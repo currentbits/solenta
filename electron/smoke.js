@@ -5,10 +5,11 @@
  * Run with the real Electron binary (not node):
  *   ./node_modules/.bin/electron electron/smoke.js
  *
- * Three passes in one invocation:
+ * Four passes in one invocation:
  *   A) CODER_SIMULATE=1 — simulated core ticker, new work-log shape
  *   B) CODER_AGENT_CMD = fake node -e agent — real generic spawn path to done
  *   C) CODER_CLAUDE_BIN = fake stream-json script — session, tools, usage
+ *   D) CODER_CODEX_BIN = fake codex JSONL — session, tool Command, status done
  *
  * Uses a temp userData path so it never touches real app state.
  * Expects dist/index.html (run `npx vite build` first) and core/dist.
@@ -93,6 +94,52 @@ function emit(obj) { process.stdout.write(JSON.stringify(obj) + "\\n"); }
     total_cost_usd: 0.002,
     num_turns: 1,
     session_id: "smoke-sess-1",
+  });
+  process.exit(0);
+})().catch((e) => { process.stderr.write(String(e)); process.exit(1); });
+`;
+  fs.writeFileSync(scriptPath, body, { mode: 0o755 });
+  return scriptPath;
+}
+
+/**
+ * Write a fake codex CLI that emits JSONL for smoke pass D.
+ * @param {string} dir
+ * @returns {string} absolute path to executable script
+ */
+function writeSmokeFakeCodex(dir) {
+  const scriptPath = path.join(dir, "smoke-fake-codex");
+  const body = `#!/usr/bin/env node
+"use strict";
+const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+function emit(obj) { process.stdout.write(JSON.stringify(obj) + "\\n"); }
+(async () => {
+  emit({ type: "thread.started", thread_id: "smoke-codex-sess-1" });
+  await delay(20);
+  emit({
+    type: "item.completed",
+    item: { id: "msg1", type: "agent_message", text: "Smoke codex ok" },
+  });
+  await delay(20);
+  emit({
+    type: "item.started",
+    item: { id: "cmd1", type: "command_execution", command: "echo smoke" },
+  });
+  await delay(20);
+  emit({
+    type: "item.completed",
+    item: {
+      id: "cmd1",
+      type: "command_execution",
+      command: "echo smoke",
+      aggregated_output: "smoke\\n",
+      exit_code: 0,
+    },
+  });
+  await delay(20);
+  emit({
+    type: "turn.completed",
+    usage: { input_tokens: 9, output_tokens: 4 },
   });
   process.exit(0);
 })().catch((e) => { process.stderr.write(String(e)); process.exit(1); });
@@ -511,7 +558,102 @@ app
     });
     logStep("passC", { ok: true });
 
-    logStep("smoke", { ok: true, passes: ["A", "B", "C"] });
+    // ── Pass D: codex adapter via fake JSONL binary ───────────────────
+    delete process.env.CODER_SIMULATE;
+    delete process.env.CODER_AGENT_CMD;
+    delete process.env.CODER_CLAUDE_BIN;
+    const fakeCodex = writeSmokeFakeCodex(userData);
+    process.env.CODER_CODEX_BIN = fakeCodex;
+
+    const threadD = await createThread(win.webContents, project.id, "Codex Smoke");
+    // Switch provider to codex before starting (no session yet).
+    const setProv = await evalInRenderer(
+      win.webContents,
+      `window.coder.threads.setProvider(${JSON.stringify({
+        threadId: threadD.id,
+        provider: "codex",
+      })})`,
+    );
+    if (!setProv || setProv.provider !== "codex") {
+      throw new Error(
+        `passD setProvider expected codex, got ${JSON.stringify(setProv)}`,
+      );
+    }
+    logStep("passD.threads.create", {
+      ok: true,
+      threadId: threadD.id,
+      provider: setProv.provider,
+    });
+
+    const startedD = await evalInRenderer(
+      win.webContents,
+      `window.coder.runs.start(${JSON.stringify({
+        threadId: threadD.id,
+        prompt: "Codex smoke prompt",
+      })})`,
+    );
+    if (!startedD || !startedD.runId) {
+      throw new Error(`passD runs.start unexpected: ${JSON.stringify(startedD)}`);
+    }
+    logStep("passD.runs.start", { ok: true, started: startedD });
+
+    const deadlineD = Date.now() + 15000;
+    let codexDetail = null;
+    while (Date.now() < deadlineD) {
+      codexDetail = await evalInRenderer(
+        win.webContents,
+        `window.coder.threads.get(${JSON.stringify(threadD.id)})`,
+      );
+      if (codexDetail && codexDetail.thread.status === "done") break;
+      if (codexDetail && codexDetail.thread.status === "failed") {
+        throw new Error(
+          `passD thread failed: ${JSON.stringify(codexDetail.messages)}`,
+        );
+      }
+      await sleep(50);
+    }
+    if (!codexDetail || codexDetail.thread.status !== "done") {
+      throw new Error(
+        `passD expected status done, got ${JSON.stringify(
+          codexDetail && codexDetail.thread && codexDetail.thread.status,
+        )}`,
+      );
+    }
+
+    if (codexDetail.thread.sessionId !== "smoke-codex-sess-1") {
+      throw new Error(
+        `passD expected sessionId smoke-codex-sess-1, got ${JSON.stringify(
+          codexDetail.thread.sessionId,
+        )}`,
+      );
+    }
+
+    const codexTool = (codexDetail.messages || []).find(
+      (m) =>
+        m.role === "tool" &&
+        m.tool &&
+        m.tool.done === true &&
+        m.tool.name === "Command",
+    );
+    if (!codexTool) {
+      throw new Error(
+        `passD expected a Command tool message with done true, messages=${JSON.stringify(
+          codexDetail.messages,
+        )}`,
+      );
+    }
+
+    assertWorkLogShape(codexDetail.workLog, startedD.runId);
+    logStep("passD.threads.get.done", {
+      ok: true,
+      status: codexDetail.thread.status,
+      sessionId: codexDetail.thread.sessionId,
+      toolDone: codexTool.tool.done,
+      usage: codexDetail.usage,
+    });
+    logStep("passD", { ok: true });
+
+    logStep("smoke", { ok: true, passes: ["A", "B", "C", "D"] });
     app.exit(0);
   })
   .catch((err) => {

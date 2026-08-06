@@ -8,15 +8,18 @@ const SIGKILL_AFTER_MS = 3000;
 /**
  * Spawn a real agent CLI as a child process.
  *
- * Prompt is appended as the final argument. stdout is utf8 and delivered
- * via onChunk as accumulated text, at most every 250ms. onDone(exitCode,
- * fullText, stderrText) fires when the process exits. kill() sends SIGTERM,
- * then SIGKILL after 3s if still alive.
+ * By default the prompt is appended as the final argument. Pass
+ * appendPrompt: false when args already include the prompt (registry
+ * text providers). stdout is utf8 and delivered via onChunk as
+ * accumulated text, at most every 250ms. onDone(exitCode, fullText,
+ * stderrText) fires when the process exits. kill() sends SIGTERM, then
+ * SIGKILL after 3s if still alive.
  *
  * @param {object} opts
  * @param {string} opts.command
  * @param {string[]} [opts.args]
- * @param {string} opts.prompt
+ * @param {string} [opts.prompt]
+ * @param {boolean} [opts.appendPrompt=true]
  * @param {string} opts.cwd
  * @param {(text: string) => void} opts.onChunk
  * @param {(exitCode: number | null, fullText: string, stderrText: string) => void} opts.onDone
@@ -28,6 +31,7 @@ function runAgent(opts) {
     command,
     args = [],
     prompt,
+    appendPrompt = true,
     cwd,
     onChunk,
     onDone,
@@ -87,9 +91,13 @@ function runAgent(opts) {
     }
   }
 
+  const spawnArgs = appendPrompt
+    ? [...args, String(prompt ?? "")]
+    : [...args];
+
   let child;
   try {
-    child = spawn(command, [...args, String(prompt ?? "")], {
+    child = spawn(command, spawnArgs, {
       cwd,
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],

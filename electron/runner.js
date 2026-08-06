@@ -12,6 +12,13 @@ const {
   INPUT_TRUNCATE,
   OUTPUT_TRUNCATE,
 } = require("./claude.js");
+const codexParse = require("./codex.js");
+const { runCodex } = codexParse;
+const {
+  getProvider,
+  resolveBin,
+  isBinAvailable,
+} = require("./providers.js");
 
 const ADJECTIVES = [
   "INTEGER",
@@ -146,8 +153,23 @@ function resolveProvider(thread) {
   if (process.env.CODER_SIMULATE === "1") return "simulate";
   if (process.env.CODER_AGENT_CMD) return "generic";
   const p = thread && thread.provider;
-  if (p === "generic" || p === "simulate" || p === "claude") return p;
+  if (p === "generic" || p === "simulate") return p;
+  if (p && getProvider(p)) return p;
   return "claude";
+}
+
+/**
+ * Ensure the provider CLI binary is available; throw a clear Error if not.
+ * @param {import('./providers').ProviderEntry} entry
+ */
+function assertProviderBinary(entry) {
+  if (!entry || entry.kind === "simulate") return;
+  const bin = resolveBin(entry);
+  if (!isBinAvailable(bin)) {
+    throw new Error(
+      `Provider binary not found: ${bin}. Install it or set ${entry.binEnv || "the provider binary env var"}.`,
+    );
+  }
 }
 
 /**
@@ -191,7 +213,7 @@ function createRunner(opts) {
       if (workflow.__real) {
         // Contract: workflow only for simulate provider
         view = null;
-      } else if (workflow.__claude) {
+      } else if (workflow.__claude || workflow.__codex) {
         view = null;
       } else {
         view = mapWorkflowView(workflow, core);
@@ -594,13 +616,20 @@ function createRunner(opts) {
 
   /**
    * Start a Claude Code stream-json session turn.
+   * @param {string} threadId
+   * @param {string} prompt
+   * @param {string} runId
+   * @param {import('./providers').ProviderEntry} [providerEntry]
    */
-  function startClaudeRun(threadId, prompt, runId) {
+  function startClaudeRun(threadId, prompt, runId, providerEntry) {
     const thread = store.getThread(threadId);
     const project = store.getProject(thread.projectId);
     if (!project) {
       throw new Error(`Unknown project for thread: ${threadId}`);
     }
+
+    const entryDef = providerEntry || getProvider("claude");
+    assertProviderBinary(entryDef);
 
     const claudeState = {
       __claude: true,
@@ -628,6 +657,13 @@ function createRunner(opts) {
     let sawResult = false;
 
     const cwd = thread.worktreePath || project.path;
+    const binary = resolveBin(entryDef);
+    const args = entryDef.buildArgs({
+      prompt,
+      sessionId: thread.sessionId || null,
+      permissionMode: thread.permissionMode || "default",
+      model: thread.model || null,
+    });
 
     const entry = {
       kind: "claude",
@@ -654,11 +690,13 @@ function createRunner(opts) {
     }
 
     const handle = runClaude({
-      binary: process.env.CODER_CLAUDE_BIN || "claude",
+      binary,
+      args,
       prompt,
       cwd,
       permissionMode: thread.permissionMode || "default",
       sessionId: thread.sessionId || null,
+      model: thread.model || null,
       onEvent: (ev) => {
         if (!guard()) return;
 
@@ -943,6 +981,503 @@ function createRunner(opts) {
   }
 
   /**
+   * Start a Codex JSONL session turn.
+   * @param {string} threadId
+   * @param {string} prompt
+   * @param {string} runId
+   * @param {import('./providers').ProviderEntry} providerEntry
+   */
+  function startCodexRun(threadId, prompt, runId, providerEntry) {
+    const thread = store.getThread(threadId);
+    const project = store.getProject(thread.projectId);
+    if (!project) {
+      throw new Error(`Unknown project for thread: ${threadId}`);
+    }
+
+    assertProviderBinary(providerEntry);
+
+    const codexState = {
+      __codex: true,
+      runId,
+    };
+
+    const startingId = beginWorkLogStep(threadId, runId, "Starting agent");
+    const workingId = beginWorkLogStep(threadId, runId, "Agent working");
+
+    store.save();
+    pushThreadsChanged();
+    pushDetail(threadId, codexState);
+
+    /** @type {string | null} */
+    let assistantMsgId = null;
+    /** @type {string} */
+    let assistantText = "";
+    /** command item id -> message id */
+    /** @type {Map<string, string>} */
+    const toolMsgById = new Map();
+    /** @type {string | null} */
+    let capturedSessionId = thread.sessionId || null;
+    let sawTerminalUsage = false;
+    let finishedFromStream = false;
+
+    const cwd = thread.worktreePath || project.path;
+    const binary = resolveBin(providerEntry);
+    const args = providerEntry.buildArgs({
+      prompt,
+      sessionId: thread.sessionId || null,
+      permissionMode: thread.permissionMode || "default",
+      model: thread.model || null,
+    });
+
+    const entry = {
+      kind: "codex",
+      runId,
+      stopping: false,
+      handle: null,
+      startingId,
+      workingId,
+      codexState,
+    };
+    Object.defineProperty(entry, "workflow", {
+      get() {
+        return codexState;
+      },
+      enumerable: true,
+    });
+    active.set(threadId, entry);
+
+    function guard() {
+      const e = active.get(threadId);
+      if (!e || e.stopping || e.runId !== runId) return null;
+      if (e.kind !== "codex") return null;
+      return e;
+    }
+
+    function ensureAssistant(text) {
+      if (!assistantMsgId) {
+        assistantMsgId = appendMessage(threadId, "assistant", text, runId);
+      } else {
+        store.updateMessage(threadId, assistantMsgId, { text });
+      }
+    }
+
+    function applyUsage(usageInfo) {
+      if (!usageInfo) return;
+      const prev = store.getUsage(threadId) || {
+        model: null,
+        inputTokens: 0,
+        outputTokens: 0,
+        costUsd: 0,
+        turns: 0,
+      };
+      store.setUsage(threadId, {
+        model: usageInfo.model || prev.model || thread.model || null,
+        inputTokens: prev.inputTokens + (usageInfo.inputTokens || 0),
+        outputTokens: prev.outputTokens + (usageInfo.outputTokens || 0),
+        costUsd: prev.costUsd + 0,
+        turns: prev.turns + 1,
+      });
+      sawTerminalUsage = true;
+    }
+
+    const handle = runCodex({
+      binary,
+      args,
+      cwd,
+      onEvent: (ev) => {
+        if (!guard()) return;
+
+        // Session / thread id
+        if (
+          codexParse.isSessionStartEvent(ev) ||
+          codexParse.extractSessionId(ev)
+        ) {
+          const sid = codexParse.extractSessionId(ev);
+          if (sid) {
+            capturedSessionId = sid;
+            store.updateThread(threadId, { sessionId: sid });
+            completeWorkLogStep(threadId, startingId);
+            store.save();
+            pushDetail(threadId, codexState);
+            pushThreadsChanged();
+          }
+        }
+
+        // Agent message growth (replace with latest full text when item.completed,
+        // append deltas when msg carries delta only).
+        const agentText = codexParse.extractAgentMessageText(ev);
+        if (agentText != null) {
+          const type = String(ev.type || "");
+          const isDelta =
+            (ev.msg &&
+              typeof ev.msg === "object" &&
+              /delta/i.test(String(ev.msg.type || ""))) ||
+            /delta/i.test(type);
+          if (isDelta) {
+            assistantText += agentText;
+          } else if (
+            type === "item.completed" ||
+            type === "item_completed" ||
+            (ev.item && ev.item.type === "agent_message")
+          ) {
+            // Full message on completed item
+            assistantText = agentText;
+          } else if (!assistantText) {
+            assistantText = agentText;
+          } else if (!assistantText.endsWith(agentText)) {
+            assistantText += agentText;
+          }
+          ensureAssistant(assistantText);
+          store.save();
+          pushDetail(threadId, codexState);
+        }
+
+        // Command execution -> tool messages
+        const cmd = codexParse.extractCommandItem(ev);
+        if (cmd) {
+          if (cmd.phase === "started") {
+            const tool = {
+              id: cmd.id,
+              name: "Command",
+              input: truncate(cmd.command, INPUT_TRUNCATE),
+              output: null,
+              isError: false,
+              done: false,
+            };
+            const summary = cmd.command
+              ? `Command: ${cmd.command.length > 80 ? `${cmd.command.slice(0, 80)}…` : cmd.command}`
+              : "Command";
+            const msgId = appendMessage(
+              threadId,
+              "tool",
+              summary,
+              runId,
+              tool,
+            );
+            toolMsgById.set(cmd.id, msgId);
+          } else if (cmd.phase === "completed") {
+            let msgId = toolMsgById.get(cmd.id);
+            if (!msgId) {
+              const tool = {
+                id: cmd.id,
+                name: "Command",
+                input: truncate(cmd.command, INPUT_TRUNCATE),
+                output: null,
+                isError: false,
+                done: false,
+              };
+              const summary = cmd.command
+                ? `Command: ${cmd.command.length > 80 ? `${cmd.command.slice(0, 80)}…` : cmd.command}`
+                : "Command";
+              msgId = appendMessage(threadId, "tool", summary, runId, tool);
+              toolMsgById.set(cmd.id, msgId);
+            }
+            const existing = store
+              .getMessages(threadId)
+              .find((m) => m.id === msgId);
+            if (existing && existing.tool) {
+              const isError =
+                cmd.exitCode != null && Number(cmd.exitCode) !== 0;
+              store.updateMessage(threadId, msgId, {
+                tool: {
+                  ...existing.tool,
+                  input: truncate(
+                    cmd.command || existing.tool.input,
+                    INPUT_TRUNCATE,
+                  ),
+                  output: truncate(cmd.output || "", OUTPUT_TRUNCATE),
+                  isError,
+                  done: true,
+                },
+              });
+            }
+          }
+          store.save();
+          pushDetail(threadId, codexState);
+        }
+
+        // Usage
+        const usageInfo = codexParse.extractUsage(ev);
+        if (usageInfo) {
+          applyUsage(usageInfo);
+          store.save();
+          pushDetail(threadId, codexState);
+        }
+      },
+      onExit: ({ code, stderr }) => {
+        const e = active.get(threadId);
+        if (!e || e.stopping || e.runId !== runId) return;
+        if (e.kind !== "codex") return;
+
+        clearRun(threadId);
+        completeWorkLogStep(threadId, e.startingId);
+        completeWorkLogStep(threadId, e.workingId);
+
+        if (capturedSessionId) {
+          store.updateThread(threadId, { sessionId: capturedSessionId });
+        }
+
+        // If we never saw usage, still count a turn with zero tokens when ok
+        if (!sawTerminalUsage && code === 0) {
+          applyUsage({ inputTokens: 0, outputTokens: 0, model: thread.model });
+        }
+
+        if (code === 0) {
+          store.updateThread(
+            threadId,
+            {
+              status: "done",
+              sessionId: capturedSessionId,
+              runStartedAt: null,
+            },
+            { touch: true },
+          );
+          store.save();
+          pushDetail(threadId, codexState);
+          pushThreadsChanged();
+          finishedFromStream = true;
+          return;
+        }
+
+        const stderrTail = String(stderr || "")
+          .split(/\r?\n/)
+          .filter(Boolean)
+          .slice(-8)
+          .join("\n");
+        const errText = stderrTail
+          ? `Run error (exit ${code == null ? "?" : code}):\n${stderrTail}`
+          : `Run error (exit ${code == null ? "?" : code})`;
+        appendMessage(threadId, "event", errText, runId);
+        appendDoneWorkLog(threadId, runId, "Run error");
+        store.updateThread(
+          threadId,
+          { status: "failed", runStartedAt: null },
+          { touch: true },
+        );
+        store.save();
+        pushDetail(threadId, codexState);
+        pushThreadsChanged();
+        void finishedFromStream;
+      },
+      onError: (err) => {
+        const e = active.get(threadId);
+        if (!e || e.stopping || e.runId !== runId) return;
+        if (e.kind !== "codex") return;
+
+        clearRun(threadId);
+        completeWorkLogStep(threadId, e.startingId);
+        completeWorkLogStep(threadId, e.workingId);
+        const msg = err && err.message ? err.message : String(err);
+        appendMessage(threadId, "event", `Run error: ${msg}`, runId);
+        appendDoneWorkLog(threadId, runId, "Run error");
+        store.updateThread(
+          threadId,
+          { status: "failed", runStartedAt: null },
+          { touch: true },
+        );
+        store.save();
+        pushDetail(threadId, codexState);
+        pushThreadsChanged();
+      },
+    });
+
+    entry.handle = handle;
+    store.save();
+    pushDetail(threadId, codexState);
+
+    return { runId };
+  }
+
+  /**
+   * Start a text-provider run (grok / opencode) via agent.js.
+   * @param {string} threadId
+   * @param {string} prompt
+   * @param {string} runId
+   * @param {string} name
+   * @param {import('./providers').ProviderEntry} providerEntry
+   */
+  function startTextProviderRun(threadId, prompt, runId, name, providerEntry) {
+    const thread = store.getThread(threadId);
+    const project = store.getProject(thread.projectId);
+    if (!project) {
+      throw new Error(`Unknown project for thread: ${threadId}`);
+    }
+
+    assertProviderBinary(providerEntry);
+
+    const binary = resolveBin(providerEntry);
+    const args = providerEntry.buildArgs({
+      prompt,
+      sessionId: thread.sessionId || null,
+      permissionMode: thread.permissionMode || "default",
+      model: thread.model || null,
+    });
+    const model = path.basename(binary);
+
+    const realState = {
+      __real: true,
+      runId,
+      name,
+      model,
+      agentStatus: "running",
+      charCount: 0,
+    };
+
+    const startingId = beginWorkLogStep(threadId, runId, "Starting agent");
+    const respondingId = beginWorkLogStep(threadId, runId, "Agent responding");
+
+    store.save();
+    pushThreadsChanged();
+    pushDetail(threadId, realState);
+
+    /** @type {string | null} */
+    let assistantMsgId = null;
+    const cwd = thread.worktreePath || project.path;
+
+    const entry = {
+      kind: "text",
+      runId,
+      stopping: false,
+      handle: null,
+      startingId,
+      respondingId,
+      realState,
+    };
+    Object.defineProperty(entry, "workflow", {
+      get() {
+        return realState;
+      },
+      enumerable: true,
+    });
+    active.set(threadId, entry);
+
+    const handle = runAgent({
+      command: binary,
+      args,
+      prompt,
+      appendPrompt: false,
+      cwd,
+      onChunk: (text) => {
+        const e = active.get(threadId);
+        if (!e || e.stopping || e.runId !== runId) return;
+
+        realState.charCount = text.length;
+
+        if (!assistantMsgId) {
+          assistantMsgId = appendMessage(threadId, "assistant", text, runId);
+        } else {
+          store.updateMessage(threadId, assistantMsgId, { text });
+        }
+
+        store.save();
+        pushDetail(threadId, realState);
+      },
+      onDone: (exitCode, fullText, stderrText) => {
+        const e = active.get(threadId);
+        if (!e || e.stopping || e.runId !== runId) return;
+        if (e.kind !== "text") return;
+
+        clearRun(threadId);
+
+        completeWorkLogStep(threadId, e.startingId);
+        completeWorkLogStep(threadId, e.respondingId);
+
+        if (fullText && fullText.length > 0) {
+          if (!assistantMsgId) {
+            assistantMsgId = appendMessage(
+              threadId,
+              "assistant",
+              fullText,
+              runId,
+            );
+          } else {
+            store.updateMessage(threadId, assistantMsgId, { text: fullText });
+          }
+          realState.charCount = fullText.length;
+        }
+
+        // Best-effort usage: ceil(chars/4), cost 0
+        const tokens = Math.ceil((realState.charCount || 0) / 4);
+        const prev = store.getUsage(threadId) || {
+          model: null,
+          inputTokens: 0,
+          outputTokens: 0,
+          costUsd: 0,
+          turns: 0,
+        };
+        store.setUsage(threadId, {
+          model: prev.model || model,
+          inputTokens: prev.inputTokens,
+          outputTokens: prev.outputTokens + tokens,
+          costUsd: prev.costUsd,
+          turns: prev.turns + 1,
+        });
+
+        if (exitCode === 0) {
+          realState.agentStatus = "settled";
+          store.updateThread(
+            threadId,
+            { status: "done", runStartedAt: null },
+            { touch: true },
+          );
+          store.save();
+          pushDetail(threadId, realState);
+          pushThreadsChanged();
+          return;
+        }
+
+        realState.agentStatus = "failed";
+        const stderrTail = String(stderrText || "")
+          .split(/\r?\n/)
+          .filter(Boolean)
+          .slice(-8)
+          .join("\n");
+        const errText = stderrTail
+          ? `Run error (exit ${exitCode}):\n${stderrTail}`
+          : `Run error (exit ${exitCode == null ? "?" : exitCode})`;
+        appendMessage(threadId, "event", errText, runId);
+        appendDoneWorkLog(threadId, runId, "Run error");
+        store.updateThread(
+          threadId,
+          { status: "failed", runStartedAt: null },
+          { touch: true },
+        );
+        store.save();
+        pushDetail(threadId, realState);
+        pushThreadsChanged();
+      },
+      onError: (err) => {
+        const e = active.get(threadId);
+        if (!e || e.stopping || e.runId !== runId) return;
+        if (e.kind !== "text") return;
+
+        clearRun(threadId);
+        completeWorkLogStep(threadId, e.startingId);
+        completeWorkLogStep(threadId, e.respondingId);
+        realState.agentStatus = "failed";
+        const msg = err && err.message ? err.message : String(err);
+        appendMessage(threadId, "event", `Run error: ${msg}`, runId);
+        appendDoneWorkLog(threadId, runId, "Run error");
+        store.updateThread(
+          threadId,
+          { status: "failed", runStartedAt: null },
+          { touch: true },
+        );
+        store.save();
+        pushDetail(threadId, realState);
+        pushThreadsChanged();
+      },
+    });
+
+    entry.handle = handle;
+    completeWorkLogStep(threadId, startingId);
+    store.save();
+    pushDetail(threadId, realState);
+
+    return { runId };
+  }
+
+  /**
    * @param {{ threadId: string, prompt: string }} input
    * @returns {Promise<{ runId: string }>}
    */
@@ -955,6 +1490,13 @@ function createRunner(opts) {
     const thread = store.getThread(threadId);
     if (!thread) {
       throw new Error(`Unknown thread: ${threadId}`);
+    }
+
+    const provider = resolveProvider(thread);
+    // Fail before mutating thread state when the CLI is missing.
+    if (provider !== "simulate" && provider !== "generic") {
+      const entryDef = getProvider(provider) || getProvider("claude");
+      assertProviderBinary(entryDef);
     }
 
     const runId = randomUUID();
@@ -973,7 +1515,6 @@ function createRunner(opts) {
     );
 
     const name = workflowNameFromThreadId(threadId);
-    const provider = resolveProvider(thread);
 
     if (provider === "simulate") {
       return startSimulatedRun(threadId, prompt, runId, name);
@@ -981,7 +1522,18 @@ function createRunner(opts) {
     if (provider === "generic") {
       return startGenericRun(threadId, prompt, runId, name);
     }
-    return startClaudeRun(threadId, prompt, runId);
+
+    const entryDef = getProvider(provider) || getProvider("claude");
+    if (entryDef.kind === "claude-stream") {
+      return startClaudeRun(threadId, prompt, runId, entryDef);
+    }
+    if (entryDef.kind === "codex-json") {
+      return startCodexRun(threadId, prompt, runId, entryDef);
+    }
+    if (entryDef.kind === "text") {
+      return startTextProviderRun(threadId, prompt, runId, name, entryDef);
+    }
+    return startClaudeRun(threadId, prompt, runId, getProvider("claude"));
   }
 
   /**
@@ -1003,7 +1555,11 @@ function createRunner(opts) {
     entry.stopping = true;
 
     if (
-      (entry.kind === "generic" || entry.kind === "claude" || entry.kind === "real") &&
+      (entry.kind === "generic" ||
+        entry.kind === "claude" ||
+        entry.kind === "codex" ||
+        entry.kind === "text" ||
+        entry.kind === "real") &&
       entry.handle
     ) {
       try {
@@ -1014,10 +1570,14 @@ function createRunner(opts) {
     }
 
     // Complete any open work-log steps for this run.
-    if (entry.kind === "generic" || entry.kind === "real") {
+    if (
+      entry.kind === "generic" ||
+      entry.kind === "real" ||
+      entry.kind === "text"
+    ) {
       completeWorkLogStep(threadId, entry.startingId);
       completeWorkLogStep(threadId, entry.respondingId);
-    } else if (entry.kind === "claude") {
+    } else if (entry.kind === "claude" || entry.kind === "codex") {
       completeWorkLogStep(threadId, entry.startingId);
       completeWorkLogStep(threadId, entry.workingId);
     } else if (entry.kind === "sim" && entry.phaseItemIds) {
@@ -1056,6 +1616,8 @@ function createRunner(opts) {
         entry &&
         (entry.kind === "generic" ||
           entry.kind === "claude" ||
+          entry.kind === "codex" ||
+          entry.kind === "text" ||
           entry.kind === "real") &&
         entry.handle
       ) {
@@ -1074,7 +1636,7 @@ function createRunner(opts) {
 
   function toWorkflowView(workflow) {
     if (!workflow) return null;
-    if (workflow.__real || workflow.__claude) {
+    if (workflow.__real || workflow.__claude || workflow.__codex) {
       if (workflow.__real) return buildRealWorkflowView(workflow);
       return null;
     }

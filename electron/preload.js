@@ -32,6 +32,9 @@ function on(channel, cb) {
 
 /** @type {import('../src/shared/ipc').CoderApi} */
 const coder = {
+  providers: {
+    list: () => invoke("providers:list"),
+  },
   projects: {
     list: () => invoke("projects:list"),
     add: (projectPath) => invoke("projects:add", projectPath),
@@ -44,6 +47,7 @@ const coder = {
     setPermissionMode: (input) =>
       invoke("threads:setPermissionMode", input),
     setArchived: (input) => invoke("threads:setArchived", input),
+    setProvider: (input) => invoke("threads:setProvider", input),
     delete: (input) => invoke("threads:delete", input),
   },
   runs: {

@@ -67,8 +67,8 @@ function registerIpc(deps) {
     const workflow = runner.getActiveWorkflow(id);
     let view = null;
     if (workflow && runner.toWorkflowView) {
-      // Only surface workflow for simulate (core) runs, not real/claude.
-      if (!workflow.__real && !workflow.__claude) {
+      // Only surface workflow for simulate (core) runs, not real providers.
+      if (!workflow.__real && !workflow.__claude && !workflow.__codex) {
         view = runner.toWorkflowView(workflow);
       }
     }
@@ -85,6 +85,16 @@ function registerIpc(deps) {
     const updated = services.setArchived(store, input);
     broadcast("threads:changed", services.listThreads(store));
     return updated;
+  });
+
+  ipcMain.handle("threads:setProvider", async (_event, input) => {
+    const updated = services.setProvider(store, input);
+    broadcast("threads:changed", services.listThreads(store));
+    return updated;
+  });
+
+  ipcMain.handle("providers:list", async () => {
+    return services.listProvidersForApi(store);
   });
 
   ipcMain.handle("threads:delete", async (_event, input) => {

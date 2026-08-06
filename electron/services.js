@@ -4,6 +4,11 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 const { randomUUID } = require("node:crypto");
+const {
+  getProvider,
+  knownProviderIds,
+  listProviders,
+} = require("./providers.js");
 
 const PERMISSION_MODES = new Set([
   "default",
@@ -147,6 +152,7 @@ function createThread(store, input) {
     runStartedAt: null,
     archived: false,
     provider: "claude",
+    model: null,
     sessionId: null,
     permissionMode: "default",
     worktreePath: null,
@@ -179,6 +185,100 @@ function setPermissionMode(store, input) {
   const updated = store.updateThread(threadId, { permissionMode: mode });
   store.save();
   return updated ? { ...updated } : { ...thread, permissionMode: mode };
+}
+
+/**
+ * Set thread provider and/or model. Does not bump updatedAt.
+ *
+ * Rejects unknown provider ids. Rejects provider change once sessionId is set.
+ * Model-only changes are allowed for providers that advertise models (e.g.
+ * claude); rejected when a non-null model is passed for providers with an
+ * empty models list.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, provider?: string, model?: string | null }} input
+ */
+function setProvider(store, input) {
+  const { threadId } = input;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+
+  const providerProvided = Object.prototype.hasOwnProperty.call(
+    input,
+    "provider",
+  );
+  const modelProvided = Object.prototype.hasOwnProperty.call(input, "model");
+
+  if (!providerProvided && !modelProvided) {
+    return { ...thread };
+  }
+
+  const nextProvider = providerProvided ? input.provider : thread.provider;
+  if (providerProvided) {
+    const id = String(input.provider || "");
+    const known =
+      knownProviderIds().includes(id) ||
+      (id === "simulate" && process.env.CODER_SIMULATE === "1");
+    if (!known) {
+      throw new Error(`Unknown provider: ${input.provider}`);
+    }
+  }
+
+  const providerChanging =
+    providerProvided && String(input.provider) !== String(thread.provider);
+
+  if (providerChanging && thread.sessionId) {
+    throw new Error(
+      `This thread already has a ${thread.provider} session. Create a new thread to switch providers.`,
+    );
+  }
+
+  if (modelProvided && input.model != null && input.model !== "") {
+    const entry = getProvider(nextProvider);
+    if (entry && Array.isArray(entry.models) && entry.models.length === 0) {
+      throw new Error(
+        `Provider ${nextProvider} does not support model selection`,
+      );
+    }
+  }
+
+  /** @type {{ provider?: string, model?: string | null }} */
+  const patch = {};
+  if (providerProvided) patch.provider = String(input.provider);
+
+  if (providerChanging) {
+    // Do not carry the old provider's model into the new provider's argv.
+    // Keep a model only when this call supplies one that is valid for the
+    // NEW provider (non-empty models list); otherwise force null.
+    const nextEntry = getProvider(nextProvider);
+    const incoming =
+      modelProvided && input.model != null && input.model !== ""
+        ? String(input.model)
+        : null;
+    const validForNew =
+      incoming != null &&
+      nextEntry &&
+      Array.isArray(nextEntry.models) &&
+      nextEntry.models.length > 0;
+    patch.model = validForNew ? incoming : null;
+  } else if (modelProvided) {
+    patch.model =
+      input.model == null || input.model === "" ? null : String(input.model);
+  }
+
+  const updated = store.updateThread(threadId, patch);
+  store.save();
+  return updated ? { ...updated } : { ...thread, ...patch };
+}
+
+/**
+ * @param {import('./store').Store} [_store]
+ * @param {object} [opts] - forwarded to listProviders (which, env, …)
+ */
+function listProvidersForApi(_store, opts) {
+  return listProviders(opts);
 }
 
 /**
@@ -296,12 +396,14 @@ module.exports = {
   addProject,
   createThread,
   setPermissionMode,
+  setProvider,
   setArchived,
   deleteThread,
   listThreads,
   getThreadDetail,
   gitStatus,
   listProjects,
+  listProvidersForApi,
   slugFromRemoteUrl,
   PERMISSION_MODES,
 };

@@ -46,6 +46,7 @@ describe("Store", () => {
       runStartedAt: null,
       archived: false,
       provider: "claude",
+      model: null,
       sessionId: null,
       permissionMode: "default",
       worktreePath: null,
@@ -118,6 +119,7 @@ describe("Store", () => {
     const store = new Store(filePath);
     const t = store.getThreads()[0];
     assert.equal(t.provider, "claude");
+    assert.equal(t.model, null);
     assert.equal(t.sessionId, null);
     assert.equal(t.permissionMode, "default");
     assert.equal(t.worktreePath, null);

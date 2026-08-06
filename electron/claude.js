@@ -87,10 +87,12 @@ function flattenContent(content) {
  *
  * @param {object} opts
  * @param {string} [opts.binary]
- * @param {string} opts.prompt
+ * @param {string[]} [opts.args] - full argv after binary; when omitted, built from prompt/session/mode/model
+ * @param {string} [opts.prompt]
  * @param {string} opts.cwd
  * @param {string} [opts.permissionMode]
  * @param {string | null} [opts.sessionId]
+ * @param {string | null} [opts.model]
  * @param {(ev: object) => void} opts.onEvent - raw parsed NDJSON event
  * @param {(info: { code: number | null, stderr: string, gotResult: boolean }) => void} opts.onExit
  * @param {(err: Error) => void} [opts.onError]
@@ -103,23 +105,32 @@ function runClaude(opts) {
     cwd,
     permissionMode = "default",
     sessionId = null,
+    model = null,
     onEvent,
     onExit,
     onError,
   } = opts;
 
-  const args = [
-    "-p",
-    "--output-format",
-    "stream-json",
-    "--verbose",
-    "--permission-mode",
-    String(permissionMode || "default"),
-  ];
-  if (sessionId) {
-    args.push("--resume", String(sessionId));
-  }
-  args.push(String(prompt ?? ""));
+  const args = Array.isArray(opts.args)
+    ? opts.args
+    : (() => {
+        const a = [
+          "-p",
+          "--output-format",
+          "stream-json",
+          "--verbose",
+          "--permission-mode",
+          String(permissionMode || "default"),
+        ];
+        if (model) {
+          a.push("--model", String(model));
+        }
+        if (sessionId) {
+          a.push("--resume", String(sessionId));
+        }
+        a.push(String(prompt ?? ""));
+        return a;
+      })();
 
   let stderrText = "";
   let lineBuf = "";

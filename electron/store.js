@@ -22,6 +22,7 @@ function migrateThread(t) {
   return {
     ...t,
     provider: t.provider != null ? t.provider : "claude",
+    model: t.model !== undefined ? t.model : null,
     sessionId: t.sessionId !== undefined ? t.sessionId : null,
     permissionMode: t.permissionMode != null ? t.permissionMode : "default",
     worktreePath: t.worktreePath !== undefined ? t.worktreePath : null,
