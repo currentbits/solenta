@@ -31,10 +31,21 @@ export interface ChatMessage {
   role: "user" | "assistant" | "event";
   text: string;
   createdAt: number;
+  /** Set when the message belongs to a run (streamed agent output, run events). */
+  runId?: string | null;
 }
 
+/**
+ * One step of a run's work log. Exactly ONE item exists per step: it is
+ * created with done: false when the step starts and the SAME item flips to
+ * done: true when the step completes. Items carry the runId of the run they
+ * belong to; the renderer groups items by runId into one Work Log card per
+ * run, placed chronologically in the conversation by the group's earliest
+ * timestamp.
+ */
 export interface WorkLogItem {
   id: string;
+  runId: string;
   label: string;
   done: boolean;
   timestamp: number;
