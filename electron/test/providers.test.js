@@ -44,9 +44,9 @@ describe("providers registry", () => {
     else process.env.CODER_OPENCODE_BIN = prevOpencode;
   });
 
-  it("registers claude, codex, grok, opencode with expected kinds and models", () => {
+  it("registers claude, codex, grok, opencode, kimi with expected kinds and models", () => {
     const ids = PROVIDERS.map((p) => p.id);
-    assert.deepEqual(ids, ["claude", "codex", "grok", "opencode"]);
+    assert.deepEqual(ids, ["claude", "codex", "grok", "opencode", "kimi"]);
 
     const claude = getProvider("claude");
     assert.equal(claude.kind, "claude-stream");
@@ -66,6 +66,16 @@ describe("providers registry", () => {
     const opencode = getProvider("opencode");
     assert.equal(opencode.kind, "text");
     assert.equal(opencode.supportsResume, false);
+
+    const kimi = getProvider("kimi");
+    assert.equal(kimi.kind, "kimi-stream");
+    assert.equal(kimi.supportsResume, true);
+    assert.equal(kimi.name, "Kimi Code");
+    assert.deepEqual(kimi.models, [
+      "k3",
+      "kimi-for-coding",
+      "kimi-for-coding-highspeed",
+    ]);
   });
 
   it("buildArgs: claude matches stream-json flags and adds --model when set", () => {
@@ -155,11 +165,12 @@ describe("providers registry", () => {
   it("listProviders availability via injected which (PATH-less)", () => {
     const which = (bin) => (bin === "claude" || bin === "grok" ? bin : null);
     const list = listProviders({ which, env: {}, includeSimulate: false });
-    assert.equal(list.length, 4);
+    assert.equal(list.length, 5);
     assert.equal(list.find((p) => p.id === "claude").available, true);
     assert.equal(list.find((p) => p.id === "codex").available, false);
     assert.equal(list.find((p) => p.id === "grok").available, true);
     assert.equal(list.find((p) => p.id === "opencode").available, false);
+    assert.equal(list.find((p) => p.id === "kimi").available, false);
     assert.ok(!list.some((p) => p.id === "simulate"));
   });
 

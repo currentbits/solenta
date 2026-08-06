@@ -528,4 +528,83 @@ describe("runner claude provider", () => {
     assert.equal(assistants.length, 1);
     assert.equal(assistants[0].text, "Only result text");
   });
+
+  it("adds --mcp-config to claude argv only when memory server is healthy", async () => {
+    const {
+      resetMemorySupForTests,
+      createMemorySupervisor,
+      getClaudeMcpArgs,
+    } = require("../memory-sup.js");
+    const http = require("node:http");
+
+    resetMemorySupForTests();
+    // Unhealthy: no --mcp-config
+    process.env.CODER_FAKE_CLAUDE_SCENARIO = "success";
+    if (fs.existsSync(argvFile)) fs.unlinkSync(argvFile);
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "no-mem" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+    let argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
+    assert.ok(!argv.includes("--mcp-config"));
+    assert.equal(getClaudeMcpArgs().length, 0);
+
+    // Healthy: adopt fake health server and expect --mcp-config
+    const memDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-claude-mem-"));
+    const freePort = await new Promise((resolve, reject) => {
+      const s = http.createServer();
+      s.listen(0, "127.0.0.1", () => {
+        const { port } = s.address();
+        s.close((err) => (err ? reject(err) : resolve(port)));
+      });
+      s.on("error", reject);
+    });
+    fs.writeFileSync(
+      path.join(memDir, "memory-server.json"),
+      JSON.stringify({
+        port: freePort,
+        token: "mcp-test-token",
+        dbPath: path.join(memDir, "db"),
+      }),
+      "utf8",
+    );
+    const server = http.createServer((req, res) => {
+      if (req.url === "/health") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: true }));
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    await new Promise((r) => server.listen(freePort, "127.0.0.1", r));
+    try {
+      const sup = createMemorySupervisor({
+        userDataPath: memDir,
+        appPath: memDir,
+        log: () => {},
+      });
+      await sup.start();
+      assert.equal(sup.getStatus().running, true);
+      assert.ok(getClaudeMcpArgs().includes("--mcp-config"));
+
+      // Fresh thread for second run
+      const project = store.getProjects()[0];
+      const t2 = services.createThread(store, {
+        projectId: project.id,
+        title: "Claude Mem",
+      });
+      fs.unlinkSync(argvFile);
+      await runner.startRun({ threadId: t2.id, prompt: "with-mem" });
+      await waitFor(() => store.getThread(t2.id).status === "done");
+      argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
+      const idx = argv.indexOf("--mcp-config");
+      assert.ok(idx >= 0, `expected --mcp-config in ${JSON.stringify(argv)}`);
+      assert.ok(fs.existsSync(argv[idx + 1]));
+      sup.stop();
+    } finally {
+      await new Promise((r) => server.close(r));
+      resetMemorySupForTests();
+      fs.rmSync(memDir, { recursive: true, force: true });
+    }
+  });
 });

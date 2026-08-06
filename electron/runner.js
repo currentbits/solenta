@@ -14,12 +14,17 @@ const {
 } = require("./claude.js");
 const codexParse = require("./codex.js");
 const { runCodex } = codexParse;
+const kimiParse = require("./kimi.js");
+const { runKimi } = kimiParse;
 const {
   getProvider,
   resolveBin,
   isBinAvailable,
 } = require("./providers.js");
+const { getClaudeMcpArgs } = require("./memory-sup.js");
 const workflowEngine = require("./workflow.js");
+
+const KIMI_PUSH_THROTTLE_MS = 250;
 
 const ADJECTIVES = [
   "INTEGER",
@@ -217,7 +222,7 @@ function createRunner(opts) {
       } else if (workflow.__real) {
         // Contract: workflow only for simulate / orchestrated
         view = null;
-      } else if (workflow.__claude || workflow.__codex) {
+      } else if (workflow.__claude || workflow.__codex || workflow.__kimi) {
         view = null;
       } else {
         view = mapWorkflowView(workflow, core);
@@ -668,6 +673,13 @@ function createRunner(opts) {
       permissionMode: thread.permissionMode || "default",
       model: thread.model || null,
     });
+    // Inject coder-memory MCP before the trailing prompt when healthy.
+    const mcpArgs = getClaudeMcpArgs();
+    if (mcpArgs.length > 0 && args.length > 0) {
+      args.splice(args.length - 1, 0, ...mcpArgs);
+    } else if (mcpArgs.length > 0) {
+      args.push(...mcpArgs);
+    }
 
     const entry = {
       kind: "claude",
@@ -1293,6 +1305,316 @@ function createRunner(opts) {
   }
 
   /**
+   * Start a Kimi stream-json (with plain-text fallback) session turn.
+   * After the first successful turn, sessionId is the sentinel "cwd"
+   * (kimi sessions are per working directory; see providers.js).
+   * @param {string} threadId
+   * @param {string} prompt
+   * @param {string} runId
+   * @param {import('./providers').ProviderEntry} providerEntry
+   */
+  function startKimiRun(threadId, prompt, runId, providerEntry) {
+    const thread = store.getThread(threadId);
+    const project = store.getProject(thread.projectId);
+    if (!project) {
+      throw new Error(`Unknown project for thread: ${threadId}`);
+    }
+
+    assertProviderBinary(providerEntry);
+
+    const kimiState = {
+      __kimi: true,
+      runId,
+    };
+
+    const startingId = beginWorkLogStep(threadId, runId, "Starting agent");
+    const workingId = beginWorkLogStep(threadId, runId, "Agent working");
+
+    store.save();
+    pushThreadsChanged();
+    pushDetail(threadId, kimiState);
+
+    /** @type {string | null} */
+    let assistantMsgId = null;
+    /** @type {string} */
+    let assistantText = "";
+    /** @type {Map<string, string>} */
+    const toolMsgById = new Map();
+    let sawUsage = false;
+    let lastPushAt = 0;
+    /** @type {ReturnType<typeof setTimeout> | null} */
+    let pushTimer = null;
+
+    const cwd = thread.worktreePath || project.path;
+    const binary = resolveBin(providerEntry);
+    const args = providerEntry.buildArgs({
+      prompt,
+      sessionId: thread.sessionId || null,
+      permissionMode: thread.permissionMode || "default",
+      model: thread.model || null,
+    });
+
+    const entry = {
+      kind: "kimi",
+      runId,
+      stopping: false,
+      handle: null,
+      startingId,
+      workingId,
+      kimiState,
+    };
+    Object.defineProperty(entry, "workflow", {
+      get() {
+        return kimiState;
+      },
+      enumerable: true,
+    });
+    active.set(threadId, entry);
+
+    function guard() {
+      const e = active.get(threadId);
+      if (!e || e.stopping || e.runId !== runId) return null;
+      if (e.kind !== "kimi") return null;
+      return e;
+    }
+
+    function flushPush() {
+      pushTimer = null;
+      lastPushAt = Date.now();
+      if (!guard()) return;
+      store.save();
+      pushDetail(threadId, kimiState);
+    }
+
+    function throttledPush() {
+      const now = Date.now();
+      const elapsed = now - lastPushAt;
+      if (elapsed >= KIMI_PUSH_THROTTLE_MS) {
+        if (pushTimer) {
+          clearTimeout(pushTimer);
+          pushTimer = null;
+        }
+        flushPush();
+        return;
+      }
+      if (!pushTimer) {
+        pushTimer = setTimeout(flushPush, KIMI_PUSH_THROTTLE_MS - elapsed);
+      }
+    }
+
+    function ensureAssistant(text) {
+      if (!assistantMsgId) {
+        assistantMsgId = appendMessage(threadId, "assistant", text, runId);
+      } else {
+        store.updateMessage(threadId, assistantMsgId, { text });
+      }
+    }
+
+    function applyUsage(usageInfo) {
+      if (!usageInfo) return;
+      const prev = store.getUsage(threadId) || {
+        model: null,
+        inputTokens: 0,
+        outputTokens: 0,
+        costUsd: 0,
+        turns: 0,
+      };
+      store.setUsage(threadId, {
+        model: prev.model || thread.model || null,
+        inputTokens: prev.inputTokens + (usageInfo.inputTokens || 0),
+        outputTokens: prev.outputTokens + (usageInfo.outputTokens || 0),
+        costUsd: prev.costUsd + 0,
+        turns: prev.turns + 1,
+      });
+      sawUsage = true;
+    }
+
+    completeWorkLogStep(threadId, startingId);
+
+    const handle = runKimi({
+      binary,
+      args,
+      cwd,
+      onEvent: (ev) => {
+        if (!guard()) return;
+
+        const text = kimiParse.extractAssistantText(ev);
+        if (text != null) {
+          assistantText += text;
+          ensureAssistant(assistantText);
+          throttledPush();
+        }
+
+        const tool = kimiParse.extractToolEvent(ev);
+        if (tool) {
+          if (tool.phase === "start") {
+            const toolMeta = {
+              id: tool.id,
+              name: tool.name,
+              input: tool.input,
+              output: null,
+              isError: false,
+              done: false,
+            };
+            const summary = tool.input
+              ? `${tool.name}: ${tool.input.length > 80 ? `${tool.input.slice(0, 80)}…` : tool.input}`
+              : tool.name;
+            const msgId = appendMessage(
+              threadId,
+              "tool",
+              summary,
+              runId,
+              toolMeta,
+            );
+            toolMsgById.set(tool.id, msgId);
+          } else if (tool.phase === "end") {
+            let msgId = toolMsgById.get(tool.id);
+            if (!msgId) {
+              const toolMeta = {
+                id: tool.id,
+                name: tool.name,
+                input: tool.input,
+                output: null,
+                isError: false,
+                done: false,
+              };
+              msgId = appendMessage(
+                threadId,
+                "tool",
+                tool.name,
+                runId,
+                toolMeta,
+              );
+              toolMsgById.set(tool.id, msgId);
+            }
+            const existing = store
+              .getMessages(threadId)
+              .find((m) => m.id === msgId);
+            if (existing && existing.tool) {
+              store.updateMessage(threadId, msgId, {
+                tool: {
+                  ...existing.tool,
+                  input: tool.input || existing.tool.input,
+                  output: tool.output,
+                  isError: tool.isError,
+                  done: true,
+                },
+              });
+            }
+          } else {
+            // single fire-and-complete
+            const toolMeta = {
+              id: tool.id,
+              name: tool.name,
+              input: tool.input,
+              output: tool.output,
+              isError: tool.isError,
+              done: true,
+            };
+            appendMessage(threadId, "tool", tool.name, runId, toolMeta);
+          }
+          throttledPush();
+        }
+
+        const usageInfo = kimiParse.extractUsage(ev);
+        if (usageInfo) {
+          applyUsage(usageInfo);
+          throttledPush();
+        }
+      },
+      onExit: ({ code, stderr, fullStdout, gotJson }) => {
+        if (pushTimer) {
+          clearTimeout(pushTimer);
+          pushTimer = null;
+        }
+        const e = active.get(threadId);
+        if (!e || e.stopping || e.runId !== runId) return;
+        if (e.kind !== "kimi") return;
+
+        clearRun(threadId);
+        completeWorkLogStep(threadId, e.startingId);
+        completeWorkLogStep(threadId, e.workingId);
+
+        // Hard fallback: no parsable JSON -> entire stdout as plain text.
+        if (!gotJson && fullStdout && fullStdout.length > 0) {
+          assistantText = fullStdout.replace(/\s+$/, "");
+          ensureAssistant(assistantText);
+        }
+
+        if (!sawUsage && code === 0) {
+          applyUsage({ inputTokens: 0, outputTokens: 0 });
+        }
+
+        if (code === 0) {
+          // Kimi sessions are per cwd; sentinel "cwd" drives -c on later turns.
+          store.updateThread(
+            threadId,
+            {
+              status: "done",
+              sessionId: "cwd",
+              runStartedAt: null,
+            },
+            { touch: true },
+          );
+          store.save();
+          pushDetail(threadId, kimiState);
+          pushThreadsChanged();
+          return;
+        }
+
+        const stderrTail = String(stderr || "")
+          .split(/\r?\n/)
+          .filter(Boolean)
+          .slice(-8)
+          .join("\n");
+        const errText = stderrTail
+          ? `Run error (exit ${code == null ? "?" : code}):\n${stderrTail}`
+          : `Run error (exit ${code == null ? "?" : code})`;
+        appendMessage(threadId, "event", errText, runId);
+        appendDoneWorkLog(threadId, runId, "Run error");
+        store.updateThread(
+          threadId,
+          { status: "failed", runStartedAt: null },
+          { touch: true },
+        );
+        store.save();
+        pushDetail(threadId, kimiState);
+        pushThreadsChanged();
+      },
+      onError: (err) => {
+        if (pushTimer) {
+          clearTimeout(pushTimer);
+          pushTimer = null;
+        }
+        const e = active.get(threadId);
+        if (!e || e.stopping || e.runId !== runId) return;
+        if (e.kind !== "kimi") return;
+
+        clearRun(threadId);
+        completeWorkLogStep(threadId, e.startingId);
+        completeWorkLogStep(threadId, e.workingId);
+        const msg = err && err.message ? err.message : String(err);
+        appendMessage(threadId, "event", `Run error: ${msg}`, runId);
+        appendDoneWorkLog(threadId, runId, "Run error");
+        store.updateThread(
+          threadId,
+          { status: "failed", runStartedAt: null },
+          { touch: true },
+        );
+        store.save();
+        pushDetail(threadId, kimiState);
+        pushThreadsChanged();
+      },
+    });
+
+    entry.handle = handle;
+    store.save();
+    pushDetail(threadId, kimiState);
+
+    return { runId };
+  }
+
+  /**
    * Start a text-provider run (grok / opencode) via agent.js.
    * @param {string} threadId
    * @param {string} prompt
@@ -1534,6 +1856,9 @@ function createRunner(opts) {
     if (entryDef.kind === "codex-json") {
       return startCodexRun(threadId, prompt, runId, entryDef);
     }
+    if (entryDef.kind === "kimi-stream") {
+      return startKimiRun(threadId, prompt, runId, entryDef);
+    }
     if (entryDef.kind === "text") {
       return startTextProviderRun(threadId, prompt, runId, name, entryDef);
     }
@@ -1588,6 +1913,7 @@ function createRunner(opts) {
       (entry.kind === "generic" ||
         entry.kind === "claude" ||
         entry.kind === "codex" ||
+        entry.kind === "kimi" ||
         entry.kind === "text" ||
         entry.kind === "real") &&
       entry.handle
@@ -1607,7 +1933,11 @@ function createRunner(opts) {
     ) {
       completeWorkLogStep(threadId, entry.startingId);
       completeWorkLogStep(threadId, entry.respondingId);
-    } else if (entry.kind === "claude" || entry.kind === "codex") {
+    } else if (
+      entry.kind === "claude" ||
+      entry.kind === "codex" ||
+      entry.kind === "kimi"
+    ) {
       completeWorkLogStep(threadId, entry.startingId);
       completeWorkLogStep(threadId, entry.workingId);
     } else if (
@@ -1652,6 +1982,7 @@ function createRunner(opts) {
         (entry.kind === "generic" ||
           entry.kind === "claude" ||
           entry.kind === "codex" ||
+          entry.kind === "kimi" ||
           entry.kind === "text" ||
           entry.kind === "real") &&
         entry.handle
@@ -1674,7 +2005,12 @@ function createRunner(opts) {
     if (workflow.__orchestrated) {
       return workflowEngine.toPublicView(workflow);
     }
-    if (workflow.__real || workflow.__claude || workflow.__codex) {
+    if (
+      workflow.__real ||
+      workflow.__claude ||
+      workflow.__codex ||
+      workflow.__kimi
+    ) {
       if (workflow.__real) return buildRealWorkflowView(workflow);
       return null;
     }

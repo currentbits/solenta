@@ -14,7 +14,7 @@ const { execFileSync } = require("node:child_process");
  * @property {string} defaultBin
  * @property {boolean} supportsResume
  * @property {string[]} models
- * @property {"claude-stream" | "codex-json" | "text" | "simulate"} kind
+ * @property {"claude-stream" | "codex-json" | "kimi-stream" | "text" | "simulate"} kind
  * @property {(opts: { prompt: string, sessionId?: string | null, permissionMode?: string, model?: string | null }) => string[]} buildArgs
  */
 
@@ -105,6 +105,38 @@ const PROVIDERS = [
     kind: "text",
     buildArgs({ prompt }) {
       return ["run", String(prompt ?? "")];
+    },
+  },
+  {
+    id: "kimi",
+    name: "Kimi Code",
+    binEnv: "CODER_KIMI_BIN",
+    defaultBin: "kimi",
+    supportsResume: true,
+    models: ["k3", "kimi-for-coding", "kimi-for-coding-highspeed"],
+    kind: "kimi-stream",
+    /**
+     * Kimi sessions are per working directory. When thread.sessionId is set we
+     * pass -c (continue) instead of a session id and keep sessionId as the
+     * sentinel "cwd". Two kimi threads sharing a cwd share history; mitigated
+     * by worktree-per-thread.
+     */
+    buildArgs({ prompt, sessionId, permissionMode, model }) {
+      const args = ["-p", String(prompt ?? ""), "--output-format", "stream-json"];
+      if (model) {
+        args.push("-m", String(model));
+      }
+      const mode = String(permissionMode || "default");
+      if (mode === "acceptEdits") {
+        args.push("-y");
+      } else if (mode === "bypassPermissions") {
+        args.push("--auto");
+      }
+      // default / plan: no permission flag
+      if (sessionId) {
+        args.push("-c");
+      }
+      return args;
     },
   },
 ];

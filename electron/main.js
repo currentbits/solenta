@@ -7,8 +7,15 @@ const { pathToFileURL } = require("node:url");
 const { Store } = require("./store.js");
 const { createRunner } = require("./runner.js");
 const { registerIpc } = require("./ipc.js");
+const {
+  createMemorySupervisor,
+  getMemoryStatus,
+} = require("./memory-sup.js");
 
 const isDev = !app.isPackaged && !process.env.CODER_PROD;
+
+/** @type {ReturnType<typeof createMemorySupervisor> | null} */
+let memorySupervisor = null;
 
 /**
  * Ensure @coder/core is built; throw a helpful error if missing.
@@ -60,7 +67,28 @@ app.whenReady().then(async () => {
   const coreIndex = assertCoreBuilt();
   const core = await import(pathToFileURL(coreIndex).href);
 
-  const storePath = path.join(app.getPath("userData"), "coder-store.json");
+  const userData = app.getPath("userData");
+  // App root: packaged app path, or repo root in dev (parent of electron/).
+  const appPath = app.isPackaged
+    ? app.getAppPath()
+    : path.join(__dirname, "..");
+
+  memorySupervisor = createMemorySupervisor({
+    userDataPath: userData,
+    appPath,
+    log: (msg) => console.warn(msg),
+  });
+  // Never block or fail app start on memory supervision.
+  try {
+    await memorySupervisor.start();
+  } catch (err) {
+    console.warn(
+      "memory-server: supervisor start error; continuing without memory:",
+      err && err.message ? err.message : err,
+    );
+  }
+
+  const storePath = path.join(userData, "coder-store.json");
   const store = new Store(storePath);
 
   const runner = createRunner({
@@ -76,7 +104,7 @@ app.whenReady().then(async () => {
     store,
     runner,
     broadcast,
-    worktreeBase: path.join(app.getPath("userData"), "worktrees"),
+    worktreeBase: path.join(userData, "worktrees"),
   });
 
   createWindow();
@@ -88,8 +116,25 @@ app.whenReady().then(async () => {
   });
 });
 
+app.on("before-quit", () => {
+  // Terminate only a memory-server child we spawned (adopted servers stay up).
+  if (memorySupervisor) {
+    try {
+      memorySupervisor.stop();
+    } catch {
+      // ignore
+    }
+  }
+});
+
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
     app.quit();
   }
 });
+
+// Expose for future UI / tests without renderer work this round.
+module.exports = {
+  getMemoryStatus: () =>
+    memorySupervisor ? memorySupervisor.getStatus() : getMemoryStatus(),
+};

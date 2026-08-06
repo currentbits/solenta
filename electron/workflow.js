@@ -3,12 +3,18 @@
 const { randomUUID } = require("node:crypto");
 const { runClaude } = require("./claude.js");
 const { runCodex, extractAgentMessageText, extractUsage } = require("./codex.js");
+const {
+  runKimi,
+  extractAssistantText: kimiExtractText,
+  extractUsage: kimiExtractUsage,
+} = require("./kimi.js");
 const { runAgent } = require("./agent.js");
 const {
   getProvider,
   resolveBin,
   isBinAvailable,
 } = require("./providers.js");
+const { getClaudeMcpArgs } = require("./memory-sup.js");
 
 const PUSH_THROTTLE_MS = 250;
 const DOSSIER_INPUT_MAX = 800;
@@ -236,8 +242,40 @@ function spawnAgentClaude(opts) {
     resolveDone(payload);
   }
 
+  // Build args so we can inject --mcp-config when memory server is healthy.
+  const claudeEntry = getProvider("claude");
+  const baseArgs = claudeEntry
+    ? claudeEntry.buildArgs({
+        prompt,
+        sessionId: null,
+        permissionMode: permissionMode || "default",
+        model: model || null,
+      })
+    : [
+        "-p",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--permission-mode",
+        String(permissionMode || "default"),
+        String(prompt ?? ""),
+      ];
+  // Inject --mcp-config before the trailing prompt when memory is healthy.
+  const mcpArgs = getClaudeMcpArgs();
+  const args =
+    mcpArgs.length > 0 && baseArgs.length > 0
+      ? [
+          ...baseArgs.slice(0, -1),
+          ...mcpArgs,
+          baseArgs[baseArgs.length - 1],
+        ]
+      : mcpArgs.length > 0
+        ? [...baseArgs, ...mcpArgs]
+        : baseArgs;
+
   const handle = runClaude({
     binary: binary || process.env.CODER_CLAUDE_BIN || "claude",
+    args,
     prompt,
     cwd,
     permissionMode: permissionMode || "default",
@@ -387,6 +425,92 @@ function spawnAgentCodex(opts) {
 }
 
 /**
+ * Spawn a one-shot Kimi stream-json agent (no resume / no -c).
+ * @param {object} opts
+ * @returns {{ handle: { kill: () => void }, done: Promise<object> }}
+ */
+function spawnAgentKimi(opts) {
+  const { prompt, cwd, model, binary, providerEntry, onText } = opts;
+
+  let text = "";
+  let usage = null;
+  let finished = false;
+  let fullStdout = "";
+  let gotJson = false;
+
+  /** @type {(value: object) => void} */
+  let resolveDone;
+  const done = new Promise((resolve) => {
+    resolveDone = resolve;
+  });
+
+  function finish(payload) {
+    if (finished) return;
+    finished = true;
+    resolveDone(payload);
+  }
+
+  const entry = providerEntry || getProvider("kimi");
+  const args = entry.buildArgs({
+    prompt,
+    sessionId: null,
+    model: model || null,
+  });
+
+  const handle = runKimi({
+    binary: binary || resolveBin(entry),
+    args,
+    cwd,
+    onEvent: (ev) => {
+      gotJson = true;
+      if (!ev || typeof ev !== "object") return;
+      const chunk = kimiExtractText(ev);
+      if (chunk != null) {
+        text += chunk;
+        if (typeof onText === "function") onText(text);
+      }
+      const u = kimiExtractUsage(ev);
+      if (u) {
+        usage = {
+          inputTokens: Number(u.inputTokens) || 0,
+          outputTokens: Number(u.outputTokens) || 0,
+          costUsd: 0,
+        };
+      }
+    },
+    onExit: ({ code, stderr, fullStdout: stdout, gotJson: parsed }) => {
+      fullStdout = stdout || "";
+      gotJson = gotJson || parsed;
+      let finalText = text;
+      if (!gotJson && fullStdout) {
+        finalText = fullStdout.replace(/\s+$/, "");
+        if (typeof onText === "function") onText(finalText);
+      }
+      finish({
+        ok: code === 0,
+        text: finalText,
+        usage,
+        code,
+        stderr: String(stderr || ""),
+      });
+    },
+    onError: (err) => {
+      const msg = err && err.message ? err.message : String(err);
+      finish({
+        ok: false,
+        text,
+        usage,
+        code: 1,
+        stderr: msg,
+        error: err,
+      });
+    },
+  });
+
+  return { handle, done };
+}
+
+/**
  * Spawn a plain text-kind provider agent.
  * @param {object} opts
  * @returns {{ handle: { kill: () => void }, done: Promise<object> }}
@@ -506,6 +630,16 @@ function spawnPhaseAgent(opts) {
   }
   if (entry.kind === "codex-json") {
     return spawnAgentCodex({
+      prompt,
+      cwd,
+      model,
+      binary,
+      providerEntry: entry,
+      onText,
+    });
+  }
+  if (entry.kind === "kimi-stream") {
+    return spawnAgentKimi({
       prompt,
       cwd,
       model,

@@ -1,6 +1,7 @@
 "use strict";
 
 const { spawn } = require("node:child_process");
+const { getClaudeMcpArgs } = require("./memory-sup.js");
 
 const SIGKILL_AFTER_MS = 3000;
 const INPUT_TRUNCATE = 2000;
@@ -128,6 +129,8 @@ function runClaude(opts) {
         if (sessionId) {
           a.push("--resume", String(sessionId));
         }
+        // Memory MCP injection when supervised server is healthy.
+        a.push(...getClaudeMcpArgs());
         a.push(String(prompt ?? ""));
         return a;
       })();
