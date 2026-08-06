@@ -1,4 +1,10 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from "react";
 import type {
   PermissionMode,
   ProviderInfo,
@@ -12,6 +18,7 @@ import {
   shortModelName,
   shortSessionId,
 } from "../format";
+import { useEscapeClose } from "../useEscapeClose";
 import { WorkflowsModal } from "./WorkflowsModal";
 import styles from "./Composer.module.css";
 
@@ -142,6 +149,15 @@ export function Composer({
     return () => document.removeEventListener("mousedown", onDoc);
   }, [modeOpen, providerOpen, modelOpen, buildMenuOpen]);
 
+  const anyMenuOpen = modeOpen || providerOpen || modelOpen || buildMenuOpen;
+  const closeAllMenus = useCallback(() => {
+    setModeOpen(false);
+    setProviderOpen(false);
+    setModelOpen(false);
+    setBuildMenuOpen(false);
+  }, []);
+  useEscapeClose(anyMenuOpen, closeAllMenus);
+
   const runAction = async (
     action: (prompt: string) => void | Promise<void>,
     failLabel: string,
@@ -271,6 +287,7 @@ export function Composer({
                 type="button"
                 className={styles.pill}
                 disabled={disabled}
+                aria-disabled={disabled || sessionLocked ? "true" : undefined}
                 title={lockedTitle}
                 aria-haspopup={sessionLocked ? undefined : "listbox"}
                 aria-expanded={sessionLocked ? undefined : providerOpen}
@@ -331,6 +348,7 @@ export function Composer({
                   type="button"
                   className={styles.pill}
                   disabled={disabled}
+                  aria-disabled={disabled ? "true" : undefined}
                   aria-haspopup="listbox"
                   aria-expanded={modelOpen}
                   onClick={() => {
@@ -381,7 +399,12 @@ export function Composer({
               </div>
             )}
 
-            <button type="button" className={styles.pill} disabled={disabled}>
+            <button
+              type="button"
+              className={styles.pill}
+              disabled={disabled}
+              aria-disabled={disabled ? "true" : undefined}
+            >
               {STATIC.effort}
             </button>
             <div className={styles.modeWrap} ref={modeWrapRef}>
@@ -389,6 +412,7 @@ export function Composer({
                 type="button"
                 className={styles.pill}
                 disabled={disabled}
+                aria-disabled={disabled ? "true" : undefined}
                 aria-haspopup="listbox"
                 aria-expanded={modeOpen}
                 onClick={() => {
@@ -435,6 +459,7 @@ export function Composer({
                 className={`${styles.pill} ${styles.pillAccent} ${styles.buildMain}`}
                 onClick={() => submitBuild()}
                 disabled={!canBuild}
+                aria-disabled={!canBuild ? "true" : undefined}
                 title="Build workflow"
               >
                 {STATIC.mode}
@@ -446,6 +471,7 @@ export function Composer({
                 aria-haspopup="menu"
                 aria-expanded={buildMenuOpen}
                 disabled={disabled || sending}
+                aria-disabled={disabled || sending ? "true" : undefined}
                 onClick={() => {
                   if (disabled || sending) return;
                   setBuildMenuOpen((v) => !v);

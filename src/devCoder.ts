@@ -8,6 +8,8 @@
  */
 import type {
   AgentView,
+  AppSettings,
+  AppStatus,
   ChatMessage,
   CoderApi,
   DiffResult,
@@ -96,6 +98,18 @@ const STANDARD_TEMPLATE: WorkflowTemplateInfo = {
 const TICK_MS = 700;
 const TITLE_MAX = 60;
 const WORKTREE_DELAY_MS = 450;
+const PUSH_DELAY_MS = 350;
+
+const SETTINGS_BUDGET_ERROR =
+  "Daily budget must be a positive number or null";
+
+function formatUsd(n: number): string {
+  return n.toFixed(2);
+}
+
+function dailyBudgetReachedMessage(spent: number, budget: number): string {
+  return `Daily budget reached ($${formatUsd(spent)} of $${formatUsd(budget)}). Raise or clear the cap in Settings.`;
+}
 
 type TemplateSaveInput = Omit<WorkflowTemplateInfo, "id" | "builtin"> & {
   id?: string;
@@ -237,6 +251,8 @@ type RunState = {
   workflowStep: number;
   /** Phase instructions for dossier text (startWorkflow only). */
   phaseInstructions?: string[];
+  /** usage.costUsd at run start; delta is billed to spendTodayUsd on end. */
+  costBaseline: number;
 };
 
 function now() {
@@ -1034,6 +1050,9 @@ function buildDevCoder(): CoderApi {
   const clearedDiff = new Set<string>();
   /** User-defined + builtin workflow templates (in-memory). */
   let templates: WorkflowTemplateInfo[] = [cloneTemplate(STANDARD_TEMPLATE)];
+  /** Aggregated cost of finished fake runs this session (stands in for "today"). */
+  let spendTodayUsd = 0;
+  let dailyBudgetUsd: number | null = null;
 
   for (const t of threads) {
     if (t.id === mockData.activeThreadId) {
@@ -1084,6 +1103,7 @@ function buildDevCoder(): CoderApi {
           sessionStep: 0,
           kind: t.provider === "simulate" ? "simulate" : "session",
           workflowStep: 0,
+          costBaseline: detail.usage?.costUsd ?? 0,
         });
       }
     } else {
@@ -1135,6 +1155,37 @@ function buildDevCoder(): CoderApi {
 
   const isSimulate = (thread: ThreadInfo) => thread.provider === "simulate";
 
+  /** Bill the cost delta of a finished/stopped run into today's spend. */
+  const settleRunSpend = (detail: ThreadDetail, run: RunState | undefined) => {
+    if (!run) return;
+    const nowCost = detail.usage?.costUsd ?? 0;
+    const delta = Math.max(0, nowCost - run.costBaseline);
+    if (delta > 0) spendTodayUsd += delta;
+    // Prevent double-billing if settle is called twice for the same run.
+    run.costBaseline = nowCost;
+  };
+
+  const assertUnderBudget = () => {
+    if (dailyBudgetUsd == null) return;
+    if (spendTodayUsd >= dailyBudgetUsd) {
+      throw new Error(
+        dailyBudgetReachedMessage(spendTodayUsd, dailyBudgetUsd),
+      );
+    }
+  };
+
+  const parseBudgetPatch = (patch: Partial<AppSettings>): number | null => {
+    if (!Object.prototype.hasOwnProperty.call(patch, "dailyBudgetUsd")) {
+      return dailyBudgetUsd;
+    }
+    const v = patch.dailyBudgetUsd;
+    if (v === null) return null;
+    if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) {
+      throw new Error(SETTINGS_BUDGET_ERROR);
+    }
+    return v;
+  };
+
   /** Prompt from the user message of the active run (for workflow final answer). */
   const runPrompt = (detail: ThreadDetail, runId: string): string => {
     const user = [...detail.messages]
@@ -1160,6 +1211,7 @@ function buildDevCoder(): CoderApi {
         sessionStep: 0,
         kind: isSimulate(detail.thread) ? "simulate" : "session",
         workflowStep: 0,
+        costBaseline: detail.usage?.costUsd ?? 0,
       };
       runStates.set(threadId, run);
     }
@@ -1214,6 +1266,7 @@ function buildDevCoder(): CoderApi {
     }
 
     if (complete) {
+      settleRunSpend(detail, run);
       thread = {
         ...thread,
         status: "done",
@@ -1242,6 +1295,27 @@ function buildDevCoder(): CoderApi {
   }
 
   const api: CoderApi = {
+    app: {
+      async status(): Promise<AppStatus> {
+        return {
+          spendTodayUsd,
+          memory: {
+            running: true,
+            adopted: false,
+            port: 49999,
+          },
+        };
+      },
+    },
+    settings: {
+      async get(): Promise<AppSettings> {
+        return { dailyBudgetUsd };
+      },
+      async set(patch: Partial<AppSettings>): Promise<AppSettings> {
+        dailyBudgetUsd = parseBudgetPatch(patch);
+        return { dailyBudgetUsd };
+      },
+    },
     providers: {
       async list() {
         return DEV_PROVIDERS.map((p) => ({
@@ -1527,6 +1601,8 @@ function buildDevCoder(): CoderApi {
           throw new Error("A run is already active on this thread");
         }
 
+        assertUnderBudget();
+
         const prompt = input.prompt.trim();
         const t = now();
         const runId = id("run");
@@ -1541,6 +1617,7 @@ function buildDevCoder(): CoderApi {
           sessionStep: 0,
           kind,
           workflowStep: 0,
+          costBaseline: detail.usage?.costUsd ?? 0,
         };
         runStates.set(input.threadId, run);
 
@@ -1607,6 +1684,8 @@ function buildDevCoder(): CoderApi {
           throw new Error("A run is already active on this thread");
         }
 
+        assertUnderBudget();
+
         const templateId = input.templateId?.trim() || "standard";
         const template = templates.find((t) => t.id === templateId);
         if (!template) {
@@ -1640,6 +1719,7 @@ function buildDevCoder(): CoderApi {
           kind: "workflow",
           workflowStep: 0,
           phaseInstructions: template.phases.map((p) => p.instruction),
+          costBaseline: detail.usage?.costUsd ?? 0,
         };
         runStates.set(input.threadId, run);
 
@@ -1694,6 +1774,7 @@ function buildDevCoder(): CoderApi {
 
         const t = now();
         const run = runStates.get(input.threadId);
+        settleRunSpend(detail, run);
         // Mark any in-flight tools done so cards settle.
         for (const m of detail.messages) {
           if (m.role === "tool" && m.tool && !m.tool.done && m.runId === run?.runId) {
@@ -1742,6 +1823,16 @@ function buildDevCoder(): CoderApi {
           branch: "main",
           dirty: false,
         };
+      },
+      async push(input) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
+        const branch = detail.thread.branch;
+        if (!branch) {
+          throw new Error("No git remote configured for this project.");
+        }
+        await new Promise((r) => setTimeout(r, PUSH_DELAY_MS));
+        return { remote: "origin", branch };
       },
       async setupWorktree(input) {
         const detail = details.get(input.threadId);

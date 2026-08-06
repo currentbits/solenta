@@ -482,6 +482,24 @@
   background: rgba(248, 113, 113, 0.18);
 }
 
+.spendMeter {
+  margin-bottom: 6px;
+  padding: 4px 10px;
+  font-size: 11.5px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  letter-spacing: 0.01em;
+}
+
+.spendMeter[data-tone="warn"] {
+  color: var(--amber);
+}
+
+.spendMeter[data-tone="over"] {
+  color: var(--danger);
+}
+
 .footerRow {
   display: flex;
   align-items: center;

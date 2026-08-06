@@ -3,6 +3,7 @@ import { useCoder } from "./useCoder";
 import { Sidebar } from "./components/Sidebar";
 import { ThreadView } from "./components/ThreadView";
 import { AgentsPanel } from "./components/AgentsPanel";
+import { SettingsModal } from "./components/SettingsModal";
 import styles from "./App.module.css";
 
 export default function App() {
@@ -32,11 +33,16 @@ export default function App() {
     mergeWorktree,
     removeWorktree,
     fetchDiff,
+    pushBranch,
+    appStatus,
+    settings,
+    saveSettings,
     projectById,
   } = useCoder();
 
   const [changesOpen, setChangesOpen] = useState(false);
   const [changesNonce, setChangesNonce] = useState(0);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   // Close the center Changes panel when switching threads (old behavior).
   useEffect(() => {
@@ -72,6 +78,9 @@ export default function App() {
         }}
         projectError={error?.scope === "project" ? error.message : null}
         onDismissProjectError={clearError}
+        onOpenSettings={() => setSettingsOpen(true)}
+        spendTodayUsd={appStatus?.spendTodayUsd ?? null}
+        dailyBudgetUsd={settings?.dailyBudgetUsd ?? null}
       />
       <ThreadView
         detail={detail}
@@ -97,6 +106,7 @@ export default function App() {
         changesNonce={changesNonce}
         onCloseChanges={() => setChangesOpen(false)}
         onFetchDiff={() => fetchDiff()}
+        onPush={() => pushBranch()}
         runError={error?.scope === "run" ? error.message : null}
         onDismissRunError={clearError}
       />
@@ -110,6 +120,13 @@ export default function App() {
         onMergeWorktree={() => mergeWorktree()}
         onRemoveWorktree={(force) => removeWorktree(force)}
         onViewChanges={openChanges}
+      />
+      <SettingsModal
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        settings={settings}
+        status={appStatus}
+        onSaveSettings={(patch) => saveSettings(patch)}
       />
     </div>
   );

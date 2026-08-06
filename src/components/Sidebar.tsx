@@ -25,6 +25,37 @@ interface SidebarProps {
   onAddProject: () => void;
   projectError?: string | null;
   onDismissProjectError?: () => void;
+  /** Opens the Settings modal. */
+  onOpenSettings?: () => void;
+  /** Aggregated spend today (USD); null while loading. */
+  spendTodayUsd?: number | null;
+  /** Daily budget cap; null = no cap. */
+  dailyBudgetUsd?: number | null;
+}
+
+function formatUsd(n: number): string {
+  return n.toFixed(2);
+}
+
+function spendMeterLabel(
+  spend: number,
+  budget: number | null | undefined,
+): string {
+  if (budget != null && budget > 0) {
+    return `Today: $${formatUsd(spend)} / $${formatUsd(budget)}`;
+  }
+  return `Today: $${formatUsd(spend)}`;
+}
+
+function spendMeterTone(
+  spend: number,
+  budget: number | null | undefined,
+): "ok" | "warn" | "over" {
+  if (budget == null || budget <= 0) return "ok";
+  const ratio = spend / budget;
+  if (ratio >= 1) return "over";
+  if (ratio >= 0.8) return "warn";
+  return "ok";
 }
 
 function StatusBadge({
@@ -136,6 +167,9 @@ export function Sidebar({
   onAddProject,
   projectError = null,
   onDismissProjectError,
+  onOpenSettings,
+  spendTodayUsd = null,
+  dailyBudgetUsd = null,
 }: SidebarProps) {
   const [projectsOpen, setProjectsOpen] = useState(true);
   const [query, setQuery] = useState("");
@@ -368,8 +402,21 @@ export function Sidebar({
             </button>
           </div>
         )}
+        {spendTodayUsd != null && (
+          <div
+            className={styles.spendMeter}
+            data-tone={spendMeterTone(spendTodayUsd, dailyBudgetUsd)}
+            title="Spend today across all providers"
+          >
+            {spendMeterLabel(spendTodayUsd, dailyBudgetUsd)}
+          </div>
+        )}
         <div className={styles.footerRow}>
-          <button type="button" className={styles.settings}>
+          <button
+            type="button"
+            className={styles.settings}
+            onClick={() => onOpenSettings?.()}
+          >
             <span className={styles.settingsIcon} aria-hidden>
               ⚙
             </span>

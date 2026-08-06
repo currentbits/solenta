@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
+  AppSettings,
+  AppStatus,
   CoderApi,
   DiffResult,
   PermissionMode,
@@ -11,6 +13,8 @@ import type {
 } from "./shared/ipc";
 import { devCoder } from "./devCoder";
 import { nextVisibleThreadId } from "./threadSelection";
+
+const STATUS_POLL_MS = 60_000;
 
 export type WorkflowSaveInput = Omit<WorkflowTemplateInfo, "id" | "builtin"> & {
   id?: string;
@@ -82,6 +86,16 @@ export interface UseCoderResult {
   mergeWorktree: () => Promise<ThreadInfo | null>;
   removeWorktree: (force?: boolean) => Promise<ThreadInfo | null>;
   fetchDiff: () => Promise<DiffResult>;
+  /** Push the selected thread's branch to origin. */
+  pushBranch: () => Promise<{ remote: string; branch: string }>;
+  /** Live spend + memory server status. */
+  appStatus: AppStatus | null;
+  /** Persisted app settings (daily budget). */
+  settings: AppSettings | null;
+  /** Patch settings; updates local state from the returned value. */
+  saveSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>;
+  /** Re-fetch app.status() (e.g. after a run settles). */
+  refreshStatus: () => Promise<void>;
   projectById: Map<string, ProjectInfo>;
 }
 
@@ -95,10 +109,14 @@ export function useCoder(): UseCoderResult {
   const [detail, setDetail] = useState<ThreadDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<CoderError | null>(null);
+  const [appStatus, setAppStatus] = useState<AppStatus | null>(null);
+  const [settings, setSettings] = useState<AppSettings | null>(null);
   const selectedRef = useRef<string | null>(null);
   /** Bumped on every threads:changed push so a late initial list cannot clobber it. */
   const threadsListGen = useRef(0);
   const threadsRef = useRef<ThreadInfo[]>([]);
+  /** Prior status by thread id; used to detect working → settled for spend refresh. */
+  const prevStatusRef = useRef<Map<string, ThreadInfo["status"]>>(new Map());
 
   useEffect(() => {
     selectedRef.current = selectedThreadId;
@@ -113,6 +131,15 @@ export function useCoder(): UseCoderResult {
     setError(null);
   }, []);
 
+  const refreshStatus = useCallback(async () => {
+    try {
+      const status = await api.app.status();
+      setAppStatus(status);
+    } catch {
+      // Status is best-effort for the spend meter; ignore transient failures.
+    }
+  }, [api]);
+
   // Initial load + subscriptions
   useEffect(() => {
     let cancelled = false;
@@ -125,6 +152,8 @@ export function useCoder(): UseCoderResult {
     });
 
     unsubUpdated = api.on("thread:updated", (next) => {
+      const prev = prevStatusRef.current.get(next.thread.id);
+      prevStatusRef.current.set(next.thread.id, next.thread.status);
       applyThreads(
         threadsRef.current.map((t) =>
           t.id === next.thread.id ? next.thread : t,
@@ -133,22 +162,35 @@ export function useCoder(): UseCoderResult {
       if (selectedRef.current === next.thread.id) {
         setDetail(next);
       }
+      // Refresh spend when a thread leaves "working" (run finished or stopped).
+      if (prev === "working" && next.thread.status !== "working") {
+        void refreshStatus();
+      }
     });
 
     const loadGen = threadsListGen.current;
 
     (async () => {
       try {
-        const [p, list, prov, wfs] = await Promise.all([
+        // status/settings are best-effort: missing IPC handlers (merge before
+        // backend) must not blank the whole boot (no catch on this IIFE).
+        const [p, list, prov, wfs, status, sett] = await Promise.all([
           api.projects.list(),
           api.threads.list(),
           api.providers.list(),
           api.workflows.list(),
+          api.app.status().catch(() => null),
+          api.settings.get().catch(() => null),
         ]);
         if (cancelled) return;
         setProjects(p);
         setProviders(prov);
         setWorkflows(wfs);
+        if (status != null) setAppStatus(status);
+        if (sett != null) setSettings(sett);
+        for (const t of list) {
+          prevStatusRef.current.set(t.id, t.status);
+        }
         if (threadsListGen.current === loadGen) {
           applyThreads(list);
         }
@@ -167,12 +209,18 @@ export function useCoder(): UseCoderResult {
       }
     })();
 
+    // Shared 60s interval for the spend meter (same pattern as sidebar age tick).
+    const statusHandle = window.setInterval(() => {
+      void refreshStatus();
+    }, STATUS_POLL_MS);
+
     return () => {
       cancelled = true;
       unsubChanged?.();
       unsubUpdated?.();
+      window.clearInterval(statusHandle);
     };
-  }, [api, applyThreads]);
+  }, [api, applyThreads, refreshStatus]);
 
   // Load ThreadDetail when selection changes
   useEffect(() => {
@@ -512,6 +560,32 @@ export function useCoder(): UseCoderResult {
     return api.git.diff({ threadId });
   }, [api, selectedThreadId]);
 
+  const pushBranch = useCallback(async () => {
+    if (!selectedThreadId) {
+      throw new Error("No thread selected");
+    }
+    const threadId = selectedThreadId;
+    try {
+      const result = await api.git.push({ threadId });
+      setError(null);
+      return result;
+    } catch (err) {
+      setError({ scope: "run", message: errorMessage(err) });
+      throw err;
+    }
+  }, [api, selectedThreadId]);
+
+  const saveSettings = useCallback(
+    async (patch: Partial<AppSettings>) => {
+      const next = await api.settings.set(patch);
+      setSettings(next);
+      // Budget changes may affect how the meter is rendered.
+      await refreshStatus();
+      return next;
+    },
+    [api, refreshStatus],
+  );
+
   return {
     api,
     projects,
@@ -541,6 +615,11 @@ export function useCoder(): UseCoderResult {
     mergeWorktree,
     removeWorktree,
     fetchDiff,
+    pushBranch,
+    appStatus,
+    settings,
+    saveSettings,
+    refreshStatus,
     projectById,
   };
 }

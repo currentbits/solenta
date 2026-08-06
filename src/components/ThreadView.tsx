@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   ChatMessage,
   DiffResult,
@@ -17,8 +17,11 @@ import {
   workLogDurationLabel,
   type WorkLogGroup,
 } from "../timeline";
+import { useEscapeClose } from "../useEscapeClose";
 import { Composer } from "./Composer";
 import styles from "./ThreadView.module.css";
+
+const PUSH_FLASH_MS = 3000;
 
 const STICK_BOTTOM_PX = 80;
 
@@ -53,6 +56,8 @@ interface ThreadViewProps {
   changesNonce: number;
   onCloseChanges: () => void;
   onFetchDiff: () => Promise<DiffResult>;
+  /** Push the thread's current branch to origin. */
+  onPush: () => Promise<{ remote: string; branch: string }>;
   runError?: string | null;
   onDismissRunError?: () => void;
 }
@@ -346,6 +351,7 @@ export function ThreadView({
   changesNonce,
   onCloseChanges,
   onFetchDiff,
+  onPush,
   runError = null,
   onDismissRunError,
 }: ThreadViewProps) {
@@ -353,8 +359,12 @@ export function ThreadView({
   const stickToBottom = useRef(true);
   const prevThreadId = useRef<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const pushFlashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
+  const [pushPending, setPushPending] = useState(false);
+  /** Shown briefly after a successful push; null when idle. */
+  const [pushFlashBranch, setPushFlashBranch] = useState<string | null>(null);
 
   const runningAgents = useMemo(() => {
     if (!detail?.workflow) return 0;
@@ -409,8 +419,22 @@ export function ThreadView({
       stickToBottom.current = true;
       setMenuOpen(false);
       setDeleteConfirm(false);
+      setPushPending(false);
+      setPushFlashBranch(null);
+      if (pushFlashTimer.current != null) {
+        clearTimeout(pushFlashTimer.current);
+        pushFlashTimer.current = null;
+      }
     }
   }, [detail?.thread.id]);
+
+  useEffect(() => {
+    return () => {
+      if (pushFlashTimer.current != null) {
+        clearTimeout(pushFlashTimer.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -420,19 +444,17 @@ export function ThreadView({
         setDeleteConfirm(false);
       }
     };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        setMenuOpen(false);
-        setDeleteConfirm(false);
-      }
-    };
     document.addEventListener("mousedown", onDoc);
-    document.addEventListener("keydown", onKey);
     return () => {
       document.removeEventListener("mousedown", onDoc);
-      document.removeEventListener("keydown", onKey);
     };
   }, [menuOpen]);
+
+  const closeMenu = useCallback(() => {
+    setMenuOpen(false);
+    setDeleteConfirm(false);
+  }, []);
+  useEscapeClose(menuOpen, closeMenu);
 
   useEffect(() => {
     const el = bodyRef.current;
@@ -479,6 +501,35 @@ export function ThreadView({
 
   const { thread } = detail;
 
+  const handlePush = async () => {
+    if (isWorking || pushPending) return;
+    setPushPending(true);
+    setPushFlashBranch(null);
+    if (pushFlashTimer.current != null) {
+      clearTimeout(pushFlashTimer.current);
+      pushFlashTimer.current = null;
+    }
+    try {
+      const result = await onPush();
+      setPushFlashBranch(result.branch);
+      pushFlashTimer.current = setTimeout(() => {
+        setPushFlashBranch(null);
+        pushFlashTimer.current = null;
+      }, PUSH_FLASH_MS);
+    } catch {
+      // Parent surfaces rejections via the runError banner.
+    } finally {
+      setPushPending(false);
+    }
+  };
+
+  const pushDisabled = isWorking || pushPending;
+  const pushLabel = pushPending
+    ? "Pushing…"
+    : pushFlashBranch
+      ? `Pushed ${pushFlashBranch}`
+      : "Push";
+
   return (
     <main className={styles.main}>
       <header className={styles.header}>
@@ -490,8 +541,18 @@ export function ThreadView({
           <span className={styles.threadTitle}>{thread.title}</span>
         </div>
         <div className={styles.actions}>
-          <button type="button" className={`${styles.btn} ${styles.btnPrimary}`}>
-            Push
+          <button
+            type="button"
+            className={`${styles.btn} ${styles.btnPrimary} ${styles.pushBtn}`}
+            disabled={pushDisabled}
+            aria-disabled={pushDisabled ? "true" : undefined}
+            aria-busy={pushPending || undefined}
+            onClick={() => void handlePush()}
+          >
+            {pushPending && (
+              <span className={styles.pushSpinner} aria-hidden />
+            )}
+            {pushLabel}
           </button>
           <div className={styles.menuWrap} ref={menuRef}>
             <button
@@ -501,6 +562,7 @@ export function ThreadView({
               aria-haspopup="menu"
               aria-expanded={menuOpen}
               disabled={isWorking}
+              aria-disabled={isWorking ? "true" : undefined}
               onClick={() => {
                 if (isWorking) return;
                 setMenuOpen((v) => !v);
