@@ -34,6 +34,29 @@ describe("memory.recent", () => {
     assert.ok(withProject.length >= 1);
     assert.ok(global.length >= 1);
   });
+
+  it("filters by optional project when provided", async () => {
+    const api = createDevCoder();
+    await api.memory.store({
+      type: "knowledge",
+      title: "Recent project alpha",
+      body: "scoped recent body",
+      project: "demo/alpha",
+    });
+    await api.memory.store({
+      type: "knowledge",
+      title: "Recent project beta",
+      body: "other recent body",
+      project: "demo/beta",
+    });
+    const hits = await api.memory.recent({
+      limit: 50,
+      project: "demo/alpha",
+    });
+    assert.ok(hits.length >= 1);
+    assert.ok(hits.every((e) => e.project === "demo/alpha"));
+    assert.ok(hits.some((e) => e.title === "Recent project alpha"));
+  });
 });
 
 describe("memory.search", () => {

@@ -17,7 +17,10 @@ export interface MemoryTabProps {
     query: string;
     project?: string;
   }) => Promise<MemoryEntryInfo[]>;
-  recentMemory: (input?: { limit?: number }) => Promise<MemoryEntryInfo[]>;
+  recentMemory: (input?: {
+    limit?: number;
+    project?: string;
+  }) => Promise<MemoryEntryInfo[]>;
   getMemory: (input: { id: string }) => Promise<MemoryEntryInfo>;
   storeMemory: (input: {
     type: MemoryEntryInfo["type"];
@@ -71,6 +74,8 @@ export function MemoryTab({
   const [formTitle, setFormTitle] = useState("");
   const [formBody, setFormBody] = useState("");
   const [formProjectOnly, setFormProjectOnly] = useState(false);
+  /** List filter: pass selected thread project into search/recent (off by default). */
+  const [filterThisProject, setFilterThisProject] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [now, setNow] = useState(() => Date.now());
@@ -81,6 +86,7 @@ export function MemoryTab({
   const mountedRef = useRef(true);
   /** Latest search box text for Retry after not-running. */
   const queryRef = useRef(query);
+  const filterThisProjectRef = useRef(filterThisProject);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -98,17 +104,34 @@ export function MemoryTab({
   }, [query]);
 
   useEffect(() => {
+    filterThisProjectRef.current = filterThisProject;
+  }, [filterThisProject]);
+
+  useEffect(() => {
     const handle = window.setInterval(() => setNow(Date.now()), 60_000);
     return () => window.clearInterval(handle);
   }, []);
+
+  /** Project slug when the list filter is on and a thread project is known. */
+  const listProjectFilter =
+    filterThisProject && projectSlug ? projectSlug : undefined;
 
   const loadRecent = useCallback(async () => {
     const gen = ++listGen.current;
     setLoading(true);
     try {
-      const list = await recentMemory({ limit: RECENT_LIMIT });
+      const project =
+        filterThisProjectRef.current && projectSlug ? projectSlug : undefined;
+      // useCoder over-fetches + filters when project is set (proxy may ignore it).
+      const list = await recentMemory({
+        limit: RECENT_LIMIT,
+        ...(project ? { project } : {}),
+      });
       if (!mountedRef.current || listGen.current !== gen) return;
       setEntries(list);
+      setFullBodies({});
+      setExpandedId(null);
+      setFailedIds({});
       setListError(null);
       setServerDown(false);
     } catch (err) {
@@ -126,16 +149,24 @@ export function MemoryTab({
         setLoading(false);
       }
     }
-  }, [recentMemory]);
+  }, [recentMemory, projectSlug]);
 
   const runSearch = useCallback(
     async (q: string) => {
       const gen = ++listGen.current;
       setLoading(true);
       try {
-        const list = await searchMemory({ query: q });
+        const project =
+          filterThisProjectRef.current && projectSlug ? projectSlug : undefined;
+        const list = await searchMemory({
+          query: q,
+          ...(project ? { project } : {}),
+        });
         if (!mountedRef.current || listGen.current !== gen) return;
         setEntries(list);
+        setFullBodies({});
+        setExpandedId(null);
+        setFailedIds({});
         setListError(null);
         setServerDown(false);
       } catch (err) {
@@ -154,9 +185,10 @@ export function MemoryTab({
         }
       }
     },
-    [searchMemory],
+    [searchMemory, projectSlug],
   );
 
+  /** Retry after not-running: re-run active search when query is long enough. */
   const reloadCurrent = useCallback(() => {
     const trimmed = queryRef.current.trim();
     if (trimmed.length >= MIN_QUERY_LEN) {
@@ -168,6 +200,7 @@ export function MemoryTab({
 
   // Lazy first open (tab mount with empty query) + debounced search.
   // Empty query → recent; 3+ chars → search after 300ms; 1–2 chars leave list as-is.
+  // Project filter toggles also re-run the current list.
   useEffect(() => {
     const trimmed = query.trim();
     if (trimmed.length === 0) {
@@ -180,7 +213,7 @@ export function MemoryTab({
       void runSearch(trimmed);
     }, SEARCH_DEBOUNCE_MS);
     return () => window.clearTimeout(handle);
-  }, [query, loadRecent, runSearch]);
+  }, [query, loadRecent, runSearch, listProjectFilter]);
 
   const toggleExpand = async (id: string) => {
     if (expandedId === id) {
@@ -299,6 +332,18 @@ export function MemoryTab({
           onChange={(e) => setQuery(e.target.value)}
           aria-label="Search shared memory"
         />
+        <label className={styles.filterLabel}>
+          <input
+            type="checkbox"
+            checked={filterThisProject}
+            onChange={(e) => setFilterThisProject(e.target.checked)}
+            disabled={!projectSlug}
+          />
+          <span>
+            this project
+            {projectSlug ? ` (${projectSlug})` : ""}
+          </span>
+        </label>
       </div>
 
       <div className={styles.list}>

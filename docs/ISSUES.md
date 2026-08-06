@@ -2,6 +2,7 @@
 
 - 2026-08-06 - symptom: claude child hung after result; stopAll could not kill it | cause: clearRun on result dropped active handle before process exit | fix: liveClaudeChildren Set reaped by stopAll SIGTERM (runner.js)
 - 2026-08-06 - symptom: janitor orphan sweep no-op with a NULL id row | cause: SQL NOT IN fails when subquery contains NULL | fix: NOT EXISTS in janitor.js
+- 2026-08-06 - symptom: dev setProvider rejected padded model ids that electron accepts | cause: resolveModel membership used untrimmed String(raw) while electron trims first | fix: trim before membership in devCoder resolveModel
 - 2026-08-06 - symptom: opencode run threw workflowProgress flatMap on undefined | cause: pushDetail only skipped __claude/__codex/__kimi, not __opencode | fix: include __opencode in identity guard (electron/runner.js)
 - 2026-08-06 - symptom: every thread sidebar age showed "now" forever | cause: store.updateThread stamped updatedAt on every patch (permission mode, sessionId, worktree) | fix: touch option + appendMessage bump; runStartedAt start/clear/recovery (electron/store.js)
 - 2026-08-06 - symptom: sidebar age always "now", no live Working elapsed, empty projects missing | cause: formatWorkingLabel used updatedAt (no seconds); groups skipped zero-thread projects; no shared tick; ThreadInfo.runStartedAt unused in dev seed | fix: formatWorkingLabel(runStartedAt) + buildSidebarGroups + 5s tick; devCoder sets/clears runStartedAt

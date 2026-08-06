@@ -226,7 +226,7 @@ export interface CoderApi {
    */
   memory: {
     search(input: { query: string; project?: string }): Promise<MemoryEntryInfo[]>;
-    recent(input?: { limit?: number }): Promise<MemoryEntryInfo[]>;
+    recent(input?: { limit?: number; project?: string }): Promise<MemoryEntryInfo[]>;
     get(input: { id: string }): Promise<MemoryEntryInfo>;
     store(input: {
       type: MemoryEntryInfo["type"];

@@ -155,7 +155,7 @@ describe("threads.setProvider", () => {
           threadId: t.id,
           model: "x".repeat(101),
         }),
-      /Model must be a non-empty string/,
+      /Model must be at most 100 characters/,
     );
   });
 
@@ -189,6 +189,30 @@ describe("threads.setProvider", () => {
           model: "not-a-claude-model",
         }),
       /not in provider|model list|not supported/i,
+    );
+  });
+
+  it("trims before membership check for non-empty models list (matches electron)", async () => {
+    const api = createDevCoder();
+    const projects = await api.projects.list();
+    const t = await api.threads.create({
+      projectId: projects[0]!.id,
+      title: "T",
+    });
+    // Backend trims first; " claude-sonnet-5 " must be accepted as claude-sonnet-5.
+    const updated = await api.threads.setProvider({
+      threadId: t.id,
+      model: " claude-sonnet-5 ",
+    });
+    assert.equal(updated.model, "claude-sonnet-5");
+
+    await assert.rejects(
+      () =>
+        api.threads.setProvider({
+          threadId: t.id,
+          model: "   ",
+        }),
+      /Model must be a non-empty string/,
     );
   });
 

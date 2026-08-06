@@ -129,8 +129,13 @@ export function Composer({
   const providerName = providerDisplayName(provider, providers);
   const currentProviderInfo = providers.find((p) => p.id === provider);
   const providerModels = currentProviderInfo?.models ?? [];
-  /** Empty models list (e.g. codex) still shows the pill for free-form custom ids. */
-  const allowCustomModel = providerModels.length === 0;
+  /**
+   * Simulate/generic are not real CLIs; a model id is meaningless there.
+   * Hide the whole model pill (no Default-only menu, no Custom…).
+   * Other empty-list providers (e.g. codex) still get Custom….
+   */
+  const showModelPill = provider !== "simulate" && provider !== "generic";
+  const allowCustomModel = showModelPill && providerModels.length === 0;
   const modelLabel = model ? shortModelName(model) : "default";
 
   useEffect(() => {
@@ -396,96 +401,102 @@ export function Composer({
               )}
             </div>
 
-            <div className={styles.modeWrap} ref={modelWrapRef}>
-              <button
-                type="button"
-                className={styles.pill}
-                disabled={disabled}
-                aria-disabled={disabled ? "true" : undefined}
-                aria-haspopup="listbox"
-                aria-expanded={modelOpen}
-                onClick={() => {
-                  if (disabled) return;
-                  setModelOpen((v) => !v);
-                  setCustomModelOpen(false);
-                  setProviderOpen(false);
-                  setModeOpen(false);
-                  setBuildMenuOpen(false);
-                }}
-              >
-                {modelLabel}
-                <span className={styles.caret}>▾</span>
-              </button>
-              {modelOpen && (
-                <div className={styles.modeMenu} role="listbox" aria-label="Model">
-                  {customModelOpen ? (
-                    <div className={styles.customModelBox}>
-                      <input
-                        ref={customModelInputRef}
-                        type="text"
-                        className={styles.customModelInput}
-                        value={customModelDraft}
-                        maxLength={100}
-                        placeholder="Model id"
-                        aria-label="Custom model id"
-                        onChange={(e) => setCustomModelDraft(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            void commitCustomModel();
-                          } else if (e.key === "Escape") {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            cancelCustomModel();
-                          }
-                        }}
-                      />
-                    </div>
-                  ) : (
-                    <ul className={styles.modeMenuList}>
-                      <li role="option" aria-selected={model == null}>
-                        <button
-                          type="button"
-                          className={styles.modeOption}
-                          data-active={model == null}
-                          onClick={() => void pickModel(null)}
-                        >
-                          Default
-                        </button>
-                      </li>
-                      {providerModels.map((m) => (
-                        <li
-                          key={m}
-                          role="option"
-                          aria-selected={m === model}
-                        >
+            {showModelPill && (
+              <div className={styles.modeWrap} ref={modelWrapRef}>
+                <button
+                  type="button"
+                  className={styles.pill}
+                  disabled={disabled}
+                  aria-disabled={disabled ? "true" : undefined}
+                  aria-haspopup="listbox"
+                  aria-expanded={modelOpen}
+                  onClick={() => {
+                    if (disabled) return;
+                    setModelOpen((v) => !v);
+                    setCustomModelOpen(false);
+                    setProviderOpen(false);
+                    setModeOpen(false);
+                    setBuildMenuOpen(false);
+                  }}
+                >
+                  {modelLabel}
+                  <span className={styles.caret}>▾</span>
+                </button>
+                {modelOpen && (
+                  <div
+                    className={styles.modeMenu}
+                    role="listbox"
+                    aria-label="Model"
+                  >
+                    {customModelOpen ? (
+                      <div className={styles.customModelBox}>
+                        <input
+                          ref={customModelInputRef}
+                          type="text"
+                          className={styles.customModelInput}
+                          value={customModelDraft}
+                          maxLength={100}
+                          placeholder="Model id"
+                          aria-label="Custom model id"
+                          onChange={(e) => setCustomModelDraft(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              void commitCustomModel();
+                            } else if (e.key === "Escape") {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              cancelCustomModel();
+                            }
+                          }}
+                        />
+                      </div>
+                    ) : (
+                      <ul className={styles.modeMenuList}>
+                        <li role="option" aria-selected={model == null}>
                           <button
                             type="button"
                             className={styles.modeOption}
-                            data-active={m === model}
-                            onClick={() => void pickModel(m)}
+                            data-active={model == null}
+                            onClick={() => void pickModel(null)}
                           >
-                            {shortModelName(m)}
+                            Default
                           </button>
                         </li>
-                      ))}
-                      {allowCustomModel && (
-                        <li role="option" aria-selected={false}>
-                          <button
-                            type="button"
-                            className={styles.modeOption}
-                            onClick={openCustomModel}
+                        {providerModels.map((m) => (
+                          <li
+                            key={m}
+                            role="option"
+                            aria-selected={m === model}
                           >
-                            Custom…
-                          </button>
-                        </li>
-                      )}
-                    </ul>
-                  )}
-                </div>
-              )}
-            </div>
+                            <button
+                              type="button"
+                              className={styles.modeOption}
+                              data-active={m === model}
+                              onClick={() => void pickModel(m)}
+                            >
+                              {shortModelName(m)}
+                            </button>
+                          </li>
+                        ))}
+                        {allowCustomModel && (
+                          <li role="option" aria-selected={false}>
+                            <button
+                              type="button"
+                              className={styles.modeOption}
+                              onClick={openCustomModel}
+                            >
+                              Custom…
+                            </button>
+                          </li>
+                        )}
+                      </ul>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
 
             <button
               type="button"

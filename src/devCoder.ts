@@ -1445,10 +1445,17 @@ function buildDevCoder(): CoderApi {
         );
         return rows.map(toListEntry);
       },
-      async recent(input?: { limit?: number }): Promise<MemoryEntryInfo[]> {
+      async recent(input?: {
+        limit?: number;
+        project?: string;
+      }): Promise<MemoryEntryInfo[]> {
         const limit =
           input?.limit != null && input.limit > 0 ? Math.floor(input.limit) : 20;
-        const rows = [...memoryEntries].sort((a, b) =>
+        let rows = [...memoryEntries];
+        if (input?.project != null && input.project !== "") {
+          rows = rows.filter((row) => row.project === input.project);
+        }
+        rows = rows.sort((a, b) =>
           a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0,
         );
         return rows.slice(0, limit).map(toListEntry);
@@ -1721,21 +1728,24 @@ function buildDevCoder(): CoderApi {
           providerId: string,
           raw: string | null | undefined,
         ): string | null => {
+          // Match electron/services.js normalizeModelForProvider: trim first.
           if (raw == null || raw === "") return null;
+          const trimmed = String(raw).trim();
+          if (!trimmed) {
+            throw new Error("Model must be a non-empty string");
+          }
           const entry = DEV_PROVIDERS.find((p) => p.id === providerId);
           const models = entry?.models ?? [];
           if (models.length > 0) {
-            const asString = String(raw);
-            if (!models.includes(asString)) {
+            if (!models.includes(trimmed)) {
               throw new Error(
-                `Model "${asString}" is not in provider ${providerId}'s model list`,
+                `Model "${trimmed}" is not in provider ${providerId}'s model list`,
               );
             }
-            return asString;
+            return trimmed;
           }
-          const trimmed = String(raw).trim();
-          if (!trimmed || trimmed.length > 100) {
-            throw new Error("Model must be a non-empty string");
+          if (trimmed.length > 100) {
+            throw new Error("Model must be at most 100 characters");
           }
           return trimmed;
         };

@@ -5,6 +5,7 @@ import type {
   WorkflowTemplateInfo,
 } from "../shared/ipc";
 import type { WorkflowSaveInput } from "../useCoder";
+import { useEscapeClose } from "../useEscapeClose";
 import styles from "./WorkflowsModal.module.css";
 
 interface WorkflowsModalProps {
@@ -102,17 +103,9 @@ export function WorkflowsModal({
     }
   }, [open, initialSelectedId, workflows, providers]);
 
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        onClose();
-      }
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  // Shared Escape handler (same semantics as inline: close when open).
+  // Composer disables its own Escape while this modal is open via manageOpen.
+  useEscapeClose(open, onClose);
 
   const selected = useMemo(
     () => workflows.find((w) => w.id === selectedId) ?? null,

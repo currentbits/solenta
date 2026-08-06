@@ -36,7 +36,10 @@ interface AgentsPanelProps {
     query: string;
     project?: string;
   }) => Promise<MemoryEntryInfo[]>;
-  recentMemory: (input?: { limit?: number }) => Promise<MemoryEntryInfo[]>;
+  recentMemory: (input?: {
+    limit?: number;
+    project?: string;
+  }) => Promise<MemoryEntryInfo[]>;
   getMemory: (input: { id: string }) => Promise<MemoryEntryInfo>;
   storeMemory: (input: {
     type: MemoryEntryInfo["type"];

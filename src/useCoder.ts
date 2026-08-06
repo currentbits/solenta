@@ -103,7 +103,10 @@ export interface UseCoderResult {
     query: string;
     project?: string;
   }) => Promise<MemoryEntryInfo[]>;
-  recentMemory: (input?: { limit?: number }) => Promise<MemoryEntryInfo[]>;
+  recentMemory: (input?: {
+    limit?: number;
+    project?: string;
+  }) => Promise<MemoryEntryInfo[]>;
   getMemory: (input: { id: string }) => Promise<MemoryEntryInfo>;
   storeMemory: (input: {
     type: MemoryEntryInfo["type"];
@@ -608,8 +611,24 @@ export function useCoder(): UseCoderResult {
   );
 
   const recentMemory = useCallback(
-    async (input?: { limit?: number }) => {
-      return api.memory.recent(input);
+    async (input?: { limit?: number; project?: string }) => {
+      const wantLimit =
+        input?.limit != null && input.limit > 0 ? Math.floor(input.limit) : 20;
+      const project =
+        input?.project != null && input.project !== ""
+          ? input.project
+          : undefined;
+      // Electron proxy may still ignore project on recent. Over-fetch so a
+      // client-side filter can still surface project rows buried past limit 20.
+      const fetchLimit = project ? Math.max(wantLimit, 100) : wantLimit;
+      let list = await api.memory.recent({
+        limit: fetchLimit,
+        ...(project ? { project } : {}),
+      });
+      if (project) {
+        list = list.filter((e) => e.project === project);
+      }
+      return list.slice(0, wantLimit);
     },
     [api],
   );
