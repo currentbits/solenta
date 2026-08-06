@@ -8,7 +8,23 @@ const EMPTY = {
   threads: [],
   messagesByThread: {},
   workLogByThread: {},
+  usageByThread: {},
 };
+
+/**
+ * Migrate a persisted thread missing the newer session fields.
+ * @param {object} t
+ */
+function migrateThread(t) {
+  if (!t || typeof t !== "object") return t;
+  return {
+    ...t,
+    provider: t.provider != null ? t.provider : "claude",
+    sessionId: t.sessionId !== undefined ? t.sessionId : null,
+    permissionMode: t.permissionMode != null ? t.permissionMode : "default",
+    worktreePath: t.worktreePath !== undefined ? t.worktreePath : null,
+  };
+}
 
 /**
  * JSON persistence for Coder main-process state.
@@ -31,9 +47,12 @@ class Store {
       }
       const raw = fs.readFileSync(this.filePath, "utf8");
       const parsed = JSON.parse(raw);
+      const threads = Array.isArray(parsed.threads)
+        ? parsed.threads.map(migrateThread)
+        : [];
       return {
         projects: Array.isArray(parsed.projects) ? parsed.projects : [],
-        threads: Array.isArray(parsed.threads) ? parsed.threads : [],
+        threads,
         messagesByThread:
           parsed.messagesByThread && typeof parsed.messagesByThread === "object"
             ? parsed.messagesByThread
@@ -41,6 +60,10 @@ class Store {
         workLogByThread:
           parsed.workLogByThread && typeof parsed.workLogByThread === "object"
             ? parsed.workLogByThread
+            : {},
+        usageByThread:
+          parsed.usageByThread && typeof parsed.usageByThread === "object"
+            ? parsed.usageByThread
             : {},
       };
     } catch {
@@ -70,7 +93,7 @@ class Store {
   }
 
   setThreads(threads) {
-    this.data.threads = threads;
+    this.data.threads = threads.map(migrateThread);
   }
 
   getMessages(threadId) {
@@ -99,6 +122,26 @@ class Store {
     const list = this.getWorkLog(threadId).slice();
     list.push(item);
     this.setWorkLog(threadId, list);
+  }
+
+  /**
+   * @param {string} threadId
+   * @returns {{ model: string | null, inputTokens: number, outputTokens: number, costUsd: number, turns: number } | null}
+   */
+  getUsage(threadId) {
+    return this.data.usageByThread[threadId] || null;
+  }
+
+  /**
+   * @param {string} threadId
+   * @param {object | null} usage
+   */
+  setUsage(threadId, usage) {
+    if (usage == null) {
+      delete this.data.usageByThread[threadId];
+    } else {
+      this.data.usageByThread[threadId] = usage;
+    }
   }
 
   /**
@@ -154,7 +197,8 @@ function cloneEmpty() {
     threads: [],
     messagesByThread: {},
     workLogByThread: {},
+    usageByThread: {},
   };
 }
 
-module.exports = { Store, EMPTY };
+module.exports = { Store, EMPTY, migrateThread };

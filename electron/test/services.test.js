@@ -98,13 +98,41 @@ describe("services", () => {
     assert.equal(thread.status, "idle");
     assert.equal(thread.branch, null);
     assert.equal(thread.prNumber, null);
+    assert.equal(thread.provider, "claude");
+    assert.equal(thread.sessionId, null);
+    assert.equal(thread.permissionMode, "default");
+    assert.equal(thread.worktreePath, null);
     assert.ok(typeof thread.createdAt === "number");
     const listed = services.listThreads(store);
     assert.equal(listed.length, 1);
     assert.equal(listed[0].id, thread.id);
   });
 
-  it("getThreadDetail returns empty messages and work log", () => {
+  it("setPermissionMode validates and updates", () => {
+    const repo = path.join(tmpDir, "pm-repo");
+    fs.mkdirSync(repo);
+    git(repo, ["init"]);
+    const project = services.addProject(store, repo);
+    const thread = services.createThread(store, {
+      projectId: project.id,
+      title: "T",
+    });
+    const updated = services.setPermissionMode(store, {
+      threadId: thread.id,
+      mode: "acceptEdits",
+    });
+    assert.equal(updated.permissionMode, "acceptEdits");
+    assert.throws(
+      () =>
+        services.setPermissionMode(store, {
+          threadId: thread.id,
+          mode: "nope",
+        }),
+      /Invalid permission mode/i,
+    );
+  });
+
+  it("getThreadDetail returns empty messages, work log, usage null", () => {
     const repo = path.join(tmpDir, "d-repo");
     fs.mkdirSync(repo);
     git(repo, ["init"]);
@@ -118,6 +146,7 @@ describe("services", () => {
     assert.deepEqual(detail.messages, []);
     assert.deepEqual(detail.workLog, []);
     assert.equal(detail.workflow, null);
+    assert.equal(detail.usage, null);
   });
 
   it("gitStatus reports branch and dirty flag", () => {

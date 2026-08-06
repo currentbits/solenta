@@ -2,6 +2,7 @@
 
 const { BrowserWindow } = require("electron");
 const services = require("./services.js");
+const { setupWorktree, diff } = require("./worktrees.js");
 
 /**
  * Register all invoke handlers from the ipc contract.
@@ -12,6 +13,7 @@ const services = require("./services.js");
  * @param {import('./store').Store} deps.store
  * @param {ReturnType<import('./runner').createRunner>} deps.runner
  * @param {(channel: string, payload: unknown) => void} [deps.broadcast]
+ * @param {string} [deps.worktreeBase] - base dir for git worktrees
  */
 function registerIpc(deps) {
   const { ipcMain, dialog, store, runner } = deps;
@@ -26,8 +28,7 @@ function registerIpc(deps) {
       }
     });
 
-  // Wrap runner push so threads:changed also goes to all windows
-  // (runner already calls pushFn; ipc registration wires that)
+  const worktreeBase = deps.worktreeBase || "";
 
   ipcMain.handle("projects:list", async () => {
     return services.listProjects(store);
@@ -59,11 +60,20 @@ function registerIpc(deps) {
 
   ipcMain.handle("threads:get", async (_event, id) => {
     const workflow = runner.getActiveWorkflow(id);
-    const view =
-      workflow && runner.toWorkflowView
-        ? runner.toWorkflowView(workflow)
-        : null;
+    let view = null;
+    if (workflow && runner.toWorkflowView) {
+      // Only surface workflow for simulate (core) runs, not real/claude.
+      if (!workflow.__real && !workflow.__claude) {
+        view = runner.toWorkflowView(workflow);
+      }
+    }
     return services.getThreadDetail(store, id, view);
+  });
+
+  ipcMain.handle("threads:setPermissionMode", async (_event, input) => {
+    const updated = services.setPermissionMode(store, input);
+    broadcast("threads:changed", services.listThreads(store));
+    return updated;
   });
 
   ipcMain.handle("runs:start", async (_event, input) => {
@@ -80,6 +90,22 @@ function registerIpc(deps) {
       return { isRepo: false, branch: "", dirty: false };
     }
     return services.gitStatus(project.path);
+  });
+
+  ipcMain.handle("git:setupWorktree", async (_event, input) => {
+    if (!worktreeBase) {
+      throw new Error("worktreeBase is not configured");
+    }
+    return setupWorktree({
+      store,
+      threadId: input.threadId,
+      worktreeBase,
+      broadcast,
+    });
+  });
+
+  ipcMain.handle("git:diff", async (_event, input) => {
+    return diff({ store, threadId: input.threadId });
   });
 
   return { broadcast };

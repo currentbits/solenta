@@ -41,6 +41,8 @@ const coder = {
     list: () => invoke("threads:list"),
     create: (input) => invoke("threads:create", input),
     get: (id) => invoke("threads:get", id),
+    setPermissionMode: (input) =>
+      invoke("threads:setPermissionMode", input),
   },
   runs: {
     start: (input) => invoke("runs:start", input),
@@ -48,6 +50,8 @@ const coder = {
   },
   git: {
     status: (projectId) => invoke("git:status", projectId),
+    setupWorktree: (input) => invoke("git:setupWorktree", input),
+    diff: (input) => invoke("git:diff", input),
   },
   on,
 };

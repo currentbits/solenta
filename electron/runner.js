@@ -4,6 +4,14 @@ const path = require("node:path");
 const { randomUUID } = require("node:crypto");
 const services = require("./services.js");
 const { runAgent, parseAgentCommand } = require("./agent.js");
+const {
+  runClaude,
+  truncate,
+  toolSummary,
+  flattenContent,
+  INPUT_TRUNCATE,
+  OUTPUT_TRUNCATE,
+} = require("./claude.js");
 
 const ADJECTIVES = [
   "INTEGER",
@@ -96,6 +104,8 @@ function mapWorkflowView(workflow, coreApi) {
 
 /**
  * Build a real-run WorkflowView (single phase, one agent).
+ * Kept for generic agent path internal tracking; contract says workflow
+ * is only for simulate, so pushDetail passes null for real providers.
  * @param {object} state
  */
 function buildRealWorkflowView(state) {
@@ -128,6 +138,19 @@ function buildRealWorkflowView(state) {
 }
 
 /**
+ * Resolve which provider handles this startRun.
+ * Env overrides win for tests/smoke: CODER_SIMULATE, CODER_AGENT_CMD.
+ * @param {object} thread
+ */
+function resolveProvider(thread) {
+  if (process.env.CODER_SIMULATE === "1") return "simulate";
+  if (process.env.CODER_AGENT_CMD) return "generic";
+  const p = thread && thread.provider;
+  if (p === "generic" || p === "simulate" || p === "claude") return p;
+  return "claude";
+}
+
+/**
  * @param {object} opts
  * @param {import('./store').Store} opts.store
  * @param {object} opts.core - @coder/core API
@@ -151,23 +174,25 @@ function createRunner(opts) {
    */
   const active = new Map();
 
-  /** Last known workflow (core Workflow or real WorkflowView) per thread. */
+  /** Last known workflow (core Workflow or real state) per thread. */
   /** @type {Map<string, object>} */
   const lastWorkflowByThread = new Map();
-
-  function isSimulated() {
-    return process.env.CODER_SIMULATE === "1";
-  }
 
   function pushDetail(threadId, workflow) {
     if (workflow) {
       lastWorkflowByThread.set(threadId, workflow);
     }
-    const view = workflow
-      ? workflow.__real
-        ? buildRealWorkflowView(workflow)
-        : mapWorkflowView(workflow, core)
-      : null;
+    let view = null;
+    if (workflow) {
+      if (workflow.__real) {
+        // Contract: workflow only for simulate provider
+        view = null;
+      } else if (workflow.__claude) {
+        view = null;
+      } else {
+        view = mapWorkflowView(workflow, core);
+      }
+    }
     const detail = services.getThreadDetail(store, threadId, view);
     pushFn("thread:updated", detail);
     return detail;
@@ -226,9 +251,10 @@ function createRunner(opts) {
    * @param {string} role
    * @param {string} text
    * @param {string | null} [runId]
+   * @param {object | null} [tool]
    */
-  function appendMessage(threadId, role, text, runId = null) {
-    /** @type {{ id: string, role: string, text: string, createdAt: number, runId?: string }} */
+  function appendMessage(threadId, role, text, runId = null, tool = null) {
+    /** @type {{ id: string, role: string, text: string, createdAt: number, runId?: string, tool?: object }} */
     const msg = {
       id: randomUUID(),
       role,
@@ -236,6 +262,7 @@ function createRunner(opts) {
       createdAt: Date.now(),
     };
     if (runId) msg.runId = runId;
+    if (tool) msg.tool = tool;
     store.appendMessage(threadId, msg);
     return msg.id;
   }
@@ -386,13 +413,13 @@ function createRunner(opts) {
     });
     active.set(threadId, entry);
 
-    return { workflowId: runId };
+    return { runId };
   }
 
   /**
-   * Start a real agent child-process run.
+   * Start a real generic agent child-process run (CODER_AGENT_CMD).
    */
-  function startRealRun(threadId, prompt, runId, name) {
+  function startGenericRun(threadId, prompt, runId, name) {
     const thread = store.getThread(threadId);
     const project = store.getProject(thread.projectId);
     if (!project) {
@@ -422,8 +449,10 @@ function createRunner(opts) {
     /** @type {string | null} */
     let assistantMsgId = null;
 
+    const cwd = thread.worktreePath || project.path;
+
     const entry = {
-      kind: "real",
+      kind: "generic",
       runId,
       stopping: false,
       handle: null,
@@ -443,11 +472,8 @@ function createRunner(opts) {
       command,
       args,
       prompt,
-      cwd: project.path,
+      cwd,
       onChunk: (text) => {
-        // Only act on THIS run. After stop+restart, active may hold a newer
-        // entry for the same thread; late chunks from a killed agent must not
-        // overwrite lastWorkflowByThread or push the old run's view.
         const e = active.get(threadId);
         if (!e || e.stopping || e.runId !== runId) return;
 
@@ -464,16 +490,14 @@ function createRunner(opts) {
       },
       onDone: (exitCode, fullText, stderrText) => {
         const e = active.get(threadId);
-        // Stop already handled this run, or a newer run owns the thread slot.
         if (!e || e.stopping || e.runId !== runId) return;
-        if (e.kind !== "real") return;
+        if (e.kind !== "generic") return;
 
         clearRun(threadId);
 
         completeWorkLogStep(threadId, e.startingId);
         completeWorkLogStep(threadId, e.respondingId);
 
-        // Ensure final assistant text is stored even if no chunk arrived.
         if (fullText && fullText.length > 0) {
           if (!assistantMsgId) {
             assistantMsgId = appendMessage(
@@ -515,9 +539,8 @@ function createRunner(opts) {
       },
       onError: (err) => {
         const e = active.get(threadId);
-        // Same identity guard: spawn failure for run A must not clear run B.
         if (!e || e.stopping || e.runId !== runId) return;
-        if (e.kind !== "real") return;
+        if (e.kind !== "generic") return;
 
         clearRun(threadId);
         completeWorkLogStep(threadId, e.startingId);
@@ -534,17 +557,353 @@ function createRunner(opts) {
     });
 
     entry.handle = handle;
-    // Process spawned: mark Starting agent done (spawn returned a handle).
     completeWorkLogStep(threadId, startingId);
     store.save();
     pushDetail(threadId, realState);
 
-    return { workflowId: runId };
+    return { runId };
+  }
+
+  /**
+   * Start a Claude Code stream-json session turn.
+   */
+  function startClaudeRun(threadId, prompt, runId) {
+    const thread = store.getThread(threadId);
+    const project = store.getProject(thread.projectId);
+    if (!project) {
+      throw new Error(`Unknown project for thread: ${threadId}`);
+    }
+
+    const claudeState = {
+      __claude: true,
+      runId,
+    };
+
+    const startingId = beginWorkLogStep(threadId, runId, "Starting agent");
+    const workingId = beginWorkLogStep(threadId, runId, "Agent working");
+
+    store.save();
+    pushThreadsChanged();
+    pushDetail(threadId, claudeState);
+
+    /** @type {string | null} */
+    let assistantMsgId = null;
+    /** @type {string} */
+    let assistantText = "";
+    /** tool_use id -> message id */
+    /** @type {Map<string, string>} */
+    const toolMsgById = new Map();
+    /** @type {string | null} */
+    let capturedModel = null;
+    /** @type {string | null} */
+    let capturedSessionId = thread.sessionId || null;
+    let sawResult = false;
+
+    const cwd = thread.worktreePath || project.path;
+
+    const entry = {
+      kind: "claude",
+      runId,
+      stopping: false,
+      handle: null,
+      startingId,
+      workingId,
+      claudeState,
+    };
+    Object.defineProperty(entry, "workflow", {
+      get() {
+        return claudeState;
+      },
+      enumerable: true,
+    });
+    active.set(threadId, entry);
+
+    function guard() {
+      const e = active.get(threadId);
+      if (!e || e.stopping || e.runId !== runId) return null;
+      if (e.kind !== "claude") return null;
+      return e;
+    }
+
+    const handle = runClaude({
+      binary: process.env.CODER_CLAUDE_BIN || "claude",
+      prompt,
+      cwd,
+      permissionMode: thread.permissionMode || "default",
+      sessionId: thread.sessionId || null,
+      onEvent: (ev) => {
+        if (!guard()) return;
+
+        const type = ev && ev.type;
+
+        if (type === "system" && ev.subtype === "init") {
+          if (typeof ev.session_id === "string" && ev.session_id) {
+            capturedSessionId = ev.session_id;
+            store.updateThread(threadId, { sessionId: ev.session_id });
+          }
+          if (typeof ev.model === "string" && ev.model) {
+            capturedModel = ev.model;
+          }
+          completeWorkLogStep(threadId, startingId);
+          store.save();
+          pushDetail(threadId, claudeState);
+          pushThreadsChanged();
+          return;
+        }
+
+        if (type === "assistant" && ev.message && Array.isArray(ev.message.content)) {
+          for (const block of ev.message.content) {
+            if (!block || typeof block !== "object") continue;
+            if (block.type === "text" && typeof block.text === "string") {
+              assistantText += block.text;
+              if (!assistantMsgId) {
+                assistantMsgId = appendMessage(
+                  threadId,
+                  "assistant",
+                  assistantText,
+                  runId,
+                );
+              } else {
+                store.updateMessage(threadId, assistantMsgId, {
+                  text: assistantText,
+                });
+              }
+            } else if (block.type === "tool_use") {
+              const toolId = String(block.id || randomUUID());
+              const toolName = String(block.name || "tool");
+              const inputObj = block.input != null ? block.input : {};
+              let inputStr;
+              try {
+                inputStr = truncate(
+                  JSON.stringify(inputObj, null, 2),
+                  INPUT_TRUNCATE,
+                );
+              } catch {
+                inputStr = truncate(String(inputObj), INPUT_TRUNCATE);
+              }
+              const summary = toolSummary(toolName, inputObj);
+              const tool = {
+                id: toolId,
+                name: toolName,
+                input: inputStr,
+                output: null,
+                isError: false,
+                done: false,
+              };
+              const msgId = appendMessage(
+                threadId,
+                "tool",
+                summary,
+                runId,
+                tool,
+              );
+              toolMsgById.set(toolId, msgId);
+            }
+          }
+          store.save();
+          pushDetail(threadId, claudeState);
+          return;
+        }
+
+        if (type === "user" && ev.message && Array.isArray(ev.message.content)) {
+          for (const block of ev.message.content) {
+            if (!block || typeof block !== "object") continue;
+            if (block.type !== "tool_result") continue;
+            const toolUseId = String(block.tool_use_id || "");
+            const msgId = toolMsgById.get(toolUseId);
+            if (!msgId) {
+              // Fall back: search messages for matching tool.id
+              const found = store
+                .getMessages(threadId)
+                .find(
+                  (m) =>
+                    m.role === "tool" &&
+                    m.tool &&
+                    m.tool.id === toolUseId,
+                );
+              if (!found) continue;
+              const output = truncate(
+                flattenContent(block.content),
+                OUTPUT_TRUNCATE,
+              );
+              store.updateMessage(threadId, found.id, {
+                tool: {
+                  ...found.tool,
+                  output,
+                  isError: Boolean(block.is_error),
+                  done: true,
+                },
+              });
+              continue;
+            }
+            const existing = store
+              .getMessages(threadId)
+              .find((m) => m.id === msgId);
+            if (!existing || !existing.tool) continue;
+            const output = truncate(
+              flattenContent(block.content),
+              OUTPUT_TRUNCATE,
+            );
+            store.updateMessage(threadId, msgId, {
+              tool: {
+                ...existing.tool,
+                output,
+                isError: Boolean(block.is_error),
+                done: true,
+              },
+            });
+          }
+          store.save();
+          pushDetail(threadId, claudeState);
+          return;
+        }
+
+        if (type === "result") {
+          sawResult = true;
+          if (!guard()) return;
+
+          completeWorkLogStep(threadId, startingId);
+          completeWorkLogStep(threadId, workingId);
+
+          if (typeof ev.session_id === "string" && ev.session_id) {
+            capturedSessionId = ev.session_id;
+          }
+          if (capturedSessionId) {
+            store.updateThread(threadId, { sessionId: capturedSessionId });
+          }
+
+          // Accumulate usage
+          const prev = store.getUsage(threadId) || {
+            model: null,
+            inputTokens: 0,
+            outputTokens: 0,
+            costUsd: 0,
+            turns: 0,
+          };
+          const usage = ev.usage || {};
+          const inputTokens =
+            prev.inputTokens + (Number(usage.input_tokens) || 0);
+          const outputTokens =
+            prev.outputTokens + (Number(usage.output_tokens) || 0);
+          const costUsd =
+            prev.costUsd + (Number(ev.total_cost_usd) || 0);
+          const model =
+            capturedModel || prev.model || null;
+          store.setUsage(threadId, {
+            model,
+            inputTokens,
+            outputTokens,
+            costUsd,
+            turns: prev.turns + 1,
+          });
+
+          // Assistant text from stream, or fall back to result field
+          if (!assistantText && typeof ev.result === "string" && ev.result) {
+            assistantText = ev.result;
+            if (!assistantMsgId) {
+              assistantMsgId = appendMessage(
+                threadId,
+                "assistant",
+                assistantText,
+                runId,
+              );
+            } else {
+              store.updateMessage(threadId, assistantMsgId, {
+                text: assistantText,
+              });
+            }
+          }
+
+          const ok = ev.subtype === "success";
+          store.updateThread(threadId, {
+            status: ok ? "done" : "failed",
+            sessionId: capturedSessionId,
+          });
+
+          if (!ok) {
+            appendMessage(
+              threadId,
+              "event",
+              `Run error: result subtype ${ev.subtype || "unknown"}`,
+              runId,
+            );
+            appendDoneWorkLog(threadId, runId, "Run error");
+          }
+
+          store.save();
+          // Free the thread slot immediately so the next turn can start;
+          // onExit will no-op via the runId identity guard.
+          clearRun(threadId);
+          pushDetail(threadId, claudeState);
+          pushThreadsChanged();
+          return;
+        }
+      },
+      onExit: ({ code, stderr, gotResult }) => {
+        const e = active.get(threadId);
+        // Result already cleared this run, or a newer run owns the slot.
+        if (!e || e.stopping || e.runId !== runId) return;
+        if (e.kind !== "claude") return;
+
+        clearRun(threadId);
+
+        // If we already handled a result event, finalize work-log and exit.
+        if (sawResult || gotResult) {
+          completeWorkLogStep(threadId, e.startingId);
+          completeWorkLogStep(threadId, e.workingId);
+          store.save();
+          pushDetail(threadId, claudeState);
+          pushThreadsChanged();
+          return;
+        }
+
+        // Nonzero (or any) exit without result: failed
+        completeWorkLogStep(threadId, e.startingId);
+        completeWorkLogStep(threadId, e.workingId);
+
+        const stderrTail = String(stderr || "")
+          .split(/\r?\n/)
+          .filter(Boolean)
+          .slice(-8)
+          .join("\n");
+        const errText = stderrTail
+          ? `Run error (exit ${code == null ? "?" : code}):\n${stderrTail}`
+          : `Run error (exit ${code == null ? "?" : code})`;
+        appendMessage(threadId, "event", errText, runId);
+        appendDoneWorkLog(threadId, runId, "Run error");
+        store.updateThread(threadId, { status: "failed" });
+        store.save();
+        pushDetail(threadId, claudeState);
+        pushThreadsChanged();
+      },
+      onError: (err) => {
+        const e = active.get(threadId);
+        if (!e || e.stopping || e.runId !== runId) return;
+        if (e.kind !== "claude") return;
+
+        clearRun(threadId);
+        completeWorkLogStep(threadId, e.startingId);
+        completeWorkLogStep(threadId, e.workingId);
+        const msg = err && err.message ? err.message : String(err);
+        appendMessage(threadId, "event", `Run error: ${msg}`, runId);
+        appendDoneWorkLog(threadId, runId, "Run error");
+        store.updateThread(threadId, { status: "failed" });
+        store.save();
+        pushDetail(threadId, claudeState);
+        pushThreadsChanged();
+      },
+    });
+
+    entry.handle = handle;
+    store.save();
+    pushDetail(threadId, claudeState);
+
+    return { runId };
   }
 
   /**
    * @param {{ threadId: string, prompt: string }} input
-   * @returns {Promise<{ workflowId: string }>}
+   * @returns {Promise<{ runId: string }>}
    */
   async function startRun(input) {
     const { threadId, prompt } = input;
@@ -569,11 +928,15 @@ function createRunner(opts) {
     store.updateThread(threadId, { status: "working", title });
 
     const name = workflowNameFromThreadId(threadId);
+    const provider = resolveProvider(thread);
 
-    if (isSimulated()) {
+    if (provider === "simulate") {
       return startSimulatedRun(threadId, prompt, runId, name);
     }
-    return startRealRun(threadId, prompt, runId, name);
+    if (provider === "generic") {
+      return startGenericRun(threadId, prompt, runId, name);
+    }
+    return startClaudeRun(threadId, prompt, runId);
   }
 
   /**
@@ -594,7 +957,10 @@ function createRunner(opts) {
 
     entry.stopping = true;
 
-    if (entry.kind === "real" && entry.handle) {
+    if (
+      (entry.kind === "generic" || entry.kind === "claude" || entry.kind === "real") &&
+      entry.handle
+    ) {
       try {
         entry.handle.kill();
       } catch {
@@ -603,9 +969,12 @@ function createRunner(opts) {
     }
 
     // Complete any open work-log steps for this run.
-    if (entry.kind === "real") {
+    if (entry.kind === "generic" || entry.kind === "real") {
       completeWorkLogStep(threadId, entry.startingId);
       completeWorkLogStep(threadId, entry.respondingId);
+    } else if (entry.kind === "claude") {
+      completeWorkLogStep(threadId, entry.startingId);
+      completeWorkLogStep(threadId, entry.workingId);
     } else if (entry.kind === "sim" && entry.phaseItemIds) {
       for (const id of entry.phaseItemIds.values()) {
         completeWorkLogStep(threadId, id);
@@ -634,7 +1003,13 @@ function createRunner(opts) {
   function stopAll() {
     for (const threadId of [...active.keys()]) {
       const entry = active.get(threadId);
-      if (entry && entry.kind === "real" && entry.handle) {
+      if (
+        entry &&
+        (entry.kind === "generic" ||
+          entry.kind === "claude" ||
+          entry.kind === "real") &&
+        entry.handle
+      ) {
         entry.stopping = true;
         try {
           entry.handle.kill();
@@ -648,7 +1023,10 @@ function createRunner(opts) {
 
   function toWorkflowView(workflow) {
     if (!workflow) return null;
-    if (workflow.__real) return buildRealWorkflowView(workflow);
+    if (workflow.__real || workflow.__claude) {
+      if (workflow.__real) return buildRealWorkflowView(workflow);
+      return null;
+    }
     return mapWorkflowView(workflow, core);
   }
 
@@ -660,6 +1038,7 @@ function createRunner(opts) {
     stopAll,
     workflowNameFromThreadId,
     toWorkflowView,
+    resolveProvider,
   };
 }
 
@@ -667,6 +1046,7 @@ module.exports = {
   createRunner,
   workflowNameFromThreadId,
   toWorkflowView: mapWorkflowView,
+  resolveProvider,
   ADJECTIVES,
   NOUNS,
 };

@@ -131,12 +131,12 @@ describe("runner simulated mode", () => {
 
   it("startRun full lifecycle reaches done with assistant summary", async () => {
     const thread = store.getThreads()[0];
-    const { workflowId } = await runner.startRun({
+    const { runId } = await runner.startRun({
       threadId: thread.id,
       prompt: "Fix the flaky login test\nmore detail",
     });
-    assert.ok(workflowId);
-    assert.match(workflowId, /.+/);
+    assert.ok(runId);
+    assert.match(runId, /.+/);
 
     const renamed = store.getThreads().find((t) => t.id === thread.id);
     assert.equal(renamed.title, "Fix the flaky login test");
@@ -145,7 +145,7 @@ describe("runner simulated mode", () => {
     const msgs = store.getMessages(thread.id);
     assert.equal(msgs[0].role, "user");
     assert.equal(msgs[0].text, "Fix the flaky login test\nmore detail");
-    assert.equal(msgs[0].runId, workflowId);
+    assert.equal(msgs[0].runId, runId);
 
     await waitFor(() => {
       const t = store.getThreads().find((x) => x.id === thread.id);
@@ -174,7 +174,7 @@ describe("runner simulated mode", () => {
       true,
     );
 
-    assertWorkLogShape(detail.workLog, workflowId);
+    assertWorkLogShape(detail.workLog, runId);
     const labels = detail.workLog.map((w) => w.label);
     assert.ok(labels.some((l) => l === "Analyze" || l === "analyze"));
     // One item per phase, all eventually done
@@ -194,7 +194,7 @@ describe("runner simulated mode", () => {
     const assistant = detail.messages.filter((m) => m.role === "assistant");
     assert.ok(assistant.length >= 1);
     assert.ok(/token/i.test(assistant[assistant.length - 1].text));
-    assert.equal(assistant[assistant.length - 1].runId, workflowId);
+    assert.equal(assistant[assistant.length - 1].runId, runId);
 
     assert.ok(runner.getActiveWorkflow(thread.id));
   });
@@ -211,7 +211,7 @@ describe("runner simulated mode", () => {
 
   it("stopRun mid-flight sets idle and appends event", async () => {
     const thread = store.getThreads()[0];
-    const { workflowId } = await runner.startRun({
+    const { runId } = await runner.startRun({
       threadId: thread.id,
       prompt: "Stop me please",
     });
@@ -231,15 +231,15 @@ describe("runner simulated mode", () => {
     assert.equal(detail.thread.status, "idle");
     assert.ok(
       detail.messages.some(
-        (m) => m.role === "event" && /stopped/i.test(m.text) && m.runId === workflowId,
+        (m) => m.role === "event" && /stopped/i.test(m.text) && m.runId === runId,
       ),
     );
     assert.ok(
       detail.workLog.some(
-        (w) => /stop/i.test(w.label) && w.done === true && w.runId === workflowId,
+        (w) => /stop/i.test(w.label) && w.done === true && w.runId === runId,
       ),
     );
-    assertWorkLogShape(detail.workLog, workflowId);
+    assertWorkLogShape(detail.workLog, runId);
 
     const pushCount = pushes.length;
     await new Promise((r) => setTimeout(r, 50));
@@ -312,7 +312,7 @@ describe("runner simulated mode", () => {
     });
 
     const thread = store.getThreads()[0];
-    const { workflowId } = await failRunner.startRun({
+    const { runId } = await failRunner.startRun({
       threadId: thread.id,
       prompt: "will error",
     });
@@ -332,12 +332,12 @@ describe("runner simulated mode", () => {
         (m) =>
           m.role === "event" &&
           /Run error/i.test(m.text) &&
-          m.runId === workflowId,
+          m.runId === runId,
       ),
     );
     assert.ok(
       detailPush.payload.workLog.some(
-        (w) => w.label === "Run error" && w.done === true && w.runId === workflowId,
+        (w) => w.label === "Run error" && w.done === true && w.runId === runId,
       ),
     );
     assert.ok(
@@ -422,7 +422,7 @@ describe("runner real agent mode", () => {
     process.env.CODER_AGENT_CMD = `${process.execPath} -e ${fakeAgentSuccessScript()}`;
 
     const thread = store.getThreads()[0];
-    const { workflowId } = await runner.startRun({
+    const { runId } = await runner.startRun({
       threadId: thread.id,
       prompt: "stream please",
     });
@@ -439,7 +439,7 @@ describe("runner real agent mode", () => {
     );
 
     assert.equal(detail.thread.status, "done");
-    assertWorkLogShape(detail.workLog, workflowId);
+    assertWorkLogShape(detail.workLog, runId);
 
     const starting = detail.workLog.filter((w) => w.label === "Starting agent");
     const responding = detail.workLog.filter((w) => w.label === "Agent responding");
@@ -450,7 +450,7 @@ describe("runner real agent mode", () => {
 
     const assistants = detail.messages.filter((m) => m.role === "assistant");
     assert.equal(assistants.length, 1, "exactly one assistant message for the run");
-    assert.equal(assistants[0].runId, workflowId);
+    assert.equal(assistants[0].runId, runId);
     assert.equal(assistants[0].text, FAKE_AGENT_OUTPUT);
 
     // Growing: at least one push should have had a shorter partial text
@@ -458,7 +458,7 @@ describe("runner real agent mode", () => {
       .filter((p) => p.channel === "thread:updated")
       .map((p) =>
         (p.payload.messages || []).find(
-          (m) => m.role === "assistant" && m.runId === workflowId,
+          (m) => m.role === "assistant" && m.runId === runId,
         ),
       )
       .filter(Boolean);
@@ -477,6 +477,10 @@ describe("runner real agent mode", () => {
     assert.equal(detail.workflow.total, 1);
     assert.equal(detail.workflow.settled, 1);
     assert.equal(detail.workflow.complete, true);
+    // Contract: workflow is null for real (generic) sessions; only simulate fills it.
+    // toWorkflowView still projects internal real-state when asked explicitly above.
+    assert.ok(detail.workflow);
+    assert.equal(detail.workflow.phases.length, 1);
     const agent = detail.workflow.phases[0].agents[0];
     assert.equal(agent.id, "agent:0");
     assert.equal(agent.status, "settled");
@@ -490,7 +494,7 @@ describe("runner real agent mode", () => {
     process.env.CODER_AGENT_CMD = `${process.execPath} -e ${fakeAgentFailScript()}`;
 
     const thread = store.getThreads()[0];
-    const { workflowId } = await runner.startRun({
+    const { runId } = await runner.startRun({
       threadId: thread.id,
       prompt: "fail please",
     });
@@ -512,15 +516,15 @@ describe("runner real agent mode", () => {
           m.role === "event" &&
           /Run error/i.test(m.text) &&
           /agent-stderr-line|more-err/i.test(m.text) &&
-          m.runId === workflowId,
+          m.runId === runId,
       ),
     );
     assert.ok(
       detail.workLog.some(
-        (w) => w.label === "Run error" && w.done === true && w.runId === workflowId,
+        (w) => w.label === "Run error" && w.done === true && w.runId === runId,
       ),
     );
-    assertWorkLogShape(detail.workLog, workflowId);
+    assertWorkLogShape(detail.workLog, runId);
 
     const agent = detail.workflow.phases[0].agents[0];
     assert.equal(agent.status, "failed");
@@ -531,7 +535,7 @@ describe("runner real agent mode", () => {
     process.env.CODER_AGENT_CMD = `${process.execPath} -e ${fakeAgentSlowScript()}`;
 
     const thread = store.getThreads()[0];
-    const { workflowId } = await runner.startRun({
+    const { runId } = await runner.startRun({
       threadId: thread.id,
       prompt: "long run",
     });
@@ -553,12 +557,12 @@ describe("runner real agent mode", () => {
         (m) =>
           m.role === "event" &&
           /Run stopped/i.test(m.text) &&
-          m.runId === workflowId,
+          m.runId === runId,
       ),
     );
     assert.ok(
       detail.workLog.some(
-        (w) => w.label === "Run stopped" && w.done === true && w.runId === workflowId,
+        (w) => w.label === "Run stopped" && w.done === true && w.runId === runId,
       ),
     );
 
@@ -573,7 +577,7 @@ describe("runner real agent mode", () => {
     process.env.CODER_AGENT_CMD = `${process.execPath} -e ${fakeAgentSigtermTrapScript()}`;
 
     const thread = store.getThreads()[0];
-    const { workflowId: runA } = await runner.startRun({
+    const { runId: runA } = await runner.startRun({
       threadId: thread.id,
       prompt: "run A trap",
     });
@@ -593,7 +597,7 @@ describe("runner real agent mode", () => {
 
     // Immediate restart: B must survive A's late onDone/onChunk.
     process.env.CODER_AGENT_CMD = `${process.execPath} -e ${fakeAgentSlowScript()}`;
-    const { workflowId: runB } = await runner.startRun({
+    const { runId: runB } = await runner.startRun({
       threadId: thread.id,
       prompt: "run B survivor",
     });

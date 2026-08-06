@@ -5,9 +5,10 @@
  * Run with the real Electron binary (not node):
  *   ./node_modules/.bin/electron electron/smoke.js
  *
- * Two passes in one invocation:
+ * Three passes in one invocation:
  *   A) CODER_SIMULATE=1 — simulated core ticker, new work-log shape
- *   B) CODER_AGENT_CMD = fake node -e agent — real spawn path to done
+ *   B) CODER_AGENT_CMD = fake node -e agent — real generic spawn path to done
+ *   C) CODER_CLAUDE_BIN = fake stream-json script — session, tools, usage
  *
  * Uses a temp userData path so it never touches real app state.
  * Expects dist/index.html (run `npx vite build` first) and core/dist.
@@ -47,6 +48,57 @@ function resolveNodeBinary() {
   throw new Error(
     "No space-free node binary found for CODER_AGENT_CMD fake agent",
   );
+}
+
+/**
+ * Write a fake claude CLI that emits stream-json for smoke pass C.
+ * @param {string} dir
+ * @returns {string} absolute path to executable script
+ */
+function writeSmokeFakeClaude(dir) {
+  const scriptPath = path.join(dir, "smoke-fake-claude");
+  const body = `#!/usr/bin/env node
+"use strict";
+const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+function emit(obj) { process.stdout.write(JSON.stringify(obj) + "\\n"); }
+(async () => {
+  emit({ type: "system", subtype: "init", session_id: "smoke-sess-1", model: "smoke-model" });
+  await delay(20);
+  emit({ type: "assistant", message: { content: [{ type: "text", text: "Smoke claude ok" }] } });
+  await delay(20);
+  emit({
+    type: "assistant",
+    message: {
+      content: [{ type: "tool_use", id: "toolu_smoke", name: "Bash", input: { command: "echo hi" } }],
+    },
+  });
+  await delay(20);
+  emit({
+    type: "user",
+    message: {
+      content: [{
+        type: "tool_result",
+        tool_use_id: "toolu_smoke",
+        content: "hi",
+        is_error: false,
+      }],
+    },
+  });
+  await delay(20);
+  emit({
+    type: "result",
+    subtype: "success",
+    result: "Smoke claude ok",
+    usage: { input_tokens: 12, output_tokens: 8 },
+    total_cost_usd: 0.002,
+    num_turns: 1,
+    session_id: "smoke-sess-1",
+  });
+  process.exit(0);
+})().catch((e) => { process.stderr.write(String(e)); process.exit(1); });
+`;
+  fs.writeFileSync(scriptPath, body, { mode: 0o755 });
+  return scriptPath;
 }
 
 const userData = fs.mkdtempSync(path.join(os.tmpdir(), "coder-smoke-"));
@@ -168,6 +220,7 @@ app
     const core = await import(pathToFileURL(coreIndex).href);
 
     const store = new Store(path.join(app.getPath("userData"), "coder-store.json"));
+    const worktreeBase = path.join(app.getPath("userData"), "worktrees");
 
     function broadcast(channel, payload) {
       for (const win of BrowserWindow.getAllWindows()) {
@@ -177,7 +230,7 @@ app
       }
     }
 
-    // Runner reads CODER_SIMULATE / CODER_AGENT_CMD at each startRun.
+    // Runner reads CODER_SIMULATE / CODER_AGENT_CMD / CODER_CLAUDE_BIN at each startRun.
     const runner = createRunner({
       store,
       core,
@@ -191,6 +244,7 @@ app
       store,
       runner,
       broadcast,
+      worktreeBase,
     });
 
     const win = new BrowserWindow({
@@ -223,6 +277,7 @@ app
     // ── Pass A: simulated mode ────────────────────────────────────────
     process.env.CODER_SIMULATE = "1";
     delete process.env.CODER_AGENT_CMD;
+    delete process.env.CODER_CLAUDE_BIN;
 
     const threadA = await createThread(win.webContents, project.id, "New Thread");
     logStep("passA.threads.create", { ok: true, threadId: threadA.id });
@@ -234,7 +289,7 @@ app
         prompt: "Smoke test prompt for workflow",
       })})`,
     );
-    if (!startedA || !startedA.workflowId) {
+    if (!startedA || !startedA.runId) {
       throw new Error(`passA runs.start unexpected: ${JSON.stringify(startedA)}`);
     }
     logStep("passA.runs.start", { ok: true, started: startedA });
@@ -259,7 +314,7 @@ app
         `passA expected workflow.total === 13, got ${workingDetail.workflow.total}`,
       );
     }
-    assertWorkLogShape(workingDetail.workLog, startedA.workflowId);
+    assertWorkLogShape(workingDetail.workLog, startedA.runId);
     logStep("passA.threads.get.working", {
       ok: true,
       status: workingDetail.thread.status,
@@ -296,7 +351,7 @@ app
         )}`,
       );
     }
-    assertWorkLogShape(idleDetail.workLog, startedA.workflowId);
+    assertWorkLogShape(idleDetail.workLog, startedA.runId);
     logStep("passA.threads.get.idle", {
       ok: true,
       status: idleDetail.thread.status,
@@ -308,6 +363,7 @@ app
 
     // ── Pass B: real agent with fake node -e ──────────────────────────
     delete process.env.CODER_SIMULATE;
+    delete process.env.CODER_CLAUDE_BIN;
     // No spaces inside the -e body or binary path so whitespace split stays valid.
     const nodeBin = resolveNodeBinary();
     const fakeScript = `process.stdout.write('${FAKE_AGENT_MARKER}');process.exit(0)`;
@@ -323,15 +379,15 @@ app
         prompt: "Real agent smoke prompt",
       })})`,
     );
-    if (!startedB || !startedB.workflowId) {
+    if (!startedB || !startedB.runId) {
       throw new Error(`passB runs.start unexpected: ${JSON.stringify(startedB)}`);
     }
     logStep("passB.runs.start", { ok: true, started: startedB });
 
     // Wait until thread reaches done (fake agent is near-instant).
-    const deadline = Date.now() + 15000;
+    const deadlineB = Date.now() + 15000;
     let doneDetail = null;
-    while (Date.now() < deadline) {
+    while (Date.now() < deadlineB) {
       doneDetail = await evalInRenderer(
         win.webContents,
         `window.coder.threads.get(${JSON.stringify(threadB.id)})`,
@@ -353,7 +409,7 @@ app
     }
 
     const assistant = (doneDetail.messages || []).find(
-      (m) => m.role === "assistant" && m.runId === startedB.workflowId,
+      (m) => m.role === "assistant" && m.runId === startedB.runId,
     );
     if (!assistant || !String(assistant.text).includes(FAKE_AGENT_MARKER)) {
       throw new Error(
@@ -362,17 +418,100 @@ app
         )}`,
       );
     }
-    assertWorkLogShape(doneDetail.workLog, startedB.workflowId);
+    assertWorkLogShape(doneDetail.workLog, startedB.runId);
     logStep("passB.threads.get.done", {
       ok: true,
       status: doneDetail.thread.status,
       assistantText: assistant.text,
       workLogCount: doneDetail.workLog.length,
-      workflowTotal: doneDetail.workflow && doneDetail.workflow.total,
+      workflow: doneDetail.workflow,
     });
     logStep("passB", { ok: true });
 
-    logStep("smoke", { ok: true, passes: ["A", "B"] });
+    // ── Pass C: claude adapter via fake stream-json binary ────────────
+    delete process.env.CODER_SIMULATE;
+    delete process.env.CODER_AGENT_CMD;
+    const fakeClaude = writeSmokeFakeClaude(userData);
+    process.env.CODER_CLAUDE_BIN = fakeClaude;
+
+    const threadC = await createThread(win.webContents, project.id, "Claude Smoke");
+    logStep("passC.threads.create", {
+      ok: true,
+      threadId: threadC.id,
+      provider: threadC.provider,
+    });
+
+    const startedC = await evalInRenderer(
+      win.webContents,
+      `window.coder.runs.start(${JSON.stringify({
+        threadId: threadC.id,
+        prompt: "Claude smoke prompt",
+      })})`,
+    );
+    if (!startedC || !startedC.runId) {
+      throw new Error(`passC runs.start unexpected: ${JSON.stringify(startedC)}`);
+    }
+    logStep("passC.runs.start", { ok: true, started: startedC });
+
+    const deadlineC = Date.now() + 15000;
+    let claudeDetail = null;
+    while (Date.now() < deadlineC) {
+      claudeDetail = await evalInRenderer(
+        win.webContents,
+        `window.coder.threads.get(${JSON.stringify(threadC.id)})`,
+      );
+      if (claudeDetail && claudeDetail.thread.status === "done") break;
+      if (claudeDetail && claudeDetail.thread.status === "failed") {
+        throw new Error(
+          `passC thread failed: ${JSON.stringify(claudeDetail.messages)}`,
+        );
+      }
+      await sleep(50);
+    }
+    if (!claudeDetail || claudeDetail.thread.status !== "done") {
+      throw new Error(
+        `passC expected status done, got ${JSON.stringify(
+          claudeDetail && claudeDetail.thread && claudeDetail.thread.status,
+        )}`,
+      );
+    }
+
+    if (claudeDetail.thread.sessionId !== "smoke-sess-1") {
+      throw new Error(
+        `passC expected sessionId smoke-sess-1, got ${JSON.stringify(
+          claudeDetail.thread.sessionId,
+        )}`,
+      );
+    }
+
+    const toolMsg = (claudeDetail.messages || []).find(
+      (m) => m.role === "tool" && m.tool && m.tool.done === true,
+    );
+    if (!toolMsg) {
+      throw new Error(
+        `passC expected a tool message with done true, messages=${JSON.stringify(
+          claudeDetail.messages,
+        )}`,
+      );
+    }
+
+    if (!claudeDetail.usage || claudeDetail.usage.inputTokens == null) {
+      throw new Error(
+        `passC expected non-null usage, got ${JSON.stringify(claudeDetail.usage)}`,
+      );
+    }
+
+    assertWorkLogShape(claudeDetail.workLog, startedC.runId);
+    logStep("passC.threads.get.done", {
+      ok: true,
+      status: claudeDetail.thread.status,
+      sessionId: claudeDetail.thread.sessionId,
+      toolDone: toolMsg.tool.done,
+      usage: claudeDetail.usage,
+    });
+    logStep("passC", { ok: true });
+
+    logStep("smoke", { ok: true, passes: ["A", "B", "C"] });
     app.exit(0);
   })
   .catch((err) => {

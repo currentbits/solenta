@@ -43,6 +43,10 @@ describe("Store", () => {
       status: "idle",
       createdAt: 1,
       updatedAt: 2,
+      provider: "claude",
+      sessionId: null,
+      permissionMode: "default",
+      worktreePath: null,
     };
     const msg = {
       id: "m1",
@@ -87,5 +91,53 @@ describe("Store", () => {
       .readdirSync(tmpDir)
       .filter((n) => n !== "coder-store.json");
     assert.deepEqual(leftovers, []);
+  });
+
+  it("migrates old-shape threads missing session fields on load", () => {
+    const old = {
+      projects: [],
+      threads: [
+        {
+          id: "t-old",
+          projectId: "p1",
+          title: "Legacy",
+          branch: null,
+          prNumber: null,
+          status: "idle",
+          createdAt: 1,
+          updatedAt: 2,
+        },
+      ],
+      messagesByThread: {},
+      workLogByThread: {},
+    };
+    fs.writeFileSync(filePath, JSON.stringify(old), "utf8");
+
+    const store = new Store(filePath);
+    const t = store.getThreads()[0];
+    assert.equal(t.provider, "claude");
+    assert.equal(t.sessionId, null);
+    assert.equal(t.permissionMode, "default");
+    assert.equal(t.worktreePath, null);
+  });
+
+  it("persists usage by thread", () => {
+    const store = new Store(filePath);
+    store.setUsage("t1", {
+      model: "m",
+      inputTokens: 10,
+      outputTokens: 5,
+      costUsd: 0.02,
+      turns: 1,
+    });
+    store.save();
+    const reloaded = new Store(filePath);
+    assert.deepEqual(reloaded.getUsage("t1"), {
+      model: "m",
+      inputTokens: 10,
+      outputTokens: 5,
+      costUsd: 0.02,
+      turns: 1,
+    });
   });
 });

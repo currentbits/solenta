@@ -5,6 +5,13 @@ const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 const { randomUUID } = require("node:crypto");
 
+const PERMISSION_MODES = new Set([
+  "default",
+  "acceptEdits",
+  "plan",
+  "bypassPermissions",
+]);
+
 /**
  * @param {string} cwd
  * @param {string[]} args
@@ -137,6 +144,10 @@ function createThread(store, input) {
     status: "idle",
     createdAt: now,
     updatedAt: now,
+    provider: "claude",
+    sessionId: null,
+    permissionMode: "default",
+    worktreePath: null,
   };
 
   const threads = store.getThreads().slice();
@@ -146,6 +157,26 @@ function createThread(store, input) {
   store.setWorkLog(thread.id, []);
   store.save();
   return thread;
+}
+
+/**
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, mode: string }} input
+ */
+function setPermissionMode(store, input) {
+  const { threadId, mode } = input;
+  if (!PERMISSION_MODES.has(mode)) {
+    throw new Error(
+      `Invalid permission mode: ${mode}. Expected one of: ${[...PERMISSION_MODES].join(", ")}`,
+    );
+  }
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  const updated = store.updateThread(threadId, { permissionMode: mode });
+  store.save();
+  return updated ? { ...updated } : { ...thread, permissionMode: mode };
 }
 
 /**
@@ -170,6 +201,7 @@ function getThreadDetail(store, threadId, workflow = null) {
     messages: store.getMessages(threadId).slice(),
     workLog: store.getWorkLog(threadId).slice(),
     workflow: workflow ?? null,
+    usage: store.getUsage(threadId) ?? null,
   };
 }
 
@@ -217,9 +249,11 @@ function listProjects(store) {
 module.exports = {
   addProject,
   createThread,
+  setPermissionMode,
   listThreads,
   getThreadDetail,
   gitStatus,
   listProjects,
   slugFromRemoteUrl,
+  PERMISSION_MODES,
 };
