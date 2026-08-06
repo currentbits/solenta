@@ -207,6 +207,15 @@ export interface CoderApi {
      * from the first line of the prompt.
      */
     start(input: { threadId: string; prompt: string }): Promise<{ runId: string }>;
+    /**
+     * Starts an orchestrated multi-phase workflow run (the Build action):
+     * seed plan -> parallel analyze agents -> synthesize, each phase agent a
+     * REAL one-shot provider call. Live phase/agent state streams through
+     * ThreadDetail.workflow on thread:updated; the synthesize output becomes
+     * the assistant answer. Currently requires the claude provider; rejects
+     * otherwise, and rejects while any run is active on the thread.
+     */
+    startWorkflow(input: { threadId: string; prompt: string }): Promise<{ runId: string }>;
     stop(input: { threadId: string }): Promise<void>;
   };
   git: {
