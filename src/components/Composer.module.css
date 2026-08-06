@@ -109,10 +109,46 @@
   background: var(--blue-soft);
 }
 
-/** Non-claude Build: visibly dimmed even before :disabled opacity stacks. */
-.pillDimmed {
-  opacity: 0.4;
-  filter: grayscale(0.35);
+.buildSplit {
+  position: relative;
+  display: inline-flex;
+  align-items: stretch;
+}
+
+.buildMain {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+  border-right: none;
+  padding-right: 8px;
+}
+
+.buildCaret {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  padding-left: 6px;
+  padding-right: 8px;
+  border-left: 1px solid var(--blue-border);
+}
+
+.buildMenu {
+  min-width: 180px;
+  right: 0;
+  left: auto;
+}
+
+.checkSlot {
+  display: inline-block;
+  width: 1em;
+  margin-right: 6px;
+  text-align: center;
+  color: #bfdbfe;
+}
+
+.menuDivider {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
+  list-style: none;
 }
 
 .modeWrap {

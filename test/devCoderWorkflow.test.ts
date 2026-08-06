@@ -1,19 +1,21 @@
 /**
- * Dev-mode runs.startWorkflow: claude-only Build orchestration.
+ * Dev-mode runs.startWorkflow: template-driven Build orchestration.
  * Run: node --experimental-strip-types --test test/devCoderWorkflow.test.ts
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { createDevCoder } from "../src/devCoder.ts";
 
-async function createClaudeThread() {
+async function createThread(provider = "claude") {
   const api = createDevCoder();
   const projects = await api.projects.list();
-  const t = await api.threads.create({
+  let t = await api.threads.create({
     projectId: projects[0]!.id,
     title: "Workflow thread",
   });
-  assert.equal(t.provider, "claude");
+  if (provider !== t.provider) {
+    t = await api.threads.setProvider({ threadId: t.id, provider });
+  }
   return { api, threadId: t.id };
 }
 
@@ -32,34 +34,18 @@ async function waitFor(
 }
 
 describe("runs.startWorkflow", () => {
-  it("rejects non-claude threads with the exact provider message", async () => {
-    const api = createDevCoder();
-    const projects = await api.projects.list();
-    const t = await api.threads.create({
-      projectId: projects[0]!.id,
-      title: "Codex thread",
+  it("allows non-claude threads when all phase providers are available", async () => {
+    const { api, threadId } = await createThread("codex");
+    const { runId } = await api.runs.startWorkflow({
+      threadId,
+      prompt: "build on codex",
     });
-    await api.threads.setProvider({ threadId: t.id, provider: "codex" });
-
-    await assert.rejects(
-      () =>
-        api.runs.startWorkflow({
-          threadId: t.id,
-          prompt: "build something",
-        }),
-      (err: unknown) => {
-        assert.ok(err instanceof Error);
-        assert.equal(
-          err.message,
-          "Workflow runs currently require the Claude provider.",
-        );
-        return true;
-      },
-    );
+    assert.ok(runId);
+    await api.runs.stop({ threadId });
   });
 
   it("rejects while a run is already active", async () => {
-    const { api, threadId } = await createClaudeThread();
+    const { api, threadId } = await createThread();
     await api.runs.start({ threadId, prompt: "session turn" });
 
     await assert.rejects(
@@ -74,8 +60,51 @@ describe("runs.startWorkflow", () => {
     await api.runs.stop({ threadId });
   });
 
-  it("starts seed→analyze(2)→synthesize workflow with kickoff, work log, and answer", async () => {
-    const { api, threadId } = await createClaudeThread();
+  it("rejects unknown templateId", async () => {
+    const { api, threadId } = await createThread();
+    await assert.rejects(
+      () =>
+        api.runs.startWorkflow({
+          threadId,
+          prompt: "go",
+          templateId: "does-not-exist",
+        }),
+      /template|not found|unknown/i,
+    );
+  });
+
+  it("rejects when a phase provider is unavailable", async () => {
+    const { api, threadId } = await createThread();
+    const saved = await api.workflows.save({
+      name: "Needs Grok",
+      phases: [
+        {
+          name: "plan",
+          agentCount: 1,
+          instruction: "Plan it",
+          provider: "grok",
+          model: null,
+        },
+      ],
+    });
+    await assert.rejects(
+      () =>
+        api.runs.startWorkflow({
+          threadId,
+          prompt: "go",
+          templateId: saved.id,
+        }),
+      (err: unknown) => {
+        assert.ok(err instanceof Error);
+        assert.match(err.message, /grok/i);
+        assert.match(err.message, /not available|unavailable|not installed/i);
+        return true;
+      },
+    );
+  });
+
+  it("defaults to standard: seed→analyze(2)→synthesize with kickoff, work log, dossiers, answer", async () => {
+    const { api, threadId } = await createThread();
     const updates: import("../src/shared/ipc.ts").ThreadDetail[] = [];
     const unsub = api.on("thread:updated", (d) => {
       updates.push(d);
@@ -129,6 +158,16 @@ describe("runs.startWorkflow", () => {
     assert.ok(answer, "final assistant message starts with Workflow answer:");
     assert.equal(answer!.runId, runId);
 
+    const dossiers = done.messages.filter(
+      (m) => m.role === "tool" && m.tool && m.runId === runId,
+    );
+    assert.equal(dossiers.length, 4, "one dossier tool message per agent");
+    for (const d of dossiers) {
+      assert.ok(d.tool);
+      assert.equal(d.tool!.done, true);
+      assert.ok(d.tool!.output && d.tool!.output.length > 0);
+    }
+
     const phaseLabels = ["Seed", "Analyze", "Synthesize"];
     for (const label of phaseLabels) {
       const item = done.workLog.find(
@@ -146,8 +185,70 @@ describe("runs.startWorkflow", () => {
     unsub();
   });
 
+  it("simulates custom template phase names and agent counts", async () => {
+    const { api, threadId } = await createThread();
+    const saved = await api.workflows.save({
+      name: "Two phase",
+      phases: [
+        {
+          name: "scout",
+          agentCount: 3,
+          instruction: "Scout the repo",
+          provider: "claude",
+          model: null,
+        },
+        {
+          name: "ship",
+          agentCount: 1,
+          instruction: "Ship it",
+          provider: "claude",
+          model: "claude-sonnet-5",
+        },
+      ],
+    });
+
+    const { runId } = await api.runs.startWorkflow({
+      threadId,
+      prompt: "custom template run",
+      templateId: saved.id,
+    });
+
+    const first = await api.threads.get(threadId);
+    assert.deepEqual(
+      first.workflow!.phases.map((p) => ({
+        name: p.name,
+        n: p.agents.length,
+      })),
+      [
+        { name: "scout", n: 3 },
+        { name: "ship", n: 1 },
+      ],
+    );
+    assert.equal(first.workflow!.total, 4);
+    assert.equal(first.workflow!.name, "Two phase");
+
+    await waitFor(async () => {
+      const d = await api.threads.get(threadId);
+      return d.thread.status === "done" && d.workflow?.complete === true;
+    });
+
+    const done = await api.threads.get(threadId);
+    const dossiers = done.messages.filter(
+      (m) => m.role === "tool" && m.runId === runId,
+    );
+    assert.equal(dossiers.length, 4);
+
+    for (const label of ["Scout", "Ship"]) {
+      const item = done.workLog.find(
+        (w) => w.runId === runId && w.label === label,
+      );
+      assert.ok(item, `work log has ${label}`);
+      assert.equal(item!.done, true);
+    }
+  });
+
   it("stop fails running agents, idles thread, and posts Run stopped", async () => {
-    const { api, threadId } = await createClaudeThread();
+    const { api, threadId } = await createThread();
     await api.runs.startWorkflow({
       threadId,
       prompt: "stop me mid-build",

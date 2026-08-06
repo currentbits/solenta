@@ -18,6 +18,8 @@ import type {
   ThreadDetail,
   ThreadInfo,
   WorkLogItem,
+  WorkflowPhaseSpec,
+  WorkflowTemplateInfo,
   WorkflowView,
 } from "./shared/ipc";
 import { mockData } from "./mockData.ts";
@@ -61,9 +63,153 @@ const DEV_PROVIDERS: ProviderInfo[] = [
 
 const KNOWN_PROVIDER_IDS = new Set(DEV_PROVIDERS.map((p) => p.id));
 
+/** Builtin Standard template (id "standard"). Seeded into every dev session. */
+const STANDARD_TEMPLATE: WorkflowTemplateInfo = {
+  id: "standard",
+  name: "Standard",
+  builtin: true,
+  phases: [
+    {
+      name: "seed",
+      agentCount: 1,
+      instruction: "Plan context from the prompt",
+      provider: "claude",
+      model: null,
+    },
+    {
+      name: "analyze",
+      agentCount: 2,
+      instruction: "Concurrent exploration",
+      provider: "claude",
+      model: null,
+    },
+    {
+      name: "synthesize",
+      agentCount: 1,
+      instruction: "Final answer",
+      provider: "claude",
+      model: null,
+    },
+  ],
+};
+
 const TICK_MS = 700;
 const TITLE_MAX = 60;
 const WORKTREE_DELAY_MS = 450;
+
+type TemplateSaveInput = Omit<WorkflowTemplateInfo, "id" | "builtin"> & {
+  id?: string;
+};
+
+function cloneTemplate(t: WorkflowTemplateInfo): WorkflowTemplateInfo {
+  return {
+    id: t.id,
+    name: t.name,
+    builtin: t.builtin,
+    phases: t.phases.map((p) => ({ ...p })),
+  };
+}
+
+/**
+ * Validate a workflow template before save.
+ * Error copy mirrors electron/services.js validateWorkflowTemplate VERBATIM
+ * so the Manage modal shows the same messages in dev and prod.
+ */
+function validateTemplate(
+  input: TemplateSaveInput,
+  providers: ProviderInfo[],
+): { name: string; phases: WorkflowPhaseSpec[] } {
+  const name = input.name != null ? String(input.name).trim() : "";
+  if (!name) {
+    throw new Error("Template name is required");
+  }
+
+  const phases = input.phases;
+  if (!Array.isArray(phases)) {
+    throw new Error("Template phases must be an array");
+  }
+  if (phases.length < 1 || phases.length > 6) {
+    throw new Error("Template must have between 1 and 6 phases");
+  }
+
+  const providerById = new Map(providers.map((p) => [p.id, p]));
+  const cleaned: WorkflowPhaseSpec[] = [];
+
+  for (let i = 0; i < phases.length; i++) {
+    const raw = phases[i];
+    if (!raw || typeof raw !== "object") {
+      throw new Error(`Phase ${i + 1}: invalid phase object`);
+    }
+    const phaseName = raw.name != null ? String(raw.name).trim() : "";
+    if (!phaseName) {
+      throw new Error(`Phase ${i + 1}: name is required`);
+    }
+    if (phaseName.length > 24) {
+      throw new Error(
+        `Phase "${phaseName}": name must be at most 24 characters`,
+      );
+    }
+
+    const agentCount = raw.agentCount;
+    if (
+      typeof agentCount !== "number" ||
+      !Number.isInteger(agentCount) ||
+      agentCount < 1 ||
+      agentCount > 4
+    ) {
+      throw new Error(
+        `Phase "${phaseName}": agentCount must be an integer from 1 to 4`,
+      );
+    }
+
+    const instruction =
+      raw.instruction != null ? String(raw.instruction).trim() : "";
+    if (!instruction) {
+      throw new Error(`Phase "${phaseName}": instruction is required`);
+    }
+    if (String(raw.instruction).length > 2000) {
+      throw new Error(
+        `Phase "${phaseName}": instruction must be at most 2000 characters`,
+      );
+    }
+
+    const providerId =
+      raw.provider != null ? String(raw.provider).trim() : "";
+    if (!providerId) {
+      throw new Error(`Phase "${phaseName}": provider is required`);
+    }
+    const entry = providerById.get(providerId);
+    // simulate is a dev-only harness; never a selectable workflow provider.
+    if (!entry || providerId === "simulate") {
+      throw new Error(
+        `Phase "${phaseName}": unknown provider "${providerId}"`,
+      );
+    }
+
+    const model =
+      raw.model == null || raw.model === "" ? null : String(raw.model);
+    if (
+      model != null &&
+      Array.isArray(entry.models) &&
+      entry.models.length > 0 &&
+      !entry.models.includes(model)
+    ) {
+      throw new Error(
+        `Phase "${phaseName}": model "${model}" is not in provider ${providerId}'s model list`,
+      );
+    }
+
+    cleaned.push({
+      name: phaseName,
+      agentCount,
+      instruction,
+      provider: providerId,
+      model,
+    });
+  }
+
+  return { name, phases: cleaned };
+}
 
 type ListenerMap = {
   "threads:changed": Set<(threads: ThreadInfo[]) => void>;
@@ -84,11 +230,13 @@ type RunState = {
   /**
    * session: single-provider turn (runs.start)
    * simulate: mock multi-agent tick for provider === "simulate"
-   * workflow: Build orchestration (runs.startWorkflow, claude only)
+   * workflow: Build orchestration (runs.startWorkflow, template-driven)
    */
   kind: "session" | "simulate" | "workflow";
-  /** Build-workflow step index (startWorkflow only). */
+  /** Index of the currently running phase (startWorkflow only). */
   workflowStep: number;
+  /** Phase instructions for dossier text (startWorkflow only). */
+  phaseInstructions?: string[];
 };
 
 function now() {
@@ -269,69 +417,101 @@ function createFreshWorkflow(): WorkflowView {
 }
 
 /**
- * Build (startWorkflow) shape: seed(1) → analyze(2 concurrent) → synthesize(1).
- * Seed starts running so the first thread:updated already shows progress.
+ * Build a WorkflowView from a template. First phase agents start running so
+ * the first thread:updated already shows progress.
  */
-function createBuildWorkflow(): WorkflowView {
-  const seed: AgentView = {
-    id: "seed:1",
-    model: "sonnet-5",
-    status: "running",
-    tokensUsed: 200,
-  };
-  const analyze: AgentView[] = [
-    {
-      id: "analyze:1",
-      model: "sonnet-5",
-      status: "pending",
-      tokensUsed: 0,
-    },
-    {
-      id: "analyze:2",
-      model: "sonnet-5",
-      status: "pending",
-      tokensUsed: 0,
-    },
-  ];
-  const synthesize: AgentView = {
-    id: "synthesize:1",
-    model: "sonnet-5",
-    status: "pending",
-    tokensUsed: 0,
-  };
-  const phases: WorkflowView["phases"] = [
-    { name: "seed", pipelined: false, agents: [seed] },
-    { name: "analyze", pipelined: true, agents: analyze },
-    { name: "synthesize", pipelined: false, agents: [synthesize] },
-  ];
-  return {
+function createWorkflowFromTemplate(
+  template: WorkflowTemplateInfo,
+): WorkflowView {
+  const phases: WorkflowView["phases"] = template.phases.map((p, pi) => {
+    const modelLabel = p.model ?? "default";
+    const agents: AgentView[] = Array.from({ length: p.agentCount }, (_, i) => ({
+      id: `${p.name}:${i + 1}`,
+      model: modelLabel,
+      status: pi === 0 ? ("running" as const) : ("pending" as const),
+      tokensUsed: pi === 0 ? 200 + Math.floor(Math.random() * 100) : 0,
+    }));
+    return {
+      name: p.name,
+      pipelined: p.agentCount > 1,
+      agents,
+    };
+  });
+  return recomputeWorkflow(phases, {
     id: id("wf"),
-    name: "BUILD",
+    name: template.name,
     phases,
     settled: 0,
-    total: 4,
-    tokensTotal: seed.tokensUsed,
+    total: 0,
+    tokensTotal: 0,
     complete: false,
-  };
+  });
 }
 
-function buildKickoffText(wf: WorkflowView): string {
-  const lines = [
-    `Kicked off ${wf.total} subagents`,
-    "Seed · 1 · Plan context from the prompt",
-    "Analyze · 2 · Concurrent exploration",
-    "Synthesize · 1 · Final answer",
-  ];
+function buildKickoffText(
+  wf: WorkflowView,
+  phases: WorkflowPhaseSpec[],
+): string {
+  const lines = [`Kicked off ${wf.total} subagents`];
+  for (const p of phases) {
+    lines.push(
+      `${capitalize(p.name)} · ${p.agentCount} · ${p.instruction}`,
+    );
+  }
   return lines.join("\n");
 }
 
+function appendDossier(
+  detail: ThreadDetail,
+  run: RunState,
+  t: number,
+  phaseName: string,
+  agent: AgentView,
+  instruction: string,
+  prompt: string,
+): void {
+  const short = prompt.split("\n")[0]?.slice(0, 60) || "the task";
+  const output = [
+    `Phase: ${phaseName}`,
+    `Agent: ${agent.id}`,
+    `Model: ${agent.model}`,
+    `Instruction: ${instruction}`,
+    "",
+    `Findings for "${short}":`,
+    `- Explored relevant modules for ${phaseName}`,
+    `- Produced intermediate notes (${agent.tokensUsed} tokens)`,
+  ].join("\n");
+
+  detail.messages.push({
+    id: id("msg"),
+    role: "tool",
+    text: `Dossier: ${phaseName} · ${agent.id}`,
+    createdAt: t,
+    runId: run.runId,
+    tool: {
+      id: id("tool"),
+      name: "Dossier",
+      input: JSON.stringify(
+        {
+          phase: phaseName,
+          agentId: agent.id,
+          model: agent.model,
+          instruction,
+        },
+        null,
+        2,
+      ),
+      output,
+      isError: false,
+      done: true,
+    },
+  });
+}
+
 /**
- * Advance Build workflow one step:
- * 0 (start): seed running
- * 1: seed settled; both analyze running
- * 2: analyze settled; synthesize running
- * 3: synthesize settled → complete
- * Returns true when the workflow is complete after this tick.
+ * Advance template-driven Build workflow one phase per tick.
+ * Settles the current phase (appending a dossier per agent), then starts the
+ * next. Returns true when the workflow is complete after this tick.
  */
 function tickBuildWorkflow(
   detail: ThreadDetail,
@@ -347,52 +527,44 @@ function tickBuildWorkflow(
     agents: p.agents.map((a) => ({ ...a })),
   }));
   const step = run.workflowStep;
+  const current = phases[step];
+  if (!current) return true;
 
-  if (step === 0) {
-    // Seed was already running at start; settle it and start both analyze agents.
-    for (const a of phases[0]!.agents) {
-      a.status = "settled";
-      a.tokensUsed += 900 + Math.floor(Math.random() * 400);
-    }
-    for (const a of phases[1]!.agents) {
+  const instruction =
+    run.phaseInstructions?.[step] ?? `Run phase ${current.name}`;
+
+  for (const a of current.agents) {
+    a.status = "settled";
+    a.tokensUsed += 900 + Math.floor(Math.random() * 500);
+    appendDossier(detail, run, t, current.name, a, instruction, prompt);
+  }
+
+  const nextIndex = step + 1;
+  const next = phases[nextIndex];
+  if (next) {
+    for (const a of next.agents) {
       a.status = "running";
       a.tokensUsed = 300 + Math.floor(Math.random() * 200);
     }
-    run.workflowStep = 1;
-  } else if (step === 1) {
-    for (const a of phases[1]!.agents) {
-      a.status = "settled";
-      a.tokensUsed += 1200 + Math.floor(Math.random() * 500);
-    }
-    for (const a of phases[2]!.agents) {
-      a.status = "running";
-      a.tokensUsed = 400 + Math.floor(Math.random() * 200);
-    }
-    run.workflowStep = 2;
-  } else {
-    for (const a of phases[2]!.agents) {
-      a.status = "settled";
-      a.tokensUsed += 1500 + Math.floor(Math.random() * 600);
-    }
-    run.workflowStep = 3;
-  }
-
-  detail.workflow = recomputeWorkflow(phases, wf);
-  syncWorkLogForWorkflow(detail, run, t);
-
-  if (run.workflowStep < 3) {
+    run.workflowStep = nextIndex;
+    detail.workflow = recomputeWorkflow(phases, wf);
+    syncWorkLogForWorkflow(detail, run, t);
     return false;
   }
+
+  run.workflowStep = nextIndex;
+  detail.workflow = recomputeWorkflow(phases, wf);
+  syncWorkLogForWorkflow(detail, run, t);
 
   for (const item of detail.workLog) {
     if (item.runId === run.runId) item.done = true;
   }
-  const short =
-    prompt.split("\n")[0]?.slice(0, 80) || "your request";
+  const short = prompt.split("\n")[0]?.slice(0, 80) || "your request";
+  const phaseNames = phases.map((p) => p.name).join(" → ");
   detail.messages.push({
     id: id("msg"),
     role: "assistant",
-    text: `Workflow answer: completed Build for "${short}". Seed planned context, two analyze agents explored in parallel, and synthesize merged the findings.`,
+    text: `Workflow answer: completed ${wf.name} for "${short}". Phases: ${phaseNames}.`,
     createdAt: t,
     runId: run.runId,
   });
@@ -860,6 +1032,8 @@ function buildDevCoder(): CoderApi {
   const runStates = new Map<string, RunState>();
   /** Threads whose worktree was merged/removed; fakeDiff stays empty until re-setup. */
   const clearedDiff = new Set<string>();
+  /** User-defined + builtin workflow templates (in-memory). */
+  let templates: WorkflowTemplateInfo[] = [cloneTemplate(STANDARD_TEMPLATE)];
 
   for (const t of threads) {
     if (t.id === mockData.activeThreadId) {
@@ -1074,6 +1248,72 @@ function buildDevCoder(): CoderApi {
           ...p,
           models: [...p.models],
         }));
+      },
+    },
+    workflows: {
+      async list() {
+        return templates.map(cloneTemplate);
+      },
+      async save(input) {
+        const cleaned = validateTemplate(input, DEV_PROVIDERS);
+        const existing =
+          input.id != null
+            ? templates.find((t) => t.id === input.id)
+            : undefined;
+
+        // Saving a builtin always creates a copy (never mutates the builtin).
+        // Name: append " (copy)" when the submitted name equals the builtin name
+        // (matches electron/store.js saveTemplate).
+        if (existing?.builtin) {
+          const renamed =
+            cleaned.name.length > 0 &&
+            cleaned.name !== String(existing.name || "");
+          const copy: WorkflowTemplateInfo = {
+            id: id("wf-tpl"),
+            name: renamed ? cleaned.name : `${existing.name} (copy)`,
+            builtin: false,
+            phases: cleaned.phases,
+          };
+          templates = [...templates, copy];
+          return cloneTemplate(copy);
+        }
+
+        if (existing) {
+          const updated: WorkflowTemplateInfo = {
+            id: existing.id,
+            name: cleaned.name,
+            builtin: false,
+            phases: cleaned.phases,
+          };
+          templates = templates.map((t) =>
+            t.id === existing.id ? updated : t,
+          );
+          return cloneTemplate(updated);
+        }
+
+        const created: WorkflowTemplateInfo = {
+          id: input.id && input.id.trim() ? input.id.trim() : id("wf-tpl"),
+          name: cleaned.name,
+          builtin: false,
+          phases: cleaned.phases,
+        };
+        // Guard: never allow overwriting standard via a fresh create with that id.
+        if (created.id === "standard" || templates.some((t) => t.id === created.id)) {
+          created.id = id("wf-tpl");
+        }
+        templates = [...templates, created];
+        return cloneTemplate(created);
+      },
+      async remove(input) {
+        const tid = String(input.id);
+        const existing = templates.find((t) => t.id === tid);
+        if (!existing) {
+          throw new Error(`Unknown template: ${tid}`);
+        }
+        if (existing.builtin) {
+          throw new Error(`Cannot remove builtin template: ${tid}`);
+        }
+        templates = templates.filter((t) => t.id !== tid);
       },
     },
     projects: {
@@ -1360,17 +1600,32 @@ function buildDevCoder(): CoderApi {
         const detail = details.get(input.threadId);
         if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
 
-        if (detail.thread.provider !== "claude") {
-          throw new Error(
-            "Workflow runs currently require the Claude provider.",
-          );
-        }
-
         if (
           detail.thread.status === "working" ||
           runTimers.has(input.threadId)
         ) {
           throw new Error("A run is already active on this thread");
+        }
+
+        const templateId = input.templateId?.trim() || "standard";
+        const template = templates.find((t) => t.id === templateId);
+        if (!template) {
+          throw new Error(`Unknown workflow template: ${templateId}`);
+        }
+
+        // Backend validates phase providers at start (naming the unavailable one).
+        for (const phase of template.phases) {
+          const prov = DEV_PROVIDERS.find((p) => p.id === phase.provider);
+          if (!prov) {
+            throw new Error(
+              `Provider "${phase.provider}" is not available`,
+            );
+          }
+          if (!prov.available) {
+            throw new Error(
+              `Provider "${phase.provider}" is not available`,
+            );
+          }
         }
 
         const prompt = input.prompt.trim();
@@ -1384,6 +1639,7 @@ function buildDevCoder(): CoderApi {
           sessionStep: 0,
           kind: "workflow",
           workflowStep: 0,
+          phaseInstructions: template.phases.map((p) => p.instruction),
         };
         runStates.set(input.threadId, run);
 
@@ -1414,12 +1670,12 @@ function buildDevCoder(): CoderApi {
         };
         detail.thread = thread;
 
-        detail.workflow = createBuildWorkflow();
+        detail.workflow = createWorkflowFromTemplate(template);
         syncWorkLogForWorkflow(detail, run, t);
         detail.messages.push({
           id: id("evt"),
           role: "event",
-          text: buildKickoffText(detail.workflow),
+          text: buildKickoffText(detail.workflow, template.phases),
           createdAt: t + 1,
           runId,
         });

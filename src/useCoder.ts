@@ -7,9 +7,14 @@ import type {
   ProviderInfo,
   ThreadDetail,
   ThreadInfo,
+  WorkflowTemplateInfo,
 } from "./shared/ipc";
 import { devCoder } from "./devCoder";
 import { nextVisibleThreadId } from "./threadSelection";
+
+export type WorkflowSaveInput = Omit<WorkflowTemplateInfo, "id" | "builtin"> & {
+  id?: string;
+};
 
 function resolveApi(): CoderApi {
   const w = window as unknown as { coder?: CoderApi };
@@ -34,6 +39,8 @@ export interface UseCoderResult {
   threads: ThreadInfo[];
   /** Provider registry loaded once at startup. */
   providers: ProviderInfo[];
+  /** Workflow templates loaded at startup; refreshed after save/remove. */
+  workflows: WorkflowTemplateInfo[];
   selectedThreadId: string | null;
   selectThread: (id: string | null) => void;
   detail: ThreadDetail | null;
@@ -49,8 +56,17 @@ export interface UseCoderResult {
     projectId?: string,
   ) => Promise<ThreadInfo | null>;
   startRun: (prompt: string) => Promise<void>;
-  /** Multi-phase Build workflow (claude only); same selectedRef guard as startRun. */
-  startWorkflowRun: (prompt: string) => Promise<void>;
+  /**
+   * Multi-phase Build workflow for the selected thread. Passes templateId to
+   * runs.startWorkflow (backend validates phase providers).
+   */
+  startWorkflowRun: (prompt: string, templateId?: string) => Promise<void>;
+  /** Persist a workflow template; refreshes the list. Saving a builtin creates a copy. */
+  saveWorkflow: (template: WorkflowSaveInput) => Promise<WorkflowTemplateInfo>;
+  /** Remove a non-builtin template; refreshes the list. */
+  removeWorkflow: (id: string) => Promise<void>;
+  /** Reload workflows.list() into state. */
+  refreshWorkflows: () => Promise<void>;
   stopRun: () => Promise<void>;
   setPermissionMode: (mode: PermissionMode) => Promise<void>;
   /** Set provider and/or model on the selected thread (selectedRef-guarded). */
@@ -74,6 +90,7 @@ export function useCoder(): UseCoderResult {
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
   const [threads, setThreads] = useState<ThreadInfo[]>([]);
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
+  const [workflows, setWorkflows] = useState<WorkflowTemplateInfo[]>([]);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
   const [detail, setDetail] = useState<ThreadDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -122,14 +139,16 @@ export function useCoder(): UseCoderResult {
 
     (async () => {
       try {
-        const [p, list, prov] = await Promise.all([
+        const [p, list, prov, wfs] = await Promise.all([
           api.projects.list(),
           api.threads.list(),
           api.providers.list(),
+          api.workflows.list(),
         ]);
         if (cancelled) return;
         setProjects(p);
         setProviders(prov);
+        setWorkflows(wfs);
         if (threadsListGen.current === loadGen) {
           applyThreads(list);
         }
@@ -265,12 +284,21 @@ export function useCoder(): UseCoderResult {
     [api, selectedThreadId, applyThreads],
   );
 
+  const refreshWorkflows = useCallback(async () => {
+    const list = await api.workflows.list();
+    setWorkflows(list);
+  }, [api]);
+
   const startWorkflowRun = useCallback(
-    async (prompt: string) => {
+    async (prompt: string, templateId?: string) => {
       if (!selectedThreadId) return;
       const threadId = selectedThreadId;
       try {
-        await api.runs.startWorkflow({ threadId, prompt });
+        await api.runs.startWorkflow({
+          threadId,
+          prompt,
+          ...(templateId ? { templateId } : {}),
+        });
         const d = await api.threads.get(threadId);
         if (selectedRef.current !== threadId) return;
         setDetail(d);
@@ -286,6 +314,23 @@ export function useCoder(): UseCoderResult {
       }
     },
     [api, selectedThreadId, applyThreads],
+  );
+
+  const saveWorkflow = useCallback(
+    async (template: WorkflowSaveInput) => {
+      const saved = await api.workflows.save(template);
+      await refreshWorkflows();
+      return saved;
+    },
+    [api, refreshWorkflows],
+  );
+
+  const removeWorkflow = useCallback(
+    async (workflowId: string) => {
+      await api.workflows.remove({ id: workflowId });
+      await refreshWorkflows();
+    },
+    [api, refreshWorkflows],
   );
 
   const stopRun = useCallback(async () => {
@@ -472,6 +517,7 @@ export function useCoder(): UseCoderResult {
     projects,
     threads,
     providers,
+    workflows,
     selectedThreadId,
     selectThread,
     detail,
@@ -483,6 +529,9 @@ export function useCoder(): UseCoderResult {
     createThread,
     startRun,
     startWorkflowRun,
+    saveWorkflow,
+    removeWorkflow,
+    refreshWorkflows,
     stopRun,
     setPermissionMode,
     setProvider,

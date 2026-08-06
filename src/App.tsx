@@ -10,6 +10,7 @@ export default function App() {
     projects,
     threads,
     providers,
+    workflows,
     selectedThreadId,
     selectThread,
     detail,
@@ -20,6 +21,8 @@ export default function App() {
     createThread,
     startRun,
     startWorkflowRun,
+    saveWorkflow,
+    removeWorkflow,
     stopRun,
     setPermissionMode,
     setProvider,
@@ -74,12 +77,17 @@ export default function App() {
         detail={detail}
         project={project}
         providers={providers}
+        workflows={workflows}
         hasProjects={projects.length > 0}
         onAddProject={() => {
           void addProject();
         }}
         onStartRun={(prompt) => startRun(prompt)}
-        onStartWorkflow={(prompt) => startWorkflowRun(prompt)}
+        onStartWorkflow={(prompt, templateId) =>
+          startWorkflowRun(prompt, templateId)
+        }
+        onSaveWorkflow={(template) => saveWorkflow(template)}
+        onRemoveWorkflow={(id) => removeWorkflow(id)}
         onStopRun={() => stopRun()}
         onSetPermissionMode={(mode) => setPermissionMode(mode)}
         onSetProvider={(input) => setProvider(input)}

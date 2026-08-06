@@ -7,7 +7,9 @@ import type {
   ProviderInfo,
   ThreadDetail,
   WorkLogItem,
+  WorkflowTemplateInfo,
 } from "../shared/ipc";
+import type { WorkflowSaveInput } from "../useCoder";
 import { diffLineKind, isEmptyDiff } from "../diffView";
 import { splitParagraphs } from "../format";
 import {
@@ -24,11 +26,17 @@ interface ThreadViewProps {
   detail: ThreadDetail | null;
   project: ProjectInfo | null;
   providers: ProviderInfo[];
+  workflows: WorkflowTemplateInfo[];
   hasProjects: boolean;
   onAddProject: () => void;
   onStartRun: (prompt: string) => void | Promise<void>;
-  /** Multi-phase Build workflow (Build pill). */
-  onStartWorkflow: (prompt: string) => void | Promise<void>;
+  /** Multi-phase Build workflow (Build pill) with selected template id. */
+  onStartWorkflow: (
+    prompt: string,
+    templateId: string,
+  ) => void | Promise<void>;
+  onSaveWorkflow: (template: WorkflowSaveInput) => Promise<WorkflowTemplateInfo>;
+  onRemoveWorkflow: (id: string) => Promise<void>;
   onStopRun: () => void | Promise<void>;
   onSetPermissionMode: (mode: PermissionMode) => void | Promise<void>;
   onSetProvider: (input: {
@@ -322,10 +330,13 @@ export function ThreadView({
   detail,
   project,
   providers,
+  workflows,
   hasProjects,
   onAddProject,
   onStartRun,
   onStartWorkflow,
+  onSaveWorkflow,
+  onRemoveWorkflow,
   onStopRun,
   onSetPermissionMode,
   onSetProvider,
@@ -619,13 +630,17 @@ export function ThreadView({
       </div>
 
       <Composer
+        threadId={thread.id}
         branch={thread.branch}
         permissionMode={thread.permissionMode}
         onPermissionModeChange={onSetPermissionMode}
         provider={thread.provider}
         model={thread.model}
         providers={providers}
+        workflows={workflows}
         onSetProvider={onSetProvider}
+        onSaveWorkflow={onSaveWorkflow}
+        onRemoveWorkflow={onRemoveWorkflow}
         sessionId={thread.sessionId}
         hasWorktree={hasWorktree}
         disabled={isWorking || isArchived}
