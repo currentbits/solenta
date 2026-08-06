@@ -174,6 +174,19 @@ export interface CoderApi {
     setupWorktree(input: { threadId: string }): Promise<ThreadInfo>;
     /** Working-tree changes in the thread's cwd (worktree if set, else project). */
     diff(input: { threadId: string }): Promise<DiffResult>;
+    /**
+     * Squash-merges the thread's worktree branch into the project's default
+     * branch (committing any uncommitted worktree changes first), then removes
+     * the worktree and branch. Rejects with a descriptive Error on conflicts
+     * or a dirty project checkout; nothing is force-removed on failure.
+     */
+    mergeWorktree(input: { threadId: string }): Promise<ThreadInfo>;
+    /**
+     * Deletes the thread's worktree and branch WITHOUT merging. Rejects when
+     * the worktree has uncommitted changes or unmerged commits unless force
+     * is true; the rejection message lists what would be lost.
+     */
+    removeWorktree(input: { threadId: string; force?: boolean }): Promise<ThreadInfo>;
   };
   /** Returns an unsubscribe function. */
   on(channel: "threads:changed", cb: (threads: ThreadInfo[]) => void): () => void;
