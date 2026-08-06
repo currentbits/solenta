@@ -1,0 +1,26 @@
+{
+  "name": "coder",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Coder - desktop agentic development tool",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "preview": "vite preview",
+    "electron": "electron ."
+  },
+  "dependencies": {
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.2",
+    "@types/react-dom": "^19.1.2",
+    "@vitejs/plugin-react": "^4.4.1",
+    "electron": "^35.2.0",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.3"
+  }
+}
