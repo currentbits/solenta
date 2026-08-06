@@ -96,6 +96,7 @@ app.whenReady().then(async () => {
     core,
     pushFn: (channel, payload) => broadcast(channel, payload),
     tickMs: 700,
+    userDataPath: userData,
   });
 
   registerIpc({

@@ -189,12 +189,43 @@ function setPermissionMode(store, input) {
 }
 
 /**
+ * Validate a model string for a provider entry.
+ * Empty models list: any non-empty trimmed string up to 100 chars (custom ids).
+ * Non-empty list: membership required.
+ * Returns the normalized model string, or null when clearing.
+ *
+ * @param {import('./providers').ProviderEntry | null} entry
+ * @param {string | null | undefined} rawModel
+ * @returns {string | null}
+ */
+function normalizeModelForProvider(entry, rawModel) {
+  if (rawModel == null || rawModel === "") return null;
+  const trimmed = String(rawModel).trim();
+  if (!trimmed) {
+    throw new Error("Model must be a non-empty string");
+  }
+  const models = entry && Array.isArray(entry.models) ? entry.models : [];
+  if (models.length === 0) {
+    if (trimmed.length > 100) {
+      throw new Error("Model must be at most 100 characters");
+    }
+    return trimmed;
+  }
+  if (!models.includes(trimmed)) {
+    throw new Error(
+      `Unknown model for ${entry && entry.id ? entry.id : "provider"}: ${trimmed}`,
+    );
+  }
+  return trimmed;
+}
+
+/**
  * Set thread provider and/or model. Does not bump updatedAt.
  *
  * Rejects unknown provider ids. Rejects provider change once sessionId is set.
- * Model-only changes are allowed for providers that advertise models (e.g.
- * claude); rejected when a non-null model is passed for providers with an
- * empty models list.
+ * Model validation: when the provider's models list is non-empty the model must
+ * come from it; when the list is empty any non-empty string is accepted and
+ * passed to the CLI as-is (custom model ids, e.g. codex -m).
  *
  * @param {import('./store').Store} store
  * @param {{ threadId: string, provider?: string, model?: string | null }} input
@@ -236,37 +267,22 @@ function setProvider(store, input) {
     );
   }
 
-  if (modelProvided && input.model != null && input.model !== "") {
-    const entry = getProvider(nextProvider);
-    if (entry && Array.isArray(entry.models) && entry.models.length === 0) {
-      throw new Error(
-        `Provider ${nextProvider} does not support model selection`,
-      );
-    }
-  }
-
   /** @type {{ provider?: string, model?: string | null }} */
   const patch = {};
   if (providerProvided) patch.provider = String(input.provider);
 
+  const nextEntry = getProvider(nextProvider);
+
   if (providerChanging) {
     // Do not carry the old provider's model into the new provider's argv.
-    // Keep a model only when this call supplies one that is valid for the
-    // NEW provider (non-empty models list); otherwise force null.
-    const nextEntry = getProvider(nextProvider);
-    const incoming =
-      modelProvided && input.model != null && input.model !== ""
-        ? String(input.model)
-        : null;
-    const validForNew =
-      incoming != null &&
-      nextEntry &&
-      Array.isArray(nextEntry.models) &&
-      nextEntry.models.length > 0;
-    patch.model = validForNew ? incoming : null;
+    // Keep a model only when this call supplies one that is valid for the NEW provider.
+    if (modelProvided) {
+      patch.model = normalizeModelForProvider(nextEntry, input.model);
+    } else {
+      patch.model = null;
+    }
   } else if (modelProvided) {
-    patch.model =
-      input.model == null || input.model === "" ? null : String(input.model);
+    patch.model = normalizeModelForProvider(nextEntry, input.model);
   }
 
   const updated = store.updateThread(threadId, patch);

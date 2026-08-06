@@ -21,7 +21,8 @@ const {
   resolveBin,
   isBinAvailable,
 } = require("./providers.js");
-const { getClaudeMcpArgs } = require("./memory-sup.js");
+const { getClaudeMcpArgs, getMemoryStatus } = require("./memory-sup.js");
+const { recordRunOutcome } = require("./memory-record.js");
 const workflowEngine = require("./workflow.js");
 
 const KIMI_PUSH_THROTTLE_MS = 250;
@@ -186,6 +187,8 @@ function assertProviderBinary(entry) {
  * @param {number} [opts.tickMs]
  * @param {typeof setInterval} [opts.setIntervalFn]
  * @param {typeof clearInterval} [opts.clearIntervalFn]
+ * @param {string} [opts.userDataPath] - for memory auto-record
+ * @param {() => { running: boolean, adopted: boolean, port: number | null }} [opts.getMemoryStatus]
  */
 function createRunner(opts) {
   const {
@@ -195,6 +198,8 @@ function createRunner(opts) {
     tickMs = 700,
     setIntervalFn = setInterval,
     clearIntervalFn = clearInterval,
+    userDataPath = "",
+    getMemoryStatus: getMemStatus = getMemoryStatus,
   } = opts;
 
   /**
@@ -205,6 +210,71 @@ function createRunner(opts) {
   /** Last known workflow (core Workflow or real state) per thread. */
   /** @type {Map<string, object>} */
   const lastWorkflowByThread = new Map();
+
+  /**
+   * Fire-and-forget memory record for a real run terminal. Never throws.
+   * Skips simulate-provider runs.
+   *
+   * @param {string} threadId
+   * @param {"done" | "failed" | "stopped"} status
+   * @param {string} [text]
+   * @param {object} [extras]
+   * @param {string} [extras.provider]
+   * @param {string | null} [extras.model]
+   * @param {number} [extras.tokensIn]
+   * @param {number} [extras.tokensOut]
+   * @param {number} [extras.costUsd]
+   * @param {boolean} [extras.skip] - force skip (simulate path)
+   */
+  function notifyRunTerminal(threadId, status, text, extras = {}) {
+    try {
+      if (extras && extras.skip) return;
+      const thread = store.getThread(threadId);
+      if (!thread) return;
+      const provider =
+        extras.provider != null ? String(extras.provider) : thread.provider;
+      if (provider === "simulate") return;
+      const project = store.getProject(thread.projectId);
+      void recordRunOutcome(
+        {
+          thread,
+          project,
+          outcome: {
+            status,
+            text: text || "",
+            provider,
+            model:
+              extras.model !== undefined ? extras.model : thread.model,
+            tokensIn: extras.tokensIn,
+            tokensOut: extras.tokensOut,
+            costUsd: extras.costUsd,
+          },
+        },
+        {
+          userDataPath,
+          getStatus: getMemStatus,
+        },
+      );
+    } catch {
+      // never affect the run path
+    }
+  }
+
+  /**
+   * Last assistant message text for a run (or any), for stop/partial bodies.
+   * @param {string} threadId
+   * @param {string | null} [runId]
+   */
+  function lastAssistantText(threadId, runId) {
+    const msgs = store.getMessages(threadId) || [];
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const m = msgs[i];
+      if (m.role !== "assistant") continue;
+      if (runId && m.runId && m.runId !== runId) continue;
+      return m.text || "";
+    }
+    return "";
+  }
 
   function pushDetail(threadId, workflow) {
     // Deleted threads must not resurrect via late agent/sim pushes.
@@ -569,6 +639,11 @@ function createRunner(opts) {
           store.save();
           pushDetail(threadId, realState);
           pushThreadsChanged();
+          notifyRunTerminal(
+            threadId,
+            "done",
+            fullText || lastAssistantText(threadId, runId),
+          );
           return;
         }
 
@@ -591,6 +666,7 @@ function createRunner(opts) {
         store.save();
         pushDetail(threadId, realState);
         pushThreadsChanged();
+        notifyRunTerminal(threadId, "failed", errText);
       },
       onError: (err) => {
         const e = active.get(threadId);
@@ -602,7 +678,8 @@ function createRunner(opts) {
         completeWorkLogStep(threadId, e.respondingId);
         realState.agentStatus = "failed";
         const msg = err && err.message ? err.message : String(err);
-        appendMessage(threadId, "event", `Run error: ${msg}`, runId);
+        const errText = `Run error: ${msg}`;
+        appendMessage(threadId, "event", errText, runId);
         appendDoneWorkLog(threadId, runId, "Run error");
         store.updateThread(
           threadId,
@@ -612,6 +689,7 @@ function createRunner(opts) {
         store.save();
         pushDetail(threadId, realState);
         pushThreadsChanged();
+        notifyRunTerminal(threadId, "failed", errText);
       },
     });
 
@@ -664,6 +742,8 @@ function createRunner(opts) {
     /** @type {string | null} */
     let capturedSessionId = thread.sessionId || null;
     let sawResult = false;
+    /** Run-local usage for memory footers (not cumulative store totals). */
+    const runUsage = { tokensIn: 0, tokensOut: 0, costUsd: 0 };
 
     const cwd = thread.worktreePath || project.path;
     const binary = resolveBin(entryDef);
@@ -689,6 +769,7 @@ function createRunner(opts) {
       startingId,
       workingId,
       claudeState,
+      runUsage,
     };
     Object.defineProperty(entry, "workflow", {
       get() {
@@ -863,11 +944,14 @@ function createRunner(opts) {
             turns: 0,
           };
           const usage = ev.usage || {};
-          const inputTokens =
-            prev.inputTokens + (Number(usage.input_tokens) || 0);
-          const outputTokens =
-            prev.outputTokens + (Number(usage.output_tokens) || 0);
+          const turnIn = Number(usage.input_tokens) || 0;
+          const turnOut = Number(usage.output_tokens) || 0;
           const costDelta = Number(ev.total_cost_usd) || 0;
+          runUsage.tokensIn += turnIn;
+          runUsage.tokensOut += turnOut;
+          runUsage.costUsd += costDelta;
+          const inputTokens = prev.inputTokens + turnIn;
+          const outputTokens = prev.outputTokens + turnOut;
           const costUsd = prev.costUsd + costDelta;
           const model =
             capturedModel || prev.model || null;
@@ -910,13 +994,10 @@ function createRunner(opts) {
             { touch: true },
           );
 
+          let failText = "";
           if (!ok) {
-            appendMessage(
-              threadId,
-              "event",
-              `Run error: result subtype ${ev.subtype || "unknown"}`,
-              runId,
-            );
+            failText = `Run error: result subtype ${ev.subtype || "unknown"}`;
+            appendMessage(threadId, "event", failText, runId);
             appendDoneWorkLog(threadId, runId, "Run error");
           }
 
@@ -926,6 +1007,20 @@ function createRunner(opts) {
           clearRun(threadId);
           pushDetail(threadId, claudeState);
           pushThreadsChanged();
+          notifyRunTerminal(
+            threadId,
+            ok ? "done" : "failed",
+            ok
+              ? assistantText ||
+                  (typeof ev.result === "string" ? ev.result : "") ||
+                  lastAssistantText(threadId, runId)
+              : failText,
+            {
+              tokensIn: runUsage.tokensIn,
+              tokensOut: runUsage.tokensOut,
+              costUsd: runUsage.costUsd,
+            },
+          );
           return;
         }
       },
@@ -969,6 +1064,11 @@ function createRunner(opts) {
         store.save();
         pushDetail(threadId, claudeState);
         pushThreadsChanged();
+        notifyRunTerminal(threadId, "failed", errText, {
+          tokensIn: runUsage.tokensIn,
+          tokensOut: runUsage.tokensOut,
+          costUsd: runUsage.costUsd,
+        });
       },
       onError: (err) => {
         const e = active.get(threadId);
@@ -979,7 +1079,8 @@ function createRunner(opts) {
         completeWorkLogStep(threadId, e.startingId);
         completeWorkLogStep(threadId, e.workingId);
         const msg = err && err.message ? err.message : String(err);
-        appendMessage(threadId, "event", `Run error: ${msg}`, runId);
+        const errText = `Run error: ${msg}`;
+        appendMessage(threadId, "event", errText, runId);
         appendDoneWorkLog(threadId, runId, "Run error");
         store.updateThread(
           threadId,
@@ -989,6 +1090,11 @@ function createRunner(opts) {
         store.save();
         pushDetail(threadId, claudeState);
         pushThreadsChanged();
+        notifyRunTerminal(threadId, "failed", errText, {
+          tokensIn: runUsage.tokensIn,
+          tokensOut: runUsage.tokensOut,
+          costUsd: runUsage.costUsd,
+        });
       },
     });
 
@@ -1038,6 +1144,8 @@ function createRunner(opts) {
     let capturedSessionId = thread.sessionId || null;
     let sawTerminalUsage = false;
     let finishedFromStream = false;
+    /** Run-local usage for memory footers (not cumulative store totals). */
+    const runUsage = { tokensIn: 0, tokensOut: 0, costUsd: 0 };
 
     const cwd = thread.worktreePath || project.path;
     const binary = resolveBin(providerEntry);
@@ -1056,6 +1164,7 @@ function createRunner(opts) {
       startingId,
       workingId,
       codexState,
+      runUsage,
     };
     Object.defineProperty(entry, "workflow", {
       get() {
@@ -1090,10 +1199,15 @@ function createRunner(opts) {
         turns: 0,
       };
       const costDelta = Number(usageInfo.costUsd) || 0;
+      const inDelta = Number(usageInfo.inputTokens) || 0;
+      const outDelta = Number(usageInfo.outputTokens) || 0;
+      runUsage.tokensIn += inDelta;
+      runUsage.tokensOut += outDelta;
+      runUsage.costUsd += costDelta;
       store.setUsage(threadId, {
         model: usageInfo.model || prev.model || thread.model || null,
-        inputTokens: prev.inputTokens + (usageInfo.inputTokens || 0),
-        outputTokens: prev.outputTokens + (usageInfo.outputTokens || 0),
+        inputTokens: prev.inputTokens + inDelta,
+        outputTokens: prev.outputTokens + outDelta,
         costUsd: prev.costUsd + costDelta,
         turns: prev.turns + 1,
       });
@@ -1259,6 +1373,16 @@ function createRunner(opts) {
           pushDetail(threadId, codexState);
           pushThreadsChanged();
           finishedFromStream = true;
+          notifyRunTerminal(
+            threadId,
+            "done",
+            lastAssistantText(threadId, runId),
+            {
+              tokensIn: runUsage.tokensIn,
+              tokensOut: runUsage.tokensOut,
+              costUsd: runUsage.costUsd,
+            },
+          );
           return;
         }
 
@@ -1281,6 +1405,11 @@ function createRunner(opts) {
         pushDetail(threadId, codexState);
         pushThreadsChanged();
         void finishedFromStream;
+        notifyRunTerminal(threadId, "failed", errText, {
+          tokensIn: runUsage.tokensIn,
+          tokensOut: runUsage.tokensOut,
+          costUsd: runUsage.costUsd,
+        });
       },
       onError: (err) => {
         const e = active.get(threadId);
@@ -1291,7 +1420,8 @@ function createRunner(opts) {
         completeWorkLogStep(threadId, e.startingId);
         completeWorkLogStep(threadId, e.workingId);
         const msg = err && err.message ? err.message : String(err);
-        appendMessage(threadId, "event", `Run error: ${msg}`, runId);
+        const errText = `Run error: ${msg}`;
+        appendMessage(threadId, "event", errText, runId);
         appendDoneWorkLog(threadId, runId, "Run error");
         store.updateThread(
           threadId,
@@ -1301,6 +1431,11 @@ function createRunner(opts) {
         store.save();
         pushDetail(threadId, codexState);
         pushThreadsChanged();
+        notifyRunTerminal(threadId, "failed", errText, {
+          tokensIn: runUsage.tokensIn,
+          tokensOut: runUsage.tokensOut,
+          costUsd: runUsage.costUsd,
+        });
       },
     });
 
@@ -1351,6 +1486,8 @@ function createRunner(opts) {
     let lastPushAt = 0;
     /** @type {ReturnType<typeof setTimeout> | null} */
     let pushTimer = null;
+    /** Run-local usage for memory footers (not cumulative store totals). */
+    const runUsage = { tokensIn: 0, tokensOut: 0, costUsd: 0 };
 
     const cwd = thread.worktreePath || project.path;
     const binary = resolveBin(providerEntry);
@@ -1369,6 +1506,7 @@ function createRunner(opts) {
       startingId,
       workingId,
       kimiState,
+      runUsage,
     };
     Object.defineProperty(entry, "workflow", {
       get() {
@@ -1427,10 +1565,15 @@ function createRunner(opts) {
         turns: 0,
       };
       const costDelta = Number(usageInfo.costUsd) || 0;
+      const inDelta = Number(usageInfo.inputTokens) || 0;
+      const outDelta = Number(usageInfo.outputTokens) || 0;
+      runUsage.tokensIn += inDelta;
+      runUsage.tokensOut += outDelta;
+      runUsage.costUsd += costDelta;
       store.setUsage(threadId, {
         model: prev.model || thread.model || null,
-        inputTokens: prev.inputTokens + (usageInfo.inputTokens || 0),
-        outputTokens: prev.outputTokens + (usageInfo.outputTokens || 0),
+        inputTokens: prev.inputTokens + inDelta,
+        outputTokens: prev.outputTokens + outDelta,
         costUsd: prev.costUsd + costDelta,
         turns: prev.turns + 1,
       });
@@ -1570,6 +1713,16 @@ function createRunner(opts) {
           store.save();
           pushDetail(threadId, kimiState);
           pushThreadsChanged();
+          notifyRunTerminal(
+            threadId,
+            "done",
+            assistantText || lastAssistantText(threadId, runId),
+            {
+              tokensIn: runUsage.tokensIn,
+              tokensOut: runUsage.tokensOut,
+              costUsd: runUsage.costUsd,
+            },
+          );
           return;
         }
 
@@ -1591,6 +1744,11 @@ function createRunner(opts) {
         store.save();
         pushDetail(threadId, kimiState);
         pushThreadsChanged();
+        notifyRunTerminal(threadId, "failed", errText, {
+          tokensIn: runUsage.tokensIn,
+          tokensOut: runUsage.tokensOut,
+          costUsd: runUsage.costUsd,
+        });
       },
       onError: (err) => {
         if (pushTimer) {
@@ -1605,7 +1763,8 @@ function createRunner(opts) {
         completeWorkLogStep(threadId, e.startingId);
         completeWorkLogStep(threadId, e.workingId);
         const msg = err && err.message ? err.message : String(err);
-        appendMessage(threadId, "event", `Run error: ${msg}`, runId);
+        const errText = `Run error: ${msg}`;
+        appendMessage(threadId, "event", errText, runId);
         appendDoneWorkLog(threadId, runId, "Run error");
         store.updateThread(
           threadId,
@@ -1615,6 +1774,11 @@ function createRunner(opts) {
         store.save();
         pushDetail(threadId, kimiState);
         pushThreadsChanged();
+        notifyRunTerminal(threadId, "failed", errText, {
+          tokensIn: runUsage.tokensIn,
+          tokensOut: runUsage.tokensOut,
+          costUsd: runUsage.costUsd,
+        });
       },
     });
 
@@ -1670,12 +1834,15 @@ function createRunner(opts) {
     /** @type {string | null} */
     let assistantMsgId = null;
     const cwd = thread.worktreePath || project.path;
+    /** Run-local usage for memory footers. */
+    const runUsage = { tokensIn: 0, tokensOut: 0, costUsd: 0 };
 
     const entry = {
       kind: "text",
       runId,
       stopping: false,
       handle: null,
+      runUsage,
       startingId,
       respondingId,
       realState,
@@ -1735,6 +1902,7 @@ function createRunner(opts) {
 
         // Best-effort usage: ceil(chars/4), cost 0
         const tokens = Math.ceil((realState.charCount || 0) / 4);
+        runUsage.tokensOut = tokens;
         const prev = store.getUsage(threadId) || {
           model: null,
           inputTokens: 0,
@@ -1760,6 +1928,17 @@ function createRunner(opts) {
           store.save();
           pushDetail(threadId, realState);
           pushThreadsChanged();
+          notifyRunTerminal(
+            threadId,
+            "done",
+            fullText || lastAssistantText(threadId, runId),
+            {
+              tokensIn: runUsage.tokensIn,
+              tokensOut: runUsage.tokensOut,
+              costUsd: runUsage.costUsd,
+              model: prev.model || model,
+            },
+          );
           return;
         }
 
@@ -1782,6 +1961,11 @@ function createRunner(opts) {
         store.save();
         pushDetail(threadId, realState);
         pushThreadsChanged();
+        notifyRunTerminal(threadId, "failed", errText, {
+          tokensIn: runUsage.tokensIn,
+          tokensOut: runUsage.tokensOut,
+          costUsd: runUsage.costUsd,
+        });
       },
       onError: (err) => {
         const e = active.get(threadId);
@@ -1793,7 +1977,8 @@ function createRunner(opts) {
         completeWorkLogStep(threadId, e.respondingId);
         realState.agentStatus = "failed";
         const msg = err && err.message ? err.message : String(err);
-        appendMessage(threadId, "event", `Run error: ${msg}`, runId);
+        const errText = `Run error: ${msg}`;
+        appendMessage(threadId, "event", errText, runId);
         appendDoneWorkLog(threadId, runId, "Run error");
         store.updateThread(
           threadId,
@@ -1803,6 +1988,11 @@ function createRunner(opts) {
         store.save();
         pushDetail(threadId, realState);
         pushThreadsChanged();
+        notifyRunTerminal(threadId, "failed", errText, {
+          tokensIn: runUsage.tokensIn,
+          tokensOut: runUsage.tokensOut,
+          costUsd: runUsage.costUsd,
+        });
       },
     });
 
@@ -1900,6 +2090,7 @@ function createRunner(opts) {
       completeWorkLogStep,
       appendDoneWorkLog,
       appendMessage,
+      notifyRunTerminal,
     });
   }
 
@@ -1963,6 +2154,12 @@ function createRunner(opts) {
       }
     }
 
+    const wasSimulate = entry.kind === "sim";
+    const stopUsage = entry.runUsage || {
+      tokensIn: 0,
+      tokensOut: 0,
+      costUsd: 0,
+    };
     clearRun(threadId);
     appendMessage(threadId, "event", "Run stopped", runId);
     appendDoneWorkLog(threadId, runId, "Run stopped");
@@ -1974,6 +2171,18 @@ function createRunner(opts) {
     store.save();
     pushDetail(threadId, lastWorkflow);
     pushThreadsChanged();
+    if (!wasSimulate) {
+      notifyRunTerminal(
+        threadId,
+        "stopped",
+        lastAssistantText(threadId, runId) || "Run stopped",
+        {
+          tokensIn: stopUsage.tokensIn || 0,
+          tokensOut: stopUsage.tokensOut || 0,
+          costUsd: stopUsage.costUsd || 0,
+        },
+      );
+    }
   }
 
   function getActiveWorkflow(threadId) {

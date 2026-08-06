@@ -110,17 +110,85 @@ describe("setProvider lock semantics", () => {
     assert.equal(store.getThread(thread.id).updatedAt, before);
   });
 
-  it("rejects model for providers with empty models list", () => {
+  it("accepts any non-empty custom model for providers with empty models list (codex)", () => {
     const thread = store.getThreads()[0];
     services.setProvider(store, { threadId: thread.id, provider: "codex" });
+    const updated = services.setProvider(store, {
+      threadId: thread.id,
+      model: "o3-pro-custom",
+    });
+    assert.equal(updated.model, "o3-pro-custom");
+    assert.equal(store.getThread(thread.id).model, "o3-pro-custom");
+  });
+
+  it("trims custom model and rejects whitespace-only with exact message", () => {
+    const thread = store.getThreads()[0];
+    services.setProvider(store, { threadId: thread.id, provider: "codex" });
+    const updated = services.setProvider(store, {
+      threadId: thread.id,
+      model: "  gpt-5-custom  ",
+    });
+    assert.equal(updated.model, "gpt-5-custom");
+
     assert.throws(
       () =>
         services.setProvider(store, {
           threadId: thread.id,
-          model: "o3",
+          model: "   ",
         }),
-      /does not support model/i,
+      { message: "Model must be a non-empty string" },
     );
+    assert.throws(
+      () =>
+        services.setProvider(store, {
+          threadId: thread.id,
+          model: "\t\n",
+        }),
+      { message: "Model must be a non-empty string" },
+    );
+  });
+
+  it("rejects custom model longer than 100 chars for empty models list", () => {
+    const thread = store.getThreads()[0];
+    services.setProvider(store, { threadId: thread.id, provider: "codex" });
+    const long = "m".repeat(101);
+    assert.throws(
+      () =>
+        services.setProvider(store, {
+          threadId: thread.id,
+          model: long,
+        }),
+      /100|at most|too long/i,
+    );
+  });
+
+  it("enforces membership for claude and kimi (non-empty models list)", () => {
+    const thread = store.getThreads()[0];
+    assert.throws(
+      () =>
+        services.setProvider(store, {
+          threadId: thread.id,
+          model: "not-a-claude-model",
+        }),
+      /model|not in|unknown/i,
+    );
+    assert.equal(store.getThread(thread.id).model, null);
+
+    services.setProvider(store, { threadId: thread.id, provider: "kimi" });
+    assert.throws(
+      () =>
+        services.setProvider(store, {
+          threadId: thread.id,
+          model: "not-a-kimi-model",
+        }),
+      /model|not in|unknown/i,
+    );
+    // Valid kimi model still accepted
+    const ok = services.setProvider(store, {
+      threadId: thread.id,
+      model: "k3",
+    });
+    assert.equal(ok.model, "k3");
   });
 
   it("does not bump updatedAt on setProvider", () => {

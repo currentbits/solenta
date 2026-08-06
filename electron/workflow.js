@@ -713,6 +713,7 @@ function kickoffText(template) {
  * @param {(threadId: string, itemId: string) => void} deps.completeWorkLogStep
  * @param {(threadId: string, runId: string, label: string) => void} deps.appendDoneWorkLog
  * @param {(threadId: string, role: string, text: string, runId?: string | null, tool?: object | null) => string} deps.appendMessage
+ * @param {(threadId: string, status: "done"|"failed"|"stopped", text?: string, extras?: object) => void} [deps.notifyRunTerminal]
  * @returns {Promise<{ runId: string }>}
  */
 async function startWorkflowRun(deps) {
@@ -730,6 +731,7 @@ async function startWorkflowRun(deps) {
     completeWorkLogStep,
     appendDoneWorkLog,
     appendMessage,
+    notifyRunTerminal,
   } = deps;
 
   if (active.has(threadId)) {
@@ -794,10 +796,17 @@ async function startWorkflowRun(deps) {
   /** Live child handles for stopRun */
   /** @type {Map<string, { kill: () => void }>} */
   const liveHandles = new Map();
-  /** Accumulated usage across agents */
+  /** Accumulated usage across agents (also on entry.runUsage for stop footers). */
   let aggInput = 0;
   let aggOutput = 0;
   let aggCost = 0;
+  const runUsage = { tokensIn: 0, tokensOut: 0, costUsd: 0 };
+
+  function syncRunUsage() {
+    runUsage.tokensIn = aggInput;
+    runUsage.tokensOut = aggOutput;
+    runUsage.costUsd = aggCost;
+  }
 
   /** @type {{ lastPush: number, pending: boolean, timer: ReturnType<typeof setTimeout> | null }} */
   const throttle = { lastPush: 0, pending: false, timer: null };
@@ -881,6 +890,7 @@ async function startWorkflowRun(deps) {
     phaseItemIds,
     view,
     throttle,
+    runUsage,
   };
   Object.defineProperty(entry, "workflow", {
     get() {
@@ -946,6 +956,13 @@ async function startWorkflowRun(deps) {
     // Final push never dropped.
     pushDetail(threadId, view);
     pushThreadsChanged();
+    if (typeof notifyRunTerminal === "function") {
+      notifyRunTerminal(threadId, "failed", errText, {
+        tokensIn: aggInput,
+        tokensOut: aggOutput,
+        costUsd: aggCost,
+      });
+    }
   }
 
   /**
@@ -1009,6 +1026,7 @@ async function startWorkflowRun(deps) {
         aggOutput += result.usage.outputTokens || 0;
         const agentCost = Number(result.usage.costUsd) || 0;
         aggCost += agentCost;
+        syncRunUsage();
         // Record per agent as it settles so stop/fail mid-run still bills spend.
         if (agentCost > 0) {
           store.recordSpend(agentCost);
@@ -1026,6 +1044,7 @@ async function startWorkflowRun(deps) {
         aggOutput += result.usage.outputTokens || 0;
         const agentCost = Number(result.usage.costUsd) || 0;
         aggCost += agentCost;
+        syncRunUsage();
         if (agentCost > 0) {
           store.recordSpend(agentCost);
         }
@@ -1162,6 +1181,13 @@ async function startWorkflowRun(deps) {
         // Final push never dropped.
         pushDetail(threadId, view);
         pushThreadsChanged();
+        if (typeof notifyRunTerminal === "function") {
+          notifyRunTerminal(threadId, "done", answerText, {
+            tokensIn: aggInput,
+            tokensOut: aggOutput,
+            costUsd: aggCost,
+          });
+        }
         return;
       }
 
