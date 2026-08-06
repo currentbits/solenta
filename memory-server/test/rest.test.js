@@ -1,0 +1,132 @@
+import { describe, it, before, after } from 'node:test'
+import assert from 'node:assert/strict'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import { Memory } from '../src/memory.js'
+import { startServer } from '../src/index.js'
+
+const TOKEN = 'test-token-0123456789abcdef'
+
+describe('REST convenience + new MCP tools', () => {
+  let server
+  let baseURL
+  let memory
+
+  before(async () => {
+    memory = new Memory(':memory:')
+    server = await startServer(memory, { port: 0, token: TOKEN, dbPath: ':memory:' })
+    const addr = server.address()
+    baseURL = `http://127.0.0.1:${addr.port}`
+  })
+
+  after(async () => {
+    await new Promise((resolve, reject) => {
+      server.close((err) => (err ? reject(err) : resolve()))
+    })
+    memory.close()
+  })
+
+  function authHeaders(extra = {}) {
+    return { Authorization: `Bearer ${TOKEN}`, ...extra }
+  }
+
+  it('REST endpoints require bearer auth', async () => {
+    for (const path of ['/api/recent', '/api/search?query=x', '/api/entry/x']) {
+      const res = await fetch(`${baseURL}${path}`)
+      assert.equal(res.status, 401, path)
+    }
+    const post = await fetch(`${baseURL}/api/store`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ type: 'knowledge', title: 't', body: 'b' }),
+    })
+    assert.equal(post.status, 401)
+  })
+
+  it('GET /api/recent, /api/search, /api/entry/:id, POST /api/store shapes', async () => {
+    const storeRes = await fetch(`${baseURL}/api/store`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify({
+        type: 'knowledge',
+        title: 'REST fact',
+        body: 'the restwalrus operator for rest tests',
+        project: 'coder',
+      }),
+    })
+    assert.equal(storeRes.status, 200)
+    const stored = await storeRes.json()
+    assert.ok(stored.id)
+
+    const recent = await fetch(`${baseURL}/api/recent?limit=10`, { headers: authHeaders() })
+    assert.equal(recent.status, 200)
+    const recentBody = await recent.json()
+    assert.ok(Array.isArray(recentBody))
+    const recentHit = recentBody.find((r) => r.id === stored.id)
+    assert.ok(recentHit)
+    // App contract: list rows carry body (excerpt form) and updated_at.
+    assert.equal(typeof recentHit.body, 'string')
+    assert.ok(recentHit.body.length > 0)
+    assert.ok(recentHit.updated_at, 'list rows must carry updated_at')
+    assert.equal(recentHit.excerpt, undefined)
+
+    const search = await fetch(
+      `${baseURL}/api/search?query=${encodeURIComponent('restwalrus')}&project=coder`,
+      { headers: authHeaders() },
+    )
+    assert.equal(search.status, 200)
+    const searchBody = await search.json()
+    assert.ok(Array.isArray(searchBody))
+    const searchHit = searchBody.find((h) => h.id === stored.id)
+    assert.ok(searchHit)
+    assert.equal(typeof searchHit.body, 'string')
+    assert.ok(searchHit.updated_at, 'search rows must carry updated_at')
+
+    const entry = await fetch(`${baseURL}/api/entry/${stored.id}`, { headers: authHeaders() })
+    assert.equal(entry.status, 200)
+    const full = await entry.json()
+    assert.equal(full.body, 'the restwalrus operator for rest tests')
+    assert.equal(full.id, stored.id)
+  })
+
+  it('GET /health includes janitor snapshot', async () => {
+    const res = await fetch(`${baseURL}/health`)
+    assert.equal(res.status, 200)
+    const body = await res.json()
+    assert.equal(body.ok, true)
+    assert.ok(body.janitor)
+    assert.equal(typeof body.janitor.liveEntries, 'number')
+    assert.equal(typeof body.janitor.entityCount, 'number')
+    assert.equal(typeof body.janitor.edgeCount, 'number')
+  })
+
+  it('MCP exposes memory_recent and memory_feedback', async () => {
+    const transport = new StreamableHTTPClientTransport(new URL(`${baseURL}/mcp`), {
+      requestInit: { headers: { Authorization: `Bearer ${TOKEN}` } },
+    })
+    const mcp = new Client({ name: 'test', version: '0.0.0' })
+    await mcp.connect(transport)
+
+    const tools = await mcp.listTools()
+    const names = tools.tools.map((t) => t.name).sort()
+    assert.ok(names.includes('memory_recent'))
+    assert.ok(names.includes('memory_feedback'))
+    assert.ok(names.includes('memory_store'))
+
+    const recent = await mcp.callTool({ name: 'memory_recent', arguments: { limit: 5 } })
+    const recentList = JSON.parse(recent.content[0].text)
+    assert.ok(Array.isArray(recentList))
+    assert.ok(recentList.length >= 1)
+    assert.equal(recentList[0].body, undefined)
+
+    const id = recentList[0].id
+    const fb = await mcp.callTool({
+      name: 'memory_feedback',
+      arguments: { id, verdict: 'helpful', note: 'yes' },
+    })
+    const fbBody = JSON.parse(fb.content[0].text)
+    assert.equal(fbBody.ok, true)
+
+    await mcp.close()
+  })
+})

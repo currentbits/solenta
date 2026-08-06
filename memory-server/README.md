@@ -20,5 +20,11 @@ cd memory-server && npm install && node src/index.js
 
 - `memory_bootstrap` — conventions, knowledge, active tasks, protocol
 - `memory_store` / `memory_get` / `memory_search` / `memory_supersede`
+- `memory_recent` — newest live entries (excerpts, limit ≤ 50)
+- `memory_feedback` — `{ id, verdict: helpful|harmful, note? }` evidence counters
+
+Search fuses FTS5 with a 2-hop entity graph (RRF), then applies composite scoring and a 20% relevance gate. Entities are extracted conservatively on store/supersede (`[[wikilinks]]`, code/doc files, two-hump PascalCase modules). A janitor runs on start and every 6h (access decay, orphan sweep, health snapshot on `GET /health` as `janitor`).
+
+REST (same bearer auth): `GET /api/recent`, `GET /api/search`, `GET /api/entry/:id`, `POST /api/store`.
 
 Search returns excerpts; call `memory_get` for full bodies. MCP at `POST /mcp` with `Authorization: Bearer <token>`. `GET /health` is open.

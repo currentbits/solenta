@@ -8,6 +8,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { z } from 'zod'
 import { Memory } from './memory.js'
+import { runJanitor, readJanitorSnapshot } from './janitor.js'
 
 const INSTRUCTIONS =
   'Coder shared memory. MEMORY PREFLIGHT: at session start call memory_bootstrap with project set to your working directory and treat its conventions as standing instructions. While working, store durable non-obvious findings (decisions, gotchas, conventions) with memory_store; before finishing, record what a future agent must know. Search returns excerpts; use memory_get for full bodies.'
@@ -102,8 +103,14 @@ function json(value) {
   return { content: [{ type: 'text', text: JSON.stringify(value, null, 2) }] }
 }
 
+function sendJson(res, status, value) {
+  res.writeHead(status, { 'content-type': 'application/json' })
+  res.end(JSON.stringify(value))
+}
+
 const entryType = z.enum(['knowledge', 'task', 'convention', 'run'])
 const taskStatus = z.enum(['active', 'done', 'abandoned'])
+const feedbackVerdict = z.enum(['helpful', 'harmful'])
 
 /**
  * @param {Memory} memory
@@ -190,6 +197,33 @@ export function buildServer(memory) {
     async (args) => json(memory.bootstrap(args)),
   )
 
+  server.registerTool(
+    'memory_recent',
+    {
+      description: 'Newest live memory entries (excerpt form). Limit max 50.',
+      inputSchema: {
+        limit: z.number().int().positive().max(50).optional(),
+        project: z.string().optional(),
+        type: entryType.optional(),
+      },
+    },
+    async (args) => json(memory.recent(args)),
+  )
+
+  server.registerTool(
+    'memory_feedback',
+    {
+      description:
+        'Report that a memory helped or misled you. Bumps helpful_count or harmful_count and writes feedback_log.',
+      inputSchema: {
+        id: z.string().min(1),
+        verdict: feedbackVerdict,
+        note: z.string().optional(),
+      },
+    },
+    async (args) => json(memory.feedback(args)),
+  )
+
   return server
 }
 
@@ -208,12 +242,109 @@ function readBody(req) {
 }
 
 /**
+ * Thin REST wrappers for the Coder UI proxy.
+ * @param {http.IncomingMessage} req
+ * @param {http.ServerResponse} res
+ * @param {URL} url
+ * @param {Memory} memory
+ */
+/**
+ * App-facing list row: the Coder UI contract wants `body` (excerpt form in
+ * lists) and `updated_at`; the MCP tools keep `excerpt`/`hint`.
+ */
+function toApiRow(r) {
+  return {
+    id: r.id,
+    type: r.type,
+    title: r.title,
+    body: r.excerpt ?? r.body ?? '',
+    project: r.project ?? null,
+    importance: r.importance,
+    created_at: r.created_at,
+    updated_at: r.updated_at ?? r.created_at,
+  }
+}
+
+async function handleApi(req, res, url, memory) {
+  try {
+    if (req.method === 'GET' && url.pathname === '/api/recent') {
+      const limit = url.searchParams.get('limit')
+      const project = url.searchParams.get('project') ?? undefined
+      const type = url.searchParams.get('type') ?? undefined
+      const result = memory.recent({
+        limit: limit != null ? Number(limit) : undefined,
+        project,
+        type,
+      })
+      sendJson(res, 200, result.map(toApiRow))
+      return true
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/search') {
+      const query = url.searchParams.get('query') ?? ''
+      const project = url.searchParams.get('project') ?? undefined
+      const limit = url.searchParams.get('limit')
+      const result = memory.search({
+        query,
+        project,
+        limit: limit != null ? Number(limit) : undefined,
+      })
+      sendJson(res, 200, result.map(toApiRow))
+      return true
+    }
+
+    if (req.method === 'GET' && url.pathname.startsWith('/api/entry/')) {
+      const id = decodeURIComponent(url.pathname.slice('/api/entry/'.length))
+      if (!id) {
+        sendJson(res, 400, { error: 'id required' })
+        return true
+      }
+      const entry = memory.get(id)
+      if (!entry) {
+        sendJson(res, 404, { error: 'not found' })
+        return true
+      }
+      if (!entry.title) {
+        // Superseded stub ({superseded_by, hint}); never serve it as a blank entry.
+        sendJson(res, 404, {
+          error: `Entry superseded${entry.superseded_by ? ` by ${entry.superseded_by}` : ''}`,
+        })
+        return true
+      }
+      sendJson(res, 200, { ...toApiRow(entry), body: entry.body })
+      return true
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/store') {
+      let body
+      try {
+        const raw = await readBody(req)
+        body = raw.length ? JSON.parse(raw.toString('utf8')) : {}
+      } catch {
+        sendJson(res, 400, { error: 'valid JSON required' })
+        return true
+      }
+      const result = memory.store(body)
+      sendJson(res, 200, result)
+      return true
+    }
+  } catch (err) {
+    sendJson(res, 400, { error: err instanceof Error ? err.message : String(err) })
+    return true
+  }
+  return false
+}
+
+/**
  * @param {Memory} memory
  * @param {{ port: number, token: string, dbPath: string }} config
  * @param {string} [host]
  * @returns {Promise<http.Server>}
  */
 export function startServer(memory, config, host = '127.0.0.1') {
+  // The Memory constructor already ran the janitor once; running it again
+  // here would double-decay access counts on every boot.
+
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', `http://${host}`)
 
@@ -225,8 +356,21 @@ export function startServer(memory, config, host = '127.0.0.1') {
           ok: true,
           entryCount: memory.entryCount(),
           dbPath: config.dbPath,
+          janitor: memory.janitorSnapshot?.() ?? readJanitorSnapshot(memory.db),
         }),
       )
+      return
+    }
+
+    // REST convenience endpoints require bearer auth.
+    if (url.pathname.startsWith('/api/')) {
+      if (!authorized(req, config.token)) {
+        res.writeHead(401).end()
+        return
+      }
+      const handled = await handleApi(req, res, url, memory)
+      if (handled) return
+      res.writeHead(404).end()
       return
     }
 
