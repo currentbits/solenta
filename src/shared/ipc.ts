@@ -187,7 +187,29 @@ export interface WorkflowTemplateInfo {
   phases: WorkflowPhaseSpec[];
 }
 
+export interface AppSettings {
+  /** Hard daily spend cap across all providers; null = no cap. */
+  dailyBudgetUsd: number | null;
+}
+
+export interface AppStatus {
+  /** Aggregated cost of all runs that finished today (local time). */
+  spendTodayUsd: number;
+  memory: {
+    running: boolean;
+    adopted: boolean;
+    port: number | null;
+  };
+}
+
 export interface CoderApi {
+  app: {
+    status(): Promise<AppStatus>;
+  };
+  settings: {
+    get(): Promise<AppSettings>;
+    set(patch: Partial<AppSettings>): Promise<AppSettings>;
+  };
   providers: {
     list(): Promise<ProviderInfo[]>;
   };
@@ -267,6 +289,12 @@ export interface CoderApi {
      * is true; the rejection message lists what would be lost.
      */
     removeWorktree(input: { threadId: string; force?: boolean }): Promise<ThreadInfo>;
+    /**
+     * Pushes the thread's current branch (worktree branch if set, else the
+     * project's checked-out branch) to origin with -u. Rejects with a clear
+     * message when no remote is configured or the push fails.
+     */
+    push(input: { threadId: string }): Promise<{ remote: string; branch: string }>;
   };
   /** Returns an unsubscribe function. */
   on(channel: "threads:changed", cb: (threads: ThreadInfo[]) => void): () => void;
