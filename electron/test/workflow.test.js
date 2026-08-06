@@ -819,6 +819,39 @@ describe("workflow orchestration", () => {
     assert.ok(analyze.agents.some((a) => a.status === "failed"));
   });
 
+  it("stop mid-phase still records spendByDay from settled agents", async () => {
+    const { localDayKey } = require("../store.js");
+    process.env.CODER_WF_TRAP_SIGTERM = "1";
+    const thread = store.getThreads()[0];
+    const day = localDayKey();
+    const before = store.getSpendToday();
+
+    await runner.startWorkflowRun({
+      threadId: thread.id,
+      prompt: "stop after seed so spend sticks",
+    });
+
+    // Wait until analyze has started: seed (with cost) has already settled.
+    await waitFor(() => {
+      const a1 = readMarkers(markerDir, "analyze1").some((m) => m.phase === "start");
+      const a2 = readMarkers(markerDir, "analyze2").some((m) => m.phase === "start");
+      return a1 && a2;
+    });
+
+    await runner.stopRun({ threadId: thread.id });
+
+    await waitFor(() => store.getThread(thread.id).status === "idle");
+
+    // Seed agent emits total_cost_usd 0.001; per-agent recordSpend must have
+    // landed even though the run never reached isFinal success.
+    const today = store.data.spendByDay[day] || 0;
+    assert.ok(
+      today > before,
+      `expected spendByDay[${day}] > ${before}, got ${today}`,
+    );
+    assert.ok(store.getSpendToday() > before);
+  });
+
   it("rejects unavailable phase provider naming the binary", async () => {
     const missing = path.join(tmpDir, "no-such-claude-binary");
     process.env.CODER_CLAUDE_BIN = missing;

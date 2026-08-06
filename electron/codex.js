@@ -337,7 +337,7 @@ function extractCommandItem(ev) {
 /**
  * Extract token usage from completion / token_count events.
  * @param {object} ev
- * @returns {{ inputTokens: number, outputTokens: number, model: string | null } | null}
+ * @returns {{ inputTokens: number, outputTokens: number, model: string | null, costUsd: number } | null}
  */
 function extractUsage(ev) {
   if (!ev || typeof ev !== "object") return null;
@@ -408,7 +408,20 @@ function extractUsage(ev) {
         ? ev.model
         : null;
 
-  return { inputTokens, outputTokens, model };
+  const costRaw =
+    usage.total_cost_usd ??
+    usage.cost_usd ??
+    usage.costUsd ??
+    ev.total_cost_usd ??
+    ev.cost_usd;
+  const costUsd = costRaw != null ? Number(costRaw) || 0 : 0;
+
+  /** @type {{ inputTokens: number, outputTokens: number, model: string | null, costUsd?: number }} */
+  const out = { inputTokens, outputTokens, model };
+  if (costRaw != null) {
+    out.costUsd = costUsd;
+  }
+  return out;
 }
 
 module.exports = {

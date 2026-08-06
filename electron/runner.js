@@ -867,8 +867,8 @@ function createRunner(opts) {
             prev.inputTokens + (Number(usage.input_tokens) || 0);
           const outputTokens =
             prev.outputTokens + (Number(usage.output_tokens) || 0);
-          const costUsd =
-            prev.costUsd + (Number(ev.total_cost_usd) || 0);
+          const costDelta = Number(ev.total_cost_usd) || 0;
+          const costUsd = prev.costUsd + costDelta;
           const model =
             capturedModel || prev.model || null;
           store.setUsage(threadId, {
@@ -878,6 +878,9 @@ function createRunner(opts) {
             costUsd,
             turns: prev.turns + 1,
           });
+          if (costDelta > 0) {
+            store.recordSpend(costDelta);
+          }
 
           // Assistant text from stream, or fall back to result field
           if (!assistantText && typeof ev.result === "string" && ev.result) {
@@ -1086,13 +1089,17 @@ function createRunner(opts) {
         costUsd: 0,
         turns: 0,
       };
+      const costDelta = Number(usageInfo.costUsd) || 0;
       store.setUsage(threadId, {
         model: usageInfo.model || prev.model || thread.model || null,
         inputTokens: prev.inputTokens + (usageInfo.inputTokens || 0),
         outputTokens: prev.outputTokens + (usageInfo.outputTokens || 0),
-        costUsd: prev.costUsd + 0,
+        costUsd: prev.costUsd + costDelta,
         turns: prev.turns + 1,
       });
+      if (costDelta > 0) {
+        store.recordSpend(costDelta);
+      }
       sawTerminalUsage = true;
     }
 
@@ -1419,13 +1426,17 @@ function createRunner(opts) {
         costUsd: 0,
         turns: 0,
       };
+      const costDelta = Number(usageInfo.costUsd) || 0;
       store.setUsage(threadId, {
         model: prev.model || thread.model || null,
         inputTokens: prev.inputTokens + (usageInfo.inputTokens || 0),
         outputTokens: prev.outputTokens + (usageInfo.outputTokens || 0),
-        costUsd: prev.costUsd + 0,
+        costUsd: prev.costUsd + costDelta,
         turns: prev.turns + 1,
       });
+      if (costDelta > 0) {
+        store.recordSpend(costDelta);
+      }
       sawUsage = true;
     }
 
@@ -1817,6 +1828,9 @@ function createRunner(opts) {
     if (!thread) {
       throw new Error(`Unknown thread: ${threadId}`);
     }
+
+    // Budget gate is start-time only; never kills an in-flight run.
+    services.assertUnderDailyBudget(store);
 
     const provider = resolveProvider(thread);
     // Fail before mutating thread state when the CLI is missing.

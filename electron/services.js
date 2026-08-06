@@ -9,6 +9,7 @@ const {
   knownProviderIds,
   listProviders,
 } = require("./providers.js");
+const { getMemoryStatus } = require("./memory-sup.js");
 
 const PERMISSION_MODES = new Set([
   "default",
@@ -524,6 +525,59 @@ function removeTemplate(store, input) {
   store.save();
 }
 
+/**
+ * @param {import('./store').Store} store
+ * @returns {{ dailyBudgetUsd: number | null }}
+ */
+function getSettings(store) {
+  return store.getSettings();
+}
+
+/**
+ * Validate and persist settings. Does not touch threads.
+ * @param {import('./store').Store} store
+ * @param {Partial<{ dailyBudgetUsd: number | null }>} patch
+ * @returns {{ dailyBudgetUsd: number | null }}
+ */
+function setSettings(store, patch) {
+  const next = store.setSettings(patch || {});
+  store.save();
+  return next;
+}
+
+/**
+ * @param {import('./store').Store} store
+ * @returns {{ spendTodayUsd: number, memory: { running: boolean, adopted: boolean, port: number | null } }}
+ */
+function appStatus(store) {
+  const spend = store.getSpendToday();
+  const spendTodayUsd = Math.round(spend * 100) / 100;
+  return {
+    spendTodayUsd,
+    memory: getMemoryStatus(),
+  };
+}
+
+/**
+ * Reject when a daily budget is set and today's spend is already at/over it.
+ * Start-time only; does not kill in-flight runs.
+ * @param {import('./store').Store} store
+ */
+function assertUnderDailyBudget(store) {
+  const settings = store.getSettings();
+  const budget = settings.dailyBudgetUsd;
+  if (budget == null) return;
+  if (typeof budget !== "number" || !Number.isFinite(budget) || budget <= 0) {
+    return;
+  }
+  const spent = store.getSpendToday();
+  if (spent >= budget) {
+    throw new Error(
+      `Daily budget reached ($${spent.toFixed(2)} of $${budget.toFixed(2)}). Raise or clear the cap in Settings.`,
+    );
+  }
+}
+
 module.exports = {
   addProject,
   createThread,
@@ -541,5 +595,9 @@ module.exports = {
   removeTemplate,
   validateWorkflowTemplate,
   slugFromRemoteUrl,
+  getSettings,
+  setSettings,
+  appStatus,
+  assertUnderDailyBudget,
   PERMISSION_MODES,
 };

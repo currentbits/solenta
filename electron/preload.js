@@ -32,6 +32,13 @@ function on(channel, cb) {
 
 /** @type {import('../src/shared/ipc').CoderApi} */
 const coder = {
+  app: {
+    status: () => invoke("app:status"),
+  },
+  settings: {
+    get: () => invoke("settings:get"),
+    set: (patch) => invoke("settings:set", patch),
+  },
   providers: {
     list: () => invoke("providers:list"),
   },
@@ -66,6 +73,7 @@ const coder = {
     diff: (input) => invoke("git:diff", input),
     mergeWorktree: (input) => invoke("git:mergeWorktree", input),
     removeWorktree: (input) => invoke("git:removeWorktree", input),
+    push: (input) => invoke("git:push", input),
   },
   on,
 };

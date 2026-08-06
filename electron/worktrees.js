@@ -29,24 +29,42 @@ function gitOut(cwd, args, opts) {
  * Run git without throwing. Returns { ok, stdout, stderr, combined }.
  * @param {string} cwd
  * @param {string[]} args
- * @param {{ raw?: boolean }} [opts]
+ * @param {{ raw?: boolean, env?: NodeJS.ProcessEnv, timeout?: number }} [opts]
  */
 function gitTry(cwd, args, opts) {
   try {
-    const out = execFileSync("git", args, {
+    /** @type {import('node:child_process').ExecFileSyncOptionsWithStringEncoding} */
+    const execOpts = {
       cwd,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
       maxBuffer: GIT_MAX_BUFFER,
-    });
+    };
+    if (opts && opts.env) {
+      execOpts.env = { ...process.env, ...opts.env };
+    }
+    if (opts && opts.timeout != null) {
+      execOpts.timeout = opts.timeout;
+    }
+    const out = execFileSync("git", args, execOpts);
     const stdout = opts && opts.raw ? out : out.trim();
     return { ok: true, stdout, stderr: "", combined: stdout };
   } catch (err) {
     const stdout = err && err.stdout != null ? String(err.stdout) : "";
     const stderr = err && err.stderr != null ? String(err.stderr) : "";
     const msg = err && err.message ? String(err.message) : String(err);
+    const timedOut =
+      (err && err.code === "ETIMEDOUT") ||
+      (err && err.killed && /ETIMEDOUT|timed out/i.test(msg));
     const combined = [stdout, stderr, msg].filter(Boolean).join("\n");
-    return { ok: false, stdout, stderr, combined, error: err };
+    return {
+      ok: false,
+      stdout,
+      stderr,
+      combined,
+      error: err,
+      timedOut: Boolean(timedOut),
+    };
   }
 }
 
@@ -545,11 +563,82 @@ function diff(opts) {
   };
 }
 
+/**
+ * Push the thread's current branch (worktree if set, else project checkout)
+ * to origin with -u.
+ *
+ * @param {object} opts
+ * @param {import('./store').Store} opts.store
+ * @param {string} opts.threadId
+ * @param {(channel: string, payload: unknown) => void} [opts.broadcast]
+ * @returns {{ remote: string, branch: string }}
+ */
+function push(opts) {
+  const { store, threadId, broadcast } = opts;
+
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  const project = store.getProject(thread.projectId);
+  if (!project) {
+    throw new Error(`Unknown project for thread: ${threadId}`);
+  }
+
+  const cwd = thread.worktreePath || project.path;
+
+  let branch = "";
+  try {
+    branch = gitOut(cwd, ["branch", "--show-current"]);
+  } catch (err) {
+    const msg = err && err.message ? String(err.message) : String(err);
+    throw new Error(
+      `Could not determine current branch: ${msg.split("\n")[0]}`,
+    );
+  }
+  if (!branch) {
+    throw new Error(
+      "Checkout is detached HEAD or has no branch name; check out a branch before pushing",
+    );
+  }
+
+  const remote = gitTry(cwd, ["remote", "get-url", "origin"]);
+  if (!remote.ok) {
+    throw new Error("No git remote configured for this project.");
+  }
+
+  // Never prompt for credentials on the main process; cap wait so a hung
+  // remote cannot freeze Electron.
+  const result = gitTry(cwd, ["push", "-u", "origin", branch], {
+    env: { GIT_TERMINAL_PROMPT: "0" },
+    timeout: 30_000,
+  });
+  if (!result.ok) {
+    if (result.timedOut) {
+      throw new Error("git push timed out after 30s");
+    }
+    const errText = (result.stderr || result.combined || "").trim();
+    // Last 300 chars (tail), not the head: useful error text is often at the end.
+    const tail =
+      (errText.length <= 300 ? errText : errText.slice(-300)) ||
+      "git push failed";
+    throw new Error(tail);
+  }
+
+  if (typeof broadcast === "function") {
+    const { listThreads } = require("./services.js");
+    broadcast("threads:changed", listThreads(store));
+  }
+
+  return { remote: "origin", branch };
+}
+
 module.exports = {
   setupWorktree,
   diff,
   mergeWorktree,
   removeWorktree,
+  push,
   slugify,
   PATCH_TRUNCATE,
 };

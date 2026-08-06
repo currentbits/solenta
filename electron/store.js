@@ -44,7 +44,82 @@ const EMPTY = {
   workLogByThread: {},
   usageByThread: {},
   workflowTemplates: [],
+  spendByDay: {},
+  settings: { dailyBudgetUsd: null },
 };
+
+const SPEND_RETENTION_DAYS = 90;
+
+/**
+ * Local calendar day key YYYY-MM-DD (LOCAL timezone, not UTC).
+ * @param {Date} [now]
+ * @returns {string}
+ */
+function localDayKey(now = new Date()) {
+  const d = now instanceof Date ? now : new Date(now);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+/**
+ * Drop spendByDay keys older than retention days relative to `now`.
+ * Mutates the map in place.
+ * @param {Record<string, number>} spendByDay
+ * @param {Date} [now]
+ */
+function pruneSpendByDay(spendByDay, now = new Date()) {
+  if (!spendByDay || typeof spendByDay !== "object") return;
+  const cutoff = new Date(now instanceof Date ? now.getTime() : Date.now());
+  cutoff.setHours(0, 0, 0, 0);
+  cutoff.setDate(cutoff.getDate() - SPEND_RETENTION_DAYS);
+  const cutoffKey = localDayKey(cutoff);
+  for (const key of Object.keys(spendByDay)) {
+    if (typeof key !== "string" || key < cutoffKey) {
+      delete spendByDay[key];
+    }
+  }
+}
+
+/**
+ * Normalize settings from disk.
+ * @param {unknown} raw
+ * @returns {{ dailyBudgetUsd: number | null }}
+ */
+function normalizeSettings(raw) {
+  const settings = { dailyBudgetUsd: null };
+  if (!raw || typeof raw !== "object") return settings;
+  const v = /** @type {{ dailyBudgetUsd?: unknown }} */ (raw).dailyBudgetUsd;
+  if (v === null || v === undefined) {
+    settings.dailyBudgetUsd = null;
+  } else if (typeof v === "number" && Number.isFinite(v) && v > 0) {
+    settings.dailyBudgetUsd = v;
+  } else {
+    settings.dailyBudgetUsd = null;
+  }
+  return settings;
+}
+
+/**
+ * Normalize spendByDay map and prune old buckets.
+ * @param {unknown} raw
+ * @param {Date} [now]
+ * @returns {Record<string, number>}
+ */
+function normalizeSpendByDay(raw, now = new Date()) {
+  /** @type {Record<string, number>} */
+  const map = {};
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    for (const [k, v] of Object.entries(raw)) {
+      if (typeof k === "string" && typeof v === "number" && Number.isFinite(v)) {
+        map[k] = v;
+      }
+    }
+  }
+  pruneSpendByDay(map, now);
+  return map;
+}
 
 /**
  * Deep-clone the builtin standard template.
@@ -182,6 +257,8 @@ class Store {
         workflowTemplates: Array.isArray(parsed.workflowTemplates)
           ? parsed.workflowTemplates
           : [],
+        spendByDay: normalizeSpendByDay(parsed.spendByDay),
+        settings: normalizeSettings(parsed.settings),
       };
       ensureWorkflowTemplates(data);
       this._recoveredOnLoad = recoverInterruptedRuns(data);
@@ -268,6 +345,77 @@ class Store {
     } else {
       this.data.usageByThread[threadId] = usage;
     }
+  }
+
+  /**
+   * Add a cost delta to today's local-day spend bucket.
+   * Zero/negative/non-finite deltas are ignored.
+   * @param {number} deltaUsd
+   * @param {Date} [now] - injectable clock for tests
+   */
+  recordSpend(deltaUsd, now = new Date()) {
+    const n = Number(deltaUsd);
+    if (!Number.isFinite(n) || n <= 0) return;
+    if (!this.data.spendByDay || typeof this.data.spendByDay !== "object") {
+      this.data.spendByDay = {};
+    }
+    const key = localDayKey(now);
+    this.data.spendByDay[key] = (Number(this.data.spendByDay[key]) || 0) + n;
+  }
+
+  /**
+   * @param {Date} [now]
+   * @returns {number}
+   */
+  getSpendToday(now = new Date()) {
+    if (!this.data.spendByDay || typeof this.data.spendByDay !== "object") {
+      return 0;
+    }
+    const key = localDayKey(now);
+    const v = this.data.spendByDay[key];
+    return typeof v === "number" && Number.isFinite(v) ? v : 0;
+  }
+
+  /**
+   * @returns {{ dailyBudgetUsd: number | null }}
+   */
+  getSettings() {
+    if (!this.data.settings || typeof this.data.settings !== "object") {
+      this.data.settings = { dailyBudgetUsd: null };
+    }
+    return {
+      dailyBudgetUsd:
+        this.data.settings.dailyBudgetUsd == null
+          ? null
+          : this.data.settings.dailyBudgetUsd,
+    };
+  }
+
+  /**
+   * Validate and merge settings. Does not touch threads.
+   * Does not save; caller must save.
+   * @param {Partial<{ dailyBudgetUsd: number | null }>} patch
+   * @returns {{ dailyBudgetUsd: number | null }}
+   */
+  setSettings(patch) {
+    if (!patch || typeof patch !== "object") {
+      return this.getSettings();
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "dailyBudgetUsd")) {
+      const v = patch.dailyBudgetUsd;
+      if (v !== null) {
+        if (typeof v !== "number" || !Number.isFinite(v) || !(v > 0)) {
+          throw new Error(
+            "Daily budget must be a positive number or null",
+          );
+        }
+      }
+      if (!this.data.settings || typeof this.data.settings !== "object") {
+        this.data.settings = { dailyBudgetUsd: null };
+      }
+      this.data.settings.dailyBudgetUsd = v === null ? null : v;
+    }
+    return this.getSettings();
   }
 
   /**
@@ -469,6 +617,8 @@ function cloneEmpty() {
     workLogByThread: {},
     usageByThread: {},
     workflowTemplates: [],
+    spendByDay: {},
+    settings: { dailyBudgetUsd: null },
   };
   ensureWorkflowTemplates(data);
   return data;
@@ -481,4 +631,9 @@ module.exports = {
   STANDARD_TEMPLATE,
   cloneStandardTemplate,
   ensureWorkflowTemplates,
+  localDayKey,
+  pruneSpendByDay,
+  normalizeSettings,
+  normalizeSpendByDay,
+  SPEND_RETENTION_DAYS,
 };

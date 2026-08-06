@@ -11,6 +11,7 @@ const {
   diff,
   mergeWorktree,
   removeWorktree,
+  push,
 } = require("../worktrees.js");
 
 function git(cwd, args) {
@@ -417,5 +418,70 @@ describe("worktrees", () => {
     assert.ok(!fs.existsSync(wtPath));
     const branches = git(repo, ["branch"]);
     assert.ok(!branches.includes(branch));
+  });
+
+  it("push happy path: local bare remote receives the branch", () => {
+    const bare = path.join(tmpDir, "remote.git");
+    git(tmpDir, ["init", "--bare", bare]);
+    git(repo, ["remote", "add", "origin", bare]);
+
+    // Ensure named branch
+    let branch;
+    try {
+      branch = git(repo, ["branch", "--show-current"]);
+    } catch {
+      branch = "";
+    }
+    if (!branch) {
+      git(repo, ["checkout", "-b", "main"]);
+      branch = "main";
+    }
+
+    broadcasts = [];
+    const result = push({
+      store,
+      threadId: thread.id,
+      broadcast: (ch, payload) => broadcasts.push({ ch, payload }),
+    });
+
+    assert.deepEqual(result, { remote: "origin", branch });
+    assert.ok(broadcasts.some((b) => b.ch === "threads:changed"));
+
+    // Bare repo should list the branch
+    const refs = git(bare, ["branch"]);
+    assert.ok(
+      refs.includes(branch) || refs.includes(`* ${branch}`),
+      `bare branches: ${refs}`,
+    );
+  });
+
+  it("push rejects when no origin remote is configured", () => {
+    // Fresh repo from beforeEach has no origin
+    assert.throws(
+      () => push({ store, threadId: thread.id, broadcast: () => {} }),
+      /No git remote configured for this project\./,
+    );
+  });
+
+  it("push failure surfaces stderr tail", () => {
+    // Point origin at a path that cannot accept pushes
+    const badRemote = path.join(tmpDir, "does-not-exist-remote");
+    git(repo, ["remote", "add", "origin", badRemote]);
+
+    assert.throws(
+      () => push({ store, threadId: thread.id, broadcast: () => {} }),
+      (err) => {
+        assert.ok(err && err.message);
+        assert.ok(err.message.length <= 300 || err.message.length > 0);
+        // Must carry real git failure text (not a generic wrapper)
+        assert.ok(
+          /denied|exist|repository|remote|fatal|error|Could not|does not/i.test(
+            err.message,
+          ),
+          `unexpected push error: ${err.message}`,
+        );
+        return true;
+      },
+    );
   });
 });

@@ -741,6 +741,10 @@ async function startWorkflowRun(deps) {
     throw new Error(`Unknown thread: ${threadId}`);
   }
 
+  // Budget gate is start-time only; never kills an in-flight run.
+  const services = require("./services.js");
+  services.assertUnderDailyBudget(store);
+
   const project = store.getProject(thread.projectId);
   if (!project) {
     throw new Error(`Unknown project for thread: ${threadId}`);
@@ -1003,7 +1007,12 @@ async function startWorkflowRun(deps) {
           1;
         aggInput += result.usage.inputTokens || 0;
         aggOutput += result.usage.outputTokens || 0;
-        aggCost += result.usage.costUsd || 0;
+        const agentCost = Number(result.usage.costUsd) || 0;
+        aggCost += agentCost;
+        // Record per agent as it settles so stop/fail mid-run still bills spend.
+        if (agentCost > 0) {
+          store.recordSpend(agentCost);
+        }
       } else {
         agent.tokensUsed = Math.ceil((result.text || "").length / 4) || 1;
       }
@@ -1015,7 +1024,11 @@ async function startWorkflowRun(deps) {
           (result.usage.inputTokens || 0) + (result.usage.outputTokens || 0);
         aggInput += result.usage.inputTokens || 0;
         aggOutput += result.usage.outputTokens || 0;
-        aggCost += result.usage.costUsd || 0;
+        const agentCost = Number(result.usage.costUsd) || 0;
+        aggCost += agentCost;
+        if (agentCost > 0) {
+          store.recordSpend(agentCost);
+        }
       }
       appendDossier(phaseName, agentIndex, agentPrompt, result, true);
     }
@@ -1136,6 +1149,7 @@ async function startWorkflowRun(deps) {
           costUsd: prev.costUsd + aggCost,
           turns: prev.turns + 1,
         });
+        // spendByDay is updated per agent above; do not re-record aggCost here.
 
         recomputeView(view);
         store.updateThread(

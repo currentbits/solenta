@@ -7,6 +7,7 @@ const {
   diff,
   mergeWorktree,
   removeWorktree,
+  push,
 } = require("./worktrees.js");
 
 /**
@@ -96,6 +97,18 @@ function registerIpc(deps) {
     return updated;
   });
 
+  ipcMain.handle("app:status", async () => {
+    return services.appStatus(store);
+  });
+
+  ipcMain.handle("settings:get", async () => {
+    return services.getSettings(store);
+  });
+
+  ipcMain.handle("settings:set", async (_event, patch) => {
+    return services.setSettings(store, patch);
+  });
+
   ipcMain.handle("providers:list", async () => {
     return services.listProvidersForApi(store);
   });
@@ -168,6 +181,14 @@ function registerIpc(deps) {
       store,
       threadId: input.threadId,
       force: Boolean(input && input.force),
+      broadcast,
+    });
+  });
+
+  ipcMain.handle("git:push", async (_event, input) => {
+    return push({
+      store,
+      threadId: input.threadId,
       broadcast,
     });
   });

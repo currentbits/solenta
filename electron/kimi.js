@@ -153,9 +153,9 @@ function extractToolEvent(obj) {
 
 /**
  * Usage-ish fields: input_tokens/output_tokens or prompt_tokens/completion_tokens
- * at top level or under usage.
+ * at top level or under usage. Cost when the provider reports it.
  * @param {object} obj
- * @returns {{ inputTokens: number, outputTokens: number } | null}
+ * @returns {{ inputTokens: number, outputTokens: number, costUsd: number } | null}
  */
 function extractUsage(obj) {
   if (!obj || typeof obj !== "object") return null;
@@ -200,7 +200,20 @@ function extractUsage(obj) {
         0,
     ) || 0;
 
-  return { inputTokens, outputTokens };
+  const costRaw =
+    usage.total_cost_usd ??
+    usage.cost_usd ??
+    usage.costUsd ??
+    obj.total_cost_usd ??
+    obj.cost_usd;
+  const costUsd = costRaw != null ? Number(costRaw) || 0 : 0;
+
+  /** @type {{ inputTokens: number, outputTokens: number, costUsd?: number }} */
+  const out = { inputTokens, outputTokens };
+  if (costRaw != null) {
+    out.costUsd = costUsd;
+  }
+  return out;
 }
 
 /**
