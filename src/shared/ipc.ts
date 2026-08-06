@@ -267,8 +267,11 @@ export interface CoderApi {
     /**
      * Sets the thread's provider and/or model. Rejects once the thread has a
      * sessionId (context lives with the provider; switching would lose it).
-     * Model alone may still be changed between turns for providers whose
-     * sessions tolerate it (claude); implementations reject otherwise.
+     * Model validation: when the provider's models list is non-empty the
+     * model must come from it; when the list is EMPTY any non-empty string
+     * is accepted and passed to the CLI as-is (custom model ids, e.g codex
+     * -m). Model alone may still be changed between turns for providers
+     * whose sessions tolerate it.
      */
     setProvider(input: { threadId: string; provider?: string; model?: string | null }): Promise<ThreadInfo>;
     /**
