@@ -19,6 +19,7 @@ const {
   resolveBin,
   isBinAvailable,
 } = require("./providers.js");
+const workflowEngine = require("./workflow.js");
 
 const ADJECTIVES = [
   "INTEGER",
@@ -210,8 +211,11 @@ function createRunner(opts) {
     }
     let view = null;
     if (workflow) {
-      if (workflow.__real) {
-        // Contract: workflow only for simulate provider
+      if (workflow.__orchestrated) {
+        // Real multi-phase workflow: already a WorkflowView shape.
+        view = workflowEngine.toPublicView(workflow);
+      } else if (workflow.__real) {
+        // Contract: workflow only for simulate / orchestrated
         view = null;
       } else if (workflow.__claude || workflow.__codex) {
         view = null;
@@ -1537,6 +1541,29 @@ function createRunner(opts) {
   }
 
   /**
+   * Orchestrated multi-phase Build workflow (real one-shot Claude agents).
+   * @param {{ threadId: string, prompt: string }} input
+   * @returns {Promise<{ runId: string }>}
+   */
+  async function startWorkflowRun(input) {
+    return workflowEngine.startWorkflowRun({
+      threadId: input.threadId,
+      prompt: input.prompt,
+      store,
+      core,
+      pushFn,
+      active,
+      clearRun,
+      pushDetail,
+      pushThreadsChanged,
+      beginWorkLogStep,
+      completeWorkLogStep,
+      appendDoneWorkLog,
+      appendMessage,
+    });
+  }
+
+  /**
    * @param {{ threadId: string }} input
    */
   async function stopRun(input) {
@@ -1554,7 +1581,9 @@ function createRunner(opts) {
 
     entry.stopping = true;
 
-    if (
+    if (entry.kind === "workflow") {
+      workflowEngine.stopWorkflowEntry(entry);
+    } else if (
       (entry.kind === "generic" ||
         entry.kind === "claude" ||
         entry.kind === "codex" ||
@@ -1580,7 +1609,10 @@ function createRunner(opts) {
     } else if (entry.kind === "claude" || entry.kind === "codex") {
       completeWorkLogStep(threadId, entry.startingId);
       completeWorkLogStep(threadId, entry.workingId);
-    } else if (entry.kind === "sim" && entry.phaseItemIds) {
+    } else if (
+      (entry.kind === "sim" || entry.kind === "workflow") &&
+      entry.phaseItemIds
+    ) {
       for (const id of entry.phaseItemIds.values()) {
         completeWorkLogStep(threadId, id);
       }
@@ -1612,7 +1644,9 @@ function createRunner(opts) {
   function stopAll() {
     for (const threadId of [...active.keys()]) {
       const entry = active.get(threadId);
-      if (
+      if (entry && entry.kind === "workflow") {
+        workflowEngine.stopWorkflowEntry(entry);
+      } else if (
         entry &&
         (entry.kind === "generic" ||
           entry.kind === "claude" ||
@@ -1636,6 +1670,9 @@ function createRunner(opts) {
 
   function toWorkflowView(workflow) {
     if (!workflow) return null;
+    if (workflow.__orchestrated) {
+      return workflowEngine.toPublicView(workflow);
+    }
     if (workflow.__real || workflow.__claude || workflow.__codex) {
       if (workflow.__real) return buildRealWorkflowView(workflow);
       return null;
@@ -1645,6 +1682,7 @@ function createRunner(opts) {
 
   return {
     startRun,
+    startWorkflowRun,
     stopRun,
     getActiveWorkflow,
     isRunning,

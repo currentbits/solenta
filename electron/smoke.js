@@ -5,11 +5,12 @@
  * Run with the real Electron binary (not node):
  *   ./node_modules/.bin/electron electron/smoke.js
  *
- * Four passes in one invocation:
+ * Five passes in one invocation:
  *   A) CODER_SIMULATE=1 — simulated core ticker, new work-log shape
  *   B) CODER_AGENT_CMD = fake node -e agent — real generic spawn path to done
  *   C) CODER_CLAUDE_BIN = fake stream-json script — session, tools, usage
  *   D) CODER_CODEX_BIN = fake codex JSONL — session, tool Command, status done
+ *   E) CODER_CLAUDE_BIN = workflow-aware fake — runs.startWorkflow multi-phase
  *
  * Uses a temp userData path so it never touches real app state.
  * Expects dist/index.html (run `npx vite build` first) and core/dist.
@@ -94,6 +95,55 @@ function emit(obj) { process.stdout.write(JSON.stringify(obj) + "\\n"); }
     total_cost_usd: 0.002,
     num_turns: 1,
     session_id: "smoke-sess-1",
+  });
+  process.exit(0);
+})().catch((e) => { process.stderr.write(String(e)); process.exit(1); });
+`;
+  fs.writeFileSync(scriptPath, body, { mode: 0o755 });
+  return scriptPath;
+}
+
+/**
+ * Write a fake claude that handles both session turns and workflow agent roles
+ * (branches on prompt content for seed/analyze/synthesize).
+ * @param {string} dir
+ * @returns {string} absolute path to executable script
+ */
+function writeSmokeWorkflowFakeClaude(dir) {
+  const scriptPath = path.join(dir, "smoke-wf-fake-claude");
+  const body = `#!/usr/bin/env node
+"use strict";
+const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+function emit(obj) { process.stdout.write(JSON.stringify(obj) + "\\n"); }
+const prompt = process.argv[process.argv.length - 1] || "";
+function roleOf(p) {
+  if (/produce the final answer/i.test(p) || /ORIGINAL user prompt/i.test(p)) return "synthesize";
+  if (/You are the planning agent/i.test(p)) return "seed";
+  if (/You are analyze agent 1 of 2/i.test(p)) return "analyze1";
+  if (/You are analyze agent 2 of 2/i.test(p)) return "analyze2";
+  return "session";
+}
+const role = roleOf(prompt);
+const texts = {
+  seed: "SMOKE_PLAN: step one",
+  analyze1: "SMOKE_IMPL: do it",
+  analyze2: "SMOKE_RISK: careful",
+  synthesize: "SMOKE_SYNTH_FINAL",
+  session: "Smoke claude ok",
+};
+(async () => {
+  const text = texts[role] || "ok";
+  emit({ type: "system", subtype: "init", session_id: "smoke-wf-sess", model: "smoke-wf-model" });
+  await delay(10);
+  emit({ type: "assistant", message: { content: [{ type: "text", text }] } });
+  await delay(10);
+  emit({
+    type: "result",
+    subtype: "success",
+    result: text,
+    usage: { input_tokens: 5, output_tokens: 7 },
+    total_cost_usd: 0.001,
+    session_id: "smoke-wf-sess",
   });
   process.exit(0);
 })().catch((e) => { process.stderr.write(String(e)); process.exit(1); });
@@ -653,7 +703,116 @@ app
     });
     logStep("passD", { ok: true });
 
-    logStep("smoke", { ok: true, passes: ["A", "B", "C", "D"] });
+    // ── Pass E: real orchestrated workflow via startWorkflow ──────────
+    delete process.env.CODER_SIMULATE;
+    delete process.env.CODER_AGENT_CMD;
+    delete process.env.CODER_CODEX_BIN;
+    const fakeWfClaude = writeSmokeWorkflowFakeClaude(userData);
+    process.env.CODER_CLAUDE_BIN = fakeWfClaude;
+
+    const threadE = await createThread(win.webContents, project.id, "New Thread");
+    logStep("passE.threads.create", {
+      ok: true,
+      threadId: threadE.id,
+      provider: threadE.provider,
+    });
+
+    const startWfType = await evalInRenderer(
+      win.webContents,
+      `typeof window.coder.runs.startWorkflow`,
+    );
+    if (startWfType !== "function") {
+      throw new Error(
+        `passE expected window.coder.runs.startWorkflow to be a function, got ${startWfType}`,
+      );
+    }
+
+    const startedE = await evalInRenderer(
+      win.webContents,
+      `window.coder.runs.startWorkflow(${JSON.stringify({
+        threadId: threadE.id,
+        prompt: "Smoke workflow prompt",
+      })})`,
+    );
+    if (!startedE || !startedE.runId) {
+      throw new Error(
+        `passE runs.startWorkflow unexpected: ${JSON.stringify(startedE)}`,
+      );
+    }
+    logStep("passE.runs.startWorkflow", { ok: true, started: startedE });
+
+    const deadlineE = Date.now() + 20000;
+    let wfDetail = null;
+    while (Date.now() < deadlineE) {
+      wfDetail = await evalInRenderer(
+        win.webContents,
+        `window.coder.threads.get(${JSON.stringify(threadE.id)})`,
+      );
+      if (wfDetail && wfDetail.thread.status === "done") break;
+      if (wfDetail && wfDetail.thread.status === "failed") {
+        throw new Error(
+          `passE thread failed: ${JSON.stringify(wfDetail.messages)}`,
+        );
+      }
+      await sleep(50);
+    }
+    if (!wfDetail || wfDetail.thread.status !== "done") {
+      throw new Error(
+        `passE expected status done, got ${JSON.stringify(
+          wfDetail && wfDetail.thread && wfDetail.thread.status,
+        )}`,
+      );
+    }
+
+    const synthAssistant = (wfDetail.messages || []).find(
+      (m) => m.role === "assistant" && m.runId === startedE.runId,
+    );
+    if (!synthAssistant || synthAssistant.text !== "SMOKE_SYNTH_FINAL") {
+      throw new Error(
+        `passE expected assistant text SMOKE_SYNTH_FINAL, got ${JSON.stringify(
+          synthAssistant && synthAssistant.text,
+        )}`,
+      );
+    }
+
+    if (!wfDetail.workflow || wfDetail.workflow.complete !== true) {
+      throw new Error(
+        `passE expected workflow.complete true, got ${JSON.stringify(
+          wfDetail.workflow,
+        )}`,
+      );
+    }
+    if (wfDetail.workflow.total !== 4) {
+      throw new Error(
+        `passE expected workflow.total === 4, got ${wfDetail.workflow.total}`,
+      );
+    }
+    let settledAgents = 0;
+    for (const phase of wfDetail.workflow.phases || []) {
+      for (const agent of phase.agents || []) {
+        if (agent.status === "settled") settledAgents += 1;
+      }
+    }
+    if (settledAgents !== 4) {
+      throw new Error(
+        `passE expected 4 settled agents, got ${settledAgents}: ${JSON.stringify(
+          wfDetail.workflow,
+        )}`,
+      );
+    }
+
+    assertWorkLogShape(wfDetail.workLog, startedE.runId);
+    logStep("passE.threads.get.done", {
+      ok: true,
+      status: wfDetail.thread.status,
+      assistantText: synthAssistant.text,
+      workflowComplete: wfDetail.workflow.complete,
+      settledAgents,
+      usage: wfDetail.usage,
+    });
+    logStep("passE", { ok: true });
+
+    logStep("smoke", { ok: true, passes: ["A", "B", "C", "D", "E"] });
     app.exit(0);
   })
   .catch((err) => {

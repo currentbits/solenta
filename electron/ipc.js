@@ -67,8 +67,11 @@ function registerIpc(deps) {
     const workflow = runner.getActiveWorkflow(id);
     let view = null;
     if (workflow && runner.toWorkflowView) {
-      // Only surface workflow for simulate (core) runs, not real providers.
-      if (!workflow.__real && !workflow.__claude && !workflow.__codex) {
+      // Surface workflow for simulate (core) and orchestrated multi-phase runs.
+      if (
+        workflow.__orchestrated ||
+        (!workflow.__real && !workflow.__claude && !workflow.__codex)
+      ) {
         view = runner.toWorkflowView(workflow);
       }
     }
@@ -106,6 +109,10 @@ function registerIpc(deps) {
 
   ipcMain.handle("runs:start", async (_event, input) => {
     return runner.startRun(input);
+  });
+
+  ipcMain.handle("runs:startWorkflow", async (_event, input) => {
+    return runner.startWorkflowRun(input);
   });
 
   ipcMain.handle("runs:stop", async (_event, input) => {
