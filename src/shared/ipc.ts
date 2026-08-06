@@ -202,9 +202,38 @@ export interface AppStatus {
   };
 }
 
+/** A shared-memory entry as surfaced to the UI (excerpt form unless fetched). */
+export interface MemoryEntryInfo {
+  id: string;
+  type: "knowledge" | "task" | "convention" | "run";
+  title: string;
+  /** Excerpt in list/search results; full body from memory.get. */
+  body: string;
+  project: string | null;
+  importance: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface CoderApi {
   app: {
     status(): Promise<AppStatus>;
+  };
+  /**
+   * Proxied to the local shared-memory server by the main process (the
+   * renderer never sees the bearer token). Every method rejects with
+   * "Memory server is not running." when it is unavailable.
+   */
+  memory: {
+    search(input: { query: string; project?: string }): Promise<MemoryEntryInfo[]>;
+    recent(input?: { limit?: number }): Promise<MemoryEntryInfo[]>;
+    get(input: { id: string }): Promise<MemoryEntryInfo>;
+    store(input: {
+      type: MemoryEntryInfo["type"];
+      title: string;
+      body: string;
+      project?: string;
+    }): Promise<{ id: string }>;
   };
   settings: {
     get(): Promise<AppSettings>;
