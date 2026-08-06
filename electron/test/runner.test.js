@@ -141,6 +141,14 @@ describe("runner simulated mode", () => {
     const renamed = store.getThreads().find((t) => t.id === thread.id);
     assert.equal(renamed.title, "Fix the flaky login test");
     assert.equal(renamed.status, "working");
+    assert.ok(
+      typeof renamed.runStartedAt === "number" && renamed.runStartedAt > 0,
+      "run start must set runStartedAt",
+    );
+    assert.ok(
+      renamed.updatedAt >= renamed.createdAt,
+      "status/title activity must bump updatedAt",
+    );
 
     const msgs = store.getMessages(thread.id);
     assert.equal(msgs[0].role, "user");
@@ -151,6 +159,9 @@ describe("runner simulated mode", () => {
       const t = store.getThreads().find((x) => x.id === thread.id);
       return t && t.status === "done";
     });
+
+    const doneThread = store.getThreads().find((t) => t.id === thread.id);
+    assert.equal(doneThread.runStartedAt, null);
 
     const lastPush = [...pushes]
       .reverse()
@@ -225,10 +236,14 @@ describe("runner simulated mode", () => {
       );
     });
 
+    const mid = store.getThread(thread.id);
+    assert.ok(typeof mid.runStartedAt === "number" && mid.runStartedAt > 0);
+
     await runner.stopRun({ threadId: thread.id });
 
     const detail = services.getThreadDetail(store, thread.id);
     assert.equal(detail.thread.status, "idle");
+    assert.equal(detail.thread.runStartedAt, null);
     assert.ok(
       detail.messages.some(
         (m) => m.role === "event" && /stopped/i.test(m.text) && m.runId === runId,

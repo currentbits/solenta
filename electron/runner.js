@@ -314,7 +314,11 @@ function createRunner(opts) {
     ].join(" ");
 
     appendMessage(threadId, "assistant", text, runId);
-    store.updateThread(threadId, { status: "done" });
+    store.updateThread(
+      threadId,
+      { status: "done", runStartedAt: null },
+      { touch: true },
+    );
     store.save();
     pushDetail(threadId, workflow);
     pushThreadsChanged();
@@ -372,7 +376,11 @@ function createRunner(opts) {
 
         if (core.isFailed(current) || core.isStuck(current)) {
           clearRun(threadId);
-          store.updateThread(threadId, { status: "failed" });
+          store.updateThread(
+            threadId,
+            { status: "failed", runStartedAt: null },
+            { touch: true },
+          );
           const errLabel = core.isFailed(current)
             ? "Run failed"
             : "Run stuck and cannot progress";
@@ -384,7 +392,11 @@ function createRunner(opts) {
         }
       } catch (err) {
         clearRun(threadId);
-        store.updateThread(threadId, { status: "failed" });
+        store.updateThread(
+          threadId,
+          { status: "failed", runStartedAt: null },
+          { touch: true },
+        );
         appendMessage(
           threadId,
           "event",
@@ -514,7 +526,11 @@ function createRunner(opts) {
 
         if (exitCode === 0) {
           realState.agentStatus = "settled";
-          store.updateThread(threadId, { status: "done" });
+          store.updateThread(
+            threadId,
+            { status: "done", runStartedAt: null },
+            { touch: true },
+          );
           store.save();
           pushDetail(threadId, realState);
           pushThreadsChanged();
@@ -532,7 +548,11 @@ function createRunner(opts) {
           : `Run error (exit ${exitCode == null ? "?" : exitCode})`;
         appendMessage(threadId, "event", errText, runId);
         appendDoneWorkLog(threadId, runId, "Run error");
-        store.updateThread(threadId, { status: "failed" });
+        store.updateThread(
+          threadId,
+          { status: "failed", runStartedAt: null },
+          { touch: true },
+        );
         store.save();
         pushDetail(threadId, realState);
         pushThreadsChanged();
@@ -549,7 +569,11 @@ function createRunner(opts) {
         const msg = err && err.message ? err.message : String(err);
         appendMessage(threadId, "event", `Run error: ${msg}`, runId);
         appendDoneWorkLog(threadId, runId, "Run error");
-        store.updateThread(threadId, { status: "failed" });
+        store.updateThread(
+          threadId,
+          { status: "failed", runStartedAt: null },
+          { touch: true },
+        );
         store.save();
         pushDetail(threadId, realState);
         pushThreadsChanged();
@@ -815,10 +839,15 @@ function createRunner(opts) {
           }
 
           const ok = ev.subtype === "success";
-          store.updateThread(threadId, {
-            status: ok ? "done" : "failed",
-            sessionId: capturedSessionId,
-          });
+          store.updateThread(
+            threadId,
+            {
+              status: ok ? "done" : "failed",
+              sessionId: capturedSessionId,
+              runStartedAt: null,
+            },
+            { touch: true },
+          );
 
           if (!ok) {
             appendMessage(
@@ -871,7 +900,11 @@ function createRunner(opts) {
           : `Run error (exit ${code == null ? "?" : code})`;
         appendMessage(threadId, "event", errText, runId);
         appendDoneWorkLog(threadId, runId, "Run error");
-        store.updateThread(threadId, { status: "failed" });
+        store.updateThread(
+          threadId,
+          { status: "failed", runStartedAt: null },
+          { touch: true },
+        );
         store.save();
         pushDetail(threadId, claudeState);
         pushThreadsChanged();
@@ -887,7 +920,11 @@ function createRunner(opts) {
         const msg = err && err.message ? err.message : String(err);
         appendMessage(threadId, "event", `Run error: ${msg}`, runId);
         appendDoneWorkLog(threadId, runId, "Run error");
-        store.updateThread(threadId, { status: "failed" });
+        store.updateThread(
+          threadId,
+          { status: "failed", runStartedAt: null },
+          { touch: true },
+        );
         store.save();
         pushDetail(threadId, claudeState);
         pushThreadsChanged();
@@ -925,7 +962,11 @@ function createRunner(opts) {
       title = firstLine.slice(0, 60) || "New Thread";
     }
 
-    store.updateThread(threadId, { status: "working", title });
+    store.updateThread(
+      threadId,
+      { status: "working", title, runStartedAt: Date.now() },
+      { touch: true },
+    );
 
     const name = workflowNameFromThreadId(threadId);
     const provider = resolveProvider(thread);
@@ -984,7 +1025,11 @@ function createRunner(opts) {
     clearRun(threadId);
     appendMessage(threadId, "event", "Run stopped", runId);
     appendDoneWorkLog(threadId, runId, "Run stopped");
-    store.updateThread(threadId, { status: "idle" });
+    store.updateThread(
+      threadId,
+      { status: "idle", runStartedAt: null },
+      { touch: true },
+    );
     store.save();
     pushDetail(threadId, lastWorkflow);
     pushThreadsChanged();
@@ -1018,6 +1063,8 @@ function createRunner(opts) {
         }
       }
       clearRun(threadId);
+      // App lifecycle / test teardown: clear run clock without sidebar bump.
+      store.updateThread(threadId, { runStartedAt: null });
     }
   }
 

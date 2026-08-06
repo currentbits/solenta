@@ -43,6 +43,7 @@ describe("Store", () => {
       status: "idle",
       createdAt: 1,
       updatedAt: 2,
+      runStartedAt: null,
       provider: "claude",
       sessionId: null,
       permissionMode: "default",
@@ -139,5 +140,176 @@ describe("Store", () => {
       costUsd: 0.02,
       turns: 1,
     });
+  });
+
+  it("updateThread without touch preserves updatedAt", () => {
+    const store = new Store(filePath);
+    const fixed = 1_700_000_000_000;
+    store.setThreads([
+      {
+        id: "t1",
+        projectId: "p1",
+        title: "Hello",
+        branch: null,
+        prNumber: null,
+        status: "idle",
+        createdAt: fixed,
+        updatedAt: fixed,
+        runStartedAt: null,
+        provider: "claude",
+        sessionId: null,
+        permissionMode: "default",
+        worktreePath: null,
+      },
+    ]);
+
+    const before = Date.now();
+    const updated = store.updateThread("t1", {
+      permissionMode: "plan",
+      sessionId: "sess-1",
+    });
+    assert.ok(updated);
+    assert.equal(updated.permissionMode, "plan");
+    assert.equal(updated.sessionId, "sess-1");
+    assert.equal(updated.updatedAt, fixed);
+    assert.ok(updated.updatedAt < before);
+  });
+
+  it("updateThread with touch bumps updatedAt", () => {
+    const store = new Store(filePath);
+    const fixed = 1_700_000_000_000;
+    store.setThreads([
+      {
+        id: "t1",
+        projectId: "p1",
+        title: "Hello",
+        branch: null,
+        prNumber: null,
+        status: "idle",
+        createdAt: fixed,
+        updatedAt: fixed,
+        runStartedAt: null,
+        provider: "claude",
+        sessionId: null,
+        permissionMode: "default",
+        worktreePath: null,
+      },
+    ]);
+
+    const updated = store.updateThread(
+      "t1",
+      { status: "working", runStartedAt: Date.now() },
+      { touch: true },
+    );
+    assert.ok(updated);
+    assert.equal(updated.status, "working");
+    assert.ok(updated.updatedAt > fixed);
+    assert.ok(typeof updated.runStartedAt === "number");
+  });
+
+  it("appendMessage bumps owning thread updatedAt", () => {
+    const store = new Store(filePath);
+    const fixed = 1_700_000_000_000;
+    store.setThreads([
+      {
+        id: "t1",
+        projectId: "p1",
+        title: "Hello",
+        branch: null,
+        prNumber: null,
+        status: "idle",
+        createdAt: fixed,
+        updatedAt: fixed,
+        runStartedAt: null,
+        provider: "claude",
+        sessionId: null,
+        permissionMode: "default",
+        worktreePath: null,
+      },
+    ]);
+
+    store.appendMessage("t1", {
+      id: "m1",
+      role: "user",
+      text: "hi",
+      createdAt: Date.now(),
+    });
+    const t = store.getThread("t1");
+    assert.ok(t.updatedAt > fixed);
+  });
+
+  it("migration adds runStartedAt null without changing updatedAt", () => {
+    const old = {
+      projects: [],
+      threads: [
+        {
+          id: "t-old",
+          projectId: "p1",
+          title: "Legacy",
+          branch: null,
+          prNumber: null,
+          status: "idle",
+          createdAt: 1,
+          updatedAt: 2,
+        },
+      ],
+      messagesByThread: {},
+      workLogByThread: {},
+    };
+    fs.writeFileSync(filePath, JSON.stringify(old), "utf8");
+
+    const store = new Store(filePath);
+    const t = store.getThreads()[0];
+    assert.equal(t.runStartedAt, null);
+    assert.equal(t.updatedAt, 2);
+    assert.equal(t.provider, "claude");
+  });
+
+  it("load recovery normalizes working threads to failed", () => {
+    const fixed = 1_700_000_000_000;
+    const raw = {
+      projects: [],
+      threads: [
+        {
+          id: "t-work",
+          projectId: "p1",
+          title: "Mid run",
+          branch: null,
+          prNumber: null,
+          status: "working",
+          createdAt: fixed,
+          updatedAt: fixed,
+          runStartedAt: fixed + 100,
+          provider: "claude",
+          sessionId: "s1",
+          permissionMode: "default",
+          worktreePath: null,
+        },
+      ],
+      messagesByThread: {
+        "t-work": [
+          {
+            id: "m0",
+            role: "user",
+            text: "do work",
+            createdAt: fixed + 50,
+          },
+        ],
+      },
+      workLogByThread: {},
+      usageByThread: {},
+    };
+    fs.writeFileSync(filePath, JSON.stringify(raw), "utf8");
+
+    const store = new Store(filePath);
+    const t = store.getThread("t-work");
+    assert.equal(t.status, "failed");
+    assert.equal(t.runStartedAt, null);
+
+    const msgs = store.getMessages("t-work");
+    assert.ok(msgs.length >= 2);
+    const last = msgs[msgs.length - 1];
+    assert.equal(last.role, "event");
+    assert.equal(last.text, "Run interrupted by app restart");
   });
 });

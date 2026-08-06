@@ -102,6 +102,7 @@ describe("services", () => {
     assert.equal(thread.sessionId, null);
     assert.equal(thread.permissionMode, "default");
     assert.equal(thread.worktreePath, null);
+    assert.equal(thread.runStartedAt, null);
     assert.ok(typeof thread.createdAt === "number");
     const listed = services.listThreads(store);
     assert.equal(listed.length, 1);
@@ -130,6 +131,42 @@ describe("services", () => {
         }),
       /Invalid permission mode/i,
     );
+  });
+
+  it("setPermissionMode leaves updatedAt unchanged", () => {
+    const repo = path.join(tmpDir, "pm-at-repo");
+    fs.mkdirSync(repo);
+    git(repo, ["init"]);
+    const project = services.addProject(store, repo);
+    const thread = services.createThread(store, {
+      projectId: project.id,
+      title: "T",
+    });
+    // Freeze updatedAt to a past stamp so any accidental bump is obvious.
+    store.updateThread(thread.id, { updatedAt: 1_700_000_000_000 });
+    // updateThread without touch must not rewrite updatedAt from the freeze.
+    const frozen = store.getThread(thread.id);
+    assert.equal(frozen.updatedAt, 1_700_000_000_000);
+
+    const updated = services.setPermissionMode(store, {
+      threadId: thread.id,
+      mode: "plan",
+    });
+    assert.equal(updated.permissionMode, "plan");
+    assert.equal(updated.updatedAt, 1_700_000_000_000);
+    assert.equal(store.getThread(thread.id).updatedAt, 1_700_000_000_000);
+  });
+
+  it("createThread includes runStartedAt null", () => {
+    const repo = path.join(tmpDir, "rs-repo");
+    fs.mkdirSync(repo);
+    git(repo, ["init"]);
+    const project = services.addProject(store, repo);
+    const thread = services.createThread(store, {
+      projectId: project.id,
+      title: "T",
+    });
+    assert.equal(thread.runStartedAt, null);
   });
 
   it("getThreadDetail returns empty messages, work log, usage null", () => {

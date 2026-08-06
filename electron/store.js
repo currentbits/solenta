@@ -2,6 +2,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
+const { randomUUID } = require("node:crypto");
 
 const EMPTY = {
   projects: [],
@@ -13,6 +14,7 @@ const EMPTY = {
 
 /**
  * Migrate a persisted thread missing the newer session fields.
+ * Does not change updatedAt.
  * @param {object} t
  */
 function migrateThread(t) {
@@ -23,7 +25,36 @@ function migrateThread(t) {
     sessionId: t.sessionId !== undefined ? t.sessionId : null,
     permissionMode: t.permissionMode != null ? t.permissionMode : "default",
     worktreePath: t.worktreePath !== undefined ? t.worktreePath : null,
+    runStartedAt: t.runStartedAt !== undefined ? t.runStartedAt : null,
   };
+}
+
+/**
+ * Threads left "working" when the app died mid-run become failed with an event.
+ * Status change is real activity, so updatedAt is bumped.
+ * @param {object} data
+ * @returns {boolean} true if any thread was recovered
+ */
+function recoverInterruptedRuns(data) {
+  let recovered = false;
+  for (const t of data.threads) {
+    if (t.status !== "working") continue;
+    t.status = "failed";
+    t.runStartedAt = null;
+    t.updatedAt = Date.now();
+    const list = Array.isArray(data.messagesByThread[t.id])
+      ? data.messagesByThread[t.id].slice()
+      : [];
+    list.push({
+      id: randomUUID(),
+      role: "event",
+      text: "Run interrupted by app restart",
+      createdAt: Date.now(),
+    });
+    data.messagesByThread[t.id] = list;
+    recovered = true;
+  }
+  return recovered;
 }
 
 /**
@@ -38,9 +69,13 @@ class Store {
   constructor(filePath) {
     this.filePath = filePath;
     this.data = this._load();
+    if (this._recoveredOnLoad) {
+      this.save();
+    }
   }
 
   _load() {
+    this._recoveredOnLoad = false;
     try {
       if (!fs.existsSync(this.filePath)) {
         return cloneEmpty();
@@ -50,7 +85,7 @@ class Store {
       const threads = Array.isArray(parsed.threads)
         ? parsed.threads.map(migrateThread)
         : [];
-      return {
+      const data = {
         projects: Array.isArray(parsed.projects) ? parsed.projects : [],
         threads,
         messagesByThread:
@@ -66,6 +101,8 @@ class Store {
             ? parsed.usageByThread
             : {},
       };
+      this._recoveredOnLoad = recoverInterruptedRuns(data);
+      return data;
     } catch {
       return cloneEmpty();
     }
@@ -104,10 +141,16 @@ class Store {
     this.data.messagesByThread[threadId] = messages;
   }
 
+  /**
+   * Append a message and bump the owning thread's updatedAt (real activity).
+   * @param {string} threadId
+   * @param {object} message
+   */
   appendMessage(threadId, message) {
     const list = this.getMessages(threadId).slice();
     list.push(message);
     this.setMessages(threadId, list);
+    this.updateThread(threadId, {}, { touch: true });
   }
 
   getWorkLog(threadId) {
@@ -174,10 +217,23 @@ class Store {
     return list[idx];
   }
 
-  updateThread(threadId, patch) {
-    const threads = this.data.threads.map((t) =>
-      t.id === threadId ? { ...t, ...patch, updatedAt: Date.now() } : t,
-    );
+  /**
+   * Patch a thread. Does NOT bump updatedAt unless options.touch is true.
+   * Real activity only: message append (via appendMessage), run status change,
+   * or title change. Internal bookkeeping must omit touch.
+   * @param {string} threadId
+   * @param {object} patch
+   * @param {{ touch?: boolean }} [options]
+   */
+  updateThread(threadId, patch, options) {
+    const touch = Boolean(options && options.touch);
+    const threads = this.data.threads.map((t) => {
+      if (t.id !== threadId) return t;
+      if (touch) {
+        return { ...t, ...patch, updatedAt: Date.now() };
+      }
+      return { ...t, ...patch };
+    });
     this.data.threads = threads;
     return threads.find((t) => t.id === threadId) || null;
   }

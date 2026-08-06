@@ -144,6 +144,7 @@ function createThread(store, input) {
     status: "idle",
     createdAt: now,
     updatedAt: now,
+    runStartedAt: null,
     provider: "claude",
     sessionId: null,
     permissionMode: "default",
