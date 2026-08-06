@@ -1,5 +1,6 @@
 # Issues log
 
+- 2026-08-06 - symptom: non-force removeWorktree deleted branch under detached HEAD with no error | cause: catch defaultBranch and skip unmerged check | fix: WORKTREE_DIRTY + git log -n 10 branch (worktrees.js a18ddbd)
 - 2026-08-06 - symptom: second claude turn threw "run already active" after first reached done | cause: result event set status done but left active Map until process exit | fix: clearRun on result event; onExit no-ops via runId guard (runner.js)
 - 2026-08-06 - symptom: stop run A then start B; A's late exit marked thread done and cleared B | cause: real-run onChunk/onDone/onError re-looked up active by threadId only | fix: guard e.runId !== closed-over runId in all three callbacks (runner.js)
 - 2026-08-06 - symptom: smoke pass B spawn ENOENT for node under Electron | cause: CODER_AGENT_CMD whitespace-split breaks process.execPath under Application Support | fix: smoke resolves space-free node via which/homebrew

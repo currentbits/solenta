@@ -52,6 +52,8 @@ const coder = {
     status: (projectId) => invoke("git:status", projectId),
     setupWorktree: (input) => invoke("git:setupWorktree", input),
     diff: (input) => invoke("git:diff", input),
+    mergeWorktree: (input) => invoke("git:mergeWorktree", input),
+    removeWorktree: (input) => invoke("git:removeWorktree", input),
   },
   on,
 };

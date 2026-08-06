@@ -6,7 +6,12 @@ const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 const { Store } = require("../store.js");
 const services = require("../services.js");
-const { setupWorktree, diff } = require("../worktrees.js");
+const {
+  setupWorktree,
+  diff,
+  mergeWorktree,
+  removeWorktree,
+} = require("../worktrees.js");
 
 function git(cwd, args) {
   return execFileSync("git", args, {
@@ -164,5 +169,253 @@ describe("worktrees", () => {
       result.patch.includes("README.md") || result.patch.includes("hello"),
       `patch should mention README changes: ${result.patch.slice(0, 200)}`,
     );
+  });
+
+  it("mergeWorktree commits worktree changes, squash-merges, cleans up", () => {
+    const setup = setupWorktree({
+      store,
+      threadId: thread.id,
+      worktreeBase,
+      broadcast: () => {},
+    });
+    const branch = setup.branch;
+    const wtPath = setup.worktreePath;
+
+    fs.writeFileSync(path.join(wtPath, "feature.txt"), "from worktree\n");
+
+    const merged = mergeWorktree({
+      store,
+      threadId: thread.id,
+      broadcast: (ch, payload) => broadcasts.push({ ch, payload }),
+    });
+
+    assert.equal(merged.worktreePath, null);
+    assert.equal(merged.branch, null);
+    assert.ok(fs.existsSync(path.join(repo, "feature.txt")));
+    assert.equal(
+      fs.readFileSync(path.join(repo, "feature.txt"), "utf8"),
+      "from worktree\n",
+    );
+    assert.ok(!fs.existsSync(wtPath));
+
+    const branches = git(repo, ["branch"]);
+    assert.ok(
+      !branches.includes(branch),
+      `branch ${branch} should be deleted: ${branches}`,
+    );
+
+    const log = git(repo, ["log", "-1", "--oneline"]);
+    assert.match(log, /Merge worktree/i);
+    assert.match(log, new RegExp(branch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+
+    const stored = store.getThread(thread.id);
+    assert.equal(stored.worktreePath, null);
+    assert.equal(stored.branch, null);
+    assert.ok(broadcasts.some((b) => b.ch === "threads:changed"));
+  });
+
+  it("mergeWorktree rejects on conflict and restores clean project checkout", () => {
+    const setup = setupWorktree({
+      store,
+      threadId: thread.id,
+      worktreeBase,
+      broadcast: () => {},
+    });
+
+    // Divergent edits to the same file in project and worktree
+    fs.writeFileSync(path.join(repo, "README.md"), "project side\n");
+    git(repo, ["add", "README.md"]);
+    git(repo, ["commit", "-m", "project edit"]);
+
+    fs.writeFileSync(path.join(setup.worktreePath, "README.md"), "worktree side\n");
+    git(setup.worktreePath, ["add", "README.md"]);
+    git(setup.worktreePath, ["commit", "-m", "worktree edit"]);
+
+    assert.throws(
+      () =>
+        mergeWorktree({
+          store,
+          threadId: thread.id,
+          broadcast: () => {},
+        }),
+      (err) => {
+        assert.ok(err instanceof Error);
+        assert.ok(
+          /conflict|CONFLICT|merge/i.test(err.message),
+          `expected conflict message, got: ${err.message}`,
+        );
+        return true;
+      },
+    );
+
+    // Project checkout restored clean
+    const status = git(repo, ["status", "--porcelain"]);
+    assert.equal(status, "", `project should be clean after abort: ${status}`);
+    assert.equal(
+      fs.readFileSync(path.join(repo, "README.md"), "utf8"),
+      "project side\n",
+    );
+
+    // Worktree still present (nothing force-removed on failure)
+    const still = store.getThread(thread.id);
+    assert.ok(still.worktreePath);
+    assert.ok(fs.existsSync(still.worktreePath));
+  });
+
+  it("removeWorktree without force rejects dirty worktree with WORKTREE_DIRTY", () => {
+    const setup = setupWorktree({
+      store,
+      threadId: thread.id,
+      worktreeBase,
+      broadcast: () => {},
+    });
+
+    fs.writeFileSync(path.join(setup.worktreePath, "dirty.txt"), "uncommitted\n");
+
+    assert.throws(
+      () =>
+        removeWorktree({
+          store,
+          threadId: thread.id,
+          force: false,
+          broadcast: () => {},
+        }),
+      (err) => {
+        assert.ok(err instanceof Error);
+        // Renderer detects via message.includes("WORKTREE_DIRTY:") after IPC wrap
+        assert.ok(
+          err.message.includes("WORKTREE_DIRTY:"),
+          `message must contain WORKTREE_DIRTY: got ${err.message}`,
+        );
+        assert.ok(
+          err.message.includes("dirty.txt"),
+          `message must list the lost file: ${err.message}`,
+        );
+        return true;
+      },
+    );
+
+    assert.ok(fs.existsSync(setup.worktreePath));
+    const still = store.getThread(thread.id);
+    assert.equal(still.worktreePath, setup.worktreePath);
+  });
+
+  it("removeWorktree without force rejects when project HEAD is detached", () => {
+    const setup = setupWorktree({
+      store,
+      threadId: thread.id,
+      worktreeBase,
+      broadcast: () => {},
+    });
+    const branch = setup.branch;
+    const wtPath = setup.worktreePath;
+
+    // Commit on worktree so there is something to lose
+    fs.writeFileSync(path.join(wtPath, "orphan-me.txt"), "would be lost\n");
+    git(wtPath, ["add", "orphan-me.txt"]);
+    git(wtPath, ["commit", "-m", "unmerged feature"]);
+
+    // Detach project checkout HEAD so default branch cannot be determined
+    const headSha = git(repo, ["rev-parse", "HEAD"]);
+    git(repo, ["checkout", "--detach", headSha]);
+    assert.equal(git(repo, ["branch", "--show-current"]), "");
+
+    assert.throws(
+      () =>
+        removeWorktree({
+          store,
+          threadId: thread.id,
+          force: false,
+          broadcast: () => {},
+        }),
+      (err) => {
+        assert.ok(err instanceof Error);
+        assert.ok(
+          err.message.includes("WORKTREE_DIRTY:"),
+          `must contain WORKTREE_DIRTY: got ${err.message}`,
+        );
+        // Lists recent commits on the branch (cannot prove merged)
+        assert.ok(
+          /unmerged:|unmerged feature|orphan/i.test(err.message),
+          `must list branch commits: ${err.message}`,
+        );
+        return true;
+      },
+    );
+
+    assert.ok(fs.existsSync(wtPath), "worktree must remain after reject");
+    const still = store.getThread(thread.id);
+    assert.equal(still.worktreePath, wtPath);
+    assert.equal(still.branch, branch);
+
+    // force still works while detached
+    const removed = removeWorktree({
+      store,
+      threadId: thread.id,
+      force: true,
+      broadcast: () => {},
+    });
+    assert.equal(removed.worktreePath, null);
+    assert.equal(removed.branch, null);
+    assert.ok(!fs.existsSync(wtPath));
+  });
+
+  it("removeWorktree with force succeeds on dirty worktree", () => {
+    const setup = setupWorktree({
+      store,
+      threadId: thread.id,
+      worktreeBase,
+      broadcast: () => {},
+    });
+    const branch = setup.branch;
+    const wtPath = setup.worktreePath;
+
+    fs.writeFileSync(path.join(wtPath, "dirty.txt"), "uncommitted\n");
+
+    const removed = removeWorktree({
+      store,
+      threadId: thread.id,
+      force: true,
+      broadcast: (ch, payload) => broadcasts.push({ ch, payload }),
+    });
+
+    assert.equal(removed.worktreePath, null);
+    assert.equal(removed.branch, null);
+    assert.ok(!fs.existsSync(wtPath));
+    const branches = git(repo, ["branch"]);
+    assert.ok(!branches.includes(branch));
+    assert.ok(broadcasts.some((b) => b.ch === "threads:changed"));
+  });
+
+  it("removeWorktree on clean fully-merged worktree succeeds without force", () => {
+    const setup = setupWorktree({
+      store,
+      threadId: thread.id,
+      worktreeBase,
+      broadcast: () => {},
+    });
+    const branch = setup.branch;
+    const wtPath = setup.worktreePath;
+
+    // Commit a change in worktree, regular-merge into project so
+    // defaultBranch..branch is empty (fully merged), leave worktree in place
+    fs.writeFileSync(path.join(wtPath, "merged.txt"), "already merged\n");
+    git(wtPath, ["add", "merged.txt"]);
+    git(wtPath, ["commit", "-m", "feature"]);
+
+    git(repo, ["merge", "--no-ff", "-m", "merge feature", branch]);
+
+    const removed = removeWorktree({
+      store,
+      threadId: thread.id,
+      force: false,
+      broadcast: (ch, payload) => broadcasts.push({ ch, payload }),
+    });
+
+    assert.equal(removed.worktreePath, null);
+    assert.equal(removed.branch, null);
+    assert.ok(!fs.existsSync(wtPath));
+    const branches = git(repo, ["branch"]);
+    assert.ok(!branches.includes(branch));
   });
 });

@@ -2,7 +2,12 @@
 
 const { BrowserWindow } = require("electron");
 const services = require("./services.js");
-const { setupWorktree, diff } = require("./worktrees.js");
+const {
+  setupWorktree,
+  diff,
+  mergeWorktree,
+  removeWorktree,
+} = require("./worktrees.js");
 
 /**
  * Register all invoke handlers from the ipc contract.
@@ -106,6 +111,23 @@ function registerIpc(deps) {
 
   ipcMain.handle("git:diff", async (_event, input) => {
     return diff({ store, threadId: input.threadId });
+  });
+
+  ipcMain.handle("git:mergeWorktree", async (_event, input) => {
+    return mergeWorktree({
+      store,
+      threadId: input.threadId,
+      broadcast,
+    });
+  });
+
+  ipcMain.handle("git:removeWorktree", async (_event, input) => {
+    return removeWorktree({
+      store,
+      threadId: input.threadId,
+      force: Boolean(input && input.force),
+      broadcast,
+    });
   });
 
   return { broadcast };
