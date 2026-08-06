@@ -1,7 +1,10 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ProjectInfo, ThreadInfo } from "../shared/ipc";
 import { formatRelativeAge, formatWorkingLabel } from "../format";
+import { buildSidebarGroups } from "../sidebarGroups";
 import styles from "./Sidebar.module.css";
+
+const TICK_MS = 5000;
 
 interface SidebarProps {
   appName: string;
@@ -11,18 +14,29 @@ interface SidebarProps {
   threads: ThreadInfo[];
   activeThreadId: string | null;
   onSelectThread: (id: string) => void;
-  onCreateThread: () => void;
+  /** Global + uses selected project; per-group New thread passes that projectId. */
+  onCreateThread: (projectId?: string) => void;
   onAddProject: () => void;
   projectError?: string | null;
   onDismissProjectError?: () => void;
 }
 
-function StatusBadge({ thread }: { thread: ThreadInfo }) {
+function StatusBadge({
+  thread,
+  now,
+}: {
+  thread: ThreadInfo;
+  now: number;
+}) {
   if (thread.status === "working") {
+    const label =
+      thread.runStartedAt != null
+        ? formatWorkingLabel(thread.runStartedAt, now)
+        : "Working";
     return (
       <span className={`${styles.badge} ${styles.badgeWorking}`}>
         <span className={styles.spinner} aria-hidden />
-        {formatWorkingLabel(thread.updatedAt)}
+        {label}
       </span>
     );
   }
@@ -49,6 +63,53 @@ function StatusBadge({ thread }: { thread: ThreadInfo }) {
   return null;
 }
 
+function ThreadCard({
+  thread,
+  slug,
+  active,
+  now,
+  onSelect,
+}: {
+  thread: ThreadInfo;
+  slug: string;
+  active: boolean;
+  now: number;
+  onSelect: (id: string) => void;
+}) {
+  const branch = thread.branch ?? "";
+  const pr =
+    thread.prNumber != null ? `PR #${thread.prNumber}` : "";
+  const branchLine =
+    branch && pr ? `${branch} · ${pr}` : branch || pr;
+
+  return (
+    <button
+      type="button"
+      className={styles.card}
+      data-active={active}
+      onClick={() => onSelect(thread.id)}
+    >
+      <div className={styles.cardTop}>
+        <span className={styles.repo}>{slug}</span>
+        <span className={styles.age}>
+          {formatRelativeAge(thread.updatedAt, now)}
+        </span>
+      </div>
+      <div className={styles.cardTitle}>{thread.title}</div>
+      <div className={styles.cardTags}>
+        <span className={styles.providerTag}>{thread.provider}</span>
+        {thread.worktreePath && (
+          <span className={styles.worktreeTag}>wt</span>
+        )}
+      </div>
+      <div className={styles.cardMeta}>
+        <span className={styles.branch}>{branchLine}</span>
+        <StatusBadge thread={thread} now={now} />
+      </div>
+    </button>
+  );
+}
+
 export function Sidebar({
   appName,
   searchPlaceholder,
@@ -64,6 +125,15 @@ export function Sidebar({
 }: SidebarProps) {
   const [projectsOpen, setProjectsOpen] = useState(true);
   const [query, setQuery] = useState("");
+  const [now, setNow] = useState(() => Date.now());
+
+  // One shared interval for the whole list (age + working elapsed).
+  useEffect(() => {
+    const handle = window.setInterval(() => {
+      setNow(Date.now());
+    }, TICK_MS);
+    return () => window.clearInterval(handle);
+  }, []);
 
   const projectById = useMemo(() => {
     const m = new Map<string, ProjectInfo>();
@@ -84,29 +154,19 @@ export function Sidebar({
     });
   }, [threads, query, projectById]);
 
-  /** Group filtered threads by project slug, preserving project list order. */
-  const groups = useMemo(() => {
-    const byProject = new Map<string, ThreadInfo[]>();
-    for (const t of filtered) {
-      const list = byProject.get(t.projectId) ?? [];
-      list.push(t);
-      byProject.set(t.projectId, list);
-    }
+  const searching = query.trim() !== "";
 
-    const ordered: { project: ProjectInfo | null; threads: ThreadInfo[] }[] =
-      [];
-    for (const p of projects) {
-      const list = byProject.get(p.id);
-      if (list?.length) ordered.push({ project: p, threads: list });
+  const groups = useMemo(() => {
+    // While searching, only surface projects that still have matching threads
+    // (empty projects stay hidden so the empty-search state can show).
+    if (searching) {
+      const projectsWithHits = projects.filter((p) =>
+        filtered.some((t) => t.projectId === p.id),
+      );
+      return buildSidebarGroups(projectsWithHits, filtered);
     }
-    // Orphan threads (project missing)
-    for (const [projectId, list] of byProject) {
-      if (!projects.some((p) => p.id === projectId)) {
-        ordered.push({ project: null, threads: list });
-      }
-    }
-    return ordered;
-  }, [filtered, projects]);
+    return buildSidebarGroups(projects, filtered);
+  }, [projects, filtered, searching]);
 
   const canCreate = projects.length > 0;
 
@@ -121,7 +181,7 @@ export function Sidebar({
         <button
           type="button"
           className={styles.headerAdd}
-          onClick={onCreateThread}
+          onClick={() => onCreateThread()}
           disabled={!canCreate}
           title={
             canCreate
@@ -158,7 +218,7 @@ export function Sidebar({
           ▸
         </span>
         <span>{projectsHeader}</span>
-        <span className={styles.count}>{filtered.length}</span>
+        <span className={styles.count}>{projects.length}</span>
       </button>
 
       <div className={styles.list}>
@@ -174,62 +234,69 @@ export function Sidebar({
 
         {projectsOpen &&
           projects.length > 0 &&
-          filtered.length === 0 &&
-          query.trim() !== "" && (
+          searching &&
+          filtered.length === 0 && (
             <p className={styles.emptySearch}>No threads match</p>
           )}
 
         {projectsOpen &&
-          groups.map(({ project, threads: groupThreads }) => (
-            <div
-              key={project?.id ?? groupThreads[0]?.projectId ?? "orphan"}
-              className={styles.group}
-            >
-              {groupThreads.map((thread) => {
-                const slug =
-                  project?.slug ??
-                  projectById.get(thread.projectId)?.slug ??
-                  "unknown";
-                // Prefer the worktree branch once set up (thread.branch is
-                // updated by git.setupWorktree); fall back to stored branch.
-                const branchLine = thread.branch ?? "";
-                return (
-                  <button
-                    key={thread.id}
-                    type="button"
-                    className={styles.card}
-                    data-active={thread.id === activeThreadId}
-                    onClick={() => onSelectThread(thread.id)}
-                  >
-                    <div className={styles.cardTop}>
-                      <span className={styles.repo}>{slug}</span>
-                      <span className={styles.age}>
-                        {formatRelativeAge(thread.updatedAt)}
-                      </span>
-                    </div>
-                    <div className={styles.cardTitle}>{thread.title}</div>
-                    <div className={styles.cardTags}>
-                      <span className={styles.providerTag}>
-                        {thread.provider}
-                      </span>
-                      {thread.worktreePath && (
-                        <span className={styles.worktreeTag}>wt</span>
-                      )}
-                    </div>
-                    <div className={styles.cardMeta}>
-                      <span className={styles.branch}>
-                        {branchLine}
-                        {thread.prNumber != null
-                          ? `${branchLine ? " · " : ""}#${thread.prNumber}`
-                          : ""}
-                      </span>
-                      <StatusBadge thread={thread} />
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          ))}
+          groups.map(({ project, threads: groupThreads }) => {
+            const groupKey =
+              project?.id ?? groupThreads[0]?.projectId ?? "orphan";
+            const slug =
+              project?.slug ??
+              (groupThreads[0]
+                ? projectById.get(groupThreads[0].projectId)?.slug
+                : undefined) ??
+              "unknown";
+            return (
+              <div key={groupKey} className={styles.group}>
+                <div className={styles.groupHeader}>
+                  <span className={styles.groupSlug}>{slug}</span>
+                  <span className={styles.groupCount}>
+                    {groupThreads.length}
+                  </span>
+                </div>
+
+                {groupThreads.length === 0 ? (
+                  <div className={styles.emptyGroup}>
+                    <span className={styles.emptyThreads}>No threads yet</span>
+                    {project && (
+                      <button
+                        type="button"
+                        className={styles.groupNewThread}
+                        onClick={() => onCreateThread(project.id)}
+                      >
+                        New thread
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <>
+                    {groupThreads.map((thread) => (
+                      <ThreadCard
+                        key={thread.id}
+                        thread={thread}
+                        slug={slug}
+                        active={thread.id === activeThreadId}
+                        now={now}
+                        onSelect={onSelectThread}
+                      />
+                    ))}
+                    {project && (
+                      <button
+                        type="button"
+                        className={styles.groupNewThread}
+                        onClick={() => onCreateThread(project.id)}
+                      >
+                        New thread
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
+            );
+          })}
       </div>
 
       <footer className={styles.footer}>

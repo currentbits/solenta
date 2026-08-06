@@ -90,10 +90,9 @@ function seedThreads(projects: ProjectInfo[]): ThreadInfo[] {
   return mockData.threads.map((card, index) => {
     const project = bySlug.get(card.repoSlug)!;
     const ageMs = ageToMs(card.age);
+    const workingMs = workingMinutes(card.workingLabel) * 60 * 1000;
     const updatedAt =
-      card.status === "working"
-        ? t0 - workingMinutes(card.workingLabel) * 60 * 1000
-        : t0 - ageMs;
+      card.status === "working" ? t0 - workingMs : t0 - ageMs;
     const isSimulate = card.id === mockData.activeThreadId;
     return {
       id: card.id,
@@ -104,6 +103,7 @@ function seedThreads(projects: ProjectInfo[]): ThreadInfo[] {
       status: card.status,
       createdAt: t0 - ageMs - 60 * 60 * 1000,
       updatedAt,
+      runStartedAt: card.status === "working" ? t0 - workingMs : null,
       provider: isSimulate ? "simulate" : index % 3 === 0 ? "generic" : "claude",
       sessionId: isSimulate
         ? "sim-seed-session-aabbccdd"
@@ -817,7 +817,12 @@ function buildDevCoder(): CoderApi {
     }
 
     if (complete) {
-      thread = { ...thread, status: "done", updatedAt: t };
+      thread = {
+        ...thread,
+        status: "done",
+        updatedAt: t,
+        runStartedAt: null,
+      };
       clearRunTimer(threadId);
     }
 
@@ -883,6 +888,7 @@ function buildDevCoder(): CoderApi {
           status: "idle",
           createdAt: now(),
           updatedAt: now(),
+          runStartedAt: null,
           provider: "claude",
           sessionId: null,
           permissionMode: "default",
@@ -969,6 +975,7 @@ function buildDevCoder(): CoderApi {
           ...thread,
           status: "working",
           updatedAt: t,
+          runStartedAt: t,
         };
         detail.thread = thread;
 
@@ -1016,6 +1023,7 @@ function buildDevCoder(): CoderApi {
           ...detail.thread,
           status: "idle",
           updatedAt: t,
+          runStartedAt: null,
         };
         detail.thread = thread;
         detail.messages.push({

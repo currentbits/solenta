@@ -55,8 +55,8 @@ export default function App() {
         threads={threads}
         activeThreadId={selectedThreadId}
         onSelectThread={selectThread}
-        onCreateThread={() => {
-          void createThread("New Thread");
+        onCreateThread={(projectId) => {
+          void createThread("New Thread", projectId);
         }}
         onAddProject={() => {
           void addProject();

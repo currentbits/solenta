@@ -288,6 +288,71 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
+  margin-bottom: 6px;
+}
+
+.groupHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 8px 2px;
+  min-width: 0;
+}
+
+.groupSlug {
+  font-size: 11px;
+  font-weight: 600;
+  font-family: var(--mono);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.groupCount {
+  margin-left: auto;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.emptyGroup {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px 8px;
+}
+
+.emptyThreads {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.groupNewThread {
+  align-self: flex-start;
+  margin: 0 8px 2px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 550;
+  text-align: left;
+}
+
+.groupNewThread:hover {
+  color: var(--text);
+  background: var(--card);
+}
+
+.emptyGroup .groupNewThread {
+  margin: 0;
+  flex-shrink: 0;
 }
 
 .addProjectRow {

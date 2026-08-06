@@ -39,7 +39,11 @@ export interface UseCoderResult {
   error: CoderError | null;
   clearError: () => void;
   addProject: () => Promise<ProjectInfo | null>;
-  createThread: (title?: string) => Promise<ThreadInfo | null>;
+  /** Create in projectId when given; otherwise the currently selected project. */
+  createThread: (
+    title?: string,
+    projectId?: string,
+  ) => Promise<ThreadInfo | null>;
   startRun: (prompt: string) => Promise<void>;
   stopRun: () => Promise<void>;
   setPermissionMode: (mode: PermissionMode) => Promise<void>;
@@ -189,10 +193,10 @@ export function useCoder(): UseCoderResult {
   }, [api]);
 
   const createThread = useCallback(
-    async (title = "New Thread") => {
-      const projectId = selectedProjectId;
-      if (!projectId) return null;
-      const t = await api.threads.create({ projectId, title });
+    async (title = "New Thread", projectId?: string) => {
+      const pid = projectId ?? selectedProjectId;
+      if (!pid) return null;
+      const t = await api.threads.create({ projectId: pid, title });
       const next = threadsRef.current.some((x) => x.id === t.id)
         ? threadsRef.current
         : [t, ...threadsRef.current];
