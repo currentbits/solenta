@@ -166,9 +166,37 @@ export interface ProviderInfo {
   models: string[];
 }
 
+/** One phase of a user-defined workflow template. */
+export interface WorkflowPhaseSpec {
+  /** Display name, e.g. "analyze". */
+  name: string;
+  /** 1-4 agents fan out in parallel within the phase. */
+  agentCount: number;
+  /** Instruction appended to every agent prompt of this phase. */
+  instruction: string;
+  /** ProviderInfo.id executing this phase's agents. */
+  provider: string;
+  model: string | null;
+}
+
+export interface WorkflowTemplateInfo {
+  id: string;
+  name: string;
+  /** Builtin templates cannot be removed; saving one creates a copy. */
+  builtin: boolean;
+  phases: WorkflowPhaseSpec[];
+}
+
 export interface CoderApi {
   providers: {
     list(): Promise<ProviderInfo[]>;
+  };
+  workflows: {
+    list(): Promise<WorkflowTemplateInfo[]>;
+    /** Saves a template; omit id to create. Saving a builtin creates a copy. */
+    save(template: Omit<WorkflowTemplateInfo, "id" | "builtin"> & { id?: string }): Promise<WorkflowTemplateInfo>;
+    /** Removes a non-builtin template. */
+    remove(input: { id: string }): Promise<void>;
   };
   projects: {
     list(): Promise<ProjectInfo[]>;
@@ -208,14 +236,16 @@ export interface CoderApi {
      */
     start(input: { threadId: string; prompt: string }): Promise<{ runId: string }>;
     /**
-     * Starts an orchestrated multi-phase workflow run (the Build action):
-     * seed plan -> parallel analyze agents -> synthesize, each phase agent a
-     * REAL one-shot provider call. Live phase/agent state streams through
-     * ThreadDetail.workflow on thread:updated; the synthesize output becomes
-     * the assistant answer. Currently requires the claude provider; rejects
-     * otherwise, and rejects while any run is active on the thread.
+     * Starts an orchestrated multi-phase workflow run (the Build action)
+     * from a template (default template when templateId omitted). Each phase
+     * runs its agents as REAL one-shot calls on the phase's provider/model;
+     * outputs chain phase to phase, every agent's full output is appended as
+     * a role "tool" dossier message, and the last phase's output becomes the
+     * assistant answer. Live state streams through ThreadDetail.workflow.
+     * Rejects while any run is active, and at start when a phase's provider
+     * binary is unavailable (naming it).
      */
-    startWorkflow(input: { threadId: string; prompt: string }): Promise<{ runId: string }>;
+    startWorkflow(input: { threadId: string; prompt: string; templateId?: string }): Promise<{ runId: string }>;
     stop(input: { threadId: string }): Promise<void>;
   };
   git: {
