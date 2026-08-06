@@ -25,7 +25,14 @@ export interface ThreadInfo {
   prNumber: number | null;
   status: ThreadStatus;
   createdAt: number;
+  /**
+   * Last REAL activity: a message appended, a run status change, or a title
+   * change. Internal mutations (permission mode, worktree bookkeeping, store
+   * migration) must NOT bump this; the sidebar age label derives from it.
+   */
   updatedAt: number;
+  /** Set while a run is active on this thread; drives the Working elapsed label. */
+  runStartedAt: number | null;
   /** Agent harness backing this thread. "claude" (default), "generic", or "simulate". */
   provider: string;
   /** Provider session id, persisted after the first turn so follow-ups resume context. */
