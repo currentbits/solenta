@@ -19,6 +19,7 @@ export default function App() {
     addProject,
     createThread,
     startRun,
+    startWorkflowRun,
     stopRun,
     setPermissionMode,
     setProvider,
@@ -78,6 +79,7 @@ export default function App() {
           void addProject();
         }}
         onStartRun={(prompt) => startRun(prompt)}
+        onStartWorkflow={(prompt) => startWorkflowRun(prompt)}
         onStopRun={() => stopRun()}
         onSetPermissionMode={(mode) => setPermissionMode(mode)}
         onSetProvider={(input) => setProvider(input)}

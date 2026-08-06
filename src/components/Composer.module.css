@@ -109,6 +109,12 @@
   background: var(--blue-soft);
 }
 
+/** Non-claude Build: visibly dimmed even before :disabled opacity stacks. */
+.pillDimmed {
+  opacity: 0.4;
+  filter: grayscale(0.35);
+}
+
 .modeWrap {
   position: relative;
 }

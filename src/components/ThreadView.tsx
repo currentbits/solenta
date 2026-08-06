@@ -27,6 +27,8 @@ interface ThreadViewProps {
   hasProjects: boolean;
   onAddProject: () => void;
   onStartRun: (prompt: string) => void | Promise<void>;
+  /** Multi-phase Build workflow (Build pill). */
+  onStartWorkflow: (prompt: string) => void | Promise<void>;
   onStopRun: () => void | Promise<void>;
   onSetPermissionMode: (mode: PermissionMode) => void | Promise<void>;
   onSetProvider: (input: {
@@ -323,6 +325,7 @@ export function ThreadView({
   hasProjects,
   onAddProject,
   onStartRun,
+  onStartWorkflow,
   onStopRun,
   onSetPermissionMode,
   onSetProvider,
@@ -631,7 +634,8 @@ export function ThreadView({
             ? "Unarchive to continue this thread"
             : undefined
         }
-        onBuild={onStartRun}
+        onSend={onStartRun}
+        onBuild={onStartWorkflow}
         error={runError}
         onDismissError={onDismissRunError}
       />

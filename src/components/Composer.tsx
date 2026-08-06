@@ -30,6 +30,9 @@ interface ComposerProps {
   /** Whether a worktree has been set up. */
   hasWorktree: boolean;
   disabled?: boolean;
+  /** Single session turn (send arrow + ⌘Enter). */
+  onSend: (prompt: string) => void | Promise<void>;
+  /** Multi-phase Build workflow (Build pill). */
   onBuild: (prompt: string) => void | Promise<void>;
   placeholder?: string;
   /** Run-scope error from the parent hook (e.g. already active). */
@@ -53,6 +56,7 @@ export function Composer({
   sessionId,
   hasWorktree,
   disabled = false,
+  onSend,
   onBuild,
   placeholder = "Ask anything, @tag files/folders, $use skills, or / for commands",
   error = null,
@@ -68,7 +72,12 @@ export function Composer({
   const providerWrapRef = useRef<HTMLDivElement>(null);
   const modelWrapRef = useRef<HTMLDivElement>(null);
 
-  const canSend = !disabled && !sending && value.trim().length > 0;
+  const hasPrompt = value.trim().length > 0;
+  const isClaude = provider === "claude";
+  const canSend = !disabled && !sending && hasPrompt;
+  /** Build requires Claude; non-claude stays dimmed with a tooltip. */
+  const canBuild = !disabled && !sending && hasPrompt && isClaude;
+  const buildDimmed = !isClaude;
   const shownError = error ?? localError;
   const shortSess = shortSessionId(sessionId);
   const sessionLocked = Boolean(sessionId);
@@ -96,29 +105,40 @@ export function Composer({
     return () => document.removeEventListener("mousedown", onDoc);
   }, [modeOpen, providerOpen, modelOpen]);
 
-  const submit = async () => {
-    if (!canSend) return;
+  const runAction = async (
+    action: (prompt: string) => void | Promise<void>,
+    failLabel: string,
+  ) => {
+    if (!hasPrompt || disabled || sending) return;
     const prompt = value.trim();
     setSending(true);
     setLocalError(null);
     try {
-      await onBuild(prompt);
+      await action(prompt);
       setValue("");
     } catch (err) {
       const msg =
-        err instanceof Error && err.message
-          ? err.message
-          : "Failed to start run";
+        err instanceof Error && err.message ? err.message : failLabel;
       setLocalError(msg);
     } finally {
       setSending(false);
     }
   };
 
+  const submitSend = () => {
+    if (!canSend) return;
+    void runAction(onSend, "Failed to start run");
+  };
+
+  const submitBuild = () => {
+    if (!canBuild) return;
+    void runAction(onBuild, "Failed to start workflow");
+  };
+
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
       e.preventDefault();
-      void submit();
+      submitSend();
     }
   };
 
@@ -361,10 +381,16 @@ export function Composer({
             </div>
             <button
               type="button"
-              className={`${styles.pill} ${styles.pillAccent}`}
-              onClick={() => void submit()}
-              disabled={!canSend}
-              title="Build (⌘Enter)"
+              className={`${styles.pill} ${styles.pillAccent}${
+                buildDimmed ? ` ${styles.pillDimmed}` : ""
+              }`}
+              onClick={() => submitBuild()}
+              disabled={!canBuild}
+              title={
+                buildDimmed
+                  ? "Workflow runs require the Claude provider"
+                  : "Build workflow"
+              }
             >
               {STATIC.mode}
               <span className={styles.caret}>▾</span>
@@ -373,9 +399,10 @@ export function Composer({
           <button
             type="button"
             className={styles.send}
-            aria-label="Build"
+            aria-label="Send"
             disabled={!canSend}
-            onClick={() => void submit()}
+            title="Send (⌘Enter)"
+            onClick={() => submitSend()}
           >
             ↑
           </button>

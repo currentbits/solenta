@@ -81,6 +81,14 @@ type RunState = {
   assistantMsgId: string | null;
   /** Session-style run step index (tool/text sequence). */
   sessionStep: number;
+  /**
+   * session: single-provider turn (runs.start)
+   * simulate: mock multi-agent tick for provider === "simulate"
+   * workflow: Build orchestration (runs.startWorkflow, claude only)
+   */
+  kind: "session" | "simulate" | "workflow";
+  /** Build-workflow step index (startWorkflow only). */
+  workflowStep: number;
 };
 
 function now() {
@@ -258,6 +266,151 @@ function createFreshWorkflow(): WorkflowView {
     tokensTotal: 0,
     complete: false,
   };
+}
+
+/**
+ * Build (startWorkflow) shape: seed(1) → analyze(2 concurrent) → synthesize(1).
+ * Seed starts running so the first thread:updated already shows progress.
+ */
+function createBuildWorkflow(): WorkflowView {
+  const seed: AgentView = {
+    id: "seed:1",
+    model: "sonnet-5",
+    status: "running",
+    tokensUsed: 200,
+  };
+  const analyze: AgentView[] = [
+    {
+      id: "analyze:1",
+      model: "sonnet-5",
+      status: "pending",
+      tokensUsed: 0,
+    },
+    {
+      id: "analyze:2",
+      model: "sonnet-5",
+      status: "pending",
+      tokensUsed: 0,
+    },
+  ];
+  const synthesize: AgentView = {
+    id: "synthesize:1",
+    model: "sonnet-5",
+    status: "pending",
+    tokensUsed: 0,
+  };
+  const phases: WorkflowView["phases"] = [
+    { name: "seed", pipelined: false, agents: [seed] },
+    { name: "analyze", pipelined: true, agents: analyze },
+    { name: "synthesize", pipelined: false, agents: [synthesize] },
+  ];
+  return {
+    id: id("wf"),
+    name: "BUILD",
+    phases,
+    settled: 0,
+    total: 4,
+    tokensTotal: seed.tokensUsed,
+    complete: false,
+  };
+}
+
+function buildKickoffText(wf: WorkflowView): string {
+  const lines = [
+    `Kicked off ${wf.total} subagents`,
+    "Seed · 1 · Plan context from the prompt",
+    "Analyze · 2 · Concurrent exploration",
+    "Synthesize · 1 · Final answer",
+  ];
+  return lines.join("\n");
+}
+
+/**
+ * Advance Build workflow one step:
+ * 0 (start): seed running
+ * 1: seed settled; both analyze running
+ * 2: analyze settled; synthesize running
+ * 3: synthesize settled → complete
+ * Returns true when the workflow is complete after this tick.
+ */
+function tickBuildWorkflow(
+  detail: ThreadDetail,
+  run: RunState,
+  t: number,
+  prompt: string,
+): boolean {
+  const wf = detail.workflow;
+  if (!wf) return true;
+
+  const phases = wf.phases.map((p) => ({
+    ...p,
+    agents: p.agents.map((a) => ({ ...a })),
+  }));
+  const step = run.workflowStep;
+
+  if (step === 0) {
+    // Seed was already running at start; settle it and start both analyze agents.
+    for (const a of phases[0]!.agents) {
+      a.status = "settled";
+      a.tokensUsed += 900 + Math.floor(Math.random() * 400);
+    }
+    for (const a of phases[1]!.agents) {
+      a.status = "running";
+      a.tokensUsed = 300 + Math.floor(Math.random() * 200);
+    }
+    run.workflowStep = 1;
+  } else if (step === 1) {
+    for (const a of phases[1]!.agents) {
+      a.status = "settled";
+      a.tokensUsed += 1200 + Math.floor(Math.random() * 500);
+    }
+    for (const a of phases[2]!.agents) {
+      a.status = "running";
+      a.tokensUsed = 400 + Math.floor(Math.random() * 200);
+    }
+    run.workflowStep = 2;
+  } else {
+    for (const a of phases[2]!.agents) {
+      a.status = "settled";
+      a.tokensUsed += 1500 + Math.floor(Math.random() * 600);
+    }
+    run.workflowStep = 3;
+  }
+
+  detail.workflow = recomputeWorkflow(phases, wf);
+  syncWorkLogForWorkflow(detail, run, t);
+
+  if (run.workflowStep < 3) {
+    return false;
+  }
+
+  for (const item of detail.workLog) {
+    if (item.runId === run.runId) item.done = true;
+  }
+  const short =
+    prompt.split("\n")[0]?.slice(0, 80) || "your request";
+  detail.messages.push({
+    id: id("msg"),
+    role: "assistant",
+    text: `Workflow answer: completed Build for "${short}". Seed planned context, two analyze agents explored in parallel, and synthesize merged the findings.`,
+    createdAt: t,
+    runId: run.runId,
+  });
+  detail.messages.push({
+    id: id("evt"),
+    role: "event",
+    text: "Run complete",
+    createdAt: t + 1,
+    runId: run.runId,
+  });
+  bumpUsage(detail, {
+    inputTokens: 2400,
+    outputTokens: 980,
+    costUsd: 0.012,
+    turns: 1,
+    model: detail.thread.model ?? "claude-opus-4",
+  });
+  return true;
 }
 
 function recomputeWorkflow(phases: WorkflowView["phases"], base: WorkflowView): WorkflowView {
@@ -755,6 +908,8 @@ function buildDevCoder(): CoderApi {
             detail.messages.find((m) => m.role === "assistant" && m.runId === runId)
               ?.id ?? null,
           sessionStep: 0,
+          kind: t.provider === "simulate" ? "simulate" : "session",
+          workflowStep: 0,
         });
       }
     } else {
@@ -806,6 +961,14 @@ function buildDevCoder(): CoderApi {
 
   const isSimulate = (thread: ThreadInfo) => thread.provider === "simulate";
 
+  /** Prompt from the user message of the active run (for workflow final answer). */
+  const runPrompt = (detail: ThreadDetail, runId: string): string => {
+    const user = [...detail.messages]
+      .reverse()
+      .find((m) => m.role === "user" && m.runId === runId);
+    return user?.text ?? "";
+  };
+
   const tickRun = (threadId: string) => {
     const detail = details.get(threadId);
     if (!detail) {
@@ -821,6 +984,8 @@ function buildDevCoder(): CoderApi {
         settled: new Set(),
         assistantMsgId: null,
         sessionStep: 0,
+        kind: isSimulate(detail.thread) ? "simulate" : "session",
+        workflowStep: 0,
       };
       runStates.set(threadId, run);
     }
@@ -832,7 +997,18 @@ function buildDevCoder(): CoderApi {
     };
     let complete = false;
 
-    if (isSimulate(thread) && detail.workflow && !detail.workflow.complete) {
+    if (run.kind === "workflow" && detail.workflow && !detail.workflow.complete) {
+      complete = tickBuildWorkflow(
+        detail,
+        run,
+        t,
+        runPrompt(detail, run.runId),
+      );
+    } else if (
+      (run.kind === "simulate" || isSimulate(thread)) &&
+      detail.workflow &&
+      !detail.workflow.complete
+    ) {
       const advanced = advanceWorkflow(detail.workflow);
       detail.workflow = advanced;
       syncWorkLogForWorkflow(detail, run, t);
@@ -857,7 +1033,7 @@ function buildDevCoder(): CoderApi {
           model: "simulate-multiagent",
         });
       }
-    } else if (!isSimulate(thread)) {
+    } else if (run.kind === "session" || !isSimulate(thread)) {
       complete = tickSessionRun(detail, run, t);
     } else {
       complete = true;
@@ -1114,12 +1290,17 @@ function buildDevCoder(): CoderApi {
         const prompt = input.prompt.trim();
         const t = now();
         const runId = id("run");
+        const kind: RunState["kind"] = isSimulate(detail.thread)
+          ? "simulate"
+          : "session";
         const run: RunState = {
           runId,
           announced: new Set(),
           settled: new Set(),
           assistantMsgId: null,
           sessionStep: 0,
+          kind,
+          workflowStep: 0,
         };
         runStates.set(input.threadId, run);
 
@@ -1151,7 +1332,7 @@ function buildDevCoder(): CoderApi {
         };
         detail.thread = thread;
 
-        if (isSimulate(thread)) {
+        if (kind === "simulate") {
           detail.workflow = createFreshWorkflow();
           detail.workflow = advanceWorkflow(detail.workflow);
           syncWorkLogForWorkflow(detail, run, t);
@@ -1175,6 +1356,80 @@ function buildDevCoder(): CoderApi {
         startRunTimer(input.threadId);
         return { runId };
       },
+      async startWorkflow(input) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
+
+        if (detail.thread.provider !== "claude") {
+          throw new Error(
+            "Workflow runs currently require the Claude provider.",
+          );
+        }
+
+        if (
+          detail.thread.status === "working" ||
+          runTimers.has(input.threadId)
+        ) {
+          throw new Error("A run is already active on this thread");
+        }
+
+        const prompt = input.prompt.trim();
+        const t = now();
+        const runId = id("run");
+        const run: RunState = {
+          runId,
+          announced: new Set(),
+          settled: new Set(),
+          assistantMsgId: null,
+          sessionStep: 0,
+          kind: "workflow",
+          workflowStep: 0,
+        };
+        runStates.set(input.threadId, run);
+
+        detail.messages.push({
+          id: id("msg"),
+          role: "user",
+          text: prompt,
+          createdAt: t,
+          runId,
+        });
+
+        let thread = { ...detail.thread };
+        if (thread.title === "New Thread") {
+          const firstLine =
+            prompt.split("\n")[0]?.slice(0, TITLE_MAX) || "New Thread";
+          thread = { ...thread, title: firstLine };
+        }
+
+        if (!thread.sessionId) {
+          thread = { ...thread, sessionId: id("sess") };
+        }
+
+        thread = {
+          ...thread,
+          status: "working",
+          updatedAt: t,
+          runStartedAt: t,
+        };
+        detail.thread = thread;
+
+        detail.workflow = createBuildWorkflow();
+        syncWorkLogForWorkflow(detail, run, t);
+        detail.messages.push({
+          id: id("evt"),
+          role: "event",
+          text: buildKickoffText(detail.workflow),
+          createdAt: t + 1,
+          runId,
+        });
+
+        details.set(input.threadId, detail);
+        syncThreadRow(thread);
+        emitDetail(detail);
+        startRunTimer(input.threadId);
+        return { runId };
+      },
       async stop(input) {
         const detail = details.get(input.threadId);
         if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
@@ -1191,6 +1446,20 @@ function buildDevCoder(): CoderApi {
             m.tool.output = m.tool.output ?? "Stopped";
           }
         }
+        if (detail.workflow) {
+          const phases = detail.workflow.phases.map((p) => ({
+            ...p,
+            agents: p.agents.map((a) =>
+              a.status === "running"
+                ? { ...a, status: "failed" as const }
+                : a,
+            ),
+          }));
+          detail.workflow = recomputeWorkflow(phases, {
+            ...detail.workflow,
+            complete: false,
+          });
+        }
         const thread: ThreadInfo = {
           ...detail.thread,
           status: "idle",
@@ -1205,12 +1474,6 @@ function buildDevCoder(): CoderApi {
           createdAt: t,
           runId: run?.runId,
         });
-        if (detail.workflow) {
-          detail.workflow = {
-            ...detail.workflow,
-            complete: false,
-          };
-        }
         details.set(input.threadId, detail);
         syncThreadRow(thread);
         emitDetail(detail);

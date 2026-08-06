@@ -515,6 +515,8 @@
 .eventTitle {
   font-weight: 600;
   margin-bottom: 10px;
+  white-space: pre-wrap;
+  line-height: 1.45;
 }
 
 .table {

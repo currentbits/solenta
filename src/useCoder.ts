@@ -49,6 +49,8 @@ export interface UseCoderResult {
     projectId?: string,
   ) => Promise<ThreadInfo | null>;
   startRun: (prompt: string) => Promise<void>;
+  /** Multi-phase Build workflow (claude only); same selectedRef guard as startRun. */
+  startWorkflowRun: (prompt: string) => Promise<void>;
   stopRun: () => Promise<void>;
   setPermissionMode: (mode: PermissionMode) => Promise<void>;
   /** Set provider and/or model on the selected thread (selectedRef-guarded). */
@@ -263,6 +265,29 @@ export function useCoder(): UseCoderResult {
     [api, selectedThreadId, applyThreads],
   );
 
+  const startWorkflowRun = useCallback(
+    async (prompt: string) => {
+      if (!selectedThreadId) return;
+      const threadId = selectedThreadId;
+      try {
+        await api.runs.startWorkflow({ threadId, prompt });
+        const d = await api.threads.get(threadId);
+        if (selectedRef.current !== threadId) return;
+        setDetail(d);
+        applyThreads(
+          threadsRef.current.map((t) =>
+            t.id === d.thread.id ? d.thread : t,
+          ),
+        );
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+        throw err;
+      }
+    },
+    [api, selectedThreadId, applyThreads],
+  );
+
   const stopRun = useCallback(async () => {
     if (!selectedThreadId) return;
     const threadId = selectedThreadId;
@@ -457,6 +482,7 @@ export function useCoder(): UseCoderResult {
     addProject,
     createThread,
     startRun,
+    startWorkflowRun,
     stopRun,
     setPermissionMode,
     setProvider,
