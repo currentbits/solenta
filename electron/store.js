@@ -101,6 +101,36 @@ class Store {
     this.setWorkLog(threadId, list);
   }
 
+  /**
+   * Patch an existing message by id. No-op if missing.
+   * @param {string} threadId
+   * @param {string} messageId
+   * @param {object} patch
+   */
+  updateMessage(threadId, messageId, patch) {
+    const list = this.getMessages(threadId).slice();
+    const idx = list.findIndex((m) => m.id === messageId);
+    if (idx < 0) return null;
+    list[idx] = { ...list[idx], ...patch };
+    this.setMessages(threadId, list);
+    return list[idx];
+  }
+
+  /**
+   * Patch an existing work-log item by id. No-op if missing.
+   * @param {string} threadId
+   * @param {string} itemId
+   * @param {object} patch
+   */
+  updateWorkLogItem(threadId, itemId, patch) {
+    const list = this.getWorkLog(threadId).slice();
+    const idx = list.findIndex((w) => w.id === itemId);
+    if (idx < 0) return null;
+    list[idx] = { ...list[idx], ...patch };
+    this.setWorkLog(threadId, list);
+    return list[idx];
+  }
+
   updateThread(threadId, patch) {
     const threads = this.data.threads.map((t) =>
       t.id === threadId ? { ...t, ...patch, updatedAt: Date.now() } : t,
