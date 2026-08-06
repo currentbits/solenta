@@ -93,10 +93,25 @@ function timingSafeEqualString(a, b) {
   return bufferA.length === bufferB.length && crypto.timingSafeEqual(bufferA, bufferB)
 }
 
-function authorized(req, token) {
+/**
+ * Bearer Authorization header, or (when allowQueryToken) ?token= on the URL.
+ * Header always wins: a present Bearer credential is never overridden by query.
+ * @param {http.IncomingMessage} req
+ * @param {string} token
+ * @param {URL} url
+ * @param {{ allowQueryToken?: boolean }} [opts]
+ */
+function authorized(req, token, url, { allowQueryToken = false } = {}) {
   const header = req.headers.authorization ?? ''
-  if (!header.startsWith('Bearer ')) return false
-  return timingSafeEqualString(header.slice(7), token)
+  if (header.startsWith('Bearer ')) {
+    return timingSafeEqualString(header.slice(7), token)
+  }
+  if (allowQueryToken) {
+    const queryToken = url.searchParams.get('token')
+    if (queryToken == null) return false
+    return timingSafeEqualString(queryToken, token)
+  }
+  return false
 }
 
 function json(value) {
@@ -362,9 +377,9 @@ export function startServer(memory, config, host = '127.0.0.1') {
       return
     }
 
-    // REST convenience endpoints require bearer auth.
+    // REST convenience endpoints require bearer header auth only.
     if (url.pathname.startsWith('/api/')) {
-      if (!authorized(req, config.token)) {
+      if (!authorized(req, config.token, url)) {
         res.writeHead(401).end()
         return
       }
@@ -374,9 +389,9 @@ export function startServer(memory, config, host = '127.0.0.1') {
       return
     }
 
-    // MCP endpoint requires bearer auth.
+    // MCP: bearer header, or ?token= for header-less clients (localhost only).
     if (url.pathname === '/mcp') {
-      if (!authorized(req, config.token)) {
+      if (!authorized(req, config.token, url, { allowQueryToken: true })) {
         res.writeHead(401).end()
         return
       }

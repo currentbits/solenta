@@ -27,4 +27,4 @@ Search fuses FTS5 with a 2-hop entity graph (RRF), then applies composite scorin
 
 REST (same bearer auth): `GET /api/recent`, `GET /api/search`, `GET /api/entry/:id`, `POST /api/store`.
 
-Search returns excerpts; call `memory_get` for full bodies. MCP at `POST /mcp` with `Authorization: Bearer <token>`. `GET /health` is open.
+Search returns excerpts; call `memory_get` for full bodies. MCP at `POST /mcp` with `Authorization: Bearer <token>`. Header-less MCP clients (for example codex HTTP MCP) may instead pass the same token as `?token=<token>` on the `/mcp` URL only; REST `/api/*` stays header-only. This option is for localhost use. `GET /health` is open.

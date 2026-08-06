@@ -49,6 +49,57 @@ describe('HTTP auth and health', () => {
     assert.equal(wrong.status, 401)
   })
 
+  it('accepts query token only on /mcp (handshake 200)', async () => {
+    const transport = new StreamableHTTPClientTransport(
+      new URL(`${baseURL}/mcp?token=${encodeURIComponent(TOKEN)}`),
+    )
+    const mcp = new Client({ name: 'test-query-token', version: '0.0.0' })
+    await mcp.connect(transport)
+    const tools = await mcp.listTools()
+    assert.ok(tools.tools.some((t) => t.name === 'memory_bootstrap'))
+    await mcp.close()
+  })
+
+  it('rejects wrong query token on /mcp with 401', async () => {
+    const res = await fetch(`${baseURL}/mcp?token=wrong-token-xxxxxxxx`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', method: 'ping', id: 1 }),
+    })
+    assert.equal(res.status, 401)
+  })
+
+  it('valid header wins over wrong query token on /mcp', async () => {
+    const transport = new StreamableHTTPClientTransport(
+      new URL(`${baseURL}/mcp?token=wrong-token-xxxxxxxx`),
+      { requestInit: { headers: { Authorization: `Bearer ${TOKEN}` } } },
+    )
+    const mcp = new Client({ name: 'test-header-wins', version: '0.0.0' })
+    await mcp.connect(transport)
+    const tools = await mcp.listTools()
+    assert.ok(tools.tools.some((t) => t.name === 'memory_bootstrap'))
+    await mcp.close()
+  })
+
+  it('wrong header rejects even with valid query token on /mcp', async () => {
+    const res = await fetch(`${baseURL}/mcp?token=${encodeURIComponent(TOKEN)}`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        Authorization: 'Bearer wrong-token-xxxxxxxx',
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', method: 'ping', id: 1 }),
+    })
+    assert.equal(res.status, 401)
+  })
+
+  it('query token alone does not authorize /api/*', async () => {
+    const res = await fetch(
+      `${baseURL}/api/recent?token=${encodeURIComponent(TOKEN)}&limit=5`,
+    )
+    assert.equal(res.status, 401)
+  })
+
   it('GET /health is open (no auth) and returns ok', async () => {
     const res = await fetch(`${baseURL}/health`)
     assert.equal(res.status, 200)
