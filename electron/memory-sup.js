@@ -262,34 +262,35 @@ function createMemorySupervisor(opts) {
     globalMcpConfigPath = null;
     ownedChild = null;
 
-    if (!fs.existsSync(configPath)) {
-      log("memory-server: no config at " + configPath + "; continuing without memory");
-      return;
-    }
-
-    /** @type {{ port?: number, token?: string, dbPath?: string }} */
-    let cfg;
-    try {
-      cfg = JSON.parse(fs.readFileSync(configPath, "utf8"));
-    } catch (err) {
-      log(
-        "memory-server: invalid config JSON; continuing without memory: " +
-          (err && err.message ? err.message : String(err)),
-      );
-      return;
-    }
-
-    const port = Number(cfg.port);
-    const token = typeof cfg.token === "string" ? cfg.token : "";
-    if (!port || !Number.isFinite(port)) {
-      log("memory-server: invalid port in config; continuing without memory");
-      return;
+    // (a) Read the config when present. A MISSING config is the normal first
+    // run: the server itself creates it, so we fall through to spawn.
+    // An existing-but-corrupt config degrades: the server would refuse to
+    // start on it anyway, so spawning would just loop.
+    /** @type {{ port: number, token: string } | null} */
+    let cfg = null;
+    if (fs.existsSync(configPath)) {
+      try {
+        const parsed = JSON.parse(fs.readFileSync(configPath, "utf8"));
+        const port = Number(parsed.port);
+        const token = typeof parsed.token === "string" ? parsed.token : "";
+        if (!port || !Number.isFinite(port)) {
+          log("memory-server: invalid port in config; continuing without memory");
+          return;
+        }
+        cfg = { port, token };
+      } catch (err) {
+        log(
+          "memory-server: invalid config JSON; continuing without memory: " +
+            (err && err.message ? err.message : String(err)),
+        );
+        return;
+      }
     }
 
     // (b) Probe health; adopt if already up.
-    if (await probeHealth(port, HEALTH_TIMEOUT_MS)) {
-      markHealthy({ port, token, userDataPath, adopted: true });
-      log(`memory-server: adopted existing server on port ${port}`);
+    if (cfg && (await probeHealth(cfg.port, HEALTH_TIMEOUT_MS))) {
+      markHealthy({ port: cfg.port, token: cfg.token, userDataPath, adopted: true });
+      log(`memory-server: adopted existing server on port ${cfg.port}`);
       return;
     }
 
@@ -359,27 +360,64 @@ function createMemorySupervisor(opts) {
       return;
     }
 
-    const up = await waitForHealth(port, SPAWN_WAIT_MS);
+    // First run: the server writes the config itself; poll for it.
+    if (!cfg) {
+      cfg = await waitForConfig(configPath, SPAWN_WAIT_MS);
+      if (!cfg) {
+        log(
+          "memory-server: config never appeared within " +
+            SPAWN_WAIT_MS +
+            "ms; continuing without memory",
+        );
+        killOwnedChild();
+        return;
+      }
+    }
+
+    const up = await waitForHealth(cfg.port, SPAWN_WAIT_MS);
     if (!up) {
       log(
         "memory-server: health never came up within " +
           SPAWN_WAIT_MS +
           "ms; continuing without memory",
       );
-      // Kill the hung spawn attempt if still around
-      if (ownedChild) {
-        try {
-          ownedChild.kill("SIGTERM");
-        } catch {
-          // ignore
-        }
-        ownedChild = null;
-      }
+      killOwnedChild();
       return;
     }
 
-    markHealthy({ port, token, userDataPath, adopted: false });
-    log(`memory-server: spawned and healthy on port ${port}`);
+    markHealthy({ port: cfg.port, token: cfg.token, userDataPath, adopted: false });
+    log(`memory-server: spawned and healthy on port ${cfg.port}`);
+  }
+
+  /** Poll for the server-created config file; null on timeout or bad shape. */
+  async function waitForConfig(file, timeoutMs) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (fs.existsSync(file)) {
+        try {
+          const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
+          const port = Number(parsed.port);
+          const token = typeof parsed.token === "string" ? parsed.token : "";
+          if (port && Number.isFinite(port)) return { port, token };
+        } catch {
+          // partially written; keep polling
+        }
+      }
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    return null;
+  }
+
+  /** Kill a hung spawn attempt if still around. */
+  function killOwnedChild() {
+    if (ownedChild) {
+      try {
+        ownedChild.kill("SIGTERM");
+      } catch {
+        // ignore
+      }
+      ownedChild = null;
+    }
   }
 
   /**

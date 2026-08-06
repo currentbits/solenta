@@ -41,9 +41,18 @@ const http = require("http");
 const fs = require("fs");
 
 const configPath = process.env.CODER_MEMORY_CONFIG;
-if (!configPath || !fs.existsSync(configPath)) {
+if (!configPath) {
   console.error("missing CODER_MEMORY_CONFIG");
   process.exit(1);
+}
+// Like the real server: create the config on first run.
+if (!fs.existsSync(configPath)) {
+  const fresh = {
+    port: 49500 + Math.floor(Math.random() * 500),
+    token: "t".repeat(64),
+    dbPath: configPath + ".db",
+  };
+  fs.writeFileSync(configPath, JSON.stringify(fresh), { mode: 0o600 });
 }
 const cfg = JSON.parse(fs.readFileSync(configPath, "utf8"));
 const port = Number(cfg.port);
@@ -320,10 +329,29 @@ describe("memory-sup supervisor", () => {
     });
   });
 
-  it("no config file: continues without memory", async () => {
+  it("no config file with entry present: spawns and picks up server-created config", async () => {
+    const entry = writeFakeMemoryEntry(tmpDir);
     const sup = createMemorySupervisor({
       userDataPath: tmpDir,
       appPath: tmpDir,
+      log: (m) => logs.push(m),
+      env: { ...process.env, CODER_MEMORY_ENTRY: entry },
+    });
+    await sup.start();
+    try {
+      assert.equal(sup.getStatus().running, true);
+      assert.equal(sup.getStatus().adopted, false);
+      assert.ok(fs.existsSync(path.join(tmpDir, "memory-server.json")));
+      assert.ok(getClaudeMcpArgs().length > 0);
+    } finally {
+      sup.stop();
+    }
+  });
+
+  it("no config and no entry: continues without memory", async () => {
+    const sup = createMemorySupervisor({
+      userDataPath: tmpDir,
+      appPath: path.join(tmpDir, "definitely-missing"),
       log: (m) => logs.push(m),
     });
     await sup.start();
