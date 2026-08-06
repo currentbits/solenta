@@ -1,5 +1,6 @@
 # Issues log
 
+- 2026-08-06 - symptom: opencode run threw workflowProgress flatMap on undefined | cause: pushDetail only skipped __claude/__codex/__kimi, not __opencode | fix: include __opencode in identity guard (electron/runner.js)
 - 2026-08-06 - symptom: every thread sidebar age showed "now" forever | cause: store.updateThread stamped updatedAt on every patch (permission mode, sessionId, worktree) | fix: touch option + appendMessage bump; runStartedAt start/clear/recovery (electron/store.js)
 - 2026-08-06 - symptom: sidebar age always "now", no live Working elapsed, empty projects missing | cause: formatWorkingLabel used updatedAt (no seconds); groups skipped zero-thread projects; no shared tick; ThreadInfo.runStartedAt unused in dev seed | fix: formatWorkingLabel(runStartedAt) + buildSidebarGroups + 5s tick; devCoder sets/clears runStartedAt
 - 2026-08-06 - symptom: non-force removeWorktree deleted branch under detached HEAD with no error | cause: catch defaultBranch and skip unmerged check | fix: WORKTREE_DIRTY + git log -n 10 branch (worktrees.js a18ddbd)

@@ -64,8 +64,8 @@ describe("providers registry", () => {
     assert.equal(grok.supportsResume, false);
 
     const opencode = getProvider("opencode");
-    assert.equal(opencode.kind, "text");
-    assert.equal(opencode.supportsResume, false);
+    assert.equal(opencode.kind, "opencode-json");
+    assert.equal(opencode.supportsResume, true);
 
     const kimi = getProvider("kimi");
     assert.equal(kimi.kind, "kimi-stream");
@@ -138,7 +138,7 @@ describe("providers registry", () => {
     assert.equal(resume[resume.length - 1], "p3");
   });
 
-  it("buildArgs: grok and opencode text shapes", () => {
+  it("buildArgs: grok text and opencode-json shapes", () => {
     assert.deepEqual(getProvider("grok").buildArgs({ prompt: "hello" }), [
       "-p",
       "hello",
@@ -146,7 +146,18 @@ describe("providers registry", () => {
     assert.deepEqual(getProvider("opencode").buildArgs({ prompt: "hello" }), [
       "run",
       "hello",
+      "--format",
+      "json",
     ]);
+    const resume = getProvider("opencode").buildArgs({
+      prompt: "again",
+      sessionId: "ses_abc",
+      model: "openai/gpt-4o",
+    });
+    assert.ok(resume.includes("-s"));
+    assert.equal(resume[resume.indexOf("-s") + 1], "ses_abc");
+    assert.ok(resume.includes("-m"));
+    assert.equal(resume[resume.indexOf("-m") + 1], "openai/gpt-4o");
   });
 
   it("resolveBin uses env overrides", () => {

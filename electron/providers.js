@@ -14,7 +14,7 @@ const { execFileSync } = require("node:child_process");
  * @property {string} defaultBin
  * @property {boolean} supportsResume
  * @property {string[]} models
- * @property {"claude-stream" | "codex-json" | "kimi-stream" | "text" | "simulate"} kind
+ * @property {"claude-stream" | "codex-json" | "kimi-stream" | "opencode-json" | "text" | "simulate"} kind
  * @property {(opts: { prompt: string, sessionId?: string | null, permissionMode?: string, model?: string | null }) => string[]} buildArgs
  */
 
@@ -100,11 +100,22 @@ const PROVIDERS = [
     name: "OpenCode",
     binEnv: "CODER_OPENCODE_BIN",
     defaultBin: "opencode",
-    supportsResume: false,
+    supportsResume: true,
     models: [],
-    kind: "text",
-    buildArgs({ prompt }) {
-      return ["run", String(prompt ?? "")];
+    kind: "opencode-json",
+    /**
+     * Custom model ids allowed (format provider/model).
+     * Resume via -s <sessionID>; model override via -m provider/model.
+     */
+    buildArgs({ prompt, sessionId, model }) {
+      const args = ["run", String(prompt ?? ""), "--format", "json"];
+      if (sessionId) {
+        args.push("-s", String(sessionId));
+      }
+      if (model) {
+        args.push("-m", String(model));
+      }
+      return args;
     },
   },
   {

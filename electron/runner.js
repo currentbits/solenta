@@ -21,7 +21,13 @@ const {
   resolveBin,
   isBinAvailable,
 } = require("./providers.js");
-const { getClaudeMcpArgs, getMemoryStatus } = require("./memory-sup.js");
+const {
+  getClaudeMcpArgs,
+  getCodexMcpArgs,
+  getMemoryStatus,
+} = require("./memory-sup.js");
+const opencodeParse = require("./opencode.js");
+const { runOpencode } = opencodeParse;
 const { recordRunOutcome } = require("./memory-record.js");
 const workflowEngine = require("./workflow.js");
 
@@ -292,7 +298,12 @@ function createRunner(opts) {
       } else if (workflow.__real) {
         // Contract: workflow only for simulate / orchestrated
         view = null;
-      } else if (workflow.__claude || workflow.__codex || workflow.__kimi) {
+      } else if (
+        workflow.__claude ||
+        workflow.__codex ||
+        workflow.__kimi ||
+        workflow.__opencode
+      ) {
         view = null;
       } else {
         view = mapWorkflowView(workflow, core);
@@ -1155,6 +1166,11 @@ function createRunner(opts) {
       permissionMode: thread.permissionMode || "default",
       model: thread.model || null,
     });
+    // Leading -c MCP override when memory server is healthy.
+    const codexMcpArgs = getCodexMcpArgs();
+    if (codexMcpArgs.length > 0) {
+      args.unshift(...codexMcpArgs);
+    }
 
     const entry = {
       kind: "codex",
@@ -1790,7 +1806,384 @@ function createRunner(opts) {
   }
 
   /**
-   * Start a text-provider run (grok / opencode) via agent.js.
+   * Start an OpenCode NDJSON (--format json) session turn with resume via -s.
+   * @param {string} threadId
+   * @param {string} prompt
+   * @param {string} runId
+   * @param {import('./providers').ProviderEntry} providerEntry
+   */
+  function startOpencodeRun(threadId, prompt, runId, providerEntry) {
+    const thread = store.getThread(threadId);
+    const project = store.getProject(thread.projectId);
+    if (!project) {
+      throw new Error(`Unknown project for thread: ${threadId}`);
+    }
+
+    assertProviderBinary(providerEntry);
+
+    const opencodeState = {
+      __opencode: true,
+      runId,
+    };
+
+    const startingId = beginWorkLogStep(threadId, runId, "Starting agent");
+    const workingId = beginWorkLogStep(threadId, runId, "Agent working");
+
+    store.save();
+    pushThreadsChanged();
+    pushDetail(threadId, opencodeState);
+
+    /** @type {string | null} */
+    let assistantMsgId = null;
+    /** Ordered part ids for text reconstruction. */
+    /** @type {string[]} */
+    const partOrder = [];
+    /** @type {Map<string, string>} */
+    const partTextById = new Map();
+    let anonPartSeq = 0;
+    /** @type {Map<string, string>} */
+    const toolMsgById = new Map();
+    /** @type {string | null} */
+    let capturedSessionId = thread.sessionId || null;
+    let lastPushAt = 0;
+    /** @type {ReturnType<typeof setTimeout> | null} */
+    let pushTimer = null;
+    /** Run-local usage for memory footers (not cumulative store totals). */
+    const runUsage = { tokensIn: 0, tokensOut: 0, costUsd: 0 };
+
+    const cwd = thread.worktreePath || project.path;
+    const binary = resolveBin(providerEntry);
+    const args = providerEntry.buildArgs({
+      prompt,
+      sessionId: thread.sessionId || null,
+      permissionMode: thread.permissionMode || "default",
+      model: thread.model || null,
+    });
+
+    const entry = {
+      kind: "opencode",
+      runId,
+      stopping: false,
+      handle: null,
+      startingId,
+      workingId,
+      opencodeState,
+      runUsage,
+    };
+    Object.defineProperty(entry, "workflow", {
+      get() {
+        return opencodeState;
+      },
+      enumerable: true,
+    });
+    active.set(threadId, entry);
+
+    function guard() {
+      const e = active.get(threadId);
+      if (!e || e.stopping || e.runId !== runId) return null;
+      if (e.kind !== "opencode") return null;
+      return e;
+    }
+
+    function rebuildAssistantText() {
+      return partOrder.map((id) => partTextById.get(id) || "").join("");
+    }
+
+    function flushPush() {
+      pushTimer = null;
+      lastPushAt = Date.now();
+      if (!guard()) return;
+      store.save();
+      pushDetail(threadId, opencodeState);
+    }
+
+    function throttledPush() {
+      const now = Date.now();
+      const elapsed = now - lastPushAt;
+      if (elapsed >= KIMI_PUSH_THROTTLE_MS) {
+        if (pushTimer) {
+          clearTimeout(pushTimer);
+          pushTimer = null;
+        }
+        flushPush();
+        return;
+      }
+      if (!pushTimer) {
+        pushTimer = setTimeout(flushPush, KIMI_PUSH_THROTTLE_MS - elapsed);
+      }
+    }
+
+    function ensureAssistant(text) {
+      if (!assistantMsgId) {
+        assistantMsgId = appendMessage(threadId, "assistant", text, runId);
+      } else {
+        store.updateMessage(threadId, assistantMsgId, { text });
+      }
+    }
+
+    function applyUsage(usageInfo) {
+      if (!usageInfo) return;
+      const prev = store.getUsage(threadId) || {
+        model: null,
+        inputTokens: 0,
+        outputTokens: 0,
+        costUsd: 0,
+        turns: 0,
+      };
+      const costDelta = Number(usageInfo.costUsd) || 0;
+      const inDelta = Number(usageInfo.inputTokens) || 0;
+      const outDelta = Number(usageInfo.outputTokens) || 0;
+      runUsage.tokensIn += inDelta;
+      runUsage.tokensOut += outDelta;
+      runUsage.costUsd += costDelta;
+      store.setUsage(threadId, {
+        model: usageInfo.model || prev.model || thread.model || null,
+        inputTokens: prev.inputTokens + inDelta,
+        outputTokens: prev.outputTokens + outDelta,
+        costUsd: prev.costUsd + costDelta,
+        turns: prev.turns + 1,
+      });
+      if (costDelta > 0) {
+        store.recordSpend(costDelta);
+      }
+    }
+
+    completeWorkLogStep(threadId, startingId);
+
+    const handle = runOpencode({
+      binary,
+      args,
+      cwd,
+      onEvent: (ev) => {
+        if (!guard()) return;
+
+        const sid = opencodeParse.extractSessionId(ev);
+        if (sid && !capturedSessionId) {
+          capturedSessionId = sid;
+          store.updateThread(threadId, { sessionId: sid });
+          store.save();
+          pushThreadsChanged();
+          throttledPush();
+        } else if (sid && sid !== capturedSessionId) {
+          capturedSessionId = sid;
+          store.updateThread(threadId, { sessionId: sid });
+          store.save();
+          pushThreadsChanged();
+        }
+
+        const textPart = opencodeParse.extractTextPart(ev);
+        if (textPart) {
+          const partId =
+            textPart.id != null && textPart.id !== ""
+              ? textPart.id
+              : `__anon_${anonPartSeq++}`;
+          if (!partTextById.has(partId)) {
+            partOrder.push(partId);
+          }
+          // Dedupe: repeating part.id with fuller text replaces that contribution.
+          const prev = partTextById.get(partId) || "";
+          if (
+            !prev ||
+            textPart.text.length >= prev.length ||
+            !prev.startsWith(textPart.text)
+          ) {
+            partTextById.set(partId, textPart.text);
+          }
+          ensureAssistant(rebuildAssistantText());
+          throttledPush();
+        }
+
+        const tool = opencodeParse.extractToolEvent(ev);
+        if (tool) {
+          if (tool.phase === "start") {
+            const toolMeta = {
+              id: tool.id,
+              name: tool.name,
+              input: tool.input,
+              output: null,
+              isError: false,
+              done: false,
+            };
+            const summary = tool.input
+              ? `${tool.name}: ${tool.input.length > 80 ? `${tool.input.slice(0, 80)}…` : tool.input}`
+              : tool.name;
+            const msgId = appendMessage(
+              threadId,
+              "tool",
+              summary,
+              runId,
+              toolMeta,
+            );
+            toolMsgById.set(tool.id, msgId);
+          } else if (tool.phase === "end") {
+            let msgId = toolMsgById.get(tool.id);
+            if (!msgId) {
+              const toolMeta = {
+                id: tool.id,
+                name: tool.name,
+                input: tool.input,
+                output: null,
+                isError: false,
+                done: false,
+              };
+              msgId = appendMessage(
+                threadId,
+                "tool",
+                tool.name,
+                runId,
+                toolMeta,
+              );
+              toolMsgById.set(tool.id, msgId);
+            }
+            const existing = store
+              .getMessages(threadId)
+              .find((m) => m.id === msgId);
+            if (existing && existing.tool) {
+              store.updateMessage(threadId, msgId, {
+                tool: {
+                  ...existing.tool,
+                  input: tool.input || existing.tool.input,
+                  output: tool.output,
+                  isError: tool.isError,
+                  done: true,
+                },
+              });
+            }
+          } else {
+            const toolMeta = {
+              id: tool.id,
+              name: tool.name,
+              input: tool.input,
+              output: tool.output,
+              isError: tool.isError,
+              done: true,
+            };
+            appendMessage(threadId, "tool", tool.name, runId, toolMeta);
+          }
+          throttledPush();
+        }
+      },
+      onExit: ({ code, stderr, fullStdout, gotJson }) => {
+        if (pushTimer) {
+          clearTimeout(pushTimer);
+          pushTimer = null;
+        }
+        const e = active.get(threadId);
+        if (!e || e.stopping || e.runId !== runId) return;
+        if (e.kind !== "opencode") return;
+
+        clearRun(threadId);
+        completeWorkLogStep(threadId, e.startingId);
+        completeWorkLogStep(threadId, e.workingId);
+
+        let assistantText = rebuildAssistantText();
+
+        // Hard fallback: zero JSON lines parse -> whole stdout as text.
+        if (!gotJson && fullStdout && fullStdout.length > 0) {
+          assistantText = fullStdout.replace(/\s+$/, "");
+          ensureAssistant(assistantText);
+        }
+
+        // Usage unknown: estimate tokens like text kind.
+        if (code === 0) {
+          const tokens = Math.ceil((assistantText || "").length / 4) || 0;
+          applyUsage({
+            inputTokens: 0,
+            outputTokens: tokens,
+            costUsd: 0,
+            model: thread.model || null,
+          });
+
+          store.updateThread(
+            threadId,
+            {
+              status: "done",
+              sessionId: capturedSessionId || thread.sessionId || null,
+              runStartedAt: null,
+            },
+            { touch: true },
+          );
+          store.save();
+          pushDetail(threadId, opencodeState);
+          pushThreadsChanged();
+          notifyRunTerminal(
+            threadId,
+            "done",
+            assistantText || lastAssistantText(threadId, runId),
+            {
+              tokensIn: runUsage.tokensIn,
+              tokensOut: runUsage.tokensOut,
+              costUsd: runUsage.costUsd,
+            },
+          );
+          return;
+        }
+
+        const stderrTail = String(stderr || "")
+          .split(/\r?\n/)
+          .filter(Boolean)
+          .slice(-8)
+          .join("\n");
+        const errText = stderrTail
+          ? `Run error (exit ${code == null ? "?" : code}):\n${stderrTail}`
+          : `Run error (exit ${code == null ? "?" : code})`;
+        appendMessage(threadId, "event", errText, runId);
+        appendDoneWorkLog(threadId, runId, "Run error");
+        store.updateThread(
+          threadId,
+          { status: "failed", runStartedAt: null },
+          { touch: true },
+        );
+        store.save();
+        pushDetail(threadId, opencodeState);
+        pushThreadsChanged();
+        notifyRunTerminal(threadId, "failed", errText, {
+          tokensIn: runUsage.tokensIn,
+          tokensOut: runUsage.tokensOut,
+          costUsd: runUsage.costUsd,
+        });
+      },
+      onError: (err) => {
+        if (pushTimer) {
+          clearTimeout(pushTimer);
+          pushTimer = null;
+        }
+        const e = active.get(threadId);
+        if (!e || e.stopping || e.runId !== runId) return;
+        if (e.kind !== "opencode") return;
+
+        clearRun(threadId);
+        completeWorkLogStep(threadId, e.startingId);
+        completeWorkLogStep(threadId, e.workingId);
+        const msg = err && err.message ? err.message : String(err);
+        const errText = `Run error: ${msg}`;
+        appendMessage(threadId, "event", errText, runId);
+        appendDoneWorkLog(threadId, runId, "Run error");
+        store.updateThread(
+          threadId,
+          { status: "failed", runStartedAt: null },
+          { touch: true },
+        );
+        store.save();
+        pushDetail(threadId, opencodeState);
+        pushThreadsChanged();
+        notifyRunTerminal(threadId, "failed", errText, {
+          tokensIn: runUsage.tokensIn,
+          tokensOut: runUsage.tokensOut,
+          costUsd: runUsage.costUsd,
+        });
+      },
+    });
+
+    entry.handle = handle;
+    store.save();
+    pushDetail(threadId, opencodeState);
+
+    return { runId };
+  }
+
+  /**
+   * Start a text-provider run (grok) via agent.js.
    * @param {string} threadId
    * @param {string} prompt
    * @param {string} runId
@@ -2063,6 +2456,9 @@ function createRunner(opts) {
     if (entryDef.kind === "kimi-stream") {
       return startKimiRun(threadId, prompt, runId, entryDef);
     }
+    if (entryDef.kind === "opencode-json") {
+      return startOpencodeRun(threadId, prompt, runId, entryDef);
+    }
     if (entryDef.kind === "text") {
       return startTextProviderRun(threadId, prompt, runId, name, entryDef);
     }
@@ -2119,6 +2515,7 @@ function createRunner(opts) {
         entry.kind === "claude" ||
         entry.kind === "codex" ||
         entry.kind === "kimi" ||
+        entry.kind === "opencode" ||
         entry.kind === "text" ||
         entry.kind === "real") &&
       entry.handle
@@ -2141,7 +2538,8 @@ function createRunner(opts) {
     } else if (
       entry.kind === "claude" ||
       entry.kind === "codex" ||
-      entry.kind === "kimi"
+      entry.kind === "kimi" ||
+      entry.kind === "opencode"
     ) {
       completeWorkLogStep(threadId, entry.startingId);
       completeWorkLogStep(threadId, entry.workingId);
@@ -2206,6 +2604,7 @@ function createRunner(opts) {
           entry.kind === "claude" ||
           entry.kind === "codex" ||
           entry.kind === "kimi" ||
+          entry.kind === "opencode" ||
           entry.kind === "text" ||
           entry.kind === "real") &&
         entry.handle
@@ -2232,7 +2631,8 @@ function createRunner(opts) {
       workflow.__real ||
       workflow.__claude ||
       workflow.__codex ||
-      workflow.__kimi
+      workflow.__kimi ||
+      workflow.__opencode
     ) {
       if (workflow.__real) return buildRealWorkflowView(workflow);
       return null;

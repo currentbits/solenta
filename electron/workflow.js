@@ -14,7 +14,13 @@ const {
   resolveBin,
   isBinAvailable,
 } = require("./providers.js");
-const { getClaudeMcpArgs } = require("./memory-sup.js");
+const { getClaudeMcpArgs, getCodexMcpArgs } = require("./memory-sup.js");
+const {
+  runOpencode,
+  extractTextPart: opencodeExtractText,
+  extractSessionId: opencodeExtractSessionId,
+  extractToolEvent: opencodeExtractTool,
+} = require("./opencode.js");
 
 const PUSH_THROTTLE_MS = 250;
 const DOSSIER_INPUT_MAX = 800;
@@ -360,6 +366,10 @@ function spawnAgentCodex(opts) {
     sessionId: null,
     model: model || null,
   });
+  const codexMcpArgs = getCodexMcpArgs();
+  if (codexMcpArgs.length > 0) {
+    args.unshift(...codexMcpArgs);
+  }
 
   const handle = runCodex({
     binary: binary || resolveBin(entry),
@@ -511,6 +521,115 @@ function spawnAgentKimi(opts) {
 }
 
 /**
+ * Spawn a one-shot OpenCode NDJSON agent (no resume).
+ * @param {object} opts
+ * @returns {{ handle: { kill: () => void }, done: Promise<object> }}
+ */
+function spawnAgentOpencode(opts) {
+  const { prompt, cwd, model, binary, providerEntry, onText } = opts;
+
+  let text = "";
+  /** @type {string[]} */
+  const partOrder = [];
+  /** @type {Map<string, string>} */
+  const partTextById = new Map();
+  let anonPartSeq = 0;
+  let finished = false;
+  let fullStdout = "";
+  let gotJson = false;
+
+  /** @type {(value: object) => void} */
+  let resolveDone;
+  const done = new Promise((resolve) => {
+    resolveDone = resolve;
+  });
+
+  function finish(payload) {
+    if (finished) return;
+    finished = true;
+    resolveDone(payload);
+  }
+
+  function rebuild() {
+    return partOrder.map((id) => partTextById.get(id) || "").join("");
+  }
+
+  const entry = providerEntry || getProvider("opencode");
+  const args = entry.buildArgs({
+    prompt,
+    sessionId: null,
+    model: model || null,
+  });
+
+  const handle = runOpencode({
+    binary: binary || resolveBin(entry),
+    args,
+    cwd,
+    onEvent: (ev) => {
+      gotJson = true;
+      if (!ev || typeof ev !== "object") return;
+      const textPart = opencodeExtractText(ev);
+      if (textPart) {
+        const partId =
+          textPart.id != null && textPart.id !== ""
+            ? textPart.id
+            : `__anon_${anonPartSeq++}`;
+        if (!partTextById.has(partId)) {
+          partOrder.push(partId);
+        }
+        const prev = partTextById.get(partId) || "";
+        if (
+          !prev ||
+          textPart.text.length >= prev.length ||
+          !prev.startsWith(textPart.text)
+        ) {
+          partTextById.set(partId, textPart.text);
+        }
+        text = rebuild();
+        if (typeof onText === "function") onText(text);
+      }
+      // sessionID captured but workflow one-shots do not resume
+      opencodeExtractSessionId(ev);
+      opencodeExtractTool(ev);
+    },
+    onExit: ({ code, stderr, fullStdout: stdout, gotJson: parsed }) => {
+      fullStdout = stdout || "";
+      gotJson = gotJson || parsed;
+      let finalText = text;
+      if (!gotJson && fullStdout) {
+        finalText = fullStdout.replace(/\s+$/, "");
+        if (typeof onText === "function") onText(finalText);
+      }
+      const tokens = Math.ceil((finalText || "").length / 4) || 0;
+      finish({
+        ok: code === 0,
+        text: finalText,
+        usage: {
+          inputTokens: 0,
+          outputTokens: tokens,
+          costUsd: 0,
+        },
+        code,
+        stderr: String(stderr || ""),
+      });
+    },
+    onError: (err) => {
+      const msg = err && err.message ? err.message : String(err);
+      finish({
+        ok: false,
+        text,
+        usage: null,
+        code: 1,
+        stderr: msg,
+        error: err,
+      });
+    },
+  });
+
+  return { handle, done };
+}
+
+/**
  * Spawn a plain text-kind provider agent.
  * @param {object} opts
  * @returns {{ handle: { kill: () => void }, done: Promise<object> }}
@@ -640,6 +759,16 @@ function spawnPhaseAgent(opts) {
   }
   if (entry.kind === "kimi-stream") {
     return spawnAgentKimi({
+      prompt,
+      cwd,
+      model,
+      binary,
+      providerEntry: entry,
+      onText,
+    });
+  }
+  if (entry.kind === "opencode-json") {
+    return spawnAgentOpencode({
       prompt,
       cwd,
       model,

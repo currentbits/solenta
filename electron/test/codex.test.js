@@ -343,4 +343,100 @@ describe("runner codex provider", () => {
         ),
     );
   });
+
+  it("adds -c mcp_servers.coder-memory.url override only when memory is healthy", async () => {
+    const {
+      resetMemorySupForTests,
+      createMemorySupervisor,
+      getCodexMcpArgs,
+    } = require("../memory-sup.js");
+    const http = require("node:http");
+
+    resetMemorySupForTests();
+    process.env.CODER_FAKE_CODEX_SCENARIO = "success";
+    if (fs.existsSync(argvFile)) fs.unlinkSync(argvFile);
+
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "no-mem" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+    let argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
+    assert.ok(!argv.some((a) => String(a).includes("mcp_servers.coder-memory")));
+    assert.equal(getCodexMcpArgs().length, 0);
+
+    const memDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-codex-mem-"));
+    const freePort = await new Promise((resolve, reject) => {
+      const s = http.createServer();
+      s.listen(0, "127.0.0.1", () => {
+        const { port } = s.address();
+        s.close((err) => (err ? reject(err) : resolve(port)));
+      });
+      s.on("error", reject);
+    });
+    const token = "codex-mcp-token";
+    fs.writeFileSync(
+      path.join(memDir, "memory-server.json"),
+      JSON.stringify({
+        port: freePort,
+        token,
+        dbPath: path.join(memDir, "db"),
+      }),
+      "utf8",
+    );
+    // Keep kimi config writes out of home during this test.
+    const prevKimiMcp = process.env.CODER_KIMI_MCP_PATH;
+    process.env.CODER_KIMI_MCP_PATH = path.join(memDir, "kimi-mcp.json");
+
+    const server = http.createServer((req, res) => {
+      if (req.url === "/health") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: true }));
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    await new Promise((r) => server.listen(freePort, "127.0.0.1", r));
+    try {
+      const sup = createMemorySupervisor({
+        userDataPath: memDir,
+        appPath: memDir,
+        log: () => {},
+      });
+      await sup.start();
+      assert.equal(sup.getStatus().running, true);
+      const mcpArgs = getCodexMcpArgs();
+      assert.equal(mcpArgs.length, 2);
+      assert.equal(mcpArgs[0], "-c");
+      assert.equal(
+        mcpArgs[1],
+        `mcp_servers.coder-memory.url="http://127.0.0.1:${freePort}/mcp?token=${token}"`,
+      );
+
+      const project = store.getProjects()[0];
+      const t2 = services.createThread(store, {
+        projectId: project.id,
+        title: "Codex Mem",
+      });
+      services.setProvider(store, { threadId: t2.id, provider: "codex" });
+      fs.unlinkSync(argvFile);
+      await runner.startRun({ threadId: t2.id, prompt: "with-mem" });
+      await waitFor(() => store.getThread(t2.id).status === "done");
+      argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
+      const cIdx = argv.indexOf("-c");
+      assert.ok(cIdx >= 0, `expected -c in ${JSON.stringify(argv)}`);
+      assert.equal(
+        argv[cIdx + 1],
+        `mcp_servers.coder-memory.url="http://127.0.0.1:${freePort}/mcp?token=${token}"`,
+      );
+      // Leading args before exec
+      assert.ok(cIdx < argv.indexOf("exec"));
+      sup.stop();
+    } finally {
+      await new Promise((r) => server.close(r));
+      resetMemorySupForTests();
+      if (prevKimiMcp === undefined) delete process.env.CODER_KIMI_MCP_PATH;
+      else process.env.CODER_KIMI_MCP_PATH = prevKimiMcp;
+      fs.rmSync(memDir, { recursive: true, force: true });
+    }
+  });
 });

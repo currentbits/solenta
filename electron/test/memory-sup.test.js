@@ -8,6 +8,9 @@ const { spawn } = require("node:child_process");
 const {
   createMemorySupervisor,
   getClaudeMcpArgs,
+  getCodexMcpArgs,
+  ensureKimiMcpConfig,
+  resolveKimiMcpPath,
   resetMemorySupForTests,
 } = require("../memory-sup.js");
 
@@ -101,8 +104,12 @@ describe("memory-sup supervisor", () => {
       CODER_NODE_BIN: process.env.CODER_NODE_BIN,
       CODER_MEMORY_ENTRY: process.env.CODER_MEMORY_ENTRY,
       CODER_MEMORY_CONFIG: process.env.CODER_MEMORY_CONFIG,
+      CODER_KIMI_MCP_PATH: process.env.CODER_KIMI_MCP_PATH,
+      CODER_KIMI_BIN: process.env.CODER_KIMI_BIN,
       PATH: process.env.PATH,
     };
+    // Keep ensureKimi writes inside the test dir if kimi is present.
+    process.env.CODER_KIMI_MCP_PATH = path.join(tmpDir, "kimi-mcp.json");
     resetMemorySupForTests();
   });
 
@@ -164,6 +171,14 @@ describe("memory-sup supervisor", () => {
       assert.equal(
         mcp.mcpServers["coder-memory"].headers.Authorization,
         `Bearer ${token}`,
+      );
+
+      const codexArgs = getCodexMcpArgs();
+      assert.equal(codexArgs.length, 2);
+      assert.equal(codexArgs[0], "-c");
+      assert.equal(
+        codexArgs[1],
+        `mcp_servers.coder-memory.url="http://127.0.0.1:${port}/mcp?token=${token}"`,
       );
 
       // Adopted: stop must not try to kill a child we never owned.
@@ -252,6 +267,7 @@ describe("memory-sup supervisor", () => {
     assert.equal(st.running, false);
     assert.equal(st.adopted, false);
     assert.equal(getClaudeMcpArgs().length, 0);
+    assert.equal(getCodexMcpArgs().length, 0);
     assert.ok(
       logs.some(
         (m) =>
@@ -357,5 +373,279 @@ describe("memory-sup supervisor", () => {
     await sup.start();
     assert.equal(sup.getStatus().running, false);
     assert.equal(getClaudeMcpArgs().length, 0);
+    assert.equal(getCodexMcpArgs().length, 0);
+  });
+
+  it("getCodexMcpArgs empty when unhealthy, populated when healthy", async () => {
+    assert.equal(getCodexMcpArgs().length, 0);
+
+    const port = await freePort();
+    const token = "codex-token-xyz";
+    fs.writeFileSync(
+      path.join(tmpDir, "memory-server.json"),
+      JSON.stringify({
+        port,
+        token,
+        dbPath: path.join(tmpDir, "db"),
+      }),
+      "utf8",
+    );
+    const server = http.createServer((req, res) => {
+      if (req.url === "/health") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: true }));
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    await new Promise((r) => server.listen(port, "127.0.0.1", r));
+    try {
+      const sup = createMemorySupervisor({
+        userDataPath: tmpDir,
+        appPath: tmpDir,
+        log: (m) => logs.push(m),
+      });
+      await sup.start();
+      const args = getCodexMcpArgs();
+      assert.deepEqual(args, [
+        "-c",
+        `mcp_servers.coder-memory.url="http://127.0.0.1:${port}/mcp?token=${token}"`,
+      ]);
+      sup.stop();
+    } finally {
+      await new Promise((r) => server.close(r));
+    }
+  });
+});
+
+describe("ensureKimiMcpConfig", () => {
+  let tmpDir;
+  let logs;
+  let prevEnv;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-kimi-mcp-"));
+    logs = [];
+    prevEnv = {
+      CODER_KIMI_MCP_PATH: process.env.CODER_KIMI_MCP_PATH,
+      CODER_KIMI_BIN: process.env.CODER_KIMI_BIN,
+    };
+    process.env.CODER_KIMI_MCP_PATH = path.join(tmpDir, "mcp.json");
+    resetMemorySupForTests();
+  });
+
+  afterEach(() => {
+    resetMemorySupForTests();
+    for (const [k, v] of Object.entries(prevEnv)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  async function markHealthyViaAdopt(port, token) {
+    fs.writeFileSync(
+      path.join(tmpDir, "memory-server.json"),
+      JSON.stringify({
+        port,
+        token,
+        dbPath: path.join(tmpDir, "db"),
+      }),
+      "utf8",
+    );
+    const server = http.createServer((req, res) => {
+      if (req.url === "/health") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: true }));
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    await new Promise((r) => server.listen(port, "127.0.0.1", r));
+    // Disable auto-write by making kimi unavailable during start; tests call ensure explicitly.
+    const sup = createMemorySupervisor({
+      userDataPath: tmpDir,
+      appPath: tmpDir,
+      log: (m) => logs.push(m),
+      env: { ...process.env, CODER_KIMI_BIN: path.join(tmpDir, "no-kimi") },
+    });
+    await sup.start();
+    return { sup, server };
+  }
+
+  it("creates fresh mcp.json when missing", async () => {
+    const port = await freePort();
+    const token = "kimi-tok";
+    const { sup, server } = await markHealthyViaAdopt(port, token);
+    try {
+      const mcpPath = process.env.CODER_KIMI_MCP_PATH;
+      assert.ok(!fs.existsSync(mcpPath));
+      const ok = ensureKimiMcpConfig({
+        log: (m) => logs.push(m),
+        isKimiAvailable: () => true,
+      });
+      assert.equal(ok, true);
+      assert.ok(fs.existsSync(mcpPath));
+      const doc = JSON.parse(fs.readFileSync(mcpPath, "utf8"));
+      assert.deepEqual(doc.mcpServers["coder-memory"], {
+        type: "http",
+        url: `http://127.0.0.1:${port}/mcp`,
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      // Fresh create: no backup
+      assert.ok(!fs.existsSync(mcpPath + ".coder-backup"));
+    } finally {
+      sup.stop();
+      await new Promise((r) => server.close(r));
+    }
+  });
+
+  it("merges into existing file preserving foreign keys and backs up once", async () => {
+    const port = await freePort();
+    const token = "merge-tok";
+    const mcpPath = process.env.CODER_KIMI_MCP_PATH;
+    fs.writeFileSync(
+      mcpPath,
+      JSON.stringify(
+        {
+          version: 1,
+          otherTop: true,
+          mcpServers: {
+            foreign: { type: "stdio", command: "echo" },
+          },
+        },
+        null,
+        2,
+      ) + "\n",
+      "utf8",
+    );
+    const { sup, server } = await markHealthyViaAdopt(port, token);
+    try {
+      assert.equal(
+        ensureKimiMcpConfig({
+          log: (m) => logs.push(m),
+          isKimiAvailable: () => true,
+        }),
+        true,
+      );
+      const doc = JSON.parse(fs.readFileSync(mcpPath, "utf8"));
+      assert.equal(doc.version, 1);
+      assert.equal(doc.otherTop, true);
+      assert.deepEqual(doc.mcpServers.foreign, {
+        type: "stdio",
+        command: "echo",
+      });
+      assert.equal(
+        doc.mcpServers["coder-memory"].url,
+        `http://127.0.0.1:${port}/mcp`,
+      );
+      const backup = mcpPath + ".coder-backup";
+      assert.ok(fs.existsSync(backup));
+      const backupDoc = JSON.parse(fs.readFileSync(backup, "utf8"));
+      assert.ok(!backupDoc.mcpServers["coder-memory"]);
+      assert.deepEqual(backupDoc.mcpServers.foreign, {
+        type: "stdio",
+        command: "echo",
+      });
+
+      // Second write with same values: no backup overwrite (backup still original)
+      const backupBefore = fs.readFileSync(backup, "utf8");
+      assert.equal(
+        ensureKimiMcpConfig({
+          log: (m) => logs.push(m),
+          isKimiAvailable: () => true,
+        }),
+        true,
+      );
+      assert.equal(fs.readFileSync(backup, "utf8"), backupBefore);
+    } finally {
+      sup.stop();
+      await new Promise((r) => server.close(r));
+    }
+  });
+
+  it("updates entry when port/token differ; does not overwrite existing backup", async () => {
+    const port1 = await freePort();
+    const token1 = "tok-a";
+    const mcpPath = process.env.CODER_KIMI_MCP_PATH;
+    fs.writeFileSync(
+      mcpPath,
+      JSON.stringify({
+        mcpServers: {
+          "coder-memory": {
+            type: "http",
+            url: "http://127.0.0.1:1/mcp",
+            headers: { Authorization: "Bearer old" },
+          },
+        },
+      }),
+      "utf8",
+    );
+    const existingBackup = mcpPath + ".coder-backup";
+    fs.writeFileSync(existingBackup, '{"keep":true}\n', "utf8");
+
+    const { sup, server } = await markHealthyViaAdopt(port1, token1);
+    try {
+      assert.equal(
+        ensureKimiMcpConfig({
+          log: (m) => logs.push(m),
+          isKimiAvailable: () => true,
+        }),
+        true,
+      );
+      const doc = JSON.parse(fs.readFileSync(mcpPath, "utf8"));
+      assert.equal(
+        doc.mcpServers["coder-memory"].url,
+        `http://127.0.0.1:${port1}/mcp`,
+      );
+      assert.equal(
+        doc.mcpServers["coder-memory"].headers.Authorization,
+        `Bearer ${token1}`,
+      );
+      assert.equal(fs.readFileSync(existingBackup, "utf8"), '{"keep":true}\n');
+    } finally {
+      sup.stop();
+      await new Promise((r) => server.close(r));
+    }
+  });
+
+  it("leaves corrupt existing file untouched", async () => {
+    const port = await freePort();
+    const mcpPath = process.env.CODER_KIMI_MCP_PATH;
+    const corrupt = "{ not valid json !!!";
+    fs.writeFileSync(mcpPath, corrupt, "utf8");
+    const { sup, server } = await markHealthyViaAdopt(port, "t");
+    try {
+      const ok = ensureKimiMcpConfig({
+        log: (m) => logs.push(m),
+        isKimiAvailable: () => true,
+      });
+      assert.equal(ok, false);
+      assert.equal(fs.readFileSync(mcpPath, "utf8"), corrupt);
+      assert.ok(!fs.existsSync(mcpPath + ".coder-backup"));
+      assert.ok(logs.some((m) => /parse failed|untouched/i.test(String(m))));
+    } finally {
+      sup.stop();
+      await new Promise((r) => server.close(r));
+    }
+  });
+
+  it("respects CODER_KIMI_MCP_PATH env override", () => {
+    const custom = path.join(tmpDir, "nested", "custom-mcp.json");
+    process.env.CODER_KIMI_MCP_PATH = custom;
+    assert.equal(resolveKimiMcpPath(), custom);
+  });
+
+  it("no-ops when memory unhealthy or kimi unavailable", () => {
+    assert.equal(
+      ensureKimiMcpConfig({
+        log: (m) => logs.push(m),
+        isKimiAvailable: () => true,
+      }),
+      false,
+    );
+    assert.ok(!fs.existsSync(process.env.CODER_KIMI_MCP_PATH));
   });
 });

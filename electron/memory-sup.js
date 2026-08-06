@@ -15,6 +15,8 @@ const HEALTH_POLL_MS = 100;
 let globalStatus = { running: false, adopted: false, port: null };
 /** @type {string | null} */
 let globalMcpConfigPath = null;
+/** @type {string | null} */
+let globalToken = null;
 /** @type {import('node:child_process').ChildProcess | null} */
 let ownedChild = null;
 
@@ -32,6 +34,7 @@ function resetMemorySupForTests() {
   ownedChild = null;
   globalStatus = { running: false, adopted: false, port: null };
   globalMcpConfigPath = null;
+  globalToken = null;
 }
 
 /**
@@ -41,6 +44,168 @@ function resetMemorySupForTests() {
 function getClaudeMcpArgs() {
   if (!globalStatus.running || !globalMcpConfigPath) return [];
   return ["--mcp-config", globalMcpConfigPath];
+}
+
+/**
+ * Codex argv extras when memory is healthy: two leading -c override args, or [].
+ * Value is a TOML string: mcp_servers.coder-memory.url="http://.../mcp?token=..."
+ * @returns {string[]}
+ */
+function getCodexMcpArgs() {
+  if (!globalStatus.running || !globalStatus.port || !globalToken) return [];
+  const url = `http://127.0.0.1:${globalStatus.port}/mcp?token=${globalToken}`;
+  return ["-c", `mcp_servers.coder-memory.url="${url}"`];
+}
+
+/**
+ * Resolve path to kimi's mcp.json (env override or ~/.kimi-code/mcp.json).
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {string}
+ */
+function resolveKimiMcpPath(env = process.env) {
+  if (env.CODER_KIMI_MCP_PATH) {
+    return String(env.CODER_KIMI_MCP_PATH);
+  }
+  return path.join(osHomedir(), ".kimi-code", "mcp.json");
+}
+
+/**
+ * Desired coder-memory entry for kimi mcp.json.
+ * @param {number} port
+ * @param {string} token
+ */
+function kimiCoderMemoryEntry(port, token) {
+  return {
+    type: "http",
+    url: `http://127.0.0.1:${port}/mcp`,
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  };
+}
+
+/**
+ * When memory is healthy and kimi binary is available, MERGE coder-memory into
+ * kimi's mcp.json (never overwrite whole file). Backup once before first edit
+ * of an existing file. On parse failure of an existing file: log and leave it.
+ *
+ * @param {object} [opts]
+ * @param {(msg: string) => void} [opts.log]
+ * @param {NodeJS.ProcessEnv} [opts.env]
+ * @param {(bin: string) => boolean} [opts.isKimiAvailable] - inject for tests
+ * @returns {boolean} true if file was written or already correct
+ */
+function ensureKimiMcpConfig(opts = {}) {
+  const log = opts.log || ((msg) => console.warn(msg));
+  const env = opts.env || process.env;
+
+  if (!globalStatus.running || !globalStatus.port || !globalToken) {
+    return false;
+  }
+
+  let kimiOk = false;
+  if (typeof opts.isKimiAvailable === "function") {
+    kimiOk = Boolean(opts.isKimiAvailable("kimi"));
+  } else {
+    try {
+      const {
+        getProvider,
+        resolveBin,
+        isBinAvailable,
+      } = require("./providers.js");
+      const entry = getProvider("kimi");
+      if (entry) {
+        kimiOk = isBinAvailable(resolveBin(entry, env));
+      }
+    } catch (err) {
+      log(
+        "memory-server: kimi availability check failed: " +
+          (err && err.message ? err.message : String(err)),
+      );
+      return false;
+    }
+  }
+  if (!kimiOk) return false;
+
+  const mcpPath = resolveKimiMcpPath(env);
+  const desired = kimiCoderMemoryEntry(globalStatus.port, globalToken);
+
+  /** @type {Record<string, unknown>} */
+  let doc = {};
+  const existed = fs.existsSync(mcpPath);
+  if (existed) {
+    let raw;
+    try {
+      raw = fs.readFileSync(mcpPath, "utf8");
+    } catch (err) {
+      log(
+        "memory-server: cannot read kimi mcp.json; leaving untouched: " +
+          (err && err.message ? err.message : String(err)),
+      );
+      return false;
+    }
+    try {
+      doc = JSON.parse(raw);
+      if (!doc || typeof doc !== "object" || Array.isArray(doc)) {
+        log("memory-server: kimi mcp.json is not an object; leaving untouched");
+        return false;
+      }
+    } catch (err) {
+      log(
+        "memory-server: kimi mcp.json parse failed; leaving untouched: " +
+          (err && err.message ? err.message : String(err)),
+      );
+      return false;
+    }
+  }
+
+  if (!doc.mcpServers || typeof doc.mcpServers !== "object") {
+    doc.mcpServers = {};
+  }
+  const servers = /** @type {Record<string, unknown>} */ (doc.mcpServers);
+  const existing = servers["coder-memory"];
+  try {
+    if (
+      existing &&
+      JSON.stringify(existing) === JSON.stringify(desired)
+    ) {
+      return true;
+    }
+  } catch {
+    // fall through to write
+  }
+
+  // Backup once before first modification of an existing file.
+  if (existed) {
+    const backupPath = mcpPath + ".coder-backup";
+    if (!fs.existsSync(backupPath)) {
+      try {
+        fs.copyFileSync(mcpPath, backupPath);
+      } catch (err) {
+        log(
+          "memory-server: failed to backup kimi mcp.json: " +
+            (err && err.message ? err.message : String(err)),
+        );
+        return false;
+      }
+    }
+  }
+
+  servers["coder-memory"] = desired;
+  try {
+    const dir = path.dirname(mcpPath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    fs.writeFileSync(mcpPath, JSON.stringify(doc, null, 2) + "\n", "utf8");
+  } catch (err) {
+    log(
+      "memory-server: failed to write kimi mcp.json: " +
+        (err && err.message ? err.message : String(err)),
+    );
+    return false;
+  }
+  return true;
 }
 
 /**
@@ -226,7 +391,13 @@ function markHealthy(opts) {
     adopted: Boolean(opts.adopted),
     port: opts.port,
   };
+  globalToken = opts.token || null;
   writeMcpConfig(opts.userDataPath, opts.port, opts.token);
+  // Merge coder-memory into kimi's mcp.json when kimi is installed (best-effort).
+  ensureKimiMcpConfig({
+    log: opts.log,
+    env: opts.env,
+  });
 }
 
 /**
@@ -260,6 +431,7 @@ function createMemorySupervisor(opts) {
     // Clear prior session state for this supervisor instance.
     globalStatus = { running: false, adopted: false, port: null };
     globalMcpConfigPath = null;
+    globalToken = null;
     ownedChild = null;
 
     // (a) Read the config when present. A MISSING config is the normal first
@@ -289,7 +461,14 @@ function createMemorySupervisor(opts) {
 
     // (b) Probe health; adopt if already up.
     if (cfg && (await probeHealth(cfg.port, HEALTH_TIMEOUT_MS))) {
-      markHealthy({ port: cfg.port, token: cfg.token, userDataPath, adopted: true });
+      markHealthy({
+        port: cfg.port,
+        token: cfg.token,
+        userDataPath,
+        adopted: true,
+        log,
+        env,
+      });
       log(`memory-server: adopted existing server on port ${cfg.port}`);
       return;
     }
@@ -341,6 +520,7 @@ function createMemorySupervisor(opts) {
           if (globalStatus.running && !globalStatus.adopted) {
             globalStatus = { running: false, adopted: false, port: null };
             globalMcpConfigPath = null;
+            globalToken = null;
           }
         }
         if (code && code !== 0) {
@@ -385,7 +565,14 @@ function createMemorySupervisor(opts) {
       return;
     }
 
-    markHealthy({ port: cfg.port, token: cfg.token, userDataPath, adopted: false });
+    markHealthy({
+      port: cfg.port,
+      token: cfg.token,
+      userDataPath,
+      adopted: false,
+      log,
+      env,
+    });
     log(`memory-server: spawned and healthy on port ${cfg.port}`);
   }
 
@@ -444,6 +631,7 @@ function createMemorySupervisor(opts) {
     if (!globalStatus.adopted) {
       globalStatus = { running: false, adopted: false, port: null };
       globalMcpConfigPath = null;
+      globalToken = null;
     }
   }
 
@@ -457,6 +645,9 @@ function createMemorySupervisor(opts) {
 module.exports = {
   createMemorySupervisor,
   getClaudeMcpArgs,
+  getCodexMcpArgs,
+  ensureKimiMcpConfig,
+  resolveKimiMcpPath,
   getMemoryStatus,
   resetMemorySupForTests,
   resolveNodeBinary,
