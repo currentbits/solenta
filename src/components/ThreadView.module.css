@@ -86,6 +86,11 @@
   gap: 14px;
 }
 
+/* Extra separation when multiple per-run Work Log cards appear in sequence */
+.body > .card + .card {
+  margin-top: 2px;
+}
+
 .card {
   background: var(--card);
   border: 1px solid var(--border);

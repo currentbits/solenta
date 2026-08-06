@@ -1,8 +1,20 @@
-import { useMemo, useState } from "react";
-import type { ChatMessage, ProjectInfo, ThreadDetail } from "../shared/ipc";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type {
+  ChatMessage,
+  ProjectInfo,
+  ThreadDetail,
+  WorkLogItem,
+} from "../shared/ipc";
 import { splitParagraphs } from "../format";
+import {
+  buildTimeline,
+  workLogDurationLabel,
+  type WorkLogGroup,
+} from "../timeline";
 import { Composer } from "./Composer";
 import styles from "./ThreadView.module.css";
+
+const STICK_BOTTOM_PX = 80;
 
 interface ThreadViewProps {
   detail: ThreadDetail | null;
@@ -42,15 +54,52 @@ function MessageBlock({ message }: { message: ChatMessage }) {
   );
 }
 
-function workLogDuration(items: ThreadDetail["workLog"]): string | null {
-  if (items.length === 0) return null;
-  const times = items.map((i) => i.timestamp);
-  const span = Math.max(...times) - Math.min(...times);
-  const secs = Math.max(0, Math.floor(span / 1000));
-  if (secs < 60) return `Worked for ${secs}s`;
-  const m = Math.floor(secs / 60);
-  const s = secs % 60;
-  return s > 0 ? `Worked for ${m}m ${s}s` : `Worked for ${m}m`;
+function WorkLogCard({
+  group,
+  defaultOpen,
+}: {
+  group: WorkLogGroup;
+  defaultOpen: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  const duration = workLogDurationLabel(group.items);
+
+  return (
+    <section className={styles.card}>
+      <button
+        type="button"
+        className={styles.cardHeader}
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+      >
+        <span className={styles.chevron} data-open={open}>
+          ▸
+        </span>
+        <span className={styles.cardTitle}>Work Log</span>
+      </button>
+      {open && (
+        <>
+          <ul className={styles.steps}>
+            {group.items.map((step: WorkLogItem) => (
+              <li key={step.id} className={styles.step}>
+                <span
+                  className={styles.checkbox}
+                  data-done={step.done}
+                  aria-hidden
+                >
+                  {step.done ? "✓" : ""}
+                </span>
+                <span className={styles.stepLabel}>{step.label}</span>
+              </li>
+            ))}
+          </ul>
+          {duration && (
+            <footer className={styles.workLogFooter}>{duration}</footer>
+          )}
+        </>
+      )}
+    </section>
+  );
 }
 
 export function ThreadView({
@@ -63,7 +112,9 @@ export function ThreadView({
   runError = null,
   onDismissRunError,
 }: ThreadViewProps) {
-  const [workLogOpen, setWorkLogOpen] = useState(true);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const stickToBottom = useRef(true);
+  const prevThreadId = useRef<string | null>(null);
 
   const runningAgents = useMemo(() => {
     if (!detail?.workflow) return 0;
@@ -74,7 +125,47 @@ export function ThreadView({
     );
   }, [detail]);
 
+  const timeline = useMemo(() => {
+    if (!detail) return [];
+    return buildTimeline(detail.messages, detail.workLog);
+  }, [detail]);
+
+  const latestWorkLogRunId = useMemo(() => {
+    let latest: WorkLogGroup | null = null;
+    for (const entry of timeline) {
+      if (entry.kind === "worklog") {
+        if (!latest || entry.timestamp >= latest.timestamp) latest = entry;
+      }
+    }
+    return latest?.runId ?? null;
+  }, [timeline]);
+
   const isWorking = detail?.thread.status === "working";
+  const emptyMessages = detail != null && detail.messages.length === 0;
+  const hasTimeline = timeline.length > 0;
+
+  // Reset stick-to-bottom when switching threads.
+  useEffect(() => {
+    const id = detail?.thread.id ?? null;
+    if (id !== prevThreadId.current) {
+      prevThreadId.current = id;
+      stickToBottom.current = true;
+    }
+  }, [detail?.thread.id]);
+
+  // Auto-scroll on new content only if the user is already near the bottom.
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!el || !stickToBottom.current) return;
+    el.scrollTop = el.scrollHeight;
+  }, [timeline, isWorking, detail?.messages, detail?.workLog]);
+
+  const onBodyScroll = () => {
+    const el = bodyRef.current;
+    if (!el) return;
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    stickToBottom.current = distance <= STICK_BOTTOM_PX;
+  };
 
   if (!hasProjects) {
     return (
@@ -106,10 +197,7 @@ export function ThreadView({
     );
   }
 
-  const { thread, messages, workLog } = detail;
-  const duration = workLogDuration(workLog);
-  const showWorkLog = workLog.length > 0;
-  const emptyMessages = messages.length === 0;
+  const { thread } = detail;
 
   return (
     <main className={styles.main}>
@@ -131,45 +219,12 @@ export function ThreadView({
         </div>
       </header>
 
-      <div className={styles.body}>
-        {showWorkLog && (
-          <section className={styles.card}>
-            <button
-              type="button"
-              className={styles.cardHeader}
-              onClick={() => setWorkLogOpen((v) => !v)}
-              aria-expanded={workLogOpen}
-            >
-              <span className={styles.chevron} data-open={workLogOpen}>
-                ▸
-              </span>
-              <span className={styles.cardTitle}>Work Log</span>
-            </button>
-            {workLogOpen && (
-              <>
-                <ul className={styles.steps}>
-                  {workLog.map((step) => (
-                    <li key={step.id} className={styles.step}>
-                      <span
-                        className={styles.checkbox}
-                        data-done={step.done}
-                        aria-hidden
-                      >
-                        {step.done ? "✓" : ""}
-                      </span>
-                      <span className={styles.stepLabel}>{step.label}</span>
-                    </li>
-                  ))}
-                </ul>
-                {duration && (
-                  <footer className={styles.workLogFooter}>{duration}</footer>
-                )}
-              </>
-            )}
-          </section>
-        )}
-
-        {emptyMessages && (
+      <div
+        className={styles.body}
+        ref={bodyRef}
+        onScroll={onBodyScroll}
+      >
+        {emptyMessages && !hasTimeline && (
           <div className={styles.emptyInline}>
             <p className={styles.emptyTitle}>
               Start by describing what to build
@@ -177,9 +232,20 @@ export function ThreadView({
           </div>
         )}
 
-        {messages.map((msg) => (
-          <MessageBlock key={msg.id} message={msg} />
-        ))}
+        {timeline.map((entry) => {
+          if (entry.kind === "message") {
+            return (
+              <MessageBlock key={entry.message.id} message={entry.message} />
+            );
+          }
+          return (
+            <WorkLogCard
+              key={`worklog-${entry.runId}`}
+              group={entry}
+              defaultOpen={entry.runId === latestWorkLogRunId}
+            />
+          );
+        })}
 
         {isWorking && (
           <div className={styles.statusStrip}>
