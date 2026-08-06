@@ -15,6 +15,8 @@ export interface ProjectInfo {
 
 export type ThreadStatus = "idle" | "working" | "done" | "failed";
 
+export type PermissionMode = "default" | "acceptEdits" | "plan" | "bypassPermissions";
+
 export interface ThreadInfo {
   id: string;
   projectId: string;
@@ -24,15 +26,64 @@ export interface ThreadInfo {
   status: ThreadStatus;
   createdAt: number;
   updatedAt: number;
+  /** Agent harness backing this thread. "claude" (default), "generic", or "simulate". */
+  provider: string;
+  /** Provider session id, persisted after the first turn so follow-ups resume context. */
+  sessionId: string | null;
+  /** Passed to the provider CLI (claude --permission-mode). Sticky per thread. */
+  permissionMode: PermissionMode;
+  /** Absolute path of the thread's git worktree, when one was set up. */
+  worktreePath: string | null;
+}
+
+/** A tool invocation surfaced from the agent's stream. */
+export interface ToolCallInfo {
+  /** Provider tool_use id, used to pair the result. */
+  id: string;
+  /** Tool name, e.g. "Bash", "Edit", "Read". */
+  name: string;
+  /** Pretty-printed JSON of the tool input (main truncates to ~2000 chars). */
+  input: string;
+  /** Result text once the tool finished (main truncates to ~4000 chars). */
+  output: string | null;
+  isError: boolean;
+  done: boolean;
 }
 
 export interface ChatMessage {
   id: string;
-  role: "user" | "assistant" | "event";
+  role: "user" | "assistant" | "event" | "tool";
+  /** For role "tool" this is a one-line summary, e.g. "Bash: npm test". */
   text: string;
   createdAt: number;
   /** Set when the message belongs to a run (streamed agent output, run events). */
   runId?: string | null;
+  /** Present exactly when role === "tool". */
+  tool?: ToolCallInfo;
+}
+
+/** Cumulative session usage across turns of a thread. */
+export interface SessionUsage {
+  model: string | null;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+  turns: number;
+}
+
+export interface FileChange {
+  path: string;
+  /** git status letter: M, A, D, R, ?? etc. */
+  status: string;
+  additions: number;
+  deletions: number;
+}
+
+export interface DiffResult {
+  files: FileChange[];
+  /** Unified diff text, truncated by main to ~100k chars. */
+  patch: string;
+  truncated: boolean;
 }
 
 /**
@@ -80,7 +131,10 @@ export interface ThreadDetail {
   thread: ThreadInfo;
   messages: ChatMessage[];
   workLog: WorkLogItem[];
+  /** Only populated by the simulate provider; null for real sessions. */
   workflow: WorkflowView | null;
+  /** Cumulative provider usage for this thread; null before the first turn. */
+  usage: SessionUsage | null;
 }
 
 export interface GitStatus {
@@ -101,18 +155,25 @@ export interface CoderApi {
     list(): Promise<ThreadInfo[]>;
     create(input: { projectId: string; title: string }): Promise<ThreadInfo>;
     get(id: string): Promise<ThreadDetail>;
+    /** Sticky permission mode for future turns of this thread. */
+    setPermissionMode(input: { threadId: string; mode: PermissionMode }): Promise<ThreadInfo>;
   };
   runs: {
     /**
-     * Starts a simulated multi-phase workflow run on the thread.
+     * Sends one turn to the thread's provider session (resuming the stored
+     * sessionId when present). Streams tool/text events via thread:updated.
      * If the thread title is still the default "New Thread", main renames it
-     * from the first line of the prompt. Emits thread:updated on every tick.
+     * from the first line of the prompt.
      */
-    start(input: { threadId: string; prompt: string }): Promise<{ workflowId: string }>;
+    start(input: { threadId: string; prompt: string }): Promise<{ runId: string }>;
     stop(input: { threadId: string }): Promise<void>;
   };
   git: {
     status(projectId: string): Promise<GitStatus>;
+    /** Creates a git worktree + branch for the thread; later runs execute in it. */
+    setupWorktree(input: { threadId: string }): Promise<ThreadInfo>;
+    /** Working-tree changes in the thread's cwd (worktree if set, else project). */
+    diff(input: { threadId: string }): Promise<DiffResult>;
   };
   /** Returns an unsubscribe function. */
   on(channel: "threads:changed", cb: (threads: ThreadInfo[]) => void): () => void;
