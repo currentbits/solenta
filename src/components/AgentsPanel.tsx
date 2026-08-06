@@ -1,7 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type {
   AgentStatus,
-  DiffResult,
   PhaseView,
   ProjectInfo,
   SessionUsage,
@@ -26,7 +25,8 @@ interface AgentsPanelProps {
   onSetupWorktree: () => Promise<unknown>;
   onMergeWorktree: () => Promise<unknown>;
   onRemoveWorktree: (force?: boolean) => Promise<unknown>;
-  onFetchDiff: () => Promise<DiffResult>;
+  /** Opens the center-pane Changes panel (fresh load). */
+  onViewChanges: () => void;
 }
 
 type PhaseChipStatus = "done" | "active" | "pending" | "failed";
@@ -131,19 +131,6 @@ function SessionCard({
         )}
       </div>
     </section>
-  );
-}
-
-function DiffLine({ line }: { line: string }) {
-  let kind = "ctx";
-  if (line.startsWith("+++") || line.startsWith("---")) kind = "meta";
-  else if (line.startsWith("@@")) kind = "hunk";
-  else if (line.startsWith("+")) kind = "add";
-  else if (line.startsWith("-")) kind = "del";
-  return (
-    <div className={styles.diffLine} data-kind={kind}>
-      {line || " "}
-    </div>
   );
 }
 
@@ -302,115 +289,25 @@ function WorktreeCard({
 }
 
 function ChangesCard({
-  threadId,
-  active,
-  onFetchDiff,
+  hasThread,
+  onViewChanges,
 }: {
-  threadId: string | null;
-  active: boolean;
-  onFetchDiff: () => Promise<DiffResult>;
+  hasThread: boolean;
+  onViewChanges: () => void;
 }) {
-  const [diff, setDiff] = useState<DiffResult | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [loadedFor, setLoadedFor] = useState<string | null>(null);
-  const threadIdRef = useRef(threadId);
-  threadIdRef.current = threadId;
-
-  const load = async () => {
-    const forThread = threadId;
-    setLoading(true);
-    setError(null);
-    try {
-      const result = await onFetchDiff();
-      // Drop late results if the user switched threads mid-flight.
-      if (threadIdRef.current !== forThread) return;
-      setDiff(result);
-      setLoadedFor(forThread);
-    } catch (err) {
-      if (threadIdRef.current !== forThread) return;
-      setError(
-        err instanceof Error && err.message ? err.message : "Failed to load diff",
-      );
-    } finally {
-      if (threadIdRef.current === forThread) setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    setDiff(null);
-    setError(null);
-    setLoadedFor(null);
-  }, [threadId]);
-
-  useEffect(() => {
-    if (!active || !threadId) return;
-    if (loadedFor === threadId) return;
-    void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- lazy load when Git tab opens / thread changes
-  }, [active, threadId, loadedFor]);
-
-  const empty =
-    !loading &&
-    !error &&
-    diff != null &&
-    diff.files.length === 0 &&
-    !diff.patch.trim();
-
   return (
     <section className={styles.gitCard}>
-      <div className={styles.changesHead}>
-        <div className={styles.gitCardLabel}>Changes</div>
+      <div className={styles.gitCardLabel}>Changes</div>
+      <div className={styles.gitActions}>
         <button
           type="button"
           className={styles.gitBtn}
-          onClick={() => void load()}
-          disabled={loading || !threadId}
+          onClick={onViewChanges}
+          disabled={!hasThread}
         >
-          {loading ? "Refreshing…" : "Refresh"}
+          View changes
         </button>
       </div>
-
-      {error && (
-        <div className={styles.inlineError} role="alert">
-          {error}
-        </div>
-      )}
-
-      {loading && !diff && (
-        <p className={styles.changesEmpty}>Loading diff…</p>
-      )}
-
-      {empty && <p className={styles.changesEmpty}>No changes</p>}
-
-      {diff && !empty && (
-        <>
-          {diff.files.length > 0 && (
-            <ul className={styles.fileList}>
-              {diff.files.map((f) => (
-                <li key={f.path} className={styles.fileRow}>
-                  <span className={styles.fileStatus}>{f.status}</span>
-                  <span className={styles.filePath}>{f.path}</span>
-                  <span className={styles.fileStats}>
-                    <span className={styles.adds}>+{f.additions}</span>
-                    <span className={styles.dels}>−{f.deletions}</span>
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-          {diff.patch.trim() !== "" && (
-            <div className={styles.patchScroll}>
-              {diff.patch.split("\n").map((line, i) => (
-                <DiffLine key={i} line={line} />
-              ))}
-            </div>
-          )}
-          {diff.truncated && (
-            <p className={styles.truncatedNote}>Diff truncated</p>
-          )}
-        </>
-      )}
     </section>
   );
 }
@@ -421,16 +318,14 @@ function GitTab({
   onSetupWorktree,
   onMergeWorktree,
   onRemoveWorktree,
-  onFetchDiff,
-  active,
+  onViewChanges,
 }: {
   thread: ThreadInfo | null;
   project: ProjectInfo | null;
   onSetupWorktree: () => Promise<unknown>;
   onMergeWorktree: () => Promise<unknown>;
   onRemoveWorktree: (force?: boolean) => Promise<unknown>;
-  onFetchDiff: () => Promise<DiffResult>;
-  active: boolean;
+  onViewChanges: () => void;
 }) {
   const [gitAction, setGitAction] = useState<GitAction>(null);
   const [dirtyMessage, setDirtyMessage] = useState<string | null>(null);
@@ -510,9 +405,8 @@ function GitTab({
           onDismissError={() => setCardError(null)}
         />
         <ChangesCard
-          threadId={thread?.id ?? null}
-          active={active}
-          onFetchDiff={onFetchDiff}
+          hasThread={Boolean(thread)}
+          onViewChanges={onViewChanges}
         />
       </div>
       <footer className={styles.gitStatus} title={statusLine}>
@@ -719,7 +613,7 @@ export function AgentsPanel({
   onSetupWorktree,
   onMergeWorktree,
   onRemoveWorktree,
-  onFetchDiff,
+  onViewChanges,
 }: AgentsPanelProps) {
   const [tab, setTab] = useState<PanelTab>("agents");
 
@@ -753,8 +647,7 @@ export function AgentsPanel({
           onSetupWorktree={onSetupWorktree}
           onMergeWorktree={onMergeWorktree}
           onRemoveWorktree={onRemoveWorktree}
-          onFetchDiff={onFetchDiff}
-          active={tab === "git"}
+          onViewChanges={onViewChanges}
         />
       )}
     </aside>

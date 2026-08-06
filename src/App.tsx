@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { useCoder } from "./useCoder";
 import { Sidebar } from "./components/Sidebar";
 import { ThreadView } from "./components/ThreadView";
@@ -25,6 +26,19 @@ export default function App() {
     fetchDiff,
     projectById,
   } = useCoder();
+
+  const [changesOpen, setChangesOpen] = useState(false);
+  const [changesNonce, setChangesNonce] = useState(0);
+
+  // Close the center Changes panel when switching threads (old behavior).
+  useEffect(() => {
+    setChangesOpen(false);
+  }, [selectedThreadId]);
+
+  const openChanges = () => {
+    setChangesOpen(true);
+    setChangesNonce((n) => n + 1);
+  };
 
   const project =
     (detail && projectById.get(detail.thread.projectId)) ||
@@ -60,6 +74,10 @@ export default function App() {
         onStartRun={(prompt) => startRun(prompt)}
         onStopRun={() => stopRun()}
         onSetPermissionMode={(mode) => setPermissionMode(mode)}
+        changesOpen={changesOpen}
+        changesNonce={changesNonce}
+        onCloseChanges={() => setChangesOpen(false)}
+        onFetchDiff={() => fetchDiff()}
         runError={error?.scope === "run" ? error.message : null}
         onDismissRunError={clearError}
       />
@@ -71,7 +89,7 @@ export default function App() {
         onSetupWorktree={() => setupWorktree()}
         onMergeWorktree={() => mergeWorktree()}
         onRemoveWorktree={(force) => removeWorktree(force)}
-        onFetchDiff={() => fetchDiff()}
+        onViewChanges={openChanges}
       />
     </div>
   );

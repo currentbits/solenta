@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   ChatMessage,
+  DiffResult,
   PermissionMode,
   ProjectInfo,
   ThreadDetail,
   WorkLogItem,
 } from "../shared/ipc";
+import { diffLineKind, isEmptyDiff } from "../diffView";
 import { splitParagraphs } from "../format";
 import {
   buildTimeline,
@@ -25,6 +27,12 @@ interface ThreadViewProps {
   onStartRun: (prompt: string) => void | Promise<void>;
   onStopRun: () => void | Promise<void>;
   onSetPermissionMode: (mode: PermissionMode) => void | Promise<void>;
+  /** Center Changes panel open (lifted so the Git tab can open it). */
+  changesOpen: boolean;
+  /** Bumps on each open request so a re-open reloads the diff. */
+  changesNonce: number;
+  onCloseChanges: () => void;
+  onFetchDiff: () => Promise<DiffResult>;
   runError?: string | null;
   onDismissRunError?: () => void;
 }
@@ -173,6 +181,131 @@ function WorkLogCard({
   );
 }
 
+function DiffLine({ line }: { line: string }) {
+  const kind = diffLineKind(line);
+  return (
+    <div className={styles.diffLine} data-kind={kind}>
+      {line || " "}
+    </div>
+  );
+}
+
+function ChangesPanel({
+  open,
+  threadId,
+  openNonce,
+  onClose,
+  onFetchDiff,
+}: {
+  open: boolean;
+  threadId: string | null;
+  openNonce: number;
+  onClose: () => void;
+  onFetchDiff: () => Promise<DiffResult>;
+}) {
+  const [diff, setDiff] = useState<DiffResult | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const threadIdRef = useRef(threadId);
+  threadIdRef.current = threadId;
+
+  const load = async () => {
+    const forThread = threadId;
+    setLoading(true);
+    setError(null);
+    setDiff(null);
+    try {
+      const result = await onFetchDiff();
+      if (threadIdRef.current !== forThread) return;
+      setDiff(result);
+    } catch (err) {
+      if (threadIdRef.current !== forThread) return;
+      setError(
+        err instanceof Error && err.message ? err.message : "Failed to load diff",
+      );
+    } finally {
+      if (threadIdRef.current === forThread) setLoading(false);
+    }
+  };
+
+  // Never show one thread's diff under another thread.
+  useEffect(() => {
+    setDiff(null);
+    setError(null);
+  }, [threadId]);
+
+  useEffect(() => {
+    if (open) void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- load when panel opens / thread / openNonce
+  }, [open, threadId, openNonce]);
+
+  if (!open) return null;
+
+  const empty = !loading && !error && diff != null && isEmptyDiff(diff);
+
+  return (
+    <section className={styles.changesPanel} aria-label="Changes">
+      <header className={styles.changesHead}>
+        <span className={styles.changesTitle}>Changes</span>
+        <div className={styles.changesActions}>
+          <button
+            type="button"
+            className={styles.btn}
+            onClick={() => void load()}
+            disabled={loading}
+          >
+            {loading ? "Refreshing…" : "Refresh"}
+          </button>
+          <button type="button" className={styles.btn} onClick={onClose}>
+            Close
+          </button>
+        </div>
+      </header>
+
+      {error && (
+        <div className={styles.inlineError} role="alert">
+          {error}
+        </div>
+      )}
+
+      {loading && !diff && (
+        <p className={styles.changesEmpty}>Loading diff…</p>
+      )}
+
+      {empty && <p className={styles.changesEmpty}>No changes</p>}
+
+      {diff && !empty && (
+        <>
+          {diff.files.length > 0 && (
+            <ul className={styles.fileList}>
+              {diff.files.map((f) => (
+                <li key={f.path} className={styles.fileRow}>
+                  <span className={styles.fileStatus}>{f.status}</span>
+                  <span className={styles.filePath}>{f.path}</span>
+                  <span className={styles.fileStats}>
+                    <span className={styles.adds}>+{f.additions}</span>
+                    <span className={styles.dels}>−{f.deletions}</span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {diff.patch.trim() !== "" && (
+            <div className={styles.patchScroll}>
+              {diff.patch.split("\n").map((line, i) => (
+                <DiffLine key={i} line={line} />
+              ))}
+            </div>
+          )}
+          {diff.truncated && (
+            <p className={styles.truncatedNote}>Diff truncated</p>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
 export function ThreadView({
   detail,
   project,
@@ -181,6 +314,10 @@ export function ThreadView({
   onStartRun,
   onStopRun,
   onSetPermissionMode,
+  changesOpen,
+  changesNonce,
+  onCloseChanges,
+  onFetchDiff,
   runError = null,
   onDismissRunError,
 }: ThreadViewProps) {
@@ -302,6 +439,14 @@ export function ThreadView({
           </button>
         </div>
       </header>
+
+      <ChangesPanel
+        open={changesOpen}
+        threadId={detail?.thread.id ?? null}
+        openNonce={changesNonce}
+        onClose={onCloseChanges}
+        onFetchDiff={onFetchDiff}
+      />
 
       <div
         className={styles.body}
