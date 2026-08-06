@@ -93,6 +93,9 @@ export function Composer({
   const [modeOpen, setModeOpen] = useState(false);
   const [providerOpen, setProviderOpen] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
+  /** Empty-list providers: Custom… swaps the menu for an inline text input. */
+  const [customModelOpen, setCustomModelOpen] = useState(false);
+  const [customModelDraft, setCustomModelDraft] = useState("");
   const [buildMenuOpen, setBuildMenuOpen] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
   /** Per-thread last-used workflow template id. */
@@ -102,6 +105,7 @@ export function Composer({
   const modeWrapRef = useRef<HTMLDivElement>(null);
   const providerWrapRef = useRef<HTMLDivElement>(null);
   const modelWrapRef = useRef<HTMLDivElement>(null);
+  const customModelInputRef = useRef<HTMLInputElement>(null);
   const buildWrapRef = useRef<HTMLDivElement>(null);
 
   // Dead ids (deleted templates) fall through like no stored selection.
@@ -125,7 +129,8 @@ export function Composer({
   const providerName = providerDisplayName(provider, providers);
   const currentProviderInfo = providers.find((p) => p.id === provider);
   const providerModels = currentProviderInfo?.models ?? [];
-  const showModelPill = providerModels.length > 0;
+  /** Empty models list (e.g. codex) still shows the pill for free-form custom ids. */
+  const allowCustomModel = providerModels.length === 0;
   const modelLabel = model ? shortModelName(model) : "default";
 
   useEffect(() => {
@@ -140,6 +145,7 @@ export function Composer({
       }
       if (modelOpen && !modelWrapRef.current?.contains(t)) {
         setModelOpen(false);
+        setCustomModelOpen(false);
       }
       if (buildMenuOpen && !buildWrapRef.current?.contains(t)) {
         setBuildMenuOpen(false);
@@ -149,14 +155,33 @@ export function Composer({
     return () => document.removeEventListener("mousedown", onDoc);
   }, [modeOpen, providerOpen, modelOpen, buildMenuOpen]);
 
+  useEffect(() => {
+    if (customModelOpen) {
+      customModelInputRef.current?.focus();
+      customModelInputRef.current?.select();
+    }
+  }, [customModelOpen]);
+
+  // Leaving the model menu (or switching provider) drops custom-input mode.
+  useEffect(() => {
+    if (!modelOpen) setCustomModelOpen(false);
+  }, [modelOpen]);
+
+  useEffect(() => {
+    setModelOpen(false);
+    setCustomModelOpen(false);
+  }, [provider]);
+
   const anyMenuOpen = modeOpen || providerOpen || modelOpen || buildMenuOpen;
   const closeAllMenus = useCallback(() => {
+    // Custom input owns Escape (cancel back to list); do not close the menu.
+    if (customModelOpen) return;
     setModeOpen(false);
     setProviderOpen(false);
     setModelOpen(false);
     setBuildMenuOpen(false);
-  }, []);
-  useEscapeClose(anyMenuOpen, closeAllMenus);
+  }, [customModelOpen]);
+  useEscapeClose(anyMenuOpen && !customModelOpen, closeAllMenus);
 
   const runAction = async (
     action: (prompt: string) => void | Promise<void>,
@@ -239,9 +264,38 @@ export function Composer({
 
   const pickModel = async (next: string | null) => {
     setModelOpen(false);
+    setCustomModelOpen(false);
     if (next === model) return;
     try {
       await onSetProvider({ model: next });
+    } catch (err) {
+      const msg =
+        err instanceof Error && err.message
+          ? err.message
+          : "Failed to set model";
+      setLocalError(msg);
+    }
+  };
+
+  const openCustomModel = () => {
+    setCustomModelDraft(model ?? "");
+    setCustomModelOpen(true);
+  };
+
+  const cancelCustomModel = () => {
+    setCustomModelOpen(false);
+    setCustomModelDraft("");
+  };
+
+  const commitCustomModel = async () => {
+    const next = customModelDraft.trim();
+    setCustomModelOpen(false);
+    setModelOpen(false);
+    setCustomModelDraft("");
+    if (next === (model ?? "")) return;
+    try {
+      // Empty draft is "Default" (null); non-empty is the free-form id.
+      await onSetProvider({ model: next === "" ? null : next });
     } catch (err) {
       const msg =
         err instanceof Error && err.message
@@ -342,62 +396,96 @@ export function Composer({
               )}
             </div>
 
-            {showModelPill && (
-              <div className={styles.modeWrap} ref={modelWrapRef}>
-                <button
-                  type="button"
-                  className={styles.pill}
-                  disabled={disabled}
-                  aria-disabled={disabled ? "true" : undefined}
-                  aria-haspopup="listbox"
-                  aria-expanded={modelOpen}
-                  onClick={() => {
-                    if (disabled) return;
-                    setModelOpen((v) => !v);
-                    setProviderOpen(false);
-                    setModeOpen(false);
-                    setBuildMenuOpen(false);
-                  }}
-                >
-                  {modelLabel}
-                  <span className={styles.caret}>▾</span>
-                </button>
-                {modelOpen && (
-                  <ul
-                    className={styles.modeMenu}
-                    role="listbox"
-                    aria-label="Model"
-                  >
-                    <li role="option" aria-selected={model == null}>
-                      <button
-                        type="button"
-                        className={styles.modeOption}
-                        data-active={model == null}
-                        onClick={() => void pickModel(null)}
-                      >
-                        Default
-                      </button>
-                    </li>
-                    {providerModels.map((m) => (
-                      <li
-                        key={m}
-                        role="option"
-                        aria-selected={m === model}
-                      >
+            <div className={styles.modeWrap} ref={modelWrapRef}>
+              <button
+                type="button"
+                className={styles.pill}
+                disabled={disabled}
+                aria-disabled={disabled ? "true" : undefined}
+                aria-haspopup="listbox"
+                aria-expanded={modelOpen}
+                onClick={() => {
+                  if (disabled) return;
+                  setModelOpen((v) => !v);
+                  setCustomModelOpen(false);
+                  setProviderOpen(false);
+                  setModeOpen(false);
+                  setBuildMenuOpen(false);
+                }}
+              >
+                {modelLabel}
+                <span className={styles.caret}>▾</span>
+              </button>
+              {modelOpen && (
+                <div className={styles.modeMenu} role="listbox" aria-label="Model">
+                  {customModelOpen ? (
+                    <div className={styles.customModelBox}>
+                      <input
+                        ref={customModelInputRef}
+                        type="text"
+                        className={styles.customModelInput}
+                        value={customModelDraft}
+                        maxLength={100}
+                        placeholder="Model id"
+                        aria-label="Custom model id"
+                        onChange={(e) => setCustomModelDraft(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            void commitCustomModel();
+                          } else if (e.key === "Escape") {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            cancelCustomModel();
+                          }
+                        }}
+                      />
+                    </div>
+                  ) : (
+                    <ul className={styles.modeMenuList}>
+                      <li role="option" aria-selected={model == null}>
                         <button
                           type="button"
                           className={styles.modeOption}
-                          data-active={m === model}
-                          onClick={() => void pickModel(m)}
+                          data-active={model == null}
+                          onClick={() => void pickModel(null)}
                         >
-                          {shortModelName(m)}
+                          Default
                         </button>
                       </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            )}
+                      {providerModels.map((m) => (
+                        <li
+                          key={m}
+                          role="option"
+                          aria-selected={m === model}
+                        >
+                          <button
+                            type="button"
+                            className={styles.modeOption}
+                            data-active={m === model}
+                            onClick={() => void pickModel(m)}
+                          >
+                            {shortModelName(m)}
+                          </button>
+                        </li>
+                      ))}
+                      {allowCustomModel && (
+                        <li role="option" aria-selected={false}>
+                          <button
+                            type="button"
+                            className={styles.modeOption}
+                            onClick={openCustomModel}
+                          >
+                            Custom…
+                          </button>
+                        </li>
+                      )}
+                    </ul>
+                  )}
+                </div>
+              )}
+            </div>
 
             <button
               type="button"

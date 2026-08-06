@@ -109,7 +109,7 @@ describe("threads.setProvider", () => {
     assert.ok(updated.sessionId);
   });
 
-  it("rejects model for providers with empty models list", async () => {
+  it("accepts custom non-empty model for providers with empty models list", async () => {
     const api = createDevCoder();
     const projects = await api.projects.list();
     const t = await api.threads.create({
@@ -117,14 +117,95 @@ describe("threads.setProvider", () => {
       title: "T",
     });
     await api.threads.setProvider({ threadId: t.id, provider: "codex" });
+    const updated = await api.threads.setProvider({
+      threadId: t.id,
+      model: "o3",
+    });
+    assert.equal(updated.provider, "codex");
+    assert.equal(updated.model, "o3");
+  });
+
+  it("trims custom models and rejects empty or over-long for empty-list providers", async () => {
+    const api = createDevCoder();
+    const projects = await api.projects.list();
+    const t = await api.threads.create({
+      projectId: projects[0]!.id,
+      title: "T",
+    });
+    await api.threads.setProvider({ threadId: t.id, provider: "codex" });
+
+    const trimmed = await api.threads.setProvider({
+      threadId: t.id,
+      model: "  gpt-5.1-codex  ",
+    });
+    assert.equal(trimmed.model, "gpt-5.1-codex");
+
     await assert.rejects(
       () =>
         api.threads.setProvider({
           threadId: t.id,
-          model: "o3",
+          model: "   ",
         }),
-      /does not support model/i,
+      /Model must be a non-empty string/,
     );
+
+    await assert.rejects(
+      () =>
+        api.threads.setProvider({
+          threadId: t.id,
+          model: "x".repeat(101),
+        }),
+      /Model must be a non-empty string/,
+    );
+  });
+
+  it("keeps a valid custom model when switching to an empty-list provider", async () => {
+    const api = createDevCoder();
+    const projects = await api.projects.list();
+    const t = await api.threads.create({
+      projectId: projects[0]!.id,
+      title: "T",
+    });
+    const updated = await api.threads.setProvider({
+      threadId: t.id,
+      provider: "codex",
+      model: "o4-mini",
+    });
+    assert.equal(updated.provider, "codex");
+    assert.equal(updated.model, "o4-mini");
+  });
+
+  it("rejects model not in a non-empty models list", async () => {
+    const api = createDevCoder();
+    const projects = await api.projects.list();
+    const t = await api.threads.create({
+      projectId: projects[0]!.id,
+      title: "T",
+    });
+    await assert.rejects(
+      () =>
+        api.threads.setProvider({
+          threadId: t.id,
+          model: "not-a-claude-model",
+        }),
+      /not in provider|model list|not supported/i,
+    );
+  });
+
+  it("clears model to default (null) for empty-list providers", async () => {
+    const api = createDevCoder();
+    const projects = await api.projects.list();
+    const t = await api.threads.create({
+      projectId: projects[0]!.id,
+      title: "T",
+    });
+    await api.threads.setProvider({ threadId: t.id, provider: "codex" });
+    await api.threads.setProvider({ threadId: t.id, model: "o3" });
+    const cleared = await api.threads.setProvider({
+      threadId: t.id,
+      model: null,
+    });
+    assert.equal(cleared.model, null);
   });
 
   it("does not bump updatedAt on setProvider", async () => {

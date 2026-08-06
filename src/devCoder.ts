@@ -1711,35 +1711,49 @@ function buildDevCoder(): CoderApi {
           );
         }
 
-        if (modelProvided && input.model != null && input.model !== "") {
-          const entry = DEV_PROVIDERS.find((p) => p.id === nextProvider);
-          if (entry && entry.models.length === 0) {
-            throw new Error(
-              `Provider ${nextProvider} does not support model selection`,
-            );
+        /**
+         * Normalize/validate a model for the target provider.
+         * - null / "" → null (provider default)
+         * - non-empty models list → must be a list member
+         * - empty models list → any non-empty trimmed string ≤ 100 chars
+         */
+        const resolveModel = (
+          providerId: string,
+          raw: string | null | undefined,
+        ): string | null => {
+          if (raw == null || raw === "") return null;
+          const entry = DEV_PROVIDERS.find((p) => p.id === providerId);
+          const models = entry?.models ?? [];
+          if (models.length > 0) {
+            const asString = String(raw);
+            if (!models.includes(asString)) {
+              throw new Error(
+                `Model "${asString}" is not in provider ${providerId}'s model list`,
+              );
+            }
+            return asString;
           }
-        }
+          const trimmed = String(raw).trim();
+          if (!trimmed || trimmed.length > 100) {
+            throw new Error("Model must be a non-empty string");
+          }
+          return trimmed;
+        };
 
         // Provider/model bookkeeping is not "activity"; leave updatedAt alone.
         const patch: Partial<ThreadInfo> = {};
         if (providerProvided) patch.provider = String(input.provider);
 
         if (providerChanging) {
-          const nextEntry = DEV_PROVIDERS.find((p) => p.id === nextProvider);
+          // Drop the old provider's model unless this call supplies one that
+          // validates for the NEW provider (including free-form custom ids).
           const incoming =
             modelProvided && input.model != null && input.model !== ""
-              ? String(input.model)
+              ? resolveModel(nextProvider, input.model)
               : null;
-          const validForNew =
-            incoming != null &&
-            nextEntry != null &&
-            nextEntry.models.length > 0;
-          patch.model = validForNew ? incoming : null;
+          patch.model = incoming;
         } else if (modelProvided) {
-          patch.model =
-            input.model == null || input.model === ""
-              ? null
-              : String(input.model);
+          patch.model = resolveModel(nextProvider, input.model);
         }
 
         const next: ThreadInfo = { ...thread, ...patch };

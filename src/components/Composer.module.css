@@ -170,6 +170,41 @@
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
 }
 
+.modeMenuList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.customModelBox {
+  padding: 4px;
+  min-width: 168px;
+}
+
+.customModelInput {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 7px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+  font-family: var(--mono);
+  outline: none;
+}
+
+.customModelInput:focus {
+  border-color: var(--blue-border);
+}
+
+.customModelInput::placeholder {
+  color: var(--text-dim);
+  font-family: inherit;
+  font-weight: 400;
+}
+
 .modeOption {
   display: block;
   width: 100%;
