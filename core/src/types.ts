@@ -64,7 +64,7 @@ export type WorkflowPhaseName =
 export type AgentRunStatus = "pending" | "running" | "settled" | "failed";
 
 export interface AgentRun {
-  /** e.g. "analyze:9240" */
+  /** e.g. "1:analyze:0" (phaseIndex:name:agentIndex) */
   id: string;
   /** e.g. "sonnet-5" */
   model: string;

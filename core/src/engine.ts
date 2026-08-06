@@ -23,11 +23,16 @@ function cloneWorkflow(workflow: Workflow): Workflow {
   return {
     id: workflow.id,
     name: workflow.name,
-    phases: workflow.phases.map((phase) => ({
-      name: phase.name,
-      pipelined: phase.pipelined,
-      agents: phase.agents.map((agent) => ({ ...agent })),
-    })),
+    phases: workflow.phases.map((phase) => {
+      const cloned: Workflow["phases"][number] = {
+        name: phase.name,
+        agents: phase.agents.map((agent) => ({ ...agent })),
+      };
+      if (phase.pipelined !== undefined) {
+        cloned.pipelined = phase.pipelined;
+      }
+      return cloned;
+    }),
   };
 }
 
@@ -41,20 +46,20 @@ function assertValidAgentCount(name: string, agentCount: number): void {
 
 /**
  * Build a workflow from a spec: each phase gets N pending agents
- * with deterministic ids like "analyze:0".
+ * with deterministic ids like "1:analyze:0" (phaseIndex:name:agentIndex).
+ * Phase index is included so duplicate phase names cannot collide.
  */
 export function createWorkflow(spec: WorkflowSpec): Workflow {
   return {
     id: spec.id,
     name: spec.name,
-    phases: spec.phases.map((phaseSpec) => {
+    phases: spec.phases.map((phaseSpec, phaseIndex) => {
       assertValidAgentCount(phaseSpec.name, phaseSpec.agentCount);
-      return {
+      const phase: Workflow["phases"][number] = {
         name: phaseSpec.name,
-        pipelined: phaseSpec.pipelined,
         agents: Array.from({ length: phaseSpec.agentCount }, (_, i) => {
           const agent: AgentRun = {
-            id: `${phaseSpec.name}:${i}`,
+            id: `${phaseIndex}:${phaseSpec.name}:${i}`,
             model: phaseSpec.model ?? DEFAULT_MODEL,
             status: "pending",
             tokensUsed: 0,
@@ -63,6 +68,10 @@ export function createWorkflow(spec: WorkflowSpec): Workflow {
           return agent;
         }),
       };
+      if (phaseSpec.pipelined !== undefined) {
+        phase.pipelined = phaseSpec.pipelined;
+      }
+      return phase;
     }),
   };
 }
@@ -156,22 +165,29 @@ export function tick(workflow: Workflow): Workflow {
 
 /**
  * Return a new workflow with the given agent marked failed.
+ * Matches exactly one agent by id (ids include phase index so collisions
+ * across same-named phases do not happen under createWorkflow).
  * Useful for tests and for the shell when an agent errors out.
  */
 export function markAgentFailed(workflow: Workflow, agentId: string): Workflow {
   const next = cloneWorkflow(workflow);
-  let found = false;
+  let match: AgentRun | undefined;
   for (const phase of next.phases) {
     for (const agent of phase.agents) {
       if (agent.id === agentId) {
-        agent.status = "failed";
-        found = true;
+        if (match) {
+          throw new Error(
+            `Ambiguous agent id "${agentId}": matched more than one agent`,
+          );
+        }
+        match = agent;
       }
     }
   }
-  if (!found) {
+  if (!match) {
     throw new Error(`No agent with id "${agentId}"`);
   }
+  match.status = "failed";
   return next;
 }
 

@@ -66,11 +66,29 @@ describe("createWorkflow", () => {
     assert.equal(wf.phases[0]!.name, "seed");
     assert.equal(wf.phases[0]!.agents.length, 2);
     assert.equal(wf.phases[1]!.agents.length, 3);
-    assert.equal(wf.phases[0]!.agents[0]!.id, "seed:0");
-    assert.equal(wf.phases[1]!.agents[2]!.id, "analyze:2");
+    // Ids include phase index so phases that share a name cannot collide.
+    assert.equal(wf.phases[0]!.agents[0]!.id, "0:seed:0");
+    assert.equal(wf.phases[1]!.agents[2]!.id, "1:analyze:2");
     assert.equal(wf.phases[0]!.agents[0]!.status, "pending");
     assert.equal(wf.phases[0]!.agents[0]!.tokensUsed, 0);
     assert.equal(wf.phases[0]!.agents[0]!.model, "sonnet-5");
+  });
+
+  it("allows duplicate phase names with unique agent ids via phase index", () => {
+    const wf = createWorkflow({
+      id: "wf-dup",
+      name: "DUP",
+      phases: [
+        { name: "analyze", agentCount: 1 },
+        { name: "analyze", agentCount: 1 },
+      ],
+    });
+    assert.equal(wf.phases[0]!.agents[0]!.id, "0:analyze:0");
+    assert.equal(wf.phases[1]!.agents[0]!.id, "1:analyze:0");
+    assert.notEqual(
+      wf.phases[0]!.agents[0]!.id,
+      wf.phases[1]!.agents[0]!.id,
+    );
   });
 
   it("rejects non-positive or fractional agentCount", () => {
@@ -327,7 +345,7 @@ describe("failed agents", () => {
     assert.equal(wf.phases[0]!.agents[0]!.status, "running");
 
     // Agent errors out
-    wf = markAgentFailed(wf, "seed:0");
+    wf = markAgentFailed(wf, "0:seed:0");
     assert.equal(wf.phases[0]!.agents[0]!.status, "failed");
     assert.equal(isFailed(wf), true);
     assert.equal(isComplete(wf), false);
@@ -373,7 +391,7 @@ describe("failed agents", () => {
     });
 
     wf = tick(wf);
-    wf = markAgentFailed(wf, "seed:0");
+    wf = markAgentFailed(wf, "0:seed:0");
     assert.equal(isFailed(wf), true);
     assert.equal(isStuck(wf), true);
 
@@ -399,5 +417,28 @@ describe("immutable tick", () => {
     assert.notEqual(next, original);
     assert.equal(original.phases[0]!.agents[0]!.status, originalStatus);
     assert.equal(next.phases[0]!.agents[0]!.status, "running");
+  });
+});
+
+describe("markAgentFailed uniqueness", () => {
+  it("marks exactly one agent and leaves a same-named phase sibling alone", () => {
+    let wf = createWorkflow({
+      id: "wf-unique",
+      name: "UNIQUE",
+      phases: [
+        { name: "analyze", agentCount: 1 },
+        { name: "analyze", agentCount: 1 },
+      ],
+    });
+    wf = tick(wf);
+    const firstId = wf.phases[0]!.agents[0]!.id;
+    const secondId = wf.phases[1]!.agents[0]!.id;
+    assert.notEqual(firstId, secondId);
+
+    wf = markAgentFailed(wf, firstId);
+    assert.equal(wf.phases[0]!.agents[0]!.status, "failed");
+    assert.notEqual(wf.phases[1]!.agents[0]!.status, "failed");
+
+    assert.throws(() => markAgentFailed(wf, "no-such-id"), /No agent/);
   });
 });
