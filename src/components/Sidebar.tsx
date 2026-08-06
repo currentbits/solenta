@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import type { ProjectInfo, ThreadInfo } from "../shared/ipc";
-import { formatRelativeAge, formatWorkingLabel } from "../format";
+import type { ProjectInfo, ProviderInfo, ThreadInfo } from "../shared/ipc";
+import {
+  formatRelativeAge,
+  formatWorkingLabel,
+  providerDisplayName,
+} from "../format";
 import { buildSidebarGroups } from "../sidebarGroups";
 import styles from "./Sidebar.module.css";
 
@@ -12,6 +16,8 @@ interface SidebarProps {
   projectsHeader: string;
   projects: ProjectInfo[];
   threads: ThreadInfo[];
+  /** Provider registry for display names on thread cards. */
+  providers: ProviderInfo[];
   activeThreadId: string | null;
   onSelectThread: (id: string) => void;
   /** Global + uses selected project; per-group New thread passes that projectId. */
@@ -66,12 +72,14 @@ function StatusBadge({
 function ThreadCard({
   thread,
   slug,
+  providers,
   active,
   now,
   onSelect,
 }: {
   thread: ThreadInfo;
   slug: string;
+  providers: ProviderInfo[];
   active: boolean;
   now: number;
   onSelect: (id: string) => void;
@@ -81,6 +89,7 @@ function ThreadCard({
     thread.prNumber != null ? `PR #${thread.prNumber}` : "";
   const branchLine =
     branch && pr ? `${branch} · ${pr}` : branch || pr;
+  const providerLabel = providerDisplayName(thread.provider, providers);
 
   return (
     <button
@@ -98,7 +107,7 @@ function ThreadCard({
       </div>
       <div className={styles.cardTitle}>{thread.title}</div>
       <div className={styles.cardTags}>
-        <span className={styles.providerTag}>{thread.provider}</span>
+        <span className={styles.providerTag}>{providerLabel}</span>
         {thread.worktreePath && (
           <span className={styles.worktreeTag}>wt</span>
         )}
@@ -120,6 +129,7 @@ export function Sidebar({
   projectsHeader,
   projects,
   threads,
+  providers,
   activeThreadId,
   onSelectThread,
   onCreateThread,
@@ -298,6 +308,7 @@ export function Sidebar({
                         key={thread.id}
                         thread={thread}
                         slug={slug}
+                        providers={providers}
                         active={thread.id === activeThreadId}
                         now={now}
                         onSelect={onSelectThread}
@@ -309,6 +320,7 @@ export function Sidebar({
                           key={thread.id}
                           thread={thread}
                           slug={slug}
+                          providers={providers}
                           active={thread.id === activeThreadId}
                           now={now}
                           onSelect={onSelectThread}

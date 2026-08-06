@@ -1,4 +1,4 @@
-import type { PermissionMode } from "./shared/ipc";
+import type { PermissionMode, ProviderInfo } from "./shared/ipc";
 
 /** Relative age like "3h", "1d", "12m" from a unix-ms timestamp. */
 export function formatRelativeAge(updatedAt: number, now = Date.now()): string {
@@ -79,4 +79,22 @@ export function formatCostUsd(costUsd: number): string {
 export function shortSessionId(sessionId: string | null | undefined): string | null {
   if (!sessionId) return null;
   return sessionId.slice(0, 8);
+}
+
+/**
+ * Compact model label for the composer pill: "claude-fable-5" → "fable-5".
+ * Drops the first hyphen-delimited segment when present.
+ */
+export function shortModelName(model: string): string {
+  const idx = model.indexOf("-");
+  if (idx <= 0) return model;
+  return model.slice(idx + 1);
+}
+
+/** Provider display name from the registry; falls back to the raw id. */
+export function providerDisplayName(
+  providerId: string,
+  providers: readonly ProviderInfo[],
+): string {
+  return providers.find((p) => p.id === providerId)?.name ?? providerId;
 }

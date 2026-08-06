@@ -3,6 +3,7 @@ import type {
   AgentStatus,
   PhaseView,
   ProjectInfo,
+  ProviderInfo,
   SessionUsage,
   ThreadInfo,
   WorkflowView,
@@ -11,6 +12,7 @@ import {
   formatCostUsd,
   formatTokenSum,
   permissionModeLabel,
+  providerDisplayName,
   shortSessionId,
 } from "../format";
 import styles from "./AgentsPanel.module.css";
@@ -21,6 +23,7 @@ interface AgentsPanelProps {
   workflow: WorkflowView | null;
   thread: ThreadInfo | null;
   usage: SessionUsage | null;
+  providers: ProviderInfo[];
   project: ProjectInfo | null;
   onSetupWorktree: () => Promise<unknown>;
   onMergeWorktree: () => Promise<unknown>;
@@ -75,17 +78,21 @@ function groupKey(phaseName: string, index: number): string {
 function SessionCard({
   thread,
   usage,
+  providers,
 }: {
   thread: ThreadInfo;
   usage: SessionUsage | null;
+  providers: ProviderInfo[];
 }) {
   const sess = shortSessionId(thread.sessionId);
+  const providerName = providerDisplayName(thread.provider, providers);
+  const modelLabel = thread.model ?? usage?.model ?? "n/a";
   return (
     <section className={styles.sessionCard}>
       <div className={styles.sessionHead}>
         <div>
           <div className={styles.sessionLabel}>Session</div>
-          <div className={styles.sessionProvider}>{thread.provider}</div>
+          <div className={styles.sessionProvider}>{providerName}</div>
         </div>
         {sess && (
           <span className={styles.sessionId} title={thread.sessionId ?? undefined}>
@@ -97,7 +104,7 @@ function SessionCard({
       <dl className={styles.sessionMeta}>
         <div className={styles.sessionRow}>
           <dt>Model</dt>
-          <dd>{usage?.model ?? "n/a"}</dd>
+          <dd>{modelLabel}</dd>
         </div>
         <div className={styles.sessionRow}>
           <dt>Permission</dt>
@@ -420,10 +427,12 @@ function AgentsContent({
   workflow,
   thread,
   usage,
+  providers,
 }: {
   workflow: WorkflowView | null;
   thread: ThreadInfo | null;
   usage: SessionUsage | null;
+  providers: ProviderInfo[];
 }) {
   /**
    * Manual expand/collapse overrides. Absent key = not toggled by user,
@@ -475,7 +484,7 @@ function AgentsContent({
     return (
       <div className={styles.scroll}>
         {thread ? (
-          <SessionCard thread={thread} usage={usage} />
+          <SessionCard thread={thread} usage={usage} providers={providers} />
         ) : (
           <p className={styles.placeholder}>No active session</p>
         )}
@@ -609,6 +618,7 @@ export function AgentsPanel({
   workflow,
   thread,
   usage,
+  providers,
   project,
   onSetupWorktree,
   onMergeWorktree,
@@ -639,7 +649,12 @@ export function AgentsPanel({
       </header>
 
       {tab === "agents" ? (
-        <AgentsContent workflow={workflow} thread={thread} usage={usage} />
+        <AgentsContent
+          workflow={workflow}
+          thread={thread}
+          usage={usage}
+          providers={providers}
+        />
       ) : (
         <GitTab
           thread={thread}

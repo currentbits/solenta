@@ -4,6 +4,7 @@ import type {
   DiffResult,
   PermissionMode,
   ProjectInfo,
+  ProviderInfo,
   ThreadDetail,
   WorkLogItem,
 } from "../shared/ipc";
@@ -22,11 +23,16 @@ const STICK_BOTTOM_PX = 80;
 interface ThreadViewProps {
   detail: ThreadDetail | null;
   project: ProjectInfo | null;
+  providers: ProviderInfo[];
   hasProjects: boolean;
   onAddProject: () => void;
   onStartRun: (prompt: string) => void | Promise<void>;
   onStopRun: () => void | Promise<void>;
   onSetPermissionMode: (mode: PermissionMode) => void | Promise<void>;
+  onSetProvider: (input: {
+    provider?: string;
+    model?: string | null;
+  }) => void | Promise<void>;
   /** Archive or unarchive the open thread. */
   onSetArchived: (archived: boolean) => void | Promise<void>;
   /** Permanently delete the open thread (caller already confirmed in UI). */
@@ -313,11 +319,13 @@ function ChangesPanel({
 export function ThreadView({
   detail,
   project,
+  providers,
   hasProjects,
   onAddProject,
   onStartRun,
   onStopRun,
   onSetPermissionMode,
+  onSetProvider,
   onSetArchived,
   onDeleteThread,
   changesOpen,
@@ -611,6 +619,10 @@ export function ThreadView({
         branch={thread.branch}
         permissionMode={thread.permissionMode}
         onPermissionModeChange={onSetPermissionMode}
+        provider={thread.provider}
+        model={thread.model}
+        providers={providers}
+        onSetProvider={onSetProvider}
         sessionId={thread.sessionId}
         hasWorktree={hasWorktree}
         disabled={isWorking || isArchived}

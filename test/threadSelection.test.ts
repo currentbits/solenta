@@ -20,6 +20,7 @@ function thread(
     runStartedAt: partial.runStartedAt ?? null,
     archived: partial.archived ?? false,
     provider: partial.provider ?? "claude",
+    model: partial.model ?? null,
     sessionId: partial.sessionId ?? null,
     permissionMode: partial.permissionMode ?? "default",
     worktreePath: partial.worktreePath ?? null,

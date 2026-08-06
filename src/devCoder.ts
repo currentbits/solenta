@@ -13,13 +13,53 @@ import type {
   DiffResult,
   PermissionMode,
   ProjectInfo,
+  ProviderInfo,
   SessionUsage,
   ThreadDetail,
   ThreadInfo,
   WorkLogItem,
   WorkflowView,
 } from "./shared/ipc";
-import { mockData } from "./mockData";
+import { mockData } from "./mockData.ts";
+
+/** Mirrors electron/providers.js registry for browser/dev demos. */
+const DEV_PROVIDERS: ProviderInfo[] = [
+  {
+    id: "claude",
+    name: "Claude Code",
+    available: true,
+    supportsResume: true,
+    models: [
+      "claude-fable-5",
+      "claude-opus-5",
+      "claude-sonnet-5",
+      "claude-haiku-4-5",
+    ],
+  },
+  {
+    id: "codex",
+    name: "Codex",
+    available: true,
+    supportsResume: true,
+    models: [],
+  },
+  {
+    id: "grok",
+    name: "Grok",
+    available: false,
+    supportsResume: false,
+    models: [],
+  },
+  {
+    id: "opencode",
+    name: "OpenCode",
+    available: true,
+    supportsResume: false,
+    models: [],
+  },
+];
+
+const KNOWN_PROVIDER_IDS = new Set(DEV_PROVIDERS.map((p) => p.id));
 
 const TICK_MS = 700;
 const TITLE_MAX = 60;
@@ -105,7 +145,8 @@ function seedThreads(projects: ProjectInfo[]): ThreadInfo[] {
       updatedAt,
       runStartedAt: card.status === "working" ? t0 - workingMs : null,
       archived: false,
-      provider: isSimulate ? "simulate" : index % 3 === 0 ? "generic" : "claude",
+      provider: isSimulate ? "simulate" : index % 3 === 0 ? "codex" : "claude",
+      model: null,
       sessionId: isSimulate
         ? "sim-seed-session-aabbccdd"
         : card.status === "done"
@@ -851,6 +892,14 @@ function buildDevCoder(): CoderApi {
   }
 
   const api: CoderApi = {
+    providers: {
+      async list() {
+        return DEV_PROVIDERS.map((p) => ({
+          ...p,
+          models: [...p.models],
+        }));
+      },
+    },
     projects: {
       async list() {
         return projects.map((p) => ({ ...p }));
@@ -897,6 +946,7 @@ function buildDevCoder(): CoderApi {
           runStartedAt: null,
           archived: false,
           provider: "claude",
+          model: null,
           sessionId: null,
           permissionMode: "default",
           worktreePath: null,
@@ -946,6 +996,84 @@ function buildDevCoder(): CoderApi {
         syncThreadRow(thread);
         emitDetail(detail);
         return { ...thread };
+      },
+      async setProvider(input) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
+        const thread = detail.thread;
+
+        const providerProvided = Object.prototype.hasOwnProperty.call(
+          input,
+          "provider",
+        );
+        const modelProvided = Object.prototype.hasOwnProperty.call(
+          input,
+          "model",
+        );
+
+        if (!providerProvided && !modelProvided) {
+          return { ...thread };
+        }
+
+        const nextProvider = providerProvided
+          ? String(input.provider)
+          : thread.provider;
+
+        if (providerProvided) {
+          const known =
+            KNOWN_PROVIDER_IDS.has(nextProvider) || nextProvider === "simulate";
+          if (!known) {
+            throw new Error(`Unknown provider: ${input.provider}`);
+          }
+        }
+
+        const providerChanging =
+          providerProvided && String(input.provider) !== String(thread.provider);
+
+        if (providerChanging && thread.sessionId) {
+          // Match electron/services.js setProvider exactly.
+          throw new Error(
+            `This thread already has a ${thread.provider} session. Create a new thread to switch providers.`,
+          );
+        }
+
+        if (modelProvided && input.model != null && input.model !== "") {
+          const entry = DEV_PROVIDERS.find((p) => p.id === nextProvider);
+          if (entry && entry.models.length === 0) {
+            throw new Error(
+              `Provider ${nextProvider} does not support model selection`,
+            );
+          }
+        }
+
+        // Provider/model bookkeeping is not "activity"; leave updatedAt alone.
+        const patch: Partial<ThreadInfo> = {};
+        if (providerProvided) patch.provider = String(input.provider);
+
+        if (providerChanging) {
+          const nextEntry = DEV_PROVIDERS.find((p) => p.id === nextProvider);
+          const incoming =
+            modelProvided && input.model != null && input.model !== ""
+              ? String(input.model)
+              : null;
+          const validForNew =
+            incoming != null &&
+            nextEntry != null &&
+            nextEntry.models.length > 0;
+          patch.model = validForNew ? incoming : null;
+        } else if (modelProvided) {
+          patch.model =
+            input.model == null || input.model === ""
+              ? null
+              : String(input.model);
+        }
+
+        const next: ThreadInfo = { ...thread, ...patch };
+        detail.thread = next;
+        details.set(input.threadId, detail);
+        syncThreadRow(next);
+        emitDetail(detail);
+        return { ...next };
       },
       async delete(input) {
         const detail = details.get(input.threadId);

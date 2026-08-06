@@ -4,6 +4,7 @@ import type {
   DiffResult,
   PermissionMode,
   ProjectInfo,
+  ProviderInfo,
   ThreadDetail,
   ThreadInfo,
 } from "./shared/ipc";
@@ -31,6 +32,8 @@ export interface UseCoderResult {
   api: CoderApi;
   projects: ProjectInfo[];
   threads: ThreadInfo[];
+  /** Provider registry loaded once at startup. */
+  providers: ProviderInfo[];
   selectedThreadId: string | null;
   selectThread: (id: string | null) => void;
   detail: ThreadDetail | null;
@@ -48,6 +51,11 @@ export interface UseCoderResult {
   startRun: (prompt: string) => Promise<void>;
   stopRun: () => Promise<void>;
   setPermissionMode: (mode: PermissionMode) => Promise<void>;
+  /** Set provider and/or model on the selected thread (selectedRef-guarded). */
+  setProvider: (input: {
+    provider?: string;
+    model?: string | null;
+  }) => Promise<void>;
   /** Archive or unarchive the selected thread. Archiving moves selection off it. */
   setArchived: (archived: boolean) => Promise<void>;
   /** Permanently delete the selected thread (after caller confirms). */
@@ -63,6 +71,7 @@ export function useCoder(): UseCoderResult {
   const api = useMemo(() => resolveApi(), []);
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
   const [threads, setThreads] = useState<ThreadInfo[]>([]);
+  const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
   const [detail, setDetail] = useState<ThreadDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -111,12 +120,14 @@ export function useCoder(): UseCoderResult {
 
     (async () => {
       try {
-        const [p, list] = await Promise.all([
+        const [p, list, prov] = await Promise.all([
           api.projects.list(),
           api.threads.list(),
+          api.providers.list(),
         ]);
         if (cancelled) return;
         setProjects(p);
+        setProviders(prov);
         if (threadsListGen.current === loadGen) {
           applyThreads(list);
         }
@@ -201,9 +212,26 @@ export function useCoder(): UseCoderResult {
     async (title = "New Thread", projectId?: string) => {
       const pid = projectId ?? selectedProjectId;
       if (!pid) return null;
-      const t = await api.threads.create({ projectId: pid, title });
+      // Inherit provider+model from the currently selected thread when present.
+      const inheritFrom = selectedRef.current
+        ? threadsRef.current.find((x) => x.id === selectedRef.current)
+        : undefined;
+      let t = await api.threads.create({ projectId: pid, title });
+      if (inheritFrom) {
+        const needsProvider = inheritFrom.provider !== t.provider;
+        const needsModel = inheritFrom.model !== t.model;
+        if (needsProvider || needsModel) {
+          t = await api.threads.setProvider({
+            threadId: t.id,
+            ...(needsProvider ? { provider: inheritFrom.provider } : {}),
+            ...(needsModel || needsProvider
+              ? { model: inheritFrom.model }
+              : {}),
+          });
+        }
+      }
       const next = threadsRef.current.some((x) => x.id === t.id)
-        ? threadsRef.current
+        ? threadsRef.current.map((x) => (x.id === t.id ? t : x))
         : [t, ...threadsRef.current];
       applyThreads(next);
       setSelectedThreadId(t.id);
@@ -262,6 +290,34 @@ export function useCoder(): UseCoderResult {
           threadId,
           mode,
         });
+        if (selectedRef.current !== threadId) return;
+        applyThreads(
+          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
+        );
+        setDetail((prev) =>
+          prev && prev.thread.id === thread.id
+            ? { ...prev, thread }
+            : prev,
+        );
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+        throw err;
+      }
+    },
+    [api, selectedThreadId, applyThreads],
+  );
+
+  const setProvider = useCallback(
+    async (input: { provider?: string; model?: string | null }) => {
+      if (!selectedThreadId) return;
+      const threadId = selectedThreadId;
+      try {
+        const thread = await api.threads.setProvider({
+          threadId,
+          ...input,
+        });
+        if (selectedRef.current !== threadId) return;
         applyThreads(
           threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
         );
@@ -390,6 +446,7 @@ export function useCoder(): UseCoderResult {
     api,
     projects,
     threads,
+    providers,
     selectedThreadId,
     selectThread,
     detail,
@@ -402,6 +459,7 @@ export function useCoder(): UseCoderResult {
     startRun,
     stopRun,
     setPermissionMode,
+    setProvider,
     setArchived,
     deleteThread,
     setupWorktree,

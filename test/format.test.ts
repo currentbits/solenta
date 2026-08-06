@@ -7,6 +7,8 @@ import { describe, it } from "node:test";
 import {
   formatRelativeAge,
   formatWorkingLabel,
+  shortModelName,
+  providerDisplayName,
 } from "../src/format.ts";
 
 describe("formatRelativeAge", () => {
@@ -51,5 +53,37 @@ describe("formatWorkingLabel", () => {
       "Working 1h 4m",
     );
     assert.equal(formatWorkingLabel(now - 2 * 3_600_000, now), "Working 2h");
+  });
+});
+
+describe("shortModelName", () => {
+  it("strips the leading provider segment from claude model ids", () => {
+    assert.equal(shortModelName("claude-fable-5"), "fable-5");
+    assert.equal(shortModelName("claude-opus-5"), "opus-5");
+    assert.equal(shortModelName("claude-haiku-4-5"), "haiku-4-5");
+  });
+
+  it("returns the id unchanged when there is no hyphen", () => {
+    assert.equal(shortModelName("default"), "default");
+  });
+});
+
+describe("providerDisplayName", () => {
+  const providers = [
+    {
+      id: "claude",
+      name: "Claude Code",
+      available: true,
+      supportsResume: true,
+      models: [] as string[],
+    },
+  ];
+
+  it("returns ProviderInfo.name when known", () => {
+    assert.equal(providerDisplayName("claude", providers), "Claude Code");
+  });
+
+  it("falls back to the raw id when unknown", () => {
+    assert.equal(providerDisplayName("generic", providers), "generic");
   });
 });

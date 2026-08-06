@@ -9,6 +9,7 @@ export default function App() {
   const {
     projects,
     threads,
+    providers,
     selectedThreadId,
     selectThread,
     detail,
@@ -20,6 +21,7 @@ export default function App() {
     startRun,
     stopRun,
     setPermissionMode,
+    setProvider,
     setArchived,
     deleteThread,
     setupWorktree,
@@ -55,6 +57,7 @@ export default function App() {
         projectsHeader="All projects"
         projects={projects}
         threads={threads}
+        providers={providers}
         activeThreadId={selectedThreadId}
         onSelectThread={selectThread}
         onCreateThread={(projectId) => {
@@ -69,6 +72,7 @@ export default function App() {
       <ThreadView
         detail={detail}
         project={project}
+        providers={providers}
         hasProjects={projects.length > 0}
         onAddProject={() => {
           void addProject();
@@ -76,6 +80,7 @@ export default function App() {
         onStartRun={(prompt) => startRun(prompt)}
         onStopRun={() => stopRun()}
         onSetPermissionMode={(mode) => setPermissionMode(mode)}
+        onSetProvider={(input) => setProvider(input)}
         onSetArchived={(archived) => setArchived(archived)}
         onDeleteThread={() => deleteThread()}
         changesOpen={changesOpen}
@@ -89,6 +94,7 @@ export default function App() {
         workflow={detail?.workflow ?? null}
         thread={detail?.thread ?? null}
         usage={detail?.usage ?? null}
+        providers={providers}
         project={project}
         onSetupWorktree={() => setupWorktree()}
         onMergeWorktree={() => mergeWorktree()}

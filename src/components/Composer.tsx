@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
-import type { PermissionMode } from "../shared/ipc";
+import type { PermissionMode, ProviderInfo } from "../shared/ipc";
 import {
   PERMISSION_MODE_LABELS,
   PERMISSION_MODES,
+  providerDisplayName,
+  shortModelName,
   shortSessionId,
 } from "../format";
 import styles from "./Composer.module.css";
@@ -13,6 +15,16 @@ interface ComposerProps {
   /** Sticky permission mode for this thread. */
   permissionMode: PermissionMode;
   onPermissionModeChange: (mode: PermissionMode) => void | Promise<void>;
+  /** Current thread provider id. */
+  provider: string;
+  /** Thread model override; null means provider default. */
+  model: string | null;
+  /** Registry from providers.list(). */
+  providers: ProviderInfo[];
+  onSetProvider: (input: {
+    provider?: string;
+    model?: string | null;
+  }) => void | Promise<void>;
   /** Provider session id (short form shown in meta). */
   sessionId: string | null;
   /** Whether a worktree has been set up. */
@@ -26,7 +38,6 @@ interface ComposerProps {
 }
 
 const STATIC = {
-  model: "Claude Opus 5",
   effort: "High · 1M",
   mode: "Build",
 };
@@ -35,6 +46,10 @@ export function Composer({
   branch,
   permissionMode,
   onPermissionModeChange,
+  provider,
+  model,
+  providers,
+  onSetProvider,
   sessionId,
   hasWorktree,
   disabled = false,
@@ -47,22 +62,39 @@ export function Composer({
   const [sending, setSending] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const [modeOpen, setModeOpen] = useState(false);
+  const [providerOpen, setProviderOpen] = useState(false);
+  const [modelOpen, setModelOpen] = useState(false);
   const modeWrapRef = useRef<HTMLDivElement>(null);
+  const providerWrapRef = useRef<HTMLDivElement>(null);
+  const modelWrapRef = useRef<HTMLDivElement>(null);
 
   const canSend = !disabled && !sending && value.trim().length > 0;
   const shownError = error ?? localError;
   const shortSess = shortSessionId(sessionId);
+  const sessionLocked = Boolean(sessionId);
+  const providerName = providerDisplayName(provider, providers);
+  const currentProviderInfo = providers.find((p) => p.id === provider);
+  const providerModels = currentProviderInfo?.models ?? [];
+  const showModelPill = providerModels.length > 0;
+  const modelLabel = model ? shortModelName(model) : "default";
 
   useEffect(() => {
-    if (!modeOpen) return;
+    if (!modeOpen && !providerOpen && !modelOpen) return;
     const onDoc = (e: MouseEvent) => {
-      if (!modeWrapRef.current?.contains(e.target as Node)) {
+      const t = e.target as Node;
+      if (modeOpen && !modeWrapRef.current?.contains(t)) {
         setModeOpen(false);
+      }
+      if (providerOpen && !providerWrapRef.current?.contains(t)) {
+        setProviderOpen(false);
+      }
+      if (modelOpen && !modelWrapRef.current?.contains(t)) {
+        setModelOpen(false);
       }
     };
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
-  }, [modeOpen]);
+  }, [modeOpen, providerOpen, modelOpen]);
 
   const submit = async () => {
     if (!canSend) return;
@@ -109,6 +141,38 @@ export function Composer({
     }
   };
 
+  const pickProvider = async (nextId: string) => {
+    setProviderOpen(false);
+    if (nextId === provider) return;
+    try {
+      await onSetProvider({ provider: nextId });
+    } catch (err) {
+      const msg =
+        err instanceof Error && err.message
+          ? err.message
+          : "Failed to set provider";
+      setLocalError(msg);
+    }
+  };
+
+  const pickModel = async (next: string | null) => {
+    setModelOpen(false);
+    if (next === model) return;
+    try {
+      await onSetProvider({ model: next });
+    } catch (err) {
+      const msg =
+        err instanceof Error && err.message
+          ? err.message
+          : "Failed to set model";
+      setLocalError(msg);
+    }
+  };
+
+  const lockedTitle = sessionLocked
+    ? `Session started with ${providerName}. New thread to switch.`
+    : undefined;
+
   return (
     <div className={styles.composer}>
       {shownError && (
@@ -136,11 +200,120 @@ export function Composer({
         />
         <div className={styles.controls}>
           <div className={styles.pills}>
-            <button type="button" className={styles.pill}>
-              {STATIC.model}
-              <span className={styles.caret}>▾</span>
-            </button>
-            <button type="button" className={styles.pill}>
+            <div className={styles.modeWrap} ref={providerWrapRef}>
+              <button
+                type="button"
+                className={styles.pill}
+                disabled={disabled}
+                title={lockedTitle}
+                aria-haspopup={sessionLocked ? undefined : "listbox"}
+                aria-expanded={sessionLocked ? undefined : providerOpen}
+                onClick={() => {
+                  if (disabled || sessionLocked) return;
+                  setProviderOpen((v) => !v);
+                  setModelOpen(false);
+                  setModeOpen(false);
+                }}
+              >
+                {providerName}
+                {!sessionLocked && <span className={styles.caret}>▾</span>}
+              </button>
+              {providerOpen && !sessionLocked && (
+                <ul
+                  className={styles.modeMenu}
+                  role="listbox"
+                  aria-label="Provider"
+                >
+                  {providers.map((p) => {
+                    const unavailable = !p.available;
+                    return (
+                      <li
+                        key={p.id}
+                        role="option"
+                        aria-selected={p.id === provider}
+                        aria-disabled={unavailable}
+                      >
+                        <button
+                          type="button"
+                          className={styles.modeOption}
+                          data-active={p.id === provider}
+                          data-disabled={unavailable ? "true" : undefined}
+                          disabled={unavailable}
+                          onClick={() => {
+                            if (!unavailable) void pickProvider(p.id);
+                          }}
+                        >
+                          {p.name}
+                          {unavailable && (
+                            <span className={styles.optionHint}>
+                              {" "}
+                              not installed
+                            </span>
+                          )}
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+
+            {showModelPill && (
+              <div className={styles.modeWrap} ref={modelWrapRef}>
+                <button
+                  type="button"
+                  className={styles.pill}
+                  disabled={disabled}
+                  aria-haspopup="listbox"
+                  aria-expanded={modelOpen}
+                  onClick={() => {
+                    if (disabled) return;
+                    setModelOpen((v) => !v);
+                    setProviderOpen(false);
+                    setModeOpen(false);
+                  }}
+                >
+                  {modelLabel}
+                  <span className={styles.caret}>▾</span>
+                </button>
+                {modelOpen && (
+                  <ul
+                    className={styles.modeMenu}
+                    role="listbox"
+                    aria-label="Model"
+                  >
+                    <li role="option" aria-selected={model == null}>
+                      <button
+                        type="button"
+                        className={styles.modeOption}
+                        data-active={model == null}
+                        onClick={() => void pickModel(null)}
+                      >
+                        Default
+                      </button>
+                    </li>
+                    {providerModels.map((m) => (
+                      <li
+                        key={m}
+                        role="option"
+                        aria-selected={m === model}
+                      >
+                        <button
+                          type="button"
+                          className={styles.modeOption}
+                          data-active={m === model}
+                          onClick={() => void pickModel(m)}
+                        >
+                          {shortModelName(m)}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+
+            <button type="button" className={styles.pill} disabled={disabled}>
               {STATIC.effort}
             </button>
             <div className={styles.modeWrap} ref={modeWrapRef}>
@@ -151,7 +324,11 @@ export function Composer({
                 aria-haspopup="listbox"
                 aria-expanded={modeOpen}
                 onClick={() => {
-                  if (!disabled) setModeOpen((v) => !v);
+                  if (!disabled) {
+                    setModeOpen((v) => !v);
+                    setProviderOpen(false);
+                    setModelOpen(false);
+                  }
                 }}
               >
                 {PERMISSION_MODE_LABELS[permissionMode]}
@@ -164,7 +341,11 @@ export function Composer({
                   aria-label="Permission mode"
                 >
                   {PERMISSION_MODES.map((mode) => (
-                    <li key={mode} role="option" aria-selected={mode === permissionMode}>
+                    <li
+                      key={mode}
+                      role="option"
+                      aria-selected={mode === permissionMode}
+                    >
                       <button
                         type="button"
                         className={styles.modeOption}

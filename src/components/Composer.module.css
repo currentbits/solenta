@@ -150,6 +150,25 @@
   background: var(--blue-soft);
 }
 
+.modeOption[data-disabled="true"],
+.modeOption:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  color: var(--text-dim);
+}
+
+.modeOption[data-disabled="true"]:hover,
+.modeOption:disabled:hover {
+  background: transparent;
+  color: var(--text-dim);
+}
+
+.optionHint {
+  color: var(--text-dim);
+  font-weight: 400;
+  font-size: 11px;
+}
+
 .caret {
   font-size: 9px;
   opacity: 0.7;
