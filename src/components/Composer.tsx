@@ -1,9 +1,22 @@
-import { useState, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import type { PermissionMode } from "../shared/ipc";
+import {
+  PERMISSION_MODE_LABELS,
+  PERMISSION_MODES,
+  shortSessionId,
+} from "../format";
 import styles from "./Composer.module.css";
 
 interface ComposerProps {
   /** Thread branch when known; null omits the branch chip (no invented default). */
   branch: string | null;
+  /** Sticky permission mode for this thread. */
+  permissionMode: PermissionMode;
+  onPermissionModeChange: (mode: PermissionMode) => void | Promise<void>;
+  /** Provider session id (short form shown in meta). */
+  sessionId: string | null;
+  /** Whether a worktree has been set up. */
+  hasWorktree: boolean;
   disabled?: boolean;
   onBuild: (prompt: string) => void | Promise<void>;
   placeholder?: string;
@@ -15,14 +28,15 @@ interface ComposerProps {
 const STATIC = {
   model: "Claude Opus 5",
   effort: "High · 1M",
-  access: "Full access",
   mode: "Build",
-  sessionId: "bb-1",
-  worktreeLabel: "Worktree",
 };
 
 export function Composer({
   branch,
+  permissionMode,
+  onPermissionModeChange,
+  sessionId,
+  hasWorktree,
   disabled = false,
   onBuild,
   placeholder = "Ask anything, @tag files/folders, $use skills, or / for commands",
@@ -32,9 +46,23 @@ export function Composer({
   const [value, setValue] = useState("");
   const [sending, setSending] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
+  const [modeOpen, setModeOpen] = useState(false);
+  const modeWrapRef = useRef<HTMLDivElement>(null);
 
   const canSend = !disabled && !sending && value.trim().length > 0;
   const shownError = error ?? localError;
+  const shortSess = shortSessionId(sessionId);
+
+  useEffect(() => {
+    if (!modeOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      if (!modeWrapRef.current?.contains(e.target as Node)) {
+        setModeOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [modeOpen]);
 
   const submit = async () => {
     if (!canSend) return;
@@ -65,6 +93,20 @@ export function Composer({
   const dismiss = () => {
     setLocalError(null);
     onDismissError?.();
+  };
+
+  const pickMode = async (mode: PermissionMode) => {
+    setModeOpen(false);
+    if (mode === permissionMode) return;
+    try {
+      await onPermissionModeChange(mode);
+    } catch (err) {
+      const msg =
+        err instanceof Error && err.message
+          ? err.message
+          : "Failed to set permission mode";
+      setLocalError(msg);
+    }
   };
 
   return (
@@ -101,9 +143,41 @@ export function Composer({
             <button type="button" className={styles.pill}>
               {STATIC.effort}
             </button>
-            <button type="button" className={styles.pill}>
-              {STATIC.access}
-            </button>
+            <div className={styles.modeWrap} ref={modeWrapRef}>
+              <button
+                type="button"
+                className={styles.pill}
+                disabled={disabled}
+                aria-haspopup="listbox"
+                aria-expanded={modeOpen}
+                onClick={() => {
+                  if (!disabled) setModeOpen((v) => !v);
+                }}
+              >
+                {PERMISSION_MODE_LABELS[permissionMode]}
+                <span className={styles.caret}>▾</span>
+              </button>
+              {modeOpen && (
+                <ul
+                  className={styles.modeMenu}
+                  role="listbox"
+                  aria-label="Permission mode"
+                >
+                  {PERMISSION_MODES.map((mode) => (
+                    <li key={mode} role="option" aria-selected={mode === permissionMode}>
+                      <button
+                        type="button"
+                        className={styles.modeOption}
+                        data-active={mode === permissionMode}
+                        onClick={() => void pickMode(mode)}
+                      >
+                        {PERMISSION_MODE_LABELS[mode]}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
             <button
               type="button"
               className={`${styles.pill} ${styles.pillAccent}`}
@@ -127,8 +201,12 @@ export function Composer({
         </div>
       </div>
       <div className={styles.meta}>
-        <span className={styles.chip}>{STATIC.sessionId}</span>
-        <span className={styles.chip}>{STATIC.worktreeLabel}</span>
+        {shortSess && (
+          <span className={`${styles.chip} ${styles.chipMono}`}>{shortSess}</span>
+        )}
+        <span className={styles.chip}>
+          {hasWorktree ? "Worktree" : "Project"}
+        </span>
         {branch != null && branch !== "" && (
           <span className={`${styles.chip} ${styles.chipMono}`}>{branch}</span>
         )}

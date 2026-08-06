@@ -138,6 +138,49 @@ describe("buildTimeline", () => {
       ["zzz-prompt", "aaa-event"],
     );
   });
+
+  it("treats role tool messages as ordinary timeline messages (carry runId)", () => {
+    const messages: ChatMessage[] = [
+      msg({ id: "u1", role: "user", text: "fix it", createdAt: 1000, runId: "r1" }),
+      msg({
+        id: "t1",
+        role: "tool",
+        text: "Bash: npm test",
+        createdAt: 2000,
+        runId: "r1",
+        tool: {
+          id: "tool-1",
+          name: "Bash",
+          input: '{"command":"npm test"}',
+          output: "ok",
+          isError: false,
+          done: true,
+        },
+      }),
+      msg({
+        id: "a1",
+        role: "assistant",
+        text: "done",
+        createdAt: 3000,
+        runId: "r1",
+      }),
+    ];
+    const workLog: WorkLogItem[] = [
+      wl({ id: "w1", runId: "r1", label: "Seed", done: true, timestamp: 1500 }),
+    ];
+    const timeline = buildTimeline(messages, workLog);
+    assert.deepEqual(
+      timeline.map((e) =>
+        e.kind === "message" ? `message:${e.message.id}:${e.message.role}` : `worklog:${e.runId}`,
+      ),
+      [
+        "message:u1:user",
+        "worklog:r1",
+        "message:t1:tool",
+        "message:a1:assistant",
+      ],
+    );
+  });
 });
 
 describe("workLogDurationLabel", () => {

@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   ChatMessage,
+  DiffResult,
+  PermissionMode,
   ProjectInfo,
   ThreadDetail,
   WorkLogItem,
@@ -23,11 +25,83 @@ interface ThreadViewProps {
   onAddProject: () => void;
   onStartRun: (prompt: string) => void | Promise<void>;
   onStopRun: () => void | Promise<void>;
+  onSetPermissionMode: (mode: PermissionMode) => void | Promise<void>;
+  onSetupWorktree: () => Promise<unknown>;
+  onFetchDiff: () => Promise<DiffResult>;
   runError?: string | null;
   onDismissRunError?: () => void;
 }
 
-function MessageBlock({ message }: { message: ChatMessage }) {
+function ToolCallCard({
+  message,
+  autoExpand,
+}: {
+  message: ChatMessage;
+  autoExpand: boolean;
+}) {
+  const tool = message.tool;
+  const [manual, setManual] = useState<boolean | null>(null);
+  const open = manual ?? autoExpand;
+
+  if (!tool) {
+    return (
+      <article className={styles.message}>
+        <p>{message.text}</p>
+      </article>
+    );
+  }
+
+  const status: "running" | "done" | "error" = !tool.done
+    ? "running"
+    : tool.isError
+      ? "error"
+      : "done";
+
+  return (
+    <section className={`${styles.card} ${styles.toolCard}`}>
+      <button
+        type="button"
+        className={styles.toolHeader}
+        onClick={() => setManual(!open)}
+        aria-expanded={open}
+      >
+        <span
+          className={styles.toolDot}
+          data-status={status}
+          aria-label={status}
+        />
+        <span className={styles.toolName}>{tool.name}</span>
+        <span className={styles.toolSummary}>{message.text}</span>
+        <span className={styles.chevron} data-open={open}>
+          ▸
+        </span>
+      </button>
+      {open && (
+        <div className={styles.toolBody}>
+          <pre className={styles.toolPre}>{tool.input}</pre>
+          {tool.output != null && tool.output !== "" && (
+            <>
+              <div className={styles.toolDivider} />
+              <pre className={styles.toolPre}>{tool.output}</pre>
+            </>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function MessageBlock({
+  message,
+  autoExpandTool,
+}: {
+  message: ChatMessage;
+  autoExpandTool: boolean;
+}) {
+  if (message.role === "tool") {
+    return <ToolCallCard message={message} autoExpand={autoExpandTool} />;
+  }
+
   if (message.role === "user") {
     return (
       <article className={`${styles.message} ${styles.messageUser}`}>
@@ -102,6 +176,129 @@ function WorkLogCard({
   );
 }
 
+function DiffLine({ line }: { line: string }) {
+  let kind = "ctx";
+  if (line.startsWith("+++") || line.startsWith("---")) kind = "meta";
+  else if (line.startsWith("@@")) kind = "hunk";
+  else if (line.startsWith("+")) kind = "add";
+  else if (line.startsWith("-")) kind = "del";
+  return <div className={styles.diffLine} data-kind={kind}>{line || " "}</div>;
+}
+
+function ChangesPanel({
+  open,
+  threadId,
+  onClose,
+  onFetchDiff,
+}: {
+  open: boolean;
+  threadId: string | null;
+  onClose: () => void;
+  onFetchDiff: () => Promise<DiffResult>;
+}) {
+  const [diff, setDiff] = useState<DiffResult | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = async () => {
+    setLoading(true);
+    setError(null);
+    setDiff(null);
+    try {
+      const result = await onFetchDiff();
+      setDiff(result);
+    } catch (err) {
+      setError(
+        err instanceof Error && err.message ? err.message : "Failed to load diff",
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Never show one thread's diff under another thread.
+  useEffect(() => {
+    setDiff(null);
+    setError(null);
+  }, [threadId]);
+
+  useEffect(() => {
+    if (open) void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- load when panel opens only
+  }, [open, threadId]);
+
+  if (!open) return null;
+
+  const empty =
+    !loading &&
+    !error &&
+    diff != null &&
+    diff.files.length === 0 &&
+    !diff.patch.trim();
+
+  return (
+    <section className={styles.changesPanel} aria-label="Changes">
+      <header className={styles.changesHead}>
+        <span className={styles.changesTitle}>Changes</span>
+        <div className={styles.changesActions}>
+          <button
+            type="button"
+            className={styles.btn}
+            onClick={() => void load()}
+            disabled={loading}
+          >
+            {loading ? "Refreshing…" : "Refresh"}
+          </button>
+          <button type="button" className={styles.btn} onClick={onClose}>
+            Close
+          </button>
+        </div>
+      </header>
+
+      {error && (
+        <div className={styles.inlineError} role="alert">
+          {error}
+        </div>
+      )}
+
+      {loading && !diff && (
+        <p className={styles.changesEmpty}>Loading diff…</p>
+      )}
+
+      {empty && <p className={styles.changesEmpty}>No changes</p>}
+
+      {diff && !empty && (
+        <>
+          {diff.files.length > 0 && (
+            <ul className={styles.fileList}>
+              {diff.files.map((f) => (
+                <li key={f.path} className={styles.fileRow}>
+                  <span className={styles.fileStatus}>{f.status}</span>
+                  <span className={styles.filePath}>{f.path}</span>
+                  <span className={styles.fileStats}>
+                    <span className={styles.adds}>+{f.additions}</span>
+                    <span className={styles.dels}>−{f.deletions}</span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {diff.patch.trim() !== "" && (
+            <div className={styles.patchScroll}>
+              {diff.patch.split("\n").map((line, i) => (
+                <DiffLine key={i} line={line} />
+              ))}
+            </div>
+          )}
+          {diff.truncated && (
+            <p className={styles.truncatedNote}>Diff truncated</p>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
 export function ThreadView({
   detail,
   project,
@@ -109,12 +306,18 @@ export function ThreadView({
   onAddProject,
   onStartRun,
   onStopRun,
+  onSetPermissionMode,
+  onSetupWorktree,
+  onFetchDiff,
   runError = null,
   onDismissRunError,
 }: ThreadViewProps) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
   const prevThreadId = useRef<string | null>(null);
+  const [worktreePending, setWorktreePending] = useState(false);
+  const [worktreeError, setWorktreeError] = useState<string | null>(null);
+  const [changesOpen, setChangesOpen] = useState(false);
 
   const runningAgents = useMemo(() => {
     if (!detail?.workflow) return 0;
@@ -140,20 +343,37 @@ export function ThreadView({
     return latest?.runId ?? null;
   }, [timeline]);
 
+  /**
+   * Latest tool message of the most recent run; that card auto-expands and
+   * stays open through completion (tool output and done arrive in the same
+   * update, so keying off !done would collapse it before output ever shows).
+   */
+  const latestRunningToolId = useMemo(() => {
+    if (!detail || !latestWorkLogRunId) return null;
+    let latest: ChatMessage | null = null;
+    for (const m of detail.messages) {
+      if (m.role === "tool" && m.tool && m.runId === latestWorkLogRunId) {
+        if (!latest || m.createdAt >= latest.createdAt) latest = m;
+      }
+    }
+    return latest?.id ?? null;
+  }, [detail, latestWorkLogRunId]);
+
   const isWorking = detail?.thread.status === "working";
   const emptyMessages = detail != null && detail.messages.length === 0;
   const hasTimeline = timeline.length > 0;
+  const hasWorktree = Boolean(detail?.thread.worktreePath);
 
-  // Reset stick-to-bottom when switching threads.
   useEffect(() => {
     const id = detail?.thread.id ?? null;
     if (id !== prevThreadId.current) {
       prevThreadId.current = id;
       stickToBottom.current = true;
+      setChangesOpen(false);
+      setWorktreeError(null);
     }
   }, [detail?.thread.id]);
 
-  // Auto-scroll on new content only if the user is already near the bottom.
   useEffect(() => {
     const el = bodyRef.current;
     if (!el || !stickToBottom.current) return;
@@ -165,6 +385,22 @@ export function ThreadView({
     if (!el) return;
     const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
     stickToBottom.current = distance <= STICK_BOTTOM_PX;
+  };
+
+  const handleSetupWorktree = async () => {
+    setWorktreePending(true);
+    setWorktreeError(null);
+    try {
+      await onSetupWorktree();
+    } catch (err) {
+      setWorktreeError(
+        err instanceof Error && err.message
+          ? err.message
+          : "Failed to set up worktree",
+      );
+    } finally {
+      setWorktreePending(false);
+    }
   };
 
   if (!hasProjects) {
@@ -198,6 +434,11 @@ export function ThreadView({
   }
 
   const { thread } = detail;
+  const branchShort = thread.branch
+    ? thread.branch.includes("/")
+      ? thread.branch.split("/").pop()!
+      : thread.branch
+    : null;
 
   return (
     <main className={styles.main}>
@@ -210,14 +451,67 @@ export function ThreadView({
           <span className={styles.threadTitle}>{thread.title}</span>
         </div>
         <div className={styles.actions}>
-          <button type="button" className={styles.btn}>
-            Setup Worktree
+          <button
+            type="button"
+            className={styles.btn}
+            onClick={() => void handleSetupWorktree()}
+            disabled={worktreePending || isWorking}
+            title={
+              hasWorktree
+                ? `Worktree ready${branchShort ? `: ${branchShort}` : ""}`
+                : "Set up a git worktree for this thread"
+            }
+          >
+            {worktreePending ? (
+              <>
+                <span className={styles.btnSpinner} aria-hidden />
+                Setting up…
+              </>
+            ) : hasWorktree ? (
+              <>
+                <span className={styles.btnCheck} aria-hidden>
+                  ✓
+                </span>
+                {branchShort ?? "Worktree"}
+              </>
+            ) : (
+              "Setup Worktree"
+            )}
+          </button>
+          <button
+            type="button"
+            className={styles.btn}
+            onClick={() => setChangesOpen((v) => !v)}
+            data-active={changesOpen}
+          >
+            Changes
           </button>
           <button type="button" className={`${styles.btn} ${styles.btnPrimary}`}>
             Push
           </button>
         </div>
       </header>
+
+      {worktreeError && (
+        <div className={styles.banner} role="alert">
+          <span className={styles.bannerText}>{worktreeError}</span>
+          <button
+            type="button"
+            className={styles.bannerDismiss}
+            onClick={() => setWorktreeError(null)}
+            aria-label="Dismiss error"
+          >
+            ×
+          </button>
+        </div>
+      )}
+
+      <ChangesPanel
+        open={changesOpen}
+        threadId={detail?.thread.id ?? null}
+        onClose={() => setChangesOpen(false)}
+        onFetchDiff={onFetchDiff}
+      />
 
       <div
         className={styles.body}
@@ -235,7 +529,11 @@ export function ThreadView({
         {timeline.map((entry) => {
           if (entry.kind === "message") {
             return (
-              <MessageBlock key={entry.message.id} message={entry.message} />
+              <MessageBlock
+                key={entry.message.id}
+                message={entry.message}
+                autoExpandTool={entry.message.id === latestRunningToolId}
+              />
             );
           }
           return (
@@ -252,8 +550,9 @@ export function ThreadView({
             <div className={styles.statusLeft}>
               <span className={styles.statusDot} aria-hidden />
               <span>
-                {runningAgents} agent{runningAgents === 1 ? "" : "s"} working
-                in the background
+                {detail.workflow
+                  ? `${runningAgents} agent${runningAgents === 1 ? "" : "s"} working in the background`
+                  : "Agent working…"}
               </span>
             </div>
             <button
@@ -269,6 +568,10 @@ export function ThreadView({
 
       <Composer
         branch={thread.branch}
+        permissionMode={thread.permissionMode}
+        onPermissionModeChange={onSetPermissionMode}
+        sessionId={thread.sessionId}
+        hasWorktree={hasWorktree}
         disabled={isWorking}
         onBuild={onStartRun}
         error={runError}

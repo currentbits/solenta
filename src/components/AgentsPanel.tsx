@@ -1,10 +1,23 @@
 import { useEffect, useMemo, useState } from "react";
-import type { AgentStatus, PhaseView, WorkflowView } from "../shared/ipc";
-import { formatTokenSum } from "../format";
+import type {
+  AgentStatus,
+  PhaseView,
+  SessionUsage,
+  ThreadInfo,
+  WorkflowView,
+} from "../shared/ipc";
+import {
+  formatCostUsd,
+  formatTokenSum,
+  permissionModeLabel,
+  shortSessionId,
+} from "../format";
 import styles from "./AgentsPanel.module.css";
 
 interface AgentsPanelProps {
   workflow: WorkflowView | null;
+  thread: ThreadInfo | null;
+  usage: SessionUsage | null;
 }
 
 type PhaseChipStatus = "done" | "active" | "pending" | "failed";
@@ -49,7 +62,69 @@ function groupKey(phaseName: string, index: number): string {
   return `${index}:${phaseName}`;
 }
 
-export function AgentsPanel({ workflow }: AgentsPanelProps) {
+function SessionCard({
+  thread,
+  usage,
+}: {
+  thread: ThreadInfo;
+  usage: SessionUsage | null;
+}) {
+  const sess = shortSessionId(thread.sessionId);
+  return (
+    <section className={styles.sessionCard}>
+      <div className={styles.sessionHead}>
+        <div>
+          <div className={styles.sessionLabel}>Session</div>
+          <div className={styles.sessionProvider}>{thread.provider}</div>
+        </div>
+        {sess && (
+          <span className={styles.sessionId} title={thread.sessionId ?? undefined}>
+            {sess}
+          </span>
+        )}
+      </div>
+
+      <dl className={styles.sessionMeta}>
+        <div className={styles.sessionRow}>
+          <dt>Model</dt>
+          <dd>{usage?.model ?? "n/a"}</dd>
+        </div>
+        <div className={styles.sessionRow}>
+          <dt>Permission</dt>
+          <dd>{permissionModeLabel(thread.permissionMode)}</dd>
+        </div>
+      </dl>
+
+      <div className={styles.usageBlock}>
+        <div className={styles.usageTitle}>Usage</div>
+        {usage ? (
+          <dl className={styles.usageList}>
+            <div className={styles.sessionRow}>
+              <dt>Input tokens</dt>
+              <dd>{usage.inputTokens.toLocaleString()}</dd>
+            </div>
+            <div className={styles.sessionRow}>
+              <dt>Output tokens</dt>
+              <dd>{usage.outputTokens.toLocaleString()}</dd>
+            </div>
+            <div className={styles.sessionRow}>
+              <dt>Turns</dt>
+              <dd>{usage.turns}</dd>
+            </div>
+            <div className={styles.sessionRow}>
+              <dt>Cost</dt>
+              <dd className={styles.cost}>{formatCostUsd(usage.costUsd)}</dd>
+            </div>
+          </dl>
+        ) : (
+          <p className={styles.usageEmpty}>No usage yet</p>
+        )}
+      </div>
+    </section>
+  );
+}
+
+export function AgentsPanel({ workflow, thread, usage }: AgentsPanelProps) {
   /**
    * Manual expand/collapse overrides. Absent key = not toggled by user,
    * so active phases auto-expand and others stay collapsed.
@@ -89,7 +164,6 @@ export function AgentsPanel({ workflow }: AgentsPanelProps) {
     if (Object.prototype.hasOwnProperty.call(manual, id)) {
       return manual[id]!;
     }
-    // Auto-expand active phases until the user toggles them.
     return status === "active";
   };
 
@@ -106,7 +180,11 @@ export function AgentsPanel({ workflow }: AgentsPanelProps) {
           </button>
         </header>
         <div className={styles.scroll}>
-          <p className={styles.placeholder}>No active workflow</p>
+          {thread ? (
+            <SessionCard thread={thread} usage={usage} />
+          ) : (
+            <p className={styles.placeholder}>No active session</p>
+          )}
         </div>
       </aside>
     );

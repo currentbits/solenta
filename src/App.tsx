@@ -18,6 +18,9 @@ export default function App() {
     createThread,
     startRun,
     stopRun,
+    setPermissionMode,
+    setupWorktree,
+    fetchDiff,
     projectById,
   } = useCoder();
 
@@ -54,10 +57,17 @@ export default function App() {
         }}
         onStartRun={(prompt) => startRun(prompt)}
         onStopRun={() => stopRun()}
+        onSetPermissionMode={(mode) => setPermissionMode(mode)}
+        onSetupWorktree={() => setupWorktree()}
+        onFetchDiff={() => fetchDiff()}
         runError={error?.scope === "run" ? error.message : null}
         onDismissRunError={clearError}
       />
-      <AgentsPanel workflow={detail?.workflow ?? null} />
+      <AgentsPanel
+        workflow={detail?.workflow ?? null}
+        thread={detail?.thread ?? null}
+        usage={detail?.usage ?? null}
+      />
     </div>
   );
 }

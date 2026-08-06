@@ -1,3 +1,5 @@
+import type { PermissionMode } from "./shared/ipc";
+
 /** Relative age like "3h", "1d", "12m" from a unix-ms timestamp. */
 export function formatRelativeAge(updatedAt: number, now = Date.now()): string {
   const diff = Math.max(0, now - updatedAt);
@@ -38,4 +40,38 @@ export function splitParagraphs(text: string): string[] {
     .split(/\n\n+/)
     .map((p) => p.trim())
     .filter(Boolean);
+}
+
+/** Human labels for PermissionMode (composer + session card). */
+export const PERMISSION_MODE_LABELS: Record<PermissionMode, string> = {
+  default: "Ask first",
+  acceptEdits: "Accept edits",
+  plan: "Plan mode",
+  bypassPermissions: "Full access",
+};
+
+export const PERMISSION_MODES: PermissionMode[] = [
+  "default",
+  "acceptEdits",
+  "plan",
+  "bypassPermissions",
+];
+
+export function permissionModeLabel(mode: PermissionMode): string {
+  return PERMISSION_MODE_LABELS[mode] ?? mode;
+}
+
+/**
+ * Cost display: four decimals under $1 ($0.0123), two decimals at/above ($12.34).
+ */
+export function formatCostUsd(costUsd: number): string {
+  if (!Number.isFinite(costUsd)) return "$0.00";
+  if (Math.abs(costUsd) < 1) return `$${costUsd.toFixed(4)}`;
+  return `$${costUsd.toFixed(2)}`;
+}
+
+/** Short session id for UI (first 8 chars); null/empty → null. */
+export function shortSessionId(sessionId: string | null | undefined): string | null {
+  if (!sessionId) return null;
+  return sessionId.slice(0, 8);
 }

@@ -1,18 +1,19 @@
 /**
  * In-memory CoderApi for plain Vite browser dev (no Electron preload).
  * Seeded from mockData so the built SPA remains demoable.
- * runs.start drives a setInterval (~700ms) that advances the fake workflow.
  *
- * Work log contract: exactly ONE item per step (label like "Seed"), created
- * with done:false when the step starts and flipped to done:true on completion.
- * Items and messages carry runId so the renderer can group and order the
- * conversation timeline.
+ * Real provider sessions (provider !== "simulate"): streams text + tool cards,
+ * accumulates SessionUsage, no workflow. Simulate provider keeps the old
+ * multi-agent workflow tick for the seeded mid-run demo.
  */
 import type {
   AgentView,
   ChatMessage,
   CoderApi,
+  DiffResult,
+  PermissionMode,
   ProjectInfo,
+  SessionUsage,
   ThreadDetail,
   ThreadInfo,
   WorkLogItem,
@@ -22,6 +23,7 @@ import { mockData } from "./mockData";
 
 const TICK_MS = 700;
 const TITLE_MAX = 60;
+const WORKTREE_DELAY_MS = 450;
 
 type ListenerMap = {
   "threads:changed": Set<(threads: ThreadInfo[]) => void>;
@@ -37,6 +39,8 @@ type RunState = {
   settled: Set<string>;
   /** Streaming assistant message id for this run (created on first tick). */
   assistantMsgId: string | null;
+  /** Session-style run step index (tool/text sequence). */
+  sessionStep: number;
 };
 
 function now() {
@@ -83,13 +87,14 @@ function seedProjects(): ProjectInfo[] {
 function seedThreads(projects: ProjectInfo[]): ThreadInfo[] {
   const bySlug = new Map(projects.map((p) => [p.slug, p]));
   const t0 = now();
-  return mockData.threads.map((card) => {
+  return mockData.threads.map((card, index) => {
     const project = bySlug.get(card.repoSlug)!;
     const ageMs = ageToMs(card.age);
     const updatedAt =
       card.status === "working"
         ? t0 - workingMinutes(card.workingLabel) * 60 * 1000
         : t0 - ageMs;
+    const isSimulate = card.id === mockData.activeThreadId;
     return {
       id: card.id,
       projectId: project.id,
@@ -99,6 +104,18 @@ function seedThreads(projects: ProjectInfo[]): ThreadInfo[] {
       status: card.status,
       createdAt: t0 - ageMs - 60 * 60 * 1000,
       updatedAt,
+      provider: isSimulate ? "simulate" : index % 3 === 0 ? "generic" : "claude",
+      sessionId: isSimulate
+        ? "sim-seed-session-aabbccdd"
+        : card.status === "done"
+          ? `sess-${card.id.replace(/[^a-z0-9]/gi, "").slice(0, 12)}`
+          : null,
+      permissionMode: (isSimulate
+        ? "bypassPermissions"
+        : index % 2 === 0
+          ? "default"
+          : "acceptEdits") as PermissionMode,
+      worktreePath: null,
     };
   });
 }
@@ -171,8 +188,6 @@ function createFreshWorkflow(): WorkflowView {
     allAgents.push(...list);
   }
 
-  // Empty phases (Verify/Judge/Synthesize in mock) get a single pending agent
-  // so the pipeline can advance through every chip.
   for (const name of phaseOrder) {
     if (!agentsByPhase.has(name) || (agentsByPhase.get(name)?.length ?? 0) === 0) {
       const agent: AgentView = {
@@ -220,10 +235,6 @@ function recomputeWorkflow(phases: WorkflowView["phases"], base: WorkflowView): 
   };
 }
 
-/**
- * One simulation step: settle a running agent (grow tokens), else start the
- * next pending agent. Returns true when the run is complete.
- */
 function advanceWorkflow(wf: WorkflowView): WorkflowView {
   const phases = wf.phases.map((p) => ({
     ...p,
@@ -232,7 +243,6 @@ function advanceWorkflow(wf: WorkflowView): WorkflowView {
 
   let acted = false;
 
-  // Prefer settling a running agent first
   outerRunning: for (const phase of phases) {
     for (const agent of phase.agents) {
       if (agent.status === "running") {
@@ -260,11 +270,6 @@ function advanceWorkflow(wf: WorkflowView): WorkflowView {
   return recomputeWorkflow(phases, wf);
 }
 
-/**
- * Sync work-log items for phase start/settle using flip semantics:
- * create one item (done:false) when a phase first has a running agent;
- * flip that same item to done:true when all agents are terminal.
- */
 function syncWorkLogForWorkflow(
   detail: ThreadDetail,
   run: RunState,
@@ -295,7 +300,6 @@ function syncWorkLogForWorkflow(
 
     if (allTerminal && !run.settled.has(phase.name)) {
       run.settled.add(phase.name);
-      // Ensure item exists even if we never saw running (edge: empty→settled).
       if (!run.announced.has(phase.name)) {
         run.announced.add(phase.name);
         detail.workLog.push({
@@ -311,15 +315,12 @@ function syncWorkLogForWorkflow(
         );
         if (item) {
           item.done = true;
-          // Keep original timestamp so duration spans start→end via other items;
-          // duration uses min/max across the group, so leave start time.
         }
       }
     }
   }
 }
 
-/** Grow (or create) a streaming assistant message for the active run. */
 function streamAssistant(detail: ThreadDetail, run: RunState, t: number): void {
   const snippets = [
     "Mapping the request against the current worktree layout.",
@@ -354,12 +355,165 @@ function streamAssistant(detail: ThreadDetail, run: RunState, t: number): void {
   }
 }
 
+function emptyUsage(model: string | null = "claude-opus-4"): SessionUsage {
+  return {
+    model,
+    inputTokens: 0,
+    outputTokens: 0,
+    costUsd: 0,
+    turns: 0,
+  };
+}
+
+function bumpUsage(detail: ThreadDetail, delta: Partial<SessionUsage> & { model?: string | null }): void {
+  const prev = detail.usage ?? emptyUsage(delta.model ?? "claude-opus-4");
+  detail.usage = {
+    model: delta.model !== undefined ? delta.model : prev.model,
+    inputTokens: prev.inputTokens + (delta.inputTokens ?? 0),
+    outputTokens: prev.outputTokens + (delta.outputTokens ?? 0),
+    costUsd: prev.costUsd + (delta.costUsd ?? 0),
+    turns: prev.turns + (delta.turns ?? 0),
+  };
+}
+
+/**
+ * Session provider ticks:
+ * 0 open assistant text
+ * 1 Bash tool (running)
+ * 2 Bash done + more text
+ * 3 Edit tool (running)
+ * 4 Edit done + final text + complete
+ */
+function tickSessionRun(detail: ThreadDetail, run: RunState, t: number): boolean {
+  const step = run.sessionStep;
+
+  if (step === 0) {
+    const msgId = id("msg");
+    run.assistantMsgId = msgId;
+    detail.messages.push({
+      id: msgId,
+      role: "assistant",
+      text: "I'll inspect the repo and apply a small fix.",
+      createdAt: t,
+      runId: run.runId,
+    });
+    bumpUsage(detail, {
+      inputTokens: 420,
+      outputTokens: 80,
+      costUsd: 0.0042,
+      model: "claude-opus-4",
+    });
+    run.sessionStep = 1;
+    return false;
+  }
+
+  if (step === 1) {
+    detail.messages.push({
+      id: id("msg"),
+      role: "tool",
+      text: "Bash: npm test",
+      createdAt: t,
+      runId: run.runId,
+      tool: {
+        id: id("tool"),
+        name: "Bash",
+        input: JSON.stringify({ command: "npm test" }, null, 2),
+        output: null,
+        isError: false,
+        done: false,
+      },
+    });
+    run.sessionStep = 2;
+    return false;
+  }
+
+  if (step === 2) {
+    const bash = [...detail.messages]
+      .reverse()
+      .find((m) => m.role === "tool" && m.tool?.name === "Bash" && !m.tool.done);
+    if (bash?.tool) {
+      bash.tool.done = true;
+      bash.tool.output =
+        "✓ test/timeline.test.ts (8)\n\n  8 passing\n\nexit 0";
+      bash.text = "Bash: npm test";
+    }
+    if (run.assistantMsgId) {
+      const asst = detail.messages.find((m) => m.id === run.assistantMsgId);
+      if (asst) {
+        asst.text +=
+          "\n\nTests are green. Next I'll patch the permission mode selector.";
+      }
+    }
+    bumpUsage(detail, { inputTokens: 210, outputTokens: 120, costUsd: 0.0031 });
+    run.sessionStep = 3;
+    return false;
+  }
+
+  if (step === 3) {
+    detail.messages.push({
+      id: id("msg"),
+      role: "tool",
+      text: "Edit: src/components/Composer.tsx",
+      createdAt: t,
+      runId: run.runId,
+      tool: {
+        id: id("tool"),
+        name: "Edit",
+        input: JSON.stringify(
+          {
+            path: "src/components/Composer.tsx",
+            old_string: 'access: "Full access"',
+            new_string: "permissionMode selector",
+          },
+          null,
+          2,
+        ),
+        output: null,
+        isError: false,
+        done: false,
+      },
+    });
+    run.sessionStep = 4;
+    return false;
+  }
+
+  // step >= 4: finish Edit + close run
+  const edit = [...detail.messages]
+    .reverse()
+    .find((m) => m.role === "tool" && m.tool?.name === "Edit" && !m.tool.done);
+  if (edit?.tool) {
+    edit.tool.done = true;
+    edit.tool.output = "Applied 1 edit to Composer.tsx";
+  }
+  detail.messages.push({
+    id: id("msg"),
+    role: "assistant",
+    text: "Done. Permission mode is wired to threads.setPermissionMode and the session card reflects live usage.",
+    createdAt: t,
+    runId: run.runId,
+  });
+  detail.messages.push({
+    id: id("evt"),
+    role: "event",
+    text: "Run complete",
+    createdAt: t + 1,
+    runId: run.runId,
+  });
+  bumpUsage(detail, {
+    inputTokens: 380,
+    outputTokens: 160,
+    costUsd: 0.0055,
+    turns: 1,
+  });
+  run.sessionStep = 5;
+  return true;
+}
+
 function seedDetail(thread: ThreadInfo): ThreadDetail {
   const tv = mockData.threadView;
   const t0 = thread.updatedAt;
   const runId = "run-seed-1";
 
-  // User prompt that triggered the mid-run state, then work log + assistant.
   const messages: ChatMessage[] = [
     {
       id: "msg-user-seed",
@@ -384,8 +538,6 @@ function seedDetail(thread: ThreadInfo): ThreadDetail {
     })),
   ];
 
-  // Single item per step (labels only), all done for completed seed work;
-  // last open step if thread is still working.
   const workLog: WorkLogItem[] = tv.workLog.steps.map((s, i) => ({
     id: s.id,
     runId,
@@ -394,8 +546,6 @@ function seedDetail(thread: ThreadInfo): ThreadDetail {
     timestamp: t0 - 120_000 + i * 20_000,
   }));
 
-  // Mid-run: add Seed (done) + Analyze (in progress) as phase-style items
-  // if the mock steps are descriptive; also reflect active Analyze phase.
   if (thread.status === "working") {
     const hasAnalyze = workLog.some((w) => /analyze/i.test(w.label));
     if (!hasAnalyze) {
@@ -416,11 +566,33 @@ function seedDetail(thread: ThreadInfo): ThreadDetail {
     }
   }
 
+  const usage: SessionUsage | null =
+    thread.provider === "simulate"
+      ? {
+          model: "simulate-multiagent",
+          inputTokens: 18400,
+          outputTokens: 6200,
+          costUsd: 0.0,
+          turns: 1,
+        }
+      : thread.sessionId
+        ? {
+            model: "claude-opus-4",
+            inputTokens: 2400,
+            outputTokens: 910,
+            costUsd: 0.0184,
+            turns: 2,
+          }
+        : null;
+
   return {
     thread,
     messages,
     workLog,
-    workflow: thread.status === "working" ? seedWorkflowMidRun() : null,
+    workflow: thread.status === "working" && thread.provider === "simulate"
+      ? seedWorkflowMidRun()
+      : null,
+    usage,
   };
 }
 
@@ -428,13 +600,61 @@ function cloneDetail(d: ThreadDetail): ThreadDetail {
   return structuredClone(d);
 }
 
+function fakeDiff(thread: ThreadInfo): DiffResult {
+  const branch = thread.branch ?? "main";
+  const files = [
+    {
+      path: "src/components/Composer.tsx",
+      status: "M",
+      additions: 28,
+      deletions: 6,
+    },
+    {
+      path: "src/components/ThreadView.tsx",
+      status: "M",
+      additions: 94,
+      deletions: 12,
+    },
+    {
+      path: "src/devCoder.ts",
+      status: "M",
+      additions: 140,
+      deletions: 40,
+    },
+  ];
+  const patch = [
+    `diff --git a/src/components/Composer.tsx b/src/components/Composer.tsx`,
+    `index 1111111..2222222 100644`,
+    `--- a/src/components/Composer.tsx`,
+    `+++ b/src/components/Composer.tsx`,
+    `@@ -100,7 +100,12 @@ export function Composer({`,
+    `     <button type="button" className={styles.pill}>`,
+    `-      {STATIC.access}`,
+    `+      {permissionModeLabel(permissionMode)}`,
+    `+      <span className={styles.caret}>▾</span>`,
+    `     </button>`,
+    ``,
+    `diff --git a/src/components/ThreadView.tsx b/src/components/ThreadView.tsx`,
+    `--- a/src/components/ThreadView.tsx`,
+    `+++ b/src/components/ThreadView.tsx`,
+    `@@ -1,4 +1,8 @@`,
+    `+import type { DiffResult } from "../shared/ipc";`,
+    `+// Changes panel + tool cards`,
+    ` // branch: ${branch}`,
+  ].join("\n");
+
+  return {
+    files,
+    patch,
+    truncated: false,
+  };
+}
+
 function buildDevCoder(): CoderApi {
   const projects = seedProjects();
   let threads = seedThreads(projects);
   const details = new Map<string, ThreadDetail>();
-  /** Active run timers keyed by thread id. */
   const runTimers = new Map<string, ReturnType<typeof setInterval>>();
-  /** Simulation state for active (and recently active) runs. */
   const runStates = new Map<string, RunState>();
 
   for (const t of threads) {
@@ -443,7 +663,9 @@ function buildDevCoder(): CoderApi {
       details.set(t.id, detail);
       if (t.status === "working") {
         const runId =
-          detail.workLog[0]?.runId ?? detail.messages.find((m) => m.runId)?.runId ?? id("run");
+          detail.workLog[0]?.runId ??
+          detail.messages.find((m) => m.runId)?.runId ??
+          id("run");
         const announced = new Set<string>();
         const settled = new Set<string>();
         for (const item of detail.workLog) {
@@ -451,7 +673,6 @@ function buildDevCoder(): CoderApi {
           announced.add(item.label);
           if (item.done) settled.add(item.label);
         }
-        // Also key by phase names from workflow for syncWorkLogForWorkflow.
         if (detail.workflow) {
           for (const phase of detail.workflow.phases) {
             const label = capitalize(phase.name);
@@ -462,8 +683,6 @@ function buildDevCoder(): CoderApi {
               announced.add(phase.name);
               if (item.done) settled.add(phase.name);
             }
-            // Mock descriptive labels may not match phase names; still track
-            // phase-style progress for new ticks via phase names.
             const allTerminal =
               phase.agents.length > 0 &&
               phase.agents.every(
@@ -484,6 +703,7 @@ function buildDevCoder(): CoderApi {
           assistantMsgId:
             detail.messages.find((m) => m.role === "assistant" && m.runId === runId)
               ?.id ?? null,
+          sessionStep: 0,
         });
       }
     } else {
@@ -492,6 +712,15 @@ function buildDevCoder(): CoderApi {
         messages: [],
         workLog: [],
         workflow: null,
+        usage: t.sessionId
+          ? {
+              model: "claude-opus-4",
+              inputTokens: 1200,
+              outputTokens: 400,
+              costUsd: 0.0091,
+              turns: 1,
+            }
+          : null,
       });
     }
   }
@@ -524,9 +753,11 @@ function buildDevCoder(): CoderApi {
     }
   };
 
+  const isSimulate = (thread: ThreadInfo) => thread.provider === "simulate";
+
   const tickRun = (threadId: string) => {
     const detail = details.get(threadId);
-    if (!detail?.workflow || detail.workflow.complete) {
+    if (!detail) {
       clearRunTimer(threadId);
       return;
     }
@@ -538,34 +769,51 @@ function buildDevCoder(): CoderApi {
         announced: new Set(),
         settled: new Set(),
         assistantMsgId: null,
+        sessionStep: 0,
       };
       runStates.set(threadId, run);
     }
 
-    const advanced = advanceWorkflow(detail.workflow);
     const t = now();
     let thread: ThreadInfo = {
       ...detail.thread,
       updatedAt: t,
     };
+    let complete = false;
 
-    detail.workflow = advanced;
-    syncWorkLogForWorkflow(detail, run, t);
-    streamAssistant(detail, run, t);
-
-    if (advanced.complete) {
-      thread = { ...thread, status: "done", updatedAt: t };
-      // Final flip for any remaining announced items.
-      for (const item of detail.workLog) {
-        if (item.runId === run.runId) item.done = true;
+    if (isSimulate(thread) && detail.workflow && !detail.workflow.complete) {
+      const advanced = advanceWorkflow(detail.workflow);
+      detail.workflow = advanced;
+      syncWorkLogForWorkflow(detail, run, t);
+      streamAssistant(detail, run, t);
+      if (advanced.complete) {
+        complete = true;
+        for (const item of detail.workLog) {
+          if (item.runId === run.runId) item.done = true;
+        }
+        detail.messages.push({
+          id: id("evt"),
+          role: "event",
+          text: "Run complete",
+          createdAt: t,
+          runId: run.runId,
+        });
+        bumpUsage(detail, {
+          inputTokens: 900,
+          outputTokens: 400,
+          costUsd: 0,
+          turns: 1,
+          model: "simulate-multiagent",
+        });
       }
-      detail.messages.push({
-        id: id("evt"),
-        role: "event",
-        text: "Run complete",
-        createdAt: t,
-        runId: run.runId,
-      });
+    } else if (!isSimulate(thread)) {
+      complete = tickSessionRun(detail, run, t);
+    } else {
+      complete = true;
+    }
+
+    if (complete) {
+      thread = { ...thread, status: "done", updatedAt: t };
       clearRunTimer(threadId);
     }
 
@@ -581,7 +829,6 @@ function buildDevCoder(): CoderApi {
     runTimers.set(threadId, handle);
   };
 
-  // Keep the seeded working thread progressing in browser demos
   for (const t of threads) {
     if (t.status === "working") {
       startRunTimer(t.id);
@@ -594,7 +841,6 @@ function buildDevCoder(): CoderApi {
         return projects.map((p) => ({ ...p }));
       },
       async add(path: string) {
-        // Mirror real backend: reject paths that are not a git repo.
         if (/not-a-git|nongit/i.test(path)) {
           throw new Error("Not a git repository...");
         }
@@ -615,7 +861,6 @@ function buildDevCoder(): CoderApi {
         return { ...project };
       },
       async addViaDialog() {
-        // Browser has no native picker; invent a demo project path.
         const n = projects.length + 1;
         return api.projects.add(`/Users/demo/demo-org/project-${n}`);
       },
@@ -634,6 +879,10 @@ function buildDevCoder(): CoderApi {
           status: "idle",
           createdAt: now(),
           updatedAt: now(),
+          provider: "claude",
+          sessionId: null,
+          permissionMode: "default",
+          worktreePath: null,
         };
         threads = [t, ...threads];
         details.set(t.id, {
@@ -641,6 +890,7 @@ function buildDevCoder(): CoderApi {
           messages: [],
           workLog: [],
           workflow: null,
+          usage: null,
         });
         emitThreads();
         return { ...t };
@@ -651,6 +901,20 @@ function buildDevCoder(): CoderApi {
         const row = threads.find((t) => t.id === threadId);
         if (row) d.thread = { ...row };
         return cloneDetail(d);
+      },
+      async setPermissionMode(input) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
+        const thread: ThreadInfo = {
+          ...detail.thread,
+          permissionMode: input.mode,
+          updatedAt: now(),
+        };
+        detail.thread = thread;
+        details.set(input.threadId, detail);
+        syncThreadRow(thread);
+        emitDetail(detail);
+        return { ...thread };
       },
     },
     runs: {
@@ -673,11 +937,10 @@ function buildDevCoder(): CoderApi {
           announced: new Set(),
           settled: new Set(),
           assistantMsgId: null,
+          sessionStep: 0,
         };
         runStates.set(input.threadId, run);
 
-        // User prompt first (same timestamp as run start; timeline sorts
-        // messages before work logs on ties).
         detail.messages.push({
           id: id("msg"),
           role: "user",
@@ -692,32 +955,42 @@ function buildDevCoder(): CoderApi {
             prompt.split("\n")[0]?.slice(0, TITLE_MAX) || "New Thread";
           thread = { ...thread, title: firstLine };
         }
+
+        // Persist a session id after the first turn so follow-ups resume.
+        if (!thread.sessionId) {
+          thread = { ...thread, sessionId: id("sess") };
+        }
+
         thread = {
           ...thread,
           status: "working",
           updatedAt: t,
-          branch: thread.branch ?? "feat/local-run",
         };
         detail.thread = thread;
-        detail.workflow = createFreshWorkflow();
-        // Kick first agent into running immediately
-        detail.workflow = advanceWorkflow(detail.workflow);
-        syncWorkLogForWorkflow(detail, run, t);
 
-        detail.messages.push({
-          id: id("evt"),
-          role: "event",
-          text: `Kicked off ${detail.workflow.total} subagents`,
-          createdAt: t + 1,
-          runId,
-        });
-        streamAssistant(detail, run, t + 2);
+        if (isSimulate(thread)) {
+          detail.workflow = createFreshWorkflow();
+          detail.workflow = advanceWorkflow(detail.workflow);
+          syncWorkLogForWorkflow(detail, run, t);
+          detail.messages.push({
+            id: id("evt"),
+            role: "event",
+            text: `Kicked off ${detail.workflow.total} subagents`,
+            createdAt: t + 1,
+            runId,
+          });
+          streamAssistant(detail, run, t + 2);
+        } else {
+          detail.workflow = null;
+          // First session tick immediately so the UI isn't empty for 700ms.
+          tickSessionRun(detail, run, t + 1);
+        }
 
         details.set(input.threadId, detail);
         syncThreadRow(thread);
         emitDetail(detail);
         startRunTimer(input.threadId);
-        return { workflowId: detail.workflow.id };
+        return { runId };
       },
       async stop(input) {
         const detail = details.get(input.threadId);
@@ -727,7 +1000,14 @@ function buildDevCoder(): CoderApi {
 
         const t = now();
         const run = runStates.get(input.threadId);
-        // Match real backend: idle, keep agent states, append stop event.
+        // Mark any in-flight tools done so cards settle.
+        for (const m of detail.messages) {
+          if (m.role === "tool" && m.tool && !m.tool.done && m.runId === run?.runId) {
+            m.tool.done = true;
+            m.tool.isError = true;
+            m.tool.output = m.tool.output ?? "Stopped";
+          }
+        }
         const thread: ThreadInfo = {
           ...detail.thread,
           status: "idle",
@@ -741,7 +1021,6 @@ function buildDevCoder(): CoderApi {
           createdAt: t,
           runId: run?.runId,
         });
-        // Leave workflow.agents as they were; mark incomplete
         if (detail.workflow) {
           detail.workflow = {
             ...detail.workflow,
@@ -760,6 +1039,45 @@ function buildDevCoder(): CoderApi {
           branch: "main",
           dirty: false,
         };
+      },
+      async setupWorktree(input) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
+
+        await new Promise((r) => setTimeout(r, WORKTREE_DELAY_MS));
+
+        const short =
+          detail.thread.branch?.replace(/^.*\//, "") ||
+          detail.thread.title
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, "-")
+            .replace(/^-|-$/g, "")
+            .slice(0, 24) ||
+          "local-run";
+        const branch = detail.thread.branch ?? `feat/${short}`;
+        const project = projects.find((p) => p.id === detail.thread.projectId);
+        const worktreePath = `${project?.path ?? "/Users/demo/project"}/.coder/worktrees/${short}`;
+
+        const thread: ThreadInfo = {
+          ...detail.thread,
+          branch,
+          worktreePath,
+          updatedAt: now(),
+        };
+        detail.thread = thread;
+        details.set(input.threadId, detail);
+        syncThreadRow(thread);
+        emitDetail(detail);
+        return { ...thread };
+      },
+      async diff(input) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
+        // Empty when brand-new idle thread with no messages.
+        if (detail.messages.length === 0 && detail.thread.status === "idle") {
+          return { files: [], patch: "", truncated: false };
+        }
+        return fakeDiff(detail.thread);
       },
     },
     on(channel, cb) {

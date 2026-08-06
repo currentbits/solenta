@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   CoderApi,
+  DiffResult,
+  PermissionMode,
   ProjectInfo,
   ThreadDetail,
   ThreadInfo,
@@ -40,6 +42,9 @@ export interface UseCoderResult {
   createThread: (title?: string) => Promise<ThreadInfo | null>;
   startRun: (prompt: string) => Promise<void>;
   stopRun: () => Promise<void>;
+  setPermissionMode: (mode: PermissionMode) => Promise<void>;
+  setupWorktree: () => Promise<ThreadInfo | null>;
+  fetchDiff: () => Promise<DiffResult>;
   projectById: Map<string, ProjectInfo>;
 }
 
@@ -75,8 +80,6 @@ export function useCoder(): UseCoderResult {
     let unsubChanged: (() => void) | undefined;
     let unsubUpdated: (() => void) | undefined;
 
-    // Register push handlers before the async list load resolves so we can
-    // detect (and keep) fresher data if a push wins the race.
     unsubChanged = api.on("threads:changed", (next) => {
       threadsListGen.current += 1;
       applyThreads(next);
@@ -103,8 +106,6 @@ export function useCoder(): UseCoderResult {
         ]);
         if (cancelled) return;
         setProjects(p);
-        // Only apply the fetched list if no threads:changed push arrived since
-        // we started this load (push is newer).
         if (threadsListGen.current === loadGen) {
           applyThreads(list);
         }
@@ -193,7 +194,6 @@ export function useCoder(): UseCoderResult {
       const next = threadsRef.current.some((x) => x.id === t.id)
         ? threadsRef.current
         : [t, ...threadsRef.current];
-      // create may also emit threads:changed; keep local list coherent either way
       applyThreads(next);
       setSelectedThreadId(t.id);
       return t;
@@ -207,7 +207,6 @@ export function useCoder(): UseCoderResult {
       const threadId = selectedThreadId;
       try {
         await api.runs.start({ threadId, prompt });
-        // detail + threads arrive via thread:updated / threads:changed
         const d = await api.threads.get(threadId);
         if (selectedRef.current !== threadId) return;
         setDetail(d);
@@ -243,6 +242,63 @@ export function useCoder(): UseCoderResult {
     }
   }, [api, selectedThreadId, applyThreads]);
 
+  const setPermissionMode = useCallback(
+    async (mode: PermissionMode) => {
+      if (!selectedThreadId) return;
+      const threadId = selectedThreadId;
+      try {
+        const thread = await api.threads.setPermissionMode({
+          threadId,
+          mode,
+        });
+        applyThreads(
+          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
+        );
+        setDetail((prev) =>
+          prev && prev.thread.id === thread.id
+            ? { ...prev, thread }
+            : prev,
+        );
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+        throw err;
+      }
+    },
+    [api, selectedThreadId, applyThreads],
+  );
+
+  const setupWorktree = useCallback(async () => {
+    if (!selectedThreadId) return null;
+    const threadId = selectedThreadId;
+    try {
+      const thread = await api.git.setupWorktree({ threadId });
+      applyThreads(
+        threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
+      );
+      setDetail((prev) =>
+        prev && prev.thread.id === thread.id
+          ? { ...prev, thread }
+          : prev,
+      );
+      // Refresh detail in case main also mutates other fields.
+      const d = await api.threads.get(threadId);
+      if (selectedRef.current === threadId) setDetail(d);
+      setError(null);
+      return thread;
+    } catch (err) {
+      setError({ scope: "run", message: errorMessage(err) });
+      throw err;
+    }
+  }, [api, selectedThreadId, applyThreads]);
+
+  const fetchDiff = useCallback(async () => {
+    if (!selectedThreadId) {
+      return { files: [], patch: "", truncated: false };
+    }
+    return api.git.diff({ threadId: selectedThreadId });
+  }, [api, selectedThreadId]);
+
   return {
     api,
     projects,
@@ -258,6 +314,9 @@ export function useCoder(): UseCoderResult {
     createThread,
     startRun,
     stopRun,
+    setPermissionMode,
+    setupWorktree,
+    fetchDiff,
     projectById,
   };
 }

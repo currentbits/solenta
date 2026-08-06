@@ -190,6 +190,9 @@ export function Sidebar({
                   project?.slug ??
                   projectById.get(thread.projectId)?.slug ??
                   "unknown";
+                // Prefer the worktree branch once set up (thread.branch is
+                // updated by git.setupWorktree); fall back to stored branch.
+                const branchLine = thread.branch ?? "";
                 return (
                   <button
                     key={thread.id}
@@ -205,11 +208,19 @@ export function Sidebar({
                       </span>
                     </div>
                     <div className={styles.cardTitle}>{thread.title}</div>
+                    <div className={styles.cardTags}>
+                      <span className={styles.providerTag}>
+                        {thread.provider}
+                      </span>
+                      {thread.worktreePath && (
+                        <span className={styles.worktreeTag}>wt</span>
+                      )}
+                    </div>
                     <div className={styles.cardMeta}>
                       <span className={styles.branch}>
-                        {thread.branch ?? ""}
+                        {branchLine}
                         {thread.prNumber != null
-                          ? `${thread.branch ? " · " : ""}#${thread.prNumber}`
+                          ? `${branchLine ? " · " : ""}#${thread.prNumber}`
                           : ""}
                       </span>
                       <StatusBadge thread={thread} />
