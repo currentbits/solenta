@@ -5,3 +5,4 @@
 - 2026-08-06 - symptom: smoke pass B spawn ENOENT for node under Electron | cause: CODER_AGENT_CMD whitespace-split breaks process.execPath under Application Support | fix: smoke resolves space-free node via which/homebrew
 - 2026-08-06 - symptom: Thread view mixed all runs into one Work Log above messages | cause: single global card + no runId grouping | fix: buildTimeline in src/timeline.ts; ThreadView merges messages + per-run cards
 - 2026-08-06 - symptom: All projects count ignored search filter | cause: section count used unfiltered threads.length | fix: Sidebar.tsx uses filtered.length
+- 2026-08-06 - symptom: long chats pushed the composer below the window frame | cause: .app grid had no row constraint, implicit row min-height auto grows with content | fix: grid-template-rows minmax(0, 1fr) in App.module.css

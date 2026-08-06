@@ -1,6 +1,7 @@
 .app {
   display: grid;
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr) var(--agents-width);
+  grid-template-rows: minmax(0, 1fr);
   height: 100%;
   width: 100%;
   background: var(--bg);
