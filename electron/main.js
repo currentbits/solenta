@@ -1,7 +1,28 @@
-const { app, BrowserWindow } = require("electron");
+"use strict";
+
+const { app, BrowserWindow, ipcMain, dialog } = require("electron");
 const path = require("node:path");
+const fs = require("node:fs");
+const { pathToFileURL } = require("node:url");
+const { Store } = require("./store.js");
+const { createRunner } = require("./runner.js");
+const { registerIpc } = require("./ipc.js");
 
 const isDev = !app.isPackaged && !process.env.CODER_PROD;
+
+/**
+ * Ensure @coder/core is built; throw a helpful error if missing.
+ */
+function assertCoreBuilt() {
+  const coreIndex = path.join(__dirname, "../core/dist/index.js");
+  if (!fs.existsSync(coreIndex)) {
+    throw new Error(
+      "Missing core/dist. Build the workflow engine first:\n" +
+        "  cd core && npm install && npm run build",
+    );
+  }
+  return coreIndex;
+}
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -27,7 +48,36 @@ function createWindow() {
   }
 }
 
-app.whenReady().then(() => {
+function broadcast(channel, payload) {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) {
+      win.webContents.send(channel, payload);
+    }
+  }
+}
+
+app.whenReady().then(async () => {
+  const coreIndex = assertCoreBuilt();
+  const core = await import(pathToFileURL(coreIndex).href);
+
+  const storePath = path.join(app.getPath("userData"), "coder-store.json");
+  const store = new Store(storePath);
+
+  const runner = createRunner({
+    store,
+    core,
+    pushFn: (channel, payload) => broadcast(channel, payload),
+    tickMs: 700,
+  });
+
+  registerIpc({
+    ipcMain,
+    dialog,
+    store,
+    runner,
+    broadcast,
+  });
+
   createWindow();
 
   app.on("activate", () => {
