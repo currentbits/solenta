@@ -438,7 +438,7 @@ process.exit(0);
   });
 });
 
-describe("text adapter grok args shape", () => {
+describe("grok structured provider args shape (smoke via setProvider)", () => {
   let tmpDir;
   let store;
   let runner;
@@ -456,11 +456,17 @@ describe("text adapter grok args shape", () => {
 
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-grok-"));
     argvFile = path.join(tmpDir, "argv.json");
+    // Minimal streaming-messages-json fake (claude-stream shape).
     const body = `#!/usr/bin/env node
 "use strict";
 const fs = require("fs");
-fs.writeFileSync(process.env.CODER_FAKE_GROK_ARGV_FILE, JSON.stringify(process.argv.slice(1)), "utf8");
-process.stdout.write("grok-ok");
+if (process.env.CODER_FAKE_GROK_ARGV_FILE) {
+  fs.writeFileSync(process.env.CODER_FAKE_GROK_ARGV_FILE, JSON.stringify(process.argv.slice(1)), "utf8");
+}
+function emit(o){process.stdout.write(JSON.stringify(o)+"\\n");}
+emit({type:"system",subtype:"init",session_id:"g-set-1",model:"grok-4.5"});
+emit({type:"assistant",message:{content:[{type:"text",text:"grok-ok"}]}});
+emit({type:"result",subtype:"success",is_error:false,result:"grok-ok",usage:{input_tokens:1,output_tokens:2},total_cost_usd:0,num_turns:1,session_id:"g-set-1"});
 process.exit(0);
 `;
     const fake = path.join(tmpDir, "fake-grok");
@@ -499,29 +505,28 @@ process.exit(0);
     delete process.env.CODER_FAKE_GROK_ARGV_FILE;
   });
 
-  it("spawns grok with -p <prompt> and reaches done", async () => {
-    // Sanity: registry shape
-    assert.deepEqual(getProvider("grok").buildArgs({ prompt: "hey" }), [
-      "-p",
-      "hey",
-    ]);
+  it("spawns grok via claude-stream with structured argv and captures session", async () => {
+    const entry = getProvider("grok");
+    assert.equal(entry.kind, "claude-stream");
+    assert.equal(entry.supportsResume, true);
 
     const thread = store.getThreads()[0];
     await runner.startRun({ threadId: thread.id, prompt: "hey grok" });
     await waitFor(() => store.getThread(thread.id).status === "done");
 
     const argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
-    // Shebang scripts include the script path as argv[0]; flags follow.
     const pIdx = argv.indexOf("-p");
     assert.ok(pIdx >= 0, `expected -p in ${JSON.stringify(argv)}`);
     assert.equal(argv[pIdx + 1], "hey grok");
-    assert.equal(argv[argv.length - 1], "hey grok");
+    assert.ok(argv.includes("streaming-messages-json"));
+    assert.ok(!argv.includes("--verbose"));
+    assert.ok(!argv.includes("--mcp-config"));
 
     const assistants = store
       .getMessages(thread.id)
       .filter((m) => m.role === "assistant");
     assert.equal(assistants.length, 1);
     assert.equal(assistants[0].text, "grok-ok");
-    assert.equal(store.getThread(thread.id).sessionId, null);
+    assert.equal(store.getThread(thread.id).sessionId, "g-set-1");
   });
 });

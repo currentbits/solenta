@@ -276,7 +276,8 @@ if (markerDir) {
 }
 
 /**
- * Fake text-kind binary (stdout plain text).
+ * Fake grok binary (claude-stream / streaming-messages-json NDJSON).
+ * Also usable as a plain-text fallback for providers that ignore stream shape.
  */
 function writeWorkflowFakeText(dir, name = "workflow-fake-text") {
   const scriptPath = path.join(dir, name);
@@ -284,7 +285,14 @@ function writeWorkflowFakeText(dir, name = "workflow-fake-text") {
 "use strict";
 const fs = require("fs");
 const path = require("path");
-const prompt = process.argv.slice(2).join(" ") || process.argv[process.argv.length - 1] || "";
+const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+function emit(obj) { process.stdout.write(JSON.stringify(obj) + "\\n"); }
+const argv = process.argv.slice(1);
+// Prompt is the value of -p for grok structured args; fall back to last arg.
+let prompt = "";
+const pIdx = argv.indexOf("-p");
+if (pIdx >= 0 && argv[pIdx + 1]) prompt = argv[pIdx + 1];
+else prompt = argv[argv.length - 1] || "";
 const markerDir = process.env.CODER_WF_MARKER_DIR;
 const captureFile = process.env.CODER_WF_CAPTURE_FILE;
 if (captureFile) {
@@ -292,17 +300,35 @@ if (captureFile) {
   try {
     if (fs.existsSync(captureFile)) prev = JSON.parse(fs.readFileSync(captureFile, "utf8"));
   } catch { prev = []; }
-  prev.push({ provider: "text", argv: process.argv.slice(1), prompt, ts: Date.now() });
+  prev.push({ provider: "grok", argv, prompt, ts: Date.now() });
   fs.writeFileSync(captureFile, JSON.stringify(prev, null, 2), "utf8");
 }
 if (markerDir) {
   try {
     fs.mkdirSync(markerDir, { recursive: true });
+    fs.writeFileSync(path.join(markerDir, "grok-hit"), "1", "utf8");
+    // Back-compat marker for any remaining text-kind assertions.
     fs.writeFileSync(path.join(markerDir, "text-hit"), "1", "utf8");
   } catch { /* ignore */ }
 }
-process.stdout.write("TEXT_FINAL_ANSWER: done via text provider\\n");
-process.exit(0);
+const text = "TEXT_FINAL_ANSWER: done via grok structured provider";
+(async () => {
+  emit({ type: "system", subtype: "init", session_id: "wf-grok-sess", model: "grok-4.5" });
+  await delay(10);
+  emit({ type: "assistant", message: { content: [{ type: "text", text }] } });
+  await delay(10);
+  emit({
+    type: "result",
+    subtype: "success",
+    is_error: false,
+    result: text,
+    usage: { input_tokens: 6, output_tokens: 8 },
+    total_cost_usd: 0.001,
+    num_turns: 1,
+    session_id: "wf-grok-sess",
+  });
+  process.exit(0);
+})().catch((e) => { process.stderr.write(String(e)); process.exit(1); });
 `;
   fs.writeFileSync(scriptPath, body, { mode: 0o755 });
   return scriptPath;
@@ -550,7 +576,7 @@ describe("workflow orchestration", () => {
     }
   });
 
-  it("mixed-provider template hits claude, codex, and text binaries", async () => {
+  it("mixed-provider template hits claude, codex, and grok structured binaries", async () => {
     const tmpl = services.saveTemplate(store, {
       name: "Mixed three",
       phases: [
@@ -571,7 +597,7 @@ describe("workflow orchestration", () => {
         {
           name: "finalize",
           agentCount: 1,
-          instruction: "Grok finalizes in plain text.",
+          instruction: "Grok finalizes via structured stream.",
           provider: "grok",
           model: null,
         },
@@ -593,12 +619,19 @@ describe("workflow orchestration", () => {
     assert.equal(store.getThread(thread.id).status, "done");
     assert.ok(fs.existsSync(path.join(markerDir, "claude-hit")), "claude binary hit");
     assert.ok(fs.existsSync(path.join(markerDir, "codex-hit")), "codex binary hit");
-    assert.ok(fs.existsSync(path.join(markerDir, "text-hit")), "text binary hit");
+    assert.ok(fs.existsSync(path.join(markerDir, "grok-hit")), "grok binary hit");
 
     const captures = JSON.parse(fs.readFileSync(captureFile, "utf8"));
     assert.ok(captures.some((c) => c.provider === "claude"));
     assert.ok(captures.some((c) => c.provider === "codex"));
-    assert.ok(captures.some((c) => c.provider === "text"));
+    const grokCap = captures.find((c) => c.provider === "grok");
+    assert.ok(grokCap, "expected grok capture");
+    assert.ok(
+      grokCap.argv.includes("streaming-messages-json"),
+      `grok phase must use structured format: ${JSON.stringify(grokCap.argv)}`,
+    );
+    assert.ok(!grokCap.argv.includes("--verbose"));
+    assert.ok(!grokCap.argv.includes("--mcp-config"));
 
     const assistant = store
       .getMessages(thread.id)

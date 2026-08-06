@@ -88,11 +88,31 @@ const PROVIDERS = [
     name: "Grok",
     binEnv: "CODER_GROK_BIN",
     defaultBin: "grok",
-    supportsResume: false,
-    models: [],
-    kind: "text",
-    buildArgs({ prompt }) {
-      return ["-p", String(prompt ?? "")];
+    supportsResume: true,
+    models: ["grok-4.5"],
+    kind: "claude-stream",
+    /**
+     * Grok CLI: -p <prompt> --output-format streaming-messages-json
+     * (NDJSON identical to claude stream-json). Permission modes map 1:1.
+     * Resume via --resume <sessionId>; model via -m <model>.
+     * No --verbose and no --mcp-config (memory uses ensureGrokMcpConfig).
+     */
+    buildArgs({ prompt, sessionId, permissionMode, model }) {
+      const args = [
+        "-p",
+        String(prompt ?? ""),
+        "--output-format",
+        "streaming-messages-json",
+        "--permission-mode",
+        String(permissionMode || "default"),
+      ];
+      if (model) {
+        args.push("-m", String(model));
+      }
+      if (sessionId) {
+        args.push("--resume", String(sessionId));
+      }
+      return args;
     },
   },
   {

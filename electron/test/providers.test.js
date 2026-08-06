@@ -60,8 +60,9 @@ describe("providers registry", () => {
     assert.deepEqual(codex.models, []);
 
     const grok = getProvider("grok");
-    assert.equal(grok.kind, "text");
-    assert.equal(grok.supportsResume, false);
+    assert.equal(grok.kind, "claude-stream");
+    assert.equal(grok.supportsResume, true);
+    assert.deepEqual(grok.models, ["grok-4.5"]);
 
     const opencode = getProvider("opencode");
     assert.equal(opencode.kind, "opencode-json");
@@ -138,11 +139,31 @@ describe("providers registry", () => {
     assert.equal(resume[resume.length - 1], "p3");
   });
 
-  it("buildArgs: grok text and opencode-json shapes", () => {
-    assert.deepEqual(getProvider("grok").buildArgs({ prompt: "hello" }), [
-      "-p",
-      "hello",
-    ]);
+  it("buildArgs: grok claude-stream and opencode-json shapes", () => {
+    const grokArgs = getProvider("grok").buildArgs({
+      prompt: "hello",
+      permissionMode: "default",
+    });
+    assert.equal(grokArgs[0], "-p");
+    assert.equal(grokArgs[1], "hello");
+    assert.ok(grokArgs.includes("streaming-messages-json"));
+    assert.ok(grokArgs.includes("--permission-mode"));
+    assert.ok(!grokArgs.includes("--verbose"));
+    assert.ok(!grokArgs.includes("--mcp-config"));
+
+    const grokResume = getProvider("grok").buildArgs({
+      prompt: "again",
+      sessionId: "g-sess",
+      model: "grok-4.5",
+      permissionMode: "plan",
+    });
+    assert.equal(grokResume[grokResume.indexOf("--resume") + 1], "g-sess");
+    assert.equal(grokResume[grokResume.indexOf("-m") + 1], "grok-4.5");
+    assert.equal(
+      grokResume[grokResume.indexOf("--permission-mode") + 1],
+      "plan",
+    );
+
     assert.deepEqual(getProvider("opencode").buildArgs({ prompt: "hello" }), [
       "run",
       "hello",

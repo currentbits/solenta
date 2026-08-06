@@ -224,12 +224,23 @@ function buildAgentPrompt(opts) {
 }
 
 /**
- * Spawn a one-shot Claude stream-json agent (no --resume).
+ * Spawn a one-shot claude-stream agent (no --resume).
+ * Reuses the claude NDJSON parser for any provider with kind "claude-stream"
+ * (claude, grok, ...). Arg builders stay per-provider; --mcp-config is
+ * injected only for the claude provider id.
  * @param {object} opts
  * @returns {{ handle: { kill: () => void }, done: Promise<object> }}
  */
 function spawnAgentClaude(opts) {
-  const { prompt, cwd, permissionMode, model, binary, onText } = opts;
+  const {
+    prompt,
+    cwd,
+    permissionMode,
+    model,
+    binary,
+    onText,
+    providerEntry,
+  } = opts;
 
   let text = "";
   let resultText = "";
@@ -248,10 +259,9 @@ function spawnAgentClaude(opts) {
     resolveDone(payload);
   }
 
-  // Build args so we can inject --mcp-config when memory server is healthy.
-  const claudeEntry = getProvider("claude");
-  const baseArgs = claudeEntry
-    ? claudeEntry.buildArgs({
+  const entry = providerEntry || getProvider("claude");
+  const baseArgs = entry
+    ? entry.buildArgs({
         prompt,
         sessionId: null,
         permissionMode: permissionMode || "default",
@@ -266,21 +276,29 @@ function spawnAgentClaude(opts) {
         String(permissionMode || "default"),
         String(prompt ?? ""),
       ];
-  // Inject --mcp-config before the trailing prompt when memory is healthy.
-  const mcpArgs = getClaudeMcpArgs();
-  const args =
-    mcpArgs.length > 0 && baseArgs.length > 0
-      ? [
-          ...baseArgs.slice(0, -1),
-          ...mcpArgs,
-          baseArgs[baseArgs.length - 1],
-        ]
-      : mcpArgs.length > 0
-        ? [...baseArgs, ...mcpArgs]
-        : baseArgs;
+  // Claude-only: inject --mcp-config before the trailing prompt when healthy.
+  // Grok (and other claude-stream providers) must not receive --mcp-config.
+  let args = baseArgs;
+  if (entry && entry.id === "claude") {
+    const mcpArgs = getClaudeMcpArgs();
+    args =
+      mcpArgs.length > 0 && baseArgs.length > 0
+        ? [
+            ...baseArgs.slice(0, -1),
+            ...mcpArgs,
+            baseArgs[baseArgs.length - 1],
+          ]
+        : mcpArgs.length > 0
+          ? [...baseArgs, ...mcpArgs]
+          : baseArgs;
+  }
 
   const handle = runClaude({
-    binary: binary || process.env.CODER_CLAUDE_BIN || "claude",
+    binary:
+      binary ||
+      (entry ? resolveBin(entry) : null) ||
+      process.env.CODER_CLAUDE_BIN ||
+      "claude",
     args,
     prompt,
     cwd,
@@ -744,6 +762,7 @@ function spawnPhaseAgent(opts) {
       permissionMode,
       model,
       binary,
+      providerEntry: entry,
       onText,
     });
   }

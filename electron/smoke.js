@@ -136,7 +136,8 @@ const text = "SMOKE_SEED_PLAN: step one";
 }
 
 /**
- * Write a fake text-kind binary for smoke pass E finalize phase.
+ * Write a fake grok (claude-stream) binary for smoke pass E finalize phase.
+ * Emits streaming-messages-json NDJSON so the structured path can parse it.
  * @param {string} dir
  * @returns {string}
  */
@@ -144,8 +145,26 @@ function writeSmokeWorkflowFakeText(dir) {
   const scriptPath = path.join(dir, "smoke-wf-fake-text");
   const body = `#!/usr/bin/env node
 "use strict";
-process.stdout.write("SMOKE_TEXT_FINAL");
-process.exit(0);
+const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+function emit(obj) { process.stdout.write(JSON.stringify(obj) + "\\n"); }
+const text = "SMOKE_TEXT_FINAL";
+(async () => {
+  emit({ type: "system", subtype: "init", session_id: "smoke-grok-sess", model: "grok-4.5" });
+  await delay(10);
+  emit({ type: "assistant", message: { content: [{ type: "text", text }] } });
+  await delay(10);
+  emit({
+    type: "result",
+    subtype: "success",
+    is_error: false,
+    result: text,
+    usage: { input_tokens: 4, output_tokens: 5 },
+    total_cost_usd: 0.001,
+    num_turns: 1,
+    session_id: "smoke-grok-sess",
+  });
+  process.exit(0);
+})().catch((e) => { process.stderr.write(String(e)); process.exit(1); });
 `;
   fs.writeFileSync(scriptPath, body, { mode: 0o755 });
   return scriptPath;

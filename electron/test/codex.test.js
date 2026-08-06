@@ -196,15 +196,24 @@ describe("runner codex provider", () => {
   let fakeCodex;
   let argvFile;
 
+  let prevGrokMcpDisable;
+  let prevGrokBin;
+
   beforeEach(async () => {
     prevSimulate = process.env.CODER_SIMULATE;
     prevAgentCmd = process.env.CODER_AGENT_CMD;
     prevCodexBin = process.env.CODER_CODEX_BIN;
     prevScenario = process.env.CODER_FAKE_CODEX_SCENARIO;
     prevArgvFile = process.env.CODER_FAKE_CODEX_ARGV_FILE;
+    prevGrokMcpDisable = process.env.CODER_GROK_MCP_DISABLE;
+    prevGrokBin = process.env.CODER_GROK_BIN;
 
     delete process.env.CODER_SIMULATE;
     delete process.env.CODER_AGENT_CMD;
+    // Structural kill switch + fake bin: supervisor tests must never touch
+    // ~/.grok/config.toml via real `grok mcp add -s user`.
+    process.env.CODER_GROK_MCP_DISABLE = "1";
+    process.env.CODER_GROK_BIN = "no-grok-not-a-real-binary";
 
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-codex-"));
     fakeCodex = writeFakeCodex(tmpDir);
@@ -248,6 +257,10 @@ describe("runner codex provider", () => {
     else process.env.CODER_FAKE_CODEX_SCENARIO = prevScenario;
     if (prevArgvFile === undefined) delete process.env.CODER_FAKE_CODEX_ARGV_FILE;
     else process.env.CODER_FAKE_CODEX_ARGV_FILE = prevArgvFile;
+    if (prevGrokMcpDisable === undefined) delete process.env.CODER_GROK_MCP_DISABLE;
+    else process.env.CODER_GROK_MCP_DISABLE = prevGrokMcpDisable;
+    if (prevGrokBin === undefined) delete process.env.CODER_GROK_BIN;
+    else process.env.CODER_GROK_BIN = prevGrokBin;
   });
 
   it("full lifecycle: sessionId, assistant, tool Command, usage, done", async () => {
@@ -401,6 +414,14 @@ describe("runner codex provider", () => {
         userDataPath: memDir,
         appPath: memDir,
         log: () => {},
+        env: {
+          ...process.env,
+          // Defense in depth: never run real `grok mcp add` during tests
+          // (-s user writes ~/.grok/config.toml with no path override).
+          CODER_GROK_MCP_DISABLE: "1",
+          CODER_GROK_BIN: path.join(memDir, "no-grok-not-a-real-binary"),
+          CODER_KIMI_BIN: path.join(memDir, "no-kimi"),
+        },
       });
       await sup.start();
       assert.equal(sup.getStatus().running, true);

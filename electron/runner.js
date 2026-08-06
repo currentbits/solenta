@@ -764,12 +764,15 @@ function createRunner(opts) {
       permissionMode: thread.permissionMode || "default",
       model: thread.model || null,
     });
-    // Inject coder-memory MCP before the trailing prompt when healthy.
-    const mcpArgs = getClaudeMcpArgs();
-    if (mcpArgs.length > 0 && args.length > 0) {
-      args.splice(args.length - 1, 0, ...mcpArgs);
-    } else if (mcpArgs.length > 0) {
-      args.push(...mcpArgs);
+    // Claude-only: inject --mcp-config before the trailing prompt when healthy.
+    // Other claude-stream providers (e.g. grok) use their own MCP injection.
+    if (entryDef.id === "claude") {
+      const mcpArgs = getClaudeMcpArgs();
+      if (mcpArgs.length > 0 && args.length > 0) {
+        args.splice(args.length - 1, 0, ...mcpArgs);
+      } else if (mcpArgs.length > 0) {
+        args.push(...mcpArgs);
+      }
     }
 
     const entry = {

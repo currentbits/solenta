@@ -3,7 +3,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const http = require("node:http");
-const { spawn, execFileSync } = require("node:child_process");
+const { spawn, execFileSync, execFile } = require("node:child_process");
 
 const CONFIG_NAME = "memory-server.json";
 const MCP_CONFIG_NAME = "mcp-coder-memory.json";
@@ -208,6 +208,102 @@ function ensureKimiMcpConfig(opts = {}) {
   return true;
 }
 
+const GROK_MCP_TIMEOUT_MS = 10000;
+
+/**
+ * When memory is healthy and the grok binary is available, register
+ * coder-memory via `grok mcp add ...` (idempotent into ~/.grok/config.toml).
+ * Never throws; log-and-continue on any failure.
+ *
+ * Fire-and-forget async execFile (10s timeout) so a stalling grok binary
+ * cannot freeze the Electron main process at boot / adopt.
+ *
+ * Kill switch: CODER_GROK_MCP_DISABLE=1 returns false immediately (tests use
+ * this because -s user has no path override and would write ~/.grok/config.toml).
+ * Binary override: CODER_GROK_BIN via the providers registry.
+ *
+ * @param {object} [opts]
+ * @param {(msg: string) => void} [opts.log]
+ * @param {NodeJS.ProcessEnv} [opts.env]
+ * @returns {boolean} true if the mcp add was kicked off; false if skipped
+ */
+function ensureGrokMcpConfig(opts = {}) {
+  const log = opts.log || ((msg) => console.warn(msg));
+  const env = opts.env || process.env;
+
+  // Structural test kill switch: -s user has no path override.
+  if (String(env.CODER_GROK_MCP_DISABLE || "") === "1") {
+    return false;
+  }
+
+  if (!globalStatus.running || !globalStatus.port || !globalToken) {
+    return false;
+  }
+
+  let bin = "";
+  try {
+    const {
+      getProvider,
+      resolveBin,
+      isBinAvailable,
+    } = require("./providers.js");
+    const entry = getProvider("grok");
+    if (!entry) return false;
+    bin = resolveBin(entry, env);
+    if (!isBinAvailable(bin)) return false;
+  } catch (err) {
+    log(
+      "memory-server: grok availability check failed: " +
+        (err && err.message ? err.message : String(err)),
+    );
+    return false;
+  }
+
+  const url = `http://127.0.0.1:${globalStatus.port}/mcp`;
+  const header = `Authorization: Bearer ${globalToken}`;
+  const args = [
+    "mcp",
+    "add",
+    "coder-memory",
+    url,
+    "-t",
+    "http",
+    "-H",
+    header,
+    "-s",
+    "user",
+  ];
+
+  // Fire-and-forget: never block markHealthy / app boot on a slow CLI.
+  try {
+    execFile(
+      bin,
+      args,
+      {
+        timeout: GROK_MCP_TIMEOUT_MS,
+        encoding: "utf8",
+        env,
+      },
+      (err) => {
+        if (err) {
+          log(
+            "memory-server: grok mcp add failed: " +
+              (err && err.message ? err.message : String(err)),
+          );
+        }
+      },
+    );
+    return true;
+  } catch (err) {
+    // Synchronous spawn failures only (callback handles async errors).
+    log(
+      "memory-server: grok mcp add failed: " +
+        (err && err.message ? err.message : String(err)),
+    );
+    return false;
+  }
+}
+
 /**
  * @returns {{ running: boolean, adopted: boolean, port: number | null }}
  */
@@ -395,6 +491,11 @@ function markHealthy(opts) {
   writeMcpConfig(opts.userDataPath, opts.port, opts.token);
   // Merge coder-memory into kimi's mcp.json when kimi is installed (best-effort).
   ensureKimiMcpConfig({
+    log: opts.log,
+    env: opts.env,
+  });
+  // Register coder-memory in grok's user MCP config when grok is installed.
+  ensureGrokMcpConfig({
     log: opts.log,
     env: opts.env,
   });
@@ -647,6 +748,7 @@ module.exports = {
   getClaudeMcpArgs,
   getCodexMcpArgs,
   ensureKimiMcpConfig,
+  ensureGrokMcpConfig,
   resolveKimiMcpPath,
   getMemoryStatus,
   resetMemorySupForTests,
@@ -654,4 +756,5 @@ module.exports = {
   probeHealth,
   CONFIG_NAME,
   MCP_CONFIG_NAME,
+  GROK_MCP_TIMEOUT_MS,
 };

@@ -10,6 +10,7 @@ const {
   getClaudeMcpArgs,
   getCodexMcpArgs,
   ensureKimiMcpConfig,
+  ensureGrokMcpConfig,
   resolveKimiMcpPath,
   resetMemorySupForTests,
 } = require("../memory-sup.js");
@@ -106,10 +107,15 @@ describe("memory-sup supervisor", () => {
       CODER_MEMORY_CONFIG: process.env.CODER_MEMORY_CONFIG,
       CODER_KIMI_MCP_PATH: process.env.CODER_KIMI_MCP_PATH,
       CODER_KIMI_BIN: process.env.CODER_KIMI_BIN,
+      CODER_GROK_BIN: process.env.CODER_GROK_BIN,
+      CODER_GROK_MCP_DISABLE: process.env.CODER_GROK_MCP_DISABLE,
       PATH: process.env.PATH,
     };
     // Keep ensureKimi writes inside the test dir if kimi is present.
     process.env.CODER_KIMI_MCP_PATH = path.join(tmpDir, "kimi-mcp.json");
+    // Defense in depth: kill switch + fake bin (mcp add -s user has no path override).
+    process.env.CODER_GROK_MCP_DISABLE = "1";
+    process.env.CODER_GROK_BIN = path.join(tmpDir, "no-grok-not-a-real-binary");
     resetMemorySupForTests();
   });
 
@@ -430,8 +436,12 @@ describe("ensureKimiMcpConfig", () => {
     prevEnv = {
       CODER_KIMI_MCP_PATH: process.env.CODER_KIMI_MCP_PATH,
       CODER_KIMI_BIN: process.env.CODER_KIMI_BIN,
+      CODER_GROK_BIN: process.env.CODER_GROK_BIN,
+      CODER_GROK_MCP_DISABLE: process.env.CODER_GROK_MCP_DISABLE,
     };
     process.env.CODER_KIMI_MCP_PATH = path.join(tmpDir, "mcp.json");
+    process.env.CODER_GROK_MCP_DISABLE = "1";
+    process.env.CODER_GROK_BIN = path.join(tmpDir, "no-grok-not-a-real-binary");
     resetMemorySupForTests();
   });
 
@@ -464,12 +474,17 @@ describe("ensureKimiMcpConfig", () => {
       res.end();
     });
     await new Promise((r) => server.listen(port, "127.0.0.1", r));
-    // Disable auto-write by making kimi unavailable during start; tests call ensure explicitly.
+    // Disable auto-write by making kimi/grok unavailable during start; tests call ensure explicitly.
     const sup = createMemorySupervisor({
       userDataPath: tmpDir,
       appPath: tmpDir,
       log: (m) => logs.push(m),
-      env: { ...process.env, CODER_KIMI_BIN: path.join(tmpDir, "no-kimi") },
+      env: {
+        ...process.env,
+        CODER_GROK_MCP_DISABLE: "1",
+        CODER_KIMI_BIN: path.join(tmpDir, "no-kimi"),
+        CODER_GROK_BIN: path.join(tmpDir, "no-grok-not-a-real-binary"),
+      },
     });
     await sup.start();
     return { sup, server };
@@ -647,5 +662,223 @@ describe("ensureKimiMcpConfig", () => {
       false,
     );
     assert.ok(!fs.existsSync(process.env.CODER_KIMI_MCP_PATH));
+  });
+});
+
+describe("ensureGrokMcpConfig", () => {
+  let tmpDir;
+  let logs;
+  let prevEnv;
+  let mcpArgvFile;
+  let fakeGrok;
+
+  /**
+   * Env for deliberately exercising ensureGrokMcpConfig (kill switch off).
+   * @param {Record<string, string | undefined>} extra
+   */
+  function enableGrokMcpEnv(extra = {}) {
+    const env = {
+      ...process.env,
+      CODER_GROK_BIN: fakeGrok,
+      ...extra,
+    };
+    delete env.CODER_GROK_MCP_DISABLE;
+    return env;
+  }
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-grok-mcp-"));
+    logs = [];
+    mcpArgvFile = path.join(tmpDir, "mcp-argv.json");
+    prevEnv = {
+      CODER_GROK_BIN: process.env.CODER_GROK_BIN,
+      CODER_FAKE_GROK_MCP_ARGV_FILE: process.env.CODER_FAKE_GROK_MCP_ARGV_FILE,
+      CODER_KIMI_BIN: process.env.CODER_KIMI_BIN,
+      CODER_GROK_MCP_DISABLE: process.env.CODER_GROK_MCP_DISABLE,
+    };
+    // Default: kill switch on so accidental markHealthy cannot touch real config.
+    process.env.CODER_GROK_MCP_DISABLE = "1";
+    // Fake grok that records `mcp add` argv and exits 0.
+    const body = `#!/usr/bin/env node
+"use strict";
+const fs = require("fs");
+const args = process.argv.slice(1);
+if (process.env.CODER_FAKE_GROK_MCP_ARGV_FILE) {
+  fs.writeFileSync(
+    process.env.CODER_FAKE_GROK_MCP_ARGV_FILE,
+    JSON.stringify(args),
+    "utf8",
+  );
+}
+process.exit(0);
+`;
+    fakeGrok = path.join(tmpDir, "fake-grok-mcp");
+    fs.writeFileSync(fakeGrok, body, { mode: 0o755 });
+    process.env.CODER_GROK_BIN = fakeGrok;
+    process.env.CODER_FAKE_GROK_MCP_ARGV_FILE = mcpArgvFile;
+    resetMemorySupForTests();
+  });
+
+  afterEach(() => {
+    resetMemorySupForTests();
+    for (const [k, v] of Object.entries(prevEnv)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  async function markHealthyViaAdopt(port, token, envExtra = {}) {
+    fs.writeFileSync(
+      path.join(tmpDir, "memory-server.json"),
+      JSON.stringify({
+        port,
+        token,
+        dbPath: path.join(tmpDir, "db"),
+      }),
+      "utf8",
+    );
+    const server = http.createServer((req, res) => {
+      if (req.url === "/health") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: true }));
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    await new Promise((r) => server.listen(port, "127.0.0.1", r));
+    const env = {
+      ...process.env,
+      CODER_KIMI_BIN: path.join(tmpDir, "no-kimi"),
+      CODER_GROK_BIN: path.join(tmpDir, "no-grok-during-start"),
+      CODER_GROK_MCP_DISABLE: "1",
+      ...envExtra,
+    };
+    // envExtra may clear the kill switch for intentional ensure tests.
+    if (Object.prototype.hasOwnProperty.call(envExtra, "CODER_GROK_MCP_DISABLE")
+      && envExtra.CODER_GROK_MCP_DISABLE == null) {
+      delete env.CODER_GROK_MCP_DISABLE;
+    }
+    const sup = createMemorySupervisor({
+      userDataPath: tmpDir,
+      appPath: tmpDir,
+      log: (m) => logs.push(m),
+      env,
+    });
+    await sup.start();
+    return { sup, server };
+  }
+
+  it("invokes fake grok with exact mcp add argv when healthy", async () => {
+    const port = await freePort();
+    const token = "grok-mcp-tok";
+    const { sup, server } = await markHealthyViaAdopt(port, token);
+    try {
+      // Call explicitly with the fake bin available (kill switch off).
+      if (fs.existsSync(mcpArgvFile)) fs.unlinkSync(mcpArgvFile);
+      const ok = ensureGrokMcpConfig({
+        log: (m) => logs.push(m),
+        env: enableGrokMcpEnv(),
+      });
+      assert.equal(ok, true, "should kick off async mcp add");
+      // Fire-and-forget: poll the fake binary's argv capture file.
+      await waitFor(() => fs.existsSync(mcpArgvFile), { timeoutMs: 3000 });
+      const argv = JSON.parse(fs.readFileSync(mcpArgvFile, "utf8"));
+      const mcpIdx = argv.indexOf("mcp");
+      assert.ok(mcpIdx >= 0, `expected mcp in ${JSON.stringify(argv)}`);
+      assert.deepEqual(argv.slice(mcpIdx), [
+        "mcp",
+        "add",
+        "coder-memory",
+        `http://127.0.0.1:${port}/mcp`,
+        "-t",
+        "http",
+        "-H",
+        `Authorization: Bearer ${token}`,
+        "-s",
+        "user",
+      ]);
+    } finally {
+      sup.stop();
+      await new Promise((r) => server.close(r));
+    }
+  });
+
+  it("no-ops when CODER_GROK_MCP_DISABLE=1 even if healthy and bin available", async () => {
+    const port = await freePort();
+    const token = "disable-tok";
+    const { sup, server } = await markHealthyViaAdopt(port, token);
+    try {
+      if (fs.existsSync(mcpArgvFile)) fs.unlinkSync(mcpArgvFile);
+      const ok = ensureGrokMcpConfig({
+        log: (m) => logs.push(m),
+        env: {
+          ...process.env,
+          CODER_GROK_BIN: fakeGrok,
+          CODER_GROK_MCP_DISABLE: "1",
+        },
+      });
+      assert.equal(ok, false);
+      // Give async path a moment in case kill switch failed open.
+      await new Promise((r) => setTimeout(r, 80));
+      assert.ok(!fs.existsSync(mcpArgvFile));
+    } finally {
+      sup.stop();
+      await new Promise((r) => server.close(r));
+    }
+  });
+
+  it("no-ops when memory unhealthy", () => {
+    if (fs.existsSync(mcpArgvFile)) fs.unlinkSync(mcpArgvFile);
+    const ok = ensureGrokMcpConfig({
+      log: (m) => logs.push(m),
+      env: enableGrokMcpEnv(),
+    });
+    assert.equal(ok, false);
+    assert.ok(!fs.existsSync(mcpArgvFile));
+  });
+
+  it("no-ops when grok binary is unavailable", async () => {
+    const port = await freePort();
+    const token = "t";
+    const { sup, server } = await markHealthyViaAdopt(port, token);
+    try {
+      if (fs.existsSync(mcpArgvFile)) fs.unlinkSync(mcpArgvFile);
+      const ok = ensureGrokMcpConfig({
+        log: (m) => logs.push(m),
+        env: enableGrokMcpEnv({
+          CODER_GROK_BIN: path.join(tmpDir, "missing-grok"),
+        }),
+      });
+      assert.equal(ok, false);
+      assert.ok(!fs.existsSync(mcpArgvFile));
+    } finally {
+      sup.stop();
+      await new Promise((r) => server.close(r));
+    }
+  });
+
+  it("markHealthy calls ensureGrokMcpConfig when grok is available", async () => {
+    const port = await freePort();
+    const token = "auto-tok";
+    if (fs.existsSync(mcpArgvFile)) fs.unlinkSync(mcpArgvFile);
+    const { sup, server } = await markHealthyViaAdopt(port, token, {
+      CODER_GROK_BIN: fakeGrok,
+      // Clear kill switch for this intentional exercise.
+      CODER_GROK_MCP_DISABLE: null,
+    });
+    try {
+      assert.equal(sup.getStatus().running, true);
+      await waitFor(() => fs.existsSync(mcpArgvFile), { timeoutMs: 3000 });
+      const argv = JSON.parse(fs.readFileSync(mcpArgvFile, "utf8"));
+      const mcpIdx = argv.indexOf("mcp");
+      assert.ok(mcpIdx >= 0);
+      assert.equal(argv[mcpIdx + 1], "add");
+      assert.equal(argv[mcpIdx + 2], "coder-memory");
+    } finally {
+      sup.stop();
+      await new Promise((r) => server.close(r));
+    }
   });
 });
