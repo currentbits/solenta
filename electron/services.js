@@ -145,6 +145,7 @@ function createThread(store, input) {
     createdAt: now,
     updatedAt: now,
     runStartedAt: null,
+    archived: false,
     provider: "claude",
     sessionId: null,
     permissionMode: "default",
@@ -178,6 +179,50 @@ function setPermissionMode(store, input) {
   const updated = store.updateThread(threadId, { permissionMode: mode });
   store.save();
   return updated ? { ...updated } : { ...thread, permissionMode: mode };
+}
+
+/**
+ * Archive or unarchive a thread. Does not bump updatedAt (not real activity).
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, archived: boolean }} input
+ */
+function setArchived(store, input) {
+  const { threadId, archived } = input;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  const updated = store.updateThread(threadId, {
+    archived: Boolean(archived),
+  });
+  store.save();
+  return updated ? { ...updated } : { ...thread, archived: Boolean(archived) };
+}
+
+/**
+ * Permanently delete a thread with its messages and work log.
+ * Rejects while a run is active (when isRunning is provided) and when a
+ * worktree is still attached.
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string }} input
+ * @param {{ isRunning?: (threadId: string) => boolean }} [opts]
+ */
+function deleteThread(store, input, opts) {
+  const { threadId } = input;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  if (opts && typeof opts.isRunning === "function" && opts.isRunning(threadId)) {
+    throw new Error("Cannot delete thread while a run is active");
+  }
+  if (thread.worktreePath) {
+    throw new Error(
+      "Thread still has a worktree. Merge or delete it in the Git tab first.",
+    );
+  }
+  store.removeThread(threadId);
+  store.save();
 }
 
 /**
@@ -251,6 +296,8 @@ module.exports = {
   addProject,
   createThread,
   setPermissionMode,
+  setArchived,
+  deleteThread,
   listThreads,
   getThreadDetail,
   gitStatus,

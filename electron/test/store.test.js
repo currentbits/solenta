@@ -44,6 +44,7 @@ describe("Store", () => {
       createdAt: 1,
       updatedAt: 2,
       runStartedAt: null,
+      archived: false,
       provider: "claude",
       sessionId: null,
       permissionMode: "default",
@@ -120,6 +121,152 @@ describe("Store", () => {
     assert.equal(t.sessionId, null);
     assert.equal(t.permissionMode, "default");
     assert.equal(t.worktreePath, null);
+    assert.equal(t.archived, false);
+  });
+
+  it("migration adds archived false without changing updatedAt", () => {
+    const old = {
+      projects: [],
+      threads: [
+        {
+          id: "t-old",
+          projectId: "p1",
+          title: "Legacy",
+          branch: null,
+          prNumber: null,
+          status: "idle",
+          createdAt: 1,
+          updatedAt: 2,
+        },
+      ],
+      messagesByThread: {},
+      workLogByThread: {},
+    };
+    fs.writeFileSync(filePath, JSON.stringify(old), "utf8");
+
+    const store = new Store(filePath);
+    const t = store.getThreads()[0];
+    assert.equal(t.archived, false);
+    assert.equal(t.updatedAt, 2);
+  });
+
+  it("removeThread cascades every *ByThread map through save/reload", () => {
+    const store = new Store(filePath);
+    store.setThreads([
+      {
+        id: "t1",
+        projectId: "p1",
+        title: "Hello",
+        branch: null,
+        prNumber: null,
+        status: "idle",
+        createdAt: 1,
+        updatedAt: 2,
+        runStartedAt: null,
+        archived: false,
+        provider: "claude",
+        sessionId: null,
+        permissionMode: "default",
+        worktreePath: null,
+      },
+      {
+        id: "t2",
+        projectId: "p1",
+        title: "Keep",
+        branch: null,
+        prNumber: null,
+        status: "idle",
+        createdAt: 1,
+        updatedAt: 2,
+        runStartedAt: null,
+        archived: false,
+        provider: "claude",
+        sessionId: null,
+        permissionMode: "default",
+        worktreePath: null,
+      },
+    ]);
+    store.setMessages("t1", [
+      { id: "m1", role: "user", text: "hi", createdAt: 3 },
+    ]);
+    store.setWorkLog("t1", [
+      { id: "w1", runId: "r1", label: "Step", done: true, timestamp: 4 },
+    ]);
+    store.setUsage("t1", {
+      model: "m",
+      inputTokens: 1,
+      outputTokens: 2,
+      costUsd: 0.01,
+      turns: 1,
+    });
+    store.setMessages("t2", [
+      { id: "m2", role: "user", text: "stay", createdAt: 5 },
+    ]);
+    store.setUsage("t2", {
+      model: "m",
+      inputTokens: 3,
+      outputTokens: 4,
+      costUsd: 0.02,
+      turns: 1,
+    });
+
+    // Sanity: every known ByThread map currently holds t1.
+    const byThreadKeys = Object.keys(store.data).filter((k) =>
+      k.endsWith("ByThread"),
+    );
+    assert.ok(byThreadKeys.length >= 3, "expect messages/workLog/usage maps");
+    for (const key of byThreadKeys) {
+      assert.equal(
+        Object.prototype.hasOwnProperty.call(store.data[key], "t1"),
+        true,
+        `${key} should hold t1 before remove`,
+      );
+    }
+
+    store.removeThread("t1");
+    store.save();
+
+    assert.equal(store.getThread("t1"), null);
+    assert.equal(store.getThreads().length, 1);
+    assert.equal(store.getThreads()[0].id, "t2");
+    assert.deepEqual(store.getMessages("t1"), []);
+    assert.deepEqual(store.getWorkLog("t1"), []);
+    assert.equal(store.getUsage("t1"), null);
+    assert.equal(store.getMessages("t2").length, 1);
+
+    // In-memory: no *ByThread map may retain the deleted id.
+    for (const key of Object.keys(store.data).filter((k) =>
+      k.endsWith("ByThread"),
+    )) {
+      assert.equal(
+        Object.prototype.hasOwnProperty.call(store.data[key], "t1"),
+        false,
+        `${key} must not retain t1 after removeThread`,
+      );
+    }
+
+    // Persist + reload: re-enumerate *ByThread maps from store data (future-proof).
+    const reloaded = new Store(filePath);
+    assert.equal(reloaded.getThread("t1"), null);
+    assert.equal(reloaded.getThreads().length, 1);
+    assert.equal(reloaded.getThreads()[0].id, "t2");
+    assert.ok(reloaded.getUsage("t2"));
+    for (const key of Object.keys(reloaded.data).filter((k) =>
+      k.endsWith("ByThread"),
+    )) {
+      assert.equal(
+        Object.prototype.hasOwnProperty.call(reloaded.data[key], "t1"),
+        false,
+        `persisted ${key} must not retain t1 after save/reload`,
+      );
+    }
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(
+        reloaded.data.messagesByThread,
+        "t2",
+      ),
+      true,
+    );
   });
 
   it("persists usage by thread", () => {

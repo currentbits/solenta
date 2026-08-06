@@ -43,6 +43,8 @@ const coder = {
     get: (id) => invoke("threads:get", id),
     setPermissionMode: (input) =>
       invoke("threads:setPermissionMode", input),
+    setArchived: (input) => invoke("threads:setArchived", input),
+    delete: (input) => invoke("threads:delete", input),
   },
   runs: {
     start: (input) => invoke("runs:start", input),

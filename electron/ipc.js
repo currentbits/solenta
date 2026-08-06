@@ -81,6 +81,19 @@ function registerIpc(deps) {
     return updated;
   });
 
+  ipcMain.handle("threads:setArchived", async (_event, input) => {
+    const updated = services.setArchived(store, input);
+    broadcast("threads:changed", services.listThreads(store));
+    return updated;
+  });
+
+  ipcMain.handle("threads:delete", async (_event, input) => {
+    services.deleteThread(store, input, {
+      isRunning: (id) => runner.isRunning(id),
+    });
+    broadcast("threads:changed", services.listThreads(store));
+  });
+
   ipcMain.handle("runs:start", async (_event, input) => {
     return runner.startRun(input);
   });

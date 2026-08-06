@@ -157,6 +157,132 @@ describe("services", () => {
     assert.equal(store.getThread(thread.id).updatedAt, 1_700_000_000_000);
   });
 
+  it("createThread includes archived false", () => {
+    const repo = path.join(tmpDir, "arch-create-repo");
+    fs.mkdirSync(repo);
+    git(repo, ["init"]);
+    const project = services.addProject(store, repo);
+    const thread = services.createThread(store, {
+      projectId: project.id,
+      title: "T",
+    });
+    assert.equal(thread.archived, false);
+    assert.equal(store.getThread(thread.id).archived, false);
+  });
+
+  it("setArchived flips without changing updatedAt", () => {
+    const repo = path.join(tmpDir, "arch-repo");
+    fs.mkdirSync(repo);
+    git(repo, ["init"]);
+    const project = services.addProject(store, repo);
+    const thread = services.createThread(store, {
+      projectId: project.id,
+      title: "T",
+    });
+    store.updateThread(thread.id, { updatedAt: 1_700_000_000_000 });
+    assert.equal(store.getThread(thread.id).archived, false);
+
+    const archived = services.setArchived(store, {
+      threadId: thread.id,
+      archived: true,
+    });
+    assert.equal(archived.archived, true);
+    assert.equal(archived.updatedAt, 1_700_000_000_000);
+    assert.equal(store.getThread(thread.id).archived, true);
+    assert.equal(store.getThread(thread.id).updatedAt, 1_700_000_000_000);
+
+    const unarchived = services.setArchived(store, {
+      threadId: thread.id,
+      archived: false,
+    });
+    assert.equal(unarchived.archived, false);
+    assert.equal(unarchived.updatedAt, 1_700_000_000_000);
+  });
+
+  it("setArchived rejects unknown thread", () => {
+    assert.throws(
+      () =>
+        services.setArchived(store, {
+          threadId: "missing",
+          archived: true,
+        }),
+      /Unknown thread/i,
+    );
+  });
+
+  it("deleteThread removes thread, messages, and work log", () => {
+    const repo = path.join(tmpDir, "del-repo");
+    fs.mkdirSync(repo);
+    git(repo, ["init"]);
+    const project = services.addProject(store, repo);
+    const thread = services.createThread(store, {
+      projectId: project.id,
+      title: "T",
+    });
+    store.appendMessage(thread.id, {
+      id: "m1",
+      role: "user",
+      text: "hi",
+      createdAt: Date.now(),
+    });
+    store.appendWorkLog(thread.id, {
+      id: "w1",
+      runId: "r1",
+      label: "Step",
+      done: true,
+      timestamp: Date.now(),
+    });
+
+    services.deleteThread(store, { threadId: thread.id });
+
+    assert.equal(store.getThread(thread.id), null);
+    assert.deepEqual(store.getMessages(thread.id), []);
+    assert.deepEqual(store.getWorkLog(thread.id), []);
+    assert.equal(store.getThreads().length, 0);
+  });
+
+  it("deleteThread rejects while a run is active", () => {
+    const repo = path.join(tmpDir, "del-run-repo");
+    fs.mkdirSync(repo);
+    git(repo, ["init"]);
+    const project = services.addProject(store, repo);
+    const thread = services.createThread(store, {
+      projectId: project.id,
+      title: "T",
+    });
+
+    assert.throws(
+      () =>
+        services.deleteThread(
+          store,
+          { threadId: thread.id },
+          { isRunning: () => true },
+        ),
+      /run|active|running/i,
+    );
+    assert.ok(store.getThread(thread.id), "thread must remain");
+  });
+
+  it("deleteThread rejects when worktreePath is set", () => {
+    const repo = path.join(tmpDir, "del-wt-repo");
+    fs.mkdirSync(repo);
+    git(repo, ["init"]);
+    const project = services.addProject(store, repo);
+    const thread = services.createThread(store, {
+      projectId: project.id,
+      title: "T",
+    });
+    store.updateThread(thread.id, {
+      worktreePath: path.join(tmpDir, "some-worktree"),
+    });
+
+    assert.throws(
+      () => services.deleteThread(store, { threadId: thread.id }),
+      /Thread still has a worktree\. Merge or delete it in the Git tab first\./,
+    );
+    assert.ok(store.getThread(thread.id), "thread must remain");
+  });
+
   it("createThread includes runStartedAt null", () => {
     const repo = path.join(tmpDir, "rs-repo");
     fs.mkdirSync(repo);

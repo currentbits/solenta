@@ -179,6 +179,10 @@ function createRunner(opts) {
   const lastWorkflowByThread = new Map();
 
   function pushDetail(threadId, workflow) {
+    // Deleted threads must not resurrect via late agent/sim pushes.
+    if (threadId == null || !store.getThread(threadId)) {
+      return null;
+    }
     if (workflow) {
       lastWorkflowByThread.set(threadId, workflow);
     }

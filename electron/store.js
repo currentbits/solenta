@@ -26,6 +26,7 @@ function migrateThread(t) {
     permissionMode: t.permissionMode != null ? t.permissionMode : "default",
     worktreePath: t.worktreePath !== undefined ? t.worktreePath : null,
     runStartedAt: t.runStartedAt !== undefined ? t.runStartedAt : null,
+    archived: t.archived != null ? Boolean(t.archived) : false,
   };
 }
 
@@ -239,7 +240,30 @@ class Store {
   }
 
   getThread(threadId) {
+    if (threadId == null) return null;
     return this.data.threads.find((t) => t.id === threadId) || null;
+  }
+
+  /**
+   * Permanently remove a thread and every per-thread keyed map entry
+   * (messages, work log, session usage, any future *ByThread map).
+   * Does not save; caller must save.
+   * @param {string} threadId
+   * @returns {boolean} true if a thread was removed
+   */
+  removeThread(threadId) {
+    if (threadId == null) return false;
+    const before = this.data.threads.length;
+    this.data.threads = this.data.threads.filter((t) => t.id !== threadId);
+    // Cascade: drop every *ByThread map key so nothing is orphaned on disk.
+    for (const key of Object.keys(this.data)) {
+      if (!key.endsWith("ByThread")) continue;
+      const map = this.data[key];
+      if (map && typeof map === "object" && !Array.isArray(map)) {
+        delete map[threadId];
+      }
+    }
+    return this.data.threads.length < before;
   }
 
   getProject(projectId) {

@@ -670,4 +670,59 @@ describe("runner real agent mode", () => {
       "stopRun must apply to B, not be a no-op",
     );
   });
+
+  it("late pushDetail after thread delete does not throw", async () => {
+    // Streaming agent so onChunk may fire after we remove the thread.
+    process.env.CODER_AGENT_CMD = `${process.execPath} -e ${fakeAgentSuccessScript()}`;
+
+    const thread = store.getThreads()[0];
+    const threadId = thread.id;
+    await runner.startRun({
+      threadId,
+      prompt: "delete me mid-run",
+    });
+
+    assert.equal(runner.isRunning(threadId), true);
+    // Simulate delete race: thread gone while agent still streaming.
+    store.removeThread(threadId);
+    store.save();
+    assert.equal(store.getThread(threadId), null);
+
+    // Wait past agent exit; pushDetail/onChunk/onDone must not throw.
+    await new Promise((r) => setTimeout(r, 400));
+
+    assert.equal(store.getThread(threadId), null);
+    // Runner may still think a run is active until clear; stopAll cleans up.
+    assert.doesNotThrow(() => runner.stopAll());
+  });
+
+  it("deleteThread rejects while runner isRunning (held open with fake agent)", async () => {
+    process.env.CODER_AGENT_CMD = `${process.execPath} -e ${fakeAgentSlowScript()}`;
+
+    const thread = store.getThreads()[0];
+    await runner.startRun({
+      threadId: thread.id,
+      prompt: "hold open",
+    });
+    assert.equal(runner.isRunning(thread.id), true);
+
+    assert.throws(
+      () =>
+        services.deleteThread(
+          store,
+          { threadId: thread.id },
+          { isRunning: (id) => runner.isRunning(id) },
+        ),
+      /run|active|running/i,
+    );
+    assert.ok(store.getThread(thread.id));
+
+    await runner.stopRun({ threadId: thread.id });
+    services.deleteThread(
+      store,
+      { threadId: thread.id },
+      { isRunning: (id) => runner.isRunning(id) },
+    );
+    assert.equal(store.getThread(thread.id), null);
+  });
 });
