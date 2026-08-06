@@ -33,6 +33,8 @@ export interface ThreadInfo {
   updatedAt: number;
   /** Set while a run is active on this thread; drives the Working elapsed label. */
   runStartedAt: number | null;
+  /** Archived threads keep their history but are hidden from the default sidebar list. */
+  archived: boolean;
   /** Agent harness backing this thread. "claude" (default), "generic", or "simulate". */
   provider: string;
   /** Provider session id, persisted after the first turn so follow-ups resume context. */
@@ -164,6 +166,14 @@ export interface CoderApi {
     get(id: string): Promise<ThreadDetail>;
     /** Sticky permission mode for future turns of this thread. */
     setPermissionMode(input: { threadId: string; mode: PermissionMode }): Promise<ThreadInfo>;
+    /** Archive or unarchive; archived threads are hidden by default but fully intact. */
+    setArchived(input: { threadId: string; archived: boolean }): Promise<ThreadInfo>;
+    /**
+     * Permanently deletes the thread with its messages and work log. Rejects
+     * while a run is active, and rejects when the thread still has a worktree
+     * (merge or delete the worktree in the Git tab first) so no work is lost.
+     */
+    delete(input: { threadId: string }): Promise<void>;
   };
   runs: {
     /**
