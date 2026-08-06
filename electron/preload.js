@@ -35,6 +35,11 @@ const coder = {
   providers: {
     list: () => invoke("providers:list"),
   },
+  workflows: {
+    list: () => invoke("workflows:list"),
+    save: (template) => invoke("workflows:save", template),
+    remove: (input) => invoke("workflows:remove", input),
+  },
   projects: {
     list: () => invoke("projects:list"),
     add: (projectPath) => invoke("projects:add", projectPath),

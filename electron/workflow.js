@@ -2,8 +2,17 @@
 
 const { randomUUID } = require("node:crypto");
 const { runClaude } = require("./claude.js");
+const { runCodex, extractAgentMessageText, extractUsage } = require("./codex.js");
+const { runAgent } = require("./agent.js");
+const {
+  getProvider,
+  resolveBin,
+  isBinAvailable,
+} = require("./providers.js");
 
 const PUSH_THROTTLE_MS = 250;
+const DOSSIER_INPUT_MAX = 800;
+const DOSSIER_OUTPUT_MAX = 6000;
 
 /**
  * Deterministic non-negative int seed from threadId + runId.
@@ -29,57 +38,62 @@ function capitalize(name) {
 }
 
 /**
- * Build the initial WorkflowView for a multi-phase real run.
+ * Truncate a string to max chars.
+ * @param {unknown} s
+ * @param {number} max
+ */
+function truncate(s, max) {
+  const str = String(s ?? "");
+  return str.length <= max ? str : str.slice(0, max);
+}
+
+/**
+ * Display model label for an agent in the workflow view.
+ * @param {{ model?: string | null, provider: string }} phase
+ */
+function agentModelLabel(phase) {
+  if (phase.model != null && phase.model !== "") {
+    return String(phase.model);
+  }
+  const entry = getProvider(phase.provider);
+  if (entry && Array.isArray(entry.models) && entry.models.length > 0) {
+    return entry.models[0];
+  }
+  return "default";
+}
+
+/**
+ * Build the initial WorkflowView from a resolved template.
  * @param {object} opts
  * @param {string} opts.runId
  * @param {string} opts.name
- * @param {string} opts.model
+ * @param {object} opts.template
  */
-function buildWorkflowView({ runId, name, model }) {
-  const phases = [
-    {
-      name: "seed",
+function buildWorkflowView({ runId, name, template }) {
+  const phases = (template.phases || []).map((phase, phaseIndex) => {
+    const count = Math.max(1, Math.min(4, Number(phase.agentCount) || 1));
+    const model = agentModelLabel(phase);
+    /** @type {object[]} */
+    const agents = [];
+    for (let i = 0; i < count; i++) {
+      agents.push({
+        id: `${phaseIndex}:${phase.name}:${i}`,
+        model,
+        status: "pending",
+        tokensUsed: 0,
+      });
+    }
+    return {
+      name: phase.name,
       pipelined: false,
-      agents: [
-        {
-          id: "0:seed:0",
-          model,
-          status: "pending",
-          tokensUsed: 0,
-        },
-      ],
-    },
-    {
-      name: "analyze",
-      pipelined: false,
-      agents: [
-        {
-          id: "1:analyze:0",
-          model,
-          status: "pending",
-          tokensUsed: 0,
-        },
-        {
-          id: "1:analyze:1",
-          model,
-          status: "pending",
-          tokensUsed: 0,
-        },
-      ],
-    },
-    {
-      name: "synthesize",
-      pipelined: false,
-      agents: [
-        {
-          id: "2:synthesize:0",
-          model,
-          status: "pending",
-          tokensUsed: 0,
-        },
-      ],
-    },
-  ];
+      agents,
+      // Internal: keep phase provider/model for spawn
+      __provider: phase.provider,
+      __model: phase.model != null && phase.model !== "" ? phase.model : null,
+      __instruction: phase.instruction || "",
+      __agentCount: count,
+    };
+  });
   return recomputeView({
     __orchestrated: true,
     id: runId,
@@ -158,18 +172,52 @@ function findAgent(view, agentId) {
 }
 
 /**
- * Spawn one one-shot Claude call (no --resume). Resolves with text/usage/ok.
+ * Build the per-agent prompt for a phase.
+ * @param {object} opts
+ * @param {string} opts.userPrompt
+ * @param {string} opts.instruction
+ * @param {number} opts.agentIndex - 0-based within phase
+ * @param {number} opts.agentCount
+ * @param {{ phaseName: string, agentIndex: number, text: string }[]} opts.priorOutputs
+ */
+function buildAgentPrompt(opts) {
+  const {
+    userPrompt,
+    instruction,
+    agentIndex,
+    agentCount,
+    priorOutputs = [],
+  } = opts;
+
+  const parts = [];
+  parts.push(`Original task:\n${userPrompt}`);
+
+  if (priorOutputs.length > 0) {
+    const blocks = priorOutputs.map(
+      (o) =>
+        `--- ${o.phaseName} agent ${o.agentIndex + 1} ---\n${o.text || "(unavailable)"}`,
+    );
+    parts.push(`Previous phase outputs:\n${blocks.join("\n\n")}`);
+  }
+
+  parts.push(String(instruction || ""));
+
+  if (agentCount > 1) {
+    parts.push(
+      `You are agent ${agentIndex + 1} of ${agentCount}; take a distinct angle from the other agents.`,
+    );
+  }
+
+  return parts.join("\n\n");
+}
+
+/**
+ * Spawn a one-shot Claude stream-json agent (no --resume).
  * @param {object} opts
  * @returns {{ handle: { kill: () => void }, done: Promise<object> }}
  */
 function spawnAgentClaude(opts) {
-  const {
-    prompt,
-    cwd,
-    permissionMode,
-    model,
-    onText,
-  } = opts;
+  const { prompt, cwd, permissionMode, model, binary, onText } = opts;
 
   let text = "";
   let resultText = "";
@@ -189,7 +237,7 @@ function spawnAgentClaude(opts) {
   }
 
   const handle = runClaude({
-    binary: process.env.CODER_CLAUDE_BIN || "claude",
+    binary: binary || process.env.CODER_CLAUDE_BIN || "claude",
     prompt,
     cwd,
     permissionMode: permissionMode || "default",
@@ -245,52 +293,281 @@ function spawnAgentClaude(opts) {
 }
 
 /**
- * Build agent prompts for each phase role.
+ * Spawn a one-shot Codex JSONL agent (no resume).
  * @param {object} opts
+ * @returns {{ handle: { kill: () => void }, done: Promise<object> }}
  */
-function buildAgentPrompt(opts) {
-  const { role, userPrompt, seedPlan, analyzeTexts } = opts;
-  if (role === "seed") {
-    return (
-      "You are the planning agent for this task. Produce a concise plan " +
-      `(max 15 lines) plus the key questions to investigate. Task: ${userPrompt}`
-    );
+function spawnAgentCodex(opts) {
+  const { prompt, cwd, model, binary, providerEntry, onText } = opts;
+
+  let text = "";
+  let usage = null;
+  let finished = false;
+
+  /** @type {(value: object) => void} */
+  let resolveDone;
+  const done = new Promise((resolve) => {
+    resolveDone = resolve;
+  });
+
+  function finish(payload) {
+    if (finished) return;
+    finished = true;
+    resolveDone(payload);
   }
-  if (role === "analyze1") {
-    return (
-      "You are analyze agent 1 of 2. Focus on implementation approach and concrete steps. " +
-      "Answer in max 30 lines.\n\n" +
-      `Plan from seed:\n${seedPlan}\n\n` +
-      `Original task: ${userPrompt}`
-    );
-  }
-  if (role === "analyze2") {
-    return (
-      "You are analyze agent 2 of 2. Focus on risks, edge cases, and testing. " +
-      "Answer in max 30 lines.\n\n" +
-      `Plan from seed:\n${seedPlan}\n\n` +
-      `Original task: ${userPrompt}`
-    );
-  }
-  // synthesize
-  const a1 = (analyzeTexts && analyzeTexts[0]) || "(analyze 1 unavailable)";
-  const a2 = (analyzeTexts && analyzeTexts[1]) || "(analyze 2 unavailable)";
-  return (
-    "Given the plan and both analyses, produce the final answer to the ORIGINAL user prompt. " +
-    "The answer must be self-contained.\n\n" +
-    `Original user prompt:\n${userPrompt}\n\n` +
-    `Plan:\n${seedPlan}\n\n` +
-    `Analysis 1 (implementation approach and concrete steps):\n${a1}\n\n` +
-    `Analysis 2 (risks, edge cases, and testing):\n${a2}`
-  );
+
+  const entry = providerEntry || getProvider("codex");
+  const args = entry.buildArgs({
+    prompt,
+    sessionId: null,
+    model: model || null,
+  });
+
+  const handle = runCodex({
+    binary: binary || resolveBin(entry),
+    args,
+    cwd,
+    onEvent: (ev) => {
+      if (!ev || typeof ev !== "object") return;
+      const agentText = extractAgentMessageText(ev);
+      if (agentText != null) {
+        const type = String(ev.type || "");
+        const isDelta =
+          (ev.msg &&
+            typeof ev.msg === "object" &&
+            /delta/i.test(String(ev.msg.type || ""))) ||
+          /delta/i.test(type);
+        if (isDelta) {
+          text += agentText;
+        } else if (
+          type === "item.completed" ||
+          type === "item_completed" ||
+          (ev.item && ev.item.type === "agent_message")
+        ) {
+          text = agentText;
+        } else if (!text) {
+          text = agentText;
+        } else if (!text.endsWith(agentText)) {
+          text += agentText;
+        }
+        if (typeof onText === "function") onText(text);
+      }
+      const u = extractUsage(ev);
+      if (u) {
+        usage = {
+          inputTokens: Number(u.inputTokens) || 0,
+          outputTokens: Number(u.outputTokens) || 0,
+          costUsd: 0,
+        };
+      }
+    },
+    onExit: ({ code, stderr }) => {
+      finish({
+        ok: code === 0,
+        text,
+        usage,
+        code,
+        stderr: String(stderr || ""),
+      });
+    },
+    onError: (err) => {
+      const msg = err && err.message ? err.message : String(err);
+      finish({
+        ok: false,
+        text,
+        usage,
+        code: 1,
+        stderr: msg,
+        error: err,
+      });
+    },
+  });
+
+  return { handle, done };
 }
 
 /**
- * Start an orchestrated multi-phase workflow run.
+ * Spawn a plain text-kind provider agent.
+ * @param {object} opts
+ * @returns {{ handle: { kill: () => void }, done: Promise<object> }}
+ */
+function spawnAgentText(opts) {
+  const { prompt, cwd, model, binary, providerEntry, onText } = opts;
+
+  let text = "";
+  let finished = false;
+
+  /** @type {(value: object) => void} */
+  let resolveDone;
+  const done = new Promise((resolve) => {
+    resolveDone = resolve;
+  });
+
+  function finish(payload) {
+    if (finished) return;
+    finished = true;
+    resolveDone(payload);
+  }
+
+  const entry = providerEntry;
+  const args = entry.buildArgs({
+    prompt,
+    sessionId: null,
+    model: model || null,
+  });
+
+  const handle = runAgent({
+    command: binary || resolveBin(entry),
+    args,
+    prompt,
+    appendPrompt: false,
+    cwd,
+    onChunk: (t) => {
+      text = t;
+      if (typeof onText === "function") onText(text);
+    },
+    onDone: (exitCode, fullText, stderrText) => {
+      const finalText = fullText || text;
+      // Text kind: estimate tokens; costUsd 0.
+      const tokens = Math.ceil((finalText || "").length / 4) || 0;
+      finish({
+        ok: exitCode === 0,
+        text: finalText,
+        usage: {
+          inputTokens: 0,
+          outputTokens: tokens,
+          costUsd: 0,
+        },
+        code: exitCode,
+        stderr: String(stderrText || ""),
+      });
+    },
+    onError: (err) => {
+      const msg = err && err.message ? err.message : String(err);
+      finish({
+        ok: false,
+        text,
+        usage: null,
+        code: 1,
+        stderr: msg,
+        error: err,
+      });
+    },
+  });
+
+  return { handle, done };
+}
+
+/**
+ * Spawn one agent using the phase provider kind.
+ * @param {object} opts
+ * @returns {{ handle: { kill: () => void }, done: Promise<object> }}
+ */
+function spawnPhaseAgent(opts) {
+  const {
+    providerId,
+    prompt,
+    cwd,
+    permissionMode,
+    model,
+    onText,
+  } = opts;
+
+  const entry = getProvider(providerId);
+  if (!entry) {
+    /** @type {(value: object) => void} */
+    let resolveDone;
+    const done = new Promise((resolve) => {
+      resolveDone = resolve;
+    });
+    queueMicrotask(() => {
+      resolveDone({
+        ok: false,
+        text: "",
+        usage: null,
+        code: 1,
+        stderr: `Unknown provider: ${providerId}`,
+      });
+    });
+    return { handle: { kill() {} }, done };
+  }
+
+  const binary = resolveBin(entry);
+
+  if (entry.kind === "claude-stream") {
+    return spawnAgentClaude({
+      prompt,
+      cwd,
+      permissionMode,
+      model,
+      binary,
+      onText,
+    });
+  }
+  if (entry.kind === "codex-json") {
+    return spawnAgentCodex({
+      prompt,
+      cwd,
+      model,
+      binary,
+      providerEntry: entry,
+      onText,
+    });
+  }
+  // text (and any other non-structured kind)
+  return spawnAgentText({
+    prompt,
+    cwd,
+    model,
+    binary,
+    providerEntry: entry,
+    onText,
+  });
+}
+
+/**
+ * Assert every phase provider binary is available. Throws naming the binary.
+ * @param {object} template
+ */
+function assertTemplateProvidersAvailable(template) {
+  for (const phase of template.phases || []) {
+    const entry = getProvider(phase.provider);
+    if (!entry || entry.kind === "simulate") {
+      throw new Error(
+        `Unknown provider for phase "${phase.name}": ${phase.provider}`,
+      );
+    }
+    const bin = resolveBin(entry);
+    if (!isBinAvailable(bin)) {
+      throw new Error(
+        `Provider binary not found: ${bin}. Install it or set ${entry.binEnv || "the provider binary env var"}.`,
+      );
+    }
+  }
+}
+
+/**
+ * Kickoff event text from a template.
+ * @param {object} template
+ */
+function kickoffText(template) {
+  let total = 0;
+  const lines = [];
+  for (const phase of template.phases || []) {
+    const n = Number(phase.agentCount) || 1;
+    total += n;
+    lines.push(`${phase.name} ${n}`);
+  }
+  return [`Kicked off ${total} subagents`, ...lines].join("\n");
+}
+
+/**
+ * Start an orchestrated multi-phase workflow run from a template.
  *
  * @param {object} deps
  * @param {string} deps.threadId
  * @param {string} deps.prompt
+ * @param {string} [deps.templateId]
  * @param {import('./store').Store} deps.store
  * @param {object} deps.core - @coder/core (nameForSeed)
  * @param {(channel: string, payload: unknown) => void} deps.pushFn
@@ -301,13 +578,14 @@ function buildAgentPrompt(opts) {
  * @param {(threadId: string, runId: string, label: string) => string} deps.beginWorkLogStep
  * @param {(threadId: string, itemId: string) => void} deps.completeWorkLogStep
  * @param {(threadId: string, runId: string, label: string) => void} deps.appendDoneWorkLog
- * @param {(threadId: string, role: string, text: string, runId?: string | null) => string} deps.appendMessage
+ * @param {(threadId: string, role: string, text: string, runId?: string | null, tool?: object | null) => string} deps.appendMessage
  * @returns {Promise<{ runId: string }>}
  */
 async function startWorkflowRun(deps) {
   const {
     threadId,
     prompt,
+    templateId,
     store,
     core,
     active,
@@ -329,17 +607,24 @@ async function startWorkflowRun(deps) {
     throw new Error(`Unknown thread: ${threadId}`);
   }
 
-  if (thread.provider !== "claude") {
-    throw new Error("Workflow runs currently require the Claude provider.");
-  }
-
   const project = store.getProject(thread.projectId);
   if (!project) {
     throw new Error(`Unknown project for thread: ${threadId}`);
   }
 
+  const resolvedTemplateId = templateId || "standard";
+  const template = store.getTemplate(resolvedTemplateId);
+  if (!template) {
+    throw new Error(`Unknown workflow template: ${resolvedTemplateId}`);
+  }
+  if (!Array.isArray(template.phases) || template.phases.length === 0) {
+    throw new Error(`Workflow template has no phases: ${resolvedTemplateId}`);
+  }
+
+  // Reject at start when any phase provider binary is unavailable.
+  assertTemplateProvidersAvailable(template);
+
   const runId = randomUUID();
-  const model = thread.model || "default";
   const cwd = thread.worktreePath || project.path;
   const permissionMode = thread.permissionMode || "default";
   const seed = hashSeed(threadId, runId);
@@ -362,15 +647,9 @@ async function startWorkflowRun(deps) {
     { touch: true },
   );
 
-  const view = buildWorkflowView({ runId, name, model });
+  const view = buildWorkflowView({ runId, name, template });
 
-  const kickoffText = [
-    "Kicked off 4 subagents",
-    "seed 1: plan the task",
-    "analyze 2: parallel deep dives",
-    "synthesize 1: final answer",
-  ].join("\n");
-  appendMessage(threadId, "event", kickoffText, runId);
+  appendMessage(threadId, "event", kickoffText(template), runId);
 
   /** @type {Map<string, string>} */
   const phaseItemIds = new Map();
@@ -431,6 +710,29 @@ async function startWorkflowRun(deps) {
     if (!e || e.stopping || e.runId !== runId) return null;
     if (e.kind !== "workflow") return null;
     return e;
+  }
+
+  /**
+   * Append a per-agent dossier tool message.
+   * @param {string} phaseName
+   * @param {number} agentIndex
+   * @param {string} agentPrompt
+   * @param {object | null} result
+   * @param {boolean} failed
+   */
+  function appendDossier(phaseName, agentIndex, agentPrompt, result, failed) {
+    const statusWord = failed ? "failed" : "finished";
+    const text = `${phaseName} agent ${agentIndex} ${statusWord}`;
+    const output = truncate((result && result.text) || "", DOSSIER_OUTPUT_MAX);
+    const tool = {
+      id: `${runId}:${phaseName}:${agentIndex}`,
+      name: `${phaseName} agent ${agentIndex}`,
+      input: truncate(agentPrompt || "", DOSSIER_INPUT_MAX),
+      output,
+      isError: Boolean(failed),
+      done: true,
+    };
+    appendMessage(threadId, "tool", text, runId, tool);
   }
 
   const entry = {
@@ -503,6 +805,7 @@ async function startWorkflowRun(deps) {
     recomputeView(view);
     store.save();
     clearRun(threadId);
+    // Final push never dropped.
     pushDetail(threadId, view);
     pushThreadsChanged();
   }
@@ -512,7 +815,14 @@ async function startWorkflowRun(deps) {
    * @param {object} spec
    */
   async function runOneAgent(spec) {
-    const { agentId, role, agentPrompt } = spec;
+    const {
+      agentId,
+      agentPrompt,
+      providerId,
+      model,
+      phaseName,
+      agentIndex,
+    } = spec;
     if (!guard()) return null;
 
     const agent = findAgent(view, agentId);
@@ -523,11 +833,12 @@ async function startWorkflowRun(deps) {
     schedulePush(true);
 
     let charCount = 0;
-    const { handle, done } = spawnAgentClaude({
+    const { handle, done } = spawnPhaseAgent({
+      providerId,
       prompt: agentPrompt,
       cwd,
       permissionMode,
-      model: thread.model || null,
+      model,
       onText: (t) => {
         if (!guard()) return;
         charCount = t.length;
@@ -544,6 +855,8 @@ async function startWorkflowRun(deps) {
     if (!guard()) {
       // Stopped mid-flight: leave status as-is if stop already marked failed
       if (agent.status === "running") agent.status = "failed";
+      // Still emit dossier so the renderer has a card for the killed agent.
+      appendDossier(phaseName, agentIndex, agentPrompt, result, true);
       return null;
     }
 
@@ -551,13 +864,16 @@ async function startWorkflowRun(deps) {
       agent.status = "settled";
       if (result.usage) {
         agent.tokensUsed =
-          (result.usage.inputTokens || 0) + (result.usage.outputTokens || 0);
+          (result.usage.inputTokens || 0) + (result.usage.outputTokens || 0) ||
+          Math.ceil((result.text || "").length / 4) ||
+          1;
         aggInput += result.usage.inputTokens || 0;
         aggOutput += result.usage.outputTokens || 0;
         aggCost += result.usage.costUsd || 0;
       } else {
         agent.tokensUsed = Math.ceil((result.text || "").length / 4) || 1;
       }
+      appendDossier(phaseName, agentIndex, agentPrompt, result, false);
     } else {
       agent.status = "failed";
       if (result.usage) {
@@ -567,6 +883,7 @@ async function startWorkflowRun(deps) {
         aggOutput += result.usage.outputTokens || 0;
         aggCost += result.usage.costUsd || 0;
       }
+      appendDossier(phaseName, agentIndex, agentPrompt, result, true);
     }
 
     schedulePush(true);
@@ -574,165 +891,153 @@ async function startWorkflowRun(deps) {
   }
 
   async function runPhases() {
-    // ── seed ──────────────────────────────────────────────────────────
-    beginPhase("seed");
-    schedulePush(true);
+    /** @type {{ phaseName: string, agentIndex: number, text: string }[]} */
+    let priorOutputs = [];
 
-    const seedResult = await runOneAgent({
-      agentId: "0:seed:0",
-      role: "seed",
-      agentPrompt: buildAgentPrompt({ role: "seed", userPrompt: prompt }),
-    });
-    if (!guard()) return;
-    completePhase("seed");
+    const phaseSpecs = template.phases;
+    const lastPhaseIndex = phaseSpecs.length - 1;
 
-    if (!seedResult || !seedResult.ok) {
-      failRun(
-        "0:seed:0",
-        (seedResult && seedResult.stderr) || "seed agent failed",
+    for (let phaseIndex = 0; phaseIndex < phaseSpecs.length; phaseIndex++) {
+      const phaseSpec = phaseSpecs[phaseIndex];
+      const phaseName = phaseSpec.name;
+      const agentCount = Math.max(
+        1,
+        Math.min(4, Number(phaseSpec.agentCount) || 1),
       );
-      return;
-    }
-    const seedPlan = seedResult.text || "";
+      const isFinal = phaseIndex === lastPhaseIndex;
 
-    // ── analyze (concurrent) ──────────────────────────────────────────
-    beginPhase("analyze");
-    schedulePush(true);
-
-    const analyzeSpecs = [
-      {
-        agentId: "1:analyze:0",
-        role: "analyze1",
-        agentPrompt: buildAgentPrompt({
-          role: "analyze1",
-          userPrompt: prompt,
-          seedPlan,
-        }),
-        label: "Analyze 1",
-      },
-      {
-        agentId: "1:analyze:1",
-        role: "analyze2",
-        agentPrompt: buildAgentPrompt({
-          role: "analyze2",
-          userPrompt: prompt,
-          seedPlan,
-        }),
-        label: "Analyze 2",
-      },
-    ];
-
-    const analyzeResults = await Promise.all(
-      analyzeSpecs.map((s) =>
-        runOneAgent({
-          agentId: s.agentId,
-          role: s.role,
-          agentPrompt: s.agentPrompt,
-        }).then((r) => ({ spec: s, result: r })),
-      ),
-    );
-
-    if (!guard()) return;
-    completePhase("analyze");
-
-    const a0 = analyzeResults[0];
-    const a1 = analyzeResults[1];
-    const a0ok = a0 && a0.result && a0.result.ok;
-    const a1ok = a1 && a1.result && a1.result.ok;
-
-    if (!a0ok && !a1ok) {
-      const failId =
-        a0 && a0.result && !a0.result.ok
-          ? a0.spec.agentId
-          : a1
-            ? a1.spec.agentId
-            : "1:analyze:0";
-      const stderr =
-        (a0 && a0.result && a0.result.stderr) ||
-        (a1 && a1.result && a1.result.stderr) ||
-        "both analyze agents failed";
-      failRun(failId, stderr);
-      return;
-    }
-
-    if (!a0ok || !a1ok) {
-      const failed = !a0ok ? a0 : a1;
-      const label = failed.spec.label || "Analyze";
-      // Human-friendly: "Analyze 2 failed, continuing"
-      appendDoneWorkLog(
-        threadId,
-        runId,
-        `${label} failed, continuing`,
-      );
+      if (!guard()) return;
+      beginPhase(phaseName);
       schedulePush(true);
-    }
 
-    const analyzeTexts = [
-      a0ok ? a0.result.text : "",
-      a1ok ? a1.result.text : "",
-    ];
+      /** @type {{ agentIndex: number, agentId: string, agentPrompt: string }[]} */
+      const specs = [];
+      for (let i = 0; i < agentCount; i++) {
+        const agentId = `${phaseIndex}:${phaseName}:${i}`;
+        const agentPrompt = buildAgentPrompt({
+          userPrompt: prompt,
+          instruction: phaseSpec.instruction,
+          agentIndex: i,
+          agentCount,
+          priorOutputs,
+        });
+        specs.push({ agentIndex: i, agentId, agentPrompt });
+      }
 
-    // ── synthesize ────────────────────────────────────────────────────
-    beginPhase("synthesize");
-    schedulePush(true);
-
-    const synthResult = await runOneAgent({
-      agentId: "2:synthesize:0",
-      role: "synthesize",
-      agentPrompt: buildAgentPrompt({
-        role: "synthesize",
-        userPrompt: prompt,
-        seedPlan,
-        analyzeTexts,
-      }),
-    });
-
-    if (!guard()) return;
-    completePhase("synthesize");
-
-    if (!synthResult || !synthResult.ok) {
-      failRun(
-        "2:synthesize:0",
-        (synthResult && synthResult.stderr) || "synthesize agent failed",
+      const results = await Promise.all(
+        specs.map((s) =>
+          runOneAgent({
+            agentId: s.agentId,
+            agentPrompt: s.agentPrompt,
+            providerId: phaseSpec.provider,
+            model:
+              phaseSpec.model != null && phaseSpec.model !== ""
+                ? phaseSpec.model
+                : null,
+            phaseName,
+            agentIndex: s.agentIndex,
+          }).then((r) => ({ spec: s, result: r })),
+        ),
       );
-      return;
+
+      if (!guard()) return;
+      completePhase(phaseName);
+
+      const successes = results.filter((r) => r.result && r.result.ok);
+      const failures = results.filter((r) => !r.result || !r.result.ok);
+
+      // All agents failed => run failed (any phase, including final).
+      if (successes.length === 0) {
+        const firstFail = failures[0];
+        const failId =
+          (firstFail && firstFail.spec && firstFail.spec.agentId) ||
+          `${phaseIndex}:${phaseName}:0`;
+        const stderr =
+          (firstFail &&
+            firstFail.result &&
+            firstFail.result.stderr) ||
+          `all agents in phase "${phaseName}" failed`;
+        failRun(failId, stderr);
+        return;
+      }
+
+      // Partial failures: note and continue (final phase still needs >=1 success).
+      if (failures.length > 0) {
+        for (const f of failures) {
+          const label = `${capitalize(phaseName)} agent ${f.spec.agentIndex + 1} failed, continuing`;
+          appendDoneWorkLog(threadId, runId, label);
+        }
+        schedulePush(true);
+      }
+
+      if (isFinal) {
+        // Build assistant answer from successful final-phase agents.
+        let answerText = "";
+        if (successes.length === 1) {
+          answerText = successes[0].result.text || "";
+        } else {
+          answerText = successes
+            .map(
+              (s) =>
+                `## ${phaseName} agent ${s.spec.agentIndex + 1}\n${s.result.text || ""}`,
+            )
+            .join("\n\n");
+        }
+
+        if (!guard()) return;
+
+        appendMessage(threadId, "assistant", answerText, runId);
+
+        const prev = store.getUsage(threadId) || {
+          model: null,
+          inputTokens: 0,
+          outputTokens: 0,
+          costUsd: 0,
+          turns: 0,
+        };
+        store.setUsage(threadId, {
+          model: prev.model || thread.model || agentModelLabel(phaseSpec),
+          inputTokens: prev.inputTokens + aggInput,
+          outputTokens: prev.outputTokens + aggOutput,
+          costUsd: prev.costUsd + aggCost,
+          turns: prev.turns + 1,
+        });
+
+        recomputeView(view);
+        store.updateThread(
+          threadId,
+          { status: "done", runStartedAt: null },
+          { touch: true },
+        );
+        store.save();
+        clearRun(threadId);
+        // Final push never dropped.
+        pushDetail(threadId, view);
+        pushThreadsChanged();
+        return;
+      }
+
+      // Chain outputs into subsequent phases (stable agentIndex order).
+      /** @type {{ phaseName: string, agentIndex: number, text: string }[]} */
+      const phaseOutputs = [];
+      for (const s of successes) {
+        phaseOutputs.push({
+          phaseName,
+          agentIndex: s.spec.agentIndex,
+          text: (s.result && s.result.text) || "",
+        });
+      }
+      // Include failed slots as unavailable so later prompts stay labeled.
+      for (const f of failures) {
+        phaseOutputs.push({
+          phaseName,
+          agentIndex: f.spec.agentIndex,
+          text: "",
+        });
+      }
+      phaseOutputs.sort((a, b) => a.agentIndex - b.agentIndex);
+      priorOutputs = priorOutputs.concat(phaseOutputs);
     }
-
-    // ── success ───────────────────────────────────────────────────────
-    if (!guard()) return;
-
-    appendMessage(
-      threadId,
-      "assistant",
-      synthResult.text || "",
-      runId,
-    );
-
-    const prev = store.getUsage(threadId) || {
-      model: null,
-      inputTokens: 0,
-      outputTokens: 0,
-      costUsd: 0,
-      turns: 0,
-    };
-    store.setUsage(threadId, {
-      model: prev.model || thread.model || model,
-      inputTokens: prev.inputTokens + aggInput,
-      outputTokens: prev.outputTokens + aggOutput,
-      costUsd: prev.costUsd + aggCost,
-      turns: prev.turns + 1,
-    });
-
-    recomputeView(view);
-    store.updateThread(
-      threadId,
-      { status: "done", runStartedAt: null },
-      { touch: true },
-    );
-    store.save();
-    clearRun(threadId);
-    pushDetail(threadId, view);
-    pushThreadsChanged();
   }
 
   return { runId };
@@ -770,9 +1075,6 @@ function stopWorkflowEntry(entry) {
     }
     recomputeView(entry.view);
   }
-  if (entry.phaseItemIds) {
-    // caller completes work-log steps
-  }
 }
 
 module.exports = {
@@ -783,5 +1085,11 @@ module.exports = {
   toPublicView,
   hashSeed,
   buildAgentPrompt,
+  spawnPhaseAgent,
+  assertTemplateProvidersAvailable,
+  kickoffText,
+  agentModelLabel,
   PUSH_THROTTLE_MS,
+  DOSSIER_INPUT_MAX,
+  DOSSIER_OUTPUT_MAX,
 };

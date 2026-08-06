@@ -1541,14 +1541,15 @@ function createRunner(opts) {
   }
 
   /**
-   * Orchestrated multi-phase Build workflow (real one-shot Claude agents).
-   * @param {{ threadId: string, prompt: string }} input
+   * Orchestrated multi-phase Build workflow from a user-defined template.
+   * @param {{ threadId: string, prompt: string, templateId?: string }} input
    * @returns {Promise<{ runId: string }>}
    */
   async function startWorkflowRun(input) {
     return workflowEngine.startWorkflowRun({
       threadId: input.threadId,
       prompt: input.prompt,
+      templateId: input.templateId,
       store,
       core,
       pushFn,

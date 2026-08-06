@@ -10,7 +10,7 @@
  *   B) CODER_AGENT_CMD = fake node -e agent — real generic spawn path to done
  *   C) CODER_CLAUDE_BIN = fake stream-json script — session, tools, usage
  *   D) CODER_CODEX_BIN = fake codex JSONL — session, tool Command, status done
- *   E) CODER_CLAUDE_BIN = workflow-aware fake — runs.startWorkflow multi-phase
+ *   E) two-phase mixed template (fake claude seed + fake text finalize) + dossiers
  *
  * Uses a temp userData path so it never touches real app state.
  * Expects dist/index.html (run `npx vite build` first) and core/dist.
@@ -104,8 +104,7 @@ function emit(obj) { process.stdout.write(JSON.stringify(obj) + "\\n"); }
 }
 
 /**
- * Write a fake claude that handles both session turns and workflow agent roles
- * (branches on prompt content for seed/analyze/synthesize).
+ * Write a fake claude for smoke pass E seed phase (stream-json).
  * @param {string} dir
  * @returns {string} absolute path to executable script
  */
@@ -115,24 +114,8 @@ function writeSmokeWorkflowFakeClaude(dir) {
 "use strict";
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 function emit(obj) { process.stdout.write(JSON.stringify(obj) + "\\n"); }
-const prompt = process.argv[process.argv.length - 1] || "";
-function roleOf(p) {
-  if (/produce the final answer/i.test(p) || /ORIGINAL user prompt/i.test(p)) return "synthesize";
-  if (/You are the planning agent/i.test(p)) return "seed";
-  if (/You are analyze agent 1 of 2/i.test(p)) return "analyze1";
-  if (/You are analyze agent 2 of 2/i.test(p)) return "analyze2";
-  return "session";
-}
-const role = roleOf(prompt);
-const texts = {
-  seed: "SMOKE_PLAN: step one",
-  analyze1: "SMOKE_IMPL: do it",
-  analyze2: "SMOKE_RISK: careful",
-  synthesize: "SMOKE_SYNTH_FINAL",
-  session: "Smoke claude ok",
-};
+const text = "SMOKE_SEED_PLAN: step one";
 (async () => {
-  const text = texts[role] || "ok";
   emit({ type: "system", subtype: "init", session_id: "smoke-wf-sess", model: "smoke-wf-model" });
   await delay(10);
   emit({ type: "assistant", message: { content: [{ type: "text", text }] } });
@@ -147,6 +130,22 @@ const texts = {
   });
   process.exit(0);
 })().catch((e) => { process.stderr.write(String(e)); process.exit(1); });
+`;
+  fs.writeFileSync(scriptPath, body, { mode: 0o755 });
+  return scriptPath;
+}
+
+/**
+ * Write a fake text-kind binary for smoke pass E finalize phase.
+ * @param {string} dir
+ * @returns {string}
+ */
+function writeSmokeWorkflowFakeText(dir) {
+  const scriptPath = path.join(dir, "smoke-wf-fake-text");
+  const body = `#!/usr/bin/env node
+"use strict";
+process.stdout.write("SMOKE_TEXT_FINAL");
+process.exit(0);
 `;
   fs.writeFileSync(scriptPath, body, { mode: 0o755 });
   return scriptPath;
@@ -703,12 +702,14 @@ app
     });
     logStep("passD", { ok: true });
 
-    // ── Pass E: real orchestrated workflow via startWorkflow ──────────
+    // ── Pass E: two-phase mixed template (claude seed + text finalize) ─
     delete process.env.CODER_SIMULATE;
     delete process.env.CODER_AGENT_CMD;
     delete process.env.CODER_CODEX_BIN;
     const fakeWfClaude = writeSmokeWorkflowFakeClaude(userData);
+    const fakeWfText = writeSmokeWorkflowFakeText(userData);
     process.env.CODER_CLAUDE_BIN = fakeWfClaude;
+    process.env.CODER_GROK_BIN = fakeWfText;
 
     const threadE = await createThread(win.webContents, project.id, "New Thread");
     logStep("passE.threads.create", {
@@ -716,6 +717,45 @@ app
       threadId: threadE.id,
       provider: threadE.provider,
     });
+
+    const listType = await evalInRenderer(
+      win.webContents,
+      `typeof window.coder.workflows?.list`,
+    );
+    if (listType !== "function") {
+      throw new Error(
+        `passE expected window.coder.workflows.list to be a function, got ${listType}`,
+      );
+    }
+
+    const tmplE = await evalInRenderer(
+      win.webContents,
+      `window.coder.workflows.save(${JSON.stringify({
+        name: "Smoke Mixed",
+        phases: [
+          {
+            name: "seed",
+            agentCount: 1,
+            instruction: "Smoke seed: produce a short plan.",
+            provider: "claude",
+            model: null,
+          },
+          {
+            name: "finalize",
+            agentCount: 1,
+            instruction: "Smoke finalize: produce the final answer.",
+            provider: "grok",
+            model: null,
+          },
+        ],
+      })})`,
+    );
+    if (!tmplE || !tmplE.id) {
+      throw new Error(
+        `passE workflows.save unexpected: ${JSON.stringify(tmplE)}`,
+      );
+    }
+    logStep("passE.workflows.save", { ok: true, templateId: tmplE.id });
 
     const startWfType = await evalInRenderer(
       win.webContents,
@@ -732,6 +772,7 @@ app
       `window.coder.runs.startWorkflow(${JSON.stringify({
         threadId: threadE.id,
         prompt: "Smoke workflow prompt",
+        templateId: tmplE.id,
       })})`,
     );
     if (!startedE || !startedE.runId) {
@@ -767,9 +808,9 @@ app
     const synthAssistant = (wfDetail.messages || []).find(
       (m) => m.role === "assistant" && m.runId === startedE.runId,
     );
-    if (!synthAssistant || synthAssistant.text !== "SMOKE_SYNTH_FINAL") {
+    if (!synthAssistant || !/SMOKE_TEXT_FINAL/.test(synthAssistant.text || "")) {
       throw new Error(
-        `passE expected assistant text SMOKE_SYNTH_FINAL, got ${JSON.stringify(
+        `passE expected assistant text containing SMOKE_TEXT_FINAL, got ${JSON.stringify(
           synthAssistant && synthAssistant.text,
         )}`,
       );
@@ -782,9 +823,9 @@ app
         )}`,
       );
     }
-    if (wfDetail.workflow.total !== 4) {
+    if (wfDetail.workflow.total !== 2) {
       throw new Error(
-        `passE expected workflow.total === 4, got ${wfDetail.workflow.total}`,
+        `passE expected workflow.total === 2, got ${wfDetail.workflow.total}`,
       );
     }
     let settledAgents = 0;
@@ -793,12 +834,34 @@ app
         if (agent.status === "settled") settledAgents += 1;
       }
     }
-    if (settledAgents !== 4) {
+    if (settledAgents !== 2) {
       throw new Error(
-        `passE expected 4 settled agents, got ${settledAgents}: ${JSON.stringify(
+        `passE expected 2 settled agents, got ${settledAgents}: ${JSON.stringify(
           wfDetail.workflow,
         )}`,
       );
+    }
+
+    const dossiers = (wfDetail.messages || []).filter(
+      (m) => m.role === "tool" && m.runId === startedE.runId && m.tool,
+    );
+    if (dossiers.length < 2) {
+      throw new Error(
+        `passE expected >=2 dossier tool messages, got ${dossiers.length}: ${JSON.stringify(
+          dossiers,
+        )}`,
+      );
+    }
+    for (const d of dossiers) {
+      if (!d.tool.done) {
+        throw new Error(`passE dossier not done: ${JSON.stringify(d)}`);
+      }
+      if (typeof d.tool.input !== "string" || !d.tool.input) {
+        throw new Error(`passE dossier missing input: ${JSON.stringify(d)}`);
+      }
+      if (typeof d.tool.output !== "string") {
+        throw new Error(`passE dossier missing output: ${JSON.stringify(d)}`);
+      }
     }
 
     assertWorkLogShape(wfDetail.workLog, startedE.runId);
@@ -808,6 +871,7 @@ app
       assistantText: synthAssistant.text,
       workflowComplete: wfDetail.workflow.complete,
       settledAgents,
+      dossierCount: dossiers.length,
       usage: wfDetail.usage,
     });
     logStep("passE", { ok: true });

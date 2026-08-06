@@ -4,13 +4,90 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { randomUUID } = require("node:crypto");
 
+/** Builtin "Plan and Verify" workflow template (seeded on every store). */
+const STANDARD_TEMPLATE = {
+  id: "standard",
+  name: "Plan and Verify",
+  builtin: true,
+  phases: [
+    {
+      name: "seed",
+      agentCount: 1,
+      instruction:
+        "Produce a concise plan (max 15 lines) plus key questions.",
+      provider: "claude",
+      model: null,
+    },
+    {
+      name: "analyze",
+      agentCount: 2,
+      instruction:
+        "Deep-dive the task. Agent focus should diversify: implementation approach versus risks and testing. Max 30 lines.",
+      provider: "claude",
+      model: null,
+    },
+    {
+      name: "synthesize",
+      agentCount: 1,
+      instruction:
+        "Using the plan and analyses, produce the final self-contained answer to the original task.",
+      provider: "claude",
+      model: null,
+    },
+  ],
+};
+
 const EMPTY = {
   projects: [],
   threads: [],
   messagesByThread: {},
   workLogByThread: {},
   usageByThread: {},
+  workflowTemplates: [],
 };
+
+/**
+ * Deep-clone the builtin standard template.
+ * @returns {object}
+ */
+function cloneStandardTemplate() {
+  return JSON.parse(JSON.stringify(STANDARD_TEMPLATE));
+}
+
+/**
+ * @param {unknown} phases
+ * @returns {object[]}
+ */
+function clonePhases(phases) {
+  if (!Array.isArray(phases)) return [];
+  return JSON.parse(JSON.stringify(phases));
+}
+
+/**
+ * Ensure workflowTemplates exists and the builtin "standard" template is present.
+ * @param {object} data
+ */
+function ensureWorkflowTemplates(data) {
+  if (!Array.isArray(data.workflowTemplates)) {
+    data.workflowTemplates = [];
+  }
+  const hasStandard = data.workflowTemplates.some(
+    (t) => t && t.id === "standard",
+  );
+  if (!hasStandard) {
+    data.workflowTemplates.unshift(cloneStandardTemplate());
+  }
+  // Normalize builtin flag on standard if someone corrupted it.
+  for (const t of data.workflowTemplates) {
+    if (t && t.id === "standard") {
+      t.builtin = true;
+      if (!t.name) t.name = STANDARD_TEMPLATE.name;
+      if (!Array.isArray(t.phases) || t.phases.length === 0) {
+        t.phases = clonePhases(STANDARD_TEMPLATE.phases);
+      }
+    }
+  }
+}
 
 /**
  * Migrate a persisted thread missing the newer session fields.
@@ -102,7 +179,11 @@ class Store {
           parsed.usageByThread && typeof parsed.usageByThread === "object"
             ? parsed.usageByThread
             : {},
+        workflowTemplates: Array.isArray(parsed.workflowTemplates)
+          ? parsed.workflowTemplates
+          : [],
       };
+      ensureWorkflowTemplates(data);
       this._recoveredOnLoad = recoverInterruptedRuns(data);
       return data;
     } catch {
@@ -270,16 +351,134 @@ class Store {
   getProject(projectId) {
     return this.data.projects.find((p) => p.id === projectId) || null;
   }
+
+  /**
+   * @returns {object[]} deep clones of all workflow templates
+   */
+  listTemplates() {
+    ensureWorkflowTemplates(this.data);
+    return this.data.workflowTemplates.map((t) =>
+      JSON.parse(JSON.stringify(t)),
+    );
+  }
+
+  /**
+   * Get one template by id (deep clone), or null.
+   * @param {string} id
+   */
+  getTemplate(id) {
+    ensureWorkflowTemplates(this.data);
+    const t = this.data.workflowTemplates.find((x) => x && x.id === id);
+    return t ? JSON.parse(JSON.stringify(t)) : null;
+  }
+
+  /**
+   * Save a workflow template.
+   * - No id: create with a new uuid, builtin false.
+   * - Builtin id: create a COPY (new id, builtin false); name gets " (copy)"
+   *   unless the caller supplied a different name from the builtin.
+   * - Non-builtin id that exists: update in place.
+   * - Unknown non-builtin id: create with that id.
+   * Does not validate phase contents; services layer owns validation.
+   * Does not save to disk; caller must save.
+   *
+   * @param {{ id?: string, name: string, phases: object[], builtin?: boolean }} template
+   * @returns {object} the saved template (deep clone)
+   */
+  saveTemplate(template) {
+    ensureWorkflowTemplates(this.data);
+    if (!template || typeof template !== "object") {
+      throw new Error("template is required");
+    }
+    const name = template.name != null ? String(template.name) : "";
+    const phases = clonePhases(template.phases);
+    const list = this.data.workflowTemplates;
+
+    if (template.id == null || template.id === "") {
+      const created = {
+        id: randomUUID(),
+        name,
+        builtin: false,
+        phases,
+      };
+      list.push(created);
+      return JSON.parse(JSON.stringify(created));
+    }
+
+    const id = String(template.id);
+    const existing = list.find((t) => t && t.id === id);
+
+    if (existing && existing.builtin) {
+      const renamed =
+        name.length > 0 && name !== String(existing.name || "");
+      const copy = {
+        id: randomUUID(),
+        name: renamed ? name : `${existing.name} (copy)`,
+        builtin: false,
+        phases: phases.length > 0 ? phases : clonePhases(existing.phases),
+      };
+      list.push(copy);
+      return JSON.parse(JSON.stringify(copy));
+    }
+
+    if (existing) {
+      existing.name = name;
+      existing.phases = phases;
+      existing.builtin = false;
+      return JSON.parse(JSON.stringify(existing));
+    }
+
+    const created = {
+      id,
+      name,
+      builtin: false,
+      phases,
+    };
+    list.push(created);
+    return JSON.parse(JSON.stringify(created));
+  }
+
+  /**
+   * Remove a non-builtin template. Rejects builtin templates.
+   * Does not save; caller must save.
+   * @param {string} id
+   */
+  removeTemplate(id) {
+    ensureWorkflowTemplates(this.data);
+    const tid = String(id);
+    const existing = this.data.workflowTemplates.find(
+      (t) => t && t.id === tid,
+    );
+    if (!existing) {
+      throw new Error(`Unknown template: ${tid}`);
+    }
+    if (existing.builtin) {
+      throw new Error(`Cannot remove builtin template: ${tid}`);
+    }
+    this.data.workflowTemplates = this.data.workflowTemplates.filter(
+      (t) => !t || t.id !== tid,
+    );
+  }
 }
 
 function cloneEmpty() {
-  return {
+  const data = {
     projects: [],
     threads: [],
     messagesByThread: {},
     workLogByThread: {},
     usageByThread: {},
+    workflowTemplates: [],
   };
+  ensureWorkflowTemplates(data);
+  return data;
 }
 
-module.exports = { Store, EMPTY, migrateThread };
+module.exports = {
+  Store,
+  EMPTY,
+  migrateThread,
+  STANDARD_TEMPLATE,
+  cloneStandardTemplate,
+  ensureWorkflowTemplates,
+};

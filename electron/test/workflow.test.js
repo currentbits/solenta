@@ -39,8 +39,7 @@ function waitFor(predicate, { timeoutMs = 20000, intervalMs = 20 } = {}) {
 }
 
 /**
- * Fake claude that branches on prompt content for workflow orchestration tests.
- * Marker file paths come from env so tests can assert concurrency and captures.
+ * Fake claude that branches on phase instruction / agent angle lines.
  */
 function writeWorkflowFakeClaude(dir) {
   const scriptPath = path.join(dir, "workflow-fake-claude");
@@ -58,6 +57,7 @@ const modeFile = process.env.CODER_WF_MODE_FILE;
 const markerDir = process.env.CODER_WF_MARKER_DIR;
 const captureFile = process.env.CODER_WF_CAPTURE_FILE;
 const trapSigterm = process.env.CODER_WF_TRAP_SIGTERM === "1";
+const markerName = process.env.CODER_WF_CLAUDE_MARKER || "claude-hit";
 
 let mode = "happy";
 if (modeFile && fs.existsSync(modeFile)) {
@@ -71,17 +71,23 @@ if (captureFile) {
       prev = JSON.parse(fs.readFileSync(captureFile, "utf8"));
     }
   } catch { prev = []; }
-  prev.push({ argv, prompt, ts: Date.now() });
+  prev.push({ provider: "claude", argv, prompt, ts: Date.now() });
   fs.writeFileSync(captureFile, JSON.stringify(prev, null, 2), "utf8");
 }
 
 function classify(p) {
-  // Synthesize first: its body embeds the analyze focus strings.
-  if (/produce the final answer/i.test(p) || /ORIGINAL user prompt/i.test(p)) return "synthesize";
-  if (/You are the planning agent/i.test(p)) return "seed";
-  if (/You are analyze agent 1 of 2/i.test(p)) return "analyze1";
-  if (/You are analyze agent 2 of 2/i.test(p)) return "analyze2";
-  return "unknown";
+  if (/Using the plan and analyses/i.test(p) || /final self-contained answer/i.test(p)) {
+    return "synthesize";
+  }
+  if (/Produce a concise plan/i.test(p) || /key questions/i.test(p)) return "seed";
+  if (/Deep-dive the task/i.test(p) || /implementation approach versus risks/i.test(p)) {
+    if (/You are agent 1 of 2/i.test(p)) return "analyze1";
+    if (/You are agent 2 of 2/i.test(p)) return "analyze2";
+    return "analyze";
+  }
+  if (/You are agent 1 of 2/i.test(p)) return "analyze1";
+  if (/You are agent 2 of 2/i.test(p)) return "analyze2";
+  return "generic";
 }
 
 const role = classify(prompt);
@@ -94,6 +100,14 @@ function writeMarker(name, phase) {
       path.join(markerDir, name + ".log"),
       JSON.stringify({ role, phase, ts: Date.now(), pid: process.pid }) + "\\n",
     );
+  } catch { /* ignore */ }
+}
+
+// Always leave a provider hit marker for mixed-provider tests.
+if (markerDir) {
+  try {
+    fs.mkdirSync(markerDir, { recursive: true });
+    fs.writeFileSync(path.join(markerDir, markerName), "1", "utf8");
   } catch { /* ignore */ }
 }
 
@@ -119,10 +133,10 @@ async function failExit(msg) {
 }
 
 (async () => {
-  if (trapSigterm && (role === "analyze1" || role === "analyze2")) {
-    writeMarker(role, "start");
+  if (trapSigterm && (role === "analyze1" || role === "analyze2" || role === "analyze")) {
+    writeMarker(role === "analyze" ? "analyze1" : role, "start");
     process.on("SIGTERM", () => {
-      writeMarker(role, "sigterm");
+      writeMarker(role === "analyze" ? "analyze1" : role, "sigterm");
       setTimeout(() => process.exit(0), 5000);
     });
     setInterval(() => {}, 200);
@@ -143,8 +157,8 @@ async function failExit(msg) {
     return;
   }
 
-  if (mode === "both-analyze-fail" && (role === "analyze1" || role === "analyze2")) {
-    writeMarker(role, "fail");
+  if (mode === "both-analyze-fail" && (role === "analyze1" || role === "analyze2" || role === "analyze")) {
+    writeMarker(role === "analyze" ? "analyze1" : role, "fail");
     await failExit(role + "-stderr-boom");
     return;
   }
@@ -152,6 +166,12 @@ async function failExit(msg) {
   if (mode === "synthesize-fail" && role === "synthesize") {
     writeMarker("synthesize", "fail");
     await failExit("synthesize-stderr-boom");
+    return;
+  }
+
+  if (mode === "final-all-fail" && role === "synthesize") {
+    writeMarker("synthesize", "fail");
+    await failExit("final-fail-boom");
     return;
   }
 
@@ -166,9 +186,8 @@ async function failExit(msg) {
     return;
   }
 
-  if (role === "analyze1") {
+  if (role === "analyze1" || (role === "analyze" && /agent 1 of/i.test(prompt))) {
     writeMarker("analyze1", "start");
-    // Hold open long enough for analyze2 to start concurrently
     await delay(180);
     writeMarker("analyze1", "end");
     await successResult("ANALYSIS_IMPL: concrete steps A B C", {
@@ -200,11 +219,90 @@ async function failExit(msg) {
     return;
   }
 
-  await successResult("unknown-role-fallback", { input_tokens: 1, output_tokens: 1 });
+  writeMarker("generic", "start");
+  await successResult("CLAUDE_GENERIC_OK", { input_tokens: 5, output_tokens: 6 });
 })().catch((e) => {
   process.stderr.write(String(e) + "\\n");
   process.exit(1);
 });
+`;
+  fs.writeFileSync(scriptPath, body, { mode: 0o755 });
+  return scriptPath;
+}
+
+/**
+ * Fake codex JSONL one-shot for mixed-provider tests.
+ */
+function writeWorkflowFakeCodex(dir) {
+  const scriptPath = path.join(dir, "workflow-fake-codex");
+  const body = `#!/usr/bin/env node
+"use strict";
+const fs = require("fs");
+const path = require("path");
+const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+function emit(obj) { process.stdout.write(JSON.stringify(obj) + "\\n"); }
+const argv = process.argv.slice(2);
+const prompt = argv[argv.length - 1] || "";
+const markerDir = process.env.CODER_WF_MARKER_DIR;
+const captureFile = process.env.CODER_WF_CAPTURE_FILE;
+if (captureFile) {
+  let prev = [];
+  try {
+    if (fs.existsSync(captureFile)) prev = JSON.parse(fs.readFileSync(captureFile, "utf8"));
+  } catch { prev = []; }
+  prev.push({ provider: "codex", argv: process.argv.slice(1), prompt, ts: Date.now() });
+  fs.writeFileSync(captureFile, JSON.stringify(prev, null, 2), "utf8");
+}
+if (markerDir) {
+  try {
+    fs.mkdirSync(markerDir, { recursive: true });
+    fs.writeFileSync(path.join(markerDir, "codex-hit"), "1", "utf8");
+  } catch { /* ignore */ }
+}
+(async () => {
+  emit({ type: "thread.started", thread_id: "wf-codex-sess" });
+  await delay(10);
+  emit({
+    type: "item.completed",
+    item: { id: "m1", type: "agent_message", text: "CODEX_PHASE_OK" },
+  });
+  await delay(10);
+  emit({ type: "turn.completed", usage: { input_tokens: 8, output_tokens: 9 } });
+  process.exit(0);
+})().catch((e) => { process.stderr.write(String(e)); process.exit(1); });
+`;
+  fs.writeFileSync(scriptPath, body, { mode: 0o755 });
+  return scriptPath;
+}
+
+/**
+ * Fake text-kind binary (stdout plain text).
+ */
+function writeWorkflowFakeText(dir, name = "workflow-fake-text") {
+  const scriptPath = path.join(dir, name);
+  const body = `#!/usr/bin/env node
+"use strict";
+const fs = require("fs");
+const path = require("path");
+const prompt = process.argv.slice(2).join(" ") || process.argv[process.argv.length - 1] || "";
+const markerDir = process.env.CODER_WF_MARKER_DIR;
+const captureFile = process.env.CODER_WF_CAPTURE_FILE;
+if (captureFile) {
+  let prev = [];
+  try {
+    if (fs.existsSync(captureFile)) prev = JSON.parse(fs.readFileSync(captureFile, "utf8"));
+  } catch { prev = []; }
+  prev.push({ provider: "text", argv: process.argv.slice(1), prompt, ts: Date.now() });
+  fs.writeFileSync(captureFile, JSON.stringify(prev, null, 2), "utf8");
+}
+if (markerDir) {
+  try {
+    fs.mkdirSync(markerDir, { recursive: true });
+    fs.writeFileSync(path.join(markerDir, "text-hit"), "1", "utf8");
+  } catch { /* ignore */ }
+}
+process.stdout.write("TEXT_FINAL_ANSWER: done via text provider\\n");
+process.exit(0);
 `;
   fs.writeFileSync(scriptPath, body, { mode: 0o755 });
   return scriptPath;
@@ -235,6 +333,9 @@ describe("workflow orchestration", () => {
   let prevSimulate;
   let prevAgentCmd;
   let prevClaudeBin;
+  let prevCodexBin;
+  let prevGrokBin;
+  let prevOpencodeBin;
   let prevModeFile;
   let prevMarkerDir;
   let prevCapture;
@@ -243,11 +344,16 @@ describe("workflow orchestration", () => {
   let markerDir;
   let captureFile;
   let fakeClaude;
+  let fakeCodex;
+  let fakeText;
 
   beforeEach(async () => {
     prevSimulate = process.env.CODER_SIMULATE;
     prevAgentCmd = process.env.CODER_AGENT_CMD;
     prevClaudeBin = process.env.CODER_CLAUDE_BIN;
+    prevCodexBin = process.env.CODER_CODEX_BIN;
+    prevGrokBin = process.env.CODER_GROK_BIN;
+    prevOpencodeBin = process.env.CODER_OPENCODE_BIN;
     prevModeFile = process.env.CODER_WF_MODE_FILE;
     prevMarkerDir = process.env.CODER_WF_MARKER_DIR;
     prevCapture = process.env.CODER_WF_CAPTURE_FILE;
@@ -259,6 +365,8 @@ describe("workflow orchestration", () => {
 
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-wf-"));
     fakeClaude = writeWorkflowFakeClaude(tmpDir);
+    fakeCodex = writeWorkflowFakeCodex(tmpDir);
+    fakeText = writeWorkflowFakeText(tmpDir);
     modeFile = path.join(tmpDir, "mode.txt");
     markerDir = path.join(tmpDir, "markers");
     captureFile = path.join(tmpDir, "capture.json");
@@ -266,6 +374,9 @@ describe("workflow orchestration", () => {
     fs.mkdirSync(markerDir, { recursive: true });
 
     process.env.CODER_CLAUDE_BIN = fakeClaude;
+    process.env.CODER_CODEX_BIN = fakeCodex;
+    process.env.CODER_GROK_BIN = fakeText;
+    process.env.CODER_OPENCODE_BIN = fakeText;
     process.env.CODER_WF_MODE_FILE = modeFile;
     process.env.CODER_WF_MARKER_DIR = markerDir;
     process.env.CODER_WF_CAPTURE_FILE = captureFile;
@@ -301,6 +412,12 @@ describe("workflow orchestration", () => {
     else process.env.CODER_AGENT_CMD = prevAgentCmd;
     if (prevClaudeBin === undefined) delete process.env.CODER_CLAUDE_BIN;
     else process.env.CODER_CLAUDE_BIN = prevClaudeBin;
+    if (prevCodexBin === undefined) delete process.env.CODER_CODEX_BIN;
+    else process.env.CODER_CODEX_BIN = prevCodexBin;
+    if (prevGrokBin === undefined) delete process.env.CODER_GROK_BIN;
+    else process.env.CODER_GROK_BIN = prevGrokBin;
+    if (prevOpencodeBin === undefined) delete process.env.CODER_OPENCODE_BIN;
+    else process.env.CODER_OPENCODE_BIN = prevOpencodeBin;
     if (prevModeFile === undefined) delete process.env.CODER_WF_MODE_FILE;
     else process.env.CODER_WF_MODE_FILE = prevModeFile;
     if (prevMarkerDir === undefined) delete process.env.CODER_WF_MARKER_DIR;
@@ -311,7 +428,7 @@ describe("workflow orchestration", () => {
     else process.env.CODER_WF_TRAP_SIGTERM = prevTrap;
   });
 
-  it("happy path: phase order, concurrent analyze, synthesize input, usage, settled view", async () => {
+  it("happy path (standard template): phase order, concurrent analyze, dossiers, usage", async () => {
     const thread = store.getThreads()[0];
     assert.equal(typeof runner.startWorkflowRun, "function");
 
@@ -330,9 +447,9 @@ describe("workflow orchestration", () => {
       .getMessages(thread.id)
       .find((m) => m.role === "event" && /Kicked off 4 subagents/i.test(m.text));
     assert.ok(kick, "expected kickoff event");
-    assert.match(kick.text, /seed 1: plan the task/);
-    assert.match(kick.text, /analyze 2: parallel deep dives/);
-    assert.match(kick.text, /synthesize 1: final answer/);
+    assert.match(kick.text, /seed 1/);
+    assert.match(kick.text, /analyze 2/);
+    assert.match(kick.text, /synthesize 1/);
 
     await waitFor(() => {
       const t = store.getThread(thread.id);
@@ -370,10 +487,28 @@ describe("workflow orchestration", () => {
     assert.ok(assistant);
     assert.equal(assistant.text, "FINAL_SYNTH_ANSWER: ship it with tests");
 
+    // Dossiers: one tool message per agent
+    const dossiers = store
+      .getMessages(thread.id)
+      .filter((m) => m.role === "tool" && m.runId === runId);
+    assert.equal(dossiers.length, 4, "expected 4 dossier tool messages");
+    for (const d of dossiers) {
+      assert.ok(d.tool);
+      assert.equal(d.tool.done, true);
+      assert.equal(d.tool.isError, false);
+      assert.ok(d.tool.id.startsWith(runId + ":"));
+      assert.ok(typeof d.tool.input === "string" && d.tool.input.length > 0);
+      assert.ok(typeof d.tool.output === "string" && d.tool.output.length > 0);
+      assert.match(d.text, /finished$/);
+    }
+    assert.ok(dossiers.some((d) => d.tool.name === "seed agent 0"));
+    assert.ok(dossiers.some((d) => d.tool.name === "analyze agent 0"));
+    assert.ok(dossiers.some((d) => d.tool.name === "analyze agent 1"));
+    assert.ok(dossiers.some((d) => d.tool.name === "synthesize agent 0"));
+
     const usage = store.getUsage(thread.id);
     assert.ok(usage);
     assert.equal(usage.turns, 1);
-    // 11+12+13+14 input, 22+24+26+28 output
     assert.equal(usage.inputTokens, 11 + 12 + 13 + 14);
     assert.equal(usage.outputTokens, 22 + 24 + 26 + 28);
 
@@ -388,38 +523,135 @@ describe("workflow orchestration", () => {
       "analyze must start after seed ends",
     );
 
-    // Concurrent analyze: overlapping lifetimes
     const a1End = readMarkers(markerDir, "analyze1").find((m) => m.phase === "end");
     const a2End = readMarkers(markerDir, "analyze2").find((m) => m.phase === "end");
     assert.ok(a1End && a2End);
-    const overlap =
-      a1Start.ts < a2End.ts && a2Start.ts < a1End.ts;
+    const overlap = a1Start.ts < a2End.ts && a2Start.ts < a1End.ts;
     assert.ok(overlap, "analyze agents must overlap in time");
 
     // Synthesize prompt contains both analyses
     const captures = JSON.parse(fs.readFileSync(captureFile, "utf8"));
-    const synth = captures.find((c) => /produce the final answer|ORIGINAL user prompt/i.test(c.prompt));
+    const synth = captures.find((c) =>
+      /Using the plan and analyses|final self-contained answer/i.test(c.prompt),
+    );
     assert.ok(synth, "expected synthesize capture");
     assert.match(synth.prompt, /ANALYSIS_IMPL/);
     assert.match(synth.prompt, /ANALYSIS_RISK/);
-    // No --resume in any call
     for (const c of captures) {
       assert.ok(!c.argv.includes("--resume"), "workflow agents must not pass --resume");
     }
 
-    // Work log: one item per phase, all done
     const detail = push.payload;
-    const labels = detail.workLog.map((w) => w.label.toLowerCase());
     for (const pl of ["seed", "analyze", "synthesize"]) {
       const items = detail.workLog.filter((w) => w.label.toLowerCase() === pl);
       assert.equal(items.length, 1, `expected one work log for ${pl}`);
       assert.equal(items[0].done, true);
       assert.equal(items[0].runId, runId);
     }
-    void labels;
   });
 
-  it("tolerates one analyze failure and continues", async () => {
+  it("mixed-provider template hits claude, codex, and text binaries", async () => {
+    const tmpl = services.saveTemplate(store, {
+      name: "Mixed three",
+      phases: [
+        {
+          name: "plan",
+          agentCount: 1,
+          instruction: "Claude plans briefly.",
+          provider: "claude",
+          model: null,
+        },
+        {
+          name: "review",
+          agentCount: 1,
+          instruction: "Codex reviews the plan.",
+          provider: "codex",
+          model: null,
+        },
+        {
+          name: "finalize",
+          agentCount: 1,
+          instruction: "Grok finalizes in plain text.",
+          provider: "grok",
+          model: null,
+        },
+      ],
+    });
+
+    const thread = store.getThreads()[0];
+    const { runId } = await runner.startWorkflowRun({
+      threadId: thread.id,
+      prompt: "mixed provider task",
+      templateId: tmpl.id,
+    });
+
+    await waitFor(() => {
+      const t = store.getThread(thread.id);
+      return t && (t.status === "done" || t.status === "failed");
+    });
+
+    assert.equal(store.getThread(thread.id).status, "done");
+    assert.ok(fs.existsSync(path.join(markerDir, "claude-hit")), "claude binary hit");
+    assert.ok(fs.existsSync(path.join(markerDir, "codex-hit")), "codex binary hit");
+    assert.ok(fs.existsSync(path.join(markerDir, "text-hit")), "text binary hit");
+
+    const captures = JSON.parse(fs.readFileSync(captureFile, "utf8"));
+    assert.ok(captures.some((c) => c.provider === "claude"));
+    assert.ok(captures.some((c) => c.provider === "codex"));
+    assert.ok(captures.some((c) => c.provider === "text"));
+
+    const assistant = store
+      .getMessages(thread.id)
+      .find((m) => m.role === "assistant" && m.runId === runId);
+    assert.ok(assistant);
+    assert.match(assistant.text, /TEXT_FINAL_ANSWER/);
+
+    const dossiers = store
+      .getMessages(thread.id)
+      .filter((m) => m.role === "tool" && m.runId === runId);
+    assert.equal(dossiers.length, 3);
+  });
+
+  it("final phase multi-agent concatenates successful outputs", async () => {
+    const tmpl = services.saveTemplate(store, {
+      name: "Multi final",
+      phases: [
+        {
+          name: "draft",
+          agentCount: 1,
+          instruction: "Claude plans briefly.",
+          provider: "claude",
+          model: null,
+        },
+        {
+          name: "answers",
+          agentCount: 2,
+          instruction: "Produce a distinct final answer.",
+          provider: "grok",
+          model: null,
+        },
+      ],
+    });
+
+    const thread = store.getThreads()[0];
+    const { runId } = await runner.startWorkflowRun({
+      threadId: thread.id,
+      prompt: "multi final",
+      templateId: tmpl.id,
+    });
+
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    const assistant = store
+      .getMessages(thread.id)
+      .find((m) => m.role === "assistant" && m.runId === runId);
+    assert.ok(assistant);
+    assert.match(assistant.text, /## answers agent 1/);
+    assert.match(assistant.text, /## answers agent 2/);
+    assert.match(assistant.text, /TEXT_FINAL_ANSWER/);
+  });
+
+  it("tolerates mid-phase partial failure and continues", async () => {
     fs.writeFileSync(modeFile, "analyze2-fail", "utf8");
     const thread = store.getThreads()[0];
     const { runId } = await runner.startWorkflowRun({
@@ -437,8 +669,8 @@ describe("workflow orchestration", () => {
 
     const note = store
       .getWorkLog(thread.id)
-      .find((w) => /Analyze 2 failed, continuing/i.test(w.label));
-    assert.ok(note, "expected work log note about analyze 2 failure");
+      .find((w) => /Analyze agent 2 failed, continuing/i.test(w.label));
+    assert.ok(note, "expected work log note about analyze agent 2 failure");
 
     const assistant = store
       .getMessages(thread.id)
@@ -446,10 +678,41 @@ describe("workflow orchestration", () => {
     assert.ok(assistant);
     assert.match(assistant.text, /FINAL_SYNTH/);
 
+    const failDossier = store
+      .getMessages(thread.id)
+      .find(
+        (m) =>
+          m.role === "tool" &&
+          m.runId === runId &&
+          m.tool &&
+          m.tool.name === "analyze agent 1" &&
+          m.tool.isError,
+      );
+    assert.ok(failDossier, "expected isError dossier for failed analyze agent");
+
     const push = lastWorkflowPush(pushes);
-    const analyzeAgents = push.payload.workflow.phases.find((p) => p.name === "analyze").agents;
+    const analyzeAgents = push.payload.workflow.phases.find(
+      (p) => p.name === "analyze",
+    ).agents;
     const statuses = analyzeAgents.map((a) => a.status).sort();
     assert.deepEqual(statuses, ["failed", "settled"]);
+  });
+
+  it("all agents failing in a mid phase fails the run", async () => {
+    fs.writeFileSync(modeFile, "both-analyze-fail", "utf8");
+    const thread = store.getThreads()[0];
+    const { runId } = await runner.startWorkflowRun({
+      threadId: thread.id,
+      prompt: "both analyze fail",
+    });
+
+    await waitFor(() => store.getThread(thread.id).status === "failed");
+    assert.equal(store.getThread(thread.id).runStartedAt, null);
+
+    const errEv = store
+      .getMessages(thread.id)
+      .find((m) => m.role === "event" && /Run error/i.test(m.text) && m.runId === runId);
+    assert.ok(errEv);
   });
 
   it("seed failure fails the run with Run error event", async () => {
@@ -473,10 +736,43 @@ describe("workflow orchestration", () => {
     assert.match(errEv.text, /seed/i);
     assert.match(errEv.text, /seed-stderr-boom|stderr/i);
 
+    const dossier = store
+      .getMessages(thread.id)
+      .find(
+        (m) =>
+          m.role === "tool" &&
+          m.runId === runId &&
+          m.tool &&
+          m.tool.name === "seed agent 0",
+      );
+    assert.ok(dossier);
+    assert.equal(dossier.tool.isError, true);
+    assert.match(dossier.text, /failed$/);
+
     const push = lastWorkflowPush(pushes);
     assert.ok(push);
     assert.equal(push.payload.workflow.phases[0].agents[0].status, "failed");
     assert.equal(push.payload.workflow.complete, false);
+  });
+
+  it("final phase all-fail fails the run", async () => {
+    fs.writeFileSync(modeFile, "synthesize-fail", "utf8");
+    const thread = store.getThreads()[0];
+    const { runId } = await runner.startWorkflowRun({
+      threadId: thread.id,
+      prompt: "final will fail",
+    });
+
+    await waitFor(() => store.getThread(thread.id).status === "failed");
+    const errEv = store
+      .getMessages(thread.id)
+      .find((m) => m.role === "event" && /Run error/i.test(m.text) && m.runId === runId);
+    assert.ok(errEv);
+    assert.match(errEv.text, /synthesize/i);
+    const assistant = store
+      .getMessages(thread.id)
+      .find((m) => m.role === "assistant" && m.runId === runId);
+    assert.equal(assistant, undefined);
   });
 
   it("stopRun mid-analyze kills children and marks agents failed", async () => {
@@ -487,7 +783,6 @@ describe("workflow orchestration", () => {
       prompt: "stop me mid analyze",
     });
 
-    // Wait until both analyze agents have started
     await waitFor(() => {
       const a1 = readMarkers(markerDir, "analyze1").some((m) => m.phase === "start");
       const a2 = readMarkers(markerDir, "analyze2").some((m) => m.phase === "start");
@@ -505,7 +800,6 @@ describe("workflow orchestration", () => {
       .find((m) => m.role === "event" && /Run stopped/i.test(m.text) && m.runId === runId);
     assert.ok(stopped);
 
-    // SIGTERM should have been delivered
     await waitFor(() => {
       const s1 = readMarkers(markerDir, "analyze1").some((m) => m.phase === "sigterm");
       const s2 = readMarkers(markerDir, "analyze2").some((m) => m.phase === "sigterm");
@@ -518,12 +812,6 @@ describe("workflow orchestration", () => {
     assert.ok(push);
     const analyze = push.payload.workflow.phases.find((p) => p.name === "analyze");
     assert.ok(analyze);
-    for (const a of analyze.agents) {
-      if (a.status === "running" || a.status === "pending") {
-        assert.fail(`expected terminal agent status after stop, got ${a.status}`);
-      }
-      // running ones become failed; seed may be settled
-    }
     const runningOrPending = analyze.agents.filter(
       (a) => a.status === "running" || a.status === "pending",
     );
@@ -531,17 +819,37 @@ describe("workflow orchestration", () => {
     assert.ok(analyze.agents.some((a) => a.status === "failed"));
   });
 
-  it("rejects non-claude provider", async () => {
+  it("rejects unavailable phase provider naming the binary", async () => {
+    const missing = path.join(tmpDir, "no-such-claude-binary");
+    process.env.CODER_CLAUDE_BIN = missing;
     const thread = store.getThreads()[0];
-    services.setProvider(store, { threadId: thread.id, provider: "codex" });
     await assert.rejects(
       () =>
         runner.startWorkflowRun({
           threadId: thread.id,
           prompt: "nope",
         }),
-      /Workflow runs currently require the Claude provider/,
+      (err) => {
+        assert.match(String(err && err.message), /Provider binary not found/);
+        assert.match(String(err && err.message), /no-such-claude-binary/);
+        return true;
+      },
     );
+  });
+
+  it("allows non-claude thread provider when template providers are available", async () => {
+    services.setProvider(store, { threadId: store.getThreads()[0].id, provider: "codex" });
+    const thread = store.getThreads()[0];
+    const { runId } = await runner.startWorkflowRun({
+      threadId: thread.id,
+      prompt: "thread is codex, template is claude",
+    });
+    assert.ok(runId);
+    await waitFor(() => {
+      const t = store.getThread(thread.id);
+      return t && (t.status === "done" || t.status === "failed");
+    });
+    assert.equal(store.getThread(thread.id).status, "done");
   });
 
   it("rejects while a run is already active", async () => {
@@ -559,7 +867,6 @@ describe("workflow orchestration", () => {
         }),
       /already active/i,
     );
-    // Also reject session start while workflow active
     await assert.rejects(
       () =>
         runner.startRun({

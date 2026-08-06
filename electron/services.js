@@ -392,6 +392,138 @@ function listProjects(store) {
   return store.getProjects().slice();
 }
 
+/**
+ * Validate a workflow template before save.
+ * Availability of the provider binary is NOT required to save.
+ *
+ * @param {{ name?: string, phases?: unknown }} template
+ */
+function validateWorkflowTemplate(template) {
+  if (!template || typeof template !== "object") {
+    throw new Error("Template is required");
+  }
+  const name = template.name != null ? String(template.name).trim() : "";
+  if (!name) {
+    throw new Error("Template name is required");
+  }
+
+  const phases = template.phases;
+  if (!Array.isArray(phases)) {
+    throw new Error("Template phases must be an array");
+  }
+  if (phases.length < 1 || phases.length > 6) {
+    throw new Error("Template must have between 1 and 6 phases");
+  }
+
+  for (let i = 0; i < phases.length; i++) {
+    const phase = phases[i];
+    if (!phase || typeof phase !== "object") {
+      throw new Error(`Phase ${i + 1}: invalid phase object`);
+    }
+    const phaseName =
+      phase.name != null ? String(phase.name).trim() : "";
+    if (!phaseName) {
+      throw new Error(`Phase ${i + 1}: name is required`);
+    }
+    if (phaseName.length > 24) {
+      throw new Error(
+        `Phase "${phaseName}": name must be at most 24 characters`,
+      );
+    }
+
+    const agentCount = phase.agentCount;
+    if (
+      typeof agentCount !== "number" ||
+      !Number.isInteger(agentCount) ||
+      agentCount < 1 ||
+      agentCount > 4
+    ) {
+      throw new Error(
+        `Phase "${phaseName}": agentCount must be an integer from 1 to 4`,
+      );
+    }
+
+    const instruction =
+      phase.instruction != null ? String(phase.instruction).trim() : "";
+    if (!instruction) {
+      throw new Error(`Phase "${phaseName}": instruction is required`);
+    }
+    if (String(phase.instruction).length > 2000) {
+      throw new Error(
+        `Phase "${phaseName}": instruction must be at most 2000 characters`,
+      );
+    }
+
+    const providerId =
+      phase.provider != null ? String(phase.provider).trim() : "";
+    if (!providerId) {
+      throw new Error(`Phase "${phaseName}": provider is required`);
+    }
+    const entry = getProvider(providerId);
+    if (!entry || entry.kind === "simulate") {
+      throw new Error(
+        `Phase "${phaseName}": unknown provider "${providerId}"`,
+      );
+    }
+
+    const model =
+      phase.model == null || phase.model === "" ? null : String(phase.model);
+    if (
+      model != null &&
+      Array.isArray(entry.models) &&
+      entry.models.length > 0 &&
+      !entry.models.includes(model)
+    ) {
+      throw new Error(
+        `Phase "${phaseName}": model "${model}" is not in provider ${providerId}'s model list`,
+      );
+    }
+  }
+}
+
+/**
+ * @param {import('./store').Store} store
+ */
+function listTemplates(store) {
+  return store.listTemplates();
+}
+
+/**
+ * Validate and save a workflow template.
+ * @param {import('./store').Store} store
+ * @param {{ id?: string, name: string, phases: object[] }} template
+ */
+function saveTemplate(store, template) {
+  validateWorkflowTemplate(template);
+  const phases = (template.phases || []).map((p) => ({
+    name: String(p.name).trim(),
+    agentCount: p.agentCount,
+    instruction: String(p.instruction),
+    provider: String(p.provider).trim(),
+    model: p.model == null || p.model === "" ? null : String(p.model),
+  }));
+  const saved = store.saveTemplate({
+    id: template.id,
+    name: String(template.name).trim(),
+    phases,
+  });
+  store.save();
+  return saved;
+}
+
+/**
+ * @param {import('./store').Store} store
+ * @param {{ id: string }} input
+ */
+function removeTemplate(store, input) {
+  const id = input && input.id != null ? String(input.id) : "";
+  if (!id) {
+    throw new Error("Template id is required");
+  }
+  store.removeTemplate(id);
+  store.save();
+}
+
 module.exports = {
   addProject,
   createThread,
@@ -404,6 +536,10 @@ module.exports = {
   gitStatus,
   listProjects,
   listProvidersForApi,
+  listTemplates,
+  saveTemplate,
+  removeTemplate,
+  validateWorkflowTemplate,
   slugFromRemoteUrl,
   PERMISSION_MODES,
 };

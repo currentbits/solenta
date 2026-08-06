@@ -327,4 +327,170 @@ describe("services", () => {
     status = services.gitStatus(repo);
     assert.equal(status.dirty, true);
   });
+
+  describe("workflow templates", () => {
+    const validPhase = (over = {}) => ({
+      name: "seed",
+      agentCount: 1,
+      instruction: "Do the thing carefully.",
+      provider: "claude",
+      model: null,
+      ...over,
+    });
+
+    it("listTemplates returns builtin standard", () => {
+      const list = services.listTemplates(store);
+      assert.ok(list.some((t) => t.id === "standard" && t.builtin));
+    });
+
+    it("saveTemplate creates and validates phases", () => {
+      const saved = services.saveTemplate(store, {
+        name: "Mixed",
+        phases: [
+          validPhase({ name: "plan", provider: "claude" }),
+          validPhase({ name: "code", provider: "codex", agentCount: 2 }),
+        ],
+      });
+      assert.ok(saved.id);
+      assert.equal(saved.builtin, false);
+      assert.equal(saved.phases.length, 2);
+    });
+
+    it("saveTemplate rejects empty name and bad phase counts", () => {
+      assert.throws(
+        () =>
+          services.saveTemplate(store, {
+            name: "  ",
+            phases: [validPhase()],
+          }),
+        /name is required/i,
+      );
+      assert.throws(
+        () =>
+          services.saveTemplate(store, {
+            name: "X",
+            phases: [],
+          }),
+        /1 and 6 phases/i,
+      );
+      assert.throws(
+        () =>
+          services.saveTemplate(store, {
+            name: "X",
+            phases: Array.from({ length: 7 }, (_, i) =>
+              validPhase({ name: `p${i}` }),
+            ),
+          }),
+        /1 and 6 phases/i,
+      );
+    });
+
+    it("saveTemplate rejects invalid phase fields", () => {
+      assert.throws(
+        () =>
+          services.saveTemplate(store, {
+            name: "X",
+            phases: [validPhase({ name: "" })],
+          }),
+        /name is required/i,
+      );
+      assert.throws(
+        () =>
+          services.saveTemplate(store, {
+            name: "X",
+            phases: [validPhase({ name: "a".repeat(25) })],
+          }),
+        /24 characters/i,
+      );
+      assert.throws(
+        () =>
+          services.saveTemplate(store, {
+            name: "X",
+            phases: [validPhase({ agentCount: 0 })],
+          }),
+        /agentCount/i,
+      );
+      assert.throws(
+        () =>
+          services.saveTemplate(store, {
+            name: "X",
+            phases: [validPhase({ agentCount: 1.5 })],
+          }),
+        /agentCount/i,
+      );
+      assert.throws(
+        () =>
+          services.saveTemplate(store, {
+            name: "X",
+            phases: [validPhase({ agentCount: 5 })],
+          }),
+        /agentCount/i,
+      );
+      assert.throws(
+        () =>
+          services.saveTemplate(store, {
+            name: "X",
+            phases: [validPhase({ instruction: "" })],
+          }),
+        /instruction is required/i,
+      );
+      assert.throws(
+        () =>
+          services.saveTemplate(store, {
+            name: "X",
+            phases: [validPhase({ instruction: "x".repeat(2001) })],
+          }),
+        /2000 characters/i,
+      );
+      assert.throws(
+        () =>
+          services.saveTemplate(store, {
+            name: "X",
+            phases: [validPhase({ provider: "nope" })],
+          }),
+        /unknown provider/i,
+      );
+      assert.throws(
+        () =>
+          services.saveTemplate(store, {
+            name: "X",
+            phases: [validPhase({ model: "not-a-real-claude-model" })],
+          }),
+        /model list/i,
+      );
+    });
+
+    it("saveTemplate allows any model when provider models list is empty", () => {
+      const saved = services.saveTemplate(store, {
+        name: "Codex model free",
+        phases: [
+          validPhase({
+            name: "c",
+            provider: "codex",
+            model: "whatever-model",
+          }),
+        ],
+      });
+      assert.equal(saved.phases[0].model, "whatever-model");
+    });
+
+    it("saveTemplate of builtin creates copy; remove rejects builtin", () => {
+      const copy = services.saveTemplate(store, {
+        id: "standard",
+        name: "Plan and Verify",
+        phases: [validPhase()],
+      });
+      assert.notEqual(copy.id, "standard");
+      assert.equal(copy.name, "Plan and Verify (copy)");
+      assert.throws(
+        () => services.removeTemplate(store, { id: "standard" }),
+        /Cannot remove builtin/i,
+      );
+      services.removeTemplate(store, { id: copy.id });
+      assert.equal(
+        services.listTemplates(store).find((t) => t.id === copy.id),
+        undefined,
+      );
+    });
+  });
 });

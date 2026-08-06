@@ -461,4 +461,163 @@ describe("Store", () => {
     assert.equal(last.role, "event");
     assert.equal(last.text, "Run interrupted by app restart");
   });
+
+  it("seeds builtin standard workflow template on empty store", () => {
+    const store = new Store(filePath);
+    const list = store.listTemplates();
+    assert.equal(list.length, 1);
+    assert.equal(list[0].id, "standard");
+    assert.equal(list[0].name, "Plan and Verify");
+    assert.equal(list[0].builtin, true);
+    assert.equal(list[0].phases.length, 3);
+    assert.deepEqual(
+      list[0].phases.map((p) => [p.name, p.agentCount, p.provider]),
+      [
+        ["seed", 1, "claude"],
+        ["analyze", 2, "claude"],
+        ["synthesize", 1, "claude"],
+      ],
+    );
+  });
+
+  it("migrates missing workflowTemplates by seeding standard", () => {
+    fs.writeFileSync(
+      filePath,
+      JSON.stringify({
+        projects: [],
+        threads: [],
+        messagesByThread: {},
+        workLogByThread: {},
+        usageByThread: {},
+      }),
+      "utf8",
+    );
+    const store = new Store(filePath);
+    assert.ok(store.getTemplate("standard"));
+    assert.equal(store.listTemplates().length, 1);
+  });
+
+  it("saveTemplate creates with uuid when no id", () => {
+    const store = new Store(filePath);
+    const saved = store.saveTemplate({
+      name: "Custom",
+      phases: [
+        {
+          name: "only",
+          agentCount: 1,
+          instruction: "do it",
+          provider: "claude",
+          model: null,
+        },
+      ],
+    });
+    assert.ok(saved.id);
+    assert.notEqual(saved.id, "standard");
+    assert.equal(saved.builtin, false);
+    assert.equal(saved.name, "Custom");
+    store.save();
+    const reloaded = new Store(filePath);
+    assert.equal(reloaded.listTemplates().length, 2);
+    assert.ok(reloaded.getTemplate(saved.id));
+  });
+
+  it("saveTemplate on builtin id creates a copy with (copy) name", () => {
+    const store = new Store(filePath);
+    const copy = store.saveTemplate({
+      id: "standard",
+      name: "Plan and Verify",
+      phases: [
+        {
+          name: "seed",
+          agentCount: 1,
+          instruction: "plan",
+          provider: "claude",
+          model: null,
+        },
+      ],
+    });
+    assert.notEqual(copy.id, "standard");
+    assert.equal(copy.builtin, false);
+    assert.equal(copy.name, "Plan and Verify (copy)");
+    assert.equal(store.getTemplate("standard").builtin, true);
+    assert.equal(store.listTemplates().length, 2);
+  });
+
+  it("saveTemplate on builtin with renamed name does not suffix (copy)", () => {
+    const store = new Store(filePath);
+    const copy = store.saveTemplate({
+      id: "standard",
+      name: "My Plan",
+      phases: [
+        {
+          name: "seed",
+          agentCount: 1,
+          instruction: "plan",
+          provider: "claude",
+          model: null,
+        },
+      ],
+    });
+    assert.equal(copy.name, "My Plan");
+    assert.equal(copy.builtin, false);
+  });
+
+  it("saveTemplate updates non-builtin in place", () => {
+    const store = new Store(filePath);
+    const created = store.saveTemplate({
+      name: "A",
+      phases: [
+        {
+          name: "p",
+          agentCount: 1,
+          instruction: "x",
+          provider: "claude",
+          model: null,
+        },
+      ],
+    });
+    const updated = store.saveTemplate({
+      id: created.id,
+      name: "B",
+      phases: [
+        {
+          name: "q",
+          agentCount: 2,
+          instruction: "y",
+          provider: "codex",
+          model: null,
+        },
+      ],
+    });
+    assert.equal(updated.id, created.id);
+    assert.equal(updated.name, "B");
+    assert.equal(updated.phases[0].name, "q");
+    assert.equal(store.listTemplates().filter((t) => t.id === created.id).length, 1);
+  });
+
+  it("removeTemplate rejects builtin and removes non-builtin", () => {
+    const store = new Store(filePath);
+    assert.throws(
+      () => store.removeTemplate("standard"),
+      /Cannot remove builtin template/,
+    );
+    const created = store.saveTemplate({
+      name: "temp",
+      phases: [
+        {
+          name: "p",
+          agentCount: 1,
+          instruction: "x",
+          provider: "claude",
+          model: null,
+        },
+      ],
+    });
+    store.removeTemplate(created.id);
+    assert.equal(store.getTemplate(created.id), null);
+    assert.throws(
+      () => store.removeTemplate("missing-id"),
+      /Unknown template/,
+    );
+  });
 });

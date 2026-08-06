@@ -100,6 +100,18 @@ function registerIpc(deps) {
     return services.listProvidersForApi(store);
   });
 
+  ipcMain.handle("workflows:list", async () => {
+    return services.listTemplates(store);
+  });
+
+  ipcMain.handle("workflows:save", async (_event, template) => {
+    return services.saveTemplate(store, template);
+  });
+
+  ipcMain.handle("workflows:remove", async (_event, input) => {
+    return services.removeTemplate(store, input);
+  });
+
   ipcMain.handle("threads:delete", async (_event, input) => {
     services.deleteThread(store, input, {
       isRunning: (id) => runner.isRunning(id),
