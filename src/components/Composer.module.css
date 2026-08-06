@@ -3,6 +3,43 @@
   padding: 0 20px 16px;
 }
 
+.errorBanner {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(248, 113, 113, 0.35);
+  background: rgba(248, 113, 113, 0.12);
+  color: #fca5a5;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.errorText {
+  flex: 1;
+  min-width: 0;
+}
+
+.errorDismiss {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: 4px;
+  color: #fca5a5;
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0.85;
+}
+
+.errorDismiss:hover {
+  opacity: 1;
+  background: rgba(248, 113, 113, 0.18);
+}
+
 .card {
   background: var(--card);
   border: 1px solid var(--border);
