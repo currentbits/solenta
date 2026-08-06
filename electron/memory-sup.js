@@ -115,7 +115,7 @@ function ensureKimiMcpConfig(opts = {}) {
       } = require("./providers.js");
       const entry = getProvider("kimi");
       if (entry) {
-        kimiOk = isBinAvailable(resolveBin(entry, env));
+        kimiOk = isBinAvailable(resolveBin(entry, env), undefined, env);
       }
     } catch (err) {
       log(
@@ -250,7 +250,7 @@ function ensureGrokMcpConfig(opts = {}) {
     const entry = getProvider("grok");
     if (!entry) return false;
     bin = resolveBin(entry, env);
-    if (!isBinAvailable(bin)) return false;
+    if (!isBinAvailable(bin, undefined, env)) return false;
   } catch (err) {
     log(
       "memory-server: grok availability check failed: " +

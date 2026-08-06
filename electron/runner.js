@@ -33,6 +33,26 @@ const workflowEngine = require("./workflow.js");
 
 const KIMI_PUSH_THROTTLE_MS = 250;
 
+/**
+ * Claude children that outlive their active Map slot (result event clears the
+ * run before process exit). stopAll reaps anything still here with SIGTERM.
+ * @type {Set<import('node:child_process').ChildProcess>}
+ */
+const liveClaudeChildren = new Set();
+
+/**
+ * @param {import('node:child_process').ChildProcess | null | undefined} child
+ */
+function trackLiveClaudeChild(child) {
+  if (!child || typeof child.kill !== "function") return;
+  liveClaudeChildren.add(child);
+  const drop = () => {
+    liveClaudeChildren.delete(child);
+  };
+  child.once("exit", drop);
+  child.once("error", drop);
+}
+
 const ADJECTIVES = [
   "INTEGER",
   "COPPER",
@@ -1113,6 +1133,7 @@ function createRunner(opts) {
     });
 
     entry.handle = handle;
+    trackLiveClaudeChild(handle.child);
     store.save();
     pushDetail(threadId, claudeState);
 
@@ -2186,221 +2207,6 @@ function createRunner(opts) {
   }
 
   /**
-   * Start a text-provider run (grok) via agent.js.
-   * @param {string} threadId
-   * @param {string} prompt
-   * @param {string} runId
-   * @param {string} name
-   * @param {import('./providers').ProviderEntry} providerEntry
-   */
-  function startTextProviderRun(threadId, prompt, runId, name, providerEntry) {
-    const thread = store.getThread(threadId);
-    const project = store.getProject(thread.projectId);
-    if (!project) {
-      throw new Error(`Unknown project for thread: ${threadId}`);
-    }
-
-    assertProviderBinary(providerEntry);
-
-    const binary = resolveBin(providerEntry);
-    const args = providerEntry.buildArgs({
-      prompt,
-      sessionId: thread.sessionId || null,
-      permissionMode: thread.permissionMode || "default",
-      model: thread.model || null,
-    });
-    const model = path.basename(binary);
-
-    const realState = {
-      __real: true,
-      runId,
-      name,
-      model,
-      agentStatus: "running",
-      charCount: 0,
-    };
-
-    const startingId = beginWorkLogStep(threadId, runId, "Starting agent");
-    const respondingId = beginWorkLogStep(threadId, runId, "Agent responding");
-
-    store.save();
-    pushThreadsChanged();
-    pushDetail(threadId, realState);
-
-    /** @type {string | null} */
-    let assistantMsgId = null;
-    const cwd = thread.worktreePath || project.path;
-    /** Run-local usage for memory footers. */
-    const runUsage = { tokensIn: 0, tokensOut: 0, costUsd: 0 };
-
-    const entry = {
-      kind: "text",
-      runId,
-      stopping: false,
-      handle: null,
-      runUsage,
-      startingId,
-      respondingId,
-      realState,
-    };
-    Object.defineProperty(entry, "workflow", {
-      get() {
-        return realState;
-      },
-      enumerable: true,
-    });
-    active.set(threadId, entry);
-
-    const handle = runAgent({
-      command: binary,
-      args,
-      prompt,
-      appendPrompt: false,
-      cwd,
-      onChunk: (text) => {
-        const e = active.get(threadId);
-        if (!e || e.stopping || e.runId !== runId) return;
-
-        realState.charCount = text.length;
-
-        if (!assistantMsgId) {
-          assistantMsgId = appendMessage(threadId, "assistant", text, runId);
-        } else {
-          store.updateMessage(threadId, assistantMsgId, { text });
-        }
-
-        store.save();
-        pushDetail(threadId, realState);
-      },
-      onDone: (exitCode, fullText, stderrText) => {
-        const e = active.get(threadId);
-        if (!e || e.stopping || e.runId !== runId) return;
-        if (e.kind !== "text") return;
-
-        clearRun(threadId);
-
-        completeWorkLogStep(threadId, e.startingId);
-        completeWorkLogStep(threadId, e.respondingId);
-
-        if (fullText && fullText.length > 0) {
-          if (!assistantMsgId) {
-            assistantMsgId = appendMessage(
-              threadId,
-              "assistant",
-              fullText,
-              runId,
-            );
-          } else {
-            store.updateMessage(threadId, assistantMsgId, { text: fullText });
-          }
-          realState.charCount = fullText.length;
-        }
-
-        // Best-effort usage: ceil(chars/4), cost 0
-        const tokens = Math.ceil((realState.charCount || 0) / 4);
-        runUsage.tokensOut = tokens;
-        const prev = store.getUsage(threadId) || {
-          model: null,
-          inputTokens: 0,
-          outputTokens: 0,
-          costUsd: 0,
-          turns: 0,
-        };
-        store.setUsage(threadId, {
-          model: prev.model || model,
-          inputTokens: prev.inputTokens,
-          outputTokens: prev.outputTokens + tokens,
-          costUsd: prev.costUsd,
-          turns: prev.turns + 1,
-        });
-
-        if (exitCode === 0) {
-          realState.agentStatus = "settled";
-          store.updateThread(
-            threadId,
-            { status: "done", runStartedAt: null },
-            { touch: true },
-          );
-          store.save();
-          pushDetail(threadId, realState);
-          pushThreadsChanged();
-          notifyRunTerminal(
-            threadId,
-            "done",
-            fullText || lastAssistantText(threadId, runId),
-            {
-              tokensIn: runUsage.tokensIn,
-              tokensOut: runUsage.tokensOut,
-              costUsd: runUsage.costUsd,
-              model: prev.model || model,
-            },
-          );
-          return;
-        }
-
-        realState.agentStatus = "failed";
-        const stderrTail = String(stderrText || "")
-          .split(/\r?\n/)
-          .filter(Boolean)
-          .slice(-8)
-          .join("\n");
-        const errText = stderrTail
-          ? `Run error (exit ${exitCode}):\n${stderrTail}`
-          : `Run error (exit ${exitCode == null ? "?" : exitCode})`;
-        appendMessage(threadId, "event", errText, runId);
-        appendDoneWorkLog(threadId, runId, "Run error");
-        store.updateThread(
-          threadId,
-          { status: "failed", runStartedAt: null },
-          { touch: true },
-        );
-        store.save();
-        pushDetail(threadId, realState);
-        pushThreadsChanged();
-        notifyRunTerminal(threadId, "failed", errText, {
-          tokensIn: runUsage.tokensIn,
-          tokensOut: runUsage.tokensOut,
-          costUsd: runUsage.costUsd,
-        });
-      },
-      onError: (err) => {
-        const e = active.get(threadId);
-        if (!e || e.stopping || e.runId !== runId) return;
-        if (e.kind !== "text") return;
-
-        clearRun(threadId);
-        completeWorkLogStep(threadId, e.startingId);
-        completeWorkLogStep(threadId, e.respondingId);
-        realState.agentStatus = "failed";
-        const msg = err && err.message ? err.message : String(err);
-        const errText = `Run error: ${msg}`;
-        appendMessage(threadId, "event", errText, runId);
-        appendDoneWorkLog(threadId, runId, "Run error");
-        store.updateThread(
-          threadId,
-          { status: "failed", runStartedAt: null },
-          { touch: true },
-        );
-        store.save();
-        pushDetail(threadId, realState);
-        pushThreadsChanged();
-        notifyRunTerminal(threadId, "failed", errText, {
-          tokensIn: runUsage.tokensIn,
-          tokensOut: runUsage.tokensOut,
-          costUsd: runUsage.costUsd,
-        });
-      },
-    });
-
-    entry.handle = handle;
-    completeWorkLogStep(threadId, startingId);
-    store.save();
-    pushDetail(threadId, realState);
-
-    return { runId };
-  }
-
-  /**
    * @param {{ threadId: string, prompt: string }} input
    * @returns {Promise<{ runId: string }>}
    */
@@ -2462,9 +2268,6 @@ function createRunner(opts) {
     if (entryDef.kind === "opencode-json") {
       return startOpencodeRun(threadId, prompt, runId, entryDef);
     }
-    if (entryDef.kind === "text") {
-      return startTextProviderRun(threadId, prompt, runId, name, entryDef);
-    }
     return startClaudeRun(threadId, prompt, runId, getProvider("claude"));
   }
 
@@ -2519,7 +2322,6 @@ function createRunner(opts) {
         entry.kind === "codex" ||
         entry.kind === "kimi" ||
         entry.kind === "opencode" ||
-        entry.kind === "text" ||
         entry.kind === "real") &&
       entry.handle
     ) {
@@ -2531,11 +2333,7 @@ function createRunner(opts) {
     }
 
     // Complete any open work-log steps for this run.
-    if (
-      entry.kind === "generic" ||
-      entry.kind === "real" ||
-      entry.kind === "text"
-    ) {
+    if (entry.kind === "generic" || entry.kind === "real") {
       completeWorkLogStep(threadId, entry.startingId);
       completeWorkLogStep(threadId, entry.respondingId);
     } else if (
@@ -2608,7 +2406,6 @@ function createRunner(opts) {
           entry.kind === "codex" ||
           entry.kind === "kimi" ||
           entry.kind === "opencode" ||
-          entry.kind === "text" ||
           entry.kind === "real") &&
         entry.handle
       ) {
@@ -2622,6 +2419,15 @@ function createRunner(opts) {
       clearRun(threadId);
       // App lifecycle / test teardown: clear run clock without sidebar bump.
       store.updateThread(threadId, { runStartedAt: null });
+    }
+    // Reap claude children that emitted result (clearRun) then hung: no longer
+    // reachable via active Map handles.
+    for (const child of [...liveClaudeChildren]) {
+      try {
+        child.kill("SIGTERM");
+      } catch {
+        // ignore
+      }
     }
   }
 
@@ -2663,4 +2469,6 @@ module.exports = {
   resolveProvider,
   ADJECTIVES,
   NOUNS,
+  /** @internal test/diagnostics */
+  liveClaudeChildren,
 };

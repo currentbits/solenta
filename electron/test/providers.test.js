@@ -240,6 +240,28 @@ describe("providers registry", () => {
     }
   });
 
+  it("isBinAvailable threads env into default which PATH lookup", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "coder-prov-path-"));
+    try {
+      const binName = "coder-prov-envbin";
+      const binPath = path.join(tmp, binName);
+      fs.writeFileSync(binPath, "#!/bin/sh\necho ok\n", { mode: 0o755 });
+      // Prepend tmp to PATH so which can resolve the bare name from env only.
+      const envHit = {
+        ...process.env,
+        PATH: `${tmp}${path.delimiter}${process.env.PATH || ""}`,
+      };
+      const envMiss = {
+        ...process.env,
+        PATH: `/nonexistent-coder-path${path.delimiter}/usr/bin`,
+      };
+      assert.equal(isBinAvailable(binName, undefined, envHit), true);
+      assert.equal(isBinAvailable(binName, undefined, envMiss), false);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("listProviders re-checks availability each call (not process-lifetime cache)", () => {
     let available = true;
     const which = (bin) => (bin === "claude" && available ? bin : null);

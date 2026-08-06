@@ -242,17 +242,49 @@ export function buildServer(memory) {
   return server
 }
 
+/** Max request body size for REST/MCP JSON payloads (1 MiB). */
+export const MAX_BODY_BYTES = 1024 * 1024
+
 /**
  * Read the full request body as a Buffer.
+ * Rejects with `{ code: 'PAYLOAD_TOO_LARGE' }` when over maxBytes.
  * @param {http.IncomingMessage} req
+ * @param {number} [maxBytes]
  * @returns {Promise<Buffer>}
  */
-function readBody(req) {
+function readBody(req, maxBytes = MAX_BODY_BYTES) {
   return new Promise((resolve, reject) => {
     const chunks = []
-    req.on('data', (c) => chunks.push(c))
-    req.on('end', () => resolve(Buffer.concat(chunks)))
-    req.on('error', reject)
+    let total = 0
+    let settled = false
+    req.on('data', (c) => {
+      if (settled) return
+      total += c.length
+      if (total > maxBytes) {
+        settled = true
+        const err = new Error('request body too large')
+        err.code = 'PAYLOAD_TOO_LARGE'
+        // Pause so the handler can send 413; drain remaining after response.
+        try {
+          req.pause()
+        } catch {
+          // ignore
+        }
+        reject(err)
+        return
+      }
+      chunks.push(c)
+    })
+    req.on('end', () => {
+      if (settled) return
+      settled = true
+      resolve(Buffer.concat(chunks))
+    })
+    req.on('error', (err) => {
+      if (settled) return
+      settled = true
+      reject(err)
+    })
   })
 }
 
@@ -335,7 +367,17 @@ async function handleApi(req, res, url, memory) {
       try {
         const raw = await readBody(req)
         body = raw.length ? JSON.parse(raw.toString('utf8')) : {}
-      } catch {
+      } catch (err) {
+        if (err && err.code === 'PAYLOAD_TOO_LARGE') {
+          sendJson(res, 413, { error: 'request body too large' })
+          // Drain leftover body so the socket can close cleanly.
+          try {
+            req.resume()
+          } catch {
+            // ignore
+          }
+          return true
+        }
         sendJson(res, 400, { error: 'valid JSON required' })
         return true
       }

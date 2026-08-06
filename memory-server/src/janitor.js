@@ -14,17 +14,19 @@ export function runJanitor(db) {
         AND CAST(access_count * 0.98 AS INTEGER) >= 0
     `)
 
-    // (b) orphan cleanup: mentions/edges pointing at missing entries or entities
+    // (b) orphan cleanup: mentions/edges pointing at missing entries or entities.
+    // NOT EXISTS (not NOT IN): a single NULL id in the subquery makes NOT IN
+    // evaluate UNKNOWN for every row and silently skip the sweep.
     db.exec(`
       DELETE FROM mentions
-      WHERE entry_id NOT IN (SELECT id FROM entries)
-         OR entity_id NOT IN (SELECT id FROM entities)
+      WHERE NOT EXISTS (SELECT 1 FROM entries e WHERE e.id = mentions.entry_id)
+         OR NOT EXISTS (SELECT 1 FROM entities n WHERE n.id = mentions.entity_id)
     `)
     db.exec(`
       DELETE FROM edges
-      WHERE entry_id NOT IN (SELECT id FROM entries)
-         OR src NOT IN (SELECT id FROM entities)
-         OR dst NOT IN (SELECT id FROM entities)
+      WHERE NOT EXISTS (SELECT 1 FROM entries e WHERE e.id = edges.entry_id)
+         OR NOT EXISTS (SELECT 1 FROM entities s WHERE s.id = edges.src)
+         OR NOT EXISTS (SELECT 1 FROM entities d WHERE d.id = edges.dst)
     `)
 
     // (c) health snapshot

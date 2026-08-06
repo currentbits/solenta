@@ -7,7 +7,7 @@ const { pathToFileURL } = require("node:url");
 const { execFileSync } = require("node:child_process");
 const { Store } = require("../store.js");
 const services = require("../services.js");
-const { createRunner } = require("../runner.js");
+const { createRunner, liveClaudeChildren } = require("../runner.js");
 
 function git(cwd, args) {
   execFileSync("git", args, { cwd, stdio: "ignore" });
@@ -47,6 +47,7 @@ function writeFakeClaude(dir) {
   const body = `#!/usr/bin/env node
 "use strict";
 const fs = require("fs");
+const path = require("path");
 
 if (process.env.CODER_FAKE_CLAUDE_ARGV_FILE) {
   fs.writeFileSync(
@@ -239,6 +240,55 @@ async function main() {
     return;
   }
 
+  // Emit result then linger, trapping SIGTERM briefly so stopAll reaper is needed.
+  if (scenario === "result-then-hang") {
+    const markerDir = process.env.CODER_FAKE_CLAUDE_MARKER_DIR || "";
+    if (markerDir) {
+      try {
+        fs.mkdirSync(markerDir, { recursive: true });
+        fs.writeFileSync(path.join(markerDir, "pid"), String(process.pid), "utf8");
+      } catch { /* ignore */ }
+    }
+    emit({
+      type: "system",
+      subtype: "init",
+      session_id: "sess-hang",
+      model: "m",
+    });
+    await delay(20);
+    emit({
+      type: "assistant",
+      message: { content: [{ type: "text", text: "hang after result" }] },
+    });
+    await delay(20);
+    emit({
+      type: "result",
+      subtype: "success",
+      result: "hang after result",
+      usage: { input_tokens: 1, output_tokens: 2 },
+      total_cost_usd: 0,
+      num_turns: 1,
+      session_id: "sess-hang",
+    });
+    // Trap SIGTERM briefly so a naive kill without tracking would miss us if
+    // the handle was already dropped; write a marker so tests can observe.
+    let gotTerm = false;
+    process.on("SIGTERM", () => {
+      if (gotTerm) return;
+      gotTerm = true;
+      if (markerDir) {
+        try {
+          fs.writeFileSync(path.join(markerDir, "sigterm"), "1", "utf8");
+        } catch { /* ignore */ }
+      }
+      setTimeout(() => process.exit(0), 200);
+    });
+    // Stay alive until reaped (or 30s safety).
+    await delay(30000);
+    process.exit(0);
+    return;
+  }
+
   process.stderr.write("unknown scenario " + scenario + "\\n");
   process.exit(1);
 }
@@ -276,6 +326,7 @@ describe("runner claude provider", () => {
 
   let prevGrokMcpDisable;
   let prevGrokBin;
+  let prevMarkerDir;
 
   beforeEach(async () => {
     prevSimulate = process.env.CODER_SIMULATE;
@@ -285,9 +336,11 @@ describe("runner claude provider", () => {
     prevArgvFile = process.env.CODER_FAKE_CLAUDE_ARGV_FILE;
     prevGrokMcpDisable = process.env.CODER_GROK_MCP_DISABLE;
     prevGrokBin = process.env.CODER_GROK_BIN;
+    prevMarkerDir = process.env.CODER_FAKE_CLAUDE_MARKER_DIR;
 
     delete process.env.CODER_SIMULATE;
     delete process.env.CODER_AGENT_CMD;
+    delete process.env.CODER_FAKE_CLAUDE_MARKER_DIR;
     // Structural kill switch + fake bin: supervisor tests must never touch
     // ~/.grok/config.toml via real `grok mcp add -s user`.
     process.env.CODER_GROK_MCP_DISABLE = "1";
@@ -334,6 +387,8 @@ describe("runner claude provider", () => {
     else process.env.CODER_FAKE_CLAUDE_SCENARIO = prevScenario;
     if (prevArgvFile === undefined) delete process.env.CODER_FAKE_CLAUDE_ARGV_FILE;
     else process.env.CODER_FAKE_CLAUDE_ARGV_FILE = prevArgvFile;
+    if (prevMarkerDir === undefined) delete process.env.CODER_FAKE_CLAUDE_MARKER_DIR;
+    else process.env.CODER_FAKE_CLAUDE_MARKER_DIR = prevMarkerDir;
     if (prevGrokMcpDisable === undefined) delete process.env.CODER_GROK_MCP_DISABLE;
     else process.env.CODER_GROK_MCP_DISABLE = prevGrokMcpDisable;
     if (prevGrokBin === undefined) delete process.env.CODER_GROK_BIN;
@@ -540,6 +595,38 @@ describe("runner claude provider", () => {
       .filter((m) => m.role === "assistant");
     assert.equal(assistants.length, 1);
     assert.equal(assistants[0].text, "Only result text");
+  });
+
+  it("stopAll reaps claude child that hung after result cleared the run slot", async () => {
+    process.env.CODER_FAKE_CLAUDE_SCENARIO = "result-then-hang";
+    const markerDir = path.join(tmpDir, "hang-markers");
+    process.env.CODER_FAKE_CLAUDE_MARKER_DIR = markerDir;
+
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "hang please" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    // Result cleared active Map; child must still be tracked for reaping.
+    assert.equal(runner.isRunning(thread.id), false);
+    assert.ok(
+      liveClaudeChildren.size >= 1,
+      "hung post-result child must remain in liveClaudeChildren",
+    );
+
+    // stopRun cannot reach the handle (slot cleared); stopAll reaper must.
+    await runner.stopRun({ threadId: thread.id });
+    assert.ok(
+      liveClaudeChildren.size >= 1,
+      "stopRun must not clear the reaper set for already-done runs",
+    );
+
+    runner.stopAll();
+
+    await waitFor(
+      () => fs.existsSync(path.join(markerDir, "sigterm")),
+      { timeoutMs: 5000 },
+    );
+    await waitFor(() => liveClaudeChildren.size === 0, { timeoutMs: 5000 });
   });
 
   it("adds --mcp-config to claude argv only when memory server is healthy", async () => {

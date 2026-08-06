@@ -77,6 +77,51 @@ describe('janitor', () => {
     assert.equal(live, 1)
   })
 
+  it('orphan sweep still works when a NULL id row exists (NOT EXISTS, not NOT IN)', () => {
+    const { id } = memory.store({
+      type: 'knowledge',
+      title: 'Keep',
+      body: 'live entry body',
+    })
+    memory.db.prepare(`INSERT INTO entities (id, name, kind) VALUES ('ent-ok', 'OkEnt', 'concept')`).run()
+    memory.db.prepare(`INSERT INTO mentions (entry_id, entity_id) VALUES (?, 'ent-ok')`).run(id)
+
+    // NULL id in entries would make `x NOT IN (SELECT id FROM entries)` no-op;
+    // insert via a temporary relaxation if needed. SQLite TEXT PRIMARY KEY allows NULL.
+    memory.db.exec(`INSERT INTO entries (id, type, title, body, created_at, updated_at)
+      VALUES (NULL, 'knowledge', 'null-id', 'n', '2026-01-01', '2026-01-01')`)
+
+    // Orphan mention: missing entry_id (must still be swept)
+    memory.db
+      .prepare(`INSERT INTO mentions (entry_id, entity_id) VALUES ('orphan-entry', 'ent-ok')`)
+      .run()
+    // Orphan edge with missing dst
+    memory.db
+      .prepare(
+        `INSERT INTO edges (src, dst, relation, entry_id, created_at)
+         VALUES ('ent-ok', 'ghost-dst', 'rel', ?, '2026-01-01')`,
+      )
+      .run(id)
+
+    runJanitor(memory.db)
+
+    assert.equal(
+      memory.db.prepare(`SELECT COUNT(*) AS n FROM mentions WHERE entry_id = 'orphan-entry'`).get().n,
+      0,
+      'orphan mention must be deleted even with a NULL entry id present',
+    )
+    assert.equal(
+      memory.db.prepare(`SELECT COUNT(*) AS n FROM edges WHERE dst = 'ghost-dst'`).get().n,
+      0,
+      'orphan edge must be deleted even with a NULL entry id present',
+    )
+    // Live mention preserved
+    assert.equal(
+      memory.db.prepare(`SELECT COUNT(*) AS n FROM mentions WHERE entry_id = ?`).get(id).n,
+      1,
+    )
+  })
+
   it('writes health snapshot into janitor_state', () => {
     memory.store({ type: 'knowledge', title: 'One', body: 'HttpServer and [[Concept]]' })
     const snap = runJanitor(memory.db)

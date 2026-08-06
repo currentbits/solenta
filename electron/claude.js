@@ -97,7 +97,7 @@ function flattenContent(content) {
  * @param {(ev: object) => void} opts.onEvent - raw parsed NDJSON event
  * @param {(info: { code: number | null, stderr: string, gotResult: boolean }) => void} opts.onExit
  * @param {(err: Error) => void} [opts.onError]
- * @returns {{ kill: () => void }}
+ * @returns {{ kill: () => void, child: import('node:child_process').ChildProcess | null }}
  */
 function runClaude(opts) {
   const {
@@ -192,7 +192,7 @@ function runClaude(opts) {
     if (typeof onExit === "function") {
       onExit({ code: 1, stderr: error.message, gotResult: false });
     }
-    return { kill() {} };
+    return { kill() {}, child: null };
   }
 
   child.stdout.setEncoding("utf8");
@@ -222,6 +222,7 @@ function runClaude(opts) {
   });
 
   return {
+    child,
     kill() {
       if (killed || finished) return;
       killed = true;

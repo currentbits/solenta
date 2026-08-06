@@ -70,6 +70,76 @@ describe('normalizeEntities', () => {
     assert.ok(edges.some((e) => e.src === 'ent-early' && e.dst === 'ent-other'))
     assert.ok(edges.some((e) => e.src === 'ent-other' && e.dst === 'ent-early'))
   })
+
+  it('keeper is earliest rowid via explicit ORDER BY, not GROUP_CONCAT order', () => {
+    // Insert late first, early second: if keeper used GROUP_CONCAT index 0, it
+    // might pick wrong; explicit ORDER BY rowid LIMIT 1 always keeps earliest.
+    db.prepare(
+      `INSERT INTO entities (id, name, kind) VALUES
+        ('ent-z', 'FooBar', 'module'),
+        ('ent-a', 'foobar', 'module')`,
+    ).run()
+    // Force ent-a to have the lower rowid by deleting and re-inserting ent-z last
+    // (rowids assigned in insert order above: ent-z first, so ent-z is earliest).
+    normalizeEntities(db)
+    const kept = db
+      .prepare(`SELECT id, name FROM entities WHERE lower(name) = 'foobar'`)
+      .all()
+    assert.equal(kept.length, 1)
+    assert.equal(kept[0].id, 'ent-z', 'earliest-inserted rowid must be the keeper')
+  })
+})
+
+describe('createSchema survives normalizeEntities failure', () => {
+  let dir
+
+  afterEach(() => {
+    if (dir) fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('Memory constructor boots when normalizeEntities throws (corrupt graph)', () => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'coder-mem-corrupt-'))
+    const dbPath = path.join(dir, 'memory.db')
+
+    {
+      const seed = openDb(dbPath)
+      createSchema(seed)
+      seed.close()
+    }
+
+    {
+      const raw = openDb(dbPath)
+      raw.exec(`DROP TABLE entities`)
+      // Case dups + BEFORE DELETE abort: normalizeEntities keeps earliest and
+      // DELETEs the rest; the abort makes normalizeEntities throw.
+      raw.exec(`
+        CREATE TABLE entities (
+          id   TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          kind TEXT NOT NULL
+        );
+        INSERT INTO entities (id, name, kind) VALUES
+          ('e1', 'Alpha', 'module'),
+          ('e2', 'alpha', 'module');
+        CREATE TRIGGER entities_abort_delete BEFORE DELETE ON entities
+        BEGIN
+          SELECT RAISE(ABORT, 'corrupt graph fixture');
+        END;
+      `)
+      raw.prepare(
+        `INSERT INTO entries (id, type, title, body, created_at, updated_at)
+         VALUES ('ent1', 'knowledge', 't', 'b', '2026-01-01', '2026-01-01')`,
+      ).run()
+      raw.prepare(`INSERT INTO mentions (entry_id, entity_id) VALUES ('ent1', 'e2')`).run()
+      raw.close()
+    }
+
+    // Must not throw — normalizeEntities is non-fatal in createSchema
+    const memory = new Memory(dbPath, { startJanitor: false })
+    assert.ok(memory)
+    assert.equal(typeof memory.entryCount(), 'number')
+    memory.close()
+  })
 })
 
 describe('graph retrieval and RRF', () => {
@@ -172,5 +242,36 @@ describe('graph retrieval and RRF', () => {
     const hits = memory.search({ query: 'findmewithfts' })
     assert.ok(hits.length >= 1)
     assert.ok(hits[0].title.includes('Still searchable') || hits[0].excerpt)
+  })
+
+  it('batched entity name lookup returns same hits as multi-token query', () => {
+    const a = memory.store({
+      type: 'knowledge',
+      title: 'Alpha path',
+      body: 'mentions BatchedEntityAlpha only',
+    })
+    const b = memory.store({
+      type: 'knowledge',
+      title: 'Beta path',
+      body: 'mentions BatchedEntityBeta only',
+    })
+    memory.db
+      .prepare(`INSERT INTO entities (id, name, kind) VALUES ('be-a', 'BatchedEntityAlpha', 'concept')`)
+      .run()
+    memory.db
+      .prepare(`INSERT INTO entities (id, name, kind) VALUES ('be-b', 'BatchedEntityBeta', 'concept')`)
+      .run()
+    memory.db.prepare(`INSERT INTO mentions (entry_id, entity_id) VALUES (?, 'be-a')`).run(a.id)
+    memory.db.prepare(`INSERT INTO mentions (entry_id, entity_id) VALUES (?, 'be-b')`).run(b.id)
+
+    // Multi-token query exercises the batched IN path for both names at once.
+    const hits = memory.graphSearch('BatchedEntityAlpha BatchedEntityBeta')
+    const ids = hits.map((h) => h.id)
+    assert.ok(ids.includes(a.id), `expected alpha hit: ${JSON.stringify(ids)}`)
+    assert.ok(ids.includes(b.id), `expected beta hit: ${JSON.stringify(ids)}`)
+
+    // Case-insensitive still works with lower() IN batch
+    const caseHits = memory.graphSearch('batchedentityalpha')
+    assert.ok(caseHits.some((h) => h.id === a.id))
   })
 })

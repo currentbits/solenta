@@ -284,31 +284,35 @@ export class Memory {
    * @returns {{ id: string, hop: number, score: number, title: string, type: string, project: string|null, agent: string|null, created_at: string, importance: number, excerpt: string }[]}
    */
   graphSearch(query, project) {
+    // node:sqlite rejects undefined binds; null is the "no project filter" sentinel.
+    project = project == null ? null : project
     try {
       const extracted = extractEntities(query)
       // Also look up any extracted names case-insensitively, plus bare tokens as entity names.
       const seedIds = new Set()
 
-      const byName = this.db.prepare(
-        `SELECT id FROM entities WHERE name = ? COLLATE NOCASE`,
-      )
-
+      /** @type {Set<string>} */
+      const lookupNames = new Set()
       for (const ent of extracted) {
-        const rows = byName.all(ent.name)
-        for (const r of rows) seedIds.add(r.id)
+        if (ent.name) lookupNames.add(ent.name)
       }
-
-      // Case-insensitive name lookup for significant tokens not already extracted
+      // Case-insensitive name lookup for significant tokens (3+ chars)
       const tokens = String(query).match(/[A-Za-z0-9_][A-Za-z0-9_.-]{2,}/g) ?? []
-      for (const tok of tokens) {
-        const rows = byName.all(tok)
-        for (const r of rows) seedIds.add(r.id)
-      }
-
+      for (const tok of tokens) lookupNames.add(tok)
       // Multi-word concept names: try the full query trimmed
       const full = String(query).trim()
-      if (full.length >= 3 && full.length <= 80) {
-        for (const r of byName.all(full)) seedIds.add(r.id)
+      if (full.length >= 3 && full.length <= 80) lookupNames.add(full)
+
+      if (lookupNames.size > 0) {
+        const names = [...lookupNames]
+        const placeholders = names.map(() => '?').join(',')
+        // Single batched IN lookup (case-insensitive via lower()).
+        const rows = this.db
+          .prepare(
+            `SELECT id FROM entities WHERE lower(name) IN (${placeholders})`,
+          )
+          .all(...names.map((n) => String(n).toLowerCase()))
+        for (const r of rows) seedIds.add(r.id)
       }
 
       if (seedIds.size === 0) return []

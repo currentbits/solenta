@@ -14,7 +14,7 @@ const { execFileSync } = require("node:child_process");
  * @property {string} defaultBin
  * @property {boolean} supportsResume
  * @property {string[]} models
- * @property {"claude-stream" | "codex-json" | "kimi-stream" | "opencode-json" | "text" | "simulate"} kind
+ * @property {"claude-stream" | "codex-json" | "kimi-stream" | "opencode-json" | "simulate"} kind
  * @property {(opts: { prompt: string, sessionId?: string | null, permissionMode?: string, model?: string | null }) => string[]} buildArgs
  */
 
@@ -203,9 +203,10 @@ function resolveBin(entry, env = process.env) {
 /**
  * Default which: absolute/relative path via existsSync, else `which` on PATH.
  * @param {string} bin
+ * @param {NodeJS.ProcessEnv} [env]
  * @returns {string | null}
  */
-function defaultWhich(bin) {
+function defaultWhich(bin, env = process.env) {
   if (!bin) return null;
   if (path.isAbsolute(bin) || bin.includes("/") || bin.includes("\\")) {
     try {
@@ -218,6 +219,7 @@ function defaultWhich(bin) {
     const out = execFileSync("which", [bin], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
+      env,
     }).trim();
     return out || null;
   } catch {
@@ -228,8 +230,9 @@ function defaultWhich(bin) {
 /**
  * @param {string} bin
  * @param {(bin: string) => string | null} [whichFn]
+ * @param {NodeJS.ProcessEnv} [env] - PATH for default which (ignored when whichFn is injected)
  */
-function isBinAvailable(bin, whichFn = defaultWhich) {
+function isBinAvailable(bin, whichFn = defaultWhich, env = process.env) {
   if (!bin) return false;
   // Absolute or relative path: filesystem only (ignore which/PATH).
   if (path.isAbsolute(bin) || bin.includes("/") || bin.includes("\\")) {
@@ -238,6 +241,9 @@ function isBinAvailable(bin, whichFn = defaultWhich) {
     } catch {
       return false;
     }
+  }
+  if (whichFn === defaultWhich) {
+    return Boolean(defaultWhich(bin, env));
   }
   return Boolean(whichFn(bin));
 }
@@ -284,7 +290,7 @@ function listProviders(opts = {}) {
     out.push({
       id: entry.id,
       name: entry.name,
-      available: isBinAvailable(bin, whichFn),
+      available: isBinAvailable(bin, whichFn, env),
       supportsResume: entry.supportsResume,
       models: entry.models.slice(),
     });

@@ -8,7 +8,6 @@ const {
   extractAssistantText: kimiExtractText,
   extractUsage: kimiExtractUsage,
 } = require("./kimi.js");
-const { runAgent } = require("./agent.js");
 const {
   getProvider,
   resolveBin,
@@ -648,78 +647,6 @@ function spawnAgentOpencode(opts) {
 }
 
 /**
- * Spawn a plain text-kind provider agent.
- * @param {object} opts
- * @returns {{ handle: { kill: () => void }, done: Promise<object> }}
- */
-function spawnAgentText(opts) {
-  const { prompt, cwd, model, binary, providerEntry, onText } = opts;
-
-  let text = "";
-  let finished = false;
-
-  /** @type {(value: object) => void} */
-  let resolveDone;
-  const done = new Promise((resolve) => {
-    resolveDone = resolve;
-  });
-
-  function finish(payload) {
-    if (finished) return;
-    finished = true;
-    resolveDone(payload);
-  }
-
-  const entry = providerEntry;
-  const args = entry.buildArgs({
-    prompt,
-    sessionId: null,
-    model: model || null,
-  });
-
-  const handle = runAgent({
-    command: binary || resolveBin(entry),
-    args,
-    prompt,
-    appendPrompt: false,
-    cwd,
-    onChunk: (t) => {
-      text = t;
-      if (typeof onText === "function") onText(text);
-    },
-    onDone: (exitCode, fullText, stderrText) => {
-      const finalText = fullText || text;
-      // Text kind: estimate tokens; costUsd 0.
-      const tokens = Math.ceil((finalText || "").length / 4) || 0;
-      finish({
-        ok: exitCode === 0,
-        text: finalText,
-        usage: {
-          inputTokens: 0,
-          outputTokens: tokens,
-          costUsd: 0,
-        },
-        code: exitCode,
-        stderr: String(stderrText || ""),
-      });
-    },
-    onError: (err) => {
-      const msg = err && err.message ? err.message : String(err);
-      finish({
-        ok: false,
-        text,
-        usage: null,
-        code: 1,
-        stderr: msg,
-        error: err,
-      });
-    },
-  });
-
-  return { handle, done };
-}
-
-/**
  * Spawn one agent using the phase provider kind.
  * @param {object} opts
  * @returns {{ handle: { kill: () => void }, done: Promise<object> }}
@@ -796,15 +723,22 @@ function spawnPhaseAgent(opts) {
       onText,
     });
   }
-  // text (and any other non-structured kind)
-  return spawnAgentText({
-    prompt,
-    cwd,
-    model,
-    binary,
-    providerEntry: entry,
-    onText,
+  // All known providers use structured kinds; plain-text path was removed.
+  /** @type {(value: object) => void} */
+  let resolveDone;
+  const done = new Promise((resolve) => {
+    resolveDone = resolve;
   });
+  queueMicrotask(() => {
+    resolveDone({
+      ok: false,
+      text: "",
+      usage: null,
+      code: 1,
+      stderr: `Unsupported provider kind for workflow: ${entry.kind} (${providerId})`,
+    });
+  });
+  return { handle: { kill() {} }, done };
 }
 
 /**

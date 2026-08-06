@@ -46,8 +46,7 @@ export function openDb(dbPath) {
 export function normalizeEntities(db) {
   const dups = db
     .prepare(
-      `SELECT lower(name) AS lname, kind, GROUP_CONCAT(id, char(31)) AS ids,
-              GROUP_CONCAT(rowid, char(31)) AS rowids
+      `SELECT lower(name) AS lname, kind
        FROM entities
        GROUP BY lower(name), kind
        HAVING COUNT(*) > 1`,
@@ -59,15 +58,25 @@ export function normalizeEntities(db) {
   db.exec('BEGIN')
   try {
     for (const group of dups) {
-      const ids = String(group.ids).split('\x1f')
-      const rowids = String(group.rowids).split('\x1f').map(Number)
-      // Earliest row = minimum rowid
-      let keepIdx = 0
-      for (let i = 1; i < rowids.length; i++) {
-        if (rowids[i] < rowids[keepIdx]) keepIdx = i
-      }
-      const keepId = ids[keepIdx]
-      const dropIds = ids.filter((id) => id !== keepId)
+      // Explicit keeper: earliest rowid for this (lower(name), kind) group.
+      // Do not rely on GROUP_CONCAT aggregate order matching across columns.
+      const keepRow = db
+        .prepare(
+          `SELECT id FROM entities
+           WHERE lower(name) = ? AND kind = ?
+           ORDER BY rowid ASC
+           LIMIT 1`,
+        )
+        .get(group.lname, group.kind)
+      if (!keepRow) continue
+      const keepId = keepRow.id
+      const dropIds = db
+        .prepare(
+          `SELECT id FROM entities
+           WHERE lower(name) = ? AND kind = ? AND id != ?`,
+        )
+        .all(group.lname, group.kind, keepId)
+        .map((r) => r.id)
 
       for (const dropId of dropIds) {
         // Repoint mentions (skip if keep already has the same entry)
@@ -244,5 +253,10 @@ export function createSchema(db) {
   addColumnIfMissing(db, 'entries', 'helpful_count', 'INTEGER NOT NULL DEFAULT 0')
   addColumnIfMissing(db, 'entries', 'harmful_count', 'INTEGER NOT NULL DEFAULT 0')
 
-  normalizeEntities(db)
+  try {
+    normalizeEntities(db)
+  } catch (err) {
+    // Non-fatal like the janitor: a corrupt graph must not brick Memory boot.
+    console.error('normalizeEntities failed (non-fatal):', err)
+  }
 }

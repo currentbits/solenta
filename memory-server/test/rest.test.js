@@ -100,6 +100,23 @@ describe('REST convenience + new MCP tools', () => {
     assert.equal(typeof body.janitor.edgeCount, 'number')
   })
 
+  it('POST /api/store rejects bodies over 1MB with 413 {error}', async () => {
+    const big = 'x'.repeat(1024 * 1024 + 64)
+    const res = await fetch(`${baseURL}/api/store`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify({
+        type: 'knowledge',
+        title: 'too big',
+        body: big,
+      }),
+    })
+    assert.equal(res.status, 413)
+    const body = await res.json()
+    assert.ok(body.error)
+    assert.match(String(body.error), /too large/i)
+  })
+
   it('MCP exposes memory_recent and memory_feedback', async () => {
     const transport = new StreamableHTTPClientTransport(new URL(`${baseURL}/mcp`), {
       requestInit: { headers: { Authorization: `Bearer ${TOKEN}` } },
