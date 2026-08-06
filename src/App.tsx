@@ -20,6 +20,8 @@ export default function App() {
     stopRun,
     setPermissionMode,
     setupWorktree,
+    mergeWorktree,
+    removeWorktree,
     fetchDiff,
     projectById,
   } = useCoder();
@@ -58,8 +60,6 @@ export default function App() {
         onStartRun={(prompt) => startRun(prompt)}
         onStopRun={() => stopRun()}
         onSetPermissionMode={(mode) => setPermissionMode(mode)}
-        onSetupWorktree={() => setupWorktree()}
-        onFetchDiff={() => fetchDiff()}
         runError={error?.scope === "run" ? error.message : null}
         onDismissRunError={clearError}
       />
@@ -67,6 +67,11 @@ export default function App() {
         workflow={detail?.workflow ?? null}
         thread={detail?.thread ?? null}
         usage={detail?.usage ?? null}
+        project={project}
+        onSetupWorktree={() => setupWorktree()}
+        onMergeWorktree={() => mergeWorktree()}
+        onRemoveWorktree={(force) => removeWorktree(force)}
+        onFetchDiff={() => fetchDiff()}
       />
     </div>
   );

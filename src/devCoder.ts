@@ -650,12 +650,16 @@ function fakeDiff(thread: ThreadInfo): DiffResult {
   };
 }
 
+const EMPTY_DIFF: DiffResult = { files: [], patch: "", truncated: false };
+
 function buildDevCoder(): CoderApi {
   const projects = seedProjects();
   let threads = seedThreads(projects);
   const details = new Map<string, ThreadDetail>();
   const runTimers = new Map<string, ReturnType<typeof setInterval>>();
   const runStates = new Map<string, RunState>();
+  /** Threads whose worktree was merged/removed; fakeDiff stays empty until re-setup. */
+  const clearedDiff = new Set<string>();
 
   for (const t of threads) {
     if (t.id === mockData.activeThreadId) {
@@ -1058,6 +1062,8 @@ function buildDevCoder(): CoderApi {
         const project = projects.find((p) => p.id === detail.thread.projectId);
         const worktreePath = `${project?.path ?? "/Users/demo/project"}/.coder/worktrees/${short}`;
 
+        clearedDiff.delete(input.threadId);
+
         const thread: ThreadInfo = {
           ...detail.thread,
           branch,
@@ -1073,11 +1079,79 @@ function buildDevCoder(): CoderApi {
       async diff(input) {
         const detail = details.get(input.threadId);
         if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
+        if (clearedDiff.has(input.threadId)) {
+          return { ...EMPTY_DIFF };
+        }
         // Empty when brand-new idle thread with no messages.
         if (detail.messages.length === 0 && detail.thread.status === "idle") {
-          return { files: [], patch: "", truncated: false };
+          return { ...EMPTY_DIFF };
         }
         return fakeDiff(detail.thread);
+      },
+      async mergeWorktree(input) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
+        if (!detail.thread.worktreePath) {
+          throw new Error("No worktree set up for this thread");
+        }
+
+        await new Promise((r) => setTimeout(r, WORKTREE_DELAY_MS));
+
+        const t = now();
+        const thread: ThreadInfo = {
+          ...detail.thread,
+          worktreePath: null,
+          branch: null,
+          updatedAt: t,
+        };
+        detail.thread = thread;
+        detail.messages.push({
+          id: id("evt"),
+          role: "event",
+          text: "Merged worktree",
+          createdAt: t,
+        });
+        clearedDiff.add(input.threadId);
+        details.set(input.threadId, detail);
+        syncThreadRow(thread);
+        emitDetail(detail);
+        return { ...thread };
+      },
+      async removeWorktree(input) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
+        if (!detail.thread.worktreePath) {
+          throw new Error("No worktree set up for this thread");
+        }
+
+        await new Promise((r) => setTimeout(r, WORKTREE_DELAY_MS));
+
+        const hasChanges =
+          !clearedDiff.has(input.threadId) &&
+          !(
+            detail.messages.length === 0 && detail.thread.status === "idle"
+          );
+
+        if (!input.force && hasChanges) {
+          // Mimic Electron's invoke wrapper so the renderer dirty path is exercised.
+          throw new Error(
+            "Error invoking remote method 'git:removeWorktree': Error: WORKTREE_DIRTY: uncommitted changes would be lost:\n  M src/components/Composer.tsx",
+          );
+        }
+
+        const t = now();
+        const thread: ThreadInfo = {
+          ...detail.thread,
+          worktreePath: null,
+          branch: null,
+          updatedAt: t,
+        };
+        detail.thread = thread;
+        clearedDiff.add(input.threadId);
+        details.set(input.threadId, detail);
+        syncThreadRow(thread);
+        emitDetail(detail);
+        return { ...thread };
       },
     },
     on(channel, cb) {

@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   ChatMessage,
-  DiffResult,
   PermissionMode,
   ProjectInfo,
   ThreadDetail,
@@ -26,8 +25,6 @@ interface ThreadViewProps {
   onStartRun: (prompt: string) => void | Promise<void>;
   onStopRun: () => void | Promise<void>;
   onSetPermissionMode: (mode: PermissionMode) => void | Promise<void>;
-  onSetupWorktree: () => Promise<unknown>;
-  onFetchDiff: () => Promise<DiffResult>;
   runError?: string | null;
   onDismissRunError?: () => void;
 }
@@ -176,129 +173,6 @@ function WorkLogCard({
   );
 }
 
-function DiffLine({ line }: { line: string }) {
-  let kind = "ctx";
-  if (line.startsWith("+++") || line.startsWith("---")) kind = "meta";
-  else if (line.startsWith("@@")) kind = "hunk";
-  else if (line.startsWith("+")) kind = "add";
-  else if (line.startsWith("-")) kind = "del";
-  return <div className={styles.diffLine} data-kind={kind}>{line || " "}</div>;
-}
-
-function ChangesPanel({
-  open,
-  threadId,
-  onClose,
-  onFetchDiff,
-}: {
-  open: boolean;
-  threadId: string | null;
-  onClose: () => void;
-  onFetchDiff: () => Promise<DiffResult>;
-}) {
-  const [diff, setDiff] = useState<DiffResult | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = async () => {
-    setLoading(true);
-    setError(null);
-    setDiff(null);
-    try {
-      const result = await onFetchDiff();
-      setDiff(result);
-    } catch (err) {
-      setError(
-        err instanceof Error && err.message ? err.message : "Failed to load diff",
-      );
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Never show one thread's diff under another thread.
-  useEffect(() => {
-    setDiff(null);
-    setError(null);
-  }, [threadId]);
-
-  useEffect(() => {
-    if (open) void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- load when panel opens only
-  }, [open, threadId]);
-
-  if (!open) return null;
-
-  const empty =
-    !loading &&
-    !error &&
-    diff != null &&
-    diff.files.length === 0 &&
-    !diff.patch.trim();
-
-  return (
-    <section className={styles.changesPanel} aria-label="Changes">
-      <header className={styles.changesHead}>
-        <span className={styles.changesTitle}>Changes</span>
-        <div className={styles.changesActions}>
-          <button
-            type="button"
-            className={styles.btn}
-            onClick={() => void load()}
-            disabled={loading}
-          >
-            {loading ? "Refreshing…" : "Refresh"}
-          </button>
-          <button type="button" className={styles.btn} onClick={onClose}>
-            Close
-          </button>
-        </div>
-      </header>
-
-      {error && (
-        <div className={styles.inlineError} role="alert">
-          {error}
-        </div>
-      )}
-
-      {loading && !diff && (
-        <p className={styles.changesEmpty}>Loading diff…</p>
-      )}
-
-      {empty && <p className={styles.changesEmpty}>No changes</p>}
-
-      {diff && !empty && (
-        <>
-          {diff.files.length > 0 && (
-            <ul className={styles.fileList}>
-              {diff.files.map((f) => (
-                <li key={f.path} className={styles.fileRow}>
-                  <span className={styles.fileStatus}>{f.status}</span>
-                  <span className={styles.filePath}>{f.path}</span>
-                  <span className={styles.fileStats}>
-                    <span className={styles.adds}>+{f.additions}</span>
-                    <span className={styles.dels}>−{f.deletions}</span>
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-          {diff.patch.trim() !== "" && (
-            <div className={styles.patchScroll}>
-              {diff.patch.split("\n").map((line, i) => (
-                <DiffLine key={i} line={line} />
-              ))}
-            </div>
-          )}
-          {diff.truncated && (
-            <p className={styles.truncatedNote}>Diff truncated</p>
-          )}
-        </>
-      )}
-    </section>
-  );
-}
-
 export function ThreadView({
   detail,
   project,
@@ -307,17 +181,12 @@ export function ThreadView({
   onStartRun,
   onStopRun,
   onSetPermissionMode,
-  onSetupWorktree,
-  onFetchDiff,
   runError = null,
   onDismissRunError,
 }: ThreadViewProps) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
   const prevThreadId = useRef<string | null>(null);
-  const [worktreePending, setWorktreePending] = useState(false);
-  const [worktreeError, setWorktreeError] = useState<string | null>(null);
-  const [changesOpen, setChangesOpen] = useState(false);
 
   const runningAgents = useMemo(() => {
     if (!detail?.workflow) return 0;
@@ -369,8 +238,6 @@ export function ThreadView({
     if (id !== prevThreadId.current) {
       prevThreadId.current = id;
       stickToBottom.current = true;
-      setChangesOpen(false);
-      setWorktreeError(null);
     }
   }, [detail?.thread.id]);
 
@@ -385,22 +252,6 @@ export function ThreadView({
     if (!el) return;
     const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
     stickToBottom.current = distance <= STICK_BOTTOM_PX;
-  };
-
-  const handleSetupWorktree = async () => {
-    setWorktreePending(true);
-    setWorktreeError(null);
-    try {
-      await onSetupWorktree();
-    } catch (err) {
-      setWorktreeError(
-        err instanceof Error && err.message
-          ? err.message
-          : "Failed to set up worktree",
-      );
-    } finally {
-      setWorktreePending(false);
-    }
   };
 
   if (!hasProjects) {
@@ -434,11 +285,6 @@ export function ThreadView({
   }
 
   const { thread } = detail;
-  const branchShort = thread.branch
-    ? thread.branch.includes("/")
-      ? thread.branch.split("/").pop()!
-      : thread.branch
-    : null;
 
   return (
     <main className={styles.main}>
@@ -451,67 +297,11 @@ export function ThreadView({
           <span className={styles.threadTitle}>{thread.title}</span>
         </div>
         <div className={styles.actions}>
-          <button
-            type="button"
-            className={styles.btn}
-            onClick={() => void handleSetupWorktree()}
-            disabled={worktreePending || isWorking}
-            title={
-              hasWorktree
-                ? `Worktree ready${branchShort ? `: ${branchShort}` : ""}`
-                : "Set up a git worktree for this thread"
-            }
-          >
-            {worktreePending ? (
-              <>
-                <span className={styles.btnSpinner} aria-hidden />
-                Setting up…
-              </>
-            ) : hasWorktree ? (
-              <>
-                <span className={styles.btnCheck} aria-hidden>
-                  ✓
-                </span>
-                {branchShort ?? "Worktree"}
-              </>
-            ) : (
-              "Setup Worktree"
-            )}
-          </button>
-          <button
-            type="button"
-            className={styles.btn}
-            onClick={() => setChangesOpen((v) => !v)}
-            data-active={changesOpen}
-          >
-            Changes
-          </button>
           <button type="button" className={`${styles.btn} ${styles.btnPrimary}`}>
             Push
           </button>
         </div>
       </header>
-
-      {worktreeError && (
-        <div className={styles.banner} role="alert">
-          <span className={styles.bannerText}>{worktreeError}</span>
-          <button
-            type="button"
-            className={styles.bannerDismiss}
-            onClick={() => setWorktreeError(null)}
-            aria-label="Dismiss error"
-          >
-            ×
-          </button>
-        </div>
-      )}
-
-      <ChangesPanel
-        open={changesOpen}
-        threadId={detail?.thread.id ?? null}
-        onClose={() => setChangesOpen(false)}
-        onFetchDiff={onFetchDiff}
-      />
 
       <div
         className={styles.body}

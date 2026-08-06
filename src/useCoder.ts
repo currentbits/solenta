@@ -44,6 +44,8 @@ export interface UseCoderResult {
   stopRun: () => Promise<void>;
   setPermissionMode: (mode: PermissionMode) => Promise<void>;
   setupWorktree: () => Promise<ThreadInfo | null>;
+  mergeWorktree: () => Promise<ThreadInfo | null>;
+  removeWorktree: (force?: boolean) => Promise<ThreadInfo | null>;
   fetchDiff: () => Promise<DiffResult>;
   projectById: Map<string, ProjectInfo>;
 }
@@ -268,11 +270,8 @@ export function useCoder(): UseCoderResult {
     [api, selectedThreadId, applyThreads],
   );
 
-  const setupWorktree = useCallback(async () => {
-    if (!selectedThreadId) return null;
-    const threadId = selectedThreadId;
-    try {
-      const thread = await api.git.setupWorktree({ threadId });
+  const applyThreadUpdate = useCallback(
+    (thread: ThreadInfo) => {
       applyThreads(
         threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
       );
@@ -281,22 +280,53 @@ export function useCoder(): UseCoderResult {
           ? { ...prev, thread }
           : prev,
       );
-      // Refresh detail in case main also mutates other fields.
+    },
+    [applyThreads],
+  );
+
+  const setupWorktree = useCallback(async () => {
+    if (!selectedThreadId) return null;
+    const threadId = selectedThreadId;
+    const thread = await api.git.setupWorktree({ threadId });
+    if (selectedRef.current !== threadId) return thread;
+    applyThreadUpdate(thread);
+    // Refresh detail in case main also mutates other fields.
+    const d = await api.threads.get(threadId);
+    if (selectedRef.current === threadId) setDetail(d);
+    return thread;
+  }, [api, selectedThreadId, applyThreadUpdate]);
+
+  const mergeWorktree = useCallback(async () => {
+    if (!selectedThreadId) return null;
+    const threadId = selectedThreadId;
+    const thread = await api.git.mergeWorktree({ threadId });
+    if (selectedRef.current !== threadId) return thread;
+    applyThreadUpdate(thread);
+    const d = await api.threads.get(threadId);
+    if (selectedRef.current === threadId) setDetail(d);
+    return thread;
+  }, [api, selectedThreadId, applyThreadUpdate]);
+
+  const removeWorktree = useCallback(
+    async (force = false) => {
+      if (!selectedThreadId) return null;
+      const threadId = selectedThreadId;
+      const thread = await api.git.removeWorktree({ threadId, force });
+      if (selectedRef.current !== threadId) return thread;
+      applyThreadUpdate(thread);
       const d = await api.threads.get(threadId);
       if (selectedRef.current === threadId) setDetail(d);
-      setError(null);
       return thread;
-    } catch (err) {
-      setError({ scope: "run", message: errorMessage(err) });
-      throw err;
-    }
-  }, [api, selectedThreadId, applyThreads]);
+    },
+    [api, selectedThreadId, applyThreadUpdate],
+  );
 
   const fetchDiff = useCallback(async () => {
     if (!selectedThreadId) {
       return { files: [], patch: "", truncated: false };
     }
-    return api.git.diff({ threadId: selectedThreadId });
+    const threadId = selectedThreadId;
+    return api.git.diff({ threadId });
   }, [api, selectedThreadId]);
 
   return {
@@ -316,6 +346,8 @@ export function useCoder(): UseCoderResult {
     stopRun,
     setPermissionMode,
     setupWorktree,
+    mergeWorktree,
+    removeWorktree,
     fetchDiff,
     projectById,
   };
