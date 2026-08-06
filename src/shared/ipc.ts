@@ -35,8 +35,10 @@ export interface ThreadInfo {
   runStartedAt: number | null;
   /** Archived threads keep their history but are hidden from the default sidebar list. */
   archived: boolean;
-  /** Agent harness backing this thread. "claude" (default), "generic", or "simulate". */
+  /** Agent harness backing this thread: a ProviderInfo.id ("claude", "codex", "grok", "opencode", "simulate"). */
   provider: string;
+  /** Model override passed to the provider CLI when set (e.g. claude --model). */
+  model: string | null;
   /** Provider session id, persisted after the first turn so follow-ups resume context. */
   sessionId: string | null;
   /** Passed to the provider CLI (claude --permission-mode). Sticky per thread. */
@@ -152,7 +154,22 @@ export interface GitStatus {
   dirty: boolean;
 }
 
+export interface ProviderInfo {
+  id: string;
+  /** Display name, e.g. "Claude Code". */
+  name: string;
+  /** Whether the CLI binary was found on this machine. */
+  available: boolean;
+  /** Whether follow-up turns resume a persistent session. */
+  supportsResume: boolean;
+  /** Selectable model ids for the picker; empty = no model choice. */
+  models: string[];
+}
+
 export interface CoderApi {
+  providers: {
+    list(): Promise<ProviderInfo[]>;
+  };
   projects: {
     list(): Promise<ProjectInfo[]>;
     /** Validates the path is a git repo; rejects otherwise. */
@@ -168,6 +185,13 @@ export interface CoderApi {
     setPermissionMode(input: { threadId: string; mode: PermissionMode }): Promise<ThreadInfo>;
     /** Archive or unarchive; archived threads are hidden by default but fully intact. */
     setArchived(input: { threadId: string; archived: boolean }): Promise<ThreadInfo>;
+    /**
+     * Sets the thread's provider and/or model. Rejects once the thread has a
+     * sessionId (context lives with the provider; switching would lose it).
+     * Model alone may still be changed between turns for providers whose
+     * sessions tolerate it (claude); implementations reject otherwise.
+     */
+    setProvider(input: { threadId: string; provider?: string; model?: string | null }): Promise<ThreadInfo>;
     /**
      * Permanently deletes the thread with its messages and work log. Rejects
      * while a run is active, and rejects when the thread still has a worktree
