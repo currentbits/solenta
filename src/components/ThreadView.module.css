@@ -48,6 +48,102 @@
   display: flex;
   gap: 8px;
   flex-shrink: 0;
+  align-items: center;
+}
+
+.menuWrap {
+  position: relative;
+}
+
+.menuBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 30px;
+  padding: 0;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text-muted);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1;
+}
+
+.menuBtn:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--card-hover);
+}
+
+.menuBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  min-width: 168px;
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.menuItem {
+  display: block;
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: 4px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 500;
+  text-align: left;
+}
+
+.menuItem:hover {
+  background: var(--card);
+}
+
+.menuItemDanger {
+  color: var(--danger);
+}
+
+.menuItemDanger:hover {
+  background: rgba(248, 113, 113, 0.12);
+}
+
+.menuConfirm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 6px 6px 4px;
+  max-width: 220px;
+}
+
+.menuConfirmText {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+
+.menuConfirmActions {
+  display: flex;
+  gap: 4px;
+}
+
+.menuConfirmActions .menuItem {
+  flex: 1;
+  text-align: center;
+  padding: 6px 8px;
 }
 
 .btn {

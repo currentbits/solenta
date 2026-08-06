@@ -20,6 +20,8 @@ export default function App() {
     startRun,
     stopRun,
     setPermissionMode,
+    setArchived,
+    deleteThread,
     setupWorktree,
     mergeWorktree,
     removeWorktree,
@@ -74,6 +76,8 @@ export default function App() {
         onStartRun={(prompt) => startRun(prompt)}
         onStopRun={() => stopRun()}
         onSetPermissionMode={(mode) => setPermissionMode(mode)}
+        onSetArchived={(archived) => setArchived(archived)}
+        onDeleteThread={() => deleteThread()}
         changesOpen={changesOpen}
         changesNonce={changesNonce}
         onCloseChanges={() => setChangesOpen(false)}

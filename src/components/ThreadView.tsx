@@ -27,6 +27,10 @@ interface ThreadViewProps {
   onStartRun: (prompt: string) => void | Promise<void>;
   onStopRun: () => void | Promise<void>;
   onSetPermissionMode: (mode: PermissionMode) => void | Promise<void>;
+  /** Archive or unarchive the open thread. */
+  onSetArchived: (archived: boolean) => void | Promise<void>;
+  /** Permanently delete the open thread (caller already confirmed in UI). */
+  onDeleteThread: () => void | Promise<void>;
   /** Center Changes panel open (lifted so the Git tab can open it). */
   changesOpen: boolean;
   /** Bumps on each open request so a re-open reloads the diff. */
@@ -314,6 +318,8 @@ export function ThreadView({
   onStartRun,
   onStopRun,
   onSetPermissionMode,
+  onSetArchived,
+  onDeleteThread,
   changesOpen,
   changesNonce,
   onCloseChanges,
@@ -324,6 +330,9 @@ export function ThreadView({
   const bodyRef = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
   const prevThreadId = useRef<string | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState(false);
 
   const runningAgents = useMemo(() => {
     if (!detail?.workflow) return 0;
@@ -366,6 +375,7 @@ export function ThreadView({
   }, [detail, latestWorkLogRunId]);
 
   const isWorking = detail?.thread.status === "working";
+  const isArchived = Boolean(detail?.thread.archived);
   const emptyMessages = detail != null && detail.messages.length === 0;
   const hasTimeline = timeline.length > 0;
   const hasWorktree = Boolean(detail?.thread.worktreePath);
@@ -375,8 +385,32 @@ export function ThreadView({
     if (id !== prevThreadId.current) {
       prevThreadId.current = id;
       stickToBottom.current = true;
+      setMenuOpen(false);
+      setDeleteConfirm(false);
     }
   }, [detail?.thread.id]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      if (!menuRef.current?.contains(e.target as Node)) {
+        setMenuOpen(false);
+        setDeleteConfirm(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setMenuOpen(false);
+        setDeleteConfirm(false);
+      }
+    };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [menuOpen]);
 
   useEffect(() => {
     const el = bodyRef.current;
@@ -437,6 +471,78 @@ export function ThreadView({
           <button type="button" className={`${styles.btn} ${styles.btnPrimary}`}>
             Push
           </button>
+          <div className={styles.menuWrap} ref={menuRef}>
+            <button
+              type="button"
+              className={styles.menuBtn}
+              aria-label="Thread actions"
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              disabled={isWorking}
+              onClick={() => {
+                if (isWorking) return;
+                setMenuOpen((v) => !v);
+                setDeleteConfirm(false);
+              }}
+            >
+              ···
+            </button>
+            {menuOpen && (
+              <div className={styles.menu} role="menu">
+                {deleteConfirm ? (
+                  <div className={styles.menuConfirm}>
+                    <p className={styles.menuConfirmText}>
+                      Delete permanently? This removes all messages.
+                    </p>
+                    <div className={styles.menuConfirmActions}>
+                      <button
+                        type="button"
+                        className={`${styles.menuItem} ${styles.menuItemDanger}`}
+                        role="menuitem"
+                        onClick={() => {
+                          setMenuOpen(false);
+                          setDeleteConfirm(false);
+                          void onDeleteThread();
+                        }}
+                      >
+                        Confirm
+                      </button>
+                      <button
+                        type="button"
+                        className={styles.menuItem}
+                        role="menuitem"
+                        onClick={() => setDeleteConfirm(false)}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      className={styles.menuItem}
+                      role="menuitem"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        void onSetArchived(!isArchived);
+                      }}
+                    >
+                      {isArchived ? "Unarchive thread" : "Archive thread"}
+                    </button>
+                    <button
+                      type="button"
+                      className={`${styles.menuItem} ${styles.menuItemDanger}`}
+                      role="menuitem"
+                      onClick={() => setDeleteConfirm(true)}
+                    >
+                      Delete thread
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </header>
 
@@ -507,7 +613,12 @@ export function ThreadView({
         onPermissionModeChange={onSetPermissionMode}
         sessionId={thread.sessionId}
         hasWorktree={hasWorktree}
-        disabled={isWorking}
+        disabled={isWorking || isArchived}
+        placeholder={
+          isArchived
+            ? "Unarchive to continue this thread"
+            : undefined
+        }
         onBuild={onStartRun}
         error={runError}
         onDismissError={onDismissRunError}

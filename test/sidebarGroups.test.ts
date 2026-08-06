@@ -25,6 +25,7 @@ function thread(
     status: partial.status ?? "idle",
     createdAt: partial.createdAt ?? partial.updatedAt,
     runStartedAt: partial.runStartedAt ?? null,
+    archived: partial.archived ?? false,
     provider: partial.provider ?? "claude",
     sessionId: partial.sessionId ?? null,
     permissionMode: partial.permissionMode ?? "default",

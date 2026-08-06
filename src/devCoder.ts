@@ -104,6 +104,7 @@ function seedThreads(projects: ProjectInfo[]): ThreadInfo[] {
       createdAt: t0 - ageMs - 60 * 60 * 1000,
       updatedAt,
       runStartedAt: card.status === "working" ? t0 - workingMs : null,
+      archived: false,
       provider: isSimulate ? "simulate" : index % 3 === 0 ? "generic" : "claude",
       sessionId: isSimulate
         ? "sim-seed-session-aabbccdd"
@@ -652,6 +653,11 @@ function fakeDiff(thread: ThreadInfo): DiffResult {
 
 const EMPTY_DIFF: DiffResult = { files: [], patch: "", truncated: false };
 
+/** Factory for tests / isolated in-memory sessions. */
+export function createDevCoder(): CoderApi {
+  return buildDevCoder();
+}
+
 function buildDevCoder(): CoderApi {
   const projects = seedProjects();
   let threads = seedThreads(projects);
@@ -889,6 +895,7 @@ function buildDevCoder(): CoderApi {
           createdAt: now(),
           updatedAt: now(),
           runStartedAt: null,
+          archived: false,
           provider: "claude",
           sessionId: null,
           permissionMode: "default",
@@ -925,6 +932,43 @@ function buildDevCoder(): CoderApi {
         syncThreadRow(thread);
         emitDetail(detail);
         return { ...thread };
+      },
+      async setArchived(input) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
+        // Archive bookkeeping is not "activity"; leave updatedAt alone.
+        const thread: ThreadInfo = {
+          ...detail.thread,
+          archived: input.archived,
+        };
+        detail.thread = thread;
+        details.set(input.threadId, detail);
+        syncThreadRow(thread);
+        emitDetail(detail);
+        return { ...thread };
+      },
+      async delete(input) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
+        if (
+          detail.thread.status === "working" ||
+          runTimers.has(input.threadId)
+        ) {
+          // Match electron/services.js deleteThread exactly.
+          throw new Error("Cannot delete thread while a run is active");
+        }
+        if (detail.thread.worktreePath) {
+          // Match electron/services.js deleteThread exactly.
+          throw new Error(
+            "Thread still has a worktree. Merge or delete it in the Git tab first.",
+          );
+        }
+        clearRunTimer(input.threadId);
+        runStates.delete(input.threadId);
+        clearedDiff.delete(input.threadId);
+        details.delete(input.threadId);
+        threads = threads.filter((t) => t.id !== input.threadId);
+        emitThreads();
       },
     },
     runs: {

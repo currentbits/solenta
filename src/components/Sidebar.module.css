@@ -237,6 +237,45 @@
   font-family: var(--mono);
 }
 
+.archivedTag {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 5px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border-soft);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-dim);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.card[data-archived="true"] {
+  opacity: 0.55;
+}
+
+.card[data-archived="true"] .cardTitle {
+  color: var(--text-muted);
+}
+
+.archivedToggle {
+  align-self: flex-start;
+  margin: 0 8px 2px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 550;
+  text-align: left;
+}
+
+.archivedToggle:hover {
+  color: var(--text-muted);
+  background: var(--card);
+}
+
 .cardMeta {
   display: flex;
   align-items: center;

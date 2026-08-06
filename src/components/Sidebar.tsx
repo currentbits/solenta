@@ -87,6 +87,7 @@ function ThreadCard({
       type="button"
       className={styles.card}
       data-active={active}
+      data-archived={thread.archived ? "true" : undefined}
       onClick={() => onSelect(thread.id)}
     >
       <div className={styles.cardTop}>
@@ -100,6 +101,9 @@ function ThreadCard({
         <span className={styles.providerTag}>{thread.provider}</span>
         {thread.worktreePath && (
           <span className={styles.worktreeTag}>wt</span>
+        )}
+        {thread.archived && (
+          <span className={styles.archivedTag}>archived</span>
         )}
       </div>
       <div className={styles.cardMeta}>
@@ -126,6 +130,8 @@ export function Sidebar({
   const [projectsOpen, setProjectsOpen] = useState(true);
   const [query, setQuery] = useState("");
   const [now, setNow] = useState(() => Date.now());
+  /** Project ids whose archived threads are shown inline. */
+  const [showArchived, setShowArchived] = useState<Set<string>>(() => new Set());
 
   // One shared interval for the whole list (age + working elapsed).
   useEffect(() => {
@@ -167,6 +173,15 @@ export function Sidebar({
     }
     return buildSidebarGroups(projects, filtered);
   }, [projects, filtered, searching]);
+
+  const toggleArchived = (groupKey: string) => {
+    setShowArchived((prev) => {
+      const next = new Set(prev);
+      if (next.has(groupKey)) next.delete(groupKey);
+      else next.add(groupKey);
+      return next;
+    });
+  };
 
   const canCreate = projects.length > 0;
 
@@ -249,16 +264,21 @@ export function Sidebar({
                 ? projectById.get(groupThreads[0].projectId)?.slug
                 : undefined) ??
               "unknown";
+            const activeThreads = groupThreads.filter((t) => !t.archived);
+            const archivedThreads = groupThreads.filter((t) => t.archived);
+            const archivedExpanded = showArchived.has(groupKey);
+            const hasAnyThreads = groupThreads.length > 0;
+
             return (
               <div key={groupKey} className={styles.group}>
                 <div className={styles.groupHeader}>
                   <span className={styles.groupSlug}>{slug}</span>
                   <span className={styles.groupCount}>
-                    {groupThreads.length}
+                    {activeThreads.length}
                   </span>
                 </div>
 
-                {groupThreads.length === 0 ? (
+                {!hasAnyThreads ? (
                   <div className={styles.emptyGroup}>
                     <span className={styles.emptyThreads}>No threads yet</span>
                     {project && (
@@ -273,7 +293,7 @@ export function Sidebar({
                   </div>
                 ) : (
                   <>
-                    {groupThreads.map((thread) => (
+                    {activeThreads.map((thread) => (
                       <ThreadCard
                         key={thread.id}
                         thread={thread}
@@ -283,6 +303,29 @@ export function Sidebar({
                         onSelect={onSelectThread}
                       />
                     ))}
+                    {archivedExpanded &&
+                      archivedThreads.map((thread) => (
+                        <ThreadCard
+                          key={thread.id}
+                          thread={thread}
+                          slug={slug}
+                          active={thread.id === activeThreadId}
+                          now={now}
+                          onSelect={onSelectThread}
+                        />
+                      ))}
+                    {archivedThreads.length > 0 && (
+                      <button
+                        type="button"
+                        className={styles.archivedToggle}
+                        onClick={() => toggleArchived(groupKey)}
+                        aria-expanded={archivedExpanded}
+                      >
+                        {archivedExpanded
+                          ? "Hide archived"
+                          : `${archivedThreads.length} archived`}
+                      </button>
+                    )}
                     {project && (
                       <button
                         type="button"

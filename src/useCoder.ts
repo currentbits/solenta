@@ -8,6 +8,7 @@ import type {
   ThreadInfo,
 } from "./shared/ipc";
 import { devCoder } from "./devCoder";
+import { nextVisibleThreadId } from "./threadSelection";
 
 function resolveApi(): CoderApi {
   const w = window as unknown as { coder?: CoderApi };
@@ -47,6 +48,10 @@ export interface UseCoderResult {
   startRun: (prompt: string) => Promise<void>;
   stopRun: () => Promise<void>;
   setPermissionMode: (mode: PermissionMode) => Promise<void>;
+  /** Archive or unarchive the selected thread. Archiving moves selection off it. */
+  setArchived: (archived: boolean) => Promise<void>;
+  /** Permanently delete the selected thread (after caller confirms). */
+  deleteThread: () => Promise<void>;
   setupWorktree: () => Promise<ThreadInfo | null>;
   mergeWorktree: () => Promise<ThreadInfo | null>;
   removeWorktree: (force?: boolean) => Promise<ThreadInfo | null>;
@@ -118,8 +123,8 @@ export function useCoder(): UseCoderResult {
         const source =
           threadsListGen.current === loadGen ? list : threadsRef.current;
         const preferred =
-          source.find((t) => t.status === "working")?.id ??
-          source[0]?.id ??
+          source.find((t) => !t.archived && t.status === "working")?.id ??
+          source.find((t) => !t.archived)?.id ??
           null;
         setSelectedThreadId((prev) => prev ?? preferred);
         if (selectedRef.current == null && preferred) {
@@ -274,6 +279,54 @@ export function useCoder(): UseCoderResult {
     [api, selectedThreadId, applyThreads],
   );
 
+  const setArchived = useCallback(
+    async (archived: boolean) => {
+      if (!selectedThreadId) return;
+      const threadId = selectedThreadId;
+      try {
+        const thread = await api.threads.setArchived({ threadId, archived });
+        if (selectedRef.current !== threadId) return;
+        const next = threadsRef.current.map((t) =>
+          t.id === thread.id ? thread : t,
+        );
+        applyThreads(next);
+        if (archived) {
+          const nextId = nextVisibleThreadId(next, threadId);
+          setSelectedThreadId(nextId);
+          if (nextId == null) setDetail(null);
+        } else {
+          setDetail((prev) =>
+            prev && prev.thread.id === thread.id
+              ? { ...prev, thread }
+              : prev,
+          );
+        }
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+      }
+    },
+    [api, selectedThreadId, applyThreads],
+  );
+
+  const deleteThread = useCallback(async () => {
+    if (!selectedThreadId) return;
+    const threadId = selectedThreadId;
+    try {
+      await api.threads.delete({ threadId });
+      const list = await api.threads.list();
+      applyThreads(list);
+      if (selectedRef.current === threadId) {
+        const nextId = nextVisibleThreadId(list, threadId);
+        setSelectedThreadId(nextId);
+        setDetail(null);
+      }
+      setError(null);
+    } catch (err) {
+      setError({ scope: "run", message: errorMessage(err) });
+    }
+  }, [api, selectedThreadId, applyThreads]);
+
   const applyThreadUpdate = useCallback(
     (thread: ThreadInfo) => {
       applyThreads(
@@ -349,6 +402,8 @@ export function useCoder(): UseCoderResult {
     startRun,
     stopRun,
     setPermissionMode,
+    setArchived,
+    deleteThread,
     setupWorktree,
     mergeWorktree,
     removeWorktree,
