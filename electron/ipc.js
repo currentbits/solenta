@@ -9,6 +9,7 @@ const {
   removeWorktree,
   push,
 } = require("./worktrees.js");
+const { createMemoryProxy } = require("./memory-proxy.js");
 
 /**
  * Register all invoke handlers from the ipc contract.
@@ -20,6 +21,7 @@ const {
  * @param {ReturnType<import('./runner').createRunner>} deps.runner
  * @param {(channel: string, payload: unknown) => void} [deps.broadcast]
  * @param {string} [deps.worktreeBase] - base dir for git worktrees
+ * @param {string} [deps.userDataPath] - app userData for memory-server.json
  */
 function registerIpc(deps) {
   const { ipcMain, dialog, store, runner } = deps;
@@ -35,6 +37,8 @@ function registerIpc(deps) {
     });
 
   const worktreeBase = deps.worktreeBase || "";
+  const userDataPath = deps.userDataPath || "";
+  const memory = createMemoryProxy({ userDataPath });
 
   ipcMain.handle("projects:list", async () => {
     return services.listProjects(store);
@@ -99,6 +103,22 @@ function registerIpc(deps) {
 
   ipcMain.handle("app:status", async () => {
     return services.appStatus(store);
+  });
+
+  ipcMain.handle("memory:search", async (_event, input) => {
+    return memory.search(input || { query: "" });
+  });
+
+  ipcMain.handle("memory:recent", async (_event, input) => {
+    return memory.recent(input || {});
+  });
+
+  ipcMain.handle("memory:get", async (_event, input) => {
+    return memory.get(input || { id: "" });
+  });
+
+  ipcMain.handle("memory:store", async (_event, input) => {
+    return memory.store(input);
   });
 
   ipcMain.handle("settings:get", async () => {

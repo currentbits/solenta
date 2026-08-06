@@ -35,6 +35,12 @@ const coder = {
   app: {
     status: () => invoke("app:status"),
   },
+  memory: {
+    search: (input) => invoke("memory:search", input),
+    recent: (input) => invoke("memory:recent", input),
+    get: (input) => invoke("memory:get", input),
+    store: (input) => invoke("memory:store", input),
+  },
   settings: {
     get: () => invoke("settings:get"),
     set: (patch) => invoke("settings:set", patch),

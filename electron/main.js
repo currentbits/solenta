@@ -105,6 +105,7 @@ app.whenReady().then(async () => {
     runner,
     broadcast,
     worktreeBase: path.join(userData, "worktrees"),
+    userDataPath: userData,
   });
 
   createWindow();

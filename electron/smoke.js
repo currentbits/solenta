@@ -341,6 +341,7 @@ app
       runner,
       broadcast,
       worktreeBase,
+      userDataPath: userData,
     });
 
     const win = new BrowserWindow({
