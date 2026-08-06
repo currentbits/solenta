@@ -4,6 +4,7 @@ import type {
   AppStatus,
   CoderApi,
   DiffResult,
+  MemoryEntryInfo,
   PermissionMode,
   ProjectInfo,
   ProviderInfo,
@@ -97,6 +98,19 @@ export interface UseCoderResult {
   /** Re-fetch app.status() (e.g. after a run settles). */
   refreshStatus: () => Promise<void>;
   projectById: Map<string, ProjectInfo>;
+  /** Thin memory passthroughs; callers hold list/search state locally. */
+  searchMemory: (input: {
+    query: string;
+    project?: string;
+  }) => Promise<MemoryEntryInfo[]>;
+  recentMemory: (input?: { limit?: number }) => Promise<MemoryEntryInfo[]>;
+  getMemory: (input: { id: string }) => Promise<MemoryEntryInfo>;
+  storeMemory: (input: {
+    type: MemoryEntryInfo["type"];
+    title: string;
+    body: string;
+    project?: string;
+  }) => Promise<{ id: string }>;
 }
 
 export function useCoder(): UseCoderResult {
@@ -586,6 +600,39 @@ export function useCoder(): UseCoderResult {
     [api, refreshStatus],
   );
 
+  const searchMemory = useCallback(
+    async (input: { query: string; project?: string }) => {
+      return api.memory.search(input);
+    },
+    [api],
+  );
+
+  const recentMemory = useCallback(
+    async (input?: { limit?: number }) => {
+      return api.memory.recent(input);
+    },
+    [api],
+  );
+
+  const getMemory = useCallback(
+    async (input: { id: string }) => {
+      return api.memory.get(input);
+    },
+    [api],
+  );
+
+  const storeMemory = useCallback(
+    async (input: {
+      type: MemoryEntryInfo["type"];
+      title: string;
+      body: string;
+      project?: string;
+    }) => {
+      return api.memory.store(input);
+    },
+    [api],
+  );
+
   return {
     api,
     projects,
@@ -621,5 +668,9 @@ export function useCoder(): UseCoderResult {
     saveSettings,
     refreshStatus,
     projectById,
+    searchMemory,
+    recentMemory,
+    getMemory,
+    storeMemory,
   };
 }

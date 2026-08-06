@@ -13,6 +13,7 @@ import type {
   ChatMessage,
   CoderApi,
   DiffResult,
+  MemoryEntryInfo,
   PermissionMode,
   ProjectInfo,
   ProviderInfo,
@@ -25,6 +26,122 @@ import type {
   WorkflowView,
 } from "./shared/ipc";
 import { mockData } from "./mockData.ts";
+
+const MEMORY_EXCERPT_LEN = 160;
+const MEMORY_NOT_FOUND = "Memory entry not found";
+
+/** Full in-memory store rows; list/search return excerpts. */
+interface MemoryRow {
+  id: string;
+  type: MemoryEntryInfo["type"];
+  title: string;
+  body: string;
+  project: string | null;
+  importance: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+function toIso(ms: number): string {
+  return new Date(ms).toISOString();
+}
+
+function excerptBody(body: string): string {
+  if (body.length <= MEMORY_EXCERPT_LEN) return body;
+  return `${body.slice(0, MEMORY_EXCERPT_LEN - 1)}…`;
+}
+
+function toListEntry(row: MemoryRow): MemoryEntryInfo {
+  return {
+    id: row.id,
+    type: row.type,
+    title: row.title,
+    body: excerptBody(row.body),
+    project: row.project,
+    importance: row.importance,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+function toFullEntry(row: MemoryRow): MemoryEntryInfo {
+  return {
+    id: row.id,
+    type: row.type,
+    title: row.title,
+    body: row.body,
+    project: row.project,
+    importance: row.importance,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+function seedMemoryEntries(t0: number): MemoryRow[] {
+  const hours = (h: number) => toIso(t0 - h * 60 * 60 * 1000);
+  return [
+    {
+      id: "mem-seed-1",
+      type: "convention",
+      title: "Never use em dashes in UI copy",
+      body: "Global preference: do not use em dashes in user-facing strings. Prefer periods, commas, colons, parentheses, or a plain hyphen.",
+      project: null,
+      importance: 5,
+      createdAt: hours(48),
+      updatedAt: hours(6),
+    },
+    {
+      id: "mem-seed-2",
+      type: "knowledge",
+      title: "Worktree dirty reject marker",
+      body: "Git removeWorktree rejections that list dirty paths are prefixed with WORKTREE_DIRTY: so the Git tab can strip Electron invoke wrappers and show only the file list.",
+      project: "coder",
+      importance: 4,
+      createdAt: hours(36),
+      updatedAt: hours(12),
+    },
+    {
+      id: "mem-seed-3",
+      type: "task",
+      title: "Add Memory tab to renderer",
+      body: "Right panel third tab with search, recent list, expand-to-full get, and store form. Dev stub always running.",
+      project: "coder",
+      importance: 3,
+      createdAt: hours(4),
+      updatedAt: hours(1),
+    },
+    {
+      id: "mem-seed-4",
+      type: "knowledge",
+      title: "Session usage only after first turn",
+      body: "ThreadDetail.usage stays null until the provider reports tokens. Session card shows \"No usage yet\" in that state.",
+      project: "pingdotgg/t3code",
+      importance: 3,
+      createdAt: hours(72),
+      updatedAt: hours(24),
+    },
+    {
+      id: "mem-seed-5",
+      type: "run",
+      title: "Simulate workflow mid-run seed",
+      body: "The active simulate thread boots with a half-settled workflow so Agents tab demos live phase chips without starting a run.",
+      project: "coder",
+      importance: 1,
+      createdAt: hours(10),
+      updatedAt: hours(8),
+    },
+    {
+      id: "mem-seed-6",
+      type: "convention",
+      title: "selectedRef guard after await",
+      body: "Any useCoder action that applies results to state after an await must check selectedRef.current still matches the thread id captured before the call.",
+      project: null,
+      importance: 5,
+      createdAt: hours(20),
+      updatedAt: hours(2),
+    },
+  ];
+}
 
 /** Mirrors electron/providers.js registry for browser/dev demos. */
 const DEV_PROVIDERS: ProviderInfo[] = [
@@ -1053,6 +1170,8 @@ function buildDevCoder(): CoderApi {
   /** Aggregated cost of finished fake runs this session (stands in for "today"). */
   let spendTodayUsd = 0;
   let dailyBudgetUsd: number | null = null;
+  /** Shared-memory stub (always running in dev). */
+  let memoryEntries: MemoryRow[] = seedMemoryEntries(now());
 
   for (const t of threads) {
     if (t.id === mockData.activeThreadId) {
@@ -1305,6 +1424,71 @@ function buildDevCoder(): CoderApi {
             port: 49999,
           },
         };
+      },
+    },
+    memory: {
+      async search(input: {
+        query: string;
+        project?: string;
+      }): Promise<MemoryEntryInfo[]> {
+        const q = input.query.trim().toLowerCase();
+        if (!q) return [];
+        let rows = memoryEntries.filter((row) => {
+          const hay = `${row.title}\n${row.body}`.toLowerCase();
+          return hay.includes(q);
+        });
+        if (input.project != null && input.project !== "") {
+          rows = rows.filter((row) => row.project === input.project);
+        }
+        rows = [...rows].sort((a, b) =>
+          a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0,
+        );
+        return rows.map(toListEntry);
+      },
+      async recent(input?: { limit?: number }): Promise<MemoryEntryInfo[]> {
+        const limit =
+          input?.limit != null && input.limit > 0 ? Math.floor(input.limit) : 20;
+        const rows = [...memoryEntries].sort((a, b) =>
+          a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0,
+        );
+        return rows.slice(0, limit).map(toListEntry);
+      },
+      async get(input: { id: string }): Promise<MemoryEntryInfo> {
+        const row = memoryEntries.find((e) => e.id === input.id);
+        if (!row) throw new Error(MEMORY_NOT_FOUND);
+        return toFullEntry(row);
+      },
+      async store(input: {
+        type: MemoryEntryInfo["type"];
+        title: string;
+        body: string;
+        project?: string;
+      }): Promise<{ id: string }> {
+        const title = input.title.trim();
+        const body = input.body.trim();
+        if (!title) throw new Error("Title is required");
+        if (!body) throw new Error("Body is required");
+        const ts = toIso(now());
+        const entry: MemoryRow = {
+          id: id("mem"),
+          type: input.type,
+          title,
+          body,
+          project:
+            input.project != null && input.project !== ""
+              ? input.project
+              : null,
+          importance:
+            input.type === "convention"
+              ? 5
+              : input.type === "run"
+                ? 1
+                : 3,
+          createdAt: ts,
+          updatedAt: ts,
+        };
+        memoryEntries = [entry, ...memoryEntries];
+        return { id: entry.id };
       },
     },
     settings: {

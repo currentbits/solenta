@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type {
   AgentStatus,
+  MemoryEntryInfo,
   PhaseView,
   ProjectInfo,
   ProviderInfo,
@@ -15,9 +16,10 @@ import {
   providerDisplayName,
   shortSessionId,
 } from "../format";
+import { MemoryTab } from "./MemoryTab";
 import styles from "./AgentsPanel.module.css";
 
-type PanelTab = "agents" | "git";
+type PanelTab = "agents" | "git" | "memory";
 
 interface AgentsPanelProps {
   workflow: WorkflowView | null;
@@ -30,6 +32,18 @@ interface AgentsPanelProps {
   onRemoveWorktree: (force?: boolean) => Promise<unknown>;
   /** Opens the center-pane Changes panel (fresh load). */
   onViewChanges: () => void;
+  searchMemory: (input: {
+    query: string;
+    project?: string;
+  }) => Promise<MemoryEntryInfo[]>;
+  recentMemory: (input?: { limit?: number }) => Promise<MemoryEntryInfo[]>;
+  getMemory: (input: { id: string }) => Promise<MemoryEntryInfo>;
+  storeMemory: (input: {
+    type: MemoryEntryInfo["type"];
+    title: string;
+    body: string;
+    project?: string;
+  }) => Promise<{ id: string }>;
 }
 
 type PhaseChipStatus = "done" | "active" | "pending" | "failed";
@@ -624,6 +638,10 @@ export function AgentsPanel({
   onMergeWorktree,
   onRemoveWorktree,
   onViewChanges,
+  searchMemory,
+  recentMemory,
+  getMemory,
+  storeMemory,
 }: AgentsPanelProps) {
   const [tab, setTab] = useState<PanelTab>("agents");
 
@@ -646,6 +664,14 @@ export function AgentsPanel({
         >
           Git
         </button>
+        <button
+          type="button"
+          className={styles.tab}
+          data-active={tab === "memory"}
+          onClick={() => setTab("memory")}
+        >
+          Memory
+        </button>
       </header>
 
       {tab === "agents" ? (
@@ -655,7 +681,7 @@ export function AgentsPanel({
           usage={usage}
           providers={providers}
         />
-      ) : (
+      ) : tab === "git" ? (
         <GitTab
           thread={thread}
           project={project}
@@ -663,6 +689,14 @@ export function AgentsPanel({
           onMergeWorktree={onMergeWorktree}
           onRemoveWorktree={onRemoveWorktree}
           onViewChanges={onViewChanges}
+        />
+      ) : (
+        <MemoryTab
+          projectSlug={project?.slug ?? null}
+          searchMemory={searchMemory}
+          recentMemory={recentMemory}
+          getMemory={getMemory}
+          storeMemory={storeMemory}
         />
       )}
     </aside>

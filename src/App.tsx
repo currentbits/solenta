@@ -38,6 +38,10 @@ export default function App() {
     settings,
     saveSettings,
     projectById,
+    searchMemory,
+    recentMemory,
+    getMemory,
+    storeMemory,
   } = useCoder();
 
   const [changesOpen, setChangesOpen] = useState(false);
@@ -120,6 +124,10 @@ export default function App() {
         onMergeWorktree={() => mergeWorktree()}
         onRemoveWorktree={(force) => removeWorktree(force)}
         onViewChanges={openChanges}
+        searchMemory={searchMemory}
+        recentMemory={recentMemory}
+        getMemory={getMemory}
+        storeMemory={storeMemory}
       />
       <SettingsModal
         open={settingsOpen}
