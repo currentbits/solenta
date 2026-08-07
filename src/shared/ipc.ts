@@ -199,6 +199,18 @@ export interface AppStatus {
     running: boolean;
     adopted: boolean;
     port: number | null;
+    /** Live counts from the server; null when it is not running. */
+    entries: number | null;
+    vectors: number | null;
+    /** Last janitor step failure, or null when clean/unknown. */
+    lastError: string | null;
+  };
+  /** Which build is running: a stale packaged bundle looks like a broken app. */
+  build: {
+    version: string;
+    /** Short commit the bundle was packaged from; null in a dev tree. */
+    sha: string | null;
+    time: string | null;
   };
 }
 
@@ -234,6 +246,13 @@ export interface CoderApi {
       body: string;
       project?: string;
     }): Promise<{ id: string }>;
+    /**
+     * Corrects an entry by superseding it: the old row is retained and marked,
+     * a new row carries the corrected content. Returns the successor id.
+     */
+    update(input: { id: string; title: string; body: string }): Promise<{ id: string }>;
+    /** Permanently removes an entry and its dependents (vectors, mentions, queue rows). */
+    remove(input: { id: string }): Promise<void>;
   };
   settings: {
     get(): Promise<AppSettings>;
