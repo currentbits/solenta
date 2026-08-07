@@ -1,5 +1,6 @@
 "use strict";
 
+
 const { createMemoryProxy } = require("./memory-proxy.js");
 
 const TITLE_MAX = 80;
@@ -101,10 +102,10 @@ async function recordRunOutcome(args, deps = {}) {
       type: "run",
       title,
       body,
-      project:
-        project && project.slug != null && project.slug !== ""
-          ? String(project.slug)
-          : null,
+      // Send the repo PATH raw: the memory server canonicalizes every
+      // boundary (paths, worktrees, owner/repo slugs) to one key. A second
+      // implementation here could only drift out of sync with it.
+      project: project && project.path ? String(project.path) : null,
     };
 
     let proxy = deps.proxy;

@@ -272,10 +272,8 @@ function createRunner(opts) {
     const project = store.getProject(thread.projectId);
     return {
       sessionId: thread.id,
-      project:
-        project && project.slug != null && project.slug !== ""
-          ? String(project.slug)
-          : null,
+      // Raw repo path; the memory server canonicalizes it (see project-key.js there).
+      project: project && project.path ? String(project.path) : null,
       threadTitle: thread.title != null ? String(thread.title) : "",
       agent: thread.provider != null ? String(thread.provider) : "unknown",
     };

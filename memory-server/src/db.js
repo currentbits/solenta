@@ -1,6 +1,7 @@
 import { DatabaseSync } from 'node:sqlite'
 import fs from 'node:fs'
 import path from 'node:path'
+import { canonicalProject } from './project-key.js'
 
 /**
  * @param {import('node:sqlite').DatabaseSync} db
@@ -315,6 +316,51 @@ export function createSchema(db) {
     // Non-fatal like the janitor: a corrupt graph must not brick Memory boot.
     console.error('normalizeEntities failed (non-fatal):', err)
   }
+
+  try {
+    normalizeProjectKeys(db)
+  } catch (err) {
+    console.error('normalizeProjectKeys failed (non-fatal):', err)
+  }
+}
+
+/**
+ * One-time-per-boot repair of mixed project keys.
+ *
+ * Historically three shapes landed in the same column: absolute worktree
+ * paths (agents sending their cwd), display slugs like "owner/repo", and
+ * plain slugs. Nothing matched anything, so project-scoped retrieval silently
+ * degraded to global-only. Rewrite every row to the canonical key.
+ * Idempotent: canonical values map to themselves.
+ * @param {import('node:sqlite').DatabaseSync} db
+ * @returns {number} rows rewritten
+ */
+export function normalizeProjectKeys(db) {
+  let changed = 0
+  for (const table of ['entries', 'session_messages']) {
+    let rows
+    try {
+      rows = db
+        .prepare(`SELECT DISTINCT project FROM ${table} WHERE project IS NOT NULL`)
+        .all()
+    } catch {
+      continue // table not present yet on an older schema
+    }
+    for (const { project } of rows) {
+      // A path that no longer exists (e.g. a pruned worktree) cannot be
+      // resolved to its main repo, and rewriting it to its own basename would
+      // freeze a bogus per-worktree project forever. Leave it; a live path
+      // will migrate on a later boot.
+      if (project.startsWith('/') && !fs.existsSync(project)) continue
+      const canon = canonicalProject(project)
+      if (canon === project) continue
+      const res = db
+        .prepare(`UPDATE ${table} SET project = ? WHERE project = ?`)
+        .run(canon, project)
+      changed += res.changes ?? 0
+    }
+  }
+  return changed
 }
 
 /**

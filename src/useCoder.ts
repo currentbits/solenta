@@ -622,14 +622,14 @@ export function useCoder(): UseCoderResult {
           : undefined;
       // Electron proxy may still ignore project on recent. Over-fetch so a
       // client-side filter can still surface project rows buried past limit 20.
-      const fetchLimit = project ? Math.max(wantLimit, 100) : wantLimit;
-      let list = await api.memory.recent({
-        limit: fetchLimit,
+      // The server canonicalizes the project key (display slugs like
+      // "owner/repo" and cwd paths both map to the repo-root basename), so it
+      // is authoritative: a client-side equality filter here would compare the
+      // canonical key against the raw display slug and drop every row.
+      const list = await api.memory.recent({
+        limit: wantLimit,
         ...(project ? { project } : {}),
       });
-      if (project) {
-        list = list.filter((e) => e.project === project);
-      }
       return list.slice(0, wantLimit);
     },
     [api],

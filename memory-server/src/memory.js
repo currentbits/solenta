@@ -9,6 +9,7 @@ import {
   EMBED_MAX_CHARS,
 } from './embedder.js'
 import { contentTokens, jaccard, queueReview } from './review.js'
+import { canonicalProject } from './project-key.js'
 
 export { contentTokens, jaccard, queueReview }
 
@@ -289,7 +290,11 @@ export class Memory {
     const importance = input.importance ?? IMPORTANCE_DEFAULT[input.type]
     const title = cleanText('title', input.title)
     const body = cleanText('body', input.body)
-    const project = input.project === undefined ? null : cleanText('project', input.project)
+    // Canonical key: agents send cwd paths, the app sends slugs; unify both.
+    const project =
+      input.project === undefined
+        ? null
+        : canonicalProject(cleanText('project', input.project))
     const agent = cleanOptional(input.agent)
 
     // Write-time dedup: Jaccard vs live same-project-or-global (cap 500 most recent).
@@ -736,7 +741,7 @@ export class Memory {
   async search(opts) {
     const query = cleanText('query', opts.query)
     const match = ftsQuery(query)
-    const project = cleanOptional(opts.project)
+    const project = canonicalProject(cleanOptional(opts.project))
     const wantLimit = clampLimit(opts.limit, DEFAULT_SEARCH_LIMIT)
     const excerptTokens = Math.min(64, SEARCH_EXCERPT_TOKENS)
     const fetchLimit = Math.max(wantLimit * 4, 40)
@@ -903,11 +908,12 @@ export class Memory {
 
     const title = fields.title !== undefined ? cleanText('title', fields.title) : old.title
     const body = fields.body !== undefined ? cleanText('body', fields.body) : old.body
+    // Canonicalize on supersede too: a successor must scope like its parent.
     const project =
       fields.project !== undefined
         ? fields.project === null
           ? null
-          : cleanText('project', fields.project)
+          : canonicalProject(cleanText('project', fields.project))
         : old.project
     const agent = fields.agent !== undefined ? cleanOptional(fields.agent) : old.agent
     let status = fields.status !== undefined ? fields.status : old.status
@@ -970,7 +976,7 @@ export class Memory {
    * @param {{ project?: string }} opts
    */
   bootstrap(opts = {}) {
-    const project = cleanOptional(opts.project)
+    const project = canonicalProject(cleanOptional(opts.project))
 
     const conventionsRaw = this.db
       .prepare(
@@ -1075,7 +1081,7 @@ export class Memory {
    */
   recent(opts = {}) {
     const limit = clampLimit(opts.limit, 20, RECENT_MAX)
-    const project = cleanOptional(opts.project)
+    const project = canonicalProject(cleanOptional(opts.project))
     const type = opts.type ? cleanText('type', opts.type) : null
     if (type && !ENTRY_TYPES.has(type)) {
       throw new Error(`invalid type '${type}'`)
@@ -1186,7 +1192,7 @@ export class Memory {
     if (content.length > SESSION_CONTENT_MAX) {
       content = content.slice(0, SESSION_CONTENT_MAX)
     }
-    const project = cleanOptional(input.project)
+    const project = canonicalProject(cleanOptional(input.project))
     const threadTitle = cleanOptional(input.threadTitle)
     const agent = cleanOptional(input.agent)
     const now = new Date().toISOString()
@@ -1211,7 +1217,7 @@ export class Memory {
     const query = cleanText('query', opts.query)
     const match = ftsQuery(query)
     if (!match) return []
-    const project = cleanOptional(opts.project)
+    const project = canonicalProject(cleanOptional(opts.project))
     const wantLimit = clampLimit(opts.limit, SESSION_SEARCH_DEFAULT, SESSION_SEARCH_MAX)
     const excerptTokens = Math.min(64, SEARCH_EXCERPT_TOKENS)
 
@@ -1350,7 +1356,7 @@ export class Memory {
    * @param {{ project?: string, now?: number }} [opts]
    */
   maintenance(opts = {}) {
-    const project = cleanOptional(opts.project)
+    const project = canonicalProject(cleanOptional(opts.project))
     const now = opts.now ?? Date.now()
     const agingCutoff = new Date(now - AGING_RUN_DAYS * 86_400_000).toISOString()
 

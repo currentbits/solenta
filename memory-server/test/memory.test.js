@@ -171,7 +171,7 @@ describe('memory core', () => {
       type: 'knowledge',
       title: 'Old fact',
       body: 'v1 body',
-      project: '/tmp/p',
+      project: 'p',
     })
     const { id: newId } = memory.supersede(oldId, { title: 'New fact', body: 'v2 body' })
     assert.notEqual(newId, oldId)
@@ -181,9 +181,9 @@ describe('memory core', () => {
     const neu = memory.get(newId)
     assert.equal(neu.title, 'New fact')
     assert.equal(neu.body, 'v2 body')
-    assert.equal(neu.project, '/tmp/p')
+    assert.equal(neu.project, 'p')
     // search should not return superseded
-    const hits = await memory.search({ query: 'fact', project: '/tmp/p' })
+    const hits = await memory.search({ query: 'fact', project: 'p' })
     assert.ok(hits.every((h) => h.id !== oldId))
   })
 

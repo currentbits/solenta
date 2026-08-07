@@ -214,7 +214,7 @@ describe("recordRunOutcome unit", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("posts type run with title, body footer, and project slug", async () => {
+  it("posts type run with title, body footer, and canonical project key", async () => {
     fake = await startCaptureServer(port, TOKEN);
     const thread = {
       id: "t1",
@@ -222,7 +222,7 @@ describe("recordRunOutcome unit", () => {
       provider: "claude",
       model: "claude-sonnet-5",
     };
-    const project = { id: "p1", slug: "acme/app", name: "app", path: "/x" };
+    const project = { id: "p1", slug: "acme/app", name: "app", path: "/code/app-fork" };
     await recordRunOutcome(
       {
         thread,
@@ -245,7 +245,10 @@ describe("recordRunOutcome unit", () => {
     assert.equal(fake.bodies.length, 1);
     const body = fake.bodies[0];
     assert.equal(body.type, "run");
-    assert.equal(body.project, "acme/app");
+    // The app sends the repo PATH raw; the memory server canonicalizes it.
+    // Fixture deliberately differs from the slug tail ("app") so a
+    // slug-based regression cannot pass by coincidence.
+    assert.equal(body.project, "/code/app-fork");
     assert.equal(body.title, "claude run: Fix the flaky test");
     assert.match(body.body, /^All green now\./);
     assert.match(
@@ -358,7 +361,11 @@ describe("auto-record on real run terminals", () => {
 
     const body = fake.bodies[0];
     assert.equal(body.type, "run");
-    assert.equal(body.project, project.slug);
+    // The app posts the repo PATH; the memory server canonicalizes it to the
+    // repo-root basename (see memory-server/src/project-key.js). Asserting the
+    // path here keeps this test about what the app SENDS; the canonicalization
+    // contract is pinned by memory-server/test/project-key.test.js.
+    assert.equal(body.project, project.path);
     assert.ok(body.title.length <= 80);
     assert.ok(body.title.startsWith("claude run: "));
     assert.match(body.body, /Final answer from assistant/);
@@ -386,7 +393,11 @@ describe("auto-record on real run terminals", () => {
     const body = fake.bodies[0];
     assert.equal(body.type, "run");
     assert.match(body.body, /status=failed/);
-    assert.equal(body.project, project.slug);
+    // The app posts the repo PATH; the memory server canonicalizes it to the
+    // repo-root basename (see memory-server/src/project-key.js). Asserting the
+    // path here keeps this test about what the app SENDS; the canonicalization
+    // contract is pinned by memory-server/test/project-key.test.js.
+    assert.equal(body.project, project.path);
   });
 
   it("records stopped when user stops a run", async () => {
@@ -409,7 +420,11 @@ describe("auto-record on real run terminals", () => {
     const body = fake.bodies[0];
     assert.equal(body.type, "run");
     assert.match(body.body, /status=stopped/);
-    assert.equal(body.project, project.slug);
+    // The app posts the repo PATH; the memory server canonicalizes it to the
+    // repo-root basename (see memory-server/src/project-key.js). Asserting the
+    // path here keeps this test about what the app SENDS; the canonicalization
+    // contract is pinned by memory-server/test/project-key.test.js.
+    assert.equal(body.project, project.path);
   });
 
   it("no-op without memory: run still completes, no crash", async () => {
@@ -482,7 +497,11 @@ describe("auto-record on real run terminals", () => {
 
     const body = fake.bodies[0];
     assert.equal(body.type, "run");
-    assert.equal(body.project, project.slug);
+    // The app posts the repo PATH; the memory server canonicalizes it to the
+    // repo-root basename (see memory-server/src/project-key.js). Asserting the
+    // path here keeps this test about what the app SENDS; the canonicalization
+    // contract is pinned by memory-server/test/project-key.test.js.
+    assert.equal(body.project, project.path);
     assert.ok(body.title.startsWith("claude run:") || /run:/.test(body.title));
     assert.match(body.body, /Synthesized final answer|status=done/);
     assert.match(body.body, /status=done/);

@@ -43,11 +43,19 @@ function resetMemorySupForTests() {
  */
 function getClaudeMcpArgs() {
   if (!globalStatus.running || !globalMcpConfigPath) return [];
-  // MUST be the single equals form: the claude CLI treats a space-separated
-  // `--mcp-config <path>` as variadic and swallows the trailing PROMPT as a
-  // second config path, failing every real run with
+  // Both flags MUST use the single equals form: the claude CLI treats the
+  // space-separated variants as variadic and swallows the trailing PROMPT as
+  // another value, failing every real run with
   // "MCP config file not found: <prompt text>".
-  return [`--mcp-config=${globalMcpConfigPath}`];
+  //
+  // The allow rule is required, not cosmetic: in headless -p runs there is
+  // nobody to approve a tool prompt, so without it every memory call is
+  // silently denied (permission_denials) and the agent reports no memory.
+  // Scope is exactly our own server's tools; nothing else is pre-approved.
+  return [
+    `--mcp-config=${globalMcpConfigPath}`,
+    "--allowedTools=mcp__coder-memory__*",
+  ];
 }
 
 /**

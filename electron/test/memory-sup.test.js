@@ -165,11 +165,14 @@ describe("memory-sup supervisor", () => {
       assert.equal(st.adopted, true);
       assert.equal(st.port, port);
 
-      // Single equals-form arg: the CLI's space form is variadic and would
-      // swallow the trailing prompt as a second config path.
+      // Equals-form args only: the CLI's space forms are variadic and would
+      // swallow the trailing prompt. The allow rule is required so headless
+      // runs can actually call the memory tools instead of being denied.
       const mcpArgs = getClaudeMcpArgs();
-      assert.equal(mcpArgs.length, 1);
+      assert.equal(mcpArgs.length, 2);
       assert.ok(mcpArgs[0].startsWith("--mcp-config="));
+      assert.equal(mcpArgs[1], "--allowedTools=mcp__coder-memory__*");
+      assert.ok(!mcpArgs.some((a) => a === "--mcp-config" || a === "--allowedTools"));
       const mcpPath = mcpArgs[0].slice("--mcp-config=".length);
       assert.ok(fs.existsSync(mcpPath));
       const mcp = JSON.parse(fs.readFileSync(mcpPath, "utf8"));

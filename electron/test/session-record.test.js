@@ -444,7 +444,11 @@ describe("auto session-record on real runs", () => {
     const userBody = fake.sessionBodies.find((b) => b.role === "user");
     assert.ok(userBody);
     assert.equal(userBody.sessionId, thread.id);
-    assert.equal(userBody.project, project.slug);
+    // The app posts the repo PATH; the memory server canonicalizes it to the
+    // repo-root basename (see memory-server/src/project-key.js). Asserting the
+    // path here keeps this test about what the app SENDS; the canonicalization
+    // contract is pinned by memory-server/test/project-key.test.js.
+    assert.equal(userBody.project, project.path);
     assert.equal(userBody.threadTitle, "User record title");
     assert.equal(userBody.agent, "claude");
     assert.equal(userBody.role, "user");
@@ -487,7 +491,11 @@ describe("auto session-record on real runs", () => {
     );
     assert.match(assistantBodies[0].content, /Hello world! done|done/);
     assert.equal(assistantBodies[0].sessionId, thread.id);
-    assert.equal(assistantBodies[0].project, project.slug);
+    // The app posts the repo PATH; the memory server canonicalizes it to the
+    // repo-root basename (see memory-server/src/project-key.js). Asserting the
+    // path here keeps this test about what the app SENDS; the canonicalization
+    // contract is pinned by memory-server/test/project-key.test.js.
+    assert.equal(assistantBodies[0].project, project.path);
     assert.equal(assistantBodies[0].agent, "claude");
   });
 
