@@ -67,6 +67,18 @@ function broadcast(channel, payload) {
 }
 
 app.whenReady().then(async () => {
+  // Dev dock icon; the packaged app gets its icon from CFBundleIconFile.
+  if (process.platform === "darwin" && app.dock) {
+    try {
+      const dockIcon = path.join(__dirname, "../assets/icon-512.png");
+      if (fs.existsSync(dockIcon)) {
+        app.dock.setIcon(dockIcon);
+      }
+    } catch {
+      // cosmetic only
+    }
+  }
+
   const coreIndex = assertCoreBuilt();
   const core = await import(pathToFileURL(coreIndex).href);
 

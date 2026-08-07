@@ -4,8 +4,6 @@
 # Electron.app (no electron-builder / electron-packager; npm blocks native
 # postinstalls on this machine).
 #
-# TODO: custom app icon (CFBundleIconFile / .icns) — skipped this round.
-#
 # Usage:
 #   bash scripts/package-app.sh           # package + verify
 #   bash scripts/package-app.sh --no-verify
@@ -156,9 +154,20 @@ if [[ -f "$PLIST" ]]; then
     || /usr/libexec/PlistBuddy -c "Add :CFBundleIdentifier string com.willem.coder" "$PLIST"
   /usr/libexec/PlistBuddy -c "Set :CFBundleExecutable Coder" "$PLIST" 2>/dev/null \
     || /usr/libexec/PlistBuddy -c "Add :CFBundleExecutable string Coder" "$PLIST"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleIconFile Coder" "$PLIST" 2>/dev/null \
+    || /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string Coder" "$PLIST"
 else
   echo "WARNING: Info.plist missing at $PLIST" >&2
 fi
+
+# ---------------------------------------------------------------------------
+# App icon (regenerate when missing, then bundle)
+# ---------------------------------------------------------------------------
+if [[ ! -f assets/Coder.icns ]]; then
+  bash scripts/make-icon.sh
+fi
+cp assets/Coder.icns "out/Coder.app/Contents/Resources/Coder.icns"
+echo "icon: Contents/Resources/Coder.icns"
 
 # ---------------------------------------------------------------------------
 # Report size
