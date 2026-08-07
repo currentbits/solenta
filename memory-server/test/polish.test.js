@@ -42,25 +42,25 @@ describe('round-22 polish', () => {
       )
     })
 
-    it('cross-scope duplicate (global vs project) downgrades to warn/enqueue', () => {
+    it('cross-scope entries are not compared at all (no block, no queue)', () => {
+      // Memory is project-scoped: a GLOBAL entry and a PROJECT entry never
+      // interact, so an identical body is neither refused nor flagged.
       const g = memory.store({ type: 'convention', title: 'Dup base', body: BODY })
-      // A project write overlapping a GLOBAL entry must NOT be refused.
       const p = memory.store({
         type: 'knowledge',
         title: 'Dup base',
         body: BODY,
         project: 'p1',
       })
-      assert.ok(p.id)
-      // ...but it must land in the review queue as a near_dup pair.
+      assert.ok(p.id, 'a project write must not be blocked by a global entry')
       const open = memory.db
         .prepare(
           `SELECT COUNT(*) AS n FROM review_queue
-           WHERE kind = 'near_dup' AND resolved_at IS NULL
+           WHERE resolved_at IS NULL
              AND ((entry_a = ? AND entry_b = ?) OR (entry_a = ? AND entry_b = ?))`,
         )
         .get(p.id, g.id, g.id, p.id).n
-      assert.equal(open, 1)
+      assert.equal(open, 0, 'cross-scope pairs must not enter the review queue')
     })
 
     it('same-scope blockable candidate is not shadowed by a stronger cross-scope one', () => {

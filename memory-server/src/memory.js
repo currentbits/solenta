@@ -52,7 +52,22 @@ const SECTION_BUDGETS = {
 }
 
 /** Live = not superseded and not invalidated. Used on every read surface. */
-export function liveSql(alias = '') {
+export /**
+ * Project scope predicate. Memory is PROJECT-SCOPED: asking about project X
+ * returns X's entries and nothing else, for agents and for the UI alike. An
+ * omitted project means "no scope given" and matches everything, which is how
+ * unscoped browsing and cross-project maintenance still work.
+ *
+ * Deliberately NOT "project rows plus global rows": leaking one project's
+ * memory into another is the failure this scoping exists to prevent.
+ * @param {string} [col] column prefix, e.g. 'e'
+ */
+function projectScopeSql(col) {
+  const c = col ? `${col}.project` : 'project'
+  return `(? IS NULL OR ${c} = ?)`
+}
+
+function liveSql(alias = '') {
   const p = alias ? `${alias}.` : ''
   return `${p}superseded_by IS NULL AND ${p}invalid_at IS NULL`
 }
@@ -412,11 +427,11 @@ export class Memory {
       .prepare(
         `SELECT id, title, body, project FROM entries
          WHERE ${liveSql()}
-           AND (? IS NULL OR project IS NULL OR project = ?)
+           AND project IS ?
          ORDER BY created_at DESC, rowid DESC
          LIMIT ?`,
       )
-      .all(project, project, DEDUP_SCAN_CAP)
+      .all(project, DEDUP_SCAN_CAP)
 
     // Prefer the strongest same-scope candidate so a blockable duplicate is
     // never shadowed by a slightly-stronger cross-scope one.
@@ -585,7 +600,7 @@ export class Memory {
            FROM entries e
            WHERE e.id IN (${ePlace})
              AND ${liveSql('e')}
-             AND (? IS NULL OR e.project IS NULL OR e.project = ?)`,
+             AND ${projectScopeSql('e')}`,
         )
         .all(...entryIds, project, project)
 
@@ -635,7 +650,7 @@ export class Memory {
            JOIN entries e ON e.id = v.entry_id
            WHERE v.model = ?
              AND ${liveSql('e')}
-             AND (? IS NULL OR e.project IS NULL OR e.project = ?)`,
+             AND ${projectScopeSql('e')}`,
         )
         .all(this.embedder.model, project, project)
 
@@ -760,7 +775,7 @@ export class Memory {
              JOIN entries e ON e.rowid = entries_fts.rowid
              WHERE entries_fts MATCH ?
                AND ${liveSql('e')}
-               AND (? IS NULL OR e.project IS NULL OR e.project = ?)
+               AND ${projectScopeSql('e')}
              ORDER BY score DESC
              LIMIT ?`,
           )
@@ -982,32 +997,32 @@ export class Memory {
       .prepare(
         `SELECT id, title, body, importance, created_at FROM entries
          WHERE type = 'convention' AND ${liveSql()}
-           AND (project IS NULL OR project = ?)
+           AND (? IS NULL OR project = ?)
          ORDER BY importance DESC, created_at DESC
          LIMIT 50`,
       )
-      .all(project)
+      .all(project, project)
 
     const knowledgeRaw = this.db
       .prepare(
         `SELECT id, title, body, importance, created_at FROM entries
          WHERE type = 'knowledge' AND ${liveSql()}
-           AND (project IS NULL OR project = ?)
+           AND (? IS NULL OR project = ?)
          ORDER BY importance DESC, created_at DESC
          LIMIT 50`,
       )
-      .all(project)
+      .all(project, project)
 
     const tasksRaw = this.db
       .prepare(
         `SELECT id, title, body, status, agent, project, created_at, updated_at FROM entries
          WHERE type = 'task' AND ${liveSql()}
            AND COALESCE(status, 'active') = 'active'
-           AND (project IS NULL OR project = ?)
+           AND (? IS NULL OR project = ?)
          ORDER BY updated_at DESC, created_at DESC
          LIMIT 50`,
       )
-      .all(project)
+      .all(project, project)
 
     const conventions = applyTokenBudget(
       conventionsRaw,
@@ -1092,7 +1107,7 @@ export class Memory {
         `SELECT id, type, title, body, project, agent, status, created_at, updated_at, importance
          FROM entries
          WHERE ${liveSql()}
-           AND (? IS NULL OR project IS NULL OR project = ?)
+           AND ${projectScopeSql()}
            AND (? IS NULL OR type = ?)
          ORDER BY created_at DESC
          LIMIT ?`,
@@ -1233,7 +1248,7 @@ export class Memory {
            FROM session_messages_fts
            JOIN session_messages m ON m.id = session_messages_fts.rowid
            WHERE session_messages_fts MATCH ?
-             AND (? IS NULL OR m.project IS NULL OR m.project = ?)
+             AND ${projectScopeSql('m')}
            ORDER BY bm25(session_messages_fts), m.created_at DESC
            LIMIT ?`,
         )
@@ -1399,7 +1414,7 @@ export class Memory {
       .prepare(
         `SELECT id, title, body, created_at FROM entries
          WHERE ${liveSql()}
-           AND (? IS NULL OR project IS NULL OR project = ?)
+           AND ${projectScopeSql()}
          ORDER BY created_at DESC
          LIMIT ?`,
       )
@@ -1437,7 +1452,7 @@ export class Memory {
       .prepare(
         `SELECT id, title, created_at, project FROM entries
          WHERE type = 'run' AND ${liveSql()} AND created_at < ?
-           AND (? IS NULL OR project IS NULL OR project = ?)
+           AND ${projectScopeSql()}
          ORDER BY created_at ASC
          LIMIT ?`,
       )
@@ -1452,7 +1467,7 @@ export class Memory {
       .prepare(
         `SELECT id, title, length(body) AS chars, created_at FROM entries
          WHERE type = 'convention' AND ${liveSql()} AND length(body) > ?
-           AND (? IS NULL OR project IS NULL OR project = ?)
+           AND ${projectScopeSql()}
          ORDER BY chars DESC
          LIMIT ?`,
       )

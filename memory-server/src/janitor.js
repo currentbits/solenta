@@ -12,7 +12,7 @@ export const DEDUP_WARN = 0.4
 /**
  * Incremental contradiction-candidate scan. Watermarked on entries.rowid so each
  * live knowledge/convention entry is examined once. A pair is flagged when two live
- * same-project-or-global knowledge/convention entries share >=2 mentioned entities,
+ * same-project knowledge/convention entries share >=2 mentioned entities,
  * or >=1 shared entity with title+body Jaccard >= 0.4. Best-effort: any error logs
  * and returns 0 without aborting the rest of the janitor.
  * @param {import('node:sqlite').DatabaseSync} db
@@ -53,7 +53,7 @@ export function scanContradictions(db) {
          AND p.type IN ('knowledge','convention')
          AND p.superseded_by IS NULL
          AND p.invalid_at IS NULL
-         AND (? IS NULL OR p.project IS NULL OR p.project = ?)
+         AND p.project IS ?  -- same scope only; memory is project-scoped
        GROUP BY p.id`,
     )
 
@@ -62,7 +62,7 @@ export function scanContradictions(db) {
     for (const cand of candidates) {
       maxRowid = Math.max(maxRowid, cand.rowid)
       const myTokens = contentTokens(`${cand.title} ${cand.body}`)
-      const partners = partnersFor.all(cand.id, cand.id, cand.project, cand.project)
+      const partners = partnersFor.all(cand.id, cand.id, cand.project)
       for (const p of partners) {
         const strong = p.shared >= 2
         const weak =

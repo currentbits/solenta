@@ -177,3 +177,83 @@ describe('normalizeProjectKeys migration', () => {
     db.close()
   })
 })
+
+describe('memory is project-scoped (no global leakage)', () => {
+  let dir
+  let memory
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'coder-scope-'))
+    memory = new Memory(path.join(dir, 'mem.db'), { embedder: fakeEmbedder(8) })
+    memory.store({
+      type: 'convention',
+      title: 'Global rule narwhal',
+      body: 'a machine-wide convention about the narwhal linter',
+    })
+    memory.store({
+      type: 'knowledge',
+      title: 'Project fact narwhal',
+      body: 'a coder-specific note about the narwhal linter',
+      project: 'coder',
+      force: true,
+    })
+    memory.store({
+      type: 'knowledge',
+      title: 'Other project narwhal',
+      body: 'an unrelated note about the narwhal linter elsewhere',
+      project: 'other',
+      force: true,
+    })
+  })
+  afterEach(() => {
+    memory.close?.()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('search in a project returns ONLY that project (no global, no siblings)', async () => {
+    const hits = await memory.search({ query: 'narwhal', project: 'coder' })
+    assert.deepEqual(
+      hits.map((h) => h.title).sort(),
+      ['Project fact narwhal'],
+      `expected only the coder entry, got ${JSON.stringify(hits.map((h) => h.title))}`,
+    )
+  })
+
+  it('recent in a project returns ONLY that project', () => {
+    const rows = memory.recent({ limit: 20, project: 'coder' })
+    assert.deepEqual(rows.map((r) => r.title), ['Project fact narwhal'])
+  })
+
+  it('bootstrap in a project does not serve another project or global rules', async () => {
+    const brief = JSON.stringify(await memory.bootstrap({ project: 'coder' }))
+    assert.ok(brief.includes('Project fact narwhal'))
+    assert.ok(!brief.includes('Global rule narwhal'), 'global rule leaked into a project briefing')
+    assert.ok(!brief.includes('Other project narwhal'), 'sibling project leaked')
+  })
+
+  it('transcripts scope the same way', () => {
+    memory.recordSession({
+      sessionId: 's-g',
+      threadTitle: 't',
+      agent: 'claude',
+      role: 'user',
+      content: 'global transcript narwhal line',
+    })
+    memory.recordSession({
+      sessionId: 's-c',
+      project: 'coder',
+      threadTitle: 't',
+      agent: 'claude',
+      role: 'user',
+      content: 'coder transcript narwhal line',
+    })
+    const hits = memory.sessionSearch({ query: 'narwhal', project: 'coder' })
+    assert.equal(hits.length, 1)
+    assert.equal(hits[0].sessionId, 's-c')
+  })
+
+  it('an unscoped query still sees everything (maintenance and browsing)', async () => {
+    const all = await memory.search({ query: 'narwhal' })
+    assert.equal(all.length, 3)
+  })
+})

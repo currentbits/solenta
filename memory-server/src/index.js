@@ -12,7 +12,7 @@ import { runJanitor, readJanitorSnapshot } from './janitor.js'
 import { createRealEmbedder, semanticEnabled } from './embedder.js'
 
 const INSTRUCTIONS =
-  'Coder shared memory. MEMORY PREFLIGHT: at session start call memory_bootstrap with project set to your working directory and treat its conventions as standing instructions. While working, store durable non-obvious findings (decisions, gotchas, conventions) with memory_store; before finishing, record what a future agent must know. Search returns excerpts; use memory_get for full bodies. Record notable turns with session_record; session_search finds past conversation excerpts. memory_maintenance reports queue items to resolve with memory_resolve.'
+  'Coder shared memory, PROJECT-SCOPED: everything you read and write belongs to the project you name, and other projects never see it. MEMORY PREFLIGHT: at session start call memory_bootstrap with project set to your working directory and treat its conventions as standing instructions. Always pass that same project on every memory call. While working, store durable non-obvious findings (decisions, gotchas, conventions) with memory_store; before finishing, record what a future agent must know. Search returns excerpts; use memory_get for full bodies. Record notable turns with session_record; session_search finds past conversation excerpts. memory_maintenance reports queue items to resolve with memory_resolve.'
 
 export function defaultRoot() {
   return process.platform === 'darwin'

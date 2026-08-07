@@ -144,7 +144,7 @@ describe('recordSession / sessionSearch / pruneSessions', () => {
     assert.equal(h.hint, undefined)
   })
 
-  it('project scoping matches entries: own project + NULL project, not other projects', () => {
+  it('project scoping matches ONLY the named project (no global, no siblings)', () => {
     memory.recordSession({
       sessionId: 's-a',
       project: 'proj-a',
@@ -165,7 +165,9 @@ describe('recordSession / sessionSearch / pruneSessions', () => {
 
     const hits = memory.sessionSearch({ query: 'sharedscopemarker', project: 'proj-a' })
     const sessions = hits.map((h) => h.sessionId).sort()
-    assert.deepEqual(sessions, ['s-a', 's-null'])
+    // Project-scoped: the unscoped ('s-null') transcript belongs to no project
+    // and must NOT surface inside proj-a.
+    assert.deepEqual(sessions, ['s-a'])
   })
 
   it('orders by bm25 then created_at DESC on ties', () => {

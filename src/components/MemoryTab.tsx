@@ -73,9 +73,7 @@ export function MemoryTab({
   const [formType, setFormType] = useState<StoreType>("knowledge");
   const [formTitle, setFormTitle] = useState("");
   const [formBody, setFormBody] = useState("");
-  const [formProjectOnly, setFormProjectOnly] = useState(false);
   /** List filter: pass selected thread project into search/recent (off by default). */
-  const [filterThisProject, setFilterThisProject] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [now, setNow] = useState(() => Date.now());
@@ -86,7 +84,6 @@ export function MemoryTab({
   const mountedRef = useRef(true);
   /** Latest search box text for Retry after not-running. */
   const queryRef = useRef(query);
-  const filterThisProjectRef = useRef(filterThisProject);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -104,25 +101,20 @@ export function MemoryTab({
   }, [query]);
 
   useEffect(() => {
-    filterThisProjectRef.current = filterThisProject;
-  }, [filterThisProject]);
-
-  useEffect(() => {
     const handle = window.setInterval(() => setNow(Date.now()), 60_000);
     return () => window.clearInterval(handle);
   }, []);
 
-  /** Project slug when the list filter is on and a thread project is known. */
-  const listProjectFilter =
-    filterThisProject && projectSlug ? projectSlug : undefined;
+  // Memory is project-scoped: when a project is selected the tab shows that
+  // project and nothing else. No opt-in toggle; cross-project browsing is not
+  // a thing the server offers for a scoped query.
+  const listProjectFilter = projectSlug ?? undefined;
 
   const loadRecent = useCallback(async () => {
     const gen = ++listGen.current;
     setLoading(true);
     try {
-      const project =
-        filterThisProjectRef.current && projectSlug ? projectSlug : undefined;
-      // useCoder over-fetches + filters when project is set (proxy may ignore it).
+      const project = projectSlug ?? undefined;
       const list = await recentMemory({
         limit: RECENT_LIMIT,
         ...(project ? { project } : {}),
@@ -156,8 +148,7 @@ export function MemoryTab({
       const gen = ++listGen.current;
       setLoading(true);
       try {
-        const project =
-          filterThisProjectRef.current && projectSlug ? projectSlug : undefined;
+        const project = projectSlug ?? undefined;
         const list = await searchMemory({
           query: q,
           ...(project ? { project } : {}),
@@ -266,23 +257,18 @@ export function MemoryTab({
       setFormError("Body is required");
       return;
     }
-    if (formProjectOnly && !projectSlug) {
-      setFormError("No project selected for this thread");
-      return;
-    }
-
     setSaving(true);
     try {
       await storeMemory({
         type: formType,
         title,
         body,
-        ...(formProjectOnly && projectSlug ? { project: projectSlug } : {}),
+        // Always belongs to the current project when there is one.
+        ...(projectSlug ? { project: projectSlug } : {}),
       });
       if (!mountedRef.current) return;
       setFormTitle("");
       setFormBody("");
-      setFormProjectOnly(false);
       setFormType("knowledge");
       setServerDown(false);
       setQuery("");
@@ -332,18 +318,9 @@ export function MemoryTab({
           onChange={(e) => setQuery(e.target.value)}
           aria-label="Search shared memory"
         />
-        <label className={styles.filterLabel}>
-          <input
-            type="checkbox"
-            checked={filterThisProject}
-            onChange={(e) => setFilterThisProject(e.target.checked)}
-            disabled={!projectSlug}
-          />
-          <span>
-            this project
-            {projectSlug ? ` (${projectSlug})` : ""}
-          </span>
-        </label>
+        <span className={styles.filterLabel} title="Memory is scoped to this project">
+          {projectSlug ? projectSlug : "all projects"}
+        </span>
       </div>
 
       <div className={styles.list}>
@@ -453,18 +430,11 @@ export function MemoryTab({
           rows={3}
           aria-label="Memory body"
         />
-        <label className={styles.checkboxLabel}>
-          <input
-            type="checkbox"
-            checked={formProjectOnly}
-            onChange={(e) => setFormProjectOnly(e.target.checked)}
-            disabled={!projectSlug}
-          />
-          <span>
-            this project only
-            {projectSlug ? ` (${projectSlug})` : ""}
-          </span>
-        </label>
+        <p className={styles.checkboxLabel}>
+          {projectSlug
+            ? `Saved to ${projectSlug}`
+            : "Saved without a project (select a thread to scope it)"}
+        </p>
         {formError && (
           <p className={styles.formError} role="alert">
             {formError}
