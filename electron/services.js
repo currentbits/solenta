@@ -350,6 +350,17 @@ function listThreads(store) {
 }
 
 /**
+ * Full-content search across titles and message text.
+ * @param {import('./store').Store} store
+ * @param {{ query?: string }} [input]
+ */
+function searchThreads(store, input) {
+  const query =
+    input && input.query != null ? String(input.query) : "";
+  return store.searchThreads(query);
+}
+
+/**
  * @param {import('./store').Store} store
  * @param {string} threadId
  * @param {object | null} [workflow]
@@ -602,6 +613,7 @@ module.exports = {
   setArchived,
   deleteThread,
   listThreads,
+  searchThreads,
   getThreadDetail,
   gitStatus,
   listProjects,

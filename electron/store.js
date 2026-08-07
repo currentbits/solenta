@@ -475,6 +475,51 @@ class Store {
   }
 
   /**
+   * Full-content thread search: titles + message text, case-insensitive
+   * substring. Includes archived. Ordered by updatedAt DESC, max 50.
+   * Empty / 1-char queries return [] (renderer only calls with 2+ chars).
+   * @param {unknown} query
+   * @returns {object[]}
+   */
+  searchThreads(query) {
+    const raw = query == null ? "" : String(query).trim();
+    if (raw.length < 2) return [];
+    const needle = raw.toLowerCase();
+    /** @type {object[]} */
+    const hits = [];
+    for (const thread of this.data.threads) {
+      if (!thread || typeof thread !== "object") continue;
+      let match = false;
+      if (
+        thread.title != null &&
+        String(thread.title).toLowerCase().includes(needle)
+      ) {
+        match = true;
+      }
+      if (!match) {
+        const msgs = this.data.messagesByThread[thread.id];
+        if (Array.isArray(msgs)) {
+          for (const m of msgs) {
+            if (
+              m &&
+              m.text != null &&
+              String(m.text).toLowerCase().includes(needle)
+            ) {
+              match = true;
+              break;
+            }
+          }
+        }
+      }
+      if (match) hits.push(thread);
+    }
+    hits.sort(
+      (a, b) => (Number(b.updatedAt) || 0) - (Number(a.updatedAt) || 0),
+    );
+    return hits.slice(0, 50);
+  }
+
+  /**
    * Permanently remove a thread and every per-thread keyed map entry
    * (messages, work log, session usage, any future *ByThread map).
    * Does not save; caller must save.

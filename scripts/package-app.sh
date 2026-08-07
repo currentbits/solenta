@@ -1,0 +1,157 @@
+#!/usr/bin/env bash
+# package-app.sh — dependency-free macOS packaging for Coder.
+# Assembles a double-clickable out/Coder.app by dropping the app into a stock
+# Electron.app (no electron-builder / electron-packager; npm blocks native
+# postinstalls on this machine).
+#
+# TODO: custom app icon (CFBundleIconFile / .icns) — skipped this round.
+#
+# Usage:
+#   bash scripts/package-app.sh           # package + verify
+#   bash scripts/package-app.sh --no-verify
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT"
+
+NO_VERIFY=0
+for arg in "$@"; do
+  case "$arg" in
+    --no-verify) NO_VERIFY=1 ;;
+  esac
+done
+
+# ---------------------------------------------------------------------------
+# Preconditions
+# ---------------------------------------------------------------------------
+
+if [[ ! -d dist ]]; then
+  echo "dist/ missing; running npx vite build..."
+  npx vite build
+fi
+
+if [[ ! -d core/dist ]] || [[ ! -f core/dist/index.js ]]; then
+  echo "core/dist missing; building core..."
+  (cd core && npm run build)
+fi
+
+ELECTRON_APP="node_modules/electron/dist/Electron.app"
+if [[ ! -d "$ELECTRON_APP/Contents/Frameworks" ]]; then
+  cat <<'EOF' >&2
+ERROR: Electron.app is a stub (missing Contents/Frameworks).
+npm allow-scripts can skip Electron postinstall on this machine.
+
+Repair from the cached zip (match version to node_modules/electron/package.json):
+
+  ditto -x -k ~/Library/Caches/electron/*/electron-v*-darwin-arm64.zip \
+    node_modules/electron/dist
+  printf 'Electron.app/Contents/MacOS/Electron' > node_modules/electron/path.txt
+
+See README.md "Electron binary on this machine".
+EOF
+  exit 1
+fi
+
+if [[ ! -d memory-server/node_modules ]]; then
+  echo "memory-server/node_modules missing; installing..."
+  (cd memory-server && npm install)
+fi
+
+VERSION="$(node -p "require('./package.json').version")"
+echo "Packaging Coder v${VERSION}..."
+
+# ---------------------------------------------------------------------------
+# Assemble out/Coder.app (idempotent)
+# ---------------------------------------------------------------------------
+
+rm -rf out/Coder.app
+mkdir -p out
+cp -R "$ELECTRON_APP" out/Coder.app
+
+APP_DIR="out/Coder.app/Contents/Resources/app"
+mkdir -p "$APP_DIR"
+
+# Minimal package.json for the embedded app.
+# IMPORTANT: "name" must remain exactly "coder". Electron derives the userData
+# directory from package.json name; keeping it "coder" preserves continuity
+# with dev sessions (same ~/Library/Application Support/coder). Never change it.
+cat > "$APP_DIR/package.json" <<EOF
+{
+  "name": "coder",
+  "productName": "Coder",
+  "version": "${VERSION}",
+  "main": "electron/main.js"
+}
+EOF
+
+# Assert name stayed "coder" (userData continuity).
+PKG_NAME="$(node -p "require('./${APP_DIR}/package.json').name")"
+if [[ "$PKG_NAME" != "coder" ]]; then
+  echo "ERROR: packaged package.json name must be exactly 'coder' (got: $PKG_NAME)" >&2
+  exit 1
+fi
+
+# electron/ .js sources only (no tests)
+mkdir -p "$APP_DIR/electron"
+for f in electron/*.js; do
+  cp "$f" "$APP_DIR/electron/"
+done
+
+# vite build output
+cp -R dist "$APP_DIR/dist"
+
+# core/dist + core/package.json — main.js resolves:
+#   path.join(__dirname, "../core/dist/index.js")  (electron/ -> app root)
+# and dynamic-import of that file. Layout mirrors repo root relative to electron/.
+mkdir -p "$APP_DIR/core"
+cp -R core/dist "$APP_DIR/core/dist"
+cp core/package.json "$APP_DIR/core/package.json"
+
+# memory-server: src + package.json + node_modules (for the SDK).
+# Supervisor resolves: path.join(appPath, "memory-server", "src", "index.js")
+# where appPath is app.getAppPath() when packaged (= Resources/app).
+mkdir -p "$APP_DIR/memory-server"
+cp -R memory-server/src "$APP_DIR/memory-server/src"
+cp memory-server/package.json "$APP_DIR/memory-server/package.json"
+cp -R memory-server/node_modules "$APP_DIR/memory-server/node_modules"
+
+# ---------------------------------------------------------------------------
+# Branding via Info.plist (no custom icon this round)
+# Rename the MacOS binary Electron -> Coder so app.isPackaged is true.
+# Electron treats an executable still named "Electron" as unpackaged, which
+# would load the vite dev URL instead of dist/.
+# ---------------------------------------------------------------------------
+
+PLIST="out/Coder.app/Contents/Info.plist"
+MACOS_DIR="out/Coder.app/Contents/MacOS"
+if [[ -f "$MACOS_DIR/Electron" ]]; then
+  mv "$MACOS_DIR/Electron" "$MACOS_DIR/Coder"
+fi
+if [[ -f "$PLIST" ]]; then
+  /usr/libexec/PlistBuddy -c "Set :CFBundleName Coder" "$PLIST" 2>/dev/null \
+    || /usr/libexec/PlistBuddy -c "Add :CFBundleName string Coder" "$PLIST"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName Coder" "$PLIST" 2>/dev/null \
+    || /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string Coder" "$PLIST"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.willem.coder" "$PLIST" 2>/dev/null \
+    || /usr/libexec/PlistBuddy -c "Add :CFBundleIdentifier string com.willem.coder" "$PLIST"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleExecutable Coder" "$PLIST" 2>/dev/null \
+    || /usr/libexec/PlistBuddy -c "Add :CFBundleExecutable string Coder" "$PLIST"
+else
+  echo "WARNING: Info.plist missing at $PLIST" >&2
+fi
+
+# ---------------------------------------------------------------------------
+# Report size
+# ---------------------------------------------------------------------------
+
+APP_PATH="$ROOT/out/Coder.app"
+SIZE="$(du -sh "$APP_PATH" | awk '{print $1}')"
+echo "Packaged: $APP_PATH ($SIZE)"
+
+# ---------------------------------------------------------------------------
+# Optional verify
+# ---------------------------------------------------------------------------
+
+if [[ "$NO_VERIFY" -eq 0 ]]; then
+  bash "$ROOT/scripts/verify-package.sh"
+fi

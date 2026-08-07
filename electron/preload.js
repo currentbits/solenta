@@ -60,6 +60,7 @@ const coder = {
   },
   threads: {
     list: () => invoke("threads:list"),
+    search: (input) => invoke("threads:search", input),
     create: (input) => invoke("threads:create", input),
     get: (id) => invoke("threads:get", id),
     setPermissionMode: (input) =>

@@ -1,5 +1,6 @@
 # Issues log
 
+- 2026-08-07 - symptom: packaged Coder.app loaded vite dev URL / isPackaged false | cause: MacOS binary still named Electron; Electron treats that as unpackaged | fix: rename binary to Coder + CFBundleExecutable in scripts/package-app.sh
 - 2026-08-06 - symptom: claude child hung after result; stopAll could not kill it | cause: clearRun on result dropped active handle before process exit | fix: liveClaudeChildren Set reaped by stopAll SIGTERM (runner.js)
 - 2026-08-06 - symptom: janitor orphan sweep no-op with a NULL id row | cause: SQL NOT IN fails when subquery contains NULL | fix: NOT EXISTS in janitor.js
 - 2026-08-06 - symptom: dev setProvider rejected padded model ids that electron accepts | cause: resolveModel membership used untrimmed String(raw) while electron trims first | fix: trim before membership in devCoder resolveModel

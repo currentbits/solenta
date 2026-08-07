@@ -62,6 +62,10 @@ function registerIpc(deps) {
     return services.listThreads(store);
   });
 
+  ipcMain.handle("threads:search", async (_event, input) => {
+    return services.searchThreads(store, input || { query: "" });
+  });
+
   ipcMain.handle("threads:create", async (_event, input) => {
     const thread = services.createThread(store, input);
     broadcast("threads:changed", services.listThreads(store));
