@@ -258,6 +258,12 @@ export interface CoderApi {
   };
   threads: {
     list(): Promise<ThreadInfo[]>;
+    /**
+     * Full-content search: matches thread titles AND message text
+     * (case-insensitive substring), newest activity first, max 50. Includes
+     * archived threads; the renderer styles them as usual.
+     */
+    search(input: { query: string }): Promise<ThreadInfo[]>;
     create(input: { projectId: string; title: string }): Promise<ThreadInfo>;
     get(id: string): Promise<ThreadDetail>;
     /** Sticky permission mode for future turns of this thread. */
