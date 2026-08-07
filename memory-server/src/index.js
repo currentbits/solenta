@@ -11,7 +11,7 @@ import { Memory } from './memory.js'
 import { runJanitor, readJanitorSnapshot } from './janitor.js'
 
 const INSTRUCTIONS =
-  'Coder shared memory. MEMORY PREFLIGHT: at session start call memory_bootstrap with project set to your working directory and treat its conventions as standing instructions. While working, store durable non-obvious findings (decisions, gotchas, conventions) with memory_store; before finishing, record what a future agent must know. Search returns excerpts; use memory_get for full bodies.'
+  'Coder shared memory. MEMORY PREFLIGHT: at session start call memory_bootstrap with project set to your working directory and treat its conventions as standing instructions. While working, store durable non-obvious findings (decisions, gotchas, conventions) with memory_store; before finishing, record what a future agent must know. Search returns excerpts; use memory_get for full bodies. Record notable turns with session_record; session_search finds past conversation excerpts.'
 
 export function defaultRoot() {
   return process.platform === 'darwin'
@@ -126,6 +126,7 @@ function sendJson(res, status, value) {
 const entryType = z.enum(['knowledge', 'task', 'convention', 'run'])
 const taskStatus = z.enum(['active', 'done', 'abandoned'])
 const feedbackVerdict = z.enum(['helpful', 'harmful'])
+const sessionRole = z.enum(['user', 'assistant', 'tool', 'system'])
 
 /**
  * @param {Memory} memory
@@ -237,6 +238,37 @@ export function buildServer(memory) {
       },
     },
     async (args) => json(memory.feedback(args)),
+  )
+
+  server.registerTool(
+    'session_record',
+    {
+      description:
+        'Record a transcript message (append-only). Use for notable turns; not for curated durable facts.',
+      inputSchema: {
+        sessionId: z.string().min(1),
+        project: z.string().optional(),
+        threadTitle: z.string().optional(),
+        agent: z.string().optional(),
+        role: sessionRole,
+        content: z.string().min(1),
+      },
+    },
+    async (args) => json(memory.recordSession(args)),
+  )
+
+  server.registerTool(
+    'session_search',
+    {
+      description:
+        'Full-text search over past conversation transcript excerpts. Limit max 20.',
+      inputSchema: {
+        query: z.string().min(1),
+        project: z.string().optional(),
+        limit: z.number().int().positive().max(20).optional(),
+      },
+    },
+    async (args) => json(memory.sessionSearch(args)),
   )
 
   return server
@@ -382,6 +414,42 @@ async function handleApi(req, res, url, memory) {
         return true
       }
       const result = memory.store(body)
+      sendJson(res, 200, result)
+      return true
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/session') {
+      let body
+      try {
+        const raw = await readBody(req)
+        body = raw.length ? JSON.parse(raw.toString('utf8')) : {}
+      } catch (err) {
+        if (err && err.code === 'PAYLOAD_TOO_LARGE') {
+          sendJson(res, 413, { error: 'request body too large' })
+          try {
+            req.resume()
+          } catch {
+            // ignore
+          }
+          return true
+        }
+        sendJson(res, 400, { error: 'valid JSON required' })
+        return true
+      }
+      const result = memory.recordSession(body)
+      sendJson(res, 200, result)
+      return true
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/session-search') {
+      const query = url.searchParams.get('query') ?? ''
+      const project = url.searchParams.get('project') ?? undefined
+      const limit = url.searchParams.get('limit')
+      const result = memory.sessionSearch({
+        query,
+        project,
+        limit: limit != null ? Number(limit) : undefined,
+      })
       sendJson(res, 200, result)
       return true
     }

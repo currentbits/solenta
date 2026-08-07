@@ -240,6 +240,37 @@ export function createSchema(db) {
       note       TEXT,
       created_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS session_messages (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id   TEXT NOT NULL,
+      project      TEXT,
+      thread_title TEXT,
+      agent        TEXT,
+      role         TEXT NOT NULL CHECK (role IN ('user','assistant','tool','system')),
+      content      TEXT NOT NULL,
+      created_at   TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS session_messages_session_idx
+      ON session_messages(session_id, id);
+
+    CREATE INDEX IF NOT EXISTS session_messages_project_idx
+      ON session_messages(project, id);
+
+    CREATE VIRTUAL TABLE IF NOT EXISTS session_messages_fts USING fts5(
+      content,
+      content='session_messages',
+      content_rowid='id'
+    );
+
+    CREATE TRIGGER IF NOT EXISTS session_messages_fts_insert AFTER INSERT ON session_messages BEGIN
+      INSERT INTO session_messages_fts(rowid, content) VALUES (new.id, new.content);
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS session_messages_fts_delete AFTER DELETE ON session_messages BEGIN
+      INSERT INTO session_messages_fts(session_messages_fts, rowid, content) VALUES ('delete', old.id, old.content);
+    END;
   `)
 
   // Migrations for older shapes (column may already exist from CREATE TABLE above).

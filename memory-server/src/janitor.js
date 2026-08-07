@@ -1,7 +1,10 @@
+/** Default retention for raw session transcripts (days). */
+export const SESSION_RETENTION_DAYS = 30
+
 /**
- * Maintenance: access-count evidence decay, orphan cleanup, health snapshot.
+ * Maintenance: access-count evidence decay, orphan cleanup, session prune, health snapshot.
  * @param {import('node:sqlite').DatabaseSync} db
- * @returns {{ liveEntries: number, entityCount: number, edgeCount: number, lastRun: string }}
+ * @returns {{ liveEntries: number, entityCount: number, edgeCount: number, sessionCount: number, prunedLastRun: number, lastRun: string }}
  */
 export function runJanitor(db) {
   db.exec('BEGIN')
@@ -29,13 +32,29 @@ export function runJanitor(db) {
          OR NOT EXISTS (SELECT 1 FROM entities d WHERE d.id = edges.dst)
     `)
 
-    // (c) health snapshot
+    // (c) prune session transcripts older than retention (FTS via delete trigger)
+    const messageCutoff = new Date(
+      Date.now() - SESSION_RETENTION_DAYS * 86_400_000,
+    ).toISOString()
+    const prunedLastRun =
+      db.prepare(`DELETE FROM session_messages WHERE created_at < ?`).run(messageCutoff)
+        .changes ?? 0
+
+    // (d) health snapshot
     const liveEntries =
       db.prepare(`SELECT COUNT(*) AS n FROM entries WHERE superseded_by IS NULL`).get()?.n ?? 0
     const entityCount = db.prepare(`SELECT COUNT(*) AS n FROM entities`).get()?.n ?? 0
     const edgeCount = db.prepare(`SELECT COUNT(*) AS n FROM edges`).get()?.n ?? 0
+    const sessionCount = db.prepare(`SELECT COUNT(*) AS n FROM session_messages`).get()?.n ?? 0
     const lastRun = new Date().toISOString()
-    const snapshot = { liveEntries, entityCount, edgeCount, lastRun }
+    const snapshot = {
+      liveEntries,
+      entityCount,
+      edgeCount,
+      sessionCount,
+      prunedLastRun,
+      lastRun,
+    }
 
     db.prepare(
       `INSERT INTO janitor_state (key, value) VALUES ('snapshot', ?)
@@ -65,7 +84,14 @@ export function readJanitorSnapshot(db) {
   } catch {
     // ignore
   }
-  return { liveEntries: 0, entityCount: 0, edgeCount: 0, lastRun: null }
+  return {
+    liveEntries: 0,
+    entityCount: 0,
+    edgeCount: 0,
+    sessionCount: 0,
+    prunedLastRun: 0,
+    lastRun: null,
+  }
 }
 
 export const JANITOR_INTERVAL_MS = 6 * 60 * 60 * 1000

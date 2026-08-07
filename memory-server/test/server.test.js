@@ -126,6 +126,8 @@ describe('HTTP auth and health', () => {
       'memory_search',
       'memory_store',
       'memory_supersede',
+      'session_record',
+      'session_search',
     ])
 
     const stored = await mcp.callTool({

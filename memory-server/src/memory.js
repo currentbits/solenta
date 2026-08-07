@@ -7,6 +7,7 @@ const ENTRY_TYPES = new Set(['knowledge', 'task', 'convention', 'run'])
 const TASK_STATUSES = new Set(['active', 'done', 'abandoned'])
 const IMPORTANCE_DEFAULT = { convention: 5, knowledge: 3, task: 3, run: 1 }
 const FEEDBACK_VERDICTS = new Set(['helpful', 'harmful'])
+const SESSION_ROLES = new Set(['user', 'assistant', 'tool', 'system'])
 
 const DECAY_RATE = 0.995
 const DECAY_FLOOR = 0.05
@@ -20,6 +21,10 @@ const RRF_K = 60
 const GRAPH_TOP = 10
 const GRAPH_MAX_HOPS = 2
 const RECENT_MAX = 50
+const SESSION_CONTENT_MAX = 4000
+const SESSION_SEARCH_MAX = 20
+const SESSION_SEARCH_DEFAULT = 10
+const SESSION_RETENTION_DAYS = 30
 
 const SECTION_BUDGETS = {
   conventions: 800,
@@ -851,5 +856,95 @@ export class Memory {
     } catch (err) {
       console.error('markAccessed failed (non-fatal):', err)
     }
+  }
+
+  /**
+   * Append a transcript message. Raw material only — no access accounting or decay.
+   * @param {{ sessionId: string, project?: string, threadTitle?: string, agent?: string, role: string, content: string }} input
+   * @returns {{ id: number }}
+   */
+  recordSession(input) {
+    const sessionId = cleanText('session id', input.sessionId)
+    const role = cleanText('role', input.role)
+    if (!SESSION_ROLES.has(role)) {
+      throw new Error(`invalid role '${role}'; expected user|assistant|tool|system`)
+    }
+    let content = cleanText('content', input.content)
+    if (content.length > SESSION_CONTENT_MAX) {
+      content = content.slice(0, SESSION_CONTENT_MAX)
+    }
+    const project = cleanOptional(input.project)
+    const threadTitle = cleanOptional(input.threadTitle)
+    const agent = cleanOptional(input.agent)
+    const now = new Date().toISOString()
+
+    const result = this.db
+      .prepare(
+        `INSERT INTO session_messages (session_id, project, thread_title, agent, role, content, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(sessionId, project, threadTitle, agent, role, content, now)
+
+    return { id: Number(result.lastInsertRowid) }
+  }
+
+  /**
+   * FTS over transcript content. No access accounting.
+   * Project scope matches entries: (project IS NULL OR project = ?).
+   * @param {{ query: string, project?: string, limit?: number }} opts
+   * @returns {{ sessionId: string, threadTitle: string|null, agent: string|null, role: string, excerpt: string, createdAt: string }[]}
+   */
+  sessionSearch(opts) {
+    const query = cleanText('query', opts.query)
+    const match = ftsQuery(query)
+    if (!match) return []
+    const project = cleanOptional(opts.project)
+    const wantLimit = clampLimit(opts.limit, SESSION_SEARCH_DEFAULT, SESSION_SEARCH_MAX)
+    const excerptTokens = Math.min(64, SEARCH_EXCERPT_TOKENS)
+
+    try {
+      const rows = this.db
+        .prepare(
+          `SELECT m.session_id AS sessionId,
+                  m.thread_title AS threadTitle,
+                  m.agent AS agent,
+                  m.role AS role,
+                  snippet(session_messages_fts, 0, '[', ']', '...', ?) AS excerpt,
+                  m.created_at AS createdAt
+           FROM session_messages_fts
+           JOIN session_messages m ON m.id = session_messages_fts.rowid
+           WHERE session_messages_fts MATCH ?
+             AND (? IS NULL OR m.project IS NULL OR m.project = ?)
+           ORDER BY bm25(session_messages_fts), m.created_at DESC
+           LIMIT ?`,
+        )
+        .all(excerptTokens, match, project, project, wantLimit)
+
+      return rows.map((r) => ({
+        sessionId: r.sessionId,
+        threadTitle: r.threadTitle ?? null,
+        agent: r.agent ?? null,
+        role: r.role,
+        excerpt: r.excerpt ?? '',
+        createdAt: r.createdAt,
+      }))
+    } catch (err) {
+      console.error('sessionSearch failed (non-fatal):', err)
+      return []
+    }
+  }
+
+  /**
+   * Delete transcript rows older than `days` (default 30). FTS rows go via delete trigger.
+   * @param {number} [days]
+   * @returns {number} rows deleted
+   */
+  pruneSessions(days = SESSION_RETENTION_DAYS) {
+    const n = Number.isFinite(days) ? Math.max(0, Math.trunc(days)) : SESSION_RETENTION_DAYS
+    const cutoff = new Date(Date.now() - n * 86_400_000).toISOString()
+    const result = this.db
+      .prepare(`DELETE FROM session_messages WHERE created_at < ?`)
+      .run(cutoff)
+    return result.changes ?? 0
   }
 }

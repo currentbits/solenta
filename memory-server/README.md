@@ -22,9 +22,10 @@ cd memory-server && npm install && node src/index.js
 - `memory_store` / `memory_get` / `memory_search` / `memory_supersede`
 - `memory_recent` — newest live entries (excerpts, limit ≤ 50)
 - `memory_feedback` — `{ id, verdict: helpful|harmful, note? }` evidence counters
+- `session_record` / `session_search` — append-only transcript turns and FTS over past conversation excerpts (30-day retention)
 
-Search fuses FTS5 with a 2-hop entity graph (RRF), then applies composite scoring and a 20% relevance gate. Entities are extracted conservatively on store/supersede (`[[wikilinks]]`, code/doc files, two-hump PascalCase modules). A janitor runs on start and every 6h (access decay, orphan sweep, health snapshot on `GET /health` as `janitor`).
+Search fuses FTS5 with a 2-hop entity graph (RRF), then applies composite scoring and a 20% relevance gate. Entities are extracted conservatively on store/supersede (`[[wikilinks]]`, code/doc files, two-hump PascalCase modules). A janitor runs on start and every 6h (access decay, orphan sweep, session transcript prune, health snapshot on `GET /health` as `janitor` including `sessionCount` and `prunedLastRun`).
 
-REST (same bearer auth): `GET /api/recent`, `GET /api/search`, `GET /api/entry/:id`, `POST /api/store`.
+REST (same bearer auth): `GET /api/recent`, `GET /api/search`, `GET /api/entry/:id`, `POST /api/store`, `POST /api/session`, `GET /api/session-search`.
 
-Search returns excerpts; call `memory_get` for full bodies. MCP at `POST /mcp` with `Authorization: Bearer <token>`. Header-less MCP clients (for example codex HTTP MCP) may instead pass the same token as `?token=<token>` on the `/mcp` URL only; REST `/api/*` stays header-only. This option is for localhost use. `GET /health` is open.
+Search returns excerpts; call `memory_get` for full bodies. Record notable turns with `session_record`; `session_search` finds past conversation excerpts. MCP at `POST /mcp` with `Authorization: Bearer <token>`. Header-less MCP clients (for example codex HTTP MCP) may instead pass the same token as `?token=<token>` on the `/mcp` URL only; REST `/api/*` stays header-only. This option is for localhost use. `GET /health` is open.
