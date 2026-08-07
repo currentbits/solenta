@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "preview": "vite preview",
     "electron": "electron .",
-    "package": "bash scripts/package-app.sh"
+    "package": "bash scripts/package-app.sh",
+    "acceptance": "electron scripts/acceptance.js"
   },
   "dependencies": {
     "react": "^19.1.0",
