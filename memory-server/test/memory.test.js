@@ -43,7 +43,7 @@ describe('memory core', () => {
     assert.equal(memory.get('missing'), null)
   })
 
-  it('FTS update trigger: search finds new text not old after update', () => {
+  it('FTS update trigger: search finds new text not old after update', async () => {
     const { id } = memory.store({
       type: 'knowledge',
       title: 'Deploy notes',
@@ -54,32 +54,34 @@ describe('memory core', () => {
       .prepare(`UPDATE entries SET title = ?, body = ?, updated_at = ? WHERE id = ?`)
       .run('Deploy notes', 'replacement betaword content here', new Date().toISOString(), id)
 
-    const oldHits = memory.search({ query: 'alphaword' })
-    const newHits = memory.search({ query: 'betaword' })
+    const oldHits = await memory.search({ query: 'alphaword' })
+    const newHits = await memory.search({ query: 'betaword' })
     assert.equal(oldHits.length, 0, 'old text must not remain in FTS')
     assert.equal(newHits.length, 1)
     assert.equal(newHits[0].id, id)
   })
 
-  it('composite ordering: importance and recency influence rank', () => {
+  it('composite ordering: importance and recency influence rank', async () => {
     const low = memory.store({
       type: 'run',
       title: 'Shared topic phrase',
       body: 'shared topic phrase detail',
       importance: 1,
+      force: true,
     })
     const high = memory.store({
       type: 'convention',
       title: 'Shared topic phrase',
       body: 'shared topic phrase detail',
       importance: 5,
+      force: true,
     })
     // Pin identical timestamps so importance alone decides (avoids micro-decay on the older row).
     const now = new Date().toISOString()
     memory.db
       .prepare(`UPDATE entries SET created_at = ?, last_accessed_at = NULL WHERE id IN (?, ?)`)
       .run(now, low.id, high.id)
-    const hits = memory.search({ query: 'shared topic phrase' })
+    const hits = await memory.search({ query: 'shared topic phrase' })
     assert.ok(hits.length >= 2)
     assert.equal(hits[0].id, high.id)
     assert.notEqual(hits[0].id, low.id)
@@ -88,18 +90,20 @@ describe('memory core', () => {
       type: 'knowledge',
       title: 'Cache invalidation trick',
       body: 'the trick details',
+      force: true,
     })
     const young = memory.store({
       type: 'knowledge',
       title: 'Cache invalidation trick',
       body: 'the trick details',
+      force: true,
     })
     backdate(old.id, 200)
-    const recency = memory.search({ query: 'cache invalidation' })
+    const recency = await memory.search({ query: 'cache invalidation' })
     assert.equal(recency[0].id, young.id)
   })
 
-  it('relevance gate drops results scoring under 20% of the top hit', () => {
+  it('relevance gate drops results scoring under 20% of the top hit', async () => {
     // Strong exact-ish match
     memory.store({
       type: 'knowledge',
@@ -114,9 +118,10 @@ describe('memory core', () => {
         title: `Unrelated run ${i}`,
         body: 'misc note mentioning pipeline in passing only',
         importance: 1,
+        force: true,
       })
     }
-    const hits = memory.search({ query: 'zebra pipeline gotcha uniquephrase', limit: 20 })
+    const hits = await memory.search({ query: 'zebra pipeline gotcha uniquephrase', limit: 20 })
     assert.ok(hits.length >= 1)
     const top = hits[0].score
     for (const h of hits) {
@@ -126,16 +131,16 @@ describe('memory core', () => {
     assert.ok(hits.every((h) => !h.title.startsWith('Unrelated run') || h.score >= top * 0.2))
   })
 
-  it('marks access once on final returned ids only', () => {
+  it('marks access once on final returned ids only', async () => {
     const a = memory.store({
       type: 'knowledge',
       title: 'Kafka topic naming',
       body: 'kafka naming details for topics',
     })
-    memory.search({ query: 'kafka' })
+    await memory.search({ query: 'kafka' })
     const count1 = memory.db.prepare(`SELECT access_count FROM entries WHERE id = ?`).get(a.id).access_count
     assert.equal(count1, 1)
-    memory.search({ query: 'kafka' })
+    await memory.search({ query: 'kafka' })
     const count2 = memory.db.prepare(`SELECT access_count FROM entries WHERE id = ?`).get(a.id).access_count
     assert.equal(count2, 2)
     const accessed = memory.db
@@ -144,14 +149,14 @@ describe('memory core', () => {
     assert.ok(accessed)
   })
 
-  it('search returns excerpts not full bodies, plus hint', () => {
+  it('search returns excerpts not full bodies, plus hint', async () => {
     const longBody = Array.from({ length: 80 }, (_, i) => `token${i}`).join(' ')
     const { id } = memory.store({
       type: 'knowledge',
       title: 'Long body entry',
       body: longBody,
     })
-    const hits = memory.search({ query: 'token10 token11' })
+    const hits = await memory.search({ query: 'token10 token11' })
     assert.ok(hits.length >= 1)
     const hit = hits.find((h) => h.id === id) ?? hits[0]
     assert.ok(hit.excerpt || hit.snippet)
@@ -161,7 +166,7 @@ describe('memory core', () => {
     assert.equal(hit.body, undefined)
   })
 
-  it('supersede marks old and returns new id', () => {
+  it('supersede marks old and returns new id', async () => {
     const { id: oldId } = memory.store({
       type: 'knowledge',
       title: 'Old fact',
@@ -178,7 +183,7 @@ describe('memory core', () => {
     assert.equal(neu.body, 'v2 body')
     assert.equal(neu.project, '/tmp/p')
     // search should not return superseded
-    const hits = memory.search({ query: 'fact', project: '/tmp/p' })
+    const hits = await memory.search({ query: 'fact', project: '/tmp/p' })
     assert.ok(hits.every((h) => h.id !== oldId))
   })
 
@@ -192,6 +197,7 @@ describe('memory core', () => {
         body: `Body of convention ${i}. ${'detail '.repeat(80)}`,
         project,
         importance: 5 - (i % 2),
+        force: true,
       })
     }
     for (let i = 0; i < 10; i++) {
@@ -200,6 +206,7 @@ describe('memory core', () => {
         title: `Knowledge ${i} ${'word '.repeat(30)}`,
         body: `Body of knowledge ${i}. ${'detail '.repeat(60)}`,
         project,
+        force: true,
       })
     }
     for (let i = 0; i < 10; i++) {
@@ -232,21 +239,23 @@ describe('memory core', () => {
     assert.ok(est(tasks) <= 400, `tasks tokens ${est(tasks)}`)
   })
 
-  it('usage boost and recency affect composite rank', () => {
+  it('usage boost and recency affect composite rank', async () => {
     const stale = memory.store({
       type: 'knowledge',
       title: 'Redis cache notes',
       body: 'redis cache tuning',
+      force: true,
     })
     const warm = memory.store({
       type: 'knowledge',
       title: 'Redis cache notes',
       body: 'redis cache tuning',
+      force: true,
     })
     backdate(stale.id, 120)
     backdate(warm.id, 120)
     setAccess(warm.id, 1, 3)
-    const hits = memory.search({ query: 'redis cache' })
+    const hits = await memory.search({ query: 'redis cache' })
     assert.equal(hits[0].id, warm.id)
   })
 })

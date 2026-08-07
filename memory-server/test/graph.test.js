@@ -184,7 +184,7 @@ describe('graph retrieval and RRF', () => {
     assert.ok(newMentions.some((m) => m.name === 'GraphRetriever'))
   })
 
-  it('graph-only recall: entry findable via shared entity when FTS misses', () => {
+  it('graph-only recall: entry findable via shared entity when FTS misses', async () => {
     // Entry body has no token "OrphanEntityName" for FTS, but we attach that entity via mention.
     const { id } = memory.store({
       type: 'knowledge',
@@ -195,11 +195,11 @@ describe('graph retrieval and RRF', () => {
     memory.db.prepare(`INSERT INTO entities (id, name, kind) VALUES (?, 'OrphanEntityName', 'concept')`).run(entId)
     memory.db.prepare(`INSERT INTO mentions (entry_id, entity_id) VALUES (?, ?)`).run(id, entId)
 
-    const hits = memory.search({ query: 'OrphanEntityName' })
+    const hits = await memory.search({ query: 'OrphanEntityName' })
     assert.ok(hits.some((h) => h.id === id), `expected graph hit for ${id}, got ${JSON.stringify(hits)}`)
   })
 
-  it('RRF fusion ORDER: an entry ranked by both retrievers beats a higher-importance single-retriever entry', () => {
+  it('RRF fusion ORDER: an entry ranked by both retrievers beats a higher-importance single-retriever entry', async () => {
     // BOTH retrievers find this one: FTS (query token in body) AND graph
     // (mentions the queried entity). Plain importance 3.
     const both = memory.store({
@@ -221,7 +221,7 @@ describe('graph retrieval and RRF', () => {
     memory.db.prepare(`INSERT INTO mentions (entry_id, entity_id) VALUES (?, ?)`).run(both.id, entId)
     memory.db.prepare(`INSERT INTO mentions (entry_id, entity_id) VALUES (?, ?)`).run(graphOnly.id, entId)
 
-    const hits = memory.search({ query: 'QuaggaFusionEntity uniquefusiontoken', limit: 10 })
+    const hits = await memory.search({ query: 'QuaggaFusionEntity uniquefusiontoken', limit: 10 })
     const ids = hits.map((h) => h.id)
     assert.ok(ids.includes(both.id), `dual-retriever candidate missing: ${JSON.stringify(ids)}`)
     assert.ok(ids.includes(graphOnly.id), `graph candidate missing: ${JSON.stringify(ids)}`)
@@ -231,7 +231,44 @@ describe('graph retrieval and RRF', () => {
     )
   })
 
-  it('graph failure never breaks search (returns FTS results)', () => {
+  it('RRF three-retriever ORDER: vector+fts dual beats single-retriever (extends graph order pin)', async () => {
+    const { fakeEmbedder } = await import('../src/embedder.js')
+    memory.close()
+    memory = new Memory(path.join(dir, 'memory.db'), {
+      startJanitor: false,
+      embedder: fakeEmbedder(32),
+    })
+
+    const dual = memory.store({
+      type: 'knowledge',
+      title: 'Vector fusion dual',
+      body: 'quantum flux capacitor writeup details',
+      importance: 3,
+      force: true,
+    })
+    const single = memory.store({
+      type: 'convention',
+      title: 'High importance single',
+      body: 'quantum flux notes only',
+      importance: 5,
+      force: true,
+    })
+    await memory.embedMissing(64)
+
+    const hits = await memory.search({ query: 'quantum flux capacitor', limit: 10 })
+    const ids = hits.map((h) => h.id)
+    assert.ok(ids.includes(dual.id), `dual missing: ${JSON.stringify(ids)}`)
+    if (ids.includes(single.id)) {
+      assert.ok(
+        ids.indexOf(dual.id) < ids.indexOf(single.id),
+        `vector+fts dual must beat single-retriever; got ${JSON.stringify(ids)}`,
+      )
+    } else {
+      assert.equal(ids[0], dual.id)
+    }
+  })
+
+  it('graph failure never breaks search (returns FTS results)', async () => {
     memory.store({
       type: 'knowledge',
       title: 'Still searchable',
@@ -239,7 +276,7 @@ describe('graph retrieval and RRF', () => {
     })
     // Break graph tables mid-flight by dropping edges (graph search should catch and return [])
     memory.db.exec(`DROP TABLE edges`)
-    const hits = memory.search({ query: 'findmewithfts' })
+    const hits = await memory.search({ query: 'findmewithfts' })
     assert.ok(hits.length >= 1)
     assert.ok(hits[0].title.includes('Still searchable') || hits[0].excerpt)
   })

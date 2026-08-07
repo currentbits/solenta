@@ -241,6 +241,28 @@ export function createSchema(db) {
       created_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS entry_vectors (
+      entry_id   TEXT PRIMARY KEY REFERENCES entries(id),
+      dim        INTEGER NOT NULL,
+      vec        BLOB NOT NULL,
+      model      TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS review_queue (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      kind        TEXT NOT NULL CHECK (kind IN ('near_dup','contradiction')),
+      entry_a     TEXT NOT NULL REFERENCES entries(id),
+      entry_b     TEXT NOT NULL REFERENCES entries(id),
+      detail      TEXT,
+      created_at  TEXT NOT NULL,
+      resolved_at TEXT,
+      resolution  TEXT CHECK (resolution IN ('update','invalidate','noop') OR resolution IS NULL)
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS review_queue_open_pair
+      ON review_queue (kind, entry_a, entry_b) WHERE resolved_at IS NULL;
+
     CREATE TABLE IF NOT EXISTS session_messages (
       id           INTEGER PRIMARY KEY AUTOINCREMENT,
       session_id   TEXT NOT NULL,
@@ -283,11 +305,32 @@ export function createSchema(db) {
   }
   addColumnIfMissing(db, 'entries', 'helpful_count', 'INTEGER NOT NULL DEFAULT 0')
   addColumnIfMissing(db, 'entries', 'harmful_count', 'INTEGER NOT NULL DEFAULT 0')
+  addColumnIfMissing(db, 'entries', 'invalid_at', 'TEXT')
+  addColumnIfMissing(db, 'entries', 'invalidated_by', 'TEXT')
+  addColumnIfMissing(db, 'entries', 'invalidation_reason', 'TEXT')
 
   try {
     normalizeEntities(db)
   } catch (err) {
     // Non-fatal like the janitor: a corrupt graph must not brick Memory boot.
     console.error('normalizeEntities failed (non-fatal):', err)
+  }
+}
+
+/**
+ * Drop embedding rows written under a different model id so backfill can re-embed
+ * into a consistent space. No-op when modelId is empty.
+ * @param {import('node:sqlite').DatabaseSync} db
+ * @param {string|null|undefined} modelId
+ * @returns {number} rows deleted
+ */
+export function purgeStaleVectors(db, modelId) {
+  if (!modelId) return 0
+  try {
+    const result = db.prepare(`DELETE FROM entry_vectors WHERE model != ?`).run(modelId)
+    return result.changes ?? 0
+  } catch (err) {
+    console.error('purgeStaleVectors failed (non-fatal):', err)
+    return 0
   }
 }

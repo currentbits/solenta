@@ -107,13 +107,33 @@ mkdir -p "$APP_DIR/core"
 cp -R core/dist "$APP_DIR/core/dist"
 cp core/package.json "$APP_DIR/core/package.json"
 
-# memory-server: src + package.json + node_modules (for the SDK).
+# memory-server: src + package.json + node_modules (for the SDK + embedder).
 # Supervisor resolves: path.join(appPath, "memory-server", "src", "index.js")
 # where appPath is app.getAppPath() when packaged (= Resources/app).
 mkdir -p "$APP_DIR/memory-server"
 cp -R memory-server/src "$APP_DIR/memory-server/src"
 cp memory-server/package.json "$APP_DIR/memory-server/package.json"
 cp -R memory-server/node_modules "$APP_DIR/memory-server/node_modules"
+
+# Prune packaged tree ONLY (never source node_modules). Drop onnxruntime-web
+# (browser WASM, ~91MB, unreachable in a Node process). Keep sharp and @img:
+# @huggingface/transformers statically imports sharp from its Node entrypoint;
+# removing them makes the package unimportable and embed() returns null forever.
+# Keep onnxruntime-node for the cpu q8 feature-extraction path.
+PKG_MS_NM="$APP_DIR/memory-server/node_modules"
+PRUNED=()
+for name in onnxruntime-web; do
+  target="$PKG_MS_NM/$name"
+  if [[ -e "$target" ]]; then
+    rm -rf "$target"
+    PRUNED+=("$name")
+  fi
+done
+if [[ ${#PRUNED[@]} -gt 0 ]]; then
+  echo "pruned packaged memory-server/node_modules: ${PRUNED[*]}"
+else
+  echo "pruned packaged memory-server/node_modules: (nothing matched)"
+fi
 
 # ---------------------------------------------------------------------------
 # Branding via Info.plist (no custom icon this round)

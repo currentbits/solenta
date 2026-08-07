@@ -1,13 +1,23 @@
 import crypto from 'node:crypto'
-import { openDb, createSchema } from './db.js'
+import { openDb, createSchema, purgeStaleVectors } from './db.js'
 import { extractEntities } from './extract.js'
 import { runJanitor, readJanitorSnapshot, JANITOR_INTERVAL_MS } from './janitor.js'
+import {
+  cosine,
+  floatToBlob,
+  blobToFloat,
+  EMBED_MAX_CHARS,
+} from './embedder.js'
+import { contentTokens, jaccard, queueReview } from './review.js'
+
+export { contentTokens, jaccard, queueReview }
 
 const ENTRY_TYPES = new Set(['knowledge', 'task', 'convention', 'run'])
 const TASK_STATUSES = new Set(['active', 'done', 'abandoned'])
 const IMPORTANCE_DEFAULT = { convention: 5, knowledge: 3, task: 3, run: 1 }
 const FEEDBACK_VERDICTS = new Set(['helpful', 'harmful'])
 const SESSION_ROLES = new Set(['user', 'assistant', 'tool', 'system'])
+const RESOLUTIONS = new Set(['update', 'invalidate', 'noop'])
 
 const DECAY_RATE = 0.995
 const DECAY_FLOOR = 0.05
@@ -19,17 +29,31 @@ const DEFAULT_SEARCH_LIMIT = 8
 const MAX_LIMIT = 100
 const RRF_K = 60
 const GRAPH_TOP = 10
+const VECTOR_TOP = 10
 const GRAPH_MAX_HOPS = 2
 const RECENT_MAX = 50
 const SESSION_CONTENT_MAX = 4000
 const SESSION_SEARCH_MAX = 20
 const SESSION_SEARCH_DEFAULT = 10
 const SESSION_RETENTION_DAYS = 30
+const DEDUP_BLOCK = 0.7
+const DEDUP_WARN = 0.4
+const DEDUP_SCAN_CAP = 500
+const EMBED_BACKFILL_CAP = 64
+const AGING_RUN_DAYS = 7
+const FAT_CONVENTION_CHARS = 1500
+const MAINTENANCE_LIST_LIMIT = 20
 
 const SECTION_BUDGETS = {
   conventions: 800,
   knowledge: 500,
   tasks: 300,
+}
+
+/** Live = not superseded and not invalidated. Used on every read surface. */
+export function liveSql(alias = '') {
+  const p = alias ? `${alias}.` : ''
+  return `${p}superseded_by IS NULL AND ${p}invalid_at IS NULL`
 }
 
 // Base composite without bm25 (graph / final re-score path).
@@ -48,6 +72,7 @@ const PROTOCOL = [
   'Before finishing, record what a future agent must know.',
   'Search returns excerpts; use memory_get for the full body.',
   'If active tasks may conflict, inspect with memory_search before changing files.',
+  'memory_maintenance reports queue items to resolve with memory_resolve.',
 ]
 
 export function estimateTokens(text) {
@@ -108,7 +133,10 @@ export function applyTokenBudget(rows, budget, cost) {
 export class Memory {
   /**
    * @param {string} dbPath
-   * @param {{ startJanitor?: boolean }} [opts]
+   * @param {{ startJanitor?: boolean, embedder?: object|null }} [opts]
+   *   Inject `embedder` (e.g. fakeEmbedder in tests, createRealEmbedder in production).
+   *   Default is none (vector retriever returns []). Production wires the real model
+   *   from index.js unless CODER_MEMORY_SEMANTIC=0.
    */
   constructor(dbPath, opts = {}) {
     this.dbPath = dbPath
@@ -125,6 +153,13 @@ export class Memory {
       return base * feedbackFactor(helpful, harmful)
     })
 
+    this.embedder = opts.embedder ?? null
+
+    // Stale embedding space: drop rows whose model id differs from the active embedder.
+    if (this.embedder?.model) {
+      purgeStaleVectors(this.db, this.embedder.model)
+    }
+
     this._janitorTimer = null
     if (opts.startJanitor !== false) {
       try {
@@ -132,6 +167,8 @@ export class Memory {
       } catch (err) {
         console.error('janitor initial run failed (non-fatal):', err)
       }
+      // Backfill embeddings off the hot path (cap 64 per pass).
+      void this.embedMissing(EMBED_BACKFILL_CAP).catch(() => {})
       // Interval janitor (skip for pure unit tests if they pass startJanitor: false — default on)
       try {
         this._janitorTimer = setInterval(() => {
@@ -140,11 +177,27 @@ export class Memory {
           } catch (err) {
             console.error('janitor interval failed (non-fatal):', err)
           }
+          void this.embedMissing(EMBED_BACKFILL_CAP).catch(() => {})
         }, JANITOR_INTERVAL_MS)
         if (typeof this._janitorTimer.unref === 'function') this._janitorTimer.unref()
       } catch {
         // ignore
       }
+    }
+  }
+
+  /** @returns {{ enabled: boolean, count: number, model: string|null }} */
+  vectorsHealth() {
+    let count = 0
+    try {
+      count = this.db.prepare(`SELECT COUNT(*) AS n FROM entry_vectors`).get()?.n ?? 0
+    } catch {
+      count = 0
+    }
+    return {
+      enabled: this.embedder != null,
+      count,
+      model: this.embedder?.model ?? null,
     }
   }
 
@@ -214,7 +267,7 @@ export class Memory {
   }
 
   /**
-   * @param {{ type: string, title: string, body: string, project?: string, agent?: string, importance?: number, status?: string }} input
+   * @param {{ type: string, title: string, body: string, project?: string, agent?: string, importance?: number, status?: string, force?: boolean }} input
    * @returns {{ id: string }}
    */
   store(input) {
@@ -238,6 +291,19 @@ export class Memory {
     const body = cleanText('body', input.body)
     const project = input.project === undefined ? null : cleanText('project', input.project)
     const agent = cleanOptional(input.agent)
+
+    // Write-time dedup: Jaccard vs live same-project-or-global (cap 500 most recent).
+    // >=0.7 refuses (unless force); >=0.4 stores and enqueues near_dup.
+    let nearDup = null
+    if (input.type !== 'task') {
+      nearDup = this.findNearDup(title, body, project)
+      if (nearDup && nearDup.overlap >= DEDUP_BLOCK && !input.force) {
+        throw new Error(
+          `near-duplicate of existing entry ${nearDup.id} "${nearDup.title}" (jaccard=${nearDup.overlap}); pass force: true to store anyway`,
+        )
+      }
+    }
+
     const id = crypto.randomUUID()
     const now = new Date().toISOString()
 
@@ -254,7 +320,42 @@ export class Memory {
       console.error('linkEntities failed (non-fatal):', err)
     }
 
+    if (nearDup && nearDup.overlap >= DEDUP_WARN) {
+      queueReview(this.db, 'near_dup', id, nearDup.id, `jaccard=${nearDup.overlap}`)
+    }
+
+    // Fire-and-forget embed; null embedding just skips the row.
+    void this.embedEntry(id).catch(() => {})
+
     return { id }
+  }
+
+  /**
+   * Scan up to DEDUP_SCAN_CAP most recent live same-project-or-global entries for Jaccard overlap.
+   * @returns {{ id: string, title: string, overlap: number }|null}
+   */
+  findNearDup(title, body, project) {
+    const mine = contentTokens(`${title} ${body}`)
+    if (mine.size === 0) return null
+    const rows = this.db
+      .prepare(
+        `SELECT id, title, body FROM entries
+         WHERE ${liveSql()}
+           AND (? IS NULL OR project IS NULL OR project = ?)
+         ORDER BY created_at DESC, rowid DESC
+         LIMIT ?`,
+      )
+      .all(project, project, DEDUP_SCAN_CAP)
+
+    let best = null
+    for (const r of rows) {
+      const overlap = Math.round(jaccard(mine, contentTokens(`${r.title} ${r.body}`)) * 1000) / 1000
+      if (overlap < DEDUP_WARN) continue
+      if (!best || overlap > best.overlap) {
+        best = { id: r.id, title: r.title, overlap }
+      }
+    }
+    return best
   }
 
   /**
@@ -265,11 +366,21 @@ export class Memory {
       .prepare(
         `SELECT id, type, title, body, project, agent, status, created_at, updated_at,
                 importance, access_count, last_accessed_at, superseded_by,
-                helpful_count, harmful_count
+                helpful_count, harmful_count,
+                invalid_at, invalidated_by, invalidation_reason
          FROM entries WHERE id = ?`,
       )
       .get(id)
     if (!row) return null
+    if (row.invalid_at) {
+      return {
+        invalidated: true,
+        invalid_at: row.invalid_at,
+        invalidated_by: row.invalidated_by,
+        invalidation_reason: row.invalidation_reason,
+        hint: 'this entry was invalidated; treat as no longer true',
+      }
+    }
     if (row.superseded_by) {
       return {
         superseded_by: row.superseded_by,
@@ -395,7 +506,7 @@ export class Memory {
                   ${BASE_SCORE_SQL} AS score
            FROM entries e
            WHERE e.id IN (${ePlace})
-             AND e.superseded_by IS NULL
+             AND ${liveSql('e')}
              AND (? IS NULL OR e.project IS NULL OR e.project = ?)`,
         )
         .all(...entryIds, project, project)
@@ -426,9 +537,130 @@ export class Memory {
   }
 
   /**
+   * Vector retriever: embed the query, brute-force cosine over stored vectors
+   * (live, project-or-global), top VECTOR_TOP by score DESC. Fail-soft → [].
+   * @param {string} query
+   * @param {string|null} project
+   * @returns {Promise<{ id: string, score: number, title: string, type: string, project: string|null, agent: string|null, created_at: string, importance: number, excerpt: string }[]>}
+   */
+  async vectorSearch(query, project) {
+    if (!this.embedder) return []
+    project = project == null ? null : project
+    try {
+      const q = await Promise.resolve(this.embedder.embed(String(query).slice(0, EMBED_MAX_CHARS)))
+      if (!q) return []
+      const rows = this.db
+        .prepare(
+          `SELECT v.entry_id AS id, v.vec AS vec, v.dim AS dim,
+                  e.type, e.title, e.body, e.project, e.agent, e.created_at, e.importance
+           FROM entry_vectors v
+           JOIN entries e ON e.id = v.entry_id
+           WHERE v.model = ?
+             AND ${liveSql('e')}
+             AND (? IS NULL OR e.project IS NULL OR e.project = ?)`,
+        )
+        .all(this.embedder.model, project, project)
+
+      const scored = rows
+        .filter((r) => r.dim === q.length)
+        .map((r) => ({
+          id: r.id,
+          score: cosine(q, blobToFloat(r.vec)),
+          title: r.title,
+          type: r.type,
+          project: r.project,
+          agent: r.agent,
+          created_at: r.created_at,
+          importance: r.importance,
+          excerpt: excerptFromBody(r.body),
+        }))
+        .sort((a, b) => b.score - a.score)
+        .slice(0, VECTOR_TOP)
+      return scored
+    } catch (err) {
+      console.error('vectorSearch failed (non-fatal):', err)
+      return []
+    }
+  }
+
+  /**
+   * Embed one live entry and UPSERT its vector. Best-effort; never throws to callers
+   * that await it carefully — failures log and return. No-op without embedder.
+   * @param {string} id
+   */
+  async embedEntry(id) {
+    if (!this.embedder) return
+    try {
+      const row = this.db
+        .prepare(
+          `SELECT id, title, body FROM entries WHERE id = ? AND ${liveSql()}`,
+        )
+        .get(id)
+      if (!row) return
+      const text = `${row.title}\n${row.body}`.slice(0, EMBED_MAX_CHARS)
+      const vec = await Promise.resolve(this.embedder.embed(text))
+      if (!vec) return
+      this.db
+        .prepare(
+          `INSERT INTO entry_vectors (entry_id, dim, vec, model, created_at)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(entry_id) DO UPDATE SET
+             dim = excluded.dim, vec = excluded.vec, model = excluded.model, created_at = excluded.created_at`,
+        )
+        .run(id, vec.length, floatToBlob(vec), this.embedder.model, new Date().toISOString())
+    } catch (err) {
+      console.error('embedEntry failed (non-fatal):', err)
+    }
+  }
+
+  /**
+   * Backfill up to `limit` missing/stale embeddings for live entries (newest first).
+   * @param {number} [limit]
+   * @returns {Promise<number>}
+   */
+  async embedMissing(limit = EMBED_BACKFILL_CAP) {
+    if (!this.embedder) return 0
+    const cap = Math.max(1, Math.trunc(limit) || EMBED_BACKFILL_CAP)
+    try {
+      const model = this.embedder.model
+      const rows = this.db
+        .prepare(
+          `SELECT e.id, e.title, e.body FROM entries e
+           WHERE ${liveSql('e')}
+             AND NOT EXISTS (
+               SELECT 1 FROM entry_vectors v WHERE v.entry_id = e.id AND v.model = ?
+             )
+           ORDER BY e.rowid DESC
+           LIMIT ?`,
+        )
+        .all(model, cap)
+      if (rows.length === 0) return 0
+      let n = 0
+      for (const r of rows) {
+        const text = `${r.title}\n${r.body}`.slice(0, EMBED_MAX_CHARS)
+        const vec = await Promise.resolve(this.embedder.embed(text))
+        if (!vec) continue
+        this.db
+          .prepare(
+            `INSERT INTO entry_vectors (entry_id, dim, vec, model, created_at)
+             VALUES (?, ?, ?, ?, ?)
+             ON CONFLICT(entry_id) DO UPDATE SET
+               dim = excluded.dim, vec = excluded.vec, model = excluded.model, created_at = excluded.created_at`,
+          )
+          .run(r.id, vec.length, floatToBlob(vec), model, new Date().toISOString())
+        n += 1
+      }
+      return n
+    } catch (err) {
+      console.error('embedMissing failed (non-fatal):', err)
+      return 0
+    }
+  }
+
+  /**
    * @param {{ query: string, project?: string, limit?: number }} opts
    */
-  search(opts) {
+  async search(opts) {
     const query = cleanText('query', opts.query)
     const match = ftsQuery(query)
     const project = cleanOptional(opts.project)
@@ -449,7 +681,7 @@ export class Memory {
              FROM entries_fts
              JOIN entries e ON e.rowid = entries_fts.rowid
              WHERE entries_fts MATCH ?
-               AND e.superseded_by IS NULL
+               AND ${liveSql('e')}
                AND (? IS NULL OR e.project IS NULL OR e.project = ?)
              ORDER BY score DESC
              LIMIT ?`,
@@ -462,12 +694,13 @@ export class Memory {
     }
 
     const graphRows = this.graphSearch(query, project)
+    const vectorRows = await this.vectorSearch(query, project)
 
-    // If neither retriever found anything, empty.
-    if (ftsRows.length === 0 && graphRows.length === 0) return []
+    // If no retriever found anything, empty.
+    if (ftsRows.length === 0 && graphRows.length === 0 && vectorRows.length === 0) return []
 
-    // Pure FTS path: keep existing bm25 composite ordering (no graph candidates).
-    if (graphRows.length === 0) {
+    // Pure FTS path: keep existing bm25 composite ordering (no graph/vector candidates).
+    if (graphRows.length === 0 && vectorRows.length === 0) {
       const topScore = ftsRows[0].score
       const gated =
         topScore <= 0
@@ -490,7 +723,7 @@ export class Memory {
       }))
     }
 
-    // RRF fusion: score 1/(60 + rank), sum across retrievers → candidate set.
+    // RRF fusion: score 1/(60 + rank), sum across retrievers (FTS, graph, vector).
     /** @type {Map<string, number>} */
     const rrf = new Map()
     ftsRows.forEach((r, i) => {
@@ -499,9 +732,13 @@ export class Memory {
     graphRows.forEach((r, i) => {
       rrf.set(r.id, (rrf.get(r.id) ?? 0) + 1 / (RRF_K + i + 1))
     })
+    vectorRows.forEach((r, i) => {
+      rrf.set(r.id, (rrf.get(r.id) ?? 0) + 1 / (RRF_K + i + 1))
+    })
 
     const ftsById = new Map(ftsRows.map((r) => [r.id, r]))
     const graphById = new Map(graphRows.map((r) => [r.id, r]))
+    const vectorById = new Map(vectorRows.map((r) => [r.id, r]))
     const fusedIds = [...rrf.keys()]
 
     // Re-score the fused set with a shared base composite (importance*decay*usage).
@@ -512,13 +749,14 @@ export class Memory {
         `SELECT e.id, e.type, e.title, e.body, e.project, e.agent, e.created_at, e.updated_at, e.importance,
                 ${BASE_SCORE_SQL} AS score
          FROM entries e
-         WHERE e.id IN (${place}) AND e.superseded_by IS NULL`,
+         WHERE e.id IN (${place}) AND ${liveSql('e')}`,
       )
       .all(...fusedIds)
 
     const fused = scoredRows.map((row) => {
       const fts = ftsById.get(row.id)
       const g = graphById.get(row.id)
+      const v = vectorById.get(row.id)
       return {
         id: row.id,
         type: row.type,
@@ -529,7 +767,7 @@ export class Memory {
         updated_at: row.updated_at,
         importance: row.importance,
         score: row.score,
-        excerpt: fts?.excerpt ?? g?.excerpt ?? excerptFromBody(row.body),
+        excerpt: fts?.excerpt ?? g?.excerpt ?? v?.excerpt ?? excerptFromBody(row.body),
         rrf: rrf.get(row.id) ?? 0,
       }
     })
@@ -650,6 +888,8 @@ export class Memory {
       console.error('linkEntities failed (non-fatal):', err)
     }
 
+    void this.embedEntry(newId).catch(() => {})
+
     return { id: newId }
   }
 
@@ -662,7 +902,7 @@ export class Memory {
     const conventionsRaw = this.db
       .prepare(
         `SELECT id, title, body, importance, created_at FROM entries
-         WHERE type = 'convention' AND superseded_by IS NULL
+         WHERE type = 'convention' AND ${liveSql()}
            AND (project IS NULL OR project = ?)
          ORDER BY importance DESC, created_at DESC
          LIMIT 50`,
@@ -672,7 +912,7 @@ export class Memory {
     const knowledgeRaw = this.db
       .prepare(
         `SELECT id, title, body, importance, created_at FROM entries
-         WHERE type = 'knowledge' AND superseded_by IS NULL
+         WHERE type = 'knowledge' AND ${liveSql()}
            AND (project IS NULL OR project = ?)
          ORDER BY importance DESC, created_at DESC
          LIMIT 50`,
@@ -682,7 +922,7 @@ export class Memory {
     const tasksRaw = this.db
       .prepare(
         `SELECT id, title, body, status, agent, project, created_at, updated_at FROM entries
-         WHERE type = 'task' AND superseded_by IS NULL
+         WHERE type = 'task' AND ${liveSql()}
            AND COALESCE(status, 'active') = 'active'
            AND (project IS NULL OR project = ?)
          ORDER BY updated_at DESC, created_at DESC
@@ -772,7 +1012,7 @@ export class Memory {
       .prepare(
         `SELECT id, type, title, body, project, agent, status, created_at, updated_at, importance
          FROM entries
-         WHERE superseded_by IS NULL
+         WHERE ${liveSql()}
            AND (? IS NULL OR project IS NULL OR project = ?)
            AND (? IS NULL OR type = ?)
          ORDER BY created_at DESC
@@ -946,5 +1186,211 @@ export class Memory {
       .prepare(`DELETE FROM session_messages WHERE created_at < ?`)
       .run(cutoff)
     return result.changes ?? 0
+  }
+
+  /**
+   * Tombstone a live entry (never deletes).
+   * @param {string} id
+   * @param {{ by?: string, reason?: string }} [opts]
+   */
+  invalidateEntry(id, opts = {}) {
+    const cleanId = cleanText('id', id)
+    const row = this.db
+      .prepare(`SELECT id, superseded_by, invalid_at FROM entries WHERE id = ?`)
+      .get(cleanId)
+    if (!row) throw new Error(`no entry with id ${id}`)
+    if (row.superseded_by) throw new Error(`entry ${id} is superseded — nothing to invalidate`)
+    if (row.invalid_at) throw new Error(`entry ${id} is already invalidated`)
+    const now = new Date().toISOString()
+    this.db
+      .prepare(
+        `UPDATE entries SET invalid_at = ?, invalidated_by = ?, invalidation_reason = ?, updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(now, opts.by ?? null, opts.reason ?? null, now, cleanId)
+  }
+
+  /**
+   * Resolve one open review_queue row.
+   * - noop: mark resolved, leave both entries
+   * - update: mark resolved (adjudication recorded; merge via normal supersede tools)
+   * - invalidate: mark resolved and tombstone the older entry (loser); winner is the other
+   * @param {{ id: number|string, resolution: 'update'|'invalidate'|'noop' }} input
+   */
+  resolve(input) {
+    const qid = Number(input.id)
+    if (!Number.isInteger(qid) || qid < 1) {
+      throw new Error(`invalid review queue id '${input.id}'`)
+    }
+    const resolution = cleanText('resolution', input.resolution)
+    if (!RESOLUTIONS.has(resolution)) {
+      throw new Error(`resolution must be update|invalidate|noop, got '${resolution}'`)
+    }
+    const row = this.db.prepare(`SELECT * FROM review_queue WHERE id = ?`).get(qid)
+    if (!row) throw new Error(`no review_queue row ${qid}`)
+    if (row.resolved_at) {
+      throw new Error(`review_queue row ${qid} already resolved (${row.resolution})`)
+    }
+
+    const a = this.db
+      .prepare(`SELECT id, created_at, superseded_by, invalid_at FROM entries WHERE id = ?`)
+      .get(row.entry_a)
+    const b = this.db
+      .prepare(`SELECT id, created_at, superseded_by, invalid_at FROM entries WHERE id = ?`)
+      .get(row.entry_b)
+    if (!a || !b) throw new Error(`review_queue row ${qid} references a missing entry`)
+
+    const dead = (e) => e.superseded_by || e.invalid_at
+    if (resolution !== 'noop' && (dead(a) || dead(b))) {
+      throw new Error(
+        'one of the entries is no longer live — resolve with resolution:noop to clear the queue row',
+      )
+    }
+
+    this.db.exec('BEGIN')
+    try {
+      if (resolution === 'invalidate') {
+        const loser = a.created_at <= b.created_at ? a : b
+        const winner = loser.id === a.id ? b : a
+        this.invalidateEntry(loser.id, {
+          by: winner.id,
+          reason: 'contradicted by newer memory',
+        })
+      }
+      this.db
+        .prepare(`UPDATE review_queue SET resolved_at = ?, resolution = ? WHERE id = ?`)
+        .run(new Date().toISOString(), resolution, qid)
+      this.db.exec('COMMIT')
+    } catch (err) {
+      try {
+        this.db.exec('ROLLBACK')
+      } catch {
+        // ignore
+      }
+      throw err
+    }
+    return { ok: true, id: qid, resolution }
+  }
+
+  /**
+   * Read-only consolidation report for memory_maintenance.
+   * @param {{ project?: string, now?: number }} [opts]
+   */
+  maintenance(opts = {}) {
+    const project = cleanOptional(opts.project)
+    const now = opts.now ?? Date.now()
+    const agingCutoff = new Date(now - AGING_RUN_DAYS * 86_400_000).toISOString()
+
+    const queueStats = this.db
+      .prepare(
+        `SELECT COUNT(*) AS open, MIN(created_at) AS oldest
+         FROM review_queue WHERE resolved_at IS NULL`,
+      )
+      .get()
+    const open = queueStats?.open ?? 0
+    const oldestAgeDays = queueStats?.oldest
+      ? Math.floor((now - Date.parse(queueStats.oldest)) / 86_400_000)
+      : 0
+
+    const openItems = this.db
+      .prepare(
+        `SELECT q.id, q.kind, q.detail, q.created_at,
+                a.id AS a_id, a.title AS a_title,
+                b.id AS b_id, b.title AS b_title
+         FROM review_queue q
+         JOIN entries a ON a.id = q.entry_a
+         JOIN entries b ON b.id = q.entry_b
+         WHERE q.resolved_at IS NULL
+         ORDER BY q.created_at ASC, q.id ASC
+         LIMIT ?`,
+      )
+      .all(MAINTENANCE_LIST_LIMIT)
+      .map((r) => ({
+        id: r.id,
+        kind: r.kind,
+        detail: r.detail,
+        created_at: r.created_at,
+        a: { id: r.a_id, title: r.a_title },
+        b: { id: r.b_id, title: r.b_title },
+        instruction: 'Resolve with memory_resolve {id, resolution: update|invalidate|noop}.',
+      }))
+
+    // Near-dup pairs among recent live entries (jaccard >= warn).
+    const actives = this.db
+      .prepare(
+        `SELECT id, title, body, created_at FROM entries
+         WHERE ${liveSql()}
+           AND (? IS NULL OR project IS NULL OR project = ?)
+         ORDER BY created_at DESC
+         LIMIT ?`,
+      )
+      .all(project, project, DEDUP_SCAN_CAP)
+    const tokenMap = new Map(actives.map((e) => [e.id, contentTokens(`${e.title} ${e.body}`)]))
+    const seen = new Set()
+    const nearDupes = []
+    for (let i = 0; i < actives.length; i++) {
+      for (let j = i + 1; j < actives.length; j++) {
+        const a = actives[i]
+        const b = actives[j]
+        const key = a.id < b.id ? `${a.id}|${b.id}` : `${b.id}|${a.id}`
+        if (seen.has(key)) continue
+        const overlap =
+          Math.round(jaccard(tokenMap.get(a.id), tokenMap.get(b.id)) * 1000) / 1000
+        if (overlap < DEDUP_WARN) continue
+        seen.add(key)
+        nearDupes.push({
+          a: { id: a.id, title: a.title },
+          b: { id: b.id, title: b.title },
+          overlap,
+          instruction:
+            'Keep the better one: memory_supersede the weaker entry (merge unique details into the survivor).',
+        })
+        if (nearDupes.length >= MAINTENANCE_LIST_LIMIT) break
+      }
+      if (nearDupes.length >= MAINTENANCE_LIST_LIMIT) break
+    }
+    nearDupes.sort((x, y) => y.overlap - x.overlap)
+
+    const agingRuns = this.db
+      .prepare(
+        `SELECT id, title, created_at, project FROM entries
+         WHERE type = 'run' AND ${liveSql()} AND created_at < ?
+           AND (? IS NULL OR project IS NULL OR project = ?)
+         ORDER BY created_at ASC
+         LIMIT ?`,
+      )
+      .all(agingCutoff, project, project, MAINTENANCE_LIST_LIMIT)
+      .map((r) => ({
+        ...r,
+        instruction:
+          'If durable, memory_store as knowledge then memory_supersede the run with a one-line outcome.',
+      }))
+
+    const fatConventions = this.db
+      .prepare(
+        `SELECT id, title, length(body) AS chars, created_at FROM entries
+         WHERE type = 'convention' AND ${liveSql()} AND length(body) > ?
+           AND (? IS NULL OR project IS NULL OR project = ?)
+         ORDER BY chars DESC
+         LIMIT ?`,
+      )
+      .all(FAT_CONVENTION_CHARS, project, project, MAINTENANCE_LIST_LIMIT)
+      .map((r) => ({
+        ...r,
+        instruction:
+          'memory_supersede with a tighter body that keeps every rule; never drop rules to save space.',
+      }))
+
+    return {
+      queue: {
+        open,
+        oldestAgeDays,
+        items: openItems,
+        instruction: 'Resolve open items with memory_resolve {id, resolution}.',
+      },
+      nearDupes,
+      agingRuns,
+      fatConventions,
+    }
   }
 }

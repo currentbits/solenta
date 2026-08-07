@@ -107,6 +107,9 @@ describe('HTTP auth and health', () => {
     assert.equal(body.ok, true)
     assert.equal(typeof body.entryCount, 'number')
     assert.ok('dbPath' in body)
+    assert.ok(body.vectors)
+    assert.equal(typeof body.vectors.enabled, 'boolean')
+    assert.equal(typeof body.vectors.count, 'number')
   })
 
   it('store/get/supersede round-trip over real MCP HTTP', async () => {
@@ -122,7 +125,9 @@ describe('HTTP auth and health', () => {
       'memory_bootstrap',
       'memory_feedback',
       'memory_get',
+      'memory_maintenance',
       'memory_recent',
+      'memory_resolve',
       'memory_search',
       'memory_store',
       'memory_supersede',

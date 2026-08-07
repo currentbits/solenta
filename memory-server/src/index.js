@@ -9,9 +9,10 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { z } from 'zod'
 import { Memory } from './memory.js'
 import { runJanitor, readJanitorSnapshot } from './janitor.js'
+import { createRealEmbedder, semanticEnabled } from './embedder.js'
 
 const INSTRUCTIONS =
-  'Coder shared memory. MEMORY PREFLIGHT: at session start call memory_bootstrap with project set to your working directory and treat its conventions as standing instructions. While working, store durable non-obvious findings (decisions, gotchas, conventions) with memory_store; before finishing, record what a future agent must know. Search returns excerpts; use memory_get for full bodies. Record notable turns with session_record; session_search finds past conversation excerpts.'
+  'Coder shared memory. MEMORY PREFLIGHT: at session start call memory_bootstrap with project set to your working directory and treat its conventions as standing instructions. While working, store durable non-obvious findings (decisions, gotchas, conventions) with memory_store; before finishing, record what a future agent must know. Search returns excerpts; use memory_get for full bodies. Record notable turns with session_record; session_search finds past conversation excerpts. memory_maintenance reports queue items to resolve with memory_resolve.'
 
 export function defaultRoot() {
   return process.platform === 'darwin'
@@ -127,6 +128,7 @@ const entryType = z.enum(['knowledge', 'task', 'convention', 'run'])
 const taskStatus = z.enum(['active', 'done', 'abandoned'])
 const feedbackVerdict = z.enum(['helpful', 'harmful'])
 const sessionRole = z.enum(['user', 'assistant', 'tool', 'system'])
+const reviewResolution = z.enum(['update', 'invalidate', 'noop'])
 
 /**
  * @param {Memory} memory
@@ -141,7 +143,7 @@ export function buildServer(memory) {
     'memory_store',
     {
       description:
-        'Store a durable memory shared by all agents. Use for non-obvious facts: decisions, gotchas, conventions, task records.',
+        'Store a durable memory shared by all agents. Use for non-obvious facts: decisions, gotchas, conventions, task records. Near-duplicates (jaccard >= 0.7) are refused unless force: true; moderate overlap (>= 0.4) stores but enqueues a review pair.',
       inputSchema: {
         type: entryType,
         title: z.string().min(1),
@@ -150,6 +152,7 @@ export function buildServer(memory) {
         agent: z.string().optional(),
         status: taskStatus.optional(),
         importance: z.number().int().min(1).max(5).optional(),
+        force: z.boolean().optional(),
       },
     },
     async (args) => json(memory.store(args)),
@@ -177,7 +180,7 @@ export function buildServer(memory) {
         limit: z.number().int().positive().max(100).optional(),
       },
     },
-    async (args) => json(memory.search(args)),
+    async (args) => json(await memory.search(args)),
   )
 
   server.registerTool(
@@ -238,6 +241,31 @@ export function buildServer(memory) {
       },
     },
     async (args) => json(memory.feedback(args)),
+  )
+
+  server.registerTool(
+    'memory_resolve',
+    {
+      description:
+        'Resolve a review_queue item (near-duplicate or contradiction candidate). resolution: update (recorded adjudication), invalidate (tombstone the older/losing entry), noop (both may coexist). Never deletes.',
+      inputSchema: {
+        id: z.number().int().positive(),
+        resolution: reviewResolution,
+      },
+    },
+    async (args) => json(memory.resolve(args)),
+  )
+
+  server.registerTool(
+    'memory_maintenance',
+    {
+      description:
+        'Read-only consolidation report: open review queue depth and oldest age, near-duplicate pairs, aging run notes (>7d), oversized conventions (>1500 chars). Each item includes a one-line instruction for resolving via normal tools. Makes no changes.',
+      inputSchema: {
+        project: z.string().optional(),
+      },
+    },
+    async (args) => json(memory.maintenance(args)),
   )
 
   server.registerTool(
@@ -363,7 +391,7 @@ async function handleApi(req, res, url, memory) {
       const query = url.searchParams.get('query') ?? ''
       const project = url.searchParams.get('project') ?? undefined
       const limit = url.searchParams.get('limit')
-      const result = memory.search({
+      const result = await memory.search({
         query,
         project,
         limit: limit != null ? Number(limit) : undefined,
@@ -482,6 +510,7 @@ export function startServer(memory, config, host = '127.0.0.1') {
           entryCount: memory.entryCount(),
           dbPath: config.dbPath,
           janitor: memory.janitorSnapshot?.() ?? readJanitorSnapshot(memory.db),
+          vectors: memory.vectorsHealth?.() ?? { enabled: false, count: 0, model: null },
         }),
       )
       return
@@ -578,7 +607,8 @@ function isMain() {
 
 if (isMain()) {
   const config = loadOrCreateConfig()
-  const memory = new Memory(config.dbPath)
+  const embedder = semanticEnabled() ? createRealEmbedder() : null
+  const memory = new Memory(config.dbPath, { embedder })
   startServer(memory, config, '127.0.0.1').then((server) => {
     const address = server.address()
     console.log(

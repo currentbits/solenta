@@ -21,9 +21,9 @@ describe('janitor', () => {
   })
 
   it('decays access_count by 0.98 with integer floor, never below 0', () => {
-    const a = memory.store({ type: 'knowledge', title: 'A', body: 'body a' })
-    const b = memory.store({ type: 'knowledge', title: 'B', body: 'body b' })
-    const c = memory.store({ type: 'knowledge', title: 'C', body: 'body c' })
+    const a = memory.store({ type: 'knowledge', title: 'A', body: 'body a', force: true })
+    const b = memory.store({ type: 'knowledge', title: 'B', body: 'body b', force: true })
+    const c = memory.store({ type: 'knowledge', title: 'C', body: 'body c', force: true })
     memory.db.prepare(`UPDATE entries SET access_count = 100 WHERE id = ?`).run(a.id)
     memory.db.prepare(`UPDATE entries SET access_count = 1 WHERE id = ?`).run(b.id)
     memory.db.prepare(`UPDATE entries SET access_count = 0 WHERE id = ?`).run(c.id)

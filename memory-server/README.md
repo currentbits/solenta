@@ -22,9 +22,11 @@ cd memory-server && npm install && node src/index.js
 - `memory_store` / `memory_get` / `memory_search` / `memory_supersede`
 - `memory_recent` — newest live entries (excerpts, limit ≤ 50)
 - `memory_feedback` — `{ id, verdict: helpful|harmful, note? }` evidence counters
+- `memory_resolve` — adjudicate a `review_queue` item (`update` | `invalidate` | `noop`)
+- `memory_maintenance` — read-only report (open queue, near-dups, aging runs, fat conventions)
 - `session_record` / `session_search` — append-only transcript turns and FTS over past conversation excerpts (30-day retention)
 
-Search fuses FTS5 with a 2-hop entity graph (RRF), then applies composite scoring and a 20% relevance gate. Entities are extracted conservatively on store/supersede (`[[wikilinks]]`, code/doc files, two-hump PascalCase modules). A janitor runs on start and every 6h (access decay, orphan sweep, session transcript prune, health snapshot on `GET /health` as `janitor` including `sessionCount` and `prunedLastRun`).
+Search fuses FTS5, a 2-hop entity graph, and local semantic vectors (RRF), then applies composite scoring and a 20% relevance gate. Vectors use `@huggingface/transformers` MiniLM (`Xenova/all-MiniLM-L6-v2`); set `CODER_MEMORY_SEMANTIC=0` to disable. Write-time Jaccard dedup refuses near-duplicates (≥0.7) unless `force: true`, and enqueues moderate pairs (≥0.4) for review. Entities are extracted conservatively on store/supersede (`[[wikilinks]]`, code/doc files, two-hump PascalCase modules). A janitor runs on start and every 6h (access decay, orphan sweep, session prune, contradiction scan, embedding backfill ≤64, health snapshot on `GET /health` as `janitor` plus `vectors: {enabled,count,model}`).
 
 REST (same bearer auth): `GET /api/recent`, `GET /api/search`, `GET /api/entry/:id`, `POST /api/store`, `POST /api/session`, `GET /api/session-search`.
 

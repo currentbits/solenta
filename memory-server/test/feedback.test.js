@@ -51,24 +51,27 @@ describe('feedback', () => {
     assert.equal(log.note, 'worked well')
   })
 
-  it('helpful feedback boosts rank; harmful demotes; clamps apply', () => {
+  it('helpful feedback boosts rank; harmful demotes; clamps apply', async () => {
     const base = memory.store({
       type: 'knowledge',
       title: 'Shared rank topic',
       body: 'shared rank topic details here',
       importance: 3,
+      force: true,
     })
     const boosted = memory.store({
       type: 'knowledge',
       title: 'Shared rank topic',
       body: 'shared rank topic details here',
       importance: 3,
+      force: true,
     })
     const demoted = memory.store({
       type: 'knowledge',
       title: 'Shared rank topic',
       body: 'shared rank topic details here',
       importance: 3,
+      force: true,
     })
     pinEqualFts([base.id, boosted.id, demoted.id])
 
@@ -78,7 +81,7 @@ describe('feedback', () => {
     for (let i = 0; i < 5; i++) memory.feedback({ id: demoted.id, verdict: 'harmful' })
     memory.feedback({ id: demoted.id, verdict: 'harmful' }) // beyond clamp of 5
 
-    const hits = memory.search({ query: 'shared rank topic', limit: 10 })
+    const hits = await memory.search({ query: 'shared rank topic', limit: 10 })
     const order = hits.map((h) => h.id)
     assert.ok(order.includes(boosted.id) && order.includes(demoted.id) && order.includes(base.id))
     assert.ok(
