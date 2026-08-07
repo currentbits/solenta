@@ -23,6 +23,8 @@ export interface ThreadInfo {
   title: string;
   branch: string | null;
   prNumber: number | null;
+  /** Set alongside prNumber so the badge can link out without calling gh. */
+  prUrl: string | null;
   status: ThreadStatus;
   createdAt: number;
   /**
@@ -152,6 +154,18 @@ export interface GitStatus {
   isRepo: boolean;
   branch: string;
   dirty: boolean;
+}
+
+/** A GitHub pull request opened from a thread's branch. */
+export interface PrInfo {
+  number: number;
+  url: string;
+  /** gh's state, uppercased: OPEN, CLOSED or MERGED. */
+  state: "OPEN" | "CLOSED" | "MERGED";
+  /** The head branch the PR was opened from. */
+  branch: string;
+  /** False when an existing PR was returned instead of a new one. */
+  created: boolean;
 }
 
 export interface ProviderInfo {
@@ -329,6 +343,7 @@ export interface CoderApi {
   };
   git: {
     status(projectId: string): Promise<GitStatus>;
+    // See PrInfo below for the shape createPr/prStatus return.
     /** Creates a git worktree + branch for the thread; later runs execute in it. */
     setupWorktree(input: { threadId: string }): Promise<ThreadInfo>;
     /** Working-tree changes in the thread's cwd (worktree if set, else project). */
@@ -352,6 +367,27 @@ export interface CoderApi {
      * message when no remote is configured or the push fails.
      */
     push(input: { threadId: string }): Promise<{ remote: string; branch: string }>;
+    /**
+     * Pushes the thread's branch, then opens a GitHub PR against the project's
+     * default branch via the gh CLI, and records prNumber/prUrl on the thread.
+     *
+     * Idempotent: when a PR already exists for the branch it is returned as-is
+     * (created: false) rather than erroring. Rejects with a plain-language
+     * message when gh is missing, gh is not authenticated, the remote is not
+     * GitHub, or the branch has no commits to propose.
+     */
+    createPr(input: {
+      threadId: string;
+      title: string;
+      body?: string;
+      draft?: boolean;
+    }): Promise<PrInfo>;
+    /**
+     * Current PR for the thread's branch, or null when there is none. Reads
+     * live state from gh so a PR merged or closed outside the app is reflected.
+     * Rejects only on the same environment failures as createPr.
+     */
+    prStatus(input: { threadId: string }): Promise<PrInfo | null>;
   };
   /** Returns an unsubscribe function. */
   on(channel: "threads:changed", cb: (threads: ThreadInfo[]) => void): () => void;
