@@ -125,6 +125,14 @@ function registerIpc(deps) {
     return memory.store(input);
   });
 
+  ipcMain.handle("memory:update", async (_event, input) => {
+    return memory.update(input);
+  });
+
+  ipcMain.handle("memory:remove", async (_event, input) => {
+    return memory.remove(input);
+  });
+
   ipcMain.handle("settings:get", async () => {
     return services.getSettings(store);
   });

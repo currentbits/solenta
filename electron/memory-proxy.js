@@ -241,13 +241,18 @@ function createMemoryProxy(opts) {
     },
 
     /**
-     * @param {{ limit?: number }} [input]
+     * @param {{ limit?: number, project?: string }} [input]
      * @returns {Promise<import('../src/shared/ipc').MemoryEntryInfo[]>}
      */
     async recent(input) {
       let pathWithQuery = "/api/recent";
       if (input && input.limit != null) {
         pathWithQuery += `?limit=${encodeURIComponent(String(input.limit))}`;
+      }
+      // Must forward project: the Memory tab's default view is recent(), and an
+      // unscoped list shows other projects' rows next to a Delete button.
+      if (input && input.project != null && input.project !== "") {
+        pathWithQuery += `${pathWithQuery.includes("?") ? "&" : "?"}project=${encodeURIComponent(String(input.project))}`;
       }
       const raw = await request("GET", pathWithQuery);
       const list = Array.isArray(raw) ? raw : [];
@@ -285,6 +290,32 @@ function createMemoryProxy(opts) {
       return {
         id: typeof o.id === "string" ? o.id : String(o.id ?? ""),
       };
+    },
+
+    /**
+     * Correct an entry by superseding it. The old row is retained and marked;
+     * the returned id is the successor.
+     * @param {{ id: string, title: string, body: string }} input
+     * @returns {Promise<{ id: string }>}
+     */
+    async update(input) {
+      const id = encodeURIComponent(String(input && input.id != null ? input.id : ""));
+      const raw = await request("POST", `/api/entry/${id}/supersede`, {
+        title: input && input.title,
+        body: input && input.body,
+      });
+      const o = raw && typeof raw === "object" ? raw : {};
+      return { id: typeof o.id === "string" ? o.id : String(o.id ?? "") };
+    },
+
+    /**
+     * Permanently remove an entry and its dependents.
+     * @param {{ id: string }} input
+     * @returns {Promise<void>}
+     */
+    async remove(input) {
+      const id = encodeURIComponent(String(input && input.id != null ? input.id : ""));
+      await request("DELETE", `/api/entry/${id}`);
     },
 
     /**

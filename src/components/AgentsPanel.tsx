@@ -41,6 +41,12 @@ interface AgentsPanelProps {
     project?: string;
   }) => Promise<MemoryEntryInfo[]>;
   getMemory: (input: { id: string }) => Promise<MemoryEntryInfo>;
+  updateMemory: (input: {
+    id: string;
+    title: string;
+    body: string;
+  }) => Promise<{ id: string }>;
+  removeMemory: (input: { id: string }) => Promise<void>;
   storeMemory: (input: {
     type: MemoryEntryInfo["type"];
     title: string;
@@ -644,6 +650,8 @@ export function AgentsPanel({
   searchMemory,
   recentMemory,
   getMemory,
+  updateMemory,
+  removeMemory,
   storeMemory,
 }: AgentsPanelProps) {
   const [tab, setTab] = useState<PanelTab>("agents");
@@ -699,6 +707,8 @@ export function AgentsPanel({
           searchMemory={searchMemory}
           recentMemory={recentMemory}
           getMemory={getMemory}
+          updateMemory={updateMemory}
+          removeMemory={removeMemory}
           storeMemory={storeMemory}
         />
       )}

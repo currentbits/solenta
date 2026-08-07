@@ -1422,7 +1422,11 @@ function buildDevCoder(): CoderApi {
             running: true,
             adopted: false,
             port: 49999,
+            entries: memoryEntries.length,
+            vectors: memoryEntries.length,
+            lastError: null,
           },
+          build: { version: "0.1.0-dev", sha: null, time: null },
         };
       },
     },
@@ -1496,6 +1500,40 @@ function buildDevCoder(): CoderApi {
         };
         memoryEntries = [entry, ...memoryEntries];
         return { id: entry.id };
+      },
+      async update(input: {
+        id: string;
+        title: string;
+        body: string;
+      }): Promise<{ id: string }> {
+        const title = input.title.trim();
+        const body = input.body.trim();
+        if (!title) throw new Error("Title is required");
+        if (!body) throw new Error("Body is required");
+        const old = memoryEntries.find((e) => e.id === input.id);
+        if (!old) throw new Error(`no entry with id ${input.id}`);
+        const ts = toIso(now());
+        const successor: MemoryRow = {
+          ...old,
+          id: id("mem"),
+          title,
+          body,
+          createdAt: ts,
+          updatedAt: ts,
+        };
+        // Supersede semantics: the old row stops being served.
+        memoryEntries = [
+          successor,
+          ...memoryEntries.filter((e) => e.id !== input.id),
+        ];
+        return { id: successor.id };
+      },
+      async remove(input: { id: string }): Promise<void> {
+        const before = memoryEntries.length;
+        memoryEntries = memoryEntries.filter((e) => e.id !== input.id);
+        if (memoryEntries.length === before) {
+          throw new Error(`no entry with id ${input.id}`);
+        }
       },
     },
     settings: {

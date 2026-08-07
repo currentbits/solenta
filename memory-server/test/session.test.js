@@ -9,6 +9,7 @@ import { openDb, createSchema } from '../src/db.js'
 import { Memory } from '../src/memory.js'
 import { runJanitor, readJanitorSnapshot } from '../src/janitor.js'
 import { startServer } from '../src/index.js'
+import { fakeEmbedder } from '../src/embedder.js'
 
 describe('session_messages schema', () => {
   let dir
@@ -418,5 +419,106 @@ describe('session REST + MCP', () => {
     assert.ok(hits.some((h) => h.sessionId === 'mcp-sess-1'))
 
     await mcp.close()
+  })
+})
+
+describe('entry correction REST (delete + supersede)', () => {
+  let dir, cfgPath, server, memory, baseURL
+  const TOKEN = 'c'.repeat(64)
+
+  beforeEach(async () => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'coder-edit-'))
+    cfgPath = path.join(dir, 'memory-server.json')
+    const port = 47000 + Math.floor(Math.random() * 500)
+    fs.writeFileSync(
+      cfgPath,
+      JSON.stringify({ port, token: TOKEN, dbPath: path.join(dir, 'mem.db') }),
+    )
+    memory = new Memory(path.join(dir, 'mem.db'), { embedder: fakeEmbedder(8) })
+    server = await startServer(memory, { port, token: TOKEN, dbPath: path.join(dir, 'mem.db') })
+    baseURL = `http://127.0.0.1:${port}`
+  })
+  afterEach(async () => {
+    await new Promise((r) => server.close(r))
+    memory.close?.()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  const auth = () => ({ Authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' })
+
+  it('supersedes an entry and returns the successor id', async () => {
+    const { id } = memory.store({
+      type: 'knowledge',
+      title: 'Wrong fact platypus',
+      body: 'the original body that turned out to be wrong about platypus',
+    })
+    const res = await fetch(`${baseURL}/api/entry/${id}/supersede`, {
+      method: 'POST',
+      headers: auth(),
+      body: JSON.stringify({ title: 'Corrected fact platypus', body: 'the corrected body about platypus' }),
+    })
+    assert.equal(res.status, 200)
+    const out = await res.json()
+    assert.ok(out.id && out.id !== id)
+    const successor = await (await fetch(`${baseURL}/api/entry/${out.id}`, { headers: auth() })).json()
+    assert.equal(successor.title, 'Corrected fact platypus')
+    // The old entry is retained but no longer served.
+    const old = await fetch(`${baseURL}/api/entry/${id}`, { headers: auth() })
+    assert.equal(old.status, 404)
+  })
+
+  it('deletes an entry, 404s an unknown id, 409s a superseded target', async () => {
+    const { id } = memory.store({
+      type: 'knowledge',
+      title: 'Junk entry quetzal',
+      body: 'this entry about quetzal is junk and should be removable',
+    })
+    const ok = await fetch(`${baseURL}/api/entry/${id}`, { method: 'DELETE', headers: auth() })
+    assert.equal(ok.status, 200)
+    assert.equal((await ok.json()).deleted, id)
+    assert.equal(memory.get(id), null)
+
+    const missing = await fetch(`${baseURL}/api/entry/does-not-exist`, {
+      method: 'DELETE',
+      headers: auth(),
+    })
+    assert.equal(missing.status, 404)
+
+    // A successor cannot be deleted while its predecessor points at it.
+    const a = memory.store({
+      type: 'knowledge',
+      title: 'Old okapi note',
+      body: 'the original okapi note body for supersession testing',
+    })
+    const b = memory.supersede(a.id, { title: 'New okapi note', body: 'the corrected okapi note body' })
+    const conflict = await fetch(`${baseURL}/api/entry/${b.id}`, {
+      method: 'DELETE',
+      headers: auth(),
+    })
+    assert.equal(conflict.status, 409)
+  })
+
+  it('404s a supersede of an unknown id', async () => {
+    // The 404 branch used to match /unknown|not found/, but supersede throws
+    // "no entry with id <id>", so every miss answered 400.
+    const res = await fetch(`${baseURL}/api/entry/no-such-entry/supersede`, {
+      method: 'POST',
+      headers: auth(),
+      body: JSON.stringify({ title: 'Title', body: 'body for a missing entry' }),
+    })
+    assert.equal(res.status, 404)
+    assert.match((await res.json()).error, /no entry with id/)
+  })
+
+  it('requires bearer auth for both routes', async () => {
+    const { id } = memory.store({ type: 'knowledge', title: 'Auth check', body: 'auth check body here' })
+    const del = await fetch(`${baseURL}/api/entry/${id}`, { method: 'DELETE' })
+    assert.equal(del.status, 401)
+    const sup = await fetch(`${baseURL}/api/entry/${id}/supersede`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: 't', body: 'b' }),
+    })
+    assert.equal(sup.status, 401)
   })
 })

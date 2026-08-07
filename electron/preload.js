@@ -40,6 +40,8 @@ const coder = {
     recent: (input) => invoke("memory:recent", input),
     get: (input) => invoke("memory:get", input),
     store: (input) => invoke("memory:store", input),
+    update: (input) => invoke("memory:update", input),
+    remove: (input) => invoke("memory:remove", input),
   },
   settings: {
     get: () => invoke("settings:get"),

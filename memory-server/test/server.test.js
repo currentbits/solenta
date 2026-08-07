@@ -123,6 +123,7 @@ describe('HTTP auth and health', () => {
     const names = tools.tools.map((t) => t.name).sort()
     assert.deepEqual(names, [
       'memory_bootstrap',
+      'memory_delete',
       'memory_feedback',
       'memory_get',
       'memory_maintenance',

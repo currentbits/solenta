@@ -41,6 +41,8 @@ export default function App() {
     searchMemory,
     recentMemory,
     getMemory,
+    updateMemory,
+    removeMemory,
     storeMemory,
     searchThreads,
   } = useCoder();
@@ -129,6 +131,8 @@ export default function App() {
         searchMemory={searchMemory}
         recentMemory={recentMemory}
         getMemory={getMemory}
+        updateMemory={updateMemory}
+        removeMemory={removeMemory}
         storeMemory={storeMemory}
       />
       <SettingsModal

@@ -185,8 +185,32 @@ export function SettingsModal({
               />
               <span>{memoryLabel}</span>
             </div>
+            {memory?.running && (
+              <p className={styles.note}>
+                {memory.entries != null ? `${memory.entries} entries` : "entries unknown"}
+                {memory.vectors != null ? `, ${memory.vectors} embedded` : ""}
+              </p>
+            )}
+            {memory?.lastError && (
+              <p className={styles.fieldError} role="alert">
+                Janitor error: {memory.lastError}
+              </p>
+            )}
             <p className={styles.note}>
-              Shared memory is injected into Claude agents automatically.
+              Shared memory is project-scoped and injected into agents
+              automatically.
+            </p>
+          </section>
+
+          <section className={styles.section}>
+            <h3 className={styles.sectionLabel}>Build</h3>
+            {/* A stale packaged bundle behaves like a broken app; name the build. */}
+            <p className={styles.note}>
+              {status
+                ? `${status.build.version}${
+                    status.build.sha ? ` · ${status.build.sha}` : " · dev tree"
+                  }${status.build.time ? ` · ${status.build.time}` : ""}`
+                : "unknown"}
             </p>
           </section>
         </div>

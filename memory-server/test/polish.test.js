@@ -181,7 +181,14 @@ describe('round-22 polish', () => {
           .get(id).n
         assert.equal(n, 0, `${table} must be clean`)
       }
-      // FTS shadow gone: search cannot find the deleted text.
+      // FTS shadow gone. Checking search by id is NOT enough: with the row gone
+      // from entries the join drops it either way. entries_fts is external-content
+      // keyed by rowid and SQLite REUSES rowids, so an orphan shadow row makes the
+      // next entry to take that rowid answer the deleted entry's words.
+      const ftsLeft = memory.db
+        .prepare('SELECT COUNT(*) AS n FROM entries_fts WHERE entries_fts MATCH ?')
+        .get('Deletable').n
+      assert.equal(ftsLeft, 0, 'entries_fts shadow row must be deleted')
       const hits = await memory.search({ query: 'Deletable Widget fact' })
       assert.ok(!hits.some((h) => h.id === id))
       // Unrelated entry untouched.

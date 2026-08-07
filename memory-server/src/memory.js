@@ -360,7 +360,7 @@ export class Memory {
 
   /**
    * Hard-delete an entry and every dependent row, transactionally.
-   * Groundwork only: exported and tested but not wired to any tool. The FK
+   * Reachable from the memory_delete tool and DELETE /api/entry/:id. The FK
    * constraints on entry_vectors/review_queue have no ON DELETE CASCADE
    * (SQLite would need table rebuilds), so dependents must go first.
    * @param {string} id

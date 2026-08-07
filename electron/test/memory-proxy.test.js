@@ -251,6 +251,41 @@ describe("memory-proxy", () => {
     assert.equal(typeof entries[0].body, "string");
   });
 
+  it("recent: forwards project so the default list stays project-scoped", async () => {
+    // Regression: recent() built its query from limit only and dropped project,
+    // so the Memory tab's default view listed every project's rows next to a
+    // per-row Delete button.
+    /** @type {string[]} */
+    const seen = [];
+    fake = await startFakeServer({
+      port,
+      token: TOKEN,
+      handler: (req) => {
+        seen.push(req.url || "");
+        return null;
+      },
+    });
+    const p = proxy();
+
+    await p.recent({ limit: 5, project: "coder" });
+    const withBoth = new URL(seen.at(-1), "http://x");
+    assert.equal(withBoth.searchParams.get("limit"), "5");
+    assert.equal(withBoth.searchParams.get("project"), "coder");
+
+    // project alone must still produce a valid query string (leading "?").
+    await p.recent({ project: "coder" });
+    const projectOnly = new URL(seen.at(-1), "http://x");
+    assert.equal(projectOnly.searchParams.get("project"), "coder");
+
+    // Encoding, and no project key at all when unscoped.
+    await p.recent({ project: "owner/repo name" });
+    assert.ok(seen.at(-1).includes("project=owner%2Frepo%20name"));
+    await p.recent({ limit: 5 });
+    assert.equal(new URL(seen.at(-1), "http://x").searchParams.has("project"), false);
+    await p.recent({ limit: 5, project: "" });
+    assert.equal(new URL(seen.at(-1), "http://x").searchParams.has("project"), false);
+  });
+
   it("get: returns full-body MemoryEntryInfo", async () => {
     fake = await startFakeServer({ port, token: TOKEN });
     const p = proxy();

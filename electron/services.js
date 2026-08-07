@@ -573,16 +573,103 @@ function setSettings(store, patch) {
 }
 
 /**
+ * Live app status: today's spend, memory health (with counts), and which build
+ * is running. A /health failure degrades to nulls; status must never throw.
  * @param {import('./store').Store} store
- * @returns {{ spendTodayUsd: number, memory: { running: boolean, adopted: boolean, port: number | null } }}
+ * @param {{ health?: () => Promise<any>, status?: () => any, pkg?: any }} [deps] injectable for tests
  */
-function appStatus(store) {
+async function appStatus(store, deps = {}) {
   const spend = store.getSpendToday();
   const spendTodayUsd = Math.round(spend * 100) / 100;
+  const base = deps.status ? deps.status() : getMemoryStatus();
+
+  let entries = null;
+  let vectors = null;
+  let lastError = null;
+  if (base.running) {
+    try {
+      const health = deps.health ? await deps.health() : await fetchMemoryHealth(base.port);
+      if (health && typeof health === "object") {
+        entries = Number.isFinite(health.entryCount) ? health.entryCount : null;
+        vectors =
+          health.vectors && Number.isFinite(health.vectors.count)
+            ? health.vectors.count
+            : null;
+        const je = health.janitor && health.janitor.lastError;
+        lastError = je ? `${je.step}: ${je.message}` : null;
+      }
+    } catch {
+      // health unreachable: report nulls rather than failing status
+    }
+  }
+
+  let version = "0.0.0";
+  let sha = null;
+  let time = null;
+  try {
+    const pkg = deps.pkg || require("../package.json");
+    version = String(pkg.version || version);
+    sha = pkg.buildSha ? String(pkg.buildSha) : null;
+    time = pkg.buildTime ? String(pkg.buildTime) : null;
+  } catch {
+    // dev tree without a stamped package: leave nulls
+  }
+
   return {
     spendTodayUsd,
-    memory: getMemoryStatus(),
+    memory: { ...base, entries, vectors, lastError },
+    build: { version, sha, time },
   };
+}
+
+/** GET /health on the local memory server; resolves null on any failure. */
+function fetchMemoryHealth(port) {
+  return new Promise((resolve) => {
+    if (!port) return resolve(null);
+    let settled = false;
+    /** @type {ReturnType<typeof setTimeout> | undefined} */
+    let deadline;
+    /** @param {any} value */
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadline);
+      try {
+        req.destroy();
+      } catch {
+        // already closed
+      }
+      resolve(value);
+    };
+    const req = require("node:http").get(
+      { host: "127.0.0.1", port, path: "/health", timeout: 1500 },
+      (res) => {
+        let body = "";
+        res.setEncoding("utf8");
+        res.on("data", (c) => {
+          // Health is a small JSON document; refuse to buffer a runaway body.
+          if (body.length > 256 * 1024) return finish(null);
+          body += c;
+        });
+        res.on("end", () => {
+          // A 500 whose body happens to parse is not health.
+          if (res.statusCode !== 200) return finish(null);
+          try {
+            finish(JSON.parse(body));
+          } catch {
+            finish(null);
+          }
+        });
+      },
+    );
+    req.on("error", () => finish(null));
+    req.on("timeout", () => finish(null));
+    // `timeout` is socket INACTIVITY, so a server dribbling a byte at a time can
+    // hold status open forever. This is the absolute deadline. It is armed AFTER
+    // http.get: an invalid port makes get() throw synchronously, and a timer
+    // armed first would outlive the rejection and then fire into a TDZ `req`.
+    deadline = setTimeout(() => finish(null), 2000);
+  });
 }
 
 /**

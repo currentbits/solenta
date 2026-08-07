@@ -228,14 +228,86 @@ describe("spendByDay and settings", () => {
     );
   });
 
-  it("app.status returns spendTodayUsd rounded and memory status", () => {
+  it("app.status returns spend, memory stats and the build stamp", async () => {
     resetMemorySupForTests();
     const store = new Store(filePath);
     store.recordSpend(1.23456);
     store.save();
-    const status = services.appStatus(store);
+    const status = await services.appStatus(store);
     assert.equal(status.spendTodayUsd, 1.23);
-    assert.deepEqual(status.memory, getMemoryStatus());
+    // Memory is down here: counts must be null, never missing or throwing.
+    const base = getMemoryStatus();
+    assert.equal(status.memory.running, base.running);
+    assert.equal(status.memory.entries, null);
+    assert.equal(status.memory.vectors, null);
+    assert.equal(status.memory.lastError, null);
+    // Build stamp must come from the real package, not a placeholder: the whole
+    // point is that a stale bundle is identifiable.
+    assert.equal(status.build.version, require("../../package.json").version);
+    // An unstamped dev tree has no sha/time.
+    assert.equal(status.build.sha, null);
+    assert.equal(status.build.time, null);
+  });
+
+  it("app.status surfaces the packaged build sha and time", async () => {
+    resetMemorySupForTests();
+    const store = new Store(filePath);
+    const status = await services.appStatus(store, {
+      pkg: {
+        version: "9.9.9",
+        buildSha: "deadbee+dirty",
+        buildTime: "2026-08-07T14:05:05Z",
+      },
+    });
+    assert.deepEqual(status.build, {
+      version: "9.9.9",
+      sha: "deadbee+dirty",
+      time: "2026-08-07T14:05:05Z",
+    });
+  });
+
+  it("app.status degrades to 0.0.0 when the package cannot be read", async () => {
+    resetMemorySupForTests();
+    const store = new Store(filePath);
+    const status = await services.appStatus(store, {
+      pkg: { version: null },
+    });
+    assert.equal(status.build.version, "0.0.0");
+    assert.equal(status.build.sha, null);
+    assert.equal(status.build.time, null);
+  });
+
+  it("app.status reports live memory counts and janitor errors when healthy", async () => {
+    resetMemorySupForTests();
+    const store = new Store(filePath);
+    const status = await services.appStatus(store, {
+      status: () => ({ running: true, adopted: false, port: 49999 }),
+      health: async () => ({
+        ok: true,
+        entryCount: 42,
+        vectors: { enabled: true, count: 40, model: "m" },
+        janitor: { lastError: { step: "orphans", message: "no such table: mentions" } },
+      }),
+    });
+    assert.equal(status.memory.running, true);
+    assert.equal(status.memory.entries, 42);
+    assert.equal(status.memory.vectors, 40);
+    assert.equal(status.memory.lastError, "orphans: no such table: mentions");
+  });
+
+  it("app.status degrades to nulls when /health is unreachable", async () => {
+    resetMemorySupForTests();
+    const store = new Store(filePath);
+    const status = await services.appStatus(store, {
+      status: () => ({ running: true, adopted: true, port: 49999 }),
+      health: async () => {
+        throw new Error("connection refused");
+      },
+    });
+    assert.equal(status.memory.running, true);
+    assert.equal(status.memory.entries, null);
+    assert.equal(status.memory.vectors, null);
+    assert.equal(status.memory.lastError, null);
   });
 });
 

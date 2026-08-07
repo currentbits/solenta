@@ -184,6 +184,22 @@ export function buildServer(memory) {
   )
 
   server.registerTool(
+    'memory_delete',
+    {
+      description:
+        'Permanently delete a memory entry and its dependents. Prefer memory_supersede (which keeps history) unless the entry is genuinely junk. Refuses when another entry supersedes this one.',
+      inputSchema: {
+        id: z.string().min(1),
+      },
+    },
+    async ({ id }) => {
+      const removed = memory.deleteEntry(id)
+      if (!removed) throw new Error(`Unknown entry: ${id}`)
+      return json({ deleted: id })
+    },
+  )
+
+  server.registerTool(
     'memory_supersede',
     {
       description:
@@ -397,6 +413,54 @@ async function handleApi(req, res, url, memory) {
         limit: limit != null ? Number(limit) : undefined,
       })
       sendJson(res, 200, result.map(toApiRow))
+      return true
+    }
+
+    if (req.method === 'POST' && url.pathname.startsWith('/api/entry/') && url.pathname.endsWith('/supersede')) {
+      const id = decodeURIComponent(
+        url.pathname.slice('/api/entry/'.length, -'/supersede'.length),
+      )
+      if (!id) {
+        sendJson(res, 400, { error: 'id required' })
+        return true
+      }
+      let body
+      try {
+        const raw = await readBody(req)
+        body = raw.length ? JSON.parse(raw.toString('utf8')) : {}
+      } catch {
+        sendJson(res, 400, { error: 'valid JSON required' })
+        return true
+      }
+      try {
+        sendJson(res, 200, memory.supersede(id, body))
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        sendJson(res, /no entry with id|unknown|not found/i.test(msg) ? 404 : 400, {
+          error: msg,
+        })
+      }
+      return true
+    }
+
+    if (req.method === 'DELETE' && url.pathname.startsWith('/api/entry/')) {
+      const id = decodeURIComponent(url.pathname.slice('/api/entry/'.length))
+      if (!id) {
+        sendJson(res, 400, { error: 'id required' })
+        return true
+      }
+      try {
+        const removed = memory.deleteEntry(id)
+        if (!removed) {
+          sendJson(res, 404, { error: `Unknown entry: ${id}` })
+          return true
+        }
+        sendJson(res, 200, { deleted: id })
+      } catch (err) {
+        // deleteEntry refuses when another entry points here via superseded_by.
+        const msg = err instanceof Error ? err.message : String(err)
+        sendJson(res, /superseded_by/.test(msg) ? 409 : 400, { error: msg })
+      }
       return true
     }
 

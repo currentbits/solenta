@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { MemoryEntryInfo } from "../shared/ipc";
 import { formatRelativeAge } from "../format";
 import styles from "./MemoryTab.module.css";
+import { memoryCardState } from "../memoryCard";
 
 const MEMORY_NOT_RUNNING = "Memory server is not running.";
 const SEARCH_DEBOUNCE_MS = 300;
@@ -22,6 +23,12 @@ export interface MemoryTabProps {
     project?: string;
   }) => Promise<MemoryEntryInfo[]>;
   getMemory: (input: { id: string }) => Promise<MemoryEntryInfo>;
+  updateMemory: (input: {
+    id: string;
+    title: string;
+    body: string;
+  }) => Promise<{ id: string }>;
+  removeMemory: (input: { id: string }) => Promise<void>;
   storeMemory: (input: {
     type: MemoryEntryInfo["type"];
     title: string;
@@ -58,6 +65,8 @@ export function MemoryTab({
   searchMemory,
   recentMemory,
   getMemory,
+  updateMemory,
+  removeMemory,
   storeMemory,
 }: MemoryTabProps) {
   const [entries, setEntries] = useState<MemoryEntryInfo[]>([]);
@@ -66,6 +75,14 @@ export function MemoryTab({
   const [listError, setListError] = useState<string | null>(null);
   const [serverDown, setServerDown] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  /** Entry being corrected (supersede) and its draft. */
+  const [editId, setEditId] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editBody, setEditBody] = useState("");
+  /** Entry awaiting delete confirmation. */
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [actionBusy, setActionBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [fullBodies, setFullBodies] = useState<Record<string, string>>({});
   /** Ids whose memory.get failed (non-not-running); re-click retries. */
   const [failedIds, setFailedIds] = useState<Record<string, string>>({});
@@ -77,6 +94,14 @@ export function MemoryTab({
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [now, setNow] = useState(() => Date.now());
+
+  /** Per-card edit/delete context is only valid for the card it was opened on:
+      a failed delete on A must not surface as an error on B's card. */
+  const clearCardActions = useCallback(() => {
+    setEditId(null);
+    setConfirmDeleteId(null);
+    setActionError(null);
+  }, []);
 
   /** Bumped so late awaits do not clobber newer list results. */
   const listGen = useRef(0);
@@ -124,6 +149,7 @@ export function MemoryTab({
       setFullBodies({});
       setExpandedId(null);
       setFailedIds({});
+      clearCardActions();
       setListError(null);
       setServerDown(false);
     } catch (err) {
@@ -141,7 +167,7 @@ export function MemoryTab({
         setLoading(false);
       }
     }
-  }, [recentMemory, projectSlug]);
+  }, [recentMemory, projectSlug, clearCardActions]);
 
   const runSearch = useCallback(
     async (q: string) => {
@@ -158,6 +184,7 @@ export function MemoryTab({
         setFullBodies({});
         setExpandedId(null);
         setFailedIds({});
+        clearCardActions();
         setListError(null);
         setServerDown(false);
       } catch (err) {
@@ -176,7 +203,7 @@ export function MemoryTab({
         }
       }
     },
-    [searchMemory, projectSlug],
+    [searchMemory, projectSlug, clearCardActions],
   );
 
   /** Retry after not-running: re-run active search when query is long enough. */
@@ -207,6 +234,7 @@ export function MemoryTab({
   }, [query, loadRecent, runSearch, listProjectFilter]);
 
   const toggleExpand = async (id: string) => {
+    clearCardActions();
     if (expandedId === id) {
       setExpandedId(null);
       return;
@@ -289,6 +317,57 @@ export function MemoryTab({
     }
   };
 
+  /** Only ever called with the fetched body; the Edit button is disabled without it. */
+  const startEdit = (entry: MemoryEntryInfo, fullBody: string) => {
+    setActionError(null);
+    setConfirmDeleteId(null);
+    setEditId(entry.id);
+    setEditTitle(entry.title);
+    setEditBody(fullBody);
+  };
+
+  const saveEdit = async (id: string) => {
+    const title = editTitle.trim();
+    const body = editBody.trim();
+    if (!title || !body) {
+      setActionError("Title and body are required");
+      return;
+    }
+    setActionBusy(true);
+    setActionError(null);
+    try {
+      await updateMemory({ id, title, body });
+      if (!mountedRef.current) return;
+      setEditId(null);
+      setExpandedId(null);
+      reloadCurrent();
+    } catch (err) {
+      if (!mountedRef.current) return;
+      if (isNotRunningError(err)) setServerDown(true);
+      else setActionError(errorMessage(err));
+    } finally {
+      if (mountedRef.current) setActionBusy(false);
+    }
+  };
+
+  const confirmDelete = async (id: string) => {
+    setActionBusy(true);
+    setActionError(null);
+    try {
+      await removeMemory({ id });
+      if (!mountedRef.current) return;
+      setConfirmDeleteId(null);
+      setExpandedId(null);
+      reloadCurrent();
+    } catch (err) {
+      if (!mountedRef.current) return;
+      if (isNotRunningError(err)) setServerDown(true);
+      else setActionError(errorMessage(err));
+    } finally {
+      if (mountedRef.current) setActionBusy(false);
+    }
+  };
+
   if (serverDown) {
     return (
       <div className={styles.downWrap}>
@@ -342,53 +421,150 @@ export function MemoryTab({
             const open = expandedId === entry.id;
             const full = fullBodies[entry.id];
             const getError = failedIds[entry.id];
+            const { loadingBody, showError, editing, showActions, canEdit } =
+              memoryCardState({
+                expanding: expandingId === entry.id,
+                hasFull: full != null,
+                hasError: getError != null,
+                editRequested: editId === entry.id,
+              });
             return (
-              <button
-                key={entry.id}
-                type="button"
-                className={styles.card}
-                data-expanded={open}
-                onClick={() => void toggleExpand(entry.id)}
-                aria-expanded={open}
-              >
-                <div className={styles.cardHead}>
-                  <span
-                    className={`${styles.badge} ${typeBadgeClass(entry.type)}`}
-                  >
-                    {entry.type}
-                  </span>
-                  <span className={styles.age}>
-                    {ageFromIso(entry.updatedAt, now)}
-                  </span>
-                </div>
-                <div className={styles.cardTitle}>{entry.title}</div>
+              <div key={entry.id} className={styles.card} data-expanded={open}>
+                {/* The toggle is its own button so the edit form and the
+                    Edit/Delete controls are siblings, not nested interactives. */}
+                <button
+                  type="button"
+                  className={styles.cardToggle}
+                  onClick={() => void toggleExpand(entry.id)}
+                  aria-expanded={open}
+                >
+                  <div className={styles.cardHead}>
+                    <span
+                      className={`${styles.badge} ${typeBadgeClass(entry.type)}`}
+                    >
+                      {entry.type}
+                    </span>
+                    <span className={styles.age}>
+                      {ageFromIso(entry.updatedAt, now)}
+                    </span>
+                  </div>
+                  <div className={styles.cardTitle}>{entry.title}</div>
+                  {!open && <div className={styles.excerpt}>{entry.body}</div>}
+                </button>
                 {open ? (
-                  <div
-                    className={styles.fullBodyWrap}
-                    onClick={(e) => e.stopPropagation()}
-                    onMouseDown={(e) => e.stopPropagation()}
-                  >
-                    {expandingId === entry.id && !full && !getError ? (
+                  <div className={styles.fullBodyWrap}>
+                    {loadingBody ? (
                       <p className={styles.bodyLoading}>Loading…</p>
-                    ) : getError ? (
+                    ) : showError ? (
                       <p className={styles.bodyError} role="alert">
                         {getError}
                       </p>
+                    ) : editing ? (
+                      <div className={styles.editWrap}>
+                        <input
+                          className={styles.titleInput}
+                          value={editTitle}
+                          onChange={(e) => setEditTitle(e.target.value)}
+                          aria-label="Edit title"
+                        />
+                        <textarea
+                          className={styles.bodyInput}
+                          value={editBody}
+                          onChange={(e) => setEditBody(e.target.value)}
+                          rows={6}
+                          aria-label="Edit body"
+                        />
+                        <div className={styles.entryActions}>
+                          <button
+                            type="button"
+                            className={styles.saveBtn}
+                            disabled={actionBusy}
+                            onClick={() => void saveEdit(entry.id)}
+                          >
+                            {actionBusy ? "Saving…" : "Save correction"}
+                          </button>
+                          <button
+                            type="button"
+                            className={styles.retryBtn}
+                            disabled={actionBusy}
+                            onClick={() => setEditId(null)}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
                     ) : full ? (
                       <pre className={styles.fullBody}>{full}</pre>
                     ) : (
                       <p className={styles.bodyLoading}>Loading…</p>
                     )}
+                    {showActions && (
+                      <div className={styles.entryActions}>
+                        {confirmDeleteId === entry.id ? (
+                          <>
+                            <span className={styles.confirmText}>
+                              Delete permanently?
+                            </span>
+                            <button
+                              type="button"
+                              className={styles.dangerBtn}
+                              disabled={actionBusy}
+                              onClick={() => void confirmDelete(entry.id)}
+                            >
+                              {actionBusy ? "Deleting…" : "Delete"}
+                            </button>
+                            <button
+                              type="button"
+                              className={styles.retryBtn}
+                              disabled={actionBusy}
+                              onClick={() => setConfirmDeleteId(null)}
+                            >
+                              Cancel
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              className={styles.retryBtn}
+                              // entry.body is the list excerpt, not the body:
+                              // editing without the real body would save the
+                              // truncation over the original.
+                              disabled={!canEdit}
+                              title={
+                                canEdit ? undefined : "Body not loaded yet"
+                              }
+                              onClick={() => startEdit(entry, full!)}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              className={styles.retryBtn}
+                              onClick={() => {
+                                setActionError(null);
+                                setConfirmDeleteId(entry.id);
+                              }}
+                            >
+                              Delete
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    )}
+                    {actionError && (
+                      <p className={styles.bodyError} role="alert">
+                        {actionError}
+                      </p>
+                    )}
                   </div>
-                ) : (
-                  <div className={styles.excerpt}>{entry.body}</div>
-                )}
+                ) : null}
                 {entry.project && (
                   <span className={styles.projectTag} title={entry.project}>
                     {entry.project}
                   </span>
                 )}
-              </button>
+              </div>
             );
           })
         )}

@@ -108,6 +108,12 @@ export interface UseCoderResult {
     project?: string;
   }) => Promise<MemoryEntryInfo[]>;
   getMemory: (input: { id: string }) => Promise<MemoryEntryInfo>;
+  updateMemory: (input: {
+    id: string;
+    title: string;
+    body: string;
+  }) => Promise<{ id: string }>;
+  removeMemory: (input: { id: string }) => Promise<void>;
   storeMemory: (input: {
     type: MemoryEntryInfo["type"];
     title: string;
@@ -642,6 +648,20 @@ export function useCoder(): UseCoderResult {
     [api],
   );
 
+  const updateMemory = useCallback(
+    async (input: { id: string; title: string; body: string }) => {
+      return api.memory.update(input);
+    },
+    [api],
+  );
+
+  const removeMemory = useCallback(
+    async (input: { id: string }) => {
+      return api.memory.remove(input);
+    },
+    [api],
+  );
+
   const storeMemory = useCallback(
     async (input: {
       type: MemoryEntryInfo["type"];
@@ -699,6 +719,8 @@ export function useCoder(): UseCoderResult {
     searchMemory,
     recentMemory,
     getMemory,
+    updateMemory,
+    removeMemory,
     storeMemory,
     searchThreads,
   };
