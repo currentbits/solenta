@@ -81,6 +81,10 @@ export function scanContradictions(db) {
     return queued
   } catch (err) {
     console.error('scanContradictions failed (non-fatal):', err)
+    // Surface the failure to the caller's lastError tracking while keeping
+    // the non-fatal contract (janitor continues, watermark rolls back only
+    // with the whole transaction).
+    scanContradictions.lastError = err
     return 0
   }
 }
@@ -91,30 +95,50 @@ export function scanContradictions(db) {
  * @returns {{ liveEntries: number, entityCount: number, edgeCount: number, sessionCount: number, prunedLastRun: number, queuedContradictions: number, lastRun: string }}
  */
 export function runJanitor(db) {
+  /** First step failure of this run, or null when clean; lands in the snapshot. */
+  let lastError = null
+  /** Run a best-effort step: a failure is recorded (first wins), not fatal. */
+  const step = (name, fn) => {
+    try {
+      return fn()
+    } catch (err) {
+      console.error(`janitor step ${name} failed (non-fatal):`, err)
+      lastError = lastError ?? {
+        step: name,
+        message: String((err && err.message) || err),
+        at: new Date().toISOString(),
+      }
+      return null
+    }
+  }
   db.exec('BEGIN')
   try {
     // (a) access-count evidence decay: *0.98, integer floor, only rows that shrink, never below 0
-    db.exec(`
-      UPDATE entries
-      SET access_count = CAST(access_count * 0.98 AS INTEGER)
-      WHERE CAST(access_count * 0.98 AS INTEGER) < access_count
-        AND CAST(access_count * 0.98 AS INTEGER) >= 0
-    `)
+    step('decay', () =>
+      db.exec(`
+        UPDATE entries
+        SET access_count = CAST(access_count * 0.98 AS INTEGER)
+        WHERE CAST(access_count * 0.98 AS INTEGER) < access_count
+          AND CAST(access_count * 0.98 AS INTEGER) >= 0
+      `),
+    )
 
     // (b) orphan cleanup: mentions/edges pointing at missing entries or entities.
     // NOT EXISTS (not NOT IN): a single NULL id in the subquery makes NOT IN
     // evaluate UNKNOWN for every row and silently skip the sweep.
-    db.exec(`
-      DELETE FROM mentions
-      WHERE NOT EXISTS (SELECT 1 FROM entries e WHERE e.id = mentions.entry_id)
-         OR NOT EXISTS (SELECT 1 FROM entities n WHERE n.id = mentions.entity_id)
-    `)
-    db.exec(`
-      DELETE FROM edges
-      WHERE NOT EXISTS (SELECT 1 FROM entries e WHERE e.id = edges.entry_id)
-         OR NOT EXISTS (SELECT 1 FROM entities s WHERE s.id = edges.src)
-         OR NOT EXISTS (SELECT 1 FROM entities d WHERE d.id = edges.dst)
-    `)
+    step('orphans', () => {
+      db.exec(`
+        DELETE FROM mentions
+        WHERE NOT EXISTS (SELECT 1 FROM entries e WHERE e.id = mentions.entry_id)
+           OR NOT EXISTS (SELECT 1 FROM entities n WHERE n.id = mentions.entity_id)
+      `)
+      db.exec(`
+        DELETE FROM edges
+        WHERE NOT EXISTS (SELECT 1 FROM entries e WHERE e.id = edges.entry_id)
+           OR NOT EXISTS (SELECT 1 FROM entities s WHERE s.id = edges.src)
+           OR NOT EXISTS (SELECT 1 FROM entities d WHERE d.id = edges.dst)
+      `)
+    })
 
     // Orphan vectors for hard-deleted entries
     try {
@@ -131,11 +155,24 @@ export function runJanitor(db) {
       Date.now() - SESSION_RETENTION_DAYS * 86_400_000,
     ).toISOString()
     const prunedLastRun =
-      db.prepare(`DELETE FROM session_messages WHERE created_at < ?`).run(messageCutoff)
-        .changes ?? 0
+      step(
+        'sessionPrune',
+        () =>
+          db.prepare(`DELETE FROM session_messages WHERE created_at < ?`).run(messageCutoff)
+            .changes ?? 0,
+      ) ?? 0
 
     // (d) contradiction scan (outside the pure-SQL hygiene; still inside the txn)
+    scanContradictions.lastError = null
     const queuedContradictions = scanContradictions(db)
+    if (scanContradictions.lastError) {
+      const err = scanContradictions.lastError
+      lastError = lastError ?? {
+        step: 'contradictions',
+        message: String((err && err.message) || err),
+        at: new Date().toISOString(),
+      }
+    }
 
     // (e) health snapshot
     const liveEntries =
@@ -156,6 +193,7 @@ export function runJanitor(db) {
       prunedLastRun,
       queuedContradictions,
       lastRun,
+      lastError,
     }
 
     db.prepare(

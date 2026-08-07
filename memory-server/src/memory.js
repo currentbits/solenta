@@ -293,11 +293,17 @@ export class Memory {
     const agent = cleanOptional(input.agent)
 
     // Write-time dedup: Jaccard vs live same-project-or-global (cap 500 most recent).
-    // >=0.7 refuses (unless force); >=0.4 stores and enqueues near_dup.
+    // Scope rule (consistent across dedup, contradiction scan, maintenance):
+    // pairs are COMPARABLE when same-project or either side is global, but the
+    // hard BLOCK below only fires for same-scope pairs (same project string, or
+    // both global). A cross-scope overlap (global vs some project) downgrades
+    // to the warn/enqueue path so a global convention can never refuse an
+    // unrelated project's write.
     let nearDup = null
     if (input.type !== 'task') {
       nearDup = this.findNearDup(title, body, project)
-      if (nearDup && nearDup.overlap >= DEDUP_BLOCK && !input.force) {
+      const sameScope = nearDup && nearDup.project === project
+      if (nearDup && nearDup.overlap >= DEDUP_BLOCK && sameScope && !input.force) {
         throw new Error(
           `near-duplicate of existing entry ${nearDup.id} "${nearDup.title}" (jaccard=${nearDup.overlap}); pass force: true to store anyway`,
         )
@@ -324,10 +330,70 @@ export class Memory {
       queueReview(this.db, 'near_dup', id, nearDup.id, `jaccard=${nearDup.overlap}`)
     }
 
-    // Fire-and-forget embed; null embedding just skips the row.
+    // Fire-and-forget embed; null embedding just skips the row. Safe to
+    // interleave with an open janitor transaction: a lost/rolled-back vector
+    // is re-created by the janitor's embedMissing backfill on the next pass.
     void this.embedEntry(id).catch(() => {})
 
     return { id }
+  }
+
+  /**
+   * Hard-delete an entry and every dependent row, transactionally.
+   * Groundwork only: exported and tested but not wired to any tool. The FK
+   * constraints on entry_vectors/review_queue have no ON DELETE CASCADE
+   * (SQLite would need table rebuilds), so dependents must go first.
+   * @param {string} id
+   * @returns {boolean} true when the entry existed and was deleted
+   */
+  deleteEntry(id) {
+    const row = this.db
+      .prepare(`SELECT id, rowid, title, body FROM entries WHERE id = ?`)
+      .get(id)
+    if (!row) return false
+    // Refuse when other entries point at this one via superseded_by: deleting
+    // a successor would silently resurrect its predecessor.
+    const refs =
+      this.db
+        .prepare(`SELECT COUNT(*) AS n FROM entries WHERE superseded_by = ?`)
+        .get(id)?.n ?? 0
+    if (refs > 0) {
+      throw new Error(
+        `Cannot delete ${id}: ${refs} entr${refs === 1 ? 'y' : 'ies'} reference it via superseded_by`,
+      )
+    }
+    this.db.exec('BEGIN')
+    try {
+      this.db.prepare(`DELETE FROM entry_vectors WHERE entry_id = ?`).run(id)
+      this.db.prepare(`DELETE FROM mentions WHERE entry_id = ?`).run(id)
+      this.db.prepare(`DELETE FROM edges WHERE entry_id = ?`).run(id)
+      for (const table of ['feedback_log', 'serve_log']) {
+        try {
+          this.db.prepare(`DELETE FROM ${table} WHERE entry_id = ?`).run(id)
+        } catch {
+          // table absent on older schemas
+        }
+      }
+      this.db
+        .prepare(`DELETE FROM review_queue WHERE entry_a = ? OR entry_b = ?`)
+        .run(id, id)
+      // External-content FTS shadow removal (no delete trigger exists for entries).
+      this.db
+        .prepare(
+          `INSERT INTO entries_fts(entries_fts, rowid, title, body) VALUES ('delete', ?, ?, ?)`,
+        )
+        .run(row.rowid, row.title, row.body)
+      this.db.prepare(`DELETE FROM entries WHERE id = ?`).run(id)
+      this.db.exec('COMMIT')
+      return true
+    } catch (err) {
+      try {
+        this.db.exec('ROLLBACK')
+      } catch {
+        // ignore
+      }
+      throw err
+    }
   }
 
   /**
@@ -339,7 +405,7 @@ export class Memory {
     if (mine.size === 0) return null
     const rows = this.db
       .prepare(
-        `SELECT id, title, body FROM entries
+        `SELECT id, title, body, project FROM entries
          WHERE ${liveSql()}
            AND (? IS NULL OR project IS NULL OR project = ?)
          ORDER BY created_at DESC, rowid DESC
@@ -347,12 +413,19 @@ export class Memory {
       )
       .all(project, project, DEDUP_SCAN_CAP)
 
+    // Prefer the strongest same-scope candidate so a blockable duplicate is
+    // never shadowed by a slightly-stronger cross-scope one.
     let best = null
     for (const r of rows) {
       const overlap = Math.round(jaccard(mine, contentTokens(`${r.title} ${r.body}`)) * 1000) / 1000
       if (overlap < DEDUP_WARN) continue
-      if (!best || overlap > best.overlap) {
-        best = { id: r.id, title: r.title, overlap }
+      const sameScope = r.project === project
+      if (
+        !best ||
+        (sameScope && !best.sameScope) ||
+        (sameScope === best.sameScope && overlap > best.overlap)
+      ) {
+        best = { id: r.id, title: r.title, overlap, project: r.project, sameScope }
       }
     }
     return best
@@ -1327,6 +1400,10 @@ export class Memory {
       .all(project, project, DEDUP_SCAN_CAP)
     const tokenMap = new Map(actives.map((e) => [e.id, contentTokens(`${e.title} ${e.body}`)]))
     const seen = new Set()
+    // Compute overlaps across the FULL scan window first, then take the top N
+    // by overlap, so the list really is the strongest duplicates rather than
+    // the first N found in recency order. Cost: O(window^2) jaccard over at
+    // most DEDUP_SCAN_CAP entries, on an on-demand read-only tool.
     const nearDupes = []
     for (let i = 0; i < actives.length; i++) {
       for (let j = i + 1; j < actives.length; j++) {
@@ -1345,11 +1422,10 @@ export class Memory {
           instruction:
             'Keep the better one: memory_supersede the weaker entry (merge unique details into the survivor).',
         })
-        if (nearDupes.length >= MAINTENANCE_LIST_LIMIT) break
       }
-      if (nearDupes.length >= MAINTENANCE_LIST_LIMIT) break
     }
     nearDupes.sort((x, y) => y.overlap - x.overlap)
+    nearDupes.length = Math.min(nearDupes.length, MAINTENANCE_LIST_LIMIT)
 
     const agingRuns = this.db
       .prepare(
