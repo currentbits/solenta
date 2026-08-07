@@ -286,6 +286,38 @@ function createMemoryProxy(opts) {
         id: typeof o.id === "string" ? o.id : String(o.id ?? ""),
       };
     },
+
+    /**
+     * Append one transcript message to shared session history.
+     * Server truncates content; non-2xx carries {error}.
+     *
+     * @param {{
+     *   sessionId: string,
+     *   project?: string | null,
+     *   threadTitle?: string | null,
+     *   agent?: string | null,
+     *   role: "user" | "assistant" | "tool" | "system",
+     *   content: string,
+     * }} input
+     * @returns {Promise<unknown>}
+     */
+    async session(input) {
+      const payload = {
+        sessionId: input && input.sessionId,
+        role: input && input.role,
+        content: input && input.content,
+      };
+      if (input && input.project !== undefined) {
+        payload.project = input.project;
+      }
+      if (input && input.threadTitle !== undefined) {
+        payload.threadTitle = input.threadTitle;
+      }
+      if (input && input.agent !== undefined) {
+        payload.agent = input.agent;
+      }
+      return request("POST", "/api/session", payload);
+    },
   };
 }
 

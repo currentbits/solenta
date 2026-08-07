@@ -29,6 +29,10 @@ const {
 const opencodeParse = require("./opencode.js");
 const { runOpencode } = opencodeParse;
 const { recordRunOutcome } = require("./memory-record.js");
+const {
+  createSessionRecorder,
+  mapMessageRole,
+} = require("./session-record.js");
 const workflowEngine = require("./workflow.js");
 
 const KIMI_PUSH_THROTTLE_MS = 250;
@@ -237,6 +241,110 @@ function createRunner(opts) {
   /** @type {Map<string, object>} */
   const lastWorkflowByThread = new Map();
 
+  /** Batched session transcript recorder (POST /api/session). */
+  const sessionRecorder = createSessionRecorder({
+    userDataPath,
+    getStatus: getMemStatus,
+  });
+
+  /**
+   * Whether this thread should be mirrored into shared session history.
+   * Never record simulate-provider runs (env override or thread provider).
+   * @param {object | null | undefined} thread
+   * @param {string} [providerOverride]
+   */
+  function shouldRecordSession(thread, providerOverride) {
+    if (!thread) return false;
+    if (process.env.CODER_SIMULATE === "1") return false;
+    const provider =
+      providerOverride != null
+        ? String(providerOverride)
+        : String(thread.provider || "");
+    if (provider === "simulate") return false;
+    return true;
+  }
+
+  /**
+   * Build base session fields from thread + project at record time.
+   * @param {object} thread
+   */
+  function sessionBaseFields(thread) {
+    const project = store.getProject(thread.projectId);
+    return {
+      sessionId: thread.id,
+      project:
+        project && project.slug != null && project.slug !== ""
+          ? String(project.slug)
+          : null,
+      threadTitle: thread.title != null ? String(thread.title) : "",
+      agent: thread.provider != null ? String(thread.provider) : "unknown",
+    };
+  }
+
+  /**
+   * Record user/event messages immediately on append (batched HTTP).
+   * Assistant/tool are deferred to run-terminal (see notifyRunTerminal).
+   * @param {string} threadId
+   * @param {string} role
+   * @param {string} text
+   */
+  function recordSessionOnAppend(threadId, role, text) {
+    try {
+      if (role !== "user" && role !== "event") return;
+      const thread = store.getThread(threadId);
+      if (!shouldRecordSession(thread)) return;
+      const mapped = mapMessageRole(role);
+      if (!mapped) return;
+      const content = text == null ? "" : String(text);
+      if (!content) return;
+      sessionRecorder.recordTranscript([
+        {
+          ...sessionBaseFields(thread),
+          role: mapped,
+          content,
+        },
+      ]);
+    } catch {
+      // never affect the run path
+    }
+  }
+
+  /**
+   * Record final assistant + tool messages for a run once at terminal.
+   * @param {string} threadId
+   * @param {string | null | undefined} runId
+   * @param {object} thread
+   */
+  function recordSessionAtTerminal(threadId, runId, thread) {
+    try {
+      if (!shouldRecordSession(thread)) return;
+      const base = sessionBaseFields(thread);
+      const msgs = store.getMessages(threadId) || [];
+      /** @type {object[]} */
+      const entries = [];
+      for (const m of msgs) {
+        if (!m || (m.role !== "assistant" && m.role !== "tool")) continue;
+        // Prefer this run's messages when runId is known.
+        if (runId && m.runId && m.runId !== runId) continue;
+        if (runId && !m.runId) continue;
+        const mapped = mapMessageRole(m.role);
+        if (!mapped) continue;
+        const content = m.text == null ? "" : String(m.text);
+        if (!content) continue;
+        entries.push({
+          ...base,
+          role: mapped,
+          content,
+        });
+      }
+      if (entries.length > 0) {
+        sessionRecorder.recordTranscript(entries);
+      }
+    } catch {
+      // never affect the run path
+    }
+  }
+
   /**
    * Fire-and-forget memory record for a real run terminal. Never throws.
    * Skips simulate-provider runs.
@@ -251,6 +359,7 @@ function createRunner(opts) {
    * @param {number} [extras.tokensOut]
    * @param {number} [extras.costUsd]
    * @param {boolean} [extras.skip] - force skip (simulate path)
+   * @param {string | null} [extras.runId] - when set, only that run's msgs
    */
   function notifyRunTerminal(threadId, status, text, extras = {}) {
     try {
@@ -281,6 +390,26 @@ function createRunner(opts) {
           getStatus: getMemStatus,
         },
       );
+      // Session transcript: final assistant + tool messages once per terminal.
+      const runId =
+        extras.runId !== undefined
+          ? extras.runId
+          : active.get(threadId)
+            ? active.get(threadId).runId
+            : null;
+      // active is often already cleared before notifyRunTerminal; prefer
+      // extras.runId when callers pass it. Fall back to last assistant's runId.
+      let resolvedRunId = runId;
+      if (resolvedRunId == null) {
+        const msgs = store.getMessages(threadId) || [];
+        for (let i = msgs.length - 1; i >= 0; i--) {
+          if (msgs[i].runId) {
+            resolvedRunId = msgs[i].runId;
+            break;
+          }
+        }
+      }
+      recordSessionAtTerminal(threadId, resolvedRunId, thread);
     } catch {
       // never affect the run path
     }
@@ -400,6 +529,8 @@ function createRunner(opts) {
     if (runId) msg.runId = runId;
     if (tool) msg.tool = tool;
     store.appendMessage(threadId, msg);
+    // Session mirror: user + event immediately; assistant/tool at terminal.
+    recordSessionOnAppend(threadId, role, text);
     return msg.id;
   }
 
@@ -2429,6 +2560,20 @@ function createRunner(opts) {
         // ignore
       }
     }
+    // Drain any pending session transcript posts before process exit.
+    void sessionRecorder.flush();
+  }
+
+  /**
+   * Await drain of the session transcript queue (tests / app-quit).
+   * @returns {Promise<void>}
+   */
+  async function flushTranscripts() {
+    try {
+      await sessionRecorder.flush();
+    } catch {
+      // silent
+    }
   }
 
   function toWorkflowView(workflow) {
@@ -2456,6 +2601,7 @@ function createRunner(opts) {
     getActiveWorkflow,
     isRunning,
     stopAll,
+    flushTranscripts,
     workflowNameFromThreadId,
     toWorkflowView,
     resolveProvider,

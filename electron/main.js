@@ -17,6 +17,9 @@ const isDev = !app.isPackaged && !process.env.CODER_PROD;
 /** @type {ReturnType<typeof createMemorySupervisor> | null} */
 let memorySupervisor = null;
 
+/** @type {ReturnType<typeof createRunner> | null} */
+let runner = null;
+
 /**
  * Ensure @coder/core is built; throw a helpful error if missing.
  */
@@ -91,7 +94,7 @@ app.whenReady().then(async () => {
   const storePath = path.join(userData, "coder-store.json");
   const store = new Store(storePath);
 
-  const runner = createRunner({
+  runner = createRunner({
     store,
     core,
     pushFn: (channel, payload) => broadcast(channel, payload),
@@ -119,6 +122,20 @@ app.whenReady().then(async () => {
 });
 
 app.on("before-quit", () => {
+  // Stop active runs and drain session transcript queue before exit.
+  if (runner) {
+    try {
+      runner.stopAll();
+    } catch {
+      // ignore
+    }
+    try {
+      // Fire-and-forget flush; stopAll already kicked flush.
+      void runner.flushTranscripts();
+    } catch {
+      // ignore
+    }
+  }
   // Terminate only a memory-server child we spawned (adopted servers stay up).
   if (memorySupervisor) {
     try {
