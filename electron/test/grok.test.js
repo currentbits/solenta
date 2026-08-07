@@ -246,7 +246,7 @@ describe("grok provider registry", () => {
     assert.ok(first.includes("default"));
     assert.ok(!first.includes("--resume"));
     assert.ok(!first.includes("--verbose"));
-    assert.ok(!first.includes("--mcp-config"));
+    assert.ok(!first.some((a) => String(a).startsWith("--mcp-config")));
     assert.ok(!first.includes("stream-json"));
 
     for (const mode of [
@@ -371,7 +371,7 @@ describe("runner grok provider (claude-stream path)", () => {
     assert.ok(argv.includes("default"));
     assert.ok(!argv.includes("--resume"));
     assert.ok(!argv.includes("--verbose"));
-    assert.ok(!argv.includes("--mcp-config"));
+    assert.ok(!argv.some((a) => String(a).startsWith("--mcp-config")));
     assert.ok(!argv.includes("stream-json"));
 
     assert.equal(store.getThread(thread.id).sessionId, "grok-sess-001");
@@ -457,7 +457,7 @@ describe("runner grok provider (claude-stream path)", () => {
       assert.ok(mIdx >= 0, mode);
       assert.equal(argv[mIdx + 1], "grok-4.5");
       assert.ok(!argv.includes("--verbose"));
-      assert.ok(!argv.includes("--mcp-config"));
+      assert.ok(!argv.some((a) => String(a).startsWith("--mcp-config")));
     }
   });
 
@@ -508,7 +508,7 @@ describe("runner grok provider (claude-stream path)", () => {
       });
       await sup.start();
       assert.equal(sup.getStatus().running, true);
-      assert.ok(getClaudeMcpArgs().includes("--mcp-config"));
+      assert.ok(getClaudeMcpArgs().some((a) => a.startsWith("--mcp-config=")));
 
       process.env.CODER_FAKE_GROK_SCENARIO = "success";
       if (fs.existsSync(argvFile)) fs.unlinkSync(argvFile);
@@ -517,7 +517,7 @@ describe("runner grok provider (claude-stream path)", () => {
       await waitFor(() => store.getThread(thread.id).status === "done");
       const argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
       assert.ok(
-        !argv.includes("--mcp-config"),
+        !argv.some((a) => String(a).startsWith("--mcp-config")),
         `grok must not get --mcp-config: ${JSON.stringify(argv)}`,
       );
       assert.ok(!argv.includes("--verbose"));

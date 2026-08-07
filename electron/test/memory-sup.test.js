@@ -165,11 +165,14 @@ describe("memory-sup supervisor", () => {
       assert.equal(st.adopted, true);
       assert.equal(st.port, port);
 
+      // Single equals-form arg: the CLI's space form is variadic and would
+      // swallow the trailing prompt as a second config path.
       const mcpArgs = getClaudeMcpArgs();
-      assert.equal(mcpArgs.length, 2);
-      assert.equal(mcpArgs[0], "--mcp-config");
-      assert.ok(fs.existsSync(mcpArgs[1]));
-      const mcp = JSON.parse(fs.readFileSync(mcpArgs[1], "utf8"));
+      assert.equal(mcpArgs.length, 1);
+      assert.ok(mcpArgs[0].startsWith("--mcp-config="));
+      const mcpPath = mcpArgs[0].slice("--mcp-config=".length);
+      assert.ok(fs.existsSync(mcpPath));
+      const mcp = JSON.parse(fs.readFileSync(mcpPath, "utf8"));
       assert.equal(
         mcp.mcpServers["coder-memory"].url,
         `http://127.0.0.1:${port}/mcp`,

@@ -15,3 +15,4 @@
 - 2026-08-06 - symptom: Thread view mixed all runs into one Work Log above messages | cause: single global card + no runId grouping | fix: buildTimeline in src/timeline.ts; ThreadView merges messages + per-run cards
 - 2026-08-06 - symptom: All projects count ignored search filter | cause: section count used unfiltered threads.length | fix: Sidebar.tsx uses filtered.length
 - 2026-08-06 - symptom: long chats pushed the composer below the window frame | cause: .app grid had no row constraint, implicit row min-height auto grows with content | fix: grid-template-rows minmax(0, 1fr) in App.module.css
+- 2026-08-07 - symptom: every real claude run failed with 'MCP config file not found: <prompt>' when memory was healthy | cause: claude CLI treats space-separated --mcp-config as variadic and swallowed the trailing prompt | fix: single equals form --mcp-config=<path> in getClaudeMcpArgs; caught by the first REAL end-to-end acceptance run, fakes cannot catch argv parsing

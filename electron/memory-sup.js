@@ -43,7 +43,11 @@ function resetMemorySupForTests() {
  */
 function getClaudeMcpArgs() {
   if (!globalStatus.running || !globalMcpConfigPath) return [];
-  return ["--mcp-config", globalMcpConfigPath];
+  // MUST be the single equals form: the claude CLI treats a space-separated
+  // `--mcp-config <path>` as variadic and swallows the trailing PROMPT as a
+  // second config path, failing every real run with
+  // "MCP config file not found: <prompt text>".
+  return [`--mcp-config=${globalMcpConfigPath}`];
 }
 
 /**

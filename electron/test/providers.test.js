@@ -149,7 +149,7 @@ describe("providers registry", () => {
     assert.ok(grokArgs.includes("streaming-messages-json"));
     assert.ok(grokArgs.includes("--permission-mode"));
     assert.ok(!grokArgs.includes("--verbose"));
-    assert.ok(!grokArgs.includes("--mcp-config"));
+    assert.ok(!grokArgs.some((a) => String(a).startsWith("--mcp-config")));
 
     const grokResume = getProvider("grok").buildArgs({
       prompt: "again",

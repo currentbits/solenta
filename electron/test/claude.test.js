@@ -645,7 +645,7 @@ describe("runner claude provider", () => {
     await runner.startRun({ threadId: thread.id, prompt: "no-mem" });
     await waitFor(() => store.getThread(thread.id).status === "done");
     let argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
-    assert.ok(!argv.includes("--mcp-config"));
+    assert.ok(!argv.some((a) => String(a).startsWith("--mcp-config")));
     assert.equal(getClaudeMcpArgs().length, 0);
 
     // Healthy: adopt fake health server and expect --mcp-config
@@ -693,7 +693,7 @@ describe("runner claude provider", () => {
       });
       await sup.start();
       assert.equal(sup.getStatus().running, true);
-      assert.ok(getClaudeMcpArgs().includes("--mcp-config"));
+      assert.ok(getClaudeMcpArgs().some((a) => a.startsWith("--mcp-config=")));
 
       // Fresh thread for second run
       const project = store.getProjects()[0];
@@ -705,9 +705,12 @@ describe("runner claude provider", () => {
       await runner.startRun({ threadId: t2.id, prompt: "with-mem" });
       await waitFor(() => store.getThread(t2.id).status === "done");
       argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
-      const idx = argv.indexOf("--mcp-config");
-      assert.ok(idx >= 0, `expected --mcp-config in ${JSON.stringify(argv)}`);
-      assert.ok(fs.existsSync(argv[idx + 1]));
+      const mcpArg = argv.find((a) => a.startsWith("--mcp-config="));
+      assert.ok(mcpArg, `expected --mcp-config= in ${JSON.stringify(argv)}`);
+      assert.ok(fs.existsSync(mcpArg.slice("--mcp-config=".length)));
+      // Regression guard for the variadic trap: the prompt must be the LAST
+      // argv element and must not follow --mcp-config as a bare value.
+      assert.equal(argv[argv.length - 1], "with-mem");
       sup.stop();
     } finally {
       await new Promise((r) => server.close(r));
