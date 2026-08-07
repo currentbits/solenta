@@ -73,12 +73,22 @@ mkdir -p "$APP_DIR"
 # IMPORTANT: "name" must remain exactly "coder". Electron derives the userData
 # directory from package.json name; keeping it "coder" preserves continuity
 # with dev sessions (same ~/Library/Application Support/coder). Never change it.
+# Stamp the source commit so a running app can be told apart from the tree it
+# was built from. A stale bundle silently missing recent fixes is otherwise
+# indistinguishable from a broken feature.
+BUILD_SHA="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+BUILD_DIRTY=""
+git diff --quiet 2>/dev/null || BUILD_DIRTY="+dirty"
+BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
 cat > "$APP_DIR/package.json" <<EOF
 {
   "name": "coder",
   "productName": "Coder",
   "version": "${VERSION}",
-  "main": "electron/main.js"
+  "main": "electron/main.js",
+  "buildSha": "${BUILD_SHA}${BUILD_DIRTY}",
+  "buildTime": "${BUILD_TIME}"
 }
 EOF
 

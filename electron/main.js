@@ -67,6 +67,17 @@ function broadcast(channel, payload) {
 }
 
 app.whenReady().then(async () => {
+  // Which build is this? A stale packaged bundle missing recent fixes looks
+  // exactly like a broken feature, so say it out loud once at boot.
+  try {
+    const pkg = require("../package.json");
+    console.warn(
+      `coder: ${pkg.version || "?"} ${pkg.buildSha ? `build ${pkg.buildSha} (${pkg.buildTime})` : "(dev tree)"}`,
+    );
+  } catch {
+    // non-fatal
+  }
+
   // Dev dock icon; the packaged app gets its icon from CFBundleIconFile.
   if (process.platform === "darwin" && app.dock) {
     try {
