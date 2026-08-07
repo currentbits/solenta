@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ProjectInfo, ProviderInfo, ThreadInfo } from "../shared/ipc";
 import {
   formatRelativeAge,
@@ -9,6 +9,8 @@ import { buildSidebarGroups } from "../sidebarGroups";
 import styles from "./Sidebar.module.css";
 
 const TICK_MS = 5000;
+const SEARCH_DEBOUNCE_MS = 250;
+const MIN_SEARCH_LEN = 2;
 
 interface SidebarProps {
   appName: string;
@@ -31,6 +33,11 @@ interface SidebarProps {
   spendTodayUsd?: number | null;
   /** Daily budget cap; null = no cap. */
   dailyBudgetUsd?: number | null;
+  /**
+   * Full-content thread search (titles + message text). Called only for
+   * queries of 2+ chars after debounce; empty / 1-char stays local.
+   */
+  searchThreads: (input: { query: string }) => Promise<ThreadInfo[]>;
 }
 
 function formatUsd(n: number): string {
@@ -107,6 +114,7 @@ function ThreadCard({
   active,
   now,
   onSelect,
+  contentMatch,
 }: {
   thread: ThreadInfo;
   slug: string;
@@ -114,6 +122,8 @@ function ThreadCard({
   active: boolean;
   now: number;
   onSelect: (id: string) => void;
+  /** True when hit is on message text, not title (search mode only). */
+  contentMatch?: boolean;
 }) {
   const branch = thread.branch ?? "";
   const pr =
@@ -145,6 +155,9 @@ function ThreadCard({
         {thread.archived && (
           <span className={styles.archivedTag}>archived</span>
         )}
+        {contentMatch && (
+          <span className={styles.inMessagesTag}>in messages</span>
+        )}
       </div>
       <div className={styles.cardMeta}>
         <span className={styles.branch}>{branchLine}</span>
@@ -170,12 +183,26 @@ export function Sidebar({
   onOpenSettings,
   spendTodayUsd = null,
   dailyBudgetUsd = null,
+  searchThreads,
 }: SidebarProps) {
   const [projectsOpen, setProjectsOpen] = useState(true);
   const [query, setQuery] = useState("");
   const [now, setNow] = useState(() => Date.now());
-  /** Project ids whose archived threads are shown inline. */
+  /** Project ids whose archived threads are shown inline (normal view only). */
   const [showArchived, setShowArchived] = useState<Set<string>>(() => new Set());
+  /** Full-content search results; null means not in active search mode. */
+  const [searchResults, setSearchResults] = useState<ThreadInfo[] | null>(null);
+  const [searchLoading, setSearchLoading] = useState(false);
+
+  const searchGen = useRef(0);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   // One shared interval for the whole list (age + working elapsed).
   useEffect(() => {
@@ -191,32 +218,75 @@ export function Sidebar({
     return m;
   }, [projects]);
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return threads;
-    return threads.filter((t) => {
-      const slug = projectById.get(t.projectId)?.slug ?? "";
-      return (
-        t.title.toLowerCase().includes(q) ||
-        slug.toLowerCase().includes(q) ||
-        (t.branch?.toLowerCase().includes(q) ?? false)
-      );
-    });
-  }, [threads, query, projectById]);
+  const liveById = useMemo(() => {
+    const m = new Map<string, ThreadInfo>();
+    for (const t of threads) m.set(t.id, t);
+    return m;
+  }, [threads]);
 
-  const searching = query.trim() !== "";
+  const trimmedQuery = query.trim();
+  /** Active full-content search mode (2+ chars). */
+  const searching = trimmedQuery.length >= MIN_SEARCH_LEN;
+
+  const runSearch = useCallback(
+    async (q: string) => {
+      const gen = ++searchGen.current;
+      setSearchLoading(true);
+      try {
+        const list = await searchThreads({ query: q });
+        if (!mountedRef.current || searchGen.current !== gen) return;
+        setSearchResults(list);
+      } catch {
+        if (!mountedRef.current || searchGen.current !== gen) return;
+        setSearchResults([]);
+      } finally {
+        if (mountedRef.current && searchGen.current === gen) {
+          setSearchLoading(false);
+        }
+      }
+    },
+    [searchThreads],
+  );
+
+  // Debounced full-content search for 2+ chars; 0–1 char restores local view.
+  useEffect(() => {
+    const q = query.trim();
+    if (q.length < MIN_SEARCH_LEN) {
+      // Instant restore: bump gen so in-flight results are ignored.
+      searchGen.current += 1;
+      setSearchResults(null);
+      setSearchLoading(false);
+      return;
+    }
+
+    const handle = window.setTimeout(() => {
+      void runSearch(q);
+    }, SEARCH_DEBOUNCE_MS);
+    return () => window.clearTimeout(handle);
+  }, [query, runSearch]);
+
+  /**
+   * Threads shown in the list: normal view uses full list; search mode uses
+   * server results with live status overlaid from the threads prop. While
+   * waiting for the first response, show nothing (loading hint covers it).
+   */
+  const displayThreads = useMemo(() => {
+    if (!searching) return threads;
+    if (searchResults == null) return [];
+    return searchResults.map((t) => liveById.get(t.id) ?? t);
+  }, [searching, searchResults, threads, liveById]);
 
   const groups = useMemo(() => {
     // While searching, only surface projects that still have matching threads
     // (empty projects stay hidden so the empty-search state can show).
     if (searching) {
       const projectsWithHits = projects.filter((p) =>
-        filtered.some((t) => t.projectId === p.id),
+        displayThreads.some((t) => t.projectId === p.id),
       );
-      return buildSidebarGroups(projectsWithHits, filtered);
+      return buildSidebarGroups(projectsWithHits, displayThreads);
     }
-    return buildSidebarGroups(projects, filtered);
-  }, [projects, filtered, searching]);
+    return buildSidebarGroups(projects, displayThreads);
+  }, [projects, displayThreads, searching]);
 
   const toggleArchived = (groupKey: string) => {
     setShowArchived((prev) => {
@@ -228,6 +298,16 @@ export function Sidebar({
   };
 
   const canCreate = projects.length > 0;
+  const queryLower = trimmedQuery.toLowerCase();
+  const sectionCount = searching ? displayThreads.length : projects.length;
+  /** Debounce window or in-flight request: show subtle "Searching…" hint. */
+  const searchInFlight = searching && (searchLoading || searchResults == null);
+  /** Search finished with zero hits (not still loading the first response). */
+  const searchEmpty =
+    searching &&
+    !searchInFlight &&
+    searchResults != null &&
+    searchResults.length === 0;
 
   return (
     <aside className={styles.sidebar}>
@@ -277,7 +357,7 @@ export function Sidebar({
           ▸
         </span>
         <span>{projectsHeader}</span>
-        <span className={styles.count}>{projects.length}</span>
+        <span className={styles.count}>{sectionCount}</span>
       </button>
 
       <div className={styles.list}>
@@ -291,12 +371,15 @@ export function Sidebar({
           </button>
         )}
 
-        {projectsOpen &&
-          projects.length > 0 &&
-          searching &&
-          filtered.length === 0 && (
-            <p className={styles.emptySearch}>No threads match</p>
-          )}
+        {projectsOpen && searchInFlight && (
+          <p className={styles.searchHint} aria-live="polite">
+            Searching…
+          </p>
+        )}
+
+        {projectsOpen && projects.length > 0 && searchEmpty && (
+          <p className={styles.emptySearch}>No threads match</p>
+        )}
 
         {projectsOpen &&
           groups.map(({ project, threads: groupThreads }) => {
@@ -310,7 +393,10 @@ export function Sidebar({
               "unknown";
             const activeThreads = groupThreads.filter((t) => !t.archived);
             const archivedThreads = groupThreads.filter((t) => t.archived);
-            const archivedExpanded = showArchived.has(groupKey);
+            // During search, archived hits render inline (no toggle required).
+            const archivedExpanded = searching
+              ? true
+              : showArchived.has(groupKey);
             const hasAnyThreads = groupThreads.length > 0;
 
             return (
@@ -318,14 +404,14 @@ export function Sidebar({
                 <div className={styles.groupHeader}>
                   <span className={styles.groupSlug}>{slug}</span>
                   <span className={styles.groupCount}>
-                    {activeThreads.length}
+                    {searching ? groupThreads.length : activeThreads.length}
                   </span>
                 </div>
 
                 {!hasAnyThreads ? (
                   <div className={styles.emptyGroup}>
                     <span className={styles.emptyThreads}>No threads yet</span>
-                    {project && (
+                    {project && !searching && (
                       <button
                         type="button"
                         className={styles.groupNewThread}
@@ -346,6 +432,10 @@ export function Sidebar({
                         active={thread.id === activeThreadId}
                         now={now}
                         onSelect={onSelectThread}
+                        contentMatch={
+                          searching &&
+                          !thread.title.toLowerCase().includes(queryLower)
+                        }
                       />
                     ))}
                     {archivedExpanded &&
@@ -358,9 +448,13 @@ export function Sidebar({
                           active={thread.id === activeThreadId}
                           now={now}
                           onSelect={onSelectThread}
+                          contentMatch={
+                            searching &&
+                            !thread.title.toLowerCase().includes(queryLower)
+                          }
                         />
                       ))}
-                    {archivedThreads.length > 0 && (
+                    {!searching && archivedThreads.length > 0 && (
                       <button
                         type="button"
                         className={styles.archivedToggle}
@@ -372,7 +466,7 @@ export function Sidebar({
                           : `${archivedThreads.length} archived`}
                       </button>
                     )}
-                    {project && (
+                    {project && !searching && (
                       <button
                         type="button"
                         className={styles.groupNewThread}

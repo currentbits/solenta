@@ -42,6 +42,7 @@ export default function App() {
     recentMemory,
     getMemory,
     storeMemory,
+    searchThreads,
   } = useCoder();
 
   const [changesOpen, setChangesOpen] = useState(false);
@@ -85,6 +86,7 @@ export default function App() {
         onOpenSettings={() => setSettingsOpen(true)}
         spendTodayUsd={appStatus?.spendTodayUsd ?? null}
         dailyBudgetUsd={settings?.dailyBudgetUsd ?? null}
+        searchThreads={searchThreads}
       />
       <ThreadView
         detail={detail}

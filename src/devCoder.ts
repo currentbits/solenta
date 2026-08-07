@@ -1614,6 +1614,36 @@ function buildDevCoder(): CoderApi {
       async list() {
         return threads.map((t) => ({ ...t }));
       },
+      /**
+       * Full-content search: title + message text, case-insensitive substring,
+       * newest activity first, max 50. Includes archived. 0–1 char → [].
+       */
+      async search(input: { query: string }): Promise<ThreadInfo[]> {
+        const q = input.query.trim().toLowerCase();
+        if (q.length < 2) return [];
+
+        const seen = new Set<string>();
+        const hits: ThreadInfo[] = [];
+
+        for (const t of threads) {
+          if (seen.has(t.id)) continue;
+          let match = t.title.toLowerCase().includes(q);
+          if (!match) {
+            const detail = details.get(t.id);
+            if (detail) {
+              match = detail.messages.some((m) =>
+                m.text.toLowerCase().includes(q),
+              );
+            }
+          }
+          if (!match) continue;
+          seen.add(t.id);
+          hits.push({ ...t });
+        }
+
+        hits.sort((a, b) => b.updatedAt - a.updatedAt);
+        return hits.slice(0, 50);
+      },
       async create(input) {
         const t: ThreadInfo = {
           id: id("thread"),

@@ -114,6 +114,8 @@ export interface UseCoderResult {
     body: string;
     project?: string;
   }) => Promise<{ id: string }>;
+  /** Full-content thread search (titles + message text); Sidebar owns debounce/state. */
+  searchThreads: (input: { query: string }) => Promise<ThreadInfo[]>;
 }
 
 export function useCoder(): UseCoderResult {
@@ -652,6 +654,13 @@ export function useCoder(): UseCoderResult {
     [api],
   );
 
+  const searchThreads = useCallback(
+    async (input: { query: string }) => {
+      return api.threads.search(input);
+    },
+    [api],
+  );
+
   return {
     api,
     projects,
@@ -691,5 +700,6 @@ export function useCoder(): UseCoderResult {
     recentMemory,
     getMemory,
     storeMemory,
+    searchThreads,
   };
 }
