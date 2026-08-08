@@ -15,6 +15,7 @@ import type {
   DiffResult,
   MemoryEntryInfo,
   PermissionMode,
+  PrInfo,
   ProjectInfo,
   ProviderInfo,
   SessionUsage,
@@ -429,6 +430,10 @@ function seedThreads(projects: ProjectInfo[]): ThreadInfo[] {
       title: card.title,
       branch: card.branch,
       prNumber: card.prNumber,
+      prUrl:
+        card.prNumber != null
+          ? `https://github.com/${card.repoSlug}/pull/${card.prNumber}`
+          : null,
       status: card.status,
       createdAt: t0 - ageMs - 60 * 60 * 1000,
       updatedAt,
@@ -1172,6 +1177,23 @@ function buildDevCoder(): CoderApi {
   let dailyBudgetUsd: number | null = null;
   /** Shared-memory stub (always running in dev). */
   let memoryEntries: MemoryRow[] = seedMemoryEntries(now());
+  /** Live PR state keyed by thread id (state can change after create). */
+  const prByThread = new Map<string, PrInfo>();
+  /** Synthetic PR numbers for harness creates (avoid colliding with seeds). */
+  let nextPrNumber = 900;
+
+  // Seed prByThread for threads that already carry prNumber/prUrl.
+  for (const t of threads) {
+    if (t.prNumber != null && t.prUrl) {
+      prByThread.set(t.id, {
+        number: t.prNumber,
+        url: t.prUrl,
+        state: "OPEN",
+        branch: t.branch ?? "",
+        created: false,
+      });
+    }
+  }
 
   for (const t of threads) {
     if (t.id === mockData.activeThreadId) {
@@ -1689,6 +1711,7 @@ function buildDevCoder(): CoderApi {
           title: input.title,
           branch: null,
           prNumber: null,
+          prUrl: null,
           status: "idle",
           createdAt: now(),
           updatedAt: now(),
@@ -2109,6 +2132,69 @@ function buildDevCoder(): CoderApi {
         }
         await new Promise((r) => setTimeout(r, PUSH_DELAY_MS));
         return { remote: "origin", branch };
+      },
+      async createPr(input) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
+        const branch = detail.thread.branch;
+        if (!branch) {
+          throw new Error(
+            "No branch to open a PR from. Set up a worktree or check out a branch first.",
+          );
+        }
+        const title = input.title?.trim() ?? "";
+        if (!title) {
+          throw new Error("PR title is required");
+        }
+
+        const existing = prByThread.get(input.threadId);
+        if (existing) {
+          return {
+            number: existing.number,
+            url: existing.url,
+            state: existing.state,
+            branch: existing.branch || branch,
+            created: false,
+          };
+        }
+
+        const project = projects.find((p) => p.id === detail.thread.projectId);
+        const slug = project?.slug ?? "owner/repo";
+        const number = nextPrNumber++;
+        const url = `https://github.com/${slug}/pull/${number}`;
+        const info: PrInfo = {
+          number,
+          url,
+          state: "OPEN",
+          branch,
+          created: true,
+        };
+        prByThread.set(input.threadId, { ...info, created: false });
+
+        const thread: ThreadInfo = {
+          ...detail.thread,
+          prNumber: number,
+          prUrl: url,
+          updatedAt: now(),
+        };
+        detail.thread = thread;
+        details.set(input.threadId, detail);
+        syncThreadRow(thread);
+        emitDetail(detail);
+        return info;
+      },
+      async prStatus(input) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
+        const existing = prByThread.get(input.threadId);
+        if (!existing) return null;
+        return {
+          number: existing.number,
+          url: existing.url,
+          state: existing.state,
+          branch: existing.branch || detail.thread.branch || "",
+          created: false,
+        };
       },
       async setupWorktree(input) {
         const detail = details.get(input.threadId);

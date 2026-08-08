@@ -11,7 +11,10 @@
     "preview": "vite preview",
     "electron": "electron .",
     "package": "bash scripts/package-app.sh",
-    "acceptance": "electron scripts/acceptance.js"
+    "acceptance": "electron scripts/acceptance.js",
+    "test:renderer": "CODER_GROK_MCP_DISABLE=1 node --import=./test/support/render.mjs --experimental-strip-types --test test/*.test.ts test/*.test.tsx",
+    "test:electron": "node --test electron/test/*.test.js",
+    "test:memory": "cd memory-server && node --test test/*.test.js"
   },
   "dependencies": {
     "react": "^19.1.0",

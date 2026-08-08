@@ -147,6 +147,7 @@ function createThread(store, input) {
     title: input.title || "New Thread",
     branch: null,
     prNumber: null,
+    prUrl: null,
     status: "idle",
     createdAt: now,
     updatedAt: now,

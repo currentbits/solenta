@@ -40,6 +40,7 @@ describe("Store", () => {
       title: "Hello",
       branch: "main",
       prNumber: null,
+      prUrl: null,
       status: "idle",
       createdAt: 1,
       updatedAt: 2,
@@ -124,6 +125,46 @@ describe("Store", () => {
     assert.equal(t.permissionMode, "default");
     assert.equal(t.worktreePath, null);
     assert.equal(t.archived, false);
+    assert.equal(t.prUrl, null);
+  });
+
+  it("migrates threads missing prNumber/prUrl to null (not undefined)", () => {
+    const old = {
+      projects: [],
+      threads: [
+        {
+          id: "t-pre-pr",
+          projectId: "p1",
+          title: "Legacy",
+          branch: null,
+          // prNumber and prUrl deliberately absent
+          status: "idle",
+          createdAt: 1,
+          updatedAt: 2,
+          provider: "claude",
+          model: null,
+          sessionId: null,
+          permissionMode: "default",
+          worktreePath: null,
+          runStartedAt: null,
+          archived: false,
+        },
+      ],
+      messagesByThread: {},
+      workLogByThread: {},
+    };
+    fs.writeFileSync(filePath, JSON.stringify(old), "utf8");
+
+    const store = new Store(filePath);
+    const t = store.getThreads()[0];
+    assert.equal(t.prNumber, null);
+    assert.equal(t.prUrl, null);
+    assert.equal("prNumber" in t, true);
+    assert.equal("prUrl" in t, true);
+    assert.notEqual(t.prNumber, undefined);
+    assert.notEqual(t.prUrl, undefined);
+    // Migration must not bump activity timestamp.
+    assert.equal(t.updatedAt, 2);
   });
 
   it("migration adds archived false without changing updatedAt", () => {

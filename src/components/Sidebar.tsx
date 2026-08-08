@@ -5,6 +5,7 @@ import {
   formatWorkingLabel,
   providerDisplayName,
 } from "../format";
+import { sidebarPrBadge } from "../prUi";
 import { buildSidebarGroups } from "../sidebarGroups";
 import styles from "./Sidebar.module.css";
 
@@ -126,44 +127,73 @@ function ThreadCard({
   contentMatch?: boolean;
 }) {
   const branch = thread.branch ?? "";
-  const pr =
-    thread.prNumber != null ? `PR #${thread.prNumber}` : "";
-  const branchLine =
-    branch && pr ? `${branch} · ${pr}` : branch || pr;
+  const prBadge = sidebarPrBadge({
+    prNumber: thread.prNumber,
+    prUrl: thread.prUrl,
+  });
   const providerLabel = providerDisplayName(thread.provider, providers);
 
+  // Card is a div (not a button) so the PR link is not nested interactive.
+  // Selection lives on a sibling button that covers the non-link content.
   return (
-    <button
-      type="button"
+    <div
       className={styles.card}
       data-active={active}
       data-archived={thread.archived ? "true" : undefined}
-      onClick={() => onSelect(thread.id)}
     >
-      <div className={styles.cardTop}>
-        <span className={styles.repo}>{slug}</span>
-        <span className={styles.age}>
-          {formatRelativeAge(thread.updatedAt, now)}
-        </span>
-      </div>
-      <div className={styles.cardTitle}>{thread.title}</div>
-      <div className={styles.cardTags}>
-        <span className={styles.providerTag}>{providerLabel}</span>
-        {thread.worktreePath && (
-          <span className={styles.worktreeTag}>wt</span>
-        )}
-        {thread.archived && (
-          <span className={styles.archivedTag}>archived</span>
-        )}
-        {contentMatch && (
-          <span className={styles.inMessagesTag}>in messages</span>
-        )}
-      </div>
+      <button
+        type="button"
+        className={styles.cardSelect}
+        onClick={() => onSelect(thread.id)}
+      >
+        <div className={styles.cardTop}>
+          <span className={styles.repo}>{slug}</span>
+          <span className={styles.age}>
+            {formatRelativeAge(thread.updatedAt, now)}
+          </span>
+        </div>
+        <div className={styles.cardTitle}>{thread.title}</div>
+        <div className={styles.cardTags}>
+          <span className={styles.providerTag}>{providerLabel}</span>
+          {thread.worktreePath && (
+            <span className={styles.worktreeTag}>wt</span>
+          )}
+          {thread.archived && (
+            <span className={styles.archivedTag}>archived</span>
+          )}
+          {contentMatch && (
+            <span className={styles.inMessagesTag}>in messages</span>
+          )}
+        </div>
+      </button>
       <div className={styles.cardMeta}>
-        <span className={styles.branch}>{branchLine}</span>
-        <StatusBadge thread={thread} now={now} />
+        <span className={styles.branch}>
+          {branch}
+          {branch && prBadge ? " · " : null}
+          {prBadge?.href ? (
+            <a
+              className={styles.prLink}
+              href={prBadge.href}
+              target="_blank"
+              rel="noreferrer"
+              title={prBadge.href}
+            >
+              {prBadge.label}
+            </a>
+          ) : prBadge ? (
+            <span>{prBadge.label}</span>
+          ) : null}
+        </span>
+        <button
+          type="button"
+          className={styles.metaSelect}
+          onClick={() => onSelect(thread.id)}
+          aria-label="Select thread"
+        >
+          <StatusBadge thread={thread} now={now} />
+        </button>
       </div>
-    </button>
+    </div>
   );
 }
 

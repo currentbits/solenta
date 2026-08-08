@@ -98,6 +98,7 @@ describe("services", () => {
     assert.equal(thread.status, "idle");
     assert.equal(thread.branch, null);
     assert.equal(thread.prNumber, null);
+    assert.equal(thread.prUrl, null);
     assert.equal(thread.provider, "claude");
     assert.equal(thread.sessionId, null);
     assert.equal(thread.permissionMode, "default");

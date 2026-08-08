@@ -6,6 +6,7 @@ import type {
   DiffResult,
   MemoryEntryInfo,
   PermissionMode,
+  PrInfo,
   ProjectInfo,
   ProviderInfo,
   ThreadDetail,
@@ -89,6 +90,14 @@ export interface UseCoderResult {
   fetchDiff: () => Promise<DiffResult>;
   /** Push the selected thread's branch to origin. */
   pushBranch: () => Promise<{ remote: string; branch: string }>;
+  /** Open (or re-return) a GitHub PR for the selected thread's branch. */
+  createPr: (input: {
+    title: string;
+    body?: string;
+    draft?: boolean;
+  }) => Promise<PrInfo>;
+  /** Live PR for the selected thread's branch, or null when none. */
+  prStatus: () => Promise<PrInfo | null>;
   /** Live spend + memory server status. */
   appStatus: AppStatus | null;
   /** Persisted app settings (daily budget). */
@@ -600,6 +609,35 @@ export function useCoder(): UseCoderResult {
     }
   }, [api, selectedThreadId]);
 
+  const createPr = useCallback(
+    async (input: { title: string; body?: string; draft?: boolean }) => {
+      if (!selectedThreadId) {
+        throw new Error("No thread selected");
+      }
+      const threadId = selectedThreadId;
+      const pr = await api.git.createPr({
+        threadId,
+        title: input.title,
+        body: input.body,
+        draft: input.draft,
+      });
+      if (selectedRef.current !== threadId) return pr;
+      // createPr records prNumber/prUrl on the thread; refresh so the badge updates.
+      const d = await api.threads.get(threadId);
+      if (selectedRef.current === threadId) {
+        applyThreadUpdate(d.thread);
+        setDetail(d);
+      }
+      return pr;
+    },
+    [api, selectedThreadId, applyThreadUpdate],
+  );
+
+  const prStatus = useCallback(async () => {
+    if (!selectedThreadId) return null;
+    return api.git.prStatus({ threadId: selectedThreadId });
+  }, [api, selectedThreadId]);
+
   const saveSettings = useCallback(
     async (patch: Partial<AppSettings>) => {
       const next = await api.settings.set(patch);
@@ -711,6 +749,8 @@ export function useCoder(): UseCoderResult {
     removeWorktree,
     fetchDiff,
     pushBranch,
+    createPr,
+    prStatus,
     appStatus,
     settings,
     saveSettings,

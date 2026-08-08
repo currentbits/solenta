@@ -83,6 +83,8 @@ const coder = {
     mergeWorktree: (input) => invoke("git:mergeWorktree", input),
     removeWorktree: (input) => invoke("git:removeWorktree", input),
     push: (input) => invoke("git:push", input),
+    createPr: (input) => invoke("git:createPr", input),
+    prStatus: (input) => invoke("git:prStatus", input),
   },
   on,
 };

@@ -34,6 +34,8 @@ export default function App() {
     removeWorktree,
     fetchDiff,
     pushBranch,
+    createPr,
+    prStatus,
     appStatus,
     settings,
     saveSettings,
@@ -128,6 +130,9 @@ export default function App() {
         onMergeWorktree={() => mergeWorktree()}
         onRemoveWorktree={(force) => removeWorktree(force)}
         onViewChanges={openChanges}
+        onPush={() => pushBranch()}
+        createPr={(input) => createPr(input)}
+        prStatus={() => prStatus()}
         searchMemory={searchMemory}
         recentMemory={recentMemory}
         getMemory={getMemory}

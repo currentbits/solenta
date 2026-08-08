@@ -22,6 +22,7 @@ function thread(
     title: partial.title ?? partial.id,
     branch: partial.branch ?? null,
     prNumber: partial.prNumber ?? null,
+    prUrl: partial.prUrl ?? null,
     status: partial.status ?? "idle",
     createdAt: partial.createdAt ?? partial.updatedAt,
     runStartedAt: partial.runStartedAt ?? null,

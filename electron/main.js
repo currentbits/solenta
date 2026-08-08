@@ -1,12 +1,13 @@
 "use strict";
 
-const { app, BrowserWindow, ipcMain, dialog } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, shell } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
 const { pathToFileURL } = require("node:url");
 const { Store } = require("./store.js");
 const { createRunner } = require("./runner.js");
 const { registerIpc } = require("./ipc.js");
+const { windowOpenAction, navigateAction } = require("./links.js");
 const {
   createMemorySupervisor,
   getMemoryStatus,
@@ -49,6 +50,25 @@ function createWindow() {
       nodeIntegration: false,
       sandbox: true,
     },
+  });
+
+  // A PR link is target=_blank. Without a policy Electron answers it with a
+  // bare chrome-less window pointed at github.com. links.js owns the decision
+  // so it can be tested; here we only wire it.
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (windowOpenAction(url).external) void shell.openExternal(url);
+    return { action: "deny" };
+  });
+
+  win.webContents.on("will-navigate", (event, url) => {
+    const decision = navigateAction(url, {
+      currentUrl: win.webContents.getURL(),
+      isDev,
+      devServerUrl: process.env.VITE_DEV_SERVER_URL || "http://localhost:5173",
+    });
+    if (decision.allow) return;
+    event.preventDefault();
+    if (decision.external) void shell.openExternal(url);
   });
 
   if (isDev) {

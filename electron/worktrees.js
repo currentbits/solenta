@@ -633,12 +633,433 @@ function push(opts) {
   return { remote: "origin", branch };
 }
 
+const GH_TIMEOUT_MS = 30_000;
+
+/**
+ * Resolve the gh binary. Tests set CODER_GH_BIN to a fake; production uses PATH.
+ * @returns {string}
+ */
+function ghBin() {
+  return process.env.CODER_GH_BIN || "gh";
+}
+
+/**
+ * True when origin points at github.com (https, ssh, or git@).
+ * Local bare paths, gitlab, and arbitrary ssh hosts return false.
+ * @param {string} url
+ * @returns {boolean}
+ */
+function isGitHubRemote(url) {
+  const s = String(url || "").trim();
+  if (!s) return false;
+  if (/^git@github\.com:/i.test(s)) return true;
+  if (/^ssh:\/\/([^@/\s]+@)?github\.com\//i.test(s)) return true;
+  if (/^https?:\/\/(www\.)?github\.com\//i.test(s)) return true;
+  return false;
+}
+
+/**
+ * Tail-trim stderr/combined the same way push does (last 300 chars).
+ * @param {string} errText
+ * @param {string} fallback
+ * @returns {string}
+ */
+function tailErr(errText, fallback) {
+  const t = String(errText || "").trim();
+  if (!t) return fallback;
+  return t.length <= 300 ? t : t.slice(-300);
+}
+
+/**
+ * Run gh without throwing. Mirrors gitTry: timeout, no prompt, enoent flag.
+ * @param {string} cwd
+ * @param {string[]} args
+ * @param {{ env?: NodeJS.ProcessEnv, timeout?: number }} [opts]
+ */
+function ghTry(cwd, args, opts) {
+  const timeout =
+    opts && opts.timeout != null ? opts.timeout : GH_TIMEOUT_MS;
+  try {
+    /** @type {import('node:child_process').ExecFileSyncOptionsWithStringEncoding} */
+    const execOpts = {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      maxBuffer: GIT_MAX_BUFFER,
+      timeout,
+      env: {
+        ...process.env,
+        ...(opts && opts.env ? opts.env : {}),
+        // Never prompt for auth/input on the main process.
+        GH_PROMPT_DISABLED: "1",
+        GIT_TERMINAL_PROMPT: "0",
+      },
+    };
+    const out = execFileSync(ghBin(), args, execOpts);
+    const stdout = out.trim();
+    return { ok: true, stdout, stderr: "", combined: stdout };
+  } catch (err) {
+    if (err && err.code === "ENOENT") {
+      return {
+        ok: false,
+        enoent: true,
+        stdout: "",
+        stderr: "",
+        combined: "",
+        error: err,
+        timedOut: false,
+      };
+    }
+    const stdout = err && err.stdout != null ? String(err.stdout) : "";
+    const stderr = err && err.stderr != null ? String(err.stderr) : "";
+    const msg = err && err.message ? String(err.message) : String(err);
+    const timedOut =
+      (err && err.code === "ETIMEDOUT") ||
+      (err && err.killed && /ETIMEDOUT|timed out/i.test(msg));
+    const combined = [stdout, stderr, msg].filter(Boolean).join("\n");
+    return {
+      ok: false,
+      enoent: false,
+      stdout,
+      stderr,
+      combined,
+      error: err,
+      timedOut: Boolean(timedOut),
+    };
+  }
+}
+
+/**
+ * Throw a clear Error from a failed ghTry result (or ENOENT / timeout).
+ * @param {{ ok: boolean, enoent?: boolean, timedOut?: boolean, stderr?: string, combined?: string }} result
+ * @param {string} fallback
+ */
+function throwGhFailure(result, fallback) {
+  if (result.enoent) {
+    throw new Error("GitHub CLI (gh) is not installed");
+  }
+  if (result.timedOut) {
+    throw new Error("gh timed out after 30s");
+  }
+  throw new Error(tailErr(result.stderr || result.combined, fallback));
+}
+
+/**
+ * Parse `gh pr view --json number,url,state` into a PrInfo-shaped object.
+ * @param {string} stdout
+ * @param {string} branch
+ * @param {boolean} created
+ * @returns {{ number: number, url: string, state: "OPEN" | "CLOSED" | "MERGED", branch: string, created: boolean }}
+ */
+function parsePrJson(stdout, branch, created) {
+  let data;
+  try {
+    data = JSON.parse(String(stdout || "").trim());
+  } catch {
+    throw new Error("gh returned unparseable PR JSON");
+  }
+  const number = Number(data && data.number);
+  const url = data && data.url != null ? String(data.url) : "";
+  if (!Number.isFinite(number) || number <= 0 || !url) {
+    throw new Error("gh returned incomplete PR JSON");
+  }
+  const raw = String((data && data.state) || "OPEN").toUpperCase();
+  /** @type {"OPEN" | "CLOSED" | "MERGED"} */
+  const state =
+    raw === "MERGED" ? "MERGED" : raw === "CLOSED" ? "CLOSED" : "OPEN";
+  return { number, url, state, branch, created: Boolean(created) };
+}
+
+/**
+ * True when gh exit means "no PR for this branch" (not an env failure).
+ * @param {string} text
+ * @returns {boolean}
+ */
+function isNoPrMessage(text) {
+  // Deliberately narrow. A bare /not found/ also matches "HTTP 404: Not Found",
+  // which is a deleted or renamed repo or a token without scope, and treating
+  // that as "no PR yet" hides a real failure behind a spurious create attempt.
+  return /no (open )?pull requests? found|no pull request found/i.test(
+    String(text || ""),
+  );
+}
+
+/**
+ * Resolve thread cwd + current branch name (same rules as push).
+ * @param {import('./store').Store} store
+ * @param {string} threadId
+ * @returns {{ thread: object, project: object, cwd: string, branch: string, originUrl: string }}
+ */
+function resolveThreadGit(store, threadId) {
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  const project = store.getProject(thread.projectId);
+  if (!project) {
+    throw new Error(`Unknown project for thread: ${threadId}`);
+  }
+
+  const cwd = thread.worktreePath || project.path;
+
+  let branch = "";
+  try {
+    branch = gitOut(cwd, ["branch", "--show-current"]);
+  } catch (err) {
+    const msg = err && err.message ? String(err.message) : String(err);
+    throw new Error(
+      `Could not determine current branch: ${msg.split("\n")[0]}`,
+    );
+  }
+  if (!branch) {
+    throw new Error(
+      "Checkout is detached HEAD or has no branch name; check out a branch before opening a PR",
+    );
+  }
+
+  const remote = gitTry(cwd, ["remote", "get-url", "origin"]);
+  if (!remote.ok) {
+    throw new Error("No git remote configured for this project.");
+  }
+  const originUrl = String(remote.stdout || "").trim();
+
+  return { thread, project, cwd, branch, originUrl };
+}
+
+/**
+ * Live PR for the thread's branch, or null when none exists.
+ * Rejects on gh missing / not authenticated / non-GitHub remote.
+ *
+ * @param {object} opts
+ * @param {import('./store').Store} opts.store
+ * @param {string} opts.threadId
+ * @returns {{ number: number, url: string, state: "OPEN" | "CLOSED" | "MERGED", branch: string, created: boolean } | null}
+ */
+function prStatus(opts) {
+  const { store, threadId } = opts;
+  const { cwd, branch, originUrl } = resolveThreadGit(store, threadId);
+
+  if (!isGitHubRemote(originUrl)) {
+    throw new Error(
+      `Remote origin is not a GitHub repository (got: ${originUrl}). PR status requires github.com.`,
+    );
+  }
+
+  const viewed = ghTry(cwd, [
+    "pr",
+    "view",
+    branch,
+    "--json",
+    "number,url,state",
+  ]);
+  if (!viewed.ok) {
+    if (viewed.enoent || viewed.timedOut) {
+      throwGhFailure(viewed, "gh pr view failed");
+    }
+    if (isNoPrMessage(viewed.stderr || viewed.combined || viewed.stdout)) {
+      return null;
+    }
+    throwGhFailure(viewed, "gh pr view failed");
+  }
+
+  return parsePrJson(viewed.stdout, branch, false);
+}
+
+/**
+ * Push the thread branch, open a GitHub PR via gh, persist prNumber/prUrl.
+ * Idempotent: an existing PR is returned with created:false.
+ *
+ * @param {object} opts
+ * @param {import('./store').Store} opts.store
+ * @param {string} opts.threadId
+ * @param {string} opts.title
+ * @param {string} [opts.body]
+ * @param {boolean} [opts.draft]
+ * @param {(channel: string, payload: unknown) => void} [opts.broadcast]
+ * @returns {{ number: number, url: string, state: "OPEN" | "CLOSED" | "MERGED", branch: string, created: boolean }}
+ */
+function createPr(opts) {
+  const { store, threadId, title, body, draft, broadcast } = opts;
+
+  const { project, cwd, branch, originUrl } = resolveThreadGit(
+    store,
+    threadId,
+  );
+
+  if (!isGitHubRemote(originUrl)) {
+    throw new Error(
+      `Remote origin is not a GitHub repository (got: ${originUrl}). PR creation requires github.com.`,
+    );
+  }
+
+  const baseBranch = defaultBranch(project.path);
+  const ahead = gitTry(cwd, ["log", `${baseBranch}..${branch}`, "--oneline"]);
+  if (!ahead.ok) {
+    throw new Error(
+      `Could not compare branch to ${baseBranch}: ${tailErr(ahead.combined, "git log failed")}`,
+    );
+  }
+  if (!String(ahead.stdout || "").trim()) {
+    throw new Error(
+      `Branch has no commits ahead of ${baseBranch}; nothing to propose in a pull request`,
+    );
+  }
+
+  // Reuse push for remote/branch/timeout/prompt discipline; no intermediate broadcast.
+  push({ store, threadId });
+
+  // Idempotency: return the existing PR rather than erroring.
+  const existing = ghTry(cwd, [
+    "pr",
+    "view",
+    branch,
+    "--json",
+    "number,url,state",
+  ]);
+  // Only an OPEN PR short-circuits. gh pr view also returns CLOSED and MERGED
+  // ones, and returning those would permanently block opening a follow-up PR
+  // from a branch whose first PR was already merged.
+  const existingInfo = existing.ok
+    ? parsePrJson(existing.stdout, branch, false)
+    : null;
+  if (existingInfo && existingInfo.state === "OPEN") {
+    const info = existingInfo;
+    store.updateThread(threadId, {
+      prNumber: info.number,
+      prUrl: info.url,
+    });
+    store.save();
+    if (typeof broadcast === "function") {
+      const { listThreads } = require("./services.js");
+      broadcast("threads:changed", listThreads(store));
+    }
+    return info;
+  }
+  // A successful view of a CLOSED or MERGED PR is not a failure: it just means
+  // there is no CURRENT PR, so fall through and open one. Only classify the
+  // error text when the view itself actually failed.
+  if (!existing.ok) {
+    if (existing.enoent || existing.timedOut) {
+      throwGhFailure(existing, "gh pr view failed");
+    }
+    if (!isNoPrMessage(existing.stderr || existing.combined || existing.stdout)) {
+      // Auth / network / other: surface gh's own message (tail-trimmed).
+      throwGhFailure(existing, "gh pr view failed");
+    }
+  }
+
+  /** @type {string[]} */
+  const createArgs = [
+    "pr",
+    "create",
+    "--base",
+    baseBranch,
+    "--head",
+    branch,
+    "--title",
+    String(title ?? ""),
+    "--body",
+    body != null ? String(body) : "",
+  ];
+  if (draft) {
+    createArgs.push("--draft");
+  }
+
+  const created = ghTry(cwd, createArgs);
+  if (!created.ok) {
+    // Race: PR appeared between view and create. Prefer idempotent return.
+    if (!created.enoent && !created.timedOut) {
+      const raced = ghTry(cwd, [
+        "pr",
+        "view",
+        branch,
+        "--json",
+        "number,url,state",
+      ]);
+      // Same OPEN filter as the first lookup. Without it a MERGED PR on this
+      // branch turns a genuine create failure into a silent success: we would
+      // return the old merged PR, swallow gh's error, and stamp the store.
+      const racedInfo = raced.ok
+        ? parsePrJson(raced.stdout, branch, false)
+        : null;
+      if (racedInfo && racedInfo.state === "OPEN") {
+        const info = racedInfo;
+        store.updateThread(threadId, {
+          prNumber: info.number,
+          prUrl: info.url,
+        });
+        store.save();
+        if (typeof broadcast === "function") {
+          const { listThreads } = require("./services.js");
+          broadcast("threads:changed", listThreads(store));
+        }
+        return info;
+      }
+    }
+    throwGhFailure(created, "gh pr create failed");
+  }
+
+  // create prints a URL; re-view for number/state so we match PrInfo exactly.
+  const viewed = ghTry(cwd, [
+    "pr",
+    "view",
+    branch,
+    "--json",
+    "number,url,state",
+  ]);
+  if (!viewed.ok) {
+    // Fall back to URL-only parse from create stdout when view is flaky.
+    const urlMatch = String(created.stdout || "").match(
+      /https:\/\/github\.com\/[^\s]+/i,
+    );
+    if (urlMatch) {
+      const url = urlMatch[0];
+      const numMatch = url.match(/\/pull\/(\d+)/i);
+      if (numMatch) {
+        const info = {
+          number: Number(numMatch[1]),
+          url,
+          state: /** @type {"OPEN"} */ ("OPEN"),
+          branch,
+          created: true,
+        };
+        store.updateThread(threadId, {
+          prNumber: info.number,
+          prUrl: info.url,
+        });
+        store.save();
+        if (typeof broadcast === "function") {
+          const { listThreads } = require("./services.js");
+          broadcast("threads:changed", listThreads(store));
+        }
+        return info;
+      }
+    }
+    throwGhFailure(viewed, "gh pr view failed after create");
+  }
+
+  const info = parsePrJson(viewed.stdout, branch, true);
+  store.updateThread(threadId, {
+    prNumber: info.number,
+    prUrl: info.url,
+  });
+  store.save();
+  if (typeof broadcast === "function") {
+    const { listThreads } = require("./services.js");
+    broadcast("threads:changed", listThreads(store));
+  }
+  return info;
+}
+
 module.exports = {
   setupWorktree,
   diff,
   mergeWorktree,
   removeWorktree,
   push,
+  createPr,
+  prStatus,
+  isGitHubRemote,
   slugify,
   PATCH_TRUNCATE,
 };

@@ -590,3 +590,153 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ── PR card (Git tab) ───────────────────────────────────── */
+
+.prForm {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.prField {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.prFieldLabel {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-weight: 550;
+}
+
+.prInput,
+.prTextarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-size: 12.5px;
+  outline: none;
+  font-family: inherit;
+}
+
+.prInput:focus,
+.prTextarea:focus {
+  border-color: var(--blue-border);
+}
+
+.prInput:disabled,
+.prTextarea:disabled {
+  opacity: 0.55;
+}
+
+.prTextarea {
+  resize: vertical;
+  min-height: 56px;
+  line-height: 1.4;
+}
+
+.prInput::placeholder,
+.prTextarea::placeholder {
+  color: var(--text-dim);
+}
+
+.prCheckLabel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.prCheckLabel input {
+  accent-color: var(--blue);
+}
+
+.prCheckLabel:has(input:disabled) {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.prExisting {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.prRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.prNumber {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--text);
+}
+
+.prState {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: var(--radius-pill);
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.03em;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.prState[data-state="open"] {
+  color: #93c5fd;
+  background: var(--blue-soft);
+  border-color: var(--blue-border);
+}
+
+.prState[data-state="merged"] {
+  color: var(--green);
+  background: var(--green-soft);
+  border-color: rgba(52, 211, 153, 0.28);
+}
+
+.prState[data-state="closed"] {
+  color: #fca5a5;
+  background: rgba(248, 113, 113, 0.12);
+  border-color: rgba(248, 113, 113, 0.35);
+}
+
+.prBranch {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prUrl {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: #93c5fd;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-decoration: none;
+}
+
+.prUrl:hover {
+  text-decoration: underline;
+  color: #bfdbfe;
+}

@@ -180,6 +180,9 @@ function migrateThread(t) {
     worktreePath: t.worktreePath !== undefined ? t.worktreePath : null,
     runStartedAt: t.runStartedAt !== undefined ? t.runStartedAt : null,
     archived: t.archived != null ? Boolean(t.archived) : false,
+    // Older stores may lack PR fields; null (not undefined) so the badge is stable.
+    prNumber: t.prNumber !== undefined ? t.prNumber : null,
+    prUrl: t.prUrl !== undefined ? t.prUrl : null,
   };
 }
 

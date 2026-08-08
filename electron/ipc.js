@@ -8,6 +8,8 @@ const {
   mergeWorktree,
   removeWorktree,
   push,
+  createPr,
+  prStatus,
 } = require("./worktrees.js");
 const { createMemoryProxy } = require("./memory-proxy.js");
 
@@ -222,6 +224,24 @@ function registerIpc(deps) {
       store,
       threadId: input.threadId,
       broadcast,
+    });
+  });
+
+  ipcMain.handle("git:createPr", async (_event, input) => {
+    return createPr({
+      store,
+      threadId: input.threadId,
+      title: input.title,
+      body: input.body,
+      draft: input.draft,
+      broadcast,
+    });
+  });
+
+  ipcMain.handle("git:prStatus", async (_event, input) => {
+    return prStatus({
+      store,
+      threadId: input.threadId,
     });
   });
 

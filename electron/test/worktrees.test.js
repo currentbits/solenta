@@ -12,6 +12,9 @@ const {
   mergeWorktree,
   removeWorktree,
   push,
+  createPr,
+  prStatus,
+  isGitHubRemote,
 } = require("../worktrees.js");
 
 function git(cwd, args) {
@@ -20,6 +23,165 @@ function git(cwd, args) {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
   }).trim();
+}
+
+/**
+ * Write a fake `gh` that reads CODER_FAKE_GH_STATE (JSON file) for scenario +
+ * in-memory PR map. No network. Mirrors the CODER_*_BIN fakes used for AI CLIs.
+ * @param {string} dir
+ * @returns {string} path to the fake binary
+ */
+function writeFakeGh(dir) {
+  const bin = path.join(dir, "fake-gh");
+  const body = `#!/usr/bin/env node
+"use strict";
+const fs = require("fs");
+
+const statePath = process.env.CODER_FAKE_GH_STATE;
+if (!statePath) {
+  process.stderr.write("fake-gh: CODER_FAKE_GH_STATE not set\\n");
+  process.exit(2);
+}
+
+function load() {
+  return JSON.parse(fs.readFileSync(statePath, "utf8"));
+}
+function save(s) {
+  fs.writeFileSync(statePath, JSON.stringify(s, null, 2), "utf8");
+}
+
+const args = process.argv.slice(2);
+const state = load();
+state.calls = state.calls || [];
+state.calls.push(args.slice());
+state.prs = state.prs || {};
+save(state);
+
+const scenario = state.scenario || "success";
+
+if (scenario === "timeout") {
+  const end = Date.now() + 120000;
+  while (Date.now() < end) {
+    /* busy-wait so execFileSync timeout kills us */
+  }
+  process.exit(0);
+}
+
+if (scenario === "create-fail" && args[0] === "pr" && args[1] === "create") {
+  process.stderr.write(
+    "GraphQL: GitHub Actions is not permitted to create or approve pull requests\\n",
+  );
+  process.exit(1);
+}
+
+if (scenario === "http-404") {
+  process.stderr.write(
+    "HTTP 404: Not Found (https://api.github.com/repos/owner/repo/pulls)\\n",
+  );
+  process.exit(1);
+}
+
+if (scenario === "auth-fail") {
+  process.stderr.write(
+    "To get started with GitHub CLI, please run:  gh auth login\\n" +
+      "Alternatively, populate the GH_TOKEN environment variable with a GitHub API authentication token.\\n",
+  );
+  process.exit(1);
+}
+
+function flagValue(name) {
+  const i = args.indexOf(name);
+  if (i < 0 || i + 1 >= args.length) return null;
+  return args[i + 1];
+}
+
+if (args[0] === "pr" && args[1] === "view") {
+  const branch = args[2];
+  const pr = state.prs[branch];
+  if (!pr) {
+    process.stderr.write("no pull requests found for branch \\"" + branch + "\\"\\n");
+    process.exit(1);
+  }
+  process.stdout.write(
+    JSON.stringify({
+      number: pr.number,
+      url: pr.url,
+      state: pr.state || "OPEN",
+    }) + "\\n",
+  );
+  process.exit(0);
+}
+
+if (args[0] === "pr" && args[1] === "create") {
+  const head = flagValue("--head");
+  const title = flagValue("--title") || "";
+  const base = flagValue("--base") || "main";
+  const draft = args.includes("--draft");
+  if (state.prs[head] && (state.prs[head].state || "OPEN") === "OPEN") {
+    process.stderr.write("a pull request for branch \\"" + head + "\\" already exists\\n");
+    process.exit(1);
+  }
+  state.createCount = (state.createCount || 0) + 1;
+  const number = state.nextNumber || 42;
+  state.nextNumber = number + 1;
+  const url =
+    "https://github.com/acme/demo/pull/" + number;
+  state.prs[head] = {
+    number,
+    url,
+    state: "OPEN",
+    title,
+    base,
+    draft: Boolean(draft),
+  };
+  save(state);
+  process.stdout.write(url + "\\n");
+  process.exit(0);
+}
+
+process.stderr.write("fake-gh: unhandled argv " + JSON.stringify(args) + "\\n");
+process.exit(2);
+`;
+  fs.writeFileSync(bin, body, { mode: 0o755 });
+  return bin;
+}
+
+/**
+ * Prepare a worktree with one commit ahead of main and a fake GitHub origin.
+ * @returns {{ setup: object, bare: string, statePath: string, fakeGh: string }}
+ */
+function preparePrFixture(ctx) {
+  const { store, thread, worktreeBase, repo, tmpDir } = ctx;
+  const setup = setupWorktree({
+    store,
+    threadId: thread.id,
+    worktreeBase,
+    broadcast: () => {},
+  });
+  fs.writeFileSync(path.join(setup.worktreePath, "feature.txt"), "feat\n");
+  git(setup.worktreePath, ["add", "feature.txt"]);
+  git(setup.worktreePath, ["commit", "-m", "feature commit"]);
+
+  const bare = path.join(tmpDir, "remote.git");
+  git(tmpDir, ["init", "--bare", bare]);
+  // Fetch URL is github.com so isGitHubRemote accepts it; push URL is a local
+  // bare repo so push() works offline without network.
+  git(repo, ["remote", "add", "origin", "https://github.com/acme/demo.git"]);
+  git(repo, ["remote", "set-url", "--push", "origin", bare]);
+
+  const fakeDir = path.join(tmpDir, "fake-bin");
+  fs.mkdirSync(fakeDir, { recursive: true });
+  const fakeGh = writeFakeGh(fakeDir);
+  const statePath = path.join(tmpDir, "gh-state.json");
+  fs.writeFileSync(
+    statePath,
+    JSON.stringify({ scenario: "success", prs: {}, calls: [], nextNumber: 42 }),
+    "utf8",
+  );
+  process.env.CODER_GH_BIN = fakeGh;
+  process.env.CODER_FAKE_GH_STATE = statePath;
+
+  return { setup, bare, statePath, fakeGh };
 }
 
 describe("worktrees", () => {
@@ -483,5 +645,484 @@ describe("worktrees", () => {
         return true;
       },
     );
+  });
+
+  describe("createPr / prStatus", () => {
+    const prevGhBin = process.env.CODER_GH_BIN;
+    const prevGhState = process.env.CODER_FAKE_GH_STATE;
+
+    afterEach(() => {
+      if (prevGhBin === undefined) delete process.env.CODER_GH_BIN;
+      else process.env.CODER_GH_BIN = prevGhBin;
+      if (prevGhState === undefined) delete process.env.CODER_FAKE_GH_STATE;
+      else process.env.CODER_FAKE_GH_STATE = prevGhState;
+    });
+
+    it("isGitHubRemote accepts github hosts and rejects gitlab/local", () => {
+      assert.equal(isGitHubRemote("https://github.com/acme/demo.git"), true);
+      assert.equal(isGitHubRemote("git@github.com:acme/demo.git"), true);
+      assert.equal(
+        isGitHubRemote("ssh://git@github.com/acme/demo.git"),
+        true,
+      );
+      assert.equal(isGitHubRemote("https://gitlab.com/acme/demo.git"), false);
+      assert.equal(isGitHubRemote("git@gitlab.com:acme/demo.git"), false);
+      assert.equal(isGitHubRemote("/tmp/local-bare.git"), false);
+      assert.equal(isGitHubRemote("ssh://git@git.example.com/acme/demo"), false);
+    });
+
+    it("happy path: creates PR, persists prNumber/prUrl, broadcasts", () => {
+      const { setup, statePath } = preparePrFixture({
+        store,
+        thread,
+        worktreeBase,
+        repo,
+        tmpDir,
+      });
+      broadcasts = [];
+
+      const info = createPr({
+        store,
+        threadId: thread.id,
+        title: "Ship feature",
+        body: "Adds feature.txt",
+        draft: false,
+        broadcast: (ch, payload) => broadcasts.push({ ch, payload }),
+      });
+
+      assert.equal(info.number, 42);
+      assert.equal(info.url, "https://github.com/acme/demo/pull/42");
+      assert.equal(info.state, "OPEN");
+      assert.equal(info.branch, setup.branch);
+      assert.equal(info.created, true);
+
+      const stored = store.getThread(thread.id);
+      assert.equal(stored.prNumber, 42);
+      assert.equal(stored.prUrl, "https://github.com/acme/demo/pull/42");
+
+      assert.ok(
+        broadcasts.some((b) => b.ch === "threads:changed"),
+        "must broadcast threads:changed after create",
+      );
+      const listed = broadcasts.find((b) => b.ch === "threads:changed");
+      const row = listed.payload.find((t) => t.id === thread.id);
+      assert.ok(row, "broadcast payload must include the thread");
+      assert.equal(row.prNumber, 42);
+      assert.equal(row.prUrl, "https://github.com/acme/demo/pull/42");
+
+      const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+      assert.equal(state.createCount, 1);
+      assert.ok(
+        state.calls.some((c) => c[0] === "pr" && c[1] === "create"),
+        `expected pr create call: ${JSON.stringify(state.calls)}`,
+      );
+      const createCall = state.calls.find(
+        (c) => c[0] === "pr" && c[1] === "create",
+      );
+      assert.ok(createCall.includes("--base"));
+      assert.ok(createCall.includes("--head"));
+      assert.ok(createCall.includes("--title"));
+      assert.ok(createCall.includes("Ship feature"));
+      assert.ok(createCall.includes(setup.branch));
+    });
+
+    it("idempotency: second createPr returns same number with created:false", () => {
+      preparePrFixture({ store, thread, worktreeBase, repo, tmpDir });
+
+      const first = createPr({
+        store,
+        threadId: thread.id,
+        title: "Ship feature",
+        broadcast: () => {},
+      });
+      assert.equal(first.created, true);
+      assert.equal(first.number, 42);
+
+      const second = createPr({
+        store,
+        threadId: thread.id,
+        title: "Ship feature again",
+        broadcast: () => {},
+      });
+      assert.equal(second.created, false);
+      assert.equal(second.number, 42);
+      assert.equal(second.url, first.url);
+
+      const stored = store.getThread(thread.id);
+      assert.equal(stored.prNumber, 42);
+      assert.equal(stored.prUrl, first.url);
+
+      const state = JSON.parse(
+        fs.readFileSync(process.env.CODER_FAKE_GH_STATE, "utf8"),
+      );
+      // Only one successful create; second path uses view only.
+      assert.equal(state.createCount, 1);
+    });
+
+    it("prStatus returns live PR or null when none", () => {
+      const { setup, statePath } = preparePrFixture({
+        store,
+        thread,
+        worktreeBase,
+        repo,
+        tmpDir,
+      });
+
+      assert.equal(prStatus({ store, threadId: thread.id }), null);
+
+      createPr({
+        store,
+        threadId: thread.id,
+        title: "Ship",
+        broadcast: () => {},
+      });
+
+      const live = prStatus({ store, threadId: thread.id });
+      assert.ok(live);
+      assert.equal(live.number, 42);
+      assert.equal(live.branch, setup.branch);
+      assert.equal(live.created, false);
+      assert.equal(live.state, "OPEN");
+
+      // Mutate fake state to MERGED so prStatus is live, not store-cached.
+      const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+      state.prs[setup.branch].state = "MERGED";
+      fs.writeFileSync(statePath, JSON.stringify(state), "utf8");
+      const merged = prStatus({ store, threadId: thread.id });
+      assert.equal(merged.state, "MERGED");
+    });
+
+    it("a merged PR does not block opening a follow-up PR", () => {
+      // gh pr view returns CLOSED and MERGED PRs too. Short-circuiting on any
+      // of them leaves a branch permanently unable to open another PR.
+      const { setup, statePath } = preparePrFixture({
+        store,
+        thread,
+        worktreeBase,
+        repo,
+        tmpDir,
+      });
+      const first = createPr({
+        store,
+        threadId: thread.id,
+        title: "First",
+        broadcast: () => {},
+      });
+      assert.equal(first.created, true);
+
+      const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+      state.prs[setup.branch].state = "MERGED";
+      fs.writeFileSync(statePath, JSON.stringify(state), "utf8");
+
+      const second = createPr({
+        store,
+        threadId: thread.id,
+        title: "Follow-up",
+        broadcast: () => {},
+      });
+      assert.equal(
+        second.created,
+        true,
+        "a merged predecessor must not be returned as the current PR",
+      );
+    });
+
+    it("a create failure is not masked by a stale merged PR on the branch", () => {
+      // The race path re-views after a failed create. If it returns any PR
+      // state, a MERGED predecessor turns a real failure into a silent success:
+      // createPr resolves, gh's error is swallowed, and the store is stamped
+      // with a PR that is not the one the user asked for.
+      const { setup, statePath } = preparePrFixture({
+        store,
+        thread,
+        worktreeBase,
+        repo,
+        tmpDir,
+      });
+      createPr({
+        store,
+        threadId: thread.id,
+        title: "First",
+        broadcast: () => {},
+      });
+
+      const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+      state.prs[setup.branch].state = "MERGED";
+      state.scenario = "create-fail";
+      fs.writeFileSync(statePath, JSON.stringify(state), "utf8");
+
+      assert.throws(
+        () =>
+          createPr({
+            store,
+            threadId: thread.id,
+            title: "Follow-up",
+            broadcast: () => {},
+          }),
+        /not permitted|gh pr create failed/i,
+        "a failed create must surface, not return the old merged PR",
+      );
+    });
+
+    it("an HTTP 404 from gh is a failure, not 'no PR exists'", () => {
+      // A bare /not found/ match also catches "HTTP 404: Not Found", which is a
+      // deleted or renamed repo or a token without scope. Reading that as "no
+      // PR yet" hides the real error behind a spurious create attempt.
+      const { statePath } = preparePrFixture({
+        store,
+        thread,
+        worktreeBase,
+        repo,
+        tmpDir,
+      });
+      const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+      state.scenario = "http-404";
+      fs.writeFileSync(statePath, JSON.stringify(state), "utf8");
+
+      assert.throws(
+        () => prStatus({ store, threadId: thread.id }),
+        /404|not found/i,
+        "prStatus must surface the 404 rather than returning null",
+      );
+    });
+
+    it("gh missing (ENOENT) -> GitHub CLI (gh) is not installed", () => {
+      preparePrFixture({ store, thread, worktreeBase, repo, tmpDir });
+      process.env.CODER_GH_BIN = path.join(tmpDir, "definitely-missing-gh");
+
+      assert.throws(
+        () =>
+          createPr({
+            store,
+            threadId: thread.id,
+            title: "X",
+            broadcast: () => {},
+          }),
+        (err) => {
+          assert.equal(err.message, "GitHub CLI (gh) is not installed");
+          return true;
+        },
+      );
+    });
+
+    it("gh not authenticated surfaces gh's own message (tail-trimmed)", () => {
+      const { statePath } = preparePrFixture({
+        store,
+        thread,
+        worktreeBase,
+        repo,
+        tmpDir,
+      });
+      fs.writeFileSync(
+        statePath,
+        JSON.stringify({ scenario: "auth-fail", prs: {}, calls: [] }),
+        "utf8",
+      );
+
+      assert.throws(
+        () =>
+          createPr({
+            store,
+            threadId: thread.id,
+            title: "X",
+            broadcast: () => {},
+          }),
+        (err) => {
+          assert.ok(err instanceof Error);
+          assert.ok(
+            /gh auth login|GH_TOKEN|authentication/i.test(err.message),
+            `expected auth message, got: ${err.message}`,
+          );
+          assert.ok(
+            err.message.length <= 300,
+            `must be tail-trimmed <=300, got ${err.message.length}`,
+          );
+          return true;
+        },
+      );
+    });
+
+    it("no origin remote message survives (via push)", () => {
+      // Worktree + commit but no origin at all.
+      const setup = setupWorktree({
+        store,
+        threadId: thread.id,
+        worktreeBase,
+        broadcast: () => {},
+      });
+      fs.writeFileSync(path.join(setup.worktreePath, "feature.txt"), "feat\n");
+      git(setup.worktreePath, ["add", "feature.txt"]);
+      git(setup.worktreePath, ["commit", "-m", "feature"]);
+
+      // Fake gh present so we fail on remote, not on ENOENT.
+      const fakeDir = path.join(tmpDir, "fake-bin");
+      fs.mkdirSync(fakeDir, { recursive: true });
+      process.env.CODER_GH_BIN = writeFakeGh(fakeDir);
+      process.env.CODER_FAKE_GH_STATE = path.join(tmpDir, "gh-state.json");
+      fs.writeFileSync(
+        process.env.CODER_FAKE_GH_STATE,
+        JSON.stringify({ scenario: "success", prs: {} }),
+        "utf8",
+      );
+
+      assert.throws(
+        () =>
+          createPr({
+            store,
+            threadId: thread.id,
+            title: "X",
+            broadcast: () => {},
+          }),
+        /No git remote configured for this project\./,
+      );
+    });
+
+    it("remote is not GitHub refuses before shelling to gh", () => {
+      const setup = setupWorktree({
+        store,
+        threadId: thread.id,
+        worktreeBase,
+        broadcast: () => {},
+      });
+      fs.writeFileSync(path.join(setup.worktreePath, "feature.txt"), "feat\n");
+      git(setup.worktreePath, ["add", "feature.txt"]);
+      git(setup.worktreePath, ["commit", "-m", "feature"]);
+
+      const bare = path.join(tmpDir, "remote.git");
+      git(tmpDir, ["init", "--bare", bare]);
+      git(repo, ["remote", "add", "origin", bare]);
+
+      const fakeDir = path.join(tmpDir, "fake-bin");
+      fs.mkdirSync(fakeDir, { recursive: true });
+      const fakeGh = writeFakeGh(fakeDir);
+      const statePath = path.join(tmpDir, "gh-state.json");
+      fs.writeFileSync(
+        statePath,
+        JSON.stringify({ scenario: "success", prs: {}, calls: [] }),
+        "utf8",
+      );
+      process.env.CODER_GH_BIN = fakeGh;
+      process.env.CODER_FAKE_GH_STATE = statePath;
+
+      assert.throws(
+        () =>
+          createPr({
+            store,
+            threadId: thread.id,
+            title: "X",
+            broadcast: () => {},
+          }),
+        /not a GitHub repository/i,
+      );
+
+      const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+      assert.equal(
+        (state.calls || []).length,
+        0,
+        "must not invoke gh for non-GitHub remotes",
+      );
+    });
+
+    it("branch with no commits ahead of base refuses without PR attempt", () => {
+      // setupWorktree alone: branch tip == main, zero commits ahead.
+      setupWorktree({
+        store,
+        threadId: thread.id,
+        worktreeBase,
+        broadcast: () => {},
+      });
+      git(repo, [
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/acme/demo.git",
+      ]);
+
+      const fakeDir = path.join(tmpDir, "fake-bin");
+      fs.mkdirSync(fakeDir, { recursive: true });
+      const fakeGh = writeFakeGh(fakeDir);
+      const statePath = path.join(tmpDir, "gh-state.json");
+      fs.writeFileSync(
+        statePath,
+        JSON.stringify({ scenario: "success", prs: {}, calls: [] }),
+        "utf8",
+      );
+      process.env.CODER_GH_BIN = fakeGh;
+      process.env.CODER_FAKE_GH_STATE = statePath;
+
+      assert.throws(
+        () =>
+          createPr({
+            store,
+            threadId: thread.id,
+            title: "X",
+            broadcast: () => {},
+          }),
+        /no commits ahead/i,
+      );
+
+      const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+      assert.equal(
+        (state.calls || []).length,
+        0,
+        "must not invoke gh when there is nothing to propose",
+      );
+    });
+
+    it("gh timeout is bounded with a clear error", () => {
+      const { statePath } = preparePrFixture({
+        store,
+        thread,
+        worktreeBase,
+        repo,
+        tmpDir,
+      });
+      fs.writeFileSync(
+        statePath,
+        JSON.stringify({ scenario: "timeout", prs: {}, calls: [] }),
+        "utf8",
+      );
+
+      assert.throws(
+        () =>
+          createPr({
+            store,
+            threadId: thread.id,
+            title: "X",
+            broadcast: () => {},
+          }),
+        (err) => {
+          assert.match(err.message, /timed out after 30s/i);
+          return true;
+        },
+      );
+    });
+
+    it("draft flag is forwarded to gh pr create", () => {
+      const { setup, statePath } = preparePrFixture({
+        store,
+        thread,
+        worktreeBase,
+        repo,
+        tmpDir,
+      });
+
+      createPr({
+        store,
+        threadId: thread.id,
+        title: "Draft PR",
+        body: "wip",
+        draft: true,
+        broadcast: () => {},
+      });
+
+      const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+      const createCall = state.calls.find(
+        (c) => c[0] === "pr" && c[1] === "create",
+      );
+      assert.ok(createCall, "expected create call");
+      assert.ok(createCall.includes("--draft"), `args=${createCall}`);
+      assert.equal(state.prs[setup.branch].draft, true);
+    });
   });
 });
