@@ -108,7 +108,8 @@ function StatusBadge({
   return null;
 }
 
-function ThreadCard({
+/** Exported for render tests that need a card without the archived-collapse gate. */
+export function ThreadCard({
   thread,
   slug,
   providers,
@@ -133,11 +134,15 @@ function ThreadCard({
   });
   const providerLabel = providerDisplayName(thread.provider, providers);
 
-  // Card is a div (not a button) so the PR link is not nested interactive.
-  // Selection lives on a sibling button that covers the non-link content.
+  // Card is a non-interactive shell. One empty stretch button is the sole
+  // select control (one tab stop). Content sits in a sibling with
+  // pointer-events:none so clicks fall through to that button; the PR <a>
+  // re-enables pointer-events so it stays separately focusable/clickable.
+  // Never nest the PR link inside a button (invalid HTML; drops clicks).
   return (
     <div
       className={styles.card}
+      data-thread-card={thread.id}
       data-active={active}
       data-archived={thread.archived ? "true" : undefined}
     >
@@ -145,7 +150,9 @@ function ThreadCard({
         type="button"
         className={styles.cardSelect}
         onClick={() => onSelect(thread.id)}
-      >
+        aria-label={`Select thread: ${thread.title}`}
+      />
+      <div className={styles.cardBody}>
         <div className={styles.cardTop}>
           <span className={styles.repo}>{slug}</span>
           <span className={styles.age}>
@@ -165,33 +172,31 @@ function ThreadCard({
             <span className={styles.inMessagesTag}>in messages</span>
           )}
         </div>
-      </button>
-      <div className={styles.cardMeta}>
-        <span className={styles.branch}>
-          {branch}
-          {branch && prBadge ? " · " : null}
-          {prBadge?.href ? (
-            <a
-              className={styles.prLink}
-              href={prBadge.href}
-              target="_blank"
-              rel="noreferrer"
-              title={prBadge.href}
-            >
-              {prBadge.label}
-            </a>
-          ) : prBadge ? (
-            <span>{prBadge.label}</span>
-          ) : null}
-        </span>
-        <button
-          type="button"
-          className={styles.metaSelect}
-          onClick={() => onSelect(thread.id)}
-          aria-label="Select thread"
-        >
+        <div className={styles.cardMeta}>
+          <div className={styles.branchRow}>
+            {/* Truncation applies only to the branch name; PR chip is a sibling. */}
+            <span className={styles.branch}>{branch}</span>
+            {branch && prBadge ? (
+              <span className={styles.branchSep} aria-hidden>
+                {" · "}
+              </span>
+            ) : null}
+            {prBadge?.href ? (
+              <a
+                className={styles.prLink}
+                href={prBadge.href}
+                target="_blank"
+                rel="noreferrer"
+                title={prBadge.href}
+              >
+                {prBadge.label}
+              </a>
+            ) : prBadge ? (
+              <span className={styles.prLabel}>{prBadge.label}</span>
+            ) : null}
+          </div>
           <StatusBadge thread={thread} now={now} />
-        </button>
+        </div>
       </div>
     </div>
   );

@@ -144,6 +144,7 @@
 }
 
 .card {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -166,31 +167,39 @@
   box-shadow: inset 0 0 0 1px rgba(59, 130, 246, 0.12);
 }
 
-/* Select hit target: not the outer card (PR link must stay a sibling). */
+/*
+ * Full-card select overlay: sole tab stop for selecting the thread.
+ * Content lives in .cardBody (pointer-events: none) so clicks on title,
+ * meta, badge all hit this button. The PR <a> is a sibling with
+ * pointer-events: auto so it stays separately focusable without nesting.
+ */
 .cardSelect {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+  position: absolute;
+  inset: 0;
+  z-index: 0;
   width: 100%;
+  height: 100%;
   padding: 0;
   margin: 0;
   border: none;
+  border-radius: inherit;
   background: transparent;
-  text-align: left;
-  color: inherit;
   cursor: pointer;
 }
 
-.metaSelect {
-  display: inline-flex;
-  align-items: center;
-  padding: 0;
-  margin: 0;
-  border: none;
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  flex-shrink: 0;
+.cardSelect:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: -2px;
+}
+
+.cardBody {
+  position: relative;
+  z-index: 1;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
 }
 
 .cardTop {
@@ -309,6 +318,18 @@
   justify-content: space-between;
   gap: 8px;
   margin-top: 2px;
+  min-width: 0;
+}
+
+/* Branch truncates; separator + PR chip never shrink away. */
+.branchRow {
+  display: flex;
+  align-items: center;
+  /* Load-bearing: without min-width:0 this flex item's automatic minimum size
+     is the FULL untruncated branch width, so .branch never truncates and the
+     PR chip is pushed outside the card. That is the round 26 bug exactly. */
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
 .branch {
@@ -319,16 +340,46 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
+  /* Shrink to truncate, never GROW: flex-grow here inflates a short branch
+     past its text and strands the PR chip in dead space to the right. */
+  flex: 0 1 auto;
+}
+
+.branchSep {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-family: var(--mono);
+  white-space: pre;
+}
+
+.prLabel {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-family: var(--mono);
 }
 
 .prLink {
+  flex-shrink: 0;
+  position: relative;
+  z-index: 1;
+  pointer-events: auto;
   color: #93c5fd;
   text-decoration: none;
+  font-size: 11px;
+  font-family: var(--mono);
 }
 
 .prLink:hover {
   color: #bfdbfe;
   text-decoration: underline;
+}
+
+.prLink:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 1px;
+  border-radius: 2px;
 }
 
 .badge {

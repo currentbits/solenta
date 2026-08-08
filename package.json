@@ -29,6 +29,7 @@
     "vite": "^6.3.3"
   },
   "allowScripts": {
-    "electron@35.7.5": true
+    "electron@35.7.5": true,
+    "esbuild@0.25.12": true
   }
 }

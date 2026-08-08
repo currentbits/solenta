@@ -2,7 +2,24 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { MemoryEntryInfo } from "../shared/ipc";
 import { formatRelativeAge } from "../format";
 import styles from "./MemoryTab.module.css";
-import { memoryCardState } from "../memoryCard";
+import {
+  actionErrorFor,
+  afterCollapse,
+  beginConfirmDelete,
+  cancelConfirmDelete,
+  cancelEdit,
+  clearActionError,
+  clearAllCardActions,
+  clearEntryActions,
+  draftFor,
+  emptyCardActions,
+  isConfirmDelete,
+  isEditing,
+  memoryCardState,
+  setActionError,
+  setDraft,
+  startEdit,
+} from "../memoryCard";
 
 const MEMORY_NOT_RUNNING = "Memory server is not running.";
 const SEARCH_DEBOUNCE_MS = 300;
@@ -75,14 +92,12 @@ export function MemoryTab({
   const [listError, setListError] = useState<string | null>(null);
   const [serverDown, setServerDown] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  /** Entry being corrected (supersede) and its draft. */
-  const [editId, setEditId] = useState<string | null>(null);
-  const [editTitle, setEditTitle] = useState("");
-  const [editBody, setEditBody] = useState("");
-  /** Entry awaiting delete confirmation. */
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  /**
+   * Drafts, edit intent, delete-confirm, and action errors keyed by entry id.
+   * Collapse keeps drafts; card A cannot paint on card B by construction.
+   */
+  const [cardActions, setCardActions] = useState(emptyCardActions);
   const [actionBusy, setActionBusy] = useState(false);
-  const [actionError, setActionError] = useState<string | null>(null);
   const [fullBodies, setFullBodies] = useState<Record<string, string>>({});
   /** Ids whose memory.get failed (non-not-running); re-click retries. */
   const [failedIds, setFailedIds] = useState<Record<string, string>>({});
@@ -94,14 +109,6 @@ export function MemoryTab({
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [now, setNow] = useState(() => Date.now());
-
-  /** Per-card edit/delete context is only valid for the card it was opened on:
-      a failed delete on A must not surface as an error on B's card. */
-  const clearCardActions = useCallback(() => {
-    setEditId(null);
-    setConfirmDeleteId(null);
-    setActionError(null);
-  }, []);
 
   /** Bumped so late awaits do not clobber newer list results. */
   const listGen = useRef(0);
@@ -149,7 +156,7 @@ export function MemoryTab({
       setFullBodies({});
       setExpandedId(null);
       setFailedIds({});
-      clearCardActions();
+      setCardActions(clearAllCardActions());
       setListError(null);
       setServerDown(false);
     } catch (err) {
@@ -167,7 +174,7 @@ export function MemoryTab({
         setLoading(false);
       }
     }
-  }, [recentMemory, projectSlug, clearCardActions]);
+  }, [recentMemory, projectSlug]);
 
   const runSearch = useCallback(
     async (q: string) => {
@@ -184,7 +191,7 @@ export function MemoryTab({
         setFullBodies({});
         setExpandedId(null);
         setFailedIds({});
-        clearCardActions();
+        setCardActions(clearAllCardActions());
         setListError(null);
         setServerDown(false);
       } catch (err) {
@@ -203,7 +210,7 @@ export function MemoryTab({
         }
       }
     },
-    [searchMemory, projectSlug, clearCardActions],
+    [searchMemory, projectSlug],
   );
 
   /** Retry after not-running: re-run active search when query is long enough. */
@@ -234,9 +241,11 @@ export function MemoryTab({
   }, [query, loadRecent, runSearch, listProjectFilter]);
 
   const toggleExpand = async (id: string) => {
-    clearCardActions();
+    // Collapse keeps drafts and edit intent (afterCollapse only drops confirm UI).
+    // Never wipe cardActions here: that is what silently destroyed mid-edit text.
     if (expandedId === id) {
       setExpandedId(null);
+      setCardActions((prev) => afterCollapse(prev, id));
       return;
     }
     setExpandedId(id);
@@ -318,33 +327,34 @@ export function MemoryTab({
   };
 
   /** Only ever called with the fetched body; the Edit button is disabled without it. */
-  const startEdit = (entry: MemoryEntryInfo, fullBody: string) => {
-    setActionError(null);
-    setConfirmDeleteId(null);
-    setEditId(entry.id);
-    setEditTitle(entry.title);
-    setEditBody(fullBody);
+  const beginEdit = (entry: MemoryEntryInfo, fullBody: string) => {
+    setCardActions((prev) => startEdit(prev, entry.id, entry.title, fullBody));
   };
 
   const saveEdit = async (id: string) => {
-    const title = editTitle.trim();
-    const body = editBody.trim();
+    const draft = draftFor(cardActions, id);
+    if (!draft) return;
+    const title = draft.title.trim();
+    const body = draft.body.trim();
     if (!title || !body) {
-      setActionError("Title and body are required");
+      setCardActions((prev) =>
+        setActionError(prev, id, "Title and body are required"),
+      );
       return;
     }
     setActionBusy(true);
-    setActionError(null);
+    setCardActions((prev) => clearActionError(prev, id));
     try {
       await updateMemory({ id, title, body });
       if (!mountedRef.current) return;
-      setEditId(null);
+      setCardActions((prev) => clearEntryActions(prev, id));
       setExpandedId(null);
       reloadCurrent();
     } catch (err) {
       if (!mountedRef.current) return;
       if (isNotRunningError(err)) setServerDown(true);
-      else setActionError(errorMessage(err));
+      else
+        setCardActions((prev) => setActionError(prev, id, errorMessage(err)));
     } finally {
       if (mountedRef.current) setActionBusy(false);
     }
@@ -352,17 +362,18 @@ export function MemoryTab({
 
   const confirmDelete = async (id: string) => {
     setActionBusy(true);
-    setActionError(null);
+    setCardActions((prev) => clearActionError(prev, id));
     try {
       await removeMemory({ id });
       if (!mountedRef.current) return;
-      setConfirmDeleteId(null);
+      setCardActions((prev) => clearEntryActions(prev, id));
       setExpandedId(null);
       reloadCurrent();
     } catch (err) {
       if (!mountedRef.current) return;
       if (isNotRunningError(err)) setServerDown(true);
-      else setActionError(errorMessage(err));
+      else
+        setCardActions((prev) => setActionError(prev, id, errorMessage(err)));
     } finally {
       if (mountedRef.current) setActionBusy(false);
     }
@@ -421,12 +432,14 @@ export function MemoryTab({
             const open = expandedId === entry.id;
             const full = fullBodies[entry.id];
             const getError = failedIds[entry.id];
+            const draft = draftFor(cardActions, entry.id);
+            const cardError = actionErrorFor(cardActions, entry.id);
             const { loadingBody, showError, editing, showActions, canEdit } =
               memoryCardState({
                 expanding: expandingId === entry.id,
                 hasFull: full != null,
                 hasError: getError != null,
-                editRequested: editId === entry.id,
+                editRequested: isEditing(cardActions, entry.id),
               });
             return (
               <div key={entry.id} className={styles.card} data-expanded={open}>
@@ -459,18 +472,32 @@ export function MemoryTab({
                       <p className={styles.bodyError} role="alert">
                         {getError}
                       </p>
-                    ) : editing ? (
+                    ) : editing && draft ? (
                       <div className={styles.editWrap}>
                         <input
                           className={styles.titleInput}
-                          value={editTitle}
-                          onChange={(e) => setEditTitle(e.target.value)}
+                          value={draft.title}
+                          onChange={(e) =>
+                            setCardActions((prev) =>
+                              setDraft(prev, entry.id, {
+                                title: e.target.value,
+                                body: draft.body,
+                              }),
+                            )
+                          }
                           aria-label="Edit title"
                         />
                         <textarea
                           className={styles.bodyInput}
-                          value={editBody}
-                          onChange={(e) => setEditBody(e.target.value)}
+                          value={draft.body}
+                          onChange={(e) =>
+                            setCardActions((prev) =>
+                              setDraft(prev, entry.id, {
+                                title: draft.title,
+                                body: e.target.value,
+                              }),
+                            )
+                          }
                           rows={6}
                           aria-label="Edit body"
                         />
@@ -487,7 +514,11 @@ export function MemoryTab({
                             type="button"
                             className={styles.retryBtn}
                             disabled={actionBusy}
-                            onClick={() => setEditId(null)}
+                            onClick={() =>
+                              setCardActions((prev) =>
+                                cancelEdit(prev, entry.id),
+                              )
+                            }
                           >
                             Cancel
                           </button>
@@ -500,7 +531,7 @@ export function MemoryTab({
                     )}
                     {showActions && (
                       <div className={styles.entryActions}>
-                        {confirmDeleteId === entry.id ? (
+                        {isConfirmDelete(cardActions, entry.id) ? (
                           <>
                             <span className={styles.confirmText}>
                               Delete permanently?
@@ -517,7 +548,11 @@ export function MemoryTab({
                               type="button"
                               className={styles.retryBtn}
                               disabled={actionBusy}
-                              onClick={() => setConfirmDeleteId(null)}
+                              onClick={() =>
+                                setCardActions((prev) =>
+                                  cancelConfirmDelete(prev, entry.id),
+                                )
+                              }
                             >
                               Cancel
                             </button>
@@ -534,17 +569,18 @@ export function MemoryTab({
                               title={
                                 canEdit ? undefined : "Body not loaded yet"
                               }
-                              onClick={() => startEdit(entry, full!)}
+                              onClick={() => beginEdit(entry, full!)}
                             >
                               Edit
                             </button>
                             <button
                               type="button"
                               className={styles.retryBtn}
-                              onClick={() => {
-                                setActionError(null);
-                                setConfirmDeleteId(entry.id);
-                              }}
+                              onClick={() =>
+                                setCardActions((prev) =>
+                                  beginConfirmDelete(prev, entry.id),
+                                )
+                              }
                             >
                               Delete
                             </button>
@@ -552,11 +588,11 @@ export function MemoryTab({
                         )}
                       </div>
                     )}
-                    {actionError && (
+                    {cardError ? (
                       <p className={styles.bodyError} role="alert">
-                        {actionError}
+                        {cardError}
                       </p>
-                    )}
+                    ) : null}
                   </div>
                 ) : null}
                 {entry.project && (
