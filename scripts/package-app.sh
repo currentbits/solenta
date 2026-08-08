@@ -23,15 +23,17 @@ done
 # Preconditions
 # ---------------------------------------------------------------------------
 
-if [[ ! -d dist ]]; then
-  echo "dist/ missing; running npx vite build..."
-  npx vite build
-fi
+# ALWAYS rebuild the renderer. Reusing an existing dist/ is how a bundle ships
+# with an old UI while the stamp below says otherwise: the sha comes from git,
+# not from the artifacts, so a stale dist produces a build stamp that LIES.
+# That defeats the whole point of stamping, which exists to make a stale bundle
+# identifiable. Costs a few seconds; buys a bundle that matches its label.
+echo "building renderer (dist/)..."
+npx vite build
 
-if [[ ! -d core/dist ]] || [[ ! -f core/dist/index.js ]]; then
-  echo "core/dist missing; building core..."
-  (cd core && npm run build)
-fi
+# Same reasoning for core: rebuild rather than trusting whatever is on disk.
+echo "building core..."
+(cd core && npm run build)
 
 ELECTRON_APP="node_modules/electron/dist/Electron.app"
 if [[ ! -d "$ELECTRON_APP/Contents/Frameworks" ]]; then
