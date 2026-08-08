@@ -912,6 +912,7 @@ function createRunner(opts) {
       sessionId: thread.sessionId || null,
       permissionMode: thread.permissionMode || "default",
       model: thread.model || null,
+      reasoningEffort: thread.reasoningEffort || null,
     });
     // Claude-only: inject --mcp-config before the trailing prompt when healthy.
     // Other claude-stream providers (e.g. grok) use their own MCP injection.
@@ -1318,6 +1319,7 @@ function createRunner(opts) {
       sessionId: thread.sessionId || null,
       permissionMode: thread.permissionMode || "default",
       model: thread.model || null,
+      reasoningEffort: thread.reasoningEffort || null,
     });
     // Leading -c MCP override when memory server is healthy.
     const codexMcpArgs = getCodexMcpArgs();
@@ -1665,6 +1667,7 @@ function createRunner(opts) {
       sessionId: thread.sessionId || null,
       permissionMode: thread.permissionMode || "default",
       model: thread.model || null,
+      reasoningEffort: thread.reasoningEffort || null,
     });
 
     const entry = {
@@ -2011,6 +2014,7 @@ function createRunner(opts) {
       sessionId: thread.sessionId || null,
       permissionMode: thread.permissionMode || "default",
       model: thread.model || null,
+      reasoningEffort: thread.reasoningEffort || null,
     });
 
     const entry = {

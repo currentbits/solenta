@@ -221,7 +221,8 @@ describe("opencode provider registry", () => {
       sessionId: "ses_x",
       model: "anthropic/claude-sonnet-4",
     });
-    assert.deepEqual(args.slice(0, 4), ["run", "go", "--format", "json"]);
+    assert.deepEqual(args.slice(0, 3), ["run", "--format", "json"]);
+    assert.equal(args[args.length - 1], "go");
     assert.equal(args[args.indexOf("-s") + 1], "ses_x");
     assert.equal(args[args.indexOf("-m") + 1], "anthropic/claude-sonnet-4");
   });
@@ -331,7 +332,8 @@ describe("opencode runner integration", () => {
     assert.ok(argv.includes("run"));
     assert.ok(argv.includes("--format"));
     assert.ok(argv.includes("json"));
-    assert.equal(argv[argv.indexOf("run") + 1], "do the thing");
+    // Prompt is always the last argv element (flags first).
+    assert.equal(argv[argv.length - 1], "do the thing");
     assert.ok(!argv.includes("-s"));
   });
 
@@ -357,7 +359,7 @@ describe("opencode runner integration", () => {
     const argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
     assert.ok(argv.includes("-s"), `expected -s in ${JSON.stringify(argv)}`);
     assert.equal(argv[argv.indexOf("-s") + 1], "ses_opencode_001");
-    assert.equal(argv[argv.indexOf("run") + 1], "turn two");
+    assert.equal(argv[argv.length - 1], "turn two");
   });
 
   it("plain-text fallback when stdout has no JSON lines", async () => {

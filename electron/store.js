@@ -177,6 +177,9 @@ function migrateThread(t) {
     model: t.model !== undefined ? t.model : null,
     sessionId: t.sessionId !== undefined ? t.sessionId : null,
     permissionMode: t.permissionMode != null ? t.permissionMode : "default",
+    // Older stores lack reasoningEffort; null (not undefined) so the picker is stable.
+    reasoningEffort:
+      t.reasoningEffort !== undefined ? t.reasoningEffort : null,
     worktreePath: t.worktreePath !== undefined ? t.worktreePath : null,
     runStartedAt: t.runStartedAt !== undefined ? t.runStartedAt : null,
     archived: t.archived != null ? Boolean(t.archived) : false,

@@ -25,6 +25,8 @@ const providers: ProviderInfo[] = [
     available: true,
     supportsResume: true,
     models: ["opus", "sonnet"],
+    modelInfo: [],
+    efforts: [],
   },
   {
     id: "codex",
@@ -32,6 +34,8 @@ const providers: ProviderInfo[] = [
     available: true,
     supportsResume: false,
     models: [],
+    modelInfo: [],
+    efforts: [],
   },
   {
     id: "grok",
@@ -39,6 +43,8 @@ const providers: ProviderInfo[] = [
     available: false,
     supportsResume: true,
     models: ["high"],
+    modelInfo: [],
+    efforts: [],
   },
 ];
 

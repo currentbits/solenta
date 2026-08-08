@@ -107,6 +107,12 @@ function registerIpc(deps) {
     return updated;
   });
 
+  ipcMain.handle("threads:setReasoningEffort", async (_event, input) => {
+    const updated = services.setReasoningEffort(store, input);
+    broadcast("threads:changed", services.listThreads(store));
+    return updated;
+  });
+
   ipcMain.handle("app:status", async () => {
     return services.appStatus(store);
   });

@@ -45,6 +45,11 @@ export interface ThreadInfo {
   sessionId: string | null;
   /** Passed to the provider CLI (claude --permission-mode). Sticky per thread. */
   permissionMode: PermissionMode;
+  /**
+   * Reasoning effort for this thread, or null to use the provider's default.
+   * Ignored by providers whose `efforts` list is empty.
+   */
+  reasoningEffort: ReasoningEffort | null;
   /** Absolute path of the thread's git worktree, when one was set up. */
   worktreePath: string | null;
 }
@@ -168,6 +173,43 @@ export interface PrInfo {
   created: boolean;
 }
 
+/**
+ * How hard a model should think. Persisted per thread, sent to the CLI.
+ *
+ * These are the levels the installed CLIs actually accept, verified against
+ * them rather than copied from a design: `claude --effort` takes low, medium,
+ * high, xhigh, max, and `grok --reasoning-effort` takes low, medium, high.
+ * A provider advertises its own subset through ProviderInfo.efforts.
+ *
+ * Getting this wrong is silent: claude answers an unknown value with
+ * "Warning: Unknown --effort value ... ignoring it" and runs at its default,
+ * so a typo here costs the user the setting without an error.
+ */
+export type ReasoningEffort = "low" | "medium" | "high" | "xhigh" | "max";
+
+/** Ordered lowest to highest; the picker renders one segment per level. */
+export const REASONING_EFFORTS: ReasoningEffort[] = [
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+];
+
+/** A model the picker can offer, with the copy it needs to describe it. */
+export interface ModelInfo {
+  /** The id passed to the CLI, e.g. "claude-opus-5". */
+  id: string;
+  /** Short display name, e.g. "Opus (1M context)". */
+  label: string;
+  /** One line on what it is for, e.g. "Best for everyday, complex tasks". */
+  description: string;
+  /** Vendor line under the label, e.g. "Anthropic". */
+  vendor: string;
+  /** True for the provider's suggested default. */
+  recommended?: boolean;
+}
+
 export interface ProviderInfo {
   id: string;
   /** Display name, e.g. "Claude Code". */
@@ -178,6 +220,18 @@ export interface ProviderInfo {
   supportsResume: boolean;
   /** Selectable model ids for the picker; empty = no model choice. */
   models: string[];
+  /**
+   * Describes each entry of `models`, in the same order. Empty when the
+   * provider offers no model choice. `models` stays the source of truth for
+   * validation so existing callers keep working.
+   */
+  modelInfo: ModelInfo[];
+  /**
+   * Effort levels this provider actually honours, lowest to highest. Empty
+   * when the CLI has no such flag, and the picker then hides the control
+   * rather than offering a setting that does nothing.
+   */
+  efforts: ReasoningEffort[];
 }
 
 /** One phase of a user-defined workflow template. */
@@ -313,6 +367,15 @@ export interface CoderApi {
      * whose sessions tolerate it.
      */
     setProvider(input: { threadId: string; provider?: string; model?: string | null }): Promise<ThreadInfo>;
+    /**
+     * Sets reasoning effort for the thread. Rejects when the provider does not
+     * support the level, rather than silently accepting a setting that would
+     * never reach the CLI.
+     */
+    setReasoningEffort(input: {
+      threadId: string;
+      effort: ReasoningEffort | null;
+    }): Promise<ThreadInfo>;
     /**
      * Permanently deletes the thread with its messages and work log. Rejects
      * while a run is active, and rejects when the thread still has a worktree

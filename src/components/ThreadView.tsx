@@ -5,6 +5,7 @@ import type {
   PermissionMode,
   ProjectInfo,
   ProviderInfo,
+  ReasoningEffort,
   ThreadDetail,
   WorkLogItem,
   WorkflowTemplateInfo,
@@ -46,6 +47,7 @@ interface ThreadViewProps {
     provider?: string;
     model?: string | null;
   }) => void | Promise<void>;
+  onSetReasoningEffort: (effort: ReasoningEffort | null) => void | Promise<void>;
   /** Archive or unarchive the open thread. */
   onSetArchived: (archived: boolean) => void | Promise<void>;
   /** Permanently delete the open thread (caller already confirmed in UI). */
@@ -345,6 +347,7 @@ export function ThreadView({
   onStopRun,
   onSetPermissionMode,
   onSetProvider,
+  onSetReasoningEffort,
   onSetArchived,
   onDeleteThread,
   changesOpen,
@@ -698,9 +701,11 @@ export function ThreadView({
         onPermissionModeChange={onSetPermissionMode}
         provider={thread.provider}
         model={thread.model}
+        reasoningEffort={thread.reasoningEffort}
         providers={providers}
         workflows={workflows}
         onSetProvider={onSetProvider}
+        onSetReasoningEffort={onSetReasoningEffort}
         onSaveWorkflow={onSaveWorkflow}
         onRemoveWorkflow={onRemoveWorkflow}
         sessionId={thread.sessionId}

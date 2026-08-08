@@ -102,6 +102,7 @@ describe("services", () => {
     assert.equal(thread.provider, "claude");
     assert.equal(thread.sessionId, null);
     assert.equal(thread.permissionMode, "default");
+    assert.equal(thread.reasoningEffort, null);
     assert.equal(thread.worktreePath, null);
     assert.equal(thread.runStartedAt, null);
     assert.ok(typeof thread.createdAt === "number");

@@ -27,6 +27,7 @@ export default function App() {
     stopRun,
     setPermissionMode,
     setProvider,
+    setReasoningEffort,
     setArchived,
     deleteThread,
     setupWorktree,
@@ -110,6 +111,7 @@ export default function App() {
         onStopRun={() => stopRun()}
         onSetPermissionMode={(mode) => setPermissionMode(mode)}
         onSetProvider={(input) => setProvider(input)}
+        onSetReasoningEffort={(effort) => setReasoningEffort(effort)}
         onSetArchived={(archived) => setArchived(archived)}
         onDeleteThread={() => deleteThread()}
         changesOpen={changesOpen}

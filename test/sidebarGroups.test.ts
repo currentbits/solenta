@@ -31,6 +31,7 @@ function thread(
     model: partial.model ?? null,
     sessionId: partial.sessionId ?? null,
     permissionMode: partial.permissionMode ?? "default",
+    reasoningEffort: partial.reasoningEffort ?? null,
     worktreePath: partial.worktreePath ?? null,
     ...partial,
   };

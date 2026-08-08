@@ -37,7 +37,9 @@ const providers: ProviderInfo[] = [
     available: true,
     supportsResume: true,
     models: [],
-  } as ProviderInfo,
+    modelInfo: [],
+    efforts: [],
+  },
 ];
 
 function thread(over: Partial<ThreadInfo> = {}): ThreadInfo {
@@ -57,9 +59,10 @@ function thread(over: Partial<ThreadInfo> = {}): ThreadInfo {
     model: null,
     sessionId: null,
     permissionMode: "default",
+    reasoningEffort: null,
     worktreePath: null,
     ...over,
-  } as ThreadInfo;
+  };
 }
 
 function renderSidebar(t: ThreadInfo): string {

@@ -9,6 +9,7 @@ import type {
   PrInfo,
   ProjectInfo,
   ProviderInfo,
+  ReasoningEffort,
   ThreadDetail,
   ThreadInfo,
   WorkflowTemplateInfo,
@@ -80,6 +81,8 @@ export interface UseCoderResult {
     provider?: string;
     model?: string | null;
   }) => Promise<void>;
+  /** Set reasoning effort on the selected thread (selectedRef-guarded). */
+  setReasoningEffort: (effort: ReasoningEffort | null) => Promise<void>;
   /** Archive or unarchive the selected thread. Archiving moves selection off it. */
   setArchived: (archived: boolean) => Promise<void>;
   /** Permanently delete the selected thread (after caller confirms). */
@@ -487,6 +490,33 @@ export function useCoder(): UseCoderResult {
     [api, selectedThreadId, applyThreads],
   );
 
+  const setReasoningEffort = useCallback(
+    async (effort: ReasoningEffort | null) => {
+      if (!selectedThreadId) return;
+      const threadId = selectedThreadId;
+      try {
+        const thread = await api.threads.setReasoningEffort({
+          threadId,
+          effort,
+        });
+        if (selectedRef.current !== threadId) return;
+        applyThreads(
+          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
+        );
+        setDetail((prev) =>
+          prev && prev.thread.id === thread.id
+            ? { ...prev, thread }
+            : prev,
+        );
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+        throw err;
+      }
+    },
+    [api, selectedThreadId, applyThreads],
+  );
+
   const setArchived = useCallback(
     async (archived: boolean) => {
       if (!selectedThreadId) return;
@@ -742,6 +772,7 @@ export function useCoder(): UseCoderResult {
     stopRun,
     setPermissionMode,
     setProvider,
+    setReasoningEffort,
     setArchived,
     deleteThread,
     setupWorktree,

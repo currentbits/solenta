@@ -37,7 +37,9 @@ const providers: ProviderInfo[] = [
     available: true,
     supportsResume: true,
     models: [],
-  } as ProviderInfo,
+    modelInfo: [],
+    efforts: [],
+  },
 ];
 
 const workflows: WorkflowTemplateInfo[] = [];
@@ -59,9 +61,10 @@ function thread(over: Partial<ThreadInfo> = {}): ThreadInfo {
     model: null,
     sessionId: null,
     permissionMode: "default",
+    reasoningEffort: null,
     worktreePath: "/tmp/wt",
     ...over,
-  } as ThreadInfo;
+  };
 }
 
 function msg(over: Partial<ChatMessage> & Pick<ChatMessage, "role" | "text">): ChatMessage {
@@ -120,6 +123,7 @@ function view(props: {
       onStopRun={() => {}}
       onSetPermissionMode={() => {}}
       onSetProvider={() => {}}
+      onSetReasoningEffort={() => {}}
       onSetArchived={() => {}}
       onDeleteThread={() => {}}
       changesOpen={props.changesOpen ?? false}

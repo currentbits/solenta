@@ -144,8 +144,9 @@ describe("providers registry", () => {
       prompt: "hello",
       permissionMode: "default",
     });
-    assert.equal(grokArgs[0], "-p");
-    assert.equal(grokArgs[1], "hello");
+    // Prompt is the last argv element (-p/--single value).
+    assert.equal(grokArgs[grokArgs.length - 2], "-p");
+    assert.equal(grokArgs[grokArgs.length - 1], "hello");
     assert.ok(grokArgs.includes("streaming-messages-json"));
     assert.ok(grokArgs.includes("--permission-mode"));
     assert.ok(!grokArgs.includes("--verbose"));
@@ -163,12 +164,13 @@ describe("providers registry", () => {
       grokResume[grokResume.indexOf("--permission-mode") + 1],
       "plan",
     );
+    assert.equal(grokResume[grokResume.length - 1], "again");
 
     assert.deepEqual(getProvider("opencode").buildArgs({ prompt: "hello" }), [
       "run",
-      "hello",
       "--format",
       "json",
+      "hello",
     ]);
     const resume = getProvider("opencode").buildArgs({
       prompt: "again",
@@ -179,6 +181,7 @@ describe("providers registry", () => {
     assert.equal(resume[resume.indexOf("-s") + 1], "ses_abc");
     assert.ok(resume.includes("-m"));
     assert.equal(resume[resume.indexOf("-m") + 1], "openai/gpt-4o");
+    assert.equal(resume[resume.length - 1], "again");
   });
 
   it("resolveBin uses env overrides", () => {

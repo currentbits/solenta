@@ -50,6 +50,7 @@ describe("Store", () => {
       model: null,
       sessionId: null,
       permissionMode: "default",
+      reasoningEffort: null,
       worktreePath: null,
     };
     const msg = {
@@ -123,6 +124,7 @@ describe("Store", () => {
     assert.equal(t.model, null);
     assert.equal(t.sessionId, null);
     assert.equal(t.permissionMode, "default");
+    assert.equal(t.reasoningEffort, null);
     assert.equal(t.worktreePath, null);
     assert.equal(t.archived, false);
     assert.equal(t.prUrl, null);

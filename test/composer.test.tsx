@@ -15,23 +15,44 @@ import { Composer } from "../src/components/Composer";
 import type {
   PermissionMode,
   ProviderInfo,
+  ReasoningEffort,
   WorkflowTemplateInfo,
 } from "../src/shared/ipc";
 
+const CLAUDE_WITH_INFO: ProviderInfo = {
+  id: "claude",
+  name: "Claude Code",
+  available: true,
+  supportsResume: true,
+  models: ["claude-sonnet-4", "claude-opus-4"],
+  modelInfo: [
+    {
+      id: "claude-sonnet-4",
+      label: "Sonnet 4",
+      description: "Everyday complex work",
+      vendor: "Anthropic",
+      recommended: true,
+    },
+    {
+      id: "claude-opus-4",
+      label: "Opus 4",
+      description: "Deepest reasoning",
+      vendor: "Anthropic",
+    },
+  ],
+  efforts: ["low", "medium", "high", "xhigh", "max"],
+};
+
 const PROVIDERS: ProviderInfo[] = [
-  {
-    id: "claude",
-    name: "Claude Code",
-    available: true,
-    supportsResume: true,
-    models: ["claude-sonnet-4", "claude-opus-4"],
-  },
+  CLAUDE_WITH_INFO,
   {
     id: "codex",
     name: "Codex",
     available: true,
     supportsResume: false,
     models: [],
+    modelInfo: [],
+    efforts: [],
   },
   {
     id: "grok",
@@ -39,6 +60,22 @@ const PROVIDERS: ProviderInfo[] = [
     available: false,
     supportsResume: false,
     models: [],
+    modelInfo: [],
+    // Real CLI: low / medium / high only (three segments, not five).
+    efforts: ["low", "medium", "high"],
+  },
+];
+
+/** Provider with models but no modelInfo and no efforts (label fallback path). */
+const BARE_MODELS: ProviderInfo[] = [
+  {
+    id: "claude",
+    name: "Claude Code",
+    available: true,
+    supportsResume: true,
+    models: ["claude-sonnet-4", "claude-opus-4"],
+    modelInfo: [],
+    efforts: [],
   },
 ];
 
@@ -60,10 +97,11 @@ interface Harness {
   builds: { prompt: string; templateId: string }[];
   modes: PermissionMode[];
   providerSets: { provider?: string; model?: string | null }[];
+  efforts: (ReasoningEffort | null)[];
 }
 
 function makeHarness(): Harness {
-  return { sends: [], builds: [], modes: [], providerSets: [] };
+  return { sends: [], builds: [], modes: [], providerSets: [], efforts: [] };
 }
 
 function composer(
@@ -72,6 +110,7 @@ function composer(
     permissionMode?: PermissionMode;
     provider?: string;
     model?: string | null;
+    reasoningEffort?: ReasoningEffort | null;
     sessionId?: string | null;
     branch?: string | null;
     hasWorktree?: boolean;
@@ -89,10 +128,16 @@ function composer(
       }}
       provider={over.provider ?? "claude"}
       model={over.model === undefined ? null : over.model}
+      reasoningEffort={
+        over.reasoningEffort === undefined ? null : over.reasoningEffort
+      }
       providers={over.providers ?? PROVIDERS}
       workflows={WORKFLOWS}
       onSetProvider={(input) => {
         harness.providerSets.push(input);
+      }}
+      onSetReasoningEffort={(effort) => {
+        harness.efforts.push(effort);
       }}
       onSaveWorkflow={async (t) => ({
         id: "saved",
@@ -167,36 +212,199 @@ describe("Composer send", () => {
 });
 
 describe("Composer model and provider pickers", () => {
-  it("lists the models it was given and reports the selection", async () => {
+  it("shows modelInfo labels (not raw ids) and reports the selected model id", async () => {
     const h = makeHarness();
     const m = await mount(composer(h, { model: null }));
 
-    // Model pill shows "default" when model is null.
+    // Trigger shows Default when model is null.
+    const modelPill = m.query('button[aria-label="Model: Default"]');
+    assert.ok(modelPill, "model trigger must expose an accessible label with Default");
     assert.ok(
-      m.text().includes("default"),
-      `model pill must show default, got: ${m.text().slice(0, 160)}`,
+      !m.text().includes("High · 1M"),
+      "the decorative High · 1M pill must be gone",
     );
 
-    // Open the model menu (pill that shows the current model label).
-    const pills = m.queryAll("button");
-    const modelPill = pills.find((b) =>
-      (b.textContent || "").includes("default"),
-    );
-    assert.ok(modelPill, "model pill must be present");
     await m.click(modelPill);
 
-    assert.ok(m.text().includes("Default"), "Default option must list");
-    assert.ok(m.text().includes("sonnet-4"), "given model must list (short name)");
-    assert.ok(m.text().includes("opus-4"), "second given model must list");
-
-    const sonnet = Array.from(m.queryAll("button")).find((b) =>
-      (b.textContent || "").includes("sonnet-4"),
+    // Labels from modelInfo, never the raw ids as the primary row text.
+    assert.ok(m.text().includes("Sonnet 4"), "modelInfo label must list");
+    assert.ok(m.text().includes("Opus 4"), "second modelInfo label must list");
+    assert.ok(m.text().includes("Anthropic"), "vendor line must list");
+    // Highlight starts on the selected row (Default); detail follows it.
+    assert.ok(
+      m.text().includes("Use the provider default model"),
+      "detail pane must describe the highlighted Default row",
     );
-    assert.ok(sonnet, "sonnet option must be clickable");
-    await m.click(sonnet);
+    // Raw ids must not be the visible row labels when modelInfo is present.
+    const modelList = m.query('[role="listbox"][aria-label="Model"]');
+    assert.ok(modelList, "model listbox must open");
+    assert.equal(
+      (modelList.textContent || "").includes("claude-sonnet-4"),
+      false,
+      "raw model id must not appear in the list when modelInfo supplies labels",
+    );
+
+    const sonnet = Array.from(m.queryAll("button")).find(
+      (b) => (b.textContent || "").includes("Sonnet 4"),
+    );
+    assert.ok(sonnet, "Sonnet 4 option must be clickable");
+    // Hover moves the highlight so the detail pane tracks it.
+    await m.click(sonnet); // selects; detail would have shown on hover in real use
 
     assert.equal(h.providerSets.length, 1, "selecting a model reports once");
     assert.deepEqual(h.providerSets[0], { model: "claude-sonnet-4" });
+    m.unmount();
+  });
+
+  it("falls back to raw ids when the provider has no modelInfo", async () => {
+    const h = makeHarness();
+    const m = await mount(
+      composer(h, { model: null, providers: BARE_MODELS }),
+    );
+    const pill = m.query('button[aria-label="Model: Default"]');
+    assert.ok(pill);
+    await m.click(pill);
+    assert.ok(
+      m.text().includes("claude-sonnet-4"),
+      "without modelInfo the list must fall back to the raw id",
+    );
+    m.unmount();
+  });
+
+  it("reports the reasoning level when a segment is clicked", async () => {
+    const h = makeHarness();
+    const m = await mount(
+      composer(h, { model: "claude-sonnet-4", reasoningEffort: "low" }),
+    );
+    const pill = m.query('button[aria-label="Model: Sonnet 4"]');
+    assert.ok(pill, "trigger must show the modelInfo label, not the raw id");
+    await m.click(pill);
+
+    assert.ok(
+      m.text().includes("REASONING"),
+      "REASONING header must appear when efforts is non-empty",
+    );
+    const group = m.query('[role="group"][aria-label="Reasoning effort"]');
+    assert.ok(group, "reasoning segment group must render");
+    const segs = group.querySelectorAll("button");
+    assert.equal(
+      segs.length,
+      5,
+      "one segment per advertised effort (claude has five, not a hardcoded five from the enum alone)",
+    );
+    // Labels must be human, not raw tokens like "xhigh".
+    const labels = Array.from(segs).map((b) => b.getAttribute("aria-label") || "");
+    assert.ok(
+      labels.some((l) => l.includes("Extra high")),
+      `xhigh must display as Extra high, got: ${labels.join(", ")}`,
+    );
+    assert.equal(
+      labels.some((l) => /\bxhigh\b/i.test(l)),
+      false,
+      "raw xhigh token must not be the aria-label",
+    );
+
+    const high = Array.from(segs).find(
+      (b) => (b.getAttribute("aria-label") || "") === "Reasoning High",
+    );
+    assert.ok(high, "High segment must exist");
+    await m.click(high);
+
+    assert.deepEqual(
+      h.efforts,
+      ["high"],
+      "clicking a segment must report that level",
+    );
+    m.unmount();
+  });
+
+  it("renders only as many reasoning segments as the provider advertises", async () => {
+    // Grok supports three levels; a meter that hardcodes REASONING_EFFORTS
+    // would show five and offer unsupported values that claude-style CLIs ignore.
+    const h = makeHarness();
+    const m = await mount(
+      composer(h, {
+        provider: "grok",
+        model: null,
+        providers: PROVIDERS,
+      }),
+    );
+    // grok has empty models → still shows model pill with Custom…
+    const pill = m.query('button[aria-label="Model: Default"]');
+    assert.ok(pill);
+    await m.click(pill);
+    const group = m.query('[role="group"][aria-label="Reasoning effort"]');
+    assert.ok(group, "grok has efforts so the control must render");
+    assert.equal(
+      group.querySelectorAll("button").length,
+      3,
+      "grok meter must have three segments (low/medium/high), not five",
+    );
+    m.unmount();
+  });
+
+  it("hides the reasoning control entirely when efforts is empty", async () => {
+    const h = makeHarness();
+    const m = await mount(
+      composer(h, {
+        model: null,
+        providers: BARE_MODELS,
+      }),
+    );
+    await m.click(m.query('button[aria-label="Model: Default"]'));
+
+    assert.equal(
+      m.query('[role="group"][aria-label="Reasoning effort"]'),
+      null,
+      "empty efforts must not render a reasoning control",
+    );
+    assert.equal(
+      m.text().includes("REASONING"),
+      false,
+      "empty efforts must not render a REASONING header either",
+    );
+    m.unmount();
+  });
+
+  it("operates the model list by keyboard: arrows, Enter, Escape", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h, { model: null }));
+    const pill = m.query('button[aria-label="Model: Default"]') as HTMLElement;
+    await m.click(pill);
+
+    const list = m.query(
+      '[role="listbox"][aria-label="Model"]',
+    ) as HTMLElement | null;
+    assert.ok(list, "listbox must open");
+
+    // Default is index 0; ArrowDown once lands on Sonnet 4 (index 1).
+    await m.press(list, "ArrowDown");
+    await m.press(list, "Enter");
+
+    assert.deepEqual(
+      h.providerSets,
+      [{ model: "claude-sonnet-4" }],
+      "Enter on the highlighted row must select that model id",
+    );
+
+    // Re-open and Escape must close without selecting.
+    await m.click(m.query('button[aria-label="Model: Default"]'));
+    const list2 = m.query(
+      '[role="listbox"][aria-label="Model"]',
+    ) as HTMLElement | null;
+    assert.ok(list2, "list must open again");
+    const before = h.providerSets.length;
+    await m.press(list2, "Escape");
+    assert.equal(
+      m.query('[role="listbox"][aria-label="Model"]'),
+      null,
+      "Escape must close the model picker",
+    );
+    assert.equal(
+      h.providerSets.length,
+      before,
+      "Escape must not report a model selection",
+    );
     m.unmount();
   });
 
@@ -283,9 +491,6 @@ describe("Composer while a run is active", () => {
     const ta = m.query("textarea") as HTMLTextAreaElement;
     assert.equal(ta.disabled, true, "prompt must be locked while a run is active");
 
-    // Typing into a disabled field is not realistic; force a value on the
-    // controlled input via the harness type helper would still leave canSend
-    // false because disabled short-circuits. Assert the controls themselves.
     const send = m.query('button[aria-label="Send"]') as HTMLButtonElement;
     const build = m.byText("Build") as HTMLButtonElement;
     assert.equal(send.disabled, true, "Send disabled during active run");
@@ -299,20 +504,12 @@ describe("Composer while a run is active", () => {
   });
 
   it("with a prompt still refuses Send and Build when disabled", async () => {
-    // Guard against a regression that only checks hasPrompt and ignores disabled.
     const h = makeHarness();
     const m = await mount(composer(h, { disabled: false }));
     await m.type(m.query("textarea"), "already typing");
-    // Remount is the realistic path (parent flips isWorking). Remount with
-    // disabled=true and re-type is not needed: canSend is !disabled && hasPrompt.
-    // Instead re-render by mounting disabled with the same harness after a
-    // successful enable, then prove disabled alone blocks.
     m.unmount();
 
     const m2 = await mount(composer(h, { disabled: true }));
-    // Even if the user somehow had text, disabled controls must not fire.
-    // Inject text while disabled: type helper still dispatches, but canSend
-    // is false regardless of value.
     await m2.type(m2.query("textarea"), "sneaky second prompt");
     const send = m2.query('button[aria-label="Send"]') as HTMLButtonElement;
     assert.equal(send.disabled, true, "disabled overrides a non-empty prompt");
@@ -323,11 +520,6 @@ describe("Composer while a run is active", () => {
 });
 
 describe("Composer value displays (null-safe)", () => {
-  /**
-   * Composer has no spend/token meter prop (that lives on Sidebar / Agents).
-   * The value surfaces it does own are session chip, branch chip, worktree
-   * chip, and the static effort pill. They must not crash on null/empty.
-   */
   it("renders session short form and omits the chip when session is null", async () => {
     const h = makeHarness();
     const withSess = await mount(
@@ -344,7 +536,6 @@ describe("Composer value displays (null-safe)", () => {
     withSess.unmount();
 
     const noSess = await mount(composer(h, { sessionId: null }));
-    // Must render without throwing; no short id fragment expected.
     assert.ok(noSess.query("textarea"), "composer still mounts with null session");
     assert.ok(
       !noSess.text().includes("abcdef01"),
@@ -353,24 +544,47 @@ describe("Composer value displays (null-safe)", () => {
     noSess.unmount();
   });
 
-  it("shows the effort pill and survives null branch", async () => {
+  it("survives null branch and never invents a main chip", async () => {
     const h = makeHarness();
     const m = await mount(composer(h, { branch: null }));
     assert.ok(
-      m.text().includes("High"),
-      "effort pill is the composer-local capacity display",
+      !m.text().includes("High · 1M"),
+      "decorative effort pill must not reappear",
     );
     assert.ok(
       m.text().includes("Worktree") || m.text().includes("Project"),
       "the composer states where the work will land",
     );
     assert.ok(m.query("textarea"), "null branch must not crash the composer");
-    // Inventing a default would tell the user their work is going to main when
-    // it is going nowhere.
     assert.equal(
       m.text().includes("main"),
       false,
       "a null branch must not invent a default chip",
+    );
+    m.unmount();
+  });
+});
+
+describe("Composer reasoning default", () => {
+  it("clicking the current level clears back to the provider default", async () => {
+    // ReasoningEffort | null is handled at every layer, but before this the UI
+    // could only move between levels, never restore the provider's default.
+    const h = makeHarness();
+    const m = await mount(composer(h, { reasoningEffort: "high" }));
+    const trigger = m.query('button[aria-label^="Model:"]');
+    assert.ok(trigger, "model trigger must exist");
+    await m.click(trigger);
+    const current = m
+      .queryAll('[aria-label^="Reasoning "]')
+      .find((el) =>
+        (el.getAttribute("aria-label") || "") === "Reasoning High",
+      );
+    assert.ok(current, "a High segment must exist");
+    await m.click(current);
+    assert.deepEqual(
+      h.efforts,
+      [null],
+      "re-clicking the active level must report null, not the same level again",
     );
     m.unmount();
   });
@@ -384,7 +598,12 @@ describe("Composer structure", () => {
     const m = await mount(composer(h));
 
     // Open every menu so option buttons are in the tree too.
-    const openLabels = ["Claude Code", "default", "Ask first"];
+    //
+    // The model popover MUST be opened LAST. Opening any other menu closes it,
+    // so with the model pill first the two-pane picker (model rows and the
+    // reasoning segments, the largest interactive surface here) was already
+    // gone by the time this asserted, and nesting inside it went unnoticed.
+    const openLabels = ["Claude Code", "Ask first"];
     for (const label of openLabels) {
       const pill = Array.from(m.queryAll("button")).find((b) =>
         (b.textContent || "").includes(label),
@@ -394,6 +613,20 @@ describe("Composer structure", () => {
     // Build caret menu.
     const caret = m.query('button[aria-label="Choose workflow template"]');
     if (caret) await m.click(caret);
+
+    const modelPill = m.query('button[aria-label="Model: Default"]');
+    assert.ok(modelPill, "the model trigger must be present");
+    await m.click(modelPill);
+    assert.ok(
+      m.queryAll('[role="option"]').length > 0,
+      "the model popover must be OPEN when this asserts, or it checks nothing",
+    );
+    // The reasoning meter is the other new interactive surface. Without this
+    // the guard silently skipped it whenever the fixture had no effort levels.
+    assert.ok(
+      m.queryAll('[aria-label^="Reasoning "]').length > 0,
+      "the reasoning segments must be rendered when this asserts",
+    );
 
     const interactives = m.queryAll("button, a");
     // Cardinality guard: a for-loop over an empty collection asserts nothing,

@@ -157,6 +157,7 @@ function createThread(store, input) {
     model: null,
     sessionId: null,
     permissionMode: "default",
+    reasoningEffort: null,
     worktreePath: null,
   };
 
@@ -187,6 +188,44 @@ function setPermissionMode(store, input) {
   const updated = store.updateThread(threadId, { permissionMode: mode });
   store.save();
   return updated ? { ...updated } : { ...thread, permissionMode: mode };
+}
+
+/**
+ * Set reasoning effort for a thread. null always means "provider default".
+ * Rejects levels the thread's provider does not honour so a setting that
+ * would never reach the CLI cannot be stored.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, effort: string | null }} input
+ */
+function setReasoningEffort(store, input) {
+  const { threadId, effort } = input;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+
+  if (effort === null || effort === undefined) {
+    const updated = store.updateThread(threadId, { reasoningEffort: null });
+    store.save();
+    return updated ? { ...updated } : { ...thread, reasoningEffort: null };
+  }
+
+  const level = String(effort);
+  const entry = getProvider(thread.provider);
+  const allowed =
+    entry && Array.isArray(entry.efforts) ? entry.efforts : [];
+  if (!allowed.includes(level)) {
+    const providerName =
+      (entry && entry.name) || thread.provider || "provider";
+    throw new Error(
+      `${providerName} does not support reasoning effort "${level}"`,
+    );
+  }
+
+  const updated = store.updateThread(threadId, { reasoningEffort: level });
+  store.save();
+  return updated ? { ...updated } : { ...thread, reasoningEffort: level };
 }
 
 /**
@@ -282,6 +321,11 @@ function setProvider(store, input) {
     } else {
       patch.model = null;
     }
+    // Same for effort, and for the same reason. A level the new provider does
+    // not list would never reach its CLI, while the picker kept displaying it:
+    // a setting shown to the user that does nothing, which is the exact bug
+    // this feature removed one control to the left.
+    patch.reasoningEffort = null;
   } else if (modelProvided) {
     patch.model = normalizeModelForProvider(nextEntry, input.model);
   }
@@ -697,6 +741,7 @@ module.exports = {
   addProject,
   createThread,
   setPermissionMode,
+  setReasoningEffort,
   setProvider,
   setArchived,
   deleteThread,

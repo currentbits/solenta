@@ -76,6 +76,8 @@ describe("providerDisplayName", () => {
       available: true,
       supportsResume: true,
       models: [] as string[],
+      modelInfo: [],
+      efforts: [],
     },
   ];
 

@@ -18,6 +18,7 @@ import type {
   PrInfo,
   ProjectInfo,
   ProviderInfo,
+  ReasoningEffort,
   SessionUsage,
   ThreadDetail,
   ThreadInfo,
@@ -157,6 +158,35 @@ const DEV_PROVIDERS: ProviderInfo[] = [
       "claude-sonnet-5",
       "claude-haiku-4-5",
     ],
+    modelInfo: [
+      {
+        id: "claude-fable-5",
+        label: "Fable",
+        description: "Fast everyday coding and chat",
+        vendor: "Anthropic",
+        recommended: true,
+      },
+      {
+        id: "claude-opus-5",
+        label: "Opus 5",
+        description: "Deepest reasoning for hard problems",
+        vendor: "Anthropic",
+      },
+      {
+        id: "claude-sonnet-5",
+        label: "Sonnet 5",
+        description: "Best for everyday complex tasks",
+        vendor: "Anthropic",
+      },
+      {
+        id: "claude-haiku-4-5",
+        label: "Haiku 4.5",
+        description: "Lightweight and cheap for simple turns",
+        vendor: "Anthropic",
+      },
+    ],
+    // claude --effort: low, medium, high, xhigh, max (all five).
+    efforts: ["low", "medium", "high", "xhigh", "max"],
   },
   {
     id: "codex",
@@ -164,6 +194,9 @@ const DEV_PROVIDERS: ProviderInfo[] = [
     available: true,
     supportsResume: true,
     models: [],
+    modelInfo: [],
+    // No verified --effort flag in the dev stand-in; hide the control.
+    efforts: [],
   },
   {
     id: "grok",
@@ -171,6 +204,9 @@ const DEV_PROVIDERS: ProviderInfo[] = [
     available: false,
     supportsResume: false,
     models: [],
+    modelInfo: [],
+    // grok --reasoning-effort: low, medium, high only (three segments).
+    efforts: ["low", "medium", "high"],
   },
   {
     id: "opencode",
@@ -178,6 +214,8 @@ const DEV_PROVIDERS: ProviderInfo[] = [
     available: true,
     supportsResume: false,
     models: [],
+    modelInfo: [],
+    efforts: [],
   },
 ];
 
@@ -451,6 +489,7 @@ function seedThreads(projects: ProjectInfo[]): ThreadInfo[] {
         : index % 2 === 0
           ? "default"
           : "acceptEdits") as PermissionMode,
+      reasoningEffort: null,
       worktreePath: null,
     };
   });
@@ -1721,6 +1760,7 @@ function buildDevCoder(): CoderApi {
           model: null,
           sessionId: null,
           permissionMode: "default",
+          reasoningEffort: null,
           worktreePath: null,
         };
         threads = [t, ...threads];
@@ -1762,6 +1802,38 @@ function buildDevCoder(): CoderApi {
         const thread: ThreadInfo = {
           ...detail.thread,
           archived: input.archived,
+        };
+        detail.thread = thread;
+        details.set(input.threadId, detail);
+        syncThreadRow(thread);
+        emitDetail(detail);
+        return { ...thread };
+      },
+      async setReasoningEffort(input: {
+        threadId: string;
+        effort: ReasoningEffort | null;
+      }) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
+        const providerId = detail.thread.provider;
+        const entry = DEV_PROVIDERS.find((p) => p.id === providerId);
+        const efforts = entry?.efforts ?? [];
+        if (input.effort != null) {
+          if (efforts.length === 0) {
+            throw new Error(
+              `Provider ${providerId} does not support reasoning effort`,
+            );
+          }
+          if (!efforts.includes(input.effort)) {
+            throw new Error(
+              `Provider ${providerId} does not support effort "${input.effort}"`,
+            );
+          }
+        }
+        // Effort bookkeeping is not "activity"; leave updatedAt alone.
+        const thread: ThreadInfo = {
+          ...detail.thread,
+          reasoningEffort: input.effort,
         };
         detail.thread = thread;
         details.set(input.threadId, detail);
@@ -1853,6 +1925,11 @@ function buildDevCoder(): CoderApi {
               ? resolveModel(nextProvider, input.model)
               : null;
           patch.model = incoming;
+          // Same as production: a level the new provider cannot honour would
+          // be shown by the picker and never reach the CLI. Without this the
+          // dev harness reproduces the very bug the shipped path fixed, which
+          // would convince the next person the fix did not land.
+          patch.reasoningEffort = null;
         } else if (modelProvided) {
           patch.model = resolveModel(nextProvider, input.model);
         }

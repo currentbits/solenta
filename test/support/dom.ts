@@ -128,6 +128,17 @@ export function unmountAll(): void {
 // there is no output to debug. Importing mount() is now enough.
 afterEach(() => unmountAll());
 
+/**
+ * Run something that triggers React state from OUTSIDE the tree, e.g. pushing
+ * an IPC event through a fake. Without act() React logs a warning, which the
+ * console gate turns into a failure, and the update may not be flushed.
+ */
+export async function inAct(fn: () => void | Promise<void>): Promise<void> {
+  await act(async () => {
+    await fn();
+  });
+}
+
 export async function mount(element: ReactElement): Promise<Mounted> {
   const dom = installDom();
   if (!patchedConsole) {

@@ -285,3 +285,30 @@ describe("threads.setProvider", () => {
     await api.runs.stop({ threadId: t.id });
   });
 });
+
+describe("dev harness matches production on provider change", () => {
+  it("clears a stranded reasoning effort", async () => {
+    // The dev harness carries a comment saying it matches services.setProvider
+    // exactly. It did not, so `npm run dev` reproduced the very bug the shipped
+    // path had just fixed, which reads as the fix not landing.
+    const api = createDevCoder();
+    const projects = await api.projects.list();
+    // A fresh thread: a seeded one has a session, which locks the provider.
+    const t = await api.threads.create({
+      projectId: projects[0].id,
+      title: "effort parity",
+    });
+    await api.threads.setProvider({ threadId: t.id, provider: "claude" });
+    await api.threads.setReasoningEffort({ threadId: t.id, effort: "max" });
+    const before = (await api.threads.get(t.id)).thread;
+    assert.equal(before.reasoningEffort, "max");
+
+    await api.threads.setProvider({ threadId: t.id, provider: "grok" });
+    const after = (await api.threads.get(t.id)).thread;
+    assert.equal(
+      after.reasoningEffort,
+      null,
+      "dev must clear an effort the new provider cannot honour, like production",
+    );
+  });
+});

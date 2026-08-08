@@ -69,6 +69,8 @@ const coder = {
       invoke("threads:setPermissionMode", input),
     setArchived: (input) => invoke("threads:setArchived", input),
     setProvider: (input) => invoke("threads:setProvider", input),
+    setReasoningEffort: (input) =>
+      invoke("threads:setReasoningEffort", input),
     delete: (input) => invoke("threads:delete", input),
   },
   runs: {

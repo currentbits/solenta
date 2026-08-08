@@ -238,8 +238,9 @@ describe("grok provider registry", () => {
       prompt: "hello",
       permissionMode: "default",
     });
-    assert.equal(first[0], "-p");
-    assert.equal(first[1], "hello");
+    // -p/--single <PROMPT> is last so flags cannot swallow the prompt.
+    assert.equal(first[first.length - 2], "-p");
+    assert.equal(first[first.length - 1], "hello");
     assert.ok(first.includes("--output-format"));
     assert.ok(first.includes("streaming-messages-json"));
     assert.ok(first.includes("--permission-mode"));

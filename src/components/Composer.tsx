@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useRef,
   useState,
   type KeyboardEvent,
@@ -8,6 +9,7 @@ import {
 import type {
   PermissionMode,
   ProviderInfo,
+  ReasoningEffort,
   WorkflowTemplateInfo,
 } from "../shared/ipc";
 import type { WorkflowSaveInput } from "../useCoder";
@@ -15,9 +17,18 @@ import {
   PERMISSION_MODE_LABELS,
   PERMISSION_MODES,
   providerDisplayName,
-  shortModelName,
   shortSessionId,
 } from "../format";
+import {
+  buildModelRows,
+  clampHighlightIndex,
+  detailModelRow,
+  effortDisplayLabel,
+  effortSegments,
+  initialHighlightIndex,
+  modelTriggerLabel,
+  showReasoningControl,
+} from "../modelPicker";
 import { useEscapeClose } from "../useEscapeClose";
 import { WorkflowsModal } from "./WorkflowsModal";
 import styles from "./Composer.module.css";
@@ -34,6 +45,8 @@ interface ComposerProps {
   provider: string;
   /** Thread model override; null means provider default. */
   model: string | null;
+  /** Thread reasoning effort; null means provider default. */
+  reasoningEffort: ReasoningEffort | null;
   /** Registry from providers.list(). */
   providers: ProviderInfo[];
   /** Workflow templates from workflows.list(). */
@@ -42,6 +55,7 @@ interface ComposerProps {
     provider?: string;
     model?: string | null;
   }) => void | Promise<void>;
+  onSetReasoningEffort: (effort: ReasoningEffort | null) => void | Promise<void>;
   onSaveWorkflow: (template: WorkflowSaveInput) => Promise<WorkflowTemplateInfo>;
   onRemoveWorkflow: (id: string) => Promise<void>;
   /** Provider session id (short form shown in meta). */
@@ -60,7 +74,6 @@ interface ComposerProps {
 }
 
 const STATIC = {
-  effort: "High · 1M",
   mode: "Build",
 };
 
@@ -73,9 +86,11 @@ export function Composer({
   onPermissionModeChange,
   provider,
   model,
+  reasoningEffort,
   providers,
   workflows,
   onSetProvider,
+  onSetReasoningEffort,
   onSaveWorkflow,
   onRemoveWorkflow,
   sessionId,
@@ -96,6 +111,8 @@ export function Composer({
   /** Empty-list providers: Custom… swaps the menu for an inline text input. */
   const [customModelOpen, setCustomModelOpen] = useState(false);
   const [customModelDraft, setCustomModelDraft] = useState("");
+  /** Index of the row under keyboard/hover focus in the model list. */
+  const [highlightIndex, setHighlightIndex] = useState(0);
   const [buildMenuOpen, setBuildMenuOpen] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
   /** Per-thread last-used workflow template id. */
@@ -105,8 +122,11 @@ export function Composer({
   const modeWrapRef = useRef<HTMLDivElement>(null);
   const providerWrapRef = useRef<HTMLDivElement>(null);
   const modelWrapRef = useRef<HTMLDivElement>(null);
+  const modelTriggerRef = useRef<HTMLButtonElement>(null);
+  const modelListRef = useRef<HTMLUListElement>(null);
   const customModelInputRef = useRef<HTMLInputElement>(null);
   const buildWrapRef = useRef<HTMLDivElement>(null);
+  const modelListId = useId();
 
   // Dead ids (deleted templates) fall through like no stored selection.
   const storedTemplateId = templateByThread[threadId];
@@ -136,7 +156,20 @@ export function Composer({
    */
   const showModelPill = provider !== "simulate" && provider !== "generic";
   const allowCustomModel = showModelPill && providerModels.length === 0;
-  const modelLabel = model ? shortModelName(model) : "default";
+  const modelRows = buildModelRows(currentProviderInfo);
+  const triggerLabel = modelTriggerLabel(model, currentProviderInfo);
+  const highlightRow = modelRows[clampHighlightIndex(modelRows, highlightIndex)];
+  const detailRow = detailModelRow(
+    modelRows,
+    model,
+    highlightRow ? highlightRow.id : undefined,
+  );
+  const efforts = currentProviderInfo?.efforts ?? [];
+  const reasoningVisible = showReasoningControl(efforts);
+  const segments = reasoningVisible
+    ? effortSegments(efforts, reasoningEffort)
+    : [];
+  const effortLabel = effortDisplayLabel(reasoningEffort);
 
   useEffect(() => {
     if (!modeOpen && !providerOpen && !modelOpen && !buildMenuOpen) return;
@@ -177,15 +210,40 @@ export function Composer({
     setCustomModelOpen(false);
   }, [provider]);
 
+  // When the popover opens, seed highlight on the selected model and focus the list.
+  useEffect(() => {
+    if (!modelOpen || customModelOpen) return;
+    setHighlightIndex(initialHighlightIndex(modelRows, model));
+    // Focus the listbox so arrow keys work immediately.
+    const t = window.setTimeout(() => {
+      modelListRef.current?.focus();
+    }, 0);
+    return () => window.clearTimeout(t);
+    // modelRows is rebuilt each render; open edge only needs modelOpen/custom.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modelOpen, customModelOpen]);
+
+  const closeModelPicker = useCallback((returnFocus: boolean) => {
+    setModelOpen(false);
+    setCustomModelOpen(false);
+    if (returnFocus) {
+      modelTriggerRef.current?.focus();
+    }
+  }, []);
+
   const anyMenuOpen = modeOpen || providerOpen || modelOpen || buildMenuOpen;
   const closeAllMenus = useCallback(() => {
     // Custom input owns Escape (cancel back to list); do not close the menu.
     if (customModelOpen) return;
     setModeOpen(false);
     setProviderOpen(false);
-    setModelOpen(false);
+    if (modelOpen) {
+      closeModelPicker(true);
+    } else {
+      setModelOpen(false);
+    }
     setBuildMenuOpen(false);
-  }, [customModelOpen]);
+  }, [customModelOpen, modelOpen, closeModelPicker]);
   useEscapeClose(anyMenuOpen && !customModelOpen, closeAllMenus);
 
   const runAction = async (
@@ -268,8 +326,7 @@ export function Composer({
   };
 
   const pickModel = async (next: string | null) => {
-    setModelOpen(false);
-    setCustomModelOpen(false);
+    closeModelPicker(true);
     if (next === model) return;
     try {
       await onSetProvider({ model: next });
@@ -278,6 +335,22 @@ export function Composer({
         err instanceof Error && err.message
           ? err.message
           : "Failed to set model";
+      setLocalError(msg);
+    }
+  };
+
+  const pickEffort = async (level: ReasoningEffort) => {
+    // Clicking the current level clears it back to the provider default.
+    // Without this the null branch is implemented at every layer and
+    // unreachable from the UI: once you pick a level you can never stop.
+    const next = level === reasoningEffort ? null : level;
+    try {
+      await onSetReasoningEffort(next);
+    } catch (err) {
+      const msg =
+        err instanceof Error && err.message
+          ? err.message
+          : "Failed to set reasoning effort";
       setLocalError(msg);
     }
   };
@@ -307,6 +380,35 @@ export function Composer({
           ? err.message
           : "Failed to set model";
       setLocalError(msg);
+    }
+  };
+
+  const onModelListKeyDown = (e: KeyboardEvent<HTMLUListElement>) => {
+    if (customModelOpen) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setHighlightIndex((i) =>
+        clampHighlightIndex(modelRows, i + 1),
+      );
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setHighlightIndex((i) =>
+        clampHighlightIndex(modelRows, i - 1),
+      );
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      const row = modelRows[clampHighlightIndex(modelRows, highlightIndex)];
+      if (row) void pickModel(row.id);
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      closeModelPicker(true);
+    } else if (e.key === "Home") {
+      e.preventDefault();
+      setHighlightIndex(0);
+    } else if (e.key === "End") {
+      e.preventDefault();
+      setHighlightIndex(Math.max(0, modelRows.length - 1));
     }
   };
 
@@ -404,29 +506,40 @@ export function Composer({
             {showModelPill && (
               <div className={styles.modeWrap} ref={modelWrapRef}>
                 <button
+                  ref={modelTriggerRef}
                   type="button"
                   className={styles.pill}
                   disabled={disabled}
                   aria-disabled={disabled ? "true" : undefined}
-                  aria-haspopup="listbox"
+                  aria-haspopup="dialog"
                   aria-expanded={modelOpen}
+                  aria-controls={modelOpen ? modelListId : undefined}
+                  aria-label={`Model: ${triggerLabel}`}
                   onClick={() => {
                     if (disabled) return;
-                    setModelOpen((v) => !v);
-                    setCustomModelOpen(false);
-                    setProviderOpen(false);
-                    setModeOpen(false);
-                    setBuildMenuOpen(false);
+                    if (modelOpen) {
+                      closeModelPicker(false);
+                    } else {
+                      setModelOpen(true);
+                      setCustomModelOpen(false);
+                      setProviderOpen(false);
+                      setModeOpen(false);
+                      setBuildMenuOpen(false);
+                    }
                   }}
                 >
-                  {modelLabel}
+                  <span className={styles.modelIcon} aria-hidden="true">
+                    ◇
+                  </span>
+                  {triggerLabel}
                   <span className={styles.caret}>▾</span>
                 </button>
                 {modelOpen && (
                   <div
-                    className={styles.modeMenu}
-                    role="listbox"
-                    aria-label="Model"
+                    className={styles.modelPopover}
+                    role="dialog"
+                    aria-label="Model picker"
+                    id={modelListId}
                   >
                     {customModelOpen ? (
                       <div className={styles.customModelBox}>
@@ -453,59 +566,118 @@ export function Composer({
                         />
                       </div>
                     ) : (
-                      <ul className={styles.modeMenuList}>
-                        <li role="option" aria-selected={model == null}>
-                          <button
-                            type="button"
-                            className={styles.modeOption}
-                            data-active={model == null}
-                            onClick={() => void pickModel(null)}
+                      <>
+                        <div className={styles.modelPopoverLeft}>
+                          <div className={styles.modelPaneHeader}>MODEL</div>
+                          <ul
+                            ref={modelListRef}
+                            className={styles.modelList}
+                            role="listbox"
+                            aria-label="Model"
+                            tabIndex={0}
+                            onKeyDown={onModelListKeyDown}
                           >
-                            Default
-                          </button>
-                        </li>
-                        {providerModels.map((m) => (
-                          <li
-                            key={m}
-                            role="option"
-                            aria-selected={m === model}
-                          >
-                            <button
-                              type="button"
-                              className={styles.modeOption}
-                              data-active={m === model}
-                              onClick={() => void pickModel(m)}
-                            >
-                              {shortModelName(m)}
-                            </button>
-                          </li>
-                        ))}
-                        {allowCustomModel && (
-                          <li role="option" aria-selected={false}>
-                            <button
-                              type="button"
-                              className={styles.modeOption}
-                              onClick={openCustomModel}
-                            >
-                              Custom…
-                            </button>
-                          </li>
-                        )}
-                      </ul>
+                            {modelRows.map((row, index) => {
+                              const selected = row.id === model;
+                              const highlighted = index === highlightIndex;
+                              return (
+                                <li
+                                  key={row.id ?? "__default__"}
+                                  role="option"
+                                  aria-selected={selected}
+                                >
+                                  <button
+                                    type="button"
+                                    className={styles.modelRow}
+                                    data-selected={selected ? "true" : undefined}
+                                    data-highlighted={
+                                      highlighted ? "true" : undefined
+                                    }
+                                    onMouseEnter={() => setHighlightIndex(index)}
+                                    onClick={() => void pickModel(row.id)}
+                                  >
+                                    <span className={styles.modelRowLabel}>
+                                      {row.label}
+                                    </span>
+                                    {row.vendor ? (
+                                      <span className={styles.modelRowVendor}>
+                                        {row.vendor}
+                                      </span>
+                                    ) : null}
+                                  </button>
+                                </li>
+                              );
+                            })}
+                            {allowCustomModel && (
+                              <li role="option" aria-selected={false}>
+                                <button
+                                  type="button"
+                                  className={styles.modelRow}
+                                  onClick={openCustomModel}
+                                >
+                                  <span className={styles.modelRowLabel}>
+                                    Custom…
+                                  </span>
+                                </button>
+                              </li>
+                            )}
+                          </ul>
+                        </div>
+                        <div className={styles.modelPopoverRight}>
+                          <div className={styles.detailLabel}>
+                            {detailRow.label}
+                          </div>
+                          {detailRow.vendor ? (
+                            <div className={styles.detailVendor}>
+                              {detailRow.vendor}
+                            </div>
+                          ) : null}
+                          {detailRow.description ? (
+                            <div className={styles.detailDesc}>
+                              {detailRow.description}
+                            </div>
+                          ) : null}
+                          {reasoningVisible && (
+                            <div className={styles.reasoningBlock}>
+                              <div className={styles.reasoningHeader}>
+                                <span className={styles.reasoningTitle}>
+                                  REASONING
+                                </span>
+                                <span className={styles.reasoningLevel}>
+                                  {effortLabel}
+                                </span>
+                              </div>
+                              <div
+                                className={styles.effortSegments}
+                                role="group"
+                                aria-label="Reasoning effort"
+                              >
+                                {segments.map((seg) => (
+                                  <button
+                                    key={seg.level}
+                                    type="button"
+                                    className={styles.effortSegment}
+                                    data-filled={seg.filled ? "true" : undefined}
+                                    aria-label={`Reasoning ${effortDisplayLabel(seg.level)}`}
+                                    aria-pressed={
+                                      reasoningEffort === seg.level
+                                        ? "true"
+                                        : "false"
+                                    }
+                                    onClick={() => void pickEffort(seg.level)}
+                                  />
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </>
                     )}
                   </div>
                 )}
               </div>
             )}
 
-            <button
-              type="button"
-              className={styles.pill}
-              disabled={disabled}
-              aria-disabled={disabled ? "true" : undefined}
-            >
-              {STATIC.effort}
-            </button>
             <div className={styles.modeWrap} ref={modeWrapRef}>
               <button
                 type="button"
