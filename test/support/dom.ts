@@ -36,6 +36,18 @@ export interface Mounted {
   click(el: Element | null): Promise<void>;
   /** Type into an input/textarea the way React's onChange expects. */
   type(el: Element | null, value: string): Promise<void>;
+  /**
+   * Press a key on whatever is ACTUALLY focused, failing if nothing is.
+   *
+   * press(el, key) dispatches on the element it is handed, so it passes with
+   * focus on <body>. That is why a picker whose every level change dropped
+   * focus shipped with a green suite: no test had ever read activeElement.
+   * Use this for anything that claims keyboard operability.
+   */
+  pressFocused(
+    key: string,
+    mods?: { metaKey?: boolean; ctrlKey?: boolean; shiftKey?: boolean },
+  ): Promise<void>;
   /** Press a key on an element, e.g. press(el, "Enter", { metaKey: true }). */
   press(
     el: Element | null,
@@ -230,6 +242,22 @@ export async function mount(element: ReactElement): Promise<Mounted> {
         node.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
       });
       await flush();
+    },
+    pressFocused: async (key, mods = {}) => {
+      const active = dom.window.document.activeElement;
+      if (!active || active === dom.window.document.body) {
+        throw new Error(
+          `pressFocused(${key}): nothing is focused (activeElement is ${
+            active ? active.tagName : "null"
+          }). A keyboard affordance that loses focus is broken.`,
+        );
+      }
+      if (!container.contains(active)) {
+        throw new Error(
+          `pressFocused(${key}): focus escaped the mounted tree (${active.tagName})`,
+        );
+      }
+      await api.press(active, key, mods);
     },
     press: async (el, key, mods = {}) => {
       if (!el) throw new Error("press: element not found");

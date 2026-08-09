@@ -381,3 +381,109 @@ export function effortDisplayLabel(current: ReasoningEffort | null): string {
   if (current == null) return "Default";
   return EFFORT_LABELS[current] ?? current;
 }
+
+/** One provider row in the drill-down's first level. */
+export interface ProviderRow {
+  id: string;
+  name: string;
+  /** e.g. "4 models" or "Default only". */
+  summary: string;
+  /** How many selectable models it offers, excluding Default and Custom. */
+  modelCount: number;
+  disabled: boolean;
+  /** Full explanation for the tooltip, or null. */
+  disabledReason: string | null;
+  /**
+   * Short text for the row's second line. The full lock reason is a sentence
+   * and wrapped to three lines per row, which made the list unreadable exactly
+   * when every row was locked.
+   */
+  badge: string;
+  unavailable: boolean;
+  /** True for the provider the thread is currently on. */
+  current: boolean;
+}
+
+/**
+ * First level of the picker: providers, not models.
+ *
+ * A flat list of every provider's models ran to 26 rows, which is more than a
+ * popover can show and more than a user wants to read. Drilling means five rows
+ * to start, and the models of exactly one harness after that.
+ */
+export function buildProviderRows(
+  providers: readonly ProviderInfo[],
+  currentProviderId: string,
+  sessionLocked: boolean,
+  currentProviderName?: string,
+): ProviderRow[] {
+  const list = Array.isArray(providers) ? providers : [];
+  const lockName =
+    currentProviderName ??
+    list.find((p) => p.id === currentProviderId)?.name ??
+    currentProviderId;
+  const lockReason = sessionLockReason(lockName);
+
+  return list.map((p) => {
+    const unavailable = p.available === false;
+    const models = Array.isArray(p.models) ? p.models : [];
+    const isCurrent = p.id === currentProviderId;
+    // A locked thread may still browse its OWN provider's models; entering
+    // another harness would break a session that can be resumed.
+    const locked = sessionLocked && !isCurrent && !unavailable;
+    const summary =
+      models.length === 0
+        ? "Default only"
+        : `${models.length} model${models.length === 1 ? "" : "s"}`;
+    return {
+      id: p.id,
+      name: p.name,
+      badge: unavailable ? "not installed" : locked ? "locked" : summary,
+      summary,
+      modelCount: models.length,
+      disabled: unavailable || locked,
+      disabledReason: unavailable
+        ? "not installed"
+        : locked
+          ? lockReason
+          : null,
+      unavailable,
+      current: isCurrent,
+    };
+  });
+}
+
+/** Index of the first provider row a keyboard user can enter, or -1. */
+export function firstSelectableProvider(rows: readonly ProviderRow[]): number {
+  return rows.findIndex((r) => !r.disabled);
+}
+
+/** Move within the provider list, skipping rows that cannot be entered. */
+export function stepProviderIndex(
+  rows: readonly ProviderRow[],
+  from: number,
+  delta: number,
+): number {
+  if (rows.length === 0) return 0;
+  let i = from;
+  for (let hops = 0; hops < rows.length; hops += 1) {
+    const next = i + delta;
+    if (next < 0 || next >= rows.length) return i;
+    i = next;
+    if (!rows[i]!.disabled) return i;
+  }
+  return from;
+}
+
+/** Where the drill-down should start: the provider the thread is on. */
+export function initialProviderIndex(
+  rows: readonly ProviderRow[],
+  currentProviderId: string,
+): number {
+  const at = rows.findIndex((r) => r.id === currentProviderId);
+  // Only land there if it can actually be entered: a thread whose provider is
+  // no longer installed would otherwise open on a dead row.
+  if (at >= 0 && !rows[at]!.disabled) return at;
+  const first = firstSelectableProvider(rows);
+  return first >= 0 ? first : 0;
+}

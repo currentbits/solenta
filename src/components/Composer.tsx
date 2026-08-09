@@ -20,14 +20,18 @@ import {
   shortSessionId,
 } from "../format";
 import {
+  buildModelRows,
   buildUnifiedModelRows,
   clampHighlightIndex,
   detailModelRow,
   CUSTOM_MODEL_ID,
+  buildProviderRows,
   effortDisplayLabel,
   effortSegments,
   firstSelectableIndex,
   initialHighlightIndex,
+  initialProviderIndex,
+  stepProviderIndex,
   isRowSelected,
   lastSelectableIndex,
   modelTriggerLabel,
@@ -116,6 +120,13 @@ export function Composer({
   const [modelOpen, setModelOpen] = useState(false);
   /** Provider whose Custom... row was picked; null when not entering one. */
   const [customFor, setCustomFor] = useState<string | null>(null);
+  /**
+   * Which provider's models are showing. null means the FIRST level, the
+   * provider list. A flat list of every provider's models ran to 26 rows;
+   * drilling shows five to start and one harness's models after that.
+   */
+  const [drillProvider, setDrillProvider] = useState<string | null>(null);
+  const [providerIndex, setProviderIndex] = useState(0);
   const [customDraft, setCustomDraft] = useState("");
   /** Index of the row under keyboard/hover focus in the model list. */
   const [highlightIndex, setHighlightIndex] = useState(0);
@@ -129,6 +140,7 @@ export function Composer({
   const modelWrapRef = useRef<HTMLDivElement>(null);
   const modelTriggerRef = useRef<HTMLButtonElement>(null);
   const modelListRef = useRef<HTMLUListElement>(null);
+  const providerListRef = useRef<HTMLUListElement>(null);
   const buildWrapRef = useRef<HTMLDivElement>(null);
   const modelListId = useId();
 
@@ -152,12 +164,20 @@ export function Composer({
   const sessionLocked = Boolean(sessionId);
   const providerName = providerDisplayName(provider, providers);
   const currentProviderInfo = providers.find((p) => p.id === provider);
-  const modelRows = buildUnifiedModelRows(
+  const providerRows = buildProviderRows(
     providers,
     provider,
     sessionLocked,
     providerName,
   );
+  const drillInfo = drillProvider
+    ? providers.find((p) => p.id === drillProvider)
+    : undefined;
+  // Second level shows exactly one provider's models; the flat list is kept for
+  // the case where the drill target vanished (provider list changed under us).
+  const modelRows = drillInfo
+    ? buildModelRows(drillInfo)
+    : buildUnifiedModelRows(providers, provider, sessionLocked, providerName);
   const triggerLabel = modelTriggerLabel(model, currentProviderInfo);
   const hi = clampHighlightIndex(modelRows, highlightIndex);
   const detailRow = detailModelRow(modelRows, provider, model, hi);
@@ -199,15 +219,65 @@ export function Composer({
     // set: reopening then showed a text box with no sign of its target, and a
     // commit went to the provider highlighted minutes earlier.
     setCustomFor(null);
+    // Same reason as customFor: reset on OPEN so every close path is covered,
+    // including ones added later.
+    setDrillProvider(null);
+    setProviderIndex(initialProviderIndex(providerRows, provider));
     setHighlightIndex(initialHighlightIndex(modelRows, provider, model));
     // Focus the listbox so arrow keys work immediately.
-    const t = window.setTimeout(() => {
-      modelListRef.current?.focus();
-    }, 0);
-    return () => window.clearTimeout(t);
-    // modelRows is rebuilt each render; open edge only needs modelOpen.
+    // modelRows is rebuilt each render; the reset only needs the open edge.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [modelOpen]);
+
+  // Focus the list that is ACTUALLY showing, on every level change.
+  //
+  // Focusing only on the open edge left focus on <body> after drilling in or
+  // backing out, because the list that had focus unmounts. That is worse than
+  // it sounds: the keydown handler lives on the <ul>, so arrows died, and the
+  // Escape handler that stops propagation was never reached, so the document
+  // listener closed the entire picker instead of stepping back a level.
+  useEffect(() => {
+    if (!modelOpen) return;
+    const t = window.setTimeout(() => {
+      (drillProvider ? modelListRef : providerListRef).current?.focus();
+    }, 0);
+    return () => window.clearTimeout(t);
+  }, [modelOpen, drillProvider]);
+
+  /** Enter a provider's models, seeding the highlight on its selected row. */
+  const enterProvider = (id: string) => {
+    setDrillProvider(id);
+    // Seed on the selected model, not on row 0. The comment used to claim this
+    // while the code sent every drill-in to Default, so the detail pane and the
+    // meter described Default while aria-selected sat on the real model.
+    const rows = buildModelRows(providers.find((p) => p.id === id));
+    setHighlightIndex(initialHighlightIndex(rows, provider, model));
+  };
+
+  const onProviderListKeyDown = (e: KeyboardEvent<HTMLUListElement>) => {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      setProviderIndex((i) =>
+        stepProviderIndex(providerRows, i, e.key === "ArrowDown" ? 1 : -1),
+      );
+      return;
+    }
+    if (e.key === "Enter" || e.key === "ArrowRight") {
+      e.preventDefault();
+      const row = providerRows[providerIndex];
+      if (row && !row.disabled) enterProvider(row.id);
+      return;
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      // Cheap insurance only: closeAllMenus is idempotent, so the document
+      // listener firing as well changes nothing. This branch is NOT what closes
+      // the picker at this level, and a comment claiming otherwise would send
+      // the next reader looking for behaviour that is not here.
+      e.stopPropagation();
+      closeModelPicker(true);
+    }
+  };
 
   const closeModelPicker = useCallback((returnFocus: boolean) => {
     setModelOpen(false);
@@ -355,7 +425,23 @@ export function Composer({
     }
   };
 
+  /** Leave a provider's models and return to the provider list. */
+  const leaveProvider = () => {
+    const at = initialProviderIndex(providerRows, drillProvider ?? provider);
+    setDrillProvider(null);
+    setProviderIndex(at);
+    setCustomFor(null);
+  };
+
   const onModelListKeyDown = (e: KeyboardEvent<HTMLUListElement>) => {
+    if (drillProvider && (e.key === "ArrowLeft" || e.key === "Escape")) {
+      e.preventDefault();
+      // Stop this reaching the popover's own Escape handler, or backing out of
+      // a provider closes the whole picker instead of stepping up one level.
+      e.stopPropagation();
+      leaveProvider();
+      return;
+    }
     if (e.key === "ArrowDown") {
       e.preventDefault();
       setHighlightIndex((i) => stepHighlightIndex(modelRows, i, 1));
@@ -442,8 +528,64 @@ export function Composer({
                   id={modelListId}
                 >
                   <div className={styles.modelPopoverLeft}>
-                    <div className={styles.modelPaneHeader}>MODEL</div>
-                    {customFor ? (
+                    {drillProvider ? (
+                      <button
+                        type="button"
+                        className={styles.modelBackHeader}
+                        aria-label="Back to providers"
+                        onClick={leaveProvider}
+                      >
+                        <span aria-hidden="true">‹ </span>
+                        {(drillInfo?.name ?? drillProvider).toUpperCase()}
+                      </button>
+                    ) : (
+                      <div className={styles.modelPaneHeader}>MODEL</div>
+                    )}
+                    {!drillProvider ? (
+                      <ul
+                        className={styles.modelList}
+                        role="listbox"
+                        aria-label="Provider"
+                        tabIndex={0}
+                        ref={providerListRef}
+                        onKeyDown={onProviderListKeyDown}
+                      >
+                        {providerRows.map((row, index) => (
+                          <li key={row.id} role="option" aria-selected={row.current}>
+                            <button
+                              type="button"
+                              className={styles.providerRow}
+                              data-selected={row.current ? "true" : undefined}
+                              data-highlighted={
+                                index === providerIndex ? "true" : undefined
+                              }
+                              data-disabled={row.disabled ? "true" : undefined}
+                              disabled={row.disabled}
+                              title={row.disabledReason ?? undefined}
+                              aria-label={`Provider ${row.name}`}
+                              onMouseEnter={() => setProviderIndex(index)}
+                              onClick={() => enterProvider(row.id)}
+                            >
+                              <span className={styles.providerRowText}>
+                                <span className={styles.modelRowLabel}>
+                                  {row.name}
+                                </span>
+                                <span className={styles.modelRowVendor}>
+                                  {row.badge}
+                                </span>
+                              </span>
+                              <span
+                                className={styles.modelRowChevron}
+                                aria-hidden="true"
+                              >
+                                ›
+                              </span>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                    {drillProvider && customFor ? (
                       <div className={styles.customModelWrap}>
                         <input
                           className={styles.customModelInput}
@@ -492,6 +634,7 @@ export function Composer({
                         </div>
                       </div>
                     ) : null}
+                    {drillProvider ? (
                     <ul
                       ref={modelListRef}
                       className={styles.modelList}
@@ -510,7 +653,7 @@ export function Composer({
                             aria-selected={selected}
                             aria-disabled={row.disabled ? true : undefined}
                           >
-                            {row.groupHeading ? (
+                            {row.groupHeading && !drillProvider ? (
                               <div
                                 className={styles.modelGroupHeading}
                                 aria-hidden="true"
@@ -555,6 +698,7 @@ export function Composer({
                         );
                       })}
                     </ul>
+                    ) : null}
                   </div>
                   <div className={styles.modelPopoverRight}>
                     <div className={styles.detailLabel}>

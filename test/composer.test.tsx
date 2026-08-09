@@ -191,6 +191,31 @@ function composer(
 
 afterEach(unmountAll);
 
+
+/**
+ * Open the picker and drill into a provider's models.
+ *
+ * The picker is now two levels: providers first, then that provider's models.
+ * Every test that wants a model row goes through here, so the navigation model
+ * lives in one place rather than being re-encoded per test.
+ */
+async function openProvider(
+  m: Awaited<ReturnType<typeof mount>>,
+  providerName: string,
+) {
+  // Only open if it is closed: clicking the trigger toggles, so calling this
+  // after a back-navigation would shut the picker instead of drilling.
+  if (!m.query('[role="listbox"][aria-label="Provider"]')) {
+    await m.click(m.query('button[aria-label^="Model:"]'));
+  }
+  const providerBtn = m.query(
+    `button[aria-label="Provider ${providerName}"]`,
+  );
+  if (!providerBtn) return null;
+  await m.click(providerBtn);
+  return m.query('[role="listbox"][aria-label="Model"]') as HTMLElement | null;
+}
+
 describe("Composer send", () => {
   it("types a prompt and submits once with that text", async () => {
     const h = makeHarness();
@@ -241,455 +266,495 @@ describe("Composer send", () => {
   });
 });
 
-describe("Composer unified model picker", () => {
-  it("lists every provider's models in one popover (not only the current harness)", async () => {
-    const h = makeHarness();
-    const m = await mount(composer(h, { model: null }));
+describe("Composer drill-down picker", () => {
+  it("opens on providers, not on a flat list of every model", () => {
+    // The flat list ran to 26 rows. The first level is five.
+    return (async () => {
+      const h = makeHarness();
+      const m = await mount(composer(h, { provider: "claude", model: null }));
+      await m.click(m.query('button[aria-label^="Model:"]'));
 
-    // Single model pill; no separate provider pill that hides other models.
-    const modelPill = m.query('button[aria-label="Model: Default"]');
-    assert.ok(modelPill, "model trigger must expose an accessible label with Default");
-    assert.equal(
-      Array.from(m.queryAll("button")).filter((b) =>
-        (b.textContent || "").includes("Claude Code"),
-      ).length,
-      0,
-      "the separate provider pill must be gone",
-    );
-    assert.ok(
-      !m.text().includes("High · 1M"),
-      "the decorative High · 1M pill must be gone",
-    );
-
-    await m.click(modelPill);
-
-    const modelList = m.query('[role="listbox"][aria-label="Model"]');
-    assert.ok(modelList, "model listbox must open");
-    const listText = modelList.textContent || "";
-
-    assert.ok(listText.includes("Sonnet 4"), "claude modelInfo label must list");
-    assert.ok(listText.includes("Opus 4"), "second claude modelInfo label must list");
-    assert.ok(listText.includes("Anthropic"), "vendor line must list");
-    assert.ok(
-      listText.includes("Codex"),
-      "other providers must appear in the same list",
-    );
-    assert.ok(
-      listText.includes("Grok"),
-      "unavailable providers still list so the user can see them",
-    );
-    assert.ok(
-      listText.includes("Grok 4"),
-      "models of other providers must be visible without switching first",
-    );
-    // Raw ids must not be the visible row labels when modelInfo is present.
-    assert.equal(
-      listText.includes("claude-sonnet-4"),
-      false,
-      "raw model id must not appear in the list when modelInfo supplies labels",
-    );
-    // Highlight starts on the selected row (Default); detail follows it.
-    assert.ok(
-      m.text().includes("Use the provider default model"),
-      "detail pane must describe the highlighted Default row",
-    );
-    m.unmount();
+      const providerList = m.query('[role="listbox"][aria-label="Provider"]');
+      assert.ok(providerList, "the first level must be the provider list");
+      assert.equal(
+        m.query('[role="listbox"][aria-label="Model"]'),
+        null,
+        "no model list until a provider is entered",
+      );
+      const rows = m.queryAll('button[aria-label^="Provider "]');
+      assert.equal(rows.length, PROVIDERS.length, "one row per provider");
+      assert.equal(
+        m.text().includes("Opus 4"),
+        false,
+        "model names must not appear before drilling in",
+      );
+      m.unmount();
+    })();
   });
 
-  it("selecting a row from a different provider reports both provider and model", async () => {
+  it("summarises how many models each provider offers", async () => {
     const h = makeHarness();
     const m = await mount(composer(h, { provider: "claude", model: null }));
-    await m.click(m.query('button[aria-label="Model: Default"]'));
-
-    // Codex only has Default (empty models). Find the Codex Default button
-    // by vendor/group text, not the Claude Default already selected.
-    const codexDefault = Array.from(m.queryAll("button")).find((b) => {
-      const t = b.textContent || "";
-      return (
-        t.includes("Default") &&
-        t.includes("Codex") &&
-        !(b as HTMLButtonElement).disabled
-      );
-    });
-    assert.ok(codexDefault, "Codex Default row must be clickable");
-    await m.click(codexDefault);
-
-    assert.equal(h.providerSets.length, 1, "selecting a row reports once");
-    assert.deepEqual(
-      h.providerSets[0],
-      { provider: "codex", model: null },
-      "cross-provider pick must set provider AND model together",
+    await m.click(m.query('button[aria-label^="Model:"]'));
+    const claude = m.query('button[aria-label="Provider Claude Code"]');
+    assert.ok(claude);
+    assert.match(
+      claude.textContent || "",
+      /2 models/,
+      "the row must say what is behind it",
+    );
+    const codex = m.query('button[aria-label="Provider Codex"]');
+    assert.match(
+      codex?.textContent || "",
+      /Default only/,
+      "a provider with no list must say so, not '0 models'",
     );
     m.unmount();
   });
 
-  it("selecting a model on the current provider still reports provider and model", async () => {
+  it("entering a provider shows that provider's models only", async () => {
     const h = makeHarness();
-    const m = await mount(composer(h, { model: null }));
-    await m.click(m.query('button[aria-label="Model: Default"]'));
-
-    const sonnet = Array.from(m.queryAll("button")).find(
-      (b) => (b.textContent || "").includes("Sonnet 4"),
-    );
-    assert.ok(sonnet, "Sonnet 4 option must be clickable");
-    await m.click(sonnet);
-
-    assert.equal(h.providerSets.length, 1);
-    assert.deepEqual(h.providerSets[0], {
-      provider: "claude",
-      model: "claude-sonnet-4",
-    });
-    m.unmount();
-  });
-
-  it("falls back to raw ids when the provider has no modelInfo", async () => {
-    const h = makeHarness();
-    const m = await mount(
-      composer(h, { model: null, providers: BARE_MODELS }),
-    );
-    const pill = m.query('button[aria-label="Model: Default"]');
-    assert.ok(pill);
-    await m.click(pill);
-    assert.ok(
-      m.text().includes("claude-sonnet-4"),
-      "without modelInfo the list must fall back to the raw id",
-    );
-    m.unmount();
-  });
-
-  it("does not silently select an unavailable provider's rows", async () => {
-    const h = makeHarness();
-    const m = await mount(composer(h, { provider: "claude" }));
-    await m.click(m.query('button[aria-label="Model: Default"]'));
-
-    assert.ok(
-      m.query('[role="listbox"][aria-label="Model"]'),
-      "popover must be open before we assert on options",
-    );
-    assert.ok(m.text().includes("Grok"), "unavailable provider still listed");
-    assert.ok(
-      m.text().includes("not installed"),
-      "unavailable provider must be marked, not look selectable",
-    );
-
-    const grokBtns = Array.from(m.queryAll("button")).filter((b) => {
-      const t = b.textContent || "";
-      return t.includes("Grok") || t.includes("not installed");
-    }) as HTMLButtonElement[];
-    const disabledGrok = grokBtns.filter((b) => b.disabled);
-    assert.ok(
-      disabledGrok.length >= 1,
-      "at least one Grok row must be disabled",
-    );
-    for (const btn of disabledGrok) {
-      await m.click(btn);
-    }
+    const m = await mount(composer(h, { provider: "claude", model: null }));
+    const list = await openProvider(m, "Claude Code");
+    assert.ok(list, "entering must open the model list");
+    assert.ok(m.text().includes("Opus 4"), "claude's models must show");
     assert.equal(
-      h.providerSets.length,
-      0,
-      "clicking unavailable rows must not report a selection",
+      m.text().includes("Grok 4"),
+      false,
+      "another provider's models must not leak into this level",
     );
     m.unmount();
   });
 
-  it("with a sessionId, other providers' rows are disabled and current stay open", async () => {
+  it("goes back to the providers without closing the picker", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h, { provider: "claude", model: null }));
+    assert.ok(await openProvider(m, "Claude Code"));
+    await m.click(m.byText("CLAUDE CODE"));
+    assert.ok(
+      m.query('[role="listbox"][aria-label="Provider"]'),
+      "back must return to the provider list",
+    );
+    assert.equal(
+      m.query('[role="listbox"][aria-label="Model"]'),
+      null,
+      "the model level must be gone",
+    );
+    assert.deepEqual(h.providerSets, [], "navigating must not select anything");
+    m.unmount();
+  });
+
+  it("selecting a model reports its provider and id together", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h, { provider: "claude", model: null }));
+    assert.ok(await openProvider(m, "Claude Code"));
+    const row = m
+      .queryAll("button")
+      .find((b) => (b.textContent || "").includes("Sonnet 4"));
+    assert.ok(row, "Sonnet must be listed");
+    await m.click(row);
+    assert.deepEqual(h.providerSets, [
+      { provider: "claude", model: "claude-sonnet-4" },
+    ]);
+    m.unmount();
+  });
+
+  it("switches harness when the model belongs to another provider", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h, { provider: "claude", model: null }));
+    assert.ok(await openProvider(m, "Codex"));
+    const row = m
+      .queryAll("button")
+      .find((b) => (b.textContent || "").trim().startsWith("Default"));
+    assert.ok(row, "Codex Default must be listed");
+    await m.click(row);
+    assert.deepEqual(h.providerSets, [{ provider: "codex", model: null }]);
+    m.unmount();
+  });
+
+  it("will not enter a provider whose CLI is missing", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h, { provider: "claude", model: null }));
+    await m.click(m.query('button[aria-label^="Model:"]'));
+    const grok = m.query(
+      'button[aria-label="Provider Grok"]',
+    ) as HTMLButtonElement | null;
+    assert.ok(grok, "an unavailable provider must still be listed");
+    assert.equal(grok.disabled, true, "but it must not be enterable");
+    assert.match(grok.textContent || "", /not installed/);
+    await m.click(grok);
+    assert.equal(
+      m.query('[role="listbox"][aria-label="Model"]'),
+      null,
+      "clicking it must not drill in",
+    );
+    m.unmount();
+  });
+
+  it("locks other providers once the thread has a session", async () => {
     const h = makeHarness();
     const m = await mount(
       composer(h, {
         provider: "claude",
-        model: null,
-        sessionId: "sess-abc-12345678",
+        model: "claude-opus-4",
+        sessionId: "sess-1",
       }),
     );
-    await m.click(m.query('button[aria-label="Model: Default"]'));
-    assert.ok(
-      m.query('[role="listbox"][aria-label="Model"]'),
-      "popover must open even when session-locked",
-    );
+    await m.click(m.query('button[aria-label^="Model:"]'));
+    const claude = m.query(
+      'button[aria-label="Provider Claude Code"]',
+    ) as HTMLButtonElement;
+    const codex = m.query(
+      'button[aria-label="Provider Codex"]',
+    ) as HTMLButtonElement;
+    assert.equal(claude.disabled, false, "its own provider stays enterable");
+    assert.equal(codex.disabled, true, "switching harness would break resume");
+    m.unmount();
+  });
 
-    const sonnet = Array.from(m.queryAll("button")).find(
-      (b) => (b.textContent || "").includes("Sonnet 4"),
-    ) as HTMLButtonElement | undefined;
-    assert.ok(sonnet, "current provider model must still list");
+  it("operates both levels by keyboard", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h, { provider: "claude", model: null }));
+    await m.click(m.query('button[aria-label^="Model:"]'));
+    const plist = m.query(
+      '[role="listbox"][aria-label="Provider"]',
+    ) as HTMLElement;
+    assert.ok(plist);
+
+    // Enter drills in; ArrowLeft comes back out.
+    await m.press(plist, "Enter");
+    const mlist = m.query(
+      '[role="listbox"][aria-label="Model"]',
+    ) as HTMLElement;
+    assert.ok(mlist, "Enter must enter the highlighted provider");
+    await m.press(mlist, "ArrowLeft");
+    assert.ok(
+      m.query('[role="listbox"][aria-label="Provider"]'),
+      "ArrowLeft must step back a level",
+    );
+    m.unmount();
+  });
+
+  it("arrow keys never land on a provider that cannot be entered", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h, { provider: "claude", model: null }));
+    await m.click(m.query('button[aria-label^="Model:"]'));
+    const plist = m.query(
+      '[role="listbox"][aria-label="Provider"]',
+    ) as HTMLElement;
+    for (let i = 0; i < 10; i += 1) {
+      await m.press(plist, "ArrowDown");
+      const hl = m.query('[data-highlighted="true"]');
+      assert.ok(hl, "something must stay highlighted");
+      assert.equal(
+        (hl.textContent || "").includes("not installed"),
+        false,
+        "arrows must skip a provider whose CLI is missing",
+      );
+    }
+    m.unmount();
+  });
+
+  it("falls back to raw model ids when a provider has no modelInfo", async () => {
+    // Restored from the pre-drill-down suite: a provider that publishes models
+    // but no metadata must still be usable, showing ids rather than nothing.
+    const h = makeHarness();
+    const bare: ProviderInfo = {
+      id: "bare",
+      name: "Bare",
+      available: true,
+      supportsResume: false,
+      models: ["raw-model-a"],
+      modelInfo: [],
+      efforts: [],
+    } as ProviderInfo;
+    const m = await mount(
+      composer(h, { provider: "claude", model: null, providers: [...PROVIDERS, bare] }),
+    );
+    const list = await openProvider(m, "Bare");
+    assert.ok(list, "a provider with no modelInfo must still be enterable");
+    assert.ok(
+      m.text().includes("raw-model-a"),
+      "the raw id must render when there is no label",
+    );
+    m.unmount();
+  });
+
+  it("hides the reasoning control entirely for a provider with no efforts", async () => {
+    // Restored: an empty efforts list must render NO control, not an empty one.
+    const h = makeHarness();
+    const m = await mount(composer(h, { provider: "claude", model: null }));
+    assert.ok(await openProvider(m, "Codex"), "codex must be enterable");
     assert.equal(
-      sonnet.disabled,
+      m.query('[role="group"][aria-label="Reasoning effort"]'),
+      null,
+      "codex advertises no efforts, so no meter may render",
+    );
+    assert.equal(
+      m.text().includes("REASONING"),
       false,
-      "current provider rows stay selectable with a session",
+      "the header must leave with the meter",
     );
+    m.unmount();
+  });
 
-    const codexDefault = Array.from(m.queryAll("button")).find((b) => {
-      const t = b.textContent || "";
-      return t.includes("Default") && t.includes("Codex");
-    }) as HTMLButtonElement | undefined;
-    assert.ok(codexDefault, "other provider rows still list");
+  it("renders one segment per level the drilled provider advertises", async () => {
+    // Restored: the count must follow the provider, not a hardcoded five.
+    const h = makeHarness();
+    const m = await mount(composer(h, { provider: "claude", model: null }));
+    assert.ok(await openProvider(m, "Claude Code"));
+    let group = m.query('[role="group"][aria-label="Reasoning effort"]');
+    assert.equal(group?.querySelectorAll("button").length, 5, "claude has five");
+
+    await m.click(m.byText("CLAUDE CODE"));
+    assert.ok(await openProvider(m, "Kimi"));
+    group = m.query('[role="group"][aria-label="Reasoning effort"]');
     assert.equal(
-      codexDefault.disabled,
-      true,
-      "other providers must be disabled once a session exists",
-    );
-    const lockTitle = codexDefault.getAttribute("title") || "";
-    assert.ok(
-      /Session started with/i.test(lockTitle),
-      `locked row must explain why: got title=${JSON.stringify(lockTitle)}`,
-    );
-
-    await m.click(codexDefault);
-    assert.equal(
-      h.providerSets.length,
-      0,
-      "session-locked other provider must not report a selection",
-    );
-
-    await m.click(sonnet);
-    assert.deepEqual(
-      h.providerSets,
-      [{ provider: "claude", model: "claude-sonnet-4" }],
-      "same-provider model change must still work with a session",
+      group?.querySelectorAll("button").length,
+      3,
+      "kimi advertises three, so three segments",
     );
     m.unmount();
   });
 
   it("reports the reasoning level when a segment is clicked", async () => {
-    const h = makeHarness();
-    const m = await mount(
-      composer(h, { model: "claude-sonnet-4", reasoningEffort: "low" }),
-    );
-    const pill = m.query('button[aria-label="Model: Sonnet 4"]');
-    assert.ok(pill, "trigger must show the modelInfo label, not the raw id");
-    await m.click(pill);
-
-    assert.ok(
-      m.text().includes("REASONING"),
-      "REASONING header must appear when efforts is non-empty",
-    );
-    const group = m.query('[role="group"][aria-label="Reasoning effort"]');
-    assert.ok(group, "reasoning segment group must render");
-    const segs = group.querySelectorAll("button");
-    assert.equal(
-      segs.length,
-      5,
-      "one segment per advertised effort (claude has five, not a hardcoded five from the enum alone)",
-    );
-    // Labels must be human, not raw tokens like "xhigh".
-    const labels = Array.from(segs).map((b) => b.getAttribute("aria-label") || "");
-    assert.ok(
-      labels.some((l) => l.includes("Extra high")),
-      `xhigh must display as Extra high, got: ${labels.join(", ")}`,
-    );
-    assert.equal(
-      labels.some((l) => /\bxhigh\b/i.test(l)),
-      false,
-      "raw xhigh token must not be the aria-label",
-    );
-
-    const high = Array.from(segs).find(
-      (b) => (b.getAttribute("aria-label") || "") === "Reasoning High",
-    );
-    assert.ok(high, "High segment must exist");
-    await m.click(high);
-
-    assert.deepEqual(
-      h.efforts,
-      ["high"],
-      "clicking a segment must report that level",
-    );
-    m.unmount();
-  });
-
-  it("meter follows the highlighted model's provider (segment count)", async () => {
-    // Claude has 5 efforts; Codex has 0. ArrowDown past the claude rows lands
-    // on Codex Default and the meter must disappear with the highlight.
+    // Restored: this is the whole point of the meter and it had no coverage
+    // left after the rewrite.
     const h = makeHarness();
     const m = await mount(composer(h, { provider: "claude", model: null }));
-    await m.click(m.query('button[aria-label="Model: Default"]'));
-    const list = m.query(
-      '[role="listbox"][aria-label="Model"]',
-    ) as HTMLElement;
-    assert.ok(list, "list must open");
-
-    // Start on Claude Default: five segments.
-    let group = m.query('[role="group"][aria-label="Reasoning effort"]');
-    assert.ok(group, "claude highlight shows the meter");
-    assert.equal(group.querySelectorAll("button").length, 5);
-
-    // Arrow down until the highlight leaves Claude, rather than hardcoding a
-    // count: the row list grows (each provider ends with a Custom row), and a
-    // magic number silently starts asserting about the wrong row.
-    let hops = 0;
-    while (
-      m.query('[role="group"][aria-label="Reasoning effort"]') &&
-      hops < 20
-    ) {
-      await m.press(list, "ArrowDown");
-      hops += 1;
-    }
-    assert.ok(hops < 20, "expected to reach a provider with no efforts");
-
-    group = m.query('[role="group"][aria-label="Reasoning effort"]');
-    assert.equal(
-      group,
-      null,
-      "highlighting a no-effort provider must hide the meter entirely",
-    );
-    assert.equal(
-      m.text().includes("REASONING"),
-      false,
-      "REASONING header must leave with the meter",
-    );
+    assert.ok(await openProvider(m, "Claude Code"));
+    const seg = m
+      .queryAll('[aria-label^="Reasoning "]')
+      .find((el) => (el.getAttribute("aria-label") || "") === "Reasoning High");
+    assert.ok(seg, "a High segment must exist for claude");
+    await m.click(seg);
+    assert.deepEqual(h.efforts, ["high"], "clicking must report that level");
     m.unmount();
   });
 
-  it("renders only as many reasoning segments as the highlighted provider advertises", async () => {
-    // Mount with grok as current so its Default is selected and highlighted.
-    // Grok is unavailable as a CLI but still the current provider of the thread.
+  it("stays keyboard-operable across every level change", async () => {
+    // This is the test that would have caught the focus bug. It drives the
+    // picker through whatever is ACTUALLY focused, so a level change that
+    // drops focus to <body> fails here instead of passing everywhere.
     const h = makeHarness();
-    const m = await mount(
-      composer(h, {
-        provider: "grok",
-        model: null,
-        providers: PROVIDERS,
-      }),
-    );
-    const pill = m.query('button[aria-label="Model: Default"]');
-    assert.ok(pill);
-    await m.click(pill);
-    const group = m.query('[role="group"][aria-label="Reasoning effort"]');
-    assert.ok(group, "grok has efforts so the control must render");
-    assert.equal(
-      group.querySelectorAll("button").length,
-      3,
-      "grok meter must have three segments (low/medium/high), not five",
-    );
-    m.unmount();
-  });
+    const m = await mount(composer(h, { provider: "claude", model: null }));
+    await m.click(m.query('button[aria-label^="Model:"]'));
 
-  it("hides the reasoning control entirely when efforts is empty", async () => {
-    const h = makeHarness();
-    const m = await mount(
-      composer(h, {
-        model: null,
-        providers: BARE_MODELS,
-      }),
-    );
-    await m.click(m.query('button[aria-label="Model: Default"]'));
-
-    assert.equal(
-      m.query('[role="group"][aria-label="Reasoning effort"]'),
-      null,
-      "empty efforts must not render a reasoning control",
-    );
-    assert.equal(
-      m.text().includes("REASONING"),
-      false,
-      "empty efforts must not render a REASONING header either",
-    );
-    m.unmount();
-  });
-
-  it("operates the model list by keyboard: arrows, Enter, Escape", async () => {
-    const h = makeHarness();
-    const m = await mount(composer(h, { model: null }));
-    const pill = m.query('button[aria-label="Model: Default"]') as HTMLElement;
-    await m.click(pill);
-
-    const list = m.query(
-      '[role="listbox"][aria-label="Model"]',
-    ) as HTMLElement | null;
-    assert.ok(list, "listbox must open");
-
-    // Default is index 0; ArrowDown once lands on Sonnet 4 (index 1).
-    await m.press(list, "ArrowDown");
-    await m.press(list, "Enter");
-
-    assert.deepEqual(
-      h.providerSets,
-      [{ provider: "claude", model: "claude-sonnet-4" }],
-      "Enter on the highlighted row must select that model id",
+    // Drill in with the keyboard.
+    await m.pressFocused("Enter");
+    assert.ok(
+      m.query('[role="listbox"][aria-label="Model"]'),
+      "Enter must drill into the highlighted provider",
     );
 
-    // Re-open and Escape must close without selecting.
-    await m.click(m.query('button[aria-label="Model: Default"]'));
-    const list2 = m.query(
-      '[role="listbox"][aria-label="Model"]',
-    ) as HTMLElement | null;
-    assert.ok(list2, "list must open again");
-    const before = h.providerSets.length;
-    await m.press(list2, "Escape");
+    // Arrows must still move at the new level.
+    const before = m.query('[data-highlighted="true"]')?.textContent;
+    await m.pressFocused("ArrowDown");
+    const after = m.query('[data-highlighted="true"]')?.textContent;
+    assert.notEqual(
+      after,
+      before,
+      "the highlight must move after drilling in, or focus was lost",
+    );
+
+    // Escape must step back a level, NOT close the picker. With focus on
+    // <body> the keydown never reaches the handler that stops propagation and
+    // the document listener closes everything.
+    await m.pressFocused("Escape");
+    assert.ok(
+      m.query('[role="listbox"][aria-label="Provider"]'),
+      "Escape must return to the provider list",
+    );
     assert.equal(
       m.query('[role="listbox"][aria-label="Model"]'),
       null,
-      "Escape must close the model picker",
+      "and leave the model level",
     );
-    assert.equal(
-      h.providerSets.length,
-      before,
-      "Escape must not report a model selection",
+
+    // And arrows must work again back at the provider level.
+    const pBefore = m.query('[data-highlighted="true"]')?.textContent;
+    await m.pressFocused("ArrowDown");
+    assert.notEqual(
+      m.query('[data-highlighted="true"]')?.textContent,
+      pBefore,
+      "the provider highlight must move after backing out",
     );
     m.unmount();
   });
 
-  it("keyboard arrow navigation skips disabled rows", async () => {
+  it("drills in highlighting the model the thread is on, not Default", async () => {
+    // B3: the comment claimed this while the code sent every drill-in to row 0,
+    // so the detail pane described Default while aria-selected sat elsewhere.
     const h = makeHarness();
-    // Session lock: only claude rows selectable. From last claude model,
-    // ArrowDown must not land on locked codex; ArrowUp then Enter picks Sonnet.
+    const m = await mount(
+      composer(h, { provider: "claude", model: "claude-opus-4" }),
+    );
+    assert.ok(await openProvider(m, "Claude Code"));
+    const hl = m.query('[data-highlighted="true"]');
+    assert.ok(hl, "a row must be highlighted");
+    assert.match(
+      hl.textContent || "",
+      /Opus 4/,
+      "the highlight must start on the selected model",
+    );
+    m.unmount();
+  });
+
+  it("keyboard-selects a model and reports it", async () => {
+    // L2: nothing keyboard-selected an actual model after the rewrite. The
+    // custom tests press Enter on Custom..., which takes a different branch.
+    const h = makeHarness();
+    const m = await mount(composer(h, { provider: "claude", model: null }));
+    await m.click(m.query('button[aria-label^="Model:"]'));
+    await m.pressFocused("Enter");
+    await m.pressFocused("ArrowDown");
+    const target = m.query('[data-highlighted="true"]')?.textContent || "";
+    await m.pressFocused("Enter");
+    assert.equal(h.providerSets.length, 1, "Enter must select the highlight");
+    assert.equal(h.providerSets[0].provider, "claude");
+    assert.ok(
+      target.includes("Sonnet 4") || target.includes("Opus 4"),
+      `expected a real model row, got ${target}`,
+    );
+    m.unmount();
+  });
+
+  it("the detail pane follows the highlight within a provider", async () => {
+    // L3: after the rewrite nothing moved the highlight WITHIN a list, so the
+    // detail pane was only ever exercised at index 0.
+    const h = makeHarness();
+    const m = await mount(composer(h, { provider: "claude", model: null }));
+    const list = await openProvider(m, "Claude Code");
+    assert.ok(list);
+    const first = m.query('[class*="detailLabel"]')?.textContent;
+    await m.press(list, "ArrowDown");
+    const second = m.query('[class*="detailLabel"]')?.textContent;
+    assert.notEqual(
+      second,
+      first,
+      "the detail pane must follow the highlighted row",
+    );
+    m.unmount();
+  });
+
+  it("a session-locked thread can still change its own model", async () => {
+    // B4 / L1: only the provider-level disabled flags survived the rewrite.
+    // buildModelRows takes no lock argument, so the day someone threads one in,
+    // a locked user silently loses the ability to change model mid-thread.
+    const h = makeHarness();
     const m = await mount(
       composer(h, {
         provider: "claude",
         model: "claude-opus-4",
-        sessionId: "sess-lock-test",
+        sessionId: "sess-lock",
       }),
     );
-    await m.click(m.query('button[aria-label="Model: Opus 4"]'));
-    const list = m.query(
-      '[role="listbox"][aria-label="Model"]',
-    ) as HTMLElement;
-    assert.ok(list, "list must be open before keyboard nav asserts");
+    assert.ok(await openProvider(m, "Claude Code"), "own provider stays open");
+    const sonnet = m
+      .queryAll("button")
+      .find((b) => (b.textContent || "").includes("Sonnet 4")) as
+      | HTMLButtonElement
+      | undefined;
+    assert.ok(sonnet, "its models must be listed");
+    assert.equal(sonnet.disabled, false, "and must stay selectable");
+    await m.click(sonnet);
+    assert.deepEqual(h.providerSets, [
+      { provider: "claude", model: "claude-sonnet-4" },
+    ]);
+    m.unmount();
+  });
 
-    // Assert the RULE, not positions: arrowing anywhere in the list must never
-    // highlight a locked provider's row. The old form hardcoded "ArrowDown
-    // twice then ArrowUp lands on Sonnet", which silently started asserting
-    // about a different row the moment the list grew.
-    for (let i = 0; i < 12; i += 1) {
-      await m.press(list, "ArrowDown");
-      const hl = m.query('[data-highlighted="true"]');
-      assert.ok(hl, "some row must stay highlighted");
-      assert.equal(
-        (hl.textContent || "").includes("Codex"),
-        false,
-        "arrow navigation must never land on a locked provider's row",
-      );
-    }
-
-    // Home is the first selectable row (claude Default); one step down is the
-    // first real model, whichever it is.
-    await m.press(list, "Home");
-    await m.press(list, "ArrowDown");
-    await m.press(list, "Enter");
-    assert.equal(h.providerSets.length, 1, "Enter must report one selection");
-    assert.equal(
-      h.providerSets[0].provider,
-      "claude",
-      "a locked thread must only ever report its own provider",
+  it("clicking a provider that cannot be entered reports nothing", async () => {
+    // L5: the old suite checked the callback stayed silent; the rewrite only
+    // checked the button was disabled.
+    const h = makeHarness();
+    const m = await mount(composer(h, { provider: "claude", model: null }));
+    await m.click(m.query('button[aria-label^="Model:"]'));
+    await m.click(m.query('button[aria-label="Provider Grok"]'));
+    assert.deepEqual(
+      h.providerSets,
+      [],
+      "a disabled provider must not report a selection",
     );
+    m.unmount();
+  });
+
+  it("shows no group heading once inside a provider", async () => {
+    // B6: the whole content of the heading commit had no test.
+    const h = makeHarness();
+    const m = await mount(composer(h, { provider: "claude", model: null }));
+    assert.ok(await openProvider(m, "Claude Code"));
+    assert.equal(
+      m.queryAll('[class*="modelGroupHeading"]').length,
+      0,
+      "the back control already names the provider",
+    );
+    m.unmount();
+  });
+
+  it("opens on, drills into, and returns to the HIGHLIGHTED provider", async () => {
+    // B5: with the thread on claude (which is PROVIDERS[0]), "highlighted",
+    // "current" and "index 0" are indistinguishable, so four separate bugs
+    // could survive. Kimi is not index 0.
+    const h = makeHarness();
+    const m = await mount(composer(h, { provider: "kimi", model: null }));
+    await m.click(m.query('button[aria-label^="Model:"]'));
+
+    const opened = m.query('[data-highlighted="true"]')?.textContent || "";
+    assert.match(opened, /Kimi/, "must open on the thread's provider, not row 0");
+
+    // ArrowRight must drill into the HIGHLIGHTED provider.
+    await m.pressFocused("ArrowUp");
+    const target = m.query('[data-highlighted="true"]')?.textContent || "";
+    assert.equal(
+      /Kimi/.test(target),
+      false,
+      "ArrowUp must move off Kimi for this to prove anything",
+    );
+    // Two assertions below, each catching a different bug, so do not delete
+    // either as redundant: the negative catches drilling into the CURRENT
+    // provider, the round-trip catches drilling into a FIXED one (whose name
+    // the negative would happily accept).
+    await m.pressFocused("ArrowRight");
+    const back = m.byText("‹ ") ?? m.query('[class*="modelBackHeader"]');
+    assert.ok(back, "ArrowRight must drill in");
+    const heading = (back.textContent || "").replace(/[‹\s]/g, "");
+    assert.equal(
+      heading.toLowerCase().includes("kimi"),
+      false,
+      `ArrowRight must enter the highlighted provider, not the current one (got ${heading})`,
+    );
+
+    // Backing out must return to the provider we came from, not row 0.
+    await m.pressFocused("Escape");
+    const returned = m.query('[data-highlighted="true"]')?.textContent || "";
+    assert.equal(
+      returned.replace(/\s+/g, " ").trim(),
+      target.replace(/\s+/g, " ").trim(),
+      "backing out must land on the provider that was entered",
+    );
+    m.unmount();
+  });
+
+  it("reopens on the provider list after drilling in", async () => {
+    // Same class as the custom-target leak: level state must reset on OPEN, or
+    // the picker reopens somewhere the user did not leave it.
+    const h = makeHarness();
+    const m = await mount(composer(h, { provider: "claude", model: null }));
+    const mlist = await openProvider(m, "Claude Code");
+    assert.ok(mlist, "must drill in first");
+    // Close WHILE STILL DRILLED. Stepping back first would clear the level as a
+    // side effect and this would pass with the reset removed.
+    await m.click(m.query('button[aria-label^="Model:"]'));
+    assert.equal(
+      m.query('[role="listbox"][aria-label="Model"]'),
+      null,
+      "the picker must be closed",
+    );
+    await m.click(m.query('button[aria-label^="Model:"]'));
     assert.ok(
-      String(h.providerSets[0].model).startsWith("claude-"),
-      `expected a claude model, got ${h.providerSets[0].model}`,
-    );
-
-    // Re-open and try to keyboard-select a locked codex row: End stays on
-    // last selectable (Opus), never reports codex.
-    await m.click(m.query('button[aria-label="Model: Opus 4"]'));
-    const list2 = m.query(
-      '[role="listbox"][aria-label="Model"]',
-    ) as HTMLElement;
-    assert.ok(list2, "list must reopen");
-    const before = h.providerSets.length;
-    await m.press(list2, "End");
-    await m.press(list2, "Enter");
-    assert.equal(
-      h.providerSets.length,
-      before,
-      "End+Enter must not select a session-locked other provider",
+      m.query('[role="listbox"][aria-label="Provider"]'),
+      "reopening must start at the provider list",
     );
     m.unmount();
   });
@@ -863,17 +928,17 @@ describe("Composer structure", () => {
     const caret = m.query('button[aria-label="Choose workflow template"]');
     if (caret) await m.click(caret);
 
-    const modelPill = m.query('button[aria-label="Model: Default"]');
-    assert.ok(modelPill, "the model trigger must be present");
-    await m.click(modelPill);
+    const mlist = await openProvider(m, "Claude Code");
+    assert.ok(mlist, "drill into a provider: level one has no model rows");
     assert.ok(
       m.queryAll('[role="option"]').length > 0,
       "the model popover must be OPEN when this asserts, or it checks nothing",
     );
-    // Cardinality: every provider contributes rows (claude 3 + codex 1 + grok 2).
+    // Cardinality: one provider's models (Default + 2 + Custom), not the flat
+    // list. Without a floor the loop below can pass by checking nothing.
     assert.ok(
-      m.queryAll('[role="option"]').length >= 5,
-      "unified list must expose multiple providers' options while open",
+      m.queryAll('[role="option"]').length >= 4,
+      "the drilled provider's rows must be present while this asserts",
     );
     // The reasoning meter is the other new interactive surface. Without this
     // the guard silently skipped it whenever the fixture had no effort levels.
@@ -966,10 +1031,10 @@ describe("Composer reasoning belongs to the current provider", () => {
         reasoningEffort: "high",
       }),
     );
-    await m.click(m.query('button[aria-label="Model: Default"]'));
-    const list = m.query('[role="listbox"][aria-label="Model"]') as HTMLElement;
-    const hl = await highlightProvider(m, list, "Moonshot");
-    assert.ok(hl, "must be able to highlight the Kimi model row");
+    const list = await openProvider(m, "Kimi");
+    assert.ok(list, "must be able to enter a provider the thread is not on");
+    const hl = m.query('[data-highlighted="true"]');
+    assert.ok(hl, "a row must be highlighted on entry");
 
     const group = m.query('[role="group"][aria-label="Reasoning effort"]');
     assert.ok(group, "kimi advertises efforts, so a meter must render");
@@ -998,9 +1063,7 @@ describe("Composer reasoning belongs to the current provider", () => {
     const m = await mount(
       composer(h, { provider: "claude", model: null, reasoningEffort: "high" }),
     );
-    await m.click(m.query('button[aria-label="Model: Default"]'));
-    const list = m.query('[role="listbox"][aria-label="Model"]') as HTMLElement;
-    assert.ok(await highlightProvider(m, list, "Moonshot"), "kimi row must be reachable");
+    assert.ok(await openProvider(m, "Kimi"), "kimi must be enterable");
 
     const group = m.query('[role="group"][aria-label="Reasoning effort"]');
     const seg = group?.querySelector("button");
@@ -1016,13 +1079,16 @@ describe("Composer reasoning belongs to the current provider", () => {
 
 describe("Composer custom model", () => {
   /** Open the picker and highlight a provider's Custom row via the keyboard. */
-  async function openTo(m: Awaited<ReturnType<typeof mount>>, vendorOrName: string) {
-    await m.click(m.query('button[aria-label^="Model:"]'));
-    const list = m.query('[role="listbox"][aria-label="Model"]') as HTMLElement;
+  /** Drill into a provider and highlight its Custom row (always the last one). */
+  async function openTo(
+    m: Awaited<ReturnType<typeof mount>>,
+    providerName: string,
+  ) {
+    const list = await openProvider(m, providerName);
+    if (!list) return null;
     for (let i = 0; i < 24; i += 1) {
       const hl = m.query('[data-highlighted="true"]');
-      const t = hl?.textContent || "";
-      if (t.includes("Custom") && t.includes(vendorOrName)) return list;
+      if ((hl?.textContent || "").includes("Custom")) return list;
       await m.press(list, "ArrowDown");
     }
     return null;
@@ -1118,11 +1184,15 @@ describe("Composer custom model", () => {
     await m.press(list, "Enter");
     assert.ok(m.query('input[aria-label="Custom model id"]'), "field opens");
 
-    // Close WITHOUT using the field's own Cancel or Escape.
+    // Close WITHOUT using the field's own Cancel or Escape: step back to the
+    // provider level, then close from there, then reopen.
     await m.press(
       m.query('[role="listbox"][aria-label="Model"]') ?? list,
       "Escape",
     );
+    const plist = m.query('[role="listbox"][aria-label="Provider"]');
+    assert.ok(plist, "Escape at the model level steps back to providers");
+    await m.press(plist, "Escape");
     await m.click(m.query('button[aria-label^="Model:"]'));
 
     assert.equal(
@@ -1130,9 +1200,11 @@ describe("Composer custom model", () => {
       null,
       "reopening must show the model list, not a stale custom field",
     );
+    // Reopening starts at the PROVIDER level now, which is itself the proof
+    // that neither the custom target nor the drill level survived the close.
     assert.ok(
-      m.query('[role="listbox"][aria-label="Model"]'),
-      "the list must be back",
+      m.query('[role="listbox"][aria-label="Provider"]'),
+      "reopening must land on the provider list",
     );
     m.unmount();
   });
@@ -1164,8 +1236,7 @@ describe("Composer custom model", () => {
     // walks off-screen past row six while the list looks frozen.
     const h = makeHarness();
     const m = await mount(composer(h, { provider: "claude", model: null }));
-    await m.click(m.query('button[aria-label^="Model:"]'));
-    const list = m.query('[role="listbox"][aria-label="Model"]') as HTMLElement;
+    const list = (await openProvider(m, "Claude Code")) as HTMLElement;
     const seen: Element[] = [];
     const proto = (m.query('[data-highlighted="true"]') as HTMLElement)
       .constructor.prototype as { scrollIntoView: () => void };

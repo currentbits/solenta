@@ -547,3 +547,63 @@
 .customModelBtn:disabled {
   opacity: 0.5;
 }
+
+/* Drill-down: a back control that reads as a header, and the chevron that
+   tells a user a provider row leads somewhere rather than selecting. */
+.modelBackHeader {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 10px 6px;
+  border: 0;
+  background: none;
+  color: var(--text-dim);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-align: left;
+  cursor: pointer;
+}
+
+.modelBackHeader:hover {
+  color: var(--text);
+}
+
+.modelRowChevron {
+  margin-left: auto;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+/* Provider row: text column on the left, chevron pinned right and centred.
+   Reusing .modelRow (a column) pushed the chevron onto its own line. */
+.providerRow {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  background: none;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.providerRow:hover:not(:disabled),
+.providerRow[data-highlighted="true"] {
+  background: var(--card-hover);
+}
+
+.providerRow:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.providerRowText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
