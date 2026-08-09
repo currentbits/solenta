@@ -44,6 +44,8 @@ export interface Mounted {
    * focus shipped with a green suite: no test had ever read activeElement.
    * Use this for anything that claims keyboard operability.
    */
+  /** Move the pointer onto an element, firing React's onMouseEnter. */
+  hover(el: Element | null): Promise<void>;
   pressFocused(
     key: string,
     mods?: { metaKey?: boolean; ctrlKey?: boolean; shiftKey?: boolean },
@@ -240,6 +242,20 @@ export async function mount(element: ReactElement): Promise<Mounted> {
         // paths only observe "change".
         node.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
         node.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+      });
+      await flush();
+    },
+    hover: async (el) => {
+      if (!el) throw new Error("hover: element not found");
+      await act(async () => {
+        el.dispatchEvent(
+          new dom.window.MouseEvent("mouseover", { bubbles: true }),
+        );
+        // React maps onMouseEnter onto mouseout/mouseover pairs, but jsdom does
+        // not synthesise them, so fire the non-bubbling event directly too.
+        el.dispatchEvent(
+          new dom.window.MouseEvent("mouseenter", { bubbles: false }),
+        );
       });
       await flush();
     },

@@ -736,6 +736,65 @@ describe("Composer drill-down picker", () => {
     m.unmount();
   });
 
+  it("describes the highlighted PROVIDER, not some unrelated model", async () => {
+    // Shipped bug: the pane indexed the flat model list with the model-level
+    // highlight, so a Grok thread opened showing "Fable / Anthropic". A pane
+    // that confidently describes something the user is not pointing at is
+    // worse than an empty one.
+    const h = makeHarness();
+    const m = await mount(composer(h, { provider: "kimi", model: null }));
+    await m.click(m.query('button[aria-label^="Model:"]'));
+
+    const label = m.query('[class*="detailLabel"]')?.textContent || "";
+    assert.equal(
+      label,
+      "Kimi",
+      `the pane must name the highlighted provider, got ${label}`,
+    );
+    const pane = m.query('[class*="modelPopoverRight"]')?.textContent || "";
+    assert.equal(
+      /Fable|Opus|Sonnet|Haiku/.test(pane),
+      false,
+      `no model name may appear at the provider level, got: ${pane}`,
+    );
+    m.unmount();
+  });
+
+  it("the provider pane follows the highlight as you arrow", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h, { provider: "claude", model: null }));
+    await m.click(m.query('button[aria-label^="Model:"]'));
+    const first = m.query('[class*="detailLabel"]')?.textContent;
+    await m.pressFocused("ArrowDown");
+    const second = m.query('[class*="detailLabel"]')?.textContent;
+    assert.notEqual(second, first, "the pane must track the highlighted row");
+    const names = PROVIDERS.map((p) => p.name);
+    assert.ok(
+      names.includes(String(second)),
+      `the pane must name a provider, got ${second}`,
+    );
+    m.unmount();
+  });
+
+  it("hovering a provider moves the highlight and the pane", async () => {
+    // Hover-to-highlight had no coverage: removing onMouseEnter from the row
+    // passed the whole suite. A disabled row is deliberately NOT hoverable,
+    // since React does not deliver mouse events to disabled buttons and you
+    // cannot highlight what you cannot enter; its row text carries the reason.
+    const h = makeHarness();
+    const m = await mount(composer(h, { provider: "claude", model: null }));
+    await m.click(m.query('button[aria-label^="Model:"]'));
+    assert.equal(m.query('[class*="detailLabel"]')?.textContent, "Claude Code");
+
+    await m.hover(m.query('button[aria-label="Provider Kimi"]'));
+    assert.equal(
+      m.query('[class*="detailLabel"]')?.textContent,
+      "Kimi",
+      "hovering a provider must move the highlight and the pane with it",
+    );
+    m.unmount();
+  });
+
   it("reopens on the provider list after drilling in", async () => {
     // Same class as the custom-target leak: level state must reset on OPEN, or
     // the picker reopens somewhere the user did not leave it.
