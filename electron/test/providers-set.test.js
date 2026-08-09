@@ -110,25 +110,38 @@ describe("setProvider lock semantics", () => {
     assert.equal(store.getThread(thread.id).updatedAt, before);
   });
 
-  it("accepts any non-empty custom model for providers with empty models list (codex)", () => {
+  it("accepts listed AND unlisted codex models", () => {
+    // The published list is a suggestion, not an allowlist. Blocking an
+    // unlisted id would stop a user reaching a model their CLI supports but
+    // our snapshot predates.
     const thread = store.getThreads()[0];
     services.setProvider(store, { threadId: thread.id, provider: "codex" });
     const updated = services.setProvider(store, {
+      threadId: thread.id,
+      model: "gpt-5.5",
+    });
+    assert.equal(updated.model, "gpt-5.5");
+
+    const custom = services.setProvider(store, {
       threadId: thread.id,
       model: "o3-pro-custom",
     });
-    assert.equal(updated.model, "o3-pro-custom");
+    assert.equal(
+      custom.model,
+      "o3-pro-custom",
+      "an unlisted id must be accepted and stored",
+    );
     assert.equal(store.getThread(thread.id).model, "o3-pro-custom");
   });
 
-  it("trims custom model and rejects whitespace-only with exact message", () => {
+  it("trims listed model and rejects whitespace-only with exact message", () => {
     const thread = store.getThreads()[0];
     services.setProvider(store, { threadId: thread.id, provider: "codex" });
     const updated = services.setProvider(store, {
       threadId: thread.id,
-      model: "  gpt-5-custom  ",
+      model: "  gpt-5.5  ",
     });
-    assert.equal(updated.model, "gpt-5-custom");
+    assert.equal(updated.model, "gpt-5.5");
 
     assert.throws(
       () =>
@@ -148,47 +161,41 @@ describe("setProvider lock semantics", () => {
     );
   });
 
-  it("rejects custom model longer than 100 chars for empty models list", () => {
+  it("accepts a custom model for every provider, and still guards the id", () => {
+    // Suggestions, not anarchy: length and emptiness still protect argv.
     const thread = store.getThreads()[0];
-    services.setProvider(store, { threadId: thread.id, provider: "codex" });
-    const long = "m".repeat(101);
-    assert.throws(
-      () =>
-        services.setProvider(store, {
-          threadId: thread.id,
-          model: long,
-        }),
-      /100|at most|too long/i,
-    );
-  });
+    for (const provider of ["claude", "codex", "grok", "opencode", "kimi"]) {
+      services.setProvider(store, { threadId: thread.id, provider });
 
-  it("enforces membership for claude and kimi (non-empty models list)", () => {
-    const thread = store.getThreads()[0];
-    assert.throws(
-      () =>
-        services.setProvider(store, {
-          threadId: thread.id,
-          model: "not-a-claude-model",
-        }),
-      /model|not in|unknown/i,
-    );
-    assert.equal(store.getThread(thread.id).model, null);
+      const custom = services.setProvider(store, {
+        threadId: thread.id,
+        model: `custom-${provider}-model`,
+      });
+      assert.equal(
+        custom.model,
+        `custom-${provider}-model`,
+        `${provider} must accept a custom model id`,
+      );
 
-    services.setProvider(store, { threadId: thread.id, provider: "kimi" });
-    assert.throws(
-      () =>
-        services.setProvider(store, {
+      const listed = getProvider(provider).models[0];
+      if (listed) {
+        const ok = services.setProvider(store, {
           threadId: thread.id,
-          model: "not-a-kimi-model",
-        }),
-      /model|not in|unknown/i,
-    );
-    // Valid kimi model still accepted
-    const ok = services.setProvider(store, {
-      threadId: thread.id,
-      model: "k3",
-    });
-    assert.equal(ok.model, "k3");
+          model: listed,
+        });
+        assert.equal(ok.model, listed, `${provider} must accept its own list`);
+      }
+
+      assert.throws(
+        () =>
+          services.setProvider(store, {
+            threadId: thread.id,
+            model: "x".repeat(101),
+          }),
+        /100 characters/i,
+        `${provider} must still reject an over-long id`,
+      );
+    }
   });
 
   it("does not bump updatedAt on setProvider", () => {

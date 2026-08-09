@@ -210,21 +210,26 @@ describe("opencode provider registry", () => {
     const entry = getProvider("opencode");
     assert.equal(entry.kind, "opencode-json");
     assert.equal(entry.supportsResume, true);
-    assert.deepEqual(entry.models, []);
+    assert.ok(entry.models.length > 0, "opencode must list verified free models");
+    assert.ok(entry.models.every((id) => id.includes("/")));
+    assert.ok(entry.models.includes("opencode/north-mini-code-free"));
 
     const list = listProviders({ which: () => null, includeSimulate: false });
     const info = list.find((p) => p.id === "opencode");
     assert.equal(info.supportsResume, true);
+    assert.deepEqual(info.models, entry.models);
 
+    // buildArgs still forwards any -m string; membership is enforced at setProvider.
+    const listed = entry.models[0];
     const args = entry.buildArgs({
       prompt: "go",
       sessionId: "ses_x",
-      model: "anthropic/claude-sonnet-4",
+      model: listed,
     });
     assert.deepEqual(args.slice(0, 3), ["run", "--format", "json"]);
     assert.equal(args[args.length - 1], "go");
     assert.equal(args[args.indexOf("-s") + 1], "ses_x");
-    assert.equal(args[args.indexOf("-m") + 1], "anthropic/claude-sonnet-4");
+    assert.equal(args[args.indexOf("-m") + 1], listed);
   });
 });
 

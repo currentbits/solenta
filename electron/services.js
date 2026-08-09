@@ -244,17 +244,14 @@ function normalizeModelForProvider(entry, rawModel) {
   if (!trimmed) {
     throw new Error("Model must be a non-empty string");
   }
-  const models = entry && Array.isArray(entry.models) ? entry.models : [];
-  if (models.length === 0) {
-    if (trimmed.length > 100) {
-      throw new Error("Model must be at most 100 characters");
-    }
-    return trimmed;
-  }
-  if (!models.includes(trimmed)) {
-    throw new Error(
-      `Unknown model for ${entry && entry.id ? entry.id : "provider"}: ${trimmed}`,
-    );
+  // A provider's `models` list is a SUGGESTION, not an allowlist. It is a
+  // snapshot of a CLI's catalogue taken when this file was written, and it goes
+  // stale the moment a model ships. Rejecting an unlisted id would block a user
+  // from a model their CLI already supports, and would make the picker's
+  // "Custom..." affordance dead for every provider now that all of them
+  // publish a list. A bad id fails loudly at the CLI, which is the right place.
+  if (trimmed.length > 100) {
+    throw new Error("Model must be at most 100 characters");
   }
   return trimmed;
 }
@@ -539,17 +536,17 @@ function validateWorkflowTemplate(template) {
       );
     }
 
-    const model =
-      phase.model == null || phase.model === "" ? null : String(phase.model);
-    if (
-      model != null &&
-      Array.isArray(entry.models) &&
-      entry.models.length > 0 &&
-      !entry.models.includes(model)
-    ) {
-      throw new Error(
-        `Phase "${phaseName}": model "${model}" is not in provider ${providerId}'s model list`,
-      );
+    // ONE rule for accepting a model, shared with setProvider. This used to be
+    // an inline membership check, which meant filling the previously-empty
+    // model lists made template phases STRICTER than before while setProvider
+    // got looser: a template saved with a custom id then threw on a no-op
+    // re-save. Routing through the helper also gives phases the trim, empty and
+    // length guards the inline block never had.
+    try {
+      normalizeModelForProvider(entry, phase.model);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(`Phase "${phaseName}": ${msg}`);
     }
   }
 }
@@ -573,7 +570,12 @@ function saveTemplate(store, template) {
     agentCount: p.agentCount,
     instruction: String(p.instruction),
     provider: String(p.provider).trim(),
-    model: p.model == null || p.model === "" ? null : String(p.model),
+    // Store the NORMALIZED value. Validating and then persisting the raw
+    // string meant a padded id stored padded, and " " + 100 chars + " " passed
+    // the length guard and then stored 102 characters.
+    // The entry argument is unused by normalizeModelForProvider now that the
+    // list is a suggestion; pass null rather than computing a lookup for show.
+    model: normalizeModelForProvider(null, p.model),
   }));
   const saved = store.saveTemplate({
     id: template.id,

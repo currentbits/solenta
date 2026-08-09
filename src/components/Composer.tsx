@@ -20,14 +20,21 @@ import {
   shortSessionId,
 } from "../format";
 import {
-  buildModelRows,
+  buildUnifiedModelRows,
   clampHighlightIndex,
   detailModelRow,
+  CUSTOM_MODEL_ID,
   effortDisplayLabel,
   effortSegments,
+  firstSelectableIndex,
   initialHighlightIndex,
+  isRowSelected,
+  lastSelectableIndex,
   modelTriggerLabel,
+  rowKey,
   showReasoningControl,
+  stepHighlightIndex,
+  type ModelRow,
 } from "../modelPicker";
 import { useEscapeClose } from "../useEscapeClose";
 import { WorkflowsModal } from "./WorkflowsModal";
@@ -106,11 +113,10 @@ export function Composer({
   const [sending, setSending] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const [modeOpen, setModeOpen] = useState(false);
-  const [providerOpen, setProviderOpen] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
-  /** Empty-list providers: Custom… swaps the menu for an inline text input. */
-  const [customModelOpen, setCustomModelOpen] = useState(false);
-  const [customModelDraft, setCustomModelDraft] = useState("");
+  /** Provider whose Custom... row was picked; null when not entering one. */
+  const [customFor, setCustomFor] = useState<string | null>(null);
+  const [customDraft, setCustomDraft] = useState("");
   /** Index of the row under keyboard/hover focus in the model list. */
   const [highlightIndex, setHighlightIndex] = useState(0);
   const [buildMenuOpen, setBuildMenuOpen] = useState(false);
@@ -120,11 +126,9 @@ export function Composer({
     Record<string, string>
   >({});
   const modeWrapRef = useRef<HTMLDivElement>(null);
-  const providerWrapRef = useRef<HTMLDivElement>(null);
   const modelWrapRef = useRef<HTMLDivElement>(null);
   const modelTriggerRef = useRef<HTMLButtonElement>(null);
   const modelListRef = useRef<HTMLUListElement>(null);
-  const customModelInputRef = useRef<HTMLInputElement>(null);
   const buildWrapRef = useRef<HTMLDivElement>(null);
   const modelListId = useId();
 
@@ -148,42 +152,35 @@ export function Composer({
   const sessionLocked = Boolean(sessionId);
   const providerName = providerDisplayName(provider, providers);
   const currentProviderInfo = providers.find((p) => p.id === provider);
-  const providerModels = currentProviderInfo?.models ?? [];
-  /**
-   * Simulate/generic are not real CLIs; a model id is meaningless there.
-   * Hide the whole model pill (no Default-only menu, no Custom…).
-   * Other empty-list providers (e.g. codex) still get Custom….
-   */
-  const showModelPill = provider !== "simulate" && provider !== "generic";
-  const allowCustomModel = showModelPill && providerModels.length === 0;
-  const modelRows = buildModelRows(currentProviderInfo);
-  const triggerLabel = modelTriggerLabel(model, currentProviderInfo);
-  const highlightRow = modelRows[clampHighlightIndex(modelRows, highlightIndex)];
-  const detailRow = detailModelRow(
-    modelRows,
-    model,
-    highlightRow ? highlightRow.id : undefined,
+  const modelRows = buildUnifiedModelRows(
+    providers,
+    provider,
+    sessionLocked,
+    providerName,
   );
-  const efforts = currentProviderInfo?.efforts ?? [];
+  const triggerLabel = modelTriggerLabel(model, currentProviderInfo);
+  const hi = clampHighlightIndex(modelRows, highlightIndex);
+  const detailRow = detailModelRow(modelRows, provider, model, hi);
+  const efforts = detailRow.efforts ?? [];
   const reasoningVisible = showReasoningControl(efforts);
+  // Effort applies only to the current provider: show the live value when the
+  // highlighted row is that provider, otherwise a blank meter (null current).
+  const effortForMeter =
+    detailRow.providerId === provider ? reasoningEffort : null;
   const segments = reasoningVisible
-    ? effortSegments(efforts, reasoningEffort)
+    ? effortSegments(efforts, effortForMeter)
     : [];
-  const effortLabel = effortDisplayLabel(reasoningEffort);
+  const effortLabel = effortDisplayLabel(effortForMeter);
 
   useEffect(() => {
-    if (!modeOpen && !providerOpen && !modelOpen && !buildMenuOpen) return;
+    if (!modeOpen && !modelOpen && !buildMenuOpen) return;
     const onDoc = (e: MouseEvent) => {
       const t = e.target as Node;
       if (modeOpen && !modeWrapRef.current?.contains(t)) {
         setModeOpen(false);
       }
-      if (providerOpen && !providerWrapRef.current?.contains(t)) {
-        setProviderOpen(false);
-      }
       if (modelOpen && !modelWrapRef.current?.contains(t)) {
         setModelOpen(false);
-        setCustomModelOpen(false);
       }
       if (buildMenuOpen && !buildWrapRef.current?.contains(t)) {
         setBuildMenuOpen(false);
@@ -191,60 +188,45 @@ export function Composer({
     };
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
-  }, [modeOpen, providerOpen, modelOpen, buildMenuOpen]);
-
-  useEffect(() => {
-    if (customModelOpen) {
-      customModelInputRef.current?.focus();
-      customModelInputRef.current?.select();
-    }
-  }, [customModelOpen]);
-
-  // Leaving the model menu (or switching provider) drops custom-input mode.
-  useEffect(() => {
-    if (!modelOpen) setCustomModelOpen(false);
-  }, [modelOpen]);
-
-  useEffect(() => {
-    setModelOpen(false);
-    setCustomModelOpen(false);
-  }, [provider]);
+  }, [modeOpen, modelOpen, buildMenuOpen]);
 
   // When the popover opens, seed highlight on the selected model and focus the list.
   useEffect(() => {
-    if (!modelOpen || customModelOpen) return;
-    setHighlightIndex(initialHighlightIndex(modelRows, model));
+    if (!modelOpen) return;
+    // Reset the custom-entry target on every OPEN, not on close. Only the
+    // commit and the field's own Cancel/Escape cleared it, so closing any
+    // other way (outside click, Escape while focus sat on a button) left it
+    // set: reopening then showed a text box with no sign of its target, and a
+    // commit went to the provider highlighted minutes earlier.
+    setCustomFor(null);
+    setHighlightIndex(initialHighlightIndex(modelRows, provider, model));
     // Focus the listbox so arrow keys work immediately.
     const t = window.setTimeout(() => {
       modelListRef.current?.focus();
     }, 0);
     return () => window.clearTimeout(t);
-    // modelRows is rebuilt each render; open edge only needs modelOpen/custom.
+    // modelRows is rebuilt each render; open edge only needs modelOpen.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [modelOpen, customModelOpen]);
+  }, [modelOpen]);
 
   const closeModelPicker = useCallback((returnFocus: boolean) => {
     setModelOpen(false);
-    setCustomModelOpen(false);
     if (returnFocus) {
       modelTriggerRef.current?.focus();
     }
   }, []);
 
-  const anyMenuOpen = modeOpen || providerOpen || modelOpen || buildMenuOpen;
+  const anyMenuOpen = modeOpen || modelOpen || buildMenuOpen;
   const closeAllMenus = useCallback(() => {
-    // Custom input owns Escape (cancel back to list); do not close the menu.
-    if (customModelOpen) return;
     setModeOpen(false);
-    setProviderOpen(false);
     if (modelOpen) {
       closeModelPicker(true);
     } else {
       setModelOpen(false);
     }
     setBuildMenuOpen(false);
-  }, [customModelOpen, modelOpen, closeModelPicker]);
-  useEscapeClose(anyMenuOpen && !customModelOpen, closeAllMenus);
+  }, [modelOpen, closeModelPicker]);
+  useEscapeClose(anyMenuOpen, closeAllMenus);
 
   const runAction = async (
     action: (prompt: string) => void | Promise<void>,
@@ -311,25 +293,22 @@ export function Composer({
     }
   };
 
-  const pickProvider = async (nextId: string) => {
-    setProviderOpen(false);
-    if (nextId === provider) return;
-    try {
-      await onSetProvider({ provider: nextId });
-    } catch (err) {
-      const msg =
-        err instanceof Error && err.message
-          ? err.message
-          : "Failed to set provider";
-      setLocalError(msg);
+  const pickRow = async (row: ModelRow) => {
+    if (row.disabled) return;
+    if (row.id === CUSTOM_MODEL_ID) {
+      // Swap the popover for a free-text field rather than selecting a model.
+      setCustomFor(row.providerId);
+      setCustomDraft("");
+      return;
     }
-  };
-
-  const pickModel = async (next: string | null) => {
     closeModelPicker(true);
-    if (next === model) return;
+    const same =
+      row.providerId === provider && row.id === model;
+    if (same) return;
     try {
-      await onSetProvider({ model: next });
+      // Always send both so a cross-provider pick switches harness and model
+      // in one setProvider call (no contract change).
+      await onSetProvider({ provider: row.providerId, model: row.id });
     } catch (err) {
       const msg =
         err instanceof Error && err.message
@@ -339,10 +318,31 @@ export function Composer({
     }
   };
 
+  /** Commit a free-text model id for the provider whose Custom row was picked. */
+  const commitCustomModel = async () => {
+    const id = customDraft.trim();
+    if (!id || !customFor) return;
+    closeModelPicker(true);
+    try {
+      await onSetProvider({ provider: customFor, model: id });
+    } catch (err) {
+      const msg =
+        err instanceof Error && err.message
+          ? err.message
+          : "Failed to set model";
+      setLocalError(msg);
+    } finally {
+      setCustomFor(null);
+      setCustomDraft("");
+    }
+  };
+
   const pickEffort = async (level: ReasoningEffort) => {
     // Clicking the current level clears it back to the provider default.
     // Without this the null branch is implemented at every layer and
     // unreachable from the UI: once you pick a level you can never stop.
+    // Only act when the detail row is the current provider (effort is per thread provider).
+    if (detailRow.providerId !== provider) return;
     const next = level === reasoningEffort ? null : level;
     try {
       await onSetReasoningEffort(next);
@@ -355,66 +355,29 @@ export function Composer({
     }
   };
 
-  const openCustomModel = () => {
-    setCustomModelDraft(model ?? "");
-    setCustomModelOpen(true);
-  };
-
-  const cancelCustomModel = () => {
-    setCustomModelOpen(false);
-    setCustomModelDraft("");
-  };
-
-  const commitCustomModel = async () => {
-    const next = customModelDraft.trim();
-    setCustomModelOpen(false);
-    setModelOpen(false);
-    setCustomModelDraft("");
-    if (next === (model ?? "")) return;
-    try {
-      // Empty draft is "Default" (null); non-empty is the free-form id.
-      await onSetProvider({ model: next === "" ? null : next });
-    } catch (err) {
-      const msg =
-        err instanceof Error && err.message
-          ? err.message
-          : "Failed to set model";
-      setLocalError(msg);
-    }
-  };
-
   const onModelListKeyDown = (e: KeyboardEvent<HTMLUListElement>) => {
-    if (customModelOpen) return;
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      setHighlightIndex((i) =>
-        clampHighlightIndex(modelRows, i + 1),
-      );
+      setHighlightIndex((i) => stepHighlightIndex(modelRows, i, 1));
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
-      setHighlightIndex((i) =>
-        clampHighlightIndex(modelRows, i - 1),
-      );
+      setHighlightIndex((i) => stepHighlightIndex(modelRows, i, -1));
     } else if (e.key === "Enter") {
       e.preventDefault();
       const row = modelRows[clampHighlightIndex(modelRows, highlightIndex)];
-      if (row) void pickModel(row.id);
+      if (row && !row.disabled) void pickRow(row);
     } else if (e.key === "Escape") {
       e.preventDefault();
       e.stopPropagation();
       closeModelPicker(true);
     } else if (e.key === "Home") {
       e.preventDefault();
-      setHighlightIndex(0);
+      setHighlightIndex(firstSelectableIndex(modelRows));
     } else if (e.key === "End") {
       e.preventDefault();
-      setHighlightIndex(Math.max(0, modelRows.length - 1));
+      setHighlightIndex(lastSelectableIndex(modelRows));
     }
   };
-
-  const lockedTitle = sessionLocked
-    ? `Session started with ${providerName}. New thread to switch.`
-    : undefined;
 
   return (
     <div className={styles.composer}>
@@ -443,240 +406,209 @@ export function Composer({
         />
         <div className={styles.controls}>
           <div className={styles.pills}>
-            <div className={styles.modeWrap} ref={providerWrapRef}>
+            <div className={styles.modeWrap} ref={modelWrapRef}>
               <button
+                ref={modelTriggerRef}
                 type="button"
                 className={styles.pill}
                 disabled={disabled}
-                aria-disabled={disabled || sessionLocked ? "true" : undefined}
-                title={lockedTitle}
-                aria-haspopup={sessionLocked ? undefined : "listbox"}
-                aria-expanded={sessionLocked ? undefined : providerOpen}
+                aria-disabled={disabled ? "true" : undefined}
+                aria-haspopup="dialog"
+                aria-expanded={modelOpen}
+                aria-controls={modelOpen ? modelListId : undefined}
+                aria-label={`Model: ${triggerLabel}`}
                 onClick={() => {
-                  if (disabled || sessionLocked) return;
-                  setProviderOpen((v) => !v);
-                  setModelOpen(false);
-                  setModeOpen(false);
-                  setBuildMenuOpen(false);
+                  if (disabled) return;
+                  if (modelOpen) {
+                    closeModelPicker(false);
+                  } else {
+                    setModelOpen(true);
+                    setModeOpen(false);
+                    setBuildMenuOpen(false);
+                  }
                 }}
               >
-                {providerName}
-                {!sessionLocked && <span className={styles.caret}>▾</span>}
+                <span className={styles.modelIcon} aria-hidden="true">
+                  ◇
+                </span>
+                {triggerLabel}
+                <span className={styles.caret}>▾</span>
               </button>
-              {providerOpen && !sessionLocked && (
-                <ul
-                  className={styles.modeMenu}
-                  role="listbox"
-                  aria-label="Provider"
+              {modelOpen && (
+                <div
+                  className={styles.modelPopover}
+                  role="dialog"
+                  aria-label="Model picker"
+                  id={modelListId}
                 >
-                  {providers.map((p) => {
-                    const unavailable = !p.available;
-                    return (
-                      <li
-                        key={p.id}
-                        role="option"
-                        aria-selected={p.id === provider}
-                        aria-disabled={unavailable}
-                      >
-                        <button
-                          type="button"
-                          className={styles.modeOption}
-                          data-active={p.id === provider}
-                          data-disabled={unavailable ? "true" : undefined}
-                          disabled={unavailable}
-                          onClick={() => {
-                            if (!unavailable) void pickProvider(p.id);
-                          }}
-                        >
-                          {p.name}
-                          {unavailable && (
-                            <span className={styles.optionHint}>
-                              {" "}
-                              not installed
-                            </span>
-                          )}
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </div>
-
-            {showModelPill && (
-              <div className={styles.modeWrap} ref={modelWrapRef}>
-                <button
-                  ref={modelTriggerRef}
-                  type="button"
-                  className={styles.pill}
-                  disabled={disabled}
-                  aria-disabled={disabled ? "true" : undefined}
-                  aria-haspopup="dialog"
-                  aria-expanded={modelOpen}
-                  aria-controls={modelOpen ? modelListId : undefined}
-                  aria-label={`Model: ${triggerLabel}`}
-                  onClick={() => {
-                    if (disabled) return;
-                    if (modelOpen) {
-                      closeModelPicker(false);
-                    } else {
-                      setModelOpen(true);
-                      setCustomModelOpen(false);
-                      setProviderOpen(false);
-                      setModeOpen(false);
-                      setBuildMenuOpen(false);
-                    }
-                  }}
-                >
-                  <span className={styles.modelIcon} aria-hidden="true">
-                    ◇
-                  </span>
-                  {triggerLabel}
-                  <span className={styles.caret}>▾</span>
-                </button>
-                {modelOpen && (
-                  <div
-                    className={styles.modelPopover}
-                    role="dialog"
-                    aria-label="Model picker"
-                    id={modelListId}
-                  >
-                    {customModelOpen ? (
-                      <div className={styles.customModelBox}>
+                  <div className={styles.modelPopoverLeft}>
+                    <div className={styles.modelPaneHeader}>MODEL</div>
+                    {customFor ? (
+                      <div className={styles.customModelWrap}>
                         <input
-                          ref={customModelInputRef}
-                          type="text"
                           className={styles.customModelInput}
-                          value={customModelDraft}
-                          maxLength={100}
+                          value={customDraft}
+                          autoFocus
                           placeholder="Model id"
                           aria-label="Custom model id"
-                          onChange={(e) => setCustomModelDraft(e.target.value)}
+                          onChange={(e) => setCustomDraft(e.target.value)}
                           onKeyDown={(e) => {
                             if (e.key === "Enter") {
                               e.preventDefault();
-                              e.stopPropagation();
                               void commitCustomModel();
                             } else if (e.key === "Escape") {
                               e.preventDefault();
+                              // Do not let this reach the popover's own Escape
+                              // handler, or backing out of the field closes the
+                              // whole picker.
                               e.stopPropagation();
-                              cancelCustomModel();
+                              setCustomFor(null);
+                              modelListRef.current?.focus();
                             }
                           }}
                         />
-                      </div>
-                    ) : (
-                      <>
-                        <div className={styles.modelPopoverLeft}>
-                          <div className={styles.modelPaneHeader}>MODEL</div>
-                          <ul
-                            ref={modelListRef}
-                            className={styles.modelList}
-                            role="listbox"
-                            aria-label="Model"
-                            tabIndex={0}
-                            onKeyDown={onModelListKeyDown}
+                        <div className={styles.customModelActions}>
+                          <button
+                            type="button"
+                            className={styles.customModelBtn}
+                            disabled={customDraft.trim().length === 0}
+                            onClick={() => void commitCustomModel()}
                           >
-                            {modelRows.map((row, index) => {
-                              const selected = row.id === model;
-                              const highlighted = index === highlightIndex;
-                              return (
-                                <li
-                                  key={row.id ?? "__default__"}
-                                  role="option"
-                                  aria-selected={selected}
-                                >
-                                  <button
-                                    type="button"
-                                    className={styles.modelRow}
-                                    data-selected={selected ? "true" : undefined}
-                                    data-highlighted={
-                                      highlighted ? "true" : undefined
-                                    }
-                                    onMouseEnter={() => setHighlightIndex(index)}
-                                    onClick={() => void pickModel(row.id)}
-                                  >
-                                    <span className={styles.modelRowLabel}>
-                                      {row.label}
-                                    </span>
-                                    {row.vendor ? (
-                                      <span className={styles.modelRowVendor}>
-                                        {row.vendor}
-                                      </span>
-                                    ) : null}
-                                  </button>
-                                </li>
-                              );
-                            })}
-                            {allowCustomModel && (
-                              <li role="option" aria-selected={false}>
-                                <button
-                                  type="button"
-                                  className={styles.modelRow}
-                                  onClick={openCustomModel}
-                                >
-                                  <span className={styles.modelRowLabel}>
-                                    Custom…
-                                  </span>
-                                </button>
-                              </li>
-                            )}
-                          </ul>
+                            Use model
+                          </button>
+                          <button
+                            type="button"
+                            className={styles.customModelBtn}
+                            onClick={() => {
+                              setCustomFor(null);
+                              // Focus must go back to the list: the arrow
+                              // handler is on the <ul>, so leaving focus on
+                              // <body> leaves the open popover unnavigable.
+                              modelListRef.current?.focus();
+                            }}
+                          >
+                            Cancel
+                          </button>
                         </div>
-                        <div className={styles.modelPopoverRight}>
-                          <div className={styles.detailLabel}>
-                            {detailRow.label}
-                          </div>
-                          {detailRow.vendor ? (
-                            <div className={styles.detailVendor}>
-                              {detailRow.vendor}
-                            </div>
-                          ) : null}
-                          {detailRow.description ? (
-                            <div className={styles.detailDesc}>
-                              {detailRow.description}
-                            </div>
-                          ) : null}
-                          {reasoningVisible && (
-                            <div className={styles.reasoningBlock}>
-                              <div className={styles.reasoningHeader}>
-                                <span className={styles.reasoningTitle}>
-                                  REASONING
-                                </span>
-                                <span className={styles.reasoningLevel}>
-                                  {effortLabel}
-                                </span>
-                              </div>
+                      </div>
+                    ) : null}
+                    <ul
+                      ref={modelListRef}
+                      className={styles.modelList}
+                      role="listbox"
+                      aria-label="Model"
+                      tabIndex={0}
+                      onKeyDown={onModelListKeyDown}
+                    >
+                      {modelRows.map((row, index) => {
+                        const selected = isRowSelected(row, provider, model);
+                        const highlighted = index === hi;
+                        return (
+                          <li
+                            key={rowKey(row)}
+                            role="option"
+                            aria-selected={selected}
+                            aria-disabled={row.disabled ? true : undefined}
+                          >
+                            {row.groupHeading ? (
                               <div
-                                className={styles.effortSegments}
-                                role="group"
-                                aria-label="Reasoning effort"
+                                className={styles.modelGroupHeading}
+                                aria-hidden="true"
                               >
-                                {segments.map((seg) => (
-                                  <button
-                                    key={seg.level}
-                                    type="button"
-                                    className={styles.effortSegment}
-                                    data-filled={seg.filled ? "true" : undefined}
-                                    aria-label={`Reasoning ${effortDisplayLabel(seg.level)}`}
-                                    aria-pressed={
-                                      reasoningEffort === seg.level
-                                        ? "true"
-                                        : "false"
-                                    }
-                                    onClick={() => void pickEffort(seg.level)}
-                                  />
-                                ))}
+                                {row.groupHeading}
                               </div>
-                            </div>
-                          )}
+                            ) : null}
+                            <button
+                              type="button"
+                              className={styles.modelRow}
+                              // The list scrolls (26 rows in a 240px box) and
+                              // opens focused, so arrow keys are the first
+                              // affordance. Without this the highlight walks
+                              // off-screen past the sixth row and the list
+                              // looks frozen while the detail pane changes.
+                              ref={(el) => {
+                                if (highlighted && el) {
+                                  el.scrollIntoView({ block: "nearest" });
+                                }
+                              }}
+                              data-selected={selected ? "true" : undefined}
+                              data-highlighted={
+                                highlighted ? "true" : undefined
+                              }
+                              data-disabled={
+                                row.disabled ? "true" : undefined
+                              }
+                              disabled={row.disabled}
+                              title={row.disabledReason ?? undefined}
+                              onMouseEnter={() => setHighlightIndex(index)}
+                              onClick={() => void pickRow(row)}
+                            >
+                              <span className={styles.modelRowLabel}>
+                                {row.label}
+                              </span>
+                              <span className={styles.modelRowVendor}>
+                                {row.vendor}
+                                {row.unavailable ? " · not installed" : ""}
+                              </span>
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                  <div className={styles.modelPopoverRight}>
+                    <div className={styles.detailLabel}>
+                      {detailRow.label}
+                    </div>
+                    {detailRow.vendor ? (
+                      <div className={styles.detailVendor}>
+                        {detailRow.vendor}
+                      </div>
+                    ) : null}
+                    {detailRow.description ? (
+                      <div className={styles.detailDesc}>
+                        {detailRow.description}
+                      </div>
+                    ) : null}
+                    {reasoningVisible && (
+                      <div className={styles.reasoningBlock}>
+                        <div className={styles.reasoningHeader}>
+                          <span className={styles.reasoningTitle}>
+                            REASONING
+                          </span>
+                          <span className={styles.reasoningLevel}>
+                            {effortLabel}
+                          </span>
                         </div>
-                      </>
+                        <div
+                          className={styles.effortSegments}
+                          role="group"
+                          aria-label="Reasoning effort"
+                        >
+                          {segments.map((seg) => (
+                            <button
+                              key={seg.level}
+                              type="button"
+                              className={styles.effortSegment}
+                              data-filled={seg.filled ? "true" : undefined}
+                              aria-label={`Reasoning ${effortDisplayLabel(seg.level)}`}
+                              aria-pressed={
+                                detailRow.providerId === provider &&
+                                reasoningEffort === seg.level
+                                  ? "true"
+                                  : "false"
+                              }
+                              disabled={detailRow.providerId !== provider}
+                              onClick={() => void pickEffort(seg.level)}
+                            />
+                          ))}
+                        </div>
+                      </div>
                     )}
                   </div>
-                )}
-              </div>
-            )}
+                </div>
+              )}
+            </div>
 
             <div className={styles.modeWrap} ref={modeWrapRef}>
               <button
@@ -689,7 +621,6 @@ export function Composer({
                 onClick={() => {
                   if (!disabled) {
                     setModeOpen((v) => !v);
-                    setProviderOpen(false);
                     setModelOpen(false);
                     setBuildMenuOpen(false);
                   }
@@ -747,7 +678,6 @@ export function Composer({
                   if (disabled || sending) return;
                   setBuildMenuOpen((v) => !v);
                   setModeOpen(false);
-                  setProviderOpen(false);
                   setModelOpen(false);
                 }}
               >

@@ -57,7 +57,9 @@ describe("providers registry", () => {
     const codex = getProvider("codex");
     assert.equal(codex.kind, "codex-json");
     assert.equal(codex.supportsResume, true);
-    assert.deepEqual(codex.models, []);
+    assert.ok(codex.models.includes("gpt-5.5"));
+    assert.ok(codex.models.includes("gpt-5.6-terra"));
+    assert.ok(codex.models.length >= 4);
 
     const grok = getProvider("grok");
     assert.equal(grok.kind, "claude-stream");
@@ -67,6 +69,15 @@ describe("providers registry", () => {
     const opencode = getProvider("opencode");
     assert.equal(opencode.kind, "opencode-json");
     assert.equal(opencode.supportsResume, true);
+    assert.ok(opencode.models.includes("opencode/north-mini-code-free"));
+    assert.ok(opencode.models.length >= 4);
+    // opencode -m requires provider/model form
+    for (const id of opencode.models) {
+      assert.ok(
+        id.includes("/"),
+        `opencode model id must be provider/model, got ${id}`,
+      );
+    }
 
     const kimi = getProvider("kimi");
     assert.equal(kimi.kind, "kimi-stream");
@@ -74,9 +85,72 @@ describe("providers registry", () => {
     assert.equal(kimi.name, "Kimi Code");
     assert.deepEqual(kimi.models, [
       "k3",
+      "k3-256k",
       "kimi-for-coding",
       "kimi-for-coding-highspeed",
     ]);
+  });
+
+  it("every provider model has matching modelInfo in the same order with non-empty fields", () => {
+    // Gate for the picker: models[i] and modelInfo[i] must be the same id in
+    // the same order, and label/description/vendor must be non-empty strings.
+    // Empty lists are honest when unverified; a non-empty list that mislabels
+    // is not. Cardinality is asserted before the loop so deleting the whole
+    // registry cannot pass silently.
+    assert.ok(PROVIDERS.length >= 5, "expected five public providers");
+    for (const entry of PROVIDERS) {
+      assert.ok(Array.isArray(entry.models), `${entry.id}: models array`);
+      assert.ok(Array.isArray(entry.modelInfo), `${entry.id}: modelInfo array`);
+      assert.equal(
+        entry.modelInfo.length,
+        entry.models.length,
+        `${entry.id}: modelInfo length must match models (got ${entry.modelInfo.length} vs ${entry.models.length})`,
+      );
+      // Every interactive provider we ship must expose at least one model so
+      // the picker is not a bare text field. Update this if a provider is
+      // deliberately left empty after verification fails.
+      assert.ok(
+        entry.models.length > 0,
+        `${entry.id}: models must not be empty (picker would have nothing to pick)`,
+      );
+      for (let i = 0; i < entry.models.length; i++) {
+        const id = entry.models[i];
+        const info = entry.modelInfo[i];
+        assert.equal(
+          info.id,
+          id,
+          `${entry.id}: modelInfo[${i}].id (${info.id}) must equal models[${i}] (${id})`,
+        );
+        assert.equal(typeof info.label, "string", `${entry.id}/${id} label type`);
+        assert.ok(
+          info.label.trim().length > 0,
+          `${entry.id}/${id}: empty label`,
+        );
+        assert.equal(
+          typeof info.description,
+          "string",
+          `${entry.id}/${id} description type`,
+        );
+        assert.ok(
+          info.description.trim().length > 0,
+          `${entry.id}/${id}: empty description`,
+        );
+        assert.equal(
+          typeof info.vendor,
+          "string",
+          `${entry.id}/${id} vendor type`,
+        );
+        assert.ok(
+          info.vendor.trim().length > 0,
+          `${entry.id}/${id}: empty vendor`,
+        );
+      }
+      const recommended = entry.modelInfo.filter((m) => m.recommended);
+      assert.ok(
+        recommended.length <= 1,
+        `${entry.id}: at most one recommended model`,
+      );
+    }
   });
 
   it("buildArgs: claude matches stream-json flags and adds --model when set", () => {

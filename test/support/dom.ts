@@ -88,6 +88,12 @@ function installDom(): JSDOM {
   g.HTMLInputElement = dom.window.HTMLInputElement;
   g.HTMLTextAreaElement = dom.window.HTMLTextAreaElement;
   g.getComputedStyle = dom.window.getComputedStyle;
+  // jsdom has no layout, so it ships no scrollIntoView. Stub it rather than
+  // guarding the call site: the component should be able to call it plainly,
+  // and a test should exercise the real path.
+  if (!dom.window.Element.prototype.scrollIntoView) {
+    dom.window.Element.prototype.scrollIntoView = function scrollIntoView() {};
+  }
   g.requestAnimationFrame = (cb: FrameRequestCallback) =>
     dom.window.setTimeout(() => cb(Date.now()), 0) as unknown as number;
   g.cancelAnimationFrame = (id: number) => dom.window.clearTimeout(id);

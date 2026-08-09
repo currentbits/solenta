@@ -139,8 +139,44 @@ const PROVIDERS = [
     binEnv: "CODER_CODEX_BIN",
     defaultBin: "codex",
     supportsResume: true,
-    models: [],
-    modelInfo: [],
+    // From ~/.codex/models_cache.json (codex-cli 0.144.1, visibility=list only;
+    // codex-auto-review is visibility=hide and is omitted). Descriptions and
+    // display names copied from the cache; vendor is OpenAI (model maker).
+    models: [
+      "gpt-5.6-terra",
+      "gpt-5.6-luna",
+      "gpt-5.5",
+      "gpt-5.4-mini",
+    ],
+    modelInfo: [
+      {
+        id: "gpt-5.6-terra",
+        label: "GPT-5.6-Terra",
+        description: "Balanced agentic coding model for everyday work.",
+        vendor: "OpenAI",
+      },
+      {
+        id: "gpt-5.6-luna",
+        label: "GPT-5.6-Luna",
+        description: "Fast and affordable agentic coding model.",
+        vendor: "OpenAI",
+      },
+      {
+        id: "gpt-5.5",
+        label: "GPT-5.5",
+        description:
+          "Frontier model for complex coding, research, and real-world work.",
+        vendor: "OpenAI",
+        recommended: true,
+      },
+      {
+        id: "gpt-5.4-mini",
+        label: "GPT-5.4-Mini",
+        description:
+          "Small, fast, and cost-efficient model for simpler coding tasks.",
+        vendor: "OpenAI",
+      },
+    ],
     // No dedicated flag; -c model_reasoning_effort=. Live API enum
     // none|minimal|low|medium|high|xhigh|max; contract has no none/minimal.
     efforts: ["low", "medium", "high", "xhigh", "max"],
@@ -229,8 +265,78 @@ const PROVIDERS = [
     binEnv: "CODER_OPENCODE_BIN",
     defaultBin: "opencode",
     supportsResume: true,
-    models: [],
-    modelInfo: [],
+    // Live `opencode models` (v1.17.12) lists these free Zen models. Labels and
+    // descriptions from `opencode models --verbose` / ~/.cache/opencode/models.json.
+    // Ids are provider/model as required by -m. Vendors are the model makers
+    // (from catalog descriptions / same model under other providers), not the CLI.
+    models: [
+      "opencode/big-pickle",
+      "opencode/deepseek-v4-flash-free",
+      "opencode/laguna-s-2.1-free",
+      "opencode/ling-3.0-tiny-free",
+      "opencode/longcat-2.0-free",
+      "opencode/mimo-v2.5-free",
+      "opencode/nemotron-3-ultra-free",
+      "opencode/north-mini-code-free",
+    ],
+    modelInfo: [
+      {
+        id: "opencode/big-pickle",
+        label: "Big Pickle",
+        description:
+          "Reasoning model for deliberate analysis, multi-step problem solving, and tool use",
+        vendor: "OpenCode",
+      },
+      {
+        id: "opencode/deepseek-v4-flash-free",
+        label: "DeepSeek V4 Flash Free",
+        description:
+          "Official DeepSeek V4 Flash release with enhanced agentic capabilities and integrated DSpark speculative decoding",
+        vendor: "DeepSeek",
+      },
+      {
+        id: "opencode/laguna-s-2.1-free",
+        label: "Laguna S 2.1 Free",
+        description:
+          "Agentic coding model from Poolside in the XS size class for local deployment",
+        vendor: "Poolside",
+      },
+      {
+        id: "opencode/ling-3.0-tiny-free",
+        label: "Ling-3.0-tiny Free",
+        description:
+          "Compact MoE model for responsive agents, instruction following, and multi-turn conversations",
+        vendor: "InclusionAI",
+      },
+      {
+        id: "opencode/longcat-2.0-free",
+        label: "LongCat-2.0 Free",
+        description:
+          "Meituan LongCat-2.0, a reasoning model with tool calling and a 1M-token context window",
+        vendor: "Meituan",
+      },
+      {
+        id: "opencode/mimo-v2.5-free",
+        label: "MiMo V2.5 Free",
+        description: "MiMo omni model for text, image, video, audio, and agents",
+        vendor: "Xiaomi",
+      },
+      {
+        id: "opencode/nemotron-3-ultra-free",
+        label: "Nemotron 3 Ultra Free",
+        description:
+          "Largest Nemotron 3 model for maximum open-weight reasoning and agent accuracy",
+        vendor: "NVIDIA",
+      },
+      {
+        id: "opencode/north-mini-code-free",
+        label: "North Mini Code Free",
+        description:
+          "Cohere coding model for practical software engineering and agentic edits",
+        vendor: "Cohere",
+        recommended: true,
+      },
+    ],
     // opencode run --help DOES list --variant (provider-specific reasoning
     // effort, e.g. high, max, minimal), but its accepted values vary per
     // underlying model and are not enumerated anywhere. Left empty until they
@@ -265,25 +371,39 @@ const PROVIDERS = [
     binEnv: "CODER_KIMI_BIN",
     defaultBin: "kimi",
     supportsResume: true,
-    models: ["k3", "kimi-for-coding", "kimi-for-coding-highspeed"],
+    // From `kimi provider list --json` / ~/.kimi-code/config.toml managed
+    // provider (4 models). Ids are the `model` field values accepted by -m
+    // (aliases also exist as kimi-code/<id>). Labels from display_name.
+    models: [
+      "k3",
+      "k3-256k",
+      "kimi-for-coding",
+      "kimi-for-coding-highspeed",
+    ],
     modelInfo: [
       {
         id: "k3",
         label: "K3",
-        description: "Default Kimi coding model",
+        description: "Default Kimi coding model (1M context)",
         vendor: "Moonshot",
         recommended: true,
       },
       {
+        id: "k3-256k",
+        label: "K3-256k",
+        description: "K3 with a 256k context window",
+        vendor: "Moonshot",
+      },
+      {
         id: "kimi-for-coding",
-        label: "Kimi for Coding",
-        description: "Coding-tuned Kimi",
+        label: "K2.7 Coding",
+        description: "Coding-tuned Kimi (K2.7)",
         vendor: "Moonshot",
       },
       {
         id: "kimi-for-coding-highspeed",
-        label: "Kimi for Coding (high speed)",
-        description: "Faster coding-tuned Kimi",
+        label: "K2.7 Coding Highspeed",
+        description: "Faster coding-tuned Kimi (K2.7)",
         vendor: "Moonshot",
       },
     ],

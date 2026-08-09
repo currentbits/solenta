@@ -452,28 +452,70 @@ describe("services", () => {
           }),
         /unknown provider/i,
       );
+      // A phase model now goes through the same rule as setProvider, so an
+      // unlisted id is accepted. What is still refused is a malformed one.
       assert.throws(
         () =>
           services.saveTemplate(store, {
             name: "X",
-            phases: [validPhase({ model: "not-a-real-claude-model" })],
+            phases: [validPhase({ model: "x".repeat(101) })],
           }),
-        /model list/i,
+        /100 characters/i,
       );
     });
 
-    it("saveTemplate allows any model when provider models list is empty", () => {
-      const saved = services.saveTemplate(store, {
-        name: "Codex model free",
+    it("saveTemplate STORES the normalized model, not the raw string", () => {
+      // The validator normalized and threw the result away, so a padded id was
+      // stored padded and " " + 100 chars + " " passed the length guard and
+      // then stored 102 characters, defeating the guard it had just passed.
+      const padded = services.saveTemplate(store, {
+        name: "Padded model",
+        phases: [
+          validPhase({ name: "c", provider: "codex", model: "  gpt-5.5  " }),
+        ],
+      });
+      assert.equal(padded.phases[0].model, "gpt-5.5");
+
+      const long = services.saveTemplate(store, {
+        name: "Long model",
         phases: [
           validPhase({
             name: "c",
             provider: "codex",
-            model: "whatever-model",
+            model: " " + "m".repeat(100) + " ",
           }),
         ],
       });
-      assert.equal(saved.phases[0].model, "whatever-model");
+      assert.equal(
+        long.phases[0].model.length,
+        100,
+        "the stored id must respect the limit it was validated against",
+      );
+    });
+
+    it("saveTemplate accepts listed AND custom codex models", () => {
+      // Templates share setProvider's rule. Before this they diverged: filling
+      // codex's model list made phases stricter than main while setProvider got
+      // looser, so a template saved with a custom id threw on a no-op re-save.
+      const saved = services.saveTemplate(store, {
+        name: "Codex listed model",
+        phases: [
+          validPhase({ name: "c", provider: "codex", model: "gpt-5.5" }),
+        ],
+      });
+      assert.equal(saved.phases[0].model, "gpt-5.5");
+
+      const custom = services.saveTemplate(store, {
+        name: "Codex custom model",
+        phases: [
+          validPhase({ name: "c", provider: "codex", model: "gpt-6-preview" }),
+        ],
+      });
+      assert.equal(
+        custom.phases[0].model,
+        "gpt-6-preview",
+        "a phase must accept an id the published list does not know",
+      );
     });
 
     it("saveTemplate of builtin creates copy; remove rejects builtin", () => {

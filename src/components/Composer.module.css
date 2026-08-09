@@ -313,6 +313,21 @@
   border-radius: 6px;
 }
 
+.modelGroupHeading {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  padding: 10px 10px 4px;
+  pointer-events: none;
+  user-select: none;
+}
+
+.modelGroupHeading:first-child {
+  padding-top: 2px;
+}
+
 .modelRow {
   display: flex;
   flex-direction: column;
@@ -340,8 +355,8 @@
   line-height: 1.3;
 }
 
-.modelRow:hover,
-.modelRow[data-highlighted="true"] {
+.modelRow:hover:not(:disabled):not([data-disabled="true"]),
+.modelRow[data-highlighted="true"]:not(:disabled):not([data-disabled="true"]) {
   background: rgba(255, 255, 255, 0.06);
   color: var(--text);
 }
@@ -358,6 +373,19 @@
 .modelRow[data-selected="true"][data-highlighted="true"] {
   background: var(--green-soft);
   color: var(--green);
+}
+
+.modelRow[data-disabled="true"],
+.modelRow:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  color: var(--text-dim);
+}
+
+.modelRow[data-disabled="true"]:hover,
+.modelRow:disabled:hover {
+  background: transparent;
+  color: var(--text-dim);
 }
 
 .detailLabel {
@@ -479,4 +507,43 @@
 
 .chipMono {
   font-family: var(--mono);
+}
+
+/* Free-text model entry: the published list is a suggestion, so a user must be
+   able to name an id it does not know yet. */
+.customModelWrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.customModelInput {
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--input-bg, rgba(255, 255, 255, 0.04));
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.customModelActions {
+  display: flex;
+  gap: 6px;
+}
+
+.customModelBtn {
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.customModelBtn:disabled {
+  opacity: 0.5;
 }

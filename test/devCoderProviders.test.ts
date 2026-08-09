@@ -7,7 +7,7 @@ import { describe, it } from "node:test";
 import { createDevCoder } from "../src/devCoder.ts";
 
 describe("providers.list", () => {
-  it("returns claude/codex/opencode available, grok unavailable, claude models only", async () => {
+  it("returns claude/codex/opencode available, grok unavailable, with each provider's models", async () => {
     const api = createDevCoder();
     const list = await api.providers.list();
     const byId = Object.fromEntries(list.map((p) => [p.id, p]));
@@ -22,14 +22,22 @@ describe("providers.list", () => {
     ]);
 
     assert.equal(byId.codex?.available, true);
-    assert.deepEqual(byId.codex?.models, []);
+    // Every provider now offers models; the dev harness mirrors the real
+    // registry, so an empty list here means the two have drifted apart again.
+    assert.ok(
+      (byId.codex?.models.length ?? 0) > 0,
+      "codex must offer models in dev, as it does in production",
+    );
 
     assert.equal(byId.grok?.available, false);
     assert.equal(byId.grok?.name, "Grok");
-    assert.deepEqual(byId.grok?.models, []);
+    assert.deepEqual(byId.grok?.models, ["grok-4.5"]);
 
     assert.equal(byId.opencode?.available, true);
-    assert.deepEqual(byId.opencode?.models, []);
+    assert.ok(
+      (byId.opencode?.models.length ?? 0) > 0,
+      "opencode must offer models in dev, as it does in production",
+    );
   });
 });
 
@@ -109,73 +117,86 @@ describe("threads.setProvider", () => {
     assert.ok(updated.sessionId);
   });
 
-  it("accepts custom non-empty model for providers with empty models list", async () => {
+  it("accepts a custom model id that the published list does not know", async () => {
+    // The list is a suggestion, not an allowlist: it is a snapshot of the CLI's
+    // catalogue and goes stale when a new model ships. Blocking an unlisted id
+    // would stop a user reaching a model their CLI already supports.
     const api = createDevCoder();
     const projects = await api.projects.list();
     const t = await api.threads.create({
-      projectId: projects[0]!.id,
-      title: "T",
+      projectId: projects[0].id,
+      title: "custom model",
     });
-    await api.threads.setProvider({ threadId: t.id, provider: "codex" });
-    const updated = await api.threads.setProvider({
-      threadId: t.id,
-      model: "o3",
-    });
-    assert.equal(updated.provider, "codex");
-    assert.equal(updated.model, "o3");
-  });
-
-  it("trims custom models and rejects empty or over-long for empty-list providers", async () => {
-    const api = createDevCoder();
-    const projects = await api.projects.list();
-    const t = await api.threads.create({
-      projectId: projects[0]!.id,
-      title: "T",
-    });
-    await api.threads.setProvider({ threadId: t.id, provider: "codex" });
-
-    const trimmed = await api.threads.setProvider({
-      threadId: t.id,
-      model: "  gpt-5.1-codex  ",
-    });
-    assert.equal(trimmed.model, "gpt-5.1-codex");
-
-    await assert.rejects(
-      () =>
-        api.threads.setProvider({
-          threadId: t.id,
-          model: "   ",
-        }),
-      /Model must be a non-empty string/,
-    );
-
-    await assert.rejects(
-      () =>
-        api.threads.setProvider({
-          threadId: t.id,
-          model: "x".repeat(101),
-        }),
-      /Model must be at most 100 characters/,
-    );
-  });
-
-  it("keeps a valid custom model when switching to an empty-list provider", async () => {
-    const api = createDevCoder();
-    const projects = await api.projects.list();
-    const t = await api.threads.create({
-      projectId: projects[0]!.id,
-      title: "T",
-    });
-    const updated = await api.threads.setProvider({
+    const set = await api.threads.setProvider({
       threadId: t.id,
       provider: "codex",
-      model: "o4-mini",
+      model: "gpt-6-unreleased",
     });
-    assert.equal(updated.provider, "codex");
-    assert.equal(updated.model, "o4-mini");
+    assert.equal(
+      set.model,
+      "gpt-6-unreleased",
+      "an id outside the snapshot must still be accepted",
+    );
   });
 
-  it("rejects model not in a non-empty models list", async () => {
+  it("trims a model id and rejects empty", async () => {
+    const api = createDevCoder();
+    const projects = await api.projects.list();
+    const t = await api.threads.create({
+      projectId: projects[0].id,
+      title: "trim rules",
+    });
+    const ok = await api.threads.setProvider({
+      threadId: t.id,
+      provider: "codex",
+      model: "  gpt-5.5  ",
+    });
+    assert.equal(ok.model, "gpt-5.5", "a padded id must be trimmed, not rejected");
+    await assert.rejects(
+      () =>
+        api.threads.setProvider({
+          threadId: t.id,
+          provider: "codex",
+          model: "   ",
+        }),
+      /non-empty/,
+    );
+  });
+
+  it("keeps a listed model when switching provider", async () => {
+    const api = createDevCoder();
+    const projects = await api.projects.list();
+    const t = await api.threads.create({
+      projectId: projects[0].id,
+      title: "switch rules",
+    });
+    const set = await api.threads.setProvider({
+      threadId: t.id,
+      provider: "codex",
+      model: "gpt-5.5",
+    });
+    assert.equal(set.model, "gpt-5.5");
+  });
+
+  it("accepts an unlisted model rather than blocking the user", async () => {
+    // Was: rejects a model outside the list. The list is now a suggestion, so
+    // an id our snapshot does not know still reaches the CLI, which is the
+    // thing that can authoritatively reject it.
+    const api = createDevCoder();
+    const projects = await api.projects.list();
+    const t = await api.threads.create({
+      projectId: projects[0]!.id,
+      title: "T",
+    });
+    const set = await api.threads.setProvider({
+      threadId: t.id,
+      model: "claude-something-new-5",
+    });
+    assert.equal(set.model, "claude-something-new-5");
+  });
+
+  it("still rejects an empty or over-long model id", async () => {
+    // Suggestions, not anarchy: the guards that protect argv still apply.
     const api = createDevCoder();
     const projects = await api.projects.list();
     const t = await api.threads.create({
@@ -183,12 +204,13 @@ describe("threads.setProvider", () => {
       title: "T",
     });
     await assert.rejects(
+      () => api.threads.setProvider({ threadId: t.id, model: "   " }),
+      /non-empty/i,
+    );
+    await assert.rejects(
       () =>
-        api.threads.setProvider({
-          threadId: t.id,
-          model: "not-a-claude-model",
-        }),
-      /not in provider|model list|not supported/i,
+        api.threads.setProvider({ threadId: t.id, model: "x".repeat(101) }),
+      /100 characters/i,
     );
   });
 
@@ -216,20 +238,24 @@ describe("threads.setProvider", () => {
     );
   });
 
-  it("clears model to default (null) for empty-list providers", async () => {
+  it("clears model to default (null)", async () => {
     const api = createDevCoder();
     const projects = await api.projects.list();
     const t = await api.threads.create({
-      projectId: projects[0]!.id,
-      title: "T",
+      projectId: projects[0].id,
+      title: "clear rules",
     });
-    await api.threads.setProvider({ threadId: t.id, provider: "codex" });
-    await api.threads.setProvider({ threadId: t.id, model: "o3" });
+    await api.threads.setProvider({
+      threadId: t.id,
+      provider: "codex",
+      model: "gpt-5.5",
+    });
     const cleared = await api.threads.setProvider({
       threadId: t.id,
+      provider: "codex",
       model: null,
     });
-    assert.equal(cleared.model, null);
+    assert.equal(cleared.model, null, "null must mean the provider default");
   });
 
   it("does not bump updatedAt on setProvider", async () => {

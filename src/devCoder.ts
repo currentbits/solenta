@@ -193,19 +193,51 @@ const DEV_PROVIDERS: ProviderInfo[] = [
     name: "Codex",
     available: true,
     supportsResume: true,
-    models: [],
-    modelInfo: [],
-    // No verified --effort flag in the dev stand-in; hide the control.
-    efforts: [],
+    models: ["gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4-mini"],
+    modelInfo: [
+      {
+        id: "gpt-5.6-terra",
+        label: "GPT-5.6-Terra",
+        description: "Balanced agentic coding model for everyday work.",
+        vendor: "OpenAI",
+      },
+      {
+        id: "gpt-5.6-luna",
+        label: "GPT-5.6-Luna",
+        description: "Fast and affordable agentic coding model.",
+        vendor: "OpenAI",
+      },
+      {
+        id: "gpt-5.5",
+        label: "GPT-5.5",
+        description: "Frontier model for complex coding, research, and real-world work.",
+        vendor: "OpenAI",
+        recommended: true,
+      },
+      {
+        id: "gpt-5.4-mini",
+        label: "GPT-5.4-Mini",
+        description: "Small, fast, and cost-efficient model for simpler coding tasks.",
+        vendor: "OpenAI",
+      },
+    ],
+    efforts: ["low", "medium", "high", "xhigh", "max"],
   },
   {
     id: "grok",
     name: "Grok",
     available: false,
     supportsResume: false,
-    models: [],
-    modelInfo: [],
-    // grok --reasoning-effort: low, medium, high only (three segments).
+    models: ["grok-4.5"],
+    modelInfo: [
+      {
+        id: "grok-4.5",
+        label: "Grok 4.5",
+        description: "xAI coding agent with tool use",
+        vendor: "xAI",
+        recommended: true,
+      },
+    ],
     efforts: ["low", "medium", "high"],
   },
   {
@@ -213,8 +245,58 @@ const DEV_PROVIDERS: ProviderInfo[] = [
     name: "OpenCode",
     available: true,
     supportsResume: false,
-    models: [],
-    modelInfo: [],
+    models: ["opencode/big-pickle", "opencode/deepseek-v4-flash-free", "opencode/laguna-s-2.1-free", "opencode/ling-3.0-tiny-free", "opencode/longcat-2.0-free", "opencode/mimo-v2.5-free", "opencode/nemotron-3-ultra-free", "opencode/north-mini-code-free"],
+    modelInfo: [
+      {
+        id: "opencode/big-pickle",
+        label: "Big Pickle",
+        description: "Reasoning model for deliberate analysis, multi-step problem solving, and tool use",
+        vendor: "OpenCode",
+      },
+      {
+        id: "opencode/deepseek-v4-flash-free",
+        label: "DeepSeek V4 Flash Free",
+        description: "Official DeepSeek V4 Flash release with enhanced agentic capabilities and integrated DSpark speculative decoding",
+        vendor: "DeepSeek",
+      },
+      {
+        id: "opencode/laguna-s-2.1-free",
+        label: "Laguna S 2.1 Free",
+        description: "Agentic coding model from Poolside in the XS size class for local deployment",
+        vendor: "Poolside",
+      },
+      {
+        id: "opencode/ling-3.0-tiny-free",
+        label: "Ling-3.0-tiny Free",
+        description: "Compact MoE model for responsive agents, instruction following, and multi-turn conversations",
+        vendor: "InclusionAI",
+      },
+      {
+        id: "opencode/longcat-2.0-free",
+        label: "LongCat-2.0 Free",
+        description: "Meituan LongCat-2.0, a reasoning model with tool calling and a 1M-token context window",
+        vendor: "Meituan",
+      },
+      {
+        id: "opencode/mimo-v2.5-free",
+        label: "MiMo V2.5 Free",
+        description: "MiMo omni model for text, image, video, audio, and agents",
+        vendor: "Xiaomi",
+      },
+      {
+        id: "opencode/nemotron-3-ultra-free",
+        label: "Nemotron 3 Ultra Free",
+        description: "Largest Nemotron 3 model for maximum open-weight reasoning and agent accuracy",
+        vendor: "NVIDIA",
+      },
+      {
+        id: "opencode/north-mini-code-free",
+        label: "North Mini Code Free",
+        description: "Cohere coding model for practical software engineering and agentic edits",
+        vendor: "Cohere",
+        recommended: true,
+      },
+    ],
     efforts: [],
   },
 ];
@@ -1898,15 +1980,10 @@ function buildDevCoder(): CoderApi {
             throw new Error("Model must be a non-empty string");
           }
           const entry = DEV_PROVIDERS.find((p) => p.id === providerId);
-          const models = entry?.models ?? [];
-          if (models.length > 0) {
-            if (!models.includes(trimmed)) {
-              throw new Error(
-                `Model "${trimmed}" is not in provider ${providerId}'s model list`,
-              );
-            }
-            return trimmed;
-          }
+          // Mirrors services.normalizeModelForProvider: the published list is
+          // a suggestion, not an allowlist, so an id the snapshot does not
+          // know is still accepted and reaches the CLI.
+          void entry;
           if (trimmed.length > 100) {
             throw new Error("Model must be at most 100 characters");
           }

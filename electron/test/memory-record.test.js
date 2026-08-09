@@ -601,7 +601,7 @@ process.exit(0);
   });
 });
 
-describe("codex custom model flows into -m", () => {
+describe("codex listed model flows into -m", () => {
   let tmpDir;
   let store;
   let runner;
@@ -655,7 +655,7 @@ process.exit(0);
     services.setProvider(store, {
       threadId: thread.id,
       provider: "codex",
-      model: "my-custom-codex-model",
+      model: "gpt-5.5",
     });
   });
 
@@ -671,14 +671,14 @@ process.exit(0);
     delete process.env.CODER_FAKE_CODEX_ARGV_FILE;
   });
 
-  it("passes -m <custom model> for codex", async () => {
+  it("passes -m <listed model> for codex", async () => {
     const thread = store.getThreads()[0];
-    assert.equal(thread.model, "my-custom-codex-model");
+    assert.equal(thread.model, "gpt-5.5");
     await runner.startRun({ threadId: thread.id, prompt: "hi" });
     await waitFor(() => store.getThread(thread.id).status === "done");
     const argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
     const idx = argv.indexOf("-m");
     assert.ok(idx >= 0, `expected -m in ${JSON.stringify(argv)}`);
-    assert.equal(argv[idx + 1], "my-custom-codex-model");
+    assert.equal(argv[idx + 1], "gpt-5.5");
   });
 });

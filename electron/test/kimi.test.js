@@ -216,6 +216,7 @@ describe("kimi provider buildArgs", () => {
     assert.equal(entry.supportsResume, true);
     assert.deepEqual(entry.models, [
       "k3",
+      "k3-256k",
       "kimi-for-coding",
       "kimi-for-coding-highspeed",
     ]);
