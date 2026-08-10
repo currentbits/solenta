@@ -169,12 +169,50 @@ function ensureWorkflowTemplates(data) {
  * Does not change updatedAt.
  * @param {object} t
  */
+/**
+ * Kimi model ids shipped briefly as bare config values ("k3"), but -m only
+ * accepts the [models."..."] alias keys ("kimi-code/k3"); bare ids fail every
+ * run with config.invalid. Prefix exactly the four ids we shipped — a custom
+ * id the user typed is theirs to own.
+ */
+const BARE_KIMI_MODELS = new Set([
+  "k3",
+  "k3-256k",
+  "kimi-for-coding",
+  "kimi-for-coding-highspeed",
+]);
+
+function migrateKimiModel(t) {
+  if (t.provider !== "kimi") return t.model !== undefined ? t.model : null;
+  return typeof t.model === "string" && BARE_KIMI_MODELS.has(t.model)
+    ? `kimi-code/${t.model}`
+    : t.model !== undefined
+      ? t.model
+      : null;
+}
+
+/** Template phases carry {provider, model} and break the same way. */
+function migrateTemplateKimiModels(tpl) {
+  if (!tpl || !Array.isArray(tpl.phases)) return tpl;
+  return {
+    ...tpl,
+    phases: tpl.phases.map((p) =>
+      p &&
+      p.provider === "kimi" &&
+      typeof p.model === "string" &&
+      BARE_KIMI_MODELS.has(p.model)
+        ? { ...p, model: `kimi-code/${p.model}` }
+        : p,
+    ),
+  };
+}
+
 function migrateThread(t) {
   if (!t || typeof t !== "object") return t;
   return {
     ...t,
     provider: t.provider != null ? t.provider : "claude",
-    model: t.model !== undefined ? t.model : null,
+    model: migrateKimiModel(t),
     sessionId: t.sessionId !== undefined ? t.sessionId : null,
     permissionMode: t.permissionMode != null ? t.permissionMode : "default",
     // Older stores lack reasoningEffort; null (not undefined) so the picker is stable.
@@ -261,7 +299,7 @@ class Store {
             ? parsed.usageByThread
             : {},
         workflowTemplates: Array.isArray(parsed.workflowTemplates)
-          ? parsed.workflowTemplates
+          ? parsed.workflowTemplates.map(migrateTemplateKimiModels)
           : [],
         spendByDay: normalizeSpendByDay(parsed.spendByDay),
         settings: normalizeSettings(parsed.settings),

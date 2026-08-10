@@ -84,10 +84,10 @@ describe("providers registry", () => {
     assert.equal(kimi.supportsResume, true);
     assert.equal(kimi.name, "Kimi Code");
     assert.deepEqual(kimi.models, [
-      "k3",
-      "k3-256k",
-      "kimi-for-coding",
-      "kimi-for-coding-highspeed",
+      "kimi-code/k3",
+      "kimi-code/k3-256k",
+      "kimi-code/kimi-for-coding",
+      "kimi-code/kimi-for-coding-highspeed",
     ]);
   });
 

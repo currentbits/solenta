@@ -215,10 +215,11 @@ describe("kimi provider buildArgs", () => {
     assert.equal(entry.kind, "kimi-stream");
     assert.equal(entry.supportsResume, true);
     assert.deepEqual(entry.models, [
-      "k3",
-      "k3-256k",
-      "kimi-for-coding",
-      "kimi-for-coding-highspeed",
+      // Alias keys: bare model values fail -m with config.invalid.
+      "kimi-code/k3",
+      "kimi-code/k3-256k",
+      "kimi-code/kimi-for-coding",
+      "kimi-code/kimi-for-coding-highspeed",
     ]);
 
     const base = entry.buildArgs({ prompt: "hi", permissionMode: "default" });
@@ -232,11 +233,11 @@ describe("kimi provider buildArgs", () => {
 
     const withModel = entry.buildArgs({
       prompt: "p",
-      model: "kimi-for-coding",
+      model: "kimi-code/kimi-for-coding",
     });
     const mIdx = withModel.indexOf("-m");
     assert.ok(mIdx >= 0);
-    assert.equal(withModel[mIdx + 1], "kimi-for-coding");
+    assert.equal(withModel[mIdx + 1], "kimi-code/kimi-for-coding");
 
     const accept = entry.buildArgs({
       prompt: "p",
@@ -426,7 +427,7 @@ describe("kimi runner integration", () => {
     const thread = store.getThreads()[0];
     store.updateThread(thread.id, {
       permissionMode: "acceptEdits",
-      model: "kimi-for-coding-highspeed",
+      model: "kimi-code/kimi-for-coding-highspeed",
     });
     store.save();
 
@@ -437,7 +438,7 @@ describe("kimi runner integration", () => {
     assert.ok(argv.includes("-y"));
     const mIdx = argv.indexOf("-m");
     assert.ok(mIdx >= 0);
-    assert.equal(argv[mIdx + 1], "kimi-for-coding-highspeed");
+    assert.equal(argv[mIdx + 1], "kimi-code/kimi-for-coding-highspeed");
   });
 
   it("bypassPermissions maps to --auto", async () => {
