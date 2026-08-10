@@ -61,11 +61,12 @@ export function isRowSelected(
 }
 
 /**
- * Copy for the session-lock case. Matches the old provider-pill explanation so
- * users hear one rule in both places.
+ * Copy for switching harness on a thread that already has a session. It is a
+ * warning, not a lock: the switch is allowed and drops the CLI session, which
+ * is not portable across harnesses. The thread and its transcript stay.
  */
-export function sessionLockReason(currentProviderName: string): string {
-  return `Session started with ${currentProviderName}. New thread to switch.`;
+export function sessionSwitchWarning(currentProviderName: string): string {
+  return `Switching from ${currentProviderName} starts a fresh session; the transcript stays.`;
 }
 
 /**
@@ -154,10 +155,9 @@ export function buildModelRows(
 }
 
 /**
- * Every provider's rows in registry order. Applies session lock: when
- * sessionLocked, rows whose providerId differs from currentProviderId are
- * disabled with the lock explanation; the current provider stays selectable
- * (unless its CLI is missing).
+ * Every provider's rows in registry order. When the thread has a session,
+ * other providers' rows stay selectable but carry the fresh-session warning
+ * as their tooltip; picking one drops the CLI session (backend clears it).
  */
 export function buildUnifiedModelRows(
   providers: readonly ProviderInfo[],
@@ -170,7 +170,7 @@ export function buildUnifiedModelRows(
     currentProviderName ??
     list.find((p) => p.id === currentProviderId)?.name ??
     currentProviderId;
-  const lockReason = sessionLockReason(lockName);
+  const warning = sessionSwitchWarning(lockName);
 
   const out: ModelRow[] = [];
   for (const provider of list) {
@@ -181,15 +181,10 @@ export function buildUnifiedModelRows(
         row.providerId !== currentProviderId &&
         !row.unavailable
       ) {
-        out.push({
-          ...row,
-          disabled: true,
-          disabledReason: lockReason,
-        });
-      } else if (sessionLocked && row.providerId !== currentProviderId) {
-        // Unavailable AND locked: keep unavailable copy (not installed).
-        out.push(row);
+        // Selectable, but warn: picking it drops the current CLI session.
+        out.push({ ...row, disabledReason: warning });
       } else {
+        // Unavailable rows keep their "not installed" copy.
         out.push(row);
       }
     }
@@ -422,15 +417,15 @@ export function buildProviderRows(
     currentProviderName ??
     list.find((p) => p.id === currentProviderId)?.name ??
     currentProviderId;
-  const lockReason = sessionLockReason(lockName);
+  const warning = sessionSwitchWarning(lockName);
 
   return list.map((p) => {
     const unavailable = p.available === false;
     const models = Array.isArray(p.models) ? p.models : [];
     const isCurrent = p.id === currentProviderId;
-    // A locked thread may still browse its OWN provider's models; entering
-    // another harness would break a session that can be resumed.
-    const locked = sessionLocked && !isCurrent && !unavailable;
+    // Switching harness on a session-bearing thread is allowed; it drops the
+    // CLI session (not portable), so the row warns instead of locking.
+    const switches = sessionLocked && !isCurrent && !unavailable;
     const summary =
       models.length === 0
         ? "Default only"
@@ -438,19 +433,14 @@ export function buildProviderRows(
     return {
       id: p.id,
       name: p.name,
-      // "locked" alone read as broken (why is Codex locked?); say the action.
-      badge: unavailable
-        ? "not installed"
-        : locked
-          ? "new thread to switch"
-          : summary,
+      badge: unavailable ? "not installed" : summary,
       summary,
       modelCount: models.length,
-      disabled: unavailable || locked,
+      disabled: unavailable,
       disabledReason: unavailable
         ? "not installed"
-        : locked
-          ? lockReason
+        : switches
+          ? warning
           : null,
       unavailable,
       current: isCurrent,
@@ -526,10 +516,10 @@ export function providerDetail(
       : `${count} model${count === 1 ? "" : "s"} to choose from.`;
   const state = row.unavailable
     ? " CLI not found on this machine."
-    : row.disabled
-      ? " Locked: this thread already has a session."
-      : row.current
-        ? " Current harness for this thread."
+    : row.current
+      ? " Current harness for this thread."
+      : row.disabledReason
+        ? ` ${row.disabledReason}`
         : "";
   return {
     providerId: row.id,

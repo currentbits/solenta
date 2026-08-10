@@ -1956,12 +1956,6 @@ function buildDevCoder(): CoderApi {
         const providerChanging =
           providerProvided && String(input.provider) !== String(thread.provider);
 
-        if (providerChanging && thread.sessionId) {
-          // Match electron/services.js setProvider exactly.
-          throw new Error(
-            `This thread already has a ${thread.provider} session. Create a new thread to switch providers.`,
-          );
-        }
 
         /**
          * Normalize/validate a model for the target provider.
@@ -1993,6 +1987,20 @@ function buildDevCoder(): CoderApi {
         // Provider/model bookkeeping is not "activity"; leave updatedAt alone.
         const patch: Partial<ThreadInfo> = {};
         if (providerProvided) patch.provider = String(input.provider);
+
+        if (
+          providerChanging &&
+          (thread.status === "working" || runTimers.has(input.threadId))
+        ) {
+          // Match electron/services.js setProvider exactly.
+          throw new Error("Cannot switch provider while a run is active");
+        }
+
+        if (providerChanging && thread.sessionId) {
+          // Match electron/services.js setProvider exactly: switching harness
+          // drops the session (not portable across CLIs); next send starts fresh.
+          patch.sessionId = null;
+        }
 
         if (providerChanging) {
           // Drop the old provider's model unless this call supplies one that

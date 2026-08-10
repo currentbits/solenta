@@ -54,15 +54,14 @@ describe("buildProviderRows", () => {
     );
   });
 
-  it("uses a SHORT badge on the row and keeps the reason for the tooltip", () => {
-    // The lock reason is a sentence. Rendering it on the row wrapped to three
-    // lines each, which made the list unreadable exactly when every row was
-    // locked. The row shows a word; the sentence goes in the title.
-    const locked = buildProviderRows(LIST, "claude", true);
-    const codex = locked.find((r) => r.id === "codex");
-    // "locked" alone read as broken; the badge now names the action.
-    assert.equal(codex?.badge, "new thread to switch");
-    assert.match(String(codex?.disabledReason), /claude code/i);
+  it("uses a SHORT badge on the row and keeps the warning for the tooltip", () => {
+    // The switch warning is a sentence. Rendering it on the row wrapped to
+    // three lines each. The row shows its model count; the sentence goes in
+    // the title.
+    const withSession = buildProviderRows(LIST, "claude", true);
+    const codex = withSession.find((r) => r.id === "codex");
+    assert.equal(codex?.badge, "1 model", "the badge stays the model count");
+    assert.match(String(codex?.disabledReason), /fresh session/i);
     assert.ok(
       String(codex?.disabledReason).length > String(codex?.badge).length,
       "the tooltip must carry more than the badge",
@@ -84,14 +83,16 @@ describe("buildProviderRows", () => {
     assert.equal(grok?.disabledReason, "not installed");
   });
 
-  it("locks other providers once the thread has a session, never its own", () => {
-    // Entering another harness mid-session breaks a resumable conversation.
+  it("warns on other providers once the thread has a session, never its own", () => {
+    // Switching harness drops the CLI session (not portable), so the row
+    // stays selectable and says what picking it costs.
     const rows = buildProviderRows(LIST, "claude", true);
     const claude = rows.find((r) => r.id === "claude");
     const codex = rows.find((r) => r.id === "codex");
     assert.equal(claude?.disabled, false, "the current provider stays open");
-    assert.equal(codex?.disabled, true, "other providers are locked");
-    assert.match(String(codex?.disabledReason), /claude code/i);
+    assert.equal(codex?.disabled, false, "other providers stay selectable");
+    assert.match(String(codex?.disabledReason), /fresh session/i);
+    assert.equal(claude?.disabledReason, null, "no warning on its own row");
   });
 
   it("marks exactly one row as current", () => {
@@ -186,12 +187,19 @@ describe("providerDetail", () => {
     assert.match(d?.description ?? "", /CLI not found/);
   });
 
-  it("says a provider is locked by the session", () => {
-    const locked = rows("claude", true);
-    const at = locked.findIndex((r) => r.id === "codex");
-    const d = providerDetail(locked, at, LIST);
-    assert.match(d?.description ?? "", /Locked/);
-    assert.match(d?.description ?? "", /session/);
+  it("warns that switching harness starts a fresh session", () => {
+    const withSession = rows("claude", true);
+    const at = withSession.findIndex((r) => r.id === "codex");
+    const d = providerDetail(withSession, at, LIST);
+    assert.match(d?.description ?? "", /fresh session/i);
+    assert.equal(d?.vendor, "harness", "a warned row is not disabled copy");
+    // Its own provider carries no warning.
+    const own = providerDetail(
+      withSession,
+      withSession.findIndex((r) => r.id === "claude"),
+      LIST,
+    );
+    assert.doesNotMatch(own?.description ?? "", /fresh session/i);
   });
 
   it("says when a provider offers no model choice", () => {
