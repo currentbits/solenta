@@ -863,9 +863,17 @@ async function startWorkflowRun(deps) {
     title = firstLine.slice(0, 60) || "New Thread";
   }
 
+  // Real activity clears a stale "settled" pin (same as startRun). An
+  // "active" pin survives. Without this, a workflow on a settled thread
+  // re-folds the moment the run finishes.
   store.updateThread(
     threadId,
-    { status: "working", title, runStartedAt: Date.now() },
+    {
+      status: "working",
+      title,
+      runStartedAt: Date.now(),
+      ...services.clearSettledOnActivity(thread),
+    },
     { touch: true },
   );
 

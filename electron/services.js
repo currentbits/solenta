@@ -374,6 +374,22 @@ function setArchived(store, input) {
 const SETTLE_OVERRIDES = new Set(["settled", "active", null]);
 
 /**
+ * Patch fields that clear a stale settle pin when real activity starts
+ * (startRun or startWorkflow). A "settled" override is cleared so the
+ * thread does not re-fold the moment the run ends; an "active" pin is
+ * left alone so the user can keep a thread out of auto-settle.
+ *
+ * @param {{ settledOverride?: string | null } | null | undefined} thread
+ * @returns {{ settledOverride: null, settledAt: null } | {}}
+ */
+function clearSettledOnActivity(thread) {
+  if (thread && thread.settledOverride === "settled") {
+    return { settledOverride: null, settledAt: null };
+  }
+  return {};
+}
+
+/**
  * Set or clear the settle override (t3-style). Does not bump updatedAt:
  * settling is bookkeeping, and bumping would push the thread to the top of
  * a list it is leaving.
@@ -793,6 +809,7 @@ module.exports = {
   setProvider,
   setArchived,
   setSettled,
+  clearSettledOnActivity,
   deleteThread,
   listThreads,
   searchThreads,

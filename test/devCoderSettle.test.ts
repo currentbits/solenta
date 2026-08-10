@@ -85,6 +85,34 @@ describe("threads.setSettled (devCoder)", () => {
     assert.equal(detail.thread.settledAt, pinnedAt);
   });
 
+  it("startWorkflow clears a settled pin and preserves an active pin", async () => {
+    const { api, threadId } = await idleThread();
+    await api.threads.setSettled({ threadId, override: "settled" });
+    await api.runs.startWorkflow({
+      threadId,
+      prompt: "workflow after settle",
+    });
+    let detail = await api.threads.get(threadId);
+    assert.equal(detail.thread.status, "working");
+    assert.equal(
+      detail.thread.settledOverride,
+      null,
+      "startWorkflow must clear a settled pin",
+    );
+    assert.equal(detail.thread.settledAt, null);
+
+    await api.runs.stop({ threadId });
+    await api.threads.setSettled({ threadId, override: "active" });
+    const pinnedAt = (await api.threads.get(threadId)).thread.settledAt;
+    await api.runs.startWorkflow({
+      threadId,
+      prompt: "workflow keep active",
+    });
+    detail = await api.threads.get(threadId);
+    assert.equal(detail.thread.settledOverride, "active");
+    assert.equal(detail.thread.settledAt, pinnedAt);
+  });
+
   it("createPr stamps prState on the thread", async () => {
     const api = createDevCoder();
     const projects = await api.projects.list();

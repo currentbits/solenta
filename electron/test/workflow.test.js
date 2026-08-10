@@ -454,6 +454,55 @@ describe("workflow orchestration", () => {
     else process.env.CODER_WF_TRAP_SIGTERM = prevTrap;
   });
 
+  it("startWorkflowRun clears a settled override but preserves an active pin", async () => {
+    const thread = store.getThreads()[0];
+    services.setSettled(store, {
+      threadId: thread.id,
+      override: "settled",
+    });
+    assert.equal(store.getThread(thread.id).settledOverride, "settled");
+    assert.ok(store.getThread(thread.id).settledAt != null);
+
+    await runner.startWorkflowRun({
+      threadId: thread.id,
+      prompt: "workflow after settle",
+    });
+    const afterSettled = store.getThread(thread.id);
+    assert.equal(afterSettled.status, "working");
+    assert.equal(
+      afterSettled.settledOverride,
+      null,
+      "startWorkflowRun must clear a settled pin",
+    );
+    assert.equal(afterSettled.settledAt, null);
+
+    await runner.stopRun({ threadId: thread.id });
+    await waitFor(() => {
+      const t = store.getThread(thread.id);
+      return t && t.status !== "working";
+    });
+
+    services.setSettled(store, {
+      threadId: thread.id,
+      override: "active",
+    });
+    const pinnedAt = store.getThread(thread.id).settledAt;
+    assert.equal(store.getThread(thread.id).settledOverride, "active");
+
+    await runner.startWorkflowRun({
+      threadId: thread.id,
+      prompt: "workflow keep active",
+    });
+    const afterActive = store.getThread(thread.id);
+    assert.equal(afterActive.status, "working");
+    assert.equal(
+      afterActive.settledOverride,
+      "active",
+      "an active pin must survive workflow start",
+    );
+    assert.equal(afterActive.settledAt, pinnedAt);
+  });
+
   it("happy path (standard template): phase order, concurrent analyze, dossiers, usage", async () => {
     const thread = store.getThreads()[0];
     assert.equal(typeof runner.startWorkflowRun, "function");

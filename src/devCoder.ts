@@ -2287,11 +2287,16 @@ function buildDevCoder(): CoderApi {
           thread = { ...thread, sessionId: id("sess") };
         }
 
+        // Real activity clears a stale "settled" pin (match electron/workflow.js).
+        // An explicit "active" pin survives.
         thread = {
           ...thread,
           status: "working",
           updatedAt: t,
           runStartedAt: t,
+          ...(thread.settledOverride === "settled"
+            ? { settledOverride: null, settledAt: null }
+            : {}),
         };
         detail.thread = thread;
 
