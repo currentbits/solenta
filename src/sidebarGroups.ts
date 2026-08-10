@@ -1,6 +1,7 @@
 import type { ProjectInfo, ThreadInfo } from "./shared/ipc";
 import {
   AUTO_SETTLE_AFTER_DAYS,
+  compareSettledNewestFirst,
   effectiveSettled,
   type SettleOpts,
 } from "./threadSettle";
@@ -13,13 +14,8 @@ export interface SidebarGroup {
 export type { SettleOpts };
 
 /**
- * Split a group's non-archived threads into the ones that still want
- * attention and the ones that settled.
- *
- * Resolution is effectiveSettled (t3-style): override, PR state, then
- * inactivity — not status==="done". Archived is a separate, stronger state
- * with its own toggle; the split still runs on the non-archived list only
- * so a done+archived thread never appears in both folds.
+ * Split non-archived threads into attention vs settled.
+ * Order within each side is preserved (caller sorts first when needed).
  */
 export function splitSettled(
   threads: readonly ThreadInfo[],
@@ -37,22 +33,40 @@ export function splitSettled(
 }
 
 /**
- * Counts for a group header, t3-style: "2 working · 5 settled".
- * Null when there is nothing to say (no threads at all).
- * Settled count uses the same resolution as the fold.
+ * Global partition for the round-40 sidebar layout (t3-style).
+ *
+ * - attentionThreads: non-archived threads with effectiveSettled false.
+ * - settled: one flat list of all non-archived settled threads across every
+ *   project, newest-settled first (resolveSettledTimestamp).
+ *
+ * Archived never enters the global settled tail (archived wins over settled).
+ * Project grouping is the caller's job (buildSidebarGroups on attention).
+ */
+export function partitionSidebar(
+  threads: readonly ThreadInfo[],
+  opts: SettleOpts,
+): {
+  attentionThreads: ThreadInfo[];
+  settled: ThreadInfo[];
+} {
+  const nonArchived = threads.filter((t) => !t.archived);
+  const { attention, settled } = splitSettled(nonArchived, opts);
+  const sortedSettled = [...settled].sort(compareSettledNewestFirst);
+  return { attentionThreads: attention, settled: sortedSettled };
+}
+
+/**
+ * Working-only summary for a project header: "2 working".
+ * Settled counts live on the global tail header now (round 40), not here.
+ * Null when there is nothing to say.
  */
 export function groupHeaderSummary(
   threads: readonly ThreadInfo[],
-  opts: SettleOpts,
 ): string | null {
   if (threads.length === 0) return null;
   const working = threads.filter((t) => t.status === "working").length;
-  const settled = threads.filter((t) => effectiveSettled(t, opts)).length;
-  const parts: string[] = [];
-  if (working > 0) parts.push(`${working} working`);
-  if (settled > 0) parts.push(`${settled} settled`);
-  if (parts.length === 0) return null;
-  return parts.join(" · ");
+  if (working > 0) return `${working} working`;
+  return null;
 }
 
 /** Default opts when a caller has no clock of its own (tests, pure helpers). */

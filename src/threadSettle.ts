@@ -6,6 +6,13 @@ import type { ThreadInfo } from "./shared/ipc";
  */
 export const AUTO_SETTLE_AFTER_DAYS = 3;
 
+/**
+ * Global settled tail paging (t3-style).
+ * Initial visible count when the tail is expanded; each "Show more" adds a page.
+ */
+export const SETTLED_TAIL_INITIAL_COUNT = 10;
+export const SETTLED_TAIL_PAGE_COUNT = 25;
+
 export interface SettleOpts {
   /** Epoch ms clock; Sidebar's existing `now` tick is the source. */
   now: number;
@@ -65,4 +72,21 @@ export function effectiveSettled(
   // quiet thread is a quiet thread. Freshly-done work stays visible until
   // this window (or PR/manual) moves it.
   return updatedAt < now - windowMs;
+}
+
+/**
+ * Single clock for settled rows: label and newest-first sort must agree.
+ * Prefer settledAt (when the pin/auto-settle took effect); fall back to
+ * updatedAt for threads that settled without an explicit pin timestamp.
+ * Malformed settledAt is ignored so a bad store value cannot invent order.
+ */
+export function resolveSettledTimestamp(thread: ThreadInfo): number {
+  const pin = thread.settledAt;
+  if (pin != null && Number.isFinite(pin)) return pin;
+  return thread.updatedAt;
+}
+
+/** Newest-settled first. Use with Array.sort. */
+export function compareSettledNewestFirst(a: ThreadInfo, b: ThreadInfo): number {
+  return resolveSettledTimestamp(b) - resolveSettledTimestamp(a);
 }

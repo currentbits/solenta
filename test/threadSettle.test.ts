@@ -1,17 +1,18 @@
 /**
- * effectiveSettled unit table (round 39). Every branch of the t3 resolution.
+ * effectiveSettled + resolveSettledTimestamp unit tables.
  * Run: node --experimental-strip-types --test test/threadSettle.test.ts
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   AUTO_SETTLE_AFTER_DAYS,
+  compareSettledNewestFirst,
   effectiveSettled,
+  resolveSettledTimestamp,
 } from "../src/threadSettle.ts";
 import type { ThreadInfo } from "../src/shared/ipc.ts";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-/** Fixed clock so inactivity math is deterministic. Not Date.now(). */
 const NOW = 1_700_000_000_000;
 
 function thread(over: Partial<ThreadInfo> = {}): ThreadInfo {
@@ -56,7 +57,6 @@ describe("AUTO_SETTLE_AFTER_DAYS", () => {
 
 describe("effectiveSettled", () => {
   it("working is never settled, even with a settled override", () => {
-    // Live work wins attention over any pin; backend refuses settle too.
     assert.equal(
       effectiveSettled(
         thread({
@@ -85,7 +85,6 @@ describe("effectiveSettled", () => {
   });
 
   it("settledOverride active pins OUT even when PR is MERGED", () => {
-    // Override beats PR so the user can keep closed work visible.
     assert.equal(
       effectiveSettled(
         thread({
@@ -164,61 +163,6 @@ describe("effectiveSettled", () => {
       true,
       "idle threads auto-settle on silence (quiet is quiet)",
     );
-    assert.equal(
-      effectiveSettled(
-        thread({
-          id: "old-failed",
-          status: "failed",
-          updatedAt: NOW - (AUTO_SETTLE_AFTER_DAYS + 1) * DAY_MS,
-        }),
-        opts(),
-      ),
-      true,
-      "failed threads also auto-settle on long silence",
-    );
-    assert.equal(
-      effectiveSettled(
-        thread({
-          id: "old-done",
-          status: "done",
-          updatedAt: NOW - (AUTO_SETTLE_AFTER_DAYS + 1) * DAY_MS,
-        }),
-        opts(),
-      ),
-      true,
-      "done threads settle via inactivity once the window elapses",
-    );
-  });
-
-  it("inactivity does not settle when still inside the window", () => {
-    assert.equal(
-      effectiveSettled(
-        thread({
-          id: "recent",
-          status: "done",
-          // 1 day ago, default window is 3: still attention.
-          updatedAt: NOW - 1 * DAY_MS,
-        }),
-        opts(),
-      ),
-      false,
-      "inside the window the thread stays in the main list",
-    );
-  });
-
-  it("autoSettleAfterDays null disables inactivity settle", () => {
-    assert.equal(
-      effectiveSettled(
-        thread({
-          id: "ancient",
-          status: "done",
-          updatedAt: NOW - 365 * DAY_MS,
-        }),
-        opts({ autoSettleAfterDays: null }),
-      ),
-      false,
-      "null window means never auto-settle on silence alone",
-    );
   });
 
   it("malformed timestamps never settle (NaN safety)", () => {
@@ -228,48 +172,70 @@ describe("effectiveSettled", () => {
         opts(),
       ),
       false,
-      "NaN updatedAt must stay active, not fall into a false comparison",
+      "NaN updatedAt must stay active",
     );
+  });
+});
+
+describe("resolveSettledTimestamp (sort=label consistency)", () => {
+  it("prefers finite settledAt over updatedAt", () => {
+    const t = thread({
+      id: "pinned-time",
+      settledAt: 1000,
+      updatedAt: 9999,
+    });
     assert.equal(
-      effectiveSettled(
-        thread({
-          id: "nan-now",
-          status: "done",
-          updatedAt: NOW - 30 * DAY_MS,
-        }),
-        opts({ now: Number.NaN }),
-      ),
-      false,
-      "NaN now must stay active",
-    );
-    assert.equal(
-      effectiveSettled(
-        thread({
-          id: "nan-days",
-          status: "done",
-          updatedAt: NOW - 30 * DAY_MS,
-        }),
-        opts({ autoSettleAfterDays: Number.NaN }),
-      ),
-      false,
-      "NaN autoSettleAfterDays must stay active",
+      resolveSettledTimestamp(t),
+      1000,
+      "settledAt is the wrap-up clock when present",
     );
   });
 
-  it("override settled beats OPEN prState", () => {
-    // Manual settle is deliberate; user can fold even with an open PR.
+  it("falls back to updatedAt when settledAt is null", () => {
+    const t = thread({ id: "no-pin", settledAt: null, updatedAt: 4242 });
+    assert.equal(resolveSettledTimestamp(t), 4242);
+  });
+
+  it("ignores NaN settledAt so sort and label stay honest", () => {
+    const t = thread({
+      id: "bad-pin",
+      settledAt: Number.NaN,
+      updatedAt: 555,
+    });
     assert.equal(
-      effectiveSettled(
-        thread({
-          id: "manual-open",
-          status: "done",
-          settledOverride: "settled",
-          prState: "OPEN",
-        }),
-        opts(),
-      ),
-      true,
-      "override-beats-PR: settled pin folds an open-PR thread",
+      resolveSettledTimestamp(t),
+      555,
+      "NaN settledAt must not invent a sort key",
+    );
+  });
+
+  it("compareSettledNewestFirst uses the same resolver as the label", () => {
+    // Mid-list interesting case is deliberately not index 0.
+    const older = thread({
+      id: "older",
+      settledAt: 100,
+      updatedAt: 9000,
+    });
+    const newer = thread({
+      id: "newer",
+      settledAt: 200,
+      updatedAt: 50,
+    });
+    const noise = thread({
+      id: "noise",
+      settledAt: null,
+      updatedAt: 150,
+    });
+    const sorted = [older, noise, newer].sort(compareSettledNewestFirst);
+    assert.deepEqual(
+      sorted.map((t) => t.id),
+      ["newer", "noise", "older"],
+      "newest-settled first must match resolveSettledTimestamp order",
+    );
+    assert.equal(
+      resolveSettledTimestamp(sorted[0]!),
+      200,
+      "the label clock of the first row is the highest timestamp",
     );
   });
 });

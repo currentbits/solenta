@@ -9,9 +9,15 @@ import { sidebarPrBadge } from "../prUi";
 import {
   buildSidebarGroups,
   groupHeaderSummary,
-  splitSettled,
+  partitionSidebar,
 } from "../sidebarGroups";
-import { AUTO_SETTLE_AFTER_DAYS, effectiveSettled } from "../threadSettle";
+import {
+  AUTO_SETTLE_AFTER_DAYS,
+  SETTLED_TAIL_INITIAL_COUNT,
+  SETTLED_TAIL_PAGE_COUNT,
+  effectiveSettled,
+  resolveSettledTimestamp,
+} from "../threadSettle";
 import styles from "./Sidebar.module.css";
 
 const TICK_MS = 5000;
@@ -161,7 +167,7 @@ export function ThreadCard({
   onSelect: (id: string) => void;
   /** True when hit is on message text, not title (search mode only). */
   contentMatch?: boolean;
-  /** Whether this card is currently in the settled fold (drives unsettle pin). */
+  /** Whether this card is currently settled (drives unsettle pin). */
   isSettled?: boolean;
   onSetSettled?: (
     threadId: string,
@@ -268,6 +274,70 @@ export function ThreadCard({
   );
 }
 
+/**
+ * Slim settled tail row (t3-style): title + project slug + wrap-up age.
+ * Dimmed at rest, restored on hover. Selectable; Keep-active hover pin only
+ * (opening a settled thread does NOT un-settle).
+ */
+export function SettledRow({
+  thread,
+  slug,
+  active,
+  now,
+  onSelect,
+  onSetSettled,
+}: {
+  thread: ThreadInfo;
+  slug: string;
+  active: boolean;
+  now: number;
+  onSelect: (id: string) => void;
+  onSetSettled?: (
+    threadId: string,
+    override: "settled" | "active",
+  ) => void | Promise<void>;
+}) {
+  const wrapUpAt = resolveSettledTimestamp(thread);
+  return (
+    <div
+      className={styles.settledRow}
+      data-thread-card={thread.id}
+      data-settled="true"
+      data-active={active}
+    >
+      <button
+        type="button"
+        className={styles.cardSelect}
+        onClick={() => onSelect(thread.id)}
+        aria-label={`Select thread: ${thread.title}`}
+      />
+      <div className={styles.settledBody}>
+        <span className={styles.settledTitle}>{thread.title}</span>
+        <span className={styles.settledSlug}>{slug}</span>
+        <span className={styles.settledAge}>
+          {formatRelativeAge(wrapUpAt, now)}
+        </span>
+      </div>
+      {onSetSettled && (
+        <div className={styles.cardActions}>
+          <button
+            type="button"
+            className={styles.settleBtn}
+            aria-label="Keep thread active"
+            title="Keep thread active"
+            onClick={(e) => {
+              e.stopPropagation();
+              void onSetSettled(thread.id, "active");
+            }}
+          >
+            ↑
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function Sidebar({
   appName,
   searchPlaceholder,
@@ -297,9 +367,15 @@ export function Sidebar({
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() =>
     loadKeySet(COLLAPSED_KEY),
   );
-  /** Group keys whose settled threads are expanded. Session-only:
-   *  peeking at settled work is transient, unlike collapsing a project. */
-  const [showSettled, setShowSettled] = useState<Set<string>>(() => new Set());
+  /**
+   * Global settled tail open state. Session-only (t3: out of the way, never
+   * gone). Collapsed by default so attention work stays scannable.
+   */
+  const [settledTailOpen, setSettledTailOpen] = useState(false);
+  /** How many settled rows to show when the tail is expanded. */
+  const [settledVisibleCount, setSettledVisibleCount] = useState(
+    SETTLED_TAIL_INITIAL_COUNT,
+  );
   const settleOpts = useMemo(
     () => ({ now, autoSettleAfterDays: AUTO_SETTLE_AFTER_DAYS }),
     [now],
@@ -390,17 +466,30 @@ export function Sidebar({
     return searchResults.map((t) => liveById.get(t.id) ?? t);
   }, [searching, searchResults, threads, liveById]);
 
+  const { settled: globalSettled } = useMemo(
+    () => partitionSidebar(displayThreads, settleOpts),
+    [displayThreads, settleOpts],
+  );
+
+  /**
+   * Project groups for the main list.
+   * Normal view: only attention + archived (settled pulled into the global tail).
+   * Search: full hit list including settled, so settled hits surface inline
+   * and never hide behind a collapsed tail.
+   */
   const groups = useMemo(() => {
-    // While searching, only surface projects that still have matching threads
-    // (empty projects stay hidden so the empty-search state can show).
     if (searching) {
       const projectsWithHits = projects.filter((p) =>
         displayThreads.some((t) => t.projectId === p.id),
       );
       return buildSidebarGroups(projectsWithHits, displayThreads);
     }
-    return buildSidebarGroups(projects, displayThreads);
-  }, [projects, displayThreads, searching]);
+    // Non-search: feed groups attention + archived only (drop settled).
+    const forGroups = displayThreads.filter(
+      (t) => t.archived || !effectiveSettled(t, settleOpts),
+    );
+    return buildSidebarGroups(projects, forGroups);
+  }, [projects, displayThreads, searching, settleOpts]);
 
   const toggleCollapsed = (groupKey: string) => {
     setCollapsedGroups((prev) => {
@@ -412,12 +501,13 @@ export function Sidebar({
     });
   };
 
-  const toggleSettled = (groupKey: string) => {
-    setShowSettled((prev) => {
-      const next = new Set(prev);
-      if (next.has(groupKey)) next.delete(groupKey);
-      else next.add(groupKey);
-      return next;
+  const toggleSettledTail = () => {
+    setSettledTailOpen((open) => {
+      if (open) {
+        // Collapse: reset paging so the next open starts at the initial page.
+        setSettledVisibleCount(SETTLED_TAIL_INITIAL_COUNT);
+      }
+      return !open;
     });
   };
 
@@ -441,6 +531,23 @@ export function Sidebar({
     !searchInFlight &&
     searchResults != null &&
     searchResults.length === 0;
+
+  // Carve-out: the open thread must never vanish behind the collapsed shelf.
+  const selectedSettled =
+    !searching &&
+    !settledTailOpen &&
+    activeThreadId != null
+      ? globalSettled.find((t) => t.id === activeThreadId) ?? null
+      : null;
+
+  const visibleSettled = settledTailOpen
+    ? globalSettled.slice(0, settledVisibleCount)
+    : [];
+  const settledHasMore =
+    settledTailOpen && globalSettled.length > settledVisibleCount;
+
+  const slugFor = (t: ThreadInfo) =>
+    projectById.get(t.projectId)?.slug ?? "unknown";
 
   return (
     <aside className={styles.sidebar}>
@@ -524,24 +631,25 @@ export function Sidebar({
                 ? projectById.get(groupThreads[0].projectId)?.slug
                 : undefined) ??
               "unknown";
-            const activeThreads = groupThreads.filter((t) => !t.archived);
+            // Attention only in normal view (settled are global); search shows all.
+            const attentionThreads = groupThreads.filter((t) => !t.archived);
             const archivedThreads = groupThreads.filter((t) => t.archived);
-            // During search, archived hits render inline (no toggle required).
             const archivedExpanded = searching
               ? true
               : showArchived.has(groupKey);
             const hasAnyThreads = groupThreads.length > 0;
-            // Settled threads (PR/inactivity/override) fold under one "N settled"
-            // row so working and fresh work stays scannable. Search shows all inline.
-            const { attention, settled } = splitSettled(
-              activeThreads,
-              settleOpts,
-            );
-            const settledExpanded = searching || showSettled.has(groupKey);
+            // Fully-settled projects have zero attention/archived rows here but
+            // their threads still live in the global tail — "No threads yet"
+            // would be a lie.
+            const settledInProject = project
+              ? globalSettled.filter((t) => t.projectId === project.id).length
+              : globalSettled.filter(
+                  (t) => t.projectId === (groupThreads[0]?.projectId ?? ""),
+                ).length;
             // A collapsed project shows only its header. Search overrides the
             // collapse: hiding hits inside a collapsed group makes results lie.
             const collapsed = !searching && collapsedGroups.has(groupKey);
-            const summary = groupHeaderSummary(activeThreads, settleOpts);
+            const summary = groupHeaderSummary(attentionThreads);
 
             return (
               <div key={groupKey} className={styles.group}>
@@ -563,13 +671,17 @@ export function Sidebar({
                     <span className={styles.groupSummary}>{summary}</span>
                   )}
                   <span className={styles.groupCount}>
-                    {searching ? groupThreads.length : activeThreads.length}
+                    {searching
+                      ? groupThreads.length
+                      : attentionThreads.length}
                   </span>
                 </button>
 
                 {collapsed ? null : !hasAnyThreads ? (
                   <div className={styles.emptyGroup}>
-                    <span className={styles.emptyThreads}>No threads yet</span>
+                    <span className={styles.emptyThreads}>
+                      {settledInProject > 0 ? "All settled" : "No threads yet"}
+                    </span>
                     {project && !searching && (
                       <button
                         type="button"
@@ -582,7 +694,7 @@ export function Sidebar({
                   </div>
                 ) : (
                   <>
-                    {attention.map((thread) => (
+                    {attentionThreads.map((thread) => (
                       <ThreadCard
                         key={thread.id}
                         thread={thread}
@@ -591,7 +703,11 @@ export function Sidebar({
                         active={thread.id === activeThreadId}
                         now={now}
                         onSelect={onSelectThread}
-                        isSettled={false}
+                        isSettled={
+                          searching
+                            ? effectiveSettled(thread, settleOpts)
+                            : false
+                        }
                         onSetSettled={onSetSettled}
                         contentMatch={
                           searching &&
@@ -599,36 +715,6 @@ export function Sidebar({
                         }
                       />
                     ))}
-                    {settledExpanded &&
-                      settled.map((thread) => (
-                        <ThreadCard
-                          key={thread.id}
-                          thread={thread}
-                          slug={slug}
-                          providers={providers}
-                          active={thread.id === activeThreadId}
-                          now={now}
-                          onSelect={onSelectThread}
-                          isSettled
-                          onSetSettled={onSetSettled}
-                          contentMatch={
-                            searching &&
-                            !thread.title.toLowerCase().includes(queryLower)
-                          }
-                        />
-                      ))}
-                    {!searching && settled.length > 0 && (
-                      <button
-                        type="button"
-                        className={styles.archivedToggle}
-                        onClick={() => toggleSettled(groupKey)}
-                        aria-expanded={settledExpanded}
-                      >
-                        {settledExpanded
-                          ? "Hide settled"
-                          : `${settled.length} settled`}
-                      </button>
-                    )}
                     {archivedExpanded &&
                       archivedThreads.map((thread) => (
                         <ThreadCard
@@ -673,6 +759,60 @@ export function Sidebar({
               </div>
             );
           })}
+
+        {/* Global settled tail (t3-style): one section at the bottom, all projects. */}
+        {projectsOpen && !searching && globalSettled.length > 0 && (
+          <div className={styles.settledTail} data-settled-tail="">
+            {selectedSettled && (
+              <SettledRow
+                thread={selectedSettled}
+                slug={slugFor(selectedSettled)}
+                active
+                now={now}
+                onSelect={onSelectThread}
+                onSetSettled={onSetSettled}
+              />
+            )}
+            <button
+              type="button"
+              className={styles.settledTailHeader}
+              onClick={toggleSettledTail}
+              aria-expanded={settledTailOpen}
+            >
+              <span className={styles.chevron} data-open={settledTailOpen}>
+                ▸
+              </span>
+              <span>
+                Settled · {globalSettled.length}
+              </span>
+            </button>
+            {settledTailOpen &&
+              visibleSettled.map((thread) => (
+                <SettledRow
+                  key={thread.id}
+                  thread={thread}
+                  slug={slugFor(thread)}
+                  active={thread.id === activeThreadId}
+                  now={now}
+                  onSelect={onSelectThread}
+                  onSetSettled={onSetSettled}
+                />
+              ))}
+            {settledHasMore && (
+              <button
+                type="button"
+                className={styles.settledShowMore}
+                onClick={() =>
+                  setSettledVisibleCount(
+                    (n) => n + SETTLED_TAIL_PAGE_COUNT,
+                  )
+                }
+              >
+                Show more
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       <footer className={styles.footer}>
