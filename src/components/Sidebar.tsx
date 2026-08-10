@@ -638,6 +638,14 @@ export function Sidebar({
               ? true
               : showArchived.has(groupKey);
             const hasAnyThreads = groupThreads.length > 0;
+            // Fully-settled projects have zero attention/archived rows here but
+            // their threads still live in the global tail — "No threads yet"
+            // would be a lie.
+            const settledInProject = project
+              ? globalSettled.filter((t) => t.projectId === project.id).length
+              : globalSettled.filter(
+                  (t) => t.projectId === (groupThreads[0]?.projectId ?? ""),
+                ).length;
             // A collapsed project shows only its header. Search overrides the
             // collapse: hiding hits inside a collapsed group makes results lie.
             const collapsed = !searching && collapsedGroups.has(groupKey);
@@ -671,7 +679,9 @@ export function Sidebar({
 
                 {collapsed ? null : !hasAnyThreads ? (
                   <div className={styles.emptyGroup}>
-                    <span className={styles.emptyThreads}>No threads yet</span>
+                    <span className={styles.emptyThreads}>
+                      {settledInProject > 0 ? "All settled" : "No threads yet"}
+                    </span>
                     {project && !searching && (
                       <button
                         type="button"
