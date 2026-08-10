@@ -101,6 +101,20 @@ function flipKimiEffort(effort) {
  */
 function extractAssistantText(obj) {
   if (!obj || typeof obj !== "object") return null;
+  // Real kimi stream-json (0.31.1, recorded live): role-shaped lines.
+  //   {"role":"assistant","content":"..."}          -> assistant text
+  //   {"role":"assistant","tool_calls":[...]}        -> extractToolEvents
+  //   {"role":"tool","content":"..."}                -> tool RESULT, not text
+  //   {"role":"meta","type":"session.resume_hint"}   -> has a content string
+  //                                                     that must NOT render
+  // Any role-shaped line that is not assistant text returns null here rather
+  // than falling through to the legacy matcher, which would happily surface
+  // the meta hint's content as an assistant message.
+  if (obj.role != null) {
+    return obj.role === "assistant" && typeof obj.content === "string"
+      ? obj.content
+      : null;
+  }
   const type = String(obj.type || "");
   if (type !== "text" && type !== "message" && type !== "assistant") {
     return null;
@@ -129,10 +143,81 @@ function extractAssistantText(obj) {
 }
 
 /**
- * Tool-call-ish events: type containing "tool" with a name field.
+ * @typedef {{ id: string, name: string, input: string, output: string | null, phase: "start" | "end" | "single", isError: boolean }} ToolEvent
+ */
+
+/**
+ * All tool events carried by one stream line.
+ *
+ * Real kimi packs CALLS as an array on an assistant line and results as
+ * separate role:"tool" lines, so one line can carry several starts:
+ *   {"role":"assistant","tool_calls":[{id,function:{name,arguments}}]}
+ *   {"role":"tool","tool_call_id":"...","content":"..."}
+ * Legacy type-based shapes still parse (one event) for older streams.
+ * @param {object} obj
+ * @returns {ToolEvent[]}
+ */
+function extractToolEvents(obj) {
+  if (!obj || typeof obj !== "object") return [];
+  if (obj.role === "assistant" && Array.isArray(obj.tool_calls)) {
+    /** @type {ToolEvent[]} */
+    const out = [];
+    for (const tc of obj.tool_calls) {
+      if (!tc || typeof tc !== "object") continue;
+      const fn = tc.function && typeof tc.function === "object" ? tc.function : null;
+      const name =
+        (fn && typeof fn.name === "string" && fn.name) ||
+        (typeof tc.name === "string" && tc.name) ||
+        "";
+      if (!name) continue;
+      const rawArgs = fn && fn.arguments != null ? fn.arguments : tc.arguments;
+      let input = "";
+      if (rawArgs != null) {
+        try {
+          input =
+            typeof rawArgs === "string" ? rawArgs : JSON.stringify(rawArgs);
+        } catch {
+          input = String(rawArgs);
+        }
+      }
+      out.push({
+        id: String(tc.id || ""),
+        name,
+        input: truncate(input, INPUT_TRUNCATE),
+        output: null,
+        phase: "start",
+        isError: false,
+      });
+    }
+    return out;
+  }
+  if (obj.role === "tool") {
+    const content = obj.content;
+    return [
+      {
+        id: String(obj.tool_call_id || obj.id || ""),
+        // Results carry no name; the runner pairs by id to the start message.
+        name: "tool",
+        input: "",
+        output: truncate(
+          typeof content === "string" ? content : JSON.stringify(content ?? ""),
+          OUTPUT_TRUNCATE,
+        ),
+        phase: "end",
+        isError: Boolean(obj.is_error || obj.error),
+      },
+    ];
+  }
+  if (obj.role != null) return []; // other role-shaped lines carry no tools
+  const legacy = extractToolEvent(obj);
+  return legacy ? [legacy] : [];
+}
+
+/**
+ * Legacy type-based tool events: type containing "tool" with a name field.
  * Best-effort start/end pairing by id when present.
  * @param {object} obj
- * @returns {{ id: string, name: string, input: string, output: string | null, phase: "start" | "end" | "single", isError: boolean } | null}
+ * @returns {ToolEvent | null}
  */
 function extractToolEvent(obj) {
   if (!obj || typeof obj !== "object") return null;
@@ -442,12 +527,31 @@ function runKimi(opts) {
   };
 }
 
+/**
+ * Real session id from the meta resume hint, or null.
+ * {"role":"meta","type":"session.resume_hint","session_id":"session_..."}
+ * Kimi DOES have per-session resume (-S <id>, verified live); the old
+ * per-cwd "-c" design predates knowing that.
+ * @param {object} obj
+ * @returns {string | null}
+ */
+function extractSessionId(obj) {
+  if (!obj || typeof obj !== "object") return null;
+  return obj.role === "meta" &&
+    typeof obj.session_id === "string" &&
+    obj.session_id
+    ? obj.session_id
+    : null;
+}
+
 module.exports = {
   runKimi,
   flipKimiEffort,
   kimiConfigPath,
   extractAssistantText,
   extractToolEvent,
+  extractToolEvents,
+  extractSessionId,
   extractUsage,
   truncate,
   INPUT_TRUNCATE,

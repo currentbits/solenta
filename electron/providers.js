@@ -421,25 +421,28 @@ const PROVIDERS = [
     effortVia: "config",
     kind: "kimi-stream",
     /**
-     * Kimi sessions are per working directory. When thread.sessionId is set we
-     * pass -c (continue) instead of a session id and keep sessionId as the
-     * sentinel "cwd". Two kimi threads sharing a cwd share history; mitigated
-     * by worktree-per-thread. Prompt is the last argv element (-p value).
+     * Kimi HAS per-session resume: the stream's meta resume hint carries a
+     * session_id and -S <id> resumes it (verified live; recalled the prior
+     * turn). The old design assumed per-cwd sessions only; threads migrated
+     * from it hold the sentinel "cwd" and keep using -c until their next
+     * session id is captured.
+     *
+     * Permission flags: -p CANNOT combine with -y or --auto ("error: Cannot
+     * combine --prompt with --yolo/--auto", verified live). Prompt mode runs
+     * tools unprompted regardless, so no flag is emitted and the permission
+     * mode is effectively ignored by kimi one-shot turns.
+     *
+     * Prompt is the last argv element (-p value).
      */
-    buildArgs({ prompt, sessionId, permissionMode, model, reasoningEffort }) {
+    buildArgs({ prompt, sessionId, model, reasoningEffort }) {
       const args = ["--output-format", "stream-json"];
       if (model) {
         args.push("-m", String(model));
       }
-      const mode = String(permissionMode || "default");
-      if (mode === "acceptEdits") {
-        args.push("-y");
-      } else if (mode === "bypassPermissions") {
-        args.push("--auto");
-      }
-      // default / plan: no permission flag
-      if (sessionId) {
+      if (sessionId === "cwd") {
         args.push("-c");
+      } else if (sessionId) {
+        args.push("-S", String(sessionId));
       }
       // Effort goes via config.toml (effortVia "config"), NEVER argv: kimi
       // 0.31.1 rejects every effort-shaped flag with "unknown option".
