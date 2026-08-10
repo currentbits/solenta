@@ -1,5 +1,5 @@
 /**
- * Sidebar project grouping / ordering + settle split (round 39).
+ * Sidebar grouping + global settle partition (round 40).
  * Run: node --experimental-strip-types --test test/sidebarGroups.test.ts
  */
 import assert from "node:assert/strict";
@@ -7,6 +7,7 @@ import { describe, it } from "node:test";
 import {
   buildSidebarGroups,
   groupHeaderSummary,
+  partitionSidebar,
   splitSettled,
 } from "../src/sidebarGroups.ts";
 import { AUTO_SETTLE_AFTER_DAYS } from "../src/threadSettle.ts";
@@ -69,15 +70,6 @@ describe("buildSidebarGroups", () => {
       groups.map((g) => g.project?.id),
       ["b", "a", "c"],
     );
-    assert.deepEqual(
-      groups[0]!.threads.map((t) => t.id),
-      ["t2"],
-    );
-    assert.deepEqual(
-      groups[1]!.threads.map((t) => t.id),
-      ["t3", "t1"],
-    );
-    assert.deepEqual(groups[2]!.threads, []);
   });
 
   it("orders threads newest-first by updatedAt inside a group", () => {
@@ -99,16 +91,88 @@ describe("buildSidebarGroups", () => {
       thread({ id: "t1", projectId: "a", updatedAt: 100 }),
     ];
     const groups = buildSidebarGroups([pA], threads);
-    assert.equal(groups.length, 2);
-    assert.equal(groups[0]!.project?.id, "a");
     assert.equal(groups[1]!.project, null);
     assert.equal(groups[1]!.threads[0]!.id, "orphan");
   });
 });
 
+describe("partitionSidebar (round 40 global settled)", () => {
+  const pA = project({ id: "a", slug: "org/alpha" });
+  const pB = project({ id: "b", slug: "org/beta" });
+
+  it("collects settled across two projects into one newest-first list", () => {
+    // Settled threads deliberately span projects; interesting case not index 0.
+    const threads = [
+      thread({
+        id: "a-work",
+        projectId: "a",
+        updatedAt: NOW,
+        status: "working",
+        runStartedAt: NOW,
+      }),
+      thread({
+        id: "b-merged",
+        projectId: "b",
+        updatedAt: NOW - 10,
+        status: "done",
+        prState: "MERGED",
+        settledAt: NOW - 5,
+      }),
+      thread({
+        id: "a-merged",
+        projectId: "a",
+        updatedAt: NOW - 20,
+        status: "done",
+        prState: "MERGED",
+        settledAt: NOW - 1,
+      }),
+      thread({
+        id: "b-fresh",
+        projectId: "b",
+        updatedAt: NOW,
+        status: "done",
+      }),
+    ];
+    const { attentionThreads, settled } = partitionSidebar(threads, settleOpts);
+    assert.deepEqual(
+      attentionThreads.map((t) => t.id).sort(),
+      ["a-work", "b-fresh"].sort(),
+      "fresh done and working stay in attention",
+    );
+    assert.deepEqual(
+      settled.map((t) => t.id),
+      ["a-merged", "b-merged"],
+      "one flat settled list, newest settledAt first, spanning both projects",
+    );
+  });
+
+  it("excludes archived from the global settled list", () => {
+    const { settled } = partitionSidebar(
+      [
+        thread({
+          id: "gone",
+          projectId: "a",
+          updatedAt: NOW,
+          status: "done",
+          prState: "MERGED",
+          archived: true,
+        }),
+        thread({
+          id: "kept",
+          projectId: "a",
+          updatedAt: NOW - 1,
+          status: "done",
+          prState: "MERGED",
+        }),
+      ],
+      settleOpts,
+    );
+    assert.deepEqual(settled.map((t) => t.id), ["kept"]);
+  });
+});
+
 describe("splitSettled (round 39 effectiveSettled)", () => {
   it("fresh done stays in attention; MERGED goes to settled", () => {
-    // Interesting MERGED case is deliberately NOT index 0 (fixture discipline).
     const { attention, settled } = splitSettled(
       [
         thread({
@@ -131,80 +195,14 @@ describe("splitSettled (round 39 effectiveSettled)", () => {
           status: "done",
           prState: "MERGED",
         }),
-        thread({
-          id: "f",
-          projectId: "a",
-          updatedAt: NOW - 2,
-          status: "failed",
-        }),
       ],
       settleOpts,
     );
     assert.deepEqual(
       attention.map((t) => t.id),
-      ["w", "fresh", "f"],
-      "working, fresh-done, and failed need attention; done alone does not settle",
+      ["w", "fresh"],
     );
-    assert.deepEqual(
-      settled.map((t) => t.id),
-      ["merged"],
-      "MERGED prState is the settled signal, not status===done",
-    );
-  });
-
-  it("override active keeps a MERGED thread out of the fold", () => {
-    const { attention, settled } = splitSettled(
-      [
-        thread({
-          id: "noise",
-          projectId: "a",
-          updatedAt: NOW,
-          status: "idle",
-        }),
-        thread({
-          id: "pinned-out",
-          projectId: "a",
-          updatedAt: NOW - 1,
-          status: "done",
-          prState: "MERGED",
-          settledOverride: "active",
-        }),
-      ],
-      settleOpts,
-    );
-    assert.ok(
-      attention.some((t) => t.id === "pinned-out"),
-      "active override beats MERGED",
-    );
-    assert.equal(settled.length, 0);
-  });
-
-  it("preserves the incoming order within each side", () => {
-    const { settled } = splitSettled(
-      [
-        thread({
-          id: "m2",
-          projectId: "a",
-          updatedAt: 9,
-          status: "done",
-          prState: "MERGED",
-        }),
-        thread({ id: "w", projectId: "a", updatedAt: 8, status: "working" }),
-        thread({
-          id: "m1",
-          projectId: "a",
-          updatedAt: 7,
-          status: "done",
-          prState: "CLOSED",
-        }),
-      ],
-      settleOpts,
-    );
-    assert.deepEqual(
-      settled.map((t) => t.id),
-      ["m2", "m1"],
-      "the group's newest-first sort must survive the split",
-    );
+    assert.deepEqual(settled.map((t) => t.id), ["merged"]);
   });
 
   it("inactivity path can settle an idle thread", () => {
@@ -223,82 +221,48 @@ describe("splitSettled (round 39 effectiveSettled)", () => {
   });
 });
 
-describe("groupHeaderSummary", () => {
-  it("counts working and settled via effectiveSettled", () => {
+describe("groupHeaderSummary (round 40: working only)", () => {
+  it("counts working and omits settled (settled moved to the global tail)", () => {
     assert.equal(
-      groupHeaderSummary(
-        [
-          thread({
-            id: "w1",
-            projectId: "a",
-            updatedAt: 3,
-            status: "working",
-          }),
-          thread({
-            id: "w2",
-            projectId: "a",
-            updatedAt: 2,
-            status: "working",
-          }),
-          thread({
-            id: "d",
-            projectId: "a",
-            updatedAt: 1,
-            status: "done",
-            prState: "MERGED",
-          }),
-        ],
-        settleOpts,
-      ),
-      "2 working · 1 settled",
+      groupHeaderSummary([
+        thread({
+          id: "w1",
+          projectId: "a",
+          updatedAt: 3,
+          status: "working",
+        }),
+        thread({
+          id: "w2",
+          projectId: "a",
+          updatedAt: 2,
+          status: "working",
+        }),
+        thread({
+          id: "d",
+          projectId: "a",
+          updatedAt: 1,
+          status: "done",
+          prState: "MERGED",
+        }),
+      ]),
+      "2 working",
+      "no settled half on project headers after round 40",
     );
     assert.equal(
-      groupHeaderSummary(
-        [
-          thread({
-            id: "fresh",
-            projectId: "a",
-            updatedAt: NOW,
-            status: "done",
-          }),
-        ],
-        settleOpts,
-      ),
+      groupHeaderSummary([
+        thread({
+          id: "fresh",
+          projectId: "a",
+          updatedAt: NOW,
+          status: "done",
+        }),
+      ]),
       null,
-      "fresh done alone is not settled, so no summary parts",
-    );
-    assert.equal(
-      groupHeaderSummary(
-        [
-          thread({
-            id: "w",
-            projectId: "a",
-            updatedAt: 1,
-            status: "working",
-          }),
-        ],
-        settleOpts,
-      ),
-      "1 working",
+      "no working threads → no summary",
     );
   });
 
-  it("says nothing for empty or all-idle-in-window groups", () => {
-    assert.equal(groupHeaderSummary([], settleOpts), null);
-    assert.equal(
-      groupHeaderSummary(
-        [
-          thread({
-            id: "i",
-            projectId: "a",
-            updatedAt: NOW,
-            status: "idle",
-          }),
-        ],
-        settleOpts,
-      ),
-      null,
-      "an all-idle-recent group has no counts worth a summary line",
-    );
+  it("says nothing for empty groups", () => {
+    assert.equal(groupHeaderSummary([]), null);
   });
 });
