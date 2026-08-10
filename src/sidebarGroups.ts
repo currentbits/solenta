@@ -1,27 +1,37 @@
 import type { ProjectInfo, ThreadInfo } from "./shared/ipc";
+import {
+  AUTO_SETTLE_AFTER_DAYS,
+  effectiveSettled,
+  type SettleOpts,
+} from "./threadSettle";
 
 export interface SidebarGroup {
   project: ProjectInfo | null;
   threads: ThreadInfo[];
 }
 
+export type { SettleOpts };
+
 /**
  * Split a group's non-archived threads into the ones that still want
  * attention and the ones that settled.
  *
- * Settled means status "done": the run finished and nothing is asking for the
- * user. Failed threads are NOT settled (they need attention), idle ones are
- * not either (they have not run yet, hiding them buries new work). Archived
- * is a separate, stronger state with its own toggle and wins over settled.
+ * Resolution is effectiveSettled (t3-style): override, PR state, then
+ * inactivity — not status==="done". Archived is a separate, stronger state
+ * with its own toggle; the split still runs on the non-archived list only
+ * so a done+archived thread never appears in both folds.
  */
-export function splitSettled(threads: readonly ThreadInfo[]): {
+export function splitSettled(
+  threads: readonly ThreadInfo[],
+  opts: SettleOpts,
+): {
   attention: ThreadInfo[];
   settled: ThreadInfo[];
 } {
   const attention: ThreadInfo[] = [];
   const settled: ThreadInfo[] = [];
   for (const t of threads) {
-    (t.status === "done" ? settled : attention).push(t);
+    (effectiveSettled(t, opts) ? settled : attention).push(t);
   }
   return { attention, settled };
 }
@@ -29,18 +39,25 @@ export function splitSettled(threads: readonly ThreadInfo[]): {
 /**
  * Counts for a group header, t3-style: "2 working · 5 settled".
  * Null when there is nothing to say (no threads at all).
+ * Settled count uses the same resolution as the fold.
  */
 export function groupHeaderSummary(
   threads: readonly ThreadInfo[],
+  opts: SettleOpts,
 ): string | null {
   if (threads.length === 0) return null;
   const working = threads.filter((t) => t.status === "working").length;
-  const settled = threads.filter((t) => t.status === "done").length;
+  const settled = threads.filter((t) => effectiveSettled(t, opts)).length;
   const parts: string[] = [];
   if (working > 0) parts.push(`${working} working`);
   if (settled > 0) parts.push(`${settled} settled`);
   if (parts.length === 0) return null;
   return parts.join(" · ");
+}
+
+/** Default opts when a caller has no clock of its own (tests, pure helpers). */
+export function defaultSettleOpts(now = Date.now()): SettleOpts {
+  return { now, autoSettleAfterDays: AUTO_SETTLE_AFTER_DAYS };
 }
 
 /**

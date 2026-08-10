@@ -129,6 +129,55 @@ describe("runner simulated mode", () => {
     else process.env.CODER_AGENT_CMD = prevAgentCmd;
   });
 
+  it("startRun clears a settled override but preserves an active pin", async () => {
+    const thread = store.getThreads()[0];
+    services.setSettled(store, {
+      threadId: thread.id,
+      override: "settled",
+    });
+    assert.equal(store.getThread(thread.id).settledOverride, "settled");
+    assert.ok(store.getThread(thread.id).settledAt != null);
+
+    await runner.startRun({
+      threadId: thread.id,
+      prompt: "do work after settle",
+    });
+    const afterSettled = store.getThread(thread.id);
+    assert.equal(afterSettled.status, "working");
+    assert.equal(
+      afterSettled.settledOverride,
+      null,
+      "startRun must clear a settled pin",
+    );
+    assert.equal(afterSettled.settledAt, null);
+
+    // Let the sim run finish so we can start another with an active pin.
+    await waitFor(() => {
+      const t = store.getThread(thread.id);
+      return t && t.status === "done";
+    });
+
+    services.setSettled(store, {
+      threadId: thread.id,
+      override: "active",
+    });
+    const pinnedAt = store.getThread(thread.id).settledAt;
+    assert.equal(store.getThread(thread.id).settledOverride, "active");
+
+    await runner.startRun({
+      threadId: thread.id,
+      prompt: "keep me active",
+    });
+    const afterActive = store.getThread(thread.id);
+    assert.equal(afterActive.status, "working");
+    assert.equal(
+      afterActive.settledOverride,
+      "active",
+      "an active pin must survive real activity",
+    );
+    assert.equal(afterActive.settledAt, pinnedAt);
+  });
+
   it("startRun full lifecycle reaches done with assistant summary", async () => {
     const thread = store.getThreads()[0];
     const { runId } = await runner.startRun({

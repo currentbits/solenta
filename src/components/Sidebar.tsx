@@ -11,6 +11,7 @@ import {
   groupHeaderSummary,
   splitSettled,
 } from "../sidebarGroups";
+import { AUTO_SETTLE_AFTER_DAYS, effectiveSettled } from "../threadSettle";
 import styles from "./Sidebar.module.css";
 
 const TICK_MS = 5000;
@@ -63,6 +64,14 @@ interface SidebarProps {
    * queries of 2+ chars after debounce; empty / 1-char stays local.
    */
   searchThreads: (input: { query: string }) => Promise<ThreadInfo[]>;
+  /**
+   * Pin or unpin settle override for a thread card (hover action).
+   * override "settled" folds it; "active" keeps it out of the fold.
+   */
+  onSetSettled?: (
+    threadId: string,
+    override: "settled" | "active",
+  ) => void | Promise<void>;
 }
 
 function formatUsd(n: number): string {
@@ -141,6 +150,8 @@ export function ThreadCard({
   now,
   onSelect,
   contentMatch,
+  isSettled = false,
+  onSetSettled,
 }: {
   thread: ThreadInfo;
   slug: string;
@@ -150,6 +161,12 @@ export function ThreadCard({
   onSelect: (id: string) => void;
   /** True when hit is on message text, not title (search mode only). */
   contentMatch?: boolean;
+  /** Whether this card is currently in the settled fold (drives unsettle pin). */
+  isSettled?: boolean;
+  onSetSettled?: (
+    threadId: string,
+    override: "settled" | "active",
+  ) => void | Promise<void>;
 }) {
   const branch = thread.branch ?? "";
   const prBadge = sidebarPrBadge({
@@ -157,18 +174,22 @@ export function ThreadCard({
     prUrl: thread.prUrl,
   });
   const providerLabel = providerDisplayName(thread.provider, providers);
+  const working = thread.status === "working";
+  // Settled cards offer "keep active"; attention cards offer "settle".
+  const settleOverride = isSettled ? ("active" as const) : ("settled" as const);
+  const settleLabel = isSettled ? "Keep thread active" : "Settle thread";
 
-  // Card is a non-interactive shell. One empty stretch button is the sole
-  // select control (one tab stop). Content sits in a sibling with
-  // pointer-events:none so clicks fall through to that button; the PR <a>
-  // re-enables pointer-events so it stays separately focusable/clickable.
-  // Never nest the PR link inside a button (invalid HTML; drops clicks).
+  // Card is a non-interactive shell. Stretch select + optional settle action
+  // are separate focusables. Content sits in a sibling with pointer-events:none
+  // so clicks fall through to select; PR <a> and settle re-enable pointer-events.
+  // Never nest interactive controls inside the select button.
   return (
     <div
       className={styles.card}
       data-thread-card={thread.id}
       data-active={active}
       data-archived={thread.archived ? "true" : undefined}
+      data-settled={isSettled ? "true" : undefined}
     >
       <button
         type="button"
@@ -222,6 +243,27 @@ export function ThreadCard({
           <StatusBadge thread={thread} now={now} />
         </div>
       </div>
+      {onSetSettled && (
+        <div className={styles.cardActions}>
+          <button
+            type="button"
+            className={styles.settleBtn}
+            aria-label={settleLabel}
+            title={
+              working
+                ? "Cannot settle while a run is active"
+                : settleLabel
+            }
+            disabled={working}
+            onClick={(e) => {
+              e.stopPropagation();
+              void onSetSettled(thread.id, settleOverride);
+            }}
+          >
+            {isSettled ? "↑" : "↓"}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -243,6 +285,7 @@ export function Sidebar({
   spendTodayUsd = null,
   dailyBudgetUsd = null,
   searchThreads,
+  onSetSettled,
 }: SidebarProps) {
   const [projectsOpen, setProjectsOpen] = useState(true);
   const [query, setQuery] = useState("");
@@ -254,9 +297,13 @@ export function Sidebar({
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() =>
     loadKeySet(COLLAPSED_KEY),
   );
-  /** Group keys whose settled (done) threads are expanded. Session-only:
+  /** Group keys whose settled threads are expanded. Session-only:
    *  peeking at settled work is transient, unlike collapsing a project. */
   const [showSettled, setShowSettled] = useState<Set<string>>(() => new Set());
+  const settleOpts = useMemo(
+    () => ({ now, autoSettleAfterDays: AUTO_SETTLE_AFTER_DAYS }),
+    [now],
+  );
   /** Full-content search results; null means not in active search mode. */
   const [searchResults, setSearchResults] = useState<ThreadInfo[] | null>(null);
   const [searchLoading, setSearchLoading] = useState(false);
@@ -484,14 +531,17 @@ export function Sidebar({
               ? true
               : showArchived.has(groupKey);
             const hasAnyThreads = groupThreads.length > 0;
-            // Done threads fold under one "N settled" row so working/failed/
-            // idle work stays scannable. Search shows everything inline.
-            const { attention, settled } = splitSettled(activeThreads);
+            // Settled threads (PR/inactivity/override) fold under one "N settled"
+            // row so working and fresh work stays scannable. Search shows all inline.
+            const { attention, settled } = splitSettled(
+              activeThreads,
+              settleOpts,
+            );
             const settledExpanded = searching || showSettled.has(groupKey);
             // A collapsed project shows only its header. Search overrides the
             // collapse: hiding hits inside a collapsed group makes results lie.
             const collapsed = !searching && collapsedGroups.has(groupKey);
-            const summary = groupHeaderSummary(activeThreads);
+            const summary = groupHeaderSummary(activeThreads, settleOpts);
 
             return (
               <div key={groupKey} className={styles.group}>
@@ -541,6 +591,8 @@ export function Sidebar({
                         active={thread.id === activeThreadId}
                         now={now}
                         onSelect={onSelectThread}
+                        isSettled={false}
+                        onSetSettled={onSetSettled}
                         contentMatch={
                           searching &&
                           !thread.title.toLowerCase().includes(queryLower)
@@ -557,6 +609,8 @@ export function Sidebar({
                           active={thread.id === activeThreadId}
                           now={now}
                           onSelect={onSelectThread}
+                          isSettled
+                          onSetSettled={onSetSettled}
                           contentMatch={
                             searching &&
                             !thread.title.toLowerCase().includes(queryLower)
@@ -585,6 +639,8 @@ export function Sidebar({
                           active={thread.id === activeThreadId}
                           now={now}
                           onSelect={onSelectThread}
+                          isSettled={effectiveSettled(thread, settleOpts)}
+                          onSetSettled={onSetSettled}
                           contentMatch={
                             searching &&
                             !thread.title.toLowerCase().includes(queryLower)

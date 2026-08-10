@@ -2389,9 +2389,17 @@ function createRunner(opts) {
       title = firstLine.slice(0, 60) || "New Thread";
     }
 
+    // Real activity clears a stale "settled" pin (t3 rule). An explicit
+    // "active" pin survives so the user can keep a thread out of auto-settle.
+    // Shared with workflow start via services.clearSettledOnActivity.
     store.updateThread(
       threadId,
-      { status: "working", title, runStartedAt: Date.now() },
+      {
+        status: "working",
+        title,
+        runStartedAt: Date.now(),
+        ...services.clearSettledOnActivity(thread),
+      },
       { touch: true },
     );
 

@@ -604,6 +604,9 @@ function seedThreads(projects: ProjectInfo[]): ThreadInfo[] {
       updatedAt,
       runStartedAt: card.status === "working" ? t0 - workingMs : null,
       archived: false,
+      settledOverride: null,
+      settledAt: null,
+      prState: card.prNumber != null ? "OPEN" : null,
       provider: isSimulate ? "simulate" : index % 3 === 0 ? "codex" : "claude",
       model: null,
       sessionId: isSimulate
@@ -1883,6 +1886,9 @@ function buildDevCoder(): CoderApi {
           updatedAt: now(),
           runStartedAt: null,
           archived: false,
+          settledOverride: null,
+          settledAt: null,
+          prState: null,
           provider: "claude",
           model: null,
           sessionId: null,
@@ -1929,6 +1935,34 @@ function buildDevCoder(): CoderApi {
         const thread: ThreadInfo = {
           ...detail.thread,
           archived: input.archived,
+        };
+        detail.thread = thread;
+        details.set(input.threadId, detail);
+        syncThreadRow(thread);
+        emitDetail(detail);
+        return { ...thread };
+      },
+      async setSettled(input: {
+        threadId: string;
+        override: "settled" | "active" | null;
+      }) {
+        // Match electron/services.js setSettled exactly (same error strings).
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Unknown thread: ${input.threadId}`);
+        const override = input.override;
+        if (override !== "settled" && override !== "active" && override !== null) {
+          throw new Error(
+            `Invalid settle override: ${JSON.stringify(override)}. Expected "settled", "active", or null`,
+          );
+        }
+        if (override === "settled" && detail.thread.status === "working") {
+          throw new Error("Cannot settle a thread while a run is active");
+        }
+        // Settling is bookkeeping; leave updatedAt alone.
+        const thread: ThreadInfo = {
+          ...detail.thread,
+          settledOverride: override,
+          settledAt: override != null ? now() : null,
         };
         detail.thread = thread;
         details.set(input.threadId, detail);
@@ -2147,11 +2181,16 @@ function buildDevCoder(): CoderApi {
           thread = { ...thread, sessionId: id("sess") };
         }
 
+        // Real activity clears a stale "settled" pin (match electron/runner.js).
+        // An explicit "active" pin survives.
         thread = {
           ...thread,
           status: "working",
           updatedAt: t,
           runStartedAt: t,
+          ...(thread.settledOverride === "settled"
+            ? { settledOverride: null, settledAt: null }
+            : {}),
         };
         detail.thread = thread;
 
@@ -2248,11 +2287,16 @@ function buildDevCoder(): CoderApi {
           thread = { ...thread, sessionId: id("sess") };
         }
 
+        // Real activity clears a stale "settled" pin (match electron/workflow.js).
+        // An explicit "active" pin survives.
         thread = {
           ...thread,
           status: "working",
           updatedAt: t,
           runStartedAt: t,
+          ...(thread.settledOverride === "settled"
+            ? { settledOverride: null, settledAt: null }
+            : {}),
         };
         detail.thread = thread;
 
@@ -2356,6 +2400,17 @@ function buildDevCoder(): CoderApi {
 
         const existing = prByThread.get(input.threadId);
         if (existing) {
+          // Keep prState in sync with the live PR (match electron/worktrees.js).
+          const thread: ThreadInfo = {
+            ...detail.thread,
+            prNumber: existing.number,
+            prUrl: existing.url,
+            prState: existing.state,
+          };
+          detail.thread = thread;
+          details.set(input.threadId, detail);
+          syncThreadRow(thread);
+          emitDetail(detail);
           return {
             number: existing.number,
             url: existing.url,
@@ -2382,6 +2437,7 @@ function buildDevCoder(): CoderApi {
           ...detail.thread,
           prNumber: number,
           prUrl: url,
+          prState: info.state,
           updatedAt: now(),
         };
         detail.thread = thread;
@@ -2395,6 +2451,17 @@ function buildDevCoder(): CoderApi {
         if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
         const existing = prByThread.get(input.threadId);
         if (!existing) return null;
+        // Persist last-known PR state (match electron/worktrees.js prStatus).
+        const thread: ThreadInfo = {
+          ...detail.thread,
+          prNumber: existing.number,
+          prUrl: existing.url,
+          prState: existing.state,
+        };
+        detail.thread = thread;
+        details.set(input.threadId, detail);
+        syncThreadRow(thread);
+        emitDetail(detail);
         return {
           number: existing.number,
           url: existing.url,

@@ -105,6 +105,9 @@ describe("services", () => {
     assert.equal(thread.reasoningEffort, null);
     assert.equal(thread.worktreePath, null);
     assert.equal(thread.runStartedAt, null);
+    assert.equal(thread.settledOverride, null);
+    assert.equal(thread.settledAt, null);
+    assert.equal(thread.prState, null);
     assert.ok(typeof thread.createdAt === "number");
     const listed = services.listThreads(store);
     assert.equal(listed.length, 1);
@@ -210,6 +213,130 @@ describe("services", () => {
         }),
       /Unknown thread/i,
     );
+  });
+
+  function makeThread(title = "T") {
+    const repo = path.join(tmpDir, `settle-${title}-${Math.random().toString(16).slice(2)}`);
+    fs.mkdirSync(repo);
+    git(repo, ["init"]);
+    const project = services.addProject(store, repo);
+    return services.createThread(store, {
+      projectId: project.id,
+      title,
+    });
+  }
+
+  it("setSettled accepts settled, active, and null; stamps settledAt only when non-null", () => {
+    const thread = makeThread("settle-accept");
+    store.updateThread(thread.id, { updatedAt: 1_700_000_000_000 });
+    const before = Date.now();
+
+    const settled = services.setSettled(store, {
+      threadId: thread.id,
+      override: "settled",
+    });
+    assert.equal(settled.settledOverride, "settled");
+    assert.ok(
+      typeof settled.settledAt === "number" && settled.settledAt >= before,
+      "settledAt must be stamped when override is non-null",
+    );
+    assert.equal(settled.updatedAt, 1_700_000_000_000);
+    assert.equal(store.getThread(thread.id).updatedAt, 1_700_000_000_000);
+
+    const active = services.setSettled(store, {
+      threadId: thread.id,
+      override: "active",
+    });
+    assert.equal(active.settledOverride, "active");
+    assert.ok(typeof active.settledAt === "number");
+    assert.equal(active.updatedAt, 1_700_000_000_000);
+
+    const cleared = services.setSettled(store, {
+      threadId: thread.id,
+      override: null,
+    });
+    assert.equal(cleared.settledOverride, null);
+    assert.equal(cleared.settledAt, null);
+    assert.equal(cleared.updatedAt, 1_700_000_000_000);
+    assert.equal(store.getThread(thread.id).settledOverride, null);
+    assert.equal(store.getThread(thread.id).settledAt, null);
+  });
+
+  it("setSettled rejects settling a working thread", () => {
+    const thread = makeThread("settle-working");
+    store.updateThread(thread.id, { status: "working" });
+    assert.throws(
+      () =>
+        services.setSettled(store, {
+          threadId: thread.id,
+          override: "settled",
+        }),
+      (err) => {
+        assert.equal(
+          err.message,
+          "Cannot settle a thread while a run is active",
+        );
+        return true;
+      },
+    );
+    // active and null stay allowed on a working thread.
+    const pinned = services.setSettled(store, {
+      threadId: thread.id,
+      override: "active",
+    });
+    assert.equal(pinned.settledOverride, "active");
+    const cleared = services.setSettled(store, {
+      threadId: thread.id,
+      override: null,
+    });
+    assert.equal(cleared.settledOverride, null);
+  });
+
+  it("setSettled rejects unknown override values, naming the value", () => {
+    const thread = makeThread("settle-bad");
+    assert.throws(
+      () =>
+        services.setSettled(store, {
+          threadId: thread.id,
+          override: "maybe",
+        }),
+      /Invalid settle override: "maybe"/,
+    );
+    assert.throws(
+      () =>
+        services.setSettled(store, {
+          threadId: thread.id,
+          override: undefined,
+        }),
+      /Invalid settle override/,
+    );
+  });
+
+  it("setSettled rejects unknown thread", () => {
+    assert.throws(
+      () =>
+        services.setSettled(store, {
+          threadId: "missing",
+          override: "settled",
+        }),
+      /Unknown thread/i,
+    );
+  });
+
+  it("clearSettledOnActivity clears only a settled pin", () => {
+    assert.deepEqual(
+      services.clearSettledOnActivity({ settledOverride: "settled" }),
+      { settledOverride: null, settledAt: null },
+    );
+    assert.deepEqual(
+      services.clearSettledOnActivity({ settledOverride: "active" }),
+      {},
+    );
+    assert.deepEqual(
+      services.clearSettledOnActivity({ settledOverride: null }),
+      {},
+    );
+    assert.deepEqual(services.clearSettledOnActivity(null), {});
   });
 
   it("deleteThread removes thread, messages, and work log", () => {

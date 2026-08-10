@@ -168,10 +168,10 @@
 }
 
 /*
- * Full-card select overlay: sole tab stop for selecting the thread.
+ * Full-card select overlay: primary tab stop for selecting the thread.
  * Content lives in .cardBody (pointer-events: none) so clicks on title,
- * meta, badge all hit this button. The PR <a> is a sibling with
- * pointer-events: auto so it stays separately focusable without nesting.
+ * meta, badge all hit this button. The PR <a> and card actions re-enable
+ * pointer-events so they stay separately focusable without nesting.
  */
 .cardSelect {
   position: absolute;
@@ -200,6 +200,61 @@
   flex-direction: column;
   gap: 4px;
   min-width: 0;
+}
+
+/*
+ * Hover/focus settle control (t3 settle-on-hover). Sibling of cardBody so it
+ * is not nested in the select button; pointer-events auto like .prLink.
+ */
+.cardActions {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.1s ease;
+}
+
+.card:hover .cardActions,
+.card:focus-within .cardActions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.settleBtn {
+  pointer-events: auto;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-soft);
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+
+.settleBtn:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--border);
+  background: var(--card);
+}
+
+.settleBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.settleBtn:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 1px;
 }
 
 .cardTop {

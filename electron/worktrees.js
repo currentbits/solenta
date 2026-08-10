@@ -862,7 +862,15 @@ function prStatus(opts) {
     throwGhFailure(viewed, "gh pr view failed");
   }
 
-  return parsePrJson(viewed.stdout, branch, false);
+  const info = parsePrJson(viewed.stdout, branch, false);
+  // Persist last-known PR state on the thread (no polling; rides this call).
+  store.updateThread(threadId, {
+    prNumber: info.number,
+    prUrl: info.url,
+    prState: info.state,
+  });
+  store.save();
+  return info;
 }
 
 /**
@@ -927,6 +935,7 @@ function createPr(opts) {
     store.updateThread(threadId, {
       prNumber: info.number,
       prUrl: info.url,
+      prState: info.state,
     });
     store.save();
     if (typeof broadcast === "function") {
@@ -987,6 +996,7 @@ function createPr(opts) {
         store.updateThread(threadId, {
           prNumber: info.number,
           prUrl: info.url,
+          prState: info.state,
         });
         store.save();
         if (typeof broadcast === "function") {
@@ -1026,6 +1036,7 @@ function createPr(opts) {
         store.updateThread(threadId, {
           prNumber: info.number,
           prUrl: info.url,
+          prState: info.state,
         });
         store.save();
         if (typeof broadcast === "function") {
@@ -1042,6 +1053,7 @@ function createPr(opts) {
   store.updateThread(threadId, {
     prNumber: info.number,
     prUrl: info.url,
+    prState: info.state,
   });
   store.save();
   if (typeof broadcast === "function") {

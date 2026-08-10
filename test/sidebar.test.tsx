@@ -1,10 +1,8 @@
 /**
- * Sidebar collapse + settled behavior (round 38), in jsdom with real clicks.
+ * Sidebar collapse + settled behavior (round 39), in jsdom with real clicks.
  *
- * Covers the two interactive claims markup tests cannot reach: clicking the
- * project header collapses the group (and persists), and the settled toggle
- * hides/reveals done threads. Search overriding both is asserted here too,
- * because a collapsed group that swallows search hits makes results lie.
+ * Round 39: settled is effectiveSettled (PR/inactivity/override), not
+ * status==="done". A fresh done thread stays visible; MERGED folds.
  *
  * Run: npm run test:renderer (jsdom via test/support/dom.ts mount()).
  */
@@ -34,6 +32,9 @@ const providers: ProviderInfo[] = [
   },
 ];
 
+/** Recent activity so inactivity auto-settle does not fold every fixture. */
+const FRESH = Date.now();
+
 function thread(over: Partial<ThreadInfo> & Pick<ThreadInfo, "id">): ThreadInfo {
   return {
     projectId: "p1",
@@ -42,10 +43,13 @@ function thread(over: Partial<ThreadInfo> & Pick<ThreadInfo, "id">): ThreadInfo 
     prNumber: null,
     prUrl: null,
     status: "idle",
-    createdAt: 1,
-    updatedAt: 1,
+    createdAt: FRESH,
+    updatedAt: FRESH,
     runStartedAt: null,
     archived: false,
+    settledOverride: null,
+    settledAt: null,
+    prState: null,
     provider: "claude",
     model: null,
     sessionId: null,
@@ -56,7 +60,10 @@ function thread(over: Partial<ThreadInfo> & Pick<ThreadInfo, "id">): ThreadInfo 
   };
 }
 
-function sidebar(threads: ThreadInfo[]) {
+function sidebar(
+  threads: ThreadInfo[],
+  over: { onSetSettled?: (id: string, o: "settled" | "active") => void } = {},
+) {
   return (
     <Sidebar
       appName="Coder"
@@ -69,6 +76,7 @@ function sidebar(threads: ThreadInfo[]) {
       onSelectThread={() => {}}
       onCreateThread={() => {}}
       onAddProject={() => {}}
+      onSetSettled={over.onSetSettled}
       // Title-substring stub: the sidebar's list is entirely server-fed while
       // searching, so an empty stub would make every search test vacuous.
       searchThreads={async ({ query }) =>
@@ -78,10 +86,37 @@ function sidebar(threads: ThreadInfo[]) {
   );
 }
 
+/**
+ * Fixture mix: interesting settled case is MERGED at mid-list (not index 0).
+ * Fresh done must stay in attention (round 39 change from round 38).
+ */
 const THREADS = [
-  thread({ id: "busy", title: "busy work", status: "working", runStartedAt: 1, updatedAt: 5 }),
-  thread({ id: "finished", title: "finished work", status: "done", updatedAt: 4 }),
-  thread({ id: "broken", title: "broken work", status: "failed", updatedAt: 3 }),
+  thread({
+    id: "busy",
+    title: "busy work",
+    status: "working",
+    runStartedAt: FRESH,
+    updatedAt: FRESH + 5,
+  }),
+  thread({
+    id: "finished",
+    title: "finished work",
+    status: "done",
+    updatedAt: FRESH + 4,
+  }),
+  thread({
+    id: "merged",
+    title: "merged work",
+    status: "done",
+    prState: "MERGED",
+    updatedAt: FRESH + 3,
+  }),
+  thread({
+    id: "broken",
+    title: "broken work",
+    status: "failed",
+    updatedAt: FRESH + 2,
+  }),
 ];
 
 function cardTitles(m: Awaited<ReturnType<typeof mount>>): string[] {
@@ -98,16 +133,18 @@ function groupHeader(m: Awaited<ReturnType<typeof mount>>): HTMLElement {
   return el as HTMLElement;
 }
 
-describe("Sidebar settled threads", () => {
-  it("folds done threads behind a count and reveals them on toggle", async () => {
+describe("Sidebar settled threads (round 39)", () => {
+  it("keeps fresh done visible; folds MERGED behind a count", async () => {
     const m = await mount(sidebar(THREADS));
     assert.deepEqual(
       cardTitles(m),
-      ["busy", "broken"],
-      "working and failed stay visible; done is folded",
+      ["busy", "finished", "broken"],
+      "working, fresh-done, and failed stay visible; MERGED is folded",
     );
-    // Exact match: the group HEADER's summary also contains "1 settled", and
-    // an includes-match would click the header and collapse the group.
+    assert.ok(
+      !cardTitles(m).includes("merged"),
+      "a MERGED-prState thread IS in the settled fold (not shown by default)",
+    );
     const toggle = m
       .queryAll("button")
       .find((b) => (b.textContent || "").trim() === "1 settled") as
@@ -116,22 +153,69 @@ describe("Sidebar settled threads", () => {
     assert.ok(toggle, "the fold must say how many threads it hides");
     await m.click(toggle);
     assert.ok(
-      cardTitles(m).includes("finished"),
-      "expanding must reveal the settled thread",
+      cardTitles(m).includes("merged"),
+      "expanding must reveal the MERGED settled thread",
     );
     await m.click(m.byText("Hide settled")!);
-    assert.deepEqual(cardTitles(m), ["busy", "broken"]);
+    assert.deepEqual(cardTitles(m), ["busy", "finished", "broken"]);
     m.unmount();
   });
 
-  it("archived wins over settled for a done thread", async () => {
-    // The split runs on the non-archived list. Splitting the whole group
-    // instead would show a done+archived thread in BOTH folds (round 38
-    // review: that mutation survived the full suite).
+  it("override active keeps a MERGED thread out of the fold", async () => {
+    // Interesting case is not alone / not index 0.
     const m = await mount(
       sidebar([
-        thread({ id: "kept", title: "kept", status: "working", runStartedAt: 1 }),
-        thread({ id: "gone", title: "gone", status: "done", archived: true }),
+        thread({
+          id: "busy2",
+          title: "busy2",
+          status: "working",
+          runStartedAt: FRESH,
+          updatedAt: FRESH + 9,
+        }),
+        thread({
+          id: "pinned",
+          title: "pinned active",
+          status: "done",
+          prState: "MERGED",
+          settledOverride: "active",
+          updatedAt: FRESH + 8,
+        }),
+        thread({
+          id: "other-merged",
+          title: "other merged",
+          status: "done",
+          prState: "MERGED",
+          updatedAt: FRESH + 7,
+        }),
+      ]),
+    );
+    assert.ok(
+      cardTitles(m).includes("pinned"),
+      "override active MERGED thread is NOT in the fold",
+    );
+    assert.ok(
+      !cardTitles(m).includes("other-merged"),
+      "a plain MERGED sibling still folds",
+    );
+    m.unmount();
+  });
+
+  it("archived wins over settled for a MERGED thread", async () => {
+    const m = await mount(
+      sidebar([
+        thread({
+          id: "kept",
+          title: "kept",
+          status: "working",
+          runStartedAt: 1,
+        }),
+        thread({
+          id: "gone",
+          title: "gone",
+          status: "done",
+          prState: "MERGED",
+          archived: true,
+        }),
       ]),
     );
     assert.ok(
@@ -143,7 +227,7 @@ describe("Sidebar settled threads", () => {
         .queryAll("button")
         .find((b) => (b.textContent || "").trim() === "1 settled"),
       undefined,
-      "the settled fold must not double-count an archived done thread",
+      "the settled fold must not double-count an archived MERGED thread",
     );
     m.unmount();
   });
@@ -153,7 +237,59 @@ describe("Sidebar settled threads", () => {
     assert.match(
       groupHeader(m).textContent || "",
       /1 working · 1 settled/,
-      "the header must count working and settled",
+      "the header must count working and effective-settled",
+    );
+    m.unmount();
+  });
+
+  it("settle hover action calls onSetSettled with the right override", async () => {
+    const calls: Array<{ id: string; o: "settled" | "active" }> = [];
+    const m = await mount(
+      sidebar(THREADS, {
+        onSetSettled: (id, o) => {
+          calls.push({ id, o });
+        },
+      }),
+    );
+    // Fresh done is in attention → Settle thread. Prefer a non-disabled
+    // control: the working card also renders Settle thread but disabled.
+    const settleBtn = m
+      .queryAll("button")
+      .find(
+        (b) =>
+          b.getAttribute("aria-label") === "Settle thread" &&
+          !(b as HTMLButtonElement).disabled,
+      ) as HTMLButtonElement | undefined;
+    assert.ok(settleBtn, "attention cards offer Settle thread");
+    await m.click(settleBtn);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0]!.o, "settled");
+    // Expand settled fold and click Keep thread active.
+    const toggle = m
+      .queryAll("button")
+      .find((b) => (b.textContent || "").trim() === "1 settled") as
+      | HTMLButtonElement
+      | undefined;
+    assert.ok(toggle);
+    await m.click(toggle);
+    const keepBtn = m
+      .queryAll("button")
+      .find((b) => b.getAttribute("aria-label") === "Keep thread active") as
+      | HTMLButtonElement
+      | undefined;
+    assert.ok(keepBtn, "settled cards offer Keep thread active");
+    await m.click(keepBtn);
+    assert.equal(calls[calls.length - 1]!.o, "active");
+    // Working card's settle control is disabled.
+    const workingCard = m.query('[data-thread-card="busy"]')!;
+    const workingSettle = workingCard.querySelector(
+      'button[aria-label="Settle thread"]',
+    ) as HTMLButtonElement | null;
+    assert.ok(workingSettle);
+    assert.equal(workingSettle.disabled, true);
+    assert.equal(
+      workingSettle.title,
+      "Cannot settle while a run is active",
     );
     m.unmount();
   });
@@ -172,7 +308,6 @@ describe("Sidebar project collapse", () => {
     );
     m.unmount();
 
-    // A fresh mount reads the persisted choice, like an app restart.
     const m2 = await mount(sidebar(THREADS));
     assert.deepEqual(
       cardTitles(m2),
@@ -180,7 +315,7 @@ describe("Sidebar project collapse", () => {
       "the collapse must survive a remount via localStorage",
     );
     await m2.click(groupHeader(m2));
-    assert.deepEqual(cardTitles(m2), ["busy", "broken"]);
+    assert.deepEqual(cardTitles(m2), ["busy", "finished", "broken"]);
     m2.unmount();
     window.localStorage.clear();
   });
@@ -191,20 +326,18 @@ describe("Sidebar project collapse", () => {
     await m.click(groupHeader(m));
     assert.deepEqual(cardTitles(m), []);
 
-    // The search list is server-fed behind a 250ms debounce; wait it out.
     const input = m.query("input") as HTMLInputElement;
     assert.ok(input, "the search input must render");
-    await m.type(input, "finished");
-    // The debounce resolves state inside act, or the console gate trips on
-    // React's not-wrapped-in-act warning.
+    // Search for the MERGED thread, which is folded when not searching.
+    await m.type(input, "merged");
     await inAct(async () => {
       await new Promise((r) => setTimeout(r, 350));
     });
     await m.flush();
     assert.deepEqual(
       cardTitles(m),
-      ["finished"],
-      "a done thread inside a collapsed group must still surface as a hit",
+      ["merged"],
+      "a MERGED thread inside a collapsed group must still surface as a hit",
     );
     m.unmount();
     window.localStorage.clear();
