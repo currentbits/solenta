@@ -11,6 +11,8 @@ const { createRunner } = require("../runner.js");
 const {
   extractAssistantText,
   extractToolEvent,
+  extractToolEvents,
+  extractSessionId,
   extractUsage,
 } = require("../kimi.js");
 const { getProvider } = require("../providers.js");
@@ -82,18 +84,50 @@ async function main() {
   }
 
   if (scenario === "success") {
-    emit({ type: "text", text: "Hello " });
+    // REAL kimi 0.31.1 stream-json shapes, recorded from a live run. The
+    // previous fake used invented type-based shapes, so the whole suite was
+    // green while real kimi turns rendered nothing.
+    emit({ role: "assistant", content: "Hello " });
     await delay(20);
-    emit({ type: "message", content: "from " });
-    await delay(20);
-    emit({ type: "assistant", delta: "kimi" });
+    emit({ role: "assistant", content: "from kimi!" });
     await delay(20);
     emit({
-      type: "assistant",
-      message: {
-        content: [{ type: "text", text: "!" }],
-      },
+      role: "assistant",
+      tool_calls: [
+        {
+          type: "function",
+          id: "tool-1",
+          function: {
+            name: "Write",
+            arguments: "{\\"path\\":\\"probe.txt\\",\\"content\\":\\"hello\\"}",
+          },
+        },
+      ],
     });
+    await delay(20);
+    emit({
+      role: "tool",
+      tool_call_id: "tool-1",
+      content: "Wrote 6 bytes to probe.txt",
+    });
+    await delay(20);
+    emit({
+      role: "meta",
+      type: "session.resume_hint",
+      session_id: "session_fake123",
+      command: "kimi -r session_fake123",
+      content: "To resume this session: kimi -r session_fake123",
+    });
+    process.exit(0);
+    return;
+  }
+
+  if (scenario === "legacy-types") {
+    // Old type-based shapes: kept parseable so a downgrade or older kimi
+    // still streams; no resume hint, so sessionId falls back to "cwd".
+    emit({ type: "text", text: "Legacy " });
+    await delay(20);
+    emit({ type: "assistant", delta: "reply" });
     await delay(20);
     emit({
       type: "tool_call",
@@ -126,8 +160,14 @@ async function main() {
   }
 
   if (scenario === "continue-turn") {
-    emit({ type: "text", text: "Continued reply" });
-    emit({ usage: { prompt_tokens: 5, completion_tokens: 3 } });
+    emit({ role: "assistant", content: "Continued reply" });
+    emit({
+      role: "meta",
+      type: "session.resume_hint",
+      session_id: "session_fake456",
+      command: "kimi -r session_fake456",
+      content: "To resume this session: kimi -r session_fake456",
+    });
     process.exit(0);
     return;
   }
@@ -144,6 +184,115 @@ main().catch((e) => {
   fs.writeFileSync(scriptPath, body, { mode: 0o755 });
   return scriptPath;
 }
+
+describe("kimi extract helpers: REAL recorded stream lines", () => {
+  // Recorded verbatim from kimi 0.31.1 `--output-format stream-json -p`.
+  // The suite previously validated the parser only against invented shapes,
+  // which is how a parser that could not read real kimi shipped green.
+  const REAL_TEXT = { role: "assistant", content: "ok" };
+  const REAL_CALL = {
+    role: "assistant",
+    tool_calls: [
+      {
+        type: "function",
+        id: "tool_aJv40ujcg7kk2L4DgXWOUutM",
+        function: {
+          name: "Write",
+          arguments: '{"path":"probe.txt","content":"hello\\n"}',
+        },
+      },
+    ],
+  };
+  const REAL_RESULT = {
+    role: "tool",
+    tool_call_id: "tool_aJv40ujcg7kk2L4DgXWOUutM",
+    content: "Wrote 6 bytes to probe.txt",
+  };
+  const REAL_META = {
+    role: "meta",
+    type: "session.resume_hint",
+    session_id: "session_cea263a5-1066-444e-84bc-4ce29d42fc6d",
+    command: "kimi -r session_cea263a5-1066-444e-84bc-4ce29d42fc6d",
+    content:
+      "To resume this session: kimi -r session_cea263a5-1066-444e-84bc-4ce29d42fc6d",
+  };
+
+  it("assistant text comes only from role assistant content", () => {
+    assert.equal(extractAssistantText(REAL_TEXT), "ok");
+    // Not recorded live, but if kimi ever streams block arrays, dropping
+    // them reproduces done-in-0s-with-no-reply while gotJson blocks the
+    // plain-text fallback.
+    assert.equal(
+      extractAssistantText({
+        role: "assistant",
+        content: [{ type: "text", text: "block " }, "tail"],
+      }),
+      "block tail",
+    );
+    assert.equal(
+      extractAssistantText(REAL_META),
+      null,
+      "the meta hint has a content string and must NOT render as text",
+    );
+    assert.equal(
+      extractAssistantText(REAL_RESULT),
+      null,
+      "a tool result's content is not assistant text",
+    );
+    assert.equal(extractAssistantText(REAL_CALL), null);
+  });
+
+  it("tool_calls arrays yield one start event per call", () => {
+    const events = extractToolEvents(REAL_CALL);
+    assert.equal(events.length, 1);
+    assert.equal(events[0].phase, "start");
+    assert.equal(events[0].name, "Write");
+    assert.equal(events[0].id, "tool_aJv40ujcg7kk2L4DgXWOUutM");
+    assert.match(events[0].input, /probe\.txt/);
+
+    const two = extractToolEvents({
+      role: "assistant",
+      tool_calls: [
+        { type: "function", id: "a", function: { name: "Read", arguments: "{}" } },
+        { type: "function", id: "b", function: { name: "Bash", arguments: "{}" } },
+      ],
+    });
+    assert.deepEqual(
+      two.map((e) => e.name),
+      ["Read", "Bash"],
+      "one stream line can carry several calls; none may be dropped",
+    );
+  });
+
+  it("role tool lines are end events paired by tool_call_id", () => {
+    const events = extractToolEvents(REAL_RESULT);
+    assert.equal(events.length, 1);
+    assert.equal(events[0].phase, "end");
+    assert.equal(events[0].id, "tool_aJv40ujcg7kk2L4DgXWOUutM");
+    assert.match(String(events[0].output), /Wrote 6 bytes/);
+  });
+
+  it("session id comes from the meta resume hint only", () => {
+    assert.equal(
+      extractSessionId(REAL_META),
+      "session_cea263a5-1066-444e-84bc-4ce29d42fc6d",
+    );
+    assert.equal(extractSessionId(REAL_TEXT), null);
+    assert.equal(extractSessionId(REAL_RESULT), null);
+    assert.equal(extractSessionId({ type: "usage", session_id: "x" }), null);
+  });
+
+  it("legacy type-based shapes still parse through extractToolEvents", () => {
+    const legacy = extractToolEvents({
+      type: "tool_call",
+      id: "t1",
+      name: "Bash",
+      input: { command: "echo hi" },
+    });
+    assert.equal(legacy.length, 1);
+    assert.equal(legacy[0].name, "Bash");
+  });
+});
 
 describe("kimi extract helpers", () => {
   it("extracts assistant text from type text/message/assistant string fields", () => {
@@ -209,7 +358,7 @@ describe("kimi extract helpers", () => {
 });
 
 describe("kimi provider buildArgs", () => {
-  it("builds stream-json args with model, permission flags, and -c resume", () => {
+  it("builds stream-json args with model, no permission flags, -S/-c resume", () => {
     const entry = getProvider("kimi");
     assert.ok(entry);
     assert.equal(entry.kind, "kimi-stream");
@@ -239,29 +388,38 @@ describe("kimi provider buildArgs", () => {
     assert.ok(mIdx >= 0);
     assert.equal(withModel[mIdx + 1], "kimi-code/kimi-for-coding");
 
-    const accept = entry.buildArgs({
-      prompt: "p",
-      permissionMode: "acceptEdits",
-    });
-    assert.ok(accept.includes("-y"));
+    // -p hard-errors combined with -y or --auto (verified live), so NO
+    // permission mode may emit a flag.
+    for (const permissionMode of [
+      "acceptEdits",
+      "bypassPermissions",
+      "plan",
+      "default",
+    ]) {
+      const argv = entry.buildArgs({ prompt: "p", permissionMode });
+      assert.ok(
+        !argv.includes("-y") && !argv.includes("--auto"),
+        `${permissionMode} must not emit -y/--auto: ${JSON.stringify(argv)}`,
+      );
+    }
 
-    const bypass = entry.buildArgs({
-      prompt: "p",
-      permissionMode: "bypassPermissions",
-    });
-    assert.ok(bypass.includes("--auto"));
-
-    const plan = entry.buildArgs({ prompt: "p", permissionMode: "plan" });
-    assert.ok(!plan.includes("-y"));
-    assert.ok(!plan.includes("--auto"));
-
-    // Resume uses -c (continue), not a session id string.
+    // Legacy cwd sentinel keeps -c; a real session id resumes with -S.
     const cont = entry.buildArgs({
       prompt: "again",
       sessionId: "cwd",
     });
     assert.ok(cont.includes("-c"));
+    assert.ok(!cont.includes("-S"));
     assert.ok(!cont.includes("cwd"));
+
+    const resumed = entry.buildArgs({
+      prompt: "again",
+      sessionId: "session_abc",
+    });
+    const sIdx = resumed.indexOf("-S");
+    assert.ok(sIdx >= 0, `expected -S: ${JSON.stringify(resumed)}`);
+    assert.equal(resumed[sIdx + 1], "session_abc");
+    assert.ok(!resumed.includes("-c"));
   });
 });
 
@@ -338,7 +496,7 @@ describe("kimi runner integration", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("streams text from multiple JSON shapes, tools, usage; sets sessionId cwd", async () => {
+  it("streams REAL role-shaped events and captures the session id", async () => {
     const thread = store.getThreads()[0];
     const { runId } = await runner.startRun({
       threadId: thread.id,
@@ -347,26 +505,34 @@ describe("kimi runner integration", () => {
 
     await waitFor(() => store.getThread(thread.id).status === "done");
 
-    assert.equal(store.getThread(thread.id).sessionId, "cwd");
+    assert.equal(
+      store.getThread(thread.id).sessionId,
+      "session_fake123",
+      "the resume hint's session id must be captured, not the cwd sentinel",
+    );
 
     const msgs = store.getMessages(thread.id);
     const assistants = msgs.filter((m) => m.role === "assistant");
     assert.equal(assistants.length, 1);
     assert.equal(assistants[0].text, "Hello from kimi!");
     assert.equal(assistants[0].runId, runId);
+    assert.ok(
+      !assistants[0].text.includes("resume"),
+      "the meta hint's content string must never render as assistant text",
+    );
 
     const tools = msgs.filter((m) => m.role === "tool");
     assert.equal(tools.length, 1);
-    assert.equal(tools[0].tool.name, "Bash");
+    assert.equal(tools[0].tool.name, "Write");
     assert.equal(tools[0].tool.done, true);
-    assert.match(tools[0].tool.input, /echo hi/);
-    assert.match(String(tools[0].tool.output || ""), /hi/);
+    assert.match(tools[0].tool.input, /probe\.txt/);
+    assert.match(String(tools[0].tool.output || ""), /Wrote 6 bytes/);
 
+    // Real kimi prompt mode emits no usage events; the zero fallback applies.
     const usage = store.getUsage(thread.id);
     assert.ok(usage);
-    assert.equal(usage.inputTokens, 12);
-    assert.equal(usage.outputTokens, 8);
-    assert.equal(usage.costUsd, 0);
+    assert.equal(usage.inputTokens, 0);
+    assert.equal(usage.outputTokens, 0);
     assert.equal(usage.turns, 1);
 
     const detail = services.getThreadDetail(store, thread.id);
@@ -378,6 +544,30 @@ describe("kimi runner integration", () => {
     assert.ok(argv.includes("stream-json"));
     assert.equal(argv[argv.indexOf("-p") + 1], "do the thing");
     assert.ok(!argv.includes("-c"));
+    assert.ok(!argv.includes("-S"));
+  });
+
+  it("legacy type-based shapes still parse, with cwd fallback", async () => {
+    process.env.CODER_FAKE_KIMI_SCENARIO = "legacy-types";
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "legacy" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    assert.equal(
+      store.getThread(thread.id).sessionId,
+      "cwd",
+      "no resume hint means the legacy per-cwd sentinel",
+    );
+    const msgs = store.getMessages(thread.id);
+    const assistants = msgs.filter((m) => m.role === "assistant");
+    assert.equal(assistants.length, 1);
+    assert.equal(assistants[0].text, "Legacy reply");
+    const tools = msgs.filter((m) => m.role === "tool");
+    assert.equal(tools.length, 1);
+    assert.equal(tools[0].tool.name, "Bash");
+    const usage = store.getUsage(thread.id);
+    assert.equal(usage.inputTokens, 12);
+    assert.equal(usage.outputTokens, 8);
   });
 
   it("plain-text fallback when stdout has no JSON lines", async () => {
@@ -393,12 +583,12 @@ describe("kimi runner integration", () => {
     assert.match(assistants[0].text, /Plain kimi reply without JSON/);
   });
 
-  it("second turn passes -c continue with sessionId sentinel cwd", async () => {
+  it("second turn resumes with -S and the captured session id", async () => {
     process.env.CODER_FAKE_KIMI_SCENARIO = "success";
     const thread = store.getThreads()[0];
     await runner.startRun({ threadId: thread.id, prompt: "turn one" });
     await waitFor(() => store.getThread(thread.id).status === "done");
-    assert.equal(store.getThread(thread.id).sessionId, "cwd");
+    assert.equal(store.getThread(thread.id).sessionId, "session_fake123");
 
     process.env.CODER_FAKE_KIMI_SCENARIO = "continue-turn";
     fs.unlinkSync(argvFile);
@@ -413,44 +603,86 @@ describe("kimi runner integration", () => {
     await waitFor(() => store.getThread(thread.id).status === "done");
 
     const argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
-    assert.ok(argv.includes("-c"), `expected -c in ${JSON.stringify(argv)}`);
+    const sIdx = argv.indexOf("-S");
+    assert.ok(sIdx >= 0, `expected -S in ${JSON.stringify(argv)}`);
+    assert.equal(argv[sIdx + 1], "session_fake123");
+    assert.ok(!argv.includes("-c"), "-c is only for legacy cwd threads");
     assert.equal(argv[argv.indexOf("-p") + 1], "turn two");
-    assert.equal(store.getThread(thread.id).sessionId, "cwd");
-
-    const usage = store.getUsage(thread.id);
-    assert.equal(usage.inputTokens, 17);
-    assert.equal(usage.outputTokens, 11);
-    assert.equal(usage.turns, 2);
+    assert.equal(
+      store.getThread(thread.id).sessionId,
+      "session_fake456",
+      "each turn stores the newest hint's session id",
+    );
+    assert.equal(store.getUsage(thread.id).turns, 2);
   });
 
-  it("maps permission flags and propagates -m model", async () => {
+  it("a hint-less turn never downgrades a real session id", async () => {
+    // The terminal stamp is captured || prior || "cwd". Every other hint-less
+    // test starts from null/"cwd", so the middle term could be deleted with
+    // the suite green (round 37 review, surviving mutation) while a single
+    // old-kimi turn silently demoted -S resume back to the cwd sentinel.
     const thread = store.getThreads()[0];
-    store.updateThread(thread.id, {
-      permissionMode: "acceptEdits",
-      model: "kimi-code/kimi-for-coding-highspeed",
-    });
+    store.updateThread(thread.id, { sessionId: "session_prior" });
     store.save();
+    process.env.CODER_FAKE_KIMI_SCENARIO = "legacy-types"; // emits no hint
 
-    await runner.startRun({ threadId: thread.id, prompt: "flagged" });
+    await runner.startRun({ threadId: thread.id, prompt: "no hint" });
     await waitFor(() => store.getThread(thread.id).status === "done");
 
     const argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
-    assert.ok(argv.includes("-y"));
-    const mIdx = argv.indexOf("-m");
-    assert.ok(mIdx >= 0);
-    assert.equal(argv[mIdx + 1], "kimi-code/kimi-for-coding-highspeed");
+    const sIdx = argv.indexOf("-S");
+    assert.ok(sIdx >= 0, `expected -S in ${JSON.stringify(argv)}`);
+    assert.equal(argv[sIdx + 1], "session_prior");
+    assert.equal(
+      store.getThread(thread.id).sessionId,
+      "session_prior",
+      "a turn without a resume hint must keep the session it resumed",
+    );
   });
 
-  it("bypassPermissions maps to --auto", async () => {
+  it("a legacy cwd thread keeps resuming with -c until a hint upgrades it", async () => {
     const thread = store.getThreads()[0];
-    store.updateThread(thread.id, { permissionMode: "bypassPermissions" });
+    store.updateThread(thread.id, { sessionId: "cwd" });
     store.save();
+    process.env.CODER_FAKE_KIMI_SCENARIO = "continue-turn";
 
-    await runner.startRun({ threadId: thread.id, prompt: "auto" });
+    await runner.startRun({ threadId: thread.id, prompt: "legacy resume" });
     await waitFor(() => store.getThread(thread.id).status === "done");
 
     const argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
-    assert.ok(argv.includes("--auto"));
+    assert.ok(argv.includes("-c"), `expected -c in ${JSON.stringify(argv)}`);
+    assert.ok(!argv.includes("-S"));
+    assert.equal(
+      store.getThread(thread.id).sessionId,
+      "session_fake456",
+      "the turn's hint upgrades the sentinel to a real session id",
+    );
+  });
+
+  it("never emits permission flags (they hard-error with -p) and propagates -m", async () => {
+    // Verified live: "error: Cannot combine --prompt with --yolo/--auto".
+    // Emitting them made every acceptEdits/bypassPermissions kimi turn fail.
+    for (const permissionMode of ["acceptEdits", "bypassPermissions"]) {
+      const thread = store.getThreads()[0];
+      store.updateThread(thread.id, {
+        permissionMode,
+        model: "kimi-code/kimi-for-coding-highspeed",
+      });
+      store.save();
+
+      await runner.startRun({ threadId: thread.id, prompt: "flagged" });
+      await waitFor(() => store.getThread(thread.id).status === "done");
+
+      const argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
+      assert.ok(
+        !argv.includes("-y") && !argv.includes("--auto"),
+        `${permissionMode} must not emit a flag -p rejects: ${JSON.stringify(argv)}`,
+      );
+      const mIdx = argv.indexOf("-m");
+      assert.ok(mIdx >= 0);
+      assert.equal(argv[mIdx + 1], "kimi-code/kimi-for-coding-highspeed");
+      fs.unlinkSync(argvFile);
+    }
   });
 
   it("nonzero exit sets failed + stderr tail", async () => {

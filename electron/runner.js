@@ -1659,6 +1659,13 @@ function createRunner(opts) {
     let pushTimer = null;
     /** Run-local usage for memory footers (not cumulative store totals). */
     const runUsage = { tokensIn: 0, tokensOut: 0, costUsd: 0 };
+    /**
+     * Real session id from the stream's meta resume hint. Falls back to the
+     * legacy per-cwd sentinel when an older kimi emits no hint, keeping -c
+     * threads resumable.
+     * @type {string | null}
+     */
+    let capturedKimiSessionId = null;
 
     const cwd = thread.worktreePath || project.path;
     const binary = resolveBin(providerEntry);
@@ -1766,6 +1773,11 @@ function createRunner(opts) {
       onEvent: (ev) => {
         if (!guard()) return;
 
+        const sid = kimiParse.extractSessionId(ev);
+        if (sid) {
+          capturedKimiSessionId = sid;
+        }
+
         const text = kimiParse.extractAssistantText(ev);
         if (text != null) {
           assistantText += text;
@@ -1773,8 +1785,7 @@ function createRunner(opts) {
           throttledPush();
         }
 
-        const tool = kimiParse.extractToolEvent(ev);
-        if (tool) {
+        for (const tool of kimiParse.extractToolEvents(ev)) {
           if (tool.phase === "start") {
             const toolMeta = {
               id: tool.id,
@@ -1874,12 +1885,15 @@ function createRunner(opts) {
         }
 
         if (code === 0) {
-          // Kimi sessions are per cwd; sentinel "cwd" drives -c on later turns.
+          // Prefer the real session id from the resume hint (-S on later
+          // turns); keep the prior id, then the legacy "cwd" sentinel (-c),
+          // so a hint-less turn never downgrades an existing session.
           store.updateThread(
             threadId,
             {
               status: "done",
-              sessionId: "cwd",
+              sessionId:
+                capturedKimiSessionId || thread.sessionId || "cwd",
               runStartedAt: null,
             },
             { touch: true },
