@@ -44,6 +44,8 @@ const providers: ProviderInfo[] = [
 
 const workflows: WorkflowTemplateInfo[] = [];
 
+const FRESH = Date.now();
+
 function thread(over: Partial<ThreadInfo> = {}): ThreadInfo {
   return {
     id: "t1",
@@ -53,10 +55,13 @@ function thread(over: Partial<ThreadInfo> = {}): ThreadInfo {
     prNumber: null,
     prUrl: null,
     status: "idle",
-    createdAt: 1,
-    updatedAt: 1,
+    createdAt: FRESH,
+    updatedAt: FRESH,
     runStartedAt: null,
     archived: false,
+    settledOverride: null,
+    settledAt: null,
+    prState: null,
     provider: "claude",
     model: null,
     sessionId: null,

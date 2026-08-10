@@ -60,6 +60,9 @@ export function project(over: Partial<ProjectInfo> = {}): ProjectInfo {
   };
 }
 
+/** Fresh activity clock so round-39 inactivity settle does not fold fixtures. */
+const FRESH = Date.now();
+
 export function thread(over: Partial<ThreadInfo> = {}): ThreadInfo {
   return {
     id: "t1",
@@ -69,10 +72,13 @@ export function thread(over: Partial<ThreadInfo> = {}): ThreadInfo {
     prNumber: null,
     prUrl: null,
     status: "idle",
-    createdAt: 1,
-    updatedAt: 2,
+    createdAt: FRESH,
+    updatedAt: FRESH,
     runStartedAt: null,
     archived: false,
+    settledOverride: null,
+    settledAt: null,
+    prState: null,
     provider: "claude",
     model: null,
     sessionId: null,
@@ -210,7 +216,29 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         rec("threads.get", [id], details[id] ?? detail({ thread: thread({ id }) })),
       setPermissionMode: (input: unknown) =>
         rec("threads.setPermissionMode", [input], thread()),
-      setArchived: (input: unknown) => rec("threads.setArchived", [input], thread()),
+      setArchived: (input: unknown) => {
+        const i = input as { threadId: string; archived: boolean };
+        return rec(
+          "threads.setArchived",
+          [input],
+          thread({ id: i.threadId, archived: i.archived }),
+        );
+      },
+      setSettled: (input: unknown) => {
+        const i = input as {
+          threadId: string;
+          override: "settled" | "active" | null;
+        };
+        return rec(
+          "threads.setSettled",
+          [input],
+          thread({
+            id: i.threadId,
+            settledOverride: i.override,
+            settledAt: i.override ? Date.now() : null,
+          }),
+        );
+      },
       setProvider: (input: unknown) => rec("threads.setProvider", [input], thread()),
       setReasoningEffort: (input: unknown) =>
         rec("threads.setReasoningEffort", [input], thread()),
