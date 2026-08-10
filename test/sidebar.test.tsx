@@ -77,6 +77,8 @@ function sidebar(
     activeThreadId?: string | null;
     onSetSettled?: (id: string, o: "settled" | "active") => void;
     onSelectThread?: (id: string) => void;
+    onRemoveProject?: (projectId: string) => void;
+    projectError?: string | null;
   } = {},
 ) {
   const projects = over.projects ?? [p1];
@@ -92,6 +94,8 @@ function sidebar(
       onSelectThread={over.onSelectThread ?? (() => {})}
       onCreateThread={() => {}}
       onAddProject={() => {}}
+      onRemoveProject={over.onRemoveProject}
+      projectError={over.projectError ?? null}
       onSetSettled={over.onSetSettled}
       searchThreads={async ({ query }) =>
         threads.filter((t) => t.title.includes(query))
@@ -630,6 +634,122 @@ describe("Sidebar project collapse", () => {
     assert.ok(
       cardTitles(m).includes("finished"),
       "search must override project collapse so hits inside it surface",
+    );
+    m.unmount();
+  });
+});
+
+describe("Sidebar remove project (round 41, t3-style)", () => {
+  // Fixture discipline: two projects; exercise the NON-first (p2).
+  const removeThreads = [
+    thread({ id: "t-p1-a", title: "ledger a", projectId: "p1" }),
+    thread({ id: "t-p2-a", title: "billing a", projectId: "p2" }),
+    thread({ id: "t-p2-b", title: "billing b", projectId: "p2", archived: true }),
+    thread({
+      id: "t-p2-c",
+      title: "billing c",
+      projectId: "p2",
+      status: "done",
+      prState: "MERGED",
+    }),
+  ];
+
+  it("exposes a separately focusable remove control per group header", async () => {
+    const m = await mount(
+      sidebar(removeThreads, {
+        projects: [p1, p2],
+        onRemoveProject: () => {},
+      }),
+    );
+    const removeP1 = m.query('[data-project-remove="p1"]');
+    const removeP2 = m.query('[data-project-remove="p2"]');
+    assert.ok(removeP1, "remove affordance on first project");
+    assert.ok(removeP2, "remove affordance on second project");
+    assert.equal(
+      removeP2!.getAttribute("aria-label"),
+      "Remove project acme/billing",
+    );
+    // Sibling of the collapse button — not nested inside it (thread-card pattern).
+    const header = groupHeader(m, "acme/billing");
+    assert.ok(
+      !header.contains(removeP2!),
+      "remove must not be nested inside the collapse control",
+    );
+    assert.equal(
+      removeP2!.parentElement,
+      header.parentElement,
+      "remove and collapse share one header row",
+    );
+    m.unmount();
+  });
+
+  it("confirm shows REAL thread count, path, and both t3 sentences", async () => {
+    const m = await mount(
+      sidebar(removeThreads, {
+        projects: [p1, p2],
+        onRemoveProject: () => {},
+      }),
+    );
+    // Remove the NON-first project.
+    await m.click(m.query('[data-project-remove="p2"]'));
+    const dialog = m.query('[data-remove-confirm="p2"]');
+    assert.ok(dialog, "destructive confirm dialog must open");
+    const text = dialog!.textContent || "";
+    // t3 title: "Remove project X and delete its N threads?"
+    assert.ok(
+      text.includes(
+        "Remove project acme/billing and delete its 3 threads?",
+      ),
+      "title must name slug + real count (attention+archived+settled = 3)",
+    );
+    assert.ok(text.includes("/tmp/billing"), "dialog must show the path");
+    assert.ok(
+      text.includes(
+        "This permanently clears conversation history for those threads.",
+      ),
+    );
+    assert.ok(text.includes("This removes only this project entry."));
+    m.unmount();
+  });
+
+  it("Cancel records nothing; Confirm records the project id (non-vacuous pair)", async () => {
+    const removed: string[] = [];
+    const m = await mount(
+      sidebar(removeThreads, {
+        projects: [p1, p2],
+        onRemoveProject: (id) => {
+          removed.push(id);
+        },
+      }),
+    );
+    await m.click(m.query('[data-project-remove="p2"]'));
+    await m.click(m.byText("Cancel"));
+    assert.deepEqual(removed, [], "cancel must not remove");
+    assert.equal(m.query('[data-remove-confirm="p2"]'), null);
+
+    await m.click(m.query('[data-project-remove="p2"]'));
+    await m.click(m.query('[data-remove-confirm-submit="p2"]'));
+    await m.flush();
+    assert.deepEqual(
+      removed,
+      ["p2"],
+      "confirm must pass the NON-first project id — proves the recorder works",
+    );
+    m.unmount();
+  });
+
+  it("singular thread count wording", async () => {
+    const m = await mount(
+      sidebar([thread({ id: "only", title: "only", projectId: "p2" })], {
+        projects: [p1, p2],
+        onRemoveProject: () => {},
+      }),
+    );
+    await m.click(m.query('[data-project-remove="p2"]'));
+    const text = m.query('[data-remove-confirm="p2"]')?.textContent || "";
+    assert.ok(
+      text.includes("Remove project acme/billing and delete its 1 thread?"),
+      "singular: thread not threads",
     );
     m.unmount();
   });

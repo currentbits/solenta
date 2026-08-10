@@ -99,6 +99,14 @@ export interface UseCoderResult {
   ) => Promise<void>;
   /** Permanently delete the selected thread (after caller confirms). */
   deleteThread: () => Promise<void>;
+  /**
+   * Remove a project ENTRY and its threads' history (after caller confirms).
+   * Repo on disk is never touched. On success refreshes projects + threads;
+   * if the open thread belonged to that project, selection hands off exactly
+   * like deleteThread (nextVisibleThreadId + clear detail). Rejects on
+   * failure so the caller can show an error toast.
+   */
+  removeProject: (projectId: string) => Promise<void>;
   setupWorktree: () => Promise<ThreadInfo | null>;
   mergeWorktree: () => Promise<ThreadInfo | null>;
   removeWorktree: (force?: boolean) => Promise<ThreadInfo | null>;
@@ -600,6 +608,42 @@ export function useCoder(): UseCoderResult {
     }
   }, [api, selectedThreadId, applyThreads]);
 
+  const removeProject = useCallback(
+    async (projectId: string) => {
+      const pid = String(projectId ?? "");
+      if (!pid) return;
+      // Capture whether the open thread belongs to this project BEFORE the
+      // remove — same "was the selected one the victim?" posture as deleteThread.
+      const openId = selectedRef.current;
+      const openBelongs =
+        openId != null &&
+        threadsRef.current.some(
+          (t) => t.id === openId && t.projectId === pid,
+        );
+      try {
+        await api.projects.remove({ projectId: pid });
+        const [nextProjects, list] = await Promise.all([
+          api.projects.list(),
+          api.threads.list(),
+        ]);
+        setProjects(nextProjects);
+        applyThreads(list);
+        // Match deleteThread: only hand off when the selected thread was the
+        // one that just vanished (here: lived in the removed project).
+        if (openBelongs && openId != null && selectedRef.current === openId) {
+          const nextId = nextVisibleThreadId(list, openId);
+          setSelectedThreadId(nextId);
+          setDetail(null);
+        }
+        setError(null);
+      } catch (err) {
+        // Re-throw so the App can show the error toast; do not swallow.
+        throw err instanceof Error ? err : new Error(errorMessage(err));
+      }
+    },
+    [api, applyThreads],
+  );
+
   const applyThreadUpdate = useCallback(
     (thread: ThreadInfo) => {
       applyThreads(
@@ -811,6 +855,7 @@ export function useCoder(): UseCoderResult {
     setArchived,
     setSettled,
     deleteThread,
+    removeProject,
     setupWorktree,
     mergeWorktree,
     removeWorktree,

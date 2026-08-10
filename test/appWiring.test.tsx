@@ -332,3 +332,148 @@ describe("App reasoning-effort wiring", () => {
     m.unmount();
   });
 });
+
+describe("App remove-project wiring (round 41)", () => {
+  // Fixture discipline: two projects; remove the NON-first; selected thread
+  // is not list index 0 (boot prefers first non-archived — we re-select).
+  const pFirst = project({
+    id: "p-first",
+    slug: "acme/first",
+    name: "first",
+    path: "/tmp/first",
+  });
+  const pDrop = project({
+    id: "p-drop",
+    slug: "acme/drop",
+    name: "drop",
+    path: "/tmp/drop",
+  });
+  const t0 = thread({
+    id: "t0",
+    projectId: "p-first",
+    title: "index zero",
+    updatedAt: Date.now() + 100,
+  });
+  const tKeep = thread({
+    id: "t-keep",
+    projectId: "p-first",
+    title: "keep me",
+    updatedAt: Date.now() + 50,
+  });
+  const tDrop = thread({
+    id: "t-drop",
+    projectId: "p-drop",
+    title: "drop me",
+    updatedAt: Date.now() + 200,
+  });
+
+  it("Confirm records projects.remove with the right id; Cancel records nothing", async () => {
+    const fake = createFakeCoder({
+      projects: [pFirst, pDrop],
+      threads: [t0, tKeep, tDrop],
+      details: {
+        t0: detail({ thread: t0 }),
+        "t-keep": detail({ thread: tKeep }),
+        "t-drop": detail({ thread: tDrop }),
+      },
+    });
+    const m = await boot(fake);
+
+    // Cancel path first — empty assertion is non-vacuous only if Confirm records.
+    await m.click(m.query('[data-project-remove="p-drop"]'));
+    await m.click(m.byText("Cancel"));
+    await m.flush();
+    assert.equal(
+      fake.of("projects.remove").length,
+      0,
+      "Cancel must not call projects.remove",
+    );
+
+    await m.click(m.query('[data-project-remove="p-drop"]'));
+    await m.click(m.query('[data-remove-confirm-submit="p-drop"]'));
+    await m.flush();
+
+    const removeCalls = fake.of("projects.remove");
+    assert.equal(removeCalls.length, 1, "Confirm records exactly one remove");
+    assert.deepEqual(
+      removeCalls[0]!.args[0],
+      { projectId: "p-drop" },
+      "remove must name the NON-first project",
+    );
+    m.unmount();
+  });
+
+  it("selection moves when removing the project that owns the selected thread", async () => {
+    const fake = createFakeCoder({
+      projects: [pFirst, pDrop],
+      threads: [t0, tKeep, tDrop],
+      details: {
+        t0: detail({ thread: t0 }),
+        "t-keep": detail({ thread: tKeep }),
+        "t-drop": detail({ thread: tDrop }),
+      },
+    });
+    const m = await boot(fake);
+
+    // Select NON-index-0 thread that lives in the project we will remove.
+    const dropCard = m.query('button[aria-label="Select thread: drop me"]');
+    assert.ok(dropCard, "drop thread card must render");
+    await m.click(dropCard);
+    await m.flush();
+
+    await m.click(m.query('[data-project-remove="p-drop"]'));
+    await m.click(m.query('[data-remove-confirm-submit="p-drop"]'));
+    await m.flush();
+
+    assert.deepEqual(
+      fake.of("projects.remove").at(-1)?.args[0],
+      { projectId: "p-drop" },
+    );
+    // Dropped thread is gone from the list; a surviving first-project thread remains.
+    assert.equal(
+      m.query('button[aria-label="Select thread: drop me"]'),
+      null,
+      "removed project's thread must leave the sidebar",
+    );
+    assert.ok(
+      m.query('button[aria-label="Select thread: index zero"]') ||
+        m.query('button[aria-label="Select thread: keep me"]'),
+      "selection must hand off to a surviving thread",
+    );
+    m.unmount();
+  });
+
+  it("failure path shows Failed to remove toast without crashing", async () => {
+    const fake = createFakeCoder({
+      projects: [pFirst, pDrop],
+      threads: [t0, tDrop],
+      details: {
+        t0: detail({ thread: t0 }),
+        "t-drop": detail({ thread: tDrop }),
+      },
+      fail: {
+        "projects.remove": new Error(
+          "Cannot remove a project while a run is active",
+        ),
+      },
+    });
+    const m = await boot(fake);
+    await m.click(m.query('[data-project-remove="p-drop"]'));
+    await m.click(m.query('[data-remove-confirm-submit="p-drop"]'));
+    await m.flush();
+
+    const toast = m.query('[data-toast="error"]');
+    assert.ok(toast, "error toast must render on reject");
+    assert.ok(
+      (toast!.textContent || "").includes('Failed to remove "acme/drop"'),
+      "toast title must be Failed to remove \"slug\"",
+    );
+    // Dialog closed; app still alive.
+    assert.equal(m.query('[data-remove-confirm="p-drop"]'), null);
+    assert.ok(
+      m.query('button[aria-label="Select thread: drop me"]'),
+      "failed remove must leave the project intact",
+    );
+    m.unmount();
+  });
+});

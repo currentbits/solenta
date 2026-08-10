@@ -1332,6 +1332,7 @@ export function createDevCoder(): CoderApi {
 }
 
 function buildDevCoder(): CoderApi {
+  // let: projects.remove must rebind the array (const would not compile).
   let projects = seedProjects();
   let threads = seedThreads(projects);
   const details = new Map<string, ThreadDetail>();
