@@ -16,6 +16,15 @@
   font-size: 13px;
 }
 
+.toastError {
+  border-color: rgba(248, 113, 113, 0.45);
+  background: rgba(30, 20, 22, 0.98);
+}
+
+.toastError .message {
+  color: #fca5a5;
+}
+
 .message {
   font-weight: 550;
 }

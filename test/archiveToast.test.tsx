@@ -57,4 +57,26 @@ describe("ArchiveToast", () => {
     assert.equal(dismissed, true, "toast must dismiss after the window");
     m.unmount();
   });
+
+  it("error variant shows the title with no Undo control", async () => {
+    let dismissed = false;
+    const m = await mount(
+      <ArchiveToast
+        variant="error"
+        title={'Failed to remove "acme/drop"'}
+        onDismiss={() => {
+          dismissed = true;
+        }}
+      />,
+    );
+    assert.ok(
+      m.text().includes('Failed to remove "acme/drop"'),
+      "error toast must show the titled failure",
+    );
+    assert.equal(m.byText("Undo"), null, "error variant has no Undo");
+    assert.ok(m.query('[data-toast="error"]'), "data-toast=error for tests");
+    await m.click(m.query('[aria-label="Dismiss"]'));
+    assert.equal(dismissed, true);
+    m.unmount();
+  });
 });

@@ -1332,7 +1332,8 @@ export function createDevCoder(): CoderApi {
 }
 
 function buildDevCoder(): CoderApi {
-  const projects = seedProjects();
+  // let: projects.remove must rebind the array (const would not compile).
+  let projects = seedProjects();
   let threads = seedThreads(projects);
   const details = new Map<string, ThreadDetail>();
   const runTimers = new Map<string, ReturnType<typeof setInterval>>();
@@ -1837,6 +1838,40 @@ function buildDevCoder(): CoderApi {
       async addViaDialog() {
         const n = projects.length + 1;
         return api.projects.add(`/Users/demo/demo-org/project-${n}`);
+      },
+      /**
+       * Contract surface for projects.remove (round 41). Electron owns the
+       * production implementation; this mirror keeps CoderApi / tsc / dev mode
+       * honest so the renderer half can ship without editing ipc.ts.
+       */
+      async remove(input: { projectId: string }) {
+        const projectId = String(input.projectId ?? "");
+        const project = projects.find((p) => p.id === projectId);
+        if (!project) {
+          throw new Error(`Unknown project: ${projectId}`);
+        }
+        const projectThreads = threads.filter((t) => t.projectId === projectId);
+        for (const t of projectThreads) {
+          if (t.status === "working" || runTimers.has(t.id)) {
+            throw new Error("Cannot remove a project while a run is active");
+          }
+        }
+        for (const t of projectThreads) {
+          if (t.worktreePath) {
+            throw new Error(
+              "Thread still has a worktree. Merge or delete it in the Git tab first.",
+            );
+          }
+        }
+        for (const t of projectThreads) {
+          clearRunTimer(t.id);
+          runStates.delete(t.id);
+          clearedDiff.delete(t.id);
+          details.delete(t.id);
+        }
+        threads = threads.filter((t) => t.projectId !== projectId);
+        projects = projects.filter((p) => p.id !== projectId);
+        emitThreads();
       },
     },
     threads: {

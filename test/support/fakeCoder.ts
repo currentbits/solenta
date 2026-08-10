@@ -114,8 +114,8 @@ export interface FakeOptions {
 
 export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
   const calls: Call[] = [];
-  const projects = opts.projects ?? [project()];
-  const threads = opts.threads ?? [thread()];
+  let projects = opts.projects ?? [project()];
+  let threads = opts.threads ?? [thread()];
   const providers =
     opts.providers ??
     ([
@@ -204,12 +204,24 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       remove: (input: unknown) => rec("workflows.remove", [input], undefined),
     },
     projects: {
-      list: () => rec("projects.list", [], projects),
+      list: () => rec("projects.list", [], projects.map((p) => ({ ...p }))),
       add: (path: string) => rec("projects.add", [path], project({ path })),
       addViaDialog: () => rec("projects.addViaDialog", [], project()),
+      remove: (input: unknown) => {
+        const projectId = String(
+          (input as { projectId?: string } | null)?.projectId ?? "",
+        );
+        return rec("projects.remove", [input], undefined).then((v) => {
+          // Mutate so a post-remove list() reflects the drop (useCoder
+          // re-lists projects + threads after remove).
+          projects = projects.filter((p) => p.id !== projectId);
+          threads = threads.filter((t) => t.projectId !== projectId);
+          return v;
+        });
+      },
     },
     threads: {
-      list: () => rec("threads.list", [], threads),
+      list: () => rec("threads.list", [], threads.map((t) => ({ ...t }))),
       search: (input: unknown) => rec("threads.search", [input], [] as ThreadInfo[]),
       create: (input: unknown) => rec("threads.create", [input], thread({ id: "t-new" })),
       get: (id: string) =>
