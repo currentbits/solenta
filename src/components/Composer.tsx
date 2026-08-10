@@ -562,7 +562,7 @@ export function Composer({
                     )}
                     {!drillProvider ? (
                       <ul
-                        className={styles.modelList}
+                        className={`${styles.modelList} ${styles.levelEnterLeft}`}
                         role="listbox"
                         aria-label="Provider"
                         tabIndex={0}
@@ -656,7 +656,7 @@ export function Composer({
                     {drillProvider ? (
                     <ul
                       ref={modelListRef}
-                      className={styles.modelList}
+                      className={`${styles.modelList} ${styles.levelEnterRight}`}
                       role="listbox"
                       aria-label="Model"
                       tabIndex={0}

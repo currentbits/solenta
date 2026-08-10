@@ -273,6 +273,48 @@
   background: var(--bg-elevated);
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
   overflow: hidden;
+  transform-origin: bottom left;
+  animation: popoverIn 140ms ease-out;
+}
+
+@keyframes popoverIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.97);
+  }
+}
+
+/* Levels mount fresh on drill in/out, so a mount animation per list gives the
+   travel direction for free: models arrive from the right, providers return
+   from the left. */
+.levelEnterLeft {
+  animation: levelFromLeft 120ms ease-out;
+}
+
+.levelEnterRight {
+  animation: levelFromRight 120ms ease-out;
+}
+
+@keyframes levelFromLeft {
+  from {
+    opacity: 0;
+    transform: translateX(-8px);
+  }
+}
+
+@keyframes levelFromRight {
+  from {
+    opacity: 0;
+    transform: translateX(8px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .modelPopover,
+  .levelEnterLeft,
+  .levelEnterRight {
+    animation: none;
+  }
 }
 
 .modelPopoverLeft {

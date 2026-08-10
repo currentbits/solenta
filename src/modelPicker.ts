@@ -438,7 +438,12 @@ export function buildProviderRows(
     return {
       id: p.id,
       name: p.name,
-      badge: unavailable ? "not installed" : locked ? "locked" : summary,
+      // "locked" alone read as broken (why is Codex locked?); say the action.
+      badge: unavailable
+        ? "not installed"
+        : locked
+          ? "new thread to switch"
+          : summary,
       summary,
       modelCount: models.length,
       disabled: unavailable || locked,

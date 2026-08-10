@@ -60,7 +60,8 @@ describe("buildProviderRows", () => {
     // locked. The row shows a word; the sentence goes in the title.
     const locked = buildProviderRows(LIST, "claude", true);
     const codex = locked.find((r) => r.id === "codex");
-    assert.equal(codex?.badge, "locked");
+    // "locked" alone read as broken; the badge now names the action.
+    assert.equal(codex?.badge, "new thread to switch");
     assert.match(String(codex?.disabledReason), /claude code/i);
     assert.ok(
       String(codex?.disabledReason).length > String(codex?.badge).length,
