@@ -83,8 +83,20 @@ export interface UseCoderResult {
   }) => Promise<void>;
   /** Set reasoning effort on the selected thread (selectedRef-guarded). */
   setReasoningEffort: (effort: ReasoningEffort | null) => Promise<void>;
-  /** Archive or unarchive the selected thread. Archiving moves selection off it. */
-  setArchived: (archived: boolean) => Promise<void>;
+  /**
+   * Archive or unarchive a thread. Defaults to the selected thread.
+   * Pass threadId when undoing archive after selection has already moved.
+   * Archiving the selected thread moves selection off it.
+   */
+  setArchived: (archived: boolean, threadId?: string) => Promise<void>;
+  /**
+   * Set the settle override for a thread (sidebar hover action).
+   * Does not require the thread to be selected.
+   */
+  setSettled: (
+    threadId: string,
+    override: "settled" | "active" | null,
+  ) => Promise<void>;
   /** Permanently delete the selected thread (after caller confirms). */
   deleteThread: () => Promise<void>;
   setupWorktree: () => Promise<ThreadInfo | null>;
@@ -518,21 +530,21 @@ export function useCoder(): UseCoderResult {
   );
 
   const setArchived = useCallback(
-    async (archived: boolean) => {
-      if (!selectedThreadId) return;
-      const threadId = selectedThreadId;
+    async (archived: boolean, threadIdArg?: string) => {
+      const threadId = threadIdArg ?? selectedThreadId;
+      if (!threadId) return;
       try {
         const thread = await api.threads.setArchived({ threadId, archived });
-        if (selectedRef.current !== threadId) return;
         const next = threadsRef.current.map((t) =>
           t.id === thread.id ? thread : t,
         );
         applyThreads(next);
-        if (archived) {
+        // Only move selection when we archived the thread that was open.
+        if (archived && selectedRef.current === threadId) {
           const nextId = nextVisibleThreadId(next, threadId);
           setSelectedThreadId(nextId);
           if (nextId == null) setDetail(null);
-        } else {
+        } else if (selectedRef.current === threadId) {
           setDetail((prev) =>
             prev && prev.thread.id === thread.id
               ? { ...prev, thread }
@@ -545,6 +557,29 @@ export function useCoder(): UseCoderResult {
       }
     },
     [api, selectedThreadId, applyThreads],
+  );
+
+  const setSettled = useCallback(
+    async (
+      threadId: string,
+      override: "settled" | "active" | null,
+    ) => {
+      try {
+        const thread = await api.threads.setSettled({ threadId, override });
+        applyThreads(
+          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
+        );
+        setDetail((prev) =>
+          prev && prev.thread.id === thread.id
+            ? { ...prev, thread }
+            : prev,
+        );
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+      }
+    },
+    [api, applyThreads],
   );
 
   const deleteThread = useCallback(async () => {
@@ -774,6 +809,7 @@ export function useCoder(): UseCoderResult {
     setProvider,
     setReasoningEffort,
     setArchived,
+    setSettled,
     deleteThread,
     setupWorktree,
     mergeWorktree,

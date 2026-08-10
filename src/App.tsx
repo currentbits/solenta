@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useCoder } from "./useCoder";
 import { Sidebar } from "./components/Sidebar";
 import { ThreadView } from "./components/ThreadView";
 import { AgentsPanel } from "./components/AgentsPanel";
 import { SettingsModal } from "./components/SettingsModal";
+import { ArchiveToast } from "./components/ArchiveToast";
 import styles from "./App.module.css";
 
 export default function App() {
@@ -29,6 +30,7 @@ export default function App() {
     setProvider,
     setReasoningEffort,
     setArchived,
+    setSettled,
     deleteThread,
     setupWorktree,
     mergeWorktree,
@@ -53,6 +55,35 @@ export default function App() {
   const [changesOpen, setChangesOpen] = useState(false);
   const [changesNonce, setChangesNonce] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  /** Synara-style undo toast after an immediate archive. */
+  const [archiveToastId, setArchiveToastId] = useState<string | null>(null);
+
+  const handleSetArchived = useCallback(
+    async (archived: boolean) => {
+      if (archived) {
+        // Capture id before setArchived moves selection off the open thread.
+        const id = selectedThreadId;
+        if (!id) return;
+        await setArchived(true, id);
+        setArchiveToastId(id);
+      } else {
+        setArchiveToastId(null);
+        await setArchived(false);
+      }
+    },
+    [selectedThreadId, setArchived],
+  );
+
+  const dismissArchiveToast = useCallback(() => {
+    setArchiveToastId(null);
+  }, []);
+
+  const undoArchive = useCallback(async () => {
+    if (!archiveToastId) return;
+    const id = archiveToastId;
+    setArchiveToastId(null);
+    await setArchived(false, id);
+  }, [archiveToastId, setArchived]);
 
   // Close the center Changes panel when switching threads (old behavior).
   useEffect(() => {
@@ -92,6 +123,9 @@ export default function App() {
         spendTodayUsd={appStatus?.spendTodayUsd ?? null}
         dailyBudgetUsd={settings?.dailyBudgetUsd ?? null}
         searchThreads={searchThreads}
+        onSetSettled={(threadId, override) => {
+          void setSettled(threadId, override);
+        }}
       />
       <ThreadView
         detail={detail}
@@ -112,7 +146,9 @@ export default function App() {
         onSetPermissionMode={(mode) => setPermissionMode(mode)}
         onSetProvider={(input) => setProvider(input)}
         onSetReasoningEffort={(effort) => setReasoningEffort(effort)}
-        onSetArchived={(archived) => setArchived(archived)}
+        onSetArchived={(archived) => {
+          void handleSetArchived(archived);
+        }}
         onDeleteThread={() => deleteThread()}
         changesOpen={changesOpen}
         changesNonce={changesNonce}
@@ -149,6 +185,9 @@ export default function App() {
         status={appStatus}
         onSaveSettings={(patch) => saveSettings(patch)}
       />
+      {archiveToastId && (
+        <ArchiveToast onUndo={() => void undoArchive()} onDismiss={dismissArchiveToast} />
+      )}
     </div>
   );
 }

@@ -42,6 +42,9 @@ const providers: ProviderInfo[] = [
   },
 ];
 
+/** Recent activity so inactivity auto-settle does not fold the card away. */
+const FRESH = Date.now();
+
 function thread(over: Partial<ThreadInfo> = {}): ThreadInfo {
   return {
     id: "t1",
@@ -51,10 +54,13 @@ function thread(over: Partial<ThreadInfo> = {}): ThreadInfo {
     prNumber: null,
     prUrl: null,
     status: "idle",
-    createdAt: 1,
-    updatedAt: 1,
+    createdAt: FRESH,
+    updatedAt: FRESH,
     runStartedAt: null,
     archived: false,
+    settledOverride: null,
+    settledAt: null,
+    prState: null,
     provider: "claude",
     model: null,
     sessionId: null,
@@ -302,29 +308,47 @@ describe("sidebar thread card: PR chip vs long branch (round 27)", () => {
   });
 });
 
-describe("sidebar thread card: one select tab stop (round 27)", () => {
-  it("has exactly one selection control per card, plus the PR link", () => {
-    const html = renderSidebar(
-      thread({
-        prNumber: 842,
-        prUrl: "https://github.com/owner/repo/pull/842",
-      }),
+describe("sidebar thread card: select + settle + PR link (round 39)", () => {
+  it("has stretch-select and settle buttons, plus the PR link as an anchor", () => {
+    // With onSetSettled wired, cards gain a settle hover control. Without it
+    // (this static Sidebar render) only select remains — pass via ThreadCard.
+    const html = renderToStaticMarkup(
+      <ThreadCard
+        thread={thread({
+          prNumber: 842,
+          prUrl: "https://github.com/owner/repo/pull/842",
+          status: "failed",
+        })}
+        slug="owner/repo"
+        providers={providers}
+        active={false}
+        now={1}
+        onSelect={() => {}}
+        onSetSettled={() => {}}
+      />,
     );
-    const card = extractCard(html);
+    const card = html;
 
+    assert.ok(
+      /class="cardSelect"/.test(card) || /cardSelect/.test(card),
+      "stretch select button must be present",
+    );
+    assert.ok(
+      /aria-label="Settle thread"/.test(card),
+      "settle hover control must be present with Settle thread label",
+    );
     const buttons = card.match(/<button\b/g) ?? [];
-    const roleButtons = card.match(/role="button"/g) ?? [];
     assert.equal(
-      buttons.length + roleButtons.length,
-      1,
-      `expected exactly one select focusable per card, got buttons=${buttons.length} role=button=${roleButtons.length}`,
+      buttons.length,
+      2,
+      `expected 2 buttons (stretch-select + settle), got ${buttons.length}`,
     );
 
     const anchors = card.match(/<a\b/g) ?? [];
     assert.equal(
       anchors.length,
       1,
-      "PR link is the second focusable; no extra anchors",
+      "PR link is an <a>; no extra anchors",
     );
     assert.ok(
       card.includes("PR #842"),
@@ -414,13 +438,13 @@ describe("sidebar thread card: one select tab stop (round 27)", () => {
       !selectChunk[0].includes("cardBody"),
       "cardSelect must be a sibling of cardBody, not wrap it",
     );
-    // Status is not its own button (that was the keyboard maze / partial meta select).
+    // Stretch select + settle hover; no metaSelect maze. PR stays an <a>.
     assert.equal(
       (card.match(/<button\b/g) ?? []).length,
       1,
-      "no metaSelect second button",
+      "without onSetSettled only the stretch select button is present",
     );
-    // Fixture is failed (done threads fold under the settled toggle now).
+    // Fixture is failed (fresh done no longer folds; MERGED would).
     assert.ok(card.includes("Failed"), "status badge still renders");
 
     const cssPath = path.join(
