@@ -153,6 +153,9 @@ function createThread(store, input) {
     updatedAt: now,
     runStartedAt: null,
     archived: false,
+    settledOverride: null,
+    settledAt: null,
+    prState: null,
     provider: "claude",
     model: null,
     sessionId: null,
@@ -366,6 +369,39 @@ function setArchived(store, input) {
   });
   store.save();
   return updated ? { ...updated } : { ...thread, archived: Boolean(archived) };
+}
+
+const SETTLE_OVERRIDES = new Set(["settled", "active", null]);
+
+/**
+ * Set or clear the settle override (t3-style). Does not bump updatedAt:
+ * settling is bookkeeping, and bumping would push the thread to the top of
+ * a list it is leaving.
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, override: "settled" | "active" | null }} input
+ */
+function setSettled(store, input) {
+  const { threadId, override } = input;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  // Accept only the three contract values. null is allowed (clear).
+  if (!SETTLE_OVERRIDES.has(override)) {
+    throw new Error(
+      `Invalid settle override: ${JSON.stringify(override)}. Expected "settled", "active", or null`,
+    );
+  }
+  if (override === "settled" && thread.status === "working") {
+    throw new Error("Cannot settle a thread while a run is active");
+  }
+  const patch = {
+    settledOverride: override,
+    settledAt: override != null ? Date.now() : null,
+  };
+  const updated = store.updateThread(threadId, patch);
+  store.save();
+  return updated ? { ...updated } : { ...thread, ...patch };
 }
 
 /**
@@ -756,6 +792,7 @@ module.exports = {
   setReasoningEffort,
   setProvider,
   setArchived,
+  setSettled,
   deleteThread,
   listThreads,
   searchThreads,

@@ -2389,11 +2389,19 @@ function createRunner(opts) {
       title = firstLine.slice(0, 60) || "New Thread";
     }
 
-    store.updateThread(
-      threadId,
-      { status: "working", title, runStartedAt: Date.now() },
-      { touch: true },
-    );
+    // Real activity clears a stale "settled" pin (t3 rule). An explicit
+    // "active" pin survives so the user can keep a thread out of auto-settle.
+    /** @type {Record<string, unknown>} */
+    const workingPatch = {
+      status: "working",
+      title,
+      runStartedAt: Date.now(),
+    };
+    if (thread.settledOverride === "settled") {
+      workingPatch.settledOverride = null;
+      workingPatch.settledAt = null;
+    }
+    store.updateThread(threadId, workingPatch, { touch: true });
 
     const name = workflowNameFromThreadId(threadId);
 
