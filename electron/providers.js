@@ -15,7 +15,10 @@ const { execFileSync } = require("node:child_process");
  * - codex: no dedicated flag; config override `-c model_reasoning_effort=<level>`.
  *   Live API rejects bogus with enum none|minimal|low|medium|high|xhigh|max;
  *   contract intersection (no none/minimal) is low|medium|high|xhigh|max.
- * - kimi / opencode: no effort flag in --help → empty efforts.
+ * - kimi: no effort flag, but [thinking].effort in config.toml (low/high/max
+ *   on the k3 family) → efforts listed with effortVia "config"; kimi.js flips
+ *   the config around the spawn.
+ * - opencode: no effort flag in --help → empty efforts.
  *
  * Prompt is always the LAST argv element for every provider so an effort flag
  * cannot swallow it (claude and grok both take the prompt positionally /
@@ -37,6 +40,8 @@ const { execFileSync } = require("node:child_process");
  * @property {string[]} models
  * @property {ModelInfo[]} modelInfo
  * @property {Array<"low"|"medium"|"high"|"xhigh"|"max">} efforts
+ * @property {"config"} [effortVia] - efforts applied outside argv (kimi:
+ *   config.toml flip in kimi.js); absent means buildArgs emits the flag
  * @property {"claude-stream" | "codex-json" | "kimi-stream" | "opencode-json" | "simulate"} kind
  * @property {(opts: {
  *   prompt: string,
@@ -407,8 +412,12 @@ const PROVIDERS = [
         vendor: "Moonshot",
       },
     ],
-    // kimi --help: no effort / reasoning flag
-    efforts: [],
+    // From per-model support_efforts in ~/.kimi-code/config.toml (k3 family).
+    // kimi has NO CLI effort flag (verified 0.31.1: --effort etc. all
+    // rejected); effortVia "config" means kimi.js flips [thinking].effort in
+    // config.toml around the spawn instead of emitting argv.
+    efforts: ["low", "high", "max"],
+    effortVia: "config",
     kind: "kimi-stream",
     /**
      * Kimi sessions are per working directory. When thread.sessionId is set we
@@ -431,7 +440,8 @@ const PROVIDERS = [
       if (sessionId) {
         args.push("-c");
       }
-      // Empty efforts: never emit an effort flag even if one is passed.
+      // Effort goes via config.toml (effortVia "config"), NEVER argv: kimi
+      // 0.31.1 rejects every effort-shaped flag with "unknown option".
       maybeEmitEffort([], reasoningEffort, () => {
         args.push("--effort", "should-not-appear");
       });

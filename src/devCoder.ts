@@ -241,6 +241,44 @@ const DEV_PROVIDERS: ProviderInfo[] = [
     efforts: ["low", "medium", "high"],
   },
   {
+    // Synced from electron/providers.js; dev had NO kimi entry at all, so the
+    // dev picker showed a different provider list than the packaged app.
+    id: "kimi",
+    name: "Kimi Code",
+    available: true,
+    supportsResume: true,
+    models: ["k3", "k3-256k", "kimi-for-coding", "kimi-for-coding-highspeed"],
+    modelInfo: [
+      {
+        id: "k3",
+        label: "K3",
+        description: "Default Kimi coding model (1M context)",
+        vendor: "Moonshot",
+        recommended: true,
+      },
+      {
+        id: "k3-256k",
+        label: "K3-256k",
+        description: "K3 with a 256k context window",
+        vendor: "Moonshot",
+      },
+      {
+        id: "kimi-for-coding",
+        label: "K2.7 Coding",
+        description: "Coding-tuned Kimi (K2.7)",
+        vendor: "Moonshot",
+      },
+      {
+        id: "kimi-for-coding-highspeed",
+        label: "K2.7 Coding Highspeed",
+        description: "Faster coding-tuned Kimi (K2.7)",
+        vendor: "Moonshot",
+      },
+    ],
+    // Per-model support_efforts in kimi's config.toml (k3 family).
+    efforts: ["low", "high", "max"],
+  },
+  {
     id: "opencode",
     name: "OpenCode",
     available: true,

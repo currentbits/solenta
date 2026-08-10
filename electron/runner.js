@@ -1761,6 +1761,8 @@ function createRunner(opts) {
       binary,
       args,
       cwd,
+      // No argv route for kimi effort; runKimi flips config.toml (effortVia).
+      reasoningEffort: thread.reasoningEffort || null,
       onEvent: (ev) => {
         if (!guard()) return;
 

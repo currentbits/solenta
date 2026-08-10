@@ -91,7 +91,10 @@ const KIMI_LIKE: ProviderInfo = {
       vendor: "Moonshot",
     },
   ],
-  efforts: ["low", "medium", "high"],
+  // The SHIPPED kimi set: non-contiguous (no medium). A contiguous fixture
+  // here would hide any meter code that assumes low..high runs unbroken —
+  // the same fixture hazard that has hidden bugs three times already.
+  efforts: ["low", "high", "max"],
 };
 
 const PROVIDERS: ProviderInfo[] = [CLAUDE_WITH_INFO, CODEX, GROK, KIMI_LIKE];
@@ -898,7 +901,7 @@ describe("Composer drill-down picker", () => {
     // harness at your own level while every segment refused the click.
     const h = makeHarness();
     const m = await mount(
-      composer(h, { provider: "kimi", model: null, reasoningEffort: "medium" }),
+      composer(h, { provider: "kimi", model: null, reasoningEffort: "high" }),
     );
     await m.click(m.query('button[aria-label^="Model:"]'));
     await m.click(m.query('button[aria-label="Provider Claude Code"]'));
@@ -914,10 +917,11 @@ describe("Composer drill-down picker", () => {
       "backing out must not leave your own meter dead",
     );
     await m.click(segs[segs.length - 1]);
-    assert.equal(
-      h.efforts.length,
-      1,
-      "and a click must still report a level change",
+    assert.deepEqual(
+      h.efforts,
+      ["max"],
+      "the last kimi segment is max, not high: the meter must map segments " +
+        "to the provider's OWN levels, not a contiguous low..high assumption",
     );
     m.unmount();
   });
