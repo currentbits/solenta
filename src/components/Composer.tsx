@@ -27,6 +27,7 @@ import {
   CUSTOM_MODEL_ID,
   buildProviderRows,
   effortDisplayLabel,
+  providerDetail,
   effortSegments,
   firstSelectableIndex,
   initialHighlightIndex,
@@ -181,12 +182,26 @@ export function Composer({
   const triggerLabel = modelTriggerLabel(model, currentProviderInfo);
   const hi = clampHighlightIndex(modelRows, highlightIndex);
   const detailRow = detailModelRow(modelRows, provider, model, hi);
-  const efforts = detailRow.efforts ?? [];
+  // At the provider level the pane must describe the highlighted PROVIDER.
+  // It used to index the flat model list with the model-level highlight, so a
+  // Grok thread showed "Fable, Anthropic": a confident description of something
+  // the user was not pointing at.
+  const providerPane = drillProvider
+    ? null
+    : providerDetail(providerRows, providerIndex, providers);
+  const detail = providerPane ?? {
+    providerId: detailRow.providerId,
+    label: detailRow.label,
+    vendor: detailRow.vendor,
+    description: detailRow.description,
+    efforts: detailRow.efforts ?? [],
+  };
+  const efforts = detail.efforts ?? [];
   const reasoningVisible = showReasoningControl(efforts);
   // Effort applies only to the current provider: show the live value when the
   // highlighted row is that provider, otherwise a blank meter (null current).
   const effortForMeter =
-    detailRow.providerId === provider ? reasoningEffort : null;
+    detail.providerId === provider ? reasoningEffort : null;
   const segments = reasoningVisible
     ? effortSegments(efforts, effortForMeter)
     : [];
@@ -412,7 +427,7 @@ export function Composer({
     // Without this the null branch is implemented at every layer and
     // unreachable from the UI: once you pick a level you can never stop.
     // Only act when the detail row is the current provider (effort is per thread provider).
-    if (detailRow.providerId !== provider) return;
+    if (detail.providerId !== provider) return;
     const next = level === reasoningEffort ? null : level;
     try {
       await onSetReasoningEffort(next);
@@ -431,6 +446,10 @@ export function Composer({
     setDrillProvider(null);
     setProviderIndex(at);
     setCustomFor(null);
+    // Deliberately NOT re-seeding highlightIndex: the provider level reads
+    // providerDetail, and enterProvider re-seeds on every drill-in, so the
+    // stale value is never read. Adding a reset here survived its own mutation,
+    // which is the signature of a line that looks load-bearing and is not.
   };
 
   const onModelListKeyDown = (e: KeyboardEvent<HTMLUListElement>) => {
@@ -702,16 +721,16 @@ export function Composer({
                   </div>
                   <div className={styles.modelPopoverRight}>
                     <div className={styles.detailLabel}>
-                      {detailRow.label}
+                      {detail.label}
                     </div>
-                    {detailRow.vendor ? (
+                    {detail.vendor ? (
                       <div className={styles.detailVendor}>
-                        {detailRow.vendor}
+                        {detail.vendor}
                       </div>
                     ) : null}
-                    {detailRow.description ? (
+                    {detail.description ? (
                       <div className={styles.detailDesc}>
-                        {detailRow.description}
+                        {detail.description}
                       </div>
                     ) : null}
                     {reasoningVisible && (
@@ -737,12 +756,12 @@ export function Composer({
                               data-filled={seg.filled ? "true" : undefined}
                               aria-label={`Reasoning ${effortDisplayLabel(seg.level)}`}
                               aria-pressed={
-                                detailRow.providerId === provider &&
+                                detail.providerId === provider &&
                                 reasoningEffort === seg.level
                                   ? "true"
                                   : "false"
                               }
-                              disabled={detailRow.providerId !== provider}
+                              disabled={detail.providerId !== provider}
                               onClick={() => void pickEffort(seg.level)}
                             />
                           ))}

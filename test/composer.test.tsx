@@ -600,6 +600,50 @@ describe("Composer drill-down picker", () => {
     m.unmount();
   });
 
+  it("drills in on the selected model for a provider that is not first", async () => {
+    // The claude case above cannot fail: claude is PROVIDERS[0], so the flat
+    // index and the per-provider index coincide and a drill-in that never
+    // re-seeds still lands on the right row. kimi is last, so its flat index
+    // is out of range for its own two-row list and clamps to Custom.
+    const h = makeHarness();
+    const m = await mount(composer(h, { provider: "kimi", model: "k3" }));
+    assert.ok(await openProvider(m, "Kimi"));
+    const hl = m.query('[data-highlighted="true"]');
+    assert.ok(hl, "a row must be highlighted");
+    assert.match(
+      hl.textContent || "",
+      /K3/,
+      "drilling in must re-seed the highlight from the thread's model",
+    );
+    m.unmount();
+  });
+
+  it("hovering a model row moves the highlight and the detail pane", async () => {
+    // The provider level had this pinned and the model level did not, so
+    // deleting the model row's onMouseEnter left the suite green.
+    const h = makeHarness();
+    const m = await mount(composer(h, { provider: "claude", model: null }));
+    assert.ok(await openProvider(m, "Claude Code"));
+    const before = m.query('[class*="detailLabel"]')?.textContent;
+    const opus = m
+      .queryAll('[class*="modelRow"]')
+      .find((el) => (el.textContent || "").includes("Opus 4"));
+    assert.ok(opus, "the Opus row must render to be hovered");
+    await m.hover(opus);
+    assert.match(
+      m.query('[class*="detailLabel"]')?.textContent || "",
+      /Opus 4/,
+      "hover must move the detail pane to the hovered model",
+    );
+    assert.notEqual(before, "Opus 4", "the pane must have started elsewhere");
+    assert.match(
+      m.query('[data-highlighted="true"]')?.textContent || "",
+      /Opus 4/,
+      "hover must move the highlight, not just the pane",
+    );
+    m.unmount();
+  });
+
   it("keyboard-selects a model and reports it", async () => {
     // L2: nothing keyboard-selected an actual model after the rewrite. The
     // custom tests press Enter on Custom..., which takes a different branch.
@@ -732,6 +776,135 @@ describe("Composer drill-down picker", () => {
       returned.replace(/\s+/g, " ").trim(),
       target.replace(/\s+/g, " ").trim(),
       "backing out must land on the provider that was entered",
+    );
+    m.unmount();
+  });
+
+  it("describes the highlighted PROVIDER, not some unrelated model", async () => {
+    // Shipped bug: the pane indexed the flat model list with the model-level
+    // highlight, so a Grok thread opened showing "Fable / Anthropic". A pane
+    // that confidently describes something the user is not pointing at is
+    // worse than an empty one.
+    const h = makeHarness();
+    const m = await mount(composer(h, { provider: "kimi", model: null }));
+    await m.click(m.query('button[aria-label^="Model:"]'));
+
+    const label = m.query('[class*="detailLabel"]')?.textContent || "";
+    assert.equal(
+      label,
+      "Kimi",
+      `the pane must name the highlighted provider, got ${label}`,
+    );
+    const pane = m.query('[class*="modelPopoverRight"]')?.textContent || "";
+    assert.equal(
+      /Fable|Opus|Sonnet|Haiku/.test(pane),
+      false,
+      `no model name may appear at the provider level, got: ${pane}`,
+    );
+    m.unmount();
+  });
+
+  it("the provider pane follows the highlight as you arrow", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h, { provider: "claude", model: null }));
+    await m.click(m.query('button[aria-label^="Model:"]'));
+    const first = m.query('[class*="detailLabel"]')?.textContent;
+    await m.pressFocused("ArrowDown");
+    const second = m.query('[class*="detailLabel"]')?.textContent;
+    assert.notEqual(second, first, "the pane must track the highlighted row");
+    const names = PROVIDERS.map((p) => p.name);
+    assert.ok(
+      names.includes(String(second)),
+      `the pane must name a provider, got ${second}`,
+    );
+    m.unmount();
+  });
+
+  it("hovering a provider moves the highlight and the pane", async () => {
+    // Hover-to-highlight had no coverage: removing onMouseEnter from the row
+    // passed the whole suite. A disabled row is deliberately NOT hoverable,
+    // since React does not deliver mouse events to disabled buttons and you
+    // cannot highlight what you cannot enter; its row text carries the reason.
+    const h = makeHarness();
+    const m = await mount(composer(h, { provider: "claude", model: null }));
+    await m.click(m.query('button[aria-label^="Model:"]'));
+    assert.equal(m.query('[class*="detailLabel"]')?.textContent, "Claude Code");
+
+    await m.hover(m.query('button[aria-label="Provider Kimi"]'));
+    assert.equal(
+      m.query('[class*="detailLabel"]')?.textContent,
+      "Kimi",
+      "hovering a provider must move the highlight and the pane with it",
+    );
+    m.unmount();
+  });
+
+  it("the meter at the provider level follows the highlighted provider", async () => {
+    // Both the segment COUNT and the enabled state must follow the highlight.
+    // The thread is on kimi (not PROVIDERS[0]) so "highlighted", "current" and
+    // "first" are distinguishable; with claude they are not.
+    const h = makeHarness();
+    const m = await mount(
+      composer(h, { provider: "kimi", model: null, reasoningEffort: "high" }),
+    );
+    await m.click(m.query('button[aria-label^="Model:"]'));
+
+    // Own provider: three segments (kimi), live level, clickable.
+    let group = m.query('[role="group"][aria-label="Reasoning effort"]');
+    assert.ok(group, "the thread's own provider shows a meter");
+    let segs = Array.from(group.querySelectorAll("button")) as HTMLButtonElement[];
+    assert.equal(segs.length, 3, "kimi advertises three levels");
+    assert.equal(
+      segs.every((b) => b.disabled),
+      false,
+      "the thread's own meter must be usable",
+    );
+
+    // Foreign provider: five segments (claude), no borrowed level, all refused.
+    await m.hover(m.query('button[aria-label="Provider Claude Code"]'));
+    group = m.query('[role="group"][aria-label="Reasoning effort"]');
+    assert.ok(group);
+    segs = Array.from(group.querySelectorAll("button")) as HTMLButtonElement[];
+    assert.equal(segs.length, 5, "the count must follow the highlighted provider");
+    assert.equal(
+      segs.every((b) => b.disabled),
+      true,
+      "a foreign provider's segments must all refuse input",
+    );
+    assert.equal(
+      segs.some((b) => b.getAttribute("aria-pressed") === "true"),
+      false,
+      "and none may announce the thread's level as pressed",
+    );
+    m.unmount();
+  });
+
+  it("leaves the meter usable after backing out of a provider", async () => {
+    // Regression: backing out left the model highlight pointing into the flat
+    // list at another provider's row, so the pane said you were on your own
+    // harness at your own level while every segment refused the click.
+    const h = makeHarness();
+    const m = await mount(
+      composer(h, { provider: "kimi", model: null, reasoningEffort: "medium" }),
+    );
+    await m.click(m.query('button[aria-label^="Model:"]'));
+    await m.click(m.query('button[aria-label="Provider Claude Code"]'));
+    await m.click(m.byText("CLAUDE CODE"));
+    await m.hover(m.query('button[aria-label="Provider Kimi"]'));
+
+    const group = m.query('[role="group"][aria-label="Reasoning effort"]');
+    assert.ok(group, "own provider must still show its meter");
+    const segs = Array.from(group.querySelectorAll("button")) as HTMLButtonElement[];
+    assert.equal(
+      segs.every((b) => b.disabled),
+      false,
+      "backing out must not leave your own meter dead",
+    );
+    await m.click(segs[segs.length - 1]);
+    assert.equal(
+      h.efforts.length,
+      1,
+      "and a click must still report a level change",
     );
     m.unmount();
   });
@@ -1066,8 +1239,15 @@ describe("Composer reasoning belongs to the current provider", () => {
     assert.ok(await openProvider(m, "Kimi"), "kimi must be enterable");
 
     const group = m.query('[role="group"][aria-label="Reasoning effort"]');
-    const seg = group?.querySelector("button");
-    if (seg) await m.click(seg);
+    assert.ok(group, "a foreign provider with efforts must still show a meter");
+    const seg = group.querySelector("button") as HTMLButtonElement | null;
+    assert.ok(seg, "and it must have segments to click");
+    assert.equal(
+      seg.disabled,
+      true,
+      "a foreign provider's segment must refuse the click in the DOM",
+    );
+    await m.click(seg);
     assert.deepEqual(
       h.efforts,
       [],

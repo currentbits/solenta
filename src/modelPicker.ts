@@ -487,3 +487,54 @@ export function initialProviderIndex(
   const first = firstSelectableProvider(rows);
   return first >= 0 ? first : 0;
 }
+
+/** What the right pane shows while the picker is on the provider level. */
+export interface ProviderDetail {
+  providerId: string;
+  label: string;
+  /** Second line: the vendor slot is meaningless for a provider, so state goes here. */
+  vendor: string;
+  description: string;
+  efforts: ReasoningEffort[];
+}
+
+/**
+ * Detail for the highlighted PROVIDER.
+ *
+ * The pane used to index the flat model list with the model-level highlight,
+ * so at the provider level it described an arbitrary model: a Grok thread
+ * showed "Fable, Anthropic". A pane that confidently describes something the
+ * user is not pointing at is worse than an empty one.
+ */
+export function providerDetail(
+  rows: readonly ProviderRow[],
+  index: number,
+  providers: readonly ProviderInfo[],
+): ProviderDetail | null {
+  const row = rows[index] ?? rows.find((r) => !r.disabled) ?? rows[0];
+  if (!row) return null;
+  const info = providers.find((p) => p.id === row.id);
+  const count = row.modelCount;
+  const models =
+    count === 0
+      ? "No model choice; uses the provider default."
+      : `${count} model${count === 1 ? "" : "s"} to choose from.`;
+  const state = row.unavailable
+    ? " CLI not found on this machine."
+    : row.disabled
+      ? " Locked: this thread already has a session."
+      : row.current
+        ? " Current harness for this thread."
+        : "";
+  return {
+    providerId: row.id,
+    label: row.name,
+    vendor: row.unavailable
+      ? "not installed"
+      : row.current
+        ? "current harness"
+        : "harness",
+    description: `${models}${state}`,
+    efforts: Array.isArray(info?.efforts) ? info.efforts : [],
+  };
+}
