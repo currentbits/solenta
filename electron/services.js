@@ -421,6 +421,23 @@ function setSettled(store, input) {
 }
 
 /**
+ * Shared with deleteThread and removeProject — one string so the two cannot
+ * drift. Renderer and Git tab copy depend on this exact wording.
+ */
+const THREAD_STILL_HAS_WORKTREE =
+  "Thread still has a worktree. Merge or delete it in the Git tab first.";
+
+/**
+ * Drop a thread and every *ByThread map entry (messages, work log, usage).
+ * Does not save; caller owns durability so bulk callers can save once.
+ * @param {import('./store').Store} store
+ * @param {string} threadId
+ */
+function purgeThread(store, threadId) {
+  store.removeThread(threadId);
+}
+
+/**
  * Permanently delete a thread with its messages and work log.
  * Rejects while a run is active (when isRunning is provided) and when a
  * worktree is still attached.
@@ -438,11 +455,55 @@ function deleteThread(store, input, opts) {
     throw new Error("Cannot delete thread while a run is active");
   }
   if (thread.worktreePath) {
-    throw new Error(
-      "Thread still has a worktree. Merge or delete it in the Git tab first.",
-    );
+    throw new Error(THREAD_STILL_HAS_WORKTREE);
   }
-  store.removeThread(threadId);
+  purgeThread(store, threadId);
+  store.save();
+}
+
+/**
+ * Remove the project ENTRY and delete its threads' conversation history
+ * (t3-style). The repository on disk is never touched — no fs calls on the
+ * project path. Same worktree guard string as deleteThread; active-run copy
+ * is project-scoped. All guards run before any deletion so a reject cannot
+ * leave a half-removed project.
+ * @param {import('./store').Store} store
+ * @param {{ projectId: string }} input
+ * @param {{ isRunning?: (threadId: string) => boolean }} [opts]
+ */
+function removeProject(store, input, opts) {
+  const projectId =
+    input && input.projectId != null ? String(input.projectId) : "";
+  const project = store.getProject(projectId);
+  if (!project) {
+    throw new Error(`Unknown project: ${projectId}`);
+  }
+
+  const threads = store
+    .getThreads()
+    .filter((t) => t && t.projectId === projectId);
+
+  // Guards first — every thread — before any purge.
+  for (const thread of threads) {
+    const activeRun =
+      thread.status === "working" ||
+      (opts &&
+        typeof opts.isRunning === "function" &&
+        opts.isRunning(thread.id));
+    if (activeRun) {
+      throw new Error("Cannot remove a project while a run is active");
+    }
+  }
+  for (const thread of threads) {
+    if (thread.worktreePath) {
+      throw new Error(THREAD_STILL_HAS_WORKTREE);
+    }
+  }
+
+  for (const thread of threads) {
+    purgeThread(store, thread.id);
+  }
+  store.setProjects(store.getProjects().filter((p) => p.id !== projectId));
   store.save();
 }
 
@@ -803,6 +864,7 @@ function assertUnderDailyBudget(store) {
 
 module.exports = {
   addProject,
+  removeProject,
   createThread,
   setPermissionMode,
   setReasoningEffort,
@@ -811,6 +873,8 @@ module.exports = {
   setSettled,
   clearSettledOnActivity,
   deleteThread,
+  purgeThread,
+  THREAD_STILL_HAS_WORKTREE,
   listThreads,
   searchThreads,
   getThreadDetail,
