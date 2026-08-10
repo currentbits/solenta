@@ -59,6 +59,7 @@ const coder = {
     list: () => invoke("projects:list"),
     add: (projectPath) => invoke("projects:add", projectPath),
     addViaDialog: () => invoke("projects:addViaDialog"),
+    remove: (input) => invoke("projects:remove", input),
   },
   threads: {
     list: () => invoke("threads:list"),
