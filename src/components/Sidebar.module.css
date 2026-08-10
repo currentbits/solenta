@@ -425,6 +425,24 @@
   gap: 8px;
   padding: 8px 8px 2px;
   min-width: 0;
+  /* Now a button (collapses the group); keep the old header look. */
+  width: 100%;
+  border: 0;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.groupHeader:hover .groupSlug {
+  color: var(--text);
+}
+
+.groupSummary {
+  font-size: 10px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .groupSlug {

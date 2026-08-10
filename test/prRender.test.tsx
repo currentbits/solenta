@@ -215,7 +215,6 @@ describe("sidebar thread card: PR chip vs long branch (round 27)", () => {
         branch: longBranch,
         prNumber: 842,
         prUrl: "https://github.com/owner/repo/pull/842",
-        status: "done",
       }),
     );
     const card = extractCard(html);
@@ -309,7 +308,6 @@ describe("sidebar thread card: one select tab stop (round 27)", () => {
       thread({
         prNumber: 842,
         prUrl: "https://github.com/owner/repo/pull/842",
-        status: "done",
       }),
     );
     const card = extractCard(html);
@@ -376,7 +374,9 @@ describe("sidebar thread card: one select tab stop (round 27)", () => {
       thread({
         prNumber: 11,
         prUrl: "https://github.com/owner/repo/pull/11",
-        status: "done",
+        // failed, not done: done threads now fold under the settled toggle,
+        // and this test needs a status badge visible in the default view.
+        status: "failed",
         branch: "coder/meta-click-select-abcdef",
       }),
     );
@@ -420,7 +420,8 @@ describe("sidebar thread card: one select tab stop (round 27)", () => {
       1,
       "no metaSelect second button",
     );
-    assert.ok(card.includes("Done"), "status badge still renders");
+    // Fixture is failed (done threads fold under the settled toggle now).
+    assert.ok(card.includes("Failed"), "status badge still renders");
 
     const cssPath = path.join(
       path.dirname(fileURLToPath(import.meta.url)),

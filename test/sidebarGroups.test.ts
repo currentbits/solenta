@@ -4,7 +4,11 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { buildSidebarGroups } from "../src/sidebarGroups.ts";
+import {
+  buildSidebarGroups,
+  groupHeaderSummary,
+  splitSettled,
+} from "../src/sidebarGroups.ts";
 import type { ProjectInfo, ThreadInfo } from "../src/shared/ipc.ts";
 
 function project(partial: Partial<ProjectInfo> & Pick<ProjectInfo, "id" | "slug">): ProjectInfo {
@@ -88,5 +92,74 @@ describe("buildSidebarGroups", () => {
     assert.equal(groups[0]!.project?.id, "a");
     assert.equal(groups[1]!.project, null);
     assert.equal(groups[1]!.threads[0]!.id, "orphan");
+  });
+});
+
+describe("splitSettled", () => {
+  it("settles exactly done; working, failed, and idle keep attention", () => {
+    const { attention, settled } = splitSettled([
+      thread({ id: "w", projectId: "a", updatedAt: 4, status: "working" }),
+      thread({ id: "d", projectId: "a", updatedAt: 3, status: "done" }),
+      thread({ id: "f", projectId: "a", updatedAt: 2, status: "failed" }),
+      thread({ id: "i", projectId: "a", updatedAt: 1, status: "idle" }),
+    ]);
+    assert.deepEqual(
+      attention.map((t) => t.id),
+      ["w", "f", "i"],
+      "failed needs the user and idle has not run; neither may be buried",
+    );
+    assert.deepEqual(
+      settled.map((t) => t.id),
+      ["d"],
+    );
+  });
+
+  it("preserves the incoming order within each side", () => {
+    const { settled } = splitSettled([
+      thread({ id: "d2", projectId: "a", updatedAt: 9, status: "done" }),
+      thread({ id: "w", projectId: "a", updatedAt: 8, status: "working" }),
+      thread({ id: "d1", projectId: "a", updatedAt: 7, status: "done" }),
+    ]);
+    assert.deepEqual(
+      settled.map((t) => t.id),
+      ["d2", "d1"],
+      "the group's newest-first sort must survive the split",
+    );
+  });
+});
+
+describe("groupHeaderSummary", () => {
+  it("counts working and settled, omitting zero parts", () => {
+    assert.equal(
+      groupHeaderSummary([
+        thread({ id: "w1", projectId: "a", updatedAt: 3, status: "working" }),
+        thread({ id: "w2", projectId: "a", updatedAt: 2, status: "working" }),
+        thread({ id: "d", projectId: "a", updatedAt: 1, status: "done" }),
+      ]),
+      "2 working · 1 settled",
+    );
+    assert.equal(
+      groupHeaderSummary([
+        thread({ id: "d", projectId: "a", updatedAt: 1, status: "done" }),
+      ]),
+      "1 settled",
+    );
+    assert.equal(
+      groupHeaderSummary([
+        thread({ id: "w", projectId: "a", updatedAt: 1, status: "working" }),
+      ]),
+      "1 working",
+    );
+  });
+
+  it("says nothing for empty or all-idle groups", () => {
+    assert.equal(groupHeaderSummary([]), null);
+    assert.equal(
+      groupHeaderSummary([
+        thread({ id: "i", projectId: "a", updatedAt: 1, status: "idle" }),
+      ]),
+      null,
+      "an all-idle group has no counts worth a summary line",
+    );
   });
 });
