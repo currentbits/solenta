@@ -198,6 +198,10 @@ export function Composer({
   };
   const efforts = detail.efforts ?? [];
   const reasoningVisible = showReasoningControl(efforts);
+  // A provider whose CLI is not installed can be highlighted but never
+  // selected, so its meter must stay inert even though it renders.
+  const detailUnavailable =
+    providers.find((p) => p.id === detail.providerId)?.available === false;
   // Effort applies only to the current provider: show the live value when the
   // highlighted row is that provider, otherwise a blank meter (null current).
   const effortForMeter =
@@ -423,13 +427,25 @@ export function Composer({
   };
 
   const pickEffort = async (level: ReasoningEffort) => {
-    // Clicking the current level clears it back to the provider default.
-    // Without this the null branch is implemented at every layer and
-    // unreachable from the UI: once you pick a level you can never stop.
-    // Only act when the detail row is the current provider (effort is per thread provider).
-    if (detail.providerId !== provider) return;
-    const next = level === reasoningEffort ? null : level;
+    // The meter follows the HIGHLIGHTED row. Picking a level on another
+    // harness selects that harness and the highlighted model, then applies
+    // the level: setProvider resets effort to null on a provider switch, so
+    // the effort call must come second or it is wiped immediately.
+    if (detailUnavailable) return;
     try {
+      if (detail.providerId !== provider) {
+        const targetModel =
+          providerPane || detailRow.id === CUSTOM_MODEL_ID
+            ? null
+            : detailRow.id;
+        await onSetProvider({ provider: detail.providerId, model: targetModel });
+        await onSetReasoningEffort(level);
+        return;
+      }
+      // Clicking the current level clears it back to the provider default.
+      // Without this the null branch is implemented at every layer and
+      // unreachable from the UI: once you pick a level you can never stop.
+      const next = level === reasoningEffort ? null : level;
       await onSetReasoningEffort(next);
     } catch (err) {
       const msg =
@@ -720,54 +736,59 @@ export function Composer({
                     ) : null}
                   </div>
                   <div className={styles.modelPopoverRight}>
-                    <div className={styles.detailLabel}>
-                      {detail.label}
+                    {/* Keyed on the highlighted row so a highlight move
+                        remounts the pane and replays the detailIn fade. */}
+                    <div
+                      className={styles.detailBody}
+                      key={`${detail.providerId}::${detail.label}`}
+                    >
+                      <div className={styles.detailLabel}>{detail.label}</div>
+                      {detail.vendor ? (
+                        <div className={styles.detailVendor}>
+                          {detail.vendor}
+                        </div>
+                      ) : null}
+                      {detail.description ? (
+                        <div className={styles.detailDesc}>
+                          {detail.description}
+                        </div>
+                      ) : null}
+                      {reasoningVisible && (
+                        <div className={styles.reasoningBlock}>
+                          <div className={styles.reasoningHeader}>
+                            <span className={styles.reasoningTitle}>
+                              REASONING
+                            </span>
+                            <span className={styles.reasoningLevel}>
+                              {effortLabel}
+                            </span>
+                          </div>
+                          <div
+                            className={styles.effortSegments}
+                            role="group"
+                            aria-label="Reasoning effort"
+                          >
+                            {segments.map((seg) => (
+                              <button
+                                key={seg.level}
+                                type="button"
+                                className={styles.effortSegment}
+                                data-filled={seg.filled ? "true" : undefined}
+                                aria-label={`Reasoning ${effortDisplayLabel(seg.level)}`}
+                                aria-pressed={
+                                  detail.providerId === provider &&
+                                  reasoningEffort === seg.level
+                                    ? "true"
+                                    : "false"
+                                }
+                                disabled={detailUnavailable}
+                                onClick={() => void pickEffort(seg.level)}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
-                    {detail.vendor ? (
-                      <div className={styles.detailVendor}>
-                        {detail.vendor}
-                      </div>
-                    ) : null}
-                    {detail.description ? (
-                      <div className={styles.detailDesc}>
-                        {detail.description}
-                      </div>
-                    ) : null}
-                    {reasoningVisible && (
-                      <div className={styles.reasoningBlock}>
-                        <div className={styles.reasoningHeader}>
-                          <span className={styles.reasoningTitle}>
-                            REASONING
-                          </span>
-                          <span className={styles.reasoningLevel}>
-                            {effortLabel}
-                          </span>
-                        </div>
-                        <div
-                          className={styles.effortSegments}
-                          role="group"
-                          aria-label="Reasoning effort"
-                        >
-                          {segments.map((seg) => (
-                            <button
-                              key={seg.level}
-                              type="button"
-                              className={styles.effortSegment}
-                              data-filled={seg.filled ? "true" : undefined}
-                              aria-label={`Reasoning ${effortDisplayLabel(seg.level)}`}
-                              aria-pressed={
-                                detail.providerId === provider &&
-                                reasoningEffort === seg.level
-                                  ? "true"
-                                  : "false"
-                              }
-                              disabled={detail.providerId !== provider}
-                              onClick={() => void pickEffort(seg.level)}
-                            />
-                          ))}
-                        </div>
-                      </div>
-                    )}
                   </div>
                 </div>
               )}

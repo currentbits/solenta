@@ -876,7 +876,9 @@ describe("Composer drill-down picker", () => {
       "the thread's own meter must be usable",
     );
 
-    // Foreign provider: five segments (claude), no borrowed level, all refused.
+    // Foreign provider: five segments (claude), no borrowed level. Clicking
+    // one now SWITCHES to that harness and applies the level (the unlock-
+    // switch contract), so the segments stay enabled.
     await m.hover(m.query('button[aria-label="Provider Claude Code"]'));
     group = m.query('[role="group"][aria-label="Reasoning effort"]');
     assert.ok(group);
@@ -884,13 +886,25 @@ describe("Composer drill-down picker", () => {
     assert.equal(segs.length, 5, "the count must follow the highlighted provider");
     assert.equal(
       segs.every((b) => b.disabled),
-      true,
-      "a foreign provider's segments must all refuse input",
+      false,
+      "an available foreign provider's segments accept input (click = switch)",
     );
     assert.equal(
       segs.some((b) => b.getAttribute("aria-pressed") === "true"),
       false,
-      "and none may announce the thread's level as pressed",
+      "but none may announce the thread's level as pressed",
+    );
+    await m.click(segs[0]);
+    assert.deepEqual(
+      h.providerSets,
+      [{ provider: "claude", model: null }],
+      "clicking a foreign segment must switch to that harness first",
+    );
+    assert.deepEqual(
+      h.efforts,
+      ["low"],
+      "and then apply the clicked level, in that order: setProvider clears " +
+        "effort on switch, so effort-first would be wiped immediately",
     );
     m.unmount();
   });
@@ -1209,10 +1223,11 @@ describe("Composer reasoning belongs to the current provider", () => {
     return null;
   }
 
-  it("shows no level and no clickable segments for a foreign provider", async () => {
+  it("shows no filled level for a foreign provider, but its meter is clickable", async () => {
     // Round 30 shipped a stranded effort: a level displayed for a provider that
     // could not honour it. Highlighting a foreign row must not borrow the
-    // current provider's level.
+    // current provider's level — but the meter itself is now the way to select
+    // that harness WITH an effort, so its segments must be live.
     const h = makeHarness();
     const m = await mount(
       composer(h, {
@@ -1236,9 +1251,9 @@ describe("Composer reasoning belongs to the current provider", () => {
       "claude's High must not fill a foreign provider's meter",
     );
     assert.equal(
-      segments.every((b) => (b as HTMLButtonElement).disabled),
-      true,
-      "a foreign provider's segments must not be clickable",
+      segments.some((b) => (b as HTMLButtonElement).disabled),
+      false,
+      "an available foreign provider's segments must be clickable",
     );
     assert.equal(
       m.text().includes("REASONINGHigh") || m.text().includes("REASONING High"),
@@ -1248,28 +1263,62 @@ describe("Composer reasoning belongs to the current provider", () => {
     m.unmount();
   });
 
-  it("clicking a foreign provider's segment reports nothing", async () => {
+  it("clicking a foreign provider's segment selects that harness, model, and effort", async () => {
     const h = makeHarness();
     const m = await mount(
       composer(h, { provider: "claude", model: null, reasoningEffort: "high" }),
     );
-    assert.ok(await openProvider(m, "Kimi"), "kimi must be enterable");
+    const list = await openProvider(m, "Kimi");
+    assert.ok(list, "kimi must be enterable");
 
     const group = m.query('[role="group"][aria-label="Reasoning effort"]');
     assert.ok(group, "a foreign provider with efforts must still show a meter");
     const seg = group.querySelector("button") as HTMLButtonElement | null;
     assert.ok(seg, "and it must have segments to click");
-    assert.equal(
-      seg.disabled,
-      true,
-      "a foreign provider's segment must refuse the click in the DOM",
-    );
+    assert.equal(seg.disabled, false, "the segment must accept the click");
     await m.click(seg);
+
+    // Entry highlight sits on Kimi's Default row, so no model override is sent.
+    assert.deepEqual(
+      h.providerSets,
+      [{ provider: "kimi", model: null }],
+      "a foreign effort pick must first switch the thread to that harness",
+    );
     assert.deepEqual(
       h.efforts,
-      [],
-      "a click on a foreign meter must not rewrite the current provider's effort",
+      ["low"],
+      "the effort call must follow the provider switch (it resets effort)",
     );
+    m.unmount();
+  });
+
+  it("applies the highlighted foreign model together with the effort", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h, { provider: "claude", model: null }));
+    const list = await openProvider(m, "Kimi");
+    assert.ok(list, "kimi must be enterable");
+    // Entry highlight is Default; one step down lands on the K3 row.
+    await m.press(list, "ArrowDown");
+    const hl = m.query('[data-highlighted="true"]');
+    assert.ok(
+      hl && (hl.textContent || "").includes("K3"),
+      "the K3 row must be highlighted before the effort pick",
+    );
+
+    const seg = Array.from(
+      m.queryAll('[aria-label^="Reasoning "]'),
+    ).find(
+      (el) => (el.getAttribute("aria-label") || "") === "Reasoning High",
+    );
+    assert.ok(seg, "kimi's High segment must render");
+    await m.click(seg);
+
+    assert.deepEqual(
+      h.providerSets,
+      [{ provider: "kimi", model: "k3" }],
+      "the highlighted model must ride along with the harness switch",
+    );
+    assert.deepEqual(h.efforts, ["high"], "and the picked level must follow");
     m.unmount();
   });
 });
