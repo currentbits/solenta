@@ -753,4 +753,74 @@ describe("Sidebar remove project (round 41, t3-style)", () => {
     );
     m.unmount();
   });
+
+  it("confirm submit disables while remove is in flight; second click records nothing", async () => {
+    // M9: removing disabled={removePending}, aria-busy, and the re-entry
+    // guard left the suite green. Hold the remove promise so we can assert
+    // mid-flight state.
+    let resolveRemove!: () => void;
+    const held = new Promise<void>((resolve) => {
+      resolveRemove = resolve;
+    });
+    const calls: string[] = [];
+    const m = await mount(
+      sidebar(removeThreads, {
+        projects: [p1, p2],
+        onRemoveProject: (id) => {
+          calls.push(id);
+          return held;
+        },
+      }),
+    );
+    await m.click(m.query('[data-project-remove="p2"]'));
+    const submit = m.query(
+      '[data-remove-confirm-submit="p2"]',
+    ) as HTMLButtonElement | null;
+    assert.ok(submit, "confirm submit must render");
+    assert.equal(submit!.disabled, false, "enabled before the first click");
+
+    // First click starts the call; recording is proven live here (length → 1).
+    await m.click(submit!);
+    await m.flush();
+
+    assert.deepEqual(calls, ["p2"], "first click records the project id once");
+
+    const inflight = m.query(
+      '[data-remove-confirm-submit="p2"]',
+    ) as HTMLButtonElement | null;
+    assert.ok(inflight, "dialog stays open while the promise is held");
+    assert.equal(
+      inflight!.disabled,
+      true,
+      "submit must be disabled while removePending",
+    );
+    assert.equal(
+      inflight!.getAttribute("aria-busy"),
+      "true",
+      "aria-busy marks the in-flight confirm",
+    );
+
+    // Second click must not enqueue another call (disabled + re-entry guard).
+    await m.click(inflight!);
+    await m.flush();
+    assert.deepEqual(
+      calls,
+      ["p2"],
+      "second click while in flight records nothing",
+    );
+
+    await inAct(async () => {
+      resolveRemove();
+      await Promise.resolve();
+    });
+    await m.flush();
+
+    assert.equal(
+      m.query('[data-remove-confirm="p2"]'),
+      null,
+      "dialog closes after the held promise resolves",
+    );
+    assert.deepEqual(calls, ["p2"], "still exactly one recorded call");
+    m.unmount();
+  });
 });

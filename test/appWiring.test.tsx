@@ -403,7 +403,14 @@ describe("App remove-project wiring (round 41)", () => {
     m.unmount();
   });
 
-  it("selection moves when removing the project that owns the selected thread", async () => {
+  /**
+   * Handoff pin (M10): deleting the openBelongs / nextVisibleThreadId /
+   * setSelectedThreadId / setDetail block left appWiring green because the
+   * old test only checked that survivor cards still rendered. Assert WHERE
+   * selection lands — data-active on the successor card + threads.get for
+   * that id. Name is shared-pattern ready for threads.delete handoff.
+   */
+  it("selection handoff lands on the successor (data-active + threads.get) after remove — same pin for threads.delete", async () => {
     const fake = createFakeCoder({
       projects: [pFirst, pDrop],
       threads: [t0, tKeep, tDrop],
@@ -421,6 +428,14 @@ describe("App remove-project wiring (round 41)", () => {
     await m.click(dropCard);
     await m.flush();
 
+    const selectedBefore = m.query(
+      '[data-thread-card="t-drop"][data-active="true"]',
+    );
+    assert.ok(
+      selectedBefore,
+      "precondition: drop thread is the active selection",
+    );
+
     await m.click(m.query('[data-project-remove="p-drop"]'));
     await m.click(m.query('[data-remove-confirm-submit="p-drop"]'));
     await m.flush();
@@ -429,16 +444,34 @@ describe("App remove-project wiring (round 41)", () => {
       fake.of("projects.remove").at(-1)?.args[0],
       { projectId: "p-drop" },
     );
-    // Dropped thread is gone from the list; a surviving first-project thread remains.
     assert.equal(
-      m.query('button[aria-label="Select thread: drop me"]'),
+      m.query('[data-thread-card="t-drop"]'),
       null,
       "removed project's thread must leave the sidebar",
     );
+
+    // nextVisibleThreadId on the post-remove list (t0, t-keep) returns t0 —
+    // the first remaining non-archived thread (same rule deleteThread uses).
+    const successorCard = m.query(
+      '[data-thread-card="t0"][data-active="true"]',
+    );
     assert.ok(
-      m.query('button[aria-label="Select thread: index zero"]') ||
-        m.query('button[aria-label="Select thread: keep me"]'),
-      "selection must hand off to a surviving thread",
+      successorCard,
+      "successor t0 must carry data-active=true — proves setSelectedThreadId ran",
+    );
+    assert.equal(
+      m.query('[data-thread-card="t-keep"][data-active="true"]'),
+      null,
+      "only the handoff target is active, not every survivor",
+    );
+
+    // useCoder clears detail then loads the new selection — threads.get must
+    // name the successor (not the deleted thread).
+    const getIds = fake.of("threads.get").map((c) => c.args[0]);
+    assert.equal(
+      getIds[getIds.length - 1],
+      "t0",
+      "last threads.get must be the handoff successor id",
     );
     m.unmount();
   });
