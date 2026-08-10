@@ -248,14 +248,12 @@ export async function mount(element: ReactElement): Promise<Mounted> {
     hover: async (el) => {
       if (!el) throw new Error("hover: element not found");
       await act(async () => {
+        // React derives onMouseEnter from the top-level mouseover; it does not
+        // listen for raw mouseenter, so dispatching one as well is dead code.
         el.dispatchEvent(
           new dom.window.MouseEvent("mouseover", { bubbles: true }),
         );
-        // React maps onMouseEnter onto mouseout/mouseover pairs, but jsdom does
-        // not synthesise them, so fire the non-bubbling event directly too.
-        el.dispatchEvent(
-          new dom.window.MouseEvent("mouseenter", { bubbles: false }),
-        );
+
       });
       await flush();
     },

@@ -795,6 +795,76 @@ describe("Composer drill-down picker", () => {
     m.unmount();
   });
 
+  it("the meter at the provider level follows the highlighted provider", async () => {
+    // Both the segment COUNT and the enabled state must follow the highlight.
+    // The thread is on kimi (not PROVIDERS[0]) so "highlighted", "current" and
+    // "first" are distinguishable; with claude they are not.
+    const h = makeHarness();
+    const m = await mount(
+      composer(h, { provider: "kimi", model: null, reasoningEffort: "high" }),
+    );
+    await m.click(m.query('button[aria-label^="Model:"]'));
+
+    // Own provider: three segments (kimi), live level, clickable.
+    let group = m.query('[role="group"][aria-label="Reasoning effort"]');
+    assert.ok(group, "the thread's own provider shows a meter");
+    let segs = Array.from(group.querySelectorAll("button")) as HTMLButtonElement[];
+    assert.equal(segs.length, 3, "kimi advertises three levels");
+    assert.equal(
+      segs.every((b) => b.disabled),
+      false,
+      "the thread's own meter must be usable",
+    );
+
+    // Foreign provider: five segments (claude), no borrowed level, all refused.
+    await m.hover(m.query('button[aria-label="Provider Claude Code"]'));
+    group = m.query('[role="group"][aria-label="Reasoning effort"]');
+    assert.ok(group);
+    segs = Array.from(group.querySelectorAll("button")) as HTMLButtonElement[];
+    assert.equal(segs.length, 5, "the count must follow the highlighted provider");
+    assert.equal(
+      segs.every((b) => b.disabled),
+      true,
+      "a foreign provider's segments must all refuse input",
+    );
+    assert.equal(
+      segs.some((b) => b.getAttribute("aria-pressed") === "true"),
+      false,
+      "and none may announce the thread's level as pressed",
+    );
+    m.unmount();
+  });
+
+  it("leaves the meter usable after backing out of a provider", async () => {
+    // Regression: backing out left the model highlight pointing into the flat
+    // list at another provider's row, so the pane said you were on your own
+    // harness at your own level while every segment refused the click.
+    const h = makeHarness();
+    const m = await mount(
+      composer(h, { provider: "kimi", model: null, reasoningEffort: "medium" }),
+    );
+    await m.click(m.query('button[aria-label^="Model:"]'));
+    await m.click(m.query('button[aria-label="Provider Claude Code"]'));
+    await m.click(m.byText("CLAUDE CODE"));
+    await m.hover(m.query('button[aria-label="Provider Kimi"]'));
+
+    const group = m.query('[role="group"][aria-label="Reasoning effort"]');
+    assert.ok(group, "own provider must still show its meter");
+    const segs = Array.from(group.querySelectorAll("button")) as HTMLButtonElement[];
+    assert.equal(
+      segs.every((b) => b.disabled),
+      false,
+      "backing out must not leave your own meter dead",
+    );
+    await m.click(segs[segs.length - 1]);
+    assert.equal(
+      h.efforts.length,
+      1,
+      "and a click must still report a level change",
+    );
+    m.unmount();
+  });
+
   it("reopens on the provider list after drilling in", async () => {
     // Same class as the custom-target leak: level state must reset on OPEN, or
     // the picker reopens somewhere the user did not leave it.
@@ -1125,8 +1195,15 @@ describe("Composer reasoning belongs to the current provider", () => {
     assert.ok(await openProvider(m, "Kimi"), "kimi must be enterable");
 
     const group = m.query('[role="group"][aria-label="Reasoning effort"]');
-    const seg = group?.querySelector("button");
-    if (seg) await m.click(seg);
+    assert.ok(group, "a foreign provider with efforts must still show a meter");
+    const seg = group.querySelector("button") as HTMLButtonElement | null;
+    assert.ok(seg, "and it must have segments to click");
+    assert.equal(
+      seg.disabled,
+      true,
+      "a foreign provider's segment must refuse the click in the DOM",
+    );
+    await m.click(seg);
     assert.deepEqual(
       h.efforts,
       [],

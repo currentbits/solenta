@@ -446,6 +446,10 @@ export function Composer({
     setDrillProvider(null);
     setProviderIndex(at);
     setCustomFor(null);
+    // Deliberately NOT re-seeding highlightIndex: the provider level reads
+    // providerDetail, and enterProvider re-seeds on every drill-in, so the
+    // stale value is never read. Adding a reset here survived its own mutation,
+    // which is the signature of a line that looks load-bearing and is not.
   };
 
   const onModelListKeyDown = (e: KeyboardEvent<HTMLUListElement>) => {
@@ -752,12 +756,12 @@ export function Composer({
                               data-filled={seg.filled ? "true" : undefined}
                               aria-label={`Reasoning ${effortDisplayLabel(seg.level)}`}
                               aria-pressed={
-                                detailRow.providerId === provider &&
+                                detail.providerId === provider &&
                                 reasoningEffort === seg.level
                                   ? "true"
                                   : "false"
                               }
-                              disabled={detailRow.providerId !== provider}
+                              disabled={detail.providerId !== provider}
                               onClick={() => void pickEffort(seg.level)}
                             />
                           ))}

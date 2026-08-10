@@ -7,6 +7,7 @@ import { describe, it } from "node:test";
 import type { ProviderInfo } from "../src/shared/ipc";
 import {
   buildProviderRows,
+  providerDetail,
   firstSelectableProvider,
   initialProviderIndex,
   stepProviderIndex,
@@ -146,5 +147,72 @@ describe("opening on an unusable provider", () => {
       false,
       "the opening highlight must be enterable",
     );
+  });
+});
+
+describe("providerDetail", () => {
+  // Five of its six outputs were unpinned: only `label` had a test, so efforts,
+  // vendor, providerId and the entire description string were free to be
+  // anything. providerId gates the reasoning meter.
+  const rows = (current = "claude", locked = false) =>
+    buildProviderRows(LIST, current, locked);
+
+  it("describes the CURRENT provider", () => {
+    const d = providerDetail(rows(), 0, LIST);
+    assert.equal(d?.providerId, "claude");
+    assert.equal(d?.label, "Claude Code");
+    assert.equal(d?.vendor, "current harness");
+    assert.match(d?.description ?? "", /2 models to choose from/);
+    assert.match(d?.description ?? "", /Current harness for this thread/);
+  });
+
+  it("describes a foreign provider without claiming it is current", () => {
+    const d = providerDetail(rows(), 1, LIST);
+    assert.equal(d?.providerId, "codex");
+    assert.equal(d?.vendor, "harness");
+    assert.match(d?.description ?? "", /1 model to choose from/);
+    assert.equal(
+      /Current harness/.test(d?.description ?? ""),
+      false,
+      "only the thread's own provider may claim to be current",
+    );
+  });
+
+  it("says a provider is not installed", () => {
+    const d = providerDetail(rows(), 2, LIST);
+    assert.equal(d?.providerId, "grok");
+    assert.equal(d?.vendor, "not installed");
+    assert.match(d?.description ?? "", /CLI not found/);
+  });
+
+  it("says a provider is locked by the session", () => {
+    const locked = rows("claude", true);
+    const at = locked.findIndex((r) => r.id === "codex");
+    const d = providerDetail(locked, at, LIST);
+    assert.match(d?.description ?? "", /Locked/);
+    assert.match(d?.description ?? "", /session/);
+  });
+
+  it("says when a provider offers no model choice", () => {
+    const at = rows().findIndex((r) => r.id === "kimi");
+    const d = providerDetail(rows(), at, LIST);
+    assert.match(d?.description ?? "", /No model choice/);
+    assert.equal(
+      /\d+ model/.test(d?.description ?? ""),
+      false,
+      "a provider with no list must not claim a count",
+    );
+  });
+
+  it("carries THAT provider's efforts, not the first provider's", () => {
+    // This gates the reasoning meter: taking providers[0].efforts would render
+    // the wrong number of segments for every other provider.
+    const withEfforts: ProviderInfo[] = [
+      p({ id: "claude", efforts: ["low", "medium", "high", "xhigh", "max"] }),
+      p({ id: "codex", name: "Codex", efforts: ["low", "medium"] }),
+    ] as ProviderInfo[];
+    const r = buildProviderRows(withEfforts, "claude", false);
+    assert.equal(providerDetail(r, 0, withEfforts)?.efforts.length, 5);
+    assert.equal(providerDetail(r, 1, withEfforts)?.efforts.length, 2);
   });
 });
