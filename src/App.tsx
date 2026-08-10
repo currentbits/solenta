@@ -186,7 +186,11 @@ export default function App() {
         onSaveSettings={(patch) => saveSettings(patch)}
       />
       {archiveToastId && (
-        <ArchiveToast onUndo={() => void undoArchive()} onDismiss={dismissArchiveToast} />
+        <ArchiveToast
+          key={archiveToastId}
+          onUndo={() => void undoArchive()}
+          onDismiss={dismissArchiveToast}
+        />
       )}
     </div>
   );
