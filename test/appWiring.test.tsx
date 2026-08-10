@@ -193,6 +193,85 @@ describe("App memory wiring", () => {
   });
 });
 
+describe("App archive undo toast wiring", () => {
+  /**
+   * Load-bearing for handleSetArchived / undoArchive / the pre-move id capture.
+   * A local Host harness that re-implements the same flow is vacuous (ISSUES
+   * flavour #12): gutting undoArchive in App.tsx must fail THIS test.
+   */
+  it("archives through the real UI and Undo records setArchived false for the captured id", async () => {
+    // Distinct id mid-list, not "t1" / index 0 (fixture discipline).
+    const target = thread({
+      id: "t-to-archive",
+      title: "thread marked for archive undo",
+      projectId: "p1",
+    });
+    const keeper = thread({
+      id: "t-stays",
+      title: "keeper stays visible",
+      projectId: "p1",
+      updatedAt: (target.updatedAt ?? Date.now()) - 1000,
+    });
+    const fake = createFakeCoder({
+      projects: [project({ id: "p1" })],
+      // Target first so boot selects it (preferred = first non-archived).
+      threads: [target, keeper],
+      details: {
+        "t-to-archive": detail({ thread: target }),
+        "t-stays": detail({ thread: keeper }),
+      },
+    });
+    const m = await boot(fake);
+
+    // Boot already selects the first thread; open its overflow and archive.
+    const menuBtn = m
+      .queryAll("button")
+      .find((b) => b.getAttribute("aria-label") === "Thread actions");
+    assert.ok(menuBtn, "Thread actions menu must be present on the open thread");
+    await m.click(menuBtn as HTMLElement);
+
+    const archiveItem = m
+      .queryAll("button")
+      .find((b) => (b.textContent || "").includes("Archive thread"));
+    assert.ok(archiveItem, "Archive thread menu item must exist");
+    await m.click(archiveItem as HTMLElement);
+
+    const archivedCalls = fake.of("threads.setArchived");
+    assert.ok(
+      archivedCalls.length >= 1,
+      "archive must hit threads.setArchived",
+    );
+    assert.deepEqual(
+      archivedCalls[archivedCalls.length - 1]!.args[0],
+      { threadId: "t-to-archive", archived: true },
+      "the archive call must name the open thread and archived:true",
+    );
+
+    assert.ok(
+      m.text().includes("Archived"),
+      "App-level toast must appear after archive",
+    );
+    const undo = m.byText("Undo");
+    assert.ok(undo, "toast Undo control must be present");
+    await m.click(undo!);
+
+    const unarchive = fake
+      .of("threads.setArchived")
+      .map((c) => c.args[0] as { threadId: string; archived: boolean })
+      .find((a) => a.archived === false);
+    assert.ok(
+      unarchive,
+      "Undo must call threads.setArchived with archived:false",
+    );
+    assert.deepEqual(
+      unarchive,
+      { threadId: "t-to-archive", archived: false },
+      "Undo must restore the CAPTURED id, not whatever is selected after archive",
+    );
+    m.unmount();
+  });
+});
+
 describe("App reasoning-effort wiring", () => {
   const claude = {
     id: "claude",
