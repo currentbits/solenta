@@ -600,6 +600,50 @@ describe("Composer drill-down picker", () => {
     m.unmount();
   });
 
+  it("drills in on the selected model for a provider that is not first", async () => {
+    // The claude case above cannot fail: claude is PROVIDERS[0], so the flat
+    // index and the per-provider index coincide and a drill-in that never
+    // re-seeds still lands on the right row. kimi is last, so its flat index
+    // is out of range for its own two-row list and clamps to Custom.
+    const h = makeHarness();
+    const m = await mount(composer(h, { provider: "kimi", model: "k3" }));
+    assert.ok(await openProvider(m, "Kimi"));
+    const hl = m.query('[data-highlighted="true"]');
+    assert.ok(hl, "a row must be highlighted");
+    assert.match(
+      hl.textContent || "",
+      /K3/,
+      "drilling in must re-seed the highlight from the thread's model",
+    );
+    m.unmount();
+  });
+
+  it("hovering a model row moves the highlight and the detail pane", async () => {
+    // The provider level had this pinned and the model level did not, so
+    // deleting the model row's onMouseEnter left the suite green.
+    const h = makeHarness();
+    const m = await mount(composer(h, { provider: "claude", model: null }));
+    assert.ok(await openProvider(m, "Claude Code"));
+    const before = m.query('[class*="detailLabel"]')?.textContent;
+    const opus = m
+      .queryAll('[class*="modelRow"]')
+      .find((el) => (el.textContent || "").includes("Opus 4"));
+    assert.ok(opus, "the Opus row must render to be hovered");
+    await m.hover(opus);
+    assert.match(
+      m.query('[class*="detailLabel"]')?.textContent || "",
+      /Opus 4/,
+      "hover must move the detail pane to the hovered model",
+    );
+    assert.notEqual(before, "Opus 4", "the pane must have started elsewhere");
+    assert.match(
+      m.query('[data-highlighted="true"]')?.textContent || "",
+      /Opus 4/,
+      "hover must move the highlight, not just the pane",
+    );
+    m.unmount();
+  });
+
   it("keyboard-selects a model and reports it", async () => {
     // L2: nothing keyboard-selected an actual model after the rewrite. The
     // custom tests press Enter on Custom..., which takes a different branch.
