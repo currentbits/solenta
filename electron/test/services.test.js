@@ -323,6 +323,22 @@ describe("services", () => {
     );
   });
 
+  it("clearSettledOnActivity clears only a settled pin", () => {
+    assert.deepEqual(
+      services.clearSettledOnActivity({ settledOverride: "settled" }),
+      { settledOverride: null, settledAt: null },
+    );
+    assert.deepEqual(
+      services.clearSettledOnActivity({ settledOverride: "active" }),
+      {},
+    );
+    assert.deepEqual(
+      services.clearSettledOnActivity({ settledOverride: null }),
+      {},
+    );
+    assert.deepEqual(services.clearSettledOnActivity(null), {});
+  });
+
   it("deleteThread removes thread, messages, and work log", () => {
     const repo = path.join(tmpDir, "del-repo");
     fs.mkdirSync(repo);
