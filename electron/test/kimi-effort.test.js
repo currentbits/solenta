@@ -12,8 +12,13 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { pathToFileURL } = require("node:url");
+const { execFileSync } = require("node:child_process");
 
 const { flipKimiEffort, kimiConfigPath, runKimi } = require("../kimi.js");
+const { Store } = require("../store.js");
+const services = require("../services.js");
+const { createRunner } = require("../runner.js");
 
 const CONFIG = `default_model = "kimi-code/k3"
 
@@ -123,6 +128,41 @@ describe("flipKimiEffort", () => {
       tricky,
       "a later section's effort line is not [thinking]'s",
     );
+  });
+
+  it("reinstates a leftover backup even when the turn has NO effort", () => {
+    // The default case. Recovery behind the !effort early-return was dead
+    // code for effortless turns: after a crash the user stayed on Coder's
+    // flipped effort until they happened to set one again.
+    writeConfig(CONFIG.replace('effort = "high"', 'effort = "low"'));
+    fs.writeFileSync(`${kimiConfigPath()}.coder-effort-backup`, CONFIG);
+    flipKimiEffort(null);
+    assert.equal(
+      readConfig(),
+      CONFIG,
+      "an effortless turn must still recover the user's real config",
+    );
+    assert.equal(
+      fs.existsSync(`${kimiConfigPath()}.coder-effort-backup`),
+      false,
+    );
+  });
+
+  it("mangles nothing when '[thinking]' appears inside a quoted value", () => {
+    // An earlier section with its own effort key and a quoted "[thinking]"
+    // used to satisfy the unanchored header match and flip the WRONG key.
+    const tricky =
+      '[notes]\ncomment = "about [thinking] behaviour"\neffort = "banana"\n\n[thinking]\nenabled = true\neffort = "high"\n';
+    writeConfig(tricky);
+    const restore = flipKimiEffort("low");
+    assert.match(readConfig(), /\[thinking\]\nenabled = true\neffort = "low"/);
+    assert.match(
+      readConfig(),
+      /effort = "banana"/,
+      "the [notes] section's effort key must be untouched",
+    );
+    restore();
+    assert.equal(readConfig(), tricky);
   });
 
   it("is a noop without an effort or without a config file", () => {
@@ -252,5 +292,123 @@ describe("runKimi applies effort via config", () => {
       "no effort on the thread means the user's own default",
     );
     assert.equal(readConfig(), CONFIG);
+  });
+});
+
+describe("runner wires thread.reasoningEffort to the kimi flip (config evidence)", () => {
+  // runner.js -> runKimi({ reasoningEffort }) is the feature's ONLY
+  // connection to the app; without this test, nulling that one argument
+  // left the whole electron suite green (round 35 review, mutation M8b).
+  function git(cwd, args) {
+    execFileSync("git", args, { cwd, stdio: "ignore" });
+  }
+
+  async function loadCore() {
+    const corePath = path.join(__dirname, "../../core/dist/index.js");
+    return import(pathToFileURL(corePath).href);
+  }
+
+  function waitFor(predicate, { timeoutMs = 15000, intervalMs = 20 } = {}) {
+    return new Promise((resolve, reject) => {
+      const start = Date.now();
+      const tick = () => {
+        try {
+          if (predicate()) return resolve();
+        } catch (e) {
+          return reject(e);
+        }
+        if (Date.now() - start > timeoutMs) {
+          return reject(new Error("waitFor timed out"));
+        }
+        setTimeout(tick, intervalMs);
+      };
+      tick();
+    });
+  }
+
+  it("a kimi thread's effort reaches the child via config and is restored", async () => {
+    // KIMI_CODE_HOME already points at tmpHome (outer beforeEach), which is
+    // also the guard keeping this runner test away from the real ~/.kimi-code.
+    writeConfig();
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-kimi-run-"));
+    const seenFile = path.join(tmpDir, "seen-effort.txt");
+    const fakeKimi = path.join(tmpDir, "fake-kimi");
+    fs.writeFileSync(
+      fakeKimi,
+      `#!/usr/bin/env node
+"use strict";
+const fs = require("fs");
+const path = require("path");
+// Read config the way real kimi does at startup, and report what we saw.
+const cfg = fs.readFileSync(
+  path.join(process.env.KIMI_CODE_HOME, "config.toml"),
+  "utf8",
+);
+const m = cfg.match(/\\[thinking\\][^[]*?effort[ \\t]*=[ \\t]*"([^"]*)"/);
+fs.writeFileSync(process.env.CODER_FAKE_KIMI_SEEN_FILE, m ? m[1] : "none");
+function emit(obj) { process.stdout.write(JSON.stringify(obj) + "\\n"); }
+emit({ type: "text", text: "ok" });
+emit({ type: "usage", input_tokens: 1, output_tokens: 1 });
+`,
+      { mode: 0o755 },
+    );
+
+    const prev = {
+      CODER_SIMULATE: process.env.CODER_SIMULATE,
+      CODER_AGENT_CMD: process.env.CODER_AGENT_CMD,
+      CODER_KIMI_BIN: process.env.CODER_KIMI_BIN,
+      CODER_FAKE_KIMI_SEEN_FILE: process.env.CODER_FAKE_KIMI_SEEN_FILE,
+    };
+    delete process.env.CODER_SIMULATE;
+    delete process.env.CODER_AGENT_CMD;
+    process.env.CODER_KIMI_BIN = fakeKimi;
+    process.env.CODER_FAKE_KIMI_SEEN_FILE = seenFile;
+
+    let runner;
+    try {
+      const projectDir = path.join(tmpDir, "proj");
+      fs.mkdirSync(projectDir);
+      git(projectDir, ["init"]);
+      git(projectDir, ["config", "user.email", "t@t.com"]);
+      git(projectDir, ["config", "user.name", "t"]);
+      fs.writeFileSync(path.join(projectDir, "README.md"), "hi\n");
+      git(projectDir, ["add", "."]);
+      git(projectDir, ["commit", "-m", "init"]);
+
+      const store = new Store(path.join(tmpDir, "store.json"));
+      const core = await loadCore();
+      runner = createRunner({ store, core, pushFn() {}, tickMs: 15 });
+      const project = services.addProject(store, projectDir);
+      const thread = services.createThread(store, {
+        projectId: project.id,
+        title: "Kimi Effort",
+      });
+      services.setProvider(store, { threadId: thread.id, provider: "kimi" });
+      services.setReasoningEffort(store, {
+        threadId: thread.id,
+        effort: "low",
+      });
+
+      await runner.startRun({ threadId: thread.id, prompt: "check effort" });
+      await waitFor(() => store.getThread(thread.id).status === "done");
+
+      assert.equal(
+        fs.readFileSync(seenFile, "utf8"),
+        "low",
+        "the kimi child must see the thread's effort in its config",
+      );
+      assert.equal(readConfig(), CONFIG, "restored after the run");
+      assert.equal(
+        fs.existsSync(`${kimiConfigPath()}.coder-effort-backup`),
+        false,
+      );
+    } finally {
+      if (runner) runner.stopAll();
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+      for (const [k, v] of Object.entries(prev)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
   });
 });

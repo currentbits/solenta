@@ -49,21 +49,28 @@ function kimiConfigPath() {
  */
 function flipKimiEffort(effort) {
   const noop = () => {};
-  if (!effort) return noop;
   const configPath = kimiConfigPath();
   const backupPath = `${configPath}.coder-effort-backup`;
   try {
+    // Crash recovery runs on EVERY kimi turn, including effortless ones: a
+    // leftover backup means a previous flip never restored, and the backup is
+    // the user's real config. Behind the !effort return it was dead code for
+    // the default case, leaving the user on the wrong effort indefinitely.
     if (fs.existsSync(backupPath)) {
-      // A leftover backup means a previous flip never restored; the backup is
-      // the user's real config, so reinstate it before reading.
       fs.copyFileSync(backupPath, configPath);
       fs.unlinkSync(backupPath);
     }
+  } catch {
+    return noop;
+  }
+  if (!effort) return noop;
+  try {
     const original = fs.readFileSync(configPath, "utf8");
     const flipped = original.replace(
-      // The effort line inside the [thinking] section only; [^[]*? stops the
-      // match from crossing into the next TOML section.
-      /(\[thinking\][^[]*?^[ \t]*effort[ \t]*=[ \t]*")[^"]*(")/m,
+      // The effort line inside the [thinking] section only: ^ anchors the
+      // header so "[thinking]" inside a quoted value cannot match, and [^[]*?
+      // stops the match from crossing into the next TOML section.
+      /(^\[thinking\][^[]*?^[ \t]*effort[ \t]*=[ \t]*")[^"]*(")/m,
       `$1${effort}$2`,
     );
     if (flipped === original) return noop;
