@@ -111,9 +111,24 @@ function extractAssistantText(obj) {
   // than falling through to the legacy matcher, which would happily surface
   // the meta hint's content as an assistant message.
   if (obj.role != null) {
-    return obj.role === "assistant" && typeof obj.content === "string"
-      ? obj.content
-      : null;
+    if (obj.role !== "assistant") return null;
+    if (typeof obj.content === "string") return obj.content;
+    // Only strings were recorded live, but a block array here would silently
+    // reproduce this round's exact symptom (gotJson true blocks the
+    // plain-text fallback), so join text-ish parts as cheap insurance.
+    if (Array.isArray(obj.content)) {
+      const parts = obj.content
+        .map((b) =>
+          typeof b === "string"
+            ? b
+            : b && typeof b === "object" && typeof b.text === "string"
+              ? b.text
+              : "",
+        )
+        .filter(Boolean);
+      if (parts.length > 0) return parts.join("");
+    }
+    return null;
   }
   const type = String(obj.type || "");
   if (type !== "text" && type !== "message" && type !== "assistant") {

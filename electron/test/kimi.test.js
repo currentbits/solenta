@@ -219,6 +219,16 @@ describe("kimi extract helpers: REAL recorded stream lines", () => {
 
   it("assistant text comes only from role assistant content", () => {
     assert.equal(extractAssistantText(REAL_TEXT), "ok");
+    // Not recorded live, but if kimi ever streams block arrays, dropping
+    // them reproduces done-in-0s-with-no-reply while gotJson blocks the
+    // plain-text fallback.
+    assert.equal(
+      extractAssistantText({
+        role: "assistant",
+        content: [{ type: "text", text: "block " }, "tail"],
+      }),
+      "block tail",
+    );
     assert.equal(
       extractAssistantText(REAL_META),
       null,
@@ -604,6 +614,30 @@ describe("kimi runner integration", () => {
       "each turn stores the newest hint's session id",
     );
     assert.equal(store.getUsage(thread.id).turns, 2);
+  });
+
+  it("a hint-less turn never downgrades a real session id", async () => {
+    // The terminal stamp is captured || prior || "cwd". Every other hint-less
+    // test starts from null/"cwd", so the middle term could be deleted with
+    // the suite green (round 37 review, surviving mutation) while a single
+    // old-kimi turn silently demoted -S resume back to the cwd sentinel.
+    const thread = store.getThreads()[0];
+    store.updateThread(thread.id, { sessionId: "session_prior" });
+    store.save();
+    process.env.CODER_FAKE_KIMI_SCENARIO = "legacy-types"; // emits no hint
+
+    await runner.startRun({ threadId: thread.id, prompt: "no hint" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    const argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
+    const sIdx = argv.indexOf("-S");
+    assert.ok(sIdx >= 0, `expected -S in ${JSON.stringify(argv)}`);
+    assert.equal(argv[sIdx + 1], "session_prior");
+    assert.equal(
+      store.getThread(thread.id).sessionId,
+      "session_prior",
+      "a turn without a resume hint must keep the session it resumed",
+    );
   });
 
   it("a legacy cwd thread keeps resuming with -c until a hint upgrades it", async () => {
