@@ -224,6 +224,11 @@ function migrateThread(t) {
     // Older stores may lack PR fields; null (not undefined) so the badge is stable.
     prNumber: t.prNumber !== undefined ? t.prNumber : null,
     prUrl: t.prUrl !== undefined ? t.prUrl : null,
+    // Round 39 settle lifecycle: null (not undefined) so resolution is stable.
+    settledOverride:
+      t.settledOverride !== undefined ? t.settledOverride : null,
+    settledAt: t.settledAt !== undefined ? t.settledAt : null,
+    prState: t.prState !== undefined ? t.prState : null,
   };
 }
 

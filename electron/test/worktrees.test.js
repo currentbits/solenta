@@ -699,6 +699,7 @@ describe("worktrees", () => {
       const stored = store.getThread(thread.id);
       assert.equal(stored.prNumber, 42);
       assert.equal(stored.prUrl, "https://github.com/acme/demo/pull/42");
+      assert.equal(stored.prState, "OPEN");
 
       assert.ok(
         broadcasts.some((b) => b.ch === "threads:changed"),
@@ -709,6 +710,7 @@ describe("worktrees", () => {
       assert.ok(row, "broadcast payload must include the thread");
       assert.equal(row.prNumber, 42);
       assert.equal(row.prUrl, "https://github.com/acme/demo/pull/42");
+      assert.equal(row.prState, "OPEN");
 
       const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
       assert.equal(state.createCount, 1);
@@ -783,6 +785,13 @@ describe("worktrees", () => {
       assert.equal(live.branch, setup.branch);
       assert.equal(live.created, false);
       assert.equal(live.state, "OPEN");
+      // prStatus success persists last-known state on the thread.
+      assert.equal(store.getThread(thread.id).prState, "OPEN");
+      assert.equal(store.getThread(thread.id).prNumber, 42);
+      assert.equal(
+        store.getThread(thread.id).prUrl,
+        "https://github.com/acme/demo/pull/42",
+      );
 
       // Mutate fake state to MERGED so prStatus is live, not store-cached.
       const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
@@ -790,6 +799,48 @@ describe("worktrees", () => {
       fs.writeFileSync(statePath, JSON.stringify(state), "utf8");
       const merged = prStatus({ store, threadId: thread.id });
       assert.equal(merged.state, "MERGED");
+      assert.equal(
+        store.getThread(thread.id).prState,
+        "MERGED",
+        "prStatus must persist the live state, including MERGED",
+      );
+    });
+
+    it("prStatus with a pre-existing PR persists prState without createPr", () => {
+      // Seed a PR in the fake gh state, then only call prStatus.
+      const { setup } = preparePrFixture({
+        store,
+        thread,
+        worktreeBase,
+        repo,
+        tmpDir,
+      });
+      // preparePrFixture leaves the branch ahead but no PR; create then clear
+      // store fields so prStatus is the only path that can re-stamp them.
+      createPr({
+        store,
+        threadId: thread.id,
+        title: "Ship",
+        broadcast: () => {},
+      });
+      store.updateThread(thread.id, {
+        prNumber: null,
+        prUrl: null,
+        prState: null,
+      });
+      store.save();
+      assert.equal(store.getThread(thread.id).prState, null);
+
+      const live = prStatus({ store, threadId: thread.id });
+      assert.ok(live);
+      assert.equal(live.number, 42);
+      assert.equal(live.branch, setup.branch);
+      assert.equal(store.getThread(thread.id).prState, "OPEN");
+      assert.equal(store.getThread(thread.id).prNumber, 42);
+      assert.equal(
+        store.getThread(thread.id).prUrl,
+        "https://github.com/acme/demo/pull/42",
+      );
     });
 
     it("a merged PR does not block opening a follow-up PR", () => {
