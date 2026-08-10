@@ -359,6 +359,17 @@ export interface CoderApi {
     add(path: string): Promise<ProjectInfo>;
     /** Opens a native folder picker; resolves null if the user cancels. */
     addViaDialog(): Promise<ProjectInfo | null>;
+    /**
+     * Remove the project ENTRY and delete its threads' conversation history
+     * (t3-style "Remove project"). The repository on disk is never touched.
+     * Rejects while any of its threads has an active run, or still has a
+     * worktree (merge or delete those in the Git tab first) — the same
+     * guards as threads.delete, because this is that action fanned out.
+     * The renderer confirms destructively BEFORE calling (thread count,
+     * path, "permanently clears conversation history"); this call does not
+     * prompt.
+     */
+    remove(input: { projectId: string }): Promise<void>;
   };
   threads: {
     list(): Promise<ThreadInfo[]>;
