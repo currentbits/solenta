@@ -135,7 +135,12 @@ describe("reasoning effort: provider modelInfo + efforts", () => {
     ]);
     assert.deepEqual(byId.grok.efforts, ["low", "medium", "high"]);
     assert.deepEqual(byId.opencode.efforts, []);
-    assert.deepEqual(byId.kimi.efforts, []);
+    // kimi's levels come from config.toml support_efforts, not a CLI flag:
+    // low/high/max, with no medium. Applied via config flip (effortVia).
+    assert.deepEqual(byId.kimi.efforts, ["low", "high", "max"]);
+    // effortVia is registry-internal (runner concern), not IPC surface.
+    assert.equal(byId.kimi.effortVia, undefined);
+    assert.equal(getProvider("kimi").effortVia, "config");
     assert.deepEqual(byId.simulate.efforts, []);
     assert.deepEqual(byId.simulate.modelInfo, []);
   });
@@ -154,6 +159,20 @@ describe("reasoning effort: provider modelInfo + efforts", () => {
             !args.includes("--variant") &&
             !args.some((a) => String(a).startsWith("model_reasoning_effort=")),
           `${entry.id} with empty efforts must not emit effort flags: ${JSON.stringify(args)}`,
+        );
+      } else if (entry.effortVia === "config") {
+        // Efforts applied outside argv (kimi config flip): the level must
+        // NEVER leak into argv, same assertions as the empty-efforts case.
+        const args = entry.buildArgs({
+          prompt: "p",
+          reasoningEffort: entry.efforts[0],
+        });
+        assert.ok(
+          !args.includes("--effort") &&
+            !args.includes("--reasoning-effort") &&
+            !args.includes("--variant") &&
+            !args.some((a) => String(a).startsWith("model_reasoning_effort=")),
+          `${entry.id} with effortVia config must not emit effort flags: ${JSON.stringify(args)}`,
         );
       } else {
         const level = entry.efforts[0];
@@ -275,9 +294,11 @@ describe("reasoning effort: buildArgs per provider", () => {
     assert.ok(!forced.includes("--reasoning-effort"));
   });
 
-  it("kimi: empty efforts never emits a flag; prompt last", () => {
+  it("kimi: effort never reaches argv even though efforts are listed", () => {
+    // kimi 0.31.1 rejects every effort-shaped flag; the level is applied by
+    // flipping [thinking].effort in config.toml (kimi.js), not by argv.
     const entry = getProvider("kimi");
-    assert.deepEqual(entry.efforts, []);
+    assert.deepEqual(entry.efforts, ["low", "high", "max"]);
     const forced = entry.buildArgs({
       prompt: PROMPT_KIMI,
       permissionMode: "default",
@@ -495,7 +516,7 @@ describe("reasoning effort: setReasoningEffort service", () => {
       projectId: project.id,
       title: "T",
     });
-    services.setProvider(store, { threadId: thread.id, provider: "kimi" });
+    services.setProvider(store, { threadId: thread.id, provider: "opencode" });
     assert.throws(
       () =>
         services.setReasoningEffort(store, {
@@ -503,10 +524,33 @@ describe("reasoning effort: setReasoningEffort service", () => {
           effort: "high",
         }),
       (err) => {
-        assert.match(err.message, /Kimi Code/i);
+        assert.match(err.message, /OpenCode/i);
         assert.match(err.message, /high/);
         return true;
       },
+    );
+  });
+
+  it("kimi: accepts its config levels but rejects medium, which it lacks", () => {
+    // kimi's set is low/high/max; medium looks plausible (claude and grok
+    // both have it) and must fail loudly rather than be stored and ignored.
+    const thread = services.createThread(store, {
+      projectId: project.id,
+      title: "T",
+    });
+    services.setProvider(store, { threadId: thread.id, provider: "kimi" });
+    const updated = services.setReasoningEffort(store, {
+      threadId: thread.id,
+      effort: "max",
+    });
+    assert.equal(updated.reasoningEffort, "max");
+    assert.throws(
+      () =>
+        services.setReasoningEffort(store, {
+          threadId: thread.id,
+          effort: "medium",
+        }),
+      /Kimi Code does not support reasoning effort "medium"/,
     );
   });
 

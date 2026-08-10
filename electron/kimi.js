@@ -1,6 +1,9 @@
 "use strict";
 
 const { spawn } = require("node:child_process");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 
 const SIGKILL_AFTER_MS = 3000;
 const INPUT_TRUNCATE = 2000;
@@ -13,6 +16,73 @@ const OUTPUT_TRUNCATE = 4000;
 function truncate(s, max) {
   const str = String(s ?? "");
   return str.length <= max ? str : str.slice(0, max);
+}
+
+/** Kimi home dir; KIMI_CODE_HOME is kimi's own override, which tests also use. */
+function kimiConfigPath() {
+  const home =
+    process.env.KIMI_CODE_HOME || path.join(os.homedir(), ".kimi-code");
+  return path.join(home, "config.toml");
+}
+
+/**
+ * Set [thinking].effort in kimi's config.toml and return a restore function.
+ *
+ * kimi 0.31.1 has no per-invocation effort mechanism: no CLI flag (probed
+ * --effort/--thinking-effort/--reasoning-effort/--thinking, all rejected) and
+ * no env var. The value lives only in config.toml and is read once at process
+ * start, so the flip only needs to hold until the child produces output.
+ *
+ * Restore is idempotent and crash-safe: the original file is kept in a
+ * .coder-effort-backup sidecar, and a leftover sidecar (previous crash) is
+ * restored before reading, so the user's real config is never lost.
+ *
+ * If the [thinking] effort line is missing, or the config cannot be read, the
+ * turn runs on the user's default rather than Coder inventing a section in a
+ * file it does not own.
+ *
+ * ponytail: concurrent kimi turns race the flip window (last writer wins for
+ * a few ms); serialize flips or use a per-invocation flag when kimi ships one.
+ *
+ * @param {string | null | undefined} effort
+ * @returns {() => void} restore
+ */
+function flipKimiEffort(effort) {
+  const noop = () => {};
+  if (!effort) return noop;
+  const configPath = kimiConfigPath();
+  const backupPath = `${configPath}.coder-effort-backup`;
+  try {
+    if (fs.existsSync(backupPath)) {
+      // A leftover backup means a previous flip never restored; the backup is
+      // the user's real config, so reinstate it before reading.
+      fs.copyFileSync(backupPath, configPath);
+      fs.unlinkSync(backupPath);
+    }
+    const original = fs.readFileSync(configPath, "utf8");
+    const flipped = original.replace(
+      // The effort line inside the [thinking] section only; [^[]*? stops the
+      // match from crossing into the next TOML section.
+      /(\[thinking\][^[]*?^[ \t]*effort[ \t]*=[ \t]*")[^"]*(")/m,
+      `$1${effort}$2`,
+    );
+    if (flipped === original) return noop;
+    fs.writeFileSync(backupPath, original);
+    fs.writeFileSync(configPath, flipped);
+    let restored = false;
+    return () => {
+      if (restored) return;
+      restored = true;
+      try {
+        fs.writeFileSync(configPath, original);
+        fs.unlinkSync(backupPath);
+      } catch {
+        // Backup stays; the next flip's crash recovery reinstates it.
+      }
+    };
+  } catch {
+    return noop; // no config at all: kimi runs on its own defaults
+  }
 }
 
 /**
@@ -233,6 +303,7 @@ function runKimi(opts) {
     binary = process.env.CODER_KIMI_BIN || "kimi",
     args = [],
     cwd,
+    reasoningEffort = null,
     onEvent,
     onExit,
     onError,
@@ -269,6 +340,7 @@ function runKimi(opts) {
   function finish(code) {
     if (finished) return;
     finished = true;
+    restoreEffort();
     if (killTimer) {
       clearTimeout(killTimer);
       killTimer = null;
@@ -287,6 +359,10 @@ function runKimi(opts) {
     }
   }
 
+  // Kimi reads config.toml once at startup; the flip holds until first
+  // output (proof the child is past startup), with finish() as the backstop.
+  const restoreEffort = flipKimiEffort(reasoningEffort);
+
   let child;
   try {
     child = spawn(binary, args, {
@@ -295,6 +371,7 @@ function runKimi(opts) {
       stdio: ["ignore", "pipe", "pipe"],
     });
   } catch (err) {
+    restoreEffort();
     const error = err instanceof Error ? err : new Error(String(err));
     if (typeof onError === "function") onError(error);
     if (typeof onExit === "function") {
@@ -312,6 +389,7 @@ function runKimi(opts) {
   child.stderr.setEncoding("utf8");
 
   child.stdout.on("data", (chunk) => {
+    restoreEffort();
     const str = String(chunk);
     fullStdout += str;
     lineBuf += str;
@@ -359,6 +437,8 @@ function runKimi(opts) {
 
 module.exports = {
   runKimi,
+  flipKimiEffort,
+  kimiConfigPath,
   extractAssistantText,
   extractToolEvent,
   extractUsage,
