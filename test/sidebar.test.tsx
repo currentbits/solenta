@@ -124,6 +124,30 @@ describe("Sidebar settled threads", () => {
     m.unmount();
   });
 
+  it("archived wins over settled for a done thread", async () => {
+    // The split runs on the non-archived list. Splitting the whole group
+    // instead would show a done+archived thread in BOTH folds (round 38
+    // review: that mutation survived the full suite).
+    const m = await mount(
+      sidebar([
+        thread({ id: "kept", title: "kept", status: "working", runStartedAt: 1 }),
+        thread({ id: "gone", title: "gone", status: "done", archived: true }),
+      ]),
+    );
+    assert.ok(
+      m.byText("1 archived"),
+      "the archived toggle must claim the thread",
+    );
+    assert.equal(
+      m
+        .queryAll("button")
+        .find((b) => (b.textContent || "").trim() === "1 settled"),
+      undefined,
+      "the settled fold must not double-count an archived done thread",
+    );
+    m.unmount();
+  });
+
   it("shows the t3-style summary on the group header", async () => {
     const m = await mount(sidebar(THREADS));
     assert.match(

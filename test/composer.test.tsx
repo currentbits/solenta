@@ -131,10 +131,29 @@ interface Harness {
   modes: PermissionMode[];
   providerSets: { provider?: string; model?: string | null }[];
   efforts: (ReasoningEffort | null)[];
+  /**
+   * Ordered log across BOTH callbacks, and the effective effort after
+   * emulating the backend rule (setProvider clears effort on a provider
+   * change, electron/services.js). Two separate arrays cannot see order, so
+   * "switch first, then effort" was asserted by a test that passed with the
+   * awaits swapped (round 38 review, M1).
+   */
+  callOrder: ("setProvider" | "setReasoningEffort")[];
+  effectiveEffort: ReasoningEffort | null;
+  harnessProvider: string;
 }
 
-function makeHarness(): Harness {
-  return { sends: [], builds: [], modes: [], providerSets: [], efforts: [] };
+function makeHarness(provider = "claude"): Harness {
+  return {
+    sends: [],
+    builds: [],
+    modes: [],
+    providerSets: [],
+    efforts: [],
+    callOrder: [],
+    effectiveEffort: null,
+    harnessProvider: provider,
+  };
 }
 
 function composer(
@@ -151,6 +170,11 @@ function composer(
     providers?: ProviderInfo[];
   } = {},
 ) {
+  // Seed the emulation from the thread this element renders with, so the
+  // provider-change detection compares against the real starting state.
+  harness.harnessProvider = over.provider ?? "claude";
+  harness.effectiveEffort =
+    over.reasoningEffort === undefined ? null : over.reasoningEffort;
   return (
     <Composer
       threadId="t1"
@@ -168,9 +192,19 @@ function composer(
       workflows={WORKFLOWS}
       onSetProvider={(input) => {
         harness.providerSets.push(input);
+        harness.callOrder.push("setProvider");
+        // Emulate the backend: a provider CHANGE wipes reasoningEffort
+        // (electron/services.js). Without this, effort-set-before-switch and
+        // effort-set-after-switch are indistinguishable to any assertion.
+        if (input.provider && input.provider !== harness.harnessProvider) {
+          harness.harnessProvider = input.provider;
+          harness.effectiveEffort = null;
+        }
       }}
       onSetReasoningEffort={(effort) => {
         harness.efforts.push(effort);
+        harness.callOrder.push("setReasoningEffort");
+        harness.effectiveEffort = effort;
       }}
       onSaveWorkflow={async (t) => ({
         id: "saved",
@@ -860,8 +894,11 @@ describe("Composer drill-down picker", () => {
     // The thread is on kimi (not PROVIDERS[0]) so "highlighted", "current" and
     // "first" are distinguishable; with claude they are not.
     const h = makeHarness();
+    // model "k3", NOT null: at the provider level the flat-list highlight
+    // sits on the selected model, so if the switch branch ever leaks the
+    // model-level detail row into setProvider, "k3" rides along visibly.
     const m = await mount(
-      composer(h, { provider: "kimi", model: null, reasoningEffort: "high" }),
+      composer(h, { provider: "kimi", model: "k3", reasoningEffort: "high" }),
     );
     await m.click(m.query('button[aria-label^="Model:"]'));
 
@@ -898,14 +935,81 @@ describe("Composer drill-down picker", () => {
     assert.deepEqual(
       h.providerSets,
       [{ provider: "claude", model: null }],
-      "clicking a foreign segment must switch to that harness first",
+      "the switch must not carry the kimi thread's model or a stale row",
     );
     assert.deepEqual(
-      h.efforts,
-      ["low"],
-      "and then apply the clicked level, in that order: setProvider clears " +
-        "effort on switch, so effort-first would be wiped immediately",
+      h.callOrder,
+      ["setProvider", "setReasoningEffort"],
+      "switch first, then effort: two separate arrays could not see order " +
+        "and passed with the awaits swapped (round 38 M1)",
     );
+    assert.equal(
+      h.effectiveEffort,
+      "low",
+      "with the backend's effort-clear emulated, effort-first ends null",
+    );
+    m.unmount();
+  });
+
+  it("clicking a segment on a foreign Custom row switches without __custom__", async () => {
+    // The null-guard has two halves; this pins the CUSTOM_MODEL_ID one.
+    // Without it the switch ships the sentinel as a real model id.
+    const h = makeHarness();
+    const m = await mount(composer(h, { provider: "kimi", model: "k3" }));
+    assert.ok(await openProvider(m, "Claude Code"), "drill into a foreign provider");
+    // Walk the highlight to the Custom row (last row of the drilled list).
+    const target = m.query('[data-highlighted="true"]');
+    assert.ok(target);
+    await m.pressFocused("End");
+    assert.match(
+      m.query('[data-highlighted="true"]')?.textContent || "",
+      /Custom/,
+      "End must land on the Custom row for this to prove anything",
+    );
+    const group = m.query('[role="group"][aria-label="Reasoning effort"]');
+    assert.ok(group, "claude advertises efforts, so the meter renders");
+    const segs = Array.from(
+      group.querySelectorAll("button"),
+    ) as HTMLButtonElement[];
+    await m.click(segs[segs.length - 1]);
+    assert.deepEqual(
+      h.providerSets,
+      [{ provider: "claude", model: null }],
+      "Custom is a prompt for input, never a model id to ship",
+    );
+    assert.equal(h.effectiveEffort, "max");
+    m.unmount();
+  });
+
+  it("keeps the meter inert when the thread's OWN provider is not installed", async () => {
+    // Both halves of the inertness (disabled + the pickEffort early-return)
+    // could be removed with the suite green (round 38 M3): every meter test
+    // used an installed provider.
+    const h = makeHarness();
+    // GROK alone: with other providers present the initial highlight skips a
+    // disabled current row (round 32), so the pane would describe an
+    // installed provider and this test would exercise nothing.
+    const m = await mount(
+      composer(h, {
+        provider: "grok",
+        model: null,
+        reasoningEffort: "high",
+        providers: [GROK],
+      }),
+    );
+    await m.click(m.query('button[aria-label^="Model:"]'));
+    const group = m.query('[role="group"][aria-label="Reasoning effort"]');
+    assert.ok(group, "grok advertises efforts, so the meter renders");
+    const segs = Array.from(
+      group.querySelectorAll("button"),
+    ) as HTMLButtonElement[];
+    assert.equal(
+      segs.every((b) => b.disabled),
+      true,
+      "an uninstalled CLI cannot honour a level; the meter must refuse",
+    );
+    await m.click(segs[0]);
+    assert.deepEqual(h.efforts, [], "and a click must report nothing");
     m.unmount();
   });
 

@@ -4,6 +4,7 @@ import {
   useId,
   useRef,
   useState,
+  type CSSProperties,
   type KeyboardEvent,
 } from "react";
 import type {
@@ -90,6 +91,10 @@ const STATIC = {
 };
 
 const DEFAULT_TEMPLATE_ID = "standard";
+
+/** Capped cascade index: row 30 shouldn't wait half a second to appear. */
+const rowEnterStyle = (index: number): CSSProperties =>
+  ({ "--i": String(Math.min(index, 10)) }) as CSSProperties;
 
 export function Composer({
   threadId,
@@ -262,6 +267,23 @@ export function Composer({
     }, 0);
     return () => window.clearTimeout(t);
   }, [modelOpen, drillProvider]);
+
+  /**
+   * Gliding highlight: one indicator that slides to the highlighted row
+   * instead of each row blinking its own background on and off. Measured
+   * from the DOM (offsetTop/Height) so variable row heights and scroll
+   * position need no math here. The glider mounts fresh with each list, so
+   * drilling never animates it across the level change.
+   */
+  const [glider, setGlider] = useState<{ top: number; height: number } | null>(
+    null,
+  );
+  useEffect(() => {
+    if (!modelOpen) return;
+    const list = (drillProvider ? modelListRef : providerListRef).current;
+    const hl = list?.querySelector<HTMLElement>('[data-highlighted="true"]');
+    setGlider(hl ? { top: hl.offsetTop, height: hl.offsetHeight } : null);
+  }, [modelOpen, drillProvider, providerIndex, hi, modelRows.length]);
 
   /** Enter a provider's models, seeding the highlight on its selected row. */
   const enterProvider = (id: string) => {
@@ -552,7 +574,11 @@ export function Composer({
                 <span className={styles.modelIcon} aria-hidden="true">
                   ◇
                 </span>
-                {triggerLabel}
+                {/* Keyed so a model swap replays the pop instead of swapping
+                    text mid-frame. */}
+                <span key={triggerLabel} className={styles.pillLabel}>
+                  {triggerLabel}
+                </span>
                 <span className={styles.caret}>▾</span>
               </button>
               {modelOpen && (
@@ -585,6 +611,16 @@ export function Composer({
                         ref={providerListRef}
                         onKeyDown={onProviderListKeyDown}
                       >
+                        {glider && (
+                          <div
+                            className={styles.highlightGlider}
+                            aria-hidden="true"
+                            style={{
+                              height: glider.height,
+                              transform: `translateY(${glider.top}px)`,
+                            }}
+                          />
+                        )}
                         {providerRows.map((row, index) => (
                           <li key={row.id} role="option" aria-selected={row.current}>
                             <button
@@ -678,6 +714,16 @@ export function Composer({
                       tabIndex={0}
                       onKeyDown={onModelListKeyDown}
                     >
+                      {glider && (
+                        <div
+                          className={styles.highlightGlider}
+                          aria-hidden="true"
+                          style={{
+                            height: glider.height,
+                            transform: `translateY(${glider.top}px)`,
+                          }}
+                        />
+                      )}
                       {modelRows.map((row, index) => {
                         const selected = isRowSelected(row, provider, model);
                         const highlighted = index === hi;
@@ -687,6 +733,8 @@ export function Composer({
                             role="option"
                             aria-selected={selected}
                             aria-disabled={row.disabled ? true : undefined}
+                            className={styles.rowEnter}
+                            style={rowEnterStyle(index)}
                           >
                             {row.groupHeading && !drillProvider ? (
                               <div
@@ -768,11 +816,12 @@ export function Composer({
                             role="group"
                             aria-label="Reasoning effort"
                           >
-                            {segments.map((seg) => (
+                            {segments.map((seg, i) => (
                               <button
                                 key={seg.level}
                                 type="button"
                                 className={styles.effortSegment}
+                                style={{ "--i": String(i) } as CSSProperties}
                                 data-filled={seg.filled ? "true" : undefined}
                                 aria-label={`Reasoning ${effortDisplayLabel(seg.level)}`}
                                 aria-pressed={
