@@ -37,6 +37,23 @@ export interface ThreadInfo {
   runStartedAt: number | null;
   /** Archived threads keep their history but are hidden from the default sidebar list. */
   archived: boolean;
+  /**
+   * Explicit settle lifecycle override (t3-style). "settled" pins the thread
+   * into the settled fold; "active" pins it OUT (suppresses auto-settle);
+   * null means no override, resolution falls to PR state and inactivity.
+   * The backend clears a "settled" override on real activity (a new run),
+   * so an override never goes stale silently.
+   */
+  settledOverride: "settled" | "active" | null;
+  /** Epoch ms when the current override was accepted; null without one. */
+  settledAt: number | null;
+  /**
+   * Last KNOWN PR state, persisted whenever prStatus/createPr succeed.
+   * Lazily refreshed (selecting the thread refreshes it); no background
+   * polling — prStatus froze the main process once already. MERGED/CLOSED
+   * auto-settle the thread; OPEN blocks inactivity auto-settle entirely.
+   */
+  prState: "OPEN" | "CLOSED" | "MERGED" | null;
   /** Agent harness backing this thread: a ProviderInfo.id ("claude", "codex", "grok", "opencode", "simulate"). */
   provider: string;
   /** Model override passed to the provider CLI when set (e.g. claude --model). */
@@ -358,8 +375,21 @@ export interface CoderApi {
     /** Archive or unarchive; archived threads are hidden by default but fully intact. */
     setArchived(input: { threadId: string; archived: boolean }): Promise<ThreadInfo>;
     /**
-     * Sets the thread's provider and/or model. Rejects once the thread has a
-     * sessionId (context lives with the provider; switching would lose it).
+     * Set or clear the settle override. Rejects override "settled" while a
+     * run is active: settling live work would hide it (t3's rule — anything
+     * the resolution refuses to classify as settled is refused as a settle
+     * target). Does not bump updatedAt: settling is bookkeeping, and bumping
+     * would push the thread to the top of a list it is leaving.
+     */
+    setSettled(input: {
+      threadId: string;
+      override: "settled" | "active" | null;
+    }): Promise<ThreadInfo>;
+    /**
+     * Sets the thread's provider and/or model. A provider change on a
+     * session-bearing thread is allowed and clears sessionId (CLI sessions
+     * are not portable; the next send starts fresh); it is rejected only
+     * while a run is active. (Round 34 replaced the old hard lock.)
      * Model validation: when the provider's models list is non-empty the
      * model must come from it; when the list is EMPTY any non-empty string
      * is accepted and passed to the CLI as-is (custom model ids, e.g codex
