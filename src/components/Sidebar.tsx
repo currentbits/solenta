@@ -57,6 +57,12 @@ interface SidebarProps {
   /** Global + uses selected project; per-group New thread passes that projectId. */
   onCreateThread: (projectId?: string) => void;
   onAddProject: () => void;
+  /**
+   * t3-style remove project entry (after the sidebar confirm). Caller owns
+   * the IPC call, selection handoff, and failure toast. Resolves on success;
+   * rejects on failure so the confirm can close either way.
+   */
+  onRemoveProject?: (projectId: string) => void | Promise<void>;
   projectError?: string | null;
   onDismissProjectError?: () => void;
   /** Opens the Settings modal. */
@@ -349,6 +355,7 @@ export function Sidebar({
   onSelectThread,
   onCreateThread,
   onAddProject,
+  onRemoveProject,
   projectError = null,
   onDismissProjectError,
   onOpenSettings,
@@ -360,6 +367,13 @@ export function Sidebar({
   const [projectsOpen, setProjectsOpen] = useState(true);
   const [query, setQuery] = useState("");
   const [now, setNow] = useState(() => Date.now());
+  /**
+   * Project pending the destructive remove confirm. Confirm is a dialog, not
+   * an archive-style undo toast: history deletion is irreversible.
+   */
+  const [removeConfirmId, setRemoveConfirmId] = useState<string | null>(null);
+  /** True while projects.remove is in flight; disables the confirm button. */
+  const [removePending, setRemovePending] = useState(false);
   /** Project ids whose archived threads are shown inline (normal view only). */
   const [showArchived, setShowArchived] = useState<Set<string>>(() => new Set());
   /** Group keys the user collapsed. Survives restarts: collapsing a noisy
@@ -653,29 +667,48 @@ export function Sidebar({
 
             return (
               <div key={groupKey} className={styles.group}>
-                <button
-                  type="button"
-                  className={styles.groupHeader}
-                  onClick={() => toggleCollapsed(groupKey)}
-                  aria-expanded={!collapsed}
-                >
-                  <span
-                    className={styles.chevron}
-                    data-open={!collapsed}
-                    aria-hidden="true"
+                <div className={styles.groupHeaderRow}>
+                  <button
+                    type="button"
+                    className={styles.groupHeader}
+                    onClick={() => toggleCollapsed(groupKey)}
+                    aria-expanded={!collapsed}
                   >
-                    ▸
-                  </span>
-                  <span className={styles.groupSlug}>{slug}</span>
-                  {summary && (
-                    <span className={styles.groupSummary}>{summary}</span>
+                    <span
+                      className={styles.chevron}
+                      data-open={!collapsed}
+                      aria-hidden="true"
+                    >
+                      ▸
+                    </span>
+                    <span className={styles.groupSlug}>{slug}</span>
+                    {summary && (
+                      <span className={styles.groupSummary}>{summary}</span>
+                    )}
+                    <span className={styles.groupCount}>
+                      {searching
+                        ? groupThreads.length
+                        : attentionThreads.length}
+                    </span>
+                  </button>
+                  {/*
+                    Remove is a sibling of the collapse control — separately
+                    focusable, not nested inside it — so keyboard users can
+                    reach it without toggling the group.
+                  */}
+                  {project && onRemoveProject && !searching && (
+                    <button
+                      type="button"
+                      className={styles.groupRemove}
+                      aria-label={`Remove project ${slug}`}
+                      title="Remove project"
+                      data-project-remove={project.id}
+                      onClick={() => setRemoveConfirmId(project.id)}
+                    >
+                      ×
+                    </button>
                   )}
-                  <span className={styles.groupCount}>
-                    {searching
-                      ? groupThreads.length
-                      : attentionThreads.length}
-                  </span>
-                </button>
+                </div>
 
                 {collapsed ? null : !hasAnyThreads ? (
                   <div className={styles.emptyGroup}>
@@ -814,6 +847,88 @@ export function Sidebar({
           </div>
         )}
       </div>
+
+      {removeConfirmId &&
+        (() => {
+          const confirmProject = projectById.get(removeConfirmId);
+          if (!confirmProject) return null;
+          // Real count: every thread the project owns (attention + archived +
+          // settled), not the attention-only header badge.
+          const count = threads.filter(
+            (t) => t.projectId === confirmProject.id,
+          ).length;
+          const threadWord = count === 1 ? "thread" : "threads";
+          // t3 LegacySidebar copy: title names project + count; body has path
+          // and the two load-bearing sentences about history vs entry-only.
+          const title = `Remove project ${confirmProject.slug} and delete its ${count} ${threadWord}?`;
+          const closeConfirm = () => {
+            if (removePending) return;
+            setRemoveConfirmId(null);
+          };
+          return (
+            <div
+              className={styles.removeConfirmOverlay}
+              role="presentation"
+              onClick={closeConfirm}
+            >
+              <div
+                className={styles.removeConfirm}
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="remove-project-title"
+                data-remove-confirm={confirmProject.id}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <h2
+                  id="remove-project-title"
+                  className={styles.removeConfirmTitle}
+                >
+                  {title}
+                </h2>
+                <p className={styles.removeConfirmMeta}>{confirmProject.path}</p>
+                <p className={styles.removeConfirmBody}>
+                  This permanently clears conversation history for those
+                  threads.
+                </p>
+                <p className={styles.removeConfirmBody}>
+                  This removes only this project entry.
+                </p>
+                <div className={styles.removeConfirmActions}>
+                  <button
+                    type="button"
+                    className={styles.removeConfirmDanger}
+                    data-remove-confirm-submit={confirmProject.id}
+                    disabled={removePending}
+                    aria-busy={removePending || undefined}
+                    onClick={() => {
+                      if (removePending || !onRemoveProject) return;
+                      const id = confirmProject.id;
+                      setRemovePending(true);
+                      void Promise.resolve(onRemoveProject(id))
+                        .catch(() => {
+                          // Failure toast is the caller's job; always close.
+                        })
+                        .finally(() => {
+                          setRemovePending(false);
+                          setRemoveConfirmId(null);
+                        });
+                    }}
+                  >
+                    {removePending ? "Removing…" : "Remove project"}
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.removeConfirmCancel}
+                    disabled={removePending}
+                    onClick={closeConfirm}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
       <footer className={styles.footer}>
         {projectError && (

@@ -32,6 +32,7 @@ export default function App() {
     setArchived,
     setSettled,
     deleteThread,
+    removeProject,
     setupWorktree,
     mergeWorktree,
     removeWorktree,
@@ -57,6 +58,11 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   /** Synara-style undo toast after an immediate archive. */
   const [archiveToastId, setArchiveToastId] = useState<string | null>(null);
+  /**
+   * Error toast after projects.remove rejects. Title is t3-shaped:
+   * Failed to remove "slug". Cleared on dismiss / timeout.
+   */
+  const [removeFailSlug, setRemoveFailSlug] = useState<string | null>(null);
 
   const handleSetArchived = useCallback(
     async (archived: boolean) => {
@@ -64,6 +70,7 @@ export default function App() {
         // Capture id before setArchived moves selection off the open thread.
         const id = selectedThreadId;
         if (!id) return;
+        setRemoveFailSlug(null);
         await setArchived(true, id);
         setArchiveToastId(id);
       } else {
@@ -84,6 +91,28 @@ export default function App() {
     setArchiveToastId(null);
     await setArchived(false, id);
   }, [archiveToastId, setArchived]);
+
+  const handleRemoveProject = useCallback(
+    async (projectId: string) => {
+      const slug =
+        projectById.get(projectId)?.slug ??
+        projects.find((p) => p.id === projectId)?.slug ??
+        projectId;
+      setArchiveToastId(null);
+      try {
+        await removeProject(projectId);
+        setRemoveFailSlug(null);
+      } catch {
+        setRemoveFailSlug(slug);
+        throw new Error(`Failed to remove "${slug}"`);
+      }
+    },
+    [projectById, projects, removeProject],
+  );
+
+  const dismissRemoveFail = useCallback(() => {
+    setRemoveFailSlug(null);
+  }, []);
 
   // Close the center Changes panel when switching threads (old behavior).
   useEffect(() => {
@@ -117,6 +146,7 @@ export default function App() {
         onAddProject={() => {
           void addProject();
         }}
+        onRemoveProject={handleRemoveProject}
         projectError={error?.scope === "project" ? error.message : null}
         onDismissProjectError={clearError}
         onOpenSettings={() => setSettingsOpen(true)}
@@ -187,9 +217,17 @@ export default function App() {
       />
       {archiveToastId && (
         <ArchiveToast
-          key={archiveToastId}
+          key={`archive-${archiveToastId}`}
           onUndo={() => void undoArchive()}
           onDismiss={dismissArchiveToast}
+        />
+      )}
+      {removeFailSlug && (
+        <ArchiveToast
+          key={`remove-fail-${removeFailSlug}`}
+          variant="error"
+          title={`Failed to remove "${removeFailSlug}"`}
+          onDismiss={dismissRemoveFail}
         />
       )}
     </div>

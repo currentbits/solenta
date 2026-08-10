@@ -60,6 +60,13 @@ function registerIpc(deps) {
     return services.addProject(store, result.filePaths[0]);
   });
 
+  ipcMain.handle("projects:remove", async (_event, input) => {
+    services.removeProject(store, input, {
+      isRunning: (id) => runner.isRunning(id),
+    });
+    broadcast("threads:changed", services.listThreads(store));
+  });
+
   ipcMain.handle("threads:list", async () => {
     return services.listThreads(store);
   });
