@@ -247,29 +247,36 @@ const DEV_PROVIDERS: ProviderInfo[] = [
     name: "Kimi Code",
     available: true,
     supportsResume: true,
-    models: ["k3", "k3-256k", "kimi-for-coding", "kimi-for-coding-highspeed"],
+    // Ids are config.toml alias keys: `-m k3` fails config.invalid,
+    // `-m kimi-code/k3` runs (verified against the real CLI).
+    models: [
+      "kimi-code/k3",
+      "kimi-code/k3-256k",
+      "kimi-code/kimi-for-coding",
+      "kimi-code/kimi-for-coding-highspeed",
+    ],
     modelInfo: [
       {
-        id: "k3",
+        id: "kimi-code/k3",
         label: "K3",
         description: "Default Kimi coding model (1M context)",
         vendor: "Moonshot",
         recommended: true,
       },
       {
-        id: "k3-256k",
+        id: "kimi-code/k3-256k",
         label: "K3-256k",
         description: "K3 with a 256k context window",
         vendor: "Moonshot",
       },
       {
-        id: "kimi-for-coding",
+        id: "kimi-code/kimi-for-coding",
         label: "K2.7 Coding",
         description: "Coding-tuned Kimi (K2.7)",
         vendor: "Moonshot",
       },
       {
-        id: "kimi-for-coding-highspeed",
+        id: "kimi-code/kimi-for-coding-highspeed",
         label: "K2.7 Coding Highspeed",
         description: "Faster coding-tuned Kimi (K2.7)",
         vendor: "Moonshot",

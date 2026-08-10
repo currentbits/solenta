@@ -376,37 +376,38 @@ const PROVIDERS = [
     binEnv: "CODER_KIMI_BIN",
     defaultBin: "kimi",
     supportsResume: true,
-    // From `kimi provider list --json` / ~/.kimi-code/config.toml managed
-    // provider (4 models). Ids are the `model` field values accepted by -m
-    // (aliases also exist as kimi-code/<id>). Labels from display_name.
+    // From ~/.kimi-code/config.toml. Ids are the [models."..."] ALIAS KEYS:
+    // -m takes the alias, and a bare model value fails loudly (verified:
+    // `-m k3` → config.invalid "not configured in config.toml", while
+    // `-m kimi-code/k3` runs). Labels from display_name.
     models: [
-      "k3",
-      "k3-256k",
-      "kimi-for-coding",
-      "kimi-for-coding-highspeed",
+      "kimi-code/k3",
+      "kimi-code/k3-256k",
+      "kimi-code/kimi-for-coding",
+      "kimi-code/kimi-for-coding-highspeed",
     ],
     modelInfo: [
       {
-        id: "k3",
+        id: "kimi-code/k3",
         label: "K3",
         description: "Default Kimi coding model (1M context)",
         vendor: "Moonshot",
         recommended: true,
       },
       {
-        id: "k3-256k",
+        id: "kimi-code/k3-256k",
         label: "K3-256k",
         description: "K3 with a 256k context window",
         vendor: "Moonshot",
       },
       {
-        id: "kimi-for-coding",
+        id: "kimi-code/kimi-for-coding",
         label: "K2.7 Coding",
         description: "Coding-tuned Kimi (K2.7)",
         vendor: "Moonshot",
       },
       {
-        id: "kimi-for-coding-highspeed",
+        id: "kimi-code/kimi-for-coding-highspeed",
         label: "K2.7 Coding Highspeed",
         description: "Faster coding-tuned Kimi (K2.7)",
         vendor: "Moonshot",

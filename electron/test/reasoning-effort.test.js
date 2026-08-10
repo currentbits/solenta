@@ -393,6 +393,64 @@ describe("reasoning effort: store migration", () => {
     );
     assert.notEqual(t.reasoningEffort, undefined);
   });
+
+  it("bare kimi model ids migrate to alias keys; custom and foreign ids do not", () => {
+    // "k3" shipped briefly, but kimi -m only accepts the config.toml alias
+    // key: every run failed config.invalid. Threads and template phases heal
+    // on load; a custom id the user typed is theirs and stays.
+    const thread = (id, provider, model) => ({
+      id,
+      projectId: "p1",
+      title: id,
+      branch: null,
+      prNumber: null,
+      status: "idle",
+      createdAt: 1,
+      updatedAt: 2,
+      provider,
+      model,
+      sessionId: null,
+      permissionMode: "default",
+      reasoningEffort: null,
+      worktreePath: null,
+      runStartedAt: null,
+      archived: false,
+    });
+    const old = {
+      projects: [],
+      threads: [
+        thread("t-bare", "kimi", "k3"),
+        thread("t-custom", "kimi", "my-own-alias/k3"),
+        thread("t-null", "kimi", null),
+        // A claude thread whose model happens to collide with a bare kimi id
+        // must NOT be rewritten: the migration is provider-scoped.
+        thread("t-foreign", "claude", "k3"),
+      ],
+      messagesByThread: {},
+      workLogByThread: {},
+      workflowTemplates: [
+        {
+          id: "wf-kimi",
+          name: "Kimi flow",
+          builtin: false,
+          phases: [
+            { name: "seed", agentCount: 1, provider: "kimi", model: "k3-256k" },
+            { name: "sift", agentCount: 1, provider: "claude", model: "k3" },
+          ],
+        },
+      ],
+    };
+    fs.writeFileSync(filePath, JSON.stringify(old), "utf8");
+    const store = new Store(filePath);
+    const byId = Object.fromEntries(store.getThreads().map((t) => [t.id, t]));
+    assert.equal(byId["t-bare"].model, "kimi-code/k3");
+    assert.equal(byId["t-custom"].model, "my-own-alias/k3");
+    assert.equal(byId["t-null"].model, null);
+    assert.equal(byId["t-foreign"].model, "k3");
+    const wf = store.listTemplates().find((t) => t.id === "wf-kimi");
+    assert.equal(wf.phases[0].model, "kimi-code/k3-256k");
+    assert.equal(wf.phases[1].model, "k3", "claude phases are not touched");
+  });
 });
 
 describe("reasoning effort: setReasoningEffort service", () => {
