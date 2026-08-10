@@ -391,7 +391,9 @@ describe("Composer drill-down picker", () => {
     m.unmount();
   });
 
-  it("locks other providers once the thread has a session", async () => {
+  it("lets a session-bearing thread switch harness, with a warning", async () => {
+    // Sessions are not portable across CLIs, so the switch drops the session
+    // (backend clears it); the picker warns instead of locking.
     const h = makeHarness();
     const m = await mount(
       composer(h, {
@@ -401,14 +403,25 @@ describe("Composer drill-down picker", () => {
       }),
     );
     await m.click(m.query('button[aria-label^="Model:"]'));
-    const claude = m.query(
-      'button[aria-label="Provider Claude Code"]',
-    ) as HTMLButtonElement;
     const codex = m.query(
       'button[aria-label="Provider Codex"]',
     ) as HTMLButtonElement;
-    assert.equal(claude.disabled, false, "its own provider stays enterable");
-    assert.equal(codex.disabled, true, "switching harness would break resume");
+    assert.equal(codex.disabled, false, "other harnesses stay enterable");
+    assert.match(
+      codex.title,
+      /fresh session/i,
+      "the row must say what switching costs",
+    );
+    // The switch must actually go through: drill in and pick its Default.
+    await m.click(codex);
+    const def = m
+      .queryAll("button")
+      .find((b) => (b.textContent || "").includes("Default")) as
+      | HTMLButtonElement
+      | undefined;
+    assert.ok(def, "codex models must be listed after drilling in");
+    await m.click(def);
+    assert.deepEqual(h.providerSets, [{ provider: "codex", model: null }]);
     m.unmount();
   });
 

@@ -81,19 +81,54 @@ describe("setProvider lock semantics", () => {
     assert.equal(store.getThread(thread.id).provider, "codex");
   });
 
-  it("rejects provider change after sessionId is set", () => {
+  it("clears sessionId when the provider changes on a session-bearing thread", () => {
+    // The old CLI's session is not portable; the switch drops it so the next
+    // send starts fresh. The thread itself survives the switch.
     const thread = store.getThreads()[0];
-    store.updateThread(thread.id, { sessionId: "sess-locked" });
+    store.updateThread(thread.id, { sessionId: "sess-live" });
+    store.save();
+    const updated = services.setProvider(store, {
+      threadId: thread.id,
+      provider: "codex",
+    });
+    assert.equal(updated.provider, "codex");
+    assert.equal(updated.sessionId, null, "the CLI session must be dropped");
+    assert.equal(store.getThread(thread.id).sessionId, null);
+    assert.equal(store.getThread(thread.id).provider, "codex");
+  });
+
+  it("rejects a provider switch while a run is active", () => {
+    // The runner writes sessionId back at turn end, which would resurrect the
+    // old CLI's session onto the new provider.
+    const thread = store.getThreads()[0];
+    store.updateThread(thread.id, {
+      status: "working",
+      sessionId: "sess-mid-run",
+    });
     store.save();
     assert.throws(
       () =>
-        services.setProvider(store, {
-          threadId: thread.id,
-          provider: "codex",
-        }),
-      /already has a claude session/i,
+        services.setProvider(store, { threadId: thread.id, provider: "codex" }),
+      /while a run is active/i,
     );
     assert.equal(store.getThread(thread.id).provider, "claude");
+    assert.equal(store.getThread(thread.id).sessionId, "sess-mid-run");
+  });
+
+  it("keeps sessionId when setProvider repeats the same provider", () => {
+    // Only a real switch drops the session; re-asserting the current provider
+    // (or a model-only change) must not cost the user their conversation.
+    const thread = store.getThreads()[0];
+    store.updateThread(thread.id, {
+      provider: "claude",
+      sessionId: "sess-keep",
+    });
+    store.save();
+    const updated = services.setProvider(store, {
+      threadId: thread.id,
+      provider: "claude",
+    });
+    assert.equal(updated.sessionId, "sess-keep");
   });
 
   it("allows model-only change for claude with sessionId", () => {

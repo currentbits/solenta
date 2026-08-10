@@ -73,7 +73,9 @@ describe("threads.setProvider", () => {
     assert.equal(updated.model, null);
   });
 
-  it("rejects provider change after sessionId is set", async () => {
+  it("clears sessionId when the provider changes on a session-bearing thread", async () => {
+    // Match electron/services.js setProvider: switching drops the CLI session
+    // (not portable across harnesses); the thread stays.
     const api = createDevCoder();
     const projects = await api.projects.list();
     const t = await api.threads.create({
@@ -86,14 +88,31 @@ describe("threads.setProvider", () => {
     const after = await api.threads.get(t.id);
     assert.ok(after.thread.sessionId);
 
+    const updated = await api.threads.setProvider({
+      threadId: t.id,
+      provider: "codex",
+    });
+    assert.equal(updated.provider, "codex");
+    assert.equal(updated.sessionId, null, "the CLI session must be dropped");
+    const still = await api.threads.get(t.id);
+    assert.equal(still.thread.provider, "codex");
+    assert.equal(still.thread.sessionId, null);
+  });
+
+  it("rejects a provider switch while a run is active", async () => {
+    // Match electron/services.js setProvider exactly.
+    const api = createDevCoder();
+    const projects = await api.projects.list();
+    const t = await api.threads.create({
+      projectId: projects[0]!.id,
+      title: "T",
+    });
+    await api.runs.start({ threadId: t.id, prompt: "hello" });
     await assert.rejects(
-      () =>
-        api.threads.setProvider({
-          threadId: t.id,
-          provider: "codex",
-        }),
-      /already has a claude session/i,
+      () => api.threads.setProvider({ threadId: t.id, provider: "codex" }),
+      /while a run is active/i,
     );
+    await api.runs.stop({ threadId: t.id });
     const still = await api.threads.get(t.id);
     assert.equal(still.thread.provider, "claude");
   });

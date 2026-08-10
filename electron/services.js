@@ -259,7 +259,10 @@ function normalizeModelForProvider(entry, rawModel) {
 /**
  * Set thread provider and/or model. Does not bump updatedAt.
  *
- * Rejects unknown provider ids. Rejects provider change once sessionId is set.
+ * Rejects unknown provider ids. Changing provider on a thread with a session
+ * clears the session id (CLI sessions are not portable across harnesses), so
+ * the next send starts a fresh session with the new CLI; the thread and its
+ * transcript stay.
  * Model validation: when the provider's models list is non-empty the model must
  * come from it; when the list is empty any non-empty string is accepted and
  * passed to the CLI as-is (custom model ids, e.g. codex -m).
@@ -298,14 +301,21 @@ function setProvider(store, input) {
   const providerChanging =
     providerProvided && String(input.provider) !== String(thread.provider);
 
-  if (providerChanging && thread.sessionId) {
-    throw new Error(
-      `This thread already has a ${thread.provider} session. Create a new thread to switch providers.`,
-    );
+  /** @type {{ provider?: string, model?: string | null, sessionId?: null, reasoningEffort?: null }} */
+  const patch = {};
+
+  if (providerChanging && thread.status === "working") {
+    // The runner writes sessionId back when the turn ends, which would
+    // resurrect the old CLI's session onto the new provider. Same rule as
+    // deleteThread: wait the run out.
+    throw new Error("Cannot switch provider while a run is active");
   }
 
-  /** @type {{ provider?: string, model?: string | null }} */
-  const patch = {};
+  if (providerChanging && thread.sessionId) {
+    // The old CLI's session cannot be resumed by the new one, so drop it and
+    // let the next send start fresh. The thread and its transcript stay.
+    patch.sessionId = null;
+  }
   if (providerProvided) patch.provider = String(input.provider);
 
   const nextEntry = getProvider(nextProvider);

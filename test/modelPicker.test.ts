@@ -20,7 +20,7 @@ import {
   lastSelectableIndex,
   modelTriggerLabel,
   rowKey,
-  sessionLockReason,
+  sessionSwitchWarning,
   showReasoningControl,
   stepHighlightIndex,
 } from "../src/modelPicker";
@@ -175,23 +175,29 @@ describe("buildUnifiedModelRows", () => {
     assert.ok(claude.every((r) => !r.disabled));
   });
 
-  it("session-locks other providers while current provider stays selectable", () => {
+  it("warns instead of locking other providers when a session exists", () => {
+    // Switching harness is allowed and drops the CLI session; the row carries
+    // the warning as its tooltip but stays selectable.
     const rows = buildUnifiedModelRows(MULTI, "claude", true, "Claude Code");
     const claude = rows.filter((r) => r.providerId === "claude");
     const codex = rows.filter((r) => r.providerId === "codex");
     assert.ok(
       claude.every((r) => !r.disabled),
-      "current provider must stay selectable with a session",
+      "current provider stays selectable with a session",
     );
     assert.ok(
-      codex.every((r) => r.disabled),
-      "other providers must be locked when sessionId is set",
+      codex.every((r) => !r.disabled),
+      "other providers stay selectable with a session",
     );
     assert.equal(
       codex[0]!.disabledReason,
-      sessionLockReason("Claude Code"),
+      sessionSwitchWarning("Claude Code"),
     );
-    // Unavailable grok stays "not installed", not the lock message.
+    assert.ok(
+      claude.every((r) => r.disabledReason === null),
+      "the current provider's rows carry no warning",
+    );
+    // Unavailable grok stays "not installed", not the switch warning.
     const grok = rows.filter((r) => r.providerId === "grok");
     assert.ok(grok.every((r) => r.disabledReason === "not installed"));
   });
@@ -271,29 +277,36 @@ describe("highlight helpers", () => {
   });
 
   it("stepHighlightIndex skips disabled rows", () => {
-    const rows = buildUnifiedModelRows(MULTI, "claude", true, "Claude Code");
-    // Claude rows are 0..3 (Default, Opus, Sonnet, Custom); Codex starts at 4.
-    const lastClaude = 3;
-    const stepped = stepHighlightIndex(rows, lastClaude, 1);
-    assert.equal(
-      stepped,
-      lastClaude,
-      "ArrowDown from last selectable must not land on a locked row",
+    // Disabled rows now come only from unavailable CLIs (the session warns
+    // instead of locking). Grok is last in MULTI, so its rows bound the list.
+    const rows = buildUnifiedModelRows(MULTI, "claude", false);
+    const last = lastSelectableIndex(rows);
+    assert.ok(
+      rows.slice(last + 1).length > 0 &&
+        rows.slice(last + 1).every((r) => r.disabled),
+      "disabled rows must follow the last selectable for this to prove anything",
     );
-    // From a locked row, ArrowUp should reach the last selectable.
-    const fromLocked = stepHighlightIndex(rows, 4, -1);
-    assert.equal(fromLocked, lastClaude);
-    assert.equal(rows[fromLocked]!.disabled, false);
+    assert.equal(
+      stepHighlightIndex(rows, last, 1),
+      last,
+      "ArrowDown from last selectable must not land on a disabled row",
+    );
+    // From a disabled row, ArrowUp should reach the last selectable.
+    const firstDisabled = rows.findIndex((r) => r.disabled);
+    assert.equal(stepHighlightIndex(rows, firstDisabled, -1), last);
+    assert.equal(rows[last]!.disabled, false);
   });
 
-  it("first and last selectable skip locked and unavailable rows", () => {
-    // Only codex available? Use multi with session lock on claude current:
-    // first selectable is claude Default (0); last is claude's Custom row (3),
-    // since Custom belongs to the current provider and stays selectable.
-    const rows = buildUnifiedModelRows(MULTI, "claude", true, "Claude Code");
+  it("first and last selectable skip unavailable rows", () => {
+    const rows = buildUnifiedModelRows(MULTI, "claude", false);
     assert.equal(firstSelectableIndex(rows), 0);
-    assert.equal(lastSelectableIndex(rows), 3);
-    assert.equal(rows[lastSelectableIndex(rows)]!.disabled, false);
+    const last = lastSelectableIndex(rows);
+    assert.equal(rows[last]!.disabled, false);
+    assert.equal(
+      rows[last]!.providerId,
+      "codex",
+      "grok is unavailable, so the last selectable row is codex's",
+    );
   });
 });
 
