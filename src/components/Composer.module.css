@@ -247,8 +247,27 @@
 }
 
 .caret {
+  display: inline-block;
   font-size: 9px;
   opacity: 0.7;
+  transition: transform 140ms ease;
+}
+
+.pill[aria-expanded="true"] .caret {
+  transform: rotate(180deg);
+}
+
+/* Keyed remount in the component replays this when the model name changes. */
+.pillLabel {
+  display: inline-block;
+  animation: pillLabelIn 160ms cubic-bezier(0.2, 0.9, 0.25, 1);
+}
+
+@keyframes pillLabelIn {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
 }
 
 .modelIcon {
@@ -274,13 +293,14 @@
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
   overflow: hidden;
   transform-origin: bottom left;
-  animation: popoverIn 140ms ease-out;
+  animation: popoverIn 180ms cubic-bezier(0.2, 0.9, 0.25, 1);
 }
 
 @keyframes popoverIn {
+  /* Click-opened, no gesture momentum: critically damped ease, no overshoot. */
   from {
     opacity: 0;
-    transform: translateY(4px) scale(0.97);
+    transform: translateY(6px) scale(0.98);
   }
 }
 
@@ -309,11 +329,39 @@
   }
 }
 
+/* Rows cascade in behind the level travel; --i is the row index, set inline
+   (capped in the component so long lists don't lag). backwards fill keeps a
+   row hidden during its delay instead of flashing then animating. */
+.rowEnter {
+  animation: rowIn 180ms cubic-bezier(0.2, 0.9, 0.25, 1) backwards;
+  animation-delay: calc(var(--i, 0) * 18ms);
+}
+
+@keyframes rowIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .modelPopover,
   .levelEnterLeft,
-  .levelEnterRight {
+  .levelEnterRight,
+  .detailBody,
+  .detailBody > *,
+  .rowEnter,
+  .pillLabel {
     animation: none;
+  }
+
+  .caret,
+  .modelRow,
+  .providerRow,
+  .effortSegment,
+  .modelRowChevron,
+  .highlightGlider {
+    transition: none;
   }
 }
 
@@ -333,6 +381,48 @@
   gap: 4px;
 }
 
+/* Keyed remount per highlighted row: the fade marks the pane following the
+   highlight instead of swapping text mid-frame. */
+.detailBody {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 auto;
+  min-height: 0;
+  animation: detailIn 120ms ease-out;
+}
+
+@keyframes detailIn {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+}
+
+/* The pane's lines land one after another behind the pane's own fade —
+   fade-only, so they don't fight the pane's slide. */
+.detailBody > * {
+  animation: detailChildIn 160ms ease-out backwards;
+}
+
+.detailBody > *:nth-child(2) {
+  animation-delay: 25ms;
+}
+
+.detailBody > *:nth-child(3) {
+  animation-delay: 50ms;
+}
+
+.detailBody > *:nth-child(4) {
+  animation-delay: 75ms;
+}
+
+@keyframes detailChildIn {
+  from {
+    opacity: 0;
+  }
+}
+
 .modelPaneHeader {
   font-size: 10px;
   font-weight: 600;
@@ -342,12 +432,29 @@
 }
 
 .modelList {
+  position: relative;
   margin: 0;
   padding: 0;
   list-style: none;
   max-height: 240px;
   overflow-y: auto;
   outline: none;
+}
+
+/* One indicator that physically slides to the highlighted row; the component
+   measures the row's offset, so the glider rides the scroll container and
+   matches variable row heights with no math in CSS. */
+.highlightGlider {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.07);
+  pointer-events: none;
+  transition:
+    transform 150ms cubic-bezier(0.2, 0.9, 0.25, 1),
+    height 150ms cubic-bezier(0.2, 0.9, 0.25, 1);
 }
 
 .modelList:focus-visible {
@@ -371,6 +478,8 @@
 }
 
 .modelRow {
+  position: relative;
+  z-index: 1;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -381,6 +490,15 @@
   border-radius: 8px;
   color: var(--text-muted);
   background: transparent;
+  transition:
+    background-color 100ms ease,
+    color 100ms ease,
+    transform 100ms ease;
+}
+
+/* Press feedback lands on pointer-down, not on release. */
+.modelRow:active:not(:disabled):not([data-disabled="true"]) {
+  transform: scale(0.98);
 }
 
 .modelRowLabel {
@@ -399,7 +517,8 @@
 
 .modelRow:hover:not(:disabled):not([data-disabled="true"]),
 .modelRow[data-highlighted="true"]:not(:disabled):not([data-disabled="true"]) {
-  background: rgba(255, 255, 255, 0.06);
+  /* The glider supplies the background; the row only lifts its text. */
+  background: transparent;
   color: var(--text);
 }
 
@@ -490,15 +609,28 @@
   border-radius: 3px;
   background: rgba(255, 255, 255, 0.08);
   border: 1px solid transparent;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    filter 120ms ease,
+    transform 120ms ease;
 }
 
-.effortSegment:hover {
+.effortSegment:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.14);
+}
+
+.effortSegment:active:not(:disabled) {
+  transform: scaleY(1.5);
 }
 
 .effortSegment[data-filled="true"] {
   background: var(--green);
   border-color: rgba(52, 211, 153, 0.4);
+  /* --i is the segment index: the fill sweeps left-to-right instead of
+     lighting every segment on the same frame. Only set in the filled state,
+     so hover and un-fill stay immediate. */
+  transition-delay: calc(var(--i, 0) * 25ms);
 }
 
 .effortSegment[data-filled="true"]:hover {
@@ -615,11 +747,22 @@
   margin-left: auto;
   color: var(--text-dim);
   font-size: 13px;
+  transition:
+    transform 120ms ease,
+    color 120ms ease;
+}
+
+/* The chevron leans into the drill direction when its row is highlighted. */
+.providerRow[data-highlighted="true"] .modelRowChevron {
+  transform: translateX(3px);
+  color: var(--text);
 }
 
 /* Provider row: text column on the left, chevron pinned right and centred.
    Reusing .modelRow (a column) pushed the chevron onto its own line. */
 .providerRow {
+  position: relative;
+  z-index: 1;
   display: flex;
   flex-direction: row;
   align-items: center;
@@ -631,11 +774,19 @@
   color: var(--text);
   text-align: left;
   cursor: pointer;
+  transition:
+    background-color 100ms ease,
+    transform 100ms ease;
+}
+
+.providerRow:active:not(:disabled) {
+  transform: scale(0.98);
 }
 
 .providerRow:hover:not(:disabled),
 .providerRow[data-highlighted="true"] {
-  background: var(--card-hover);
+  /* The glider supplies the background. */
+  background: transparent;
 }
 
 .providerRow:disabled {

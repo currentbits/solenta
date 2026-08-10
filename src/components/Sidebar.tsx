@@ -6,12 +6,36 @@ import {
   providerDisplayName,
 } from "../format";
 import { sidebarPrBadge } from "../prUi";
-import { buildSidebarGroups } from "../sidebarGroups";
+import {
+  buildSidebarGroups,
+  groupHeaderSummary,
+  splitSettled,
+} from "../sidebarGroups";
 import styles from "./Sidebar.module.css";
 
 const TICK_MS = 5000;
 const SEARCH_DEBOUNCE_MS = 250;
 const MIN_SEARCH_LEN = 2;
+const COLLAPSED_KEY = "coder.sidebar.collapsedGroups";
+
+/** localStorage set, defensive: private mode / quota / bad JSON all mean "empty". */
+function loadKeySet(key: string): Set<string> {
+  try {
+    const raw = window.localStorage.getItem(key);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(parsed) ? parsed.map(String) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveKeySet(key: string, set: Set<string>): void {
+  try {
+    window.localStorage.setItem(key, JSON.stringify([...set]));
+  } catch {
+    // Quota/private mode: collapse state just stops persisting.
+  }
+}
 
 interface SidebarProps {
   appName: string;
@@ -225,6 +249,14 @@ export function Sidebar({
   const [now, setNow] = useState(() => Date.now());
   /** Project ids whose archived threads are shown inline (normal view only). */
   const [showArchived, setShowArchived] = useState<Set<string>>(() => new Set());
+  /** Group keys the user collapsed. Survives restarts: collapsing a noisy
+   *  project is a lasting choice, not a per-session whim. */
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() =>
+    loadKeySet(COLLAPSED_KEY),
+  );
+  /** Group keys whose settled (done) threads are expanded. Session-only:
+   *  peeking at settled work is transient, unlike collapsing a project. */
+  const [showSettled, setShowSettled] = useState<Set<string>>(() => new Set());
   /** Full-content search results; null means not in active search mode. */
   const [searchResults, setSearchResults] = useState<ThreadInfo[] | null>(null);
   const [searchLoading, setSearchLoading] = useState(false);
@@ -322,6 +354,25 @@ export function Sidebar({
     }
     return buildSidebarGroups(projects, displayThreads);
   }, [projects, displayThreads, searching]);
+
+  const toggleCollapsed = (groupKey: string) => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(groupKey)) next.delete(groupKey);
+      else next.add(groupKey);
+      saveKeySet(COLLAPSED_KEY, next);
+      return next;
+    });
+  };
+
+  const toggleSettled = (groupKey: string) => {
+    setShowSettled((prev) => {
+      const next = new Set(prev);
+      if (next.has(groupKey)) next.delete(groupKey);
+      else next.add(groupKey);
+      return next;
+    });
+  };
 
   const toggleArchived = (groupKey: string) => {
     setShowArchived((prev) => {
@@ -433,17 +484,40 @@ export function Sidebar({
               ? true
               : showArchived.has(groupKey);
             const hasAnyThreads = groupThreads.length > 0;
+            // Done threads fold under one "N settled" row so working/failed/
+            // idle work stays scannable. Search shows everything inline.
+            const { attention, settled } = splitSettled(activeThreads);
+            const settledExpanded = searching || showSettled.has(groupKey);
+            // A collapsed project shows only its header. Search overrides the
+            // collapse: hiding hits inside a collapsed group makes results lie.
+            const collapsed = !searching && collapsedGroups.has(groupKey);
+            const summary = groupHeaderSummary(activeThreads);
 
             return (
               <div key={groupKey} className={styles.group}>
-                <div className={styles.groupHeader}>
+                <button
+                  type="button"
+                  className={styles.groupHeader}
+                  onClick={() => toggleCollapsed(groupKey)}
+                  aria-expanded={!collapsed}
+                >
+                  <span
+                    className={styles.chevron}
+                    data-open={!collapsed}
+                    aria-hidden="true"
+                  >
+                    ▸
+                  </span>
                   <span className={styles.groupSlug}>{slug}</span>
+                  {summary && (
+                    <span className={styles.groupSummary}>{summary}</span>
+                  )}
                   <span className={styles.groupCount}>
                     {searching ? groupThreads.length : activeThreads.length}
                   </span>
-                </div>
+                </button>
 
-                {!hasAnyThreads ? (
+                {collapsed ? null : !hasAnyThreads ? (
                   <div className={styles.emptyGroup}>
                     <span className={styles.emptyThreads}>No threads yet</span>
                     {project && !searching && (
@@ -458,7 +532,7 @@ export function Sidebar({
                   </div>
                 ) : (
                   <>
-                    {activeThreads.map((thread) => (
+                    {attention.map((thread) => (
                       <ThreadCard
                         key={thread.id}
                         thread={thread}
@@ -473,6 +547,34 @@ export function Sidebar({
                         }
                       />
                     ))}
+                    {settledExpanded &&
+                      settled.map((thread) => (
+                        <ThreadCard
+                          key={thread.id}
+                          thread={thread}
+                          slug={slug}
+                          providers={providers}
+                          active={thread.id === activeThreadId}
+                          now={now}
+                          onSelect={onSelectThread}
+                          contentMatch={
+                            searching &&
+                            !thread.title.toLowerCase().includes(queryLower)
+                          }
+                        />
+                      ))}
+                    {!searching && settled.length > 0 && (
+                      <button
+                        type="button"
+                        className={styles.archivedToggle}
+                        onClick={() => toggleSettled(groupKey)}
+                        aria-expanded={settledExpanded}
+                      >
+                        {settledExpanded
+                          ? "Hide settled"
+                          : `${settled.length} settled`}
+                      </button>
+                    )}
                     {archivedExpanded &&
                       archivedThreads.map((thread) => (
                         <ThreadCard
