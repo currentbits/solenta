@@ -1300,4 +1300,85 @@ describe("Sidebar unread indicators (round 43)", () => {
     assert.match(header, /\d+ unread/, `header must count unread, got: ${header}`);
     m.unmount();
   });
+
+  /**
+   * B2: pin zero-unread omission on the settled tail header.
+   * B3: pin SettledRow's !active guard (selected + technically unread → no dot).
+   */
+  it("settled tail omits unread when none; selected settled unread paints no dot", async () => {
+    const settledVisited = thread({
+      id: "settled-read",
+      title: "settled and read",
+      status: "done",
+      prState: "MERGED",
+      settledAt: baseVisited + 10,
+      updatedAt: baseVisited + 10,
+      lastVisitedAt: baseVisited + 10,
+      projectId: "p1",
+    });
+    // Technically unread, but we open it as the active selection (B3).
+    const settledSelectedUnread = thread({
+      id: "settled-sel-unread",
+      title: "settled selected unread",
+      status: "done",
+      prState: "MERGED",
+      settledAt: baseVisited + 20,
+      updatedAt: baseVisited + 400,
+      lastVisitedAt: baseVisited,
+      projectId: "p1",
+    });
+    // Attention noise so the project group is non-empty (not "All settled").
+    const attention = thread({
+      id: "att-noise",
+      title: "attention noise",
+      status: "idle",
+      updatedAt: baseVisited,
+      lastVisitedAt: baseVisited,
+      projectId: "p1",
+    });
+
+    // --- B2: no settled row is unread → tail header must not say "unread" ---
+    const mZero = await mount(
+      sidebar([attention, settledVisited], {
+        projects: [p1],
+        activeThreadId: "att-noise",
+      }),
+    );
+    const zeroHeader = settledTailHeader(mZero).textContent || "";
+    assert.ok(
+      zeroHeader.includes("Settled ·"),
+      `tail header must still count settled, got: ${zeroHeader}`,
+    );
+    assert.ok(
+      !zeroHeader.includes("unread"),
+      `zero-unread tail must omit the unread fragment (kills "· 0 unread"), got: ${zeroHeader}`,
+    );
+    mZero.unmount();
+
+    // --- B3: active + technically unread settled row → no dot ---
+    const mSel = await mount(
+      sidebar([attention, settledVisited, settledSelectedUnread], {
+        projects: [p1],
+        // Open the settled unread so the collapsed-shelf carve-out paints it.
+        activeThreadId: "settled-sel-unread",
+      }),
+    );
+    // Carve-out shows the open settled row even while the tail is collapsed.
+    assert.ok(
+      mSel.query('[data-thread-card="settled-sel-unread"]'),
+      "selected settled row must render (shelf carve-out)",
+    );
+    assert.equal(
+      mSel.query('[data-unread-dot="settled-sel-unread"]') != null,
+      false,
+      "selected settled row must not paint unread even when technically unread",
+    );
+    assert.equal(
+      mSel
+        .query('[data-thread-card="settled-sel-unread"]')
+        ?.getAttribute("data-unread") ?? null,
+      null,
+    );
+    mSel.unmount();
+  });
 });
