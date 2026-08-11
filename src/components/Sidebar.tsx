@@ -44,6 +44,28 @@ function saveKeySet(key: string, set: Set<string>): void {
   }
 }
 
+/**
+ * Whether the ALL PROJECTS control should treat the tree as having any
+ * expanded group. Used for BOTH aria/title render and the collapse-all click
+ * — duplicating this with a searching term only on one side inverted
+ * collapse-all during search into expand-all (B1).
+ *
+ * Search overrides per-group collapse for display, so searching counts as
+ * expanded-any (click re-collapses; it must not clear the set).
+ *
+ * A project added after collapse-all is absent from the collapsed set, so it
+ * renders expanded: new work must be visible.
+ */
+export function anyGroupExpandedState(
+  groupKeys: readonly string[],
+  collapsed: ReadonlySet<string>,
+  searching: boolean,
+): boolean {
+  if (groupKeys.length === 0) return false;
+  if (searching) return true;
+  return groupKeys.some((k) => !collapsed.has(k));
+}
+
 interface SidebarProps {
   appName: string;
   searchPlaceholder: string;
@@ -364,7 +386,6 @@ export function Sidebar({
   searchThreads,
   onSetSettled,
 }: SidebarProps) {
-  const [projectsOpen, setProjectsOpen] = useState(true);
   const [query, setQuery] = useState("");
   const [now, setNow] = useState(() => Date.now());
   /**
@@ -515,6 +536,52 @@ export function Sidebar({
     });
   };
 
+  /**
+   * Keys for every project group currently rendered. Collapse-all / expand-all
+   * and the ALL PROJECTS aria-expanded state are derived from this list.
+   */
+  const allGroupKeys = useMemo(
+    () =>
+      groups.map(
+        ({ project, threads: groupThreads }) =>
+          project?.id ?? groupThreads[0]?.projectId ?? "orphan",
+      ),
+    [groups],
+  );
+
+  /** Shared render + click predicate (see anyGroupExpandedState). */
+  const anyGroupExpanded = anyGroupExpandedState(
+    allGroupKeys,
+    collapsedGroups,
+    searching,
+  );
+
+  /**
+   * ALL PROJECTS header: if any group is expanded → collapse every group
+   * (persist all keys); if all are collapsed → expand all (clear the set).
+   * Replaces the old projectsOpen section-hide toggle.
+   */
+  const toggleCollapseAll = () => {
+    setCollapsedGroups((prev) => {
+      // Same predicate as aria-expanded / title — never branch on a second
+      // copy that omits `searching` (that cleared the set mid-search).
+      const anyExpanded = anyGroupExpandedState(
+        allGroupKeys,
+        prev,
+        searching,
+      );
+      const next = anyExpanded
+        ? (() => {
+            const s = new Set(prev);
+            for (const k of allGroupKeys) s.add(k);
+            return s;
+          })()
+        : new Set<string>();
+      saveKeySet(COLLAPSED_KEY, next);
+      return next;
+    });
+  };
+
   const toggleSettledTail = () => {
     setSettledTailOpen((open) => {
       if (open) {
@@ -604,10 +671,18 @@ export function Sidebar({
       <button
         type="button"
         className={styles.sectionHeader}
-        onClick={() => setProjectsOpen((v) => !v)}
-        aria-expanded={projectsOpen}
+        onClick={toggleCollapseAll}
+        aria-expanded={anyGroupExpanded}
+        title={
+          anyGroupExpanded ? "Collapse all projects" : "Expand all projects"
+        }
+        data-projects-section=""
       >
-        <span className={styles.chevron} data-open={projectsOpen}>
+        <span
+          className={styles.chevron}
+          data-open={anyGroupExpanded}
+          aria-hidden="true"
+        >
           ▸
         </span>
         <span>{projectsHeader}</span>
@@ -615,7 +690,7 @@ export function Sidebar({
       </button>
 
       <div className={styles.list}>
-        {projectsOpen && projects.length === 0 && (
+        {projects.length === 0 && (
           <button
             type="button"
             className={styles.addProjectRow}
@@ -625,18 +700,17 @@ export function Sidebar({
           </button>
         )}
 
-        {projectsOpen && searchInFlight && (
+        {searchInFlight && (
           <p className={styles.searchHint} aria-live="polite">
             Searching…
           </p>
         )}
 
-        {projectsOpen && projects.length > 0 && searchEmpty && (
+        {projects.length > 0 && searchEmpty && (
           <p className={styles.emptySearch}>No threads match</p>
         )}
 
-        {projectsOpen &&
-          groups.map(({ project, threads: groupThreads }) => {
+        {groups.map(({ project, threads: groupThreads }) => {
             const groupKey =
               project?.id ?? groupThreads[0]?.projectId ?? "orphan";
             const slug =
@@ -673,10 +747,12 @@ export function Sidebar({
                     className={styles.groupHeader}
                     onClick={() => toggleCollapsed(groupKey)}
                     aria-expanded={!collapsed}
+                    title={collapsed ? "Expand project" : "Collapse project"}
                   >
                     <span
                       className={styles.chevron}
                       data-open={!collapsed}
+                      data-group-chevron={groupKey}
                       aria-hidden="true"
                     >
                       ▸
@@ -793,8 +869,9 @@ export function Sidebar({
             );
           })}
 
-        {/* Global settled tail (t3-style): one section at the bottom, all projects. */}
-        {projectsOpen && !searching && globalSettled.length > 0 && (
+        {/* Global settled tail (t3-style): one section at the bottom, all projects.
+            Independent of per-project / collapse-all — has its own toggle. */}
+        {!searching && globalSettled.length > 0 && (
           <div className={styles.settledTail} data-settled-tail="">
             {selectedSettled && (
               <SettledRow
