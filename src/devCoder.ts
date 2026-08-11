@@ -593,6 +593,10 @@ function seedThreads(projects: ProjectInfo[]): ThreadInfo[] {
     // Most seeds look visited (lastVisitedAt >= updatedAt). ONE non-active
     // thread is genuinely unread so dev mode demos the sidebar indicator.
     const unreadDemo = card.id === "thread-2";
+    // Round 44: one pinned + one snoozed (~tomorrow) so partition demos.
+    const pinDemo = card.id === "thread-4";
+    const snoozeDemo = card.id === "thread-5";
+    const dayMs = 24 * 60 * 60 * 1000;
     return {
       id: card.id,
       projectId: project.id,
@@ -612,6 +616,9 @@ function seedThreads(projects: ProjectInfo[]): ThreadInfo[] {
       settledAt: null,
       prState: card.prNumber != null ? "OPEN" : null,
       lastVisitedAt: unreadDemo ? Math.min(createdAt, updatedAt - 1) : updatedAt,
+      pinnedAt: pinDemo ? t0 - 30 * 60 * 1000 : null,
+      snoozedUntil: snoozeDemo ? t0 + dayMs : null,
+      snoozedAt: snoozeDemo ? t0 - 5 * 60 * 1000 : null,
       provider: isSimulate ? "simulate" : index % 3 === 0 ? "codex" : "claude",
       model: null,
       sessionId: isSimulate
@@ -1935,6 +1942,9 @@ function buildDevCoder(): CoderApi {
           prState: null,
           // Match electron createThread: just-created is not unread.
           lastVisitedAt: t0,
+          pinnedAt: null,
+          snoozedUntil: null,
+          snoozedAt: null,
           provider: "claude",
           model: null,
           sessionId: null,
@@ -2014,11 +2024,63 @@ function buildDevCoder(): CoderApi {
           throw new Error("Cannot settle a thread while a run is active");
         }
         // Settling is bookkeeping; leave updatedAt alone.
+        // Mutual exclusion with pin: settle clears pin (mirror of setPinned).
         const thread: ThreadInfo = {
           ...detail.thread,
           settledOverride: override,
           settledAt: override != null ? now() : null,
+          ...(override === "settled" ? { pinnedAt: null } : {}),
         };
+        detail.thread = thread;
+        details.set(input.threadId, detail);
+        syncThreadRow(thread);
+        emitDetail(detail);
+        return { ...thread };
+      },
+      async setPinned(input: { threadId: string; pinned: boolean }) {
+        // Match electron/services.js setPinned (same mutual-exclusion rules).
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Unknown thread: ${input.threadId}`);
+        let thread: ThreadInfo;
+        if (input.pinned) {
+          thread = {
+            ...detail.thread,
+            pinnedAt: now(),
+            ...(detail.thread.settledOverride === "settled"
+              ? { settledOverride: null, settledAt: null }
+              : {}),
+          };
+        } else {
+          thread = { ...detail.thread, pinnedAt: null };
+        }
+        detail.thread = thread;
+        details.set(input.threadId, detail);
+        syncThreadRow(thread);
+        emitDetail(detail);
+        return { ...thread };
+      },
+      async setSnoozed(input: { threadId: string; until: number | null }) {
+        // Match electron/services.js setSnoozed (same error strings).
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Unknown thread: ${input.threadId}`);
+        let thread: ThreadInfo;
+        if (input.until === null || input.until === undefined) {
+          thread = {
+            ...detail.thread,
+            snoozedUntil: null,
+            snoozedAt: null,
+          };
+        } else {
+          const t = Number(input.until);
+          if (!Number.isFinite(t) || !(t > Date.now())) {
+            throw new Error(`Snooze time ${input.until} is not in the future`);
+          }
+          thread = {
+            ...detail.thread,
+            snoozedUntil: t,
+            snoozedAt: now(),
+          };
+        }
         detail.thread = thread;
         details.set(input.threadId, detail);
         syncThreadRow(thread);

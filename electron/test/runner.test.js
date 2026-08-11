@@ -178,6 +178,28 @@ describe("runner simulated mode", () => {
     assert.equal(afterActive.settledAt, pinnedAt);
   });
 
+  it("startRun preserves pinnedAt and snooze fields (round 44)", async () => {
+    // t3: pins survive activity; snooze is visibility-only and wakes derived.
+    const thread = store.getThreads()[0];
+    const until = Date.now() + 86_400_000;
+    services.setPinned(store, { threadId: thread.id, pinned: true });
+    services.setSnoozed(store, { threadId: thread.id, until });
+    const pinnedAt = store.getThread(thread.id).pinnedAt;
+    const snoozedAt = store.getThread(thread.id).snoozedAt;
+    assert.ok(pinnedAt != null);
+    assert.ok(snoozedAt != null);
+
+    await runner.startRun({
+      threadId: thread.id,
+      prompt: "pin and snooze must stick",
+    });
+    const after = store.getThread(thread.id);
+    assert.equal(after.status, "working");
+    assert.equal(after.pinnedAt, pinnedAt, "pinnedAt must survive startRun");
+    assert.equal(after.snoozedUntil, until, "snoozedUntil must survive startRun");
+    assert.equal(after.snoozedAt, snoozedAt, "snoozedAt must survive startRun");
+  });
+
   it("startRun full lifecycle reaches done with assistant summary", async () => {
     const thread = store.getThreads()[0];
     const { runId } = await runner.startRun({

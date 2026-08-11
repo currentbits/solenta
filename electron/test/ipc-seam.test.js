@@ -184,6 +184,23 @@ exit 1`,
         handlers.has("git:prStatus"),
         "main must handle git:prStatus",
       );
+
+      // Round 44 pin + snooze (mirror setSettled seam).
+      for (const name of ["setPinned", "setSnoozed"]) {
+        assert.equal(
+          typeof api.threads[name],
+          "function",
+          `preload must expose threads.${name}`,
+        );
+      }
+      assert.ok(
+        handlers.has("threads:setPinned"),
+        "main must handle threads:setPinned",
+      );
+      assert.ok(
+        handlers.has("threads:setSnoozed"),
+        "main must handle threads:setSnoozed",
+      );
     });
   });
 
