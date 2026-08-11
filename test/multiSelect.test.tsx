@@ -79,10 +79,10 @@ function fullFixture(): ThreadInfo[] {
 
 function Host({
   initial = fullFixture(),
-  openShelves = true,
+  onRemoveProject,
 }: {
   initial?: ThreadInfo[];
-  openShelves?: boolean;
+  onRemoveProject?: (projectId: string) => void | Promise<void>;
 }) {
   const [threads, setThreads] = useState(initial);
   const [active, setActive] = useState("noise");
@@ -104,6 +104,7 @@ function Host({
         onSelectThread={setActive}
         onCreateThread={() => {}}
         onAddProject={() => {}}
+        onRemoveProject={onRemoveProject}
         onSetSettled={(id, override) => {
           patch(id, (t) => ({
             ...t,
@@ -270,9 +271,8 @@ describe("Sidebar multi-select (round 46)", () => {
     m.unmount();
   });
 
-  it("batch archive records setArchived; batch settle skips working", async () => {
+  it("batch archive records setArchived for each selected id", async () => {
     const archived: string[] = [];
-    const settled: string[] = [];
 
     function HostTrack() {
       const [threads, setThreads] = useState(fullFixture());
@@ -294,6 +294,60 @@ describe("Sidebar multi-select (round 46)", () => {
               prev.map((t) => (t.id === id ? { ...t, archived: a } : t)),
             );
           }}
+          onSetSettled={() => {}}
+          searchThreads={async () => threads}
+        />
+      );
+    }
+
+    const m = await mount(<HostTrack />);
+    await openShelves(m);
+
+    for (const id of ["p1-mid", "working-x", "p2-mid"]) {
+      const btn = m.query(`[data-thread-card="${id}"]`)!.querySelector("button")!;
+      await inAct(async () => {
+        btn.dispatchEvent(
+          new MouseEvent("click", {
+            bubbles: true,
+            metaKey: true,
+            cancelable: true,
+          }),
+        );
+      });
+      await m.flush();
+    }
+    assert.ok(m.query("[data-batch-archive]"), "toolbar must render at 2+");
+
+    await m.click(m.query("[data-batch-archive]")!);
+    await m.flush();
+    assert.deepEqual(archived.sort(), ["p1-mid", "p2-mid", "working-x"].sort());
+    assert.equal(
+      m.query("[data-batch-count]") != null,
+      false,
+      "selection cleared after batch archive",
+    );
+    m.unmount();
+  });
+
+  it("batch settle skips working; records only idle; feedback + clear", async () => {
+    // Fresh fixture — do not reuse threads archived by another test half.
+    const settled: string[] = [];
+
+    function HostSettle() {
+      const [threads, setThreads] = useState(fullFixture());
+      return (
+        <Sidebar
+          appName="Coder"
+          searchPlaceholder="S"
+          projectsHeader="All"
+          projects={[p1, p2]}
+          threads={threads}
+          providers={providers}
+          activeThreadId="noise"
+          onSelectThread={() => {}}
+          onCreateThread={() => {}}
+          onAddProject={() => {}}
+          onSetArchived={() => {}}
           onSetSettled={(id, o) => {
             settled.push(id);
             setThreads((prev) =>
@@ -313,12 +367,14 @@ describe("Sidebar multi-select (round 46)", () => {
       );
     }
 
-    const m = await mount(<HostTrack />);
+    const m = await mount(<HostSettle />);
     await openShelves(m);
 
-    // Multi-select p1-mid, working-x, p2-mid
+    // Mixed selection: 2 idle + 1 working (interesting rows not index 0).
     for (const id of ["p1-mid", "working-x", "p2-mid"]) {
-      const btn = m.query(`[data-thread-card="${id}"]`)!.querySelector("button")!;
+      const card = m.query(`[data-thread-card="${id}"]`);
+      assert.ok(card, `fixture must expose ${id}`);
+      const btn = card!.querySelector("button")!;
       await inAct(async () => {
         btn.dispatchEvent(
           new MouseEvent("click", {
@@ -330,47 +386,36 @@ describe("Sidebar multi-select (round 46)", () => {
       });
       await m.flush();
     }
-    assert.ok(m.query("[data-batch-bar]"));
 
-    await m.click(m.query("[data-batch-archive]")!);
+    const settleBtn = m.query("[data-batch-settle]");
+    assert.ok(settleBtn, "toolbar Settle must render at 2+ selected");
+
+    await m.click(settleBtn!);
     await m.flush();
-    assert.deepEqual(archived.sort(), ["p1-mid", "p2-mid", "working-x"].sort());
 
-    // Re-select for settle (archive cleared multi)
-    for (const id of ["p1-mid", "working-x", "p2-mid"]) {
-      // may be archived and hidden — use unarchived settle targets instead
-    }
-    // Fresh multi for settle: use pin-mid, working-x, settled-mid
-    for (const id of ["pin-mid", "working-x", "p2-mid"]) {
-      const el = m.query(`[data-thread-card="${id}"]`);
-      if (!el) continue;
-      const btn = el.querySelector("button")!;
-      await inAct(async () => {
-        btn.dispatchEvent(
-          new MouseEvent("click", {
-            bubbles: true,
-            metaKey: true,
-            cancelable: true,
-          }),
-        );
-      });
-      await m.flush();
-    }
-    settled.length = 0;
-    if (m.query("[data-batch-settle]")) {
-      await m.click(m.query("[data-batch-settle]")!);
-      await m.flush();
-      assert.ok(
-        !settled.includes("working-x"),
-        "no setSettled call for working thread",
-      );
-      assert.ok(
-        (m.query("[data-batch-feedback]")?.textContent || "").includes(
-          "skipped (running)",
-        ),
-        `feedback must mention skip, got: ${m.query("[data-batch-feedback]")?.textContent}`,
-      );
-    }
+    assert.deepEqual(
+      settled.slice().sort(),
+      ["p1-mid", "p2-mid"].sort(),
+      "exactly 2 setSettled calls for the idle ids",
+    );
+    assert.equal(
+      settled.includes("working-x"),
+      false,
+      "working thread must not receive setSettled",
+    );
+    assert.equal(
+      m.query("[data-batch-feedback]")?.textContent,
+      "2 settled · 1 skipped (running)",
+    );
+    assert.equal(
+      m.query("[data-batch-count]") != null,
+      false,
+      "selection cleared after batch settle",
+    );
+    assert.equal(
+      m.query('[data-thread-card="p1-mid"]')?.getAttribute("data-multi"),
+      null,
+    );
     m.unmount();
   });
 });
@@ -509,25 +554,47 @@ describe("Keyboard sheet (round 46)", () => {
   });
 
   it("shortcuts dead while a modal dialog is open", async () => {
-    const m = await mount(<Host />);
-    // Open remove confirm as dialog
+    const m = await mount(<Host onRemoveProject={() => {}} />);
+    await openShelves(m);
+
     const remove = m.query('[data-project-remove="p1"]');
-    if (remove) {
-      await m.click(remove);
-      await m.flush();
-      assert.ok(m.query('[role="dialog"]'));
-      await inAct(async () => {
-        dispatchKey("keydown", "3", { metaKey: true });
-      });
-      await m.flush();
-      // Still on noise (active unchanged by blocked shortcut)
-      assert.equal(
-        m.query("[data-thread-card][data-active=true]")?.getAttribute(
-          "data-thread-card",
-        ),
-        "noise",
-      );
-    }
+    assert.ok(remove, "remove control requires onRemoveProject on Host");
+    await m.click(remove!);
+    await m.flush();
+
+    const dialog = m.query('[role="dialog"]');
+    assert.ok(dialog, "confirm dialog must open");
+    assert.ok(
+      m.query('[data-remove-confirm="p1"]'),
+      "real remove-project confirm, not a stub",
+    );
+
+    // Active stays noise; none of the jump / sheet shortcuts may act.
+    await inAct(async () => {
+      dispatchKey("keydown", "3", { metaKey: true });
+    });
+    await m.flush();
+    await inAct(async () => {
+      dispatchKey("keydown", "j", { metaKey: true });
+    });
+    await m.flush();
+    await inAct(async () => {
+      dispatchKey("keydown", "?");
+    });
+    await m.flush();
+
+    assert.equal(
+      m.query("[data-thread-card][data-active=true]")?.getAttribute(
+        "data-thread-card",
+      ),
+      "noise",
+      "cmd+3 / cmd+j must no-op while modal open",
+    );
+    assert.equal(
+      m.query("[data-keyboard-sheet]") != null,
+      false,
+      "? must not open keyboard sheet while modal open",
+    );
     m.unmount();
   });
 });

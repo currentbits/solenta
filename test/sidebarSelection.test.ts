@@ -139,6 +139,97 @@ describe("buildVisibleThreadIds", () => {
     });
     assert.deepEqual(ids, ["shown", "sn2", "st1"]);
   });
+
+  it("paged settled tail contributes only the visible page (M3)", () => {
+    // More settled rows than the page size — slice must drop the rest.
+    const settled = [
+      t("st-page-0", { projectId: "p1", status: "done", settledAt: NOW }),
+      t("st-page-1", { projectId: "p1", status: "done", settledAt: NOW - 1 }),
+      t("st-page-2", { projectId: "p2", status: "done", settledAt: NOW - 2 }),
+      t("st-page-3", { projectId: "p2", status: "done", settledAt: NOW - 3 }),
+      t("st-page-4", { projectId: "p2", status: "done", settledAt: NOW - 4 }),
+    ];
+    const ids = buildVisibleThreadIds({
+      pinned: [],
+      groups: [
+        {
+          project: { id: "p1", slug: "a", name: "a", path: "/a" },
+          threads: [t("attn-noise", { projectId: "p1" })],
+        },
+      ],
+      collapsedGroupKeys: new Set(),
+      showArchivedKeys: new Set(),
+      snoozed: [],
+      snoozedOpen: false,
+      selectedSnoozedId: null,
+      settled,
+      settledOpen: true,
+      settledVisibleCount: 2,
+      selectedSettledId: null,
+    });
+    assert.deepEqual(ids, ["attn-noise", "st-page-0", "st-page-1"]);
+    assert.equal(ids.includes("st-page-2"), false);
+    assert.equal(ids.includes("st-page-4"), false);
+  });
+
+  it("collapsed archived contribute nothing until expanded (M11)", () => {
+    const groups: SidebarGroup[] = [
+      {
+        project: { id: "p1", slug: "a", name: "a", path: "/a" },
+        threads: [
+          t("attn-a", { projectId: "p1" }),
+          t("arch-hidden", { projectId: "p1", archived: true }),
+          t("arch-also", { projectId: "p1", archived: true }),
+        ],
+      },
+      {
+        project: { id: "p2", slug: "b", name: "b", path: "/b" },
+        threads: [
+          t("attn-b", { projectId: "p2" }),
+          t("arch-b", { projectId: "p2", archived: true }),
+        ],
+      },
+    ];
+
+    const collapsed = buildVisibleThreadIds({
+      pinned: [t("pin-x", { pinnedAt: NOW, projectId: "p2" })],
+      groups,
+      collapsedGroupKeys: new Set(),
+      showArchivedKeys: new Set(),
+      snoozed: [],
+      snoozedOpen: false,
+      selectedSnoozedId: null,
+      settled: [],
+      settledOpen: false,
+      settledVisibleCount: 10,
+      selectedSettledId: null,
+    });
+    assert.deepEqual(collapsed, ["pin-x", "attn-a", "attn-b"]);
+    assert.equal(collapsed.includes("arch-hidden"), false);
+    assert.equal(collapsed.includes("arch-b"), false);
+
+    const expanded = buildVisibleThreadIds({
+      pinned: [t("pin-x", { pinnedAt: NOW, projectId: "p2" })],
+      groups,
+      collapsedGroupKeys: new Set(),
+      showArchivedKeys: new Set(["p1"]),
+      snoozed: [],
+      snoozedOpen: false,
+      selectedSnoozedId: null,
+      settled: [],
+      settledOpen: false,
+      settledVisibleCount: 10,
+      selectedSettledId: null,
+    });
+    assert.deepEqual(expanded, [
+      "pin-x",
+      "attn-a",
+      "arch-hidden",
+      "arch-also",
+      "attn-b",
+    ]);
+    assert.equal(expanded.includes("arch-b"), false, "p2 still collapsed");
+  });
 });
 
 describe("rangeSelectIds", () => {

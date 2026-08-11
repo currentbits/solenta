@@ -2,13 +2,13 @@ import { useCallback } from "react";
 import { useEscapeClose } from "../useEscapeClose";
 import styles from "./KeyboardSheet.module.css";
 
-export interface ShortcutRow {
+interface ShortcutRow {
   keys: string;
   action: string;
 }
 
 /** Static shortcut list — not a remapping panel. */
-export const APP_SHORTCUTS: readonly ShortcutRow[] = [
+const APP_SHORTCUTS: readonly ShortcutRow[] = [
   { keys: "⌘ + click", action: "Toggle thread in multi-select" },
   { keys: "⇧ + click", action: "Select range in visible list" },
   { keys: "⌘ + 1…9", action: "Jump to nth visible thread" },

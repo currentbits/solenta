@@ -6,7 +6,7 @@ import type { SidebarGroup } from "./sidebarGroups";
  * Order mirrors render: pinned → per-project attention (+ archived if open)
  * → snoozed visible rows → settled visible rows.
  */
-export interface VisibleListInput {
+interface VisibleListInput {
   pinned: readonly ThreadInfo[];
   /** Project groups already filtered to attention (+ optional archived). */
   groups: readonly SidebarGroup[];
