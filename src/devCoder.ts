@@ -589,6 +589,10 @@ function seedThreads(projects: ProjectInfo[]): ThreadInfo[] {
     const updatedAt =
       card.status === "working" ? t0 - workingMs : t0 - ageMs;
     const isSimulate = card.id === mockData.activeThreadId;
+    const createdAt = t0 - ageMs - 60 * 60 * 1000;
+    // Type field only on this renderer branch — full stamp-on-get + unread demo
+    // seed is Worker A (electron + devCoder). lastVisitedAt = updatedAt keeps
+    // seeds read until A lands.
     return {
       id: card.id,
       projectId: project.id,
@@ -600,12 +604,13 @@ function seedThreads(projects: ProjectInfo[]): ThreadInfo[] {
           ? `https://github.com/${card.repoSlug}/pull/${card.prNumber}`
           : null,
       status: card.status,
-      createdAt: t0 - ageMs - 60 * 60 * 1000,
+      createdAt,
       updatedAt,
       runStartedAt: card.status === "working" ? t0 - workingMs : null,
       archived: false,
       settledOverride: null,
       settledAt: null,
+      lastVisitedAt: updatedAt,
       prState: card.prNumber != null ? "OPEN" : null,
       provider: isSimulate ? "simulate" : index % 3 === 0 ? "codex" : "claude",
       model: null,
@@ -1912,6 +1917,7 @@ function buildDevCoder(): CoderApi {
         return hits.slice(0, 50);
       },
       async create(input) {
+        const t0 = now();
         const t: ThreadInfo = {
           id: id("thread"),
           projectId: input.projectId,
@@ -1920,12 +1926,14 @@ function buildDevCoder(): CoderApi {
           prNumber: null,
           prUrl: null,
           status: "idle",
-          createdAt: now(),
-          updatedAt: now(),
+          createdAt: t0,
+          updatedAt: t0,
           runStartedAt: null,
           archived: false,
           settledOverride: null,
           settledAt: null,
+          // Match contract create: just-created is not unread. Stamp-on-get is Worker A.
+          lastVisitedAt: t0,
           prState: null,
           provider: "claude",
           model: null,

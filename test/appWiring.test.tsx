@@ -510,3 +510,72 @@ describe("App remove-project wiring (round 41)", () => {
     m.unmount();
   });
 });
+
+
+describe("App selection stamps lastVisitedAt (round 43 unread)", () => {
+  it("clears the unread dot after a selection round-trip through fakeCoder", async () => {
+    // Unread mid-list; boot selects first (visited), so unread is neither index 0
+    // nor the selected thread (fixture discipline).
+    const visited = thread({
+      id: "t-open",
+      title: "already open",
+      projectId: "p1",
+      updatedAt: Date.now(),
+      lastVisitedAt: Date.now(),
+    });
+    const unread = thread({
+      id: "t-unread-mid",
+      title: "needs a look",
+      projectId: "p1",
+      updatedAt: Date.now() + 5_000,
+      lastVisitedAt: Date.now() - 60_000,
+    });
+    const keeper = thread({
+      id: "t-keeper",
+      title: "quiet peer",
+      projectId: "p1",
+      updatedAt: Date.now() - 1_000,
+      lastVisitedAt: Date.now() - 1_000,
+    });
+    const fake = createFakeCoder({
+      projects: [project({ id: "p1" })],
+      threads: [visited, unread, keeper],
+      details: {
+        "t-open": detail({ thread: visited }),
+        "t-unread-mid": detail({ thread: unread }),
+        "t-keeper": detail({ thread: keeper }),
+      },
+    });
+    const m = await boot(fake);
+    await m.flush();
+
+    assert.ok(
+      m.query('[data-unread-dot="t-unread-mid"]'),
+      "before select: unread mid must show a dot",
+    );
+
+    const select = m.query(
+      'button[aria-label="Select thread: needs a look, unread"]',
+    );
+    assert.ok(select, "unread card select control must exist");
+    await m.click(select as HTMLElement);
+    await m.flush();
+    // Let the threads.get promise settle and applyThreads re-render.
+    await inAct(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await m.flush();
+
+    assert.ok(
+      fake.of("threads.get").some((c) => c.args[0] === "t-unread-mid"),
+      "select must call threads.get for the unread thread",
+    );
+    assert.equal(
+      m.query('[data-unread-dot="t-unread-mid"]'),
+      null,
+      "after select round-trip: stamp clears the unread dot",
+    );
+    m.unmount();
+  });
+});

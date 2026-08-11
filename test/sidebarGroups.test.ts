@@ -31,17 +31,21 @@ function project(partial: Partial<ProjectInfo> & Pick<ProjectInfo, "id" | "slug"
 function thread(
   partial: Partial<ThreadInfo> & Pick<ThreadInfo, "id" | "projectId" | "updatedAt">,
 ): ThreadInfo {
+  const createdAt = partial.createdAt ?? partial.updatedAt;
+  const updatedAt = partial.updatedAt;
   return {
     title: partial.title ?? partial.id,
     branch: partial.branch ?? null,
     prNumber: partial.prNumber ?? null,
     prUrl: partial.prUrl ?? null,
     status: partial.status ?? "idle",
-    createdAt: partial.createdAt ?? partial.updatedAt,
+    createdAt,
     runStartedAt: partial.runStartedAt ?? null,
     archived: partial.archived ?? false,
     settledOverride: partial.settledOverride ?? null,
     settledAt: partial.settledAt ?? null,
+    lastVisitedAt:
+      partial.lastVisitedAt !== undefined ? partial.lastVisitedAt : updatedAt,
     prState: partial.prState ?? null,
     provider: partial.provider ?? "claude",
     model: partial.model ?? null,
@@ -221,7 +225,7 @@ describe("splitSettled (round 39 effectiveSettled)", () => {
   });
 });
 
-describe("groupHeaderSummary (round 40: working only)", () => {
+describe("groupHeaderSummary (round 40 working + round 43 unread)", () => {
   it("counts working and omits settled (settled moved to the global tail)", () => {
     assert.equal(
       groupHeaderSummary([
@@ -259,6 +263,61 @@ describe("groupHeaderSummary (round 40: working only)", () => {
       ]),
       null,
       "no working threads → no summary",
+    );
+  });
+
+  it("appends unread count when any attention thread is unread", () => {
+    assert.equal(
+      groupHeaderSummary([
+        thread({
+          id: "w1",
+          projectId: "a",
+          updatedAt: 30,
+          status: "working",
+          lastVisitedAt: 10,
+        }),
+        thread({
+          id: "read",
+          projectId: "a",
+          updatedAt: 20,
+          status: "idle",
+          lastVisitedAt: 20,
+        }),
+        thread({
+          id: "newmsg",
+          projectId: "a",
+          updatedAt: 40,
+          status: "done",
+          lastVisitedAt: 5,
+        }),
+      ]),
+      "1 working · 2 unread",
+    );
+    assert.equal(
+      groupHeaderSummary([
+        thread({
+          id: "only-unread",
+          projectId: "a",
+          updatedAt: 50,
+          status: "idle",
+          lastVisitedAt: 1,
+        }),
+      ]),
+      "1 unread",
+      "unread alone is enough for a summary",
+    );
+    assert.equal(
+      groupHeaderSummary([
+        thread({
+          id: "legacy",
+          projectId: "a",
+          updatedAt: 99,
+          status: "idle",
+          lastVisitedAt: null,
+        }),
+      ]),
+      null,
+      "legacy null lastVisitedAt is not unread",
     );
   });
 

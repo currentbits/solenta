@@ -64,6 +64,8 @@ export function project(over: Partial<ProjectInfo> = {}): ProjectInfo {
 const FRESH = Date.now();
 
 export function thread(over: Partial<ThreadInfo> = {}): ThreadInfo {
+  const createdAt = over.createdAt ?? FRESH;
+  const updatedAt = over.updatedAt ?? createdAt;
   return {
     id: "t1",
     projectId: "p1",
@@ -72,12 +74,16 @@ export function thread(over: Partial<ThreadInfo> = {}): ThreadInfo {
     prNumber: null,
     prUrl: null,
     status: "idle",
-    createdAt: FRESH,
-    updatedAt: FRESH,
+    createdAt,
+    updatedAt,
     runStartedAt: null,
     archived: false,
     settledOverride: null,
     settledAt: null,
+    // Default lastVisitedAt to updatedAt so fixtures that only bump updatedAt
+    // stay read. Pass lastVisitedAt explicitly for unread cases.
+    lastVisitedAt:
+      over.lastVisitedAt !== undefined ? over.lastVisitedAt : updatedAt,
     prState: null,
     provider: "claude",
     model: null,
@@ -223,9 +229,49 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     threads: {
       list: () => rec("threads.list", [], threads.map((t) => ({ ...t }))),
       search: (input: unknown) => rec("threads.search", [input], [] as ThreadInfo[]),
-      create: (input: unknown) => rec("threads.create", [input], thread({ id: "t-new" })),
-      get: (id: string) =>
-        rec("threads.get", [id], details[id] ?? detail({ thread: thread({ id }) })),
+      create: (input: unknown) => {
+        const createdAt = Date.now();
+        // Match production createThread: a brand-new thread is visited at birth.
+        const t = thread({
+          id: "t-new",
+          createdAt,
+          updatedAt: createdAt,
+          lastVisitedAt: createdAt,
+        });
+        threads = [t, ...threads.filter((x) => x.id !== t.id)];
+        return rec("threads.create", [input], t);
+      },
+      /**
+       * Production stamps lastVisitedAt inside threads.get (select = visit)
+       * without bumping updatedAt. Keep this fake honest so renderer tests
+       * that select-and-clear-unread do not pass against a silent no-op.
+       * Round-37 lesson: a fake that drifts from reality ships green and broken.
+       */
+      get: (id: string) => {
+        const stamp = Date.now();
+        const existing = threads.find((t) => t.id === id);
+        if (existing) {
+          // Visiting is not activity: lastVisitedAt only, never updatedAt.
+          const stampedRow: ThreadInfo = {
+            ...existing,
+            lastVisitedAt: stamp,
+          };
+          threads = threads.map((t) => (t.id === id ? stampedRow : t));
+          const base = details[id] ?? detail({ thread: stampedRow });
+          const stampedDetail: ThreadDetail = {
+            ...base,
+            thread: { ...base.thread, ...stampedRow, lastVisitedAt: stamp },
+          };
+          details[id] = stampedDetail;
+          return rec("threads.get", [id], stampedDetail);
+        }
+        const fallback = details[id] ?? detail({ thread: thread({ id, lastVisitedAt: stamp }) });
+        const stampedFallback: ThreadDetail = {
+          ...fallback,
+          thread: { ...fallback.thread, lastVisitedAt: stamp },
+        };
+        return rec("threads.get", [id], stampedFallback);
+      },
       setPermissionMode: (input: unknown) =>
         rec("threads.setPermissionMode", [input], thread()),
       setArchived: (input: unknown) => {
