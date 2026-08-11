@@ -131,4 +131,17 @@ describe("setSettings autoSettleAfterDays validation", () => {
       autoSettleAfterDays: 3,
     });
   });
+
+  it("null survives save + reload (Never is not healed to 3)", () => {
+    const store = new Store(filePath);
+    services.setSettings(store, { autoSettleAfterDays: null });
+    assert.equal(store.getSettings().autoSettleAfterDays, null);
+    store.save();
+    const reloaded = new Store(filePath);
+    assert.equal(
+      reloaded.getSettings().autoSettleAfterDays,
+      null,
+      "explicit Never must persist across reload, not become default 3",
+    );
+  });
 });

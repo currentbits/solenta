@@ -137,34 +137,71 @@ describe("Sidebar auto-settle window (round 45)", () => {
   });
 });
 
-describe("Settings auto-settle fakeCoder round-trip (round 45)", () => {
-  it("saves autoSettleAfterDays through the real Settings modal", async () => {
-    const fake = createFakeCoder({
-      projects: [project({ id: "p1" })],
-      threads: [thread({ id: "t1", projectId: "p1" })],
-      settings: { dailyBudgetUsd: null, autoSettleAfterDays: 3 },
-      details: {
-        t1: detail({ thread: thread({ id: "t1", projectId: "p1" }) }),
-      },
-    });
+/**
+ * App→Sidebar wire (ISSUES 2026-08-07): render the PARENT that owns the call
+ * site. Mounting Sidebar with the prop cannot kill a mutant that hardcodes
+ * autoSettleAfterDays={undefined} in App.tsx.
+ */
+describe("App wires autoSettleAfterDays into Sidebar (round 45)", () => {
+  async function bootApp(fake: ReturnType<typeof createFakeCoder>) {
     const shell = await mount(<div />);
     installFakeCoder(fake);
     shell.unmount();
-    const m = await mount(<App />);
-    try {
-      await m.flush();
-      const gear = m.byText("Settings");
-      assert.ok(gear, "settings control must exist");
-      await m.click(gear!);
-      await m.flush();
+    return mount(<App />);
+  }
 
-      const input = m.query("#auto-settle-days");
-      assert.ok(input, "auto-settle field in modal");
-      await m.type(input, "7");
-      const saves = m
-        .queryAll("button")
-        .filter((b) => (b.textContent || "").includes("Save"));
-      await m.click(saves[saves.length - 1]!);
+  async function openSettings(m: Awaited<ReturnType<typeof mount>>) {
+    const gear = m.byText("Settings");
+    assert.ok(gear, "settings control must exist");
+    await m.click(gear!);
+    await m.flush();
+  }
+
+  async function saveSettleDays(
+    m: Awaited<ReturnType<typeof mount>>,
+    value: string,
+  ) {
+    const input = m.query("#auto-settle-days");
+    assert.ok(input, "auto-settle field in modal");
+    await m.type(input, value);
+    const saves = m
+      .queryAll("button")
+      .filter((b) => (b.textContent || "").includes("Save"));
+    assert.ok(saves.length >= 1, "Save button");
+    await m.click(saves[saves.length - 1]!);
+    await m.flush();
+    await inAct(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await m.flush();
+  }
+
+  async function expandSettledTail(m: Awaited<ReturnType<typeof mount>>) {
+    const header = m
+      .queryAll("button")
+      .find((b) => (b.textContent || "").includes("Settled ·"));
+    if (!header) return null;
+    await m.click(header);
+    await m.flush();
+    return header;
+  }
+
+  it("live partition: default 3 settles quiet-4d; 7 → attention; Never → no tail; invalid 0 errors", async () => {
+    // Fixture discipline: quiet mid-list, selected is noise (index 0).
+    const quiet = quietThread();
+    const fresh = noise();
+    const fake = createFakeCoder({
+      projects: [project({ id: "p1", slug: "acme/ledger" })],
+      threads: [fresh, quiet],
+      settings: { dailyBudgetUsd: null, autoSettleAfterDays: 3 },
+      details: {
+        noise: detail({ thread: fresh }),
+        "quiet-4d": detail({ thread: quiet }),
+      },
+    });
+    const m = await bootApp(fake);
+    try {
       await m.flush();
       await inAct(async () => {
         await Promise.resolve();
@@ -172,15 +209,115 @@ describe("Settings auto-settle fakeCoder round-trip (round 45)", () => {
       });
       await m.flush();
 
-      const setCalls = fake.of("settings.set");
-      assert.ok(setCalls.length >= 1, "settings.set must fire");
-      const last = setCalls[setCalls.length - 1]!.args[0] as {
-        autoSettleAfterDays?: number | null;
-      };
-      assert.equal(last.autoSettleAfterDays, 7);
+      // --- under default 3: quiet sits in settled tail ---
+      assert.ok(
+        m.query("[data-settled-tail]"),
+        "settled tail under App-wired default 3",
+      );
+      await expandSettledTail(m);
+      assert.ok(
+        m.query('[data-thread-card="quiet-4d"][data-settled="true"]'),
+        "quiet-4d settled when App passes loaded setting 3",
+      );
 
-      const got = await fake.api.settings.get();
-      assert.equal(got.autoSettleAfterDays, 7);
+      // --- set 7 through REAL modal ---
+      await openSettings(m);
+      await saveSettleDays(m, "7");
+      assert.equal(
+        (await fake.api.settings.get()).autoSettleAfterDays,
+        7,
+        "fake stores 7",
+      );
+      // Close modal so sidebar is visible (backdrop click / close).
+      const close = m.query('button[aria-label="Close"]');
+      if (close) {
+        await m.click(close);
+        await m.flush();
+      }
+
+      assert.equal(
+        m.query("[data-settled-tail]") != null,
+        false,
+        "after App re-renders with 7, quiet leaves the tail",
+      );
+      assert.ok(
+        m.query('[data-thread-card="quiet-4d"]'),
+        "quiet-4d is attention under window 7",
+      );
+      assert.equal(
+        m.query('[data-thread-card="quiet-4d"]')?.getAttribute("data-settled"),
+        null,
+      );
+
+      // --- set Never (null) ---
+      await openSettings(m);
+      await saveSettleDays(m, "");
+      assert.equal(
+        (await fake.api.settings.get()).autoSettleAfterDays,
+        null,
+      );
+      const close2 = m.query('button[aria-label="Close"]');
+      if (close2) {
+        await m.click(close2);
+        await m.flush();
+      }
+      assert.equal(
+        m.query("[data-settled-tail]") != null,
+        false,
+        "Never: no settled tail",
+      );
+      assert.ok(
+        m.query('[data-thread-card="quiet-4d"]'),
+        "quiet stays in attention when disabled",
+      );
+
+      // --- M6: invalid 0 must error and leave partition unchanged ---
+      // Quiet is currently attention with Never. Set back to 3 first so we have
+      // a settled tail, then bad 0 must not clear the setting.
+      await openSettings(m);
+      await saveSettleDays(m, "3");
+      const close3 = m.query('button[aria-label="Close"]');
+      if (close3) {
+        await m.click(close3);
+        await m.flush();
+      }
+      assert.ok(
+        m.query("[data-settled-tail]"),
+        "precondition: settled under 3 before invalid save",
+      );
+      const settledBefore = m.query("[data-settled-tail]") != null;
+
+      await openSettings(m);
+      await saveSettleDays(m, "0");
+      // Validation error from honest fakeCoder; modal stays open with alert.
+      assert.ok(
+        m.query('[role="alert"]'),
+        "invalid 0 must surface role=alert (kills silent-merge fake)",
+      );
+      assert.ok(
+        m.text().includes("Auto-settle days must be a positive integer"),
+        `error text, got: ${m.text().slice(-200)}`,
+      );
+      assert.equal(
+        (await fake.api.settings.get()).autoSettleAfterDays,
+        3,
+        "invalid 0 must NOT change stored setting",
+      );
+
+      const close4 = m.query('button[aria-label="Close"]');
+      if (close4) {
+        await m.click(close4);
+        await m.flush();
+      }
+      assert.equal(
+        m.query("[data-settled-tail]") != null,
+        settledBefore,
+        "partition must not change after rejected save",
+      );
+      assert.ok(
+        m.query("[data-settled-tail]"),
+        "settled tail still present after invalid 0 rejected",
+      );
     } finally {
       m.unmount();
     }
