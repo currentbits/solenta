@@ -108,6 +108,9 @@ describe("services", () => {
     assert.equal(thread.settledOverride, null);
     assert.equal(thread.settledAt, null);
     assert.equal(thread.prState, null);
+    assert.equal(thread.pinnedAt, null);
+    assert.equal(thread.snoozedUntil, null);
+    assert.equal(thread.snoozedAt, null);
     assert.ok(typeof thread.createdAt === "number");
     const listed = services.listThreads(store);
     assert.equal(listed.length, 1);
@@ -262,6 +265,144 @@ describe("services", () => {
     assert.equal(store.getThread(thread.id).settledAt, null);
   });
 
+  it("setSettled('settled') clears pin; setPinned(true) clears settled (mutual exclusion)", () => {
+    const thread = makeThread("settle-pin-mutex");
+    store.updateThread(thread.id, { updatedAt: 1_700_000_000_000 });
+
+    // Pin first, then settle — settle must clear pin.
+    const pinned = services.setPinned(store, {
+      threadId: thread.id,
+      pinned: true,
+    });
+    assert.ok(typeof pinned.pinnedAt === "number" && pinned.pinnedAt > 0);
+    assert.equal(pinned.settledOverride, null);
+
+    const settled = services.setSettled(store, {
+      threadId: thread.id,
+      override: "settled",
+    });
+    assert.equal(settled.settledOverride, "settled");
+    assert.ok(settled.settledAt != null);
+    assert.equal(settled.pinnedAt, null);
+    assert.equal(store.getThread(thread.id).pinnedAt, null);
+    assert.equal(store.getThread(thread.id).settledOverride, "settled");
+    assert.equal(settled.updatedAt, 1_700_000_000_000);
+
+    // Pin again — must clear settled override + settledAt.
+    const repin = services.setPinned(store, {
+      threadId: thread.id,
+      pinned: true,
+    });
+    assert.ok(typeof repin.pinnedAt === "number" && repin.pinnedAt > 0);
+    assert.equal(repin.settledOverride, null);
+    assert.equal(repin.settledAt, null);
+    assert.equal(store.getThread(thread.id).settledOverride, null);
+    assert.equal(store.getThread(thread.id).settledAt, null);
+    assert.equal(repin.updatedAt, 1_700_000_000_000);
+
+    // Unpin leaves settle fields alone (already null).
+    const unpinned = services.setPinned(store, {
+      threadId: thread.id,
+      pinned: false,
+    });
+    assert.equal(unpinned.pinnedAt, null);
+    assert.equal(unpinned.updatedAt, 1_700_000_000_000);
+  });
+
+  it("setPinned rejects unknown thread naming it", () => {
+    assert.throws(
+      () => services.setPinned(store, { threadId: "missing", pinned: true }),
+      /Unknown thread: missing/,
+    );
+  });
+
+  it("setSnoozed validation table: past, now-exact, future, null clears both", () => {
+    const thread = makeThread("snooze-table");
+    store.updateThread(thread.id, { updatedAt: 1_700_000_000_000 });
+    const fixedUpdated = 1_700_000_000_000;
+
+    const past = Date.now() - 60_000;
+    assert.throws(
+      () =>
+        services.setSnoozed(store, { threadId: thread.id, until: past }),
+      (err) => {
+        assert.match(String(err.message), /Snooze time .* is not in the future/);
+        assert.ok(String(err.message).includes(String(past)));
+        return true;
+      },
+    );
+
+    const exactNow = Date.now();
+    assert.throws(
+      () =>
+        services.setSnoozed(store, {
+          threadId: thread.id,
+          until: exactNow,
+        }),
+      /Snooze time .* is not in the future/,
+    );
+
+    const future = Date.now() + 3_600_000;
+    const before = Date.now();
+    const snoozed = services.setSnoozed(store, {
+      threadId: thread.id,
+      until: future,
+    });
+    assert.equal(snoozed.snoozedUntil, future);
+    assert.ok(
+      typeof snoozed.snoozedAt === "number" && snoozed.snoozedAt >= before,
+    );
+    assert.equal(snoozed.updatedAt, fixedUpdated);
+    assert.equal(store.getThread(thread.id).updatedAt, fixedUpdated);
+
+    // Working thread is still snoozable (visibility only).
+    store.updateThread(thread.id, { status: "working" });
+    const reSnooze = services.setSnoozed(store, {
+      threadId: thread.id,
+      until: Date.now() + 7_200_000,
+    });
+    assert.ok(reSnooze.snoozedUntil > Date.now());
+    assert.equal(store.getThread(thread.id).status, "working");
+
+    const cleared = services.setSnoozed(store, {
+      threadId: thread.id,
+      until: null,
+    });
+    assert.equal(cleared.snoozedUntil, null);
+    assert.equal(cleared.snoozedAt, null);
+    assert.equal(store.getThread(thread.id).snoozedUntil, null);
+    assert.equal(store.getThread(thread.id).snoozedAt, null);
+    assert.equal(cleared.updatedAt, fixedUpdated);
+  });
+
+  it("setSnoozed rejects unknown thread", () => {
+    assert.throws(
+      () =>
+        services.setSnoozed(store, {
+          threadId: "gone",
+          until: Date.now() + 1000,
+        }),
+      /Unknown thread: gone/,
+    );
+  });
+
+  it("pin and snooze persist across save/reload", () => {
+    const thread = makeThread("pin-snooze-disk");
+    const until = Date.now() + 86_400_000;
+    services.setPinned(store, { threadId: thread.id, pinned: true });
+    services.setSnoozed(store, { threadId: thread.id, until });
+    const pinnedAt = store.getThread(thread.id).pinnedAt;
+    const snoozedAt = store.getThread(thread.id).snoozedAt;
+    assert.ok(pinnedAt != null);
+    assert.ok(snoozedAt != null);
+
+    const reloaded = new Store(path.join(tmpDir, "store.json"));
+    const t = reloaded.getThread(thread.id);
+    assert.equal(t.pinnedAt, pinnedAt);
+    assert.equal(t.snoozedUntil, until);
+    assert.equal(t.snoozedAt, snoozedAt);
+  });
+
   it("setSettled rejects settling a working thread", () => {
     const thread = makeThread("settle-working");
     store.updateThread(thread.id, { status: "working" });
@@ -323,7 +464,7 @@ describe("services", () => {
     );
   });
 
-  it("clearSettledOnActivity clears only a settled pin", () => {
+  it("clearSettledOnActivity clears only a settled override (not pin/snooze fields)", () => {
     assert.deepEqual(
       services.clearSettledOnActivity({ settledOverride: "settled" }),
       { settledOverride: null, settledAt: null },
@@ -337,6 +478,22 @@ describe("services", () => {
       {},
     );
     assert.deepEqual(services.clearSettledOnActivity(null), {});
+    // Must not return pin/snooze wipes even when those fields are present.
+    const withPinSnooze = services.clearSettledOnActivity({
+      settledOverride: "settled",
+      pinnedAt: 99,
+      snoozedUntil: 100,
+      snoozedAt: 50,
+    });
+    assert.deepEqual(withPinSnooze, {
+      settledOverride: null,
+      settledAt: null,
+    });
+    assert.equal(Object.prototype.hasOwnProperty.call(withPinSnooze, "pinnedAt"), false);
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(withPinSnooze, "snoozedUntil"),
+      false,
+    );
   });
 
   it("deleteThread removes thread, messages, and work log", () => {

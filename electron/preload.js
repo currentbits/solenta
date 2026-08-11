@@ -70,6 +70,8 @@ const coder = {
       invoke("threads:setPermissionMode", input),
     setArchived: (input) => invoke("threads:setArchived", input),
     setSettled: (input) => invoke("threads:setSettled", input),
+    setPinned: (input) => invoke("threads:setPinned", input),
+    setSnoozed: (input) => invoke("threads:setSnoozed", input),
     setProvider: (input) => invoke("threads:setProvider", input),
     setReasoningEffort: (input) =>
       invoke("threads:setReasoningEffort", input),
