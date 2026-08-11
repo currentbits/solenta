@@ -18,6 +18,7 @@ import {
   effectiveSettled,
   resolveSettledTimestamp,
 } from "../threadSettle";
+import { countUnread, isUnread } from "../threadUnread";
 import styles from "./Sidebar.module.css";
 
 const TICK_MS = 5000;
@@ -212,6 +213,11 @@ export function ThreadCard({
   // Settled cards offer "keep active"; attention cards offer "settle".
   const settleOverride = isSettled ? ("active" as const) : ("settled" as const);
   const settleLabel = isSettled ? "Keep thread active" : "Settle thread";
+  // Selected never paints unread (you are looking at it) — render rule only.
+  const showUnread = !active && isUnread(thread);
+  const selectLabel = showUnread
+    ? `Select thread: ${thread.title}, unread`
+    : `Select thread: ${thread.title}`;
 
   // Card is a non-interactive shell. Stretch select + optional settle action
   // are separate focusables. Content sits in a sibling with pointer-events:none
@@ -224,12 +230,13 @@ export function ThreadCard({
       data-active={active}
       data-archived={thread.archived ? "true" : undefined}
       data-settled={isSettled ? "true" : undefined}
+      data-unread={showUnread ? "true" : undefined}
     >
       <button
         type="button"
         className={styles.cardSelect}
         onClick={() => onSelect(thread.id)}
-        aria-label={`Select thread: ${thread.title}`}
+        aria-label={selectLabel}
       />
       <div className={styles.cardBody}>
         <div className={styles.cardTop}>
@@ -238,7 +245,17 @@ export function ThreadCard({
             {formatRelativeAge(thread.updatedAt, now)}
           </span>
         </div>
-        <div className={styles.cardTitle}>{thread.title}</div>
+        <div className={styles.cardTitleRow}>
+          {showUnread && (
+            <span
+              className={styles.unreadDot}
+              data-unread-dot={thread.id}
+              aria-hidden="true"
+            />
+          )}
+          {showUnread && <span className={styles.srOnly}>unread</span>}
+          <div className={styles.cardTitle}>{thread.title}</div>
+        </div>
         <div className={styles.cardTags}>
           <span className={styles.providerTag}>{providerLabel}</span>
           {thread.worktreePath && (
@@ -326,20 +343,34 @@ export function SettledRow({
   ) => void | Promise<void>;
 }) {
   const wrapUpAt = resolveSettledTimestamp(thread);
+  // Settled can still be unread (activity after last visit, then auto-settled).
+  const showUnread = !active && isUnread(thread);
+  const selectLabel = showUnread
+    ? `Select thread: ${thread.title}, unread`
+    : `Select thread: ${thread.title}`;
   return (
     <div
       className={styles.settledRow}
       data-thread-card={thread.id}
       data-settled="true"
       data-active={active}
+      data-unread={showUnread ? "true" : undefined}
     >
       <button
         type="button"
         className={styles.cardSelect}
         onClick={() => onSelect(thread.id)}
-        aria-label={`Select thread: ${thread.title}`}
+        aria-label={selectLabel}
       />
       <div className={styles.settledBody}>
+        {showUnread && (
+          <span
+            className={styles.unreadDot}
+            data-unread-dot={thread.id}
+            aria-hidden="true"
+          />
+        )}
+        {showUnread && <span className={styles.srOnly}>unread</span>}
         <span className={styles.settledTitle}>{thread.title}</span>
         <span className={styles.settledSlug}>{slug}</span>
         <span className={styles.settledAge}>
@@ -894,6 +925,10 @@ export function Sidebar({
               </span>
               <span>
                 Settled · {globalSettled.length}
+                {(() => {
+                  const n = countUnread(globalSettled);
+                  return n > 0 ? ` · ${n} unread` : "";
+                })()}
               </span>
             </button>
             {settledTailOpen &&

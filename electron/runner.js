@@ -456,7 +456,11 @@ function createRunner(opts) {
         view = mapWorkflowView(workflow, core);
       }
     }
-    const detail = services.getThreadDetail(store, threadId, view);
+    // Background refresh must never stamp lastVisitedAt — only IPC threads:get
+    // (user selection) marks a thread visited. See services.getThreadDetail.
+    const detail = services.getThreadDetail(store, threadId, view, {
+      markVisited: false,
+    });
     pushFn("thread:updated", detail);
     return detail;
   }

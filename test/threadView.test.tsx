@@ -61,6 +61,7 @@ function thread(over: Partial<ThreadInfo> = {}): ThreadInfo {
     archived: false,
     settledOverride: null,
     settledAt: null,
+    lastVisitedAt: null,
     prState: null,
     provider: "claude",
     model: null,

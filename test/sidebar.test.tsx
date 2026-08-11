@@ -46,6 +46,8 @@ const FRESH = Date.now();
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 function thread(over: Partial<ThreadInfo> & Pick<ThreadInfo, "id">): ThreadInfo {
+  const createdAt = over.createdAt ?? FRESH;
+  const updatedAt = over.updatedAt ?? createdAt;
   return {
     projectId: "p1",
     title: over.id,
@@ -53,12 +55,14 @@ function thread(over: Partial<ThreadInfo> & Pick<ThreadInfo, "id">): ThreadInfo 
     prNumber: null,
     prUrl: null,
     status: "idle",
-    createdAt: FRESH,
-    updatedAt: FRESH,
+    createdAt,
+    updatedAt,
     runStartedAt: null,
     archived: false,
     settledOverride: null,
     settledAt: null,
+    lastVisitedAt:
+      over.lastVisitedAt !== undefined ? over.lastVisitedAt : updatedAt,
     prState: null,
     provider: "claude",
     model: null,
@@ -1173,5 +1177,208 @@ describe("Sidebar remove project (round 41, t3-style)", () => {
     );
     assert.deepEqual(calls, ["p2"], "still exactly one recorded call");
     m.unmount();
+  });
+});
+
+
+describe("Sidebar unread indicators (round 43)", () => {
+  /**
+   * Fixture discipline: unread thread is neither index 0 nor the selected one.
+   * selected = "sel" (second); unread = "u-mid" (third).
+   */
+  const baseVisited = FRESH;
+  const UNREAD_THREADS = [
+    thread({
+      id: "visited-first",
+      title: "visited first",
+      status: "idle",
+      updatedAt: baseVisited,
+      lastVisitedAt: baseVisited,
+      projectId: "p1",
+    }),
+    thread({
+      id: "sel",
+      title: "selected open",
+      status: "idle",
+      // Technically unread (updatedAt > lastVisitedAt) but SELECTED — no dot.
+      updatedAt: baseVisited + 200,
+      lastVisitedAt: baseVisited,
+      projectId: "p1",
+    }),
+    thread({
+      id: "u-mid",
+      title: "unread mid",
+      status: "done",
+      updatedAt: baseVisited + 300,
+      lastVisitedAt: baseVisited,
+      projectId: "p1",
+    }),
+    thread({
+      id: "legacy-null",
+      title: "legacy null",
+      status: "idle",
+      updatedAt: baseVisited + 400,
+      lastVisitedAt: null,
+      projectId: "p1",
+    }),
+    thread({
+      id: "settled-unread",
+      title: "settled unread",
+      status: "done",
+      prState: "MERGED",
+      settledAt: baseVisited + 50,
+      updatedAt: baseVisited + 350,
+      lastVisitedAt: baseVisited,
+      projectId: "p1",
+    }),
+  ];
+
+  it("renders an unread dot for a non-selected unread attention card", async () => {
+    const m = await mount(
+      sidebar(UNREAD_THREADS, { projects: [p1], activeThreadId: "sel" }),
+    );
+    const dot = m.query('[data-unread-dot="u-mid"]');
+    assert.ok(dot, "unread mid must paint a data-unread-dot");
+    const card = m.query('[data-thread-card="u-mid"]');
+    assert.equal(card?.getAttribute("data-unread"), "true");
+    const select = m.query('button[aria-label="Select thread: unread mid, unread"]');
+    assert.ok(select, "select aria-label must suffix , unread");
+    m.unmount();
+  });
+
+  it("suppresses the dot on the selected thread even when technically unread", async () => {
+    const m = await mount(
+      sidebar(UNREAD_THREADS, { projects: [p1], activeThreadId: "sel" }),
+    );
+    assert.equal(
+      m.query('[data-unread-dot="sel"]'),
+      null,
+      "selected card must not render an unread dot",
+    );
+    assert.equal(
+      m.query('[data-thread-card="sel"]')?.getAttribute("data-unread"),
+      null,
+    );
+    m.unmount();
+  });
+
+  it("does not paint unread for legacy null lastVisitedAt", async () => {
+    const m = await mount(
+      sidebar(UNREAD_THREADS, { projects: [p1], activeThreadId: "sel" }),
+    );
+    assert.equal(
+      m.query('[data-unread-dot="legacy-null"]'),
+      null,
+      "legacy null is never unread",
+    );
+    m.unmount();
+  });
+
+  it("shows unread on a settled row when the tail is open", async () => {
+    const m = await mount(
+      sidebar(UNREAD_THREADS, { projects: [p1], activeThreadId: "sel" }),
+    );
+    // Tail starts collapsed; expand to paint settled rows.
+    await m.click(settledTailHeader(m));
+    await m.flush();
+    const settledDot = m.query('[data-unread-dot="settled-unread"]');
+    assert.ok(settledDot, "settled unread must paint a dot in the tail");
+    assert.ok(
+      (settledTailHeader(m).textContent || "").includes("unread"),
+      "settled tail header must include · N unread",
+    );
+    m.unmount();
+  });
+
+  it("extends the project header with · N unread", async () => {
+    const m = await mount(
+      sidebar(UNREAD_THREADS, { projects: [p1], activeThreadId: "sel" }),
+    );
+    const header = groupHeader(m, "acme/ledger").textContent || "";
+    // attention: visited-first, sel, u-mid, legacy-null → unread among them:
+    // sel is unread by predicate, u-mid is unread → 2 unread (legacy no).
+    assert.match(header, /\d+ unread/, `header must count unread, got: ${header}`);
+    m.unmount();
+  });
+
+  /**
+   * B2: pin zero-unread omission on the settled tail header.
+   * B3: pin SettledRow's !active guard (selected + technically unread → no dot).
+   */
+  it("settled tail omits unread when none; selected settled unread paints no dot", async () => {
+    const settledVisited = thread({
+      id: "settled-read",
+      title: "settled and read",
+      status: "done",
+      prState: "MERGED",
+      settledAt: baseVisited + 10,
+      updatedAt: baseVisited + 10,
+      lastVisitedAt: baseVisited + 10,
+      projectId: "p1",
+    });
+    // Technically unread, but we open it as the active selection (B3).
+    const settledSelectedUnread = thread({
+      id: "settled-sel-unread",
+      title: "settled selected unread",
+      status: "done",
+      prState: "MERGED",
+      settledAt: baseVisited + 20,
+      updatedAt: baseVisited + 400,
+      lastVisitedAt: baseVisited,
+      projectId: "p1",
+    });
+    // Attention noise so the project group is non-empty (not "All settled").
+    const attention = thread({
+      id: "att-noise",
+      title: "attention noise",
+      status: "idle",
+      updatedAt: baseVisited,
+      lastVisitedAt: baseVisited,
+      projectId: "p1",
+    });
+
+    // --- B2: no settled row is unread → tail header must not say "unread" ---
+    const mZero = await mount(
+      sidebar([attention, settledVisited], {
+        projects: [p1],
+        activeThreadId: "att-noise",
+      }),
+    );
+    const zeroHeader = settledTailHeader(mZero).textContent || "";
+    assert.ok(
+      zeroHeader.includes("Settled ·"),
+      `tail header must still count settled, got: ${zeroHeader}`,
+    );
+    assert.ok(
+      !zeroHeader.includes("unread"),
+      `zero-unread tail must omit the unread fragment (kills "· 0 unread"), got: ${zeroHeader}`,
+    );
+    mZero.unmount();
+
+    // --- B3: active + technically unread settled row → no dot ---
+    const mSel = await mount(
+      sidebar([attention, settledVisited, settledSelectedUnread], {
+        projects: [p1],
+        // Open the settled unread so the collapsed-shelf carve-out paints it.
+        activeThreadId: "settled-sel-unread",
+      }),
+    );
+    // Carve-out shows the open settled row even while the tail is collapsed.
+    assert.ok(
+      mSel.query('[data-thread-card="settled-sel-unread"]'),
+      "selected settled row must render (shelf carve-out)",
+    );
+    assert.equal(
+      mSel.query('[data-unread-dot="settled-sel-unread"]') != null,
+      false,
+      "selected settled row must not paint unread even when technically unread",
+    );
+    assert.equal(
+      mSel
+        .query('[data-thread-card="settled-sel-unread"]')
+        ?.getAttribute("data-unread") ?? null,
+      null,
+    );
+    mSel.unmount();
   });
 });

@@ -279,7 +279,9 @@ export function useCoder(): UseCoderResult {
     };
   }, [api, applyThreads, refreshStatus]);
 
-  // Load ThreadDetail when selection changes
+  // Load ThreadDetail when selection changes. threads.get stamps lastVisitedAt
+  // (select = visit); merge the returned row into the list so the sidebar
+  // unread dot clears without waiting for a separate threads:changed push.
   useEffect(() => {
     if (!selectedThreadId) {
       setDetail(null);
@@ -289,7 +291,13 @@ export function useCoder(): UseCoderResult {
     (async () => {
       try {
         const d = await api.threads.get(selectedThreadId);
-        if (!cancelled) setDetail(d);
+        if (cancelled) return;
+        setDetail(d);
+        applyThreads(
+          threadsRef.current.map((t) =>
+            t.id === d.thread.id ? d.thread : t,
+          ),
+        );
       } catch {
         if (!cancelled) setDetail(null);
       }
@@ -297,7 +305,7 @@ export function useCoder(): UseCoderResult {
     return () => {
       cancelled = true;
     };
-  }, [api, selectedThreadId]);
+  }, [api, selectedThreadId, applyThreads]);
 
   const projectById = useMemo(() => {
     const m = new Map<string, ProjectInfo>();
