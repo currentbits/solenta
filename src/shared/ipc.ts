@@ -48,6 +48,25 @@ export interface ThreadInfo {
   /** Epoch ms when the current override was accepted; null without one. */
   settledAt: number | null;
   /**
+   * Epoch ms when the user pinned this thread; null = unpinned. Pinned
+   * threads render first and NEVER auto-settle (t3's rule). Pin and an
+   * explicit settle are mutually exclusive: setPinned(true) clears a
+   * "settled" override, setSettled("settled") clears the pin — conflicts
+   * can then only arise from raced writes, not normal use.
+   */
+  pinnedAt: number | null;
+  /**
+   * Snooze: hidden from the attention list until this epoch ms passes.
+   * Snooze is VISIBILITY ONLY — it never touches the agent, suspends a pin
+   * without clearing it, and beats settle classification. A snoozed thread
+   * wakes early ("raises its hand") when something outranks the snooze:
+   * a FRESH failure or a run completion newer than snoozedAt. Timer wakes
+   * are derived client-side — no event fires when snoozedUntil passes.
+   */
+  snoozedUntil: number | null;
+  /** Epoch ms when the snooze was set; the raised-hand comparisons anchor here. */
+  snoozedAt: number | null;
+  /**
    * Epoch ms of the last time the user LOOKED at this thread. Stamped by the
    * main process inside threads.get — selecting a thread IS visiting it; no
    * separate markVisited channel. Unread = updatedAt > lastVisitedAt. Null on
@@ -404,6 +423,18 @@ export interface CoderApi {
       threadId: string;
       override: "settled" | "active" | null;
     }): Promise<ThreadInfo>;
+    /**
+     * Pin or unpin. Pinning clears a "settled" override (mutual exclusion,
+     * see pinnedAt doc); settling clears the pin. Never bumps updatedAt.
+     */
+    setPinned(input: { threadId: string; pinned: boolean }): Promise<ThreadInfo>;
+    /**
+     * Snooze until an epoch ms, or clear with null. Rejects a non-null
+     * `until` that is not strictly in the future, naming the value. Stamps
+     * snoozedAt = now alongside. Never bumps updatedAt; never touches the
+     * agent or the run lifecycle.
+     */
+    setSnoozed(input: { threadId: string; until: number | null }): Promise<ThreadInfo>;
     /**
      * Sets the thread's provider and/or model. A provider change on a
      * session-bearing thread is allowed and clears sessionId (CLI sessions
