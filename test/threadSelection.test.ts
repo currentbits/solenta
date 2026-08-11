@@ -22,6 +22,10 @@ function thread(
     archived: partial.archived ?? false,
     settledOverride: partial.settledOverride ?? null,
     settledAt: partial.settledAt ?? null,
+    lastVisitedAt:
+      partial.lastVisitedAt !== undefined
+        ? partial.lastVisitedAt
+        : (partial.createdAt ?? partial.updatedAt ?? 1),
     prState: partial.prState ?? null,
     provider: partial.provider ?? "claude",
     model: partial.model ?? null,

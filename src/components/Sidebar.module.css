@@ -422,6 +422,14 @@
   flex-shrink: 0;
 }
 
+/* Title row holds the optional unread dot left of the title text. */
+.cardTitleRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+
 .cardTitle {
   font-size: 13px;
   font-weight: 560;
@@ -431,6 +439,40 @@
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  min-width: 0;
+  flex: 1;
+}
+
+/*
+ * Unread indicator (round 43). Sits on the title row / settled body — clear of
+ * the status badge (cardMeta right) and PR chip (branchRow). Color only is
+ * never enough for a11y: pair with .srOnly "unread" and aria-label suffix.
+ */
+.unreadDot {
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: var(--blue);
+  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.25);
+}
+
+.settledBody .unreadDot {
+  margin-top: 0;
+  align-self: center;
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .cardTags {
