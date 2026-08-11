@@ -213,6 +213,17 @@ async function clearSidebarStorage(): Promise<void> {
   shell.unmount();
 }
 
+/** Sorted keys from coder.sidebar.collapsedGroups (empty when missing/bad). */
+function collapsedFromStorage(): string[] {
+  try {
+    const raw = window.localStorage.getItem("coder.sidebar.collapsedGroups");
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.map(String).sort() : [];
+  } catch {
+    return [];
+  }
+}
+
 describe("t3 paging constants are fixed facts", () => {
   // Literal pins: a symbolic test that reads SETTLED_TAIL_* survives mutating
   // 10→4 or 25→1. These asserts die if the constants drift from t3.
@@ -754,6 +765,11 @@ describe("Sidebar collapse-all / expand-all (round 42)", () => {
     const m = await mount(sidebar(THREADS, { projects: [p1, p2] }));
     await m.click(allProjectsHeader(m));
     assert.equal(allProjectsHeader(m).getAttribute("aria-expanded"), "false");
+    assert.deepEqual(
+      collapsedFromStorage(),
+      ["p1", "p2"],
+      "collapse-all persists both group keys",
+    );
 
     // Re-open only ledger — mixed state.
     await m.click(groupHeader(m, "acme/ledger"));
@@ -770,6 +786,12 @@ describe("Sidebar collapse-all / expand-all (round 42)", () => {
     assert.equal(
       groupHeader(m, "acme/billing").getAttribute("aria-expanded"),
       "false",
+    );
+    // Storage: only the re-opened key is removed; the other remains.
+    assert.deepEqual(
+      collapsedFromStorage(),
+      ["p2"],
+      "re-expand removes just that key from localStorage",
     );
     m.unmount();
     await clearSidebarStorage();
@@ -825,6 +847,145 @@ describe("Sidebar collapse-all / expand-all (round 42)", () => {
       "ALL PROJECTS chevron data-open=false when all collapsed",
     );
     m.unmount();
+    await clearSidebarStorage();
+  });
+
+  it("title tooltips match collapse state on group and ALL PROJECTS headers", async () => {
+    // B2: M4/M5 hardcoded a single title string — both states must be asserted.
+    await clearSidebarStorage();
+    const m = await mount(sidebar(THREADS, { projects: [p1, p2] }));
+
+    assert.equal(
+      groupHeader(m, "acme/ledger").getAttribute("title"),
+      "Collapse project",
+      "expanded group title",
+    );
+    assert.equal(
+      allProjectsHeader(m).getAttribute("title"),
+      "Collapse all projects",
+      "any-expanded section title",
+    );
+
+    await m.click(allProjectsHeader(m));
+
+    assert.equal(
+      groupHeader(m, "acme/ledger").getAttribute("title"),
+      "Expand project",
+      "collapsed group title",
+    );
+    assert.equal(
+      allProjectsHeader(m).getAttribute("title"),
+      "Expand all projects",
+      "all-collapsed section title",
+    );
+    m.unmount();
+    await clearSidebarStorage();
+  });
+
+  it("header click during search after collapse-all does not clear the set (B1)", async () => {
+    // B1 / M10: render used `searching ||` but click omitted it, so collapse-all
+    // → search → click inverted into expand-all. Shared predicate must keep
+    // every key collapsed after search is cleared.
+    await clearSidebarStorage();
+    const m = await mount(sidebar(THREADS, { projects: [p1, p2] }));
+    await m.click(allProjectsHeader(m));
+    assert.deepEqual(collapsedFromStorage(), ["p1", "p2"]);
+    assert.ok(!cardTitles(m).includes("busy"));
+
+    const input = m.query("input") as HTMLInputElement;
+    assert.ok(input);
+    await m.type(input, "finished work");
+    await inAct(async () => {
+      await new Promise((r) => setTimeout(r, 350));
+    });
+    await m.flush();
+
+    // During search the header presents as expanded-any (search override).
+    assert.equal(
+      allProjectsHeader(m).getAttribute("aria-expanded"),
+      "true",
+      "search presents ALL PROJECTS as expanded-any",
+    );
+    assert.equal(
+      allProjectsHeader(m).getAttribute("title"),
+      "Collapse all projects",
+    );
+
+    // Click must re-collapse, not clear the set.
+    await m.click(allProjectsHeader(m));
+    await m.flush();
+    assert.deepEqual(
+      collapsedFromStorage(),
+      ["p1", "p2"],
+      "mid-search header click must not clear collapse-all keys",
+    );
+
+    // Leave search mode: 1 char is below MIN_SEARCH_LEN (2), so searching
+    // flips false and any expand-all inversion becomes visible.
+    await m.type(input, "f");
+    await m.flush();
+
+    assert.ok(
+      !cardTitles(m).includes("busy"),
+      "p1 still collapsed after search→header click→exit search",
+    );
+    assert.ok(
+      !cardTitles(m).includes("billing-idle"),
+      "p2 still collapsed after search→header click→exit search",
+    );
+    assert.deepEqual(
+      collapsedFromStorage(),
+      ["p1", "p2"],
+      "localStorage still holds every collapse-all key",
+    );
+    assert.equal(
+      allProjectsHeader(m).getAttribute("aria-expanded"),
+      "false",
+      "exiting search must show all-collapsed, not expand-all inversion",
+    );
+    m.unmount();
+    await clearSidebarStorage();
+  });
+
+  it("project added after collapse-all renders expanded (new work visible)", async () => {
+    // Absent from the collapsed set → expanded by default (see anyGroupExpandedState).
+    await clearSidebarStorage();
+    const m1 = await mount(sidebar(THREADS, { projects: [p1, p2] }));
+    await m1.click(allProjectsHeader(m1));
+    assert.deepEqual(collapsedFromStorage(), ["p1", "p2"]);
+    m1.unmount();
+
+    const p3: ProjectInfo = {
+      id: "p3",
+      slug: "acme/new",
+      name: "new",
+      path: "/tmp/new",
+    };
+    const withNew = [
+      ...THREADS,
+      thread({
+        id: "new-work",
+        title: "brand new",
+        projectId: "p3",
+        status: "working",
+        runStartedAt: FRESH,
+        updatedAt: FRESH + 60,
+      }),
+    ];
+    const m2 = await mount(sidebar(withNew, { projects: [p1, p2, p3] }));
+    assert.ok(
+      !cardTitles(m2).includes("busy"),
+      "previously collapse-all'd groups stay collapsed",
+    );
+    assert.ok(
+      cardTitles(m2).includes("new-work"),
+      "new project after collapse-all must show its threads",
+    );
+    assert.equal(
+      groupHeader(m2, "acme/new").getAttribute("aria-expanded"),
+      "true",
+    );
+    m2.unmount();
     await clearSidebarStorage();
   });
 });
