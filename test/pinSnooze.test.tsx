@@ -426,4 +426,122 @@ describe("fakeCoder setPinned/setSnoozed honesty (round 44)", () => {
       m.unmount();
     }
   });
+
+  /**
+   * B1: menu → preset → onSetSnoozed must hit useCoder + fakeCoder with THAT
+   * preset's until. Host-injected callbacks cannot mask a rewired pipeline.
+   */
+  it("App snooze menu preset + clear round-trip through fakeCoder", async () => {
+    // Freeze Date.now so Sidebar's `now` tick and expected until share a clock.
+    // Hard-coded target: a mutant that rewires every preset to in-3-days must
+    // fail lastSet.until === expectedUntil (not a helper self-match).
+    const frozen = new Date(2024, 5, 15, 14, 0, 0, 0).getTime();
+    const expectedUntil = new Date(2024, 5, 15, 18, 0, 0, 0).getTime();
+    const realNow = Date.now;
+    Date.now = () => frozen;
+    try {
+
+      const tOpen = thread({
+        id: "t-open",
+        projectId: "p1",
+        title: "already open",
+        updatedAt: frozen + 200,
+      });
+      // Mid-list, not selected (fixture discipline).
+      const tMid = thread({
+        id: "t-snooze-mid",
+        projectId: "p1",
+        title: "snooze mid me",
+        updatedAt: frozen + 50,
+      });
+      const fake = createFakeCoder({
+        projects: [project({ id: "p1" })],
+        threads: [tOpen, tMid],
+        details: {
+          "t-open": detail({ thread: tOpen }),
+          "t-snooze-mid": detail({ thread: tMid }),
+        },
+      });
+      const m = await boot(fake);
+      try {
+        await m.flush();
+
+        const snoozeBtn = m.query('[data-snooze-btn="t-snooze-mid"]');
+        assert.ok(snoozeBtn, "data-snooze-btn must be present");
+        await m.click(snoozeBtn!);
+        await m.flush();
+
+        const preset = m.query('[data-snooze-preset="this-evening"]');
+        assert.ok(preset, "data-snooze-preset=this-evening must open in menu");
+        await m.click(preset!);
+        await m.flush();
+        await inAct(async () => {
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+        await m.flush();
+
+        const setCalls = fake.of("threads.setSnoozed");
+        assert.ok(setCalls.length >= 1, "setSnoozed must fire");
+        const lastSet = setCalls[setCalls.length - 1]!.args[0] as {
+          threadId: string;
+          until: number | null;
+        };
+        assert.equal(lastSet.threadId, "t-snooze-mid");
+        assert.equal(
+          lastSet.until,
+          expectedUntil,
+          "must record THIS preset's until, not a rewired constant",
+        );
+
+        assert.ok(
+          m.query("[data-snoozed-shelf]"),
+          "thread lands on the snoozed shelf",
+        );
+        assert.ok(
+          (m.query("[data-snoozed-header]")?.textContent || "").includes(
+            "Snoozed · 1",
+          ),
+        );
+
+        // Expand shelf and clear via data-snooze-clear (shelf wake control).
+        await m.click(m.query("[data-snoozed-header]"));
+        await m.flush();
+        const clearBtn = m.query(
+          '[data-snooze-clear][data-snooze-clear-btn="t-snooze-mid"], [data-snooze-clear-btn="t-snooze-mid"]',
+        ) ?? m.query("[data-snooze-clear]");
+        assert.ok(clearBtn, "data-snooze-clear must be present on shelf row");
+        await m.click(clearBtn!);
+        await m.flush();
+        await inAct(async () => {
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+        await m.flush();
+
+        const clearCalls = fake.of("threads.setSnoozed");
+        const lastClear = clearCalls[clearCalls.length - 1]!.args[0] as {
+          threadId: string;
+          until: number | null;
+        };
+        assert.equal(lastClear.threadId, "t-snooze-mid");
+        assert.equal(lastClear.until, null, "clear must record until: null");
+
+        const listed = await fake.api.threads.list();
+        const mid = listed.find((x) => x.id === "t-snooze-mid");
+        assert.equal(mid?.snoozedUntil ?? null, null);
+        assert.equal(mid?.snoozedAt ?? null, null);
+
+        assert.equal(
+          m.query("[data-snoozed-shelf]") != null,
+          false,
+          "empty snoozed shelf unmounts after clear",
+        );
+      } finally {
+        m.unmount();
+      }
+    } finally {
+      Date.now = realNow;
+    }
+  });
 });

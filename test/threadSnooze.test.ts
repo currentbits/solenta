@@ -72,6 +72,17 @@ describe("effectiveSnoozed", () => {
     );
   });
 
+  it("table: until === now is already awake (exact boundary)", () => {
+    // Contract: until must be strictly in the future; effectiveSnoozed uses <=.
+    assert.equal(
+      effectiveSnoozed(
+        t({ id: "a", snoozedUntil: NOW, snoozedAt: NOW - 1000 }),
+        NOW,
+      ),
+      false,
+    );
+  });
+
   it("table: raised-hand fresh failure wakes", () => {
     // Failed AFTER snooze was set → raised hand.
     assert.equal(
@@ -260,11 +271,28 @@ describe("snoozePresetUntil (local calendar, injectable now)", () => {
     assert.equal(d.getHours(), 18);
   });
 
-  it("Tomorrow morning is next 09:00", () => {
+  it("This evening at exact 18:00:00.000 rolls to tomorrow (<=)", () => {
+    // Pins the `<=` boundary: a bare `<` would leave until === now (not future).
+    const now = new Date(2024, 5, 15, 18, 0, 0, 0).getTime();
+    const until = snoozePresetUntil("this-evening", now);
+    const d = new Date(until);
+    assert.equal(d.getFullYear(), 2024);
+    assert.equal(d.getMonth(), 5);
+    assert.equal(d.getDate(), 16, "exact 18:00 must roll to tomorrow");
+    assert.equal(d.getHours(), 18);
+    assert.equal(d.getMinutes(), 0);
+    assert.equal(d.getSeconds(), 0);
+    assert.equal(d.getMilliseconds(), 0);
+    assert.ok(until > now, "must be strictly after the frozen now");
+  });
+
+  it("Tomorrow morning is always calendar-tomorrow 09:00 (label wins)", () => {
+    // Even at 07:00, "Tomorrow morning" is NOT today's 09:00 (a 2h snooze).
     const morning = new Date(2024, 5, 15, 7, 0, 0, 0).getTime();
     const d1 = new Date(snoozePresetUntil("tomorrow-morning", morning));
-    assert.equal(d1.getDate(), 15);
+    assert.equal(d1.getDate(), 16, "07:00 → tomorrow 09:00, not today");
     assert.equal(d1.getHours(), 9);
+    assert.equal(d1.getMinutes(), 0);
 
     const afternoon = new Date(2024, 5, 15, 14, 0, 0, 0).getTime();
     const d2 = new Date(snoozePresetUntil("tomorrow-morning", afternoon));
@@ -272,7 +300,7 @@ describe("snoozePresetUntil (local calendar, injectable now)", () => {
     assert.equal(d2.getHours(), 9);
   });
 
-  it("In 3 days is now + 3×24h", () => {
+  it("In 3 days is now + 3×24h elapsed (not three midnights)", () => {
     const now = new Date(2024, 5, 15, 12, 30, 0, 0).getTime();
     assert.equal(
       snoozePresetUntil("in-3-days", now),
@@ -295,7 +323,28 @@ describe("wake label = sort consistency", () => {
     });
     assert.equal(resolveSnoozeUntil(a), NOW + 5000);
     assert.ok(compareSnoozedWakeSoonest(b, a) < 0, "sooner first");
-    const label = formatSnoozeWakeLabel(a, NOW);
-    assert.match(label, /^until /);
+  });
+
+  it("pins the RENDERED wake string for a known until (not just the prefix)", () => {
+    // 2024-06-15 10:00 local, wake today 18:00 → "until 6pm".
+    // A label one hour off (e.g. "until 5pm") must fail this assert.
+    const now = new Date(2024, 5, 15, 10, 0, 0, 0).getTime();
+    const until = new Date(2024, 5, 15, 18, 0, 0, 0).getTime();
+    const label = formatSnoozeWakeLabel(
+      t({ id: "a", snoozedUntil: until, snoozedAt: now }),
+      now,
+    );
+    assert.equal(label, "until 6pm");
+
+    // Tomorrow morning wake from the afternoon → "until tomorrow 9am".
+    const afternoon = new Date(2024, 5, 15, 14, 0, 0, 0).getTime();
+    const tomorrow9 = new Date(2024, 5, 16, 9, 0, 0, 0).getTime();
+    assert.equal(
+      formatSnoozeWakeLabel(
+        t({ id: "b", snoozedUntil: tomorrow9, snoozedAt: afternoon }),
+        afternoon,
+      ),
+      "until tomorrow 9am",
+    );
   });
 });
