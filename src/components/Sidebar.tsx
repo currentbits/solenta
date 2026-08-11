@@ -44,6 +44,28 @@ function saveKeySet(key: string, set: Set<string>): void {
   }
 }
 
+/**
+ * Whether the ALL PROJECTS control should treat the tree as having any
+ * expanded group. Used for BOTH aria/title render and the collapse-all click
+ * — duplicating this with a searching term only on one side inverted
+ * collapse-all during search into expand-all (B1).
+ *
+ * Search overrides per-group collapse for display, so searching counts as
+ * expanded-any (click re-collapses; it must not clear the set).
+ *
+ * A project added after collapse-all is absent from the collapsed set, so it
+ * renders expanded: new work must be visible.
+ */
+export function anyGroupExpandedState(
+  groupKeys: readonly string[],
+  collapsed: ReadonlySet<string>,
+  searching: boolean,
+): boolean {
+  if (groupKeys.length === 0) return false;
+  if (searching) return true;
+  return groupKeys.some((k) => !collapsed.has(k));
+}
+
 interface SidebarProps {
   appName: string;
   searchPlaceholder: string;
@@ -527,13 +549,12 @@ export function Sidebar({
     [groups],
   );
 
-  /**
-   * True when at least one project group is expanded. Search overrides
-   * per-group collapse, so during search every group is treated as expanded.
-   */
-  const anyGroupExpanded =
-    allGroupKeys.length > 0 &&
-    (searching || allGroupKeys.some((k) => !collapsedGroups.has(k)));
+  /** Shared render + click predicate (see anyGroupExpandedState). */
+  const anyGroupExpanded = anyGroupExpandedState(
+    allGroupKeys,
+    collapsedGroups,
+    searching,
+  );
 
   /**
    * ALL PROJECTS header: if any group is expanded → collapse every group
@@ -542,7 +563,13 @@ export function Sidebar({
    */
   const toggleCollapseAll = () => {
     setCollapsedGroups((prev) => {
-      const anyExpanded = allGroupKeys.some((k) => !prev.has(k));
+      // Same predicate as aria-expanded / title — never branch on a second
+      // copy that omits `searching` (that cleared the set mid-search).
+      const anyExpanded = anyGroupExpandedState(
+        allGroupKeys,
+        prev,
+        searching,
+      );
       const next = anyExpanded
         ? (() => {
             const s = new Set(prev);
