@@ -22,6 +22,9 @@ function thread(
     archived: partial.archived ?? false,
     settledOverride: partial.settledOverride ?? null,
     settledAt: partial.settledAt ?? null,
+    pinnedAt: partial.pinnedAt ?? null,
+    snoozedUntil: partial.snoozedUntil ?? null,
+    snoozedAt: partial.snoozedAt ?? null,
     lastVisitedAt:
       partial.lastVisitedAt !== undefined
         ? partial.lastVisitedAt

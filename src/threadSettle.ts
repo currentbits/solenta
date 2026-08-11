@@ -38,6 +38,12 @@ export function effectiveSettled(
   // the thing the user is watching; backend refuses settle while working too.
   if (thread.status === "working") return false;
 
+  // Round 44: a pin NEVER auto-settles (t3). pinnedAt is the pin clock;
+  // mutual exclusion with settle is enforced by setPinned/setSettled.
+  if (thread.pinnedAt != null && Number.isFinite(thread.pinnedAt)) {
+    return false;
+  }
+
   // Explicit pin into the fold (manual settle, or a prior auto that the user
   // has not undone). Beats PR and inactivity so a deliberate settle sticks.
   if (thread.settledOverride === "settled") return true;

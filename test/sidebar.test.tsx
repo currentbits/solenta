@@ -61,6 +61,9 @@ function thread(over: Partial<ThreadInfo> & Pick<ThreadInfo, "id">): ThreadInfo 
     archived: false,
     settledOverride: null,
     settledAt: null,
+    pinnedAt: null,
+    snoozedUntil: null,
+    snoozedAt: null,
     lastVisitedAt:
       over.lastVisitedAt !== undefined ? over.lastVisitedAt : updatedAt,
     prState: null,

@@ -97,6 +97,12 @@ export interface UseCoderResult {
     threadId: string,
     override: "settled" | "active" | null,
   ) => Promise<void>;
+  /** Pin or unpin a thread (sidebar hover). Does not require selection. */
+  setPinned: (threadId: string, pinned: boolean) => Promise<void>;
+  /**
+   * Snooze until an epoch ms, or clear with null. Does not require selection.
+   */
+  setSnoozed: (threadId: string, until: number | null) => Promise<void>;
   /** Permanently delete the selected thread (after caller confirms). */
   deleteThread: () => Promise<void>;
   /**
@@ -598,6 +604,46 @@ export function useCoder(): UseCoderResult {
     [api, applyThreads],
   );
 
+  const setPinned = useCallback(
+    async (threadId: string, pinned: boolean) => {
+      try {
+        const thread = await api.threads.setPinned({ threadId, pinned });
+        applyThreads(
+          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
+        );
+        setDetail((prev) =>
+          prev && prev.thread.id === thread.id
+            ? { ...prev, thread }
+            : prev,
+        );
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+      }
+    },
+    [api, applyThreads],
+  );
+
+  const setSnoozed = useCallback(
+    async (threadId: string, until: number | null) => {
+      try {
+        const thread = await api.threads.setSnoozed({ threadId, until });
+        applyThreads(
+          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
+        );
+        setDetail((prev) =>
+          prev && prev.thread.id === thread.id
+            ? { ...prev, thread }
+            : prev,
+        );
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+      }
+    },
+    [api, applyThreads],
+  );
+
   const deleteThread = useCallback(async () => {
     if (!selectedThreadId) return;
     const threadId = selectedThreadId;
@@ -862,6 +908,8 @@ export function useCoder(): UseCoderResult {
     setReasoningEffort,
     setArchived,
     setSettled,
+    setPinned,
+    setSnoozed,
     deleteThread,
     removeProject,
     setupWorktree,
