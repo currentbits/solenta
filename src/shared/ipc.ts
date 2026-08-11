@@ -302,6 +302,15 @@ export interface WorkflowTemplateInfo {
 export interface AppSettings {
   /** Hard daily spend cap across all providers; null = no cap. */
   dailyBudgetUsd: number | null;
+  /**
+   * Days of silence before a quiet thread auto-settles (t3's window).
+   * null disables the inactivity path entirely — threads then settle only
+   * via PR state or an explicit settle. Positive integer when set. The
+   * renderer's default when this is absent/undefined stays
+   * AUTO_SETTLE_AFTER_DAYS (3): the setting overrides the constant, it
+   * does not replace it.
+   */
+  autoSettleAfterDays: number | null;
 }
 
 export interface AppStatus {
