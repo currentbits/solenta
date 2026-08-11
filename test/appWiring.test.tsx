@@ -513,29 +513,38 @@ describe("App remove-project wiring (round 41)", () => {
 
 
 describe("App selection stamps lastVisitedAt (round 43 unread)", () => {
-  it("clears the unread dot after a selection round-trip through fakeCoder", async () => {
-    // Unread mid-list; boot selects first (visited), so unread is neither index 0
-    // nor the selected thread (fixture discipline).
+  /**
+   * Round-trip pin (reviewer B1): asserting the dot vanishes while the thread
+   * is ACTIVE only re-proves the !active render rule — a neutered fake stamp
+   * (R7) or a deleted useCoder list-merge (R8) still "pass". Force the row
+   * off the selection first, then require the stamp to still hold.
+   */
+  it("keeps the unread dot gone after select → select-elsewhere (real stamp + list merge)", async () => {
+    // Fixture discipline: unread is neither index 0 nor the boot-selected thread.
+    const t0 = Date.now();
     const visited = thread({
       id: "t-open",
       title: "already open",
       projectId: "p1",
-      updatedAt: Date.now(),
-      lastVisitedAt: Date.now(),
+      updatedAt: t0,
+      lastVisitedAt: t0,
     });
+    // Activity in the PAST so a real Date.now() stamp can catch up to it.
+    // (A future updatedAt would stay unread forever and hide stamp failures.)
+    const unreadVisitedAt = t0 - 60_000;
     const unread = thread({
       id: "t-unread-mid",
       title: "needs a look",
       projectId: "p1",
-      updatedAt: Date.now() + 5_000,
-      lastVisitedAt: Date.now() - 60_000,
+      updatedAt: t0 - 1_000,
+      lastVisitedAt: unreadVisitedAt,
     });
     const keeper = thread({
       id: "t-keeper",
       title: "quiet peer",
       projectId: "p1",
-      updatedAt: Date.now() - 1_000,
-      lastVisitedAt: Date.now() - 1_000,
+      updatedAt: t0 - 2_000,
+      lastVisitedAt: t0 - 2_000,
     });
     const fake = createFakeCoder({
       projects: [project({ id: "p1" })],
@@ -547,35 +556,94 @@ describe("App selection stamps lastVisitedAt (round 43 unread)", () => {
       },
     });
     const m = await boot(fake);
-    await m.flush();
+    try {
+      await m.flush();
 
-    assert.ok(
-      m.query('[data-unread-dot="t-unread-mid"]'),
-      "before select: unread mid must show a dot",
-    );
+      assert.ok(
+        m.query('[data-unread-dot="t-unread-mid"]'),
+        "before select: unread mid must show a dot",
+      );
+      // Project header counts the one unread attention row.
+      const headerBefore = m
+        .queryAll("button")
+        .find((b) => (b.textContent || "").includes("owner/repo"));
+      assert.ok(
+        (headerBefore?.textContent || "").includes("1 unread"),
+        `header must count 1 unread before visit, got: ${headerBefore?.textContent}`,
+      );
 
-    const select = m.query(
-      'button[aria-label="Select thread: needs a look, unread"]',
-    );
-    assert.ok(select, "unread card select control must exist");
-    await m.click(select as HTMLElement);
-    await m.flush();
-    // Let the threads.get promise settle and applyThreads re-render.
-    await inAct(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    await m.flush();
+      // Prefer data-thread-card select (stable under aria-label churn).
+      const unreadCard = m.query('[data-thread-card="t-unread-mid"]');
+      assert.ok(unreadCard, "unread card must render");
+      const selectUnread =
+        unreadCard!.querySelector("button.cardSelect, button") ??
+        m.query('button[aria-label="Select thread: needs a look, unread"]');
+      assert.ok(selectUnread, "unread card select control must exist");
+      await m.click(selectUnread as HTMLElement);
+      await m.flush();
+      await inAct(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      await m.flush();
 
-    assert.ok(
-      fake.of("threads.get").some((c) => c.args[0] === "t-unread-mid"),
-      "select must call threads.get for the unread thread",
-    );
-    assert.equal(
-      m.query('[data-unread-dot="t-unread-mid"]'),
-      null,
-      "after select round-trip: stamp clears the unread dot",
-    );
-    m.unmount();
+      assert.ok(
+        fake.of("threads.get").some((c) => c.args[0] === "t-unread-mid"),
+        "select must call threads.get for the unread thread",
+      );
+
+      // Critical: leave the thread so !active no longer hides the dot for free.
+      const keeperCard = m.query('[data-thread-card="t-keeper"]');
+      assert.ok(keeperCard, "keeper card must render");
+      const selectKeeper =
+        keeperCard!.querySelector("button") ??
+        m.query('button[aria-label="Select thread: quiet peer"]');
+      assert.ok(selectKeeper, "keeper select control must exist");
+      await m.click(selectKeeper as HTMLElement);
+      await m.flush();
+      await inAct(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      await m.flush();
+
+      // Boolean form: assert.equal(el, null) hangs serialising a live DOM node.
+      assert.equal(
+        m.query('[data-unread-dot="t-unread-mid"]') != null,
+        false,
+        "after select → select-elsewhere: only a real stamp+merge keeps the dot gone",
+      );
+      assert.equal(
+        m
+          .query('[data-thread-card="t-unread-mid"]')
+          ?.getAttribute("data-unread") ?? null,
+        null,
+        "row must not remain data-unread once visited and deselected",
+      );
+
+      // Fake state must show lastVisitedAt advanced (dies if get is a passthrough).
+      const listed = await fake.api.threads.list();
+      const mid = listed.find((t) => t.id === "t-unread-mid");
+      assert.ok(mid, "list must still carry t-unread-mid");
+      assert.ok(
+        mid!.lastVisitedAt != null && mid!.lastVisitedAt > unreadVisitedAt,
+        `fake must stamp lastVisitedAt past the pre-visit value, got ${mid!.lastVisitedAt}`,
+      );
+      assert.ok(
+        mid!.lastVisitedAt! >= mid!.updatedAt,
+        "stamped visit must leave the row not-unread by the pure predicate",
+      );
+
+      // Header unread count must drop (0 → no "unread" fragment).
+      const headerAfter = m
+        .queryAll("button")
+        .find((b) => (b.textContent || "").includes("owner/repo"));
+      assert.ok(
+        !(headerAfter?.textContent || "").includes("unread"),
+        `header must drop unread after visit, got: ${headerAfter?.textContent}`,
+      );
+    } finally {
+      m.unmount();
+    }
   });
 });
