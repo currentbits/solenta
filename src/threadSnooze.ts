@@ -137,10 +137,17 @@ function formatWakeTime(until: number, now: number): string {
 /**
  * Snooze preset → epoch ms.
  *
- * Local calendar boundaries (t3): "This evening" is today 18:00 local, or
- * tomorrow 18:00 if that instant is already past. "Tomorrow morning" is the
- * next 09:00 local. "In 3 days" is now + 3×24h (same wall-clock offset).
- * `now` is injectable so tests pin the rollover edge without real time.
+ * Local calendar boundaries (t3):
+ * - "This evening": today 18:00 local, or tomorrow 18:00 if that instant is
+ *   already past (including exact 18:00:00.000 — `<=` so "now" is not future).
+ * - "Tomorrow morning": ALWAYS calendar-tomorrow 09:00 local. The label wins
+ *   over a "next 09:00" reading: at 07:00, next-09:00 would be only two hours
+ *   away, which is absurd for a control named "Tomorrow morning".
+ * - "In 3 days": now + 3×24h of elapsed time (not three calendar midnights).
+ *   Across a DST transition the wall-clock time of day can shift by an hour;
+ *   that is intentional for a fixed-duration snooze, not a calendar target.
+ *
+ * `now` is injectable so tests pin rollover edges without real time.
  */
 export function snoozePresetUntil(
   id: SnoozePresetId,
@@ -150,20 +157,19 @@ export function snoozePresetUntil(
   if (id === "this-evening") {
     const evening = new Date(d);
     evening.setHours(18, 0, 0, 0);
+    // Exact 18:00:00.000 is not strictly in the future — roll to tomorrow.
     if (evening.getTime() <= now) {
       evening.setDate(evening.getDate() + 1);
     }
     return evening.getTime();
   }
   if (id === "tomorrow-morning") {
-    // Next 09:00 local — today if still ahead, else tomorrow.
+    // Label wins: always calendar tomorrow 09:00, even before 09:00 today.
     const morning = new Date(d);
+    morning.setDate(morning.getDate() + 1);
     morning.setHours(9, 0, 0, 0);
-    if (morning.getTime() <= now) {
-      morning.setDate(morning.getDate() + 1);
-    }
     return morning.getTime();
   }
-  // in-3-days: same wall time + 3 days
+  // Fixed elapsed duration (3×24h), not three local midnights — see JSDoc.
   return now + 3 * 24 * 60 * 60 * 1000;
 }

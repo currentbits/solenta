@@ -572,6 +572,7 @@ export function SnoozedRow({
             aria-label="Clear snooze"
             title="Clear snooze"
             data-snooze-clear-btn={thread.id}
+            data-snooze-clear=""
             onClick={(e) => {
               e.stopPropagation();
               void onSetSnoozed(thread.id, null);
