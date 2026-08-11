@@ -156,6 +156,8 @@ function createThread(store, input) {
     settledOverride: null,
     settledAt: null,
     prState: null,
+    // Just-created is not unread: visit time matches creation.
+    lastVisitedAt: now,
     provider: "claude",
     model: null,
     sessionId: null,
@@ -526,17 +528,37 @@ function searchThreads(store, input) {
 }
 
 /**
+ * Full thread detail for the renderer.
+ *
+ * Selecting a thread is visiting it: when markVisited is true (default), stamp
+ * lastVisitedAt = Date.now() and persist WITHOUT bumping updatedAt (visiting is
+ * not activity; bumping would re-unread the thread and re-sort the sidebar).
+ *
+ * Callers (audit before changing stamp rules):
+ * - electron/ipc.js threads:get — user selection; markVisited true (default)
+ * - electron/runner.js pushDetail — background stream refresh; MUST pass
+ *   { markVisited: false } so a non-selected thread is never marked read
+ * - electron tests — default or explicit depending on the case under test
+ *
  * @param {import('./store').Store} store
  * @param {string} threadId
  * @param {object | null} [workflow]
+ * @param {{ markVisited?: boolean }} [opts]
  */
-function getThreadDetail(store, threadId, workflow = null) {
+function getThreadDetail(store, threadId, workflow = null, opts) {
+  const markVisited = !opts || opts.markVisited !== false;
   const thread = store.getThread(threadId);
   if (!thread) {
     throw new Error(`Unknown thread: ${threadId}`);
   }
+  if (markVisited) {
+    // No touch: visiting must not bump updatedAt.
+    store.updateThread(threadId, { lastVisitedAt: Date.now() });
+    store.save();
+  }
+  const current = store.getThread(threadId) || thread;
   return {
-    thread: { ...thread },
+    thread: { ...current },
     messages: store.getMessages(threadId).slice(),
     workLog: store.getWorkLog(threadId).slice(),
     workflow: workflow ?? null,

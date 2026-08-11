@@ -589,6 +589,10 @@ function seedThreads(projects: ProjectInfo[]): ThreadInfo[] {
     const updatedAt =
       card.status === "working" ? t0 - workingMs : t0 - ageMs;
     const isSimulate = card.id === mockData.activeThreadId;
+    const createdAt = t0 - ageMs - 60 * 60 * 1000;
+    // Most seeds look visited (lastVisitedAt >= updatedAt). ONE non-active
+    // thread is genuinely unread so dev mode demos the sidebar indicator.
+    const unreadDemo = card.id === "thread-2";
     return {
       id: card.id,
       projectId: project.id,
@@ -600,13 +604,14 @@ function seedThreads(projects: ProjectInfo[]): ThreadInfo[] {
           ? `https://github.com/${card.repoSlug}/pull/${card.prNumber}`
           : null,
       status: card.status,
-      createdAt: t0 - ageMs - 60 * 60 * 1000,
+      createdAt,
       updatedAt,
       runStartedAt: card.status === "working" ? t0 - workingMs : null,
       archived: false,
       settledOverride: null,
       settledAt: null,
       prState: card.prNumber != null ? "OPEN" : null,
+      lastVisitedAt: unreadDemo ? Math.min(createdAt, updatedAt - 1) : updatedAt,
       provider: isSimulate ? "simulate" : index % 3 === 0 ? "codex" : "claude",
       model: null,
       sessionId: isSimulate
@@ -1912,6 +1917,7 @@ function buildDevCoder(): CoderApi {
         return hits.slice(0, 50);
       },
       async create(input) {
+        const t0 = now();
         const t: ThreadInfo = {
           id: id("thread"),
           projectId: input.projectId,
@@ -1920,13 +1926,15 @@ function buildDevCoder(): CoderApi {
           prNumber: null,
           prUrl: null,
           status: "idle",
-          createdAt: now(),
-          updatedAt: now(),
+          createdAt: t0,
+          updatedAt: t0,
           runStartedAt: null,
           archived: false,
           settledOverride: null,
           settledAt: null,
           prState: null,
+          // Match electron createThread: just-created is not unread.
+          lastVisitedAt: t0,
           provider: "claude",
           model: null,
           sessionId: null,
@@ -1949,7 +1957,16 @@ function buildDevCoder(): CoderApi {
         const d = details.get(threadId);
         if (!d) throw new Error(`Thread not found: ${threadId}`);
         const row = threads.find((t) => t.id === threadId);
-        if (row) d.thread = { ...row };
+        // Selecting IS visiting (matches electron threads:get). Do not bump
+        // updatedAt — visiting is not activity.
+        const visitedAt = now();
+        if (row) {
+          row.lastVisitedAt = visitedAt;
+          d.thread = { ...row };
+          syncThreadRow(row);
+        } else {
+          d.thread = { ...d.thread, lastVisitedAt: visitedAt };
+        }
         return cloneDetail(d);
       },
       async setPermissionMode(input) {
