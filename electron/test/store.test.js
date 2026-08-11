@@ -49,6 +49,7 @@ describe("Store", () => {
       settledOverride: null,
       settledAt: null,
       prState: null,
+      lastVisitedAt: null,
       provider: "claude",
       model: null,
       sessionId: null,
@@ -134,6 +135,51 @@ describe("Store", () => {
     assert.equal(t.settledOverride, null);
     assert.equal(t.settledAt, null);
     assert.equal(t.prState, null);
+    assert.equal(t.lastVisitedAt, null);
+  });
+
+  it("migrates threads missing lastVisitedAt to null (not undefined)", () => {
+    const old = {
+      projects: [],
+      threads: [
+        {
+          id: "t-pre-visit",
+          projectId: "p1",
+          title: "Legacy",
+          branch: null,
+          prNumber: null,
+          prUrl: null,
+          status: "idle",
+          createdAt: 1,
+          updatedAt: 2,
+          provider: "claude",
+          model: null,
+          sessionId: null,
+          permissionMode: "default",
+          worktreePath: null,
+          runStartedAt: null,
+          archived: false,
+          settledOverride: null,
+          settledAt: null,
+          prState: null,
+          // lastVisitedAt deliberately absent
+        },
+      ],
+      messagesByThread: {},
+      workLogByThread: {},
+    };
+    fs.writeFileSync(filePath, JSON.stringify(old), "utf8");
+
+    const store = new Store(filePath);
+    const t = store.getThreads()[0];
+    assert.equal(t.lastVisitedAt, null);
+    assert.ok(
+      Object.prototype.hasOwnProperty.call(t, "lastVisitedAt"),
+      "lastVisitedAt key must exist after migration",
+    );
+    assert.notEqual(t.lastVisitedAt, undefined);
+    // Migration must not bump activity timestamp.
+    assert.equal(t.updatedAt, 2);
   });
 
   it("migrates threads missing settle fields to null (not undefined)", () => {
