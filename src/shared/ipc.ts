@@ -48,6 +48,14 @@ export interface ThreadInfo {
   /** Epoch ms when the current override was accepted; null without one. */
   settledAt: number | null;
   /**
+   * Epoch ms of the last time the user LOOKED at this thread. Stamped by the
+   * main process inside threads.get — selecting a thread IS visiting it; no
+   * separate markVisited channel. Unread = updatedAt > lastVisitedAt. Null on
+   * legacy threads (renderer treats null as visited-at-creation so old
+   * threads don't all light up on upgrade).
+   */
+  lastVisitedAt: number | null;
+  /**
    * Last KNOWN PR state, persisted whenever prStatus/createPr succeed.
    * Lazily refreshed (selecting the thread refreshes it); no background
    * polling — prStatus froze the main process once already. MERGED/CLOSED
