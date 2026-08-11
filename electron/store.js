@@ -45,7 +45,8 @@ const EMPTY = {
   usageByThread: {},
   workflowTemplates: [],
   spendByDay: {},
-  settings: { dailyBudgetUsd: null },
+  // autoSettleAfterDays defaults to 3 (AUTO_SETTLE_AFTER_DAYS); null = disabled.
+  settings: { dailyBudgetUsd: null, autoSettleAfterDays: 3 },
 };
 
 const SPEND_RETENTION_DAYS = 90;
@@ -83,14 +84,36 @@ function pruneSpendByDay(spendByDay, now = new Date()) {
 }
 
 /**
+ * Default inactivity window (days). Must match src/threadSettle.ts
+ * AUTO_SETTLE_AFTER_DAYS — old stores without the key heal here so null
+ * remains "user disabled" and is never confused with "never configured".
+ */
+const DEFAULT_AUTO_SETTLE_AFTER_DAYS = 3;
+
+/**
  * Normalize settings from disk.
+ *
+ * autoSettleAfterDays tri-state at the store boundary:
+ *   - key ABSENT on old stores → DEFAULT (3)  (contract: missing = constant)
+ *   - null                      → null         (user disabled inactivity path)
+ *   - positive integer          → kept
+ *   - junk on disk              → DEFAULT (3)  (heal; setSettings rejects junk)
+ *
+ * dailyBudgetUsd still collapses absent/junk → null (no-cap).
+ *
  * @param {unknown} raw
- * @returns {{ dailyBudgetUsd: number | null }}
+ * @returns {{ dailyBudgetUsd: number | null, autoSettleAfterDays: number | null }}
  */
 function normalizeSettings(raw) {
-  const settings = { dailyBudgetUsd: null };
+  const settings = {
+    dailyBudgetUsd: null,
+    autoSettleAfterDays: DEFAULT_AUTO_SETTLE_AFTER_DAYS,
+  };
   if (!raw || typeof raw !== "object") return settings;
-  const v = /** @type {{ dailyBudgetUsd?: unknown }} */ (raw).dailyBudgetUsd;
+  const obj = /** @type {{ dailyBudgetUsd?: unknown, autoSettleAfterDays?: unknown }} */ (
+    raw
+  );
+  const v = obj.dailyBudgetUsd;
   if (v === null || v === undefined) {
     settings.dailyBudgetUsd = null;
   } else if (typeof v === "number" && Number.isFinite(v) && v > 0) {
@@ -98,6 +121,24 @@ function normalizeSettings(raw) {
   } else {
     settings.dailyBudgetUsd = null;
   }
+
+  if (Object.prototype.hasOwnProperty.call(obj, "autoSettleAfterDays")) {
+    const d = obj.autoSettleAfterDays;
+    if (d === null) {
+      settings.autoSettleAfterDays = null;
+    } else if (
+      typeof d === "number" &&
+      Number.isFinite(d) &&
+      Number.isInteger(d) &&
+      d > 0
+    ) {
+      settings.autoSettleAfterDays = d;
+    } else {
+      // Junk on disk (string, 0, 1.5, NaN): heal to default, not null.
+      settings.autoSettleAfterDays = DEFAULT_AUTO_SETTLE_AFTER_DAYS;
+    }
+  }
+  // key absent → leave default 3
   return settings;
 }
 
@@ -433,30 +474,43 @@ class Store {
   }
 
   /**
-   * @returns {{ dailyBudgetUsd: number | null }}
+   * @returns {{ dailyBudgetUsd: number | null, autoSettleAfterDays: number | null }}
    */
   getSettings() {
     if (!this.data.settings || typeof this.data.settings !== "object") {
-      this.data.settings = { dailyBudgetUsd: null };
+      this.data.settings = {
+        dailyBudgetUsd: null,
+        autoSettleAfterDays: DEFAULT_AUTO_SETTLE_AFTER_DAYS,
+      };
     }
+    // Re-normalize so a partial in-memory shape still exposes both keys.
+    const n = normalizeSettings(this.data.settings);
+    this.data.settings = n;
     return {
-      dailyBudgetUsd:
-        this.data.settings.dailyBudgetUsd == null
-          ? null
-          : this.data.settings.dailyBudgetUsd,
+      dailyBudgetUsd: n.dailyBudgetUsd,
+      autoSettleAfterDays: n.autoSettleAfterDays,
     };
   }
 
   /**
    * Validate and merge settings. Does not touch threads.
    * Does not save; caller must save.
-   * @param {Partial<{ dailyBudgetUsd: number | null }>} patch
-   * @returns {{ dailyBudgetUsd: number | null }}
+   * @param {Partial<{ dailyBudgetUsd: number | null, autoSettleAfterDays: number | null }>} patch
+   * @returns {{ dailyBudgetUsd: number | null, autoSettleAfterDays: number | null }}
    */
   setSettings(patch) {
     if (!patch || typeof patch !== "object") {
       return this.getSettings();
     }
+    if (!this.data.settings || typeof this.data.settings !== "object") {
+      this.data.settings = {
+        dailyBudgetUsd: null,
+        autoSettleAfterDays: DEFAULT_AUTO_SETTLE_AFTER_DAYS,
+      };
+    }
+    // Ensure both keys exist before partial patch.
+    this.data.settings = normalizeSettings(this.data.settings);
+
     if (Object.prototype.hasOwnProperty.call(patch, "dailyBudgetUsd")) {
       const v = patch.dailyBudgetUsd;
       if (v !== null) {
@@ -466,10 +520,24 @@ class Store {
           );
         }
       }
-      if (!this.data.settings || typeof this.data.settings !== "object") {
-        this.data.settings = { dailyBudgetUsd: null };
-      }
       this.data.settings.dailyBudgetUsd = v === null ? null : v;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "autoSettleAfterDays")) {
+      const v = patch.autoSettleAfterDays;
+      if (v !== null) {
+        // Positive integer only (reject 0, negatives, fractions, NaN, strings).
+        if (
+          typeof v !== "number" ||
+          !Number.isFinite(v) ||
+          !Number.isInteger(v) ||
+          !(v > 0)
+        ) {
+          throw new Error(
+            `Auto-settle days must be a positive integer or null (got ${String(v)})`,
+          );
+        }
+      }
+      this.data.settings.autoSettleAfterDays = v === null ? null : v;
     }
     return this.getSettings();
   }
@@ -719,7 +787,8 @@ function cloneEmpty() {
     usageByThread: {},
     workflowTemplates: [],
     spendByDay: {},
-    settings: { dailyBudgetUsd: null },
+    // autoSettleAfterDays defaults to 3 (AUTO_SETTLE_AFTER_DAYS); null = disabled.
+  settings: { dailyBudgetUsd: null, autoSettleAfterDays: 3 },
   };
   ensureWorkflowTemplates(data);
   return data;
@@ -735,6 +804,7 @@ module.exports = {
   localDayKey,
   pruneSpendByDay,
   normalizeSettings,
+  DEFAULT_AUTO_SETTLE_AFTER_DAYS,
   normalizeSpendByDay,
   SPEND_RETENTION_DAYS,
 };

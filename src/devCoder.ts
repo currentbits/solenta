@@ -1357,6 +1357,8 @@ function buildDevCoder(): CoderApi {
   /** Aggregated cost of finished fake runs this session (stands in for "today"). */
   let spendTodayUsd = 0;
   let dailyBudgetUsd: number | null = null;
+  /** Default 3 = AUTO_SETTLE_AFTER_DAYS; null disables. */
+  let autoSettleAfterDays: number | null = 3;
   /** Shared-memory stub (always running in dev). */
   let memoryEntries: MemoryRow[] = seedMemoryEntries(now());
   /** Live PR state keyed by thread id (state can change after create). */
@@ -1505,6 +1507,28 @@ function buildDevCoder(): CoderApi {
     if (v === null) return null;
     if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) {
       throw new Error(SETTINGS_BUDGET_ERROR);
+    }
+    return v;
+  };
+
+  const SETTINGS_SETTLE_ERROR =
+    "Auto-settle days must be a positive integer or null";
+
+  const parseSettleDaysPatch = (
+    patch: Partial<AppSettings>,
+  ): number | null => {
+    if (!Object.prototype.hasOwnProperty.call(patch, "autoSettleAfterDays")) {
+      return autoSettleAfterDays;
+    }
+    const v = patch.autoSettleAfterDays;
+    if (v === null) return null;
+    if (
+      typeof v !== "number" ||
+      !Number.isFinite(v) ||
+      !Number.isInteger(v) ||
+      !(v > 0)
+    ) {
+      throw new Error(`${SETTINGS_SETTLE_ERROR} (got ${String(v)})`);
     }
     return v;
   };
@@ -1742,11 +1766,12 @@ function buildDevCoder(): CoderApi {
     },
     settings: {
       async get(): Promise<AppSettings> {
-        return { dailyBudgetUsd };
+        return { dailyBudgetUsd, autoSettleAfterDays };
       },
       async set(patch: Partial<AppSettings>): Promise<AppSettings> {
         dailyBudgetUsd = parseBudgetPatch(patch);
-        return { dailyBudgetUsd };
+        autoSettleAfterDays = parseSettleDaysPatch(patch);
+        return { dailyBudgetUsd, autoSettleAfterDays };
       },
     },
     providers: {

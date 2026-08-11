@@ -102,6 +102,12 @@ interface SidebarProps {
   /** Daily budget cap; null = no cap. */
   dailyBudgetUsd?: number | null;
   /**
+   * Auto-settle window (days). undefined = settings still loading → use
+   * AUTO_SETTLE_AFTER_DAYS constant. null = loaded and user disabled.
+   * positive integer = override.
+   */
+  autoSettleAfterDays?: number | null;
+  /**
    * Full-content thread search (titles + message text). Called only for
    * queries of 2+ chars after debounce; empty / 1-char stays local.
    */
@@ -603,6 +609,7 @@ export function Sidebar({
   onOpenSettings,
   spendTodayUsd = null,
   dailyBudgetUsd = null,
+  autoSettleAfterDays,
   searchThreads,
   onSetSettled,
   onSetPinned,
@@ -638,9 +645,19 @@ export function Sidebar({
   );
   /** Snoozed shelf open state (session-only, collapsed by default like settled). */
   const [snoozedOpen, setSnoozedOpen] = useState(false);
+  /**
+   * Contract: null disables inactivity settle; while settings are still
+   * loading (prop undefined) fall back to AUTO_SETTLE_AFTER_DAYS (3).
+   */
   const settleOpts = useMemo(
-    () => ({ now, autoSettleAfterDays: AUTO_SETTLE_AFTER_DAYS }),
-    [now],
+    () => ({
+      now,
+      autoSettleAfterDays:
+        autoSettleAfterDays === undefined
+          ? AUTO_SETTLE_AFTER_DAYS
+          : autoSettleAfterDays,
+    }),
+    [now, autoSettleAfterDays],
   );
   /** Full-content search results; null means not in active search mode. */
   const [searchResults, setSearchResults] = useState<ThreadInfo[] | null>(null);

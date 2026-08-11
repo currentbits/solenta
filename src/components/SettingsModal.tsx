@@ -6,7 +6,7 @@ import styles from "./SettingsModal.module.css";
 interface SettingsModalProps {
   open: boolean;
   onClose: () => void;
-  /** Current settings (dailyBudgetUsd). */
+  /** Current settings (budget + auto-settle window). */
   settings: AppSettings | null;
   /** Live app status for the memory section. */
   status: AppStatus | null;
@@ -14,6 +14,12 @@ interface SettingsModalProps {
 }
 
 function budgetToInput(value: number | null | undefined): string {
+  if (value == null) return "";
+  return String(value);
+}
+
+function settleDaysToInput(value: number | null | undefined): string {
+  // null = Never (empty). undefined while loading → treat as empty draft.
   if (value == null) return "";
   return String(value);
 }
@@ -26,6 +32,7 @@ export function SettingsModal({
   onSaveSettings,
 }: SettingsModalProps) {
   const [budgetText, setBudgetText] = useState("");
+  const [settleDaysText, setSettleDaysText] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const wasOpen = useRef(false);
@@ -40,10 +47,11 @@ export function SettingsModal({
     if (wasOpen.current) return;
     wasOpen.current = true;
     setBudgetText(budgetToInput(settings?.dailyBudgetUsd ?? null));
+    setSettleDaysText(settleDaysToInput(settings?.autoSettleAfterDays ?? null));
     setError(null);
     setSaving(false);
     savingRef.current = false;
-  }, [open, settings?.dailyBudgetUsd]);
+  }, [open, settings?.dailyBudgetUsd, settings?.autoSettleAfterDays]);
 
   const handleClose = useCallback(() => {
     onClose();
@@ -59,14 +67,23 @@ export function SettingsModal({
     setSaving(true);
     setError(null);
     try {
-      const raw = budgetText.trim();
+      const budgetRaw = budgetText.trim();
       // Empty = no cap. Otherwise pass the parsed number through and let the
-      // backend reject with its validation string (electron/services.js /
-      // devCoder: "Daily budget must be a positive number or null").
+      // backend reject with its validation string.
       const dailyBudgetUsd: number | null =
-        raw === "" ? null : Number(raw);
-      const saved = await onSaveSettings({ dailyBudgetUsd });
+        budgetRaw === "" ? null : Number(budgetRaw);
+
+      const settleRaw = settleDaysText.trim();
+      // Empty = Never (null disables inactivity settle). Otherwise parse.
+      const autoSettleAfterDays: number | null =
+        settleRaw === "" ? null : Number(settleRaw);
+
+      const saved = await onSaveSettings({
+        dailyBudgetUsd,
+        autoSettleAfterDays,
+      });
       setBudgetText(budgetToInput(saved.dailyBudgetUsd));
+      setSettleDaysText(settleDaysToInput(saved.autoSettleAfterDays));
     } catch (err) {
       const msg =
         err instanceof Error && err.message
@@ -89,6 +106,20 @@ export function SettingsModal({
         Number.isFinite(next) &&
         next === current &&
         budgetText.trim() !== "");
+    if (same && error == null) return;
+    void save();
+  };
+
+  const onBlurSettleDays = () => {
+    const current = settings?.autoSettleAfterDays ?? null;
+    const next =
+      settleDaysText.trim() === "" ? null : Number(settleDaysText.trim());
+    const same =
+      (current == null && (settleDaysText.trim() === "" || next === null)) ||
+      (current != null &&
+        Number.isFinite(next) &&
+        next === current &&
+        settleDaysText.trim() !== "");
     if (same && error == null) return;
     void save();
   };
@@ -172,6 +203,53 @@ export function SettingsModal({
                   {error}
                 </p>
               )}
+            </div>
+          </section>
+
+          <section className={styles.section}>
+            <h3 className={styles.sectionLabel}>Sidebar</h3>
+            <div className={styles.field}>
+              <label className={styles.fieldLabel} htmlFor="auto-settle-days">
+                Auto-settle quiet threads after
+              </label>
+              <div className={styles.fieldRow}>
+                <input
+                  id="auto-settle-days"
+                  className={styles.input}
+                  type="number"
+                  inputMode="numeric"
+                  min="1"
+                  step="1"
+                  placeholder="Never"
+                  value={settleDaysText}
+                  disabled={saving}
+                  data-auto-settle-days=""
+                  onChange={(e) => {
+                    setSettleDaysText(e.target.value);
+                    setError(null);
+                  }}
+                  onBlur={() => onBlurSettleDays()}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      void save();
+                    }
+                  }}
+                />
+                <span className={styles.note}>days</span>
+                <button
+                  type="button"
+                  className={`${styles.btn} ${styles.btnPrimary}`}
+                  disabled={saving}
+                  onClick={() => void save()}
+                >
+                  {saving ? "Saving…" : "Save"}
+                </button>
+              </div>
+              <p className={styles.note}>
+                Empty means Never — quiet threads only settle via PR state or
+                an explicit settle.
+              </p>
             </div>
           </section>
 

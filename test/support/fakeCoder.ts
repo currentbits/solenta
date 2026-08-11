@@ -141,6 +141,11 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
   const workflows = opts.workflows ?? [];
   const details = opts.details ?? {};
   const fail = opts.fail ?? {};
+  let settingsState: AppSettings = {
+    dailyBudgetUsd: null,
+    autoSettleAfterDays: 3,
+    ...(opts.settings ?? {}),
+  };
 
   const threadSubs: Array<(t: ThreadInfo[]) => void> = [];
   const detailSubs: Array<(d: ThreadDetail) => void> = [];
@@ -193,13 +198,49 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       remove: (input: unknown) => rec("memory.remove", [input], undefined),
     },
     settings: {
-      get: () =>
-        rec("settings.get", [], opts.settings ?? ({ dailyBudgetUsd: null } as AppSettings)),
-      set: (patch: unknown) =>
-        rec("settings.set", [patch], {
-          ...(opts.settings ?? { dailyBudgetUsd: null }),
-          ...(patch as object),
-        } as AppSettings),
+      get: () => rec("settings.get", [], { ...settingsState }),
+      /**
+       * Honest settings.set: validate like electron/store.setSettings so
+       * round-trip modal tests cannot pass against a silent merge.
+       */
+      set: (patch: unknown) => {
+        const p = (patch ?? {}) as Partial<AppSettings>;
+        const next: AppSettings = { ...settingsState };
+        if (Object.prototype.hasOwnProperty.call(p, "dailyBudgetUsd")) {
+          const v = p.dailyBudgetUsd;
+          if (v !== null && v !== undefined) {
+            if (typeof v !== "number" || !Number.isFinite(v) || !(v > 0)) {
+              calls.push({ channel: "settings.set", args: [patch] });
+              return Promise.reject(
+                new Error("Daily budget must be a positive number or null"),
+              );
+            }
+          }
+          next.dailyBudgetUsd = v === null || v === undefined ? null : v;
+        }
+        if (Object.prototype.hasOwnProperty.call(p, "autoSettleAfterDays")) {
+          const v = p.autoSettleAfterDays;
+          if (v !== null && v !== undefined) {
+            if (
+              typeof v !== "number" ||
+              !Number.isFinite(v) ||
+              !Number.isInteger(v) ||
+              !(v > 0)
+            ) {
+              calls.push({ channel: "settings.set", args: [patch] });
+              return Promise.reject(
+                new Error(
+                  `Auto-settle days must be a positive integer or null (got ${String(v)})`,
+                ),
+              );
+            }
+          }
+          next.autoSettleAfterDays =
+            v === null || v === undefined ? null : v;
+        }
+        settingsState = next;
+        return rec("settings.set", [patch], { ...settingsState });
+      },
     },
     providers: { list: () => rec("providers.list", [], providers) },
     workflows: {

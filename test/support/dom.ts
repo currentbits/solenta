@@ -228,12 +228,13 @@ export async function mount(element: ReactElement): Promise<Mounted> {
           : dom.window.HTMLInputElement.prototype;
       const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
       // React caches the last value on the node and skips onChange when it
-      // sees no change. The native setter alone is not enough: clear the
-      // tracker's cached value first, or a value set here looks unchanged.
+      // sees no change. Seed the tracker with the CURRENT value so the new
+      // value is a real change — seeding with "" then typing "" never fires
+      // onChange (breaks clear-to-empty fields like "Never").
       const tracked = node as unknown as {
         _valueTracker?: { setValue(v: string): void };
       };
-      tracked._valueTracker?.setValue("");
+      tracked._valueTracker?.setValue(node.value);
       await act(async () => {
         setter?.call(node, value);
         // React tracks the last value on the node and only fires onChange when
