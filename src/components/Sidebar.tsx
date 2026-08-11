@@ -18,7 +18,14 @@ import {
   effectiveSettled,
   resolveSettledTimestamp,
 } from "../threadSettle";
+import {
+  SNOOZE_PRESETS,
+  formatSnoozeWakeLabel,
+  isPinned,
+  snoozePresetUntil,
+} from "../threadSnooze";
 import { countUnread, isUnread } from "../threadUnread";
+import { useEscapeClose } from "../useEscapeClose";
 import styles from "./Sidebar.module.css";
 
 const TICK_MS = 5000;
@@ -107,6 +114,8 @@ interface SidebarProps {
     threadId: string,
     override: "settled" | "active",
   ) => void | Promise<void>;
+  onSetPinned?: (threadId: string, pinned: boolean) => void | Promise<void>;
+  onSetSnoozed?: (threadId: string, until: number | null) => void | Promise<void>;
 }
 
 function formatUsd(n: number): string {
@@ -187,6 +196,10 @@ export function ThreadCard({
   contentMatch,
   isSettled = false,
   onSetSettled,
+  onSetPinned,
+  onSetSnoozed,
+  snoozeMenuOpen = false,
+  onToggleSnoozeMenu,
 }: {
   thread: ThreadInfo;
   slug: string;
@@ -194,14 +207,16 @@ export function ThreadCard({
   active: boolean;
   now: number;
   onSelect: (id: string) => void;
-  /** True when hit is on message text, not title (search mode only). */
   contentMatch?: boolean;
-  /** Whether this card is currently settled (drives unsettle pin). */
   isSettled?: boolean;
   onSetSettled?: (
     threadId: string,
     override: "settled" | "active",
   ) => void | Promise<void>;
+  onSetPinned?: (threadId: string, pinned: boolean) => void | Promise<void>;
+  onSetSnoozed?: (threadId: string, until: number | null) => void | Promise<void>;
+  snoozeMenuOpen?: boolean;
+  onToggleSnoozeMenu?: (threadId: string | null) => void;
 }) {
   const branch = thread.branch ?? "";
   const prBadge = sidebarPrBadge({
@@ -294,25 +309,103 @@ export function ThreadCard({
           <StatusBadge thread={thread} now={now} />
         </div>
       </div>
-      {onSetSettled && (
-        <div className={styles.cardActions}>
-          <button
-            type="button"
-            className={styles.settleBtn}
-            aria-label={settleLabel}
-            title={
-              working
-                ? "Cannot settle while a run is active"
-                : settleLabel
-            }
-            disabled={working}
-            onClick={(e) => {
-              e.stopPropagation();
-              void onSetSettled(thread.id, settleOverride);
-            }}
-          >
-            {isSettled ? "↑" : "↓"}
-          </button>
+      {(onSetSettled || onSetPinned || onSetSnoozed) && (
+        <div className={styles.cardActions} data-card-actions="">
+          {onSetPinned && (
+            <button
+              type="button"
+              className={styles.settleBtn}
+              aria-label={isPinned(thread) ? "Unpin thread" : "Pin thread"}
+              title={isPinned(thread) ? "Unpin thread" : "Pin thread"}
+              data-pin-btn={thread.id}
+              onClick={(e) => {
+                e.stopPropagation();
+                void onSetPinned(thread.id, !isPinned(thread));
+              }}
+            >
+              {isPinned(thread) ? "★" : "☆"}
+            </button>
+          )}
+          {onSetSnoozed && (
+            <div className={styles.snoozeWrap}>
+              <button
+                type="button"
+                className={styles.settleBtn}
+                aria-label="Snooze thread"
+                title="Snooze thread"
+                aria-haspopup="menu"
+                aria-expanded={snoozeMenuOpen}
+                data-snooze-btn={thread.id}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onToggleSnoozeMenu?.(snoozeMenuOpen ? null : thread.id);
+                }}
+              >
+                zzz
+              </button>
+              {snoozeMenuOpen && (
+                <div
+                  className={styles.snoozeMenu}
+                  role="menu"
+                  data-snooze-menu={thread.id}
+                >
+                  {SNOOZE_PRESETS.map((p) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      className={styles.snoozeMenuItem}
+                      role="menuitem"
+                      data-snooze-preset={p.id}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void onSetSnoozed(
+                          thread.id,
+                          snoozePresetUntil(p.id, now),
+                        );
+                        onToggleSnoozeMenu?.(null);
+                      }}
+                    >
+                      {p.label}
+                    </button>
+                  ))}
+                  {thread.snoozedUntil != null && (
+                    <button
+                      type="button"
+                      className={styles.snoozeMenuItem}
+                      role="menuitem"
+                      data-snooze-clear=""
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void onSetSnoozed(thread.id, null);
+                        onToggleSnoozeMenu?.(null);
+                      }}
+                    >
+                      Clear snooze
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+          {onSetSettled && (
+            <button
+              type="button"
+              className={styles.settleBtn}
+              aria-label={settleLabel}
+              title={
+                working
+                  ? "Cannot settle while a run is active"
+                  : settleLabel
+              }
+              disabled={working}
+              onClick={(e) => {
+                e.stopPropagation();
+                void onSetSettled(thread.id, settleOverride);
+              }}
+            >
+              {isSettled ? "↑" : "↓"}
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -331,6 +424,8 @@ export function SettledRow({
   now,
   onSelect,
   onSetSettled,
+  pinMode = false,
+  onSetPinned,
 }: {
   thread: ThreadInfo;
   slug: string;
@@ -341,8 +436,13 @@ export function SettledRow({
     threadId: string,
     override: "settled" | "active",
   ) => void | Promise<void>;
+  /** When true, this is a PINNED shelf row (unpin hover, not keep-active). */
+  pinMode?: boolean;
+  onSetPinned?: (threadId: string, pinned: boolean) => void | Promise<void>;
 }) {
-  const wrapUpAt = resolveSettledTimestamp(thread);
+  const wrapUpAt = pinMode
+    ? (thread.pinnedAt ?? thread.updatedAt)
+    : resolveSettledTimestamp(thread);
   // Settled can still be unread (activity after last visit, then auto-settled).
   const showUnread = !active && isUnread(thread);
   const selectLabel = showUnread
@@ -352,7 +452,8 @@ export function SettledRow({
     <div
       className={styles.settledRow}
       data-thread-card={thread.id}
-      data-settled="true"
+      data-settled={pinMode ? undefined : "true"}
+      data-pinned={pinMode ? "true" : undefined}
       data-active={active}
       data-unread={showUnread ? "true" : undefined}
     >
@@ -377,7 +478,23 @@ export function SettledRow({
           {formatRelativeAge(wrapUpAt, now)}
         </span>
       </div>
-      {onSetSettled && (
+      {pinMode && onSetPinned ? (
+        <div className={styles.cardActions}>
+          <button
+            type="button"
+            className={styles.settleBtn}
+            aria-label="Unpin thread"
+            title="Unpin thread"
+            data-unpin-btn={thread.id}
+            onClick={(e) => {
+              e.stopPropagation();
+              void onSetPinned(thread.id, false);
+            }}
+          >
+            ★
+          </button>
+        </div>
+      ) : onSetSettled ? (
         <div className={styles.cardActions}>
           <button
             type="button"
@@ -390,6 +507,77 @@ export function SettledRow({
             }}
           >
             ↑
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** Slim snoozed shelf row: title + slug + wake label (shared formatter). */
+export function SnoozedRow({
+  thread,
+  slug,
+  active,
+  now,
+  onSelect,
+  onSetSnoozed,
+}: {
+  thread: ThreadInfo;
+  slug: string;
+  active: boolean;
+  now: number;
+  onSelect: (id: string) => void;
+  onSetSnoozed?: (threadId: string, until: number | null) => void | Promise<void>;
+}) {
+  const showUnread = !active && isUnread(thread);
+  const wake = formatSnoozeWakeLabel(thread, now);
+  const selectLabel = showUnread
+    ? `Select thread: ${thread.title}, unread`
+    : `Select thread: ${thread.title}`;
+  return (
+    <div
+      className={styles.settledRow}
+      data-thread-card={thread.id}
+      data-snoozed="true"
+      data-active={active}
+      data-unread={showUnread ? "true" : undefined}
+    >
+      <button
+        type="button"
+        className={styles.cardSelect}
+        onClick={() => onSelect(thread.id)}
+        aria-label={selectLabel}
+      />
+      <div className={styles.settledBody}>
+        {showUnread && (
+          <span
+            className={styles.unreadDot}
+            data-unread-dot={thread.id}
+            aria-hidden="true"
+          />
+        )}
+        {showUnread && <span className={styles.srOnly}>unread</span>}
+        <span className={styles.settledTitle}>{thread.title}</span>
+        <span className={styles.settledSlug}>{slug}</span>
+        <span className={styles.settledAge} data-wake-label={thread.id}>
+          {wake}
+        </span>
+      </div>
+      {onSetSnoozed && (
+        <div className={styles.cardActions}>
+          <button
+            type="button"
+            className={styles.settleBtn}
+            aria-label="Clear snooze"
+            title="Clear snooze"
+            data-snooze-clear-btn={thread.id}
+            onClick={(e) => {
+              e.stopPropagation();
+              void onSetSnoozed(thread.id, null);
+            }}
+          >
+            wake
           </button>
         </div>
       )}
@@ -416,9 +604,14 @@ export function Sidebar({
   dailyBudgetUsd = null,
   searchThreads,
   onSetSettled,
+  onSetPinned,
+  onSetSnoozed,
 }: SidebarProps) {
   const [query, setQuery] = useState("");
   const [now, setNow] = useState(() => Date.now());
+  /** Which thread's snooze preset menu is open (one at a time). */
+  const [snoozeMenuFor, setSnoozeMenuFor] = useState<string | null>(null);
+  useEscapeClose(snoozeMenuFor != null, () => setSnoozeMenuFor(null));
   /**
    * Project pending the destructive remove confirm. Confirm is a dialog, not
    * an archive-style undo toast: history deletion is irreversible.
@@ -442,6 +635,8 @@ export function Sidebar({
   const [settledVisibleCount, setSettledVisibleCount] = useState(
     SETTLED_TAIL_INITIAL_COUNT,
   );
+  /** Snoozed shelf open state (session-only, collapsed by default like settled). */
+  const [snoozedOpen, setSnoozedOpen] = useState(false);
   const settleOpts = useMemo(
     () => ({ now, autoSettleAfterDays: AUTO_SETTLE_AFTER_DAYS }),
     [now],
@@ -532,16 +727,20 @@ export function Sidebar({
     return searchResults.map((t) => liveById.get(t.id) ?? t);
   }, [searching, searchResults, threads, liveById]);
 
-  const { settled: globalSettled } = useMemo(
+  const {
+    pinned: globalPinned,
+    attentionThreads,
+    snoozed: globalSnoozed,
+    settled: globalSettled,
+  } = useMemo(
     () => partitionSidebar(displayThreads, settleOpts),
     [displayThreads, settleOpts],
   );
 
   /**
    * Project groups for the main list.
-   * Normal view: only attention + archived (settled pulled into the global tail).
-   * Search: full hit list including settled, so settled hits surface inline
-   * and never hide behind a collapsed tail.
+   * Normal view: attention + archived only (pin/snooze/settled pulled out).
+   * Search: full hit list including shelves, so hits surface inline.
    */
   const groups = useMemo(() => {
     if (searching) {
@@ -550,12 +749,12 @@ export function Sidebar({
       );
       return buildSidebarGroups(projectsWithHits, displayThreads);
     }
-    // Non-search: feed groups attention + archived only (drop settled).
+    const attentionIds = new Set(attentionThreads.map((t) => t.id));
     const forGroups = displayThreads.filter(
-      (t) => t.archived || !effectiveSettled(t, settleOpts),
+      (t) => t.archived || attentionIds.has(t.id),
     );
     return buildSidebarGroups(projects, forGroups);
-  }, [projects, displayThreads, searching, settleOpts]);
+  }, [projects, displayThreads, searching, attentionThreads]);
 
   const toggleCollapsed = (groupKey: string) => {
     setCollapsedGroups((prev) => {
@@ -644,12 +843,18 @@ export function Sidebar({
     searchResults != null &&
     searchResults.length === 0;
 
-  // Carve-out: the open thread must never vanish behind the collapsed shelf.
+  // Carve-out: the open thread must never vanish behind a collapsed shelf.
   const selectedSettled =
     !searching &&
     !settledTailOpen &&
     activeThreadId != null
       ? globalSettled.find((t) => t.id === activeThreadId) ?? null
+      : null;
+  const selectedSnoozed =
+    !searching &&
+    !snoozedOpen &&
+    activeThreadId != null
+      ? globalSnoozed.find((t) => t.id === activeThreadId) ?? null
       : null;
 
   const visibleSettled = settledTailOpen
@@ -739,6 +944,28 @@ export function Sidebar({
 
         {projects.length > 0 && searchEmpty && (
           <p className={styles.emptySearch}>No threads match</p>
+        )}
+
+        {/* Global PINNED shelf (t3): always expanded, above project groups. */}
+        {!searching && globalPinned.length > 0 && (
+          <div className={styles.pinnedSection} data-pinned-section="">
+            <div className={styles.pinnedHeader}>
+              <span>Pinned · {globalPinned.length}</span>
+            </div>
+            {globalPinned.map((thread) => (
+              <SettledRow
+                key={thread.id}
+                thread={thread}
+                slug={slugFor(thread)}
+                active={thread.id === activeThreadId}
+                now={now}
+                onSelect={onSelectThread}
+                onSetSettled={onSetSettled}
+                pinMode
+                onSetPinned={onSetPinned}
+              />
+            ))}
+          </div>
         )}
 
         {groups.map(({ project, threads: groupThreads }) => {
@@ -849,6 +1076,10 @@ export function Sidebar({
                             : false
                         }
                         onSetSettled={onSetSettled}
+                        onSetPinned={onSetPinned}
+                        onSetSnoozed={onSetSnoozed}
+                        snoozeMenuOpen={snoozeMenuFor === thread.id}
+                        onToggleSnoozeMenu={setSnoozeMenuFor}
                         contentMatch={
                           searching &&
                           !thread.title.toLowerCase().includes(queryLower)
@@ -899,6 +1130,48 @@ export function Sidebar({
               </div>
             );
           })}
+
+        {/* Global SNOOZED shelf (t3): between groups and settled, collapsed by default. */}
+        {!searching && globalSnoozed.length > 0 && (
+          <div className={styles.snoozedShelf} data-snoozed-shelf="">
+            {selectedSnoozed && (
+              <SnoozedRow
+                thread={selectedSnoozed}
+                slug={slugFor(selectedSnoozed)}
+                active
+                now={now}
+                onSelect={onSelectThread}
+                onSetSnoozed={onSetSnoozed}
+              />
+            )}
+            <button
+              type="button"
+              className={styles.settledTailHeader}
+              onClick={() => setSnoozedOpen((o) => !o)}
+              aria-expanded={snoozedOpen}
+              data-snoozed-header=""
+            >
+              <span className={styles.chevron} data-open={snoozedOpen}>
+                ▸
+              </span>
+              <span>
+                Snoozed · {globalSnoozed.length}
+              </span>
+            </button>
+            {snoozedOpen &&
+              globalSnoozed.map((thread) => (
+                <SnoozedRow
+                  key={thread.id}
+                  thread={thread}
+                  slug={slugFor(thread)}
+                  active={thread.id === activeThreadId}
+                  now={now}
+                  onSelect={onSelectThread}
+                  onSetSnoozed={onSetSnoozed}
+                />
+              ))}
+          </div>
+        )}
 
         {/* Global settled tail (t3-style): one section at the bottom, all projects.
             Independent of per-project / collapse-all — has its own toggle. */}

@@ -31,6 +31,8 @@ export default function App() {
     setReasoningEffort,
     setArchived,
     setSettled,
+    setPinned,
+    setSnoozed,
     deleteThread,
     removeProject,
     setupWorktree,
@@ -155,6 +157,12 @@ export default function App() {
         searchThreads={searchThreads}
         onSetSettled={(threadId, override) => {
           void setSettled(threadId, override);
+        }}
+        onSetPinned={(threadId, pinned) => {
+          void setPinned(threadId, pinned);
+        }}
+        onSetSnoozed={(threadId, until) => {
+          void setSnoozed(threadId, until);
         }}
       />
       <ThreadView

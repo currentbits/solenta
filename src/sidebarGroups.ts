@@ -5,6 +5,12 @@ import {
   effectiveSettled,
   type SettleOpts,
 } from "./threadSettle";
+import {
+  comparePinnedOldestFirst,
+  compareSnoozedWakeSoonest,
+  effectiveSnoozed,
+  isPinned,
+} from "./threadSnooze";
 import { countUnread } from "./threadUnread";
 
 export interface SidebarGroup {
@@ -17,6 +23,7 @@ export type { SettleOpts };
 /**
  * Split non-archived threads into attention vs settled.
  * Order within each side is preserved (caller sorts first when needed).
+ * Does NOT account for pin/snooze shelves — prefer partitionSidebar.
  */
 export function splitSettled(
   threads: readonly ThreadInfo[],
@@ -34,26 +41,57 @@ export function splitSettled(
 }
 
 /**
- * Global partition for the round-40 sidebar layout (t3-style).
+ * Global partition for the sidebar (rounds 40–44, t3-style).
  *
- * - attentionThreads: non-archived threads with effectiveSettled false.
- * - settled: one flat list of all non-archived settled threads across every
- *   project, newest-settled first (resolveSettledTimestamp).
+ * Precedence (first match wins):
+ *   1. snoozed  — beats pin (suspends, never clears) and settle
+ *   2. pinned   — global shelf, oldest pin first; beats settle
+ *   3. settled  — PR/inactivity/override (pin already blocked above)
+ *   4. attention — everything else, for per-project groups
  *
- * Archived never enters the global settled tail (archived wins over settled).
- * Project grouping is the caller's job (buildSidebarGroups on attention).
+ * Archived never enters any shelf.
  */
 export function partitionSidebar(
   threads: readonly ThreadInfo[],
   opts: SettleOpts,
 ): {
+  pinned: ThreadInfo[];
   attentionThreads: ThreadInfo[];
+  snoozed: ThreadInfo[];
   settled: ThreadInfo[];
 } {
   const nonArchived = threads.filter((t) => !t.archived);
-  const { attention, settled } = splitSettled(nonArchived, opts);
-  const sortedSettled = [...settled].sort(compareSettledNewestFirst);
-  return { attentionThreads: attention, settled: sortedSettled };
+  const pinned: ThreadInfo[] = [];
+  const snoozed: ThreadInfo[] = [];
+  const attention: ThreadInfo[] = [];
+  const settled: ThreadInfo[] = [];
+
+  for (const t of nonArchived) {
+    if (effectiveSnoozed(t, opts.now)) {
+      snoozed.push(t);
+      continue;
+    }
+    if (isPinned(t)) {
+      pinned.push(t);
+      continue;
+    }
+    if (effectiveSettled(t, opts)) {
+      settled.push(t);
+    } else {
+      attention.push(t);
+    }
+  }
+
+  pinned.sort(comparePinnedOldestFirst);
+  snoozed.sort(compareSnoozedWakeSoonest);
+  settled.sort(compareSettledNewestFirst);
+
+  return {
+    pinned,
+    attentionThreads: attention,
+    snoozed,
+    settled,
+  };
 }
 
 /**
