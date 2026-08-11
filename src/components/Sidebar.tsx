@@ -26,6 +26,16 @@ import {
 } from "../threadSnooze";
 import { countUnread, isUnread } from "../threadUnread";
 import { useEscapeClose } from "../useEscapeClose";
+import {
+  buildVisibleThreadIds,
+  formatBatchSettleFeedback,
+  isShortcutBlocked,
+  planBatchSettle,
+  rangeSelectIds,
+  stepVisibleId,
+  toggleIdInSet,
+} from "../sidebarSelection";
+import { KeyboardSheet } from "./KeyboardSheet";
 import styles from "./Sidebar.module.css";
 
 const TICK_MS = 5000;
@@ -122,7 +132,11 @@ interface SidebarProps {
   ) => void | Promise<void>;
   onSetPinned?: (threadId: string, pinned: boolean) => void | Promise<void>;
   onSetSnoozed?: (threadId: string, until: number | null) => void | Promise<void>;
+  /** Archive a thread (batch toolbar). */
+  onSetArchived?: (threadId: string, archived: boolean) => void | Promise<void>;
 }
+
+export type SelectOpts = { meta?: boolean; shift?: boolean };
 
 function formatUsd(n: number): string {
   return n.toFixed(2);
@@ -201,6 +215,8 @@ export function ThreadCard({
   onSelect,
   contentMatch,
   isSettled = false,
+  multiSelected = false,
+  indexHint = null,
   onSetSettled,
   onSetPinned,
   onSetSnoozed,
@@ -212,9 +228,12 @@ export function ThreadCard({
   providers: ProviderInfo[];
   active: boolean;
   now: number;
-  onSelect: (id: string) => void;
+  onSelect: (id: string, opts?: SelectOpts) => void;
   contentMatch?: boolean;
   isSettled?: boolean;
+  multiSelected?: boolean;
+  /** 1-9 while cmd held; null otherwise. */
+  indexHint?: number | null;
   onSetSettled?: (
     threadId: string,
     override: "settled" | "active",
@@ -249,14 +268,25 @@ export function ThreadCard({
       className={styles.card}
       data-thread-card={thread.id}
       data-active={active}
+      data-multi={multiSelected ? "true" : undefined}
       data-archived={thread.archived ? "true" : undefined}
       data-settled={isSettled ? "true" : undefined}
       data-unread={showUnread ? "true" : undefined}
     >
+      {indexHint != null && (
+        <span className={styles.indexHint} data-index-hint={indexHint} aria-hidden>
+          {indexHint}
+        </span>
+      )}
       <button
         type="button"
         className={styles.cardSelect}
-        onClick={() => onSelect(thread.id)}
+        onClick={(e) =>
+          onSelect(thread.id, {
+            meta: e.metaKey || e.ctrlKey,
+            shift: e.shiftKey,
+          })
+        }
         aria-label={selectLabel}
       />
       <div className={styles.cardBody}>
@@ -432,19 +462,22 @@ export function SettledRow({
   onSetSettled,
   pinMode = false,
   onSetPinned,
+  multiSelected = false,
+  indexHint = null,
 }: {
   thread: ThreadInfo;
   slug: string;
   active: boolean;
   now: number;
-  onSelect: (id: string) => void;
+  onSelect: (id: string, opts?: SelectOpts) => void;
   onSetSettled?: (
     threadId: string,
     override: "settled" | "active",
   ) => void | Promise<void>;
-  /** When true, this is a PINNED shelf row (unpin hover, not keep-active). */
   pinMode?: boolean;
   onSetPinned?: (threadId: string, pinned: boolean) => void | Promise<void>;
+  multiSelected?: boolean;
+  indexHint?: number | null;
 }) {
   const wrapUpAt = pinMode
     ? (thread.pinnedAt ?? thread.updatedAt)
@@ -461,12 +494,23 @@ export function SettledRow({
       data-settled={pinMode ? undefined : "true"}
       data-pinned={pinMode ? "true" : undefined}
       data-active={active}
+      data-multi={multiSelected ? "true" : undefined}
       data-unread={showUnread ? "true" : undefined}
     >
+      {indexHint != null && (
+        <span className={styles.indexHint} data-index-hint={indexHint} aria-hidden>
+          {indexHint}
+        </span>
+      )}
       <button
         type="button"
         className={styles.cardSelect}
-        onClick={() => onSelect(thread.id)}
+        onClick={(e) =>
+          onSelect(thread.id, {
+            meta: e.metaKey || e.ctrlKey,
+            shift: e.shiftKey,
+          })
+        }
         aria-label={selectLabel}
       />
       <div className={styles.settledBody}>
@@ -528,13 +572,17 @@ export function SnoozedRow({
   now,
   onSelect,
   onSetSnoozed,
+  multiSelected = false,
+  indexHint = null,
 }: {
   thread: ThreadInfo;
   slug: string;
   active: boolean;
   now: number;
-  onSelect: (id: string) => void;
+  onSelect: (id: string, opts?: SelectOpts) => void;
   onSetSnoozed?: (threadId: string, until: number | null) => void | Promise<void>;
+  multiSelected?: boolean;
+  indexHint?: number | null;
 }) {
   const showUnread = !active && isUnread(thread);
   const wake = formatSnoozeWakeLabel(thread, now);
@@ -547,12 +595,23 @@ export function SnoozedRow({
       data-thread-card={thread.id}
       data-snoozed="true"
       data-active={active}
+      data-multi={multiSelected ? "true" : undefined}
       data-unread={showUnread ? "true" : undefined}
     >
+      {indexHint != null && (
+        <span className={styles.indexHint} data-index-hint={indexHint} aria-hidden>
+          {indexHint}
+        </span>
+      )}
       <button
         type="button"
         className={styles.cardSelect}
-        onClick={() => onSelect(thread.id)}
+        onClick={(e) =>
+          onSelect(thread.id, {
+            meta: e.metaKey || e.ctrlKey,
+            shift: e.shiftKey,
+          })
+        }
         aria-label={selectLabel}
       />
       <div className={styles.settledBody}>
@@ -614,6 +673,7 @@ export function Sidebar({
   onSetSettled,
   onSetPinned,
   onSetSnoozed,
+  onSetArchived,
 }: SidebarProps) {
   const [query, setQuery] = useState("");
   const [now, setNow] = useState(() => Date.now());
@@ -645,6 +705,13 @@ export function Sidebar({
   );
   /** Snoozed shelf open state (session-only, collapsed by default like settled). */
   const [snoozedOpen, setSnoozedOpen] = useState(false);
+  /** Multi-select set (round 46). Distinct from activeThreadId. */
+  const [multiSelected, setMultiSelected] = useState<Set<string>>(() => new Set());
+  /** Anchor for shift-range (last plain select or meta toggle). */
+  const [selectAnchor, setSelectAnchor] = useState<string | null>(null);
+  const [batchFeedback, setBatchFeedback] = useState<string | null>(null);
+  const [cmdHeld, setCmdHeld] = useState(false);
+  const [keyboardSheetOpen, setKeyboardSheetOpen] = useState(false);
   /**
    * Contract: null disables inactivity settle; while settings are still
    * loading (prop undefined) fall back to AUTO_SETTLE_AFTER_DAYS (3).
@@ -884,6 +951,171 @@ export function Sidebar({
   const slugFor = (t: ThreadInfo) =>
     projectById.get(t.projectId)?.slug ?? "unknown";
 
+  /** Ordered visible ids — matches render order (round 46). */
+  const visibleIds = useMemo(
+    () =>
+      buildVisibleThreadIds({
+        pinned: searching ? [] : globalPinned,
+        groups,
+        collapsedGroupKeys: searching ? new Set() : collapsedGroups,
+        showArchivedKeys: searching
+          ? new Set(groups.map((g) => g.project?.id ?? g.threads[0]?.projectId ?? "orphan"))
+          : showArchived,
+        snoozed: globalSnoozed,
+        snoozedOpen,
+        selectedSnoozedId: selectedSnoozed?.id ?? null,
+        settled: globalSettled,
+        settledOpen: settledTailOpen,
+        settledVisibleCount,
+        selectedSettledId: selectedSettled?.id ?? null,
+        searching,
+      }),
+    [
+      searching,
+      globalPinned,
+      groups,
+      collapsedGroups,
+      showArchived,
+      globalSnoozed,
+      snoozedOpen,
+      selectedSnoozed,
+      globalSettled,
+      settledTailOpen,
+      settledVisibleCount,
+      selectedSettled,
+    ],
+  );
+
+  const visibleIndex = useMemo(() => {
+    const m = new Map<string, number>();
+    visibleIds.forEach((id, i) => m.set(id, i));
+    return m;
+  }, [visibleIds]);
+
+  const handleSelect = useCallback(
+    (id: string, opts?: SelectOpts) => {
+      if (opts?.shift) {
+        const range = rangeSelectIds(visibleIds, selectAnchor, id);
+        setMultiSelected(new Set(range));
+        setBatchFeedback(null);
+        return;
+      }
+      if (opts?.meta) {
+        setMultiSelected((prev) => toggleIdInSet(prev, id));
+        setSelectAnchor(id);
+        setBatchFeedback(null);
+        return;
+      }
+      setMultiSelected(new Set());
+      setSelectAnchor(id);
+      setBatchFeedback(null);
+      onSelectThread(id);
+    },
+    [visibleIds, selectAnchor, onSelectThread],
+  );
+
+  const clearMulti = useCallback(() => {
+    setMultiSelected(new Set());
+    setBatchFeedback(null);
+  }, []);
+
+  const runBatchArchive = useCallback(async () => {
+    if (!onSetArchived || multiSelected.size === 0) return;
+    const ids = [...multiSelected];
+    for (const id of ids) {
+      await onSetArchived(id, true);
+    }
+    setBatchFeedback(
+      ids.length === 1 ? "1 archived" : `${ids.length} archived`,
+    );
+    setMultiSelected(new Set());
+  }, [multiSelected, onSetArchived]);
+
+  const runBatchSettle = useCallback(async () => {
+    if (!onSetSettled || multiSelected.size === 0) return;
+    const byId = new Map(threads.map((t) => [t.id, t]));
+    const { toSettle, skippedWorking } = planBatchSettle(
+      [...multiSelected],
+      byId,
+    );
+    for (const id of toSettle) {
+      await onSetSettled(id, "settled");
+    }
+    setBatchFeedback(
+      formatBatchSettleFeedback(toSettle.length, skippedWorking),
+    );
+    setMultiSelected(new Set());
+  }, [multiSelected, onSetSettled, threads]);
+
+  // Jump shortcuts + cmd index hints + keyboard sheet.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Meta" || e.key === "Control") {
+        setCmdHeld(true);
+        return;
+      }
+      if (isShortcutBlocked(e.target)) return;
+      if (keyboardSheetOpen && e.key !== "Escape") return;
+
+      const mod = e.metaKey || e.ctrlKey;
+
+      if (e.key === "?" && !mod) {
+        e.preventDefault();
+        setKeyboardSheetOpen(true);
+        return;
+      }
+
+      if (!mod) return;
+
+      // cmd+1..9
+      if (e.key >= "1" && e.key <= "9") {
+        const n = Number(e.key);
+        const id = visibleIds[n - 1];
+        if (id) {
+          e.preventDefault();
+          setMultiSelected(new Set());
+          setSelectAnchor(id);
+          onSelectThread(id);
+        }
+        return;
+      }
+
+      // cmd+j / cmd+k — next / previous (wrap)
+      const key = e.key.toLowerCase();
+      if (key === "j" || key === "k") {
+        e.preventDefault();
+        const delta = key === "j" ? 1 : -1;
+        const next = stepVisibleId(visibleIds, activeThreadId, delta as 1 | -1);
+        if (next) {
+          setMultiSelected(new Set());
+          setSelectAnchor(next);
+          onSelectThread(next);
+        }
+      }
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.key === "Meta" || e.key === "Control") {
+        setCmdHeld(false);
+      }
+    };
+    const onBlur = () => setCmdHeld(false);
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, [visibleIds, activeThreadId, onSelectThread, keyboardSheetOpen]);
+
+  const indexHintFor = (id: string): number | null => {
+    if (!cmdHeld) return null;
+    const i = visibleIndex.get(id);
+    if (i == null || i >= 9) return null;
+    return i + 1;
+  };
+
   return (
     <aside className={styles.sidebar}>
       <div className={styles.dragRegion} />
@@ -976,8 +1208,10 @@ export function Sidebar({
                 thread={thread}
                 slug={slugFor(thread)}
                 active={thread.id === activeThreadId}
+                multiSelected={multiSelected.has(thread.id)}
+                indexHint={indexHintFor(thread.id)}
                 now={now}
-                onSelect={onSelectThread}
+                onSelect={handleSelect}
                 onSetSettled={onSetSettled}
                 pinMode
                 onSetPinned={onSetPinned}
@@ -1086,8 +1320,10 @@ export function Sidebar({
                         slug={slug}
                         providers={providers}
                         active={thread.id === activeThreadId}
+                        multiSelected={multiSelected.has(thread.id)}
+                        indexHint={indexHintFor(thread.id)}
                         now={now}
-                        onSelect={onSelectThread}
+                        onSelect={handleSelect}
                         isSettled={
                           searching
                             ? effectiveSettled(thread, settleOpts)
@@ -1112,8 +1348,10 @@ export function Sidebar({
                           slug={slug}
                           providers={providers}
                           active={thread.id === activeThreadId}
+                          multiSelected={multiSelected.has(thread.id)}
+                          indexHint={indexHintFor(thread.id)}
                           now={now}
-                          onSelect={onSelectThread}
+                          onSelect={handleSelect}
                           isSettled={effectiveSettled(thread, settleOpts)}
                           onSetSettled={onSetSettled}
                           contentMatch={
@@ -1157,8 +1395,10 @@ export function Sidebar({
                 thread={selectedSnoozed}
                 slug={slugFor(selectedSnoozed)}
                 active
+                multiSelected={multiSelected.has(selectedSnoozed.id)}
+                indexHint={indexHintFor(selectedSnoozed.id)}
                 now={now}
-                onSelect={onSelectThread}
+                onSelect={handleSelect}
                 onSetSnoozed={onSetSnoozed}
               />
             )}
@@ -1183,8 +1423,10 @@ export function Sidebar({
                   thread={thread}
                   slug={slugFor(thread)}
                   active={thread.id === activeThreadId}
+                  multiSelected={multiSelected.has(thread.id)}
+                  indexHint={indexHintFor(thread.id)}
                   now={now}
-                  onSelect={onSelectThread}
+                  onSelect={handleSelect}
                   onSetSnoozed={onSetSnoozed}
                 />
               ))}
@@ -1200,8 +1442,10 @@ export function Sidebar({
                 thread={selectedSettled}
                 slug={slugFor(selectedSettled)}
                 active
+                multiSelected={multiSelected.has(selectedSettled.id)}
+                indexHint={indexHintFor(selectedSettled.id)}
                 now={now}
-                onSelect={onSelectThread}
+                onSelect={handleSelect}
                 onSetSettled={onSetSettled}
               />
             )}
@@ -1229,8 +1473,10 @@ export function Sidebar({
                   thread={thread}
                   slug={slugFor(thread)}
                   active={thread.id === activeThreadId}
+                  multiSelected={multiSelected.has(thread.id)}
+                  indexHint={indexHintFor(thread.id)}
                   now={now}
-                  onSelect={onSelectThread}
+                  onSelect={handleSelect}
                   onSetSettled={onSetSettled}
                 />
               ))}
@@ -1333,6 +1579,58 @@ export function Sidebar({
           );
         })()}
 
+      {multiSelected.size >= 2 && (
+        <div className={styles.batchBar} data-batch-bar="">
+          <span className={styles.batchCount} data-batch-count="">
+            {multiSelected.size} selected
+          </span>
+          {batchFeedback && (
+            <span className={styles.batchFeedback} data-batch-feedback="">
+              {batchFeedback}
+            </span>
+          )}
+          <button
+            type="button"
+            className={styles.batchBtn}
+            data-batch-archive=""
+            onClick={() => void runBatchArchive()}
+          >
+            Archive
+          </button>
+          <button
+            type="button"
+            className={styles.batchBtn}
+            data-batch-settle=""
+            onClick={() => void runBatchSettle()}
+          >
+            Settle
+          </button>
+          <button
+            type="button"
+            className={styles.batchBtn}
+            data-batch-clear=""
+            onClick={clearMulti}
+          >
+            Clear
+          </button>
+        </div>
+      )}
+      {batchFeedback && multiSelected.size < 2 && (
+        <div className={styles.batchBar} data-batch-bar="" data-batch-feedback-only="">
+          <span className={styles.batchFeedback} data-batch-feedback="">
+            {batchFeedback}
+          </span>
+          <button
+            type="button"
+            className={styles.batchBtn}
+            data-batch-clear=""
+            onClick={() => setBatchFeedback(null)}
+          >
+            Clear
+          </button>
+        </div>
+      )}
+
       <footer className={styles.footer}>
         {projectError && (
           <div className={styles.errorBanner} role="alert">
@@ -1380,6 +1678,10 @@ export function Sidebar({
           )}
         </div>
       </footer>
+      <KeyboardSheet
+        open={keyboardSheetOpen}
+        onClose={() => setKeyboardSheetOpen(false)}
+      />
     </aside>
   );
 }
