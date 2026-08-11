@@ -172,6 +172,28 @@ function groupHeader(
   return el as HTMLElement;
 }
 
+/** ALL PROJECTS section header (collapse/expand all). */
+function allProjectsHeader(
+  m: Awaited<ReturnType<typeof mount>>,
+): HTMLButtonElement {
+  const el = m.query(
+    "[data-projects-section]",
+  ) as HTMLButtonElement | null;
+  assert.ok(el, "ALL PROJECTS section header must render");
+  return el;
+}
+
+function groupChevron(
+  m: Awaited<ReturnType<typeof mount>>,
+  groupKey: string,
+): HTMLElement {
+  const el = m.query(
+    `[data-group-chevron="${groupKey}"]`,
+  ) as HTMLElement | null;
+  assert.ok(el, `group chevron for ${groupKey} must render`);
+  return el;
+}
+
 function settledTailHeader(
   m: Awaited<ReturnType<typeof mount>>,
 ): HTMLButtonElement {
@@ -636,6 +658,174 @@ describe("Sidebar project collapse", () => {
       "search must override project collapse so hits inside it surface",
     );
     m.unmount();
+  });
+
+  it("search surfaces hits when every project is collapsed via collapse-all", async () => {
+    // Extends the pinned search-override pin to the all-collapsed state.
+    await clearSidebarStorage();
+    const m = await mount(sidebar(THREADS, { projects: [p1, p2] }));
+    await m.click(allProjectsHeader(m));
+    assert.ok(!cardTitles(m).includes("finished"), "collapse-all hides attention");
+    assert.ok(!cardTitles(m).includes("billing-idle"));
+
+    const input = m.query("input") as HTMLInputElement;
+    assert.ok(input);
+    await m.type(input, "finished work");
+    await inAct(async () => {
+      await new Promise((r) => setTimeout(r, 350));
+    });
+    await m.flush();
+    assert.ok(
+      cardTitles(m).includes("finished"),
+      "search must surface hits even when collapse-all left every group collapsed",
+    );
+    m.unmount();
+  });
+});
+
+describe("Sidebar collapse-all / expand-all (round 42)", () => {
+  it("collapse-all collapses every group and persists across remount", async () => {
+    await clearSidebarStorage();
+    const m1 = await mount(sidebar(THREADS, { projects: [p1, p2] }));
+    assert.ok(cardTitles(m1).includes("busy"), "p1 attention visible by default");
+    assert.ok(
+      cardTitles(m1).includes("billing-idle"),
+      "p2 attention visible by default",
+    );
+    assert.equal(
+      allProjectsHeader(m1).getAttribute("aria-expanded"),
+      "true",
+      "ALL PROJECTS aria-expanded when any group is open",
+    );
+
+    await m1.click(allProjectsHeader(m1));
+    assert.ok(!cardTitles(m1).includes("busy"), "p1 collapsed");
+    assert.ok(!cardTitles(m1).includes("billing-idle"), "p2 collapsed");
+    assert.equal(
+      groupHeader(m1, "acme/ledger").getAttribute("aria-expanded"),
+      "false",
+    );
+    assert.equal(
+      groupHeader(m1, "acme/billing").getAttribute("aria-expanded"),
+      "false",
+    );
+    assert.equal(
+      allProjectsHeader(m1).getAttribute("aria-expanded"),
+      "false",
+      "ALL PROJECTS aria-expanded false when every group is collapsed",
+    );
+    m1.unmount();
+
+    const m2 = await mount(sidebar(THREADS, { projects: [p1, p2] }));
+    assert.ok(
+      !cardTitles(m2).includes("busy"),
+      "collapse-all must persist via coder.sidebar.collapsedGroups",
+    );
+    assert.ok(!cardTitles(m2).includes("billing-idle"));
+    assert.equal(allProjectsHeader(m2).getAttribute("aria-expanded"), "false");
+    m2.unmount();
+    await clearSidebarStorage();
+  });
+
+  it("expand-all clears collapse-all (every group open again)", async () => {
+    await clearSidebarStorage();
+    const m = await mount(sidebar(THREADS, { projects: [p1, p2] }));
+    await m.click(allProjectsHeader(m));
+    assert.equal(allProjectsHeader(m).getAttribute("aria-expanded"), "false");
+
+    await m.click(allProjectsHeader(m));
+    assert.ok(cardTitles(m).includes("busy"), "p1 re-expanded");
+    assert.ok(cardTitles(m).includes("billing-idle"), "p2 re-expanded");
+    assert.equal(
+      allProjectsHeader(m).getAttribute("aria-expanded"),
+      "true",
+      "ALL PROJECTS expanded-any after expand-all",
+    );
+    assert.equal(
+      groupHeader(m, "acme/ledger").getAttribute("aria-expanded"),
+      "true",
+    );
+    m.unmount();
+    await clearSidebarStorage();
+  });
+
+  it("per-group toggle after collapse-all yields mixed state; header reflects any-expanded", async () => {
+    await clearSidebarStorage();
+    const m = await mount(sidebar(THREADS, { projects: [p1, p2] }));
+    await m.click(allProjectsHeader(m));
+    assert.equal(allProjectsHeader(m).getAttribute("aria-expanded"), "false");
+
+    // Re-open only ledger — mixed state.
+    await m.click(groupHeader(m, "acme/ledger"));
+    assert.ok(cardTitles(m).includes("busy"), "re-opened group shows attention");
+    assert.ok(
+      !cardTitles(m).includes("billing-idle"),
+      "other group stays collapsed",
+    );
+    assert.equal(
+      allProjectsHeader(m).getAttribute("aria-expanded"),
+      "true",
+      "ANY expanded group makes ALL PROJECTS aria-expanded true",
+    );
+    assert.equal(
+      groupHeader(m, "acme/billing").getAttribute("aria-expanded"),
+      "false",
+    );
+    m.unmount();
+    await clearSidebarStorage();
+  });
+
+  it("collapse-all does not hide the settled tail (own toggle)", async () => {
+    await clearSidebarStorage();
+    const m = await mount(sidebar(THREADS, { projects: [p1, p2] }));
+    await m.click(allProjectsHeader(m));
+    assert.ok(
+      settledTailHeader(m),
+      "settled tail header remains after collapse-all",
+    );
+    await m.click(settledTailHeader(m));
+    assert.ok(
+      cardTitles(m).includes("merged-p1"),
+      "settled rows still expand independently of collapse-all",
+    );
+    m.unmount();
+    await clearSidebarStorage();
+  });
+
+  it("chevron data-open flips with collapse state (not CSS)", async () => {
+    await clearSidebarStorage();
+    const m = await mount(sidebar(THREADS, { projects: [p1, p2] }));
+    assert.equal(
+      groupChevron(m, "p1").getAttribute("data-open"),
+      "true",
+      "expanded group chevron data-open=true",
+    );
+    const sectionChevron = () =>
+      allProjectsHeader(m).querySelector("[data-open]") as HTMLElement | null;
+    assert.ok(sectionChevron(), "section header has a data-open chevron");
+    assert.equal(
+      sectionChevron()!.getAttribute("data-open"),
+      "true",
+      "ALL PROJECTS chevron open when any expanded",
+    );
+
+    await m.click(groupHeader(m, "acme/ledger"));
+    assert.equal(
+      groupChevron(m, "p1").getAttribute("data-open"),
+      "false",
+      "collapsed group flips data-open to false",
+    );
+
+    await m.click(allProjectsHeader(m));
+    assert.equal(groupChevron(m, "p1").getAttribute("data-open"), "false");
+    assert.equal(groupChevron(m, "p2").getAttribute("data-open"), "false");
+    assert.equal(
+      sectionChevron()!.getAttribute("data-open"),
+      "false",
+      "ALL PROJECTS chevron data-open=false when all collapsed",
+    );
+    m.unmount();
+    await clearSidebarStorage();
   });
 });
 

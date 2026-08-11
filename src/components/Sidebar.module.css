@@ -98,10 +98,10 @@
 .sectionHeader {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   width: calc(100% - 16px);
   margin: 0 8px 6px;
-  padding: 6px 8px;
+  padding: 8px 10px;
   border-radius: var(--radius-sm);
   color: var(--text-muted);
   font-size: 11px;
@@ -109,22 +109,43 @@
   letter-spacing: 0.04em;
   text-transform: uppercase;
   text-align: left;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
 }
 
 .sectionHeader:hover {
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(255, 255, 255, 0.08);
   color: var(--text);
 }
 
+.sectionHeader:hover .chevron {
+  color: var(--text);
+}
+
+/* Primary collapse affordance: larger than body text, rotates on open. */
 .chevron {
-  display: inline-block;
-  width: 12px;
-  transition: transform 0.12s ease;
-  color: var(--text-dim);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  font-size: 14px;
+  line-height: 1;
+  flex-shrink: 0;
+  transition: transform 0.15s ease, color 0.12s ease;
+  color: var(--text-muted);
 }
 
 .chevron[data-open="true"] {
   transform: rotate(90deg);
+  color: var(--text);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chevron {
+    transition: none;
+  }
 }
 
 .count {
@@ -609,16 +630,25 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 4px 2px 8px;
+  padding: 8px 6px 6px 8px;
   min-width: 0;
   flex: 1;
   border: 0;
+  border-radius: var(--radius-sm);
   background: none;
   text-align: left;
   cursor: pointer;
 }
 
+.groupHeader:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
 .groupHeader:hover .groupSlug {
+  color: var(--text);
+}
+
+.groupHeader:hover .chevron {
   color: var(--text);
 }
 
