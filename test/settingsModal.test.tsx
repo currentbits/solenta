@@ -51,12 +51,16 @@ function modal(stubs: Stubs = {}) {
     <SettingsModal
       open
       onClose={stubs.onClose ?? (() => {})}
-      settings={stubs.settings ?? { dailyBudgetUsd: 5 }}
+      settings={stubs.settings ?? { dailyBudgetUsd: 5, autoSettleAfterDays: 3 }}
       status={stubs.status === undefined ? status() : stubs.status}
       onSaveSettings={
         stubs.onSaveSettings ??
         (async (patch) => ({
           dailyBudgetUsd: patch.dailyBudgetUsd ?? null,
+          autoSettleAfterDays:
+            patch.autoSettleAfterDays === undefined
+              ? 3
+              : patch.autoSettleAfterDays,
         }))
       }
     />
@@ -176,10 +180,13 @@ describe("SettingsModal daily budget", () => {
     const patches: Partial<AppSettings>[] = [];
     const m = await mount(
       modal({
-        settings: { dailyBudgetUsd: null },
+        settings: { dailyBudgetUsd: null , autoSettleAfterDays: 3 },
         onSaveSettings: async (patch) => {
           patches.push(patch);
-          return { dailyBudgetUsd: patch.dailyBudgetUsd ?? null };
+          return {
+            dailyBudgetUsd: patch.dailyBudgetUsd ?? null,
+            autoSettleAfterDays: patch.autoSettleAfterDays ?? 3,
+          };
         },
       }),
     );
@@ -200,7 +207,7 @@ describe("SettingsModal daily budget", () => {
     async function assertRejected(value: string, label: string) {
       const m = await mount(
         modal({
-          settings: { dailyBudgetUsd: 5 },
+          settings: { dailyBudgetUsd: 5 , autoSettleAfterDays: 3 },
           onSaveSettings: async (patch) => {
             const n = patch.dailyBudgetUsd;
             if (n == null || !Number.isFinite(n) || n <= 0) {
@@ -208,7 +215,7 @@ describe("SettingsModal daily budget", () => {
                 "Daily budget must be a positive number or null",
               );
             }
-            return { dailyBudgetUsd: n };
+            return { dailyBudgetUsd: n , autoSettleAfterDays: 3 };
           },
         }),
       );
@@ -234,7 +241,7 @@ describe("SettingsModal daily budget", () => {
     {
       const m = await mount(
         modal({
-          settings: { dailyBudgetUsd: 5 },
+          settings: { dailyBudgetUsd: 5 , autoSettleAfterDays: 3 },
           onSaveSettings: async () => {
             throw new Error(
               "Daily budget must be a positive number or null",
@@ -261,10 +268,13 @@ describe("SettingsModal daily budget", () => {
     let closes = 0;
     const m = await mount(
       modal({
-        settings: { dailyBudgetUsd: 5 },
+        settings: { dailyBudgetUsd: 5 , autoSettleAfterDays: 3 },
         onSaveSettings: async (patch) => {
           saves += 1;
-          return { dailyBudgetUsd: patch.dailyBudgetUsd ?? null };
+          return {
+            dailyBudgetUsd: patch.dailyBudgetUsd ?? null,
+            autoSettleAfterDays: patch.autoSettleAfterDays ?? 3,
+          };
         },
         onClose: () => {
           closes += 1;
@@ -276,6 +286,105 @@ describe("SettingsModal daily budget", () => {
     await m.click(m.query('button[aria-label="Close"]'));
     assert.equal(closes, 1, "close must fire");
     assert.equal(saves, 0, "closing must not save a draft budget");
+    m.unmount();
+  });
+});
+
+
+describe("SettingsModal auto-settle window", () => {
+  it("sets a positive day count and reports it", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const m = await mount(
+      modal({
+        settings: { dailyBudgetUsd: null, autoSettleAfterDays: 3 },
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return {
+            dailyBudgetUsd: patch.dailyBudgetUsd ?? null,
+            autoSettleAfterDays:
+              patch.autoSettleAfterDays === undefined
+                ? 3
+                : patch.autoSettleAfterDays,
+          };
+        },
+      }),
+    );
+    const input = m.query("#auto-settle-days");
+    assert.ok(input, "auto-settle input must render");
+    assert.ok(
+      m.text().includes("Auto-settle quiet threads after"),
+      "label must match the brief",
+    );
+    await m.type(input, "7");
+    // Second Save is the settle row's (order: budget Save, settle Save).
+    const saves = m
+      .queryAll("button")
+      .filter((b) => (b.textContent || "").includes("Save"));
+    assert.ok(saves.length >= 2, "budget + settle each have Save");
+    await m.click(saves[saves.length - 1]!);
+    assert.equal(patches.length, 1);
+    assert.equal(patches[0].autoSettleAfterDays, 7);
+    m.unmount();
+  });
+
+  it("clearing the field saves null (Never)", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const m = await mount(
+      modal({
+        settings: { dailyBudgetUsd: null, autoSettleAfterDays: 3 },
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return {
+            dailyBudgetUsd: null,
+            autoSettleAfterDays:
+              patch.autoSettleAfterDays === undefined
+                ? null
+                : patch.autoSettleAfterDays,
+          };
+        },
+      }),
+    );
+    const input = m.query("#auto-settle-days") as HTMLInputElement;
+    await m.type(input, "");
+    const saves = m
+      .queryAll("button")
+      .filter((b) => (b.textContent || "").includes("Save"));
+    await m.click(saves[saves.length - 1]!);
+    assert.equal(patches[0].autoSettleAfterDays, null);
+    m.unmount();
+  });
+
+  it("rejects invalid settle days with role=alert (mirrors budget)", async () => {
+    const m = await mount(
+      modal({
+        settings: { dailyBudgetUsd: null, autoSettleAfterDays: 3 },
+        onSaveSettings: async (patch) => {
+          const n = patch.autoSettleAfterDays;
+          if (n == null) return { dailyBudgetUsd: null, autoSettleAfterDays: null };
+          if (
+            typeof n !== "number" ||
+            !Number.isInteger(n) ||
+            !(n > 0)
+          ) {
+            throw new Error(
+              `Auto-settle days must be a positive integer or null (got ${n})`,
+            );
+          }
+          return { dailyBudgetUsd: null, autoSettleAfterDays: n };
+        },
+      }),
+    );
+    const input = m.query("#auto-settle-days");
+    await m.type(input, "0");
+    const saves = m
+      .queryAll("button")
+      .filter((b) => (b.textContent || "").includes("Save"));
+    await m.click(saves[saves.length - 1]!);
+    assert.ok(m.query('[role="alert"]'), "validation must use role=alert");
+    assert.ok(
+      m.text().includes("Auto-settle days must be a positive integer"),
+      `got: ${m.text().slice(-160)}`,
+    );
     m.unmount();
   });
 });
@@ -305,10 +414,11 @@ describe("SettingsModal structure", () => {
       <SettingsModal
         open={false}
         onClose={() => {}}
-        settings={{ dailyBudgetUsd: 1 }}
+        settings={{ dailyBudgetUsd: 1 , autoSettleAfterDays: 3 }}
         status={status()}
         onSaveSettings={async (p) => ({
           dailyBudgetUsd: p.dailyBudgetUsd ?? null,
+          autoSettleAfterDays: p.autoSettleAfterDays ?? 3,
         })}
       />,
     );

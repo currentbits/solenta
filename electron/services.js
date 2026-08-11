@@ -823,7 +823,7 @@ function removeTemplate(store, input) {
 
 /**
  * @param {import('./store').Store} store
- * @returns {{ dailyBudgetUsd: number | null }}
+ * @returns {{ dailyBudgetUsd: number | null, autoSettleAfterDays: number | null }}
  */
 function getSettings(store) {
   return store.getSettings();
@@ -832,8 +832,8 @@ function getSettings(store) {
 /**
  * Validate and persist settings. Does not touch threads.
  * @param {import('./store').Store} store
- * @param {Partial<{ dailyBudgetUsd: number | null }>} patch
- * @returns {{ dailyBudgetUsd: number | null }}
+ * @param {Partial<{ dailyBudgetUsd: number | null, autoSettleAfterDays: number | null }>} patch
+ * @returns {{ dailyBudgetUsd: number | null, autoSettleAfterDays: number | null }}
  */
 function setSettings(store, patch) {
   const next = store.setSettings(patch || {});

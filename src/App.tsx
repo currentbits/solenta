@@ -154,6 +154,9 @@ export default function App() {
         onOpenSettings={() => setSettingsOpen(true)}
         spendTodayUsd={appStatus?.spendTodayUsd ?? null}
         dailyBudgetUsd={settings?.dailyBudgetUsd ?? null}
+        autoSettleAfterDays={
+          settings == null ? undefined : settings.autoSettleAfterDays
+        }
         searchThreads={searchThreads}
         onSetSettled={(threadId, override) => {
           void setSettled(threadId, override);
