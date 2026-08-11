@@ -158,6 +158,9 @@ function createThread(store, input) {
     prState: null,
     // Just-created is not unread: visit time matches creation.
     lastVisitedAt: now,
+    pinnedAt: null,
+    snoozedUntil: null,
+    snoozedAt: null,
     provider: "claude",
     model: null,
     sessionId: null,
@@ -376,10 +379,15 @@ function setArchived(store, input) {
 const SETTLE_OVERRIDES = new Set(["settled", "active", null]);
 
 /**
- * Patch fields that clear a stale settle pin when real activity starts
+ * Patch fields that clear a stale settle override when real activity starts
  * (startRun or startWorkflow). A "settled" override is cleared so the
- * thread does not re-fold the moment the run ends; an "active" pin is
+ * thread does not re-fold the moment the run ends; an "active" override is
  * left alone so the user can keep a thread out of auto-settle.
+ *
+ * Round 44: this patch must NOT clear pinnedAt or snooze fields.
+ * - Pin survives activity (t3: pins block auto-settle and are sticky).
+ * - Snooze is visibility only; server fields persist; wake is derived
+ *   client-side (timer or raised-hand), never by wiping on run start.
  *
  * @param {{ settledOverride?: string | null } | null | undefined} thread
  * @returns {{ settledOverride: null, settledAt: null } | {}}
@@ -395,6 +403,11 @@ function clearSettledOnActivity(thread) {
  * Set or clear the settle override (t3-style). Does not bump updatedAt:
  * settling is bookkeeping, and bumping would push the thread to the top of
  * a list it is leaving.
+ *
+ * Mutual exclusion with pin (round 44): an explicit "settled" override also
+ * clears pinnedAt; setPinned(true) clears a "settled" override. Both directions
+ * live here and in setPinned so they cannot drift.
+ *
  * @param {import('./store').Store} store
  * @param {{ threadId: string, override: "settled" | "active" | null }} input
  */
@@ -417,6 +430,70 @@ function setSettled(store, input) {
     settledOverride: override,
     settledAt: override != null ? Date.now() : null,
   };
+  // Mutual exclusion: settle clears pin (mirror of setPinned clearing settle).
+  if (override === "settled") {
+    patch.pinnedAt = null;
+  }
+  const updated = store.updateThread(threadId, patch);
+  store.save();
+  return updated ? { ...updated } : { ...thread, ...patch };
+}
+
+/**
+ * Pin or unpin. Never bumps updatedAt.
+ * Mutual exclusion with settle: pinning clears a "settled" override (+settledAt);
+ * setSettled("settled") clears the pin. See setSettled for the other direction.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, pinned: boolean }} input
+ */
+function setPinned(store, input) {
+  const { threadId, pinned } = input;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  /** @type {Record<string, unknown>} */
+  const patch = {};
+  if (pinned) {
+    patch.pinnedAt = Date.now();
+    // Mutual exclusion: pin clears an explicit settle (not an "active" override).
+    if (thread.settledOverride === "settled") {
+      patch.settledOverride = null;
+      patch.settledAt = null;
+    }
+  } else {
+    patch.pinnedAt = null;
+  }
+  const updated = store.updateThread(threadId, patch);
+  store.save();
+  return updated ? { ...updated } : { ...thread, ...patch };
+}
+
+/**
+ * Snooze until an epoch ms, or clear with null. Visibility only: no run-state
+ * guards (a working thread is snoozable). Never bumps updatedAt.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, until: number | null }} input
+ */
+function setSnoozed(store, input) {
+  const { threadId, until } = input;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  /** @type {Record<string, unknown>} */
+  let patch;
+  if (until === null || until === undefined) {
+    patch = { snoozedUntil: null, snoozedAt: null };
+  } else {
+    const t = Number(until);
+    if (!Number.isFinite(t) || !(t > Date.now())) {
+      throw new Error(`Snooze time ${until} is not in the future`);
+    }
+    patch = { snoozedUntil: t, snoozedAt: Date.now() };
+  }
   const updated = store.updateThread(threadId, patch);
   store.save();
   return updated ? { ...updated } : { ...thread, ...patch };
@@ -893,6 +970,8 @@ module.exports = {
   setProvider,
   setArchived,
   setSettled,
+  setPinned,
+  setSnoozed,
   clearSettledOnActivity,
   deleteThread,
   purgeThread,

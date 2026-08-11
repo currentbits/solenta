@@ -80,6 +80,9 @@ export function thread(over: Partial<ThreadInfo> = {}): ThreadInfo {
     archived: false,
     settledOverride: null,
     settledAt: null,
+    pinnedAt: null,
+    snoozedUntil: null,
+    snoozedAt: null,
     // Default lastVisitedAt to updatedAt so fixtures that only bump updatedAt
     // stay read. Pass lastVisitedAt explicitly for unread cases.
     lastVisitedAt:
@@ -287,15 +290,85 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           threadId: string;
           override: "settled" | "active" | null;
         };
-        return rec(
-          "threads.setSettled",
-          [input],
-          thread({
-            id: i.threadId,
-            settledOverride: i.override,
-            settledAt: i.override ? Date.now() : null,
-          }),
-        );
+        const existing = threads.find((t) => t.id === i.threadId);
+        // Mutual exclusion (contract): setSettled("settled") clears the pin.
+        const next: ThreadInfo = {
+          ...(existing ?? thread({ id: i.threadId })),
+          settledOverride: i.override,
+          settledAt: i.override ? Date.now() : null,
+          pinnedAt:
+            i.override === "settled"
+              ? null
+              : (existing?.pinnedAt ?? null),
+        };
+        threads = threads.map((t) => (t.id === i.threadId ? next : t));
+        return rec("threads.setSettled", [input], next);
+      },
+      /**
+       * Honest pin (round 44). Pinning clears a "settled" override; never
+       * bumps updatedAt. Round-37/43 lesson: fakes that drift ship green+broken.
+       */
+      setPinned: (input: unknown) => {
+        const i = input as { threadId: string; pinned: boolean };
+        const existing = threads.find((t) => t.id === i.threadId);
+        if (!existing) {
+          return rec(
+            "threads.setPinned",
+            [input],
+            thread({
+              id: i.threadId,
+              pinnedAt: i.pinned ? Date.now() : null,
+            }),
+          );
+        }
+        const now = Date.now();
+        const next: ThreadInfo = {
+          ...existing,
+          pinnedAt: i.pinned ? now : null,
+          // Mutual exclusion: pin clears a settled override, not "active".
+          settledOverride:
+            i.pinned && existing.settledOverride === "settled"
+              ? null
+              : existing.settledOverride,
+          settledAt:
+            i.pinned && existing.settledOverride === "settled"
+              ? null
+              : existing.settledAt,
+          // Never bump updatedAt — pin is bookkeeping.
+        };
+        threads = threads.map((t) => (t.id === i.threadId ? next : t));
+        return rec("threads.setPinned", [input], next);
+      },
+      /**
+       * Honest snooze. Rejects non-future until; stamps snoozedAt = now.
+       * Does NOT clear pin (suspends). Never bumps updatedAt.
+       */
+      setSnoozed: (input: unknown) => {
+        const i = input as { threadId: string; until: number | null };
+        const existing = threads.find((t) => t.id === i.threadId);
+        const now = Date.now();
+        calls.push({ channel: "threads.setSnoozed", args: [input] });
+        if (i.until != null) {
+          if (!Number.isFinite(i.until) || i.until <= now) {
+            return Promise.reject(
+              new Error(
+                `Snooze until must be strictly in the future (got ${i.until})`,
+              ),
+            );
+          }
+        }
+        const base = existing ?? thread({ id: i.threadId });
+        const next: ThreadInfo = {
+          ...base,
+          snoozedUntil: i.until,
+          snoozedAt: i.until == null ? null : now,
+        };
+        if (existing) {
+          threads = threads.map((t) => (t.id === i.threadId ? next : t));
+        } else {
+          threads = [next, ...threads];
+        }
+        return Promise.resolve(next);
       },
       setProvider: (input: unknown) => rec("threads.setProvider", [input], thread()),
       setReasoningEffort: (input: unknown) =>

@@ -114,6 +114,18 @@ function registerIpc(deps) {
     return updated;
   });
 
+  ipcMain.handle("threads:setPinned", async (_event, input) => {
+    const updated = services.setPinned(store, input);
+    broadcast("threads:changed", services.listThreads(store));
+    return updated;
+  });
+
+  ipcMain.handle("threads:setSnoozed", async (_event, input) => {
+    const updated = services.setSnoozed(store, input);
+    broadcast("threads:changed", services.listThreads(store));
+    return updated;
+  });
+
   ipcMain.handle("threads:setProvider", async (_event, input) => {
     const updated = services.setProvider(store, input);
     broadcast("threads:changed", services.listThreads(store));

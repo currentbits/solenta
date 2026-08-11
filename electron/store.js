@@ -232,6 +232,10 @@ function migrateThread(t) {
     // Round 43 unread: null = legacy (renderer treats as visited so upgrades
     // do not light up every old thread). Visiting is stamped in threads.get.
     lastVisitedAt: t.lastVisitedAt !== undefined ? t.lastVisitedAt : null,
+    // Round 44 pin + snooze: null = unpinned / not snoozed.
+    pinnedAt: t.pinnedAt !== undefined ? t.pinnedAt : null,
+    snoozedUntil: t.snoozedUntil !== undefined ? t.snoozedUntil : null,
+    snoozedAt: t.snoozedAt !== undefined ? t.snoozedAt : null,
   };
 }
 
