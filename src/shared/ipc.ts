@@ -218,6 +218,16 @@ export interface GitStatus {
 }
 
 /** A GitHub pull request opened from a thread's branch. */
+/** One auto-committed turn checkpoint in a thread's worktree. */
+export interface CheckpointInfo {
+  sha: string;
+  /** 1-based turn number parsed from the checkpoint message. */
+  turn: number;
+  message: string;
+  /** Epoch ms of the commit. */
+  at: number;
+}
+
 export interface PrInfo {
   number: number;
   url: string;
@@ -567,6 +577,18 @@ export interface CoderApi {
      * Rejects only on the same environment failures as createPr.
      */
     prStatus(input: { threadId: string }): Promise<PrInfo | null>;
+    /**
+     * Checkpoints: after each successful turn that changed files, the runner
+     * auto-commits in the thread's WORKTREE ("coder-checkpoint: turn N").
+     * Never fires on the main repo, never when the worktree is clean.
+     * listCheckpoints returns newest-first; empty for threads without a
+     * worktree. restoreCheckpoint hard-resets the WORKTREE to the given sha;
+     * rejects while a run is active, when the worktree is missing, or when
+     * the sha is not one of this thread's checkpoints (never an arbitrary
+     * reset target). The renderer confirms destructively BEFORE calling.
+     */
+    listCheckpoints(input: { threadId: string }): Promise<CheckpointInfo[]>;
+    restoreCheckpoint(input: { threadId: string; sha: string }): Promise<void>;
   };
   /** Returns an unsubscribe function. */
   on(channel: "threads:changed", cb: (threads: ThreadInfo[]) => void): () => void;
