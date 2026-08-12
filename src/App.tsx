@@ -5,6 +5,9 @@ import { ThreadView } from "./components/ThreadView";
 import { AgentsPanel } from "./components/AgentsPanel";
 import { SettingsModal } from "./components/SettingsModal";
 import { ArchiveToast } from "./components/ArchiveToast";
+import { AddProjectPathModal } from "./components/AddProjectPathModal";
+import { WebTokenGate } from "./components/WebTokenGate";
+import { isWebMode } from "./shared/wire";
 import styles from "./App.module.css";
 
 export default function App() {
@@ -72,6 +75,7 @@ export default function App() {
    * Failed to remove "slug". Cleared on dismiss / timeout.
    */
   const [removeFailSlug, setRemoveFailSlug] = useState<string | null>(null);
+  const [addPathOpen, setAddPathOpen] = useState(false);
 
   const handleSetArchived = useCallback(
     async (archived: boolean) => {
@@ -138,9 +142,69 @@ export default function App() {
     (selectedProjectId ? projectById.get(selectedProjectId) : undefined) ||
     null;
 
+  const handleAddProject = useCallback(() => {
+    if (isWebMode()) {
+      setAddPathOpen(true);
+      return;
+    }
+    void addProject();
+  }, [addProject]);
+
+  const submitAddPath = useCallback(
+    async (path: string) => {
+      const added = await addProject(path);
+      if (added) setAddPathOpen(false);
+      return added;
+    },
+    [addProject],
+  );
+
   return (
-    <div className={styles.app}>
-      <Sidebar
+    <div className={styles.shell}>
+      {isWebMode() && <WebTokenGate />}
+      <div className={styles.app} data-layout="app">
+        <input
+          type="checkbox"
+          id="drawer-sidebar"
+          className={styles.drawerToggle}
+          data-drawer="sidebar"
+        />
+        <input
+          type="checkbox"
+          id="drawer-agents"
+          className={styles.drawerToggle}
+          data-drawer="agents"
+        />
+        <div className={styles.narrowBar} data-narrow-chrome="">
+          <label
+            htmlFor="drawer-sidebar"
+            className={styles.narrowBtn}
+            data-drawer-open="sidebar"
+          >
+            Threads
+          </label>
+          <label
+            htmlFor="drawer-agents"
+            className={styles.narrowBtn}
+            data-drawer-open="agents"
+          >
+            Agents
+          </label>
+        </div>
+        <label
+          htmlFor="drawer-sidebar"
+          className={`${styles.scrim} ${styles.scrimSidebar}`}
+          data-scrim="sidebar"
+          aria-hidden
+        />
+        <label
+          htmlFor="drawer-agents"
+          className={`${styles.scrim} ${styles.scrimAgents}`}
+          data-scrim="agents"
+          aria-hidden
+        />
+        <div className={styles.sidebarSlot} data-pane="sidebar">
+          <Sidebar
         appName="Coder"
         searchPlaceholder="Search threads…"
         projectsHeader="All projects"
@@ -152,9 +216,7 @@ export default function App() {
         onCreateThread={(projectId) => {
           void createThread("New Thread", projectId);
         }}
-        onAddProject={() => {
-          void addProject();
-        }}
+        onAddProject={handleAddProject}
         onRemoveProject={handleRemoveProject}
         projectError={error?.scope === "project" ? error.message : null}
         onDismissProjectError={clearError}
@@ -180,16 +242,16 @@ export default function App() {
         onFork={(threadId, opts) => {
           void forkThread(threadId, opts);
         }}
-      />
-      <ThreadView
+          />
+        </div>
+        <div className={styles.threadSlot} data-pane="thread">
+          <ThreadView
         detail={detail}
         project={project}
         providers={providers}
         workflows={workflows}
         hasProjects={projects.length > 0}
-        onAddProject={() => {
-          void addProject();
-        }}
+        onAddProject={handleAddProject}
         onStartRun={(prompt) => startRun(prompt)}
         onStartWorkflow={(prompt, templateId) =>
           startWorkflowRun(prompt, templateId)
@@ -221,8 +283,10 @@ export default function App() {
         }}
         threads={threads}
         onSelectThread={selectThread}
-      />
-      <AgentsPanel
+          />
+        </div>
+        <div className={styles.agentsSlot} data-pane="agents">
+          <AgentsPanel
         workflow={detail?.workflow ?? null}
         thread={detail?.thread ?? null}
         usage={detail?.usage ?? null}
@@ -243,29 +307,37 @@ export default function App() {
         updateMemory={updateMemory}
         removeMemory={removeMemory}
         storeMemory={storeMemory}
-      />
-      <SettingsModal
-        open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-        settings={settings}
-        status={appStatus}
-        onSaveSettings={(patch) => saveSettings(patch)}
-      />
-      {archiveToastId && (
-        <ArchiveToast
-          key={`archive-${archiveToastId}`}
-          onUndo={() => void undoArchive()}
-          onDismiss={dismissArchiveToast}
+          />
+        </div>
+        <SettingsModal
+          open={settingsOpen}
+          onClose={() => setSettingsOpen(false)}
+          settings={settings}
+          status={appStatus}
+          onSaveSettings={(patch) => saveSettings(patch)}
         />
-      )}
-      {removeFailSlug && (
-        <ArchiveToast
-          key={`remove-fail-${removeFailSlug}`}
-          variant="error"
-          title={`Failed to remove "${removeFailSlug}"`}
-          onDismiss={dismissRemoveFail}
-        />
-      )}
+        {archiveToastId && (
+          <ArchiveToast
+            key={`archive-${archiveToastId}`}
+            onUndo={() => void undoArchive()}
+            onDismiss={dismissArchiveToast}
+          />
+        )}
+        {removeFailSlug && (
+          <ArchiveToast
+            key={`remove-fail-${removeFailSlug}`}
+            variant="error"
+            title={`Failed to remove "${removeFailSlug}"`}
+            onDismiss={dismissRemoveFail}
+          />
+        )}
+        {addPathOpen && (
+          <AddProjectPathModal
+            onClose={() => setAddPathOpen(false)}
+            onSubmit={submitAddPath}
+          />
+        )}
+      </div>
     </div>
   );
 }

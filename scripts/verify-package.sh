@@ -26,6 +26,18 @@ if [[ ! -x "$BIN" ]]; then
   fi
 fi
 
+# Coder Web (round 51): webBridge.js require("ws") must resolve in the
+# packaged tree. Root node_modules is not shipped except this explicit copy.
+APP_RES="$APP/Contents/Resources/app"
+if [[ ! -f "$APP_RES/electron/webBridge.js" || ! -f "$APP_RES/electron/webServer.js" ]]; then
+  echo "ERROR: packaged app missing electron/webBridge.js or webServer.js" >&2
+  exit 1
+fi
+if [[ ! -d "$APP_RES/node_modules/ws" || ! -f "$APP_RES/node_modules/ws/package.json" ]]; then
+  echo "ERROR: packaged app missing node_modules/ws (webBridge.js needs it)" >&2
+  exit 1
+fi
+
 # Install cleanup before any probe so the temp dir cannot leak.
 TMP_USERDATA="$(mktemp -d "${TMPDIR:-/tmp}/coder-pkg-verify.XXXXXX")"
 ELECTRON_PID=""

@@ -14,6 +14,14 @@ const {
 } = require("./memory-sup.js");
 const { createPrStateRefresher } = require("./worktrees.js");
 const { enrichProcessPath } = require("./pathEnv.js");
+const {
+  parseServeWebArgs,
+  startWebServer,
+  loadOrCreateToken,
+  HOST_FLAG_HELP,
+} = require("./webServer.js");
+
+const serveOpts = parseServeWebArgs(process.argv);
 
 // GUI launches get a bare launchd PATH; rebuild the user's real PATH before
 // any provider binary resolution (`which`) or agent spawn happens.
@@ -29,6 +37,9 @@ let runner = null;
 
 /** @type {ReturnType<typeof createPrStateRefresher> | null} */
 let prStateRefresher = null;
+
+/** @type {Awaited<ReturnType<typeof startWebServer>> | null} */
+let webServer = null;
 
 /**
  * Ensure @coder/core is built; throw a helpful error if missing.
@@ -93,6 +104,9 @@ function broadcast(channel, payload) {
       win.webContents.send(channel, payload);
     }
   }
+  if (webServer) {
+    webServer.broadcast(channel, payload);
+  }
 }
 
 app.whenReady().then(async () => {
@@ -154,7 +168,7 @@ app.whenReady().then(async () => {
     userDataPath: userData,
   });
 
-  registerIpc({
+  const registered = registerIpc({
     ipcMain,
     dialog,
     store,
@@ -163,6 +177,24 @@ app.whenReady().then(async () => {
     worktreeBase: path.join(userData, "worktrees"),
     userDataPath: userData,
   });
+
+  if (serveOpts.enabled) {
+    const token = loadOrCreateToken(userData);
+    // Contract: print the token to stdout when serve mode starts.
+    process.stdout.write(`coder-web: token ${token}\n`);
+    if (serveOpts.host !== "127.0.0.1") {
+      process.stdout.write(`coder-web: ${HOST_FLAG_HELP}\n`);
+    }
+    const staticDir = path.join(__dirname, "../dist");
+    webServer = await startWebServer({
+      host: serveOpts.host,
+      port: serveOpts.port,
+      staticDir: fs.existsSync(staticDir) ? staticDir : null,
+      token,
+      ctx: registered.ctx,
+      log: (msg) => console.warn(msg),
+    });
+  }
 
   // Round 47: lazy PR-state freshness. Async/serialized/latched so a slow gh
   // cannot freeze the main process (ISSUES.md prStatus hang) and non-GitHub
@@ -186,6 +218,14 @@ app.whenReady().then(async () => {
 });
 
 app.on("before-quit", () => {
+  if (webServer) {
+    try {
+      void webServer.close();
+    } catch {
+      // ignore
+    }
+    webServer = null;
+  }
   // Stop active runs and drain session transcript queue before exit.
   if (runner) {
     try {
@@ -219,6 +259,9 @@ app.on("before-quit", () => {
 });
 
 app.on("window-all-closed", () => {
+  // --serve-web keeps the process up after the last window so the HTTP+WS
+  // listener does not die with the desktop chrome.
+  if (serveOpts.enabled) return;
   if (process.platform !== "darwin") {
     app.quit();
   }
