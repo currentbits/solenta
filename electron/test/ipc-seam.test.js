@@ -185,6 +185,16 @@ exit 1`,
         "main must handle git:prStatus",
       );
 
+      assert.equal(
+        typeof api.servers.list,
+        "function",
+        "preload must expose servers.list",
+      );
+      assert.ok(
+        handlers.has("servers:list"),
+        "main must handle servers:list",
+      );
+
       // Round 44 pin + snooze (mirror setSettled seam).
       for (const name of ["setPinned", "setSnoozed"]) {
         assert.equal(

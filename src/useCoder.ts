@@ -5,6 +5,7 @@ import type {
   CheckpointInfo,
   CoderApi,
   DiffResult,
+  LocalServerInfo,
   MemoryEntryInfo,
   PermissionMode,
   PrInfo,
@@ -150,6 +151,8 @@ export interface UseCoderResult {
   listCheckpoints: (threadId: string) => Promise<CheckpointInfo[]>;
   /** Hard-reset the thread worktree to a checkpoint sha. */
   restoreCheckpoint: (threadId: string, sha: string) => Promise<void>;
+  /** Local TCP listeners whose cwd is the thread worktree or project. */
+  listLocalServers: (threadId: string) => Promise<LocalServerInfo[]>;
   /** Live spend + memory server status. */
   appStatus: AppStatus | null;
   /** Persisted app settings (daily budget). */
@@ -918,6 +921,17 @@ export function useCoder(): UseCoderResult {
     [api],
   );
 
+  const listLocalServers = useCallback(
+    async (threadId: string) => {
+      try {
+        return await api.servers.list({ threadId });
+      } catch {
+        return [];
+      }
+    },
+    [api],
+  );
+
   const saveSettings = useCallback(
     async (patch: Partial<AppSettings>) => {
       const next = await api.settings.set(patch);
@@ -1043,6 +1057,7 @@ export function useCoder(): UseCoderResult {
     prStatus,
     listCheckpoints,
     restoreCheckpoint,
+    listLocalServers,
     appStatus,
     settings,
     saveSettings,

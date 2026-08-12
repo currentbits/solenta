@@ -14,6 +14,7 @@ import type {
   CheckpointInfo,
   CoderApi,
   DiffResult,
+  LocalServerInfo,
   MemoryEntryInfo,
   PermissionMode,
   PrInfo,
@@ -2995,6 +2996,11 @@ function buildDevCoder(): CoderApi {
         syncThreadRow(thread);
         emitDetail(detail);
         return { ...thread };
+      },
+    },
+    servers: {
+      async list(_input: { threadId: string }): Promise<LocalServerInfo[]> {
+        return [];
       },
     },
     files: {

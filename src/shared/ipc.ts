@@ -233,6 +233,15 @@ export interface CheckpointInfo {
   at: number;
 }
 
+/** A TCP listener whose process cwd is the thread worktree or project. */
+export interface LocalServerInfo {
+  pid: number;
+  command: string;
+  host: string;
+  port: number;
+  url: string;
+}
+
 export interface PrInfo {
   number: number;
   url: string;
@@ -636,6 +645,13 @@ export interface CoderApi {
      * thread's worktree when bound, else the project checkout.
      */
     list(input: { threadId: string; query?: string }): Promise<{ files: string[] }>;
+  };
+  servers: {
+    /**
+     * Listening TCP processes whose cwd is the thread's worktree (or the
+     * project path when no worktree is bound). Empty on any lsof failure.
+     */
+    list(input: { threadId: string }): Promise<LocalServerInfo[]>;
   };
   /** Returns an unsubscribe function. */
   on(channel: "threads:changed", cb: (threads: ThreadInfo[]) => void): () => void;

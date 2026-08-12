@@ -20,6 +20,7 @@ import type {
   CoderApi,
   DiffResult,
   GitStatus,
+  LocalServerInfo,
   MemoryEntryInfo,
   PrInfo,
   ProjectInfo,
@@ -654,6 +655,9 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         checkpoints[i.threadId] = list.slice(idx);
         return Promise.resolve(undefined);
       },
+    },
+    servers: {
+      list: (input: unknown) => rec("servers.list", [input], [] as LocalServerInfo[]),
     },
     files: {
       list: (input: unknown) => {

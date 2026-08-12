@@ -75,6 +75,7 @@ function render(t: ThreadInfo | null): string {
       prStatus={async () => null}
       listCheckpoints={async () => []}
       restoreCheckpoint={async () => {}}
+      listLocalServers={async () => []}
     />,
   );
 }

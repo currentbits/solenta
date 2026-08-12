@@ -17,6 +17,7 @@ const {
   restoreCheckpoint,
 } = require("./worktrees.js");
 const { suggestCommitMessage } = require("./commitmsg.js");
+const { listLocalServers } = require("./servers.js");
 const { createMemoryProxy } = require("./memory-proxy.js");
 
 /**
@@ -299,6 +300,21 @@ const IPC_HANDLERS = {
       sha: input.sha,
       isRunning: (id) => ctx.runner.isRunning(id),
     });
+  },
+  "servers:list": async (ctx, input) => {
+    try {
+      const threadId = input && input.threadId;
+      if (!threadId) return [];
+      const thread = ctx.store.getThread(threadId);
+      if (!thread) return [];
+      const project = ctx.store.getProject(thread.projectId);
+      if (!project) return [];
+      const root = thread.worktreePath || project.path;
+      if (!root) return [];
+      return await listLocalServers(root);
+    } catch {
+      return [];
+    }
   },
 };
 

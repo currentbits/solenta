@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
   AgentStatus,
   CheckpointInfo,
+  LocalServerInfo,
   MemoryEntryInfo,
   PhaseView,
   PrInfo,
@@ -48,6 +49,7 @@ interface AgentsPanelProps {
   /** Worktree checkpoints (newest-first). */
   listCheckpoints: (threadId: string) => Promise<CheckpointInfo[]>;
   restoreCheckpoint: (threadId: string, sha: string) => Promise<void>;
+  listLocalServers: (threadId: string) => Promise<LocalServerInfo[]>;
   searchMemory: (input: {
     query: string;
     project?: string;
@@ -371,6 +373,72 @@ function ChangesCard({
           View changes
         </button>
       </div>
+    </section>
+  );
+}
+
+const SERVER_POLL_MS = 5_000;
+
+export function LocalServersCard({
+  threadId,
+  listLocalServers,
+}: {
+  threadId: string | null;
+  listLocalServers: (threadId: string) => Promise<LocalServerInfo[]>;
+}) {
+  const [servers, setServers] = useState<LocalServerInfo[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function tick() {
+      if (!threadId) {
+        if (!cancelled) setServers([]);
+        return;
+      }
+      try {
+        const list = await listLocalServers(threadId);
+        if (!cancelled) setServers(Array.isArray(list) ? list : []);
+      } catch {
+        if (!cancelled) setServers([]);
+      }
+    }
+    void tick();
+    const id = window.setInterval(() => void tick(), SERVER_POLL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [threadId, listLocalServers]);
+
+  return (
+    <section className={styles.gitCard} data-local-servers="">
+      <div className={`${styles.gitCardLabel} ${styles.serverLabel}`}>
+        Local Servers
+        <span className={styles.serverCount} data-local-servers-count="">
+          {servers.length}
+        </span>
+      </div>
+      {servers.length === 0 ? (
+        <p className={styles.gitHint} data-local-servers-empty="">
+          No dev servers detected
+        </p>
+      ) : (
+        <ul className={styles.serverList} data-local-servers-list="">
+          {servers.map((s) => (
+            <li key={`${s.pid}-${s.port}`} className={styles.serverRow}>
+              <a
+                className={styles.serverLink}
+                href={s.url}
+                target="_blank"
+                rel="noreferrer"
+              >
+                <span className={styles.serverCommand}>{s.command}</span>
+                <span className={styles.serverPort}>:{s.port}</span>
+              </a>
+            </li>
+          ))}
+        </ul>
+      )}
     </section>
   );
 }
@@ -752,6 +820,7 @@ export function GitTab({
   prStatus,
   listCheckpoints,
   restoreCheckpoint,
+  listLocalServers,
 }: {
   thread: ThreadInfo | null;
   project: ProjectInfo | null;
@@ -768,6 +837,7 @@ export function GitTab({
   prStatus: () => Promise<PrInfo | null>;
   listCheckpoints: (threadId: string) => Promise<CheckpointInfo[]>;
   restoreCheckpoint: (threadId: string, sha: string) => Promise<void>;
+  listLocalServers: (threadId: string) => Promise<LocalServerInfo[]>;
 }) {
   const [gitAction, setGitAction] = useState<GitAction>(null);
   const [dirtyMessage, setDirtyMessage] = useState<string | null>(null);
@@ -970,6 +1040,10 @@ export function GitTab({
         <ChangesCard
           hasThread={Boolean(thread)}
           onViewChanges={onViewChanges}
+        />
+        <LocalServersCard
+          threadId={thread?.id ?? null}
+          listLocalServers={listLocalServers}
         />
         <CheckpointsCard
           thread={thread}
@@ -1286,6 +1360,7 @@ export function AgentsPanel({
   prStatus,
   listCheckpoints,
   restoreCheckpoint,
+  listLocalServers,
   searchMemory,
   recentMemory,
   getMemory,
@@ -1344,6 +1419,7 @@ export function AgentsPanel({
           prStatus={prStatus}
           listCheckpoints={listCheckpoints}
           restoreCheckpoint={restoreCheckpoint}
+          listLocalServers={listLocalServers}
         />
       ) : (
         <MemoryTab

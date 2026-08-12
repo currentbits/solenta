@@ -5,6 +5,7 @@ import type {
   CoderApi,
   DiffResult,
   GitStatus,
+  LocalServerInfo,
   MemoryEntryInfo,
   PrInfo,
   ProjectInfo,
@@ -287,6 +288,9 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
     },
     files: {
       list: (input) => call<{ files: string[] }>("files:list", input),
+    },
+    servers: {
+      list: (input) => call<LocalServerInfo[]>("servers:list", input),
     },
     on: on as CoderApi["on"],
   };

@@ -101,6 +101,9 @@ const coder = {
   files: {
     list: (input) => invoke("files:list", input),
   },
+  servers: {
+    list: (input) => invoke("servers:list", input),
+  },
   on,
 };
 

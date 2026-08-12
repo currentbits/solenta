@@ -52,6 +52,7 @@ export default function App() {
     prStatus,
     listCheckpoints,
     restoreCheckpoint,
+    listLocalServers,
     appStatus,
     settings,
     saveSettings,
@@ -301,6 +302,7 @@ export default function App() {
         prStatus={() => prStatus()}
         listCheckpoints={listCheckpoints}
         restoreCheckpoint={restoreCheckpoint}
+        listLocalServers={listLocalServers}
         searchMemory={searchMemory}
         recentMemory={recentMemory}
         getMemory={getMemory}
