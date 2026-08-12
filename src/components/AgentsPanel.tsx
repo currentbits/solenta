@@ -1020,6 +1020,10 @@ export function GitTab({
   return (
     <>
       <div className={styles.scroll}>
+        <ChangesCard
+          hasThread={Boolean(thread)}
+          onViewChanges={onViewChanges}
+        />
         <WorktreeCard
           thread={thread}
           busy={busy}
@@ -1036,29 +1040,6 @@ export function GitTab({
           }
           onCancelDirty={() => setDirtyMessage(null)}
           onDismissError={() => setCardError(null)}
-        />
-        <ChangesCard
-          hasThread={Boolean(thread)}
-          onViewChanges={onViewChanges}
-        />
-        <LocalServersCard
-          threadId={thread?.id ?? null}
-          listLocalServers={listLocalServers}
-        />
-        <CheckpointsCard
-          thread={thread}
-          checkpoints={checkpoints}
-          loading={checkpointsLoading}
-          restorePending={restorePending}
-          cardError={checkpointError}
-          isWorking={isWorking}
-          onRestoreRequest={(cp) => {
-            if (isWorking || restorePending) return;
-            setCheckpointError(null);
-            setRestoreConfirm(cp);
-          }}
-          onDismissError={() => setCheckpointError(null)}
-          now={now}
         />
         <PrCard
           thread={thread}
@@ -1089,6 +1070,25 @@ export function GitTab({
             )
           }
           onDismissError={() => setPrError(null)}
+        />
+        <LocalServersCard
+          threadId={thread?.id ?? null}
+          listLocalServers={listLocalServers}
+        />
+        <CheckpointsCard
+          thread={thread}
+          checkpoints={checkpoints}
+          loading={checkpointsLoading}
+          restorePending={restorePending}
+          cardError={checkpointError}
+          isWorking={isWorking}
+          onRestoreRequest={(cp) => {
+            if (isWorking || restorePending) return;
+            setCheckpointError(null);
+            setRestoreConfirm(cp);
+          }}
+          onDismissError={() => setCheckpointError(null)}
+          now={now}
         />
       </div>
       <footer className={styles.gitStatus} title={statusLine}>
@@ -1368,7 +1368,7 @@ export function AgentsPanel({
   removeMemory,
   storeMemory,
 }: AgentsPanelProps) {
-  const [tab, setTab] = useState<PanelTab>("agents");
+  const [tab, setTab] = useState<PanelTab>("git");
 
   return (
     <aside className={styles.panel}>
@@ -1376,18 +1376,18 @@ export function AgentsPanel({
         <button
           type="button"
           className={styles.tab}
-          data-active={tab === "agents"}
-          onClick={() => setTab("agents")}
+          data-active={tab === "git"}
+          onClick={() => setTab("git")}
         >
-          Agents
+          Environment
         </button>
         <button
           type="button"
           className={styles.tab}
-          data-active={tab === "git"}
-          onClick={() => setTab("git")}
+          data-active={tab === "agents"}
+          onClick={() => setTab("agents")}
         >
-          Git
+          Agents
         </button>
         <button
           type="button"

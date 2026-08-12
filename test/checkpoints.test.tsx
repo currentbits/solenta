@@ -89,8 +89,8 @@ async function selectThread(
 async function openGitTab(m: Awaited<ReturnType<typeof mount>>) {
   const git = m
     .queryAll("button")
-    .find((b) => (b.textContent || "").trim() === "Git");
-  assert.ok(git, "Git tab control must exist");
+    .find((b) => (b.textContent || "").trim() === "Environment");
+  assert.ok(git, "Environment tab control must exist");
   await m.click(git as HTMLElement);
   await m.flush();
 }

@@ -68,6 +68,12 @@ rm -rf out/Coder.app
 mkdir -p out
 cp -R "$ELECTRON_APP" out/Coder.app
 
+# The stock Electron.app can carry a stale Resources/app from an earlier
+# mishap. With it in place, `cp -R dist "$APP_DIR/dist"` below nests the fresh
+# bundle as dist/dist and the app silently ships the OLD UI while the build
+# stamp claims otherwise. Always start from a clean slate.
+rm -rf "out/Coder.app/Contents/Resources/app"
+
 APP_DIR="out/Coder.app/Contents/Resources/app"
 mkdir -p "$APP_DIR"
 
@@ -122,6 +128,12 @@ echo "packaged node_modules: ws"
 
 # vite build output
 cp -R dist "$APP_DIR/dist"
+# The packaged dist must be byte-identical to the one just built; a stale or
+# nested copy is exactly the "old UI in a new-stamped app" failure mode.
+if [[ -d "$APP_DIR/dist/dist" ]] || ! diff -qr dist "$APP_DIR/dist" >/dev/null; then
+  echo "ERROR: packaged dist does not match the freshly built dist/" >&2
+  exit 1
+fi
 
 # core/dist + core/package.json — main.js resolves:
 #   path.join(__dirname, "../core/dist/index.js")  (electron/ -> app root)
