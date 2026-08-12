@@ -357,7 +357,9 @@ function ChangesCard({
   );
 }
 
-const RESTORE_ACTIVE_TITLE = "Cannot restore while a run is active";
+/** Byte-equal to electron/worktrees.js restoreCheckpoint run-active guard. */
+const RESTORE_ACTIVE_TITLE =
+  "Cannot restore a checkpoint while a run is active";
 
 function shortSha(sha: string): string {
   return sha.length > 7 ? sha.slice(0, 7) : sha;

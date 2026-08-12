@@ -243,6 +243,7 @@ describe("App checkpoints wiring (round 50)", () => {
       m.query(`[data-checkpoint-restore="${middle.sha}"]`) as HTMLElement,
     );
     await m.flush();
+    const listsBeforeConfirm = fake.of("git.listCheckpoints").length;
     await m.click(m.query("[data-restore-confirm-submit]") as HTMLElement);
     await m.flush();
 
@@ -252,6 +253,14 @@ describe("App checkpoints wiring (round 50)", () => {
       threadId: "t-cp-source",
       sha: middle.sha,
     });
+
+    // B-R2: explicit post-restore refresh is load-bearing once App passes
+    // stable useCoder callbacks (no re-render churn). Deleting
+    // await refreshCheckpoints() after restore leaves the list stale.
+    assert.ok(
+      fake.of("git.listCheckpoints").length > listsBeforeConfirm,
+      "successful restore must re-call listCheckpoints (explicit refresh)",
+    );
 
     // List refreshed: turn 3 (newer) gone; turn 2 + 1 remain.
     // This depends on fake truncating later checkpoints (reviewer mutant).
@@ -272,9 +281,10 @@ describe("App checkpoints wiring (round 50)", () => {
 
   it("restore failure surfaces error without crashing", async () => {
     const middle = threeCheckpoints()[1]!;
+    const backendMsg = "Cannot restore a checkpoint while a run is active";
     const fake = makeFake({
       fail: {
-        "git.restoreCheckpoint": new Error("Cannot restore while a run is active"),
+        "git.restoreCheckpoint": new Error(backendMsg),
       },
     });
     const m = await boot(fake);
@@ -291,7 +301,8 @@ describe("App checkpoints wiring (round 50)", () => {
     const err = m.query("[data-checkpoint-error]");
     assert.ok(err, "error surface after failed restore");
     assert.ok(
-      (err!.textContent || "").includes("Cannot restore while a run is active"),
+      (err!.textContent || "").includes(backendMsg),
+      `error must show backend string, got: ${err!.textContent}`,
     );
     m.unmount();
   });
@@ -321,7 +332,7 @@ describe("App checkpoints wiring (round 50)", () => {
       );
       assert.equal(
         b.getAttribute("title"),
-        "Cannot restore while a run is active",
+        "Cannot restore a checkpoint while a run is active",
       );
     }
     // Click despite disabled — synthetic click may still fire handlers if we
@@ -370,5 +381,115 @@ describe("fakeCoder restore truncates later checkpoints", () => {
       [2, 1],
     );
     assert.equal(after[0]!.sha, cps[1]!.sha);
+  });
+});
+
+describe("fakeCoder restoreCheckpoint error strings (byte-equal production)", () => {
+  it("rejects working / no-worktree / unknown-sha with electron strings", async () => {
+    const cps = threeCheckpoints();
+    const withWt = source();
+    const working = thread({
+      ...withWt,
+      id: "t-working",
+      status: "working",
+      worktreePath: "/tmp/wt/w",
+    });
+    const bare = thread({
+      id: "t-bare",
+      title: "bare",
+      worktreePath: null,
+      status: "idle",
+    });
+    const fake = createFakeCoder({
+      projects: [project()],
+      threads: [withWt, working, bare],
+      details: {
+        "t-cp-source": detail({ thread: withWt }),
+        "t-working": detail({ thread: working }),
+        "t-bare": detail({ thread: bare }),
+      },
+      checkpoints: {
+        "t-cp-source": cps,
+        "t-working": cps,
+      },
+    });
+
+    await assert.rejects(
+      () =>
+        fake.api.git.restoreCheckpoint({
+          threadId: "t-working",
+          sha: cps[0]!.sha,
+        }),
+      (err: unknown) => {
+        assert.ok(err instanceof Error);
+        assert.equal(
+          err.message,
+          "Cannot restore a checkpoint while a run is active",
+        );
+        return true;
+      },
+    );
+
+    await assert.rejects(
+      () =>
+        fake.api.git.restoreCheckpoint({
+          threadId: "t-bare",
+          sha: cps[0]!.sha,
+        }),
+      (err: unknown) => {
+        assert.ok(err instanceof Error);
+        assert.equal(
+          err.message,
+          "Thread t-bare has no worktree; call setupWorktree first",
+        );
+        return true;
+      },
+    );
+
+    const foreign = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
+    await assert.rejects(
+      () =>
+        fake.api.git.restoreCheckpoint({
+          threadId: "t-cp-source",
+          sha: foreign,
+        }),
+      (err: unknown) => {
+        assert.ok(err instanceof Error);
+        assert.equal(err.message, `Unknown checkpoint: ${foreign}`);
+        return true;
+      },
+    );
+  });
+});
+
+describe("App stable listCheckpoints wiring (round 50 rework B-R2)", () => {
+  it("unrelated App re-render does not re-list checkpoints", async () => {
+    const fake = makeFake();
+    const m = await boot(fake);
+    await selectThread(m, "checkpoint source thread");
+    await openGitTab(m);
+    const afterOpen = fake.of("git.listCheckpoints").length;
+    assert.ok(afterOpen >= 1, "initial list on Git open");
+
+    // Open settings — App state change re-renders with Git tab still mounted.
+    // Inline lambdas for listCheckpoints would re-create refreshCheckpoints and
+    // re-fetch; stable useCoder callbacks must not.
+    const settingsBtn = m
+      .queryAll("button")
+      .find((b) => {
+        const label = (b.getAttribute("aria-label") || "").toLowerCase();
+        const text = (b.textContent || "").toLowerCase();
+        return label.includes("settings") || text.includes("settings");
+      });
+    assert.ok(settingsBtn, "settings control must exist for re-render probe");
+    await m.click(settingsBtn as HTMLElement);
+    await m.flush();
+
+    assert.equal(
+      fake.of("git.listCheckpoints").length,
+      afterOpen,
+      "stable listCheckpoints prop must not re-fetch on unrelated re-render",
+    );
+    m.unmount();
   });
 });
