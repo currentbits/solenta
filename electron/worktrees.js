@@ -1006,6 +1006,177 @@ function parsePrJson(stdout, branch, created) {
   return info;
 }
 
+const PR_LIST_FIELDS =
+  "number,title,url,state,headRefName,isDraft,additions,deletions,updatedAt";
+const PR_LIST_FIELDS_FALLBACK = "number,title,url,state,headRefName";
+
+/**
+ * True when gh rejected --json because a field name is unknown (older gh).
+ * @param {string} text
+ * @returns {boolean}
+ */
+function isUnknownJsonField(text) {
+  return /unknown (json )?field/i.test(String(text || ""));
+}
+
+/**
+ * True when gh's error is missing/expired auth, not a repo or network issue.
+ * @param {string} text
+ * @returns {boolean}
+ */
+function isGhAuthFailure(text) {
+  return /gh auth login|GH_TOKEN|not logged into|authentication required|HTTP 401|Bad credentials/i.test(
+    String(text || ""),
+  );
+}
+
+/**
+ * Normalize one `gh pr list --json` row into a PrListItem.
+ * @param {any} row
+ * @returns {{
+ *   number: number,
+ *   title: string,
+ *   url: string,
+ *   state: "OPEN" | "CLOSED" | "MERGED",
+ *   headRefName: string,
+ *   isDraft?: boolean,
+ *   additions?: number,
+ *   deletions?: number,
+ *   updatedAt?: string,
+ * }}
+ */
+function parsePrListItem(row) {
+  const number = Number(row && row.number);
+  const url = row && row.url != null ? String(row.url) : "";
+  if (!Number.isFinite(number) || number <= 0 || !url) {
+    throw new Error("gh returned incomplete PR list JSON");
+  }
+  const raw = String((row && row.state) || "OPEN").toUpperCase();
+  /** @type {"OPEN" | "CLOSED" | "MERGED"} */
+  const state =
+    raw === "MERGED" ? "MERGED" : raw === "CLOSED" ? "CLOSED" : "OPEN";
+  /** @type {{
+   *   number: number,
+   *   title: string,
+   *   url: string,
+   *   state: "OPEN" | "CLOSED" | "MERGED",
+   *   headRefName: string,
+   *   isDraft?: boolean,
+   *   additions?: number,
+   *   deletions?: number,
+   *   updatedAt?: string,
+   * }} */
+  const item = {
+    number,
+    title: row && row.title != null ? String(row.title) : "",
+    url,
+    state,
+    headRefName:
+      row && row.headRefName != null ? String(row.headRefName) : "",
+  };
+  if (typeof (row && row.isDraft) === "boolean") {
+    item.isDraft = row.isDraft;
+  }
+  if (row && row.additions != null && Number.isFinite(Number(row.additions))) {
+    item.additions = Number(row.additions);
+  }
+  if (row && row.deletions != null && Number.isFinite(Number(row.deletions))) {
+    item.deletions = Number(row.deletions);
+  }
+  if (row && row.updatedAt != null && String(row.updatedAt).trim() !== "") {
+    item.updatedAt = String(row.updatedAt);
+  }
+  return item;
+}
+
+/**
+ * Parse `gh pr list --json ...` stdout (an array) into PrListItem[].
+ * @param {string} stdout
+ * @returns {ReturnType<typeof parsePrListItem>[]}
+ */
+function parsePrListJson(stdout) {
+  let data;
+  try {
+    const trimmed = String(stdout || "").trim();
+    data = JSON.parse(trimmed === "" ? "[]" : trimmed);
+  } catch {
+    throw new Error("gh returned unparseable PR list JSON");
+  }
+  if (!Array.isArray(data)) {
+    throw new Error("gh returned incomplete PR list JSON");
+  }
+  return data.map(parsePrListItem);
+}
+
+/**
+ * Open PRs for a project checkout. Never throws: missing gh, a non-GitHub
+ * remote, or auth failure come back as `{ ok: false, reason }` so the UI
+ * can render a per-project error row.
+ *
+ * @param {string} projectPath
+ * @returns {{ ok: true, prs: ReturnType<typeof parsePrListItem>[] } | { ok: false, reason: string }}
+ */
+function listPrs(projectPath) {
+  const cwd = String(projectPath || "");
+  if (!cwd) {
+    return { ok: false, reason: "not a GitHub repo" };
+  }
+
+  const remote = gitTry(cwd, ["remote", "get-url", "origin"]);
+  if (!remote.ok) {
+    return { ok: false, reason: "not a GitHub repo" };
+  }
+  const originUrl = String(remote.stdout || "").trim();
+  if (!isGitHubRemote(originUrl)) {
+    return { ok: false, reason: "not a GitHub repo" };
+  }
+
+  let listed = ghTry(cwd, [
+    "pr",
+    "list",
+    "--json",
+    PR_LIST_FIELDS,
+    "--limit",
+    "50",
+  ]);
+  if (
+    !listed.ok &&
+    isUnknownJsonField(listed.stderr || listed.combined || listed.stdout)
+  ) {
+    listed = ghTry(cwd, [
+      "pr",
+      "list",
+      "--json",
+      PR_LIST_FIELDS_FALLBACK,
+      "--limit",
+      "50",
+    ]);
+  }
+  if (!listed.ok) {
+    if (listed.enoent) {
+      return { ok: false, reason: "gh missing" };
+    }
+    if (isGhAuthFailure(listed.stderr || listed.combined || listed.stdout)) {
+      return { ok: false, reason: "auth" };
+    }
+    return {
+      ok: false,
+      reason: tailErr(listed.stderr || listed.combined, "gh pr list failed"),
+    };
+  }
+  try {
+    return { ok: true, prs: parsePrListJson(listed.stdout) };
+  } catch (err) {
+    return {
+      ok: false,
+      reason:
+        err && err.message
+          ? String(err.message)
+          : "gh returned unparseable PR list JSON",
+    };
+  }
+}
+
 /**
  * True when gh exit means "no PR for this branch" (not an env failure).
  * @param {string} text
@@ -1018,15 +1189,6 @@ function isNoPrMessage(text) {
   return /no (open )?pull requests? found|no pull request found/i.test(
     String(text || ""),
   );
-}
-
-/**
- * True when gh rejected --json for a field this CLI version does not know.
- * @param {string} text
- * @returns {boolean}
- */
-function isUnknownJsonField(text) {
-  return /unknown json field/i.test(String(text || ""));
 }
 
 /**
@@ -1785,6 +1947,9 @@ module.exports = {
   createPr,
   prStatus,
   parsePrJson,
+  listPrs,
+  parsePrListJson,
+  isUnknownJsonField,
   refreshPrStates,
   createPrStateRefresher,
   isPrRefreshCandidate,

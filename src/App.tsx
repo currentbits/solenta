@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from "react";
 import { useCoder } from "./useCoder";
 import { Sidebar } from "./components/Sidebar";
 import { ThreadView } from "./components/ThreadView";
+import { PrListView } from "./components/PrListView";
+import { KanbanView } from "./components/KanbanView";
 import { AgentsPanel } from "./components/AgentsPanel";
 import { SettingsModal } from "./components/SettingsModal";
 import { ArchiveToast } from "./components/ArchiveToast";
@@ -9,6 +11,8 @@ import { AddProjectPathModal } from "./components/AddProjectPathModal";
 import { WebTokenGate } from "./components/WebTokenGate";
 import { isWebMode } from "./shared/wire";
 import styles from "./App.module.css";
+
+export type AppView = "thread" | "kanban" | "prs";
 
 export default function App() {
   const {
@@ -50,6 +54,7 @@ export default function App() {
     pushBranch,
     createPr,
     prStatus,
+    listPrs,
     listCheckpoints,
     restoreCheckpoint,
     listLocalServers,
@@ -77,6 +82,15 @@ export default function App() {
    */
   const [removeFailSlug, setRemoveFailSlug] = useState<string | null>(null);
   const [addPathOpen, setAddPathOpen] = useState(false);
+  const [view, setView] = useState<AppView>("thread");
+
+  const handleSelectThread = useCallback(
+    (id: string) => {
+      setView("thread");
+      selectThread(id);
+    },
+    [selectThread],
+  );
 
   const handleSetArchived = useCallback(
     async (archived: boolean) => {
@@ -213,7 +227,10 @@ export default function App() {
         threads={threads}
         providers={providers}
         activeThreadId={selectedThreadId}
-        onSelectThread={selectThread}
+        onSelectThread={handleSelectThread}
+        activeView={view}
+        onOpenKanban={() => setView("kanban")}
+        onOpenPrs={() => setView("prs")}
         onCreateThread={(projectId) => {
           void createThread("New Thread", projectId);
         }}
@@ -246,7 +263,28 @@ export default function App() {
           />
         </div>
         <div className={styles.threadSlot} data-pane="thread">
-          <ThreadView
+          {view === "prs" ? (
+            <PrListView
+              projects={projects}
+              threads={threads}
+              listPrs={listPrs}
+              onSelectThread={handleSelectThread}
+            />
+          ) : view === "kanban" ? (
+            <KanbanView
+              threads={threads}
+              projects={projects}
+              providers={providers}
+              onSelectThread={handleSelectThread}
+              onCreateThread={() => {
+                void createThread("New Thread");
+              }}
+              autoSettleAfterDays={
+                settings == null ? undefined : settings.autoSettleAfterDays
+              }
+            />
+          ) : (
+            <ThreadView
         detail={detail}
         project={project}
         providers={providers}
@@ -283,8 +321,9 @@ export default function App() {
           void forkThread(selectedThreadId, opts);
         }}
         threads={threads}
-        onSelectThread={selectThread}
-          />
+        onSelectThread={handleSelectThread}
+            />
+          )}
         </div>
         <div className={styles.agentsSlot} data-pane="agents">
           <AgentsPanel

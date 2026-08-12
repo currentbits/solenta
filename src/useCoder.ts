@@ -8,6 +8,7 @@ import type {
   LocalServerInfo,
   MemoryEntryInfo,
   PermissionMode,
+  ListPrsResult,
   PrInfo,
   ProjectInfo,
   ProviderInfo,
@@ -147,6 +148,8 @@ export interface UseCoderResult {
   }) => Promise<PrInfo>;
   /** Live PR for the selected thread's branch, or null when none. */
   prStatus: () => Promise<PrInfo | null>;
+  /** Open PRs for a project checkout (`gh pr list`). Failures are in-band. */
+  listPrs: (projectPath: string) => Promise<ListPrsResult>;
   /** Worktree checkpoints for a thread (newest-first). */
   listCheckpoints: (threadId: string) => Promise<CheckpointInfo[]>;
   /** Hard-reset the thread worktree to a checkpoint sha. */
@@ -907,6 +910,13 @@ export function useCoder(): UseCoderResult {
     return api.git.prStatus({ threadId: selectedThreadId });
   }, [api, selectedThreadId]);
 
+  const listPrs = useCallback(
+    async (projectPath: string) => {
+      return api.git.listPrs(projectPath);
+    },
+    [api],
+  );
+
   const listCheckpoints = useCallback(
     async (threadId: string) => {
       return api.git.listCheckpoints({ threadId });
@@ -1055,6 +1065,7 @@ export function useCoder(): UseCoderResult {
     pushBranch,
     createPr,
     prStatus,
+    listPrs,
     listCheckpoints,
     restoreCheckpoint,
     listLocalServers,

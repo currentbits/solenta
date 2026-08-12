@@ -2817,6 +2817,25 @@ function buildDevCoder(): CoderApi {
           created: false,
         };
       },
+      async listPrs(projectPath: string) {
+        const project = projects.find((p) => p.path === projectPath);
+        if (!project) return { ok: true, prs: [] };
+        const prs = threads
+          .filter(
+            (t) =>
+              t.projectId === project.id &&
+              t.prNumber != null &&
+              t.prUrl != null,
+          )
+          .map((t) => ({
+            number: t.prNumber as number,
+            title: t.title,
+            url: t.prUrl as string,
+            state: (t.prState ?? "OPEN") as "OPEN" | "CLOSED" | "MERGED",
+            headRefName: t.branch ?? "",
+          }));
+        return { ok: true, prs };
+      },
       async listCheckpoints(input: { threadId: string }) {
         const detail = details.get(input.threadId);
         if (!detail) throw new Error(`Unknown thread: ${input.threadId}`);

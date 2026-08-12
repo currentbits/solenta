@@ -5,6 +5,7 @@ import type {
   CoderApi,
   DiffResult,
   GitStatus,
+  ListPrsResult,
   LocalServerInfo,
   MemoryEntryInfo,
   PrInfo,
@@ -282,6 +283,7 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
         call<{ remote: string; branch: string }>("git:push", input),
       createPr: (input) => call<PrInfo>("git:createPr", input),
       prStatus: (input) => call<PrInfo | null>("git:prStatus", input),
+      listPrs: (projectPath) => call<ListPrsResult>("git:listPrs", projectPath),
       listCheckpoints: (input) =>
         call<CheckpointInfo[]>("git:listCheckpoints", input),
       restoreCheckpoint: (input) => call<void>("git:restoreCheckpoint", input),

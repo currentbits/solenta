@@ -262,6 +262,28 @@ export interface PrInfo {
 }
 
 /**
+ * One row from `gh pr list`. Optional fields are absent when gh is too old
+ * for the extra --json keys and listPrs fell back to the short field set.
+ */
+export interface PrListItem {
+  number: number;
+  title: string;
+  url: string;
+  state: "OPEN" | "CLOSED" | "MERGED";
+  headRefName: string;
+  isDraft?: boolean;
+  additions?: number;
+  deletions?: number;
+  /** ISO timestamp from gh when the extra JSON fields are available. */
+  updatedAt?: string;
+}
+
+/** Per-project listPrs result. Failures stay in-band so the UI can retry. */
+export type ListPrsResult =
+  | { ok: true; prs: PrListItem[] }
+  | { ok: false; reason: string };
+
+/**
  * How hard a model should think. Persisted per thread, sent to the CLI.
  *
  * These are the levels the installed CLIs actually accept, verified against
@@ -625,6 +647,12 @@ export interface CoderApi {
      * Rejects only on the same environment failures as createPr.
      */
     prStatus(input: { threadId: string }): Promise<PrInfo | null>;
+    /**
+     * Open PRs for a project checkout via `gh pr list`. Never rejects for
+     * missing gh / non-GitHub remotes / auth: those come back as
+     * `{ ok: false, reason }`.
+     */
+    listPrs(projectPath: string): Promise<ListPrsResult>;
     /**
      * Checkpoints: after each successful turn that changed files, the runner
      * auto-commits in the thread's WORKTREE ("coder-checkpoint: turn N").

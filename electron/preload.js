@@ -95,6 +95,7 @@ const coder = {
     push: (input) => invoke("git:push", input),
     createPr: (input) => invoke("git:createPr", input),
     prStatus: (input) => invoke("git:prStatus", input),
+    listPrs: (projectPath) => invoke("git:listPrs", projectPath),
     listCheckpoints: (input) => invoke("git:listCheckpoints", input),
     restoreCheckpoint: (input) => invoke("git:restoreCheckpoint", input),
   },

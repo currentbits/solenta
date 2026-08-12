@@ -169,7 +169,7 @@ exit 1`,
       assert.ok(api.git, "preload must expose coder.git");
 
       // The two this round adds, named explicitly so a rename cannot slip by.
-      for (const name of ["createPr", "prStatus"]) {
+      for (const name of ["createPr", "prStatus", "listPrs"]) {
         assert.equal(
           typeof api.git[name],
           "function",
@@ -183,6 +183,10 @@ exit 1`,
       assert.ok(
         handlers.has("git:prStatus"),
         "main must handle git:prStatus",
+      );
+      assert.ok(
+        handlers.has("git:listPrs"),
+        "main must handle git:listPrs",
       );
 
       assert.equal(

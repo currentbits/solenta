@@ -95,6 +95,54 @@
   color: var(--text-dim);
 }
 
+.viewNav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0 8px 8px;
+  flex-shrink: 0;
+}
+
+.viewNavRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 550;
+  text-align: left;
+  cursor: pointer;
+}
+
+.viewNavRow:hover {
+  background: var(--card);
+  color: var(--text);
+}
+
+.viewNavRow[data-active="true"] {
+  background: var(--card);
+  border-color: var(--border);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px rgba(59, 130, 246, 0.12);
+}
+
+.viewNavIcon {
+  width: 16px;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.viewNavRow[data-active="true"] .viewNavIcon {
+  color: var(--blue);
+}
+
 .sectionHeader {
   display: flex;
   align-items: center;

@@ -20,6 +20,7 @@ import type {
   CoderApi,
   DiffResult,
   GitStatus,
+  ListPrsResult,
   LocalServerInfo,
   MemoryEntryInfo,
   PrInfo,
@@ -600,6 +601,11 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           created: true,
         } as PrInfo),
       prStatus: (input: unknown) => rec("git.prStatus", [input], null),
+      listPrs: (projectPath: string) =>
+        rec("git.listPrs", [projectPath], {
+          ok: true,
+          prs: [],
+        } as ListPrsResult),
       /**
        * Round 50 contract: newest-first; empty without a worktree.
        * SOURCE list is never mutated by list.

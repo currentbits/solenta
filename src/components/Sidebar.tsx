@@ -143,6 +143,10 @@ interface SidebarProps {
     threadId: string,
     opts?: { provider?: string },
   ) => void | Promise<void>;
+  /** Which main view is showing. Defaults to thread so existing callers stay idle. */
+  activeView?: "thread" | "kanban" | "prs";
+  onOpenKanban?: () => void;
+  onOpenPrs?: () => void;
 }
 
 export type SelectOpts = { meta?: boolean; shift?: boolean };
@@ -779,6 +783,9 @@ export function Sidebar({
   onSetSnoozed,
   onSetArchived,
   onFork,
+  activeView = "thread",
+  onOpenKanban,
+  onOpenPrs,
 }: SidebarProps) {
   const [query, setQuery] = useState("");
   const [now, setNow] = useState(() => Date.now());
@@ -1261,6 +1268,35 @@ export function Sidebar({
           aria-label="Search threads"
         />
       </div>
+
+      <nav className={styles.viewNav} aria-label="Views">
+        <button
+          type="button"
+          className={styles.viewNavRow}
+          data-view-nav="kanban"
+          data-active={activeView === "kanban" ? "true" : undefined}
+          title="Kanban"
+          onClick={() => onOpenKanban?.()}
+        >
+          <span className={styles.viewNavIcon} aria-hidden>
+            ▦
+          </span>
+          Kanban
+        </button>
+        <button
+          type="button"
+          className={styles.viewNavRow}
+          data-view-nav="prs"
+          data-active={activeView === "prs" ? "true" : undefined}
+          title="Pull requests"
+          onClick={() => onOpenPrs?.()}
+        >
+          <span className={styles.viewNavIcon} aria-hidden>
+            ⇄
+          </span>
+          Pull requests
+        </button>
+      </nav>
 
       <button
         type="button"

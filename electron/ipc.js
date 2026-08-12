@@ -13,6 +13,7 @@ const {
   push,
   createPr,
   prStatus,
+  listPrs,
   listCheckpoints,
   restoreCheckpoint,
 } = require("./worktrees.js");
@@ -286,6 +287,9 @@ const IPC_HANDLERS = {
       store: ctx.store,
       threadId: input.threadId,
     });
+  },
+  "git:listPrs": async (_ctx, projectPath) => {
+    return listPrs(projectPath);
   },
   "git:listCheckpoints": async (ctx, input) => {
     return listCheckpoints({
