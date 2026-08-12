@@ -10,6 +10,17 @@ function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+async function waitDone(api: ReturnType<typeof createDevCoder>, threadId: string) {
+  for (let i = 0; i < 50; i++) {
+    const d = await api.threads.get(threadId);
+    if (d.thread.status === "done" || d.thread.status === "failed") {
+      return d;
+    }
+    await sleep(200);
+  }
+  throw new Error("run did not finish");
+}
+
 describe("devCoder checkpoints", () => {
   it("list empty without worktree; appends on successful run with worktree", async () => {
     const api = createDevCoder();
@@ -25,13 +36,7 @@ describe("devCoder checkpoints", () => {
     assert.ok(withWt.thread.worktreePath);
 
     await api.runs.start({ threadId: t.id, prompt: "edit something" });
-    // Wait for the fake run to complete (TICK_MS * a few steps).
-    for (let i = 0; i < 40; i++) {
-      const d = await api.threads.get(t.id);
-      if (d.thread.status === "done") break;
-      await sleep(200);
-    }
-    const detail = await api.threads.get(t.id);
+    const detail = await waitDone(api, t.id);
     assert.equal(detail.thread.status, "done");
 
     const list = await api.git.listCheckpoints({ threadId: t.id });
@@ -93,17 +98,71 @@ describe("devCoder checkpoints", () => {
       title: "Busy",
     });
     await api.git.setupWorktree({ threadId: t.id });
-    // Start a long-ish run so status is working.
+    // Start a long-ish run so status is working. Assertion is unconditional
+    // (ISSUES.md bans if (status === "working") wrappers).
     await api.runs.start({ threadId: t.id, prompt: "hold" });
     const mid = await api.threads.get(t.id);
-    if (mid.thread.status === "working") {
-      await assert.rejects(
-        () =>
-          api.git.restoreCheckpoint({ threadId: t.id, sha: "whatever" }),
-        /Cannot restore a checkpoint while a run is active/,
-      );
-    }
-    // Stop to avoid timer leaks
+    assert.equal(
+      mid.thread.status,
+      "working",
+      "run must still be active for the restore guard probe",
+    );
+    await assert.rejects(
+      () => api.git.restoreCheckpoint({ threadId: t.id, sha: "whatever" }),
+      (err: Error) => {
+        assert.equal(
+          err.message,
+          "Cannot restore a checkpoint while a run is active",
+        );
+        return true;
+      },
+    );
     await api.runs.stop({ threadId: t.id });
+  });
+
+  it("A-B2: restore truncates list; next run reuses freed turn numbers", async () => {
+    const api = createDevCoder();
+    const projects = await api.projects.list();
+    const t = await api.threads.create({
+      projectId: projects[0]!.id,
+      title: "Truncate",
+    });
+    await api.git.setupWorktree({ threadId: t.id });
+
+    await api.runs.start({ threadId: t.id, prompt: "turn 1" });
+    await waitDone(api, t.id);
+    await api.runs.start({ threadId: t.id, prompt: "turn 2" });
+    await waitDone(api, t.id);
+
+    let list = await api.git.listCheckpoints({ threadId: t.id });
+    assert.deepEqual(
+      list.map((c) => c.turn),
+      [2, 1],
+      "two successful runs → turns 2 then 1 newest-first",
+    );
+    const turn1 = list.find((c) => c.turn === 1)!;
+    const turn2Sha = list.find((c) => c.turn === 2)!.sha;
+
+    await api.git.restoreCheckpoint({ threadId: t.id, sha: turn1.sha });
+    list = await api.git.listCheckpoints({ threadId: t.id });
+    assert.deepEqual(
+      list.map((c) => c.turn),
+      [1],
+      "restore to turn 1 truncates newer entries (not [2,1])",
+    );
+
+    await api.runs.start({ threadId: t.id, prompt: "turn 2 again" });
+    await waitDone(api, t.id);
+    list = await api.git.listCheckpoints({ threadId: t.id });
+    assert.deepEqual(
+      list.map((c) => c.turn),
+      [2, 1],
+      "next run reuses turn 2, not 3",
+    );
+    assert.notEqual(
+      list[0]!.sha,
+      turn2Sha,
+      "fresh sha after restore, not the discarded turn-2 object",
+    );
   });
 });

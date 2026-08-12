@@ -1566,32 +1566,22 @@ async function restoreCheckpoint(opts) {
     throw new Error(`Unknown checkpoint: ${sha}`);
   }
 
-  // Validate the sha is a coder-checkpoint commit object in THIS worktree
-  // (not an arbitrary reset target). Use `git log -1 <sha>` rather than
-  // membership in the HEAD-reachable list: after restoring an older turn,
-  // newer checkpoint objects are still valid targets even if no longer on
-  // HEAD's ancestry.
-  const show = await gitTryAsync(thread.worktreePath, [
-    "log",
-    "-1",
-    "--format=%H\t%ct\t%s",
-    want,
-  ]);
-  if (!show.ok || !String(show.stdout || "").trim()) {
-    throw new Error(`Unknown checkpoint: ${sha}`);
-  }
-  const parts = String(show.stdout).trim().split("\t");
-  const fullSha = parts[0] || want;
-  const subject = parts.slice(2).join("\t");
-  if (parseCheckpointTurn(subject) == null) {
-    // Real commit but not a turn checkpoint (e.g. the seed "init" commit).
+  // THIS THREAD's HEAD-reachable checkpoints only. Sibling worktrees of the
+  // same project share an object DB, so `git log -1 <sha>` would accept
+  // another thread's checkpoint and hard-reset into foreign state (data
+  // loss). Membership in listCheckpoints is the contract boundary.
+  const list = await listCheckpoints({ store, threadId });
+  const match = list.find(
+    (c) => c.sha === want || c.sha.startsWith(want) || want.startsWith(c.sha),
+  );
+  if (!match) {
     throw new Error(`Unknown checkpoint: ${sha}`);
   }
 
   const reset = await gitTryAsync(thread.worktreePath, [
     "reset",
     "--hard",
-    fullSha,
+    match.sha,
   ]);
   if (!reset.ok) {
     throw new Error(
