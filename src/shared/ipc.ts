@@ -75,10 +75,14 @@ export interface ThreadInfo {
    */
   lastVisitedAt: number | null;
   /**
-   * Last KNOWN PR state, persisted whenever prStatus/createPr succeed.
-   * Lazily refreshed (selecting the thread refreshes it); no background
-   * polling — prStatus froze the main process once already. MERGED/CLOSED
-   * auto-settle the thread; OPEN blocks inactivity auto-settle entirely.
+   * Last KNOWN PR state, persisted when prStatus/createPr succeed and by the
+   * main-process background refresher (refreshPrStates). That refresher runs
+   * async/serialized gh (never execFileSync) every ~5 min plus once shortly
+   * after startup, skips archived + terminal MERGED/CLOSED, and stays silent
+   * on non-GitHub origins / gh failures so it cannot reintroduce the old
+   * prStatus main-process freeze or permanent non-GitHub error. Selecting a
+   * thread still refreshes via prStatus. MERGED/CLOSED auto-settle the
+   * thread; OPEN blocks inactivity auto-settle entirely.
    */
   prState: "OPEN" | "CLOSED" | "MERGED" | null;
   /** Agent harness backing this thread: a ProviderInfo.id ("claude", "codex", "grok", "opencode", "simulate"). */
