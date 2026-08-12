@@ -417,10 +417,13 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       setReasoningEffort: (input: unknown) =>
         rec("threads.setReasoningEffort", [input], thread()),
       /**
-       * Honest fork (round 49 contract): new thread same project, copies
-       * provider/model/permissionMode unless overridden; sessionId null;
-       * handoffFrom = source id. SOURCE is never modified. Rejects unknown
-       * source and invalid provider/model with production error strings.
+       * Honest fork (round 49 contract / electron forkThread): new thread
+       * same project, copies provider/model/permissionMode unless overridden;
+       * sessionId null; handoffFrom = source id; reasoningEffort always null
+       * (production createThread+patch path never carries it). Title uses the
+       * same THREAD_TITLE_MAX=60 cap as createThread. SOURCE is never modified.
+       * Rejects unknown source and invalid provider/model with production
+       * error strings (byte-equal).
        */
       fork: (input: unknown) => {
         const i = input as {
@@ -434,6 +437,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
 
         const source = threads.find((t) => t.id === i.threadId);
         if (!source) {
+          // Match electron/services.js forkThread exactly.
           return Promise.reject(new Error(`Unknown thread: ${i.threadId}`));
         }
 
@@ -453,8 +457,11 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           nextProvider = id;
         }
 
+        const providerChanging =
+          providerProvided && String(nextProvider) !== String(source.provider);
+
         let nextModel: string | null = source.model;
-        if (providerProvided && String(i.provider) !== source.provider) {
+        if (providerChanging) {
           // Hand-off: drop the old harness model unless this call supplies one.
           if (modelProvided) {
             if (i.model == null || i.model === "") {
@@ -496,7 +503,17 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         }
 
         const now = Date.now();
-        const title = `Fork: ${source.title}`;
+        // Match electron THREAD_TITLE_MAX / truncateThreadTitle (createThread path).
+        const THREAD_TITLE_MAX = 60;
+        const sourceTitle =
+          source.title != null && String(source.title) !== ""
+            ? String(source.title)
+            : "New Thread";
+        const rawTitle = `Fork: ${sourceTitle}`;
+        const title =
+          rawTitle.length > THREAD_TITLE_MAX
+            ? rawTitle.slice(0, THREAD_TITLE_MAX)
+            : rawTitle;
         const forked = thread({
           id: `t-fork-${now}`,
           projectId: source.projectId,
@@ -517,10 +534,8 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           model: nextModel,
           sessionId: null,
           permissionMode: source.permissionMode,
-          reasoningEffort:
-            providerProvided && String(i.provider) !== source.provider
-              ? null
-              : source.reasoningEffort,
+          // Production fork never patches reasoningEffort; create leaves null.
+          reasoningEffort: null,
           branch: null,
           prNumber: null,
           prUrl: null,
