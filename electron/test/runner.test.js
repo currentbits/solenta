@@ -73,6 +73,24 @@ function fakeAgentSlowScript() {
 }
 
 /**
+ * Slow agent that writes its pid into cwd/agent.pid (no spaces in -e body).
+ * Used to prove stopAll actually kills the child process.
+ */
+function fakeAgentPidSlowScript() {
+  return "require('fs').writeFileSync('agent.pid',String(process.pid));setInterval(()=>{},500);setTimeout(()=>process.exit(0),60000)";
+}
+
+/** True when process.kill(pid, 0) says the process exists. */
+function processAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Traps SIGTERM and lingers so stopRun + immediate restart races the late
  * onDone of the killed agent. No spaces (CODER_AGENT_CMD whitespace split).
  */
@@ -456,6 +474,72 @@ describe("runner simulated mode", () => {
     assert.equal(name1, name2);
     await runner.stopRun({ threadId: thread.id });
   });
+
+  it("stopAll marks active run idle with quit interruption event (simulate)", async () => {
+    const thread = store.getThreads()[0];
+    const storePath = path.join(tmpDir, "store.json");
+    const { runId } = await runner.startRun({
+      threadId: thread.id,
+      prompt: "quit while working",
+    });
+
+    await waitFor(() => {
+      const t = store.getThread(thread.id);
+      return t && t.status === "working" && t.runStartedAt != null;
+    });
+
+    const msgsBefore = store.getMessages(thread.id).length;
+    runner.stopAll();
+
+    assert.equal(runner.isRunning(thread.id), false);
+    const after = store.getThread(thread.id);
+    assert.equal(after.status, "idle");
+    assert.equal(after.runStartedAt, null);
+    const msgs = store.getMessages(thread.id);
+    assert.ok(msgs.length > msgsBefore);
+    assert.ok(
+      msgs.some(
+        (m) =>
+          m.role === "event" &&
+          m.text === "Run interrupted by app quit" &&
+          m.runId === runId,
+      ),
+      "must append the quit interruption event with runId",
+    );
+
+    // Persist already done by stopAll; a fresh load must NOT re-stamp failed
+    // (recoverInterruptedRuns only touches status===working).
+    const reloaded = new Store(storePath);
+    const rthread = reloaded.getThread(thread.id);
+    assert.equal(rthread.status, "idle");
+    assert.equal(rthread.runStartedAt, null);
+    const rmsgs = reloaded.getMessages(thread.id);
+    assert.ok(
+      rmsgs.some((m) => m.text === "Run interrupted by app quit"),
+    );
+    assert.ok(
+      !rmsgs.some((m) =>
+        /crashed or was force-quit/i.test(m.text),
+      ),
+      "clean-quit idle threads must not get the crash recovery event",
+    );
+  });
+
+  it("stopAll with zero active runs marks nothing and appends nothing", async () => {
+    const thread = store.getThreads()[0];
+    assert.equal(runner.isRunning(thread.id), false);
+    assert.equal(store.getThread(thread.id).status, "idle");
+
+    const msgsBefore = store.getMessages(thread.id).slice();
+    const statusBefore = store.getThread(thread.id).status;
+    const updatedBefore = store.getThread(thread.id).updatedAt;
+
+    runner.stopAll();
+
+    assert.equal(store.getThread(thread.id).status, statusBefore);
+    assert.equal(store.getThread(thread.id).updatedAt, updatedBefore);
+    assert.deepEqual(store.getMessages(thread.id), msgsBefore);
+  });
 });
 
 describe("runner real agent mode", () => {
@@ -656,6 +740,53 @@ describe("runner real agent mode", () => {
     await new Promise((r) => setTimeout(r, 150));
     const still = store.getThreads().find((t) => t.id === thread.id);
     assert.equal(still.status, "idle");
+  });
+
+  it("stopAll kills live agent child and marks idle with quit event", async () => {
+    process.env.CODER_AGENT_CMD = `${process.execPath} -e ${fakeAgentPidSlowScript()}`;
+
+    const thread = store.getThreads()[0];
+    const project = store.getProject(thread.projectId);
+    const pidPath = path.join(project.path, "agent.pid");
+
+    const { runId } = await runner.startRun({
+      threadId: thread.id,
+      prompt: "quit-kill",
+    });
+
+    await waitFor(() => {
+      const t = store.getThread(thread.id);
+      return t && t.status === "working";
+    });
+    await waitFor(() => fs.existsSync(pidPath), { timeoutMs: 5000 });
+    const pid = Number(fs.readFileSync(pidPath, "utf8").trim());
+    assert.ok(Number.isFinite(pid) && pid > 0);
+    assert.equal(processAlive(pid), true, "child must be alive before stopAll");
+
+    runner.stopAll();
+
+    assert.equal(runner.isRunning(thread.id), false);
+    const after = store.getThread(thread.id);
+    assert.equal(after.status, "idle");
+    assert.equal(after.runStartedAt, null);
+    assert.ok(
+      store
+        .getMessages(thread.id)
+        .some(
+          (m) =>
+            m.role === "event" &&
+            m.text === "Run interrupted by app quit" &&
+            m.runId === runId,
+        ),
+    );
+
+    // SIGTERM (+ optional SIGKILL) — give the reaper a moment.
+    await waitFor(() => !processAlive(pid), { timeoutMs: 3000 });
+    assert.equal(processAlive(pid), false, "stopAll must kill the child");
+
+    // Kill-induced late exit must not flip idle → failed.
+    await new Promise((r) => setTimeout(r, 150));
+    assert.equal(store.getThread(thread.id).status, "idle");
   });
 
   it("late exit from stopped run A does not hijack run B on same thread", async () => {

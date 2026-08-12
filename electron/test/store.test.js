@@ -657,7 +657,60 @@ describe("Store", () => {
     assert.ok(msgs.length >= 2);
     const last = msgs[msgs.length - 1];
     assert.equal(last.role, "event");
-    assert.equal(last.text, "Run interrupted by app restart");
+    assert.equal(
+      last.text,
+      "Run interrupted: the app crashed or was force-quit mid-run",
+    );
+  });
+
+  it("load recovery skips idle threads (clean quit already marked them)", () => {
+    // stopAll leaves status idle; reload must NOT re-stamp failed.
+    const fixed = 1_700_000_000_100;
+    const raw = {
+      projects: [],
+      threads: [
+        {
+          id: "t-idle",
+          projectId: "p1",
+          title: "Clean quit",
+          branch: null,
+          prNumber: null,
+          status: "idle",
+          createdAt: fixed,
+          updatedAt: fixed,
+          runStartedAt: null,
+          provider: "claude",
+          sessionId: null,
+          permissionMode: "default",
+          worktreePath: null,
+        },
+      ],
+      messagesByThread: {
+        "t-idle": [
+          {
+            id: "m0",
+            role: "event",
+            text: "Run interrupted by app quit",
+            createdAt: fixed,
+          },
+        ],
+      },
+      workLogByThread: {},
+      usageByThread: {},
+    };
+    fs.writeFileSync(filePath, JSON.stringify(raw), "utf8");
+
+    const store = new Store(filePath);
+    const t = store.getThread("t-idle");
+    assert.equal(t.status, "idle");
+    assert.equal(t.runStartedAt, null);
+    const msgs = store.getMessages("t-idle");
+    assert.equal(msgs.length, 1);
+    assert.equal(msgs[0].text, "Run interrupted by app quit");
+    assert.ok(
+      !msgs.some((m) => /crashed|force-quit|failed/i.test(m.text)),
+      "recoverInterruptedRuns must not append a crash event on idle",
+    );
   });
 
   it("seeds builtin standard workflow template on empty store", () => {

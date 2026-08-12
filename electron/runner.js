@@ -2556,8 +2556,14 @@ function createRunner(opts) {
   }
 
   function stopAll() {
+    // Clean app quit (main.js before-quit). Mark each active run idle with an
+    // interruption event so the next launch's recoverInterruptedRuns (crash
+    // path only) does not re-stamp them as generic failures. Kill + flush
+    // below are unchanged battle-tested behavior — only marking is added.
+    let marked = false;
     for (const threadId of [...active.keys()]) {
       const entry = active.get(threadId);
+      const runId = entry && entry.runId ? entry.runId : null;
       if (entry && entry.kind === "workflow") {
         workflowEngine.stopWorkflowEntry(entry);
       } else if (
@@ -2578,8 +2584,19 @@ function createRunner(opts) {
         }
       }
       clearRun(threadId);
-      // App lifecycle / test teardown: clear run clock without sidebar bump.
-      store.updateThread(threadId, { runStartedAt: null });
+      // Mirror stopRun's terminal shape (idle + event), quit-specific wording.
+      appendMessage(
+        threadId,
+        "event",
+        "Run interrupted by app quit",
+        runId,
+      );
+      store.updateThread(
+        threadId,
+        { status: "idle", runStartedAt: null },
+        { touch: true },
+      );
+      marked = true;
     }
     // Reap claude children that emitted result (clearRun) then hung: no longer
     // reachable via active Map handles.
@@ -2592,6 +2609,9 @@ function createRunner(opts) {
     }
     // Drain any pending session transcript posts before process exit.
     void sessionRecorder.flush();
+    if (marked) {
+      store.save();
+    }
   }
 
   /**
