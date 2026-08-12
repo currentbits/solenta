@@ -614,6 +614,8 @@ function seedThreads(projects: ProjectInfo[]): ThreadInfo[] {
       archived: false,
       settledOverride: null,
       settledAt: null,
+      // Round 49 contract: only set by threads.fork.
+      handoffFrom: null,
       prState: card.prNumber != null ? "OPEN" : null,
       lastVisitedAt: unreadDemo ? Math.min(createdAt, updatedAt - 1) : updatedAt,
       pinnedAt: pinDemo ? t0 - 30 * 60 * 1000 : null,
@@ -1964,6 +1966,7 @@ function buildDevCoder(): CoderApi {
           archived: false,
           settledOverride: null,
           settledAt: null,
+          handoffFrom: null,
           prState: null,
           // Match electron createThread: just-created is not unread.
           lastVisitedAt: t0,
@@ -1975,6 +1978,106 @@ function buildDevCoder(): CoderApi {
           sessionId: null,
           permissionMode: "default",
           reasoningEffort: null,
+          worktreePath: null,
+        };
+        threads = [t, ...threads];
+        details.set(t.id, {
+          thread: t,
+          messages: [],
+          workLog: [],
+          workflow: null,
+          usage: null,
+        });
+        emitThreads();
+        return { ...t };
+      },
+      /**
+       * Round 49 contract: fork / hand-off. Copies config; optional provider
+       * override is the hand-off case. Source is never modified.
+       */
+      async fork(input: {
+        threadId: string;
+        provider?: string;
+        model?: string | null;
+      }) {
+        const source = threads.find((t) => t.id === input.threadId);
+        if (!source) {
+          throw new Error(`Unknown thread: ${input.threadId}`);
+        }
+        const providerProvided = Object.prototype.hasOwnProperty.call(
+          input,
+          "provider",
+        );
+        const modelProvided = Object.prototype.hasOwnProperty.call(
+          input,
+          "model",
+        );
+        let nextProvider = source.provider;
+        if (providerProvided) {
+          const pid = String(input.provider ?? "");
+          const known =
+            DEV_PROVIDERS.some((p) => p.id === pid) || pid === "simulate";
+          if (!known) {
+            throw new Error(`Unknown provider: ${input.provider}`);
+          }
+          nextProvider = pid;
+        }
+        let nextModel: string | null = source.model;
+        const providerChanging =
+          providerProvided && String(input.provider) !== source.provider;
+        if (providerChanging) {
+          if (modelProvided) {
+            if (input.model == null || input.model === "") {
+              nextModel = null;
+            } else {
+              const trimmed = String(input.model).trim();
+              if (!trimmed) throw new Error("Model must be a non-empty string");
+              if (trimmed.length > 100) {
+                throw new Error("Model must be at most 100 characters");
+              }
+              nextModel = trimmed;
+            }
+          } else {
+            nextModel = null;
+          }
+        } else if (modelProvided) {
+          if (input.model == null || input.model === "") {
+            nextModel = null;
+          } else {
+            const trimmed = String(input.model).trim();
+            if (!trimmed) throw new Error("Model must be a non-empty string");
+            if (trimmed.length > 100) {
+              throw new Error("Model must be at most 100 characters");
+            }
+            nextModel = trimmed;
+          }
+        }
+        const t0 = now();
+        const t: ThreadInfo = {
+          id: id("thread"),
+          projectId: source.projectId,
+          title: `Fork: ${source.title}`,
+          branch: null,
+          prNumber: null,
+          prUrl: null,
+          status: "idle",
+          createdAt: t0,
+          updatedAt: t0,
+          runStartedAt: null,
+          archived: false,
+          settledOverride: null,
+          settledAt: null,
+          handoffFrom: source.id,
+          prState: null,
+          lastVisitedAt: t0,
+          pinnedAt: null,
+          snoozedUntil: null,
+          snoozedAt: null,
+          provider: nextProvider,
+          model: nextModel,
+          sessionId: null,
+          permissionMode: source.permissionMode,
+          reasoningEffort: providerChanging ? null : source.reasoningEffort,
           worktreePath: null,
         };
         threads = [t, ...threads];

@@ -134,6 +134,14 @@ interface SidebarProps {
   onSetSnoozed?: (threadId: string, until: number | null) => void | Promise<void>;
   /** Archive a thread (batch toolbar). */
   onSetArchived?: (threadId: string, archived: boolean) => void | Promise<void>;
+  /**
+   * Fork / hand off (round 49). Plain call = same harness; provider override
+   * is hand-off. Does not require the thread to be selected.
+   */
+  onFork?: (
+    threadId: string,
+    opts?: { provider?: string },
+  ) => void | Promise<void>;
 }
 
 export type SelectOpts = { meta?: boolean; shift?: boolean };
@@ -220,8 +228,11 @@ export function ThreadCard({
   onSetSettled,
   onSetPinned,
   onSetSnoozed,
+  onFork,
   snoozeMenuOpen = false,
   onToggleSnoozeMenu,
+  forkMenuOpen = false,
+  onToggleForkMenu,
 }: {
   thread: ThreadInfo;
   slug: string;
@@ -240,8 +251,14 @@ export function ThreadCard({
   ) => void | Promise<void>;
   onSetPinned?: (threadId: string, pinned: boolean) => void | Promise<void>;
   onSetSnoozed?: (threadId: string, until: number | null) => void | Promise<void>;
+  onFork?: (
+    threadId: string,
+    opts?: { provider?: string },
+  ) => void | Promise<void>;
   snoozeMenuOpen?: boolean;
   onToggleSnoozeMenu?: (threadId: string | null) => void;
+  forkMenuOpen?: boolean;
+  onToggleForkMenu?: (threadId: string | null) => void;
 }) {
   const branch = thread.branch ?? "";
   const prBadge = sidebarPrBadge({
@@ -345,7 +362,7 @@ export function ThreadCard({
           <StatusBadge thread={thread} now={now} />
         </div>
       </div>
-      {(onSetSettled || onSetPinned || onSetSnoozed) && (
+      {(onSetSettled || onSetPinned || onSetSnoozed || onFork) && (
         <div className={styles.cardActions} data-card-actions="">
           {onSetPinned && (
             <button
@@ -375,6 +392,7 @@ export function ThreadCard({
                 onClick={(e) => {
                   e.stopPropagation();
                   onToggleSnoozeMenu?.(snoozeMenuOpen ? null : thread.id);
+                  onToggleForkMenu?.(null);
                 }}
               >
                 zzz
@@ -419,6 +437,78 @@ export function ThreadCard({
                       Clear snooze
                     </button>
                   )}
+                </div>
+              )}
+            </div>
+          )}
+          {onFork && (
+            <div className={styles.snoozeWrap}>
+              <button
+                type="button"
+                className={styles.settleBtn}
+                aria-label="Fork thread"
+                title="Fork thread"
+                data-fork-btn={thread.id}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onToggleForkMenu?.(null);
+                  onToggleSnoozeMenu?.(null);
+                  void onFork(thread.id);
+                }}
+              >
+                ⑂
+              </button>
+              <button
+                type="button"
+                className={styles.settleBtn}
+                aria-label="Hand off to…"
+                title="Hand off to…"
+                aria-haspopup="menu"
+                aria-expanded={forkMenuOpen}
+                data-handoff-btn={thread.id}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onToggleSnoozeMenu?.(null);
+                  onToggleForkMenu?.(forkMenuOpen ? null : thread.id);
+                }}
+              >
+                →
+              </button>
+              {forkMenuOpen && (
+                <div
+                  className={styles.snoozeMenu}
+                  role="menu"
+                  data-handoff-menu={thread.id}
+                >
+                  {providers
+                    .filter((p) => p.id !== thread.provider)
+                    .map((p) => {
+                      const disabled = !p.available;
+                      return (
+                        <button
+                          key={p.id}
+                          type="button"
+                          className={styles.snoozeMenuItem}
+                          role="menuitem"
+                          data-handoff-provider={p.id}
+                          disabled={disabled}
+                          aria-disabled={disabled ? "true" : undefined}
+                          title={
+                            disabled
+                              ? `${p.name} is not installed`
+                              : `Hand off to ${p.name}`
+                          }
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (disabled) return;
+                            void onFork(thread.id, { provider: p.id });
+                            onToggleForkMenu?.(null);
+                          }}
+                        >
+                          {p.name}
+                        </button>
+                      );
+                    })}
                 </div>
               )}
             </div>
@@ -674,12 +764,16 @@ export function Sidebar({
   onSetPinned,
   onSetSnoozed,
   onSetArchived,
+  onFork,
 }: SidebarProps) {
   const [query, setQuery] = useState("");
   const [now, setNow] = useState(() => Date.now());
   /** Which thread's snooze preset menu is open (one at a time). */
   const [snoozeMenuFor, setSnoozeMenuFor] = useState<string | null>(null);
+  /** Which thread's hand-off provider menu is open (one at a time). */
+  const [forkMenuFor, setForkMenuFor] = useState<string | null>(null);
   useEscapeClose(snoozeMenuFor != null, () => setSnoozeMenuFor(null));
+  useEscapeClose(forkMenuFor != null, () => setForkMenuFor(null));
   /**
    * Project pending the destructive remove confirm. Confirm is a dialog, not
    * an archive-style undo toast: history deletion is irreversible.
@@ -1332,8 +1426,11 @@ export function Sidebar({
                         onSetSettled={onSetSettled}
                         onSetPinned={onSetPinned}
                         onSetSnoozed={onSetSnoozed}
+                        onFork={onFork}
                         snoozeMenuOpen={snoozeMenuFor === thread.id}
                         onToggleSnoozeMenu={setSnoozeMenuFor}
+                        forkMenuOpen={forkMenuFor === thread.id}
+                        onToggleForkMenu={setForkMenuFor}
                         contentMatch={
                           searching &&
                           !thread.title.toLowerCase().includes(queryLower)
@@ -1354,6 +1451,9 @@ export function Sidebar({
                           onSelect={handleSelect}
                           isSettled={effectiveSettled(thread, settleOpts)}
                           onSetSettled={onSetSettled}
+                          onFork={onFork}
+                          forkMenuOpen={forkMenuFor === thread.id}
+                          onToggleForkMenu={setForkMenuFor}
                           contentMatch={
                             searching &&
                             !thread.title.toLowerCase().includes(queryLower)

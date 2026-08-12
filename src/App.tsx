@@ -21,6 +21,7 @@ export default function App() {
     clearError,
     addProject,
     createThread,
+    forkThread,
     startRun,
     startWorkflowRun,
     saveWorkflow,
@@ -170,6 +171,9 @@ export default function App() {
         onSetArchived={(threadId, archived) => {
           void setArchived(archived, threadId);
         }}
+        onFork={(threadId, opts) => {
+          void forkThread(threadId, opts);
+        }}
       />
       <ThreadView
         detail={detail}
@@ -201,6 +205,12 @@ export default function App() {
         onPush={() => pushBranch()}
         runError={error?.scope === "run" ? error.message : null}
         onDismissRunError={clearError}
+        onFork={(opts) => {
+          if (!selectedThreadId) return;
+          void forkThread(selectedThreadId, opts);
+        }}
+        threads={threads}
+        onSelectThread={selectThread}
       />
       <AgentsPanel
         workflow={detail?.workflow ?? null}

@@ -413,6 +413,16 @@
   background: var(--card);
 }
 
+.snoozeMenuItem:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  color: var(--text-dim);
+}
+
+.snoozeMenuItem:disabled:hover {
+  background: transparent;
+}
+
 /* Global settled tail (round 40, t3-style): one shelf at the bottom. */
 .settledTail {
   display: flex;
