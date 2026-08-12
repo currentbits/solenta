@@ -382,6 +382,51 @@ const TICK_MS = 700;
 const TITLE_MAX = 60;
 const WORKTREE_DELAY_MS = 450;
 const PUSH_DELAY_MS = 350;
+/** Mirrors electron/services.js HANDOFF_ASSISTANT_MAX. */
+const HANDOFF_ASSISTANT_MAX = 2000;
+
+/**
+ * One-time hand-off CLI prefix. Strings match electron/services.js
+ * buildHandoffPrefix exactly (services-level helper + dev twin pattern).
+ */
+export function buildHandoffPrefix(
+  thread: { handoffFrom?: string | null; sessionId?: string | null } | null,
+  getMessages: (
+    sourceId: string,
+  ) => Array<{ role?: string; text?: string }> | null | undefined,
+): string {
+  if (!thread || thread.handoffFrom == null || thread.handoffFrom === "") {
+    return "";
+  }
+  if (thread.sessionId != null && thread.sessionId !== "") {
+    return "";
+  }
+  let msgs: Array<{ role?: string; text?: string }> | null | undefined;
+  try {
+    msgs = getMessages(String(thread.handoffFrom));
+  } catch {
+    return "";
+  }
+  if (!Array.isArray(msgs) || msgs.length === 0) return "";
+  let lastAssistant: string | null = null;
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const m = msgs[i];
+    if (m && m.role === "assistant" && m.text != null && String(m.text)) {
+      lastAssistant = String(m.text);
+      break;
+    }
+  }
+  if (!lastAssistant) return "";
+  const body =
+    lastAssistant.length > HANDOFF_ASSISTANT_MAX
+      ? lastAssistant.slice(0, HANDOFF_ASSISTANT_MAX)
+      : lastAssistant;
+  return (
+    "[Hand-off context from a previous thread]\n" +
+    body +
+    "\n[End context]\n\n"
+  );
+}
 
 const SETTINGS_BUDGET_ERROR =
   "Daily budget must be a positive number or null";
@@ -633,6 +678,7 @@ function seedThreads(projects: ProjectInfo[]): ThreadInfo[] {
           : "acceptEdits") as PermissionMode,
       reasoningEffort: null,
       worktreePath: null,
+      handoffFrom: null,
     };
   });
 }
@@ -1950,10 +1996,15 @@ function buildDevCoder(): CoderApi {
       },
       async create(input) {
         const t0 = now();
+        const rawTitle = input.title || "New Thread";
         const t: ThreadInfo = {
           id: id("thread"),
           projectId: input.projectId,
-          title: input.title,
+          // Match electron createThread truncateThreadTitle (TITLE_MAX).
+          title:
+            rawTitle.length > TITLE_MAX
+              ? rawTitle.slice(0, TITLE_MAX)
+              : rawTitle,
           branch: null,
           prNumber: null,
           prUrl: null,
@@ -1976,6 +2027,7 @@ function buildDevCoder(): CoderApi {
           permissionMode: "default",
           reasoningEffort: null,
           worktreePath: null,
+          handoffFrom: null,
         };
         threads = [t, ...threads];
         details.set(t.id, {
@@ -1987,6 +2039,110 @@ function buildDevCoder(): CoderApi {
         });
         emitThreads();
         return { ...t };
+      },
+      async fork(input) {
+        // Mirror electron/services.js forkThread rules and error strings.
+        const sourceDetail = details.get(input.threadId);
+        if (!sourceDetail) {
+          throw new Error(`Unknown thread: ${input.threadId}`);
+        }
+        const source = sourceDetail.thread;
+
+        const providerProvided = Object.prototype.hasOwnProperty.call(
+          input,
+          "provider",
+        );
+        const modelProvided = Object.prototype.hasOwnProperty.call(
+          input,
+          "model",
+        );
+
+        let nextProvider = source.provider;
+        if (providerProvided) {
+          const pid = String(input.provider || "");
+          const known =
+            KNOWN_PROVIDER_IDS.has(pid) || pid === "simulate";
+          if (!known) {
+            throw new Error(`Unknown provider: ${input.provider}`);
+          }
+          nextProvider = pid;
+        }
+
+        const providerChanging =
+          providerProvided &&
+          String(nextProvider) !== String(source.provider);
+
+        const resolveModel = (
+          providerId: string,
+          raw: string | null | undefined,
+        ): string | null => {
+          if (raw == null || raw === "") return null;
+          const trimmed = String(raw).trim();
+          if (!trimmed) {
+            throw new Error("Model must be a non-empty string");
+          }
+          void providerId;
+          if (trimmed.length > 100) {
+            throw new Error("Model must be at most 100 characters");
+          }
+          return trimmed;
+        };
+
+        let nextModel = source.model;
+        if (providerChanging) {
+          nextModel = modelProvided
+            ? resolveModel(nextProvider, input.model)
+            : null;
+        } else if (modelProvided) {
+          nextModel = resolveModel(nextProvider, input.model);
+        }
+
+        const sourceTitle =
+          source.title != null && source.title !== ""
+            ? source.title
+            : "New Thread";
+        const rawTitle = `Fork: ${sourceTitle}`;
+        const t0 = now();
+        const created: ThreadInfo = {
+          id: id("thread"),
+          projectId: source.projectId,
+          title:
+            rawTitle.length > TITLE_MAX
+              ? rawTitle.slice(0, TITLE_MAX)
+              : rawTitle,
+          branch: null,
+          prNumber: null,
+          prUrl: null,
+          status: "idle",
+          createdAt: t0,
+          updatedAt: t0,
+          runStartedAt: null,
+          archived: false,
+          settledOverride: null,
+          settledAt: null,
+          prState: null,
+          lastVisitedAt: t0,
+          pinnedAt: null,
+          snoozedUntil: null,
+          snoozedAt: null,
+          provider: nextProvider,
+          model: nextModel,
+          sessionId: null,
+          permissionMode: source.permissionMode,
+          reasoningEffort: null,
+          worktreePath: null,
+          handoffFrom: source.id,
+        };
+        threads = [created, ...threads];
+        details.set(created.id, {
+          thread: created,
+          messages: [],
+          workLog: [],
+          workflow: null,
+          usage: null,
+        });
+        emitThreads();
+        return { ...created };
       },
       async get(threadId) {
         const d = details.get(threadId);
@@ -2303,6 +2459,9 @@ function buildDevCoder(): CoderApi {
         };
         runStates.set(input.threadId, run);
 
+        // Transcript stores the RAW prompt (match electron/runner.js). The
+        // hand-off prefix is CLI-only; compute it for the dispatch path and
+        // keep it off the stored user message.
         detail.messages.push({
           id: id("msg"),
           role: "user",
@@ -2312,6 +2471,29 @@ function buildDevCoder(): CoderApi {
         });
 
         let thread = { ...detail.thread };
+        // Build prefix while sessionId is still null (first turn only).
+        const handoffPrefix = buildHandoffPrefix(thread, (sourceId) => {
+          const src = details.get(sourceId);
+          return src ? src.messages : null;
+        });
+        // Dev has no real CLI; surface the dispatch prompt on a work-log
+        // step so tests can prove the prefix would reach the agent.
+        if (handoffPrefix) {
+          detail.workLog.push({
+            id: id("wl"),
+            runId,
+            label: "Hand-off context injected",
+            done: true,
+            timestamp: t,
+          });
+          // Stash on a private field of the run for twin tests if needed.
+          (run as RunState & { dispatchPrompt?: string }).dispatchPrompt =
+            handoffPrefix + prompt;
+        } else {
+          (run as RunState & { dispatchPrompt?: string }).dispatchPrompt =
+            prompt;
+        }
+
         if (thread.title === "New Thread") {
           const firstLine =
             prompt.split("\n")[0]?.slice(0, TITLE_MAX) || "New Thread";

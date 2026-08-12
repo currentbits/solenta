@@ -81,6 +81,12 @@ function registerIpc(deps) {
     return thread;
   });
 
+  ipcMain.handle("threads:fork", async (_event, input) => {
+    const thread = services.forkThread(store, input);
+    broadcast("threads:changed", services.listThreads(store));
+    return thread;
+  });
+
   ipcMain.handle("threads:get", async (_event, id) => {
     const workflow = runner.getActiveWorkflow(id);
     let view = null;

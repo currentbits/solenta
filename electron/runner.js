@@ -2385,6 +2385,9 @@ function createRunner(opts) {
     }
 
     const runId = randomUUID();
+    // Transcript stores the RAW user prompt. The hand-off context block (if
+    // any) is CLI-only — applied once below when handoffFrom is set and no
+    // sessionId exists yet.
     appendMessage(threadId, "user", prompt, runId);
 
     let title = thread.title;
@@ -2407,29 +2410,40 @@ function createRunner(opts) {
       { touch: true },
     );
 
+    // Single finalization point for every provider path: prefix only goes to
+    // the CLI (buildArgs / runAgent), never into the stored user message.
+    const dispatchPrompt =
+      services.buildHandoffPrefix(thread, (id) => store.getMessages(id)) +
+      String(prompt ?? "");
+
     const name = workflowNameFromThreadId(threadId);
 
     if (provider === "simulate") {
-      return startSimulatedRun(threadId, prompt, runId, name);
+      return startSimulatedRun(threadId, dispatchPrompt, runId, name);
     }
     if (provider === "generic") {
-      return startGenericRun(threadId, prompt, runId, name);
+      return startGenericRun(threadId, dispatchPrompt, runId, name);
     }
 
     const entryDef = getProvider(provider) || getProvider("claude");
     if (entryDef.kind === "claude-stream") {
-      return startClaudeRun(threadId, prompt, runId, entryDef);
+      return startClaudeRun(threadId, dispatchPrompt, runId, entryDef);
     }
     if (entryDef.kind === "codex-json") {
-      return startCodexRun(threadId, prompt, runId, entryDef);
+      return startCodexRun(threadId, dispatchPrompt, runId, entryDef);
     }
     if (entryDef.kind === "kimi-stream") {
-      return startKimiRun(threadId, prompt, runId, entryDef);
+      return startKimiRun(threadId, dispatchPrompt, runId, entryDef);
     }
     if (entryDef.kind === "opencode-json") {
-      return startOpencodeRun(threadId, prompt, runId, entryDef);
+      return startOpencodeRun(threadId, dispatchPrompt, runId, entryDef);
     }
-    return startClaudeRun(threadId, prompt, runId, getProvider("claude"));
+    return startClaudeRun(
+      threadId,
+      dispatchPrompt,
+      runId,
+      getProvider("claude"),
+    );
   }
 
   /**
