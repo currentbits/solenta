@@ -359,7 +359,7 @@ describe("refreshPrStates (round 47)", () => {
     fx = makeFixture();
     // thread has no prNumber
     const broadcasts = [];
-    const savesBefore = countSaves(fx.store);
+    const saveCount = wrapSaveCounter(fx.store);
     const result = await refreshPrStates(fx.store, {
       broadcast: (ch, payload) => broadcasts.push({ ch, payload }),
     });
@@ -368,7 +368,7 @@ describe("refreshPrStates (round 47)", () => {
     assert.equal(result.changed, 0);
     assert.equal(readGhState(fx).calls.length, 0);
     assert.equal(broadcasts.length, 0);
-    assert.equal(countSaves(fx.store), savesBefore);
+    assert.equal(saveCount.n, 0, "zero-qualifying pass must not call store.save");
   });
 
   it("terminal MERGED → zero spawns", async () => {
@@ -405,12 +405,7 @@ describe("refreshPrStates (round 47)", () => {
     });
 
     const broadcasts = [];
-    const saveCount = { n: 0 };
-    const origSave = fx.store.save.bind(fx.store);
-    fx.store.save = () => {
-      saveCount.n += 1;
-      return origSave();
-    };
+    const saveCount = wrapSaveCounter(fx.store);
 
     const result = await refreshPrStates(fx.store, {
       broadcast: (ch, payload) => broadcasts.push({ ch, payload }),
@@ -431,17 +426,62 @@ describe("refreshPrStates (round 47)", () => {
     );
   });
 
+  it("B1: two threads both change → still ONE save and ONE push", async () => {
+    // Spec headline: ONE store.save + ONE threads:changed per pass even when
+    // multiple threads mutate. A single-thread change test cannot kill a
+    // per-thread save/push mutant; this one can.
+    fx = makeFixture();
+    const t2 = addSecondThread(fx, "Second change");
+    seedOpenPr(fx, fx.thread.id, 61, "OPEN");
+    seedOpenPr(fx, t2.id, 62, "OPEN");
+    setGhState(fx, {
+      prsByNumber: {
+        "61": {
+          number: 61,
+          url: "https://github.com/acme/demo/pull/61",
+          state: "MERGED",
+        },
+        "62": {
+          number: 62,
+          url: "https://github.com/acme/demo/pull/62",
+          state: "CLOSED",
+        },
+      },
+    });
+
+    const broadcasts = [];
+    const saveCount = wrapSaveCounter(fx.store);
+
+    const result = await refreshPrStates(fx.store, {
+      broadcast: (ch, payload) => broadcasts.push({ ch, payload }),
+    });
+
+    assert.equal(result.spawned, 2, "both threads must be queried");
+    assert.equal(result.changed, 2, "both threads must report a change");
+    assert.equal(
+      saveCount.n,
+      1,
+      "exactly ONE store.save for the whole pass (not per-thread)",
+    );
+    assert.equal(
+      broadcasts.length,
+      1,
+      "exactly ONE threads:changed for the whole pass",
+    );
+    assert.equal(broadcasts[0].ch, "threads:changed");
+    assert.equal(fx.store.getThread(fx.thread.id).prState, "MERGED");
+    assert.equal(fx.store.getThread(t2.id).prState, "CLOSED");
+    const payload = broadcasts[0].payload;
+    assert.equal(payload.find((t) => t.id === fx.thread.id).prState, "MERGED");
+    assert.equal(payload.find((t) => t.id === t2.id).prState, "CLOSED");
+  });
+
   it("no-change → no save no push", async () => {
     fx = makeFixture();
     seedOpenPr(fx, fx.thread.id, 42, "OPEN");
     // gh returns the same OPEN state/url already on the thread
     const broadcasts = [];
-    const saveCount = { n: 0 };
-    const origSave = fx.store.save.bind(fx.store);
-    fx.store.save = () => {
-      saveCount.n += 1;
-      return origSave();
-    };
+    const saveCount = wrapSaveCounter(fx.store);
 
     const result = await refreshPrStates(fx.store, {
       broadcast: (ch, payload) => broadcasts.push({ ch, payload }),
@@ -681,6 +721,68 @@ describe("refreshPrStates (round 47)", () => {
     refresher.stop();
   });
 
+  it("B2: latch clears after a throwing pass (round-34 wedge guard)", async () => {
+    // Success-only latch clear wedges shut forever after the first throw.
+    // The pass itself must REJECT (not a per-thread soft failure).
+    fx = makeFixture();
+    let passes = 0;
+    const refresher = createPrStateRefresher({
+      store: fx.store,
+      broadcast: () => {},
+      intervalMs: 60_000,
+      startupDelayMs: 60_000,
+      refreshFn: async () => {
+        passes += 1;
+        throw new Error("forced refresh pass failure");
+      },
+    });
+
+    const first = await refresher.trigger();
+    assert.equal(first.ran, true, "throwing pass still resolves the trigger");
+    assert.equal(
+      first.result,
+      null,
+      "catch path returns result:null after a throw",
+    );
+    assert.equal(
+      refresher.isRunning(),
+      false,
+      "latch must clear in finally even when refreshFn throws",
+    );
+    assert.equal(passes, 1);
+
+    const second = await refresher.trigger();
+    assert.equal(
+      second.ran,
+      true,
+      "next trigger must actually run a pass (not stay latched)",
+    );
+    assert.equal(passes, 2, "spawn/pass counter proves the second pass ran");
+    assert.equal(refresher.isRunning(), false);
+
+    refresher.stop();
+  });
+
+  it("enoent-like gh failure skips silently (no persist, no throw)", async () => {
+    // Exercises the fake's "enoent-like" scenario so it is not dead code.
+    fx = makeFixture();
+    seedOpenPr(fx, fx.thread.id, 88, "OPEN");
+    setGhState(fx, { scenario: "enoent-like" });
+
+    const broadcasts = [];
+    const saveCount = wrapSaveCounter(fx.store);
+    const result = await refreshPrStates(fx.store, {
+      broadcast: (ch, payload) => broadcasts.push({ ch, payload }),
+    });
+
+    assert.equal(result.spawned, 1);
+    assert.equal(result.changed, 0);
+    assert.equal(saveCount.n, 0);
+    assert.equal(broadcasts.length, 0);
+    assert.equal(fx.store.getThread(fx.thread.id).prState, "OPEN");
+    assert.ok(readGhState(fx).calls.length >= 1, "gh was actually spawned");
+  });
+
   it("createPrStateRefresher.start schedules startup + interval (injectable timers)", async () => {
     fx = makeFixture();
     const timeouts = [];
@@ -727,7 +829,18 @@ describe("refreshPrStates (round 47)", () => {
   });
 });
 
-/** Count save invocations via a side map when tests wrap save. Fallback 0. */
-function countSaves(store) {
-  return store.__saveCount != null ? store.__saveCount : 0;
+/**
+ * Wrap store.save so callers can assert exact invocation counts.
+ * Always returns a live counter (never the vacuous 0===0 fallback).
+ * @param {import('../store').Store} store
+ * @returns {{ n: number }}
+ */
+function wrapSaveCounter(store) {
+  const counter = { n: 0 };
+  const origSave = store.save.bind(store);
+  store.save = () => {
+    counter.n += 1;
+    return origSave();
+  };
+  return counter;
 }
