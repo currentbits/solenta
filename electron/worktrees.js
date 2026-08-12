@@ -1352,6 +1352,244 @@ function createPr(opts) {
   return info;
 }
 
+// ---------------------------------------------------------------------------
+// Round 50: worktree turn checkpoints (async git only — never execFileSync)
+// ---------------------------------------------------------------------------
+
+const CHECKPOINT_SUBJECT_PREFIX = "coder-checkpoint: turn ";
+const CHECKPOINT_GIT_TIMEOUT_MS = 30_000;
+
+/**
+ * Async git. Never blocks the Electron main process (round-47 discipline).
+ * @param {string} cwd
+ * @param {string[]} args
+ * @param {{ timeout?: number, env?: NodeJS.ProcessEnv, raw?: boolean }} [opts]
+ * @returns {Promise<{ ok: boolean, stdout: string, stderr: string, combined: string, timedOut?: boolean }>}
+ */
+function gitTryAsync(cwd, args, opts) {
+  const timeout =
+    opts && opts.timeout != null ? opts.timeout : CHECKPOINT_GIT_TIMEOUT_MS;
+  const env = {
+    ...process.env,
+    ...(opts && opts.env ? opts.env : {}),
+    GIT_TERMINAL_PROMPT: "0",
+  };
+  return new Promise((resolve) => {
+    execFile(
+      "git",
+      args,
+      {
+        cwd,
+        encoding: "utf8",
+        maxBuffer: GIT_MAX_BUFFER,
+        timeout,
+        env,
+      },
+      (err, stdout, stderr) => {
+        if (!err) {
+          const out = opts && opts.raw ? String(stdout || "") : String(stdout || "").trim();
+          resolve({ ok: true, stdout: out, stderr: "", combined: out });
+          return;
+        }
+        const out = err && err.stdout != null ? String(err.stdout) : String(stdout || "");
+        const errText =
+          err && err.stderr != null ? String(err.stderr) : String(stderr || "");
+        const msg = err && err.message ? String(err.message) : String(err);
+        const timedOut =
+          (err && err.code === "ETIMEDOUT") ||
+          (err && err.killed && /ETIMEDOUT|timed out/i.test(msg));
+        resolve({
+          ok: false,
+          stdout: out,
+          stderr: errText,
+          combined: [out, errText, msg].filter(Boolean).join("\n"),
+          timedOut: Boolean(timedOut),
+        });
+      },
+    );
+  });
+}
+
+/**
+ * @param {string} subject
+ * @returns {number | null}
+ */
+function parseCheckpointTurn(subject) {
+  const m = String(subject || "").match(
+    /^coder-checkpoint:\s*turn\s+(\d+)\s*$/i,
+  );
+  if (!m) return null;
+  const n = Number(m[1]);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/**
+ * Count existing checkpoint commits in a worktree (any order).
+ * @param {string} cwd
+ * @returns {Promise<number>}
+ */
+async function countCheckpointCommits(cwd) {
+  const log = await gitTryAsync(cwd, [
+    "log",
+    "--grep=coder-checkpoint:",
+    "--format=%s",
+  ]);
+  if (!log.ok || !String(log.stdout || "").trim()) return 0;
+  return String(log.stdout)
+    .split(/\r?\n/)
+    .filter((line) => parseCheckpointTurn(line) != null).length;
+}
+
+/**
+ * After a successful turn: if the thread has a dirty WORKTREE, auto-commit
+ * `coder-checkpoint: turn N`. Best-effort — never throws, never fails the turn.
+ * Never touches the main project repo.
+ *
+ * @param {import('./store').Store} store
+ * @param {string} threadId
+ * @returns {Promise<{ sha: string, turn: number, message: string } | null>}
+ */
+async function maybeCreateCheckpoint(store, threadId) {
+  try {
+    const thread = store.getThread(threadId);
+    if (!thread || !thread.worktreePath) return null;
+    const cwd = thread.worktreePath;
+    if (!fs.existsSync(cwd)) return null;
+
+    const status = await gitTryAsync(cwd, ["status", "--porcelain", "-uall"], {
+      raw: true,
+    });
+    if (!status.ok) return null;
+    if (!String(status.stdout || "").trim()) return null; // clean → no commit
+
+    const n = (await countCheckpointCommits(cwd)) + 1;
+    const message = `${CHECKPOINT_SUBJECT_PREFIX}${n}`;
+
+    const add = await gitTryAsync(cwd, ["add", "-A"]);
+    if (!add.ok) return null;
+
+    const commit = await gitTryAsync(cwd, [
+      "-c",
+      "user.email=coder@local",
+      "-c",
+      "user.name=Coder",
+      "commit",
+      "-m",
+      message,
+    ]);
+    if (!commit.ok) return null;
+
+    const rev = await gitTryAsync(cwd, ["rev-parse", "HEAD"]);
+    if (!rev.ok || !rev.stdout) return { sha: "", turn: n, message };
+    return { sha: String(rev.stdout).trim(), turn: n, message };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * List checkpoints in the thread worktree, newest-first.
+ * @param {object} opts
+ * @param {import('./store').Store} opts.store
+ * @param {string} opts.threadId
+ * @returns {Promise<Array<{ sha: string, turn: number, message: string, at: number }>>}
+ */
+async function listCheckpoints(opts) {
+  const { store, threadId } = opts;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  if (!thread.worktreePath) {
+    return [];
+  }
+  const cwd = thread.worktreePath;
+  if (!fs.existsSync(cwd)) return [];
+
+  // %H sha, %ct committer unix, %s subject — newest first (git log default).
+  const log = await gitTryAsync(cwd, [
+    "log",
+    "--grep=coder-checkpoint:",
+    "--format=%H\t%ct\t%s",
+  ]);
+  if (!log.ok || !String(log.stdout || "").trim()) return [];
+
+  /** @type {Array<{ sha: string, turn: number, message: string, at: number }>} */
+  const out = [];
+  for (const line of String(log.stdout).split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    const parts = line.split("\t");
+    if (parts.length < 3) continue;
+    const sha = parts[0];
+    const ct = Number(parts[1]);
+    const message = parts.slice(2).join("\t");
+    const turn = parseCheckpointTurn(message);
+    if (turn == null) continue;
+    out.push({
+      sha,
+      turn,
+      message,
+      at: Number.isFinite(ct) ? ct * 1000 : 0,
+    });
+  }
+  return out;
+}
+
+/**
+ * Hard-reset the thread WORKTREE to a prior checkpoint sha.
+ * Guards (in order): unknown thread → run active → no worktree → sha not ours.
+ *
+ * @param {object} opts
+ * @param {import('./store').Store} opts.store
+ * @param {string} opts.threadId
+ * @param {string} opts.sha
+ * @param {(threadId: string) => boolean} [opts.isRunning]
+ * @returns {Promise<void>}
+ */
+async function restoreCheckpoint(opts) {
+  const { store, threadId, sha, isRunning } = opts;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  if (typeof isRunning === "function" && isRunning(threadId)) {
+    throw new Error("Cannot restore a checkpoint while a run is active");
+  }
+  if (!thread.worktreePath) {
+    throw new Error(
+      `Thread ${threadId} has no worktree; call setupWorktree first`,
+    );
+  }
+
+  const want = String(sha || "").trim();
+  if (!want) {
+    throw new Error(`Unknown checkpoint: ${sha}`);
+  }
+
+  // THIS THREAD's HEAD-reachable checkpoints only. Sibling worktrees of the
+  // same project share an object DB, so `git log -1 <sha>` would accept
+  // another thread's checkpoint and hard-reset into foreign state (data
+  // loss). Membership in listCheckpoints is the contract boundary.
+  const list = await listCheckpoints({ store, threadId });
+  const match = list.find(
+    (c) => c.sha === want || c.sha.startsWith(want) || want.startsWith(c.sha),
+  );
+  if (!match) {
+    throw new Error(`Unknown checkpoint: ${sha}`);
+  }
+
+  const reset = await gitTryAsync(thread.worktreePath, [
+    "reset",
+    "--hard",
+    match.sha,
+  ]);
+  if (!reset.ok) {
+    throw new Error(
+      tailErr(reset.stderr || reset.combined, "git reset --hard failed"),
+    );
+  }
+}
+
 module.exports = {
   setupWorktree,
   diff,
@@ -1367,4 +1605,9 @@ module.exports = {
   slugify,
   PATCH_TRUNCATE,
   PR_REFRESH_TIMEOUT_MS,
+  maybeCreateCheckpoint,
+  listCheckpoints,
+  restoreCheckpoint,
+  gitTryAsync,
+  CHECKPOINT_SUBJECT_PREFIX,
 };

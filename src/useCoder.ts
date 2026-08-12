@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   AppSettings,
   AppStatus,
+  CheckpointInfo,
   CoderApi,
   DiffResult,
   MemoryEntryInfo,
@@ -136,6 +137,10 @@ export interface UseCoderResult {
   }) => Promise<PrInfo>;
   /** Live PR for the selected thread's branch, or null when none. */
   prStatus: () => Promise<PrInfo | null>;
+  /** Worktree checkpoints for a thread (newest-first). */
+  listCheckpoints: (threadId: string) => Promise<CheckpointInfo[]>;
+  /** Hard-reset the thread worktree to a checkpoint sha. */
+  restoreCheckpoint: (threadId: string, sha: string) => Promise<void>;
   /** Live spend + memory server status. */
   appStatus: AppStatus | null;
   /** Persisted app settings (daily budget). */
@@ -844,6 +849,20 @@ export function useCoder(): UseCoderResult {
     return api.git.prStatus({ threadId: selectedThreadId });
   }, [api, selectedThreadId]);
 
+  const listCheckpoints = useCallback(
+    async (threadId: string) => {
+      return api.git.listCheckpoints({ threadId });
+    },
+    [api],
+  );
+
+  const restoreCheckpoint = useCallback(
+    async (threadId: string, sha: string) => {
+      await api.git.restoreCheckpoint({ threadId, sha });
+    },
+    [api],
+  );
+
   const saveSettings = useCallback(
     async (patch: Partial<AppSettings>) => {
       const next = await api.settings.set(patch);
@@ -963,6 +982,8 @@ export function useCoder(): UseCoderResult {
     pushBranch,
     createPr,
     prStatus,
+    listCheckpoints,
+    restoreCheckpoint,
     appStatus,
     settings,
     saveSettings,

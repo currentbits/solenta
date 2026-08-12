@@ -1115,10 +1115,10 @@ module.exports = {
   setPermissionMode,
   setReasoningEffort,
   setProvider,
-  normalizeModelForProvider,
+  // normalizeModelForProvider / isKnownProviderId / truncateThreadTitle stay
+  // module-private (round-49 review A-n2: dead exports). Tests use
+  // THREAD_TITLE_MAX / HANDOFF_ASSISTANT_MAX / buildHandoffPrefix.
   buildHandoffPrefix,
-  isKnownProviderId,
-  truncateThreadTitle,
   THREAD_TITLE_MAX,
   HANDOFF_ASSISTANT_MAX,
   setArchived,

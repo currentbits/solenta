@@ -1,4 +1,5 @@
 .panel {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -506,6 +507,133 @@
 .gitBtnDanger:hover:not(:disabled) {
   background: rgba(248, 113, 113, 0.2);
   color: #fecaca;
+}
+
+/* Round 50 checkpoints */
+.checkpointList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.checkpointRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.checkpointMeta {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+  font-size: 12px;
+}
+
+.checkpointTurn {
+  font-weight: 600;
+  color: var(--text);
+  flex-shrink: 0;
+}
+
+.checkpointSha {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.checkpointAge {
+  color: var(--text-dim);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.confirmOverlay {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.confirmDialog {
+  width: 100%;
+  max-width: 300px;
+  padding: 14px 14px 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.confirmTitle {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--text);
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.confirmBody {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.confirmActions {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.confirmDanger,
+.confirmCancel {
+  flex: 1;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 550;
+  cursor: pointer;
+}
+
+.confirmDanger {
+  border: 1px solid rgba(248, 113, 113, 0.45);
+  background: rgba(248, 113, 113, 0.14);
+  color: #fca5a5;
+}
+
+.confirmDanger:hover:not(:disabled) {
+  background: rgba(248, 113, 113, 0.22);
+}
+
+.confirmDanger:disabled,
+.confirmCancel:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.confirmCancel {
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text-muted);
+}
+
+.confirmCancel:hover:not(:disabled) {
+  color: var(--text);
 }
 
 .btnSpinner {
