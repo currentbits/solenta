@@ -144,7 +144,8 @@ function createThread(store, input) {
   const thread = {
     id: randomUUID(),
     projectId: input.projectId,
-    title: input.title || "New Thread",
+    // Same title length convention as auto-rename from first prompt line.
+    title: truncateThreadTitle(input.title || "New Thread"),
     branch: null,
     prNumber: null,
     prUrl: null,
@@ -167,6 +168,7 @@ function createThread(store, input) {
     permissionMode: "default",
     reasoningEffort: null,
     worktreePath: null,
+    handoffFrom: null,
   };
 
   const threads = store.getThreads().slice();
@@ -236,6 +238,19 @@ function setReasoningEffort(store, input) {
   return updated ? { ...updated } : { ...thread, reasoningEffort: level };
 }
 
+/** Thread title cap — matches runner auto-rename from the first prompt line. */
+const THREAD_TITLE_MAX = 60;
+
+/**
+ * @param {string} title
+ * @returns {string}
+ */
+function truncateThreadTitle(title) {
+  const s = String(title ?? "");
+  if (s.length <= THREAD_TITLE_MAX) return s;
+  return s.slice(0, THREAD_TITLE_MAX);
+}
+
 /**
  * Validate a model string for a provider entry.
  * Empty models list: any non-empty trimmed string up to 100 chars (custom ids).
@@ -262,6 +277,140 @@ function normalizeModelForProvider(entry, rawModel) {
     throw new Error("Model must be at most 100 characters");
   }
   return trimmed;
+}
+
+/**
+ * True when a provider id is accepted by setProvider / forkThread.
+ * @param {string} id
+ * @returns {boolean}
+ */
+function isKnownProviderId(id) {
+  const s = String(id || "");
+  return (
+    knownProviderIds().includes(s) ||
+    (s === "simulate" && process.env.CODER_SIMULATE === "1")
+  );
+}
+
+/** Max chars of the source assistant message injected into a hand-off prefix. */
+const HANDOFF_ASSISTANT_MAX = 2000;
+
+/**
+ * One-time hand-off context prefix for the CLI (NOT stored in the transcript).
+ * Returns "" when no prefix applies: no handoffFrom, session already exists,
+ * source missing/deleted, or source has no assistant message.
+ *
+ * Strings are mirrored in src/devCoder.ts (services-level helper + dev twin —
+ * the established pattern for shared electron/dev logic).
+ *
+ * @param {{ handoffFrom?: string | null, sessionId?: string | null } | null} thread
+ * @param {(sourceId: string) => Array<{ role?: string, text?: string }> | null | undefined} getMessages
+ * @returns {string}
+ */
+function buildHandoffPrefix(thread, getMessages) {
+  if (!thread || thread.handoffFrom == null || thread.handoffFrom === "") {
+    return "";
+  }
+  if (thread.sessionId != null && thread.sessionId !== "") {
+    return "";
+  }
+  let msgs;
+  try {
+    msgs = getMessages(String(thread.handoffFrom));
+  } catch {
+    return "";
+  }
+  if (!Array.isArray(msgs) || msgs.length === 0) return "";
+
+  let lastAssistant = null;
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const m = msgs[i];
+    if (m && m.role === "assistant" && m.text != null && String(m.text)) {
+      lastAssistant = String(m.text);
+      break;
+    }
+  }
+  if (!lastAssistant) return "";
+
+  const body =
+    lastAssistant.length > HANDOFF_ASSISTANT_MAX
+      ? lastAssistant.slice(0, HANDOFF_ASSISTANT_MAX)
+      : lastAssistant;
+
+  return (
+    "[Hand-off context from a previous thread]\n" +
+    body +
+    "\n[End context]\n\n"
+  );
+}
+
+/**
+ * Fork / hand off: new thread in the source's project. Source is never modified.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, provider?: string, model?: string | null }} input
+ * @returns {object}
+ */
+function forkThread(store, input) {
+  const sourceId = input && input.threadId;
+  const source = store.getThread(sourceId);
+  if (!source) {
+    throw new Error(`Unknown thread: ${sourceId}`);
+  }
+
+  const providerProvided = Object.prototype.hasOwnProperty.call(
+    input,
+    "provider",
+  );
+  const modelProvided = Object.prototype.hasOwnProperty.call(input, "model");
+
+  let nextProvider = source.provider;
+  if (providerProvided) {
+    const id = String(input.provider || "");
+    if (!isKnownProviderId(id)) {
+      throw new Error(`Unknown provider: ${input.provider}`);
+    }
+    nextProvider = id;
+  }
+
+  const providerChanging =
+    providerProvided && String(nextProvider) !== String(source.provider);
+
+  let nextModel = source.model;
+  const nextEntry = getProvider(nextProvider);
+  if (providerChanging) {
+    // Same rule as setProvider: do not carry the old provider's model across
+    // unless this call supplies one valid for the NEW provider.
+    if (modelProvided) {
+      nextModel = normalizeModelForProvider(nextEntry, input.model);
+    } else {
+      nextModel = null;
+    }
+  } else if (modelProvided) {
+    nextModel = normalizeModelForProvider(nextEntry, input.model);
+  }
+
+  const sourceTitle =
+    source.title != null && String(source.title) !== ""
+      ? String(source.title)
+      : "New Thread";
+  // createThread applies THREAD_TITLE_MAX; "Fork: " + title uses the same path.
+  const created = createThread(store, {
+    projectId: source.projectId,
+    title: `Fork: ${sourceTitle}`,
+  });
+
+  // createThread stamps lastVisitedAt = createdAt and handoffFrom null;
+  // patch config + provenance. sessionId stays null (fresh session).
+  const updated = store.updateThread(created.id, {
+    provider: nextProvider,
+    model: nextModel,
+    permissionMode: source.permissionMode,
+    handoffFrom: source.id,
+    sessionId: null,
+  });
+  store.save();
+  return updated ? { ...updated } : { ...created, handoffFrom: source.id };
 }
 
 /**
@@ -298,10 +447,7 @@ function setProvider(store, input) {
   const nextProvider = providerProvided ? input.provider : thread.provider;
   if (providerProvided) {
     const id = String(input.provider || "");
-    const known =
-      knownProviderIds().includes(id) ||
-      (id === "simulate" && process.env.CODER_SIMULATE === "1");
-    if (!known) {
+    if (!isKnownProviderId(id)) {
       throw new Error(`Unknown provider: ${input.provider}`);
     }
   }
@@ -965,9 +1111,16 @@ module.exports = {
   addProject,
   removeProject,
   createThread,
+  forkThread,
   setPermissionMode,
   setReasoningEffort,
   setProvider,
+  normalizeModelForProvider,
+  buildHandoffPrefix,
+  isKnownProviderId,
+  truncateThreadTitle,
+  THREAD_TITLE_MAX,
+  HANDOFF_ASSISTANT_MAX,
   setArchived,
   setSettled,
   setPinned,
