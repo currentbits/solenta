@@ -184,6 +184,22 @@ describe("App fork / hand-off wiring (round 49)", () => {
     await m.click(handoffBtn as HTMLElement);
     await m.flush();
 
+    // B1: current provider must be ABSENT from the card hand-off submenu.
+    // Mutant that drops `p.id !== thread.provider` re-lists claude here.
+    const cardMenu = m.query('[data-handoff-menu="t-source-fork"]');
+    assert.ok(cardMenu, "card hand-off menu must be open");
+    const cardEntries = m
+      .queryAll("[data-handoff-provider]")
+      .map((el) => el.getAttribute("data-handoff-provider"));
+    assert.ok(
+      !cardEntries.includes("claude"),
+      `current provider must not appear in card Hand off menu, got: ${cardEntries.join(",")}`,
+    );
+    assert.ok(
+      cardEntries.includes("grok") && cardEntries.includes("kimi"),
+      "other providers must still be listed (positive control)",
+    );
+
     const grok = m.query('[data-handoff-provider="grok"]');
     assert.ok(grok, "Grok (not current provider) must be listed");
     assert.equal(
@@ -199,6 +215,48 @@ describe("App fork / hand-off wiring (round 49)", () => {
     const arg = forks[0]!.args[0] as { threadId: string; provider?: string };
     assert.equal(arg.threadId, "t-source-fork");
     assert.equal(arg.provider, "grok", "hand-off must record provider override");
+    m.unmount();
+  });
+
+  it("header Hand off submenu excludes current provider (and lists others)", async () => {
+    const d = decoy();
+    const s = source();
+    const o = otherProjectThread();
+    const fake = createFakeCoder({
+      projects: [
+        project({ id: "p1", slug: "acme/one", name: "one", path: "/tmp/one" }),
+        project({ id: "p2", slug: "acme/two", name: "two", path: "/tmp/two" }),
+      ],
+      providers,
+      threads: [d, s, o],
+      details: {
+        "t-decoy": detail({ thread: d }),
+        "t-source-fork": detail({ thread: s }),
+        "t-p2": detail({ thread: o }),
+      },
+    });
+    const m = await boot(fake);
+    await selectThread(m, "source handoff thread");
+
+    const headerHandoff = m.query("[data-thread-handoff]");
+    assert.ok(headerHandoff, "ThreadView header Hand off to… must render");
+    await m.click(headerHandoff as HTMLElement);
+    await m.flush();
+
+    assert.ok(m.query("[data-thread-handoff-menu]"), "header hand-off menu open");
+    // Only entries inside the header menu — scope via the menu root.
+    const headerMenu = m.query("[data-thread-handoff-menu]")!;
+    const headerEntries = Array.from(
+      headerMenu.querySelectorAll("[data-handoff-provider]"),
+    ).map((el) => el.getAttribute("data-handoff-provider"));
+    assert.ok(
+      !headerEntries.includes("claude"),
+      `current provider must not appear in header Hand off menu, got: ${headerEntries.join(",")}`,
+    );
+    assert.ok(
+      headerEntries.includes("grok") && headerEntries.includes("kimi"),
+      "other providers must still be listed in header menu (positive control)",
+    );
     m.unmount();
   });
 
