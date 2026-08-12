@@ -80,6 +80,8 @@ export function thread(over: Partial<ThreadInfo> = {}): ThreadInfo {
     archived: false,
     settledOverride: null,
     settledAt: null,
+    // Round 49: null unless created by threads.fork.
+    handoffFrom: null,
     pinnedAt: null,
     snoozedUntil: null,
     snoozedAt: null,
@@ -414,6 +416,136 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       setProvider: (input: unknown) => rec("threads.setProvider", [input], thread()),
       setReasoningEffort: (input: unknown) =>
         rec("threads.setReasoningEffort", [input], thread()),
+      /**
+       * Honest fork (round 49 contract / electron forkThread): new thread
+       * same project, copies provider/model/permissionMode unless overridden;
+       * sessionId null; handoffFrom = source id; reasoningEffort always null
+       * (production createThread+patch path never carries it). Title uses the
+       * same THREAD_TITLE_MAX=60 cap as createThread. SOURCE is never modified.
+       * Rejects unknown source and invalid provider/model with production
+       * error strings (byte-equal).
+       */
+      fork: (input: unknown) => {
+        const i = input as {
+          threadId: string;
+          provider?: string;
+          model?: string | null;
+        };
+        calls.push({ channel: "threads.fork", args: [input] });
+        const err = fail["threads.fork"];
+        if (err) return Promise.reject(err);
+
+        const source = threads.find((t) => t.id === i.threadId);
+        if (!source) {
+          // Match electron/services.js forkThread exactly.
+          return Promise.reject(new Error(`Unknown thread: ${i.threadId}`));
+        }
+
+        const providerProvided = Object.prototype.hasOwnProperty.call(
+          i,
+          "provider",
+        );
+        const modelProvided = Object.prototype.hasOwnProperty.call(i, "model");
+
+        let nextProvider = source.provider;
+        if (providerProvided) {
+          const id = String(i.provider ?? "");
+          const known = providers.some((p) => p.id === id) || id === "simulate";
+          if (!known) {
+            return Promise.reject(new Error(`Unknown provider: ${i.provider}`));
+          }
+          nextProvider = id;
+        }
+
+        const providerChanging =
+          providerProvided && String(nextProvider) !== String(source.provider);
+
+        let nextModel: string | null = source.model;
+        if (providerChanging) {
+          // Hand-off: drop the old harness model unless this call supplies one.
+          if (modelProvided) {
+            if (i.model == null || i.model === "") {
+              nextModel = null;
+            } else {
+              const trimmed = String(i.model).trim();
+              if (!trimmed) {
+                return Promise.reject(
+                  new Error("Model must be a non-empty string"),
+                );
+              }
+              if (trimmed.length > 100) {
+                return Promise.reject(
+                  new Error("Model must be at most 100 characters"),
+                );
+              }
+              nextModel = trimmed;
+            }
+          } else {
+            nextModel = null;
+          }
+        } else if (modelProvided) {
+          if (i.model == null || i.model === "") {
+            nextModel = null;
+          } else {
+            const trimmed = String(i.model).trim();
+            if (!trimmed) {
+              return Promise.reject(
+                new Error("Model must be a non-empty string"),
+              );
+            }
+            if (trimmed.length > 100) {
+              return Promise.reject(
+                new Error("Model must be at most 100 characters"),
+              );
+            }
+            nextModel = trimmed;
+          }
+        }
+
+        const now = Date.now();
+        // Match electron THREAD_TITLE_MAX / truncateThreadTitle (createThread path).
+        const THREAD_TITLE_MAX = 60;
+        const sourceTitle =
+          source.title != null && String(source.title) !== ""
+            ? String(source.title)
+            : "New Thread";
+        const rawTitle = `Fork: ${sourceTitle}`;
+        const title =
+          rawTitle.length > THREAD_TITLE_MAX
+            ? rawTitle.slice(0, THREAD_TITLE_MAX)
+            : rawTitle;
+        const forked = thread({
+          id: `t-fork-${now}`,
+          projectId: source.projectId,
+          title,
+          createdAt: now,
+          updatedAt: now,
+          lastVisitedAt: now,
+          status: "idle",
+          runStartedAt: null,
+          archived: false,
+          settledOverride: null,
+          settledAt: null,
+          pinnedAt: null,
+          snoozedUntil: null,
+          snoozedAt: null,
+          handoffFrom: source.id,
+          provider: nextProvider,
+          model: nextModel,
+          sessionId: null,
+          permissionMode: source.permissionMode,
+          // Production fork never patches reasoningEffort; create leaves null.
+          reasoningEffort: null,
+          branch: null,
+          prNumber: null,
+          prUrl: null,
+          prState: null,
+          worktreePath: null,
+        });
+        threads = [forked, ...threads];
+        details[forked.id] = detail({ thread: forked, messages: [] });
+        return Promise.resolve(forked);
+      },
       delete: (input: unknown) => rec("threads.delete", [input], undefined),
     },
     runs: {

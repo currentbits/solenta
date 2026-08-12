@@ -62,6 +62,15 @@ export interface UseCoderResult {
     title?: string,
     projectId?: string,
   ) => Promise<ThreadInfo | null>;
+  /**
+   * Fork / hand off a thread (threads.fork). Selects the new thread the same
+   * way createThread does. Plain fork: no provider override. Hand-off: pass
+   * provider (and optional model). Errors surface via error scope "run".
+   */
+  forkThread: (
+    threadId: string,
+    opts?: { provider?: string; model?: string | null },
+  ) => Promise<ThreadInfo | null>;
   startRun: (prompt: string) => Promise<void>;
   /**
    * Multi-phase Build workflow for the selected thread. Passes templateId to
@@ -378,6 +387,40 @@ export function useCoder(): UseCoderResult {
       return t;
     },
     [api, selectedProjectId, applyThreads],
+  );
+
+  const forkThread = useCallback(
+    async (
+      threadId: string,
+      opts?: { provider?: string; model?: string | null },
+    ) => {
+      try {
+        const input: {
+          threadId: string;
+          provider?: string;
+          model?: string | null;
+        } = { threadId };
+        if (opts && Object.prototype.hasOwnProperty.call(opts, "provider")) {
+          input.provider = opts.provider;
+        }
+        if (opts && Object.prototype.hasOwnProperty.call(opts, "model")) {
+          input.model = opts.model;
+        }
+        const t = await api.threads.fork(input);
+        // Same selection path as createThread: prepend row, select new id.
+        const next = threadsRef.current.some((x) => x.id === t.id)
+          ? threadsRef.current.map((x) => (x.id === t.id ? t : x))
+          : [t, ...threadsRef.current];
+        applyThreads(next);
+        setSelectedThreadId(t.id);
+        setError(null);
+        return t;
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+        return null;
+      }
+    },
+    [api, applyThreads],
   );
 
   const startRun = useCallback(
@@ -897,6 +940,7 @@ export function useCoder(): UseCoderResult {
     clearError,
     addProject,
     createThread,
+    forkThread,
     startRun,
     startWorkflowRun,
     saveWorkflow,

@@ -277,6 +277,8 @@ function migrateThread(t) {
     pinnedAt: t.pinnedAt !== undefined ? t.pinnedAt : null,
     snoozedUntil: t.snoozedUntil !== undefined ? t.snoozedUntil : null,
     snoozedAt: t.snoozedAt !== undefined ? t.snoozedAt : null,
+    // Round 49 fork/hand-off: null = not a fork (provenance only).
+    handoffFrom: t.handoffFrom !== undefined ? t.handoffFrom : null,
   };
 }
 

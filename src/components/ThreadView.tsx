@@ -7,6 +7,7 @@ import type {
   ProviderInfo,
   ReasoningEffort,
   ThreadDetail,
+  ThreadInfo,
   WorkLogItem,
   WorkflowTemplateInfo,
 } from "../shared/ipc";
@@ -67,6 +68,15 @@ interface ThreadViewProps {
   onPush: () => Promise<{ remote: string; branch: string }>;
   runError?: string | null;
   onDismissRunError?: () => void;
+  /**
+   * Fork / hand off the open thread (round 49). Plain call = same harness;
+   * pass provider for hand-off.
+   */
+  onFork?: (opts?: { provider?: string }) => void | Promise<void>;
+  /** Full thread list for handoffFrom provenance lookup. */
+  threads?: ThreadInfo[];
+  /** Select another thread (provenance chip → source). */
+  onSelectThread?: (id: string) => void;
 }
 
 function ToolCallCard({
@@ -380,17 +390,28 @@ export function ThreadView({
   onPush,
   runError = null,
   onDismissRunError,
+  onFork,
+  threads = [],
+  onSelectThread,
 }: ThreadViewProps) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
   const prevThreadId = useRef<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const handoffMenuRef = useRef<HTMLDivElement>(null);
   const pushFlashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [pushPending, setPushPending] = useState(false);
   /** Shown briefly after a successful push; null when idle. */
   const [pushFlashBranch, setPushFlashBranch] = useState<string | null>(null);
+  /** Header hand-off submenu open. */
+  const [handoffMenuOpen, setHandoffMenuOpen] = useState(false);
+  /**
+   * Provenance chip dismissed for this open (not persisted). Reset when the
+   * open thread changes.
+   */
+  const [handoffBannerDismissed, setHandoffBannerDismissed] = useState(false);
 
   const runningAgents = useMemo(() => {
     if (!detail?.workflow) return 0;
@@ -468,6 +489,8 @@ export function ThreadView({
       setDeleteConfirm(false);
       setPushPending(false);
       setPushFlashBranch(null);
+      setHandoffMenuOpen(false);
+      setHandoffBannerDismissed(false);
       if (pushFlashTimer.current != null) {
         clearTimeout(pushFlashTimer.current);
         pushFlashTimer.current = null;
@@ -497,11 +520,25 @@ export function ThreadView({
     };
   }, [menuOpen]);
 
+  useEffect(() => {
+    if (!handoffMenuOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      if (!handoffMenuRef.current?.contains(e.target as Node)) {
+        setHandoffMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+    };
+  }, [handoffMenuOpen]);
+
   const closeMenu = useCallback(() => {
     setMenuOpen(false);
     setDeleteConfirm(false);
   }, []);
   useEscapeClose(menuOpen, closeMenu);
+  useEscapeClose(handoffMenuOpen, () => setHandoffMenuOpen(false));
 
   useEffect(() => {
     const el = bodyRef.current;
@@ -548,6 +585,15 @@ export function ThreadView({
 
   const { thread } = detail;
 
+  const handoffSourceId = thread.handoffFrom;
+  const handoffSource =
+    handoffSourceId != null
+      ? threads.find((t) => t.id === handoffSourceId) ?? null
+      : null;
+  const showHandoffBanner =
+    handoffSourceId != null && !handoffBannerDismissed;
+  const otherProviders = providers.filter((p) => p.id !== thread.provider);
+
   const handlePush = async () => {
     if (isWorking || pushPending) return;
     setPushPending(true);
@@ -588,6 +634,81 @@ export function ThreadView({
           <span className={styles.threadTitle}>{thread.title}</span>
         </div>
         <div className={styles.actions}>
+          {onFork && (
+            <>
+              <button
+                type="button"
+                className={styles.btn}
+                data-thread-fork=""
+                disabled={isWorking}
+                aria-disabled={isWorking ? "true" : undefined}
+                title="Fork thread (same harness)"
+                onClick={() => {
+                  if (isWorking) return;
+                  void onFork();
+                }}
+              >
+                Fork
+              </button>
+              <div className={styles.menuWrap} ref={handoffMenuRef}>
+                <button
+                  type="button"
+                  className={styles.btn}
+                  data-thread-handoff=""
+                  disabled={isWorking || otherProviders.length === 0}
+                  aria-disabled={
+                    isWorking || otherProviders.length === 0
+                      ? "true"
+                      : undefined
+                  }
+                  aria-haspopup="menu"
+                  aria-expanded={handoffMenuOpen}
+                  title="Hand off to another provider"
+                  onClick={() => {
+                    if (isWorking || otherProviders.length === 0) return;
+                    setHandoffMenuOpen((v) => !v);
+                    setMenuOpen(false);
+                  }}
+                >
+                  Hand off to…
+                </button>
+                {handoffMenuOpen && (
+                  <div
+                    className={styles.menu}
+                    role="menu"
+                    data-thread-handoff-menu=""
+                  >
+                    {otherProviders.map((p) => {
+                      const disabled = !p.available;
+                      return (
+                        <button
+                          key={p.id}
+                          type="button"
+                          className={styles.menuItem}
+                          role="menuitem"
+                          data-handoff-provider={p.id}
+                          disabled={disabled}
+                          aria-disabled={disabled ? "true" : undefined}
+                          title={
+                            disabled
+                              ? `${p.name} is not installed`
+                              : `Hand off to ${p.name}`
+                          }
+                          onClick={() => {
+                            if (disabled) return;
+                            setHandoffMenuOpen(false);
+                            void onFork({ provider: p.id });
+                          }}
+                        >
+                          {p.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
           <button
             type="button"
             className={`${styles.btn} ${styles.btnPrimary} ${styles.pushBtn}`}
@@ -684,6 +805,38 @@ export function ThreadView({
         onClose={onCloseChanges}
         onFetchDiff={onFetchDiff}
       />
+
+      {showHandoffBanner && (
+        <div className={styles.handoffBanner} data-handoff-banner="">
+          <span className={styles.handoffBannerText}>
+            {handoffSource ? (
+              <>
+                Forked from{" "}
+                <button
+                  type="button"
+                  className={styles.handoffLink}
+                  data-handoff-source={handoffSource.id}
+                  onClick={() => onSelectThread?.(handoffSource.id)}
+                >
+                  {handoffSource.title}
+                </button>
+              </>
+            ) : (
+              <span data-handoff-missing="">
+                Forked from a deleted thread
+              </span>
+            )}
+          </span>
+          <button
+            type="button"
+            className={styles.handoffDismiss}
+            aria-label="Dismiss handoff banner"
+            onClick={() => setHandoffBannerDismissed(true)}
+          >
+            ×
+          </button>
+        </div>
+      )}
 
       <div
         className={styles.body}

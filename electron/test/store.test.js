@@ -59,6 +59,7 @@ describe("Store", () => {
       permissionMode: "default",
       reasoningEffort: null,
       worktreePath: null,
+      handoffFrom: null,
     };
     const msg = {
       id: "m1",
