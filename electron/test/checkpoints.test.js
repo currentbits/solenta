@@ -281,7 +281,25 @@ describe("listCheckpoints / restoreCheckpoint", () => {
       },
     );
 
-    // restore turn 1 content
+    // 5) resolvable non-checkpoint sha (init commit) — subject-validation alone
+    const initSha = git(wt, ["rev-list", "--max-parents=0", "HEAD"]);
+    assert.ok(initSha && initSha.length >= 7);
+    assert.notEqual(initSha, c1.sha);
+    assert.notEqual(initSha, c2.sha);
+    await assert.rejects(
+      () =>
+        restoreCheckpoint({
+          store: fx.store,
+          threadId: fx.thread.id,
+          sha: initSha,
+        }),
+      (err) => {
+        assert.equal(String(err.message), `Unknown checkpoint: ${initSha}`);
+        return true;
+      },
+    );
+
+    // restore turn 1 content while still at turn 2 (both HEAD-reachable)
     const list = await listCheckpoints({
       store: fx.store,
       threadId: fx.thread.id,
@@ -297,13 +315,130 @@ describe("listCheckpoints / restoreCheckpoint", () => {
     });
     assert.equal(fs.readFileSync(file, "utf8"), "v1\n");
 
-    // restore turn 2 again
+    // After restore to turn 1, turn 2 is off-HEAD — must be rejected by list membership
+    const afterRestore = await listCheckpoints({
+      store: fx.store,
+      threadId: fx.thread.id,
+    });
+    assert.equal(afterRestore.length, 1);
+    assert.equal(afterRestore[0].turn, 1);
+    await assert.rejects(
+      () =>
+        restoreCheckpoint({
+          store: fx.store,
+          threadId: fx.thread.id,
+          sha: c2.sha,
+        }),
+      (err) => {
+        assert.equal(String(err.message), `Unknown checkpoint: ${c2.sha}`);
+        return true;
+      },
+    );
+  });
+
+  it("A-B1: sibling-thread checkpoint sha is rejected (shared object DB)", async () => {
+    // Two worktrees of one project share objects — git log -1 <t2sha> in t1
+    // would resolve. Membership in THIS thread's listCheckpoints must refuse.
+    fx = makeWorktreeFixture();
+    const t1 = fx.thread;
+    const t2 = services.createThread(fx.store, {
+      projectId: fx.project.id,
+      title: "Sibling",
+    });
+    const setup2 = setupWorktree({
+      store: fx.store,
+      threadId: t2.id,
+      worktreeBase: fx.worktreeBase,
+      broadcast: () => {},
+    });
+
+    fs.writeFileSync(path.join(fx.worktreePath, "f.txt"), "t1 only\n");
+    const c1 = await maybeCreateCheckpoint(fx.store, t1.id);
+    assert.ok(c1 && c1.sha);
+
+    fs.writeFileSync(path.join(setup2.worktreePath, "other.txt"), "t2 only\n");
+    const c2 = await maybeCreateCheckpoint(fx.store, t2.id);
+    assert.ok(c2 && c2.sha);
+    assert.notEqual(c1.sha, c2.sha);
+
+    // t1 must refuse t2's checkpoint sha by name
+    await assert.rejects(
+      () =>
+        restoreCheckpoint({
+          store: fx.store,
+          threadId: t1.id,
+          sha: c2.sha,
+        }),
+      (err) => {
+        assert.equal(String(err.message), `Unknown checkpoint: ${c2.sha}`);
+        return true;
+      },
+    );
+
+    // t1 files unchanged (no data loss)
+    assert.equal(
+      fs.readFileSync(path.join(fx.worktreePath, "f.txt"), "utf8"),
+      "t1 only\n",
+    );
+    assert.equal(
+      fs.existsSync(path.join(fx.worktreePath, "other.txt")),
+      false,
+      "t1 must not gain t2's other.txt",
+    );
+
+    // t1 can still restore its own checkpoint
+    await restoreCheckpoint({
+      store: fx.store,
+      threadId: t1.id,
+      sha: c1.sha,
+    });
+    assert.equal(
+      fs.readFileSync(path.join(fx.worktreePath, "f.txt"), "utf8"),
+      "t1 only\n",
+    );
+  });
+
+  it("A-n3: restore then new dirty turn renumbers from list length (turn 2, fresh sha)", async () => {
+    fx = makeWorktreeFixture();
+    const wt = fx.worktreePath;
+    const file = path.join(wt, "n.txt");
+
+    fs.writeFileSync(file, "t1\n");
+    const c1 = await maybeCreateCheckpoint(fx.store, fx.thread.id);
+    fs.writeFileSync(file, "t2\n");
+    const c2 = await maybeCreateCheckpoint(fx.store, fx.thread.id);
+    assert.equal(c2.turn, 2);
+
     await restoreCheckpoint({
       store: fx.store,
       threadId: fx.thread.id,
-      sha: c2.sha,
+      sha: c1.sha,
     });
-    assert.equal(fs.readFileSync(file, "utf8"), "v2\n");
+    let list = await listCheckpoints({
+      store: fx.store,
+      threadId: fx.thread.id,
+    });
+    assert.deepEqual(
+      list.map((c) => c.turn),
+      [1],
+      "after restore to turn 1, only turn 1 is HEAD-reachable",
+    );
+
+    fs.writeFileSync(file, "t2-fresh\n");
+    const c2b = await maybeCreateCheckpoint(fx.store, fx.thread.id);
+    assert.ok(c2b);
+    assert.equal(c2b.turn, 2, "next turn reuses number 2, not 3");
+    assert.notEqual(c2b.sha, c2.sha, "fresh sha, not the discarded turn-2 object");
+
+    list = await listCheckpoints({
+      store: fx.store,
+      threadId: fx.thread.id,
+    });
+    assert.deepEqual(
+      list.map((c) => c.turn),
+      [2, 1],
+    );
+    assert.equal(list[0].sha, c2b.sha);
   });
 });
 

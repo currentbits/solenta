@@ -2842,17 +2842,21 @@ function buildDevCoder(): CoderApi {
         }
         const list = checkpointsByThread.get(input.threadId) || [];
         const want = String(input.sha || "").trim();
-        const match = list.find(
+        const idx = list.findIndex(
           (c) =>
             c.sha === want ||
             c.sha.startsWith(want) ||
             want.startsWith(c.sha),
         );
-        if (!match) {
+        if (idx < 0) {
           throw new Error(`Unknown checkpoint: ${input.sha}`);
         }
-        // Dev has no real files to reset; keep the checkpoint list and mark
-        // the restore by stamping an event on the transcript.
+        const match = list[idx]!;
+        // Mirror electron HEAD-reachable truncation: restoring turn k drops
+        // every newer checkpoint so the next commit reuses turn k+1, not
+        // stale length+1 (fakeCoder / git log after reset --hard).
+        checkpointsByThread.set(input.threadId, list.slice(idx));
+        // Dev has no real files to reset; stamp an event on the transcript.
         detail.messages.push({
           id: id("msg"),
           role: "event",
