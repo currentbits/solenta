@@ -17,6 +17,60 @@
   height: 56px;
 }
 
+/* Round 49: provenance for threads created by fork/hand-off. Session-only dismiss. */
+.handoffBanner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 20px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--card);
+  flex-shrink: 0;
+}
+
+.handoffBannerText {
+  font-size: 12.5px;
+  color: var(--text-muted);
+  min-width: 0;
+}
+
+.handoffLink {
+  border: none;
+  background: none;
+  padding: 0;
+  color: #93c5fd;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.handoffLink:hover {
+  color: #bfdbfe;
+}
+
+.handoffDismiss {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 14px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.handoffDismiss:hover {
+  color: var(--text);
+  background: var(--card-hover);
+}
+
 .breadcrumb {
   display: flex;
   align-items: baseline;
@@ -110,6 +164,16 @@
 
 .menuItem:hover {
   background: var(--card);
+}
+
+.menuItem:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  color: var(--text-dim);
+}
+
+.menuItem:disabled:hover {
+  background: transparent;
 }
 
 .menuItemDanger {
