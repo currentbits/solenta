@@ -227,8 +227,8 @@ export default function App() {
         onPush={() => pushBranch()}
         createPr={(input) => createPr(input)}
         prStatus={() => prStatus()}
-        listCheckpoints={(threadId) => listCheckpoints(threadId)}
-        restoreCheckpoint={(threadId, sha) => restoreCheckpoint(threadId, sha)}
+        listCheckpoints={listCheckpoints}
+        restoreCheckpoint={restoreCheckpoint}
         searchMemory={searchMemory}
         recentMemory={recentMemory}
         getMemory={getMemory}

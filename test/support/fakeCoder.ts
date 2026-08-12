@@ -620,21 +620,26 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
 
         const t = threads.find((x) => x.id === i.threadId);
         if (!t) {
+          // Match electron/worktrees.js restoreCheckpoint.
           return Promise.reject(new Error(`Unknown thread: ${i.threadId}`));
         }
         if (t.status === "working") {
           return Promise.reject(
-            new Error("Cannot restore while a run is active"),
+            new Error("Cannot restore a checkpoint while a run is active"),
           );
         }
         if (!t.worktreePath) {
-          return Promise.reject(new Error("No worktree for this thread"));
+          return Promise.reject(
+            new Error(
+              `Thread ${i.threadId} has no worktree; call setupWorktree first`,
+            ),
+          );
         }
         const list = (checkpoints[i.threadId] ?? []).slice();
         list.sort((a, b) => b.at - a.at);
         const idx = list.findIndex((c) => c.sha === i.sha);
         if (idx < 0) {
-          return Promise.reject(new Error("Unknown checkpoint"));
+          return Promise.reject(new Error(`Unknown checkpoint: ${i.sha}`));
         }
         // Keep the restored checkpoint and older ones; drop newer (earlier
         // indices in newest-first order).
