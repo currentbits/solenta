@@ -10,6 +10,8 @@ const {
   push,
   createPr,
   prStatus,
+  listCheckpoints,
+  restoreCheckpoint,
 } = require("./worktrees.js");
 const { createMemoryProxy } = require("./memory-proxy.js");
 
@@ -279,6 +281,22 @@ function registerIpc(deps) {
     return prStatus({
       store,
       threadId: input.threadId,
+    });
+  });
+
+  ipcMain.handle("git:listCheckpoints", async (_event, input) => {
+    return listCheckpoints({
+      store,
+      threadId: input.threadId,
+    });
+  });
+
+  ipcMain.handle("git:restoreCheckpoint", async (_event, input) => {
+    return restoreCheckpoint({
+      store,
+      threadId: input.threadId,
+      sha: input.sha,
+      isRunning: (id) => runner.isRunning(id),
     });
   });
 

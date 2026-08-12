@@ -359,7 +359,27 @@ function createRunner(opts) {
    * @param {boolean} [extras.skip] - force skip (simulate path)
    * @param {string | null} [extras.runId] - when set, only that run's msgs
    */
+  /**
+   * After a successful turn lands status "done": best-effort worktree
+   * checkpoint commit. Shared across every provider path (and sim). Never
+   * throws into the run lifecycle.
+   * @param {string} threadId
+   */
+  function afterSuccessfulTurn(threadId) {
+    try {
+      const { maybeCreateCheckpoint } = require("./worktrees.js");
+      void maybeCreateCheckpoint(store, threadId);
+    } catch {
+      // silent
+    }
+  }
+
   function notifyRunTerminal(threadId, status, text, extras = {}) {
+    // Checkpoint first so every provider that signals done through here is
+    // covered by one call site (generic/claude/codex/kimi/opencode/workflow).
+    if (status === "done") {
+      afterSuccessfulTurn(threadId);
+    }
     try {
       if (extras && extras.skip) return;
       const thread = store.getThread(threadId);
@@ -591,6 +611,8 @@ function createRunner(opts) {
     store.save();
     pushDetail(threadId, workflow);
     pushThreadsChanged();
+    // Sim path does not call notifyRunTerminal; still checkpoint on success.
+    afterSuccessfulTurn(threadId);
   }
 
   function clearRun(threadId) {
@@ -2393,7 +2415,8 @@ function createRunner(opts) {
     let title = thread.title;
     if (title === "New Thread") {
       const firstLine = String(prompt).split(/\r?\n/)[0].trim();
-      title = firstLine.slice(0, 60) || "New Thread";
+      const max = services.THREAD_TITLE_MAX || 60;
+      title = firstLine.slice(0, max) || "New Thread";
     }
 
     // Real activity clears a stale "settled" pin (t3 rule). An explicit
