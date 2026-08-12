@@ -16,6 +16,7 @@
 import type {
   AppSettings,
   AppStatus,
+  CheckpointInfo,
   CoderApi,
   DiffResult,
   GitStatus,
@@ -119,6 +120,11 @@ export interface FakeOptions {
   details?: Record<string, ThreadDetail>;
   status?: AppStatus;
   settings?: AppSettings;
+  /**
+   * Per-thread checkpoint lists (newest-first). listCheckpoints returns []
+   * when the thread has no worktreePath regardless of this map.
+   */
+  checkpoints?: Record<string, CheckpointInfo[]>;
   /** Force a channel to reject, e.g. { "runs.start": new Error("boom") }. */
   fail?: Record<string, Error>;
 }
@@ -143,6 +149,10 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
   const workflows = opts.workflows ?? [];
   const details = opts.details ?? {};
   const fail = opts.fail ?? {};
+  /** Mutable per-thread checkpoint lists (newest-first). */
+  const checkpoints: Record<string, CheckpointInfo[]> = {
+    ...(opts.checkpoints ?? {}),
+  };
   let settingsState: AppSettings = {
     dailyBudgetUsd: null,
     autoSettleAfterDays: 3,
@@ -581,6 +591,56 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           created: true,
         } as PrInfo),
       prStatus: (input: unknown) => rec("git.prStatus", [input], null),
+      /**
+       * Round 50 contract: newest-first; empty without a worktree.
+       * SOURCE list is never mutated by list.
+       */
+      listCheckpoints: (input: unknown) => {
+        const i = input as { threadId: string };
+        const t = threads.find((x) => x.id === i.threadId);
+        if (!t || !t.worktreePath) {
+          return rec("git.listCheckpoints", [input], [] as CheckpointInfo[]);
+        }
+        const list = (checkpoints[i.threadId] ?? []).slice();
+        // Newest-first by `at` (stable for equal timestamps: keep insertion order).
+        list.sort((a, b) => b.at - a.at);
+        return rec("git.listCheckpoints", [input], list);
+      },
+      /**
+       * Hard-reset worktree to a thread-owned sha. Production guards:
+       * run active, missing worktree, unknown sha. Truncates later
+       * (newer) checkpoints from the list so a subsequent list matches
+       * a real reset.
+       */
+      restoreCheckpoint: (input: unknown) => {
+        const i = input as { threadId: string; sha: string };
+        calls.push({ channel: "git.restoreCheckpoint", args: [input] });
+        const err = fail["git.restoreCheckpoint"];
+        if (err) return Promise.reject(err);
+
+        const t = threads.find((x) => x.id === i.threadId);
+        if (!t) {
+          return Promise.reject(new Error(`Unknown thread: ${i.threadId}`));
+        }
+        if (t.status === "working") {
+          return Promise.reject(
+            new Error("Cannot restore while a run is active"),
+          );
+        }
+        if (!t.worktreePath) {
+          return Promise.reject(new Error("No worktree for this thread"));
+        }
+        const list = (checkpoints[i.threadId] ?? []).slice();
+        list.sort((a, b) => b.at - a.at);
+        const idx = list.findIndex((c) => c.sha === i.sha);
+        if (idx < 0) {
+          return Promise.reject(new Error("Unknown checkpoint"));
+        }
+        // Keep the restored checkpoint and older ones; drop newer (earlier
+        // indices in newest-first order).
+        checkpoints[i.threadId] = list.slice(idx);
+        return Promise.resolve(undefined);
+      },
     },
     on: (channel: string, cb: unknown) => {
       calls.push({ channel: `on:${channel}`, args: [] });

@@ -43,6 +43,8 @@ export default function App() {
     pushBranch,
     createPr,
     prStatus,
+    listCheckpoints,
+    restoreCheckpoint,
     appStatus,
     settings,
     saveSettings,
@@ -225,6 +227,8 @@ export default function App() {
         onPush={() => pushBranch()}
         createPr={(input) => createPr(input)}
         prStatus={() => prStatus()}
+        listCheckpoints={(threadId) => listCheckpoints(threadId)}
+        restoreCheckpoint={(threadId, sha) => restoreCheckpoint(threadId, sha)}
         searchMemory={searchMemory}
         recentMemory={recentMemory}
         getMemory={getMemory}
