@@ -20,19 +20,20 @@ const { suggestCommitMessage } = require("./commitmsg.js");
 const { createMemoryProxy } = require("./memory-proxy.js");
 
 /**
- * Register all invoke handlers from the ipc contract.
+ * Shared invoke table used by BOTH transports: Electron IPC and the Coder Web
+ * WebSocket server. One function per channel, same args, same throw strings.
  *
  * @param {object} deps
- * @param {import('electron').IpcMain} deps.ipcMain
  * @param {import('electron').Dialog} deps.dialog
  * @param {import('./store').Store} deps.store
  * @param {ReturnType<import('./runner').createRunner>} deps.runner
  * @param {(channel: string, payload: unknown) => void} [deps.broadcast]
- * @param {string} [deps.worktreeBase] - base dir for git worktrees
- * @param {string} [deps.userDataPath] - app userData for memory-server.json
+ * @param {string} [deps.worktreeBase]
+ * @param {string} [deps.userDataPath]
+ * @returns {Record<string, (...args: unknown[]) => Promise<unknown>>}
  */
-function registerIpc(deps) {
-  const { ipcMain, dialog, store, runner } = deps;
+function createHandlers(deps) {
+  const { dialog, store, runner } = deps;
 
   const broadcast =
     deps.broadcast ||
@@ -48,292 +49,277 @@ function registerIpc(deps) {
   const userDataPath = deps.userDataPath || "";
   const memory = createMemoryProxy({ userDataPath });
 
-  ipcMain.handle("projects:list", async () => {
-    return services.listProjects(store);
-  });
-
-  ipcMain.handle("projects:add", async (_event, projectPath) => {
-    return services.addProject(store, projectPath);
-  });
-
-  ipcMain.handle("projects:addViaDialog", async () => {
-    const result = await dialog.showOpenDialog({
-      properties: ["openDirectory"],
-    });
-    if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
-      return null;
-    }
-    return services.addProject(store, result.filePaths[0]);
-  });
-
-  ipcMain.handle("projects:remove", async (_event, input) => {
-    services.removeProject(store, input, {
-      isRunning: (id) => runner.isRunning(id),
-    });
-    broadcast("threads:changed", services.listThreads(store));
-  });
-
-  ipcMain.handle("threads:list", async () => {
-    return services.listThreads(store);
-  });
-
-  ipcMain.handle("threads:search", async (_event, input) => {
-    return services.searchThreads(store, input || { query: "" });
-  });
-
-  ipcMain.handle("threads:create", async (_event, input) => {
-    const thread = services.createThread(store, input);
-    broadcast("threads:changed", services.listThreads(store));
-    return thread;
-  });
-
-  ipcMain.handle("threads:fork", async (_event, input) => {
-    const thread = services.forkThread(store, input);
-    broadcast("threads:changed", services.listThreads(store));
-    return thread;
-  });
-
-  ipcMain.handle("threads:get", async (_event, id) => {
-    const workflow = runner.getActiveWorkflow(id);
-    let view = null;
-    if (workflow && runner.toWorkflowView) {
-      // Surface workflow for simulate (core) and orchestrated multi-phase runs.
-      if (
-        workflow.__orchestrated ||
-        (!workflow.__real && !workflow.__claude && !workflow.__codex)
-      ) {
-        view = runner.toWorkflowView(workflow);
+  return {
+    "projects:list": async () => {
+      return services.listProjects(store);
+    },
+    "projects:add": async (projectPath) => {
+      return services.addProject(store, projectPath);
+    },
+    "projects:addViaDialog": async () => {
+      const result = await dialog.showOpenDialog({
+        properties: ["openDirectory"],
+      });
+      if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
+        return null;
       }
-    }
-    return services.getThreadDetail(store, id, view);
-  });
+      return services.addProject(store, result.filePaths[0]);
+    },
+    "projects:remove": async (input) => {
+      services.removeProject(store, input, {
+        isRunning: (id) => runner.isRunning(id),
+      });
+      broadcast("threads:changed", services.listThreads(store));
+    },
+    "threads:list": async () => {
+      return services.listThreads(store);
+    },
+    "threads:search": async (input) => {
+      return services.searchThreads(store, input || { query: "" });
+    },
+    "threads:create": async (input) => {
+      const thread = services.createThread(store, input);
+      broadcast("threads:changed", services.listThreads(store));
+      return thread;
+    },
+    "threads:fork": async (input) => {
+      const thread = services.forkThread(store, input);
+      broadcast("threads:changed", services.listThreads(store));
+      return thread;
+    },
+    "threads:get": async (id) => {
+      const workflow = runner.getActiveWorkflow(id);
+      let view = null;
+      if (workflow && runner.toWorkflowView) {
+        // Surface workflow for simulate (core) and orchestrated multi-phase runs.
+        if (
+          workflow.__orchestrated ||
+          (!workflow.__real && !workflow.__claude && !workflow.__codex)
+        ) {
+          view = runner.toWorkflowView(workflow);
+        }
+      }
+      return services.getThreadDetail(store, id, view);
+    },
+    "threads:setPermissionMode": async (input) => {
+      const updated = services.setPermissionMode(store, input);
+      broadcast("threads:changed", services.listThreads(store));
+      return updated;
+    },
+    "threads:setArchived": async (input) => {
+      const updated = services.setArchived(store, input);
+      broadcast("threads:changed", services.listThreads(store));
+      return updated;
+    },
+    "threads:setSettled": async (input) => {
+      const updated = services.setSettled(store, input);
+      broadcast("threads:changed", services.listThreads(store));
+      return updated;
+    },
+    "threads:setPinned": async (input) => {
+      const updated = services.setPinned(store, input);
+      broadcast("threads:changed", services.listThreads(store));
+      return updated;
+    },
+    "threads:setSnoozed": async (input) => {
+      const updated = services.setSnoozed(store, input);
+      broadcast("threads:changed", services.listThreads(store));
+      return updated;
+    },
+    "threads:setProvider": async (input) => {
+      const updated = services.setProvider(store, input);
+      broadcast("threads:changed", services.listThreads(store));
+      return updated;
+    },
+    "threads:setReasoningEffort": async (input) => {
+      const updated = services.setReasoningEffort(store, input);
+      broadcast("threads:changed", services.listThreads(store));
+      return updated;
+    },
+    "app:status": async () => {
+      return services.appStatus(store);
+    },
+    "memory:search": async (input) => {
+      return memory.search(input || { query: "" });
+    },
+    "memory:recent": async (input) => {
+      return memory.recent(input || {});
+    },
+    "memory:get": async (input) => {
+      return memory.get(input || { id: "" });
+    },
+    "memory:store": async (input) => {
+      return memory.store(input);
+    },
+    "memory:update": async (input) => {
+      return memory.update(input);
+    },
+    "memory:remove": async (input) => {
+      return memory.remove(input);
+    },
+    "settings:get": async () => {
+      return services.getSettings(store);
+    },
+    "settings:set": async (patch) => {
+      return services.setSettings(store, patch);
+    },
+    "providers:list": async () => {
+      return services.listProvidersForApi(store);
+    },
+    "workflows:list": async () => {
+      return services.listTemplates(store);
+    },
+    "workflows:save": async (template) => {
+      return services.saveTemplate(store, template);
+    },
+    "workflows:remove": async (input) => {
+      return services.removeTemplate(store, input);
+    },
+    "threads:delete": async (input) => {
+      services.deleteThread(store, input, {
+        isRunning: (id) => runner.isRunning(id),
+      });
+      broadcast("threads:changed", services.listThreads(store));
+    },
+    "runs:start": async (input) => {
+      return runner.startRun(input);
+    },
+    "runs:startWorkflow": async (input) => {
+      return runner.startWorkflowRun(input);
+    },
+    "runs:stop": async (input) => {
+      return runner.stopRun(input);
+    },
+    "git:status": async (projectId) => {
+      const project = store.getProject(projectId);
+      if (!project) {
+        return { isRepo: false, branch: "", dirty: false };
+      }
+      return services.gitStatus(project.path);
+    },
+    "git:setupWorktree": async (input) => {
+      if (!worktreeBase) {
+        throw new Error("worktreeBase is not configured");
+      }
+      return setupWorktree({
+        store,
+        threadId: input.threadId,
+        worktreeBase,
+        broadcast,
+      });
+    },
+    "git:diff": async (input) => {
+      return diff({ store, threadId: input.threadId });
+    },
+    "git:commit": async (input) => {
+      return commit({
+        store,
+        threadId: input.threadId,
+        message: input.message,
+      });
+    },
+    "git:revertFile": async (input) => {
+      return revertFile({
+        store,
+        threadId: input.threadId,
+        path: input.path,
+        status: input.status,
+      });
+    },
+    "git:suggestCommitMessage": async (input) => {
+      return suggestCommitMessage({ store, threadId: input.threadId });
+    },
+    "files:list": async (input) => {
+      return listFiles({
+        store,
+        threadId: input.threadId,
+        query: input.query,
+      });
+    },
+    "git:mergeWorktree": async (input) => {
+      return mergeWorktree({
+        store,
+        threadId: input.threadId,
+        broadcast,
+      });
+    },
+    "git:removeWorktree": async (input) => {
+      return removeWorktree({
+        store,
+        threadId: input.threadId,
+        force: Boolean(input && input.force),
+        broadcast,
+      });
+    },
+    "git:push": async (input) => {
+      return push({
+        store,
+        threadId: input.threadId,
+        broadcast,
+      });
+    },
+    "git:createPr": async (input) => {
+      return createPr({
+        store,
+        threadId: input.threadId,
+        title: input.title,
+        body: input.body,
+        draft: input.draft,
+        broadcast,
+      });
+    },
+    "git:prStatus": async (input) => {
+      return prStatus({
+        store,
+        threadId: input.threadId,
+      });
+    },
+    "git:listCheckpoints": async (input) => {
+      return listCheckpoints({
+        store,
+        threadId: input.threadId,
+      });
+    },
+    "git:restoreCheckpoint": async (input) => {
+      return restoreCheckpoint({
+        store,
+        threadId: input.threadId,
+        sha: input.sha,
+        isRunning: (id) => runner.isRunning(id),
+      });
+    },
+  };
+}
 
-  ipcMain.handle("threads:setPermissionMode", async (_event, input) => {
-    const updated = services.setPermissionMode(store, input);
-    broadcast("threads:changed", services.listThreads(store));
-    return updated;
-  });
-
-  ipcMain.handle("threads:setArchived", async (_event, input) => {
-    const updated = services.setArchived(store, input);
-    broadcast("threads:changed", services.listThreads(store));
-    return updated;
-  });
-
-  ipcMain.handle("threads:setSettled", async (_event, input) => {
-    const updated = services.setSettled(store, input);
-    broadcast("threads:changed", services.listThreads(store));
-    return updated;
-  });
-
-  ipcMain.handle("threads:setPinned", async (_event, input) => {
-    const updated = services.setPinned(store, input);
-    broadcast("threads:changed", services.listThreads(store));
-    return updated;
-  });
-
-  ipcMain.handle("threads:setSnoozed", async (_event, input) => {
-    const updated = services.setSnoozed(store, input);
-    broadcast("threads:changed", services.listThreads(store));
-    return updated;
-  });
-
-  ipcMain.handle("threads:setProvider", async (_event, input) => {
-    const updated = services.setProvider(store, input);
-    broadcast("threads:changed", services.listThreads(store));
-    return updated;
-  });
-
-  ipcMain.handle("threads:setReasoningEffort", async (_event, input) => {
-    const updated = services.setReasoningEffort(store, input);
-    broadcast("threads:changed", services.listThreads(store));
-    return updated;
-  });
-
-  ipcMain.handle("app:status", async () => {
-    return services.appStatus(store);
-  });
-
-  ipcMain.handle("memory:search", async (_event, input) => {
-    return memory.search(input || { query: "" });
-  });
-
-  ipcMain.handle("memory:recent", async (_event, input) => {
-    return memory.recent(input || {});
-  });
-
-  ipcMain.handle("memory:get", async (_event, input) => {
-    return memory.get(input || { id: "" });
-  });
-
-  ipcMain.handle("memory:store", async (_event, input) => {
-    return memory.store(input);
-  });
-
-  ipcMain.handle("memory:update", async (_event, input) => {
-    return memory.update(input);
-  });
-
-  ipcMain.handle("memory:remove", async (_event, input) => {
-    return memory.remove(input);
-  });
-
-  ipcMain.handle("settings:get", async () => {
-    return services.getSettings(store);
-  });
-
-  ipcMain.handle("settings:set", async (_event, patch) => {
-    return services.setSettings(store, patch);
-  });
-
-  ipcMain.handle("providers:list", async () => {
-    return services.listProvidersForApi(store);
-  });
-
-  ipcMain.handle("workflows:list", async () => {
-    return services.listTemplates(store);
-  });
-
-  ipcMain.handle("workflows:save", async (_event, template) => {
-    return services.saveTemplate(store, template);
-  });
-
-  ipcMain.handle("workflows:remove", async (_event, input) => {
-    return services.removeTemplate(store, input);
-  });
-
-  ipcMain.handle("threads:delete", async (_event, input) => {
-    services.deleteThread(store, input, {
-      isRunning: (id) => runner.isRunning(id),
+/**
+ * Register all invoke handlers from the ipc contract.
+ *
+ * @param {object} deps
+ * @param {import('electron').IpcMain} deps.ipcMain
+ * @param {import('electron').Dialog} deps.dialog
+ * @param {import('./store').Store} deps.store
+ * @param {ReturnType<import('./runner').createRunner>} deps.runner
+ * @param {(channel: string, payload: unknown) => void} [deps.broadcast]
+ * @param {string} [deps.worktreeBase] - base dir for git worktrees
+ * @param {string} [deps.userDataPath] - app userData for memory-server.json
+ * @param {Record<string, (...args: unknown[]) => Promise<unknown>>} [deps.handlers]
+ */
+function registerIpc(deps) {
+  const { ipcMain } = deps;
+  const handlers = deps.handlers || createHandlers(deps);
+  for (const [channel, fn] of Object.entries(handlers)) {
+    ipcMain.handle(channel, async (_event, ...args) => fn(...args));
+  }
+  const broadcast =
+    deps.broadcast ||
+    ((channel, payload) => {
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed()) {
+          win.webContents.send(channel, payload);
+        }
+      }
     });
-    broadcast("threads:changed", services.listThreads(store));
-  });
-
-  ipcMain.handle("runs:start", async (_event, input) => {
-    return runner.startRun(input);
-  });
-
-  ipcMain.handle("runs:startWorkflow", async (_event, input) => {
-    return runner.startWorkflowRun(input);
-  });
-
-  ipcMain.handle("runs:stop", async (_event, input) => {
-    return runner.stopRun(input);
-  });
-
-  ipcMain.handle("git:status", async (_event, projectId) => {
-    const project = store.getProject(projectId);
-    if (!project) {
-      return { isRepo: false, branch: "", dirty: false };
-    }
-    return services.gitStatus(project.path);
-  });
-
-  ipcMain.handle("git:setupWorktree", async (_event, input) => {
-    if (!worktreeBase) {
-      throw new Error("worktreeBase is not configured");
-    }
-    return setupWorktree({
-      store,
-      threadId: input.threadId,
-      worktreeBase,
-      broadcast,
-    });
-  });
-
-  ipcMain.handle("git:diff", async (_event, input) => {
-    return diff({ store, threadId: input.threadId });
-  });
-
-  ipcMain.handle("git:commit", async (_event, input) => {
-    return commit({
-      store,
-      threadId: input.threadId,
-      message: input.message,
-    });
-  });
-
-  ipcMain.handle("git:revertFile", async (_event, input) => {
-    return revertFile({
-      store,
-      threadId: input.threadId,
-      path: input.path,
-      status: input.status,
-    });
-  });
-
-  ipcMain.handle("git:suggestCommitMessage", async (_event, input) => {
-    return suggestCommitMessage({ store, threadId: input.threadId });
-  });
-
-  ipcMain.handle("files:list", async (_event, input) => {
-    return listFiles({
-      store,
-      threadId: input.threadId,
-      query: input.query,
-    });
-  });
-
-  ipcMain.handle("git:mergeWorktree", async (_event, input) => {
-    return mergeWorktree({
-      store,
-      threadId: input.threadId,
-      broadcast,
-    });
-  });
-
-  ipcMain.handle("git:removeWorktree", async (_event, input) => {
-    return removeWorktree({
-      store,
-      threadId: input.threadId,
-      force: Boolean(input && input.force),
-      broadcast,
-    });
-  });
-
-  ipcMain.handle("git:push", async (_event, input) => {
-    return push({
-      store,
-      threadId: input.threadId,
-      broadcast,
-    });
-  });
-
-  ipcMain.handle("git:createPr", async (_event, input) => {
-    return createPr({
-      store,
-      threadId: input.threadId,
-      title: input.title,
-      body: input.body,
-      draft: input.draft,
-      broadcast,
-    });
-  });
-
-  ipcMain.handle("git:prStatus", async (_event, input) => {
-    return prStatus({
-      store,
-      threadId: input.threadId,
-    });
-  });
-
-  ipcMain.handle("git:listCheckpoints", async (_event, input) => {
-    return listCheckpoints({
-      store,
-      threadId: input.threadId,
-    });
-  });
-
-  ipcMain.handle("git:restoreCheckpoint", async (_event, input) => {
-    return restoreCheckpoint({
-      store,
-      threadId: input.threadId,
-      sha: input.sha,
-      isRunning: (id) => runner.isRunning(id),
-    });
-  });
-
-  return { broadcast };
+  return { broadcast, handlers };
 }
 
 /**
@@ -346,4 +332,4 @@ function createPushFn(broadcast) {
   };
 }
 
-module.exports = { registerIpc, createPushFn };
+module.exports = { registerIpc, createHandlers, createPushFn };

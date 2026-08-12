@@ -26,6 +26,18 @@ if [[ ! -x "$BIN" ]]; then
   fi
 fi
 
+# Coder Web (round 51): electron/web.js require("ws") must resolve in the
+# packaged tree. Root node_modules is not shipped except this explicit copy.
+APP_RES="$APP/Contents/Resources/app"
+if [[ ! -f "$APP_RES/electron/web.js" ]]; then
+  echo "ERROR: packaged app missing electron/web.js" >&2
+  exit 1
+fi
+if [[ ! -d "$APP_RES/node_modules/ws" || ! -f "$APP_RES/node_modules/ws/package.json" ]]; then
+  echo "ERROR: packaged app missing node_modules/ws (electron/web.js needs it)" >&2
+  exit 1
+fi
+
 # Install cleanup before any probe so the temp dir cannot leak.
 TMP_USERDATA="$(mktemp -d "${TMPDIR:-/tmp}/coder-pkg-verify.XXXXXX")"
 ELECTRON_PID=""
