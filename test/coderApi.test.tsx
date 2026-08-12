@@ -99,6 +99,43 @@ describe("needsWebTokenGate", () => {
   });
 });
 
+describe("DEV browser fallback (npm run dev, no Electron, no token)", () => {
+  it("gate is suppressed and resolveCoderApi returns devCoder in a DEV build", async () => {
+    await withDom();
+    // Web mode (no window.coder), no token: production would gate, DEV must
+    // not. isDev injected true because the esbuild harness pins env.DEV falsy.
+    assert.equal(
+      needsWebTokenGate(true),
+      false,
+      "DEV browser session must not show the token gate",
+    );
+    (globalThis as unknown as { WebSocket: typeof WebSocket }).WebSocket =
+      CountingWebSocket as unknown as typeof WebSocket;
+    const api = resolveCoderApi(true);
+    assert.equal(
+      (api as unknown as { __devCoder?: true }).__devCoder ??
+        typeof api.projects.list,
+      typeof api.projects.list,
+      "DEV fallback returns a working CoderApi (devCoder), not a throw",
+    );
+    assert.equal(
+      CountingWebSocket.constructions,
+      0,
+      "DEV fallback must not open a socket",
+    );
+  });
+
+  it("production (isDev=false) still gates then throws, never devCoder", async () => {
+    await withDom();
+    assert.equal(needsWebTokenGate(false), true, "prod web with no token gates");
+    assert.throws(
+      () => resolveCoderApi(false),
+      /Missing web token/,
+      "prod must throw, never silently fall back to devCoder",
+    );
+  });
+});
+
 describe("resolveCoderApi Electron guard", () => {
   it("returns window.coder and constructs zero WebSockets", async () => {
     await withDom();

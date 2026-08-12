@@ -48,11 +48,23 @@ export function resolveWebToken(
   return storage.getItem(WEB_TOKEN_KEY);
 }
 
-export function needsWebTokenGate(): boolean {
+/** Vite DEV build flag, injectable so the DEV branches are testable (the
+ *  esbuild test harness pins import.meta.env.DEV falsy). */
+export function isDevBuild(): boolean {
+  return Boolean(import.meta.env?.DEV);
+}
+
+export function needsWebTokenGate(isDev: boolean = isDevBuild()): boolean {
+  // A Vite DEV build with no Electron bridge is `npm run dev` in a browser,
+  // not a deployed web app: use devCoder (resolveCoderApi) rather than
+  // prompting for a token dev has no way to produce. Without this the gate
+  // intercepts every browser dev session. isDevBuild() is false in the
+  // production web bundle, so a real deploy still gates.
+  if (isDev) return false;
   return isWebMode() && !resolveWebToken();
 }
 
-export function resolveCoderApi(): CoderApi {
+export function resolveCoderApi(isDev: boolean = isDevBuild()): CoderApi {
   const w = window as unknown as { coder?: CoderApi };
   if (w.coder) return w.coder;
   const token = resolveWebToken();
@@ -66,7 +78,7 @@ export function resolveCoderApi(): CoderApi {
   // server — fall back to devCoder (restores main's `window.coder ??
   // devCoder`, which round 51's web selection dropped). In a PRODUCTION web
   // build a missing token is the token-gate case (needsWebTokenGate), and
-  // the caller must render the gate rather than reach here.
-  if (import.meta.env?.DEV) return devCoder;
+  // BootApp renders the gate before this is reached.
+  if (isDev) return devCoder;
   throw new Error("Missing web token");
 }
