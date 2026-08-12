@@ -13,7 +13,7 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { mount } from "./support/dom.ts";
+import { inAct, mount } from "./support/dom.ts";
 import {
   createFakeCoder,
   installFakeCoder,
@@ -145,11 +145,18 @@ function workingTarget(): { row: ThreadInfo; d: ThreadDetail } {
     status: "working",
     updatedAt: NOW + 3000,
   });
+  // B-2: last message is a LIVE interrupt marker. Without the working
+  // guard this would still show Retry turn (other branches pass).
   const d = detail({
     thread: row,
     messages: [
-      msg({ id: "mw1", role: "user", text: "busy prompt" }),
-      msg({ id: "mw2", role: "event", text: "Run error: should not show" }),
+      msg({ id: "mw1", role: "user", text: "busy prompt after interrupt" }),
+      msg({
+        id: "mw2",
+        role: "event",
+        text: "Run interrupted by app quit",
+        createdAt: NOW,
+      }),
     ],
   });
   return { row, d };
@@ -283,7 +290,7 @@ describe("App Retry turn wiring (round 48)", () => {
     m.unmount();
   });
 
-  it("working thread does not render Retry turn", async () => {
+  it("working thread with live interrupt last does not render Retry turn", async () => {
     const decoyRow = decoy();
     const { row, d } = workingTarget();
     // Prefer working on boot — but still not index 0 only: put decoy first,
@@ -301,7 +308,7 @@ describe("App Retry turn wiring (round 48)", () => {
     assert.equal(
       retryButtons(m).length,
       0,
-      "Retry turn must be absent while a run is active",
+      "Retry turn must be absent while a run is active (even with live interrupt)",
     );
     m.unmount();
   });
@@ -323,6 +330,64 @@ describe("App Retry turn wiring (round 48)", () => {
       retryButtons(m).length,
       0,
       "Retry turn must be absent without a user message to re-send",
+    );
+    m.unmount();
+  });
+
+  it("round-trip: interrupt → retry → run completes → button gone", async () => {
+    const decoyRow = decoy();
+    const { row, d } = interruptTarget();
+    const fake = createFakeCoder({
+      projects: [project()],
+      threads: [decoyRow, row],
+      details: {
+        "t-decoy": detail({ thread: decoyRow }),
+        "t-interrupt-retry": d,
+      },
+    });
+    const m = await boot(fake);
+    await selectThread(m, "interrupt retry target");
+    assert.equal(retryButtons(m).length, 1, "button present on interrupt");
+
+    await m.click(retryButtons(m)[0]!);
+    await m.flush();
+    assert.equal(
+      fake.of("runs.start").length >= 1,
+      true,
+      "retry must hit runs.start",
+    );
+
+    // Successful retry: status done; interrupt is mid-transcript; no new event.
+    // Stale last-event anchor would keep the button; last-message must clear it.
+    const completed: ThreadDetail = detail({
+      thread: thread({
+        ...row,
+        status: "done",
+        updatedAt: NOW + 9000,
+      }),
+      messages: [
+        ...d.messages,
+        msg({
+          id: "m-retry-user",
+          role: "user",
+          text: "continue after quit please",
+          createdAt: NOW + 100,
+        }),
+        msg({
+          id: "m-retry-asst",
+          role: "assistant",
+          text: "picked up where we left off",
+          createdAt: NOW + 200,
+        }),
+      ],
+    });
+    await inAct(() => fake.emitThread(completed));
+    await m.flush();
+
+    assert.equal(
+      retryButtons(m).length,
+      0,
+      "after successful completion, stale interrupt must not keep Retry turn",
     );
     m.unmount();
   });
