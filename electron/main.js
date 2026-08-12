@@ -13,6 +13,11 @@ const {
   getMemoryStatus,
 } = require("./memory-sup.js");
 const { createPrStateRefresher } = require("./worktrees.js");
+const { enrichProcessPath } = require("./pathEnv.js");
+
+// GUI launches get a bare launchd PATH; rebuild the user's real PATH before
+// any provider binary resolution (`which`) or agent spawn happens.
+enrichProcessPath();
 
 const isDev = !app.isPackaged && !process.env.CODER_PROD;
 
