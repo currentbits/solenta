@@ -285,7 +285,7 @@ export function SettingsModal({
             <h3 className={styles.sectionLabel}>Build</h3>
             {/* A stale packaged bundle behaves like a broken app; name the build. */}
             <p className={styles.note}>
-              {status
+              {status?.build
                 ? `${status.build.version}${
                     status.build.sha ? ` · ${status.build.sha}` : " · dev tree"
                   }${status.build.time ? ` · ${status.build.time}` : ""}`
