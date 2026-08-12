@@ -298,7 +298,12 @@
   z-index: 2;
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 1px;
+  padding: 2px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.1s ease;
@@ -310,17 +315,23 @@
   pointer-events: auto;
 }
 
+/* The timestamp sits under the action pill; hide it while the pill is up. */
+.card:hover .age,
+.card:focus-within .age {
+  opacity: 0;
+}
+
 .settleBtn {
   pointer-events: auto;
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   display: grid;
   place-items: center;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border-soft);
-  background: var(--bg-elevated);
+  border-radius: 4px;
+  border: none;
+  background: transparent;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1;
   cursor: pointer;
   padding: 0;
@@ -328,8 +339,7 @@
 
 .settleBtn:hover:not(:disabled) {
   color: var(--text);
-  border-color: var(--border);
-  background: var(--card);
+  background: var(--card-hover);
 }
 
 .settleBtn:disabled {
@@ -377,6 +387,17 @@
 .snoozeWrap {
   position: relative;
   pointer-events: auto;
+  /* Inside the card-action pill: keep the fork + hand-off pair on one line;
+     as a block flex item it shrank to one button wide and stacked them. */
+  display: inline-flex;
+  gap: 1px;
+  flex-shrink: 0;
+}
+
+/* No pill child may shrink: shrink-to-fit sizing of the absolute pill
+   otherwise squeezes the last items onto a second row. */
+.cardActions > * {
+  flex-shrink: 0;
 }
 
 .snoozeMenu {
@@ -564,6 +585,7 @@
   font-size: 11px;
   color: var(--text-dim);
   flex-shrink: 0;
+  transition: opacity 0.1s ease;
 }
 
 /* Title row holds the optional unread dot left of the title text. */

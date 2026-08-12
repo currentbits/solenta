@@ -456,7 +456,20 @@ export function ThreadCard({
                   void onFork(thread.id);
                 }}
               >
-                ⑂
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  aria-hidden="true"
+                >
+                  <circle cx="4" cy="3.5" r="1.8" />
+                  <circle cx="4" cy="12.5" r="1.8" />
+                  <circle cx="12" cy="8" r="1.8" />
+                  <path d="M4 5.3v5.4M4 8c0 2.2 3.2 2.6 6.2 2.7" />
+                </svg>
               </button>
               <button
                 type="button"
