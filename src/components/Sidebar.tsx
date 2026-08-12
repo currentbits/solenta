@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ProjectInfo, ProviderInfo, ThreadInfo } from "../shared/ipc";
+import { isWebMode } from "../shared/wire";
 import {
   formatRelativeAge,
   formatWorkingLabel,
@@ -1225,7 +1226,7 @@ export function Sidebar({
 
   return (
     <aside className={styles.sidebar}>
-      <div className={styles.dragRegion} />
+      {!isWebMode() && <div className={styles.dragRegion} />}
       <header className={styles.header}>
         <div className={styles.brand}>
           <span className={styles.brandMark}>◇</span>

@@ -16,6 +16,7 @@ import type {
   WorkflowTemplateInfo,
 } from "./shared/ipc";
 import { resolveCoderApi } from "./coderApi";
+import { isWebMode } from "./shared/wire";
 import { nextVisibleThreadId } from "./threadSelection";
 
 const STATUS_POLL_MS = 60_000;
@@ -56,7 +57,8 @@ export interface UseCoderResult {
   selectedProjectId: string | null;
   error: CoderError | null;
   clearError: () => void;
-  addProject: () => Promise<ProjectInfo | null>;
+  /** Native: folder picker. Web: pass a filesystem path (projects.add). */
+  addProject: (path?: string) => Promise<ProjectInfo | null>;
   /** Create in projectId when given; otherwise the currently selected project. */
   createThread: (
     title?: string,
@@ -352,9 +354,15 @@ export function useCoder(): UseCoderResult {
     setSelectedThreadId(id);
   }, []);
 
-  const addProject = useCallback(async () => {
+  const addProject = useCallback(async (path?: string) => {
     try {
-      const p = await api.projects.addViaDialog();
+      const trimmed = typeof path === "string" ? path.trim() : "";
+      // Native folder picker cannot run without Electron. Web callers must
+      // pass a path (the path-input modal). Never fall through to addViaDialog.
+      if (isWebMode() && !trimmed) return null;
+      const p = trimmed
+        ? await api.projects.add(trimmed)
+        : await api.projects.addViaDialog();
       if (p) {
         setProjects((prev) => {
           if (prev.some((x) => x.id === p.id)) return prev;

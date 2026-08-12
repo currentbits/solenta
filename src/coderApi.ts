@@ -1,6 +1,7 @@
 import type { CoderApi } from "./shared/ipc";
 import { isWebMode } from "./shared/wire";
 import { createWireCoder } from "./wireClient";
+import { devCoder } from "./devCoder";
 
 export const WEB_TOKEN_KEY = "coder.web.token";
 
@@ -55,11 +56,17 @@ export function resolveCoderApi(): CoderApi {
   const w = window as unknown as { coder?: CoderApi };
   if (w.coder) return w.coder;
   const token = resolveWebToken();
-  if (!token) {
-    throw new Error("Missing web token");
+  if (token) {
+    return createWireCoder({
+      url: wsUrlFromLocation(window.location),
+      token,
+    });
   }
-  return createWireCoder({
-    url: wsUrlFromLocation(window.location),
-    token,
-  });
+  // No Electron bridge and no web token. In a Vite DEV build that's the dev
+  // server — fall back to devCoder (restores main's `window.coder ??
+  // devCoder`, which round 51's web selection dropped). In a PRODUCTION web
+  // build a missing token is the token-gate case (needsWebTokenGate), and
+  // the caller must render the gate rather than reach here.
+  if (import.meta.env?.DEV) return devCoder;
+  throw new Error("Missing web token");
 }
