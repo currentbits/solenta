@@ -281,7 +281,9 @@ function migrateThread(t) {
 }
 
 /**
- * Threads left "working" when the app died mid-run become failed with an event.
+ * CRASH / force-quit path only: threads still "working" on disk when the
+ * process loads mean the previous process died mid-run (clean quits mark idle
+ * via runner.stopAll first). A crash IS a failure of the run — stamp failed.
  * Status change is real activity, so updatedAt is bumped.
  * @param {object} data
  * @returns {boolean} true if any thread was recovered
@@ -299,7 +301,7 @@ function recoverInterruptedRuns(data) {
     list.push({
       id: randomUUID(),
       role: "event",
-      text: "Run interrupted by app restart",
+      text: "Run interrupted: the app crashed or was force-quit mid-run",
       createdAt: Date.now(),
     });
     data.messagesByThread[t.id] = list;
