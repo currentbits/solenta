@@ -2794,6 +2794,18 @@ function buildDevCoder(): CoderApi {
           created: false,
         };
       },
+      /**
+       * Round-50 contract stubs, landed WITH the contract so parallel
+       * workers branch from a compiling baseline (the devCoder-collision
+       * fix — rounds 41/44/49 all hit both workers implementing this file).
+       * Worker A replaces these with the real dev emulation.
+       */
+      async listCheckpoints(_input: { threadId: string }) {
+        return [];
+      },
+      async restoreCheckpoint(_input: { threadId: string; sha: string }) {
+        throw new Error("Checkpoints are not available in dev mode yet");
+      },
       async setupWorktree(input) {
         const detail = details.get(input.threadId);
         if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
