@@ -18,6 +18,11 @@ import {
   workLogDurationLabel,
   type WorkLogGroup,
 } from "../timeline";
+import {
+  lastUserMessage,
+  retryAnchorEventId,
+  retryButtonTitle,
+} from "../retryTurn";
 import { useEscapeClose } from "../useEscapeClose";
 import { Composer } from "./Composer";
 import styles from "./ThreadView.module.css";
@@ -126,9 +131,15 @@ function ToolCallCard({
 function MessageBlock({
   message,
   autoExpandTool,
+  showRetry,
+  retryTitle,
+  onRetry,
 }: {
   message: ChatMessage;
   autoExpandTool: boolean;
+  showRetry?: boolean;
+  retryTitle?: string;
+  onRetry?: () => void;
 }) {
   if (message.role === "tool") {
     return <ToolCallCard message={message} autoExpand={autoExpandTool} />;
@@ -145,7 +156,19 @@ function MessageBlock({
   if (message.role === "event") {
     return (
       <section className={styles.card}>
-        <div className={styles.eventTitle}>{message.text}</div>
+        <div className={styles.eventRow}>
+          <div className={styles.eventTitle}>{message.text}</div>
+          {showRetry && onRetry && (
+            <button
+              type="button"
+              className={styles.retryBtn}
+              title={retryTitle}
+              onClick={() => onRetry()}
+            >
+              Retry turn
+            </button>
+          )}
+        </div>
       </section>
     );
   }
@@ -415,6 +438,27 @@ export function ThreadView({
   const hasTimeline = timeline.length > 0;
   const hasWorktree = Boolean(detail?.thread.worktreePath);
 
+  /** Last user text + event card id that carries the Retry turn control. */
+  const retryUser = useMemo(
+    () => (detail ? lastUserMessage(detail.messages) : null),
+    [detail],
+  );
+  const retryEventId = useMemo(
+    () =>
+      detail
+        ? retryAnchorEventId(detail.thread.status, detail.messages)
+        : null,
+    [detail],
+  );
+  const retryTitle = useMemo(
+    () => (retryUser ? retryButtonTitle(retryUser.text) : ""),
+    [retryUser],
+  );
+  const handleRetry = useCallback(() => {
+    if (!retryUser || isWorking) return;
+    void onStartRun(retryUser.text);
+  }, [retryUser, isWorking, onStartRun]);
+
   useEffect(() => {
     const id = detail?.thread.id ?? null;
     if (id !== prevThreadId.current) {
@@ -656,11 +700,18 @@ export function ThreadView({
 
         {timeline.map((entry) => {
           if (entry.kind === "message") {
+            const isRetrySurface =
+              entry.message.role === "event" &&
+              retryEventId != null &&
+              entry.message.id === retryEventId;
             return (
               <MessageBlock
                 key={entry.message.id}
                 message={entry.message}
                 autoExpandTool={entry.message.id === latestRunningToolId}
+                showRetry={isRetrySurface}
+                retryTitle={isRetrySurface ? retryTitle : undefined}
+                onRetry={isRetrySurface ? handleRetry : undefined}
               />
             );
           }

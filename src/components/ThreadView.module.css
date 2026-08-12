@@ -536,11 +536,38 @@
   font-size: 12px;
 }
 
+.eventRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .eventTitle {
   font-weight: 600;
-  margin-bottom: 10px;
   white-space: pre-wrap;
   line-height: 1.45;
+  min-width: 0;
+  flex: 1;
+}
+
+/* Round 48: re-send last user message after failed / interrupted runs. */
+.retryBtn {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.retryBtn:hover {
+  color: var(--text);
+  background: var(--card-hover);
+  border-color: var(--blue-border);
 }
 
 .table {
