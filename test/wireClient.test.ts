@@ -205,6 +205,25 @@ describe("createWireCoder push", () => {
 });
 
 describe("createWireCoder disconnect", () => {
+  it("rejects queued invokes when the socket closes before auth-ok", async () => {
+    const api = createWireCoder({
+      url: "ws://127.0.0.1:8787",
+      token: "tok-secret",
+      WebSocket: FakeWebSocket as unknown as typeof WebSocket,
+      setTimeout: () => 0,
+    });
+    const ws = lastSocket();
+    const pending = api.threads.list();
+    ws.open();
+    assert.deepEqual(ws.sent[0], { kind: "auth", token: "tok-secret" });
+    ws.close();
+    await assert.rejects(pending, (err: unknown) => {
+      assert.ok(err instanceof Error);
+      assert.match(err.message, /disconnect|closed|transport|auth/i);
+      return true;
+    });
+  });
+
   it("rejects in-flight invokes on drop with a clear transport error", async () => {
     const { api, ws } = connect();
     authOk(ws);
