@@ -48,6 +48,14 @@ export interface ThreadInfo {
   /** Epoch ms when the current override was accepted; null without one. */
   settledAt: number | null;
   /**
+   * Source thread id when this thread was created by fork/hand-off; null
+   * otherwise. While set AND sessionId is null, the runner prefixes the
+   * FIRST turn's prompt with one context block built from the source
+   * thread's last assistant message (a hand-off summary, not a replay).
+   * After that first turn the session carries its own context.
+   */
+  handoffFrom: string | null;
+  /**
    * Epoch ms when the user pinned this thread; null = unpinned. Pinned
    * threads render first and NEVER auto-settle (t3's rule). Pin and an
    * explicit settle are mutually exclusive: setPinned(true) clears a
@@ -448,6 +456,21 @@ export interface CoderApi {
      * agent or the run lifecycle.
      */
     setSnoozed(input: { threadId: string; until: number | null }): Promise<ThreadInfo>;
+    /**
+     * Fork / hand off a thread: creates a NEW thread in the same project,
+     * copying provider/model/permissionMode unless overridden (a provider
+     * override is the hand-off case). The new thread starts with sessionId
+     * null and handoffFrom = the source id; the runner injects the one-time
+     * context prefix on its first turn (see handoffFrom). Title defaults to
+     * "Fork: <source title>" truncated like createThread titles. Rejects an
+     * unknown source thread, and an override provider/model invalid by the
+     * same rules as setProvider. The SOURCE thread is never modified.
+     */
+    fork(input: {
+      threadId: string;
+      provider?: string;
+      model?: string | null;
+    }): Promise<ThreadInfo>;
     /**
      * Sets the thread's provider and/or model. A provider change on a
      * session-bearing thread is allowed and clears sessionId (CLI sessions
