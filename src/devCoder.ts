@@ -11,6 +11,7 @@ import type {
   AppSettings,
   AppStatus,
   ChatMessage,
+  CheckpointInfo,
   CoderApi,
   DiffResult,
   MemoryEntryInfo,
@@ -1526,6 +1527,28 @@ function buildDevCoder(): CoderApi {
 
   const isSimulate = (thread: ThreadInfo) => thread.provider === "simulate";
 
+  /**
+   * In-memory checkpoints per thread (dev twin of worktree git log).
+   * Appended on successful run complete when the thread has a fake worktreePath.
+   * Newest-first list order matches electron listCheckpoints.
+   */
+  const checkpointsByThread = new Map<string, CheckpointInfo[]>();
+
+  /** Mirror electron maybeCreateCheckpoint — best-effort, worktree-only. */
+  const appendDevCheckpoint = (thread: ThreadInfo) => {
+    if (!thread.worktreePath) return;
+    const prev = checkpointsByThread.get(thread.id) || [];
+    const turn = prev.length + 1;
+    const entry: CheckpointInfo = {
+      sha: `devckpt${turn.toString(16).padStart(7, "0")}${id("c").slice(-8)}`,
+      turn,
+      message: `coder-checkpoint: turn ${turn}`,
+      at: now(),
+    };
+    // newest-first
+    checkpointsByThread.set(thread.id, [entry, ...prev]);
+  };
+
   /** Bill the cost delta of a finished/stopped run into today's spend. */
   const settleRunSpend = (detail: ThreadDetail, run: RunState | undefined) => {
     if (!run) return;
@@ -1667,6 +1690,8 @@ function buildDevCoder(): CoderApi {
         runStartedAt: null,
       };
       clearRunTimer(threadId);
+      // Successful turn + fake worktree → in-memory checkpoint (electron twin).
+      appendDevCheckpoint(thread);
     }
 
     detail.thread = thread;
@@ -2472,12 +2497,12 @@ function buildDevCoder(): CoderApi {
 
         let thread = { ...detail.thread };
         // Build prefix while sessionId is still null (first turn only).
+        // Helper is tested directly; wiring keeps the same prefix rules as
+        // electron without stashing a dead dispatchPrompt field (r49 A-n1).
         const handoffPrefix = buildHandoffPrefix(thread, (sourceId) => {
           const src = details.get(sourceId);
           return src ? src.messages : null;
         });
-        // Dev has no real CLI; surface the dispatch prompt on a work-log
-        // step so tests can prove the prefix would reach the agent.
         if (handoffPrefix) {
           detail.workLog.push({
             id: id("wl"),
@@ -2486,12 +2511,6 @@ function buildDevCoder(): CoderApi {
             done: true,
             timestamp: t,
           });
-          // Stash on a private field of the run for twin tests if needed.
-          (run as RunState & { dispatchPrompt?: string }).dispatchPrompt =
-            handoffPrefix + prompt;
-        } else {
-          (run as RunState & { dispatchPrompt?: string }).dispatchPrompt =
-            prompt;
         }
 
         if (thread.title === "New Thread") {
@@ -2794,17 +2813,54 @@ function buildDevCoder(): CoderApi {
           created: false,
         };
       },
-      /**
-       * Round-50 contract stubs, landed WITH the contract so parallel
-       * workers branch from a compiling baseline (the devCoder-collision
-       * fix — rounds 41/44/49 all hit both workers implementing this file).
-       * Worker A replaces these with the real dev emulation.
-       */
-      async listCheckpoints(_input: { threadId: string }) {
-        return [];
+      async listCheckpoints(input: { threadId: string }) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Unknown thread: ${input.threadId}`);
+        if (!detail.thread.worktreePath) return [];
+        return (checkpointsByThread.get(input.threadId) || []).map((c) => ({
+          ...c,
+        }));
       },
-      async restoreCheckpoint(_input: { threadId: string; sha: string }) {
-        throw new Error("Checkpoints are not available in dev mode yet");
+      async restoreCheckpoint(input: { threadId: string; sha: string }) {
+        // Guard order matches electron/worktrees.js restoreCheckpoint.
+        const detail = details.get(input.threadId);
+        if (!detail) {
+          throw new Error(`Unknown thread: ${input.threadId}`);
+        }
+        if (
+          detail.thread.status === "working" ||
+          runTimers.has(input.threadId)
+        ) {
+          throw new Error(
+            "Cannot restore a checkpoint while a run is active",
+          );
+        }
+        if (!detail.thread.worktreePath) {
+          throw new Error(
+            `Thread ${input.threadId} has no worktree; call setupWorktree first`,
+          );
+        }
+        const list = checkpointsByThread.get(input.threadId) || [];
+        const want = String(input.sha || "").trim();
+        const match = list.find(
+          (c) =>
+            c.sha === want ||
+            c.sha.startsWith(want) ||
+            want.startsWith(c.sha),
+        );
+        if (!match) {
+          throw new Error(`Unknown checkpoint: ${input.sha}`);
+        }
+        // Dev has no real files to reset; keep the checkpoint list and mark
+        // the restore by stamping an event on the transcript.
+        detail.messages.push({
+          id: id("msg"),
+          role: "event",
+          text: `Restored checkpoint turn ${match.turn} (${match.sha.slice(0, 7)})`,
+          createdAt: now(),
+        });
+        details.set(input.threadId, detail);
+        emitDetail(detail);
       },
       async setupWorktree(input) {
         const detail = details.get(input.threadId);
