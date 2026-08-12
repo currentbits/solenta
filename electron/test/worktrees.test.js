@@ -14,6 +14,7 @@ const {
   push,
   createPr,
   prStatus,
+  parsePrJson,
   isGitHubRemote,
 } = require("../worktrees.js");
 
@@ -102,13 +103,30 @@ if (args[0] === "pr" && args[1] === "view") {
     process.stderr.write("no pull requests found for branch \\"" + branch + "\\"\\n");
     process.exit(1);
   }
-  process.stdout.write(
-    JSON.stringify({
-      number: pr.number,
-      url: pr.url,
-      state: pr.state || "OPEN",
-    }) + "\\n",
-  );
+  const jsonFields = (flagValue("--json") || "number,url,state").split(",");
+  if (scenario === "unknown-json-field") {
+    const extra = jsonFields.filter(function (f) {
+      return f !== "number" && f !== "url" && f !== "state";
+    });
+    if (extra.length) {
+      process.stderr.write("Unknown JSON field: \\"" + extra[0] + "\\"\\n");
+      process.exit(1);
+    }
+  }
+  const out = {
+    number: pr.number,
+    url: pr.url,
+    state: pr.state || "OPEN",
+  };
+  for (const f of jsonFields) {
+    if (f === "title" && pr.title != null) out.title = pr.title;
+    if (f === "additions" && pr.additions != null) out.additions = pr.additions;
+    if (f === "deletions" && pr.deletions != null) out.deletions = pr.deletions;
+    if (f === "changedFiles" && pr.changedFiles != null) {
+      out.changedFiles = pr.changedFiles;
+    }
+  }
+  process.stdout.write(JSON.stringify(out) + "\\n");
   process.exit(0);
 }
 
@@ -840,6 +858,136 @@ describe("worktrees", () => {
       assert.equal(
         store.getThread(thread.id).prUrl,
         "https://github.com/acme/demo/pull/42",
+      );
+    });
+
+    it("parsePrJson passes through optional title and diff stats", () => {
+      const info = parsePrJson(
+        JSON.stringify({
+          number: 574,
+          url: "https://github.com/acme/demo/pull/574",
+          state: "OPEN",
+          title: "Cache provider usage",
+          additions: 464,
+          deletions: 63,
+          changedFiles: 17,
+        }),
+        "feat/cache",
+        false,
+      );
+      assert.equal(info.number, 574);
+      assert.equal(info.title, "Cache provider usage");
+      assert.equal(info.additions, 464);
+      assert.equal(info.deletions, 63);
+      assert.equal(info.changedFiles, 17);
+      assert.equal(info.branch, "feat/cache");
+      assert.equal(info.created, false);
+    });
+
+    it("parsePrJson omits extra fields when they are absent", () => {
+      const info = parsePrJson(
+        JSON.stringify({
+          number: 1,
+          url: "https://github.com/acme/demo/pull/1",
+          state: "OPEN",
+        }),
+        "feat/x",
+        true,
+      );
+      assert.equal(info.number, 1);
+      assert.equal(info.title, undefined);
+      assert.equal(info.additions, undefined);
+      assert.equal(info.deletions, undefined);
+      assert.equal(info.changedFiles, undefined);
+      assert.equal(info.created, true);
+    });
+
+    it("prStatus returns enriched title and diff stats when gh provides them", () => {
+      const { setup, statePath } = preparePrFixture({
+        store,
+        thread,
+        worktreeBase,
+        repo,
+        tmpDir,
+      });
+      createPr({
+        store,
+        threadId: thread.id,
+        title: "Ship",
+        broadcast: () => {},
+      });
+      const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+      state.prs[setup.branch].title = "Cache provider usage";
+      state.prs[setup.branch].additions = 464;
+      state.prs[setup.branch].deletions = 63;
+      state.prs[setup.branch].changedFiles = 17;
+      fs.writeFileSync(statePath, JSON.stringify(state), "utf8");
+
+      const live = prStatus({ store, threadId: thread.id });
+      assert.equal(live.title, "Cache provider usage");
+      assert.equal(live.additions, 464);
+      assert.equal(live.deletions, 63);
+      assert.equal(live.changedFiles, 17);
+
+      const after = JSON.parse(fs.readFileSync(statePath, "utf8"));
+      const statusView = [...after.calls]
+        .reverse()
+        .find((c) => c[0] === "pr" && c[1] === "view");
+      assert.ok(statusView, "prStatus must call gh pr view");
+      assert.ok(
+        statusView.includes(
+          "number,url,state,title,additions,deletions,changedFiles",
+        ),
+        `interactive prStatus must request enriched fields, got: ${JSON.stringify(statusView)}`,
+      );
+    });
+
+    it("prStatus falls back to number,url,state when gh rejects unknown JSON fields", () => {
+      const { setup, statePath } = preparePrFixture({
+        store,
+        thread,
+        worktreeBase,
+        repo,
+        tmpDir,
+      });
+      createPr({
+        store,
+        threadId: thread.id,
+        title: "Ship",
+        broadcast: () => {},
+      });
+      const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+      state.scenario = "unknown-json-field";
+      state.prs[setup.branch].title = "Should not be returned";
+      state.prs[setup.branch].additions = 10;
+      fs.writeFileSync(statePath, JSON.stringify(state), "utf8");
+
+      const live = prStatus({ store, threadId: thread.id });
+      assert.ok(live);
+      assert.equal(live.number, 42);
+      assert.equal(live.branch, setup.branch);
+      assert.equal(live.title, undefined);
+      assert.equal(live.additions, undefined);
+
+      const after = JSON.parse(fs.readFileSync(statePath, "utf8"));
+      const views = after.calls.filter((c) => c[0] === "pr" && c[1] === "view");
+      const statusViews = views.filter((c) =>
+        String(c[2]) === setup.branch,
+      );
+      // Interactive path: enriched first, then minimal retry.
+      const lastTwo = statusViews.slice(-2);
+      assert.ok(
+        lastTwo.some((c) =>
+          c.includes("number,url,state,title,additions,deletions,changedFiles"),
+        ),
+        "first retry attempt must request enriched fields",
+      );
+      assert.ok(
+        lastTwo.some((c) => {
+          const json = c[c.indexOf("--json") + 1];
+          return json === "number,url,state";
+        }),
+        "fallback must retry with the minimal field set",
       );
     });
 

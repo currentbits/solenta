@@ -944,12 +944,39 @@ function throwGhFailure(result, fallback) {
   throw new Error(tailErr(result.stderr || result.combined, fallback));
 }
 
+/** Interactive `gh pr view` field set. Background refresh and create stay minimal. */
+const PR_JSON_MINIMAL = "number,url,state";
+const PR_JSON_ENRICHED =
+  "number,url,state,title,additions,deletions,changedFiles";
+
 /**
- * Parse `gh pr view --json number,url,state` into a PrInfo-shaped object.
+ * Finite number from gh JSON, or undefined when the field is absent/unusable.
+ * @param {unknown} value
+ * @returns {number | undefined}
+ */
+function optionalPrCount(value) {
+  if (value == null || value === "") return undefined;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+/**
+ * Parse `gh pr view --json` into a PrInfo-shaped object.
+ * Optional title/diff stats are passed through when present.
  * @param {string} stdout
  * @param {string} branch
  * @param {boolean} created
- * @returns {{ number: number, url: string, state: "OPEN" | "CLOSED" | "MERGED", branch: string, created: boolean }}
+ * @returns {{
+ *   number: number,
+ *   url: string,
+ *   state: "OPEN" | "CLOSED" | "MERGED",
+ *   branch: string,
+ *   created: boolean,
+ *   title?: string,
+ *   additions?: number,
+ *   deletions?: number,
+ *   changedFiles?: number,
+ * }}
  */
 function parsePrJson(stdout, branch, created) {
   let data;
@@ -967,7 +994,16 @@ function parsePrJson(stdout, branch, created) {
   /** @type {"OPEN" | "CLOSED" | "MERGED"} */
   const state =
     raw === "MERGED" ? "MERGED" : raw === "CLOSED" ? "CLOSED" : "OPEN";
-  return { number, url, state, branch, created: Boolean(created) };
+  /** @type {{ number: number, url: string, state: "OPEN" | "CLOSED" | "MERGED", branch: string, created: boolean, title?: string, additions?: number, deletions?: number, changedFiles?: number }} */
+  const info = { number, url, state, branch, created: Boolean(created) };
+  if (data && data.title != null) info.title = String(data.title);
+  const additions = optionalPrCount(data && data.additions);
+  if (additions !== undefined) info.additions = additions;
+  const deletions = optionalPrCount(data && data.deletions);
+  if (deletions !== undefined) info.deletions = deletions;
+  const changedFiles = optionalPrCount(data && data.changedFiles);
+  if (changedFiles !== undefined) info.changedFiles = changedFiles;
+  return info;
 }
 
 /**
@@ -982,6 +1018,15 @@ function isNoPrMessage(text) {
   return /no (open )?pull requests? found|no pull request found/i.test(
     String(text || ""),
   );
+}
+
+/**
+ * True when gh rejected --json for a field this CLI version does not know.
+ * @param {string} text
+ * @returns {boolean}
+ */
+function isUnknownJsonField(text) {
+  return /unknown json field/i.test(String(text || ""));
 }
 
 /**
@@ -1045,13 +1090,13 @@ function prStatus(opts) {
     );
   }
 
-  const viewed = ghTry(cwd, [
-    "pr",
-    "view",
-    branch,
-    "--json",
-    "number,url,state",
-  ]);
+  let viewed = ghTry(cwd, ["pr", "view", branch, "--json", PR_JSON_ENRICHED]);
+  if (
+    !viewed.ok &&
+    isUnknownJsonField(viewed.stderr || viewed.combined || viewed.stdout)
+  ) {
+    viewed = ghTry(cwd, ["pr", "view", branch, "--json", PR_JSON_MINIMAL]);
+  }
   if (!viewed.ok) {
     if (viewed.enoent || viewed.timedOut) {
       throwGhFailure(viewed, "gh pr view failed");
@@ -1739,6 +1784,7 @@ module.exports = {
   push,
   createPr,
   prStatus,
+  parsePrJson,
   refreshPrStates,
   createPrStateRefresher,
   isPrRefreshCandidate,

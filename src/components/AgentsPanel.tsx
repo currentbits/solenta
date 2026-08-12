@@ -477,6 +477,22 @@ function CheckpointsCard({
   );
 }
 
+function formatPrStats(pr: {
+  additions?: number;
+  deletions?: number;
+  changedFiles?: number;
+}): string | null {
+  const diff: string[] = [];
+  if (pr.additions != null) diff.push(`+${pr.additions}`);
+  if (pr.deletions != null) diff.push(`-${pr.deletions}`);
+  const files =
+    pr.changedFiles != null ? `${pr.changedFiles} files` : null;
+  if (diff.length === 0 && files == null) return null;
+  if (diff.length > 0 && files) return `${diff.join(" ")} · ${files}`;
+  if (diff.length > 0) return diff.join(" ");
+  return files;
+}
+
 function PrCard({
   thread,
   busy,
@@ -486,6 +502,7 @@ function PrCard({
   bodyDraft,
   draft,
   live,
+  prStatus,
   onTitleChange,
   onBodyChange,
   onDraftChange,
@@ -501,6 +518,7 @@ function PrCard({
   bodyDraft: string;
   draft: boolean;
   live: PrInfo | null | undefined;
+  prStatus: () => Promise<PrInfo | null>;
   onTitleChange: (v: string) => void;
   onBodyChange: (v: string) => void;
   onDraftChange: (v: boolean) => void;
@@ -508,14 +526,41 @@ function PrCard({
   onCreate: () => void;
   onDismissError: () => void;
 }) {
+  const [refreshed, setRefreshed] = useState<PrInfo | null | undefined>(
+    undefined,
+  );
+  const [refreshFailed, setRefreshFailed] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+
+  useEffect(() => {
+    setRefreshed(undefined);
+    setRefreshFailed(false);
+    setRefreshing(false);
+  }, [thread?.id]);
+
+  const effectiveLive = refreshed !== undefined ? refreshed : live;
   const view = prCardView({
     branch: thread?.branch ?? null,
     threadPrNumber: thread?.prNumber ?? null,
     threadPrUrl: thread?.prUrl ?? null,
-    live,
+    live: effectiveLive,
     titleDraft,
     busy,
   });
+  const statsLine = view.existing ? formatPrStats(view.existing) : null;
+
+  const refreshPr = async () => {
+    setRefreshing(true);
+    try {
+      const info = await prStatus();
+      setRefreshed(info);
+      setRefreshFailed(false);
+    } catch {
+      setRefreshFailed(true);
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   if (!thread) {
     return (
@@ -560,7 +605,29 @@ function PrCard({
                 {view.existing.state}
               </span>
             )}
+            <button
+              type="button"
+              className={`${styles.gitBtn} ${styles.prRefresh}`}
+              onClick={() => void refreshPr()}
+              disabled={busy || refreshing}
+              title="Refresh PR data"
+            >
+              {refreshing ? (
+                <>
+                  <span className={styles.btnSpinner} aria-hidden />
+                  Refresh
+                </>
+              ) : (
+                "Refresh"
+              )}
+            </button>
           </div>
+          {view.existing.title ? (
+            <div className={styles.prTitle} title={view.existing.title}>
+              {view.existing.title}
+            </div>
+          ) : null}
+          {statsLine ? <div className={styles.prStats}>{statsLine}</div> : null}
           {view.existing.branch && (
             <div className={styles.prBranch} title={view.existing.branch}>
               {view.existing.branch}
@@ -578,6 +645,22 @@ function PrCard({
           ) : (
             <p className={styles.gitHint}>No URL recorded for this PR.</p>
           )}
+          {refreshFailed ? (
+            <div className={styles.prLoadError} role="alert">
+              <span className={styles.prLoadErrorText}>
+                Couldn&apos;t load PR data
+              </span>
+              <button
+                type="button"
+                className={styles.gitBtn}
+                onClick={() => void refreshPr()}
+                disabled={busy || refreshing}
+                title="Retry loading PR data"
+              >
+                Retry
+              </button>
+            </div>
+          ) : null}
         </div>
       ) : null}
       {view.showForm ? (
@@ -912,6 +995,7 @@ export function GitTab({
           bodyDraft={bodyDraft}
           draft={draft}
           live={livePr}
+          prStatus={prStatus}
           onTitleChange={setTitleDraft}
           onBodyChange={setBodyDraft}
           onDraftChange={setDraft}

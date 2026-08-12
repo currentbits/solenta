@@ -119,6 +119,53 @@ describe("prCardView", () => {
     });
   });
 
+  it("carries optional title and diff stats from live PrInfo", () => {
+    const v = prCardView({
+      ...base,
+      live: {
+        ...openPr,
+        title: "Cache provider usage",
+        additions: 464,
+        deletions: 63,
+        changedFiles: 17,
+      },
+    });
+    assert.deepEqual(v.existing, {
+      number: 42,
+      url: openPr.url,
+      state: "OPEN",
+      branch: "feat/x",
+      title: "Cache provider usage",
+      additions: 464,
+      deletions: 63,
+      changedFiles: 17,
+    });
+  });
+
+  it("omits title and stats when live PrInfo does not include them", () => {
+    const v = prCardView({
+      ...base,
+      threadPrNumber: 842,
+      threadPrUrl: "https://github.com/acme/app/pull/842",
+      live: undefined,
+    });
+    assert.equal(v.existing?.title, undefined);
+    assert.equal(v.existing?.additions, undefined);
+    assert.equal(v.existing?.deletions, undefined);
+    assert.equal(v.existing?.changedFiles, undefined);
+  });
+
+  it("passes through a partial stats set without inventing numbers", () => {
+    const v = prCardView({
+      ...base,
+      live: { ...openPr, additions: 12, changedFiles: 3 },
+    });
+    assert.equal(v.existing?.additions, 12);
+    assert.equal(v.existing?.deletions, undefined);
+    assert.equal(v.existing?.changedFiles, 3);
+    assert.equal(v.existing?.title, undefined);
+  });
+
   it("treats live null as confirmed absent even if thread fields linger", () => {
     const v = prCardView({
       ...base,

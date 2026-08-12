@@ -33,6 +33,10 @@ export interface ExistingPrView {
   url: string | null;
   state: PrState | null;
   branch: string;
+  title?: string;
+  additions?: number;
+  deletions?: number;
+  changedFiles?: number;
 }
 
 export interface PrCardView {
@@ -67,6 +71,12 @@ export function prCardView(input: {
       state: input.live.state,
       branch: input.live.branch,
     };
+    if (input.live.title != null) existing.title = input.live.title;
+    if (input.live.additions != null) existing.additions = input.live.additions;
+    if (input.live.deletions != null) existing.deletions = input.live.deletions;
+    if (input.live.changedFiles != null) {
+      existing.changedFiles = input.live.changedFiles;
+    }
   } else if (input.live === undefined && input.threadPrNumber != null) {
     // Prefer thread fields only until live status has been fetched.
     existing = {

@@ -73,6 +73,8 @@ function render(t: ThreadInfo | null): string {
         }) as PrInfo
       }
       prStatus={async () => null}
+      listCheckpoints={async () => []}
+      restoreCheckpoint={async () => {}}
     />,
   );
 }

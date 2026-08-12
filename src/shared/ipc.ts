@@ -242,6 +242,14 @@ export interface PrInfo {
   branch: string;
   /** False when an existing PR was returned instead of a new one. */
   created: boolean;
+  /** PR title from gh, when the interactive status fetch included it. */
+  title?: string;
+  /** Added line count from gh, when present. */
+  additions?: number;
+  /** Deleted line count from gh, when present. */
+  deletions?: number;
+  /** Changed file count from gh, when present. */
+  changedFiles?: number;
 }
 
 /**
