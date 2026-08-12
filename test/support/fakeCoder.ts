@@ -578,6 +578,14 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           patch: "",
           truncated: false,
         } as DiffResult),
+      commit: (input: unknown) =>
+        rec("git.commit", [input], { subject: "test commit" }),
+      revertFile: (input: unknown) =>
+        rec("git.revertFile", [input], { path: "file.ts" }),
+      suggestCommitMessage: (input: unknown) =>
+        rec("git.suggestCommitMessage", [input], {
+          message: "feat: suggested message",
+        }),
       mergeWorktree: (input: unknown) => rec("git.mergeWorktree", [input], thread()),
       removeWorktree: (input: unknown) => rec("git.removeWorktree", [input], thread()),
       push: (input: unknown) =>
@@ -645,6 +653,15 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         // indices in newest-first order).
         checkpoints[i.threadId] = list.slice(idx);
         return Promise.resolve(undefined);
+      },
+    },
+    files: {
+      list: (input: unknown) => {
+        const q = ((input as { query?: string }).query ?? "").toLowerCase();
+        const all = ["src/App.tsx", "src/main.tsx", "README.md", "package.json"];
+        return rec("files.list", [input], {
+          files: all.filter((f) => !q || f.toLowerCase().includes(q)),
+        });
       },
     },
     on: (channel: string, cb: unknown) => {

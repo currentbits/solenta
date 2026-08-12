@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   ChatMessage,
   DiffResult,
+  FileChange,
   PermissionMode,
   ProjectInfo,
   ProviderInfo,
@@ -13,7 +14,8 @@ import type {
 } from "../shared/ipc";
 import type { WorkflowSaveInput } from "../useCoder";
 import { diffLineKind, isEmptyDiff } from "../diffView";
-import { splitParagraphs } from "../format";
+import { contextRing, contextWindowFor, type ContextRingView } from "../contextRing";
+import { messageMetaLine } from "../messageMeta";
 import {
   buildTimeline,
   workLogDurationLabel,
@@ -26,11 +28,39 @@ import {
 } from "../retryTurn";
 import { useEscapeClose } from "../useEscapeClose";
 import { Composer } from "./Composer";
+import { Markdown } from "./Markdown";
 import styles from "./ThreadView.module.css";
 
 const PUSH_FLASH_MS = 3000;
 
 const STICK_BOTTOM_PX = 80;
+
+const RING_R = 8;
+const RING_C = 2 * Math.PI * RING_R;
+
+/** Small context-fill ring + percent for the thread header. */
+function ContextRingBadge({ ring }: { ring: ContextRingView }) {
+  return (
+    <span
+      className={styles.contextRing}
+      title={`Context: ${ring.percentLabel} of ${ring.windowLabel} (last turn)`}
+      aria-label={`Context ${ring.percentLabel} of ${ring.windowLabel}`}
+    >
+      <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden>
+        <circle cx="10" cy="10" r={RING_R} className={styles.ringTrack} />
+        <circle
+          cx="10"
+          cy="10"
+          r={RING_R}
+          className={styles.ringFill}
+          strokeDasharray={`${(ring.fraction * RING_C).toFixed(2)} ${RING_C.toFixed(2)}`}
+          transform="rotate(-90 10 10)"
+        />
+      </svg>
+      <span className={styles.ringLabel}>{ring.percentLabel}</span>
+    </span>
+  );
+}
 
 interface ThreadViewProps {
   detail: ThreadDetail | null;
@@ -64,6 +94,14 @@ interface ThreadViewProps {
   changesNonce: number;
   onCloseChanges: () => void;
   onFetchDiff: () => Promise<DiffResult>;
+  /** Commit all changes shown in the Changes panel. */
+  onCommitChanges: (message: string) => Promise<{ subject: string }>;
+  /** Discard one changed file (untracked deletes the file). */
+  onRevertFile: (path: string, status: string) => Promise<{ path: string }>;
+  /** Draft a commit message with the thread's provider. */
+  onSuggestCommitMessage: () => Promise<{ message: string }>;
+  /** File lookup for the composer @-mention popup. */
+  onListFiles?: (query: string) => Promise<string[]>;
   /** Push the thread's current branch to origin. */
   onPush: () => Promise<{ remote: string; branch: string }>;
   runError?: string | null;
@@ -144,12 +182,15 @@ function MessageBlock({
   showRetry,
   retryTitle,
   onRetry,
+  meta,
 }: {
   message: ChatMessage;
   autoExpandTool: boolean;
   showRetry?: boolean;
   retryTitle?: string;
   onRetry?: () => void;
+  /** Assistant footer segments; null/empty fields are omitted inside. */
+  meta?: { model: string | null; effort: string | null; duration: string | null };
 }) {
   if (message.role === "tool") {
     return <ToolCallCard message={message} autoExpand={autoExpandTool} />;
@@ -183,12 +224,16 @@ function MessageBlock({
     );
   }
 
-  const paragraphs = splitParagraphs(message.text);
+  const metaLine = messageMetaLine({
+    createdAt: message.createdAt,
+    model: meta?.model ?? null,
+    effort: meta?.effort ?? null,
+    duration: meta?.duration ?? null,
+  });
   return (
     <article className={styles.message}>
-      {paragraphs.map((p, i) => (
-        <p key={`${message.id}-${i}`}>{p}</p>
-      ))}
+      <Markdown text={message.text} />
+      <footer className={styles.msgMeta}>{metaLine}</footer>
     </article>
   );
 }
@@ -256,16 +301,28 @@ function ChangesPanel({
   openNonce,
   onClose,
   onFetchDiff,
+  onCommit,
+  onRevert,
+  onSuggest,
 }: {
   open: boolean;
   threadId: string | null;
   openNonce: number;
   onClose: () => void;
   onFetchDiff: () => Promise<DiffResult>;
+  onCommit: (message: string) => Promise<{ subject: string }>;
+  onRevert: (path: string, status: string) => Promise<{ path: string }>;
+  onSuggest: () => Promise<{ message: string }>;
 }) {
   const [diff, setDiff] = useState<DiffResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState("");
+  /** Which footer action is running; null = idle. */
+  const [busy, setBusy] = useState<"commit" | "generate" | null>(null);
+  const [reverting, setReverting] = useState<string | null>(null);
+  /** Untracked-path revert arms a confirm first (it deletes the file). */
+  const [confirmRevert, setConfirmRevert] = useState<string | null>(null);
   const threadIdRef = useRef(threadId);
   threadIdRef.current = threadId;
 
@@ -292,6 +349,8 @@ function ChangesPanel({
   useEffect(() => {
     setDiff(null);
     setError(null);
+    setMessage("");
+    setConfirmRevert(null);
   }, [threadId]);
 
   useEffect(() => {
@@ -302,6 +361,59 @@ function ChangesPanel({
   if (!open) return null;
 
   const empty = !loading && !error && diff != null && isEmptyDiff(diff);
+
+  const failMessage = (err: unknown, fallback: string) =>
+    err instanceof Error && err.message ? err.message : fallback;
+
+  const revert = async (f: FileChange) => {
+    // Untracked and staged-new reverts delete the file; arm a confirm first.
+    const destructive = f.status === "??" || f.status === "A";
+    if (destructive && confirmRevert !== f.path) {
+      setConfirmRevert(f.path);
+      return;
+    }
+    setConfirmRevert(null);
+    setReverting(f.path);
+    setError(null);
+    try {
+      await onRevert(f.path, f.status);
+      await load();
+    } catch (err) {
+      setError(failMessage(err, "Failed to discard changes"));
+    } finally {
+      setReverting(null);
+    }
+  };
+
+  const suggest = async () => {
+    if (busy) return;
+    setBusy("generate");
+    setError(null);
+    try {
+      const result = await onSuggest();
+      setMessage(result.message);
+    } catch (err) {
+      setError(failMessage(err, "Failed to generate a message"));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const doCommit = async () => {
+    const msg = message.trim();
+    if (!msg || busy) return;
+    setBusy("commit");
+    setError(null);
+    try {
+      await onCommit(msg);
+      setMessage("");
+      await load();
+    } catch (err) {
+      setError(failMessage(err, "Failed to commit"));
+    } finally {
+      setBusy(null);
+    }
+  };
 
   return (
     <section className={styles.changesPanel} aria-label="Changes">
@@ -346,6 +458,26 @@ function ChangesPanel({
                     <span className={styles.adds}>+{f.additions}</span>
                     <span className={styles.dels}>−{f.deletions}</span>
                   </span>
+                  <button
+                    type="button"
+                    className={styles.fileRevert}
+                    title={
+                      f.status === "??" || f.status === "A"
+                        ? confirmRevert === f.path
+                          ? "Click again to delete this file"
+                          : "Discard (deletes the file)"
+                        : "Discard changes"
+                    }
+                    aria-label={`Discard changes to ${f.path}`}
+                    disabled={reverting != null}
+                    onClick={() => void revert(f)}
+                  >
+                    {reverting === f.path
+                      ? "…"
+                      : confirmRevert === f.path
+                        ? "Sure?"
+                        : "↩"}
+                  </button>
                 </li>
               ))}
             </ul>
@@ -360,6 +492,35 @@ function ChangesPanel({
           {diff.truncated && (
             <p className={styles.truncatedNote}>Diff truncated</p>
           )}
+          <div className={styles.commitBox}>
+            <textarea
+              className={styles.commitInput}
+              rows={2}
+              placeholder="Commit message"
+              aria-label="Commit message"
+              value={message}
+              disabled={busy != null}
+              onChange={(e) => setMessage(e.target.value)}
+            />
+            <div className={styles.commitActions}>
+              <button
+                type="button"
+                className={styles.btn}
+                disabled={busy != null}
+                onClick={() => void suggest()}
+              >
+                {busy === "generate" ? "Generating…" : "Generate"}
+              </button>
+              <button
+                type="button"
+                className={`${styles.btn} ${styles.btnPrimary}`}
+                disabled={message.trim() === "" || busy != null}
+                onClick={() => void doCommit()}
+              >
+                {busy === "commit" ? "Committing…" : "Commit"}
+              </button>
+            </div>
+          </div>
         </>
       )}
     </section>
@@ -387,6 +548,10 @@ export function ThreadView({
   changesNonce,
   onCloseChanges,
   onFetchDiff,
+  onCommitChanges,
+  onRevertFile,
+  onSuggestCommitMessage,
+  onListFiles,
   onPush,
   runError = null,
   onDismissRunError,
@@ -427,6 +592,23 @@ export function ThreadView({
     return buildTimeline(detail.messages, detail.workLog);
   }, [detail]);
 
+  /** Run duration per runId, for assistant-message meta footers. */
+  const durationByRunId = useMemo(() => {
+    const map = new Map<string, string>();
+    if (!detail) return map;
+    const byRun = new Map<string, WorkLogItem[]>();
+    for (const item of detail.workLog) {
+      const list = byRun.get(item.runId);
+      if (list) list.push(item);
+      else byRun.set(item.runId, [item]);
+    }
+    for (const [runId, items] of byRun) {
+      const label = workLogDurationLabel(items);
+      if (label) map.set(runId, label);
+    }
+    return map;
+  }, [detail]);
+
   const latestWorkLogRunId = useMemo(() => {
     let latest: WorkLogGroup | null = null;
     for (const entry of timeline) {
@@ -456,6 +638,16 @@ export function ThreadView({
   const isWorking = detail?.thread.status === "working";
   const isArchived = Boolean(detail?.thread.archived);
   const emptyMessages = detail != null && detail.messages.length === 0;
+
+  /** Header context ring; null hides it (unknown window or no measured turn). */
+  const ring = useMemo(() => {
+    if (!detail) return null;
+    const modelId = detail.usage?.model ?? detail.thread.model;
+    return contextRing({
+      used: detail.usage?.contextTokens ?? null,
+      window: contextWindowFor(providers, detail.thread.provider, modelId),
+    });
+  }, [detail, providers]);
   const hasTimeline = timeline.length > 0;
   const hasWorktree = Boolean(detail?.thread.worktreePath);
 
@@ -634,6 +826,7 @@ export function ThreadView({
           <span className={styles.threadTitle}>{thread.title}</span>
         </div>
         <div className={styles.actions}>
+          {ring && <ContextRingBadge ring={ring} />}
           {onFork && (
             <>
               <button
@@ -804,6 +997,9 @@ export function ThreadView({
         openNonce={changesNonce}
         onClose={onCloseChanges}
         onFetchDiff={onFetchDiff}
+        onCommit={onCommitChanges}
+        onRevert={onRevertFile}
+        onSuggest={onSuggestCommitMessage}
       />
 
       {showHandoffBanner && (
@@ -865,6 +1061,14 @@ export function ThreadView({
                 showRetry={isRetrySurface}
                 retryTitle={isRetrySurface ? retryTitle : undefined}
                 onRetry={isRetrySurface ? handleRetry : undefined}
+                meta={{
+                  model:
+                    detail?.usage?.model ?? detail?.thread.model ?? null,
+                  effort: detail?.thread.reasoningEffort ?? null,
+                  duration: entry.message.runId
+                    ? (durationByRunId.get(entry.message.runId) ?? null)
+                    : null,
+                }}
               />
             );
           }
@@ -924,6 +1128,7 @@ export function ThreadView({
         onBuild={onStartWorkflow}
         error={runError}
         onDismissError={onDismissRunError}
+        onListFiles={onListFiles}
       />
     </main>
   );

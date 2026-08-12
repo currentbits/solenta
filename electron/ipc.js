@@ -5,6 +5,9 @@ const services = require("./services.js");
 const {
   setupWorktree,
   diff,
+  commit,
+  revertFile,
+  listFiles,
   mergeWorktree,
   removeWorktree,
   push,
@@ -13,6 +16,7 @@ const {
   listCheckpoints,
   restoreCheckpoint,
 } = require("./worktrees.js");
+const { suggestCommitMessage } = require("./commitmsg.js");
 const { createMemoryProxy } = require("./memory-proxy.js");
 
 /**
@@ -239,6 +243,35 @@ function registerIpc(deps) {
 
   ipcMain.handle("git:diff", async (_event, input) => {
     return diff({ store, threadId: input.threadId });
+  });
+
+  ipcMain.handle("git:commit", async (_event, input) => {
+    return commit({
+      store,
+      threadId: input.threadId,
+      message: input.message,
+    });
+  });
+
+  ipcMain.handle("git:revertFile", async (_event, input) => {
+    return revertFile({
+      store,
+      threadId: input.threadId,
+      path: input.path,
+      status: input.status,
+    });
+  });
+
+  ipcMain.handle("git:suggestCommitMessage", async (_event, input) => {
+    return suggestCommitMessage({ store, threadId: input.threadId });
+  });
+
+  ipcMain.handle("files:list", async (_event, input) => {
+    return listFiles({
+      store,
+      threadId: input.threadId,
+      query: input.query,
+    });
   });
 
   ipcMain.handle("git:mergeWorktree", async (_event, input) => {

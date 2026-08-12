@@ -41,6 +41,7 @@
 }
 
 .card {
+  position: relative;
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: 14px;
@@ -799,4 +800,44 @@
   flex-direction: column;
   gap: 2px;
   min-width: 0;
+}
+
+.mentionList {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  z-index: 30;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  max-height: 240px;
+  overflow-y: auto;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+}
+
+.mentionRow {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 5px 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mentionRow[data-highlighted="true"] {
+  background: var(--card-hover);
+  color: var(--text);
 }

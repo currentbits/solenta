@@ -127,6 +127,14 @@ export interface UseCoderResult {
   mergeWorktree: () => Promise<ThreadInfo | null>;
   removeWorktree: (force?: boolean) => Promise<ThreadInfo | null>;
   fetchDiff: () => Promise<DiffResult>;
+  /** Commit all changes in the selected thread's cwd. */
+  commitChanges: (message: string) => Promise<{ subject: string }>;
+  /** Discard one changed file in the selected thread's cwd. */
+  revertFile: (path: string, status: string) => Promise<{ path: string }>;
+  /** Draft a commit message with the thread's provider (never commits). */
+  suggestCommitMessage: () => Promise<{ message: string }>;
+  /** File paths for the composer @-mention popup. */
+  listFiles: (query: string) => Promise<string[]>;
   /** Push the selected thread's branch to origin. */
   pushBranch: () => Promise<{ remote: string; branch: string }>;
   /** Open (or re-return) a GitHub PR for the selected thread's branch. */
@@ -805,6 +813,46 @@ export function useCoder(): UseCoderResult {
     return api.git.diff({ threadId });
   }, [api, selectedThreadId]);
 
+  const commitChanges = useCallback(
+    async (message: string) => {
+      if (!selectedThreadId) {
+        throw new Error("No thread selected");
+      }
+      const threadId = selectedThreadId;
+      return api.git.commit({ threadId, message });
+    },
+    [api, selectedThreadId],
+  );
+
+  const revertFile = useCallback(
+    async (path: string, status: string) => {
+      if (!selectedThreadId) {
+        throw new Error("No thread selected");
+      }
+      const threadId = selectedThreadId;
+      return api.git.revertFile({ threadId, path, status });
+    },
+    [api, selectedThreadId],
+  );
+
+  const suggestCommitMessage = useCallback(async () => {
+    if (!selectedThreadId) {
+      throw new Error("No thread selected");
+    }
+    const threadId = selectedThreadId;
+    return api.git.suggestCommitMessage({ threadId });
+  }, [api, selectedThreadId]);
+
+  const listFiles = useCallback(
+    async (query: string) => {
+      if (!selectedThreadId) return [];
+      const threadId = selectedThreadId;
+      const result = await api.files.list({ threadId, query });
+      return result.files;
+    },
+    [api, selectedThreadId],
+  );
+
   const pushBranch = useCallback(async () => {
     if (!selectedThreadId) {
       throw new Error("No thread selected");
@@ -979,6 +1027,10 @@ export function useCoder(): UseCoderResult {
     mergeWorktree,
     removeWorktree,
     fetchDiff,
+    commitChanges,
+    revertFile,
+    suggestCommitMessage,
+    listFiles,
     pushBranch,
     createPr,
     prStatus,

@@ -87,6 +87,9 @@ const coder = {
     status: (projectId) => invoke("git:status", projectId),
     setupWorktree: (input) => invoke("git:setupWorktree", input),
     diff: (input) => invoke("git:diff", input),
+    commit: (input) => invoke("git:commit", input),
+    revertFile: (input) => invoke("git:revertFile", input),
+    suggestCommitMessage: (input) => invoke("git:suggestCommitMessage", input),
     mergeWorktree: (input) => invoke("git:mergeWorktree", input),
     removeWorktree: (input) => invoke("git:removeWorktree", input),
     push: (input) => invoke("git:push", input),
@@ -94,6 +97,9 @@ const coder = {
     prStatus: (input) => invoke("git:prStatus", input),
     listCheckpoints: (input) => invoke("git:listCheckpoints", input),
     restoreCheckpoint: (input) => invoke("git:restoreCheckpoint", input),
+  },
+  files: {
+    list: (input) => invoke("files:list", input),
   },
   on,
 };

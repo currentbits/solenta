@@ -20,6 +20,7 @@ import {
   shortSessionId,
 } from "../format";
 import { prCardView } from "../prUi";
+import { contextRing, contextWindowFor } from "../contextRing";
 import { MemoryTab } from "./MemoryTab";
 import styles from "./AgentsPanel.module.css";
 
@@ -125,6 +126,14 @@ function SessionCard({
   const sess = shortSessionId(thread.sessionId);
   const providerName = providerDisplayName(thread.provider, providers);
   const modelLabel = thread.model ?? usage?.model ?? "n/a";
+  const ring = contextRing({
+    used: usage?.contextTokens ?? null,
+    window: contextWindowFor(
+      providers,
+      thread.provider,
+      thread.model ?? usage?.model,
+    ),
+  });
   return (
     <section className={styles.sessionCard}>
       <div className={styles.sessionHead}>
@@ -170,6 +179,14 @@ function SessionCard({
               <dt>Cost</dt>
               <dd className={styles.cost}>{formatCostUsd(usage.costUsd)}</dd>
             </div>
+            {ring && (
+              <div className={styles.sessionRow}>
+                <dt>Context</dt>
+                <dd>
+                  {ring.percentLabel} of {ring.windowLabel} (last turn)
+                </dd>
+              </div>
+            )}
           </dl>
         ) : (
           <p className={styles.usageEmpty}>No usage yet</p>

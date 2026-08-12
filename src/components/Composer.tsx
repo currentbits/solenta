@@ -43,6 +43,7 @@ import {
   type ModelRow,
 } from "../modelPicker";
 import { useEscapeClose } from "../useEscapeClose";
+import { applyMention, getMentionQuery, type MentionQuery } from "../mention";
 import { WorkflowsModal } from "./WorkflowsModal";
 import styles from "./Composer.module.css";
 
@@ -84,6 +85,11 @@ interface ComposerProps {
   /** Run-scope error from the parent hook (e.g. already active). */
   error?: string | null;
   onDismissError?: () => void;
+  /**
+   * File lookup for the @-mention popup. Absent disables the feature (tests,
+   * mock shells without a repo behind them).
+   */
+  onListFiles?: (query: string) => Promise<string[]>;
 }
 
 const STATIC = {
@@ -118,6 +124,7 @@ export function Composer({
   placeholder = "Ask anything, @tag files/folders, $use skills, or / for commands",
   error = null,
   onDismissError,
+  onListFiles,
 }: ComposerProps) {
   const [value, setValue] = useState("");
   const [sending, setSending] = useState(false);
@@ -149,6 +156,86 @@ export function Composer({
   const providerListRef = useRef<HTMLUListElement>(null);
   const buildWrapRef = useRef<HTMLDivElement>(null);
   const modelListId = useId();
+
+  /** @-mention popup state; `mention` null means closed. */
+  const [mention, setMention] = useState<MentionQuery | null>(null);
+  const [mentionFiles, setMentionFiles] = useState<string[]>([]);
+  const [mentionIndex, setMentionIndex] = useState(0);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const mentionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Stale-response guard: only the latest lookup may paint the popup. */
+  const mentionSeq = useRef(0);
+  /** Caret to restore after a mention insert re-renders the textarea. */
+  const pendingCaret = useRef<number | null>(null);
+  const mentionOpen = mention != null && mentionFiles.length > 0;
+
+  const closeMention = useCallback(() => {
+    setMention(null);
+    setMentionFiles([]);
+    setMentionIndex(0);
+    if (mentionTimer.current) {
+      clearTimeout(mentionTimer.current);
+      mentionTimer.current = null;
+    }
+  }, []);
+
+  /** Recompute the active @token from the live textarea and (re)fetch files. */
+  const refreshMention = useCallback(() => {
+    const el = textareaRef.current;
+    if (!el || !onListFiles || disabled) {
+      closeMention();
+      return;
+    }
+    const q = getMentionQuery(el.value, el.selectionStart ?? el.value.length);
+    if (!q) {
+      closeMention();
+      return;
+    }
+    setMention(q);
+    if (mentionTimer.current) clearTimeout(mentionTimer.current);
+    const seq = ++mentionSeq.current;
+    mentionTimer.current = setTimeout(() => {
+      onListFiles(q.query)
+        .then((files) => {
+          if (mentionSeq.current !== seq) return;
+          setMentionFiles(files);
+          setMentionIndex(0);
+        })
+        .catch(() => {
+          if (mentionSeq.current !== seq) return;
+          setMentionFiles([]);
+        });
+    }, 150);
+  }, [onListFiles, disabled, closeMention]);
+
+  const acceptMention = useCallback(
+    (path: string) => {
+      const el = textareaRef.current;
+      if (!el || !mention) return;
+      const next = applyMention(
+        el.value,
+        el.selectionStart ?? el.value.length,
+        mention.start,
+        path,
+      );
+      pendingCaret.current = next.caret;
+      setValue(next.text);
+      closeMention();
+    },
+    [mention, closeMention],
+  );
+
+  // Restore the caret after an accepted mention re-renders the textarea.
+  useEffect(() => {
+    if (pendingCaret.current != null && textareaRef.current) {
+      textareaRef.current.focus();
+      textareaRef.current.setSelectionRange(
+        pendingCaret.current,
+        pendingCaret.current,
+      );
+      pendingCaret.current = null;
+    }
+  }, [value]);
 
   // Dead ids (deleted templates) fall through like no stored selection.
   const storedTemplateId = templateByThread[threadId];
@@ -350,6 +437,7 @@ export function Composer({
     try {
       await action(prompt);
       setValue("");
+      closeMention();
     } catch (err) {
       const msg =
         err instanceof Error && err.message ? err.message : failLabel;
@@ -379,6 +467,32 @@ export function Composer({
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (mentionOpen) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setMentionIndex((i) => Math.min(i + 1, mentionFiles.length - 1));
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setMentionIndex((i) => Math.max(i - 1, 0));
+        return;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        const f = mentionFiles[mentionIndex];
+        if (f) acceptMention(f);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        // Keep this from the popover-level Escape handlers: only the mention
+        // popup closes.
+        e.stopPropagation();
+        closeMention();
+        return;
+      }
+    }
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
       e.preventDefault();
       submitSend();
@@ -538,12 +652,38 @@ export function Composer({
         </div>
       )}
       <div className={styles.card}>
+        {mentionOpen && (
+          <ul
+            className={styles.mentionList}
+            role="listbox"
+            aria-label="Mention a file"
+          >
+            {mentionFiles.map((f, i) => (
+              <li key={f} role="option" aria-selected={i === mentionIndex}>
+                <button
+                  type="button"
+                  className={styles.mentionRow}
+                  data-highlighted={i === mentionIndex ? "true" : undefined}
+                  onMouseEnter={() => setMentionIndex(i)}
+                  onClick={() => acceptMention(f)}
+                >
+                  {f}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
         <textarea
+          ref={textareaRef}
           className={styles.textarea}
           placeholder={placeholder}
           rows={3}
           value={value}
-          onChange={(e) => setValue(e.target.value)}
+          onChange={(e) => {
+            setValue(e.target.value);
+            refreshMention();
+          }}
+          onSelect={refreshMention}
           onKeyDown={onKeyDown}
           disabled={disabled || sending}
         />

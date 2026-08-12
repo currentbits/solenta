@@ -1,0 +1,69 @@
+/**
+ * Markdown component, mounted for real: fenced blocks get a header with a
+ * working Copy button, inline code stays inline, and raw HTML in agent output
+ * is dropped (never executed).
+ *
+ * Run: node --import=./test/support/render.mjs --test test/markdown.test.tsx
+ */
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
+import { mount } from "./support/dom.ts";
+import { Markdown } from "../src/components/Markdown";
+
+describe("Markdown", () => {
+  it("renders plain paragraphs", async () => {
+    const m = await mount(<Markdown text={"first\n\nsecond"} />);
+    const paras = m.container.querySelectorAll("p");
+    assert.equal(paras.length, 2);
+    assert.match(m.text(), /first/);
+    assert.match(m.text(), /second/);
+  });
+
+  it("fenced code gets a language header and a Copy button", async () => {
+    const m = await mount(<Markdown text={"```ts\nconst x = 1;\n```"} />);
+    assert.match(m.text(), /ts/);
+    const btn = m.byText("Copy");
+    assert.ok(btn, "Copy button present");
+    assert.match(m.text(), /const x = 1;/);
+  });
+
+  it("Copy writes the code to the clipboard and flips the label", async () => {
+    const writes: string[] = [];
+    Object.defineProperty(navigator, "clipboard", {
+      value: {
+        writeText: async (t: string) => {
+          writes.push(t);
+        },
+      },
+      configurable: true,
+    });
+    const m = await mount(<Markdown text={"```\nhello code\n```"} />);
+    await m.click(m.byText("Copy"));
+    assert.deepEqual(writes, ["hello code"]);
+    assert.ok(m.byText("Copied"), "label flips after copy");
+  });
+
+  it("inline code has no header or Copy button", async () => {
+    const m = await mount(<Markdown text={"use `npm test` to verify"} />);
+    assert.equal(m.byText("Copy"), null);
+    const code = m.container.querySelector("p code");
+    assert.ok(code, "inline code element present");
+    assert.equal(code.textContent, "npm test");
+  });
+
+  it("raw HTML in agent output is not rendered", async () => {
+    const m = await mount(
+      <Markdown text={"before<script>alert(1)</script>after"} />,
+    );
+    assert.equal(m.container.querySelector("script"), null);
+  });
+
+  it("links open externally with noreferrer", async () => {
+    const m = await mount(<Markdown text={"[docs](https://example.com)"} />);
+    const a = m.container.querySelector("a");
+    assert.ok(a);
+    assert.equal(a.getAttribute("target"), "_blank");
+    assert.equal(a.getAttribute("rel"), "noreferrer");
+    assert.equal(a.getAttribute("href"), "https://example.com");
+  });
+});

@@ -40,6 +40,10 @@ export default function App() {
     mergeWorktree,
     removeWorktree,
     fetchDiff,
+    commitChanges,
+    revertFile,
+    suggestCommitMessage,
+    listFiles,
     pushBranch,
     createPr,
     prStatus,
@@ -204,6 +208,10 @@ export default function App() {
         changesNonce={changesNonce}
         onCloseChanges={() => setChangesOpen(false)}
         onFetchDiff={() => fetchDiff()}
+        onCommitChanges={(message) => commitChanges(message)}
+        onRevertFile={(path, status) => revertFile(path, status)}
+        onSuggestCommitMessage={() => suggestCommitMessage()}
+        onListFiles={(query) => listFiles(query)}
         onPush={() => pushBranch()}
         runError={error?.scope === "run" ? error.message : null}
         onDismissRunError={clearError}

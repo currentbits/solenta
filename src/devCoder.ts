@@ -1095,17 +1095,20 @@ function emptyUsage(model: string | null = "claude-opus-4"): SessionUsage {
     outputTokens: 0,
     costUsd: 0,
     turns: 0,
+    contextTokens: 0,
   };
 }
 
 function bumpUsage(detail: ThreadDetail, delta: Partial<SessionUsage> & { model?: string | null }): void {
   const prev = detail.usage ?? emptyUsage(delta.model ?? "claude-opus-4");
+  const turnTokens = (delta.inputTokens ?? 0) + (delta.outputTokens ?? 0);
   detail.usage = {
     model: delta.model !== undefined ? delta.model : prev.model,
     inputTokens: prev.inputTokens + (delta.inputTokens ?? 0),
     outputTokens: prev.outputTokens + (delta.outputTokens ?? 0),
     costUsd: prev.costUsd + (delta.costUsd ?? 0),
     turns: prev.turns + (delta.turns ?? 0),
+    contextTokens: turnTokens > 0 ? turnTokens : prev.contextTokens ?? 0,
   };
 }
 
@@ -2910,6 +2913,24 @@ function buildDevCoder(): CoderApi {
         }
         return fakeDiff(detail.thread);
       },
+      async commit(input) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
+        const message = input.message.trim();
+        if (!message) throw new Error("Commit message is empty");
+        clearedDiff.add(input.threadId);
+        return { subject: message.split("\n")[0] };
+      },
+      async revertFile(input) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
+        return { path: input.path };
+      },
+      async suggestCommitMessage(input) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
+        return { message: "feat: update the centre pane" };
+      },
       async mergeWorktree(input) {
         const detail = details.get(input.threadId);
         if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
@@ -2974,6 +2995,21 @@ function buildDevCoder(): CoderApi {
         syncThreadRow(thread);
         emitDetail(detail);
         return { ...thread };
+      },
+    },
+    files: {
+      async list(input: { threadId: string; query?: string }) {
+        const q = (input.query ?? "").toLowerCase();
+        const all = [
+          "src/App.tsx",
+          "src/components/ThreadView.tsx",
+          "src/components/Composer.tsx",
+          "src/useCoder.ts",
+          "electron/main.js",
+          "README.md",
+          "package.json",
+        ];
+        return { files: all.filter((f) => !q || f.toLowerCase().includes(q)) };
       },
     },
     on(channel, cb) {

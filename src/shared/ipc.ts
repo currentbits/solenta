@@ -143,6 +143,11 @@ export interface SessionUsage {
   outputTokens: number;
   costUsd: number;
   turns: number;
+  /**
+   * Last turn's input+output tokens; the numerator for the context ring.
+   * Absent on usage recorded before this field existed.
+   */
+  contextTokens?: number;
 }
 
 export interface FileChange {
@@ -274,6 +279,11 @@ export interface ModelInfo {
   vendor: string;
   /** True for the provider's suggested default. */
   recommended?: boolean;
+  /**
+   * Context window size in tokens, only when the vendor documents it.
+   * The context ring hides itself when this is absent; never guessed.
+   */
+  contextTokens?: number;
 }
 
 export interface ProviderInfo {
@@ -538,6 +548,27 @@ export interface CoderApi {
     /** Working-tree changes in the thread's cwd (worktree if set, else project). */
     diff(input: { threadId: string }): Promise<DiffResult>;
     /**
+     * Commits every change in the thread's cwd (git add -A + commit -m).
+     * Rejects on an empty message or when there is nothing to commit.
+     */
+    commit(input: { threadId: string; message: string }): Promise<{ subject: string }>;
+    /**
+     * Discards one file's changes: untracked files are deleted, staged-new
+     * files are removed from index and disk, tracked files are restored from
+     * HEAD. `path`/`status` come from the diff file list.
+     */
+    revertFile(input: {
+      threadId: string;
+      path: string;
+      status: string;
+    }): Promise<{ path: string }>;
+    /**
+     * Drafts a commit message for the thread's uncommitted changes with the
+     * thread's provider CLI in print mode. Never commits. Rejects when there
+     * are no changes or the provider CLI is unavailable.
+     */
+    suggestCommitMessage(input: { threadId: string }): Promise<{ message: string }>;
+    /**
      * Squash-merges the thread's worktree branch into the project's default
      * branch (committing any uncommitted worktree changes first), then removes
      * the worktree and branch. Rejects with a descriptive Error on conflicts
@@ -589,6 +620,14 @@ export interface CoderApi {
      */
     listCheckpoints(input: { threadId: string }): Promise<CheckpointInfo[]>;
     restoreCheckpoint(input: { threadId: string; sha: string }): Promise<void>;
+  };
+  files: {
+    /**
+     * Repo-relative paths for the composer's @-mention popup: tracked plus
+     * untracked (gitignored excluded), substring-filtered, top 20. Uses the
+     * thread's worktree when bound, else the project checkout.
+     */
+    list(input: { threadId: string; query?: string }): Promise<{ files: string[] }>;
   };
   /** Returns an unsubscribe function. */
   on(channel: "threads:changed", cb: (threads: ThreadInfo[]) => void): () => void;

@@ -506,6 +506,60 @@
   color: var(--text-dim);
 }
 
+.fileRevert {
+  flex-shrink: 0;
+  font: inherit;
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.fileRevert:hover:not(:disabled) {
+  color: var(--danger);
+  border-color: var(--border);
+  background: var(--card-hover);
+}
+
+.fileRevert:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.commitBox {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px solid var(--border-soft);
+  padding-top: 10px;
+}
+
+.commitInput {
+  width: 100%;
+  resize: vertical;
+  font: inherit;
+  font-size: 12.5px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text);
+}
+
+.commitInput:focus {
+  outline: none;
+  border-color: var(--blue-border);
+}
+
+.commitActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .body {
   flex: 1;
   min-height: 0;
@@ -670,6 +724,41 @@
 
 .message {
   padding: 4px 2px;
+}
+
+.msgMeta {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+  display: flex;
+  gap: 6px;
+  user-select: none;
+}
+
+.contextRing {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 4px;
+}
+
+.ringTrack {
+  fill: none;
+  stroke: var(--border);
+  stroke-width: 2.5;
+}
+
+.ringFill {
+  fill: none;
+  stroke: var(--green);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+}
+
+.ringLabel {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
 }
 
 .message p {

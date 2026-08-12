@@ -30,6 +30,9 @@ const { execFileSync } = require("node:child_process");
  * @property {string} description
  * @property {string} vendor
  * @property {boolean} [recommended]
+ * @property {number} [contextTokens] - context window size, ONLY where the
+ *   vendor copy above states it; never guessed (the context ring hides itself
+ *   without it)
  *
  * @typedef {object} ProviderEntry
  * @property {string} id
@@ -319,6 +322,7 @@ const PROVIDERS = [
         description:
           "Meituan LongCat-2.0, a reasoning model with tool calling and a 1M-token context window",
         vendor: "Meituan",
+        contextTokens: 1000000,
       },
       {
         id: "opencode/mimo-v2.5-free",
@@ -393,12 +397,14 @@ const PROVIDERS = [
         description: "Default Kimi coding model (1M context)",
         vendor: "Moonshot",
         recommended: true,
+        contextTokens: 1000000,
       },
       {
         id: "kimi-code/k3-256k",
         label: "K3-256k",
         description: "K3 with a 256k context window",
         vendor: "Moonshot",
+        contextTokens: 256000,
       },
       {
         id: "kimi-code/kimi-for-coding",

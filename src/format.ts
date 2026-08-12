@@ -39,14 +39,6 @@ export function formatTokenSum(tokens: number): string {
   return `Σ ${tokens}`;
 }
 
-/** Split assistant text into paragraphs (blank-line separated). */
-export function splitParagraphs(text: string): string[] {
-  return text
-    .split(/\n\n+/)
-    .map((p) => p.trim())
-    .filter(Boolean);
-}
-
 /** Human labels for PermissionMode (composer + session card). */
 export const PERMISSION_MODE_LABELS: Record<PermissionMode, string> = {
   default: "Ask first",

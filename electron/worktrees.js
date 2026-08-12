@@ -570,6 +570,144 @@ function diff(opts) {
 }
 
 /**
+ * Resolve the git cwd for a thread (worktree when bound, else the project
+ * checkout), throwing the same unknown-thread/project errors as diff().
+ * @param {import('./store').Store} store
+ * @param {string} threadId
+ */
+function threadGitCwd(store, threadId) {
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  const project = store.getProject(thread.projectId);
+  if (!project) {
+    throw new Error(`Unknown project for thread: ${threadId}`);
+  }
+  return { thread, project, cwd: thread.worktreePath || project.path };
+}
+
+/**
+ * Commit every change in the thread's tree (add -A + commit -m). The message
+ * is one argv element, never shell-interpolated.
+ *
+ * @param {object} opts
+ * @param {import('./store').Store} opts.store
+ * @param {string} opts.threadId
+ * @param {string} opts.message
+ * @returns {{ subject: string }}
+ */
+function commit(opts) {
+  const { store, threadId } = opts;
+  const message = String(opts.message || "").trim();
+  if (!message) {
+    throw new Error("Commit message is empty");
+  }
+  const { cwd } = threadGitCwd(store, threadId);
+  if (!gitOut(cwd, ["status", "--porcelain", "-uall"])) {
+    throw new Error("Nothing to commit");
+  }
+  const add = gitTry(cwd, ["add", "-A"]);
+  if (!add.ok) {
+    throw new Error(tailErr(add.stderr || add.combined, "git add failed"));
+  }
+  const res = gitTry(cwd, ["commit", "-m", message]);
+  if (!res.ok) {
+    throw new Error(tailErr(res.stderr || res.combined, "git commit failed"));
+  }
+  return { subject: message.split("\n")[0] };
+}
+
+/**
+ * Discard one file's changes from the thread's tree.
+ * - untracked ("??"): delete from disk
+ * - staged-new ("A"): remove from index and disk
+ * - anything else: restore index + worktree from HEAD
+ *
+ * @param {object} opts
+ * @param {import('./store').Store} opts.store
+ * @param {string} opts.threadId
+ * @param {string} opts.path - repo-relative path from the diff file list
+ * @param {string} opts.status - status letter from the diff file list
+ * @returns {{ path: string }}
+ */
+function revertFile(opts) {
+  const { store, threadId, status } = opts;
+  const relPath = String(opts.path || "");
+  if (!relPath || path.isAbsolute(relPath)) {
+    throw new Error(`Invalid path: ${relPath || "(empty)"}`);
+  }
+  const { cwd } = threadGitCwd(store, threadId);
+  const full = path.resolve(cwd, relPath);
+  if (full !== cwd && !full.startsWith(cwd + path.sep)) {
+    throw new Error(`Path escapes the working tree: ${relPath}`);
+  }
+  if (status === "??") {
+    fs.rmSync(full, { recursive: true, force: true });
+    return { path: relPath };
+  }
+  if (status === "A") {
+    const rm = gitTry(cwd, ["rm", "-f", "--", relPath]);
+    if (!rm.ok) {
+      throw new Error(tailErr(rm.stderr || rm.combined, "git rm failed"));
+    }
+    return { path: relPath };
+  }
+  const res = gitTry(cwd, [
+    "restore",
+    "--staged",
+    "--worktree",
+    "--",
+    relPath,
+  ]);
+  if (!res.ok) {
+    throw new Error(tailErr(res.stderr || res.combined, "git restore failed"));
+  }
+  return { path: relPath };
+}
+
+const LS_FILES_CAP = 20000;
+const LIST_FILES_RESULT = 20;
+
+/**
+ * Files matchable by the composer's @-mention popup: tracked plus untracked
+ * (gitignored excluded), filtered case-insensitively by substring. Paths that
+ * START with the query rank above mid-string matches.
+ *
+ * @param {object} opts
+ * @param {import('./store').Store} opts.store
+ * @param {string} opts.threadId
+ * @param {string} [opts.query]
+ * @returns {{ files: string[] }}
+ */
+function listFiles(opts) {
+  const { store, threadId } = opts;
+  const query = String(opts.query || "").toLowerCase();
+  const { cwd } = threadGitCwd(store, threadId);
+  const out = gitTry(cwd, [
+    "ls-files",
+    "--cached",
+    "--others",
+    "--exclude-standard",
+  ]);
+  if (!out.ok) {
+    throw new Error(
+      tailErr(out.stderr || out.combined, "git ls-files failed"),
+    );
+  }
+  const all = out.stdout.split("\n").filter(Boolean).slice(0, LS_FILES_CAP);
+  const matched = query
+    ? all.filter((p) => p.toLowerCase().includes(query))
+    : all;
+  matched.sort((a, b) => {
+    const aPrefix = a.toLowerCase().startsWith(query) ? 0 : 1;
+    const bPrefix = b.toLowerCase().startsWith(query) ? 0 : 1;
+    return aPrefix - bPrefix;
+  });
+  return { files: matched.slice(0, LIST_FILES_RESULT) };
+}
+
+/**
  * Push the thread's current branch (worktree if set, else project checkout)
  * to origin with -u.
  *
@@ -1593,6 +1731,9 @@ async function restoreCheckpoint(opts) {
 module.exports = {
   setupWorktree,
   diff,
+  commit,
+  revertFile,
+  listFiles,
   mergeWorktree,
   removeWorktree,
   push,

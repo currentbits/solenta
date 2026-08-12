@@ -1132,6 +1132,7 @@ function createRunner(opts) {
             outputTokens: 0,
             costUsd: 0,
             turns: 0,
+            contextTokens: 0,
           };
           const usage = ev.usage || {};
           const turnIn = Number(usage.input_tokens) || 0;
@@ -1151,6 +1152,9 @@ function createRunner(opts) {
             outputTokens,
             costUsd,
             turns: prev.turns + 1,
+            // Last turn's in+out approximates context-window fill.
+            contextTokens:
+              turnIn + turnOut > 0 ? turnIn + turnOut : prev.contextTokens || 0,
           });
           if (costDelta > 0) {
             store.recordSpend(costDelta);
@@ -1394,6 +1398,7 @@ function createRunner(opts) {
         outputTokens: 0,
         costUsd: 0,
         turns: 0,
+        contextTokens: 0,
       };
       const costDelta = Number(usageInfo.costUsd) || 0;
       const inDelta = Number(usageInfo.inputTokens) || 0;
@@ -1407,6 +1412,9 @@ function createRunner(opts) {
         outputTokens: prev.outputTokens + outDelta,
         costUsd: prev.costUsd + costDelta,
         turns: prev.turns + 1,
+        // Last turn's in+out approximates context-window fill.
+        contextTokens:
+          inDelta + outDelta > 0 ? inDelta + outDelta : prev.contextTokens || 0,
       });
       if (costDelta > 0) {
         store.recordSpend(costDelta);
@@ -1768,6 +1776,7 @@ function createRunner(opts) {
         outputTokens: 0,
         costUsd: 0,
         turns: 0,
+        contextTokens: 0,
       };
       const costDelta = Number(usageInfo.costUsd) || 0;
       const inDelta = Number(usageInfo.inputTokens) || 0;
@@ -1781,6 +1790,9 @@ function createRunner(opts) {
         outputTokens: prev.outputTokens + outDelta,
         costUsd: prev.costUsd + costDelta,
         turns: prev.turns + 1,
+        // Last turn's in+out approximates context-window fill.
+        contextTokens:
+          inDelta + outDelta > 0 ? inDelta + outDelta : prev.contextTokens || 0,
       });
       if (costDelta > 0) {
         store.recordSpend(costDelta);

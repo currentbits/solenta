@@ -139,6 +139,9 @@ function view(props: {
       changesNonce={0}
       onCloseChanges={() => {}}
       onFetchDiff={async () => ({ files: [], patch: "", truncated: false })}
+      onCommitChanges={async () => ({ subject: "x" })}
+      onRevertFile={async (path) => ({ path })}
+      onSuggestCommitMessage={async () => ({ message: "feat: x" })}
       onPush={async () => ({ remote: "origin", branch: "main" })}
     />
   );
