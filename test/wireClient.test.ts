@@ -205,6 +205,25 @@ describe("createWireCoder push", () => {
 });
 
 describe("createWireCoder disconnect", () => {
+  it("rejects queued invokes when the socket closes before auth-ok", async () => {
+    const api = createWireCoder({
+      url: "ws://127.0.0.1:8787",
+      token: "tok-secret",
+      WebSocket: FakeWebSocket as unknown as typeof WebSocket,
+      setTimeout: () => 0,
+    });
+    const ws = lastSocket();
+    const pending = api.threads.list();
+    ws.open();
+    assert.deepEqual(ws.sent[0], { kind: "auth", token: "tok-secret" });
+    ws.close();
+    await assert.rejects(pending, (err: unknown) => {
+      assert.ok(err instanceof Error);
+      assert.match(err.message, /disconnect|closed|transport|auth/i);
+      return true;
+    });
+  });
+
   it("rejects in-flight invokes on drop with a clear transport error", async () => {
     const { api, ws } = connect();
     authOk(ws);
@@ -254,6 +273,48 @@ describe("createWireCoder reconnect", () => {
     ws2.deliver({ kind: "reply", id: resync.id, result: listed });
     assert.equal(resynced.length, 1);
     assert.equal(resynced[0][0]?.id, "t-resync");
+  });
+
+  it("queued invoke after auth-ok survives reconnect and resolves (not rejectQueued)", async () => {
+    // Protective half of `if (!everAuthed) rejectQueued(...)`.
+    // An invoke parked in `queued` after a successful session must flush
+    // on the next auth-ok. Unconditional rejectQueued on close fails this.
+    const timers: Array<() => void> = [];
+    const { api, ws } = connect({
+      setTimeout: (fn) => {
+        timers.push(fn);
+        return timers.length;
+      },
+    });
+    authOk(ws);
+
+    // Socket is dying: ready is still true, but readyState is not OPEN, so
+    // the next invoke goes to `queued` instead of inflight.
+    ws.readyState = FakeWebSocket.CLOSING;
+    const listed = [{ id: "t-queued" }] as unknown as ThreadInfo[];
+    const pending = api.threads.list();
+    assert.equal(
+      ws.sent.filter((m) => m.kind === "invoke").length,
+      0,
+      "invoke must be queued, not sent on the dying socket",
+    );
+
+    ws.close();
+    // everAuthed is true: queue must survive this close.
+    timers.shift()!();
+    const ws2 = lastSocket();
+    ws2.open();
+    authOk(ws2);
+
+    const userInvoke = ws2.sent.find(
+      (m) => m.kind === "invoke" && m.channel === "threads:list",
+    );
+    assert.ok(
+      userInvoke && userInvoke.kind === "invoke",
+      "reconnect auth-ok must flush the queued invoke",
+    );
+    ws2.deliver({ kind: "reply", id: userInvoke.id, result: listed });
+    assert.deepEqual(await pending, listed);
   });
 
   it("caps exponential backoff at 30s", () => {

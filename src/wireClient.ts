@@ -75,6 +75,11 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
     inflight.clear();
   }
 
+  function rejectQueued(message: string): void {
+    const err = new Error(message);
+    while (queued.length) queued.shift()!.reject(err);
+  }
+
   function invoke(channel: string, ...args: unknown[]): Promise<unknown> {
     return new Promise((resolve, reject) => {
       const p: Pending = {
@@ -169,9 +174,17 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
       const data = typeof ev.data === "string" ? ev.data : String(ev.data);
       handleMessage(data);
     };
+    // Browser WebSocket errors stay on onerror. The `ws` package (and Node's
+    // WebSocket) emit an 'error' that becomes uncaughtException with no
+    // listener — same close path either way, so swallow here.
+    ws.onerror = () => {};
     ws.onclose = () => {
       ready = false;
       rejectInflight(TRANSPORT_ERROR);
+      // Queued invokes sit here until auth-ok. A close before the first
+      // auth-ok (wrong token, refused, drop) used to leave them pending
+      // forever — the integration harness hung on a bad token.
+      if (!everAuthed) rejectQueued(TRANSPORT_ERROR);
       scheduleReconnect();
     };
   }
