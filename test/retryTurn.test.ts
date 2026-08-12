@@ -56,11 +56,11 @@ describe("retryAnchorEventId", () => {
     m({ id: "e1", role: "event", text: "Run error: exit 1" }),
   ];
 
-  it("anchors on last event when status is failed", () => {
+  it("anchors on last message when it is a failed-run event", () => {
     assert.equal(retryAnchorEventId("failed", twoUsers), "e1");
   });
 
-  it("anchors on interrupt event when status is idle", () => {
+  it("anchors on interrupt event when it is the last message (idle)", () => {
     const msgs = [
       m({ id: "u1", role: "user", text: "do work" }),
       m({ id: "e1", role: "event", text: "Run interrupted by app quit" }),
@@ -68,8 +68,34 @@ describe("retryAnchorEventId", () => {
     assert.equal(retryAnchorEventId("idle", msgs), "e1");
   });
 
+  it("is null for a stale interrupt after a successful retry (done + later messages)", () => {
+    // Reviewer mutant: last-EVENT anchor returned "e1" here. Last-MESSAGE
+    // rule requires the interrupt to be the final transcript entry.
+    assert.equal(
+      retryAnchorEventId("done", [
+        m({ id: "u1", role: "user", text: "first" }),
+        m({ id: "e1", role: "event", text: "Run interrupted by app quit" }),
+        m({ id: "u2", role: "user", text: "retry prompt" }),
+        m({ id: "a1", role: "assistant", text: "answered" }),
+      ]),
+      null,
+    );
+  });
+
   it("is null while working even if failed-shaped transcript", () => {
     assert.equal(retryAnchorEventId("working", twoUsers), null);
+  });
+
+  it("is null while working when last message is a live interrupt marker", () => {
+    // B-2: without the working guard, status working + last interrupt would
+    // still show Retry and allow a double-send mid-retry.
+    assert.equal(
+      retryAnchorEventId("working", [
+        m({ id: "u1", role: "user", text: "retry me" }),
+        m({ id: "e1", role: "event", text: "Run interrupted by app quit" }),
+      ]),
+      null,
+    );
   });
 
   it("is null without a user message", () => {
@@ -99,10 +125,21 @@ describe("retryAnchorEventId", () => {
       null,
     );
   });
+
+  it("is null when last message is not an event even if an older interrupt exists", () => {
+    assert.equal(
+      retryAnchorEventId("failed", [
+        m({ id: "u1", role: "user", text: "prompt" }),
+        m({ id: "e1", role: "event", text: "Run error: boom" }),
+        m({ id: "a1", role: "assistant", text: "partial" }),
+      ]),
+      null,
+    );
+  });
 });
 
 describe("retryButtonTitle", () => {
-  it("prefixes Retry: and truncates long text at ~60 chars", () => {
+  it("prefixes Retry: and truncates long text at ~60 codepoints", () => {
     const long = "x".repeat(80);
     const title = retryButtonTitle(long);
     assert.ok(title.startsWith("Retry: "));
@@ -115,6 +152,13 @@ describe("retryButtonTitle", () => {
       retryButtonTitle("fix the sidebar chip"),
       "Retry: fix the sidebar chip",
     );
+  });
+
+  it("does not split a trailing surrogate pair when truncating", () => {
+    // 59 ASCII + one emoji (two UTF-16 units, one codepoint) → keep emoji.
+    const text = `${"a".repeat(59)}\u{1F680}extra`;
+    const title = retryButtonTitle(text);
+    assert.equal(title, `Retry: ${"a".repeat(59)}\u{1F680}…`);
   });
 });
 

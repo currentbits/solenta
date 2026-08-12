@@ -3,10 +3,14 @@ import type { ChatMessage, ThreadStatus } from "./shared/ipc";
 /**
  * Round 48: Retry-turn affordance decisions (pure).
  *
- * Show "Retry turn" beside the last event surface when:
+ * Show "Retry turn" beside the last transcript message when it is an event
+ * and either:
  *   - thread status is "failed", OR
- *   - the last event text contains "Run interrupted"
+ *   - that event text contains "Run interrupted"
  * and there is a user message to re-send, and no run is active.
+ *
+ * The anchor must be the LAST MESSAGE (not merely the last event). A stale
+ * interrupt mid-transcript after a successful retry must not keep the button.
  *
  * Click re-sends the LAST user message via the same onStartRun path as Composer.
  */
@@ -25,7 +29,7 @@ export function lastUserMessage(
   return last;
 }
 
-/** Last event message in transcript order. */
+/** Last event message in transcript order (any position). */
 export function lastEventMessage(
   messages: readonly ChatMessage[],
 ): ChatMessage | null {
@@ -43,27 +47,35 @@ export function isInterruptEvent(text: string): boolean {
 /**
  * Id of the event card that should carry the Retry button, or null if
  * the affordance is absent (active run, no user text, no eligible surface).
+ *
+ * The anchor event MUST be the last message in the transcript. Anchoring on
+ * "last event anywhere" leaves a stale "Run interrupted…" button after a
+ * successful retry (status done, assistant reply after the interrupt).
  */
 export function retryAnchorEventId(
   status: ThreadStatus,
   messages: readonly ChatMessage[],
 ): string | null {
+  // Mid-retry: status is working while the interrupt event is still last —
+  // hide the button so a double-send cannot fire.
   if (status === "working") return null;
   if (!lastUserMessage(messages)) return null;
-  const event = lastEventMessage(messages);
-  if (!event) return null;
-  if (status === "failed" || isInterruptEvent(event.text)) {
-    return event.id;
+  const last = messages.length > 0 ? messages[messages.length - 1]! : null;
+  if (!last || last.role !== "event") return null;
+  if (status === "failed" || isInterruptEvent(last.text)) {
+    return last.id;
   }
   return null;
 }
 
-/** Tooltip / title: "Retry: " + first ~60 chars of the last user message. */
+/** Tooltip / title: "Retry: " + first ~60 codepoints of the last user message. */
 export function retryButtonTitle(userText: string): string {
   const trimmed = userText.trim();
+  // Codepoint-safe (not UTF-16 code unit) so a surrogate pair is not split.
+  const chars = Array.from(trimmed);
   const snippet =
-    trimmed.length <= TITLE_MAX
+    chars.length <= TITLE_MAX
       ? trimmed
-      : `${trimmed.slice(0, TITLE_MAX)}…`;
+      : `${chars.slice(0, TITLE_MAX).join("")}…`;
   return `Retry: ${snippet}`;
 }
