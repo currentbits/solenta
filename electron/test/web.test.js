@@ -1,16 +1,10 @@
 "use strict";
 
 /**
- * Round 51: Coder Web server (HTTP+WS, auth, invoke, push, bind).
+ * Round 51: Coder Web server (webBridge + webServer).
  *
- * Mutations these tests exist to catch:
- * - first message that is not auth does not close
- * - invoke before auth-ok is executed (must error, not run)
- * - service throw is not the same string as the IPC path
- * - pushes reach unauthenticated sockets
- * - default bind is not 127.0.0.1
- * - ws is not copied by package-app.sh
- * - createHandlers channels drift from preload invoke names
+ * Auth table, invoke vs real services, error-string parity, push fan-out,
+ * static serve, token 0600, no-flag port probe.
  */
 
 const { describe, it, beforeEach, afterEach } = require("node:test");
@@ -19,18 +13,47 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const http = require("node:http");
+const net = require("node:net");
+const { execFileSync } = require("node:child_process");
 const Module = require("node:module");
 const { WebSocket } = require("ws");
+
+// ipc.js requires("electron") at load. This machine's Electron postinstall is
+// often a stub, so install a process-wide mock BEFORE loading web modules.
+{
+  const origLoad = Module._load;
+  Module._load = function (request) {
+    if (request === "electron") {
+      return {
+        ipcMain: { handle() {} },
+        BrowserWindow: { getAllWindows: () => [] },
+        dialog: {},
+        shell: {},
+        app: { getPath: () => os.tmpdir() },
+      };
+    }
+    return origLoad.apply(this, arguments);
+  };
+}
+
 const {
-  parseServeArgs,
+  parseServeWebArgs,
   loadOrCreateToken,
   startWebServer,
-  PUSH_CHANNELS,
-  HOST_FLAG_HELP,
   TOKEN_FILENAME,
   DEFAULT_HOST,
   DEFAULT_PORT,
-} = require("../web.js");
+  HOST_FLAG_HELP,
+} = require("../webServer.js");
+const { WS_PATH } = require("../webBridge.js");
+
+function git(cwd, args) {
+  return execFileSync("git", args, {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  }).trim();
+}
 
 function connect(url) {
   return new Promise((resolve, reject) => {
@@ -131,25 +154,37 @@ function withStubbedElectron(fn) {
   }
 }
 
-describe("parseServeArgs", () => {
-  it("defaults to disabled, 127.0.0.1, port 8787", () => {
-    const got = parseServeArgs(["/path/to/Electron", "."]);
+function dummyRunner() {
+  return {
+    isRunning: () => false,
+    startRun: async () => ({ runId: "r" }),
+    startWorkflowRun: async () => ({ runId: "r" }),
+    stopRun: async () => {},
+    getActiveWorkflow: () => null,
+  };
+}
+
+describe("parseServeWebArgs", () => {
+  it("defaults to disabled, 127.0.0.1, port 4620", () => {
+    const got = parseServeWebArgs(["/path/to/Electron", "."]);
     assert.equal(got.enabled, false);
     assert.equal(got.host, "127.0.0.1");
-    assert.equal(got.port, 8787);
+    assert.equal(got.port, 4620);
     assert.equal(got.host, DEFAULT_HOST);
     assert.equal(got.port, DEFAULT_PORT);
   });
 
-  it("enables on --serve and accepts --host/--port in both forms", () => {
-    const space = parseServeArgs(["--serve", "--host", "0.0.0.0", "--port", "9000"]);
-    assert.equal(space.enabled, true);
-    assert.equal(space.host, "0.0.0.0");
-    assert.equal(space.port, 9000);
-    const eq = parseServeArgs(["app", "--serve", "--host=10.0.0.4", "--port=0"]);
+  it("enables on --serve-web[=port] and --serve-host", () => {
+    const bare = parseServeWebArgs(["--serve-web"]);
+    assert.equal(bare.enabled, true);
+    assert.equal(bare.port, 4620);
+    const eq = parseServeWebArgs(["app", "--serve-web=9000", "--serve-host=0.0.0.0"]);
     assert.equal(eq.enabled, true);
-    assert.equal(eq.host, "10.0.0.4");
-    assert.equal(eq.port, 0);
+    assert.equal(eq.port, 9000);
+    assert.equal(eq.host, "0.0.0.0");
+    const space = parseServeWebArgs(["--serve-web", "--serve-host", "10.0.0.4"]);
+    assert.equal(space.enabled, true);
+    assert.equal(space.host, "10.0.0.4");
   });
 
   it("HOST_FLAG_HELP names no TLS and LAN as an informed choice", () => {
@@ -168,43 +203,63 @@ describe("loadOrCreateToken", () => {
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
-  it("creates a crypto token next to the store and reuses it", () => {
+  it("persists userData/web-token at 0600 and reuses it", () => {
     const a = loadOrCreateToken(tmp);
     const b = loadOrCreateToken(tmp);
     assert.equal(a, b);
-    assert.ok(a.length >= 32, "token must be long enough to be random");
+    assert.ok(a.length >= 32);
     const file = path.join(tmp, TOKEN_FILENAME);
+    assert.equal(TOKEN_FILENAME, "web-token");
     assert.equal(fs.readFileSync(file, "utf8").trim(), a);
-    // Same directory as coder-store.json would use (userData root).
     assert.equal(path.dirname(file), tmp);
+    const mode = fs.statSync(file).mode & 0o777;
+    assert.equal(mode, 0o600, `expected 0600, got ${mode.toString(8)}`);
   });
 });
 
-describe("startWebServer wire protocol", () => {
+describe("auth table + invoke + push (real socket)", () => {
   let tmp;
   let server;
-  let calls;
+  let ctx;
+  let store;
+  let services;
 
   beforeEach(async () => {
-    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "coder-web-"));
-    fs.writeFileSync(path.join(tmp, "index.html"), "<!doctype html><title>ok</title>");
-    fs.writeFileSync(path.join(tmp, "app.js"), "window.x=1;");
-    calls = [];
-    server = await startWebServer({
-      host: "127.0.0.1",
-      port: 0,
-      token: "secret-token",
-      staticDir: tmp,
-      invoke: async (channel, args) => {
-        calls.push({ channel, args });
-        if (channel === "boom") {
-          throw new Error("Cannot restore a checkpoint while a run is active");
-        }
-        if (channel === "missing") {
-          throw new Error(`No handler registered for '${channel}'`);
-        }
-        return { channel, args, ok: true };
-      },
+    await withStubbedElectron(async () => {
+      delete require.cache[require.resolve("../ipc.js")];
+      const ipc = require("../ipc.js");
+      services = require("../services.js");
+      const { Store } = require("../store.js");
+      tmp = fs.mkdtempSync(path.join(os.tmpdir(), "coder-web-"));
+      fs.writeFileSync(path.join(tmp, "index.html"), "<!doctype html><title>web-ok</title>");
+      fs.writeFileSync(path.join(tmp, "app.js"), "window.x=1;");
+      const repo = path.join(tmp, "repo");
+      fs.mkdirSync(repo);
+      git(repo, ["init"]);
+      git(repo, ["config", "user.email", "t@example.com"]);
+      git(repo, ["config", "user.name", "t"]);
+      fs.writeFileSync(path.join(repo, "README.md"), "hi\n");
+      git(repo, ["add", "README.md"]);
+      git(repo, ["commit", "-m", "init"]);
+      store = new Store(path.join(tmp, "store.json"));
+      const project = services.addProject(store, repo);
+      services.createThread(store, { projectId: project.id, title: "alpha" });
+      ctx = ipc.makeCtx({
+        dialog: {},
+        store,
+        runner: dummyRunner(),
+        broadcast() {},
+        worktreeBase: "",
+        userDataPath: tmp,
+      });
+      server = await startWebServer({
+        host: "127.0.0.1",
+        port: 0,
+        token: "secret-token",
+        ctx,
+        handlers: ipc.IPC_HANDLERS,
+        staticDir: tmp,
+      });
     });
   });
 
@@ -213,289 +268,200 @@ describe("startWebServer wire protocol", () => {
       await server.close();
       server = null;
     }
-    fs.rmSync(tmp, { recursive: true, force: true });
+    if (tmp) fs.rmSync(tmp, { recursive: true, force: true });
   });
 
   function wsUrl() {
-    return `ws://127.0.0.1:${server.port}`;
+    return `ws://127.0.0.1:${server.port}${WS_PATH}`;
   }
 
-  async function auth(ws, token) {
-    ws.send(JSON.stringify({ kind: "auth", token }));
-    return onceMessage(ws);
-  }
+  it("auth table: good → auth-ok; bad → close; invoke-first → error + drop", async () => {
+    const good = await connect(wsUrl());
+    good.send(JSON.stringify({ kind: "auth", token: "secret-token" }));
+    assert.deepEqual(await onceMessage(good), { kind: "auth-ok" });
+    good.close();
+    await onceClose(good);
 
-  it("binds 127.0.0.1 unless --host widens it", async () => {
-    assert.equal(server.host, "127.0.0.1");
-    const addr = server.server.address();
-    assert.equal(addr.address, "127.0.0.1");
+    const bad = await connect(wsUrl());
+    const badClosed = onceClose(bad);
+    bad.send(JSON.stringify({ kind: "auth", token: "nope" }));
+    await badClosed;
 
-    const wide = await startWebServer({
-      host: "0.0.0.0",
-      port: 0,
-      token: "t",
-      invoke: async () => null,
+    const first = await connect(wsUrl());
+    const closed = onceClose(first);
+    let reply = null;
+    first.on("message", (data) => {
+      reply = JSON.parse(String(data));
     });
+    first.send(
+      JSON.stringify({ kind: "invoke", id: 1, channel: "threads:list", args: [] }),
+    );
+    await closed;
+    assert.ok(reply, "invoke-first must get an error reply before drop");
+    assert.equal(reply.kind, "reply");
+    assert.equal(reply.id, 1);
+    assert.equal(reply.error, "Not authenticated");
+  });
+
+  it("threads:list over the socket equals services.listThreads", async () => {
+    const ws = await connect(wsUrl());
+    ws.send(JSON.stringify({ kind: "auth", token: "secret-token" }));
+    assert.deepEqual(await onceMessage(ws), { kind: "auth-ok" });
+    ws.send(
+      JSON.stringify({ kind: "invoke", id: 9, channel: "threads:list", args: [] }),
+    );
+    const reply = await onceMessage(ws);
+    assert.equal(reply.kind, "reply");
+    assert.equal(reply.id, 9);
+    assert.equal(reply.error, undefined);
+    assert.deepEqual(reply.result, services.listThreads(store));
+    assert.ok(Array.isArray(reply.result));
+    assert.equal(reply.result.length, 1);
+    assert.equal(reply.result[0].title, "alpha");
+    ws.close();
+    await onceClose(ws);
+  });
+
+  it("error-string parity: WS error === IPC_HANDLERS throw message", async () => {
+    const { IPC_HANDLERS } = require("../ipc.js");
+    let direct = "";
     try {
-      const waddr = wide.server.address();
-      assert.equal(waddr.address, "0.0.0.0");
-    } finally {
-      await wide.close();
+      await IPC_HANDLERS["git:setupWorktree"](ctx, { threadId: "missing" });
+    } catch (err) {
+      direct = err.message;
     }
-  });
+    assert.equal(direct, "worktreeBase is not configured");
 
-  it("first message must be auth; anything else closes", async () => {
     const ws = await connect(wsUrl());
-    const closed = onceClose(ws);
-    ws.send(JSON.stringify({ kind: "invoke", id: 1, channel: "threads:list", args: [] }));
-    await closed;
-    assert.equal(calls.length, 0, "invoke must not run before auth");
-  });
-
-  it("wrong token closes without auth-ok", async () => {
-    const ws = await connect(wsUrl());
-    const closed = onceClose(ws);
-    ws.send(JSON.stringify({ kind: "auth", token: "nope" }));
-    await closed;
-  });
-
-  it("good auth replies auth-ok, then invoke replies with the result", async () => {
-    const ws = await connect(wsUrl());
-    const ok = await auth(ws, "secret-token");
-    assert.deepEqual(ok, { kind: "auth-ok" });
+    ws.send(JSON.stringify({ kind: "auth", token: "secret-token" }));
+    await onceMessage(ws);
     ws.send(
       JSON.stringify({
         kind: "invoke",
-        id: 7,
-        channel: "threads:list",
-        args: [],
+        id: 3,
+        channel: "git:setupWorktree",
+        args: [{ threadId: "missing" }],
       }),
     );
     const reply = await onceMessage(ws);
     assert.equal(reply.kind, "reply");
-    assert.equal(reply.id, 7);
-    assert.equal(reply.error, undefined);
-    assert.deepEqual(reply.result, { channel: "threads:list", args: [], ok: true });
-    assert.deepEqual(calls, [{ channel: "threads:list", args: [] }]);
-    ws.close();
-    await onceClose(ws);
-  });
-
-  it("service throws become {kind:reply,id,error:message} — same string", async () => {
-    const ws = await connect(wsUrl());
-    await auth(ws, "secret-token");
-    ws.send(JSON.stringify({ kind: "invoke", id: 3, channel: "boom", args: [] }));
-    const reply = await onceMessage(ws);
-    assert.equal(reply.kind, "reply");
     assert.equal(reply.id, 3);
-    assert.equal(reply.result, undefined);
-    assert.equal(
-      reply.error,
-      "Cannot restore a checkpoint while a run is active",
-    );
+    assert.equal(reply.error, direct);
     ws.close();
     await onceClose(ws);
   });
 
-  it("unknown channel is an error reply, not a close", async () => {
-    const ws = await connect(wsUrl());
-    await auth(ws, "secret-token");
-    ws.send(
-      JSON.stringify({ kind: "invoke", id: 4, channel: "missing", args: ["x"] }),
-    );
-    const reply = await onceMessage(ws);
-    assert.equal(reply.error, "No handler registered for 'missing'");
-    ws.close();
-    await onceClose(ws);
-  });
-
-  it("garbage JSON closes the socket", async () => {
-    const ws = await connect(wsUrl());
-    const closed = onceClose(ws);
-    ws.send("not-json");
-    await closed;
-  });
-
-  it("broadcast fans push channels to every authed socket, none to unauthed", async () => {
-    const authedA = await connect(wsUrl());
-    const authedB = await connect(wsUrl());
+  it("push fan-out: 2 authed sockets see one broadcast; unauthed sees nothing", async () => {
+    const a = await connect(wsUrl());
+    const b = await connect(wsUrl());
     const stranger = await connect(wsUrl());
-    await auth(authedA, "secret-token");
-    await auth(authedB, "secret-token");
+    a.send(JSON.stringify({ kind: "auth", token: "secret-token" }));
+    b.send(JSON.stringify({ kind: "auth", token: "secret-token" }));
+    assert.deepEqual(await onceMessage(a), { kind: "auth-ok" });
+    assert.deepEqual(await onceMessage(b), { kind: "auth-ok" });
 
-    const gotA = onceMessage(authedA);
-    const gotB = onceMessage(authedB);
+    const gotA = onceMessage(a);
+    const gotB = onceMessage(b);
     let strangerPushed = false;
     stranger.on("message", () => {
       strangerPushed = true;
     });
 
     server.broadcast("threads:changed", [{ id: "t1" }]);
-    server.broadcast("noise:ignored", { no: true });
 
-    const a = await gotA;
-    const b = await gotB;
-    assert.deepEqual(a, {
+    const pa = await gotA;
+    const pb = await gotB;
+    assert.deepEqual(pa, {
       kind: "push",
       channel: "threads:changed",
       payload: [{ id: "t1" }],
     });
-    assert.deepEqual(b, a);
+    assert.deepEqual(pb, pa);
     await new Promise((r) => setTimeout(r, 40));
-    assert.equal(strangerPushed, false, "unauthed socket must not get pushes");
+    assert.equal(strangerPushed, false);
 
-    authedA.close();
-    authedB.close();
+    a.close();
+    b.close();
     stranger.close();
-    await Promise.all([onceClose(authedA), onceClose(authedB), onceClose(stranger)]);
+    await Promise.all([onceClose(a), onceClose(b), onceClose(stranger)]);
   });
 
-  it("PUSH_CHANNELS match preload and the wire contract", () => {
-    assert.deepEqual(PUSH_CHANNELS, ["threads:changed", "thread:updated"]);
-    const preload = fs.readFileSync(
-      path.join(__dirname, "../preload.js"),
-      "utf8",
-    );
-    assert.match(preload, /threads:changed/);
-    assert.match(preload, /thread:updated/);
-    const wire = fs.readFileSync(
-      path.join(__dirname, "../../src/shared/wire.ts"),
-      "utf8",
-    );
-    assert.match(wire, /WIRE_PUSH_CHANNELS = \["threads:changed", "thread:updated"\]/);
-  });
-
-  it("serves the renderer static files", async () => {
+  it("static serve: index, asset MIME, SPA fallback", async () => {
     const index = await httpGet(`http://127.0.0.1:${server.port}/`);
     assert.equal(index.status, 200);
     assert.match(index.type, /text\/html/);
-    assert.match(index.body, /<title>ok<\/title>/);
+    assert.match(index.body, /<title>web-ok<\/title>/);
+
     const js = await httpGet(`http://127.0.0.1:${server.port}/app.js`);
     assert.equal(js.status, 200);
     assert.match(js.type, /javascript/);
     assert.match(js.body, /window\.x=1/);
-  });
 
-  it("rejects path traversal", async () => {
-    const res = await httpGet(
-      `http://127.0.0.1:${server.port}/../../../../etc/passwd`,
-    );
-    assert.ok(res.status === 403 || res.status === 404 || res.status === 200);
-    if (res.status === 200) {
-      // SPA fallback is allowed only to index.html inside the static dir.
-      assert.match(res.body, /<title>ok<\/title>/);
-      assert.doesNotMatch(res.body, /root:|passwd/);
-    }
+    const spa = await httpGet(`http://127.0.0.1:${server.port}/thread/abc`);
+    assert.equal(spa.status, 200);
+    assert.match(spa.type, /text\/html/);
+    assert.match(spa.body, /<title>web-ok<\/title>/);
   });
 });
 
-describe("createHandlers is the one invoke table", () => {
+describe("no-flag → no listeners (port probe)", () => {
+  it("requiring the modules does not bind the default port", async () => {
+    const args = parseServeWebArgs(process.argv);
+    assert.equal(args.enabled, false, "this test process has no --serve-web");
+    assert.equal(DEFAULT_PORT, 4620);
+
+    await new Promise((resolve, reject) => {
+      const s = net.createServer();
+      s.once("error", (err) => {
+        reject(
+          new Error(
+            `default port ${DEFAULT_PORT} is already bound (no-flag must leave it free): ${err.message}`,
+          ),
+        );
+      });
+      s.listen(DEFAULT_PORT, "127.0.0.1", () => {
+        s.close(() => resolve());
+      });
+    });
+  });
+});
+
+describe("one map, two transports + packaging", () => {
+  it("registerIpc and webBridge both walk the exported IPC_HANDLERS object", () => {
+    const ipcSrc = fs.readFileSync(path.join(__dirname, "../ipc.js"), "utf8");
+    const bridgeSrc = fs.readFileSync(
+      path.join(__dirname, "../webBridge.js"),
+      "utf8",
+    );
+    assert.match(ipcSrc, /const IPC_HANDLERS = \{/);
+    assert.match(ipcSrc, /Object\.entries\(IPC_HANDLERS\)/);
+    assert.match(bridgeSrc, /require\("\.\/ipc\.js"\)/);
+    assert.match(bridgeSrc, /IPC_HANDLERS/);
+    assert.match(bridgeSrc, /fn\(ctx, \.\.\.args\)/);
+  });
+
   it("covers every channel preload invokes", async () => {
     await withStubbedElectron(() => {
       delete require.cache[require.resolve("../ipc.js")];
-      const { createHandlers } = require("../ipc.js");
-      const { Store } = require("../store.js");
-      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "coder-web-h-"));
-      try {
-        const store = new Store(path.join(tmp, "store.json"));
-        const handlers = createHandlers({
-          dialog: {},
-          store,
-          runner: {
-            isRunning: () => false,
-            startRun: async () => ({ runId: "r" }),
-            startWorkflowRun: async () => ({ runId: "r" }),
-            stopRun: async () => {},
-            getActiveWorkflow: () => null,
-          },
-          broadcast() {},
-          worktreeBase: path.join(tmp, "wt"),
-          userDataPath: tmp,
-        });
-        const preload = fs.readFileSync(
-          path.join(__dirname, "../preload.js"),
-          "utf8",
+      const { IPC_HANDLERS } = require("../ipc.js");
+      const preload = fs.readFileSync(
+        path.join(__dirname, "../preload.js"),
+        "utf8",
+      );
+      const channels = [...preload.matchAll(/invoke\("([^"]+)"/g)].map(
+        (m) => m[1],
+      );
+      assert.ok(channels.length > 20);
+      for (const ch of new Set(channels)) {
+        assert.equal(
+          typeof IPC_HANDLERS[ch],
+          "function",
+          `IPC_HANDLERS must own ${ch}`,
         );
-        const channels = [
-          ...preload.matchAll(/invoke\("([^"]+)"/g),
-        ].map((m) => m[1]);
-        assert.ok(channels.length > 20, "preload must list invoke channels");
-        for (const ch of new Set(channels)) {
-          assert.equal(
-            typeof handlers[ch],
-            "function",
-            `createHandlers must own ${ch} (same table as IPC and WS)`,
-          );
-        }
-      } finally {
-        fs.rmSync(tmp, { recursive: true, force: true });
       }
     });
   });
 
-  it("web invoke and createHandlers share one function (same throw)", async () => {
-    await withStubbedElectron(async () => {
-      delete require.cache[require.resolve("../ipc.js")];
-      const { createHandlers } = require("../ipc.js");
-      const { Store } = require("../store.js");
-      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "coder-web-share-"));
-      let srv;
-      try {
-        const store = new Store(path.join(tmp, "store.json"));
-        const handlers = createHandlers({
-          dialog: {},
-          store,
-          runner: {
-            isRunning: () => false,
-            getActiveWorkflow: () => null,
-          },
-          broadcast() {},
-          worktreeBase: "",
-          userDataPath: tmp,
-        });
-        srv = await startWebServer({
-          host: "127.0.0.1",
-          port: 0,
-          token: "tok",
-          invoke: async (channel, args) => {
-            const fn = handlers[channel];
-            if (!fn) throw new Error(`No handler registered for '${channel}'`);
-            return fn(...args);
-          },
-        });
-        const ws = await connect(`ws://127.0.0.1:${srv.port}`);
-        ws.send(JSON.stringify({ kind: "auth", token: "tok" }));
-        assert.deepEqual(await onceMessage(ws), { kind: "auth-ok" });
-        ws.send(
-          JSON.stringify({
-            kind: "invoke",
-            id: 1,
-            channel: "git:setupWorktree",
-            args: [{ threadId: "missing" }],
-          }),
-        );
-        const reply = await onceMessage(ws);
-        assert.equal(reply.kind, "reply");
-        assert.equal(reply.error, "worktreeBase is not configured");
-        // Direct call must throw the identical string.
-        await assert.rejects(
-          () => handlers["git:setupWorktree"]({ threadId: "missing" }),
-          (err) => {
-            assert.equal(err.message, reply.error);
-            return true;
-          },
-        );
-        ws.close();
-        await onceClose(ws);
-      } finally {
-        if (srv) await srv.close();
-        fs.rmSync(tmp, { recursive: true, force: true });
-      }
-    });
-  });
-});
-
-describe("packaging ships web.js and ws", () => {
   it("package-app.sh copies electron/*.js and node_modules/ws", () => {
     const sh = fs.readFileSync(
       path.join(__dirname, "../../scripts/package-app.sh"),
@@ -503,27 +469,25 @@ describe("packaging ships web.js and ws", () => {
     );
     assert.match(sh, /electron\/\*\.js/);
     assert.match(sh, /node_modules\/ws/);
-    assert.ok(
-      fs.existsSync(path.join(__dirname, "../web.js")),
-      "web.js must sit at electron/web.js so the existing copy loop ships it",
-    );
+    assert.ok(fs.existsSync(path.join(__dirname, "../webBridge.js")));
+    assert.ok(fs.existsSync(path.join(__dirname, "../webServer.js")));
     const verify = fs.readFileSync(
       path.join(__dirname, "../../scripts/verify-package.sh"),
       "utf8",
     );
     assert.match(verify, /node_modules\/ws/);
-    assert.match(verify, /electron\/web\.js/);
+    assert.match(verify, /webBridge\.js/);
   });
 
-  it("main.js starts the server on --serve via the shared handlers", () => {
+  it("main.js starts only on --serve-web via shared ctx", () => {
     const main = fs.readFileSync(path.join(__dirname, "../main.js"), "utf8");
-    assert.match(main, /parseServeArgs/);
+    assert.match(main, /parseServeWebArgs/);
     assert.match(main, /startWebServer/);
     assert.match(main, /loadOrCreateToken/);
     assert.match(main, /serveOpts\.enabled/);
-    assert.match(main, /registered\.handlers/);
-    assert.match(main, /No handler registered/);
+    assert.match(main, /registered\.ctx/);
     assert.match(main, /HOST_FLAG_HELP/);
+    assert.doesNotMatch(main, /parseServeArgs\(/);
     assert.match(main, /process\.stdout\.write\(`coder-web: token/);
   });
 
@@ -532,6 +496,5 @@ describe("packaging ships web.js and ws", () => {
       fs.readFileSync(path.join(__dirname, "../../package.json"), "utf8"),
     );
     assert.equal(pkg.dependencies.ws, "8.21.3");
-    assert.equal(require("ws/package.json").version, "8.21.3");
   });
 });

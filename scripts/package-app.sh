@@ -101,15 +101,15 @@ if [[ "$PKG_NAME" != "coder" ]]; then
   exit 1
 fi
 
-# electron/ .js sources only (no tests). web.js lives at this level so this
-# loop ships the Coder Web server; a subdirectory would be silently dropped.
+# electron/ .js sources only (no tests). webBridge.js + webServer.js live at
+# this level so this loop ships them; a subdirectory would be silently dropped.
 mkdir -p "$APP_DIR/electron"
 for f in electron/*.js; do
   cp "$f" "$APP_DIR/electron/"
 done
 
 # Root node_modules is NOT copied into the bundle (only memory-server's is).
-# electron/web.js `require("ws")` therefore needs an explicit copy. ws 8.x is
+# electron/webBridge.js `require("ws")` therefore needs an explicit copy. ws 8.x is
 # pure JS (no native addon, no transitive deps).
 if [[ ! -d node_modules/ws ]]; then
   echo "ERROR: node_modules/ws missing; npm install (ws is a production dep)" >&2

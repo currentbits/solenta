@@ -1,30 +1,27 @@
 "use strict";
 
 /**
- * Coder Web server (Tier 3 / round 51): the SAME CoderApi channel map as
- * preload.js, carried over one HTTP+WebSocket listener.
+ * HTTP static server for Coder Web, plus the --serve-web flag parser.
  *
- * Bind default is 127.0.0.1. --host widens it; there is no TLS in v1.
+ * Binding: 127.0.0.1 by default. --serve-host widens it.
+ * There is no TLS in v1. Opening the bind beyond loopback puts the
+ * token-gated API on the LAN; that is the operator's informed choice.
+ *
+ * Requiring this module creates ZERO listeners. Listeners exist only
+ * after startWebServer() is called (main.js does that solely when
+ * --serve-web is present).
  */
 
 const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
-const { WebSocketServer, WebSocket } = require("ws");
+const { attachWebBridge, WS_PATH } = require("./webBridge.js");
 
-/** Keep in lockstep with preload.js PUSH_CHANNELS and src/shared/wire.ts. */
-const PUSH_CHANNELS = ["threads:changed", "thread:updated"];
-
-const TOKEN_FILENAME = "coder-web-token";
-
+const TOKEN_FILENAME = "web-token";
 const DEFAULT_HOST = "127.0.0.1";
-const DEFAULT_PORT = 8787;
+const DEFAULT_PORT = 4620;
 
-/**
- * --host help text. Printed when the operator widens the bind.
- * No TLS in v1; LAN exposure is an informed choice.
- */
 const HOST_FLAG_HELP =
   "Bind address (default 127.0.0.1). There is no TLS in v1. LAN exposure is the operator's informed choice.";
 
@@ -46,44 +43,47 @@ const MIME = {
 };
 
 /**
- * Parse serve-mode flags from an argv array (process.argv).
- * Unknown flags are ignored so Electron's own switches still work.
- *
  * @param {string[]} argv
  * @returns {{ enabled: boolean, host: string, port: number }}
  */
-function parseServeArgs(argv) {
+function parseServeWebArgs(argv) {
   const args = Array.isArray(argv) ? argv : [];
   let enabled = false;
   let host = DEFAULT_HOST;
   let port = DEFAULT_PORT;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
-    if (a === "--serve") {
+    if (a === "--serve-web") {
       enabled = true;
       continue;
     }
-    if (a === "--host" || (typeof a === "string" && a.startsWith("--host="))) {
-      const val = a === "--host" ? args[++i] : a.slice("--host=".length);
-      if (!val) throw new Error("--host requires an address");
-      host = val;
+    if (typeof a === "string" && a.startsWith("--serve-web=")) {
+      enabled = true;
+      port = parsePort(a.slice("--serve-web=".length));
       continue;
     }
-    if (a === "--port" || (typeof a === "string" && a.startsWith("--port="))) {
-      const val = a === "--port" ? args[++i] : a.slice("--port=".length);
-      const n = Number(val);
-      if (!Number.isInteger(n) || n < 0 || n > 65535) {
-        throw new Error(`Invalid --port: ${val}`);
-      }
-      port = n;
+    if (a === "--serve-host" || (typeof a === "string" && a.startsWith("--serve-host="))) {
+      const val = a === "--serve-host" ? args[++i] : a.slice("--serve-host=".length);
+      if (!val) throw new Error("--serve-host requires an address");
+      host = val;
     }
   }
   return { enabled, host, port };
 }
 
 /**
- * Load the serve token from next to the store, or create one.
- * crypto-random, persisted at `{userDataPath}/coder-web-token`.
+ * @param {string} raw
+ */
+function parsePort(raw) {
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0 || n > 65535) {
+    throw new Error(`Invalid --serve-web port: ${raw}`);
+  }
+  return n;
+}
+
+/**
+ * Load or create `{userDataPath}/web-token` (mode 0600).
  *
  * @param {string} userDataPath
  * @returns {string}
@@ -107,17 +107,6 @@ function loadOrCreateToken(userDataPath) {
     // mode is best-effort on some filesystems
   }
   return token;
-}
-
-/**
- * @param {string} a
- * @param {string} b
- */
-function tokensEqual(a, b) {
-  const ba = Buffer.from(String(a));
-  const bb = Buffer.from(String(b));
-  if (ba.length !== bb.length) return false;
-  return crypto.timingSafeEqual(ba, bb);
 }
 
 /**
@@ -198,127 +187,39 @@ function serveStatic(req, res, staticDir) {
 }
 
 /**
- * @param {import("ws").WebSocket} ws
- * @param {object} obj
- */
-function sendJson(ws, obj) {
-  if (ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify(obj));
-  }
-}
-
-/**
- * Start the HTTP+WS server.
+ * Start HTTP (static dist/) + WS at /ws on the same port.
+ * Does nothing unless the caller invokes this function.
  *
  * @param {object} opts
  * @param {string} [opts.host]
  * @param {number} [opts.port]
  * @param {string} opts.token
- * @param {(channel: string, args: unknown[]) => Promise<unknown>} opts.invoke
+ * @param {object} opts.ctx
+ * @param {object} [opts.handlers]
  * @param {string | null} [opts.staticDir]
  * @param {(msg: string) => void} [opts.log]
- * @returns {Promise<{
- *   host: string,
- *   port: number,
- *   server: import("node:http").Server,
- *   wss: import("ws").WebSocketServer,
- *   broadcast: (channel: string, payload: unknown) => void,
- *   close: () => Promise<void>,
- * }>}
  */
 function startWebServer(opts) {
-  const host = opts.host || DEFAULT_HOST;
-  const port = opts.port == null ? DEFAULT_PORT : opts.port;
-  const token = opts.token;
-  const invoke = opts.invoke;
-  const staticDir = opts.staticDir || null;
-  const log = opts.log || (() => {});
+  const host = (opts && opts.host) || DEFAULT_HOST;
+  const port = opts && opts.port != null ? opts.port : DEFAULT_PORT;
+  const token = opts && opts.token;
+  const ctx = opts && opts.ctx;
+  const staticDir = (opts && opts.staticDir) || null;
+  const log = (opts && opts.log) || (() => {});
 
   if (!token) throw new Error("startWebServer requires a token");
 
-  /** @type {Set<import("ws").WebSocket>} */
-  const authed = new Set();
-
+  // No TLS. Default bind is loopback. --serve-host is an informed LAN choice.
   const server = http.createServer((req, res) => {
     serveStatic(req, res, staticDir);
   });
 
-  const wss = new WebSocketServer({ server });
-
-  wss.on("connection", (ws) => {
-    let sawFirst = false;
-    let isAuthed = false;
-
-    ws.on("message", async (raw) => {
-      let msg;
-      try {
-        msg = JSON.parse(String(raw));
-      } catch {
-        ws.close();
-        return;
-      }
-      if (!sawFirst) {
-        sawFirst = true;
-        if (!msg || msg.kind !== "auth" || typeof msg.token !== "string") {
-          if (msg && msg.kind === "invoke" && msg.id != null) {
-            sendJson(ws, {
-              kind: "reply",
-              id: msg.id,
-              error: "Not authenticated",
-            });
-          }
-          ws.close();
-          return;
-        }
-        if (!tokensEqual(msg.token, token)) {
-          ws.close();
-          return;
-        }
-        isAuthed = true;
-        authed.add(ws);
-        sendJson(ws, { kind: "auth-ok" });
-        return;
-      }
-      if (!isAuthed) {
-        if (msg && msg.kind === "invoke" && msg.id != null) {
-          sendJson(ws, {
-            kind: "reply",
-            id: msg.id,
-            error: "Not authenticated",
-          });
-        }
-        return;
-      }
-      if (!msg || msg.kind !== "invoke") return;
-      const id = msg.id;
-      const channel = msg.channel;
-      const args = Array.isArray(msg.args) ? msg.args : [];
-      try {
-        if (typeof invoke !== "function") {
-          throw new Error(`No handler registered for '${channel}'`);
-        }
-        const result = await invoke(channel, args);
-        sendJson(ws, { kind: "reply", id, result });
-      } catch (err) {
-        const error = err && err.message ? String(err.message) : String(err);
-        sendJson(ws, { kind: "reply", id, error });
-      }
-    });
-
-    ws.on("close", () => {
-      authed.delete(ws);
-    });
+  const bridge = attachWebBridge(server, {
+    token,
+    ctx,
+    handlers: opts.handlers,
+    path: WS_PATH,
   });
-
-  function broadcast(channel, payload) {
-    if (!PUSH_CHANNELS.includes(channel)) return;
-    const frame = JSON.stringify({ kind: "push", channel, payload });
-    for (const client of authed) {
-      if (client.readyState === WebSocket.OPEN) {
-        client.send(frame);
-      }
-    }
-  }
 
   const listening = new Promise((resolve, reject) => {
     const onErr = (err) => reject(err);
@@ -334,16 +235,7 @@ function startWebServer(opts) {
   });
 
   async function close() {
-    for (const client of wss.clients) {
-      try {
-        client.terminate();
-      } catch {
-        // ignore
-      }
-    }
-    await new Promise((resolve) => {
-      wss.close(() => resolve());
-    });
+    await bridge.close();
     await new Promise((resolve, reject) => {
       server.close((err) => (err ? reject(err) : resolve()));
     });
@@ -355,20 +247,19 @@ function startWebServer(opts) {
       host,
       port: addr.port,
       server,
-      wss,
-      broadcast,
+      bridge,
+      broadcast: bridge.broadcast,
       close,
     };
   });
 }
 
 module.exports = {
-  PUSH_CHANNELS,
   TOKEN_FILENAME,
-  HOST_FLAG_HELP,
   DEFAULT_HOST,
   DEFAULT_PORT,
-  parseServeArgs,
+  HOST_FLAG_HELP,
+  parseServeWebArgs,
   loadOrCreateToken,
   startWebServer,
 };

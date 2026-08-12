@@ -15,13 +15,13 @@ const {
 const { createPrStateRefresher } = require("./worktrees.js");
 const { enrichProcessPath } = require("./pathEnv.js");
 const {
-  parseServeArgs,
+  parseServeWebArgs,
   startWebServer,
   loadOrCreateToken,
   HOST_FLAG_HELP,
-} = require("./web.js");
+} = require("./webServer.js");
 
-const serveOpts = parseServeArgs(process.argv);
+const serveOpts = parseServeWebArgs(process.argv);
 
 // GUI launches get a bare launchd PATH; rebuild the user's real PATH before
 // any provider binary resolution (`which`) or agent spawn happens.
@@ -191,13 +191,7 @@ app.whenReady().then(async () => {
       port: serveOpts.port,
       staticDir: fs.existsSync(staticDir) ? staticDir : null,
       token,
-      invoke: async (channel, args) => {
-        const fn = registered.handlers[channel];
-        if (!fn) {
-          throw new Error(`No handler registered for '${channel}'`);
-        }
-        return fn(...(Array.isArray(args) ? args : []));
-      },
+      ctx: registered.ctx,
       log: (msg) => console.warn(msg),
     });
   }
@@ -265,7 +259,7 @@ app.on("before-quit", () => {
 });
 
 app.on("window-all-closed", () => {
-  // --serve keeps the process up after the last window so the HTTP+WS
+  // --serve-web keeps the process up after the last window so the HTTP+WS
   // listener does not die with the desktop chrome.
   if (serveOpts.enabled) return;
   if (process.platform !== "darwin") {
