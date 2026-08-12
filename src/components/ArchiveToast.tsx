@@ -49,6 +49,7 @@ export function ArchiveToast(props: ArchiveToastProps) {
           className={styles.dismiss}
           onClick={onDismiss}
           aria-label="Dismiss"
+          title="Dismiss"
         >
           ×
         </button>
@@ -72,6 +73,7 @@ export function ArchiveToast(props: ArchiveToastProps) {
         className={styles.dismiss}
         onClick={onDismiss}
         aria-label="Dismiss"
+        title="Dismiss"
       >
         ×
       </button>

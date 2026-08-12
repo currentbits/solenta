@@ -920,6 +920,7 @@ export function ThreadView({
               type="button"
               className={styles.menuBtn}
               aria-label="Thread actions"
+              title="Thread actions"
               aria-haspopup="menu"
               aria-expanded={menuOpen}
               disabled={isWorking}
@@ -1027,6 +1028,7 @@ export function ThreadView({
             type="button"
             className={styles.handoffDismiss}
             aria-label="Dismiss handoff banner"
+            title="Dismiss handoff banner"
             onClick={() => setHandoffBannerDismissed(true)}
           >
             ×

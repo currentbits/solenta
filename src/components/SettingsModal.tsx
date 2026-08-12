@@ -154,6 +154,7 @@ export function SettingsModal({
             className={styles.close}
             onClick={handleClose}
             aria-label="Close"
+            title="Close"
           >
             ×
           </button>

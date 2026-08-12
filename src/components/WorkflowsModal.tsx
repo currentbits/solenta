@@ -254,6 +254,7 @@ export function WorkflowsModal({
             className={styles.close}
             onClick={onClose}
             aria-label="Close"
+            title="Close"
           >
             ×
           </button>
@@ -379,6 +380,7 @@ export function WorkflowsModal({
                               type="button"
                               className={styles.iconBtn}
                               aria-label="Move phase up"
+                              title="Move phase up"
                               disabled={saving || index === 0}
                               onClick={() => movePhase(index, -1)}
                             >
@@ -388,6 +390,7 @@ export function WorkflowsModal({
                               type="button"
                               className={styles.iconBtn}
                               aria-label="Move phase down"
+                              title="Move phase down"
                               disabled={
                                 saving || index === draft.phases.length - 1
                               }
@@ -399,6 +402,7 @@ export function WorkflowsModal({
                               type="button"
                               className={`${styles.iconBtn} ${styles.iconBtnDanger}`}
                               aria-label="Remove phase"
+                              title="Remove phase"
                               disabled={saving || draft.phases.length <= 1}
                               onClick={() => removePhase(index)}
                             >
@@ -427,6 +431,7 @@ export function WorkflowsModal({
                                 type="button"
                                 className={styles.iconBtn}
                                 aria-label="Decrease agent count"
+                                title="Decrease agent count"
                                 disabled={saving || phase.agentCount <= 1}
                                 onClick={() =>
                                   updatePhase(index, {
@@ -446,6 +451,7 @@ export function WorkflowsModal({
                                 type="button"
                                 className={styles.iconBtn}
                                 aria-label="Increase agent count"
+                                title="Increase agent count"
                                 disabled={saving || phase.agentCount >= 4}
                                 onClick={() =>
                                   updatePhase(index, {

@@ -646,6 +646,7 @@ export function Composer({
             className={styles.errorDismiss}
             onClick={dismiss}
             aria-label="Dismiss error"
+            title="Dismiss error"
           >
             ×
           </button>
@@ -700,6 +701,7 @@ export function Composer({
                 aria-expanded={modelOpen}
                 aria-controls={modelOpen ? modelListId : undefined}
                 aria-label={`Model: ${triggerLabel}`}
+                title={`Model: ${triggerLabel}`}
                 onClick={() => {
                   if (disabled) return;
                   if (modelOpen) {
@@ -734,6 +736,7 @@ export function Composer({
                         type="button"
                         className={styles.modelBackHeader}
                         aria-label="Back to providers"
+                        title="Back to providers"
                         onClick={leaveProvider}
                       >
                         <span aria-hidden="true">‹ </span>
@@ -964,6 +967,7 @@ export function Composer({
                                 style={{ "--i": String(i) } as CSSProperties}
                                 data-filled={seg.filled ? "true" : undefined}
                                 aria-label={`Reasoning ${effortDisplayLabel(seg.level)}`}
+                                title={`Reasoning ${effortDisplayLabel(seg.level)}`}
                                 aria-pressed={
                                   detail.providerId === provider &&
                                   reasoningEffort === seg.level
@@ -1043,6 +1047,7 @@ export function Composer({
                 type="button"
                 className={`${styles.pill} ${styles.pillAccent} ${styles.buildCaret}`}
                 aria-label="Choose workflow template"
+                title="Choose workflow template"
                 aria-haspopup="menu"
                 aria-expanded={buildMenuOpen}
                 disabled={disabled || sending}

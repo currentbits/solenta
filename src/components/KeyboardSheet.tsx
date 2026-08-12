@@ -51,6 +51,7 @@ export function KeyboardSheet({ open, onClose }: KeyboardSheetProps) {
             className={styles.close}
             onClick={onClose}
             aria-label="Close"
+            title="Close"
           >
             ×
           </button>

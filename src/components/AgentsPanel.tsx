@@ -341,6 +341,7 @@ function WorktreeCard({
             className={styles.cardErrorDismiss}
             onClick={onDismissError}
             aria-label="Dismiss error"
+            title="Dismiss error"
           >
             ×
           </button>
@@ -466,6 +467,7 @@ function CheckpointsCard({
             className={styles.cardErrorDismiss}
             onClick={onDismissError}
             aria-label="Dismiss error"
+            title="Dismiss error"
           >
             ×
           </button>
@@ -645,6 +647,7 @@ function PrCard({
             className={styles.cardErrorDismiss}
             onClick={onDismissError}
             aria-label="Dismiss error"
+            title="Dismiss error"
           >
             ×
           </button>

@@ -1753,6 +1753,7 @@ export function Sidebar({
               className={styles.errorDismiss}
               onClick={onDismissProjectError}
               aria-label="Dismiss error"
+              title="Dismiss error"
             >
               ×
             </button>
