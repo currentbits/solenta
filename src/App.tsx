@@ -167,6 +167,9 @@ export default function App() {
         onSetSnoozed={(threadId, until) => {
           void setSnoozed(threadId, until);
         }}
+        onSetArchived={(threadId, archived) => {
+          void setArchived(archived, threadId);
+        }}
       />
       <ThreadView
         detail={detail}
