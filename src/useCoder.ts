@@ -15,7 +15,7 @@ import type {
   ThreadInfo,
   WorkflowTemplateInfo,
 } from "./shared/ipc";
-import { devCoder } from "./devCoder";
+import { resolveCoderApi } from "./coderApi";
 import { nextVisibleThreadId } from "./threadSelection";
 
 const STATUS_POLL_MS = 60_000;
@@ -25,8 +25,7 @@ export type WorkflowSaveInput = Omit<WorkflowTemplateInfo, "id" | "builtin"> & {
 };
 
 function resolveApi(): CoderApi {
-  const w = window as unknown as { coder?: CoderApi };
-  return w.coder ?? devCoder;
+  return resolveCoderApi();
 }
 
 function errorMessage(err: unknown): string {
