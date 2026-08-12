@@ -2,11 +2,17 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
-const { execFileSync } = require("node:child_process");
+const { execFileSync, execFile } = require("node:child_process");
 
 const PATCH_TRUNCATE = 100_000;
 
 const GIT_MAX_BUFFER = 32 * 1024 * 1024;
+
+/** Per-thread background PR refresh timeout. Hard kill; never block the main process. */
+const PR_REFRESH_TIMEOUT_MS = 8_000;
+
+/** MERGED/CLOSED are terminal — never re-query. */
+const TERMINAL_PR_STATES = new Set(["MERGED", "CLOSED"]);
 
 /**
  * @param {string} cwd
@@ -671,7 +677,46 @@ function tailErr(errText, fallback) {
 }
 
 /**
+ * Classify a failed execFileSync/execFile error into the shared ghTry shape.
+ * @param {any} err
+ * @returns {{ ok: false, enoent: boolean, stdout: string, stderr: string, combined: string, error: any, timedOut: boolean }}
+ */
+function ghFailFromError(err) {
+  if (err && err.code === "ENOENT") {
+    return {
+      ok: false,
+      enoent: true,
+      stdout: "",
+      stderr: "",
+      combined: "",
+      error: err,
+      timedOut: false,
+    };
+  }
+  const stdout = err && err.stdout != null ? String(err.stdout) : "";
+  const stderr = err && err.stderr != null ? String(err.stderr) : "";
+  const msg = err && err.message ? String(err.message) : String(err);
+  // Node marks timeout kills with err.killed + ETIMEDOUT / "timed out" message.
+  const timedOut =
+    (err && err.code === "ETIMEDOUT") ||
+    (err && err.killed && /ETIMEDOUT|timed out/i.test(msg)) ||
+    (err && err.killed === true && err.signal != null);
+  const combined = [stdout, stderr, msg].filter(Boolean).join("\n");
+  return {
+    ok: false,
+    enoent: false,
+    stdout,
+    stderr,
+    combined,
+    error: err,
+    timedOut: Boolean(timedOut),
+  };
+}
+
+/**
  * Run gh without throwing. Mirrors gitTry: timeout, no prompt, enoent flag.
+ * SYNC — only for interactive createPr/prStatus paths that already run off
+ * the UI thread via ipcMain.handle. Background refresh MUST use ghTryAsync.
  * @param {string} cwd
  * @param {string[]} args
  * @param {{ env?: NodeJS.ProcessEnv, timeout?: number }} [opts]
@@ -699,34 +744,51 @@ function ghTry(cwd, args, opts) {
     const stdout = out.trim();
     return { ok: true, stdout, stderr: "", combined: stdout };
   } catch (err) {
-    if (err && err.code === "ENOENT") {
-      return {
-        ok: false,
-        enoent: true,
-        stdout: "",
-        stderr: "",
-        combined: "",
-        error: err,
-        timedOut: false,
-      };
-    }
-    const stdout = err && err.stdout != null ? String(err.stdout) : "";
-    const stderr = err && err.stderr != null ? String(err.stderr) : "";
-    const msg = err && err.message ? String(err.message) : String(err);
-    const timedOut =
-      (err && err.code === "ETIMEDOUT") ||
-      (err && err.killed && /ETIMEDOUT|timed out/i.test(msg));
-    const combined = [stdout, stderr, msg].filter(Boolean).join("\n");
-    return {
-      ok: false,
-      enoent: false,
-      stdout,
-      stderr,
-      combined,
-      error: err,
-      timedOut: Boolean(timedOut),
-    };
+    return ghFailFromError(err);
   }
+}
+
+/**
+ * Async gh. NEVER blocks the Electron main process. Uses execFile (not Sync)
+ * with a hard timeout that kills the child. Used by the PR-state refresher.
+ * @param {string} cwd
+ * @param {string[]} args
+ * @param {{ env?: NodeJS.ProcessEnv, timeout?: number }} [opts]
+ * @returns {Promise<{ ok: boolean, enoent?: boolean, stdout: string, stderr: string, combined: string, timedOut?: boolean, error?: any }>}
+ */
+function ghTryAsync(cwd, args, opts) {
+  const timeout =
+    opts && opts.timeout != null ? opts.timeout : PR_REFRESH_TIMEOUT_MS;
+  const env = {
+    ...process.env,
+    ...(opts && opts.env ? opts.env : {}),
+    GH_PROMPT_DISABLED: "1",
+    GIT_TERMINAL_PROMPT: "0",
+  };
+  return new Promise((resolve) => {
+    execFile(
+      ghBin(),
+      args,
+      {
+        cwd,
+        encoding: "utf8",
+        maxBuffer: GIT_MAX_BUFFER,
+        timeout,
+        env,
+      },
+      (err, stdout, stderr) => {
+        if (!err) {
+          const out = String(stdout || "").trim();
+          resolve({ ok: true, stdout: out, stderr: "", combined: out });
+          return;
+        }
+        // Attach stdout/stderr from the callback when the error object lacks them.
+        if (err && err.stdout == null && stdout != null) err.stdout = stdout;
+        if (err && err.stderr == null && stderr != null) err.stderr = stderr;
+        resolve(ghFailFromError(err));
+      },
+    );
+  });
 }
 
 /**
@@ -863,7 +925,8 @@ function prStatus(opts) {
   }
 
   const info = parsePrJson(viewed.stdout, branch, false);
-  // Persist last-known PR state on the thread (no polling; rides this call).
+  // Persist last-known PR state (interactive path). Background freshness is
+  // refreshPrStates — async, serialized, failure-silent, on a latch.
   store.updateThread(threadId, {
     prNumber: info.number,
     prUrl: info.url,
@@ -871,6 +934,232 @@ function prStatus(opts) {
   });
   store.save();
   return info;
+}
+
+/**
+ * True when a thread should be considered for background PR-state refresh:
+ * has a prNumber, is not archived, and prState is not already terminal.
+ * @param {object} t
+ * @returns {boolean}
+ */
+function isPrRefreshCandidate(t) {
+  if (!t || typeof t !== "object") return false;
+  if (t.archived) return false;
+  if (t.prNumber == null || !Number.isFinite(Number(t.prNumber))) return false;
+  const raw =
+    t.prState == null || t.prState === ""
+      ? null
+      : String(t.prState).toUpperCase();
+  if (raw && TERMINAL_PR_STATES.has(raw)) return false;
+  return true;
+}
+
+/**
+ * Lazy background PR-state refresh for non-archived threads with a prNumber
+ * whose prState is not yet terminal (MERGED/CLOSED).
+ *
+ * Structural guarantees (docs/ISSUES.md):
+ * - gh is ALWAYS async (execFile, never execFileSync) so the main process
+ *   cannot freeze the way prStatus once did.
+ * - Strictly serialized: one gh at a time (for-await), never parallel.
+ * - Hard per-call timeout (~8s) with kill.
+ * - Non-GitHub origin, missing gh, network, timeout: skip silently — never
+ *   surface an error, never persist a failure.
+ * - ONE store.save() and ONE threads:changed push at the end iff anything
+ *   actually changed.
+ *
+ * @param {import('./store').Store} store
+ * @param {object} [opts]
+ * @param {(channel: string, payload: unknown) => void} [opts.broadcast]
+ * @param {number} [opts.timeoutMs] default PR_REFRESH_TIMEOUT_MS
+ * @param {(cwd: string, args: string[], opts?: object) => Promise<object>} [opts.ghTryAsyncFn] test inject
+ * @returns {Promise<{ examined: number, changed: number, spawned: number }>}
+ */
+async function refreshPrStates(store, opts) {
+  const broadcast = opts && opts.broadcast;
+  const timeoutMs =
+    opts && opts.timeoutMs != null ? opts.timeoutMs : PR_REFRESH_TIMEOUT_MS;
+  const runGh =
+    opts && typeof opts.ghTryAsyncFn === "function"
+      ? opts.ghTryAsyncFn
+      : ghTryAsync;
+
+  const candidates = store.getThreads().filter(isPrRefreshCandidate);
+  if (candidates.length === 0) {
+    return { examined: 0, changed: 0, spawned: 0 };
+  }
+
+  let changed = 0;
+  let spawned = 0;
+
+  // Strict serialization: await each call before starting the next.
+  for (const snapshot of candidates) {
+    const threadId = snapshot.id;
+    try {
+      let cwd;
+      let originUrl;
+      try {
+        const resolved = resolveThreadGit(store, threadId);
+        cwd = resolved.cwd;
+        originUrl = resolved.originUrl;
+      } catch {
+        // Missing project/cwd/branch: not an event. Skip.
+        continue;
+      }
+      if (!isGitHubRemote(originUrl)) {
+        // Non-GitHub origin must never paint an error (ISSUES.md). Skip.
+        continue;
+      }
+
+      const prNumber = Number(snapshot.prNumber);
+      spawned += 1;
+      const viewed = await runGh(
+        cwd,
+        ["pr", "view", String(prNumber), "--json", "number,url,state"],
+        { timeout: timeoutMs },
+      );
+      if (!viewed || !viewed.ok) {
+        // gh missing / network / timeout / no-PR: skip silently.
+        continue;
+      }
+
+      let info;
+      try {
+        info = parsePrJson(viewed.stdout, "", false);
+      } catch {
+        continue;
+      }
+
+      const current = store.getThread(threadId);
+      if (!current) continue;
+
+      const nextState = info.state;
+      const nextUrl = info.url;
+      const nextNumber = info.number;
+      if (
+        current.prState === nextState &&
+        current.prUrl === nextUrl &&
+        current.prNumber === nextNumber
+      ) {
+        continue;
+      }
+
+      // Do not touch updatedAt: a background PR poll is not user activity.
+      store.updateThread(threadId, {
+        prNumber: nextNumber,
+        prUrl: nextUrl,
+        prState: nextState,
+      });
+      changed += 1;
+    } catch {
+      // A refresh failure is not an event. Never throw out of the loop.
+      continue;
+    }
+  }
+
+  if (changed > 0) {
+    store.save();
+    if (typeof broadcast === "function") {
+      const { listThreads } = require("./services.js");
+      broadcast("threads:changed", listThreads(store));
+    }
+  }
+
+  return { examined: candidates.length, changed, spawned };
+}
+
+/**
+ * Schedule + latch for background PR refresh.
+ * - Boolean latch: a tick during a running pass is a no-op (not queued).
+ * - Startup pass after startupDelayMs; then every intervalMs.
+ * - Timers are unref'd so they do not keep a short-lived process alive.
+ *
+ * @param {object} opts
+ * @param {import('./store').Store} opts.store
+ * @param {(channel: string, payload: unknown) => void} [opts.broadcast]
+ * @param {number} [opts.intervalMs] default 5 min
+ * @param {number} [opts.startupDelayMs] default 30s
+ * @param {typeof setTimeout} [opts.setTimeoutFn]
+ * @param {typeof setInterval} [opts.setIntervalFn]
+ * @param {typeof clearTimeout} [opts.clearTimeoutFn]
+ * @param {typeof clearInterval} [opts.clearIntervalFn]
+ * @param {typeof refreshPrStates} [opts.refreshFn]
+ * @param {object} [opts.refreshOpts] forwarded into refreshFn (timeoutMs, ghTryAsyncFn)
+ */
+function createPrStateRefresher(opts) {
+  const store = opts.store;
+  const broadcast = opts.broadcast;
+  const intervalMs =
+    opts.intervalMs != null ? opts.intervalMs : 5 * 60 * 1000;
+  const startupDelayMs =
+    opts.startupDelayMs != null ? opts.startupDelayMs : 30_000;
+  const setTimeoutFn = opts.setTimeoutFn || setTimeout;
+  const setIntervalFn = opts.setIntervalFn || setInterval;
+  const clearTimeoutFn = opts.clearTimeoutFn || clearTimeout;
+  const clearIntervalFn = opts.clearIntervalFn || clearInterval;
+  const refreshFn = opts.refreshFn || refreshPrStates;
+  const refreshOpts = opts.refreshOpts || {};
+
+  let running = false;
+  /** @type {ReturnType<typeof setTimeout> | null} */
+  let startupTimer = null;
+  /** @type {ReturnType<typeof setInterval> | null} */
+  let intervalTimer = null;
+
+  /**
+   * @returns {Promise<{ ran: boolean, result?: { examined: number, changed: number, spawned: number } | null }>}
+   */
+  async function trigger() {
+    if (running) return { ran: false };
+    running = true;
+    try {
+      const result = await refreshFn(store, {
+        broadcast,
+        ...refreshOpts,
+      });
+      return { ran: true, result };
+    } catch {
+      // refreshPrStates is failure-silent; this is belt-and-suspenders.
+      return { ran: true, result: null };
+    } finally {
+      running = false;
+    }
+  }
+
+  function start() {
+    if (startupTimer != null || intervalTimer != null) return;
+    startupTimer = setTimeoutFn(() => {
+      startupTimer = null;
+      void trigger();
+    }, startupDelayMs);
+    if (startupTimer && typeof startupTimer.unref === "function") {
+      startupTimer.unref();
+    }
+    intervalTimer = setIntervalFn(() => {
+      void trigger();
+    }, intervalMs);
+    if (intervalTimer && typeof intervalTimer.unref === "function") {
+      intervalTimer.unref();
+    }
+  }
+
+  function stop() {
+    if (startupTimer != null) {
+      clearTimeoutFn(startupTimer);
+      startupTimer = null;
+    }
+    if (intervalTimer != null) {
+      clearIntervalFn(intervalTimer);
+      intervalTimer = null;
+    }
+  }
+
+  return {
+    trigger,
+    start,
+    stop,
+    isRunning: () => running,
+  };
 }
 
 /**
@@ -1071,7 +1360,11 @@ module.exports = {
   push,
   createPr,
   prStatus,
+  refreshPrStates,
+  createPrStateRefresher,
+  isPrRefreshCandidate,
   isGitHubRemote,
   slugify,
   PATCH_TRUNCATE,
+  PR_REFRESH_TIMEOUT_MS,
 };

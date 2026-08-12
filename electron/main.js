@@ -12,6 +12,7 @@ const {
   createMemorySupervisor,
   getMemoryStatus,
 } = require("./memory-sup.js");
+const { createPrStateRefresher } = require("./worktrees.js");
 
 const isDev = !app.isPackaged && !process.env.CODER_PROD;
 
@@ -20,6 +21,9 @@ let memorySupervisor = null;
 
 /** @type {ReturnType<typeof createRunner> | null} */
 let runner = null;
+
+/** @type {ReturnType<typeof createPrStateRefresher> | null} */
+let prStateRefresher = null;
 
 /**
  * Ensure @coder/core is built; throw a helpful error if missing.
@@ -155,6 +159,18 @@ app.whenReady().then(async () => {
     userDataPath: userData,
   });
 
+  // Round 47: lazy PR-state freshness. Async/serialized/latched so a slow gh
+  // cannot freeze the main process (ISSUES.md prStatus hang) and non-GitHub
+  // origins stay silent. Startup pass ~30s after boot; then every 5 min.
+  // Zero qualifying threads → refreshPrStates spawns nothing.
+  prStateRefresher = createPrStateRefresher({
+    store,
+    broadcast,
+    intervalMs: 5 * 60 * 1000,
+    startupDelayMs: 30_000,
+  });
+  prStateRefresher.start();
+
   createWindow();
 
   app.on("activate", () => {
@@ -178,6 +194,14 @@ app.on("before-quit", () => {
     } catch {
       // ignore
     }
+  }
+  if (prStateRefresher) {
+    try {
+      prStateRefresher.stop();
+    } catch {
+      // ignore
+    }
+    prStateRefresher = null;
   }
   // Terminate only a memory-server child we spawned (adopted servers stay up).
   if (memorySupervisor) {
