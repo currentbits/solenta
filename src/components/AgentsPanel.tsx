@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
   AgentStatus,
+  CheckpointInfo,
   MemoryEntryInfo,
   PhaseView,
   PrInfo,
@@ -12,6 +13,7 @@ import type {
 } from "../shared/ipc";
 import {
   formatCostUsd,
+  formatRelativeAge,
   formatTokenSum,
   permissionModeLabel,
   providerDisplayName,
@@ -42,6 +44,9 @@ interface AgentsPanelProps {
     draft?: boolean;
   }) => Promise<PrInfo>;
   prStatus: () => Promise<PrInfo | null>;
+  /** Worktree checkpoints (newest-first). */
+  listCheckpoints: (threadId: string) => Promise<CheckpointInfo[]>;
+  restoreCheckpoint: (threadId: string, sha: string) => Promise<void>;
   searchMemory: (input: {
     query: string;
     project?: string;
@@ -352,6 +357,105 @@ function ChangesCard({
   );
 }
 
+const RESTORE_ACTIVE_TITLE = "Cannot restore while a run is active";
+
+function shortSha(sha: string): string {
+  return sha.length > 7 ? sha.slice(0, 7) : sha;
+}
+
+/**
+ * Round 50: worktree turn checkpoints. Hidden with no worktree; empty copy
+ * when a worktree exists but list is empty. Restore is confirm-gated.
+ */
+function CheckpointsCard({
+  thread,
+  checkpoints,
+  loading,
+  restorePending,
+  cardError,
+  isWorking,
+  onRestoreRequest,
+  onDismissError,
+  now,
+}: {
+  thread: ThreadInfo | null;
+  checkpoints: CheckpointInfo[];
+  loading: boolean;
+  restorePending: boolean;
+  cardError: string | null;
+  isWorking: boolean;
+  onRestoreRequest: (cp: CheckpointInfo) => void;
+  onDismissError: () => void;
+  now: number;
+}) {
+  const hasWorktree = Boolean(thread?.worktreePath);
+  if (!thread || !hasWorktree) return null;
+
+  return (
+    <section className={styles.gitCard} data-checkpoints="">
+      <div className={styles.gitCardLabel}>Checkpoints</div>
+      {loading && checkpoints.length === 0 ? (
+        <p className={styles.gitHint}>Loading…</p>
+      ) : checkpoints.length === 0 ? (
+        <p className={styles.gitHint} data-checkpoints-empty="">
+          No checkpoints yet
+        </p>
+      ) : (
+        <ul className={styles.checkpointList} data-checkpoints-list="">
+          {checkpoints.map((cp) => {
+            const short = shortSha(cp.sha);
+            const restoreDisabled = isWorking || restorePending;
+            return (
+              <li
+                key={cp.sha}
+                className={styles.checkpointRow}
+                data-checkpoint={cp.sha}
+                data-checkpoint-turn={cp.turn}
+              >
+                <div className={styles.checkpointMeta}>
+                  <span className={styles.checkpointTurn}>Turn {cp.turn}</span>
+                  <span className={styles.checkpointSha} title={cp.sha}>
+                    {short}
+                  </span>
+                  <span className={styles.checkpointAge}>
+                    {formatRelativeAge(cp.at, now)}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  className={styles.gitBtn}
+                  data-checkpoint-restore={cp.sha}
+                  disabled={restoreDisabled}
+                  title={isWorking ? RESTORE_ACTIVE_TITLE : `Restore turn ${cp.turn}`}
+                  onClick={() => {
+                    if (restoreDisabled) return;
+                    onRestoreRequest(cp);
+                  }}
+                >
+                  Restore
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {cardError && (
+        <div className={styles.cardError} role="alert" data-checkpoint-error="">
+          <span className={styles.cardErrorText}>{cardError}</span>
+          <button
+            type="button"
+            className={styles.cardErrorDismiss}
+            onClick={onDismissError}
+            aria-label="Dismiss error"
+          >
+            ×
+          </button>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function PrCard({
   thread,
   busy,
@@ -541,6 +645,8 @@ export function GitTab({
   onPush,
   createPr,
   prStatus,
+  listCheckpoints,
+  restoreCheckpoint,
 }: {
   thread: ThreadInfo | null;
   project: ProjectInfo | null;
@@ -555,6 +661,8 @@ export function GitTab({
     draft?: boolean;
   }) => Promise<PrInfo>;
   prStatus: () => Promise<PrInfo | null>;
+  listCheckpoints: (threadId: string) => Promise<CheckpointInfo[]>;
+  restoreCheckpoint: (threadId: string, sha: string) => Promise<void>;
 }) {
   const [gitAction, setGitAction] = useState<GitAction>(null);
   const [dirtyMessage, setDirtyMessage] = useState<string | null>(null);
@@ -565,6 +673,14 @@ export function GitTab({
   const [draft, setDraft] = useState(false);
   /** undefined until first fetch; null = none; PrInfo = known. */
   const [livePr, setLivePr] = useState<PrInfo | null | undefined>(undefined);
+  const [checkpoints, setCheckpoints] = useState<CheckpointInfo[]>([]);
+  const [checkpointsLoading, setCheckpointsLoading] = useState(false);
+  const [checkpointError, setCheckpointError] = useState<string | null>(null);
+  const [restoreConfirm, setRestoreConfirm] = useState<CheckpointInfo | null>(
+    null,
+  );
+  const [restorePending, setRestorePending] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
 
   const isWorking = thread?.status === "working";
   const busy = isWorking || gitAction != null;
@@ -580,8 +696,45 @@ export function GitTab({
     setBodyDraft("");
     setDraft(false);
     setLivePr(undefined);
+    setCheckpoints([]);
+    setCheckpointError(null);
+    setRestoreConfirm(null);
+    setRestorePending(false);
     // Only thread id: a title rename must not wipe an in-progress form.
   }, [thread?.id]);
+
+  // Relative ages tick (same 60s cadence as the sidebar).
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 60_000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const refreshCheckpoints = useCallback(async () => {
+    if (!thread?.id || !thread.worktreePath) {
+      setCheckpoints([]);
+      return;
+    }
+    setCheckpointsLoading(true);
+    try {
+      const list = await listCheckpoints(thread.id);
+      setCheckpoints(list);
+      setCheckpointError(null);
+    } catch (err) {
+      const msg =
+        err instanceof Error && err.message
+          ? err.message
+          : "Failed to load checkpoints";
+      setCheckpointError(msg);
+    } finally {
+      setCheckpointsLoading(false);
+    }
+  }, [thread?.id, thread?.worktreePath, listCheckpoints]);
+
+  // Fetch on Git tab mount / thread change / after a run settles (status).
+  // GitTab only mounts while the Git tab is selected, so open = mount.
+  useEffect(() => {
+    void refreshCheckpoints();
+  }, [refreshCheckpoints, thread?.status]);
 
   // Refresh live PR status, but ONLY when this thread already has a PR.
   //
@@ -666,6 +819,29 @@ export function GitTab({
     return provider;
   })();
 
+  const handleRestoreConfirm = async () => {
+    if (!thread || !restoreConfirm || restorePending || isWorking) return;
+    const cp = restoreConfirm;
+    setRestorePending(true);
+    setCheckpointError(null);
+    try {
+      await restoreCheckpoint(thread.id, cp.sha);
+      setRestoreConfirm(null);
+      await refreshCheckpoints();
+      // Refresh the center Changes surface (same open path bumps nonce).
+      onViewChanges();
+    } catch (err) {
+      const msg =
+        err instanceof Error && err.message
+          ? err.message
+          : "Restore failed";
+      setCheckpointError(msg);
+      setRestoreConfirm(null);
+    } finally {
+      setRestorePending(false);
+    }
+  };
+
   return (
     <>
       <div className={styles.scroll}>
@@ -689,6 +865,21 @@ export function GitTab({
         <ChangesCard
           hasThread={Boolean(thread)}
           onViewChanges={onViewChanges}
+        />
+        <CheckpointsCard
+          thread={thread}
+          checkpoints={checkpoints}
+          loading={checkpointsLoading}
+          restorePending={restorePending}
+          cardError={checkpointError}
+          isWorking={isWorking}
+          onRestoreRequest={(cp) => {
+            if (isWorking || restorePending) return;
+            setCheckpointError(null);
+            setRestoreConfirm(cp);
+          }}
+          onDismissError={() => setCheckpointError(null)}
+          now={now}
         />
         <PrCard
           thread={thread}
@@ -723,6 +914,62 @@ export function GitTab({
       <footer className={styles.gitStatus} title={statusLine}>
         {statusLine}
       </footer>
+      {restoreConfirm && thread && (
+        <div
+          className={styles.confirmOverlay}
+          role="presentation"
+          onClick={() => {
+            if (restorePending) return;
+            setRestoreConfirm(null);
+          }}
+        >
+          <div
+            className={styles.confirmDialog}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="restore-checkpoint-title"
+            data-restore-confirm={restoreConfirm.sha}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2
+              id="restore-checkpoint-title"
+              className={styles.confirmTitle}
+            >
+              Restore turn {restoreConfirm.turn} ({shortSha(restoreConfirm.sha)}
+              )?
+            </h2>
+            <p className={styles.confirmBody}>
+              This resets the worktree to this checkpoint. Uncommitted changes
+              and later checkpoints&apos; work will be lost. The main repository
+              is not touched.
+            </p>
+            <div className={styles.confirmActions}>
+              <button
+                type="button"
+                className={styles.confirmDanger}
+                data-restore-confirm-submit=""
+                disabled={restorePending || isWorking}
+                aria-busy={restorePending || undefined}
+                onClick={() => void handleRestoreConfirm()}
+              >
+                {restorePending ? "Restoring…" : "Restore checkpoint"}
+              </button>
+              <button
+                type="button"
+                className={styles.confirmCancel}
+                data-restore-confirm-cancel=""
+                disabled={restorePending}
+                onClick={() => {
+                  if (restorePending) return;
+                  setRestoreConfirm(null);
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
@@ -931,6 +1178,8 @@ export function AgentsPanel({
   onPush,
   createPr,
   prStatus,
+  listCheckpoints,
+  restoreCheckpoint,
   searchMemory,
   recentMemory,
   getMemory,
@@ -987,6 +1236,8 @@ export function AgentsPanel({
           onPush={onPush}
           createPr={createPr}
           prStatus={prStatus}
+          listCheckpoints={listCheckpoints}
+          restoreCheckpoint={restoreCheckpoint}
         />
       ) : (
         <MemoryTab
