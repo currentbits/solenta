@@ -1,5 +1,5 @@
 /**
- * Wire protocol for Coder Web (Tier 3): the SAME CoderApi channel map that
+ * Wire protocol for Solenta Web (Tier 3): the SAME CoderApi channel map that
  * preload.js exposes over Electron IPC, carried over one WebSocket.
  *
  * Design rules (the contract for rounds 51+):

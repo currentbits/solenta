@@ -163,7 +163,7 @@ app.whenReady().then(async () => {
   try {
     const pkg = require("../package.json");
     console.warn(
-      `coder: ${pkg.version || "?"} ${pkg.buildSha ? `build ${pkg.buildSha} (${pkg.buildTime})` : "(dev tree)"}`,
+      `solenta: ${pkg.version || "?"} ${pkg.buildSha ? `build ${pkg.buildSha} (${pkg.buildTime})` : "(dev tree)"}`,
     );
   } catch {
     // non-fatal
@@ -185,6 +185,21 @@ app.whenReady().then(async () => {
   const core = await import(pathToFileURL(coreIndex).href);
 
   const userData = app.getPath("userData");
+  // One-time rename Coder -> Solenta: Electron derives the userData directory
+  // from the package name, so adopt the legacy directory whole to keep
+  // existing installs' store, worktrees, and memory db.
+  try {
+    const legacyUserData = path.join(app.getPath("appData"), "coder");
+    if (!fs.existsSync(userData) && fs.existsSync(legacyUserData)) {
+      fs.renameSync(legacyUserData, userData);
+      console.warn(`solenta: migrated userData from ${legacyUserData}`);
+    }
+  } catch (err) {
+    console.warn(
+      "solenta: legacy userData migration failed; starting fresh:",
+      err && err.message ? err.message : err,
+    );
+  }
   // App root: packaged app path, or repo root in dev (parent of electron/).
   const appPath = app.isPackaged
     ? app.getAppPath()
@@ -244,9 +259,9 @@ app.whenReady().then(async () => {
   if (serveOpts.enabled) {
     const token = loadOrCreateToken(userData);
     // Contract: print the token to stdout when serve mode starts.
-    process.stdout.write(`coder-web: token ${token}\n`);
+    process.stdout.write(`solenta-web: token ${token}\n`);
     if (serveOpts.host !== "127.0.0.1") {
-      process.stdout.write(`coder-web: ${HOST_FLAG_HELP}\n`);
+      process.stdout.write(`solenta-web: ${HOST_FLAG_HELP}\n`);
     }
     const staticDir = path.join(__dirname, "../dist");
     webServer = await startWebServer({

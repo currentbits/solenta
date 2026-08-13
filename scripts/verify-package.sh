@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# verify-package.sh — smoke-check a packaged out/Coder.app.
+# verify-package.sh — smoke-check a packaged out/Solenta.app.
 # Invoked by package-app.sh (skip with --no-verify).
 #
 # Does NOT run --version: with Resources/app present and the binary renamed,
@@ -10,9 +10,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-APP="out/Coder.app"
-# Binary is renamed Electron -> Coder during packaging (app.isPackaged).
-BIN="$APP/Contents/MacOS/Coder"
+APP="out/Solenta.app"
+# Binary is renamed Electron -> Solenta during packaging (app.isPackaged).
+BIN="$APP/Contents/MacOS/Solenta"
 if [[ ! -f "$BIN" && -f "$APP/Contents/MacOS/Electron" ]]; then
   BIN="$APP/Contents/MacOS/Electron"
 fi
@@ -26,7 +26,7 @@ if [[ ! -x "$BIN" ]]; then
   fi
 fi
 
-# Coder Web (round 51): webBridge.js require("ws") must resolve in the
+# Solenta Web (round 51): webBridge.js require("ws") must resolve in the
 # packaged tree. Root node_modules is not shipped except this explicit copy.
 APP_RES="$APP/Contents/Resources/app"
 if [[ ! -f "$APP_RES/electron/webBridge.js" || ! -f "$APP_RES/electron/webServer.js" ]]; then
@@ -39,7 +39,7 @@ if [[ ! -d "$APP_RES/node_modules/ws" || ! -f "$APP_RES/node_modules/ws/package.
 fi
 
 # Install cleanup before any probe so the temp dir cannot leak.
-TMP_USERDATA="$(mktemp -d "${TMPDIR:-/tmp}/coder-pkg-verify.XXXXXX")"
+TMP_USERDATA="$(mktemp -d "${TMPDIR:-/tmp}/solenta-pkg-verify.XXXXXX")"
 ELECTRON_PID=""
 cleanup() {
   if [[ -n "${ELECTRON_PID}" ]] && kill -0 "$ELECTRON_PID" 2>/dev/null; then

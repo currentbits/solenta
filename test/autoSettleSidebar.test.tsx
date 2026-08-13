@@ -67,7 +67,7 @@ function Host({ days }: { days: number | null | undefined }) {
   const [threads] = useState([noise(), quietThread()]);
   return (
     <Sidebar
-      appName="Coder"
+      appName="Solenta"
       searchPlaceholder="Search"
       projectsHeader="All projects"
       projects={[p1]}

@@ -1,4 +1,4 @@
-# Coder
+# Solenta
 
 Local-first desktop control surface for coding agents (Claude Code, Codex, Kimi,
 Grok, OpenCode). Electron owns CLIs, worktrees, spend, and a shared memory

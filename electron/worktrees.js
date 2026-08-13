@@ -2252,9 +2252,9 @@ async function maybeCreateCheckpoint(store, threadId) {
 
     const commit = await gitTryAsync(cwd, [
       "-c",
-      "user.email=coder@local",
+      "user.email=solenta@local",
       "-c",
-      "user.name=Coder",
+      "user.name=Solenta",
       "commit",
       "-m",
       message,

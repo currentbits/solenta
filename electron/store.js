@@ -469,7 +469,7 @@ function recoverInterruptedRuns(data) {
 }
 
 /**
- * JSON persistence for Coder main-process state.
+ * JSON persistence for Solenta main-process state.
  * Constructor takes a file path; load on start; tolerate missing/corrupt.
  * Atomic-ish save: write tmp then rename.
  */

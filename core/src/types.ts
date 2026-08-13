@@ -1,4 +1,4 @@
-/** Domain model for Coder: projects, threads, messages, workflows, agents. */
+/** Domain model for Solenta: projects, threads, messages, workflows, agents. */
 
 export interface Project {
   id: string;

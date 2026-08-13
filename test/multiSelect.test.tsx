@@ -94,7 +94,7 @@ function Host({
   return (
     <div data-host="">
       <Sidebar
-        appName="Coder"
+        appName="Solenta"
         searchPlaceholder="Search"
         projectsHeader="All projects"
         projects={[p1, p2]}
@@ -278,7 +278,7 @@ describe("Sidebar multi-select (round 46)", () => {
       const [threads, setThreads] = useState(fullFixture());
       return (
         <Sidebar
-          appName="Coder"
+          appName="Solenta"
           searchPlaceholder="S"
           projectsHeader="All"
           projects={[p1, p2]}
@@ -337,7 +337,7 @@ describe("Sidebar multi-select (round 46)", () => {
       const [threads, setThreads] = useState(fullFixture());
       return (
         <Sidebar
-          appName="Coder"
+          appName="Solenta"
           searchPlaceholder="S"
           projectsHeader="All"
           projects={[p1, p2]}

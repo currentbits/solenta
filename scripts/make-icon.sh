@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Generate assets/Coder.icns (and assets/icon-512.png for the dev dock icon)
+# Generate assets/Solenta.icns (and assets/icon-512.png for the dev dock icon)
 # from assets/icon.svg. Zero new dependencies: rasterizes with the sharp that
 # already ships in memory-server/node_modules, converts with macOS iconutil.
 # Idempotent: safe to re-run; outputs are overwritten.
@@ -7,8 +7,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 SVG="assets/icon.svg"
-ICONSET="assets/Coder.iconset"
-ICNS="assets/Coder.icns"
+ICONSET="assets/Solenta.iconset"
+ICNS="assets/Solenta.icns"
 SHARP_DIR="memory-server/node_modules/sharp"
 
 if [[ ! -f "$SVG" ]]; then

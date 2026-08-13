@@ -1,7 +1,7 @@
 "use strict";
 
 /**
- * HTTP static server for Coder Web, plus the --serve-web flag parser.
+ * HTTP static server for Solenta Web, plus the --serve-web flag parser.
  *
  * Binding: 127.0.0.1 by default. --serve-host widens it.
  * There is no TLS in v1. Opening the bind beyond loopback puts the
@@ -242,7 +242,7 @@ function startWebServer(opts) {
   }
 
   return listening.then((addr) => {
-    log(`coder-web: listening on http://${host}:${addr.port}`);
+    log(`solenta-web: listening on http://${host}:${addr.port}`);
     return {
       host,
       port: addr.port,

@@ -1,6 +1,6 @@
 # Architecture
 
-Coder is an Electron desktop app: main owns agents and disk, the renderer is a
+Solenta is an Electron desktop app: main owns agents and disk, the renderer is a
 React UI, and preload exposes a typed `window.coder` API. The contract lives in
 `src/shared/ipc.ts` (channel names mirror method paths: `threads:list`,
 `runs:start`, push events `threads:changed` / `thread:updated`).

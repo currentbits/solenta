@@ -282,7 +282,7 @@ export default function App() {
         />
         <div className={styles.sidebarSlot} data-pane="sidebar">
           <Sidebar
-        appName="Coder"
+        appName="Solenta"
         searchPlaceholder="Search threads…"
         projectsHeader="All projects"
         projects={projects}

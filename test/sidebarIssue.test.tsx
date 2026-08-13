@@ -65,7 +65,7 @@ describe("Sidebar issue form", () => {
       [];
     const m = await mount(
       <Sidebar
-        appName="Coder"
+        appName="Solenta"
         searchPlaceholder="Search threads..."
         projectsHeader="All projects"
         projects={[project]}
@@ -127,7 +127,7 @@ describe("Sidebar issue form", () => {
   it("does not render the icon when the optional prop is omitted", async () => {
     const m = await mount(
       <Sidebar
-        appName="Coder"
+        appName="Solenta"
         searchPlaceholder="Search threads..."
         projectsHeader="All projects"
         projects={[project]}

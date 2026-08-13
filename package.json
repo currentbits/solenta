@@ -1,8 +1,9 @@
 {
-  "name": "coder",
+  "name": "solenta",
   "version": "0.1.0",
   "private": true,
-  "description": "Coder - desktop agentic development tool",
+  "license": "MIT",
+  "description": "Solenta - desktop agentic development tool",
   "main": "electron/main.js",
   "scripts": {
     "dev": "vite",

@@ -91,7 +91,7 @@ function sidebar(
   const projects = over.projects ?? [p1];
   return (
     <Sidebar
-      appName="Coder"
+      appName="Solenta"
       searchPlaceholder="Search threads..."
       projectsHeader="All projects"
       projects={projects}

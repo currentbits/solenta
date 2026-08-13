@@ -1,6 +1,6 @@
-# Coder - Product Spec (MVP)
+# Solenta - Product Spec (MVP)
 
-This is the build contract for Coder: what ships first, how Electron + React are split, the core data model, the three-pane UI, and a four-milestone path from mock shell to real agent execution.
+This is the build contract for Solenta: what ships first, how Electron + React are split, the core data model, the three-pane UI, and a four-milestone path from mock shell to real agent execution.
 
 Companion doc: `BRAINSTORM.md` (vision, differentiation, ranked ideas, risks).
 

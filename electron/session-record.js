@@ -7,7 +7,7 @@ const BATCH_SIZE = 10;
 const FLUSH_MS = 2000;
 
 /**
- * Map Coder message role to session API role.
+ * Map Solenta message role to session API role.
  * @param {string} role
  * @returns {"user" | "assistant" | "tool" | "system" | null}
  */

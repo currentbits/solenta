@@ -78,7 +78,7 @@ function thread(over: Partial<ThreadInfo> = {}): ThreadInfo {
 function renderSidebar(t: ThreadInfo): string {
   return renderToStaticMarkup(
     <Sidebar
-      appName="Coder"
+      appName="Solenta"
       searchPlaceholder="Search"
       projectsHeader="Projects"
       projects={[project]}

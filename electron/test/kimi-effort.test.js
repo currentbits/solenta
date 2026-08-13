@@ -108,7 +108,7 @@ describe("flipKimiEffort", () => {
     const noEffort = 'default_model = "kimi-code/k3"\n\n[thinking]\nenabled = true\n';
     writeConfig(noEffort);
     const restore = flipKimiEffort("low");
-    assert.equal(readConfig(), noEffort, "Coder does not invent config lines");
+    assert.equal(readConfig(), noEffort, "Solenta does not invent config lines");
     assert.equal(
       fs.existsSync(`${kimiConfigPath()}.coder-effort-backup`),
       false,
@@ -132,7 +132,7 @@ describe("flipKimiEffort", () => {
 
   it("reinstates a leftover backup even when the turn has NO effort", () => {
     // The default case. Recovery behind the !effort early-return was dead
-    // code for effortless turns: after a crash the user stayed on Coder's
+    // code for effortless turns: after a crash the user stayed on Solenta's
     // flipped effort until they happened to set one again.
     writeConfig(CONFIG.replace('effort = "high"', 'effort = "low"'));
     fs.writeFileSync(`${kimiConfigPath()}.coder-effort-backup`, CONFIG);

@@ -3,7 +3,7 @@ import { persistWebToken, resolveWebToken, webNavigation } from "../coderApi";
 import styles from "./SettingsModal.module.css";
 
 /**
- * Visual token gate for Coder Web. Hidden when a token already resolves
+ * Visual token gate for Solenta Web. Hidden when a token already resolves
  * (query param or persisted); submitting persists via the same
  * persistWebToken path boot.tsx's gate uses and reloads so the wire
  * client picks it up.
@@ -41,7 +41,7 @@ export function WebTokenGate() {
       >
         <div className={styles.header}>
           <h2 id="web-token-title" className={styles.title}>
-            Connect to Coder
+            Connect to Solenta
           </h2>
         </div>
         <div className={styles.body}>

@@ -1,7 +1,7 @@
 "use strict";
 
 /**
- * WebSocket transport for Coder Web. Attaches to an existing http.Server;
+ * WebSocket transport for Solenta Web. Attaches to an existing http.Server;
  * does not listen on its own.
  *
  * First client message must be {kind:"auth", token}. Anything else closes.

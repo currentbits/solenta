@@ -38,7 +38,7 @@ function kimiConfigPath() {
  * restored before reading, so the user's real config is never lost.
  *
  * If the [thinking] effort line is missing, or the config cannot be read, the
- * turn runs on the user's default rather than Coder inventing a section in a
+ * turn runs on the user's default rather than Solenta inventing a section in a
  * file it does not own.
  *
  * ponytail: concurrent kimi turns race the flip window (last writer wins for

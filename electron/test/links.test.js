@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const { windowOpenAction, navigateAction } = require("../links.js");
 
 const DEV = "http://localhost:5173";
-const APP = "file:///Applications/Coder.app/Contents/Resources/app/dist/index.html";
+const APP = "file:///Applications/Solenta.app/Contents/Resources/app/dist/index.html";
 
 describe("external link policy", () => {
   it("sends http(s) targets to the OS browser", () => {

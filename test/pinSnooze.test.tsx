@@ -63,7 +63,7 @@ function Host({
   const [threads, setThreads] = useState(initial);
   return (
     <Sidebar
-      appName="Coder"
+      appName="Solenta"
       searchPlaceholder="Search"
       projectsHeader="All projects"
       projects={[p1, p2]}

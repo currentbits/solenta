@@ -1,7 +1,7 @@
 "use strict";
 
 /**
- * Round 51: Coder Web server (webBridge + webServer).
+ * Round 51: Solenta Web server (webBridge + webServer).
  *
  * Auth table, invoke vs real services, error-string parity, push fan-out,
  * static serve, token 0600, no-flag port probe.
@@ -488,7 +488,7 @@ describe("one map, two transports + packaging", () => {
     assert.match(main, /registered\.ctx/);
     assert.match(main, /HOST_FLAG_HELP/);
     assert.doesNotMatch(main, /parseServeArgs\(/);
-    assert.match(main, /process\.stdout\.write\(`coder-web: token/);
+    assert.match(main, /process\.stdout\.write\(`solenta-web: token/);
   });
 
   it("ws is a pinned production dependency", () => {

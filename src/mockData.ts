@@ -113,7 +113,7 @@ export interface AppMockData {
 }
 
 export const mockData: AppMockData = {
-  appName: "Coder",
+  appName: "Solenta",
   searchPlaceholder: "Search threads…",
   projectsHeader: "All projects",
   activeThreadId: "thread-1",

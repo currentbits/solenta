@@ -1,10 +1,10 @@
-# Coder memory server
+# Solenta memory server
 
-Minimal shared-memory MCP server for the Coder app. Localhost-only HTTP, bearer auth, SQLite + FTS5.
+Minimal shared-memory MCP server for the Solenta app. Localhost-only HTTP, bearer auth, SQLite + FTS5.
 
 ## Supervision
 
-Coder (Electron) is expected to adopt-or-spawn this process: probe `GET /health`, adopt if live, otherwise spawn `node src/index.js` and only kill a child it started.
+Solenta (Electron) is expected to adopt-or-spawn this process: probe `GET /health`, adopt if live, otherwise spawn `node src/index.js` and only kill a child it started.
 
 ## Config
 

@@ -14,7 +14,7 @@ const CONFIG_NAME = "orch-server.json";
 const MAX_BODY_BYTES = 1024 * 1024;
 
 const INSTRUCTIONS =
-  "Coder thread orchestrator: drive other agent threads in this Coder workspace. " +
+  "Solenta thread orchestrator: drive other agent threads in this Solenta workspace. " +
   "threads_list shows every thread with id, title, provider, status and handoffFrom. " +
   "thread_fork copies a thread into a new one (optionally on a different provider) " +
   "and starts it on your prompt. thread_send starts a run with your prompt on an " +

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# package-app.sh — dependency-free macOS packaging for Coder.
-# Assembles a double-clickable out/Coder.app by dropping the app into a stock
+# package-app.sh — dependency-free macOS packaging for Solenta.
+# Assembles a double-clickable out/Solenta.app by dropping the app into a stock
 # Electron.app (no electron-builder / electron-packager; npm blocks native
 # postinstalls on this machine).
 #
@@ -58,29 +58,29 @@ if [[ ! -d memory-server/node_modules ]]; then
 fi
 
 VERSION="$(node -p "require('./package.json').version")"
-echo "Packaging Coder v${VERSION}..."
+echo "Packaging Solenta v${VERSION}..."
 
 # ---------------------------------------------------------------------------
-# Assemble out/Coder.app (idempotent)
+# Assemble out/Solenta.app (idempotent)
 # ---------------------------------------------------------------------------
 
-rm -rf out/Coder.app
+rm -rf out/Solenta.app
 mkdir -p out
-cp -R "$ELECTRON_APP" out/Coder.app
+cp -R "$ELECTRON_APP" out/Solenta.app
 
 # The stock Electron.app can carry a stale Resources/app from an earlier
 # mishap. With it in place, `cp -R dist "$APP_DIR/dist"` below nests the fresh
 # bundle as dist/dist and the app silently ships the OLD UI while the build
 # stamp claims otherwise. Always start from a clean slate.
-rm -rf "out/Coder.app/Contents/Resources/app"
+rm -rf "out/Solenta.app/Contents/Resources/app"
 
-APP_DIR="out/Coder.app/Contents/Resources/app"
+APP_DIR="out/Solenta.app/Contents/Resources/app"
 mkdir -p "$APP_DIR"
 
 # Minimal package.json for the embedded app.
-# IMPORTANT: "name" must remain exactly "coder". Electron derives the userData
-# directory from package.json name; keeping it "coder" preserves continuity
-# with dev sessions (same ~/Library/Application Support/coder). Never change it.
+# The userData directory derives from this name (~/Library/Application
+# Support/solenta); main.js migrates a legacy "coder" userData directory on
+# first boot, so existing installs keep their data. Keep the name "solenta".
 # Stamp the source commit so a running app can be told apart from the tree it
 # was built from. A stale bundle silently missing recent fixes is otherwise
 # indistinguishable from a broken feature.
@@ -91,8 +91,8 @@ BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 cat > "$APP_DIR/package.json" <<EOF
 {
-  "name": "coder",
-  "productName": "Coder",
+  "name": "solenta",
+  "productName": "Solenta",
   "version": "${VERSION}",
   "main": "electron/main.js",
   "buildSha": "${BUILD_SHA}${BUILD_DIRTY}",
@@ -100,10 +100,10 @@ cat > "$APP_DIR/package.json" <<EOF
 }
 EOF
 
-# Assert name stayed "coder" (userData continuity).
+# Assert name stayed "solenta" (the userData migration keys on it).
 PKG_NAME="$(node -p "require('./${APP_DIR}/package.json').name")"
-if [[ "$PKG_NAME" != "coder" ]]; then
-  echo "ERROR: packaged package.json name must be exactly 'coder' (got: $PKG_NAME)" >&2
+if [[ "$PKG_NAME" != "solenta" ]]; then
+  echo "ERROR: packaged package.json name must be exactly 'solenta' (got: $PKG_NAME)" >&2
   exit 1
 fi
 
@@ -172,27 +172,27 @@ fi
 
 # ---------------------------------------------------------------------------
 # Branding via Info.plist (no custom icon this round)
-# Rename the MacOS binary Electron -> Coder so app.isPackaged is true.
+# Rename the MacOS binary Electron -> Solenta so app.isPackaged is true.
 # Electron treats an executable still named "Electron" as unpackaged, which
 # would load the vite dev URL instead of dist/.
 # ---------------------------------------------------------------------------
 
-PLIST="out/Coder.app/Contents/Info.plist"
-MACOS_DIR="out/Coder.app/Contents/MacOS"
+PLIST="out/Solenta.app/Contents/Info.plist"
+MACOS_DIR="out/Solenta.app/Contents/MacOS"
 if [[ -f "$MACOS_DIR/Electron" ]]; then
-  mv "$MACOS_DIR/Electron" "$MACOS_DIR/Coder"
+  mv "$MACOS_DIR/Electron" "$MACOS_DIR/Solenta"
 fi
 if [[ -f "$PLIST" ]]; then
-  /usr/libexec/PlistBuddy -c "Set :CFBundleName Coder" "$PLIST" 2>/dev/null \
-    || /usr/libexec/PlistBuddy -c "Add :CFBundleName string Coder" "$PLIST"
-  /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName Coder" "$PLIST" 2>/dev/null \
-    || /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string Coder" "$PLIST"
-  /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.willem.coder" "$PLIST" 2>/dev/null \
-    || /usr/libexec/PlistBuddy -c "Add :CFBundleIdentifier string com.willem.coder" "$PLIST"
-  /usr/libexec/PlistBuddy -c "Set :CFBundleExecutable Coder" "$PLIST" 2>/dev/null \
-    || /usr/libexec/PlistBuddy -c "Add :CFBundleExecutable string Coder" "$PLIST"
-  /usr/libexec/PlistBuddy -c "Set :CFBundleIconFile Coder" "$PLIST" 2>/dev/null \
-    || /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string Coder" "$PLIST"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleName Solenta" "$PLIST" 2>/dev/null \
+    || /usr/libexec/PlistBuddy -c "Add :CFBundleName string Solenta" "$PLIST"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName Solenta" "$PLIST" 2>/dev/null \
+    || /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string Solenta" "$PLIST"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.willem.solenta" "$PLIST" 2>/dev/null \
+    || /usr/libexec/PlistBuddy -c "Add :CFBundleIdentifier string com.willem.solenta" "$PLIST"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleExecutable Solenta" "$PLIST" 2>/dev/null \
+    || /usr/libexec/PlistBuddy -c "Add :CFBundleExecutable string Solenta" "$PLIST"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleIconFile Solenta" "$PLIST" 2>/dev/null \
+    || /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string Solenta" "$PLIST"
 else
   echo "WARNING: Info.plist missing at $PLIST" >&2
 fi
@@ -200,17 +200,17 @@ fi
 # ---------------------------------------------------------------------------
 # App icon (regenerate when missing, then bundle)
 # ---------------------------------------------------------------------------
-if [[ ! -f assets/Coder.icns ]]; then
+if [[ ! -f assets/Solenta.icns ]]; then
   bash scripts/make-icon.sh
 fi
-cp assets/Coder.icns "out/Coder.app/Contents/Resources/Coder.icns"
-echo "icon: Contents/Resources/Coder.icns"
+cp assets/Solenta.icns "out/Solenta.app/Contents/Resources/Solenta.icns"
+echo "icon: Contents/Resources/Solenta.icns"
 
 # ---------------------------------------------------------------------------
 # Report size
 # ---------------------------------------------------------------------------
 
-APP_PATH="$ROOT/out/Coder.app"
+APP_PATH="$ROOT/out/Solenta.app"
 SIZE="$(du -sh "$APP_PATH" | awk '{print $1}')"
 echo "Packaged: $APP_PATH ($SIZE)"
 
