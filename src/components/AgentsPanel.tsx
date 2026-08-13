@@ -4,6 +4,8 @@ import type {
   AppSettings,
   CheckpointInfo,
   GitSyncInfo,
+  GitRepoInfo,
+  GitPullResult,
   DevServerState,
   LocalServerInfo,
   MemoryEntryInfo,
@@ -87,6 +89,10 @@ interface AgentsPanelProps {
   openInEditor: () => Promise<void>;
   gitSyncInfo: (threadId: string) => Promise<GitSyncInfo>;
   gitFetch: (threadId: string) => Promise<void>;
+  /** Origin owner/repo + web URL for the Repository row. Never rejects. */
+  gitRepoInfo: (threadId: string) => Promise<GitRepoInfo>;
+  /** `git pull --ff-only` for the Pull card. Never rejects. */
+  gitPull: (threadId: string) => Promise<GitPullResult>;
   listDevScripts: (threadId: string) => Promise<string[]>;
   startDevServer: (threadId: string, script: string) => Promise<DevServerState>;
   stopDevServer: (threadId: string) => Promise<DevServerState>;
@@ -815,6 +821,239 @@ export function LocalServersCard({
   );
 }
 
+/**
+ * Repository row: the thread root's git origin as owner/repo with an
+ * external link to the host. Hidden when there is no origin (or no thread).
+ */
+function RepositoryCard({
+  threadId,
+  gitRepoInfo,
+}: {
+  threadId: string | null;
+  gitRepoInfo?: (threadId: string) => Promise<GitRepoInfo>;
+}) {
+  const [info, setInfo] = useState<GitRepoInfo | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!threadId || !gitRepoInfo) {
+      setInfo(null);
+      return;
+    }
+    gitRepoInfo(threadId)
+      .then((res) => {
+        if (!cancelled) setInfo(res && typeof res === "object" ? res : null);
+      })
+      .catch(() => {
+        if (!cancelled) setInfo(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [threadId, gitRepoInfo]);
+
+  if (!info || !info.ok) return null;
+
+  return (
+    <section className={styles.gitCard} data-repo-card="">
+      <div className={styles.gitCardLabel}>
+        <svg {...LABEL_ICON_PROPS} className={styles.labelIcon}>
+          <path d="M3 4.5A1.5 1.5 0 0 1 4.5 3H13v10H4.5A1.5 1.5 0 0 0 3 14.5v-10Z" />
+          <path d="M3 14.5A1.5 1.5 0 0 1 4.5 13H13" />
+        </svg>
+        Repository
+      </div>
+      <a
+        className={styles.repoLink}
+        href={info.webUrl}
+        target="_blank"
+        rel="noreferrer"
+        title={info.webUrl}
+        data-repo-link=""
+      >
+        <span className={styles.repoSlug}>
+          {info.owner}/{info.repo}
+        </span>
+        <svg
+          width="12"
+          height="12"
+          viewBox="0 0 16 16"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+          className={styles.repoExternal}
+        >
+          <path d="M6.5 3.5H4A1.5 1.5 0 0 0 2.5 5v7A1.5 1.5 0 0 0 4 13.5h7a1.5 1.5 0 0 0 1.5-1.5V9.5" />
+          <path d="M9.5 2.5h4v4" />
+          <path d="M13.5 2.5 8 8" />
+        </svg>
+      </a>
+    </section>
+  );
+}
+
+/**
+ * Pull action: `git pull --ff-only` in the thread root, result inline.
+ * Failures (dirty tree, no upstream, diverged) arrive in-band, never thrown.
+ */
+function PullCard({
+  threadId,
+  gitPull,
+}: {
+  threadId: string | null;
+  gitPull?: (threadId: string) => Promise<GitPullResult>;
+}) {
+  const [pulling, setPulling] = useState(false);
+  const [result, setResult] = useState<GitPullResult | null>(null);
+
+  useEffect(() => {
+    setPulling(false);
+    setResult(null);
+  }, [threadId]);
+
+  if (!gitPull) return null;
+
+  const onPull = async () => {
+    if (!threadId || pulling) return;
+    setPulling(true);
+    setResult(null);
+    try {
+      setResult(await gitPull(threadId));
+    } catch (err) {
+      setResult({
+        ok: false,
+        reason:
+          err instanceof Error && err.message ? err.message : "Pull failed",
+      });
+    } finally {
+      setPulling(false);
+    }
+  };
+
+  return (
+    <section className={styles.gitCard} data-pull-card="">
+      <div className={styles.gitCardLabel}>
+        <svg {...LABEL_ICON_PROPS} className={styles.labelIcon}>
+          <path d="M8 2.5V10" />
+          <path d="m4.5 6.5 3.5 3.5 3.5-3.5" />
+          <path d="M3 13.5h10" />
+        </svg>
+        Pull
+      </div>
+      {!threadId ? (
+        <p className={styles.gitHint}>Select a thread to pull its branch.</p>
+      ) : (
+        <>
+          <div className={styles.gitActions}>
+            <button
+              type="button"
+              className={styles.gitBtn}
+              data-pull-btn=""
+              onClick={() => void onPull()}
+              disabled={pulling}
+              title="Pull from upstream (fast-forward only)"
+            >
+              {pulling ? (
+                <>
+                  <span className={styles.btnSpinner} aria-hidden />
+                  Pulling…
+                </>
+              ) : (
+                "Pull"
+              )}
+            </button>
+          </div>
+          {result && (
+            <p
+              className={result.ok ? styles.pullResult : styles.pullError}
+              data-pull-result=""
+              role={result.ok ? undefined : "alert"}
+            >
+              {result.ok ? result.summary : result.reason}
+            </p>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+/**
+ * Recap: where the thread stands at a glance, derived without any LLM call.
+ * The activity line is the first line of the last assistant message (from
+ * threads:summaries); the facts line is branch, PR, and thread status.
+ * Refreshes when the selected thread changes or its status changes.
+ */
+function RecapCard({
+  thread,
+  listThreadSummaries,
+}: {
+  thread: ThreadInfo | null;
+  listThreadSummaries?: () => Promise<ThreadSummaryInfo[]>;
+}) {
+  const threadId = thread?.id ?? null;
+  const threadStatus = thread?.status ?? null;
+  const [activity, setActivity] = useState<{ text: string; at: number } | null>(
+    null,
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!threadId || !listThreadSummaries) {
+      setActivity(null);
+      return;
+    }
+    listThreadSummaries()
+      .then((list) => {
+        if (cancelled) return;
+        const entry = Array.isArray(list)
+          ? list.find((s) => s && s.id === threadId)
+          : undefined;
+        setActivity(entry?.lastActivity ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setActivity(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [threadId, threadStatus, listThreadSummaries]);
+
+  if (!thread) return null;
+
+  const facts: string[] = [];
+  if (thread.branch) facts.push(thread.branch);
+  if (thread.prNumber != null) {
+    facts.push(
+      thread.prState
+        ? `#${thread.prNumber} ${thread.prState.toLowerCase()}`
+        : `#${thread.prNumber}`,
+    );
+  }
+  facts.push(thread.status);
+
+  return (
+    <section className={styles.gitCard} data-recap-card="">
+      <div className={styles.gitCardLabel}>
+        <svg {...LABEL_ICON_PROPS} className={styles.labelIcon}>
+          <circle cx="8" cy="8" r="5.5" />
+          <path d="M8 5.5V8l2 1.5" />
+        </svg>
+        Recap
+      </div>
+      <p className={styles.recapActivity} data-recap-activity="">
+        {activity?.text ?? "No activity yet"}
+      </p>
+      <div className={styles.recapFacts} data-recap-facts="">
+        {facts.join(" · ")}
+      </div>
+    </section>
+  );
+}
+
 /** Byte-equal to electron/worktrees.js restoreCheckpoint run-active guard. */
 const RESTORE_ACTIVE_TITLE =
   "Cannot restore a checkpoint while a run is active";
@@ -1318,6 +1557,9 @@ export function GitTab({
   openInEditor,
   gitSyncInfo,
   gitFetch,
+  gitRepoInfo,
+  gitPull,
+  listThreadSummaries,
   listDevScripts,
   startDevServer,
   stopDevServer,
@@ -1345,6 +1587,10 @@ export function GitTab({
   openInEditor?: () => Promise<void>;
   gitSyncInfo?: (threadId: string) => Promise<GitSyncInfo>;
   gitFetch?: (threadId: string) => Promise<void>;
+  gitRepoInfo?: (threadId: string) => Promise<GitRepoInfo>;
+  gitPull?: (threadId: string) => Promise<GitPullResult>;
+  /** threads:summaries passthrough powering the Recap card. */
+  listThreadSummaries?: () => Promise<ThreadSummaryInfo[]>;
   listDevScripts: (threadId: string) => Promise<string[]>;
   startDevServer: (threadId: string, script: string) => Promise<DevServerState>;
   stopDevServer: (threadId: string) => Promise<DevServerState>;
@@ -1567,6 +1813,7 @@ export function GitTab({
   return (
     <>
       <div className={styles.scroll}>
+        <RepositoryCard threadId={thread?.id ?? null} gitRepoInfo={gitRepoInfo} />
         <ChangesCard
           hasThread={Boolean(thread)}
           onViewChanges={onViewChanges}
@@ -1600,6 +1847,7 @@ export function GitTab({
           onCancelDirty={() => setDirtyMessage(null)}
           onDismissError={() => setCardError(null)}
         />
+        <PullCard threadId={thread?.id ?? null} gitPull={gitPull} />
         <PrCard
           thread={thread}
           busy={busy}
@@ -1680,6 +1928,7 @@ export function GitTab({
         />
           </>
         )}
+        <RecapCard thread={thread} listThreadSummaries={listThreadSummaries} />
       </div>
       <footer className={styles.gitStatus} data-git-status="">
         <span className={styles.gitStatusLine} title={statusLine}>
@@ -2126,6 +2375,8 @@ export function AgentsPanel({
   openInEditor,
   gitSyncInfo,
   gitFetch,
+  gitRepoInfo,
+  gitPull,
   listDevScripts,
   startDevServer,
   stopDevServer,
@@ -2211,6 +2462,9 @@ export function AgentsPanel({
           openInEditor={openInEditor}
           gitSyncInfo={gitSyncInfo}
           gitFetch={gitFetch}
+          gitRepoInfo={gitRepoInfo}
+          gitPull={gitPull}
+          listThreadSummaries={listThreadSummaries}
           listDevScripts={listDevScripts}
           startDevServer={startDevServer}
           stopDevServer={stopDevServer}

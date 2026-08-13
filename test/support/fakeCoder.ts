@@ -25,6 +25,8 @@ import type {
   FetchIssueResult,
   GitStatus,
   GitSyncInfo,
+  GitRepoInfo,
+  GitPullResult,
   ListPrsResult,
   LocalServerInfo,
   MemoryEntryInfo,
@@ -837,6 +839,18 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       syncInfo: (input: unknown) =>
         rec("git.syncInfo", [input], { hasUpstream: false } as GitSyncInfo),
       fetch: (input: unknown) => rec("git.fetch", [input], undefined),
+      repoInfo: (input: unknown) =>
+        rec("git.repoInfo", [input], {
+          ok: true,
+          owner: "owner",
+          repo: "repo",
+          webUrl: "https://github.com/owner/repo",
+        } as GitRepoInfo),
+      pull: (input: unknown) =>
+        rec("git.pull", [input], {
+          ok: true,
+          summary: "Already up to date",
+        } as GitPullResult),
       runStats: (input: unknown) => {
         const i = input as { threadId: string };
         const t = threads.find((x) => x.id === i.threadId);

@@ -9,6 +9,8 @@ import type {
   DiffResult,
   GitStatus,
   GitSyncInfo,
+  GitRepoInfo,
+  GitPullResult,
   FetchIssueResult,
   ListPrsResult,
   DevServerState,
@@ -317,6 +319,8 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
       restoreCheckpoint: (input) => call<void>("git:restoreCheckpoint", input),
       syncInfo: (input) => call<GitSyncInfo>("git:syncInfo", input),
       fetch: (input) => call<void>("git:fetch", input),
+      repoInfo: (input) => call<GitRepoInfo>("git:repoInfo", input),
+      pull: (input) => call<GitPullResult>("git:pull", input),
       runStats: (input) => call<RunStatInfo[]>("git:runStats", input),
     },
     issues: {

@@ -70,6 +70,8 @@ export default function App() {
     openInEditor,
     gitSyncInfo,
     gitFetch,
+    gitRepoInfo,
+    gitPull,
     listDevScripts,
     startDevServer,
     stopDevServer,
@@ -402,6 +404,12 @@ export default function App() {
         onSuggestCommitMessage={() => suggestCommitMessage()}
         onListFiles={(query) => listFiles(query)}
         onPush={() => pushBranch()}
+        gitSyncInfo={gitSyncInfo}
+        gitFetch={gitFetch}
+        listDevScripts={listDevScripts}
+        startDevServer={startDevServer}
+        stopDevServer={stopDevServer}
+        devServerStatus={devServerStatus}
         runError={error?.scope === "run" ? error.message : null}
         onDismissRunError={clearError}
         onFork={async (opts) => {
@@ -442,6 +450,8 @@ export default function App() {
         openInEditor={openInEditor}
         gitSyncInfo={gitSyncInfo}
         gitFetch={gitFetch}
+        gitRepoInfo={gitRepoInfo}
+        gitPull={gitPull}
         listDevScripts={listDevScripts}
         startDevServer={startDevServer}
         stopDevServer={stopDevServer}

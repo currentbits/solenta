@@ -969,6 +969,141 @@ function gitFetch(cwd) {
 }
 
 /**
+ * owner/repo plus an https web URL from a git remote URL, or null.
+ * Handles scp-style ssh (git@host:owner/repo), ssh:// and http(s) URLs.
+ * For nested groups (gitlab group/sub/repo) the last two segments win,
+ * matching slugFromRemoteUrl.
+ *
+ * @param {string} url
+ * @returns {{ owner: string, repo: string, webUrl: string } | null}
+ */
+function repoInfoFromRemote(url) {
+  const cleaned = String(url || "")
+    .trim()
+    .replace(/\.git$/i, "")
+    .replace(/\/+$/, "");
+  if (!cleaned) return null;
+
+  const fromParts = (host, pathPart) => {
+    const parts = String(pathPart || "")
+      .split("/")
+      .filter(Boolean);
+    if (!host || parts.length < 2) return null;
+    const owner = parts[parts.length - 2];
+    const repo = parts[parts.length - 1];
+    return { owner, repo, webUrl: `https://${host}/${owner}/${repo}` };
+  };
+
+  // scp-style ssh: git@host:owner/repo
+  const scp = cleaned.match(/^[^@\s]+@([^:\s]+):(.+)$/);
+  if (scp) return fromParts(scp[1], scp[2]);
+
+  try {
+    const u = new URL(cleaned);
+    const proto = u.protocol.replace(/:$/, "").toLowerCase();
+    if (proto !== "http" && proto !== "https" && proto !== "ssh") return null;
+    return fromParts(u.hostname, u.pathname);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Origin owner/repo + web URL for a checkout. Never throws: no repo, no
+ * origin, or an unparseable remote all come back as { ok: false }.
+ *
+ * @param {string} cwd
+ * @returns {{ ok: true, owner: string, repo: string, webUrl: string } | { ok: false }}
+ */
+function gitRepoInfo(cwd) {
+  if (!cwd) return { ok: false };
+  const resolved = path.resolve(cwd);
+  try {
+    const inside = gitOut(resolved, ["rev-parse", "--is-inside-work-tree"]);
+    if (inside !== "true") return { ok: false };
+  } catch {
+    return { ok: false };
+  }
+  let remote = "";
+  try {
+    remote = gitOut(resolved, ["remote", "get-url", "origin"]);
+  } catch {
+    return { ok: false };
+  }
+  const info = repoInfoFromRemote(remote);
+  if (!info) return { ok: false };
+  return { ok: true, ...info };
+}
+
+/**
+ * Map `git pull --ff-only` stdout to a one-line UI summary.
+ *
+ * @param {string} output
+ * @returns {string}
+ */
+function summarizePullOutput(output) {
+  const text = String(output || "").trim();
+  if (/already up[ -]to[ -]date/i.test(text)) return "Already up to date";
+  if (/fast-forward/i.test(text)) return "Fast-forwarded";
+  const first = text.split(/\r?\n/, 1)[0].trim();
+  return first || "Already up to date";
+}
+
+/**
+ * Map a failed `git pull --ff-only` error message to a short reason.
+ * execFileSync folds stderr into err.message, so fixtures here are the
+ * combined output.
+ *
+ * @param {string} message
+ * @returns {string}
+ */
+function pullFailureReason(message) {
+  const text = String(message || "");
+  if (/not a git repository/i.test(text)) return "Not a git repository";
+  if (/no tracking information|no upstream configured/i.test(text)) {
+    return "No upstream configured for this branch";
+  }
+  if (/divergent branches|not possible to fast-forward/i.test(text)) {
+    return "Branch has diverged from upstream";
+  }
+  if (/local changes|please commit your changes|uncommitted changes/i.test(text)) {
+    return "Working tree has uncommitted changes";
+  }
+  const lines = text
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l && !/^command failed:/i.test(l));
+  const fatal = lines.find((l) => /^(fatal|error):/i.test(l));
+  return fatal || lines[0] || "Pull failed";
+}
+
+/**
+ * `git pull --ff-only` in a checkout. Never throws: every failure mode
+ * (dirty tree, no upstream, diverged, not a repo) comes back in-band.
+ *
+ * @param {string} cwd
+ * @returns {{ ok: true, summary: string } | { ok: false, reason: string }}
+ */
+function gitPull(cwd) {
+  if (!cwd) return { ok: false, reason: "Not a git repository" };
+  const resolved = path.resolve(cwd);
+  try {
+    const inside = gitOut(resolved, ["rev-parse", "--is-inside-work-tree"]);
+    if (inside !== "true") return { ok: false, reason: "Not a git repository" };
+  } catch {
+    return { ok: false, reason: "Not a git repository" };
+  }
+  let out;
+  try {
+    out = gitOut(resolved, ["pull", "--ff-only"]);
+  } catch (err) {
+    const msg = err && err.message ? String(err.message) : String(err);
+    return { ok: false, reason: pullFailureReason(msg) };
+  }
+  return { ok: true, summary: summarizePullOutput(out) };
+}
+
+/**
  * List all projects.
  * @param {import('./store').Store} store
  */
@@ -1445,6 +1580,11 @@ module.exports = {
   parseRevListCount,
   gitSyncInfo,
   gitFetch,
+  repoInfoFromRemote,
+  gitRepoInfo,
+  summarizePullOutput,
+  pullFailureReason,
+  gitPull,
   listProjects,
   listProvidersForApi,
   listTemplates,

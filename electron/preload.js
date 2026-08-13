@@ -122,6 +122,8 @@ const coder = {
     restoreCheckpoint: (input) => invoke("git:restoreCheckpoint", input),
     syncInfo: (input) => invoke("git:syncInfo", input),
     fetch: (input) => invoke("git:fetch", input),
+    repoInfo: (input) => invoke("git:repoInfo", input),
+    pull: (input) => invoke("git:pull", input),
     runStats: (input) => invoke("git:runStats", input),
   },
   issues: {

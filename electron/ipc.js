@@ -445,6 +445,40 @@ const IPC_HANDLERS = {
     const { root } = resolveThreadRoot(ctx.store, threadId);
     services.gitFetch(root);
   },
+  "git:repoInfo": async (ctx, input) => {
+    // Never throws: anything missing or unparseable is { ok: false }.
+    try {
+      const threadId = input && input.threadId;
+      if (!threadId) return { ok: false };
+      const thread = ctx.store.getThread(threadId);
+      if (!thread) return { ok: false };
+      const project = ctx.store.getProject(thread.projectId);
+      if (!project || project.remoteHost) return { ok: false };
+      const root = thread.worktreePath || project.path;
+      if (!root) return { ok: false };
+      return services.gitRepoInfo(root);
+    } catch {
+      return { ok: false };
+    }
+  },
+  "git:pull": async (ctx, input) => {
+    // Never throws: failure modes come back in-band as { ok: false, reason }.
+    try {
+      const threadId = input && input.threadId;
+      if (!threadId) return { ok: false, reason: "No thread selected" };
+      const thread = ctx.store.getThread(threadId);
+      if (!thread) return { ok: false, reason: "Unknown thread" };
+      const project = ctx.store.getProject(thread.projectId);
+      if (!project || project.remoteHost) {
+        return { ok: false, reason: "Not available on remote projects" };
+      }
+      const root = thread.worktreePath || project.path;
+      return services.gitPull(root);
+    } catch (err) {
+      const msg = err && err.message ? String(err.message) : String(err);
+      return { ok: false, reason: msg.split("\n")[0] || "Pull failed" };
+    }
+  },
   "shell:reveal": async (ctx, input) => {
     const target = resolveAllowedShellPath(ctx.store, input);
     shell.showItemInFolder(target);

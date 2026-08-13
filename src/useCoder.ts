@@ -11,6 +11,8 @@ import type {
   DevServerState,
   DiffResult,
   GitSyncInfo,
+  GitRepoInfo,
+  GitPullResult,
   FetchIssueResult,
   LocalServerInfo,
   MemoryEntryInfo,
@@ -202,6 +204,10 @@ export interface UseCoderResult {
   gitSyncInfo: (threadId: string) => Promise<GitSyncInfo>;
   /** Fetch remotes for a thread root. */
   gitFetch: (threadId: string) => Promise<void>;
+  /** Origin owner/repo + web URL for a thread root. Never rejects. */
+  gitRepoInfo: (threadId: string) => Promise<GitRepoInfo>;
+  /** `git pull --ff-only` for a thread root. Never rejects. */
+  gitPull: (threadId: string) => Promise<GitPullResult>;
   /** Runnable package.json scripts (dev/start/serve) at the thread root. */
   listDevScripts: (threadId: string) => Promise<string[]>;
   /** Start the thread's npm dev script. */
@@ -1174,6 +1180,32 @@ export function useCoder(): UseCoderResult {
     [api],
   );
 
+  const gitRepoInfo = useCallback(
+    async (threadId: string): Promise<GitRepoInfo> => {
+      try {
+        return await api.git.repoInfo({ threadId });
+      } catch {
+        return { ok: false };
+      }
+    },
+    [api],
+  );
+
+  const gitPull = useCallback(
+    async (threadId: string): Promise<GitPullResult> => {
+      try {
+        return await api.git.pull({ threadId });
+      } catch (err) {
+        return {
+          ok: false,
+          reason:
+            err instanceof Error && err.message ? err.message : "Pull failed",
+        };
+      }
+    },
+    [api],
+  );
+
   const startDevServer = useCallback(
     async (threadId: string, script: string) => {
       return api.devserver.start({ threadId, script });
@@ -1359,6 +1391,8 @@ export function useCoder(): UseCoderResult {
     openInEditor,
     gitSyncInfo,
     gitFetch,
+    gitRepoInfo,
+    gitPull,
     listDevScripts,
     startDevServer,
     stopDevServer,

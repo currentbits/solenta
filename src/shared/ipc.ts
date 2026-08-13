@@ -270,6 +270,22 @@ export type GitSyncInfo =
   | { hasUpstream: false }
   | { hasUpstream: true; ahead: number; behind: number };
 
+/**
+ * Origin owner/repo plus an https web URL for the thread root. In-band
+ * failure: no repo, no origin, or an unparseable remote is `{ ok: false }`.
+ */
+export type GitRepoInfo =
+  | { ok: true; owner: string; repo: string; webUrl: string }
+  | { ok: false };
+
+/**
+ * `git pull --ff-only` outcome. Never rejects: dirty tree, no upstream,
+ * diverged, and not-a-repo all come back as `{ ok: false, reason }`.
+ */
+export type GitPullResult =
+  | { ok: true; summary: string }
+  | { ok: false; reason: string };
+
 /** A GitHub pull request opened from a thread's branch. */
 /** One auto-committed turn checkpoint in a thread's worktree. */
 export interface CheckpointInfo {
@@ -873,6 +889,16 @@ export interface CoderApi {
     syncInfo(input: { threadId: string }): Promise<GitSyncInfo>;
     /** `git fetch` in the thread root. */
     fetch(input: { threadId: string }): Promise<void>;
+    /**
+     * Origin owner/repo + https web URL for the thread root. Never rejects:
+     * `{ ok: false }` when there is no repo, no origin, or a remote project.
+     */
+    repoInfo(input: { threadId: string }): Promise<GitRepoInfo>;
+    /**
+     * `git pull --ff-only` in the thread root. Never rejects: dirty tree, no
+     * upstream, diverged, and not-a-repo come back as `{ ok: false, reason }`.
+     */
+    pull(input: { threadId: string }): Promise<GitPullResult>;
     /**
      * Per-checkpoint-pair shortstat for a thread. Checkpoint N diffs against
      * N-1 (first checkpoint diffs against its parent). Empty when the thread

@@ -3212,6 +3212,24 @@ function buildDevCoder(): CoderApi {
       async fetch(_input: { threadId: string }) {
         // Dev mock: no remotes.
       },
+      async repoInfo(input: { threadId: string }) {
+        const detail = details.get(input.threadId);
+        if (!detail) return { ok: false as const };
+        const project = projects.find((p) => p.id === detail.thread.projectId);
+        const slug = project?.slug ?? "";
+        const [owner, repo] = slug.split("/");
+        if (!owner || !repo) return { ok: false as const };
+        return {
+          ok: true as const,
+          owner,
+          repo,
+          webUrl: `https://github.com/${owner}/${repo}`,
+        };
+      },
+      async pull(_input: { threadId: string }) {
+        // Dev mock: local fixture repos have no upstream to pull from.
+        return { ok: true as const, summary: "Already up to date" };
+      },
       async restoreCheckpoint(input: { threadId: string; sha: string }) {
         // Guard order matches electron/worktrees.js restoreCheckpoint.
         const detail = details.get(input.threadId);
