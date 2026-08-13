@@ -1,28 +1,68 @@
-# Solenta
+<p align="center">
+  <img src="assets/icon-512.png" width="128" alt="Solenta icon" />
+</p>
 
-Local-first desktop control surface for coding agents (Claude Code, Codex, Kimi,
-Grok, OpenCode). Electron owns CLIs, worktrees, spend, and a shared memory
-server; React drives three panes over the typed contract in `src/shared/ipc.ts`.
+<h1 align="center">Solenta</h1>
 
-## UI (three panes)
+<p align="center">
+  <strong>A local-first desktop control surface for coding agents.</strong><br/>
+  Run Claude Code, Codex, Kimi, Grok, and OpenCode side by side — with worktrees,
+  PRs, spend guardrails, and shared agent memory, all in one window.
+</p>
 
-- **Sidebar:** projects, threads, spend/budget, settings
-- **Center:** conversation + work log, composer (provider / model / permission /
-  Build), Changes panel
-- **Right:** Agents (live workflow), Git (worktree setup/merge/delete, push),
-  Memory tab
+<p align="center">
+  <a href="https://github.com/currentbits/solenta/releases/latest">Download for macOS</a> ·
+  <a href="https://github.com/currentbits/solenta/issues">Issues</a> ·
+  <a href="LICENSE">MIT License</a>
+</p>
 
-**Threads** are provider sessions with sticky permission mode, optional model
-override, and resume where supported. After the first turn, `sessionId` locks the
-provider. Empty `models` lists (e.g. Codex) accept free-form model ids via the
-composer pill (Default + Custom…).
+---
 
-**Worktrees** are optional per thread; merge or delete from Git before deleting
-the thread. **Build** runs multi-phase workflow templates (custom + builtin) with
-per-phase providers and agent dossiers. **Memory** is a supervised local
-MCP/HTTP server auto-injected into Claude via `--mcp-config`; the Memory tab
-searches and stores notes. **Cost** guardrails: optional daily budget blocks new
-runs when today's spend is at/over the cap.
+## What it is
+
+Solenta turns "kick off an agent in a terminal and hope" into a directed,
+visible workflow. Each **thread** is a provider session against one of your
+projects: you watch the conversation and work log live, inspect the diff, and
+land the result as a PR — without juggling terminal tabs, branches, or PIDs.
+
+Everything runs locally. Solenta shells out to the agent CLIs you already have
+installed and keeps its state on your disk.
+
+## Features
+
+- **Five providers, one UI** — Claude Code, Codex, Kimi, Grok, and OpenCode
+  threads with sticky permission modes, per-thread model overrides, and session
+  resume where the provider supports it.
+- **Three-pane workspace** — projects and threads on the left, conversation +
+  work log in the center, and a live agent/git/memory panel on the right.
+- **Isolated git worktrees per thread** — set up, diff, merge to main, push, or
+  delete from the Git tab. Open a PR straight from a thread and watch its CI
+  checks as badges.
+- **Build workflows** — multi-phase pipeline templates (plan, analyze, verify…)
+  with per-phase providers, fan-out, and a judge step; watch each phase settle
+  in the Agents panel.
+- **Shared agent memory** — a supervised local memory server (MCP + HTTP) is
+  auto-injected into agent sessions, so what one thread learns, the next one
+  knows.
+- **Spend guardrails** — optional daily budget caps block new runs when the
+  day's spend hits the limit; token usage is visible per thread.
+- **Automations** — schedule recurring prompts (hourly / daily / weekly) against
+  any project.
+- **Web mode** — `--serve-web` exposes the same UI over HTTP + WebSocket behind
+  a session token, so you can check in from a browser.
+- **SSH remote projects** — register projects on remote hosts and run agents
+  against them over SSH.
+- **Activity feed** — one chronological view of everything your agents did.
+
+## Install
+
+1. Download `Solenta-<version>-macos-arm64.zip` from the
+   [latest release](https://github.com/currentbits/solenta/releases/latest).
+2. Unzip and move `Solenta.app` to `/Applications`.
+3. The app is not notarized: right-click → **Open** the first time (or
+   `xattr -dr com.apple.quarantine /Applications/Solenta.app`).
+4. Install whichever agent CLIs you want to drive (`claude`, `codex`, `kimi`,
+   `grok`, `opencode`) — Solenta finds them on your `PATH`.
 
 ## Dev
 
