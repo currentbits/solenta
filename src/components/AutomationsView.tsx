@@ -38,6 +38,7 @@ export function AutomationsView({
   const [projectId, setProjectId] = useState(projects[0]?.id ?? "");
   const [prompt, setPrompt] = useState("");
   const [provider, setProvider] = useState(providers[0]?.id ?? "claude");
+  const [model, setModel] = useState("");
   const [preset, setPreset] = useState<AutomationPreset>("hourly");
   const [hour, setHour] = useState("9");
   const [formError, setFormError] = useState<string | null>(null);
@@ -50,6 +51,8 @@ export function AutomationsView({
   );
 
   const needsHour = preset === "daily" || preset === "weekly";
+  const providerModels =
+    providers.find((p) => p.id === provider)?.models ?? [];
 
   const submit = async () => {
     const error = createFormError({
@@ -70,13 +73,14 @@ export function AutomationsView({
       projectId,
       prompt,
       provider,
-      model: null,
+      model: model.trim() || null,
       preset,
       hour: needsHour ? Number(hour) : null,
       enabled: true,
     });
     setName("");
     setPrompt("");
+    setModel("");
   };
 
   return (
@@ -129,7 +133,10 @@ export function AutomationsView({
             <select
               className={styles.select}
               value={provider}
-              onChange={(e) => setProvider(e.target.value)}
+              onChange={(e) => {
+                setProvider(e.target.value);
+                setModel("");
+              }}
               name="provider"
               aria-label="Provider"
             >
@@ -139,6 +146,38 @@ export function AutomationsView({
                 </option>
               ))}
             </select>
+          </label>
+          <label className={styles.field}>
+            <span className={styles.label}>Model</span>
+            {providerModels.length > 0 ? (
+              <select
+                className={styles.select}
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                name="model"
+                aria-label="Model"
+                data-automation-model=""
+              >
+                <option value="">Default</option>
+                {providerModels.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                className={styles.input}
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                name="model"
+                aria-label="Model"
+                placeholder="Default"
+                autoComplete="off"
+                spellCheck={false}
+                data-automation-model=""
+              />
+            )}
           </label>
           <label className={styles.field}>
             <span className={styles.label}>Schedule</span>
@@ -217,6 +256,9 @@ export function AutomationsView({
                   <span className={styles.schedule}>
                     {scheduleLabel(auto.preset, auto.hour, auto.nextRunAt)}
                   </span>
+                  {auto.model ? (
+                    <span className={styles.schedule}>{auto.model}</span>
+                  ) : null}
                   <span className={styles.next}>
                     {formatNextRun(auto.nextRunAt, now)}
                   </span>

@@ -79,6 +79,13 @@ export interface UseCoderResult {
     path?: string,
     opts?: { remoteHost?: string; remotePath?: string },
   ) => Promise<ProjectInfo | null>;
+  /** Patch name and/or SSH remote fields of an existing project. */
+  updateProject: (input: {
+    projectId: string;
+    name?: string;
+    remoteHost?: string;
+    remotePath?: string;
+  }) => Promise<ProjectInfo | null>;
   /** Create in projectId when given; otherwise the currently selected project. */
   createThread: (
     title?: string,
@@ -470,6 +477,25 @@ export function useCoder(): UseCoderResult {
         setError(null);
       }
       return p;
+    } catch (err) {
+      setError({ scope: "project", message: errorMessage(err) });
+      return null;
+    }
+  }, [api]);
+
+  const updateProject = useCallback(async (input: {
+    projectId: string;
+    name?: string;
+    remoteHost?: string;
+    remotePath?: string;
+  }) => {
+    try {
+      const updated = await api.projects.update(input);
+      setProjects((prev) =>
+        prev.map((p) => (p.id === updated.id ? updated : p)),
+      );
+      setError(null);
+      return updated;
     } catch (err) {
       setError({ scope: "project", message: errorMessage(err) });
       return null;
@@ -1344,6 +1370,7 @@ export function useCoder(): UseCoderResult {
     error,
     clearError,
     addProject,
+    updateProject,
     createThread,
     forkThread,
     startRun,

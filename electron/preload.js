@@ -74,6 +74,7 @@ const coder = {
   projects: {
     list: () => invoke("projects:list"),
     add: (projectPath, opts) => invoke("projects:add", projectPath, opts),
+    update: (input) => invoke("projects:update", input),
     addViaDialog: () => invoke("projects:addViaDialog"),
     remove: (input) => invoke("projects:remove", input),
   },

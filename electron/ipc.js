@@ -127,6 +127,13 @@ const IPC_HANDLERS = {
   "projects:add": async (ctx, projectPath, opts) => {
     return services.addProject(ctx.store, projectPath, opts);
   },
+  "projects:update": async (ctx, input) => {
+    return services.updateProject(
+      ctx.store,
+      input && input.projectId,
+      input || {},
+    );
+  },
   "projects:addViaDialog": async (ctx) => {
     const result = await ctx.dialog.showOpenDialog({
       properties: ["openDirectory"],

@@ -10,8 +10,10 @@ import { AgentsPanel } from "./components/AgentsPanel";
 import { SettingsModal } from "./components/SettingsModal";
 import { ArchiveToast } from "./components/ArchiveToast";
 import { AddProjectPathModal } from "./components/AddProjectPathModal";
+import { EditProjectModal } from "./components/EditProjectModal";
 import { WebTokenGate } from "./components/WebTokenGate";
 import { isWebMode } from "./shared/wire";
+import type { ProjectUpdateInput } from "./shared/ipc";
 import styles from "./App.module.css";
 
 export type AppView = "thread" | "kanban" | "prs" | "automations" | "activity";
@@ -29,6 +31,7 @@ export default function App() {
     error,
     clearError,
     addProject,
+    updateProject,
     createThread,
     forkThread,
     startRun,
@@ -109,6 +112,7 @@ export default function App() {
    */
   const [removeFailSlug, setRemoveFailSlug] = useState<string | null>(null);
   const [addPathOpen, setAddPathOpen] = useState(false);
+  const [editProjectId, setEditProjectId] = useState<string | null>(null);
   const [view, setView] = useState<AppView>("thread");
 
   const handleSelectThread = useCallback(
@@ -236,6 +240,18 @@ export default function App() {
     [addProject],
   );
 
+  const editProject =
+    projects.find((p) => p.id === editProjectId) ?? null;
+
+  const submitEditProject = useCallback(
+    async (input: ProjectUpdateInput) => {
+      const updated = await updateProject(input);
+      if (updated) setEditProjectId(null);
+      return updated;
+    },
+    [updateProject],
+  );
+
   return (
     <div className={styles.shell}>
       {isWebMode() && <WebTokenGate />}
@@ -301,6 +317,7 @@ export default function App() {
         onCreateThreadFromIssue={handleCreateThreadFromIssue}
         onAddProject={handleAddProject}
         onRemoveProject={handleRemoveProject}
+        onEditProject={setEditProjectId}
         projectError={error?.scope === "project" ? error.message : null}
         onDismissProjectError={clearError}
         onOpenSettings={() => setSettingsOpen(true)}
@@ -495,6 +512,13 @@ export default function App() {
           <AddProjectPathModal
             onClose={() => setAddPathOpen(false)}
             onSubmit={submitAddPath}
+          />
+        )}
+        {editProject && (
+          <EditProjectModal
+            project={editProject}
+            onClose={() => setEditProjectId(null)}
+            onSubmit={submitEditProject}
           />
         )}
       </div>

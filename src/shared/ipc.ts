@@ -23,6 +23,18 @@ export interface AddProjectOptions {
   remotePath?: string;
 }
 
+/**
+ * Patch for projects.update. An empty remoteHost string clears the remote
+ * config, turning the project local again; a non-empty host requires an
+ * absolute remotePath.
+ */
+export interface ProjectUpdateInput {
+  projectId: string;
+  name?: string;
+  remoteHost?: string;
+  remotePath?: string;
+}
+
 export type ThreadStatus = "idle" | "working" | "done" | "failed";
 
 export type PermissionMode = "default" | "acceptEdits" | "plan" | "bypassPermissions";
@@ -661,6 +673,8 @@ export interface CoderApi {
     list(): Promise<ProjectInfo[]>;
     /** Validates the path is a git repo; rejects otherwise. Optional remotes skip the local checkout. */
     add(path: string, opts?: AddProjectOptions): Promise<ProjectInfo>;
+    /** Patch name and/or SSH remote fields of an existing project. */
+    update(input: ProjectUpdateInput): Promise<ProjectInfo>;
     /** Opens a native folder picker; resolves null if the user cancels. */
     addViaDialog(): Promise<ProjectInfo | null>;
     /**
