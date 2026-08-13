@@ -20,11 +20,13 @@ describe("normalizeSettings autoSettleAfterDays", () => {
       dailyBudgetUsd: null,
       autoSettleAfterDays: DEFAULT_AUTO_SETTLE_AFTER_DAYS,
       mcpServers: [],
+      defaultWorktree: false,
     });
     assert.deepEqual(normalizeSettings(null), {
       dailyBudgetUsd: null,
       autoSettleAfterDays: 3,
       mcpServers: [],
+      defaultWorktree: false,
     });
     assert.equal(DEFAULT_AUTO_SETTLE_AFTER_DAYS, 3);
   });
@@ -86,13 +88,13 @@ describe("setSettings autoSettleAfterDays validation", () => {
 
     assert.deepEqual(
       services.setSettings(store, { autoSettleAfterDays: 7 }),
-      { dailyBudgetUsd: null, autoSettleAfterDays: 7, mcpServers: [] },
+      { dailyBudgetUsd: null, autoSettleAfterDays: 7, mcpServers: [], defaultWorktree: false },
     );
     assert.equal(store.getSettings().autoSettleAfterDays, 7);
 
     assert.deepEqual(
       services.setSettings(store, { autoSettleAfterDays: null }),
-      { dailyBudgetUsd: null, autoSettleAfterDays: null, mcpServers: [] },
+      { dailyBudgetUsd: null, autoSettleAfterDays: null, mcpServers: [], defaultWorktree: false },
     );
 
     assert.throws(
@@ -132,6 +134,7 @@ describe("setSettings autoSettleAfterDays validation", () => {
       dailyBudgetUsd: null,
       autoSettleAfterDays: 3,
       mcpServers: [],
+      defaultWorktree: false,
     });
   });
 
@@ -146,5 +149,25 @@ describe("setSettings autoSettleAfterDays validation", () => {
       null,
       "explicit Never must persist across reload, not become default 3",
     );
+  });
+
+  it("defaultWorktree: absent/junk → false, boolean kept, persists", () => {
+    assert.equal(normalizeSettings({}).defaultWorktree, false);
+    assert.equal(normalizeSettings({ defaultWorktree: "yes" }).defaultWorktree, false);
+    assert.equal(normalizeSettings({ defaultWorktree: 1 }).defaultWorktree, false);
+    assert.equal(normalizeSettings({ defaultWorktree: true }).defaultWorktree, true);
+
+    const store = new Store(filePath);
+    assert.equal(store.getSettings().defaultWorktree, false);
+    assert.equal(
+      services.setSettings(store, { defaultWorktree: true }).defaultWorktree,
+      true,
+    );
+    assert.throws(
+      () => services.setSettings(store, { defaultWorktree: "yes" }),
+      /defaultWorktree must be a boolean/,
+    );
+    const reloaded = new Store(filePath);
+    assert.equal(reloaded.getSettings().defaultWorktree, true);
   });
 });

@@ -1576,6 +1576,8 @@ function buildDevCoder(): CoderApi {
   let autoSettleAfterDays: number | null = 3;
   /** User MCP servers (Skills tab), in-memory. */
   let mcpServers: McpServerInfo[] = [];
+  /** Default new threads into a fake worktree (Settings toggle). */
+  let defaultWorktree = false;
   /** In-memory skills (Skills tab); dev twin of the on-disk SKILL.md scan. */
   let skillsList: SkillInfo[] = [
     {
@@ -2034,6 +2036,7 @@ function buildDevCoder(): CoderApi {
           dailyBudgetUsd,
           autoSettleAfterDays,
           mcpServers: mcpServers.map((s) => ({ ...s })),
+          defaultWorktree,
         };
       },
       async set(patch: Partial<AppSettings>): Promise<AppSettings> {
@@ -2045,10 +2048,17 @@ function buildDevCoder(): CoderApi {
           }
           mcpServers = patch.mcpServers.map((s) => ({ ...s }));
         }
+        if (Object.prototype.hasOwnProperty.call(patch, "defaultWorktree")) {
+          if (typeof patch.defaultWorktree !== "boolean") {
+            throw new Error("defaultWorktree must be a boolean");
+          }
+          defaultWorktree = patch.defaultWorktree;
+        }
         return {
           dailyBudgetUsd,
           autoSettleAfterDays,
           mcpServers: mcpServers.map((s) => ({ ...s })),
+          defaultWorktree,
         };
       },
     },

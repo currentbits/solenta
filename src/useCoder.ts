@@ -538,6 +538,12 @@ export function useCoder(): UseCoderResult {
     ) => {
       const pid = projectId ?? selectedProjectId;
       if (!pid) return null;
+      // Settings can default new threads into a worktree; explicit opts win.
+      // Worktrees are local-only, so remote projects always get plain threads.
+      const project = projects.find((p) => p.id === pid);
+      const worktree =
+        opts?.worktree ??
+        (settings?.defaultWorktree === true && !project?.remoteHost);
       // Inherit provider+model from the currently selected thread when present.
       const inheritFrom = selectedRef.current
         ? threadsRef.current.find((x) => x.id === selectedRef.current)
@@ -547,7 +553,7 @@ export function useCoder(): UseCoderResult {
         t = await api.threads.create({
           projectId: pid,
           title,
-          ...(opts?.worktree ? { worktree: true } : {}),
+          ...(worktree ? { worktree: true } : {}),
         });
       } catch (err) {
         setError({ scope: "run", message: errorMessage(err) });
@@ -574,7 +580,7 @@ export function useCoder(): UseCoderResult {
       setSelectedThreadId(t.id);
       return t;
     },
-    [api, selectedProjectId, applyThreads],
+    [api, selectedProjectId, applyThreads, projects, settings],
   );
 
   const forkThread = useCallback(
