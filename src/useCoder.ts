@@ -505,8 +505,8 @@ export function useCoder(): UseCoderResult {
   );
 
   const startRun = useCallback(
-    async (prompt: string, threadIdArg?: string) => {
-      const threadId = threadIdArg || selectedThreadId;
+    async (prompt: string, targetThreadId?: string) => {
+      const threadId = targetThreadId ?? selectedThreadId;
       if (!threadId) return;
       try {
         await api.runs.start({ threadId, prompt });

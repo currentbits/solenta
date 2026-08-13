@@ -44,6 +44,7 @@ import {
 } from "../modelPicker";
 import { useEscapeClose } from "../useEscapeClose";
 import { applyMention, getMentionQuery, type MentionQuery } from "../mention";
+import { buildBestOfNPlan, providerVendor } from "../bestOfN";
 import { WorkflowsModal } from "./WorkflowsModal";
 import styles from "./Composer.module.css";
 
@@ -81,6 +82,11 @@ interface ComposerProps {
   onSend: (prompt: string) => void | Promise<void>;
   /** Multi-phase Build workflow (Build pill main segment). */
   onBuild: (prompt: string, templateId: string) => void | Promise<void>;
+  /**
+   * Best of N: run this prompt on each selected provider as a forked thread.
+   * Absent hides the control (tests and shells without fork).
+   */
+  onBestOfN?: (providerIds: string[], prompt: string) => void | Promise<void>;
   placeholder?: string;
   /** Run-scope error from the parent hook (e.g. already active). */
   error?: string | null;
@@ -121,6 +127,7 @@ export function Composer({
   disabled = false,
   onSend,
   onBuild,
+  onBestOfN,
   placeholder = "Ask anything, @tag files/folders, $use skills, or / for commands",
   error = null,
   onDismissError,
@@ -144,6 +151,8 @@ export function Composer({
   /** Index of the row under keyboard/hover focus in the model list. */
   const [highlightIndex, setHighlightIndex] = useState(0);
   const [buildMenuOpen, setBuildMenuOpen] = useState(false);
+  const [bestOfNOpen, setBestOfNOpen] = useState(false);
+  const [bestIds, setBestIds] = useState<string[]>([]);
   const [manageOpen, setManageOpen] = useState(false);
   /** Per-thread last-used workflow template id. */
   const [templateByThread, setTemplateByThread] = useState<
@@ -155,6 +164,7 @@ export function Composer({
   const modelListRef = useRef<HTMLUListElement>(null);
   const providerListRef = useRef<HTMLUListElement>(null);
   const buildWrapRef = useRef<HTMLDivElement>(null);
+  const bestOfNWrapRef = useRef<HTMLDivElement>(null);
   const modelListId = useId();
 
   /** @-mention popup state; `mention` null means closed. */
@@ -304,7 +314,7 @@ export function Composer({
   const effortLabel = effortDisplayLabel(effortForMeter);
 
   useEffect(() => {
-    if (!modeOpen && !modelOpen && !buildMenuOpen) return;
+    if (!modeOpen && !modelOpen && !buildMenuOpen && !bestOfNOpen) return;
     const onDoc = (e: MouseEvent) => {
       const t = e.target as Node;
       if (modeOpen && !modeWrapRef.current?.contains(t)) {
@@ -316,10 +326,13 @@ export function Composer({
       if (buildMenuOpen && !buildWrapRef.current?.contains(t)) {
         setBuildMenuOpen(false);
       }
+      if (bestOfNOpen && !bestOfNWrapRef.current?.contains(t)) {
+        setBestOfNOpen(false);
+      }
     };
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
-  }, [modeOpen, modelOpen, buildMenuOpen]);
+  }, [modeOpen, modelOpen, buildMenuOpen, bestOfNOpen]);
 
   // When the popover opens, seed highlight on the selected model and focus the list.
   useEffect(() => {
@@ -414,7 +427,7 @@ export function Composer({
     }
   }, []);
 
-  const anyMenuOpen = modeOpen || modelOpen || buildMenuOpen;
+  const anyMenuOpen = modeOpen || modelOpen || buildMenuOpen || bestOfNOpen;
   const closeAllMenus = useCallback(() => {
     setModeOpen(false);
     if (modelOpen) {
@@ -423,6 +436,7 @@ export function Composer({
       setModelOpen(false);
     }
     setBuildMenuOpen(false);
+    setBestOfNOpen(false);
   }, [modelOpen, closeModelPicker]);
   useEscapeClose(anyMenuOpen, closeAllMenus);
 
@@ -459,6 +473,28 @@ export function Composer({
       (prompt) => onBuild(prompt, templateId),
       "Failed to start workflow",
     );
+  };
+
+  const installedProviders = providers.filter((p) => p.available);
+  const canBestOfN = Boolean(onBestOfN) && canSend;
+  const toggleBestId = (id: string) => {
+    setBestIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    );
+  };
+
+  const submitBestOfN = () => {
+    if (!canBestOfN || !onBestOfN) return;
+    const availableIds = installedProviders.map((p) => p.id);
+    const plan = buildBestOfNPlan(availableIds, bestIds, provider);
+    if (typeof plan === "string") {
+      setLocalError(plan);
+      return;
+    }
+    void runAction(async (prompt) => {
+      await onBestOfN(plan, prompt);
+      setBestOfNOpen(false);
+    }, "Failed to start Best of N");
   };
 
   const selectTemplate = (id: string) => {
@@ -710,6 +746,7 @@ export function Composer({
                     setModelOpen(true);
                     setModeOpen(false);
                     setBuildMenuOpen(false);
+                    setBestOfNOpen(false);
                   }
                 }}
               >
@@ -1000,6 +1037,7 @@ export function Composer({
                     setModeOpen((v) => !v);
                     setModelOpen(false);
                     setBuildMenuOpen(false);
+                    setBestOfNOpen(false);
                   }
                 }}
               >
@@ -1057,6 +1095,7 @@ export function Composer({
                   setBuildMenuOpen((v) => !v);
                   setModeOpen(false);
                   setModelOpen(false);
+                  setBestOfNOpen(false);
                 }}
               >
                 <span className={styles.caret}>▾</span>
@@ -1106,6 +1145,83 @@ export function Composer({
                 </ul>
               )}
             </div>
+
+            {onBestOfN && (
+              <div className={styles.bestOfNWrap} ref={bestOfNWrapRef}>
+                <button
+                  type="button"
+                  className={styles.pill}
+                  disabled={!canBestOfN}
+                  aria-disabled={!canBestOfN ? "true" : undefined}
+                  aria-haspopup="dialog"
+                  aria-expanded={bestOfNOpen}
+                  aria-label="Best of N"
+                  title="Run this prompt on multiple providers at once"
+                  data-best-of-n=""
+                  onClick={() => {
+                    if (!canBestOfN) return;
+                    setBestOfNOpen((v) => !v);
+                    setModeOpen(false);
+                    setModelOpen(false);
+                    setBuildMenuOpen(false);
+                  }}
+                >
+                  Best of N
+                </button>
+                {bestOfNOpen && (
+                  <div
+                    className={styles.bestOfNPopover}
+                    role="dialog"
+                    aria-label="Best of N"
+                    data-best-of-n-popover=""
+                  >
+                    <p className={styles.bestOfNHint}>
+                      Each selection forks a new thread
+                    </p>
+                    <ul className={styles.bestOfNList}>
+                      {installedProviders.map((p) => {
+                        const vendor = providerVendor(p);
+                        const checked = bestIds.includes(p.id);
+                        return (
+                          <li key={p.id}>
+                            <label className={styles.bestOfNRow}>
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                data-best-of-n-provider={p.id}
+                                onChange={() => toggleBestId(p.id)}
+                              />
+                              <span className={styles.bestOfNRowText}>
+                                <span className={styles.modelRowLabel}>
+                                  {p.name}
+                                </span>
+                                {vendor ? (
+                                  <span className={styles.modelRowVendor}>
+                                    {vendor}
+                                  </span>
+                                ) : null}
+                              </span>
+                            </label>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                    <button
+                      type="button"
+                      className={styles.bestOfNRun}
+                      disabled={bestIds.length < 2 || sending}
+                      aria-disabled={
+                        bestIds.length < 2 || sending ? "true" : undefined
+                      }
+                      data-best-of-n-run=""
+                      onClick={() => submitBestOfN()}
+                    >
+                      Run
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
           <button
             type="button"

@@ -359,7 +359,7 @@ export default function App() {
         workflows={workflows}
         hasProjects={projects.length > 0}
         onAddProject={handleAddProject}
-        onStartRun={(prompt) => startRun(prompt)}
+        onStartRun={(prompt, threadId) => startRun(prompt, threadId)}
         onStartWorkflow={(prompt, templateId) =>
           startWorkflowRun(prompt, templateId)
         }
@@ -387,9 +387,9 @@ export default function App() {
         onPush={() => pushBranch()}
         runError={error?.scope === "run" ? error.message : null}
         onDismissRunError={clearError}
-        onFork={(opts) => {
-          if (!selectedThreadId) return;
-          void forkThread(selectedThreadId, opts);
+        onFork={async (opts) => {
+          if (!selectedThreadId) return null;
+          return forkThread(selectedThreadId, opts);
         }}
         threads={threads}
         onSelectThread={handleSelectThread}

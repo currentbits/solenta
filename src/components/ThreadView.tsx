@@ -32,6 +32,7 @@ import {
   mapReviewBars,
   type ReviewBar,
 } from "../reviewBar";
+import { buildBestOfNPlan } from "../bestOfN";
 import { useEscapeClose } from "../useEscapeClose";
 import { Composer } from "./Composer";
 import { Markdown } from "./Markdown";
@@ -83,7 +84,7 @@ interface ThreadViewProps {
   workflows: WorkflowTemplateInfo[];
   hasProjects: boolean;
   onAddProject: () => void;
-  onStartRun: (prompt: string) => void | Promise<void>;
+  onStartRun: (prompt: string, threadId?: string) => void | Promise<void>;
   /** Multi-phase Build workflow (Build pill) with selected template id. */
   onStartWorkflow: (
     prompt: string,
@@ -130,7 +131,9 @@ interface ThreadViewProps {
    * Fork / hand off the open thread (round 49). Plain call = same harness;
    * pass provider for hand-off.
    */
-  onFork?: (opts?: { provider?: string }) => void | Promise<void>;
+  onFork?: (
+    opts?: { provider?: string },
+  ) => void | Promise<void | ThreadInfo | null>;
   /** Full thread list for handoffFrom provenance lookup. */
   threads?: ThreadInfo[];
   /** Select another thread (provenance chip → source). */
@@ -749,6 +752,40 @@ export function ThreadView({
     void onStartRun(retryUser.text);
   }, [retryUser, isWorking, onStartRun]);
 
+  /**
+   * Fork one thread per selected provider, then start the same prompt on each
+   * new fork. Sequential: a run cannot start until its fork exists. Failures
+   * throw so Composer and the run-error banner both surface them.
+   */
+  const runBestOfN = useCallback(
+    async (selectedIds: string[], prompt: string) => {
+      const current = detail?.thread;
+      if (!current || !onFork) {
+        throw new Error("Failed to start Best of N");
+      }
+      const availableIds = providers
+        .filter((p) => p.available)
+        .map((p) => p.id);
+      const plan = buildBestOfNPlan(
+        availableIds,
+        selectedIds,
+        current.provider,
+      );
+      if (typeof plan === "string") throw new Error(plan);
+      const created: string[] = [];
+      for (const providerId of plan) {
+        const forked = await onFork({ provider: providerId });
+        if (!forked || typeof forked !== "object" || !forked.id) {
+          throw new Error("Failed to fork thread");
+        }
+        created.push(forked.id);
+        await onStartRun(prompt, forked.id);
+      }
+      if (created[0]) onSelectThread?.(created[0]);
+    },
+    [detail, onFork, onSelectThread, onStartRun, providers],
+  );
+
   useEffect(() => {
     const id = detail?.thread.id ?? null;
     if (id !== prevThreadId.current) {
@@ -1309,6 +1346,7 @@ export function ThreadView({
         }
         onSend={onStartRun}
         onBuild={onStartWorkflow}
+        onBestOfN={onFork ? runBestOfN : undefined}
         error={runError}
         onDismissError={onDismissRunError}
         onListFiles={onListFiles}
