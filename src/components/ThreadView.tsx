@@ -1,8 +1,10 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   ChatMessage,
+  DevServerState,
   DiffResult,
   FileChange,
+  GitSyncInfo,
   PermissionMode,
   ProjectInfo,
   ProviderInfo,
@@ -32,6 +34,12 @@ import {
   mapReviewBars,
   type ReviewBar,
 } from "../reviewBar";
+import {
+  isRunCollapsed,
+  mapRunHeaders,
+  toggleRunCollapsed,
+  type RunHeader,
+} from "../runHeader";
 import { buildBestOfNPlan } from "../bestOfN";
 import { useEscapeClose } from "../useEscapeClose";
 import { Composer } from "./Composer";
@@ -39,6 +47,7 @@ import { Markdown } from "./Markdown";
 import styles from "./ThreadView.module.css";
 
 const PUSH_FLASH_MS = 3000;
+const COPY_FLASH_MS = 1500;
 
 /** Byte-equal to electron/worktrees.js restoreCheckpoint run-active guard. */
 const RESTORE_ACTIVE_TITLE =
@@ -125,6 +134,18 @@ interface ThreadViewProps {
   onListFiles?: (query: string) => Promise<string[]>;
   /** Push the thread's current branch to origin. */
   onPush: () => Promise<{ remote: string; branch: string }>;
+  /** Upstream state for the header sync pill; absent hides the pill. */
+  gitSyncInfo?: (threadId: string) => Promise<GitSyncInfo>;
+  /** Fetch remotes before the sync pill re-reads state. */
+  gitFetch?: (threadId: string) => Promise<void>;
+  /** Runnable package.json scripts for the header dev dropdown. */
+  listDevScripts?: (threadId: string) => Promise<string[]>;
+  /** Start `npm run <script>` at the thread root. */
+  startDevServer?: (threadId: string, script: string) => Promise<DevServerState>;
+  /** Stop the thread's spawned dev server. */
+  stopDevServer?: (threadId: string) => Promise<DevServerState>;
+  /** Live status for the thread's spawned dev server. */
+  devServerStatus?: (threadId: string) => Promise<DevServerState>;
   runError?: string | null;
   onDismissRunError?: () => void;
   /**
@@ -321,6 +342,340 @@ function ReviewBarStrip({
           Review
         </button>
       </div>
+    </div>
+  );
+}
+
+/** Collapsible "Worked for 2m 5s" header row above a completed run. */
+function RunHeaderRow({
+  header,
+  collapsed,
+  onToggle,
+}: {
+  header: RunHeader;
+  collapsed: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={styles.runHeader}
+      data-run-header={header.runId}
+      aria-expanded={!collapsed}
+      title={collapsed ? "Show this run" : "Hide this run"}
+      onClick={onToggle}
+    >
+      <span className={styles.chevron} data-open={!collapsed}>
+        <svg
+          width="9"
+          height="9"
+          viewBox="0 0 10 10"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M3.5 2 6.5 5 3.5 8" />
+        </svg>
+      </span>
+      <span className={styles.runHeaderLabel}>{header.label}</span>
+    </button>
+  );
+}
+
+function syncPillLabel(info: GitSyncInfo | null): string | null {
+  if (!info || !info.hasUpstream) return null;
+  if (info.ahead === 0 && info.behind === 0) return "Synced";
+  const parts: string[] = [];
+  if (info.ahead > 0) parts.push(`${info.ahead} ahead`);
+  if (info.behind > 0) parts.push(`${info.behind} behind`);
+  return parts.join(" · ");
+}
+
+/**
+ * Small upstream-state pill next to Push. Fetches then reads on mount and
+ * whenever refreshNonce bumps (after a push); clicking refetches. Hidden
+ * entirely when the thread root has no upstream.
+ */
+function SyncPill({
+  threadId,
+  gitSyncInfo,
+  gitFetch,
+  refreshNonce,
+}: {
+  threadId: string;
+  gitSyncInfo: (threadId: string) => Promise<GitSyncInfo>;
+  gitFetch: (threadId: string) => Promise<void>;
+  refreshNonce: number;
+}) {
+  const [info, setInfo] = useState<GitSyncInfo | null>(null);
+  const [busy, setBusy] = useState(false);
+  const threadRef = useRef(threadId);
+  threadRef.current = threadId;
+
+  const refresh = useCallback(async () => {
+    setBusy(true);
+    try {
+      await gitFetch(threadId);
+    } catch {
+      // Offline or no remote: fall through to re-reading local state.
+    }
+    try {
+      const next = await gitSyncInfo(threadId);
+      if (threadRef.current === threadId) setInfo(next);
+    } catch {
+      if (threadRef.current === threadId) setInfo(null);
+    } finally {
+      if (threadRef.current === threadId) setBusy(false);
+    }
+  }, [threadId, gitFetch, gitSyncInfo]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh, refreshNonce]);
+
+  const label = syncPillLabel(info);
+  if (!label) return null;
+  return (
+    <button
+      type="button"
+      className={styles.syncPill}
+      data-sync-pill=""
+      title="Fetch from remote"
+      aria-busy={busy || undefined}
+      onClick={() => void refresh()}
+    >
+      {label}
+    </button>
+  );
+}
+
+const DEV_MENU_POLL_MS = 3000;
+
+/**
+ * "Play dev" dropdown: lists the thread root's runnable scripts, starts one
+ * per row, stops the running server, and links the captured URL. Polls while
+ * the popover is open or a server is running.
+ */
+function DevMenu({
+  threadId,
+  listDevScripts,
+  startDevServer,
+  stopDevServer,
+  devServerStatus,
+}: {
+  threadId: string;
+  listDevScripts: (threadId: string) => Promise<string[]>;
+  startDevServer: (threadId: string, script: string) => Promise<DevServerState>;
+  stopDevServer: (threadId: string) => Promise<DevServerState>;
+  devServerStatus: (threadId: string) => Promise<DevServerState>;
+}) {
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const [scripts, setScripts] = useState<string[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [state, setState] = useState<DevServerState>({ running: false });
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setOpen(false);
+    setBusy(false);
+    setLoaded(false);
+    setScripts([]);
+    setState({ running: false });
+    async function load() {
+      try {
+        const [list, status] = await Promise.all([
+          listDevScripts(threadId),
+          devServerStatus(threadId),
+        ]);
+        if (cancelled) return;
+        setScripts(Array.isArray(list) ? list : []);
+        setState(
+          status && typeof status === "object" ? status : { running: false },
+        );
+      } catch {
+        if (cancelled) return;
+        setScripts([]);
+        setState({ running: false });
+      } finally {
+        if (!cancelled) setLoaded(true);
+      }
+    }
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [threadId, listDevScripts, devServerStatus]);
+
+  const live = open || state.running;
+  useEffect(() => {
+    if (!live) return;
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const status = await devServerStatus(threadId);
+        if (cancelled) return;
+        setState(
+          status && typeof status === "object" ? status : { running: false },
+        );
+      } catch {
+        // Keep last known state; the next tick retries.
+      }
+    };
+    const id = window.setInterval(() => void tick(), DEV_MENU_POLL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [live, threadId, devServerStatus]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+    };
+  }, [open]);
+  useEscapeClose(open, useCallback(() => setOpen(false), []));
+
+  const start = async (script: string) => {
+    if (busy || state.running) return;
+    setBusy(true);
+    try {
+      const next = await startDevServer(threadId, script);
+      setState(next && typeof next === "object" ? next : { running: false });
+    } catch {
+      // Parent surfaces failures; the next poll refreshes state.
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const stop = async () => {
+    if (busy || !state.running) return;
+    setBusy(true);
+    try {
+      const next = await stopDevServer(threadId);
+      setState(next && typeof next === "object" ? next : { running: false });
+    } catch {
+      // Next poll refreshes state.
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const noScripts = loaded && scripts.length === 0;
+  const label = state.running && state.script ? state.script : "dev";
+
+  return (
+    <div className={styles.menuWrap} ref={wrapRef}>
+      <button
+        type="button"
+        className={styles.btn}
+        data-dev-menu=""
+        disabled={noScripts}
+        aria-disabled={noScripts ? "true" : undefined}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        title={
+          noScripts
+            ? "No runnable scripts in package.json"
+            : state.running
+              ? `Dev server running: ${label}`
+              : "Run a dev server"
+        }
+        onClick={() => {
+          if (noScripts) return;
+          setOpen((v) => !v);
+        }}
+      >
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 16 16"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M5 3.2v9.6L12.8 8 5 3.2Z" />
+        </svg>
+        <span>{label}</span>
+        <span className={styles.chevron} data-open={open}>
+          <svg
+            width="9"
+            height="9"
+            viewBox="0 0 10 10"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.6"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M3.5 2 6.5 5 3.5 8" />
+          </svg>
+        </span>
+      </button>
+      {open && (
+        <div className={styles.menu} role="menu" data-dev-popover="">
+          {scripts.map((script) => {
+            const isRunningThis = state.running && state.script === script;
+            return (
+              <button
+                key={script}
+                type="button"
+                className={styles.menuItem}
+                role="menuitem"
+                data-dev-script={script}
+                disabled={busy || state.running}
+                title={
+                  state.running
+                    ? "Stop the running server first"
+                    : `Run npm run ${script}`
+                }
+                onClick={() => void start(script)}
+              >
+                {isRunningThis ? `${script} (running)` : script}
+              </button>
+            );
+          })}
+          {state.running && (
+            <button
+              type="button"
+              className={styles.menuItem}
+              role="menuitem"
+              data-dev-stop=""
+              disabled={busy}
+              title="Stop the dev server"
+              onClick={() => void stop()}
+            >
+              Stop
+            </button>
+          )}
+          {state.url && (
+            <a
+              className={styles.menuItem}
+              role="menuitem"
+              data-dev-url=""
+              href={state.url}
+              target="_blank"
+              rel="noreferrer"
+            >
+              {state.url}
+            </a>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -655,6 +1010,12 @@ export function ThreadView({
   onSuggestCommitMessage,
   onListFiles,
   onPush,
+  gitSyncInfo,
+  gitFetch,
+  listDevScripts,
+  startDevServer,
+  stopDevServer,
+  devServerStatus,
   runError = null,
   onDismissRunError,
   onFork,
@@ -684,6 +1045,15 @@ export function ThreadView({
   const [restoreConfirm, setRestoreConfirm] = useState<ReviewBar | null>(null);
   const [restorePending, setRestorePending] = useState(false);
   const [restoreError, setRestoreError] = useState<string | null>(null);
+  /** Runs collapsed by the user; everything else stays open. */
+  const [collapsedRuns, setCollapsedRuns] = useState<ReadonlySet<string>>(
+    () => new Set<string>(),
+  );
+  /** Bumps after a successful push so the sync pill refetches. */
+  const [syncRefreshNonce, setSyncRefreshNonce] = useState(0);
+  /** Brief inline confirmation after copying the thread id. */
+  const [copiedThreadId, setCopiedThreadId] = useState(false);
+  const copyFlashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const runningAgents = useMemo(() => {
     if (!detail?.workflow) return 0;
@@ -712,6 +1082,16 @@ export function ThreadView({
     for (const [runId, items] of byRun) {
       const label = workLogDurationLabel(items);
       if (label) map.set(runId, label);
+    }
+    return map;
+  }, [detail]);
+
+  /** "Worked for" header per completed run, keyed by its first message. */
+  const headerByMessageId = useMemo(() => {
+    const map = new Map<string, RunHeader>();
+    if (!detail) return map;
+    for (const header of mapRunHeaders(detail.messages, detail.thread.status)) {
+      map.set(header.firstMessageId, header);
     }
     return map;
   }, [detail]);
@@ -848,9 +1228,16 @@ export function ThreadView({
       setRestorePending(false);
       setRestoreError(null);
       setRunStatList([]);
+      setCollapsedRuns(new Set<string>());
+      setSyncRefreshNonce(0);
+      setCopiedThreadId(false);
       if (pushFlashTimer.current != null) {
         clearTimeout(pushFlashTimer.current);
         pushFlashTimer.current = null;
+      }
+      if (copyFlashTimer.current != null) {
+        clearTimeout(copyFlashTimer.current);
+        copyFlashTimer.current = null;
       }
     }
   }, [detail?.thread.id]);
@@ -942,6 +1329,9 @@ export function ThreadView({
     return () => {
       if (pushFlashTimer.current != null) {
         clearTimeout(pushFlashTimer.current);
+      }
+      if (copyFlashTimer.current != null) {
+        clearTimeout(copyFlashTimer.current);
       }
     };
   }, []);
@@ -1076,6 +1466,7 @@ export function ThreadView({
     try {
       const result = await onPush();
       setPushFlashBranch(result.branch);
+      setSyncRefreshNonce((n) => n + 1);
       pushFlashTimer.current = setTimeout(() => {
         setPushFlashBranch(null);
         pushFlashTimer.current = null;
@@ -1085,6 +1476,22 @@ export function ThreadView({
     } finally {
       setPushPending(false);
     }
+  };
+
+  const handleCopyThreadId = async () => {
+    try {
+      await navigator.clipboard.writeText(thread.id);
+    } catch {
+      return;
+    }
+    setCopiedThreadId(true);
+    if (copyFlashTimer.current != null) {
+      clearTimeout(copyFlashTimer.current);
+    }
+    copyFlashTimer.current = setTimeout(() => {
+      setCopiedThreadId(false);
+      copyFlashTimer.current = null;
+    }, COPY_FLASH_MS);
   };
 
   const pushDisabled = isWorking || pushPending;
@@ -1106,6 +1513,18 @@ export function ThreadView({
         </div>
         <div className={styles.actions}>
           {ring && <ContextRingBadge ring={ring} />}
+          {listDevScripts &&
+            startDevServer &&
+            stopDevServer &&
+            devServerStatus && (
+              <DevMenu
+                threadId={thread.id}
+                listDevScripts={listDevScripts}
+                startDevServer={startDevServer}
+                stopDevServer={stopDevServer}
+                devServerStatus={devServerStatus}
+              />
+            )}
           {onFork && (
             <>
               <button
@@ -1223,6 +1642,14 @@ export function ThreadView({
             )}
             {pushLabel}
           </button>
+          {gitSyncInfo && gitFetch && (
+            <SyncPill
+              threadId={thread.id}
+              gitSyncInfo={gitSyncInfo}
+              gitFetch={gitFetch}
+              refreshNonce={syncRefreshNonce}
+            />
+          )}
           <div className={styles.menuWrap} ref={menuRef}>
             <button
               type="button"
@@ -1283,6 +1710,15 @@ export function ThreadView({
                   </div>
                 ) : (
                   <>
+                    <button
+                      type="button"
+                      className={styles.menuItem}
+                      role="menuitem"
+                      data-copy-thread-id=""
+                      onClick={() => void handleCopyThreadId()}
+                    >
+                      {copiedThreadId ? "Copied" : "Copy thread ID"}
+                    </button>
                     <button
                       type="button"
                       className={styles.menuItem}
@@ -1394,34 +1830,55 @@ export function ThreadView({
               retryEventId != null &&
               entry.message.id === retryEventId;
             const bar = barByMessageId.get(entry.message.id);
+            const runHeader = headerByMessageId.get(entry.message.id);
+            const runId = entry.message.runId;
+            const runCollapsed =
+              runId != null && isRunCollapsed(collapsedRuns, runId);
+            if (runCollapsed && !runHeader) return null;
             return (
               <Fragment key={entry.message.id}>
-                <MessageBlock
-                  message={entry.message}
-                  autoExpandTool={entry.message.id === latestRunningToolId}
-                  showRetry={isRetrySurface}
-                  retryTitle={isRetrySurface ? retryTitle : undefined}
-                  onRetry={isRetrySurface ? handleRetry : undefined}
-                  meta={{
-                    model:
-                      detail?.usage?.model ?? detail?.thread.model ?? null,
-                    effort: detail?.thread.reasoningEffort ?? null,
-                    duration: entry.message.runId
-                      ? (durationByRunId.get(entry.message.runId) ?? null)
-                      : null,
-                  }}
-                />
-                {bar && (
-                  <ReviewBarStrip
-                    bar={bar}
-                    isWorking={isWorking}
-                    onReview={() => onViewChanges?.()}
-                    onUndo={() => {
-                      if (!bar.undoSha || isWorking || restorePending) return;
-                      setRestoreError(null);
-                      setRestoreConfirm(bar);
-                    }}
+                {runHeader && (
+                  <RunHeaderRow
+                    header={runHeader}
+                    collapsed={runCollapsed}
+                    onToggle={() =>
+                      setCollapsedRuns((prev) =>
+                        toggleRunCollapsed(prev, runHeader.runId),
+                      )
+                    }
                   />
+                )}
+                {!runCollapsed && (
+                  <>
+                    <MessageBlock
+                      message={entry.message}
+                      autoExpandTool={entry.message.id === latestRunningToolId}
+                      showRetry={isRetrySurface}
+                      retryTitle={isRetrySurface ? retryTitle : undefined}
+                      onRetry={isRetrySurface ? handleRetry : undefined}
+                      meta={{
+                        model:
+                          detail?.usage?.model ?? detail?.thread.model ?? null,
+                        effort: detail?.thread.reasoningEffort ?? null,
+                        duration: entry.message.runId
+                          ? (durationByRunId.get(entry.message.runId) ?? null)
+                          : null,
+                      }}
+                    />
+                    {bar && (
+                      <ReviewBarStrip
+                        bar={bar}
+                        isWorking={isWorking}
+                        onReview={() => onViewChanges?.()}
+                        onUndo={() => {
+                          if (!bar.undoSha || isWorking || restorePending)
+                            return;
+                          setRestoreError(null);
+                          setRestoreConfirm(bar);
+                        }}
+                      />
+                    )}
+                  </>
                 )}
               </Fragment>
             );

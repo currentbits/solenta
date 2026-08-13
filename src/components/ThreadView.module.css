@@ -1086,3 +1086,61 @@
     opacity: 0.45;
   }
 }
+
+/* "Worked for 2m 5s" collapsible header above a completed run. */
+.runHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin: -6px auto -10px;
+  padding: 2px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 550;
+  text-align: left;
+  user-select: none;
+}
+
+.runHeader:hover {
+  color: var(--text-muted);
+}
+
+.runHeaderLabel {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Upstream state pill next to Push. */
+.syncPill {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 9px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 550;
+  white-space: nowrap;
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease;
+}
+
+.syncPill:hover {
+  color: var(--text);
+  background: var(--card-hover);
+}
+
+/* Anchor rows inside the header popovers (dev server URL). */
+a.menuItem {
+  color: var(--text);
+  text-decoration: none;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
