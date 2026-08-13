@@ -168,6 +168,61 @@ function addProject(store, projectPath, opts) {
 }
 
 /**
+ * Patch an existing project. Today: display name and the SSH remote fields.
+ * Remote validation mirrors addProject: a non-empty host requires an absolute
+ * remotePath; an empty host clears both keys, turning the project local again.
+ * The local checkout path is never edited here.
+ * @param {import('./store').Store} store
+ * @param {string} projectId
+ * @param {{ name?: string, remoteHost?: string, remotePath?: string }} patch
+ */
+function updateProject(store, projectId, patch) {
+  const projects = store.getProjects().slice();
+  const idx = projects.findIndex((p) => p.id === projectId);
+  if (idx === -1) {
+    throw new Error(`Unknown project: ${projectId}`);
+  }
+  const next = { ...projects[idx] };
+  const input = patch && typeof patch === "object" ? patch : {};
+
+  if (typeof input.name === "string") {
+    const name = input.name.trim();
+    if (!name) {
+      throw new Error("Name cannot be empty");
+    }
+    next.name = name;
+  }
+
+  if (
+    typeof input.remoteHost === "string" ||
+    typeof input.remotePath === "string"
+  ) {
+    const host =
+      typeof input.remoteHost === "string" ? input.remoteHost.trim() : "";
+    const rpath =
+      typeof input.remotePath === "string" ? input.remotePath.trim() : "";
+    if (host) {
+      if (!rpath) {
+        throw new Error("Remote path is required when remote host is set");
+      }
+      if (!rpath.startsWith("/")) {
+        throw new Error("Remote path must be an absolute path (start with /)");
+      }
+      next.remoteHost = host;
+      next.remotePath = rpath;
+    } else {
+      delete next.remoteHost;
+      delete next.remotePath;
+    }
+  }
+
+  projects[idx] = next;
+  store.setProjects(projects);
+  store.save();
+  return next;
+}
+
+/**
  * @param {import('./store').Store} store
  * @param {{ projectId: string, title: string }} input
  */
@@ -1553,6 +1608,7 @@ function assertUnderDailyBudget(store) {
 module.exports = {
   addProject,
   removeProject,
+  updateProject,
   createThread,
   forkThread,
   setPermissionMode,

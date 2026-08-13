@@ -2286,6 +2286,46 @@ function buildDevCoder(): CoderApi {
         const n = projects.length + 1;
         return api.projects.add(`/Users/demo/demo-org/project-${n}`);
       },
+      /** Mirrors services.updateProject: empty host clears the remote fields. */
+      async update(input: {
+        projectId: string;
+        name?: string;
+        remoteHost?: string;
+        remotePath?: string;
+      }) {
+        const project = projects.find((p) => p.id === input.projectId);
+        if (!project) {
+          throw new Error(`Unknown project: ${input.projectId}`);
+        }
+        if (typeof input.name === "string") {
+          const name = input.name.trim();
+          if (!name) throw new Error("Name cannot be empty");
+          project.name = name;
+        }
+        if (
+          typeof input.remoteHost === "string" ||
+          typeof input.remotePath === "string"
+        ) {
+          const host = (input.remoteHost ?? "").trim();
+          const rpath = (input.remotePath ?? "").trim();
+          if (host) {
+            if (!rpath) {
+              throw new Error("Remote path is required when remote host is set");
+            }
+            if (!rpath.startsWith("/")) {
+              throw new Error(
+                "Remote path must be an absolute path (start with /)",
+              );
+            }
+            project.remoteHost = host;
+            project.remotePath = rpath;
+          } else {
+            delete project.remoteHost;
+            delete project.remotePath;
+          }
+        }
+        return { ...project };
+      },
       /**
        * t3-style remove project entry + thread history. Repo on disk untouched.
        * Guard order and strings match electron/services.js removeProject.

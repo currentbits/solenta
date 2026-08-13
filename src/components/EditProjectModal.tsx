@@ -1,0 +1,195 @@
+import { useCallback, useState } from "react";
+import { useEscapeClose } from "../useEscapeClose";
+import type { ProjectInfo, ProjectUpdateInput } from "../shared/ipc";
+import styles from "./SettingsModal.module.css";
+
+interface EditProjectModalProps {
+  project: ProjectInfo;
+  onClose: () => void;
+  onSubmit: (input: ProjectUpdateInput) => Promise<unknown>;
+}
+
+/**
+ * Edit an existing project: display name and the SSH remote fields. The local
+ * checkout path is shown read-only (it is the project's identity on disk).
+ * Clearing the host turns the project local again. Reuses the Settings modal
+ * chrome, same as AddProjectPathModal.
+ */
+export function EditProjectModal({
+  project,
+  onClose,
+  onSubmit,
+}: EditProjectModalProps) {
+  const [name, setName] = useState(project.name);
+  const [remoteHost, setRemoteHost] = useState(project.remoteHost ?? "");
+  const [remotePath, setRemotePath] = useState(project.remotePath ?? "");
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleClose = useCallback(() => {
+    if (pending) return;
+    onClose();
+  }, [onClose, pending]);
+
+  useEscapeClose(true, handleClose);
+
+  const host = remoteHost.trim();
+  const rpath = remotePath.trim();
+  const canSubmit = name.trim().length > 0 && (host ? Boolean(rpath) : true);
+
+  const submit = async () => {
+    if (pending || !canSubmit) return;
+    if (host && !rpath.startsWith("/")) {
+      setError("Remote path must be an absolute path (start with /).");
+      return;
+    }
+    setPending(true);
+    setError(null);
+    try {
+      const updated = await onSubmit({
+        projectId: project.id,
+        name: name.trim(),
+        remoteHost: host,
+        remotePath: rpath,
+      });
+      if (!updated) {
+        setError("Could not save the project.");
+      }
+    } catch (err) {
+      setError(
+        err instanceof Error && err.message
+          ? err.message
+          : "Could not save the project.",
+      );
+    } finally {
+      setPending(false);
+    }
+  };
+
+  const enterToSubmit = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      void submit();
+    }
+  };
+
+  return (
+    <div
+      className={styles.backdrop}
+      role="presentation"
+      data-edit-project=""
+      onClick={handleClose}
+    >
+      <div
+        className={styles.modal}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="edit-project-title"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className={styles.header}>
+          <h2 id="edit-project-title" className={styles.title}>
+            Edit project
+          </h2>
+          <button
+            type="button"
+            className={styles.close}
+            onClick={handleClose}
+            aria-label="Close"
+          >
+            ×
+          </button>
+        </div>
+        <div className={styles.body}>
+          <div className={styles.field}>
+            <label className={styles.fieldLabel} htmlFor="edit-project-name">
+              Name
+            </label>
+            <input
+              id="edit-project-name"
+              className={styles.input}
+              data-edit-project-name=""
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              autoComplete="off"
+              spellCheck={false}
+              disabled={pending}
+              onKeyDown={enterToSubmit}
+            />
+          </div>
+          <div className={styles.field}>
+            <label className={styles.fieldLabel} htmlFor="edit-project-path">
+              Local path
+            </label>
+            <input
+              id="edit-project-path"
+              className={styles.input}
+              data-edit-project-path=""
+              value={project.path}
+              readOnly
+              disabled
+            />
+          </div>
+          <div className={styles.field}>
+            <label className={styles.fieldLabel} htmlFor="edit-project-remote-host">
+              Remote host (user@host)
+            </label>
+            <input
+              id="edit-project-remote-host"
+              className={styles.input}
+              data-edit-project-remote-host=""
+              value={remoteHost}
+              onChange={(e) => setRemoteHost(e.target.value)}
+              placeholder="empty = local project"
+              autoComplete="off"
+              spellCheck={false}
+              disabled={pending}
+              onKeyDown={enterToSubmit}
+            />
+          </div>
+          <div className={styles.field}>
+            <label className={styles.fieldLabel} htmlFor="edit-project-remote-path">
+              Remote path
+            </label>
+            <input
+              id="edit-project-remote-path"
+              className={styles.input}
+              data-edit-project-remote-path=""
+              value={remotePath}
+              onChange={(e) => setRemotePath(e.target.value)}
+              placeholder="/absolute/path/on/the/remote"
+              autoComplete="off"
+              spellCheck={false}
+              disabled={pending}
+              onKeyDown={enterToSubmit}
+            />
+          </div>
+          {error && (
+            <p className={styles.fieldError} role="alert">
+              {error}
+            </p>
+          )}
+          <div className={styles.fieldRow}>
+            <button
+              type="button"
+              className={`${styles.btn} ${styles.btnPrimary}`}
+              data-edit-project-submit=""
+              disabled={pending || !canSubmit}
+              onClick={() => void submit()}
+            >
+              {pending ? "Saving…" : "Save"}
+            </button>
+            <button
+              type="button"
+              className={styles.btn}
+              disabled={pending}
+              onClick={handleClose}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

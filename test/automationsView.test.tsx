@@ -167,4 +167,64 @@ describe("AutomationsView", () => {
     assert.equal(input.preset, "hourly");
     m.unmount();
   });
+
+  it("passes a typed model to onCreate when the provider has no model list", async () => {
+    const created: unknown[] = [];
+    const m = await mount(
+      <AutomationsView
+        automations={[]}
+        projects={[p1]}
+        providers={providers}
+        onCreate={(input) => {
+          created.push(input);
+        }}
+        onUpdate={() => {}}
+        onRemove={() => {}}
+        onRunNow={() => {}}
+      />,
+    );
+    const modelInput = m.query("[data-automation-model]");
+    assert.ok(modelInput, "model control");
+    assert.equal(modelInput.tagName, "INPUT", "no model list → free-form input");
+
+    await m.type(m.query('[data-automation-create] [name="name"]'), "Nightly");
+    await m.type(
+      m.query('[data-automation-create] [name="prompt"]'),
+      "review the repo",
+    );
+    await m.type(modelInput, "claude-opus-4-6");
+    await m.click(m.query("[data-automation-create] button[type=submit]"));
+
+    assert.equal(created.length, 1);
+    assert.equal(
+      (created[0] as { model: string | null }).model,
+      "claude-opus-4-6",
+      "typed model must reach onCreate",
+    );
+    m.unmount();
+  });
+
+  it("offers a model dropdown when the provider lists models", async () => {
+    const withModels: ProviderInfo[] = [
+      { ...providers[0], models: ["claude-opus-4-6", "claude-sonnet-4-6"] },
+    ];
+    const m = await mount(
+      <AutomationsView
+        automations={[]}
+        projects={[p1]}
+        providers={withModels}
+        onCreate={() => {}}
+        onUpdate={() => {}}
+        onRemove={() => {}}
+        onRunNow={() => {}}
+      />,
+    );
+    const select = m.query("select[data-automation-model]");
+    assert.ok(select, "model list → dropdown");
+    const labels = Array.from(select.querySelectorAll("option")).map(
+      (o) => o.textContent,
+    );
+    assert.deepEqual(labels, ["Default", "claude-opus-4-6", "claude-sonnet-4-6"]);
+    m.unmount();
+  });
 });

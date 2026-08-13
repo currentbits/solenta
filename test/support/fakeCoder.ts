@@ -390,6 +390,35 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           }),
         ),
       addViaDialog: () => rec("projects.addViaDialog", [], project()),
+      update: (input: {
+        projectId: string;
+        name?: string;
+        remoteHost?: string;
+        remotePath?: string;
+      }) => {
+        const found = projects.find((p) => p.id === input.projectId);
+        const updated = found ? { ...found } : project();
+        if (typeof input.name === "string" && input.name.trim()) {
+          updated.name = input.name.trim();
+        }
+        const host = input.remoteHost?.trim() ?? "";
+        if (host) {
+          updated.remoteHost = host;
+          updated.remotePath = input.remotePath?.trim() ?? "";
+        } else if (
+          input.remoteHost !== undefined ||
+          input.remotePath !== undefined
+        ) {
+          delete updated.remoteHost;
+          delete updated.remotePath;
+        }
+        return rec("projects.update", [input], updated).then((v) => {
+          if (found) {
+            projects = projects.map((p) => (p.id === updated.id ? updated : p));
+          }
+          return v;
+        });
+      },
       remove: (input: unknown) => {
         const projectId = String(
           (input as { projectId?: string } | null)?.projectId ?? "",

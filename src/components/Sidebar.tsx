@@ -104,6 +104,8 @@ interface SidebarProps {
    * rejects on failure so the confirm can close either way.
    */
   onRemoveProject?: (projectId: string) => void | Promise<void>;
+  /** Opens the edit-project modal (name + SSH remote fields). */
+  onEditProject?: (projectId: string) => void;
   projectError?: string | null;
   onDismissProjectError?: () => void;
   /** Opens the Settings modal. */
@@ -908,6 +910,7 @@ export function Sidebar({
   onCreateThread,
   onAddProject,
   onRemoveProject,
+  onEditProject,
   projectError = null,
   onDismissProjectError,
   onOpenSettings,
@@ -1853,6 +1856,30 @@ export function Sidebar({
                     focusable, not nested inside it — so keyboard users can
                     reach it without toggling the group.
                   */}
+                  {project && onEditProject && !searching && (
+                    <button
+                      type="button"
+                      className={styles.groupRemove}
+                      aria-label={`Edit project ${slug}`}
+                      title="Edit project"
+                      data-project-edit={project.id}
+                      onClick={() => onEditProject(project.id)}
+                    >
+                      <svg
+                        width="12"
+                        height="12"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                      >
+                        <path d="M11.3 2.7a1.4 1.4 0 0 1 2 2L5 13H3v-2l8.3-8.3Z" />
+                      </svg>
+                    </button>
+                  )}
                   {project && onRemoveProject && !searching && (
                     <button
                       type="button"
