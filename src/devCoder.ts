@@ -158,6 +158,15 @@ function seedMemoryEntries(t0: number): MemoryRow[] {
   ];
 }
 
+const TRAILER = import.meta.env?.VITE_TRAILER === "1";
+const TRAILER_PROVIDERS = [
+  "claude",
+  "codex",
+  "kimi",
+  "grok",
+  "opencode",
+] as const;
+
 /** Mirrors electron/providers.js registry for browser/dev demos. */
 const DEV_PROVIDERS: ProviderInfo[] = [
   {
@@ -239,7 +248,7 @@ const DEV_PROVIDERS: ProviderInfo[] = [
   {
     id: "grok",
     name: "Grok",
-    available: false,
+    available: TRAILER ? true : false,
     supportsResume: false,
     models: ["grok-4.5"],
     modelInfo: [
@@ -757,7 +766,13 @@ function seedThreads(projects: ProjectInfo[]): ThreadInfo[] {
       pinnedAt: pinDemo ? t0 - 30 * 60 * 1000 : null,
       snoozedUntil: snoozeDemo ? t0 + dayMs : null,
       snoozedAt: snoozeDemo ? t0 - 5 * 60 * 1000 : null,
-      provider: isSimulate ? "simulate" : index % 3 === 0 ? "codex" : "claude",
+      provider: TRAILER
+        ? (TRAILER_PROVIDERS[index] ?? "claude")
+        : isSimulate
+          ? "simulate"
+          : index % 3 === 0
+            ? "codex"
+            : "claude",
       model: null,
       sessionId: isSimulate
         ? "sim-seed-session-aabbccdd"
@@ -1394,8 +1409,9 @@ function seedDetail(thread: ThreadInfo): ThreadDetail {
     }
   }
 
+  const trailerActive = TRAILER && thread.id === mockData.activeThreadId;
   const usage: SessionUsage | null =
-    thread.provider === "simulate"
+    thread.provider === "simulate" || trailerActive
       ? {
           model: "simulate-multiagent",
           inputTokens: 18400,
@@ -1417,9 +1433,11 @@ function seedDetail(thread: ThreadInfo): ThreadDetail {
     thread,
     messages,
     workLog,
-    workflow: thread.status === "working" && thread.provider === "simulate"
-      ? seedWorkflowMidRun()
-      : null,
+    workflow:
+      (thread.status === "working" && thread.provider === "simulate") ||
+      trailerActive
+        ? seedWorkflowMidRun()
+        : null,
     usage,
   };
 }
@@ -1587,7 +1605,11 @@ function buildDevCoder(): CoderApi {
             detail.messages.find((m) => m.role === "assistant" && m.runId === runId)
               ?.id ?? null,
           sessionStep: 0,
-          kind: t.provider === "simulate" ? "simulate" : "session",
+          kind:
+            t.provider === "simulate" ||
+            (TRAILER && t.id === mockData.activeThreadId)
+              ? "simulate"
+              : "session",
           workflowStep: 0,
           costBaseline: detail.usage?.costUsd ?? 0,
         });
@@ -1639,7 +1661,9 @@ function buildDevCoder(): CoderApi {
     }
   };
 
-  const isSimulate = (thread: ThreadInfo) => thread.provider === "simulate";
+  const isSimulate = (thread: ThreadInfo) =>
+    thread.provider === "simulate" ||
+    (TRAILER && thread.id === mockData.activeThreadId);
 
   /**
    * In-memory checkpoints per thread (dev twin of worktree git log).
