@@ -59,6 +59,7 @@ export default function App() {
     listPrs,
     listCheckpoints,
     restoreCheckpoint,
+    runStats,
     listLocalServers,
     revealInFinder,
     openInEditor,
@@ -314,6 +315,9 @@ export default function App() {
         changesOpen={changesOpen}
         changesNonce={changesNonce}
         onCloseChanges={() => setChangesOpen(false)}
+        onViewChanges={openChanges}
+        runStats={runStats}
+        restoreCheckpoint={restoreCheckpoint}
         onFetchDiff={() => fetchDiff()}
         onCommitChanges={(message) => commitChanges(message)}
         onRevertFile={(path, status) => revertFile(path, status)}

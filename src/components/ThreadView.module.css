@@ -1,4 +1,5 @@
 .main {
+  position: relative;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -733,6 +734,141 @@
   display: flex;
   gap: 6px;
   user-select: none;
+}
+
+.reviewBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 2px 2px 10px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--card);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.reviewStats {
+  min-width: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.reviewActions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.reviewBtn {
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 550;
+}
+
+.reviewBtn:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--card-hover);
+}
+
+.reviewBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.reviewError {
+  margin: 0;
+  padding: 8px 20px;
+  font-size: 12px;
+  color: #fca5a5;
+  border-top: 1px solid var(--border);
+}
+
+.confirmOverlay {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.confirmDialog {
+  width: 100%;
+  max-width: 300px;
+  padding: 14px 14px 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.confirmTitle {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--text);
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.confirmBody {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.confirmActions {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.confirmDanger,
+.confirmCancel {
+  flex: 1;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 550;
+  cursor: pointer;
+}
+
+.confirmDanger {
+  border: 1px solid rgba(248, 113, 113, 0.45);
+  background: rgba(248, 113, 113, 0.14);
+  color: #fca5a5;
+}
+
+.confirmDanger:hover:not(:disabled) {
+  background: rgba(248, 113, 113, 0.22);
+}
+
+.confirmDanger:disabled,
+.confirmCancel:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.confirmCancel {
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text-muted);
+}
+
+.confirmCancel:hover:not(:disabled) {
+  color: var(--text);
 }
 
 .contextRing {

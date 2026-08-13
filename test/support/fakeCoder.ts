@@ -18,6 +18,7 @@ import type {
   AppStatus,
   CheckpointInfo,
   CoderApi,
+  RunStatInfo,
   DiffResult,
   GitStatus,
   GitSyncInfo,
@@ -129,6 +130,8 @@ export interface FakeOptions {
    * when the thread has no worktreePath regardless of this map.
    */
   checkpoints?: Record<string, CheckpointInfo[]>;
+  /** Per-thread runStats override. When omitted, derived from checkpoints. */
+  runStats?: Record<string, RunStatInfo[]>;
   /** Force a channel to reject, e.g. { "runs.start": new Error("boom") }. */
   fail?: Record<string, Error>;
 }
@@ -679,6 +682,28 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       syncInfo: (input: unknown) =>
         rec("git.syncInfo", [input], { hasUpstream: false } as GitSyncInfo),
       fetch: (input: unknown) => rec("git.fetch", [input], undefined),
+      runStats: (input: unknown) => {
+        const i = input as { threadId: string };
+        const t = threads.find((x) => x.id === i.threadId);
+        if (!t || !t.worktreePath) {
+          return rec("git.runStats", [input], [] as RunStatInfo[]);
+        }
+        const override = opts.runStats?.[i.threadId];
+        if (override) {
+          return rec("git.runStats", [input], override.slice());
+        }
+        const list = (checkpoints[i.threadId] ?? [])
+          .slice()
+          .sort((a, b) => a.turn - b.turn);
+        const derived: RunStatInfo[] = list.map((c) => ({
+          sha: c.sha,
+          turn: c.turn,
+          files: 1,
+          additions: 1,
+          deletions: 0,
+        }));
+        return rec("git.runStats", [input], derived);
+      },
     },
     servers: {
       list: (input: unknown) => rec("servers.list", [input], [] as LocalServerInfo[]),

@@ -13,6 +13,7 @@ import type {
   ChatMessage,
   CheckpointInfo,
   CoderApi,
+  RunStatInfo,
   DiffResult,
   LocalServerInfo,
   MemoryEntryInfo,
@@ -2945,6 +2946,25 @@ function buildDevCoder(): CoderApi {
         });
         details.set(input.threadId, detail);
         emitDetail(detail);
+      },
+      async runStats(input: { threadId: string }): Promise<RunStatInfo[]> {
+        try {
+          const detail = details.get(input.threadId);
+          if (!detail || !detail.thread.worktreePath) return [];
+          const list = checkpointsByThread.get(input.threadId) || [];
+          return list
+            .slice()
+            .sort((a, b) => a.turn - b.turn)
+            .map((c) => ({
+              sha: c.sha,
+              turn: c.turn,
+              files: 1,
+              additions: 1,
+              deletions: 0,
+            }));
+        } catch {
+          return [];
+        }
       },
       async setupWorktree(input) {
         const detail = details.get(input.threadId);

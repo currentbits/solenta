@@ -4,6 +4,7 @@ import type {
   AppStatus,
   CheckpointInfo,
   CoderApi,
+  RunStatInfo,
   DiffResult,
   GitSyncInfo,
   LocalServerInfo,
@@ -160,6 +161,8 @@ export interface UseCoderResult {
   listCheckpoints: (threadId: string) => Promise<CheckpointInfo[]>;
   /** Hard-reset the thread worktree to a checkpoint sha. */
   restoreCheckpoint: (threadId: string, sha: string) => Promise<void>;
+  /** Per-checkpoint-pair shortstat for a thread. Never rejects. */
+  runStats: (threadId: string) => Promise<RunStatInfo[]>;
   /** Local TCP listeners whose cwd is the thread worktree or project. */
   listLocalServers: (threadId: string) => Promise<LocalServerInfo[]>;
   /** Reveal the selected thread root in Finder. */
@@ -973,6 +976,17 @@ export function useCoder(): UseCoderResult {
     [api],
   );
 
+  const runStats = useCallback(
+    async (threadId: string) => {
+      try {
+        return await api.git.runStats({ threadId });
+      } catch {
+        return [];
+      }
+    },
+    [api],
+  );
+
   const listLocalServers = useCallback(
     async (threadId: string) => {
       try {
@@ -1152,6 +1166,7 @@ export function useCoder(): UseCoderResult {
     listPrs,
     listCheckpoints,
     restoreCheckpoint,
+    runStats,
     listLocalServers,
     revealInFinder,
     openInEditor,

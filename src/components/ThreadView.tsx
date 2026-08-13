@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   ChatMessage,
   DiffResult,
@@ -7,6 +7,7 @@ import type {
   ProjectInfo,
   ProviderInfo,
   ReasoningEffort,
+  RunStatInfo,
   ThreadDetail,
   ThreadInfo,
   WorkLogItem,
@@ -26,12 +27,25 @@ import {
   retryAnchorEventId,
   retryButtonTitle,
 } from "../retryTurn";
+import {
+  formatReviewBarText,
+  mapReviewBars,
+  type ReviewBar,
+} from "../reviewBar";
 import { useEscapeClose } from "../useEscapeClose";
 import { Composer } from "./Composer";
 import { Markdown } from "./Markdown";
 import styles from "./ThreadView.module.css";
 
 const PUSH_FLASH_MS = 3000;
+
+/** Byte-equal to electron/worktrees.js restoreCheckpoint run-active guard. */
+const RESTORE_ACTIVE_TITLE =
+  "Cannot restore a checkpoint while a run is active";
+
+function shortSha(sha: string): string {
+  return sha.length > 7 ? sha.slice(0, 7) : sha;
+}
 
 const STICK_BOTTOM_PX = 80;
 
@@ -93,6 +107,12 @@ interface ThreadViewProps {
   /** Bumps on each open request so a re-open reloads the diff. */
   changesNonce: number;
   onCloseChanges: () => void;
+  /** Opens the center Changes panel (same path as the Environment tab). */
+  onViewChanges?: () => void;
+  /** Per-checkpoint-pair shortstat for review bars. */
+  runStats?: (threadId: string) => Promise<RunStatInfo[]>;
+  /** Hard-reset the worktree to a checkpoint (Undo confirm). */
+  restoreCheckpoint?: (threadId: string, sha: string) => Promise<void>;
   onFetchDiff: () => Promise<DiffResult>;
   /** Commit all changes shown in the Changes panel. */
   onCommitChanges: (message: string) => Promise<{ subject: string }>;
@@ -235,6 +255,56 @@ function MessageBlock({
       <Markdown text={message.text} />
       <footer className={styles.msgMeta}>{metaLine}</footer>
     </article>
+  );
+}
+
+function ReviewBarStrip({
+  bar,
+  isWorking,
+  onReview,
+  onUndo,
+}: {
+  bar: ReviewBar;
+  isWorking: boolean;
+  onReview: () => void;
+  onUndo: () => void;
+}) {
+  const canUndo = Boolean(bar.undoSha) && !isWorking;
+  const undoTitle = isWorking
+    ? RESTORE_ACTIVE_TITLE
+    : bar.undoSha
+      ? "Undo this run"
+      : "Nothing to undo";
+  return (
+    <div className={styles.reviewBar} data-review-bar={bar.runId}>
+      <span className={styles.reviewStats} data-review-stats="">
+        {formatReviewBarText(bar.files, bar.additions, bar.deletions)}
+      </span>
+      <div className={styles.reviewActions}>
+        <button
+          type="button"
+          className={styles.reviewBtn}
+          data-review-undo=""
+          disabled={!canUndo}
+          title={undoTitle}
+          onClick={() => {
+            if (!canUndo) return;
+            onUndo();
+          }}
+        >
+          Undo
+        </button>
+        <button
+          type="button"
+          className={styles.reviewBtn}
+          data-review-open=""
+          title="Review changes"
+          onClick={onReview}
+        >
+          Review
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -547,6 +617,9 @@ export function ThreadView({
   changesOpen,
   changesNonce,
   onCloseChanges,
+  onViewChanges,
+  runStats,
+  restoreCheckpoint,
   onFetchDiff,
   onCommitChanges,
   onRevertFile,
@@ -577,6 +650,10 @@ export function ThreadView({
    * open thread changes.
    */
   const [handoffBannerDismissed, setHandoffBannerDismissed] = useState(false);
+  const [runStatList, setRunStatList] = useState<RunStatInfo[]>([]);
+  const [restoreConfirm, setRestoreConfirm] = useState<ReviewBar | null>(null);
+  const [restorePending, setRestorePending] = useState(false);
+  const [restoreError, setRestoreError] = useState<string | null>(null);
 
   const runningAgents = useMemo(() => {
     if (!detail?.workflow) return 0;
@@ -683,12 +760,99 @@ export function ThreadView({
       setPushFlashBranch(null);
       setHandoffMenuOpen(false);
       setHandoffBannerDismissed(false);
+      setRestoreConfirm(null);
+      setRestorePending(false);
+      setRestoreError(null);
+      setRunStatList([]);
       if (pushFlashTimer.current != null) {
         clearTimeout(pushFlashTimer.current);
         pushFlashTimer.current = null;
       }
     }
   }, [detail?.thread.id]);
+
+  const refreshRunStats = useCallback(async () => {
+    const threadId = detail?.thread.id;
+    const wt = detail?.thread.worktreePath;
+    if (!threadId || !wt || !runStats) {
+      setRunStatList([]);
+      return;
+    }
+    try {
+      const list = await runStats(threadId);
+      setRunStatList(list);
+    } catch {
+      setRunStatList([]);
+    }
+  }, [detail?.thread.id, detail?.thread.worktreePath, runStats]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const threadId = detail?.thread.id;
+    const wt = detail?.thread.worktreePath;
+    if (!threadId || !wt || !runStats) {
+      setRunStatList([]);
+      return;
+    }
+    void runStats(threadId)
+      .then((list) => {
+        if (!cancelled) setRunStatList(list);
+      })
+      .catch(() => {
+        if (!cancelled) setRunStatList([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    detail?.thread.id,
+    detail?.thread.worktreePath,
+    detail?.thread.status,
+    detail?.messages.length,
+    runStats,
+  ]);
+
+  const barByMessageId = useMemo(() => {
+    const map = new Map<string, ReviewBar>();
+    if (!detail) return map;
+    for (const bar of mapReviewBars({
+      messages: detail.messages,
+      stats: runStatList,
+      threadStatus: detail.thread.status,
+    })) {
+      map.set(bar.messageId, bar);
+    }
+    return map;
+  }, [detail, runStatList]);
+
+  const handleRestoreConfirm = async () => {
+    const threadId = detail?.thread.id;
+    const bar = restoreConfirm;
+    if (
+      !threadId ||
+      !bar?.undoSha ||
+      !restoreCheckpoint ||
+      restorePending ||
+      isWorking
+    ) {
+      return;
+    }
+    setRestorePending(true);
+    setRestoreError(null);
+    try {
+      await restoreCheckpoint(threadId, bar.undoSha);
+      setRestoreConfirm(null);
+      await refreshRunStats();
+      onViewChanges?.();
+    } catch (err) {
+      const msg =
+        err instanceof Error && err.message ? err.message : "Restore failed";
+      setRestoreError(msg);
+      setRestoreConfirm(null);
+    } finally {
+      setRestorePending(false);
+    }
+  };
 
   useEffect(() => {
     return () => {
@@ -731,6 +895,9 @@ export function ThreadView({
   }, []);
   useEscapeClose(menuOpen, closeMenu);
   useEscapeClose(handoffMenuOpen, () => setHandoffMenuOpen(false));
+  useEscapeClose(restoreConfirm != null && !restorePending, () => {
+    setRestoreConfirm(null);
+  });
 
   useEffect(() => {
     const el = bodyRef.current;
@@ -1055,23 +1222,37 @@ export function ThreadView({
               entry.message.role === "event" &&
               retryEventId != null &&
               entry.message.id === retryEventId;
+            const bar = barByMessageId.get(entry.message.id);
             return (
-              <MessageBlock
-                key={entry.message.id}
-                message={entry.message}
-                autoExpandTool={entry.message.id === latestRunningToolId}
-                showRetry={isRetrySurface}
-                retryTitle={isRetrySurface ? retryTitle : undefined}
-                onRetry={isRetrySurface ? handleRetry : undefined}
-                meta={{
-                  model:
-                    detail?.usage?.model ?? detail?.thread.model ?? null,
-                  effort: detail?.thread.reasoningEffort ?? null,
-                  duration: entry.message.runId
-                    ? (durationByRunId.get(entry.message.runId) ?? null)
-                    : null,
-                }}
-              />
+              <Fragment key={entry.message.id}>
+                <MessageBlock
+                  message={entry.message}
+                  autoExpandTool={entry.message.id === latestRunningToolId}
+                  showRetry={isRetrySurface}
+                  retryTitle={isRetrySurface ? retryTitle : undefined}
+                  onRetry={isRetrySurface ? handleRetry : undefined}
+                  meta={{
+                    model:
+                      detail?.usage?.model ?? detail?.thread.model ?? null,
+                    effort: detail?.thread.reasoningEffort ?? null,
+                    duration: entry.message.runId
+                      ? (durationByRunId.get(entry.message.runId) ?? null)
+                      : null,
+                  }}
+                />
+                {bar && (
+                  <ReviewBarStrip
+                    bar={bar}
+                    isWorking={isWorking}
+                    onReview={() => onViewChanges?.()}
+                    onUndo={() => {
+                      if (!bar.undoSha || isWorking || restorePending) return;
+                      setRestoreError(null);
+                      setRestoreConfirm(bar);
+                    }}
+                  />
+                )}
+              </Fragment>
             );
           }
           return (
@@ -1132,6 +1313,66 @@ export function ThreadView({
         onDismissError={onDismissRunError}
         onListFiles={onListFiles}
       />
+
+      {restoreError && (
+        <p className={styles.reviewError} role="alert" data-review-undo-error="">
+          {restoreError}
+        </p>
+      )}
+
+      {restoreConfirm && restoreConfirm.undoSha && (
+        <div
+          className={styles.confirmOverlay}
+          role="presentation"
+          onClick={() => {
+            if (restorePending) return;
+            setRestoreConfirm(null);
+          }}
+        >
+          <div
+            className={styles.confirmDialog}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="review-undo-title"
+            data-review-undo-confirm={restoreConfirm.undoSha}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 id="review-undo-title" className={styles.confirmTitle}>
+              Restore turn {restoreConfirm.undoTurn} (
+              {shortSha(restoreConfirm.undoSha)})?
+            </h2>
+            <p className={styles.confirmBody}>
+              This resets the worktree to this checkpoint. Uncommitted changes
+              and later checkpoints&apos; work will be lost. The main repository
+              is not touched.
+            </p>
+            <div className={styles.confirmActions}>
+              <button
+                type="button"
+                className={styles.confirmDanger}
+                data-review-undo-submit=""
+                disabled={restorePending || isWorking}
+                aria-busy={restorePending || undefined}
+                onClick={() => void handleRestoreConfirm()}
+              >
+                {restorePending ? "Restoring…" : "Restore checkpoint"}
+              </button>
+              <button
+                type="button"
+                className={styles.confirmCancel}
+                data-review-undo-cancel=""
+                disabled={restorePending}
+                onClick={() => {
+                  if (restorePending) return;
+                  setRestoreConfirm(null);
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

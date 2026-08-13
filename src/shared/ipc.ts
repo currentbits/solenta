@@ -240,6 +240,15 @@ export interface CheckpointInfo {
   at: number;
 }
 
+/** Per-checkpoint-pair `git diff --shortstat` for a completed turn. */
+export interface RunStatInfo {
+  sha: string;
+  turn: number;
+  files: number;
+  additions: number;
+  deletions: number;
+}
+
 /** A TCP listener whose process cwd is the thread worktree or project. */
 export interface LocalServerInfo {
   pid: number;
@@ -708,6 +717,12 @@ export interface CoderApi {
     syncInfo(input: { threadId: string }): Promise<GitSyncInfo>;
     /** `git fetch` in the thread root. */
     fetch(input: { threadId: string }): Promise<void>;
+    /**
+     * Per-checkpoint-pair shortstat for a thread. Checkpoint N diffs against
+     * N-1 (first checkpoint diffs against its parent). Empty when the thread
+     * has no worktree or checkpoints. Never rejects.
+     */
+    runStats(input: { threadId: string }): Promise<RunStatInfo[]>;
   };
   files: {
     /**

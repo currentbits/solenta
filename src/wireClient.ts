@@ -3,6 +3,7 @@ import type {
   AppStatus,
   CheckpointInfo,
   CoderApi,
+  RunStatInfo,
   DiffResult,
   GitStatus,
   GitSyncInfo,
@@ -293,6 +294,7 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
       restoreCheckpoint: (input) => call<void>("git:restoreCheckpoint", input),
       syncInfo: (input) => call<GitSyncInfo>("git:syncInfo", input),
       fetch: (input) => call<void>("git:fetch", input),
+      runStats: (input) => call<RunStatInfo[]>("git:runStats", input),
     },
     files: {
       list: (input) => call<{ files: string[] }>("files:list", input),

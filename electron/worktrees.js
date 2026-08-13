@@ -2089,6 +2089,81 @@ function gitTryAsync(cwd, args, opts) {
 }
 
 /**
+ * Parse `git diff --shortstat` output.
+ * " 3 files changed, 24 insertions(+), 9 deletions(-)"
+ * Missing insertion/deletion clauses become 0. Returns null when unparseable.
+ *
+ * @param {string} text
+ * @returns {{ files: number, additions: number, deletions: number } | null}
+ */
+function parseShortstat(text) {
+  const s = String(text || "");
+  const files = s.match(/(\d+)\s+files?\s+changed/);
+  if (!files) return null;
+  const add = s.match(/(\d+)\s+insertions?\(\+\)/);
+  const del = s.match(/(\d+)\s+deletions?\(-\)/);
+  return {
+    files: Number(files[1]),
+    additions: add ? Number(add[1]) : 0,
+    deletions: del ? Number(del[1]) : 0,
+  };
+}
+
+/**
+ * Per-checkpoint-pair shortstat for a thread worktree.
+ * Checkpoint N diffs against N-1 (first checkpoint diffs against <sha>^).
+ * Never throws: missing worktree / checkpoints / git failures return [].
+ *
+ * @param {object} opts
+ * @param {import('./store').Store} opts.store
+ * @param {string} opts.threadId
+ * @returns {Promise<Array<{ sha: string, turn: number, files: number, additions: number, deletions: number }>>}
+ */
+async function runStats(opts) {
+  try {
+    const { store, threadId } = opts;
+    if (!threadId) return [];
+    const thread = store.getThread(threadId);
+    if (!thread || !thread.worktreePath) return [];
+    const cwd = thread.worktreePath;
+    if (!fs.existsSync(cwd)) return [];
+
+    const list = await listCheckpoints({ store, threadId });
+    if (!list.length) return [];
+
+    const oldestFirst = [...list].sort((a, b) => {
+      if (a.turn !== b.turn) return a.turn - b.turn;
+      return a.at - b.at;
+    });
+
+    /** @type {Array<{ sha: string, turn: number, files: number, additions: number, deletions: number }>} */
+    const out = [];
+    for (let i = 0; i < oldestFirst.length; i++) {
+      const cp = oldestFirst[i];
+      const from = i === 0 ? `${cp.sha}^` : oldestFirst[i - 1].sha;
+      const diff = await gitTryAsync(
+        cwd,
+        ["diff", "--shortstat", from, cp.sha],
+        { raw: true },
+      );
+      if (!diff.ok) continue;
+      const parsed = parseShortstat(diff.stdout);
+      if (!parsed) continue;
+      out.push({
+        sha: cp.sha,
+        turn: cp.turn,
+        files: parsed.files,
+        additions: parsed.additions,
+        deletions: parsed.deletions,
+      });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+/**
  * @param {string} subject
  * @returns {number | null}
  */
@@ -2298,6 +2373,8 @@ module.exports = {
   maybeCreateCheckpoint,
   listCheckpoints,
   restoreCheckpoint,
+  runStats,
+  parseShortstat,
   gitTryAsync,
   CHECKPOINT_SUBJECT_PREFIX,
 };

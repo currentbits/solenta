@@ -20,6 +20,7 @@ const {
   listPrs,
   listCheckpoints,
   restoreCheckpoint,
+  runStats,
 } = require("./worktrees.js");
 const { suggestCommitMessage } = require("./commitmsg.js");
 const { listLocalServers } = require("./servers.js");
@@ -397,6 +398,12 @@ const IPC_HANDLERS = {
     const target = resolveAllowedShellPath(ctx.store, input);
     const err = await shell.openPath(target);
     if (err) throw new Error(err);
+  },
+  "git:runStats": async (ctx, input) => {
+    return runStats({
+      store: ctx.store,
+      threadId: input && input.threadId,
+    });
   },
   "servers:list": async (ctx, input) => {
     try {

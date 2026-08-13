@@ -17,6 +17,7 @@ import type {
   ChatMessage,
   ProjectInfo,
   ProviderInfo,
+  RunStatInfo,
   ThreadDetail,
   ThreadInfo,
   WorkLogItem,
@@ -116,6 +117,9 @@ function view(props: {
   hasProjects?: boolean;
   project?: ProjectInfo | null;
   changesOpen?: boolean;
+  onViewChanges?: () => void;
+  runStats?: (threadId: string) => Promise<RunStatInfo[]>;
+  restoreCheckpoint?: (threadId: string, sha: string) => Promise<void>;
 }) {
   return (
     <ThreadView
@@ -138,6 +142,9 @@ function view(props: {
       changesOpen={props.changesOpen ?? false}
       changesNonce={0}
       onCloseChanges={() => {}}
+      onViewChanges={props.onViewChanges}
+      runStats={props.runStats}
+      restoreCheckpoint={props.restoreCheckpoint}
       onFetchDiff={async () => ({ files: [], patch: "", truncated: false })}
       onCommitChanges={async () => ({ subject: "x" })}
       onRevertFile={async (path) => ({ path })}
@@ -470,6 +477,139 @@ describe("ThreadView mounted interactions", () => {
       m.text().includes("TOOL_INPUT_SECRET_PAYLOAD"),
       `expanded tool body must show input, got: ${m.text().slice(0, 200)}`,
     );
+    m.unmount();
+  });
+});
+
+describe("ThreadView review bar", () => {
+  const twoRunDetail = detail({
+    thread: thread({ status: "idle", worktreePath: "/tmp/wt" }),
+    messages: [
+      msg({
+        id: "u1",
+        role: "user",
+        text: "first prompt",
+        runId: "run-1",
+        createdAt: 10,
+      }),
+      msg({
+        id: "a1",
+        role: "assistant",
+        text: "FIRST_ASSISTANT",
+        runId: "run-1",
+        createdAt: 20,
+      }),
+      msg({
+        id: "u2",
+        role: "user",
+        text: "second prompt",
+        runId: "run-2",
+        createdAt: 30,
+      }),
+      msg({
+        id: "a2",
+        role: "assistant",
+        text: "SECOND_ASSISTANT",
+        runId: "run-2",
+        createdAt: 40,
+      }),
+    ],
+  });
+
+  const twoStats: RunStatInfo[] = [
+    { sha: "sha-turn-1-aaaaaaaa", turn: 1, files: 3, additions: 24, deletions: 9 },
+    { sha: "sha-turn-2-bbbbbbbb", turn: 2, files: 1, additions: 2, deletions: 0 },
+  ];
+
+  it("renders stats under the last assistant of each completed run", async () => {
+    const m = await mount(
+      view({
+        detail: twoRunDetail,
+        runStats: async () => twoStats,
+      }),
+    );
+    await m.flush();
+    const bars = m.queryAll("[data-review-bar]");
+    assert.equal(bars.length, 2, "one bar per completed run with a checkpoint");
+    assert.ok(
+      (m.query("[data-review-bar='run-1']")?.textContent || "").includes(
+        "Edited 3 files · +24 -9",
+      ),
+      "first run stats",
+    );
+    assert.ok(
+      (m.query("[data-review-bar='run-2']")?.textContent || "").includes(
+        "Edited 1 file · +2 -0",
+      ),
+      "second run stats",
+    );
+    const html = m.html();
+    assert.ok(
+      html.indexOf("FIRST_ASSISTANT") < html.indexOf("Edited 3 files"),
+      "bar sits under the first run's assistant",
+    );
+    assert.ok(
+      html.indexOf("SECOND_ASSISTANT") < html.indexOf("Edited 1 file"),
+      "bar sits under the second run's assistant",
+    );
+    m.unmount();
+  });
+
+  it("Review opens Changes via onViewChanges; Undo confirm restores the prior checkpoint", async () => {
+    let reviews = 0;
+    const restores: Array<{ threadId: string; sha: string }> = [];
+    const m = await mount(
+      view({
+        detail: twoRunDetail,
+        runStats: async () => twoStats,
+        onViewChanges: () => {
+          reviews += 1;
+        },
+        restoreCheckpoint: async (threadId, sha) => {
+          restores.push({ threadId, sha });
+        },
+      }),
+    );
+    await m.flush();
+
+    const reviewBtns = m.queryAll("[data-review-open]");
+    assert.equal(reviewBtns.length, 2);
+    await m.click(reviewBtns[1] as HTMLElement);
+    assert.equal(reviews, 1, "Review calls onViewChanges");
+
+    const firstUndo = m.query(
+      "[data-review-bar='run-1'] [data-review-undo]",
+    ) as HTMLButtonElement | null;
+    assert.ok(firstUndo, "Undo on first run");
+    assert.equal(firstUndo!.disabled, true, "first run has no prior checkpoint");
+
+    const secondUndo = m.query(
+      "[data-review-bar='run-2'] [data-review-undo]",
+    ) as HTMLButtonElement | null;
+    assert.ok(secondUndo, "Undo on second run");
+    await m.click(secondUndo);
+    await m.flush();
+
+    const dialog = m.query("[data-review-undo-confirm]");
+    assert.ok(dialog, "confirm dialog open");
+    const copy = dialog!.textContent || "";
+    assert.ok(copy.includes("turn 1") || copy.includes("Turn 1"));
+    assert.ok(copy.includes("sha-tur"), "confirm names short sha");
+    assert.ok(
+      copy.includes("resets the worktree") &&
+        copy.includes("main repository is not touched"),
+    );
+
+    await m.click(m.query("[data-review-undo-cancel]") as HTMLElement);
+    await m.flush();
+    assert.equal(restores.length, 0, "Cancel must not restore");
+
+    await m.click(secondUndo);
+    await m.flush();
+    await m.click(m.query("[data-review-undo-submit]") as HTMLElement);
+    await m.flush();
+    assert.deepEqual(restores, [{ threadId: "t1", sha: "sha-turn-1-aaaaaaaa" }]);
+    assert.equal(reviews, 2, "successful undo also opens Changes");
     m.unmount();
   });
 });
