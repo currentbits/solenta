@@ -5,6 +5,7 @@ import { ThreadView } from "./components/ThreadView";
 import { PrListView } from "./components/PrListView";
 import { KanbanView } from "./components/KanbanView";
 import { AutomationsView } from "./components/AutomationsView";
+import { ActivityView } from "./components/ActivityView";
 import { AgentsPanel } from "./components/AgentsPanel";
 import { SettingsModal } from "./components/SettingsModal";
 import { ArchiveToast } from "./components/ArchiveToast";
@@ -13,7 +14,7 @@ import { WebTokenGate } from "./components/WebTokenGate";
 import { isWebMode } from "./shared/wire";
 import styles from "./App.module.css";
 
-export type AppView = "thread" | "kanban" | "prs" | "automations";
+export type AppView = "thread" | "kanban" | "prs" | "automations" | "activity";
 
 export default function App() {
   const {
@@ -59,6 +60,7 @@ export default function App() {
     prChecks,
     prMerge,
     listPrs,
+    listActivity,
     listCheckpoints,
     restoreCheckpoint,
     runStats,
@@ -282,6 +284,7 @@ export default function App() {
         onOpenKanban={() => setView("kanban")}
         onOpenPrs={() => setView("prs")}
         onOpenAutomations={() => setView("automations")}
+        onOpenActivity={() => setView("activity")}
         onCreateThread={(projectId) => {
           void createThread("New Thread", projectId);
         }}
@@ -315,7 +318,13 @@ export default function App() {
           />
         </div>
         <div className={styles.threadSlot} data-pane="thread">
-          {view === "prs" ? (
+          {view === "activity" ? (
+            <ActivityView
+              projects={projects}
+              listActivity={listActivity}
+              onSelectThread={handleSelectThread}
+            />
+          ) : view === "prs" ? (
             <PrListView
               projects={projects}
               threads={threads}

@@ -89,6 +89,9 @@ const coder = {
       invoke("threads:setReasoningEffort", input),
     delete: (input) => invoke("threads:delete", input),
   },
+  activity: {
+    list: () => invoke("activity:list"),
+  },
   runs: {
     start: (input) => invoke("runs:start", input),
     startWorkflow: (input) => invoke("runs:startWorkflow", input),

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
+  ActivityItem,
   AppSettings,
   AppStatus,
   AutomationInfo,
@@ -175,6 +176,8 @@ export interface UseCoderResult {
   prMerge: () => Promise<PrInfo>;
   /** Open PRs for a project checkout (`gh pr list`). Failures are in-band. */
   listPrs: (projectPath: string) => Promise<ListPrsResult>;
+  /** Cross-thread newest-first activity feed. */
+  listActivity: () => Promise<ActivityItem[]>;
   /** Worktree checkpoints for a thread (newest-first). */
   listCheckpoints: (threadId: string) => Promise<CheckpointInfo[]>;
   /** Hard-reset the thread worktree to a checkpoint sha. */
@@ -1038,6 +1041,9 @@ export function useCoder(): UseCoderResult {
     },
     [api],
   );
+  const listActivity = useCallback(async () => {
+    return api.activity.list();
+  }, [api]);
 
   const listCheckpoints = useCallback(
     async (threadId: string) => {
@@ -1280,6 +1286,7 @@ export function useCoder(): UseCoderResult {
     prMerge,
     listPrs,
     fetchIssue,
+    listActivity,
     listCheckpoints,
     restoreCheckpoint,
     runStats,

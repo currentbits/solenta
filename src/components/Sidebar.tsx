@@ -144,7 +144,7 @@ interface SidebarProps {
     opts?: { provider?: string },
   ) => void | Promise<void>;
   /** Which main view is showing. Defaults to thread so existing callers stay idle. */
-  activeView?: "thread" | "kanban" | "prs" | "automations";
+  activeView?: "thread" | "kanban" | "prs" | "automations" | "activity";
   onOpenKanban?: () => void;
   onOpenPrs?: () => void;
   /**
@@ -157,6 +157,7 @@ interface SidebarProps {
     ref: string;
   }) => Promise<{ ok: true } | { ok: false; reason: string }>;
   onOpenAutomations?: () => void;
+  onOpenActivity?: () => void;
 }
 
 export type SelectOpts = { meta?: boolean; shift?: boolean };
@@ -798,6 +799,7 @@ export function Sidebar({
   onOpenPrs,
   onCreateThreadFromIssue,
   onOpenAutomations,
+  onOpenActivity,
 }: SidebarProps) {
   const [query, setQuery] = useState("");
   const [now, setNow] = useState(() => Date.now());
@@ -1421,6 +1423,19 @@ export function Sidebar({
       </div>
 
       <nav className={styles.viewNav} aria-label="Views">
+        <button
+          type="button"
+          className={styles.viewNavRow}
+          data-view-nav="activity"
+          data-active={activeView === "activity" ? "true" : undefined}
+          title="Activity"
+          onClick={() => onOpenActivity?.()}
+        >
+          <span className={styles.viewNavIcon} aria-hidden>
+            ●
+          </span>
+          Activity
+        </button>
         <button
           type="button"
           className={styles.viewNavRow}

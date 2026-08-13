@@ -1,4 +1,5 @@
 import type {
+  ActivityItem,
   AppSettings,
   AppStatus,
   AutomationInfo,
@@ -275,6 +276,9 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
       setReasoningEffort: (input) =>
         call<ThreadInfo>("threads:setReasoningEffort", input),
       delete: (input) => call<void>("threads:delete", input),
+    },
+    activity: {
+      list: () => call<ActivityItem[]>("activity:list"),
     },
     runs: {
       start: (input) => call<{ runId: string }>("runs:start", input),

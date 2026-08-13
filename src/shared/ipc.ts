@@ -181,6 +181,19 @@ export interface WorkLogItem {
   timestamp: number;
 }
 
+/** One row in the cross-thread activity feed. */
+export type ActivityKind = "created" | "started" | "done" | "failed";
+
+export interface ActivityItem {
+  id: string;
+  threadId: string;
+  projectId: string;
+  kind: ActivityKind;
+  /** Epoch ms of the real event. Never invented. */
+  at: number;
+  threadTitle: string;
+}
+
 export type AgentStatus = "pending" | "running" | "settled" | "failed";
 
 export interface AgentView {
@@ -652,6 +665,10 @@ export interface CoderApi {
      * (merge or delete the worktree in the Git tab first) so no work is lost.
      */
     delete(input: { threadId: string }): Promise<void>;
+  };
+  activity: {
+    /** Cross-thread newest-first feed of created/started/done/failed. */
+    list(): Promise<ActivityItem[]>;
   };
   runs: {
     /**

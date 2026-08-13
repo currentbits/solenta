@@ -7,6 +7,7 @@
  * multi-agent workflow tick for the seeded mid-run demo.
  */
 import type {
+  ActivityItem,
   AgentView,
   AppSettings,
   AppStatus,
@@ -35,6 +36,7 @@ import type {
   WorkflowTemplateInfo,
   WorkflowView,
 } from "./shared/ipc";
+import { buildActivity } from "./activity.ts";
 import { mockData } from "./mockData.ts";
 
 const MEMORY_EXCERPT_LEN = 160;
@@ -2893,6 +2895,15 @@ function buildDevCoder(): CoderApi {
         details.set(input.threadId, detail);
         syncThreadRow(thread);
         emitDetail(detail);
+      },
+    },
+    activity: {
+      async list(): Promise<ActivityItem[]> {
+        const workLogByThread: Record<string, WorkLogItem[]> = {};
+        for (const [id, d] of details) {
+          workLogByThread[id] = d.workLog;
+        }
+        return buildActivity(threads, workLogByThread, now());
       },
     },
     git: {

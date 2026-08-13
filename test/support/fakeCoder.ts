@@ -34,8 +34,10 @@ import type {
   ProviderInfo,
   ThreadDetail,
   ThreadInfo,
+  WorkLogItem,
   WorkflowTemplateInfo,
 } from "../../src/shared/ipc";
+import { buildActivity } from "../../src/activity";
 
 export interface Call {
   channel: string;
@@ -614,6 +616,19 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         return Promise.resolve(forked);
       },
       delete: (input: unknown) => rec("threads.delete", [input], undefined),
+    },
+    activity: {
+      list: () => {
+        const workLogByThread: Record<string, WorkLogItem[]> = {};
+        for (const [id, d] of Object.entries(details)) {
+          workLogByThread[id] = d.workLog;
+        }
+        return rec(
+          "activity.list",
+          [],
+          buildActivity(threads, workLogByThread, Date.now()),
+        );
+      },
     },
     runs: {
       start: (input: unknown) => rec("runs.start", [input], { runId: "r1" }),

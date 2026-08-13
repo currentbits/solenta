@@ -28,6 +28,7 @@ const devservers = require("./devservers.js");
 const { createMemoryProxy } = require("./memory-proxy.js");
 const { fetchIssue } = require("./issues.js");
 const automations = require("./automations.js");
+const { buildActivity } = require("./activity.js");
 
 /**
  * Default window fan-out (desktop transport). main.js replaces this with a
@@ -141,6 +142,10 @@ const IPC_HANDLERS = {
   },
   "threads:list": async (ctx) => {
     return services.listThreads(ctx.store);
+  },
+  "activity:list": async (ctx) => {
+    const threads = ctx.store.getThreads();
+    return buildActivity(threads, ctx.store.data.workLogByThread, Date.now());
   },
   "threads:search": async (ctx, input) => {
     return services.searchThreads(ctx.store, input || { query: "" });
