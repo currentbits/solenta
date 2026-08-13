@@ -18,6 +18,10 @@
 
 ---
 
+<p align="center">
+  <img src="assets/screenshot.png" alt="Solenta: threads with PR badges, live work log, and the environment panel" width="100%" />
+</p>
+
 ## What it is
 
 Solenta turns "kick off an agent in a terminal and hope" into a directed,
