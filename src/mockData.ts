@@ -120,7 +120,7 @@ export const mockData: AppMockData = {
   threads: [
     {
       id: "thread-1",
-      repoSlug: "pingdotgg/t3code",
+      repoSlug: "acme/nebula",
       age: "3h",
       title: "Modernize Per-Device Provider Settings",
       branch: "feat/provider-settings",
@@ -130,7 +130,7 @@ export const mockData: AppMockData = {
     },
     {
       id: "thread-2",
-      repoSlug: "pingdotgg/t3code",
+      repoSlug: "acme/nebula",
       age: "5h",
       title: "Fix worktree path resolution on Windows",
       branch: "fix/win-worktree",
@@ -158,7 +158,7 @@ export const mockData: AppMockData = {
     },
     {
       id: "thread-5",
-      repoSlug: "willem/coder",
+      repoSlug: "acme/pulse",
       age: "3d",
       title: "Scaffold three-pane desktop shell",
       branch: "agentmux/8d11e8a0",
@@ -167,7 +167,7 @@ export const mockData: AppMockData = {
     },
   ],
   threadView: {
-    project: "pingdotgg/t3code",
+    project: "acme/nebula",
     title: "Modernize Per-Device Provider Settings",
     workLog: {
       title: "Work Log",

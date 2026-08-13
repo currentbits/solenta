@@ -130,7 +130,7 @@ function seedMemoryEntries(t0: number): MemoryRow[] {
       type: "knowledge",
       title: "Session usage only after first turn",
       body: "ThreadDetail.usage stays null until the provider reports tokens. Session card shows \"No usage yet\" in that state.",
-      project: "pingdotgg/t3code",
+      project: "acme/nebula",
       importance: 3,
       createdAt: hours(72),
       updatedAt: hours(24),
