@@ -450,7 +450,7 @@ describe("runner claude provider", () => {
     else process.env.CODER_GROK_BIN = prevGrokBin;
   });
 
-  it("captures session id on init, streams text into one assistant message, pairs tools", async () => {
+  it("captures session id on init, streams text, pairs tools, final answer lands after tools", async () => {
     process.env.CODER_FAKE_CLAUDE_SCENARIO = "success";
 
     const thread = store.getThreads()[0];
@@ -473,9 +473,14 @@ describe("runner claude provider", () => {
 
     const msgs = store.getMessages(thread.id);
     const assistants = msgs.filter((m) => m.role === "assistant");
-    assert.equal(assistants.length, 1);
+    assert.equal(assistants.length, 2);
     assert.equal(assistants[0].text, "Hello world");
     assert.equal(assistants[0].runId, runId);
+    // Final answer is its own message, appended after the tool call.
+    assert.equal(assistants[1].text, "All done.");
+    assert.ok(
+      msgs.indexOf(assistants[1]) > msgs.findIndex((m) => m.role === "tool"),
+    );
 
     const tools = msgs.filter((m) => m.role === "tool");
     assert.equal(tools.length, 1);

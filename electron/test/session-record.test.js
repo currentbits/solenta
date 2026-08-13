@@ -532,7 +532,12 @@ describe("auto session-record on real runs", () => {
       assert.ok(tools.every((t) => t.sessionId === thread.id));
     }
     const assistants = fake.sessionBodies.filter((b) => b.role === "assistant");
-    assert.equal(assistants.length, 1);
+    // Pre-tool and post-tool text are separate messages; both are recorded.
+    assert.equal(assistants.length, 2);
+    assert.equal(
+      assistants[1].content,
+      "Final assistant answer for session record.",
+    );
   });
 
   it("records assistant/tool/event once at failed terminal", async () => {

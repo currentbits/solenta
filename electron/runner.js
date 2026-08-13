@@ -1188,6 +1188,11 @@ function createRunner(opts) {
                 tool,
               );
               toolMsgById.set(toolId, msgId);
+              // Post-tool text starts a fresh message so the final answer
+              // renders below the tool calls, not merged into the first
+              // (earlier-timestamped) bubble.
+              assistantMsgId = null;
+              assistantText = "";
             }
           }
           store.save();
@@ -1298,7 +1303,13 @@ function createRunner(opts) {
           }
 
           // Assistant text from stream, or fall back to result field
-          if (!assistantText && typeof ev.result === "string" && ev.result) {
+          // (skip when result merely repeats the last streamed bubble).
+          if (
+            !assistantText &&
+            typeof ev.result === "string" &&
+            ev.result &&
+            ev.result !== lastAssistantText(threadId, runId)
+          ) {
             assistantText = ev.result;
             if (!assistantMsgId) {
               assistantMsgId = appendMessage(
@@ -1635,6 +1646,9 @@ function createRunner(opts) {
               tool,
             );
             toolMsgById.set(cmd.id, msgId);
+            // Post-tool text starts a fresh message below the tool call.
+            assistantMsgId = null;
+            assistantText = "";
           } else if (cmd.phase === "completed") {
             let msgId = toolMsgById.get(cmd.id);
             if (!msgId) {
@@ -1651,6 +1665,8 @@ function createRunner(opts) {
                 : "Command";
               msgId = appendMessage(threadId, "tool", summary, runId, tool);
               toolMsgById.set(cmd.id, msgId);
+              assistantMsgId = null;
+              assistantText = "";
             }
             const existing = store
               .getMessages(threadId)
@@ -1983,6 +1999,9 @@ function createRunner(opts) {
               toolMeta,
             );
             toolMsgById.set(tool.id, msgId);
+            // Post-tool text starts a fresh message below the tool call.
+            assistantMsgId = null;
+            assistantText = "";
           } else if (tool.phase === "end") {
             let msgId = toolMsgById.get(tool.id);
             if (!msgId) {
@@ -2002,6 +2021,8 @@ function createRunner(opts) {
                 toolMeta,
               );
               toolMsgById.set(tool.id, msgId);
+              assistantMsgId = null;
+              assistantText = "";
             }
             const existing = store
               .getMessages(threadId)
@@ -2028,6 +2049,9 @@ function createRunner(opts) {
               done: true,
             };
             appendMessage(threadId, "tool", tool.name, runId, toolMeta);
+            // Post-tool text starts a fresh message below the tool call.
+            assistantMsgId = null;
+            assistantText = "";
           }
           throttledPush();
         }
@@ -2366,6 +2390,11 @@ function createRunner(opts) {
               toolMeta,
             );
             toolMsgById.set(tool.id, msgId);
+            // Post-tool text starts a fresh message below the tool call.
+            // Clearing parts is safe: opencode completes text parts before tools.
+            assistantMsgId = null;
+            partOrder.length = 0;
+            partTextById.clear();
           } else if (tool.phase === "end") {
             let msgId = toolMsgById.get(tool.id);
             if (!msgId) {
@@ -2385,6 +2414,9 @@ function createRunner(opts) {
                 toolMeta,
               );
               toolMsgById.set(tool.id, msgId);
+              assistantMsgId = null;
+              partOrder.length = 0;
+              partTextById.clear();
             }
             const existing = store
               .getMessages(threadId)
@@ -2410,6 +2442,11 @@ function createRunner(opts) {
               done: true,
             };
             appendMessage(threadId, "tool", tool.name, runId, toolMeta);
+            // Post-tool text starts a fresh message below the tool call.
+            // Clearing parts is safe: opencode completes text parts before tools.
+            assistantMsgId = null;
+            partOrder.length = 0;
+            partTextById.clear();
           }
           throttledPush();
         }
@@ -2427,7 +2464,8 @@ function createRunner(opts) {
         completeWorkLogStep(threadId, e.startingId);
         completeWorkLogStep(threadId, e.workingId);
 
-        let assistantText = rebuildAssistantText();
+        let assistantText =
+          rebuildAssistantText() || lastAssistantText(threadId, runId);
 
         // Hard fallback: zero JSON lines parse -> whole stdout as text.
         if (!gotJson && fullStdout && fullStdout.length > 0) {
