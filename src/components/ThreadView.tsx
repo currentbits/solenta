@@ -181,7 +181,19 @@ function ToolCallCard({
         <span className={styles.toolName}>{tool.name}</span>
         <span className={styles.toolSummary}>{message.text}</span>
         <span className={styles.chevron} data-open={open}>
-          ▸
+          <svg
+            width="9"
+            height="9"
+            viewBox="0 0 10 10"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.6"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M3.5 2 6.5 5 3.5 8" />
+          </svg>
         </span>
       </button>
       {open && (
@@ -330,7 +342,19 @@ function WorkLogCard({
         aria-expanded={open}
       >
         <span className={styles.chevron} data-open={open}>
-          ▸
+          <svg
+            width="9"
+            height="9"
+            viewBox="0 0 10 10"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.6"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M3.5 2 6.5 5 3.5 8" />
+          </svg>
         </span>
         <span className={styles.cardTitle}>Work Log</span>
       </button>
@@ -953,6 +977,20 @@ export function ThreadView({
     return (
       <main className={styles.main}>
         <div className={styles.empty}>
+          <div className={styles.emptyGlyph} aria-hidden="true">
+            <svg
+              width="22"
+              height="22"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M2.5 4A1.5 1.5 0 0 1 4 2.5h2.2a1.5 1.5 0 0 1 1.1.5l.8 1a1.5 1.5 0 0 0 1.1.5H12A1.5 1.5 0 0 1 13.5 6v5A1.5 1.5 0 0 1 12 12.5H4A1.5 1.5 0 0 1 2.5 11V4Z" />
+            </svg>
+          </div>
           <p className={styles.emptyTitle}>Add a project to get started</p>
           <button
             type="button"
@@ -970,6 +1008,20 @@ export function ThreadView({
     return (
       <main className={styles.main}>
         <div className={styles.empty}>
+          <div className={styles.emptyGlyph} aria-hidden="true">
+            <svg
+              width="22"
+              height="22"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M3 2.5h10A1.5 1.5 0 0 1 14.5 4v6A1.5 1.5 0 0 1 13 11.5H8l-3.5 2.8v-2.8H3A1.5 1.5 0 0 1 1.5 10V4A1.5 1.5 0 0 1 3 2.5Z" />
+            </svg>
+          </div>
           <p className={styles.emptyTitle}>Select a thread</p>
           <p className={styles.emptyHint}>
             Choose a thread from the sidebar, or create a new one.
@@ -1045,6 +1097,22 @@ export function ThreadView({
                   void onFork();
                 }}
               >
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <circle cx="4.5" cy="3.5" r="1.5" />
+                  <circle cx="4.5" cy="12.5" r="1.5" />
+                  <circle cx="11.5" cy="5.5" r="1.5" />
+                  <path d="M4.5 5v6M11.5 7c0 2.2-2.8 2.3-4.6 3.4" />
+                </svg>
                 Fork
               </button>
               <div className={styles.menuWrap} ref={handoffMenuRef}>
@@ -1067,6 +1135,19 @@ export function ThreadView({
                     setMenuOpen(false);
                   }}
                 >
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M9.5 2.5H13a.5.5 0 0 1 .5.5v3.5M13.2 2.8 8.5 7.5M6 3.5H4A1.5 1.5 0 0 0 2.5 5v7A1.5 1.5 0 0 0 4 13.5h8a1.5 1.5 0 0 0 1.5-1.5v-2" />
+                  </svg>
                   Hand off to…
                 </button>
                 {handoffMenuOpen && (
@@ -1135,7 +1216,17 @@ export function ThreadView({
                 setDeleteConfirm(false);
               }}
             >
-              ···
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 16 16"
+                fill="currentColor"
+                aria-hidden="true"
+              >
+                <circle cx="3.5" cy="8" r="1.3" />
+                <circle cx="8" cy="8" r="1.3" />
+                <circle cx="12.5" cy="8" r="1.3" />
+              </svg>
             </button>
             {menuOpen && (
               <div className={styles.menu} role="menu">
@@ -1247,8 +1338,28 @@ export function ThreadView({
       >
         {emptyMessages && !hasTimeline && (
           <div className={styles.emptyInline}>
+            <div
+              className={`${styles.emptyGlyph} ${styles.emptyGlyphSm}`}
+              aria-hidden="true"
+            >
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M8 2 9.6 6.4 14 8 9.6 9.6 8 14 6.4 9.6 2 8l4.4-1.6Z" />
+              </svg>
+            </div>
             <p className={styles.emptyTitle}>
               Start by describing what to build
+            </p>
+            <p className={styles.emptyHint}>
+              Type a prompt below, then send it with ⌘Enter.
             </p>
           </div>
         )}

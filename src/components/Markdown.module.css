@@ -1,6 +1,6 @@
 .md {
   font-size: 13.5px;
-  line-height: 1.55;
+  line-height: 1.6;
   color: var(--text);
   user-select: text;
 }
@@ -108,26 +108,49 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 4px 6px 4px 12px;
+  gap: 10px;
+  min-height: 32px;
+  padding: 3px 6px 3px 12px;
   border-bottom: 1px solid var(--border-soft);
   background: var(--card);
 }
 
 .codeLang {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   font-family: var(--mono);
   font-size: 11px;
   color: var(--text-dim);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.codeLang::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--blue);
+  opacity: 0.8;
 }
 
 .codeCopy {
   font: inherit;
   font-size: 11px;
-  padding: 2px 8px;
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 8px;
   border-radius: var(--radius-sm);
   border: 1px solid transparent;
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
+  flex-shrink: 0;
 }
 
 .codeCopy:hover {
@@ -138,10 +161,11 @@
 
 .codePre {
   margin: 0;
-  padding: 10px 12px;
+  padding: 12px 14px;
   overflow-x: auto;
   font-family: var(--mono);
   font-size: 12px;
-  line-height: 1.5;
+  line-height: 1.55;
   color: var(--text);
+  background: rgba(0, 0, 0, 0.16);
 }

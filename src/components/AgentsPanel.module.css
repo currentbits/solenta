@@ -11,8 +11,8 @@
 .tabs {
   display: flex;
   align-items: stretch;
-  gap: 4px;
-  padding: 0 16px;
+  gap: 2px;
+  padding: 0 12px;
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
   height: 56px;
@@ -21,17 +21,30 @@
 .tab {
   display: flex;
   align-items: center;
-  padding: 0 4px;
-  margin-right: 12px;
+  padding: 0 10px;
+  margin-right: 2px;
   color: var(--text-dim);
   font-weight: 600;
   font-size: 13px;
   border-bottom: 2px solid transparent;
+  transition:
+    color 0.12s ease,
+    border-color 0.12s ease;
+}
+
+.tab:hover:not([data-active="true"]) {
+  color: var(--text-muted);
+}
+
+.tab:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--focus-ring, rgba(59, 130, 246, 0.55));
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
 }
 
 .tab[data-active="true"] {
   color: var(--text);
-  border-bottom-color: var(--blue);
+  border-bottom-color: var(--btn-primary-bg, #3b82f6);
 }
 
 .scroll {
@@ -312,11 +325,13 @@
 }
 
 .chevron {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 12px;
+  flex-shrink: 0;
   color: var(--text-dim);
   transition: transform 0.12s ease;
-  font-size: 11px;
 }
 
 .chevron[data-open="true"] {
@@ -421,15 +436,24 @@
   padding: 14px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
 }
 
 .gitCardLabel {
-  font-size: 10.5px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
   font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--text-muted);
+}
+
+.labelIcon {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--text-dim);
 }
 
 .gitHint {
@@ -467,19 +491,33 @@
 .gitBtn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
-  padding: 6px 12px;
+  height: 30px;
+  padding: 0 12px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
-  background: var(--card);
+  background: transparent;
   color: var(--text-muted);
   font-size: 12px;
   font-weight: 550;
+  white-space: nowrap;
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease,
+    border-color 0.12s ease;
 }
 
 .gitBtn:hover:not(:disabled) {
   color: var(--text);
   background: var(--card-hover);
+}
+
+.gitBtn:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px var(--card),
+    0 0 0 4px var(--focus-ring, rgba(59, 130, 246, 0.55));
 }
 
 .gitBtn:disabled {
@@ -488,14 +526,19 @@
 }
 
 .gitBtnPrimary {
-  background: var(--blue-soft);
-  border-color: var(--blue-border);
-  color: #bfdbfe;
+  background: var(--btn-primary-bg, #3b82f6);
+  border-color: transparent;
+  color: #fff;
 }
 
 .gitBtnPrimary:hover:not(:disabled) {
-  filter: brightness(1.08);
-  color: #dbeafe;
+  background: var(--btn-primary-hover, #2563eb);
+  color: #fff;
+}
+
+.gitBtnPrimary .btnSpinner {
+  border-color: rgba(255, 255, 255, 0.4);
+  border-top-color: #fff;
 }
 
 .gitBtnDanger {
@@ -572,7 +615,7 @@
   border-radius: var(--radius);
   border: 1px solid var(--border);
   background: var(--bg-elevated);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--shadow-pop, 0 12px 40px rgba(0, 0, 0, 0.45));
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -772,13 +815,19 @@
 }
 
 .devScriptSelect {
-  padding: 5px 8px;
+  height: 30px;
+  padding: 0 8px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   background: var(--bg-elevated);
   color: var(--text);
   font-size: 12px;
   font-family: inherit;
+}
+
+.devScriptSelect:focus-visible {
+  outline: none;
+  border-color: var(--blue-border);
 }
 
 .devScriptSelect:disabled {

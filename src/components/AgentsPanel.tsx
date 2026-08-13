@@ -31,6 +31,19 @@ import styles from "./AgentsPanel.module.css";
 
 type PanelTab = "agents" | "git" | "memory";
 
+/** Shared props for the 14px line icons in Environment card labels. */
+const LABEL_ICON_PROPS = {
+  width: 14,
+  height: 14,
+  viewBox: "0 0 16 16",
+  fill: "none",
+  stroke: "currentColor",
+  strokeWidth: 1.5,
+  strokeLinecap: "round",
+  strokeLinejoin: "round",
+  "aria-hidden": true,
+} as const;
+
 interface AgentsPanelProps {
   workflow: WorkflowView | null;
   thread: ThreadInfo | null;
@@ -244,7 +257,15 @@ function WorktreeCard({
 
   return (
     <section className={styles.gitCard}>
-      <div className={styles.gitCardLabel}>Worktree</div>
+      <div className={styles.gitCardLabel}>
+        <svg {...LABEL_ICON_PROPS} className={styles.labelIcon}>
+          <circle cx="4.5" cy="3.5" r="1.5" />
+          <circle cx="4.5" cy="12.5" r="1.5" />
+          <circle cx="11.5" cy="5.5" r="1.5" />
+          <path d="M4.5 5v6M11.5 7c0 2.2-2.8 2.3-4.6 3.4" />
+        </svg>
+        Worktree
+      </div>
 
       {!thread ? (
         <p className={styles.gitHint}>Select a thread to manage its worktree.</p>
@@ -376,7 +397,13 @@ function ChangesCard({
 }) {
   return (
     <section className={styles.gitCard}>
-      <div className={styles.gitCardLabel}>Changes</div>
+      <div className={styles.gitCardLabel}>
+        <svg {...LABEL_ICON_PROPS} className={styles.labelIcon}>
+          <path d="M11.3 2.7a1.4 1.4 0 0 1 2 2L5 13H3v-2l8.3-8.3Z" />
+          <path d="M10 4l2 2" />
+        </svg>
+        Changes
+      </div>
       <div className={styles.gitActions}>
         <button
           type="button"
@@ -402,7 +429,13 @@ export function EditorCard({
 }) {
   return (
     <section className={styles.gitCard} data-editor="">
-      <div className={styles.gitCardLabel}>Editor</div>
+      <div className={styles.gitCardLabel}>
+        <svg {...LABEL_ICON_PROPS} className={styles.labelIcon}>
+          <path d="M7 3.5H4A1.5 1.5 0 0 0 2.5 5v7A1.5 1.5 0 0 0 4 13.5h8a1.5 1.5 0 0 0 1.5-1.5V9" />
+          <path d="M11 2.8a1.3 1.3 0 0 1 1.9 1.9L8 9.6 5.7 10.2 6.3 7.9 11 2.8Z" />
+        </svg>
+        Editor
+      </div>
       {!hasThread && (
         <p className={styles.gitHint} data-editor-hint="">
           Select a thread to open its folder.
@@ -591,7 +624,13 @@ export function DevServerCard({
 
   return (
     <section className={styles.gitCard} data-dev-server="">
-      <div className={styles.gitCardLabel}>Dev server</div>
+      <div className={styles.gitCardLabel}>
+        <svg {...LABEL_ICON_PROPS} className={styles.labelIcon}>
+          <rect x="2" y="3" width="12" height="10" rx="2" />
+          <path d="m5.5 7 2 2-2 2M9 11h2" />
+        </svg>
+        Dev server
+      </div>
       {!threadId ? (
         <p className={styles.gitHint}>Select a thread to run its dev server.</p>
       ) : scripts.length === 0 ? (
@@ -712,6 +751,11 @@ export function LocalServersCard({
   return (
     <section className={styles.gitCard} data-local-servers="">
       <div className={`${styles.gitCardLabel} ${styles.serverLabel}`}>
+        <svg {...LABEL_ICON_PROPS} className={styles.labelIcon}>
+          <rect x="3" y="3" width="10" height="4" rx="1" />
+          <rect x="3" y="9" width="10" height="4" rx="1" />
+          <path d="M5.5 5h.01M5.5 11h.01" />
+        </svg>
         Local Servers
         <span className={styles.serverCount} data-local-servers-count="">
           {servers.length}
@@ -780,7 +824,12 @@ function CheckpointsCard({
 
   return (
     <section className={styles.gitCard} data-checkpoints="">
-      <div className={styles.gitCardLabel}>Checkpoints</div>
+      <div className={styles.gitCardLabel}>
+        <svg {...LABEL_ICON_PROPS} className={styles.labelIcon}>
+          <path d="M4.5 2.5h7a.5.5 0 0 1 .5.5v10l-4-2.6L4 13V3a.5.5 0 0 1 .5-.5Z" />
+        </svg>
+        Checkpoints
+      </div>
       {loading && checkpoints.length === 0 ? (
         <p className={styles.gitHint}>Loading…</p>
       ) : checkpoints.length === 0 ? (
@@ -977,7 +1026,14 @@ function PrCard({
   if (!thread) {
     return (
       <section className={styles.gitCard}>
-        <div className={styles.gitCardLabel}>Pull request</div>
+        <div className={styles.gitCardLabel}>
+          <svg {...LABEL_ICON_PROPS} className={styles.labelIcon}>
+            <circle cx="4" cy="4" r="1.5" />
+            <circle cx="12" cy="12" r="1.5" />
+            <path d="M4 5.5v5M12 10.5V7a2 2 0 0 0-2-2H8" />
+          </svg>
+          Pull request
+        </div>
         <p className={styles.gitHint}>Select a thread to open a PR.</p>
       </section>
     );
@@ -985,7 +1041,14 @@ function PrCard({
 
   return (
     <section className={styles.gitCard}>
-      <div className={styles.gitCardLabel}>Pull request</div>
+      <div className={styles.gitCardLabel}>
+        <svg {...LABEL_ICON_PROPS} className={styles.labelIcon}>
+          <circle cx="4" cy="4" r="1.5" />
+          <circle cx="12" cy="12" r="1.5" />
+          <path d="M4 5.5v5M12 10.5V7a2 2 0 0 0-2-2H8" />
+        </svg>
+        Pull request
+      </div>
 
       <div className={styles.gitActions}>
         <button
@@ -1481,7 +1544,12 @@ export function GitTab({
         />
         {project?.remoteHost ? (
           <section className={styles.gitCard} data-remote-unavailable="">
-            <div className={styles.gitCardLabel}>Remote</div>
+            <div className={styles.gitCardLabel}>
+              <svg {...LABEL_ICON_PROPS} className={styles.labelIcon}>
+                <path d="M5 12.5h6a3 3 0 0 0 .6-5.9A4.2 4.2 0 0 0 3.6 8 2.6 2.6 0 0 0 5 12.5Z" />
+              </svg>
+              Remote
+            </div>
             <p className={styles.gitHint}>Not available on remote projects</p>
           </section>
         ) : (
@@ -1810,7 +1878,19 @@ function AgentsContent({
                   aria-expanded={open}
                 >
                   <span className={styles.chevron} data-open={open}>
-                    ▸
+                    <svg
+                      width="9"
+                      height="9"
+                      viewBox="0 0 10 10"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.6"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path d="M3.5 2 6.5 5 3.5 8" />
+                    </svg>
                   </span>
                   <span className={styles.groupName}>{group.name}</span>
                   <span className={styles.groupMeta}>

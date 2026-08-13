@@ -751,14 +751,43 @@ export function Composer({
                 }}
               >
                 <span className={styles.modelIcon} aria-hidden="true">
-                  ◇
+                  {/* Hidden legacy glyph: picker tests locate model rows by a
+                      textContent prefix, so this trigger's text must not start
+                      with the model label. The visible icon is the SVG. */}
+                  <span className={styles.legacyGlyph}>◇</span>
+                  <svg
+                    width="13"
+                    height="13"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M8 2 9.6 6.4 14 8 9.6 9.6 8 14 6.4 9.6 2 8l4.4-1.6Z" />
+                  </svg>
                 </span>
                 {/* Keyed so a model swap replays the pop instead of swapping
                     text mid-frame. */}
                 <span key={triggerLabel} className={styles.pillLabel}>
                   {triggerLabel}
                 </span>
-                <span className={styles.caret}>▾</span>
+                <span className={styles.caret}>
+                  <svg
+                    width="10"
+                    height="10"
+                    viewBox="0 0 10 10"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M2.5 3.5 5 6l2.5-2.5" />
+                  </svg>
+                </span>
               </button>
               {modelOpen && (
                 <div
@@ -829,7 +858,18 @@ export function Composer({
                                 className={styles.modelRowChevron}
                                 aria-hidden="true"
                               >
-                                ›
+                                <svg
+                                  width="12"
+                                  height="12"
+                                  viewBox="0 0 10 10"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="1.5"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                >
+                                  <path d="M3.5 2 6.5 5 3.5 8" />
+                                </svg>
                               </span>
                             </button>
                           </li>
@@ -1042,7 +1082,21 @@ export function Composer({
                 }}
               >
                 {PERMISSION_MODE_LABELS[permissionMode]}
-                <span className={styles.caret}>▾</span>
+                <span className={styles.caret}>
+                  <svg
+                    width="10"
+                    height="10"
+                    viewBox="0 0 10 10"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M2.5 3.5 5 6l2.5-2.5" />
+                  </svg>
+                </span>
               </button>
               {modeOpen && (
                 <ul
@@ -1098,7 +1152,21 @@ export function Composer({
                   setBestOfNOpen(false);
                 }}
               >
-                <span className={styles.caret}>▾</span>
+                <span className={styles.caret}>
+                  <svg
+                    width="10"
+                    height="10"
+                    viewBox="0 0 10 10"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M2.5 3.5 5 6l2.5-2.5" />
+                  </svg>
+                </span>
               </button>
               {buildMenuOpen && (
                 <ul
@@ -1167,6 +1235,21 @@ export function Composer({
                   }}
                 >
                   Best of N
+                  <span className={styles.caret}>
+                    <svg
+                      width="10"
+                      height="10"
+                      viewBox="0 0 10 10"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path d="M2.5 3.5 5 6l2.5-2.5" />
+                    </svg>
+                  </span>
                 </button>
                 {bestOfNOpen && (
                   <div
@@ -1231,20 +1314,76 @@ export function Composer({
             title="Send (⌘Enter)"
             onClick={() => submitSend()}
           >
-            ↑
+            <svg
+              width="15"
+              height="15"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M8 13V3M4 7l4-4 4 4" />
+            </svg>
           </button>
         </div>
-      </div>
-      <div className={styles.meta}>
-        {shortSess && (
-          <span className={`${styles.chip} ${styles.chipMono}`}>{shortSess}</span>
-        )}
-        <span className={styles.chip}>
-          {hasWorktree ? "Worktree" : "Project"}
-        </span>
-        {branch != null && branch !== "" && (
-          <span className={`${styles.chip} ${styles.chipMono}`}>{branch}</span>
-        )}
+        <div className={styles.meta}>
+          {shortSess && (
+            <span className={`${styles.chip} ${styles.chipMono}`}>
+              {shortSess}
+            </span>
+          )}
+          <span className={styles.chip}>
+            <svg
+              className={styles.chipIcon}
+              width="12"
+              height="12"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              {hasWorktree ? (
+                <>
+                  <circle cx="4.5" cy="3.5" r="1.5" />
+                  <circle cx="4.5" cy="12.5" r="1.5" />
+                  <circle cx="11.5" cy="5.5" r="1.5" />
+                  <path d="M4.5 5v6M11.5 7c0 2.2-2.8 2.3-4.6 3.4" />
+                </>
+              ) : (
+                <path d="M2.5 4A1.5 1.5 0 0 1 4 2.5h2.2a1.5 1.5 0 0 1 1.1.5l.8 1a1.5 1.5 0 0 0 1.1.5H12A1.5 1.5 0 0 1 13.5 6v5A1.5 1.5 0 0 1 12 12.5H4A1.5 1.5 0 0 1 2.5 11V4Z" />
+              )}
+            </svg>
+            {hasWorktree ? "Worktree" : "Project"}
+          </span>
+          {branch != null && branch !== "" && (
+            <span className={`${styles.chip} ${styles.chipMono}`}>
+              <svg
+                className={styles.chipIcon}
+                width="12"
+                height="12"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <circle cx="4.5" cy="3.5" r="1.5" />
+                <circle cx="4.5" cy="12.5" r="1.5" />
+                <circle cx="11.5" cy="5.5" r="1.5" />
+                <path d="M4.5 5v6M11.5 7c0 2.2-2.8 2.3-4.6 3.4" />
+              </svg>
+              {branch}
+            </span>
+          )}
+        </div>
       </div>
 
       <WorkflowsModal

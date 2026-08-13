@@ -47,6 +47,11 @@
   border-radius: 14px;
   padding: 12px 12px 10px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+  transition: border-color 0.15s ease;
+}
+
+.card:focus-within {
+  border-color: var(--blue-border);
 }
 
 .textarea {
@@ -83,20 +88,32 @@
 .pill {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 5px 10px;
+  gap: 5px;
+  height: 28px;
+  padding: 0 10px;
   border-radius: var(--radius-pill);
-  background: rgba(255, 255, 255, 0.04);
+  background: transparent;
   border: 1px solid var(--border);
   color: var(--text-muted);
   font-size: 12px;
   font-weight: 500;
   white-space: nowrap;
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease,
+    border-color 0.12s ease;
 }
 
 .pill:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.07);
+  background: var(--card-hover);
   color: var(--text);
+}
+
+.pill:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px var(--card),
+    0 0 0 4px var(--focus-ring, rgba(59, 130, 246, 0.55));
 }
 
 .pill:disabled {
@@ -105,9 +122,14 @@
 }
 
 .pillAccent {
-  color: #bfdbfe;
+  color: #dbeafe;
   border-color: var(--blue-border);
   background: var(--blue-soft);
+}
+
+.pillAccent:hover:not(:disabled) {
+  background: rgba(59, 130, 246, 0.24);
+  color: #fff;
 }
 
 .buildSplit {
@@ -156,7 +178,7 @@
   border-radius: 12px;
   border: 1px solid var(--border);
   background: var(--bg-elevated);
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--shadow-pop, 0 8px 24px rgba(0, 0, 0, 0.45));
   transform-origin: bottom left;
   animation: popoverIn 180ms cubic-bezier(0.2, 0.9, 0.25, 1);
 }
@@ -204,17 +226,20 @@
 
 .bestOfNRun {
   align-self: flex-end;
-  padding: 5px 12px;
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 14px;
   border-radius: var(--radius-pill);
-  border: 1px solid var(--blue-border);
-  background: var(--blue-soft);
-  color: #bfdbfe;
+  border: 1px solid transparent;
+  background: var(--btn-primary-bg, #3b82f6);
+  color: #fff;
   font-size: 12px;
-  font-weight: 500;
+  font-weight: 550;
 }
 
 .bestOfNRun:hover:not(:disabled) {
-  filter: brightness(1.08);
+  background: var(--btn-primary-hover, #2563eb);
 }
 
 .bestOfNRun:disabled {
@@ -250,10 +275,10 @@
   margin: 0;
   padding: 4px;
   list-style: none;
-  border-radius: var(--radius-sm);
+  border-radius: 8px;
   border: 1px solid var(--border);
   background: var(--bg-elevated);
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--shadow-pop, 0 8px 24px rgba(0, 0, 0, 0.45));
 }
 
 .modeMenuList {
@@ -333,8 +358,9 @@
 }
 
 .caret {
-  display: inline-block;
-  font-size: 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   opacity: 0.7;
   transition: transform 140ms ease;
 }
@@ -357,9 +383,15 @@
 }
 
 .modelIcon {
-  font-size: 10px;
+  display: inline-flex;
+  align-items: center;
   opacity: 0.75;
   line-height: 1;
+}
+
+/* Invisible text node keeping the trigger's textContent contract stable. */
+.legacyGlyph {
+  display: none;
 }
 
 /* Two-pane model picker floating above the composer */
@@ -376,7 +408,7 @@
   border-radius: 12px;
   border: 1px solid var(--border);
   background: var(--bg-elevated);
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--shadow-pop, 0 8px 24px rgba(0, 0, 0, 0.45));
   overflow: hidden;
   transform-origin: bottom left;
   animation: popoverIn 180ms cubic-bezier(0.2, 0.9, 0.25, 1);
@@ -725,45 +757,75 @@
 }
 
 .send {
-  width: 34px;
-  height: 34px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
-  background: var(--blue);
-  color: white;
-  font-size: 16px;
-  font-weight: 600;
+  background: var(--btn-primary-bg, #3b82f6);
+  color: #fff;
   display: grid;
   place-items: center;
   flex-shrink: 0;
-  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.35);
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.35);
+  transition:
+    background-color 0.12s ease,
+    transform 0.12s ease,
+    box-shadow 0.12s ease;
 }
 
 .send:hover:not(:disabled) {
-  filter: brightness(1.08);
+  background: var(--btn-primary-hover, #2563eb);
+}
+
+.send:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+.send:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px var(--card),
+    0 0 0 4px var(--focus-ring, rgba(59, 130, 246, 0.55));
 }
 
 .send:disabled {
-  opacity: 0.4;
+  background: var(--card-hover);
+  color: var(--text-dim);
+  opacity: 1;
   box-shadow: none;
+  cursor: not-allowed;
 }
 
+/* Meta chips live INSIDE the composer card, as a footer row, so the scope and
+   branch read as part of the input instead of dangling below it. */
 .meta {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 6px;
-  margin-top: 8px;
-  padding-left: 4px;
+  margin-top: 10px;
+  padding: 8px 2px 0;
+  border-top: 1px solid var(--border-soft);
 }
 
 .chip {
   display: inline-flex;
   align-items: center;
+  gap: 5px;
   padding: 2px 8px;
   border-radius: var(--radius-pill);
   background: transparent;
   border: 1px solid var(--border-soft);
   color: var(--text-dim);
   font-size: 11px;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.chipIcon {
+  display: inline-flex;
+  flex-shrink: 0;
+  opacity: 0.8;
 }
 
 .chipMono {
@@ -902,7 +964,7 @@
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow-pop, 0 8px 24px rgba(0, 0, 0, 0.45));
 }
 
 .mentionRow {

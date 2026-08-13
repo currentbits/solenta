@@ -81,19 +81,23 @@
 }
 
 .project {
-  color: var(--text-muted);
+  color: var(--text-dim);
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
   white-space: nowrap;
 }
 
 .sep {
   color: var(--text-dim);
+  opacity: 0.7;
 }
 
 .threadTitle {
-  font-weight: 600;
-  font-size: 14px;
+  font-weight: 650;
+  font-size: 14.5px;
+  letter-spacing: -0.01em;
+  color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -114,22 +118,28 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
+  width: 30px;
   height: 30px;
   padding: 0;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
-  background: var(--card);
+  background: transparent;
   color: var(--text-muted);
-  font-size: 14px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  line-height: 1;
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease;
 }
 
 .menuBtn:hover:not(:disabled) {
   color: var(--text);
   background: var(--card-hover);
+}
+
+.menuBtn:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px var(--bg),
+    0 0 0 4px var(--focus-ring, rgba(59, 130, 246, 0.55));
 }
 
 .menuBtn:disabled {
@@ -144,10 +154,10 @@
   z-index: 20;
   min-width: 168px;
   padding: 4px;
-  border-radius: var(--radius-sm);
+  border-radius: 8px;
   border: 1px solid var(--border);
   background: var(--bg-elevated);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--shadow-pop, 0 8px 24px rgba(0, 0, 0, 0.45));
 }
 
 .menuItem {
@@ -214,19 +224,33 @@
 .btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
-  padding: 6px 12px;
+  height: 30px;
+  padding: 0 12px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
-  background: var(--card);
+  background: transparent;
   color: var(--text-muted);
   font-size: 12px;
   font-weight: 550;
+  white-space: nowrap;
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease,
+    border-color 0.12s ease;
 }
 
 .btn:hover:not(:disabled) {
   color: var(--text);
   background: var(--card-hover);
+}
+
+.btn:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px var(--bg),
+    0 0 0 4px var(--focus-ring, rgba(59, 130, 246, 0.55));
 }
 
 .btn:disabled {
@@ -241,14 +265,14 @@
 }
 
 .btnPrimary {
-  background: var(--blue-soft);
-  border-color: var(--blue-border);
-  color: #bfdbfe;
+  background: var(--btn-primary-bg, #3b82f6);
+  border-color: transparent;
+  color: #fff;
 }
 
 .btnPrimary:hover:not(:disabled) {
-  filter: brightness(1.08);
-  color: #dbeafe;
+  background: var(--btn-primary-hover, #2563eb);
+  color: #fff;
 }
 
 .pushBtn {
@@ -263,8 +287,8 @@
   width: 12px;
   height: 12px;
   border-radius: 50%;
-  border: 1.5px solid rgba(191, 219, 254, 0.35);
-  border-top-color: #bfdbfe;
+  border: 1.5px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #fff;
   animation: pushSpin 0.7s linear infinite;
   flex-shrink: 0;
 }
@@ -565,10 +589,18 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 20px 20px 12px;
+  padding: 24px 24px 16px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
+}
+
+/* Comfortable reading column: every timeline block shares one centered measure. */
+.body > * {
+  width: 100%;
+  max-width: 800px;
+  margin-left: auto;
+  margin-right: auto;
 }
 
 /* Extra separation when multiple per-run Work Log cards appear in sequence */
@@ -581,6 +613,7 @@
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 12px 14px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
 }
 
 .cardHeader {
@@ -593,8 +626,11 @@
 }
 
 .chevron {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 12px;
+  flex-shrink: 0;
   color: var(--text-dim);
   transition: transform 0.12s ease;
 }
@@ -724,11 +760,11 @@
 }
 
 .message {
-  padding: 4px 2px;
+  padding: 2px 2px;
 }
 
 .msgMeta {
-  margin-top: 4px;
+  margin-top: 6px;
   font-size: 11px;
   color: var(--text-dim);
   display: flex;
@@ -736,16 +772,19 @@
   user-select: none;
 }
 
+/* Per-run review strip: a tidy card row tucked under the run's last message. */
 .reviewBar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  margin: 2px 2px 10px;
-  padding: 6px 8px;
-  border-radius: var(--radius-sm);
+  gap: 12px;
+  margin: -6px auto 4px;
+  padding: 7px 8px 7px 12px;
+  border-radius: var(--radius);
   border: 1px solid var(--border);
+  border-left: 2px solid var(--blue-border);
   background: var(--card);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
   font-size: 12px;
   color: var(--text-muted);
 }
@@ -762,13 +801,20 @@
 }
 
 .reviewBtn {
-  padding: 3px 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 26px;
+  padding: 0 10px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
-  background: var(--bg);
+  background: transparent;
   color: var(--text-muted);
   font-size: 12px;
   font-weight: 550;
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease;
 }
 
 .reviewBtn:hover:not(:disabled) {
@@ -807,7 +853,7 @@
   border-radius: var(--radius);
   border: 1px solid var(--border);
   background: var(--bg-elevated);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--shadow-pop, 0 12px 40px rgba(0, 0, 0, 0.45));
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -900,7 +946,7 @@
 .message p {
   margin: 0 0 10px;
   color: var(--text-muted);
-  line-height: 1.55;
+  line-height: 1.6;
   font-size: 13.5px;
   max-width: 72ch;
 }
@@ -918,11 +964,11 @@
 .userBubble {
   max-width: min(72ch, 85%);
   padding: 10px 14px;
-  border-radius: 12px 12px 4px 12px;
+  border-radius: 14px 14px 4px 14px;
   background: var(--blue-soft);
   border: 1px solid var(--blue-border);
   color: #e0ecff;
-  line-height: 1.5;
+  line-height: 1.55;
   font-size: 13.5px;
   white-space: pre-wrap;
   user-select: text;
@@ -939,28 +985,50 @@
   text-align: center;
 }
 
+.emptyGlyph {
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  background: var(--card);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  margin-bottom: 2px;
+}
+
+.emptyGlyphSm {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  box-shadow: none;
+}
+
 .emptyInline {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  padding: 48px 16px 24px;
+  gap: 10px;
+  padding: 64px 16px 32px;
   text-align: center;
 }
 
 .emptyTitle {
   margin: 0;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-muted);
+  font-size: 14.5px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--text);
 }
 
 .emptyHint {
   margin: 0;
   font-size: 12.5px;
+  line-height: 1.5;
   color: var(--text-dim);
-  max-width: 36ch;
+  max-width: 38ch;
 }
 
 .statusStrip {
