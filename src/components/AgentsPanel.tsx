@@ -6,6 +6,8 @@ import type {
   LocalServerInfo,
   MemoryEntryInfo,
   PhaseView,
+  PrCheckInfo,
+  PrChecksResult,
   PrInfo,
   ProjectInfo,
   ProviderInfo,
@@ -21,7 +23,7 @@ import {
   providerDisplayName,
   shortSessionId,
 } from "../format";
-import { prCardView } from "../prUi";
+import { formatChecksRollup, prCardView } from "../prUi";
 import { contextRing, contextWindowFor } from "../contextRing";
 import { MemoryTab } from "./MemoryTab";
 import styles from "./AgentsPanel.module.css";
@@ -47,6 +49,8 @@ interface AgentsPanelProps {
     draft?: boolean;
   }) => Promise<PrInfo>;
   prStatus: () => Promise<PrInfo | null>;
+  prChecks: () => Promise<PrChecksResult>;
+  prMerge: () => Promise<PrInfo>;
   /** Worktree checkpoints (newest-first). */
   listCheckpoints: (threadId: string) => Promise<CheckpointInfo[]>;
   restoreCheckpoint: (threadId: string, sha: string) => Promise<void>;
@@ -80,7 +84,7 @@ interface AgentsPanelProps {
 
 type PhaseChipStatus = "done" | "active" | "pending" | "failed";
 type DotStatus = "active" | "done" | "pending" | "error";
-type GitAction = "setup" | "merge" | "remove" | "push" | "pr" | null;
+type GitAction = "setup" | "merge" | "remove" | "push" | "pr" | "prMerge" | null;
 
 function phaseStatus(phase: PhaseView): PhaseChipStatus {
   if (phase.agents.length === 0) return "pending";
@@ -627,11 +631,13 @@ function PrCard({
   draft,
   live,
   prStatus,
+  prChecks,
   onTitleChange,
   onBodyChange,
   onDraftChange,
   onPush,
   onCreate,
+  onMerge,
   onDismissError,
 }: {
   thread: ThreadInfo | null;
@@ -643,11 +649,13 @@ function PrCard({
   draft: boolean;
   live: PrInfo | null | undefined;
   prStatus: () => Promise<PrInfo | null>;
+  prChecks: () => Promise<PrChecksResult>;
   onTitleChange: (v: string) => void;
   onBodyChange: (v: string) => void;
   onDraftChange: (v: boolean) => void;
   onPush: () => void;
   onCreate: () => void;
+  onMerge: () => void;
   onDismissError: () => void;
 }) {
   const [refreshed, setRefreshed] = useState<PrInfo | null | undefined>(
@@ -655,11 +663,15 @@ function PrCard({
   );
   const [refreshFailed, setRefreshFailed] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [checks, setChecks] = useState<PrCheckInfo[] | null>(null);
+  const [mergeArmed, setMergeArmed] = useState(false);
 
   useEffect(() => {
     setRefreshed(undefined);
     setRefreshFailed(false);
     setRefreshing(false);
+    setChecks(null);
+    setMergeArmed(false);
   }, [thread?.id]);
 
   const effectiveLive = refreshed !== undefined ? refreshed : live;
@@ -672,19 +684,56 @@ function PrCard({
     busy,
   });
   const statsLine = view.existing ? formatPrStats(view.existing) : null;
+  const checksRollup = checks ? formatChecksRollup(checks) : null;
+
+  useEffect(() => {
+    if (view.existing?.state && view.existing.state !== "OPEN") {
+      setMergeArmed(false);
+    }
+  }, [view.existing?.state]);
+
+  const loadChecks = async (): Promise<boolean> => {
+    try {
+      const result = await prChecks();
+      if (result.ok) {
+        setChecks(result.checks);
+        return true;
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  };
 
   const refreshPr = async () => {
     setRefreshing(true);
+    let statusOk = false;
+    let checksOk = false;
     try {
       const info = await prStatus();
       setRefreshed(info);
-      setRefreshFailed(false);
+      statusOk = true;
     } catch {
-      setRefreshFailed(true);
-    } finally {
-      setRefreshing(false);
+      statusOk = false;
     }
+    checksOk = await loadChecks();
+    setRefreshFailed(!statusOk || !checksOk);
+    setRefreshing(false);
   };
+
+  useEffect(() => {
+    if (!thread || thread.prNumber == null) {
+      setChecks(null);
+      return;
+    }
+    let cancelled = false;
+    void loadChecks().then((ok) => {
+      if (!cancelled && !ok) setRefreshFailed(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [thread?.id, thread?.prNumber, prChecks]);
 
   if (!thread) {
     return (
@@ -752,6 +801,15 @@ function PrCard({
             </div>
           ) : null}
           {statsLine ? <div className={styles.prStats}>{statsLine}</div> : null}
+          {checksRollup?.line ? (
+            <div
+              className={styles.prChecks}
+              data-pr-checks=""
+              title={checksRollup.tooltip}
+            >
+              {checksRollup.line}
+            </div>
+          ) : null}
           {view.existing.branch && (
             <div className={styles.prBranch} title={view.existing.branch}>
               {view.existing.branch}
@@ -784,6 +842,52 @@ function PrCard({
                 Retry
               </button>
             </div>
+          ) : null}
+          {view.existing.state === "OPEN" ? (
+            mergeArmed ? (
+              <div className={styles.prMergeConfirm} data-pr-merge-confirm="">
+                <p className={styles.prMergeConfirmText}>
+                  Confirm merge? This squashes into the base branch.
+                </p>
+                <div className={styles.prMergeConfirmActions}>
+                  <button
+                    type="button"
+                    className={`${styles.gitBtn} ${styles.gitBtnPrimary}`}
+                    onClick={() => onMerge()}
+                    disabled={busy}
+                  >
+                    {gitAction === "prMerge" ? (
+                      <>
+                        <span className={styles.btnSpinner} aria-hidden />
+                        Merging…
+                      </>
+                    ) : (
+                      "Confirm"
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.gitBtn}
+                    onClick={() => setMergeArmed(false)}
+                    disabled={busy}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className={styles.gitActions}>
+                <button
+                  type="button"
+                  className={`${styles.gitBtn} ${styles.gitBtnPrimary}`}
+                  data-pr-merge=""
+                  onClick={() => setMergeArmed(true)}
+                  disabled={busy || refreshing}
+                >
+                  Merge
+                </button>
+              </div>
+            )
           ) : null}
         </div>
       ) : null}
@@ -874,6 +978,8 @@ export function GitTab({
   onPush,
   createPr,
   prStatus,
+  prChecks,
+  prMerge,
   listCheckpoints,
   restoreCheckpoint,
   listLocalServers,
@@ -895,6 +1001,8 @@ export function GitTab({
     draft?: boolean;
   }) => Promise<PrInfo>;
   prStatus: () => Promise<PrInfo | null>;
+  prChecks: () => Promise<PrChecksResult>;
+  prMerge: () => Promise<PrInfo>;
   listCheckpoints: (threadId: string) => Promise<CheckpointInfo[]>;
   restoreCheckpoint: (threadId: string, sha: string) => Promise<void>;
   listLocalServers: (threadId: string) => Promise<LocalServerInfo[]>;
@@ -1151,6 +1259,7 @@ export function GitTab({
           draft={draft}
           live={livePr}
           prStatus={prStatus}
+          prChecks={prChecks}
           onTitleChange={setTitleDraft}
           onBodyChange={setBodyDraft}
           onDraftChange={setDraft}
@@ -1164,6 +1273,16 @@ export function GitTab({
                   body: bodyDraft.trim() ? bodyDraft : undefined,
                   draft: draft || undefined,
                 });
+                setLivePr(info);
+              },
+              { scope: "pr" },
+            )
+          }
+          onMerge={() =>
+            void runAction(
+              "prMerge",
+              async () => {
+                const info = await prMerge();
                 setLivePr(info);
               },
               { scope: "pr" },
@@ -1488,6 +1607,8 @@ export function AgentsPanel({
   onPush,
   createPr,
   prStatus,
+  prChecks,
+  prMerge,
   listCheckpoints,
   restoreCheckpoint,
   listLocalServers,
@@ -1551,6 +1672,8 @@ export function AgentsPanel({
           onPush={onPush}
           createPr={createPr}
           prStatus={prStatus}
+          prChecks={prChecks}
+          prMerge={prMerge}
           listCheckpoints={listCheckpoints}
           restoreCheckpoint={restoreCheckpoint}
           listLocalServers={listLocalServers}

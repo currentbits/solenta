@@ -6,7 +6,8 @@
  * mutation is at the CALL SITE, so testing PrCard directly cannot catch it:
  * GitTab is the smallest unit that contains the wiring.
  *
- * renderToStaticMarkup runs no effects, so nothing here can reach gh.
+ * Static markup covers wiring. The checks rollup, merge confirm, and merged
+ * result run through the DOM harness so effects and clicks actually fire.
  *
  * Run: node --import=./test/support/render.mjs --test test/prCard.test.tsx
  */
@@ -14,7 +15,13 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { GitTab } from "../src/components/AgentsPanel";
-import type { ThreadInfo, ProjectInfo, PrInfo } from "../src/shared/ipc";
+import { mount } from "./support/dom.ts";
+import type {
+  ThreadInfo,
+  ProjectInfo,
+  PrCheckInfo,
+  PrInfo,
+} from "../src/shared/ipc";
 
 const project = {
   id: "p1",
@@ -53,31 +60,62 @@ function thread(over: Partial<ThreadInfo> = {}): ThreadInfo {
   } as ThreadInfo;
 }
 
+const openPr: PrInfo = {
+  number: 12,
+  url: "https://github.com/owner/repo/pull/12",
+  state: "OPEN",
+  branch: "coder/ship-it-abc123",
+  created: false,
+  title: "ship it",
+  additions: 4,
+  deletions: 1,
+  changedFiles: 2,
+};
+
+const passingFailing: PrCheckInfo[] = [
+  { name: "test", bucket: "pass" },
+  { name: "lint", bucket: "pass" },
+  { name: "types", bucket: "pass" },
+  { name: "e2e", bucket: "fail" },
+];
+
+function gitTabProps(
+  t: ThreadInfo | null,
+  over: {
+    prStatus?: () => Promise<PrInfo | null>;
+    prChecks?: () => Promise<{ ok: true; checks: PrCheckInfo[] } | { ok: false; reason: string }>;
+    prMerge?: () => Promise<PrInfo>;
+  } = {},
+) {
+  return {
+    thread: t,
+    project,
+    onSetupWorktree: async () => {},
+    onMergeWorktree: async () => {},
+    onRemoveWorktree: async () => {},
+    onViewChanges: () => {},
+    onPush: async () => ({ remote: "origin", branch: "b" }),
+    createPr: async () =>
+      ({
+        number: 1,
+        url: "https://github.com/owner/repo/pull/1",
+        state: "OPEN",
+        branch: "b",
+        created: true,
+      }) as PrInfo,
+    prStatus: over.prStatus ?? (async () => null),
+    prChecks: over.prChecks ?? (async () => ({ ok: true as const, checks: [] })),
+    prMerge:
+      over.prMerge ??
+      (async () => ({ ...openPr, state: "MERGED" as const })),
+    listCheckpoints: async () => [],
+    restoreCheckpoint: async () => {},
+    listLocalServers: async () => [],
+  };
+}
+
 function render(t: ThreadInfo | null): string {
-  return renderToStaticMarkup(
-    <GitTab
-      thread={t}
-      project={project}
-      onSetupWorktree={async () => {}}
-      onMergeWorktree={async () => {}}
-      onRemoveWorktree={async () => {}}
-      onViewChanges={() => {}}
-      onPush={async () => ({ remote: "origin", branch: "b" })}
-      createPr={async () =>
-        ({
-          number: 1,
-          url: "https://github.com/owner/repo/pull/1",
-          state: "OPEN",
-          branch: "b",
-          created: true,
-        }) as PrInfo
-      }
-      prStatus={async () => null}
-      listCheckpoints={async () => []}
-      restoreCheckpoint={async () => {}}
-      listLocalServers={async () => []}
-    />,
-  );
+  return renderToStaticMarkup(<GitTab {...gitTabProps(t)} />);
 }
 
 describe("Git tab wires the PR card to the selected thread", () => {
@@ -124,5 +162,92 @@ describe("Git tab wires the PR card to the selected thread", () => {
       html.slice(button, idx).includes("disabled"),
       "Create PR must be disabled without a branch",
     );
+  });
+});
+
+describe("PrCard checks rollup and merge", () => {
+  function threadWithPr(): ThreadInfo {
+    return thread({
+      prNumber: 12,
+      prUrl: openPr.url,
+      prState: "OPEN",
+    });
+  }
+
+  it("renders the checks rollup under the stats line", async () => {
+    const m = await mount(
+      <GitTab
+        {...gitTabProps(threadWithPr(), {
+          prStatus: async () => openPr,
+          prChecks: async () => ({ ok: true, checks: passingFailing }),
+        })}
+      />,
+    );
+    await m.flush();
+    const line = m.query("[data-pr-checks]");
+    assert.ok(line, "checks rollup line must render");
+    assert.equal((line.textContent || "").trim(), "Checks: 3 passing · 1 failing");
+    const tip = line.getAttribute("title") || "";
+    assert.ok(tip.includes("test: pass"), tip);
+    assert.ok(tip.includes("e2e: fail"), tip);
+    assert.ok(m.query("[data-pr-merge]"), "OPEN PR must offer Merge");
+  });
+
+  it("arms an inline confirm, then shows MERGED after confirm", async () => {
+    let merged = false;
+    const m = await mount(
+      <GitTab
+        {...gitTabProps(threadWithPr(), {
+          prStatus: async () => openPr,
+          prChecks: async () => ({ ok: true, checks: passingFailing }),
+          prMerge: async () => {
+            merged = true;
+            return { ...openPr, state: "MERGED" };
+          },
+        })}
+      />,
+    );
+    await m.flush();
+    const mergeBtn = m.query("[data-pr-merge]");
+    assert.ok(mergeBtn, "Merge button");
+    await m.click(mergeBtn);
+    await m.flush();
+    assert.ok(
+      m.query("[data-pr-merge-confirm]"),
+      "inline confirm must replace Merge",
+    );
+    assert.ok(
+      m.text().includes("Confirm merge? This squashes into the base branch."),
+    );
+    await m.click(m.byText("Confirm"));
+    await m.flush();
+    assert.equal(merged, true, "prMerge must run on Confirm");
+    assert.ok(m.text().includes("MERGED"), "card must show the merged state");
+    assert.equal(m.query("[data-pr-merge]"), null, "Merge is only for OPEN PRs");
+    assert.equal(m.query("[data-pr-merge-confirm]"), null);
+  });
+
+  it("Cancel leaves the PR open and the Merge button back", async () => {
+    let merged = false;
+    const m = await mount(
+      <GitTab
+        {...gitTabProps(threadWithPr(), {
+          prStatus: async () => openPr,
+          prChecks: async () => ({ ok: true, checks: passingFailing }),
+          prMerge: async () => {
+            merged = true;
+            return { ...openPr, state: "MERGED" };
+          },
+        })}
+      />,
+    );
+    await m.flush();
+    await m.click(m.query("[data-pr-merge]"));
+    await m.flush();
+    await m.click(m.byText("Cancel"));
+    await m.flush();
+    assert.equal(merged, false, "Cancel must not call prMerge");
+    assert.ok(m.query("[data-pr-merge]"), "Merge returns after Cancel");
+    assert.ok(m.text().includes("OPEN"));
   });
 });

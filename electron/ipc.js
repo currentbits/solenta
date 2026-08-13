@@ -15,6 +15,8 @@ const {
   push,
   createPr,
   prStatus,
+  prChecks,
+  mergePr,
   listPrs,
   listCheckpoints,
   restoreCheckpoint,
@@ -334,6 +336,19 @@ const IPC_HANDLERS = {
     return prStatus({
       store: ctx.store,
       threadId: input.threadId,
+    });
+  },
+  "git:prChecks": async (ctx, input) => {
+    return prChecks({
+      store: ctx.store,
+      threadId: input.threadId,
+    });
+  },
+  "git:prMerge": async (ctx, input) => {
+    return mergePr({
+      store: ctx.store,
+      threadId: input.threadId,
+      broadcast: ctx.broadcast,
     });
   },
   "git:listPrs": async (_ctx, projectPath) => {

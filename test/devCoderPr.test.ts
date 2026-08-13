@@ -179,3 +179,26 @@ describe("git.createPr", () => {
     assert.equal(again.number, withPr!.prNumber);
   });
 });
+
+describe("git.prChecks / git.prMerge", () => {
+  it("returns in-band no PR when the thread has none", async () => {
+    const { api, threadId } = await threadWithBranch();
+    const result = await api.git.prChecks({ threadId });
+    assert.deepEqual(result, { ok: false, reason: "no PR" });
+  });
+
+  it("squash-merges an OPEN PR and reports MERGED", async () => {
+    const { api, threadId } = await threadWithBranch("Merge harness");
+    await api.git.createPr({ threadId, title: "Merge harness" });
+    const checks = await api.git.prChecks({ threadId });
+    assert.equal(checks.ok, true);
+    const merged = await api.git.prMerge({ threadId });
+    assert.equal(merged.state, "MERGED");
+    const status = await api.git.prStatus({ threadId });
+    assert.equal(status?.state, "MERGED");
+    await assert.rejects(
+      () => api.git.prMerge({ threadId }),
+      /not open/i,
+    );
+  });
+});

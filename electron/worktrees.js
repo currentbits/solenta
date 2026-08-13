@@ -1281,6 +1281,339 @@ function prStatus(opts) {
   return info;
 }
 
+/** Buckets `gh pr checks --json` reports. */
+const PR_CHECK_BUCKETS = new Set([
+  "pass",
+  "fail",
+  "pending",
+  "skipping",
+  "cancel",
+]);
+
+/**
+ * Map a gh check state/bucket string onto the five buckets the UI knows.
+ * @param {unknown} raw
+ * @returns {"pass" | "fail" | "pending" | "skipping" | "cancel"}
+ */
+function normalizeCheckBucket(raw) {
+  const s = String(raw || "")
+    .toLowerCase()
+    .trim();
+  if (s === "pass" || s === "success" || s === "completed") return "pass";
+  if (s === "fail" || s === "failure" || s === "failed" || s === "error") {
+    return "fail";
+  }
+  if (s === "skipping" || s === "skipped" || s === "skip") return "skipping";
+  if (s === "cancel" || s === "cancelled" || s === "canceled") return "cancel";
+  if (
+    s === "pending" ||
+    s === "queued" ||
+    s === "in_progress" ||
+    s === "inprogress" ||
+    s === "waiting"
+  ) {
+    return "pending";
+  }
+  return "pending";
+}
+
+/**
+ * True when gh rejected `pr checks --json` (older CLI, unknown field/flag).
+ * @param {string} text
+ * @returns {boolean}
+ */
+function isChecksJsonRejected(text) {
+  const s = String(text || "");
+  if (isUnknownJsonField(s)) return true;
+  return (
+    /json/i.test(s) &&
+    /unknown flag|flag provided but not defined|unknown (command|argument|shorthand)/i.test(
+      s,
+    )
+  );
+}
+
+/**
+ * Parse one `gh pr checks --json` row.
+ * @param {any} row
+ * @returns {{ name: string, bucket: "pass" | "fail" | "pending" | "skipping" | "cancel", link?: string }}
+ */
+function parsePrCheckItem(row) {
+  const name = row && row.name != null ? String(row.name).trim() : "";
+  if (!name) {
+    throw new Error("gh returned incomplete PR checks JSON");
+  }
+  const bucket = normalizeCheckBucket(
+    (row && row.bucket) || (row && row.state),
+  );
+  /** @type {{ name: string, bucket: "pass" | "fail" | "pending" | "skipping" | "cancel", link?: string }} */
+  const item = { name, bucket };
+  if (row && row.link != null && String(row.link).trim() !== "") {
+    item.link = String(row.link);
+  }
+  return item;
+}
+
+/**
+ * Parse `gh pr checks --json name,state,bucket,link` stdout (an array).
+ * @param {string} stdout
+ * @returns {ReturnType<typeof parsePrCheckItem>[]}
+ */
+function parsePrChecksJson(stdout) {
+  let data;
+  try {
+    const trimmed = String(stdout || "").trim();
+    data = JSON.parse(trimmed === "" ? "[]" : trimmed);
+  } catch {
+    throw new Error("gh returned unparseable PR checks JSON");
+  }
+  if (!Array.isArray(data)) {
+    throw new Error("gh returned incomplete PR checks JSON");
+  }
+  return data.map(parsePrCheckItem);
+}
+
+const CHECK_TEXT_BUCKET =
+  /^(pass|fail|pending|skipping|cancel|success|failure|failed|error|queued|in_progress|inprogress|waiting|skipped|skip|cancelled|canceled)$/i;
+
+/**
+ * Parse plain `gh pr checks <number>` text (tab- or multi-space-separated
+ * name / pass-fail-pending / duration / link rows).
+ * @param {string} stdout
+ * @returns {ReturnType<typeof parsePrCheckItem>[]}
+ */
+function parsePrChecksText(stdout) {
+  const checks = [];
+  for (const line of String(stdout || "").split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const cols = trimmed.includes("\t")
+      ? trimmed.split("\t").map((s) => s.trim())
+      : trimmed.split(/\s{2,}/).map((s) => s.trim());
+    if (cols.length < 2) continue;
+    let bucketIdx = -1;
+    for (let i = 0; i < cols.length; i++) {
+      if (CHECK_TEXT_BUCKET.test(cols[i])) {
+        bucketIdx = i;
+        break;
+      }
+    }
+    if (bucketIdx <= 0) continue;
+    const name = cols.slice(0, bucketIdx).join(" ").trim();
+    if (!name) continue;
+    const bucket = normalizeCheckBucket(cols[bucketIdx]);
+    /** @type {{ name: string, bucket: "pass" | "fail" | "pending" | "skipping" | "cancel", link?: string }} */
+    const item = { name, bucket };
+    const last = cols[cols.length - 1];
+    if (last && /^https?:\/\//i.test(last)) item.link = last;
+    checks.push(item);
+  }
+  return checks;
+}
+
+/**
+ * Counts per check bucket. Unknown buckets are ignored.
+ * @param {{ bucket: string }[]} checks
+ * @returns {{ pass: number, fail: number, pending: number, skipping: number, cancel: number }}
+ */
+function rollupPrChecks(checks) {
+  const counts = {
+    pass: 0,
+    fail: 0,
+    pending: 0,
+    skipping: 0,
+    cancel: 0,
+  };
+  if (!Array.isArray(checks)) return counts;
+  for (const c of checks) {
+    const bucket = c && c.bucket;
+    if (PR_CHECK_BUCKETS.has(bucket)) counts[bucket] += 1;
+  }
+  return counts;
+}
+
+/**
+ * Pull checks from a ghTry result. `gh pr checks` exits 1 when any check
+ * failed and 8 when some are pending, so a non-zero exit with parseable
+ * stdout is still success.
+ * @param {{ ok: boolean, stdout?: string, stderr?: string, combined?: string }} result
+ * @param {boolean} preferText
+ * @returns {ReturnType<typeof parsePrCheckItem>[] | null}
+ */
+function extractPrChecks(result, preferText) {
+  const out = result && result.stdout != null ? String(result.stdout) : "";
+  const trimmed = out.trim();
+  if (!preferText && (trimmed.startsWith("[") || trimmed.startsWith("{"))) {
+    try {
+      return parsePrChecksJson(trimmed);
+    } catch {
+      // Fall through to the text table (older gh, or JSON mixed with a banner).
+    }
+  }
+  const fromText = parsePrChecksText(trimmed);
+  if (fromText.length > 0) return fromText;
+  if (preferText || trimmed === "") return fromText;
+  try {
+    return parsePrChecksJson(trimmed);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * CI checks for the thread's current PR. Failures stay in-band so the
+ * card can retry: `{ ok: false, reason }` for missing gh, no PR, or auth.
+ *
+ * @param {object} opts
+ * @param {import('./store').Store} opts.store
+ * @param {string} opts.threadId
+ * @returns {{ ok: true, checks: ReturnType<typeof parsePrCheckItem>[] } | { ok: false, reason: string }}
+ */
+function prChecks(opts) {
+  const { store, threadId } = opts;
+  let cwd;
+  let branch;
+  let originUrl;
+  try {
+    const resolved = resolveThreadGit(store, threadId);
+    cwd = resolved.cwd;
+    branch = resolved.branch;
+    originUrl = resolved.originUrl;
+  } catch (err) {
+    return {
+      ok: false,
+      reason: err && err.message ? String(err.message) : "no PR",
+    };
+  }
+
+  if (!isGitHubRemote(originUrl)) {
+    return { ok: false, reason: "not a GitHub repo" };
+  }
+
+  let viewed = ghTry(cwd, ["pr", "view", branch, "--json", PR_JSON_ENRICHED]);
+  if (
+    !viewed.ok &&
+    isUnknownJsonField(viewed.stderr || viewed.combined || viewed.stdout)
+  ) {
+    viewed = ghTry(cwd, ["pr", "view", branch, "--json", PR_JSON_MINIMAL]);
+  }
+  if (!viewed.ok) {
+    if (viewed.enoent) return { ok: false, reason: "gh missing" };
+    if (isGhAuthFailure(viewed.stderr || viewed.combined || viewed.stdout)) {
+      return { ok: false, reason: "auth" };
+    }
+    if (isNoPrMessage(viewed.stderr || viewed.combined || viewed.stdout)) {
+      return { ok: false, reason: "no PR" };
+    }
+    return {
+      ok: false,
+      reason: tailErr(viewed.stderr || viewed.combined, "gh pr view failed"),
+    };
+  }
+
+  let info;
+  try {
+    info = parsePrJson(viewed.stdout, branch, false);
+  } catch (err) {
+    return {
+      ok: false,
+      reason:
+        err && err.message
+          ? String(err.message)
+          : "gh returned unparseable PR JSON",
+    };
+  }
+
+  let checked = ghTry(cwd, [
+    "pr",
+    "checks",
+    String(info.number),
+    "--json",
+    "name,state,bucket,link",
+  ]);
+  let preferText = false;
+  if (
+    !checked.ok &&
+    isChecksJsonRejected(checked.stderr || checked.combined || checked.stdout)
+  ) {
+    checked = ghTry(cwd, ["pr", "checks", String(info.number)]);
+    preferText = true;
+  }
+
+  if (checked.enoent) return { ok: false, reason: "gh missing" };
+  if (isGhAuthFailure(checked.stderr || checked.combined || checked.stdout)) {
+    return { ok: false, reason: "auth" };
+  }
+
+  const checks = extractPrChecks(checked, preferText);
+  if (checks) return { ok: true, checks };
+
+  return {
+    ok: false,
+    reason: tailErr(
+      checked.stderr || checked.combined,
+      "gh pr checks failed",
+    ),
+  };
+}
+
+/**
+ * Squash-merge the thread's current PR via `gh pr merge --squash`, then
+ * return the refreshed PrInfo. Throws (with gh's own tail) on failure.
+ * CLOSED/MERGED PRs are left to gh; we do not invent a pre-check.
+ *
+ * @param {object} opts
+ * @param {import('./store').Store} opts.store
+ * @param {string} opts.threadId
+ * @param {(channel: string, payload: unknown) => void} [opts.broadcast]
+ * @returns {ReturnType<typeof prStatus>}
+ */
+function mergePr(opts) {
+  const { store, threadId, broadcast } = opts;
+  const { cwd, branch, originUrl } = resolveThreadGit(store, threadId);
+
+  if (!isGitHubRemote(originUrl)) {
+    throw new Error(
+      `Remote origin is not a GitHub repository (got: ${originUrl}). Merging a PR requires github.com.`,
+    );
+  }
+
+  let viewed = ghTry(cwd, ["pr", "view", branch, "--json", PR_JSON_ENRICHED]);
+  if (
+    !viewed.ok &&
+    isUnknownJsonField(viewed.stderr || viewed.combined || viewed.stdout)
+  ) {
+    viewed = ghTry(cwd, ["pr", "view", branch, "--json", PR_JSON_MINIMAL]);
+  }
+  if (!viewed.ok) {
+    if (viewed.enoent || viewed.timedOut) {
+      throwGhFailure(viewed, "gh pr view failed");
+    }
+    if (isNoPrMessage(viewed.stderr || viewed.combined || viewed.stdout)) {
+      throw new Error("No pull request found for this branch");
+    }
+    throwGhFailure(viewed, "gh pr view failed");
+  }
+
+  const info = parsePrJson(viewed.stdout, branch, false);
+  const merged = ghTry(cwd, [
+    "pr",
+    "merge",
+    String(info.number),
+    "--squash",
+  ]);
+  if (!merged.ok) {
+    throwGhFailure(merged, "gh pr merge failed");
+  }
+
+  const live = prStatus({ store, threadId });
+  if (typeof broadcast === "function") {
+    const { listThreads } = require("./services.js");
+    broadcast("threads:changed", listThreads(store));
+  }
+  return live;
+}
+
 /**
  * True when a thread should be considered for background PR-state refresh:
  * has a prNumber, is not archived, and prState is not already terminal.
@@ -1946,7 +2279,12 @@ module.exports = {
   push,
   createPr,
   prStatus,
+  prChecks,
+  mergePr,
   parsePrJson,
+  parsePrChecksJson,
+  parsePrChecksText,
+  rollupPrChecks,
   listPrs,
   parsePrListJson,
   isUnknownJsonField,

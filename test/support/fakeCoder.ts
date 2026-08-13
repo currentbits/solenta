@@ -24,6 +24,7 @@ import type {
   ListPrsResult,
   LocalServerInfo,
   MemoryEntryInfo,
+  PrChecksResult,
   PrInfo,
   ProjectInfo,
   ProviderInfo,
@@ -602,6 +603,19 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           created: true,
         } as PrInfo),
       prStatus: (input: unknown) => rec("git.prStatus", [input], null),
+      prChecks: (input: unknown) =>
+        rec("git.prChecks", [input], {
+          ok: true,
+          checks: [],
+        } as PrChecksResult),
+      prMerge: (input: unknown) =>
+        rec("git.prMerge", [input], {
+          number: 1,
+          url: "https://github.com/owner/repo/pull/1",
+          state: "MERGED",
+          branch: "b",
+          created: false,
+        } as PrInfo),
       listPrs: (projectPath: string) =>
         rec("git.listPrs", [projectPath], {
           ok: true,

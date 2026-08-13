@@ -9,6 +9,7 @@ import type {
   ListPrsResult,
   LocalServerInfo,
   MemoryEntryInfo,
+  PrChecksResult,
   PrInfo,
   ProjectInfo,
   ProviderInfo,
@@ -284,6 +285,8 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
         call<{ remote: string; branch: string }>("git:push", input),
       createPr: (input) => call<PrInfo>("git:createPr", input),
       prStatus: (input) => call<PrInfo | null>("git:prStatus", input),
+      prChecks: (input) => call<PrChecksResult>("git:prChecks", input),
+      prMerge: (input) => call<PrInfo>("git:prMerge", input),
       listPrs: (projectPath) => call<ListPrsResult>("git:listPrs", projectPath),
       listCheckpoints: (input) =>
         call<CheckpointInfo[]>("git:listCheckpoints", input),

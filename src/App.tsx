@@ -54,6 +54,8 @@ export default function App() {
     pushBranch,
     createPr,
     prStatus,
+    prChecks,
+    prMerge,
     listPrs,
     listCheckpoints,
     restoreCheckpoint,
@@ -343,6 +345,8 @@ export default function App() {
         onPush={() => pushBranch()}
         createPr={(input) => createPr(input)}
         prStatus={() => prStatus()}
+        prChecks={() => prChecks()}
+        prMerge={() => prMerge()}
         listCheckpoints={listCheckpoints}
         restoreCheckpoint={restoreCheckpoint}
         listLocalServers={listLocalServers}

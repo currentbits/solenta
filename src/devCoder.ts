@@ -17,6 +17,7 @@ import type {
   LocalServerInfo,
   MemoryEntryInfo,
   PermissionMode,
+  PrCheckInfo,
   PrInfo,
   ProjectInfo,
   ProviderInfo,
@@ -2814,6 +2815,56 @@ function buildDevCoder(): CoderApi {
           url: existing.url,
           state: existing.state,
           branch: existing.branch || detail.thread.branch || "",
+          created: false,
+        };
+      },
+      async prChecks(input) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
+        const existing = prByThread.get(input.threadId);
+        if (!existing) return { ok: false as const, reason: "no PR" };
+        const checks: PrCheckInfo[] =
+          existing.state === "MERGED"
+            ? [
+                { name: "test", bucket: "pass" },
+                { name: "lint", bucket: "pass" },
+              ]
+            : [
+                { name: "test", bucket: "pass" },
+                { name: "lint", bucket: "pending" },
+              ];
+        return { ok: true as const, checks };
+      },
+      async prMerge(input) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
+        const existing = prByThread.get(input.threadId);
+        if (!existing) {
+          throw new Error("No pull request found for this branch");
+        }
+        if (existing.state !== "OPEN") {
+          throw new Error(
+            `Pull request #${existing.number} is not open`,
+          );
+        }
+        const merged: PrInfo = { ...existing, state: "MERGED", created: false };
+        prByThread.set(input.threadId, merged);
+        const thread: ThreadInfo = {
+          ...detail.thread,
+          prNumber: merged.number,
+          prUrl: merged.url,
+          prState: merged.state,
+          updatedAt: now(),
+        };
+        detail.thread = thread;
+        details.set(input.threadId, detail);
+        syncThreadRow(thread);
+        emitDetail(detail);
+        return {
+          number: merged.number,
+          url: merged.url,
+          state: merged.state,
+          branch: merged.branch || detail.thread.branch || "",
           created: false,
         };
       },

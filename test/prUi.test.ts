@@ -4,8 +4,8 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { prCardView, sidebarPrBadge } from "../src/prUi.ts";
-import type { PrInfo } from "../src/shared/ipc.ts";
+import { formatChecksRollup, prCardView, sidebarPrBadge } from "../src/prUi.ts";
+import type { PrCheckInfo, PrInfo } from "../src/shared/ipc.ts";
 
 const openPr: PrInfo = {
   number: 42,
@@ -233,5 +233,38 @@ describe("a finished PR does not block a follow-up", () => {
     });
     assert.equal(v.existing?.state, null);
     assert.equal(v.showForm, false, "unknown state must not invite a new PR");
+  });
+});
+
+describe("formatChecksRollup", () => {
+  const checks: PrCheckInfo[] = [
+    { name: "test", bucket: "pass" },
+    { name: "lint", bucket: "pass" },
+    { name: "types", bucket: "pass" },
+    { name: "e2e", bucket: "fail" },
+  ];
+
+  it("renders only nonzero buckets", () => {
+    const { line } = formatChecksRollup(checks);
+    assert.equal(line, "Checks: 3 passing · 1 failing");
+  });
+
+  it("lists every check in the tooltip", () => {
+    const { tooltip } = formatChecksRollup(checks);
+    assert.equal(tooltip, "test: pass\nlint: pass\ntypes: pass\ne2e: fail");
+  });
+
+  it("hides the line when there are no checks", () => {
+    const { line, tooltip } = formatChecksRollup([]);
+    assert.equal(line, null);
+    assert.equal(tooltip, "");
+  });
+
+  it("includes pending without inventing empty buckets", () => {
+    const { line } = formatChecksRollup([
+      { name: "ci", bucket: "pending" },
+      { name: "old", bucket: "cancel" },
+    ]);
+    assert.equal(line, "Checks: 1 pending · 1 cancelled");
   });
 });

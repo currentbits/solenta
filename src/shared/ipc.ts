@@ -268,6 +268,25 @@ export interface PrInfo {
   changedFiles?: number;
 }
 
+/** One CI check from `gh pr checks`. */
+export type PrCheckBucket =
+  | "pass"
+  | "fail"
+  | "pending"
+  | "skipping"
+  | "cancel";
+
+export interface PrCheckInfo {
+  name: string;
+  bucket: PrCheckBucket;
+  link?: string;
+}
+
+/** Per-thread prChecks result. Failures stay in-band so the UI can retry. */
+export type PrChecksResult =
+  | { ok: true; checks: PrCheckInfo[] }
+  | { ok: false; reason: string };
+
 /**
  * One row from `gh pr list`. Optional fields are absent when gh is too old
  * for the extra --json keys and listPrs fell back to the short field set.
@@ -654,6 +673,16 @@ export interface CoderApi {
      * Rejects only on the same environment failures as createPr.
      */
     prStatus(input: { threadId: string }): Promise<PrInfo | null>;
+    /**
+     * CI checks for the thread's current PR via `gh pr checks`. Failures
+     * stay in-band (`{ ok: false, reason }`) so the card can retry.
+     */
+    prChecks(input: { threadId: string }): Promise<PrChecksResult>;
+    /**
+     * Squash-merge the thread's current OPEN PR (`gh pr merge --squash`)
+     * and return the refreshed PrInfo. Rejects with gh's own message.
+     */
+    prMerge(input: { threadId: string }): Promise<PrInfo>;
     /**
      * Open PRs for a project checkout via `gh pr list`. Never rejects for
      * missing gh / non-GitHub remotes / auth: those come back as

@@ -7,7 +7,7 @@
  * 3. Create is disabled without a branch, a non-empty title, or while busy.
  * 4. Live prStatus wins over stale thread.prNumber/prUrl when present.
  */
-import type { PrInfo } from "./shared/ipc";
+import type { PrCheckBucket, PrCheckInfo, PrInfo } from "./shared/ipc";
 
 export type PrState = PrInfo["state"];
 
@@ -100,4 +100,41 @@ export function prCardView(input: {
     input.titleDraft.trim().length > 0;
 
   return { existing, showForm, canCreate };
+}
+
+const ROLLUP_PARTS: { bucket: PrCheckBucket; label: string }[] = [
+  { bucket: "pass", label: "passing" },
+  { bucket: "fail", label: "failing" },
+  { bucket: "pending", label: "pending" },
+  { bucket: "skipping", label: "skipping" },
+  { bucket: "cancel", label: "cancelled" },
+];
+
+/**
+ * Checks rollup line + tooltip. Only nonzero buckets appear in the line.
+ * Empty input yields no line (the card hides it).
+ */
+export function formatChecksRollup(checks: PrCheckInfo[]): {
+  line: string | null;
+  tooltip: string;
+} {
+  const counts: Record<PrCheckBucket, number> = {
+    pass: 0,
+    fail: 0,
+    pending: 0,
+    skipping: 0,
+    cancel: 0,
+  };
+  for (const c of checks) {
+    if (c.bucket in counts) counts[c.bucket] += 1;
+  }
+  const parts: string[] = [];
+  for (const { bucket, label } of ROLLUP_PARTS) {
+    const n = counts[bucket];
+    if (n > 0) parts.push(`${n} ${label}`);
+  }
+  return {
+    line: parts.length > 0 ? `Checks: ${parts.join(" · ")}` : null,
+    tooltip: checks.map((c) => `${c.name}: ${c.bucket}`).join("\n"),
+  };
 }

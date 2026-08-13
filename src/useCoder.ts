@@ -10,6 +10,7 @@ import type {
   MemoryEntryInfo,
   PermissionMode,
   ListPrsResult,
+  PrChecksResult,
   PrInfo,
   ProjectInfo,
   ProviderInfo,
@@ -149,6 +150,10 @@ export interface UseCoderResult {
   }) => Promise<PrInfo>;
   /** Live PR for the selected thread's branch, or null when none. */
   prStatus: () => Promise<PrInfo | null>;
+  /** CI checks for the selected thread's current PR. Failures are in-band. */
+  prChecks: () => Promise<PrChecksResult>;
+  /** Squash-merge the selected thread's current OPEN PR. */
+  prMerge: () => Promise<PrInfo>;
   /** Open PRs for a project checkout (`gh pr list`). Failures are in-band. */
   listPrs: (projectPath: string) => Promise<ListPrsResult>;
   /** Worktree checkpoints for a thread (newest-first). */
@@ -927,6 +932,26 @@ export function useCoder(): UseCoderResult {
     return api.git.prStatus({ threadId: selectedThreadId });
   }, [api, selectedThreadId]);
 
+  const prChecks = useCallback(async () => {
+    if (!selectedThreadId) return { ok: false as const, reason: "no PR" };
+    return api.git.prChecks({ threadId: selectedThreadId });
+  }, [api, selectedThreadId]);
+
+  const prMerge = useCallback(async () => {
+    if (!selectedThreadId) {
+      throw new Error("No thread selected");
+    }
+    const threadId = selectedThreadId;
+    const pr = await api.git.prMerge({ threadId });
+    if (selectedRef.current !== threadId) return pr;
+    const d = await api.threads.get(threadId);
+    if (selectedRef.current === threadId) {
+      applyThreadUpdate(d.thread);
+      setDetail(d);
+    }
+    return pr;
+  }, [api, selectedThreadId, applyThreadUpdate]);
+
   const listPrs = useCallback(
     async (projectPath: string) => {
       return api.git.listPrs(projectPath);
@@ -1122,6 +1147,8 @@ export function useCoder(): UseCoderResult {
     pushBranch,
     createPr,
     prStatus,
+    prChecks,
+    prMerge,
     listPrs,
     listCheckpoints,
     restoreCheckpoint,
