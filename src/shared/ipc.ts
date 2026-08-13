@@ -575,6 +575,12 @@ export interface AppSettings {
    * folded into every provider's MCP injection on the next turn.
    */
   mcpServers: McpServerInfo[];
+  /**
+   * When true, plain "New thread" creates an isolated worktree thread by
+   * default (local projects only; remote projects always get plain threads).
+   * The caret's "New worktree thread" stays an explicit opt-in either way.
+   */
+  defaultWorktree: boolean;
 }
 
 /** A user-registered MCP server entry (settings slice). */

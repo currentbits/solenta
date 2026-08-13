@@ -177,6 +177,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     dailyBudgetUsd: null,
     autoSettleAfterDays: 3,
     mcpServers: [],
+    defaultWorktree: false,
     ...(opts.settings ?? {}),
   };
   /** In-memory skill rows for the Skills tab; add/remove mutate this. */
@@ -286,6 +287,16 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
             return Promise.reject(new Error("mcpServers must be an array"));
           }
           next.mcpServers = v.map((s) => ({ ...s }));
+        }
+        if (Object.prototype.hasOwnProperty.call(p, "defaultWorktree")) {
+          const v = p.defaultWorktree;
+          if (typeof v !== "boolean") {
+            calls.push({ channel: "settings.set", args: [patch] });
+            return Promise.reject(
+              new Error("defaultWorktree must be a boolean"),
+            );
+          }
+          next.defaultWorktree = v;
         }
         settingsState = next;
         return rec("settings.set", [patch], { ...settingsState });

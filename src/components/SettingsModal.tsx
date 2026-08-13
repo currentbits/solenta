@@ -255,6 +255,38 @@ export function SettingsModal({
           </section>
 
           <section className={styles.section}>
+            <h3 className={styles.sectionLabel}>Threads</h3>
+            <div className={styles.field}>
+              <label className={styles.fieldRow}>
+                <input
+                  type="checkbox"
+                  data-default-worktree=""
+                  checked={settings?.defaultWorktree ?? false}
+                  disabled={saving || settings == null}
+                  onChange={(e) => {
+                    setError(null);
+                    void onSaveSettings({
+                      defaultWorktree: e.target.checked,
+                    }).catch((err) => {
+                      setError(
+                        err instanceof Error && err.message
+                          ? err.message
+                          : "Failed to save settings",
+                      );
+                    });
+                  }}
+                />
+                <span>Isolate new threads in a git worktree</span>
+              </label>
+              <p className={styles.note}>
+                New threads get their own branch and working directory, so
+                parallel agents never touch your checkout. Local projects
+                only.
+              </p>
+            </div>
+          </section>
+
+          <section className={styles.section}>
             <h3 className={styles.sectionLabel}>Memory</h3>
             <div className={styles.memoryRow}>
               <span

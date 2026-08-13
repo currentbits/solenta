@@ -198,14 +198,18 @@ const DEFAULT_AUTO_SETTLE_AFTER_DAYS = 3;
  * mcpServers: absent/junk → []; entries are healed entry-by-entry
  * (normalizeMcpServers), never throwing on a corrupt store.
  *
+ * defaultWorktree: absent/junk → false (new threads run in the checkout
+ * unless the user opts in).
+ *
  * @param {unknown} raw
- * @returns {{ dailyBudgetUsd: number | null, autoSettleAfterDays: number | null, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }> }}
+ * @returns {{ dailyBudgetUsd: number | null, autoSettleAfterDays: number | null, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }>, defaultWorktree: boolean }}
  */
 function normalizeSettings(raw) {
   const settings = {
     dailyBudgetUsd: null,
     autoSettleAfterDays: DEFAULT_AUTO_SETTLE_AFTER_DAYS,
     mcpServers: [],
+    defaultWorktree: false,
   };
   if (!raw || typeof raw !== "object") return settings;
   const obj = /** @type {{ dailyBudgetUsd?: unknown, autoSettleAfterDays?: unknown, mcpServers?: unknown }} */ (
@@ -239,6 +243,8 @@ function normalizeSettings(raw) {
   // key absent → leave default 3
 
   settings.mcpServers = normalizeMcpServers(obj.mcpServers);
+  settings.defaultWorktree =
+    /** @type {{ defaultWorktree?: unknown }} */ (obj).defaultWorktree === true;
   return settings;
 }
 
@@ -639,7 +645,7 @@ class Store {
   }
 
   /**
-   * @returns {{ dailyBudgetUsd: number | null, autoSettleAfterDays: number | null, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }> }}
+   * @returns {{ dailyBudgetUsd: number | null, autoSettleAfterDays: number | null, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }>, defaultWorktree: boolean }}
    */
   getSettings() {
     if (!this.data.settings || typeof this.data.settings !== "object") {
@@ -656,14 +662,15 @@ class Store {
       dailyBudgetUsd: n.dailyBudgetUsd,
       autoSettleAfterDays: n.autoSettleAfterDays,
       mcpServers: n.mcpServers,
+      defaultWorktree: n.defaultWorktree,
     };
   }
 
   /**
    * Validate and merge settings. Does not touch threads.
    * Does not save; caller must save.
-   * @param {Partial<{ dailyBudgetUsd: number | null, autoSettleAfterDays: number | null, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }> }>} patch
-   * @returns {{ dailyBudgetUsd: number | null, autoSettleAfterDays: number | null, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }> }}
+   * @param {Partial<{ dailyBudgetUsd: number | null, autoSettleAfterDays: number | null, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }>, defaultWorktree: boolean }>} patch
+   * @returns {{ dailyBudgetUsd: number | null, autoSettleAfterDays: number | null, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }>, defaultWorktree: boolean }}
    */
   setSettings(patch) {
     if (!patch || typeof patch !== "object") {
@@ -709,6 +716,13 @@ class Store {
     }
     if (Object.prototype.hasOwnProperty.call(patch, "mcpServers")) {
       this.data.settings.mcpServers = validateMcpServers(patch.mcpServers);
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "defaultWorktree")) {
+      const v = patch.defaultWorktree;
+      if (typeof v !== "boolean") {
+        throw new Error("defaultWorktree must be a boolean");
+      }
+      this.data.settings.defaultWorktree = v;
     }
     return this.getSettings();
   }
