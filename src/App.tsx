@@ -103,8 +103,8 @@ export default function App() {
   const [changesOpen, setChangesOpen] = useState(false);
   const [changesNonce, setChangesNonce] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  /** Synara-style undo toast after an immediate archive. */
-  const [archiveToastId, setArchiveToastId] = useState<string | null>(null);
+  /** Synara-style undo toast after an immediate archive (single or bulk clear). */
+  const [archiveToastIds, setArchiveToastIds] = useState<string[] | null>(null);
   /**
    * Error toast after projects.remove rejects. Title is t3-shaped:
    * Failed to remove "slug". Cleared on dismiss / timeout.
@@ -130,25 +130,40 @@ export default function App() {
         if (!id) return;
         setRemoveFailSlug(null);
         await setArchived(true, id);
-        setArchiveToastId(id);
+        setArchiveToastIds([id]);
       } else {
-        setArchiveToastId(null);
+        setArchiveToastIds(null);
         await setArchived(false);
       }
     },
     [selectedThreadId, setArchived],
   );
 
+  /** Clear the settled tail: archive every settled thread, undoable as one unit. */
+  const handleClearSettled = useCallback(
+    async (ids: string[]) => {
+      if (ids.length === 0) return;
+      setRemoveFailSlug(null);
+      for (const id of ids) {
+        await setArchived(true, id);
+      }
+      setArchiveToastIds(ids);
+    },
+    [setArchived],
+  );
+
   const dismissArchiveToast = useCallback(() => {
-    setArchiveToastId(null);
+    setArchiveToastIds(null);
   }, []);
 
   const undoArchive = useCallback(async () => {
-    if (!archiveToastId) return;
-    const id = archiveToastId;
-    setArchiveToastId(null);
-    await setArchived(false, id);
-  }, [archiveToastId, setArchived]);
+    if (!archiveToastIds) return;
+    const ids = archiveToastIds;
+    setArchiveToastIds(null);
+    for (const id of ids) {
+      await setArchived(false, id);
+    }
+  }, [archiveToastIds, setArchived]);
 
   const handleRemoveProject = useCallback(
     async (projectId: string) => {
@@ -156,7 +171,7 @@ export default function App() {
         projectById.get(projectId)?.slug ??
         projects.find((p) => p.id === projectId)?.slug ??
         projectId;
-      setArchiveToastId(null);
+      setArchiveToastIds(null);
       try {
         await removeProject(projectId);
         setRemoveFailSlug(null);
@@ -348,6 +363,9 @@ export default function App() {
         onSetArchived={(threadId, archived) => {
           void setArchived(archived, threadId);
         }}
+        onClearSettled={(ids) => {
+          void handleClearSettled(ids);
+        }}
         onFork={(threadId, opts) => {
           void forkThread(threadId, opts);
         }}
@@ -500,9 +518,14 @@ export default function App() {
           status={appStatus}
           onSaveSettings={(patch) => saveSettings(patch)}
         />
-        {archiveToastId && (
+        {archiveToastIds && (
           <ArchiveToast
-            key={`archive-${archiveToastId}`}
+            key={`archive-${archiveToastIds.join(",")}`}
+            message={
+              archiveToastIds.length > 1
+                ? `${archiveToastIds.length} archived`
+                : undefined
+            }
             onUndo={() => void undoArchive()}
             onDismiss={dismissArchiveToast}
           />

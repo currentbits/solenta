@@ -137,6 +137,8 @@ interface SidebarProps {
   onSetSnoozed?: (threadId: string, until: number | null) => void | Promise<void>;
   /** Archive a thread (batch toolbar). */
   onSetArchived?: (threadId: string, archived: boolean) => void | Promise<void>;
+  /** Clear the settled tail: archive all settled threads (Synara-style, undo via toast). */
+  onClearSettled?: (threadIds: string[]) => void | Promise<void>;
   /**
    * Fork / hand off (round 49). Plain call = same harness; provider override
    * is hand-off. Does not require the thread to be selected.
@@ -922,6 +924,7 @@ export function Sidebar({
   onSetPinned,
   onSetSnoozed,
   onSetArchived,
+  onClearSettled,
   onFork,
   activeView = "thread",
   onOpenKanban,
@@ -2125,34 +2128,50 @@ export function Sidebar({
                 onSetSettled={onSetSettled}
               />
             )}
-            <button
-              type="button"
-              className={styles.settledTailHeader}
-              onClick={toggleSettledTail}
-              aria-expanded={settledTailOpen}
-            >
-              <span className={styles.chevron} data-open={settledTailOpen}>
-                <svg
-                  width="12"
-                  height="12"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
+            <div className={styles.settledTailBar}>
+              <button
+                type="button"
+                className={styles.settledTailHeader}
+                onClick={toggleSettledTail}
+                aria-expanded={settledTailOpen}
+              >
+                <span className={styles.chevron} data-open={settledTailOpen}>
+                  <svg
+                    width="12"
+                    height="12"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="m6 3.5 4.5 4.5L6 12.5" />
+                  </svg>
+                </span>
+                <span>
+                  Settled · {globalSettled.length}
+                  {(() => {
+                    const n = countUnread(globalSettled);
+                    return n > 0 ? ` · ${n} unread` : "";
+                  })()}
+                </span>
+              </button>
+              {onClearSettled && (
+                <button
+                  type="button"
+                  className={styles.settledClear}
+                  data-settled-clear-all=""
+                  aria-label="Clear settled threads"
+                  title="Archive all settled threads (undoable)"
+                  onClick={() =>
+                    void onClearSettled(globalSettled.map((t) => t.id))
+                  }
                 >
-                  <path d="m6 3.5 4.5 4.5L6 12.5" />
-                </svg>
-              </span>
-              <span>
-                Settled · {globalSettled.length}
-                {(() => {
-                  const n = countUnread(globalSettled);
-                  return n > 0 ? ` · ${n} unread` : "";
-                })()}
-              </span>
-            </button>
+                  Clear
+                </button>
+              )}
+            </div>
             {settledTailOpen &&
               visibleSettled.map((thread) => (
                 <SettledRow

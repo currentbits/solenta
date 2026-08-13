@@ -8,7 +8,9 @@ type ArchiveToastProps =
   | {
       /** Default: archive undo after an immediate archive. */
       variant?: "archive";
-      /** Restore the archived thread. */
+      /** Message line; defaults to "Archived". Bulk clear passes "N archived". */
+      message?: string;
+      /** Restore the archived thread(s). */
       onUndo: () => void;
       /** Dismiss without undoing (timeout or explicit close). */
       onDismiss: () => void;
@@ -64,7 +66,7 @@ export function ArchiveToast(props: ArchiveToastProps) {
       aria-live="polite"
       data-toast="archive"
     >
-      <span className={styles.message}>Archived</span>
+      <span className={styles.message}>{props.message ?? "Archived"}</span>
       <button type="button" className={styles.undo} onClick={props.onUndo}>
         Undo
       </button>

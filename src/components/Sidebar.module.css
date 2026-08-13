@@ -528,6 +528,41 @@
   border-top: 1px solid var(--border-soft);
 }
 
+.settledTailBar {
+  display: flex;
+  align-items: center;
+}
+
+.settledTailBar > .settledTailHeader {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Hidden at rest like card hover actions; the bar reveals it. */
+.settledClear {
+  margin-right: 4px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 550;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.1s ease;
+}
+
+.settledTailBar:hover .settledClear,
+.settledTailBar:focus-within .settledClear {
+  opacity: 1;
+}
+
+.settledClear:hover {
+  color: var(--text-muted);
+  background: var(--card);
+}
+
 .settledTailHeader {
   display: flex;
   align-items: center;
