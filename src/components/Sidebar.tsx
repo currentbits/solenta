@@ -144,7 +144,7 @@ interface SidebarProps {
     opts?: { provider?: string },
   ) => void | Promise<void>;
   /** Which main view is showing. Defaults to thread so existing callers stay idle. */
-  activeView?: "thread" | "kanban" | "prs";
+  activeView?: "thread" | "kanban" | "prs" | "automations";
   onOpenKanban?: () => void;
   onOpenPrs?: () => void;
   /**
@@ -156,6 +156,7 @@ interface SidebarProps {
     projectPath: string;
     ref: string;
   }) => Promise<{ ok: true } | { ok: false; reason: string }>;
+  onOpenAutomations?: () => void;
 }
 
 export type SelectOpts = { meta?: boolean; shift?: boolean };
@@ -796,6 +797,7 @@ export function Sidebar({
   onOpenKanban,
   onOpenPrs,
   onCreateThreadFromIssue,
+  onOpenAutomations,
 }: SidebarProps) {
   const [query, setQuery] = useState("");
   const [now, setNow] = useState(() => Date.now());
@@ -1444,6 +1446,19 @@ export function Sidebar({
             ⇄
           </span>
           Pull requests
+        </button>
+        <button
+          type="button"
+          className={styles.viewNavRow}
+          data-view-nav="automations"
+          data-active={activeView === "automations" ? "true" : undefined}
+          title="Automations"
+          onClick={() => onOpenAutomations?.()}
+        >
+          <span className={styles.viewNavIcon} aria-hidden>
+            ⟳
+          </span>
+          Automations
         </button>
       </nav>
 

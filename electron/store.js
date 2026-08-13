@@ -45,6 +45,7 @@ const EMPTY = {
   usageByThread: {},
   workflowTemplates: [],
   spendByDay: {},
+  automations: [],
   // autoSettleAfterDays defaults to 3 (AUTO_SETTLE_AFTER_DAYS); null = disabled.
   settings: { dailyBudgetUsd: null, autoSettleAfterDays: 3 },
 };
@@ -248,6 +249,44 @@ function migrateTemplateKimiModels(tpl) {
   };
 }
 
+/**
+ * Normalize a persisted automation. Old stores lack the slice entirely
+ * (defaulted to [] on load). A partial row heals missing fields so the
+ * scheduler never sees undefined lastRunAt / nextRunAt.
+ * @param {object} a
+ */
+function migrateAutomation(a) {
+  if (!a || typeof a !== "object") return a;
+  const preset =
+    a.preset === "daily" || a.preset === "weekly" || a.preset === "hourly"
+      ? a.preset
+      : "hourly";
+  let hour = null;
+  if (preset !== "hourly") {
+    hour =
+      typeof a.hour === "number" &&
+      Number.isInteger(a.hour) &&
+      a.hour >= 0 &&
+      a.hour <= 23
+        ? a.hour
+        : 0;
+  }
+  return {
+    ...a,
+    provider: a.provider != null ? a.provider : "claude",
+    model: a.model !== undefined ? a.model : null,
+    preset,
+    hour,
+    enabled: a.enabled != null ? Boolean(a.enabled) : true,
+    lastRunAt: a.lastRunAt !== undefined ? a.lastRunAt : null,
+    nextRunAt:
+      typeof a.nextRunAt === "number" && Number.isFinite(a.nextRunAt)
+        ? a.nextRunAt
+        : 0,
+    lastError: a.lastError !== undefined ? a.lastError : null,
+  };
+}
+
 function migrateThread(t) {
   if (!t || typeof t !== "object") return t;
   return {
@@ -359,6 +398,9 @@ class Store {
           ? parsed.workflowTemplates.map(migrateTemplateKimiModels)
           : [],
         spendByDay: normalizeSpendByDay(parsed.spendByDay),
+        automations: Array.isArray(parsed.automations)
+          ? parsed.automations.map(migrateAutomation)
+          : [],
         settings: normalizeSettings(parsed.settings),
       };
       ensureWorkflowTemplates(data);
@@ -674,6 +716,33 @@ class Store {
   }
 
   /**
+   * @returns {object[]}
+   */
+  getAutomations() {
+    if (!Array.isArray(this.data.automations)) {
+      this.data.automations = [];
+    }
+    return this.data.automations;
+  }
+
+  /**
+   * @param {object[]} automations
+   */
+  setAutomations(automations) {
+    this.data.automations = Array.isArray(automations)
+      ? automations.map(migrateAutomation)
+      : [];
+  }
+
+  /**
+   * @param {string} id
+   */
+  getAutomation(id) {
+    if (id == null) return null;
+    return this.getAutomations().find((a) => a && a.id === id) || null;
+  }
+
+  /**
    * @returns {object[]} deep clones of all workflow templates
    */
   listTemplates() {
@@ -791,6 +860,7 @@ function cloneEmpty() {
     usageByThread: {},
     workflowTemplates: [],
     spendByDay: {},
+    automations: [],
     // autoSettleAfterDays defaults to 3 (AUTO_SETTLE_AFTER_DAYS); null = disabled.
   settings: { dailyBudgetUsd: null, autoSettleAfterDays: 3 },
   };
@@ -802,6 +872,7 @@ module.exports = {
   Store,
   EMPTY,
   migrateThread,
+  migrateAutomation,
   STANDARD_TEMPLATE,
   cloneStandardTemplate,
   ensureWorkflowTemplates,

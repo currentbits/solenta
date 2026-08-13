@@ -24,6 +24,56 @@ describe("Store", () => {
     assert.deepEqual(store.getThreads(), []);
     assert.deepEqual(store.getMessages("any"), []);
     assert.deepEqual(store.getWorkLog("any"), []);
+    assert.deepEqual(store.getAutomations(), []);
+  });
+
+  it("migrates missing automations to an empty array", () => {
+    fs.writeFileSync(
+      filePath,
+      JSON.stringify({
+        projects: [],
+        threads: [],
+        messagesByThread: {},
+        workLogByThread: {},
+        usageByThread: {},
+      }),
+      "utf8",
+    );
+    const store = new Store(filePath);
+    assert.deepEqual(store.getAutomations(), []);
+  });
+
+  it("migrates partial automations to default fields", () => {
+    fs.writeFileSync(
+      filePath,
+      JSON.stringify({
+        projects: [],
+        threads: [],
+        messagesByThread: {},
+        workLogByThread: {},
+        usageByThread: {},
+        automations: [
+          {
+            id: "a1",
+            projectId: "p1",
+            name: "Nightly",
+            prompt: "go",
+          },
+        ],
+      }),
+      "utf8",
+    );
+    const store = new Store(filePath);
+    const [auto] = store.getAutomations();
+    assert.equal(auto.id, "a1");
+    assert.equal(auto.provider, "claude");
+    assert.equal(auto.model, null);
+    assert.equal(auto.preset, "hourly");
+    assert.equal(auto.hour, null);
+    assert.equal(auto.enabled, true);
+    assert.equal(auto.lastRunAt, null);
+    assert.equal(auto.nextRunAt, 0);
+    assert.equal(auto.lastError, null);
   });
 
   it("round-trips projects, threads, messages, work log", () => {

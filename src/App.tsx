@@ -4,6 +4,7 @@ import { Sidebar } from "./components/Sidebar";
 import { ThreadView } from "./components/ThreadView";
 import { PrListView } from "./components/PrListView";
 import { KanbanView } from "./components/KanbanView";
+import { AutomationsView } from "./components/AutomationsView";
 import { AgentsPanel } from "./components/AgentsPanel";
 import { SettingsModal } from "./components/SettingsModal";
 import { ArchiveToast } from "./components/ArchiveToast";
@@ -12,7 +13,7 @@ import { WebTokenGate } from "./components/WebTokenGate";
 import { isWebMode } from "./shared/wire";
 import styles from "./App.module.css";
 
-export type AppView = "thread" | "kanban" | "prs";
+export type AppView = "thread" | "kanban" | "prs" | "automations";
 
 export default function App() {
   const {
@@ -81,6 +82,11 @@ export default function App() {
     removeMemory,
     storeMemory,
     searchThreads,
+    automations,
+    addAutomation,
+    updateAutomation,
+    removeAutomation,
+    runAutomationNow,
   } = useCoder();
 
   const [changesOpen, setChangesOpen] = useState(false);
@@ -275,6 +281,7 @@ export default function App() {
         activeView={view}
         onOpenKanban={() => setView("kanban")}
         onOpenPrs={() => setView("prs")}
+        onOpenAutomations={() => setView("automations")}
         onCreateThread={(projectId) => {
           void createThread("New Thread", projectId);
         }}
@@ -314,6 +321,22 @@ export default function App() {
               threads={threads}
               listPrs={listPrs}
               onSelectThread={handleSelectThread}
+            />
+          ) : view === "automations" ? (
+            <AutomationsView
+              automations={automations}
+              projects={projects}
+              providers={providers}
+              onCreate={async (input) => {
+                await addAutomation(input);
+              }}
+              onUpdate={async (input) => {
+                await updateAutomation(input);
+              }}
+              onRemove={(id) => removeAutomation(id)}
+              onRunNow={async (id) => {
+                await runAutomationNow(id);
+              }}
             />
           ) : view === "kanban" ? (
             <KanbanView

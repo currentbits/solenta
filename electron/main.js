@@ -15,6 +15,7 @@ const {
 } = require("./memory-sup.js");
 const { createPrStateRefresher } = require("./worktrees.js");
 const { killAll: killAllDevServers } = require("./devservers.js");
+const { startScheduler } = require("./automations.js");
 const { enrichProcessPath } = require("./pathEnv.js");
 const {
   parseServeWebArgs,
@@ -39,6 +40,9 @@ let runner = null;
 
 /** @type {ReturnType<typeof createPrStateRefresher> | null} */
 let prStateRefresher = null;
+
+/** @type {ReturnType<typeof startScheduler> | null} */
+let automationScheduler = null;
 
 /** @type {Awaited<ReturnType<typeof startWebServer>> | null} */
 let webServer = null;
@@ -262,6 +266,8 @@ app.whenReady().then(async () => {
   });
   prStateRefresher.start();
 
+  automationScheduler = startScheduler({ store, runner, broadcast });
+
   createWindow();
 
   app.on("activate", () => {
@@ -301,6 +307,14 @@ app.on("before-quit", () => {
       // ignore
     }
     prStateRefresher = null;
+  }
+  if (automationScheduler) {
+    try {
+      automationScheduler.stop();
+    } catch {
+      // ignore
+    }
+    automationScheduler = null;
   }
   // Terminate only a memory-server child we spawned (adopted servers stay up).
   if (memorySupervisor) {

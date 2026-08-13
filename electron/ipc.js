@@ -27,6 +27,7 @@ const { listLocalServers } = require("./servers.js");
 const devservers = require("./devservers.js");
 const { createMemoryProxy } = require("./memory-proxy.js");
 const { fetchIssue } = require("./issues.js");
+const automations = require("./automations.js");
 
 /**
  * Default window fan-out (desktop transport). main.js replaces this with a
@@ -241,6 +242,22 @@ const IPC_HANDLERS = {
   },
   "workflows:remove": async (ctx, input) => {
     return services.removeTemplate(ctx.store, input);
+  },
+  "automations:list": async (ctx) => {
+    return services.listAutomations(ctx.store);
+  },
+  "automations:add": async (ctx, input) => {
+    return services.addAutomation(ctx.store, input);
+  },
+  "automations:update": async (ctx, input) => {
+    return services.updateAutomation(ctx.store, input);
+  },
+  "automations:remove": async (ctx, input) => {
+    services.removeAutomation(ctx.store, input);
+  },
+  "automations:runNow": async (ctx, input) => {
+    const id = input && input.id != null ? String(input.id) : "";
+    return automations.runNow(ctx, id);
   },
   "threads:delete": async (ctx, input) => {
     services.deleteThread(ctx.store, input, {

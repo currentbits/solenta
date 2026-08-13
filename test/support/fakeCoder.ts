@@ -16,6 +16,7 @@
 import type {
   AppSettings,
   AppStatus,
+  AutomationInfo,
   CheckpointInfo,
   CoderApi,
   RunStatInfo,
@@ -124,6 +125,7 @@ export interface FakeOptions {
   threads?: ThreadInfo[];
   providers?: ProviderInfo[];
   workflows?: WorkflowTemplateInfo[];
+  automations?: AutomationInfo[];
   details?: Record<string, ThreadDetail>;
   status?: AppStatus;
   settings?: AppSettings;
@@ -158,6 +160,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       },
     ] as ProviderInfo[]);
   const workflows = opts.workflows ?? [];
+  let automations = opts.automations ?? [];
   const details = opts.details ?? {};
   const fail = opts.fail ?? {};
   /** Mutable per-thread checkpoint lists (newest-first). */
@@ -275,6 +278,49 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           ...(t as object),
         } as WorkflowTemplateInfo),
       remove: (input: unknown) => rec("workflows.remove", [input], undefined),
+    },
+    automations: {
+      list: () =>
+        rec("automations.list", [], automations.map((a) => ({ ...a }))),
+      add: (input: unknown) => {
+        const created = {
+          id: "auto-new",
+          model: null,
+          hour: null,
+          enabled: true,
+          lastRunAt: null,
+          nextRunAt: Date.now() + 3600_000,
+          lastError: null,
+          ...(input as object),
+        } as AutomationInfo;
+        automations = [...automations, created];
+        return rec("automations.add", [input], created);
+      },
+      update: (input: unknown) => {
+        const patch = input as Partial<AutomationInfo> & { id: string };
+        const existing = automations.find((a) => a.id === patch.id);
+        const updated = { ...(existing ?? {}), ...patch } as AutomationInfo;
+        automations = existing
+          ? automations.map((a) => (a.id === patch.id ? updated : a))
+          : automations;
+        return rec("automations.update", [input], updated);
+      },
+      remove: (input: unknown) => {
+        const id = String((input as { id?: string } | null)?.id ?? "");
+        automations = automations.filter((a) => a.id !== id);
+        return rec("automations.remove", [input], undefined);
+      },
+      runNow: (input: unknown) => {
+        const id = String((input as { id?: string } | null)?.id ?? "");
+        const existing = automations.find((a) => a.id === id);
+        const updated = existing
+          ? { ...existing, lastRunAt: Date.now() }
+          : ({ id } as AutomationInfo);
+        if (existing) {
+          automations = automations.map((a) => (a.id === id ? updated : a));
+        }
+        return rec("automations.runNow", [input], updated);
+      },
     },
     projects: {
       list: () => rec("projects.list", [], projects.map((p) => ({ ...p }))),

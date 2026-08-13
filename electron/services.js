@@ -1048,6 +1048,168 @@ function setSettings(store, patch) {
   return next;
 }
 
+const AUTOMATION_PRESETS = new Set(["hourly", "daily", "weekly"]);
+
+/**
+ * @param {unknown} hour
+ * @param {"hourly" | "daily" | "weekly"} preset
+ * @returns {number | null}
+ */
+function normalizeAutomationHour(preset, hour) {
+  if (preset === "hourly") return null;
+  if (hour == null || hour === "") {
+    throw new Error("Hour is required for daily and weekly automations");
+  }
+  const n = Number(hour);
+  if (!Number.isInteger(n) || n < 0 || n > 23) {
+    throw new Error("Hour must be an integer from 0 to 23");
+  }
+  return n;
+}
+
+/**
+ * @param {import('./store').Store} store
+ * @param {object} input
+ * @returns {object}
+ */
+function normalizeAutomationInput(store, input, existing) {
+  const src = input && typeof input === "object" ? input : {};
+  const base = existing || {};
+
+  const nameRaw = Object.prototype.hasOwnProperty.call(src, "name")
+    ? src.name
+    : base.name;
+  const name = nameRaw != null ? String(nameRaw).trim() : "";
+  if (!name) {
+    throw new Error("Automation name is required");
+  }
+
+  const projectId = Object.prototype.hasOwnProperty.call(src, "projectId")
+    ? String(src.projectId || "")
+    : String(base.projectId || "");
+  if (!projectId) {
+    throw new Error("Project is required");
+  }
+  if (!store.getProject(projectId)) {
+    throw new Error(`Unknown project: ${projectId}`);
+  }
+
+  const promptRaw = Object.prototype.hasOwnProperty.call(src, "prompt")
+    ? src.prompt
+    : base.prompt;
+  const prompt = promptRaw != null ? String(promptRaw) : "";
+  if (!String(prompt).trim()) {
+    throw new Error("Prompt is required");
+  }
+
+  const provider = Object.prototype.hasOwnProperty.call(src, "provider")
+    ? String(src.provider || "")
+    : String(base.provider || "");
+  if (!provider || !isKnownProviderId(provider)) {
+    throw new Error(`Unknown provider: ${src.provider ?? base.provider}`);
+  }
+
+  const modelRaw = Object.prototype.hasOwnProperty.call(src, "model")
+    ? src.model
+    : base.model;
+  const model = normalizeModelForProvider(getProvider(provider), modelRaw);
+
+  const preset = Object.prototype.hasOwnProperty.call(src, "preset")
+    ? String(src.preset || "")
+    : String(base.preset || "");
+  if (!AUTOMATION_PRESETS.has(preset)) {
+    throw new Error(
+      `Invalid preset: ${preset || "(empty)"}. Expected hourly, daily, or weekly`,
+    );
+  }
+
+  const hourRaw = Object.prototype.hasOwnProperty.call(src, "hour")
+    ? src.hour
+    : base.hour;
+  const hour = normalizeAutomationHour(preset, hourRaw);
+
+  let enabled = base.enabled !== undefined ? Boolean(base.enabled) : true;
+  if (Object.prototype.hasOwnProperty.call(src, "enabled")) {
+    enabled = Boolean(src.enabled);
+  }
+
+  return { name, projectId, prompt, provider, model, preset, hour, enabled };
+}
+
+/**
+ * @param {import('./store').Store} store
+ */
+function listAutomations(store) {
+  return store.getAutomations().map((a) => ({ ...a }));
+}
+
+/**
+ * @param {import('./store').Store} store
+ * @param {object} input
+ */
+function addAutomation(store, input) {
+  const { nextFire } = require("./automations.js");
+  const fields = normalizeAutomationInput(store, input, null);
+  const now = Date.now();
+  const created = {
+    id: randomUUID(),
+    ...fields,
+    lastRunAt: null,
+    nextRunAt: nextFire(fields.preset, fields.hour, now),
+    lastError: null,
+  };
+  const list = store.getAutomations().slice();
+  list.push(created);
+  store.setAutomations(list);
+  store.save();
+  return { ...created };
+}
+
+/**
+ * @param {import('./store').Store} store
+ * @param {{ id: string } & object} input
+ */
+function updateAutomation(store, input) {
+  const { nextFire } = require("./automations.js");
+  const id = input && input.id != null ? String(input.id) : "";
+  const existing = store.getAutomation(id);
+  if (!existing) {
+    throw new Error(`Unknown automation: ${id}`);
+  }
+  const fields = normalizeAutomationInput(store, input, existing);
+  const scheduleChanged =
+    fields.preset !== existing.preset || fields.hour !== existing.hour;
+  const updated = {
+    ...existing,
+    ...fields,
+    nextRunAt: scheduleChanged
+      ? nextFire(fields.preset, fields.hour, Date.now())
+      : existing.nextRunAt,
+  };
+  store.setAutomations(
+    store.getAutomations().map((a) => (a && a.id === id ? updated : a)),
+  );
+  store.save();
+  return { ...updated };
+}
+
+/**
+ * @param {import('./store').Store} store
+ * @param {{ id: string }} input
+ */
+function removeAutomation(store, input) {
+  const id = input && input.id != null ? String(input.id) : "";
+  if (!id) {
+    throw new Error("Automation id is required");
+  }
+  const existing = store.getAutomation(id);
+  if (!existing) {
+    throw new Error(`Unknown automation: ${id}`);
+  }
+  store.setAutomations(store.getAutomations().filter((a) => !a || a.id !== id));
+  store.save();
+}
+
 /**
  * Live app status: today's spend, memory health (with counts), and which build
  * is running. A /health failure degrades to nulls; status must never throw.
@@ -1206,6 +1368,10 @@ module.exports = {
   slugFromRemoteUrl,
   getSettings,
   setSettings,
+  listAutomations,
+  addAutomation,
+  updateAutomation,
+  removeAutomation,
   appStatus,
   assertUnderDailyBudget,
   PERMISSION_MODES,

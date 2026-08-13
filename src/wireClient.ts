@@ -1,6 +1,7 @@
 import type {
   AppSettings,
   AppStatus,
+  AutomationInfo,
   CheckpointInfo,
   CoderApi,
   RunStatInfo,
@@ -244,6 +245,13 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
       save: (template) =>
         call<WorkflowTemplateInfo>("workflows:save", template),
       remove: (input) => call<void>("workflows:remove", input),
+    },
+    automations: {
+      list: () => call<AutomationInfo[]>("automations:list"),
+      add: (input) => call<AutomationInfo>("automations:add", input),
+      update: (input) => call<AutomationInfo>("automations:update", input),
+      remove: (input) => call<void>("automations:remove", input),
+      runNow: (input) => call<AutomationInfo>("automations:runNow", input),
     },
     projects: {
       list: () => call<ProjectInfo[]>("projects:list"),

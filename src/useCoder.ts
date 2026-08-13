@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   AppSettings,
   AppStatus,
+  AutomationInfo,
+  AutomationWrite,
   CheckpointInfo,
   CoderApi,
   RunStatInfo,
@@ -56,6 +58,8 @@ export interface UseCoderResult {
   providers: ProviderInfo[];
   /** Workflow templates loaded at startup; refreshed after save/remove. */
   workflows: WorkflowTemplateInfo[];
+  /** Scheduled automations; refreshed after add/update/remove/runNow. */
+  automations: AutomationInfo[];
   selectedThreadId: string | null;
   selectThread: (id: string | null) => void;
   detail: ThreadDetail | null;
@@ -97,6 +101,13 @@ export interface UseCoderResult {
   removeWorkflow: (id: string) => Promise<void>;
   /** Reload workflows.list() into state. */
   refreshWorkflows: () => Promise<void>;
+  refreshAutomations: () => Promise<void>;
+  addAutomation: (input: AutomationWrite) => Promise<AutomationInfo>;
+  updateAutomation: (
+    input: Partial<AutomationWrite> & { id: string },
+  ) => Promise<AutomationInfo>;
+  removeAutomation: (id: string) => Promise<void>;
+  runAutomationNow: (id: string) => Promise<AutomationInfo>;
   stopRun: () => Promise<void>;
   setPermissionMode: (mode: PermissionMode) => Promise<void>;
   /** Set provider and/or model on the selected thread (selectedRef-guarded). */
@@ -229,6 +240,7 @@ export function useCoder(): UseCoderResult {
   const [threads, setThreads] = useState<ThreadInfo[]>([]);
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [workflows, setWorkflows] = useState<WorkflowTemplateInfo[]>([]);
+  const [automations, setAutomations] = useState<AutomationInfo[]>([]);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
   const [detail, setDetail] = useState<ThreadDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -305,11 +317,12 @@ export function useCoder(): UseCoderResult {
       try {
         // status/settings are best-effort: missing IPC handlers (merge before
         // backend) must not blank the whole boot (no catch on this IIFE).
-        const [p, list, prov, wfs, status, sett] = await Promise.all([
+        const [p, list, prov, wfs, autos, status, sett] = await Promise.all([
           api.projects.list(),
           api.threads.list(),
           api.providers.list(),
           api.workflows.list(),
+          api.automations.list().catch(() => [] as AutomationInfo[]),
           api.app.status().catch(() => null),
           api.settings.get().catch(() => null),
         ]);
@@ -317,6 +330,7 @@ export function useCoder(): UseCoderResult {
         setProjects(p);
         setProviders(prov);
         setWorkflows(wfs);
+        setAutomations(autos);
         if (status != null) setAppStatus(status);
         if (sett != null) setSettings(sett);
         for (const t of list) {
@@ -517,6 +531,46 @@ export function useCoder(): UseCoderResult {
     const list = await api.workflows.list();
     setWorkflows(list);
   }, [api]);
+
+  const refreshAutomations = useCallback(async () => {
+    const list = await api.automations.list();
+    setAutomations(list);
+  }, [api]);
+
+  const addAutomation = useCallback(
+    async (input: AutomationWrite) => {
+      const created = await api.automations.add(input);
+      await refreshAutomations();
+      return created;
+    },
+    [api, refreshAutomations],
+  );
+
+  const updateAutomation = useCallback(
+    async (input: Partial<AutomationWrite> & { id: string }) => {
+      const updated = await api.automations.update(input);
+      await refreshAutomations();
+      return updated;
+    },
+    [api, refreshAutomations],
+  );
+
+  const removeAutomation = useCallback(
+    async (automationId: string) => {
+      await api.automations.remove({ id: automationId });
+      await refreshAutomations();
+    },
+    [api, refreshAutomations],
+  );
+
+  const runAutomationNow = useCallback(
+    async (automationId: string) => {
+      const updated = await api.automations.runNow({ id: automationId });
+      await refreshAutomations();
+      return updated;
+    },
+    [api, refreshAutomations],
+  );
 
   const startWorkflowRun = useCallback(
     async (prompt: string, templateId?: string) => {
@@ -1180,6 +1234,7 @@ export function useCoder(): UseCoderResult {
     threads,
     providers,
     workflows,
+    automations,
     selectedThreadId,
     selectThread,
     detail,
@@ -1195,6 +1250,11 @@ export function useCoder(): UseCoderResult {
     saveWorkflow,
     removeWorkflow,
     refreshWorkflows,
+    refreshAutomations,
+    addAutomation,
+    updateAutomation,
+    removeAutomation,
+    runAutomationNow,
     stopRun,
     setPermissionMode,
     setProvider,

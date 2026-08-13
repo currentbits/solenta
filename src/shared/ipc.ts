@@ -427,6 +427,36 @@ export interface WorkflowTemplateInfo {
   phases: WorkflowPhaseSpec[];
 }
 
+export type AutomationPreset = "hourly" | "daily" | "weekly";
+
+/** A scheduled agent run (Synara-style automation). */
+export interface AutomationInfo {
+  id: string;
+  projectId: string;
+  name: string;
+  prompt: string;
+  provider: string;
+  model: string | null;
+  preset: AutomationPreset;
+  /** 0-23 for daily/weekly; null for hourly. */
+  hour: number | null;
+  enabled: boolean;
+  lastRunAt: number | null;
+  nextRunAt: number;
+  lastError: string | null;
+}
+
+export interface AutomationWrite {
+  projectId: string;
+  name: string;
+  prompt: string;
+  provider: string;
+  model?: string | null;
+  preset: AutomationPreset;
+  hour?: number | null;
+  enabled?: boolean;
+}
+
 export interface AppSettings {
   /** Hard daily spend cap across all providers; null = no cap. */
   dailyBudgetUsd: number | null;
@@ -516,6 +546,14 @@ export interface CoderApi {
     save(template: Omit<WorkflowTemplateInfo, "id" | "builtin"> & { id?: string }): Promise<WorkflowTemplateInfo>;
     /** Removes a non-builtin template. */
     remove(input: { id: string }): Promise<void>;
+  };
+  automations: {
+    list(): Promise<AutomationInfo[]>;
+    add(input: AutomationWrite): Promise<AutomationInfo>;
+    update(input: Partial<AutomationWrite> & { id: string }): Promise<AutomationInfo>;
+    remove(input: { id: string }): Promise<void>;
+    /** Fire one immediately and recompute nextRunAt. */
+    runNow(input: { id: string }): Promise<AutomationInfo>;
   };
   projects: {
     list(): Promise<ProjectInfo[]>;

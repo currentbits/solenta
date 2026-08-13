@@ -59,6 +59,13 @@ const coder = {
     save: (template) => invoke("workflows:save", template),
     remove: (input) => invoke("workflows:remove", input),
   },
+  automations: {
+    list: () => invoke("automations:list"),
+    add: (input) => invoke("automations:add", input),
+    update: (input) => invoke("automations:update", input),
+    remove: (input) => invoke("automations:remove", input),
+    runNow: (input) => invoke("automations:runNow", input),
+  },
   projects: {
     list: () => invoke("projects:list"),
     add: (projectPath) => invoke("projects:add", projectPath),
