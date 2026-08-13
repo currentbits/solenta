@@ -112,3 +112,9 @@ Root `package.json` already has `"allowScripts"` for the pinned Electron version
 - `docs/ARCHITECTURE.md`: process split, providers, runner, memory, store
 - `docs/ISSUES.md`: short symptom/cause/fix log
 - `PRODUCT-SPEC.md`, `BRAINSTORM.md`: historical (not kept current)
+
+## Acknowledgments
+
+Solenta's design and some of its feature ideas are inspired by
+[t3code](https://github.com/pingdotgg/t3code) and Synara. No code from
+either project is used; all code here is MIT-licensed original work.
