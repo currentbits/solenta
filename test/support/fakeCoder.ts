@@ -34,6 +34,7 @@ import type {
   ProviderInfo,
   ThreadDetail,
   ThreadInfo,
+  ThreadSummaryInfo,
   WorkLogItem,
   WorkflowTemplateInfo,
 } from "../../src/shared/ipc";
@@ -352,6 +353,36 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     },
     threads: {
       list: () => rec("threads.list", [], threads.map((t) => ({ ...t }))),
+      /** Mirror electron services.threadSummaries (team view). */
+      summaries: () =>
+        rec(
+          "threads.summaries",
+          [],
+          threads.map((t): ThreadSummaryInfo => {
+            const msgs = details[t.id]?.messages ?? [];
+            let last: (typeof msgs)[number] | null = null;
+            for (let i = msgs.length - 1; i >= 0; i--) {
+              const m = msgs[i];
+              if (m && m.role === "assistant" && m.text.trim() !== "") {
+                last = m;
+                break;
+              }
+            }
+            return {
+              id: t.id,
+              title: t.title,
+              provider: t.provider,
+              status: t.status,
+              handoffFrom: t.handoffFrom ?? null,
+              lastActivity: last
+                ? {
+                    text: last.text.split(/\r?\n/, 1)[0].trim(),
+                    at: last.createdAt || t.updatedAt,
+                  }
+                : null,
+            };
+          }),
+        ),
       search: (input: unknown) => rec("threads.search", [input], [] as ThreadInfo[]),
       create: (input: unknown) => {
         const createdAt = Date.now();

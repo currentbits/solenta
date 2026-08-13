@@ -44,6 +44,7 @@ import {
 } from "../modelPicker";
 import { useEscapeClose } from "../useEscapeClose";
 import { applyMention, getMentionQuery, type MentionQuery } from "../mention";
+import { parseDelegate } from "../delegate";
 import { buildBestOfNPlan, providerVendor } from "../bestOfN";
 import { WorkflowsModal } from "./WorkflowsModal";
 import styles from "./Composer.module.css";
@@ -87,6 +88,14 @@ interface ComposerProps {
    * Absent hides the control (tests and shells without fork).
    */
   onBestOfN?: (providerIds: string[], prompt: string) => void | Promise<void>;
+  /**
+   * Delegation command: a prompt whose first token is `@<installed provider>`
+   * forks this thread onto that provider and runs the remainder there.
+   * Absent disables the feature (tests and shells without fork).
+   */
+  onDelegate?: (providerId: string, task: string) => void | Promise<void>;
+  /** Fired each time the model picker popover opens (provider list refresh). */
+  onModelPickerOpen?: () => void;
   placeholder?: string;
   /** Run-scope error from the parent hook (e.g. already active). */
   error?: string | null;
@@ -128,7 +137,9 @@ export function Composer({
   onSend,
   onBuild,
   onBestOfN,
-  placeholder = "Ask anything, @tag files/folders, $use skills, or / for commands",
+  onDelegate,
+  onModelPickerOpen,
+  placeholder = "Ask anything, @tag files/folders, @provider delegates, $use skills, or / for commands",
   error = null,
   onDismissError,
   onListFiles,
@@ -463,7 +474,22 @@ export function Composer({
 
   const submitSend = () => {
     if (!canSend) return;
-    void runAction(onSend, "Failed to start run");
+    void runAction(async (prompt) => {
+      // Delegation command: "@provider task" forks onto that provider instead
+      // of sending to this thread (parseDelegate returns null for @file
+      // mentions and unknown ids, so those keep the normal path).
+      const delegation = onDelegate
+        ? parseDelegate(
+            prompt,
+            installedProviders.map((p) => p.id),
+          )
+        : null;
+      if (delegation && onDelegate) {
+        await onDelegate(delegation.provider, delegation.task);
+        return;
+      }
+      await onSend(prompt);
+    }, "Failed to start run");
   };
 
   const submitBuild = () => {
@@ -747,6 +773,9 @@ export function Composer({
                     setModeOpen(false);
                     setBuildMenuOpen(false);
                     setBestOfNOpen(false);
+                    // Providers were fetched once at boot; re-check so a CLI
+                    // installed mid-session does not show "not installed".
+                    onModelPickerOpen?.();
                   }
                 }}
               >

@@ -138,6 +138,8 @@ interface ThreadViewProps {
   threads?: ThreadInfo[];
   /** Select another thread (provenance chip → source). */
   onSelectThread?: (id: string) => void;
+  /** Fired when the composer model picker opens (provider list refresh). */
+  onModelPickerOpen?: () => void;
 }
 
 function ToolCallCard({
@@ -658,6 +660,7 @@ export function ThreadView({
   onFork,
   threads = [],
   onSelectThread,
+  onModelPickerOpen,
 }: ThreadViewProps) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
@@ -808,6 +811,26 @@ export function ThreadView({
       if (created[0]) onSelectThread?.(created[0]);
     },
     [detail, onFork, onSelectThread, onStartRun, providers],
+  );
+
+  /**
+   * Delegation command ("@provider task" in the composer): fork the open
+   * thread onto the named provider, start the task on the fork, then select
+   * it so the user watches it run. Same fork-then-run sequence as Best of N.
+   */
+  const runDelegate = useCallback(
+    async (providerId: string, task: string) => {
+      if (!detail?.thread || !onFork) {
+        throw new Error("Failed to delegate");
+      }
+      const forked = await onFork({ provider: providerId });
+      if (!forked || typeof forked !== "object" || !forked.id) {
+        throw new Error("Failed to fork thread");
+      }
+      await onStartRun(task, forked.id);
+      onSelectThread?.(forked.id);
+    },
+    [detail, onFork, onSelectThread, onStartRun],
   );
 
   useEffect(() => {
@@ -1458,6 +1481,8 @@ export function ThreadView({
         onSend={onStartRun}
         onBuild={onStartWorkflow}
         onBestOfN={onFork ? runBestOfN : undefined}
+        onDelegate={onFork ? runDelegate : undefined}
+        onModelPickerOpen={onModelPickerOpen}
         error={runError}
         onDismissError={onDismissRunError}
         onListFiles={onListFiles}

@@ -777,6 +777,44 @@ function listThreads(store) {
 }
 
 /**
+ * Per-thread summaries for the Agents tab team view (threads:summaries).
+ * lastActivity is the first line of the thread's last assistant message
+ * (null when the thread has none). Cheap: reads the store only.
+ * @param {import('./store').Store} store
+ */
+function threadSummaries(store) {
+  return store.getThreads().map((t) => {
+    const msgs = store.getMessages(t.id);
+    let last = null;
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const m = msgs[i];
+      if (
+        m &&
+        m.role === "assistant" &&
+        typeof m.text === "string" &&
+        m.text.trim() !== ""
+      ) {
+        last = m;
+        break;
+      }
+    }
+    return {
+      id: t.id,
+      title: t.title,
+      provider: t.provider,
+      status: t.status,
+      handoffFrom: t.handoffFrom ?? null,
+      lastActivity: last
+        ? {
+            text: String(last.text).split(/\r?\n/, 1)[0].trim(),
+            at: Number(last.createdAt) || t.updatedAt,
+          }
+        : null,
+    };
+  });
+}
+
+/**
  * Full-content search across titles and message text.
  * @param {import('./store').Store} store
  * @param {{ query?: string }} [input]
@@ -1400,6 +1438,7 @@ module.exports = {
   purgeThread,
   THREAD_STILL_HAS_WORKTREE,
   listThreads,
+  threadSummaries,
   searchThreads,
   getThreadDetail,
   gitStatus,

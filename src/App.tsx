@@ -61,6 +61,7 @@ export default function App() {
     prMerge,
     listPrs,
     listActivity,
+    listThreadSummaries,
     listCheckpoints,
     restoreCheckpoint,
     runStats,
@@ -76,6 +77,7 @@ export default function App() {
     appStatus,
     settings,
     saveSettings,
+    refreshProviders,
     projectById,
     searchMemory,
     recentMemory,
@@ -405,6 +407,9 @@ export default function App() {
         }}
         threads={threads}
         onSelectThread={handleSelectThread}
+        onModelPickerOpen={() => {
+          void refreshProviders();
+        }}
             />
           )}
         </div>
@@ -415,6 +420,9 @@ export default function App() {
         usage={detail?.usage ?? null}
         providers={providers}
         project={project}
+        threads={threads}
+        listThreadSummaries={listThreadSummaries}
+        onSelectThread={handleSelectThread}
         onSetupWorktree={() => setupWorktree()}
         onMergeWorktree={() => mergeWorktree()}
         onRemoveWorktree={(force) => removeWorktree(force)}

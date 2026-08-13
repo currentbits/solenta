@@ -23,6 +23,7 @@ import type {
   ReasoningEffort,
   ThreadDetail,
   ThreadInfo,
+  ThreadSummaryInfo,
   WorkflowTemplateInfo,
 } from "./shared/ipc";
 import { resolveCoderApi } from "./coderApi";
@@ -181,6 +182,8 @@ export interface UseCoderResult {
   listPrs: (projectPath: string) => Promise<ListPrsResult>;
   /** Cross-thread newest-first activity feed. */
   listActivity: () => Promise<ActivityItem[]>;
+  /** Per-thread summaries for the Agents tab team view. */
+  listThreadSummaries: () => Promise<ThreadSummaryInfo[]>;
   /** Worktree checkpoints for a thread (newest-first). */
   listCheckpoints: (threadId: string) => Promise<CheckpointInfo[]>;
   /** Hard-reset the thread worktree to a checkpoint sha. */
@@ -213,6 +216,11 @@ export interface UseCoderResult {
   saveSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>;
   /** Re-fetch app.status() (e.g. after a run settles). */
   refreshStatus: () => Promise<void>;
+  /**
+   * Re-fetch providers.list() into state. Cheap and silent: fixes the
+   * boot-only fetch going stale when a CLI is installed mid-session.
+   */
+  refreshProviders: () => Promise<void>;
   projectById: Map<string, ProjectInfo>;
   /** Thin memory passthroughs; callers hold list/search state locally. */
   searchMemory: (input: {
@@ -1058,6 +1066,18 @@ export function useCoder(): UseCoderResult {
     return api.activity.list();
   }, [api]);
 
+  const listThreadSummaries = useCallback(async () => {
+    return api.threads.summaries();
+  }, [api]);
+
+  const refreshProviders = useCallback(async () => {
+    try {
+      setProviders(await api.providers.list());
+    } catch {
+      // Best-effort staleness fix; keep the boot list on failure.
+    }
+  }, [api]);
+
   const listCheckpoints = useCallback(
     async (threadId: string) => {
       return api.git.listCheckpoints({ threadId });
@@ -1300,6 +1320,7 @@ export function useCoder(): UseCoderResult {
     listPrs,
     fetchIssue,
     listActivity,
+    listThreadSummaries,
     listCheckpoints,
     restoreCheckpoint,
     runStats,
@@ -1316,6 +1337,7 @@ export function useCoder(): UseCoderResult {
     settings,
     saveSettings,
     refreshStatus,
+    refreshProviders,
     projectById,
     searchMemory,
     recentMemory,

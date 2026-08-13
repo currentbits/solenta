@@ -14,6 +14,7 @@ import type {
   ProviderInfo,
   SessionUsage,
   ThreadInfo,
+  ThreadSummaryInfo,
   WorkflowView,
 } from "../shared/ipc";
 import {
@@ -50,6 +51,15 @@ interface AgentsPanelProps {
   usage: SessionUsage | null;
   providers: ProviderInfo[];
   project: ProjectInfo | null;
+  /**
+   * Full thread list; changing it refetches summaries for the Agents tab
+   * team view. Absent (tests) disables the team view.
+   */
+  threads?: ThreadInfo[];
+  /** threads:summaries passthrough powering the team view. */
+  listThreadSummaries?: () => Promise<ThreadSummaryInfo[]>;
+  /** Select a thread (team row click). */
+  onSelectThread?: (id: string) => void;
   onSetupWorktree: () => Promise<unknown>;
   onMergeWorktree: () => Promise<unknown>;
   onRemoveWorktree: (force?: boolean) => Promise<unknown>;
@@ -147,10 +157,13 @@ function SessionCard({
   thread,
   usage,
   providers,
+  role,
 }: {
   thread: ThreadInfo;
   usage: SessionUsage | null;
   providers: ProviderInfo[];
+  /** Team role chip ("Orchestrator" / "Worker"); absent renders no chip. */
+  role?: string;
 }) {
   const sess = shortSessionId(thread.sessionId);
   const providerName = providerDisplayName(thread.provider, providers);
@@ -167,7 +180,10 @@ function SessionCard({
     <section className={styles.sessionCard}>
       <div className={styles.sessionHead}>
         <div>
-          <div className={styles.sessionLabel}>Session</div>
+          <div className={styles.sessionLabel}>
+            Session
+            {role && <span className={styles.roleChip}>{role}</span>}
+          </div>
           <div className={styles.sessionProvider}>{providerName}</div>
         </div>
         {sess && (
@@ -1734,16 +1750,60 @@ export function GitTab({
   );
 }
 
-function AgentsContent({
+/** One team row: role chip, provider, title, status badge, last activity. */
+function TeamRow({
+  summary,
+  role,
+  providers,
+  onSelect,
+}: {
+  summary: ThreadSummaryInfo;
+  role: string;
+  providers: ProviderInfo[];
+  onSelect?: (id: string) => void;
+}) {
+  return (
+    <li>
+      <button
+        type="button"
+        className={styles.teamRow}
+        onClick={() => onSelect?.(summary.id)}
+        title={summary.title}
+      >
+        <span className={styles.roleChip}>{role}</span>
+        <span className={styles.teamProvider}>
+          {providerDisplayName(summary.provider, providers)}
+        </span>
+        <span className={styles.teamTitle}>{summary.title}</span>
+        <span className={styles.teamStatus} data-status={summary.status}>
+          {summary.status}
+        </span>
+        {summary.lastActivity && (
+          <span className={styles.teamActivity}>
+            {summary.lastActivity.text}
+          </span>
+        )}
+      </button>
+    </li>
+  );
+}
+
+export function AgentsContent({
   workflow,
   thread,
   usage,
   providers,
+  threads,
+  listThreadSummaries,
+  onSelectThread,
 }: {
   workflow: WorkflowView | null;
   thread: ThreadInfo | null;
   usage: SessionUsage | null;
   providers: ProviderInfo[];
+  threads?: ThreadInfo[];
+  listThreadSummaries?: () => Promise<ThreadSummaryInfo[]>;
+  onSelectThread?: (id: string) => void;
 }) {
   /**
    * Manual expand/collapse overrides. Absent key = not toggled by user,
@@ -1751,9 +1811,48 @@ function AgentsContent({
    */
   const [manual, setManual] = useState<Record<string, boolean>>({});
 
+  const [summaries, setSummaries] = useState<ThreadSummaryInfo[] | null>(null);
+
   useEffect(() => {
     setManual({});
   }, [workflow?.id]);
+
+  // Team view data. Refetches when the thread list changes (a worker's
+  // status or lastActivity moves with it); null when no fetcher is wired.
+  useEffect(() => {
+    if (!listThreadSummaries) {
+      setSummaries(null);
+      return;
+    }
+    let cancelled = false;
+    listThreadSummaries()
+      .then((list) => {
+        if (!cancelled) setSummaries(list);
+      })
+      .catch(() => {
+        if (!cancelled) setSummaries(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [listThreadSummaries, threads]);
+
+  // Roles derive from handoffFrom: a thread WITH one is a Worker; a thread
+  // another summary points to is an Orchestrator. Neither = plain session.
+  const team = useMemo(() => {
+    if (!thread || !summaries) return null;
+    const workers = summaries.filter((s) => s.handoffFrom === thread.id);
+    if (workers.length > 0) {
+      return { kind: "orchestrator" as const, workers };
+    }
+    const orchestrator = thread.handoffFrom
+      ? summaries.find((s) => s.id === thread.handoffFrom)
+      : undefined;
+    if (orchestrator) {
+      return { kind: "worker" as const, orchestrator };
+    }
+    return null;
+  }, [thread, summaries]);
 
   const groups = useMemo(() => {
     if (!workflow) return [];
@@ -1792,13 +1891,65 @@ function AgentsContent({
   };
 
   if (!workflow) {
+    if (!thread) {
+      return (
+        <div className={styles.scroll}>
+          <p className={styles.placeholder}>No active session</p>
+        </div>
+      );
+    }
+    if (team?.kind === "orchestrator") {
+      return (
+        <div className={styles.scroll}>
+          <SessionCard
+            thread={thread}
+            usage={usage}
+            providers={providers}
+            role="Orchestrator"
+          />
+          <section className={styles.teamSection} aria-label="Team">
+            <div className={styles.sessionLabel}>Team</div>
+            <ul className={styles.teamList}>
+              {team.workers.map((w) => (
+                <TeamRow
+                  key={w.id}
+                  summary={w}
+                  role="Worker"
+                  providers={providers}
+                  onSelect={onSelectThread}
+                />
+              ))}
+            </ul>
+          </section>
+        </div>
+      );
+    }
+    if (team?.kind === "worker") {
+      return (
+        <div className={styles.scroll}>
+          <SessionCard
+            thread={thread}
+            usage={usage}
+            providers={providers}
+            role="Worker"
+          />
+          <section className={styles.teamSection} aria-label="Team">
+            <div className={styles.sessionLabel}>Team</div>
+            <ul className={styles.teamList}>
+              <TeamRow
+                summary={team.orchestrator}
+                role="Orchestrator"
+                providers={providers}
+                onSelect={onSelectThread}
+              />
+            </ul>
+          </section>
+        </div>
+      );
+    }
     return (
       <div className={styles.scroll}>
-        {thread ? (
-          <SessionCard thread={thread} usage={usage} providers={providers} />
-        ) : (
-          <p className={styles.placeholder}>No active session</p>
-        )}
+        <SessionCard thread={thread} usage={usage} providers={providers} />
       </div>
     );
   }
@@ -1943,6 +2094,9 @@ export function AgentsPanel({
   usage,
   providers,
   project,
+  threads,
+  listThreadSummaries,
+  onSelectThread,
   onSetupWorktree,
   onMergeWorktree,
   onRemoveWorktree,
@@ -2007,6 +2161,9 @@ export function AgentsPanel({
           thread={thread}
           usage={usage}
           providers={providers}
+          threads={threads}
+          listThreadSummaries={listThreadSummaries}
+          onSelectThread={onSelectThread}
         />
       ) : tab === "git" ? (
         <GitTab

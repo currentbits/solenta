@@ -120,6 +120,24 @@ export interface ThreadInfo {
   worktreePath: string | null;
 }
 
+/**
+ * Lightweight per-thread row for the Agents tab team view (threads:summaries).
+ * Roles derive from handoffFrom: a summary WITH handoffFrom is a Worker; a
+ * thread another summary's handoffFrom points to is an Orchestrator.
+ */
+export interface ThreadSummaryInfo {
+  id: string;
+  title: string;
+  provider: string;
+  status: ThreadStatus;
+  handoffFrom: string | null;
+  /**
+   * First line of the thread's last assistant message and its timestamp;
+   * null when the thread has no assistant message yet.
+   */
+  lastActivity: { text: string; at: number } | null;
+}
+
 /** A tool invocation surfaced from the agent's stream. */
 export interface ToolCallInfo {
   /** Provider tool_use id, used to pair the result. */
@@ -598,6 +616,12 @@ export interface CoderApi {
   };
   threads: {
     list(): Promise<ThreadInfo[]>;
+    /**
+     * Per-thread summaries for the Agents tab team view: role fields
+     * (handoffFrom) plus the first line of the last assistant message.
+     * Cheap: no git or provider calls.
+     */
+    summaries(): Promise<ThreadSummaryInfo[]>;
     /**
      * Full-content search: matches thread titles AND message text
      * (case-insensitive substring), newest activity first, max 50. Includes

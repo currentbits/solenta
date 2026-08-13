@@ -20,6 +20,7 @@ import type {
   ProviderInfo,
   ThreadDetail,
   ThreadInfo,
+  ThreadSummaryInfo,
   WorkflowTemplateInfo,
 } from "./shared/ipc";
 import {
@@ -263,6 +264,7 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
     },
     threads: {
       list: () => call<ThreadInfo[]>("threads:list"),
+      summaries: () => call<ThreadSummaryInfo[]>("threads:summaries"),
       search: (input) => call<ThreadInfo[]>("threads:search", input),
       create: (input) => call<ThreadInfo>("threads:create", input),
       fork: (input) => call<ThreadInfo>("threads:fork", input),

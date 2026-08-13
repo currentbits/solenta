@@ -74,6 +74,7 @@ const coder = {
   },
   threads: {
     list: () => invoke("threads:list"),
+    summaries: () => invoke("threads:summaries"),
     search: (input) => invoke("threads:search", input),
     create: (input) => invoke("threads:create", input),
     fork: (input) => invoke("threads:fork", input),

@@ -2200,6 +2200,33 @@ function buildDevCoder(): CoderApi {
       async list() {
         return threads.map((t) => ({ ...t }));
       },
+      /** Mirror electron services.threadSummaries (team view). */
+      async summaries() {
+        return threads.map((t) => {
+          const msgs = details.get(t.id)?.messages ?? [];
+          let last: (typeof msgs)[number] | null = null;
+          for (let i = msgs.length - 1; i >= 0; i--) {
+            const m = msgs[i];
+            if (m && m.role === "assistant" && m.text.trim() !== "") {
+              last = m;
+              break;
+            }
+          }
+          return {
+            id: t.id,
+            title: t.title,
+            provider: t.provider,
+            status: t.status,
+            handoffFrom: t.handoffFrom ?? null,
+            lastActivity: last
+              ? {
+                  text: last.text.split(/\r?\n/, 1)[0].trim(),
+                  at: last.createdAt || t.updatedAt,
+                }
+              : null,
+          };
+        });
+      },
       /**
        * Full-content search: title + message text, case-insensitive substring,
        * newest activity first, max 50. Includes archived. 0–1 char → [].
