@@ -60,13 +60,18 @@ installed and keeps its state on your disk.
 
 ## Install
 
-1. Download `Solenta-<version>-macos-arm64.zip` from the
-   [latest release](https://github.com/currentbits/solenta/releases/latest).
-2. Unzip and move `Solenta.app` to `/Applications`.
-3. The app is not notarized: right-click → **Open** the first time (or
-   `xattr -dr com.apple.quarantine /Applications/Solenta.app`).
-4. Install whichever agent CLIs you want to drive (`claude`, `codex`, `kimi`,
-   `grok`, `opencode`) — Solenta finds them on your `PATH`.
+Grab an archive from the
+[latest release](https://github.com/currentbits/solenta/releases/latest):
+
+- **macOS (Apple Silicon):** `Solenta-<v>-macos-arm64.zip` — unzip, move
+  `Solenta.app` to `/Applications`. Not notarized: right-click → **Open** the
+  first time (or `xattr -dr com.apple.quarantine /Applications/Solenta.app`).
+- **Windows (x64):** `Solenta-<v>-win32-x64.zip` — unzip anywhere, run
+  `solenta.exe`. Unsigned, so SmartScreen will ask once.
+- **Linux (x64):** `Solenta-<v>-linux-x64.tar.gz` — extract, run `./solenta`.
+
+Then install whichever agent CLIs you want to drive (`claude`, `codex`,
+`kimi`, `grok`, `opencode`) — Solenta finds them on your `PATH`.
 
 ## Dev
 
