@@ -47,8 +47,101 @@ const EMPTY = {
   spendByDay: {},
   automations: [],
   // autoSettleAfterDays defaults to 3 (AUTO_SETTLE_AFTER_DAYS); null = disabled.
-  settings: { dailyBudgetUsd: null, autoSettleAfterDays: 3 },
+  settings: { dailyBudgetUsd: null, autoSettleAfterDays: 3, mcpServers: [] },
 };
+
+/** User MCP server names: lowercase slug, same rule as skill names. */
+const MCP_SERVER_NAME_RE = /^[a-z0-9-]+$/;
+
+/** Built-in servers owned by the app; user entries may never use these. */
+const RESERVED_MCP_NAMES = new Set(["coder-memory", "coder-threads"]);
+
+/**
+ * @param {unknown} u
+ * @returns {boolean}
+ */
+function isHttpUrl(u) {
+  if (typeof u !== "string" || !u) return false;
+  try {
+    const parsed = new URL(u);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Lenient normalization for values read from disk: drops invalid entries,
+ * coerces enabled (default true), dedupes by name. Never throws.
+ * @param {unknown} raw
+ * @returns {Array<{ name: string, url: string, token?: string, enabled: boolean }>}
+ */
+function normalizeMcpServers(raw) {
+  if (!Array.isArray(raw)) return [];
+  /** @type {Array<{ name: string, url: string, token?: string, enabled: boolean }>} */
+  const out = [];
+  const seen = new Set();
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const name =
+      typeof item.name === "string" ? item.name.trim() : "";
+    const url = typeof item.url === "string" ? item.url.trim() : "";
+    if (!MCP_SERVER_NAME_RE.test(name) || RESERVED_MCP_NAMES.has(name)) {
+      continue;
+    }
+    if (!isHttpUrl(url) || seen.has(name)) continue;
+    seen.add(name);
+    const entry = { name, url, enabled: item.enabled !== false };
+    if (typeof item.token === "string" && item.token) {
+      entry.token = item.token;
+    }
+    out.push(entry);
+  }
+  return out;
+}
+
+/**
+ * Strict validation for settings:set patches: throws on the first problem so
+ * the UI can show why a server list was refused.
+ * @param {unknown} raw
+ * @returns {Array<{ name: string, url: string, token?: string, enabled: boolean }>}
+ */
+function validateMcpServers(raw) {
+  if (!Array.isArray(raw)) {
+    throw new Error("mcpServers must be an array");
+  }
+  const seen = new Set();
+  return raw.map((item) => {
+    const name =
+      item && typeof item.name === "string" ? item.name.trim() : "";
+    if (!MCP_SERVER_NAME_RE.test(name)) {
+      throw new Error(
+        `MCP server name must be lowercase letters, digits, dashes (got "${name}")`,
+      );
+    }
+    if (RESERVED_MCP_NAMES.has(name)) {
+      throw new Error(
+        `MCP server name "${name}" is reserved for a built-in server`,
+      );
+    }
+    if (seen.has(name)) {
+      throw new Error(`Duplicate MCP server name: ${name}`);
+    }
+    seen.add(name);
+    const url = item && typeof item.url === "string" ? item.url.trim() : "";
+    if (!isHttpUrl(url)) {
+      throw new Error(`MCP server URL must be http(s) (got "${url}")`);
+    }
+    const entry = { name, url, enabled: item.enabled !== false };
+    if (item.token !== undefined && item.token !== null) {
+      if (typeof item.token !== "string") {
+        throw new Error("MCP server token must be a string");
+      }
+      if (item.token) entry.token = item.token;
+    }
+    return entry;
+  });
+}
 
 const SPEND_RETENTION_DAYS = 90;
 
@@ -102,16 +195,20 @@ const DEFAULT_AUTO_SETTLE_AFTER_DAYS = 3;
  *
  * dailyBudgetUsd still collapses absent/junk → null (no-cap).
  *
+ * mcpServers: absent/junk → []; entries are healed entry-by-entry
+ * (normalizeMcpServers), never throwing on a corrupt store.
+ *
  * @param {unknown} raw
- * @returns {{ dailyBudgetUsd: number | null, autoSettleAfterDays: number | null }}
+ * @returns {{ dailyBudgetUsd: number | null, autoSettleAfterDays: number | null, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }> }}
  */
 function normalizeSettings(raw) {
   const settings = {
     dailyBudgetUsd: null,
     autoSettleAfterDays: DEFAULT_AUTO_SETTLE_AFTER_DAYS,
+    mcpServers: [],
   };
   if (!raw || typeof raw !== "object") return settings;
-  const obj = /** @type {{ dailyBudgetUsd?: unknown, autoSettleAfterDays?: unknown }} */ (
+  const obj = /** @type {{ dailyBudgetUsd?: unknown, autoSettleAfterDays?: unknown, mcpServers?: unknown }} */ (
     raw
   );
   const v = obj.dailyBudgetUsd;
@@ -140,6 +237,8 @@ function normalizeSettings(raw) {
     }
   }
   // key absent → leave default 3
+
+  settings.mcpServers = normalizeMcpServers(obj.mcpServers);
   return settings;
 }
 
@@ -540,29 +639,31 @@ class Store {
   }
 
   /**
-   * @returns {{ dailyBudgetUsd: number | null, autoSettleAfterDays: number | null }}
+   * @returns {{ dailyBudgetUsd: number | null, autoSettleAfterDays: number | null, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }> }}
    */
   getSettings() {
     if (!this.data.settings || typeof this.data.settings !== "object") {
       this.data.settings = {
         dailyBudgetUsd: null,
         autoSettleAfterDays: DEFAULT_AUTO_SETTLE_AFTER_DAYS,
+        mcpServers: [],
       };
     }
-    // Re-normalize so a partial in-memory shape still exposes both keys.
+    // Re-normalize so a partial in-memory shape still exposes every key.
     const n = normalizeSettings(this.data.settings);
     this.data.settings = n;
     return {
       dailyBudgetUsd: n.dailyBudgetUsd,
       autoSettleAfterDays: n.autoSettleAfterDays,
+      mcpServers: n.mcpServers,
     };
   }
 
   /**
    * Validate and merge settings. Does not touch threads.
    * Does not save; caller must save.
-   * @param {Partial<{ dailyBudgetUsd: number | null, autoSettleAfterDays: number | null }>} patch
-   * @returns {{ dailyBudgetUsd: number | null, autoSettleAfterDays: number | null }}
+   * @param {Partial<{ dailyBudgetUsd: number | null, autoSettleAfterDays: number | null, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }> }>} patch
+   * @returns {{ dailyBudgetUsd: number | null, autoSettleAfterDays: number | null, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }> }}
    */
   setSettings(patch) {
     if (!patch || typeof patch !== "object") {
@@ -572,6 +673,7 @@ class Store {
       this.data.settings = {
         dailyBudgetUsd: null,
         autoSettleAfterDays: DEFAULT_AUTO_SETTLE_AFTER_DAYS,
+        mcpServers: [],
       };
     }
     // Ensure both keys exist before partial patch.
@@ -604,6 +706,9 @@ class Store {
         }
       }
       this.data.settings.autoSettleAfterDays = v === null ? null : v;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "mcpServers")) {
+      this.data.settings.mcpServers = validateMcpServers(patch.mcpServers);
     }
     return this.getSettings();
   }
@@ -882,7 +987,7 @@ function cloneEmpty() {
     spendByDay: {},
     automations: [],
     // autoSettleAfterDays defaults to 3 (AUTO_SETTLE_AFTER_DAYS); null = disabled.
-  settings: { dailyBudgetUsd: null, autoSettleAfterDays: 3 },
+  settings: { dailyBudgetUsd: null, autoSettleAfterDays: 3, mcpServers: [] },
   };
   ensureWorkflowTemplates(data);
   return data;
@@ -900,6 +1005,9 @@ module.exports = {
   localDayKey,
   pruneSpendByDay,
   normalizeSettings,
+  normalizeMcpServers,
+  validateMcpServers,
+  RESERVED_MCP_NAMES,
   DEFAULT_AUTO_SETTLE_AFTER_DAYS,
   normalizeSpendByDay,
   SPEND_RETENTION_DAYS,

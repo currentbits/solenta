@@ -12,6 +12,7 @@ const { windowOpenAction, navigateAction } = require("./links.js");
 const {
   createMemorySupervisor,
   getMemoryStatus,
+  syncUserMcpServers,
 } = require("./memory-sup.js");
 const { createOrchServer } = require("./orchServer.js");
 const { createPrStateRefresher } = require("./worktrees.js");
@@ -287,6 +288,22 @@ app.whenReady().then(async () => {
   } catch (err) {
     console.warn(
       "orch-server: start error; continuing without thread tools:",
+      err && err.message ? err.message : err,
+    );
+  }
+
+  // User MCP servers from settings: fold every enabled entry into the four
+  // provider injection hooks. Built-ins (coder-memory, coder-threads) are
+  // untouched by the sync. Runs after the orch server so its registration
+  // lands first; never block app start on it.
+  try {
+    syncUserMcpServers(store.getSettings().mcpServers, {
+      userDataPath: userData,
+      log: (msg) => console.warn(msg),
+    });
+  } catch (err) {
+    console.warn(
+      "memory-server: user MCP sync error at boot:",
       err && err.message ? err.message : err,
     );
   }

@@ -19,10 +19,12 @@ describe("normalizeSettings autoSettleAfterDays", () => {
     assert.deepEqual(normalizeSettings({}), {
       dailyBudgetUsd: null,
       autoSettleAfterDays: DEFAULT_AUTO_SETTLE_AFTER_DAYS,
+      mcpServers: [],
     });
     assert.deepEqual(normalizeSettings(null), {
       dailyBudgetUsd: null,
       autoSettleAfterDays: 3,
+      mcpServers: [],
     });
     assert.equal(DEFAULT_AUTO_SETTLE_AFTER_DAYS, 3);
   });
@@ -84,13 +86,13 @@ describe("setSettings autoSettleAfterDays validation", () => {
 
     assert.deepEqual(
       services.setSettings(store, { autoSettleAfterDays: 7 }),
-      { dailyBudgetUsd: null, autoSettleAfterDays: 7 },
+      { dailyBudgetUsd: null, autoSettleAfterDays: 7, mcpServers: [] },
     );
     assert.equal(store.getSettings().autoSettleAfterDays, 7);
 
     assert.deepEqual(
       services.setSettings(store, { autoSettleAfterDays: null }),
-      { dailyBudgetUsd: null, autoSettleAfterDays: null },
+      { dailyBudgetUsd: null, autoSettleAfterDays: null, mcpServers: [] },
     );
 
     assert.throws(
@@ -129,6 +131,7 @@ describe("setSettings autoSettleAfterDays validation", () => {
     assert.deepEqual(store.getSettings(), {
       dailyBudgetUsd: null,
       autoSettleAfterDays: 3,
+      mcpServers: [],
     });
   });
 

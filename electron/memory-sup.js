@@ -22,7 +22,10 @@ let globalUserDataPath = null;
 /**
  * Additional in-main MCP servers (e.g. coder-threads) registered alongside
  * coder-memory. Every provider hook below serves the whole list.
- * @type {Array<{ name: string, port: number, token: string }>}
+ * `url` is the full MCP endpoint; for port-based local servers it is derived
+ * as http://127.0.0.1:<port>/mcp. `user` marks settings-driven entries so
+ * syncUserMcpServers can reconcile them without touching built-ins.
+ * @type {Array<{ name: string, port: number | null, token: string, url: string, user?: boolean }>}
  */
 let extraServers = [];
 /** @type {import('node:child_process').ChildProcess | null} */
@@ -30,16 +33,17 @@ let ownedChild = null;
 
 /**
  * All MCP servers currently available for injection, coder-memory first.
- * @returns {Array<{ name: string, port: number, token: string }>}
+ * @returns {Array<{ name: string, port: number | null, token: string, url: string }>}
  */
 function activeServers() {
-  /** @type {Array<{ name: string, port: number, token: string }>} */
+  /** @type {Array<{ name: string, port: number | null, token: string, url: string }>} */
   const list = [];
   if (globalStatus.running && globalStatus.port && globalToken) {
     list.push({
       name: "coder-memory",
       port: globalStatus.port,
       token: globalToken,
+      url: `http://127.0.0.1:${globalStatus.port}/mcp`,
     });
   }
   return list.concat(extraServers);
@@ -52,8 +56,11 @@ function activeServers() {
  *
  * @param {object} opts
  * @param {string} opts.name - server name, e.g. "coder-threads"
- * @param {number} opts.port
- * @param {string} opts.token
+ * @param {number} [opts.port] - local server port; url is derived from it
+ * @param {string} [opts.url] - full MCP endpoint (user servers); overrides port
+ * @param {string} [opts.token] - bearer token; required for port-based servers,
+ *   optional for url-based user servers
+ * @param {boolean} [opts.user] - marks a settings-driven entry (sync-managed)
  * @param {string} [opts.userDataPath] - needed to rewrite the claude config
  *   when markHealthy has not run (memory down but orchestrator up)
  * @param {(msg: string) => void} [opts.log]
@@ -66,9 +73,23 @@ function registerMcpServer(opts) {
   const port = Number(opts.port);
   const token = String(opts.token || "");
   // "coder-memory" is owned by markHealthy and must not be replaced here.
-  if (!name || name === "coder-memory" || !token) return false;
-  if (!port || !Number.isFinite(port)) return false;
-  const entry = { name, port, token };
+  if (!name || name === "coder-memory") return false;
+  let url = typeof opts.url === "string" ? opts.url.trim() : "";
+  if (url) {
+    if (!/^https?:\/\//.test(url)) return false;
+  } else {
+    // Port-based local server: bearer token is mandatory (loopback auth).
+    if (!token) return false;
+    if (!port || !Number.isFinite(port)) return false;
+    url = `http://127.0.0.1:${port}/mcp`;
+  }
+  const entry = {
+    name,
+    port: Number.isFinite(port) && port > 0 ? port : null,
+    token,
+    url,
+  };
+  if (opts.user) entry.user = true;
   const idx = extraServers.findIndex((s) => s.name === name);
   if (idx >= 0) {
     extraServers[idx] = entry;
@@ -120,6 +141,55 @@ function unregisterMcpServer(name) {
 }
 
 /**
+ * Reconcile user-registered MCP servers with the settings slice. Built-in
+ * registrations (coder-memory via markHealthy, coder-threads via the orch
+ * server) are never touched: only entries previously marked `user` are
+ * removed, and reserved names in the desired list are skipped defensively.
+ * Never throws.
+ *
+ * @param {unknown} servers - settings.mcpServers: [{ name, url, token?, enabled }]
+ * @param {object} [opts]
+ * @param {string} [opts.userDataPath]
+ * @param {(msg: string) => void} [opts.log]
+ * @param {NodeJS.ProcessEnv} [opts.env]
+ */
+function syncUserMcpServers(servers, opts = {}) {
+  const log = opts.log || ((msg) => console.warn(msg));
+  /** @type {Map<string, { name: string, url: string, token?: string, enabled: boolean }>} */
+  const desired = new Map();
+  for (const s of Array.isArray(servers) ? servers : []) {
+    if (!s || typeof s !== "object") continue;
+    const name = typeof s.name === "string" ? s.name : "";
+    if (!name || name === "coder-memory" || name === "coder-threads") continue;
+    if (s.enabled === false) continue;
+    desired.set(name, s);
+  }
+  try {
+    for (const entry of [...extraServers]) {
+      if (entry.user && !desired.has(entry.name)) {
+        unregisterMcpServer(entry.name);
+      }
+    }
+    for (const s of desired.values()) {
+      registerMcpServer({
+        name: s.name,
+        url: typeof s.url === "string" ? s.url : "",
+        token: typeof s.token === "string" ? s.token : "",
+        user: true,
+        userDataPath: opts.userDataPath,
+        log,
+        env: opts.env,
+      });
+    }
+  } catch (err) {
+    log(
+      "memory-server: failed to sync user MCP servers: " +
+        (err && err.message ? err.message : String(err)),
+    );
+  }
+}
+
+/**
  * Reset module state (tests only).
  */
 function resetMemorySupForTests() {
@@ -165,13 +235,15 @@ function getClaudeMcpArgs() {
  * Codex argv extras when at least one MCP server is up: two leading -c
  * override args per server, or [].
  * Value is a TOML string: mcp_servers.<name>.url="http://.../mcp?token=..."
+ * (the ?token= query carries loopback auth for our own servers only; user
+ * servers keep their URL as-is).
  * @returns {string[]}
  */
 function getCodexMcpArgs() {
   /** @type {string[]} */
   const args = [];
   for (const s of activeServers()) {
-    const url = `http://127.0.0.1:${s.port}/mcp?token=${s.token}`;
+    const url = s.port ? `${s.url}?token=${s.token}` : s.url;
     args.push("-c", `mcp_servers.${s.name}.url="${url}"`);
   }
   return args;
@@ -191,17 +263,19 @@ function resolveKimiMcpPath(env = process.env) {
 
 /**
  * Desired kimi mcp.json entry for one of our servers.
- * @param {number} port
+ * @param {string} url
  * @param {string} token
  */
-function kimiHttpEntry(port, token) {
-  return {
+function kimiHttpEntry(url, token) {
+  const entry = {
     type: "http",
-    url: `http://127.0.0.1:${port}/mcp`,
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
+    url,
+    headers: {},
   };
+  if (token) {
+    entry.headers.Authorization = `Bearer ${token}`;
+  }
+  return entry;
 }
 
 /**
@@ -250,10 +324,10 @@ function ensureKimiMcpConfig(opts = {}) {
   if (!kimiOk) return false;
 
   const mcpPath = resolveKimiMcpPath(env);
-  /** @type {Record<string, { type: string, url: string, headers: { Authorization: string } }>} */
+  /** @type {Record<string, { type: string, url: string, headers: { Authorization?: string } }>} */
   const desiredByName = {};
   for (const s of servers) {
-    desiredByName[s.name] = kimiHttpEntry(s.port, s.token);
+    desiredByName[s.name] = kimiHttpEntry(s.url, s.token);
   }
 
   /** @type {Record<string, unknown>} */
@@ -391,20 +465,11 @@ function ensureGrokMcpConfig(opts = {}) {
 
   let kicked = 0;
   for (const s of activeServers()) {
-    const url = `http://127.0.0.1:${s.port}/mcp`;
-    const header = `Authorization: Bearer ${s.token}`;
-    const args = [
-      "mcp",
-      "add",
-      s.name,
-      url,
-      "-t",
-      "http",
-      "-H",
-      header,
-      "-s",
-      "user",
-    ];
+    const args = ["mcp", "add", s.name, s.url, "-t", "http"];
+    if (s.token) {
+      args.push("-H", `Authorization: Bearer ${s.token}`);
+    }
+    args.push("-s", "user");
 
     // Fire-and-forget: never block markHealthy / app boot on a slow CLI.
     try {
@@ -593,13 +658,15 @@ function writeMcpConfig(userDataPath) {
   /** @type {Record<string, unknown>} */
   const mcpServers = {};
   for (const s of activeServers()) {
-    mcpServers[s.name] = {
+    const entry = {
       type: "http",
-      url: `http://127.0.0.1:${s.port}/mcp`,
-      headers: {
-        Authorization: `Bearer ${s.token}`,
-      },
+      url: s.url,
+      headers: {},
     };
+    if (s.token) {
+      entry.headers.Authorization = `Bearer ${s.token}`;
+    }
+    mcpServers[s.name] = entry;
   }
   fs.writeFileSync(
     mcpPath,
@@ -889,6 +956,7 @@ module.exports = {
   ensureGrokMcpConfig,
   registerMcpServer,
   unregisterMcpServer,
+  syncUserMcpServers,
   activeServers,
   resolveKimiMcpPath,
   getMemoryStatus,

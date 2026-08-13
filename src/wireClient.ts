@@ -18,6 +18,7 @@ import type {
   PrInfo,
   ProjectInfo,
   ProviderInfo,
+  SkillInfo,
   ThreadDetail,
   ThreadInfo,
   ThreadSummaryInfo,
@@ -238,6 +239,11 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
     settings: {
       get: () => call<AppSettings>("settings:get"),
       set: (patch) => call<AppSettings>("settings:set", patch),
+    },
+    skills: {
+      list: (input) => call<SkillInfo[]>("skills:list", input),
+      add: (input) => call<{ name: string }>("skills:add", input),
+      remove: (input) => call<void>("skills:remove", input),
     },
     providers: {
       list: () => call<ProviderInfo[]>("providers:list"),

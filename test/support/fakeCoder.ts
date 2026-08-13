@@ -32,6 +32,7 @@ import type {
   PrInfo,
   ProjectInfo,
   ProviderInfo,
+  SkillInfo,
   ThreadDetail,
   ThreadInfo,
   ThreadSummaryInfo,
@@ -173,8 +174,17 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
   let settingsState: AppSettings = {
     dailyBudgetUsd: null,
     autoSettleAfterDays: 3,
+    mcpServers: [],
     ...(opts.settings ?? {}),
   };
+  /** In-memory skill rows for the Skills tab; add/remove mutate this. */
+  let skillsState: SkillInfo[] = [
+    {
+      name: "review-pr",
+      description: "Review a pull request end to end",
+      source: "claude",
+    },
+  ];
 
   const threadSubs: Array<(t: ThreadInfo[]) => void> = [];
   const detailSubs: Array<(d: ThreadDetail) => void> = [];
@@ -267,8 +277,48 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           next.autoSettleAfterDays =
             v === null || v === undefined ? null : v;
         }
+        if (Object.prototype.hasOwnProperty.call(p, "mcpServers")) {
+          const v = p.mcpServers;
+          if (!Array.isArray(v)) {
+            calls.push({ channel: "settings.set", args: [patch] });
+            return Promise.reject(new Error("mcpServers must be an array"));
+          }
+          next.mcpServers = v.map((s) => ({ ...s }));
+        }
         settingsState = next;
         return rec("settings.set", [patch], { ...settingsState });
+      },
+    },
+    skills: {
+      list: (input: unknown) =>
+        rec("skills.list", [input], skillsState.map((s) => ({ ...s }))),
+      add: (input: unknown) => {
+        const w = input as {
+          target: "claude" | "agents";
+          name: string;
+          description: string;
+          body: string;
+        };
+        if (!/^[a-z0-9-]+$/.test(w.name)) {
+          calls.push({ channel: "skills.add", args: [input] });
+          return Promise.reject(
+            new Error("Skill name must be lowercase letters, digits, dashes"),
+          );
+        }
+        skillsState = [
+          ...skillsState.filter(
+            (s) => !(s.name === w.name && s.source === w.target),
+          ),
+          { name: w.name, description: w.description, source: w.target },
+        ];
+        return rec("skills.add", [input], { name: w.name });
+      },
+      remove: (input: unknown) => {
+        const r = input as { target: "claude" | "agents"; name: string };
+        skillsState = skillsState.filter(
+          (s) => !(s.name === r.name && s.source === r.target),
+        );
+        return rec("skills.remove", [input], undefined);
       },
     },
     providers: { list: () => rec("providers.list", [], providers) },

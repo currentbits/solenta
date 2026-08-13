@@ -26,6 +26,8 @@ const { suggestCommitMessage } = require("./commitmsg.js");
 const { listLocalServers } = require("./servers.js");
 const devservers = require("./devservers.js");
 const { createMemoryProxy } = require("./memory-proxy.js");
+const { syncUserMcpServers } = require("./memory-sup.js");
+const skills = require("./skills.js");
 const { fetchIssue } = require("./issues.js");
 const automations = require("./automations.js");
 const { buildActivity } = require("./activity.js");
@@ -237,7 +239,28 @@ const IPC_HANDLERS = {
     return services.getSettings(ctx.store);
   },
   "settings:set": async (ctx, patch) => {
-    return services.setSettings(ctx.store, patch);
+    const next = services.setSettings(ctx.store, patch);
+    // Re-register user MCP servers so provider hooks pick the change up on
+    // the next turn. Best-effort: never fail a settings save on it.
+    try {
+      syncUserMcpServers(next.mcpServers, { userDataPath: ctx.userDataPath });
+    } catch {
+      // ignore
+    }
+    return next;
+  },
+  "skills:list": async (ctx, input) => {
+    const projectPath =
+      input && typeof input.projectPath === "string"
+        ? input.projectPath
+        : null;
+    return skills.listSkills(projectPath);
+  },
+  "skills:add": async (ctx, input) => {
+    return skills.addSkill(input || {});
+  },
+  "skills:remove": async (ctx, input) => {
+    return skills.removeSkill(input || {});
   },
   "providers:list": async (ctx) => {
     return services.listProvidersForApi(ctx.store);

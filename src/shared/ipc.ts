@@ -510,6 +510,41 @@ export interface AppSettings {
    * does not replace it.
    */
   autoSettleAfterDays: number | null;
+  /**
+   * User-registered MCP servers (Skills tab). Built-ins coder-memory and
+   * coder-threads are app-owned and never appear here. Enabled entries are
+   * folded into every provider's MCP injection on the next turn.
+   */
+  mcpServers: McpServerInfo[];
+}
+
+/** A user-registered MCP server entry (settings slice). */
+export interface McpServerInfo {
+  /** Lowercase slug: /^[a-z0-9-]+$/; coder-memory/coder-threads are reserved. */
+  name: string;
+  /** http(s) MCP endpoint. */
+  url: string;
+  /** Optional bearer token; never echoed back by the UI once stored. */
+  token?: string;
+  enabled: boolean;
+}
+
+/** Where a skill was found on disk. */
+export type SkillSource = "claude" | "agents" | "project";
+
+/** A discovered skill (SKILL.md) as surfaced to the Skills tab. */
+export interface SkillInfo {
+  name: string;
+  description: string;
+  source: SkillSource;
+}
+
+/** Payload for skills:add; target picks the user skill dir to write into. */
+export interface SkillWrite {
+  target: "claude" | "agents";
+  name: string;
+  description: string;
+  body: string;
 }
 
 export interface AppStatus {
@@ -577,6 +612,16 @@ export interface CoderApi {
   settings: {
     get(): Promise<AppSettings>;
     set(patch: Partial<AppSettings>): Promise<AppSettings>;
+  };
+  /**
+   * Agent skills on disk (SKILL.md files). list reads the two user skill
+   * dirs plus the selected project's .claude/skills; add/remove only ever
+   * touch the user dirs (~/.claude/skills, ~/.agents/skills).
+   */
+  skills: {
+    list(input?: { projectPath?: string }): Promise<SkillInfo[]>;
+    add(input: SkillWrite): Promise<{ name: string }>;
+    remove(input: { target: "claude" | "agents"; name: string }): Promise<void>;
   };
   providers: {
     list(): Promise<ProviderInfo[]>;

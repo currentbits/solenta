@@ -21,6 +21,8 @@ import type {
   ProjectInfo,
   ProviderInfo,
   ReasoningEffort,
+  SkillInfo,
+  SkillWrite,
   ThreadDetail,
   ThreadInfo,
   ThreadSummaryInfo,
@@ -244,6 +246,13 @@ export interface UseCoderResult {
     body: string;
     project?: string;
   }) => Promise<{ id: string }>;
+  /** Thin skills passthroughs; SkillsTab holds list state locally. */
+  listSkills: (input?: { projectPath?: string }) => Promise<SkillInfo[]>;
+  addSkill: (input: SkillWrite) => Promise<{ name: string }>;
+  removeSkill: (input: {
+    target: "claude" | "agents";
+    name: string;
+  }) => Promise<void>;
   /** Full-content thread search (titles + message text); Sidebar owns debounce/state. */
   searchThreads: (input: { query: string }) => Promise<ThreadInfo[]>;
 }
@@ -1260,6 +1269,27 @@ export function useCoder(): UseCoderResult {
     [api],
   );
 
+  const listSkills = useCallback(
+    async (input?: { projectPath?: string }) => {
+      return api.skills.list(input);
+    },
+    [api],
+  );
+
+  const addSkill = useCallback(
+    async (input: SkillWrite) => {
+      return api.skills.add(input);
+    },
+    [api],
+  );
+
+  const removeSkill = useCallback(
+    async (input: { target: "claude" | "agents"; name: string }) => {
+      return api.skills.remove(input);
+    },
+    [api],
+  );
+
   const searchThreads = useCallback(
     async (input: { query: string }) => {
       return api.threads.search(input);
@@ -1345,6 +1375,9 @@ export function useCoder(): UseCoderResult {
     updateMemory,
     removeMemory,
     storeMemory,
+    listSkills,
+    addSkill,
+    removeSkill,
     searchThreads,
   };
 }

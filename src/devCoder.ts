@@ -22,6 +22,7 @@ import type {
   FetchIssueResult,
   LocalServerInfo,
   MemoryEntryInfo,
+  McpServerInfo,
   PermissionMode,
   PrCheckInfo,
   PrInfo,
@@ -29,6 +30,8 @@ import type {
   ProviderInfo,
   ReasoningEffort,
   SessionUsage,
+  SkillInfo,
+  SkillWrite,
   ThreadDetail,
   ThreadInfo,
   WorkLogItem,
@@ -1500,6 +1503,21 @@ function buildDevCoder(): CoderApi {
   let dailyBudgetUsd: number | null = null;
   /** Default 3 = AUTO_SETTLE_AFTER_DAYS; null disables. */
   let autoSettleAfterDays: number | null = 3;
+  /** User MCP servers (Skills tab), in-memory. */
+  let mcpServers: McpServerInfo[] = [];
+  /** In-memory skills (Skills tab); dev twin of the on-disk SKILL.md scan. */
+  let skillsList: SkillInfo[] = [
+    {
+      name: "review-pr",
+      description: "Review a pull request end to end",
+      source: "claude",
+    },
+    {
+      name: "write-tests",
+      description: "Add tests for the current change",
+      source: "agents",
+    },
+  ];
   /** Shared-memory stub (always running in dev). */
   let memoryEntries: MemoryRow[] = seedMemoryEntries(now());
   /** Live PR state keyed by thread id (state can change after create). */
@@ -1933,12 +1951,63 @@ function buildDevCoder(): CoderApi {
     },
     settings: {
       async get(): Promise<AppSettings> {
-        return { dailyBudgetUsd, autoSettleAfterDays };
+        return {
+          dailyBudgetUsd,
+          autoSettleAfterDays,
+          mcpServers: mcpServers.map((s) => ({ ...s })),
+        };
       },
       async set(patch: Partial<AppSettings>): Promise<AppSettings> {
         dailyBudgetUsd = parseBudgetPatch(patch);
         autoSettleAfterDays = parseSettleDaysPatch(patch);
-        return { dailyBudgetUsd, autoSettleAfterDays };
+        if (Object.prototype.hasOwnProperty.call(patch, "mcpServers")) {
+          if (!Array.isArray(patch.mcpServers)) {
+            throw new Error("mcpServers must be an array");
+          }
+          mcpServers = patch.mcpServers.map((s) => ({ ...s }));
+        }
+        return {
+          dailyBudgetUsd,
+          autoSettleAfterDays,
+          mcpServers: mcpServers.map((s) => ({ ...s })),
+        };
+      },
+    },
+    skills: {
+      async list(input?: { projectPath?: string }): Promise<SkillInfo[]> {
+        const out = skillsList.map((s) => ({ ...s }));
+        if (input?.projectPath) {
+          out.push({
+            name: "project-conventions",
+            description: "Project-local review rules",
+            source: "project",
+          });
+        }
+        return out;
+      },
+      async add(input: SkillWrite): Promise<{ name: string }> {
+        if (!/^[a-z0-9-]+$/.test(input.name)) {
+          throw new Error("Skill name must be lowercase letters, digits, dashes");
+        }
+        skillsList = [
+          ...skillsList.filter(
+            (s) => !(s.name === input.name && s.source === input.target),
+          ),
+          {
+            name: input.name,
+            description: input.description,
+            source: input.target,
+          },
+        ];
+        return { name: input.name };
+      },
+      async remove(input: {
+        target: "claude" | "agents";
+        name: string;
+      }): Promise<void> {
+        skillsList = skillsList.filter(
+          (s) => !(s.name === input.name && s.source === input.target),
+        );
       },
     },
     providers: {

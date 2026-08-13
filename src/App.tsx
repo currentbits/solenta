@@ -85,6 +85,9 @@ export default function App() {
     updateMemory,
     removeMemory,
     storeMemory,
+    listSkills,
+    addSkill,
+    removeSkill,
     searchThreads,
     automations,
     addAutomation,
@@ -449,6 +452,11 @@ export default function App() {
         updateMemory={updateMemory}
         removeMemory={removeMemory}
         storeMemory={storeMemory}
+        settings={settings}
+        saveSettings={saveSettings}
+        listSkills={listSkills}
+        addSkill={addSkill}
+        removeSkill={removeSkill}
           />
         </div>
         <SettingsModal

@@ -51,6 +51,11 @@ const coder = {
     get: () => invoke("settings:get"),
     set: (patch) => invoke("settings:set", patch),
   },
+  skills: {
+    list: (input) => invoke("skills:list", input),
+    add: (input) => invoke("skills:add", input),
+    remove: (input) => invoke("skills:remove", input),
+  },
   providers: {
     list: () => invoke("providers:list"),
   },

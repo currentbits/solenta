@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
   AgentStatus,
+  AppSettings,
   CheckpointInfo,
   GitSyncInfo,
   DevServerState,
@@ -13,6 +14,8 @@ import type {
   ProjectInfo,
   ProviderInfo,
   SessionUsage,
+  SkillInfo,
+  SkillWrite,
   ThreadInfo,
   ThreadSummaryInfo,
   WorkflowView,
@@ -28,9 +31,10 @@ import {
 import { formatChecksRollup, prCardView } from "../prUi";
 import { contextRing, contextWindowFor } from "../contextRing";
 import { MemoryTab } from "./MemoryTab";
+import { SkillsTab } from "./SkillsTab";
 import styles from "./AgentsPanel.module.css";
 
-type PanelTab = "agents" | "git" | "memory";
+type PanelTab = "agents" | "git" | "memory" | "skills";
 
 /** Shared props for the 14px line icons in Environment card labels. */
 const LABEL_ICON_PROPS = {
@@ -108,6 +112,15 @@ interface AgentsPanelProps {
     body: string;
     project?: string;
   }) => Promise<{ id: string }>;
+  /** Skills tab: settings surface for MCP servers + skills CRUD. */
+  settings: AppSettings | null;
+  saveSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>;
+  listSkills: (input?: { projectPath?: string }) => Promise<SkillInfo[]>;
+  addSkill: (input: SkillWrite) => Promise<{ name: string }>;
+  removeSkill: (input: {
+    target: "claude" | "agents";
+    name: string;
+  }) => Promise<void>;
 }
 
 type PhaseChipStatus = "done" | "active" | "pending" | "failed";
@@ -2123,6 +2136,11 @@ export function AgentsPanel({
   updateMemory,
   removeMemory,
   storeMemory,
+  settings,
+  saveSettings,
+  listSkills,
+  addSkill,
+  removeSkill,
 }: AgentsPanelProps) {
   const [tab, setTab] = useState<PanelTab>("git");
 
@@ -2152,6 +2170,14 @@ export function AgentsPanel({
           onClick={() => setTab("memory")}
         >
           Memory
+        </button>
+        <button
+          type="button"
+          className={styles.tab}
+          data-active={tab === "skills"}
+          onClick={() => setTab("skills")}
+        >
+          Skills
         </button>
       </header>
 
@@ -2190,7 +2216,7 @@ export function AgentsPanel({
           stopDevServer={stopDevServer}
           devServerStatus={devServerStatus}
         />
-      ) : (
+      ) : tab === "memory" ? (
         <MemoryTab
           projectSlug={project?.slug ?? null}
           searchMemory={searchMemory}
@@ -2199,6 +2225,15 @@ export function AgentsPanel({
           updateMemory={updateMemory}
           removeMemory={removeMemory}
           storeMemory={storeMemory}
+        />
+      ) : (
+        <SkillsTab
+          projectPath={project?.path ?? null}
+          settings={settings}
+          saveSettings={saveSettings}
+          listSkills={listSkills}
+          addSkill={addSkill}
+          removeSkill={removeSkill}
         />
       )}
     </aside>
