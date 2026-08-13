@@ -11,6 +11,8 @@
 </p>
 
 <p align="center">
+  <a href="https://currentbits.github.io/solenta/">Website</a> ·
+  <a href="https://currentbits.github.io/solenta/docs.html">Docs</a> ·
   <a href="https://github.com/currentbits/solenta/releases/latest">Download for macOS</a> ·
   <a href="https://github.com/currentbits/solenta/issues">Issues</a> ·
   <a href="LICENSE">MIT License</a>
