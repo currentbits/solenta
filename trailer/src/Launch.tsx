@@ -12,14 +12,17 @@ function titleDuck(frame: number): number {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });
-  const fadeOut = interpolate(frame, [940, 960], [1, 0], {
+  const fadeOut = interpolate(frame, [930, 960], [1, 0], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });
   const onTitle =
-    (frame >= 0 && frame <= 89) ||
-    (frame >= 180 && frame <= 389) ||
-    (frame >= 390 && frame <= 689);
+    (frame >= BEATS.terminals.from &&
+      frame < BEATS.terminals.from + BEATS.terminals.durationInFrames) ||
+    (frame >= BEATS.sidebar.from &&
+      frame < BEATS.sidebar.from + BEATS.sidebar.durationInFrames) ||
+    (frame >= BEATS.pipeline.from &&
+      frame < BEATS.pipeline.from + BEATS.pipeline.durationInFrames);
   const level = onTitle ? 0.55 : 0.75;
   return fadeIn * fadeOut * level;
 }
@@ -78,10 +81,10 @@ export const Launch: React.FC = () => {
         <EndCard />
       </Sequence>
       <Audio src={staticFile("audio/bed.wav")} volume={(f) => titleDuck(f)} />
-      <Sequence from={90} durationInFrames={30} layout="none">
+      <Sequence from={BEATS.collapse.from} durationInFrames={30} layout="none">
         <Audio src="https://remotion.media/whoosh.wav" volume={0.45} />
       </Sequence>
-      <Sequence from={240} durationInFrames={15} layout="none">
+      <Sequence from={BEATS.sidebar.from + 45} durationInFrames={15} layout="none">
         <Audio src="https://remotion.media/mouse-click.wav" volume={0.35} />
       </Sequence>
     </AbsoluteFill>

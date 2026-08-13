@@ -4,8 +4,10 @@ import { TerminalWindow } from "./TerminalWindow";
 import {
   TERMINALS,
   TERMINAL_SIZE,
-  WINDOW_INSET,
-  WINDOW_SIZE,
+  WINDOW_H,
+  WINDOW_INSET_X,
+  WINDOW_INSET_Y,
+  WINDOW_W,
 } from "./terminalsData";
 
 const HERO = 18;
@@ -30,10 +32,10 @@ export const Collapse: React.FC = () => {
   return (
     <AbsoluteFill style={{ background: colors.bg }}>
       {TERMINALS.map((term) => {
-        const left = interpolate(t, [0, 1], [term.left, WINDOW_INSET]);
-        const top = interpolate(t, [0, 1], [term.top, WINDOW_INSET]);
-        const width = interpolate(t, [0, 1], [TERMINAL_SIZE.width, WINDOW_SIZE]);
-        const height = interpolate(t, [0, 1], [TERMINAL_SIZE.height, WINDOW_SIZE]);
+        const left = interpolate(t, [0, 1], [term.left, WINDOW_INSET_X]);
+        const top = interpolate(t, [0, 1], [term.top, WINDOW_INSET_Y]);
+        const width = interpolate(t, [0, 1], [TERMINAL_SIZE.width, WINDOW_W]);
+        const height = interpolate(t, [0, 1], [TERMINAL_SIZE.height, WINDOW_H]);
         const rotate = interpolate(t, [0, 1], [term.rotate, 0]);
         return (
           <div
@@ -60,10 +62,10 @@ export const Collapse: React.FC = () => {
       <div
         style={{
           position: "absolute",
-          left: WINDOW_INSET,
-          top: WINDOW_INSET,
-          width: WINDOW_SIZE,
-          height: WINDOW_SIZE,
+          left: WINDOW_INSET_X,
+          top: WINDOW_INSET_Y,
+          width: WINDOW_W,
+          height: WINDOW_H,
           opacity: chrome,
           background: colors.bg,
           border: `1px solid ${colors.border}`,

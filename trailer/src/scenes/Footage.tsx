@@ -1,4 +1,4 @@
-import { AbsoluteFill, interpolate, staticFile, useCurrentFrame } from "remotion";
+import { AbsoluteFill, staticFile, useVideoConfig } from "remotion";
 import { Video } from "@remotion/media";
 import { mediaExists } from "../mediaExists";
 import { fontFamily } from "../fonts";
@@ -10,53 +10,45 @@ export const Footage: React.FC<{
   objectPosition: string;
   title?: string;
 }> = ({ name, objectPosition, title }) => {
-  const frame = useCurrentFrame();
+  const { durationInFrames } = useVideoConfig();
   const src = `footage/${name}.mp4`;
   const hasFile = mediaExists(src);
-  const scale = interpolate(frame, [0, 300], [1, 1.03], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-  });
 
   return (
     <AbsoluteFill style={{ background: colors.bg }}>
-      <AbsoluteFill
-        style={{
-          scale,
-        }}
-      >
-        {hasFile ? (
-          <Video
-            src={staticFile(src)}
-            muted
-            objectFit="cover"
+      {hasFile ? (
+        <Video
+          src={staticFile(src)}
+          muted
+          objectFit="contain"
+          style={{
+            width: "100%",
+            height: "100%",
+            objectPosition,
+          }}
+        />
+      ) : (
+        <AbsoluteFill
+          style={{
+            background: colors.card,
+            justifyContent: "center",
+            alignItems: "center",
+          }}
+        >
+          <div
             style={{
-              width: "100%",
-              height: "100%",
-              objectPosition,
-            }}
-          />
-        ) : (
-          <AbsoluteFill
-            style={{
-              background: colors.card,
-              justifyContent: "center",
-              alignItems: "center",
+              fontFamily,
+              fontSize: 32,
+              color: colors.muted,
             }}
           >
-            <div
-              style={{
-                fontFamily,
-                fontSize: 32,
-                color: colors.muted,
-              }}
-            >
-              {src}
-            </div>
-          </AbsoluteFill>
-        )}
-      </AbsoluteFill>
-      {title ? <TitleCard text={title} durationInFrames={300} /> : null}
+            {src}
+          </div>
+        </AbsoluteFill>
+      )}
+      {title ? (
+        <TitleCard text={title} durationInFrames={durationInFrames} />
+      ) : null}
     </AbsoluteFill>
   );
 };

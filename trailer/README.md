@@ -1,6 +1,6 @@
 # Solenta launch trailer
 
-32s, 1080×1080 Remotion film for the X launch post.
+32s, 1920×1080 Remotion film for the X launch post.
 
 ```bash
 cd trailer

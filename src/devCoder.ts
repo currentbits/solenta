@@ -400,7 +400,7 @@ const STANDARD_TEMPLATE: WorkflowTemplateInfo = {
   ],
 };
 
-const TICK_MS = 700;
+const TICK_MS = TRAILER ? 1600 : 700;
 const TITLE_MAX = 60;
 const WORKTREE_DELAY_MS = 450;
 const PUSH_DELAY_MS = 350;
@@ -1110,6 +1110,37 @@ function advanceWorkflow(wf: WorkflowView): WorkflowView {
   return recomputeWorkflow(phases, wf);
 }
 
+/** Trailer-only: settle one worker, then fan out a whole phase at once. */
+function advanceWorkflowFanout(wf: WorkflowView): WorkflowView {
+  const phases = wf.phases.map((p) => ({
+    ...p,
+    agents: p.agents.map((a) => ({ ...a })),
+  }));
+
+  for (const phase of phases) {
+    const running = phase.agents.filter((a) => a.status === "running");
+    if (running.length > 0) {
+      const agent = running[0];
+      agent.status = "settled";
+      agent.tokensUsed += 1800 + Math.floor(Math.random() * 900);
+      return recomputeWorkflow(phases, wf);
+    }
+  }
+
+  for (const phase of phases) {
+    const pending = phase.agents.filter((a) => a.status === "pending");
+    if (pending.length > 0) {
+      for (const agent of pending) {
+        agent.status = "running";
+        agent.tokensUsed = 400 + Math.floor(Math.random() * 400);
+      }
+      return recomputeWorkflow(phases, wf);
+    }
+  }
+
+  return recomputeWorkflow(phases, wf);
+}
+
 function syncWorkLogForWorkflow(
   detail: ThreadDetail,
   run: RunState,
@@ -1436,7 +1467,9 @@ function seedDetail(thread: ThreadInfo): ThreadDetail {
     workflow:
       (thread.status === "working" && thread.provider === "simulate") ||
       trailerActive
-        ? seedWorkflowMidRun()
+        ? TRAILER
+          ? createFreshWorkflow()
+          : seedWorkflowMidRun()
         : null,
     usage,
   };
@@ -1789,7 +1822,9 @@ function buildDevCoder(): CoderApi {
       detail.workflow &&
       !detail.workflow.complete
     ) {
-      const advanced = advanceWorkflow(detail.workflow);
+      const advanced = TRAILER
+        ? advanceWorkflowFanout(detail.workflow)
+        : advanceWorkflow(detail.workflow);
       detail.workflow = advanced;
       syncWorkLogForWorkflow(detail, run, t);
       streamAssistant(detail, run, t);

@@ -30,7 +30,7 @@ export const Terminals: React.FC = () => {
           />
         </div>
       ))}
-      <TitleCard text={COPY.terminals} durationInFrames={90} />
+      <TitleCard text={COPY.terminals} durationInFrames={75} />
     </AbsoluteFill>
   );
 };
