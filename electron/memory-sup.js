@@ -17,8 +17,107 @@ let globalStatus = { running: false, adopted: false, port: null };
 let globalMcpConfigPath = null;
 /** @type {string | null} */
 let globalToken = null;
+/** @type {string | null} */
+let globalUserDataPath = null;
+/**
+ * Additional in-main MCP servers (e.g. coder-threads) registered alongside
+ * coder-memory. Every provider hook below serves the whole list.
+ * @type {Array<{ name: string, port: number, token: string }>}
+ */
+let extraServers = [];
 /** @type {import('node:child_process').ChildProcess | null} */
 let ownedChild = null;
+
+/**
+ * All MCP servers currently available for injection, coder-memory first.
+ * @returns {Array<{ name: string, port: number, token: string }>}
+ */
+function activeServers() {
+  /** @type {Array<{ name: string, port: number, token: string }>} */
+  const list = [];
+  if (globalStatus.running && globalStatus.port && globalToken) {
+    list.push({
+      name: "coder-memory",
+      port: globalStatus.port,
+      token: globalToken,
+    });
+  }
+  return list.concat(extraServers);
+}
+
+/**
+ * Register an extra MCP server (e.g. the coder-threads orchestrator) so all
+ * four provider hooks include it. Rewrites the claude mcp config and
+ * best-effort refreshes the kimi/grok registrations. Never throws.
+ *
+ * @param {object} opts
+ * @param {string} opts.name - server name, e.g. "coder-threads"
+ * @param {number} opts.port
+ * @param {string} opts.token
+ * @param {string} [opts.userDataPath] - needed to rewrite the claude config
+ *   when markHealthy has not run (memory down but orchestrator up)
+ * @param {(msg: string) => void} [opts.log]
+ * @param {NodeJS.ProcessEnv} [opts.env]
+ * @returns {boolean} true if registered
+ */
+function registerMcpServer(opts) {
+  const log = opts.log || ((msg) => console.warn(msg));
+  const name = String(opts.name || "");
+  const port = Number(opts.port);
+  const token = String(opts.token || "");
+  // "coder-memory" is owned by markHealthy and must not be replaced here.
+  if (!name || name === "coder-memory" || !token) return false;
+  if (!port || !Number.isFinite(port)) return false;
+  const entry = { name, port, token };
+  const idx = extraServers.findIndex((s) => s.name === name);
+  if (idx >= 0) {
+    extraServers[idx] = entry;
+  } else {
+    extraServers.push(entry);
+  }
+  const userDataPath = opts.userDataPath || globalUserDataPath;
+  if (userDataPath) {
+    try {
+      writeMcpConfig(userDataPath);
+    } catch (err) {
+      log(
+        "memory-server: failed to rewrite claude mcp config: " +
+          (err && err.message ? err.message : String(err)),
+      );
+    }
+  }
+  // Best-effort: fold the new server into the file/CLI-based providers too.
+  try {
+    ensureKimiMcpConfig({ log, env: opts.env });
+  } catch {
+    // ignore
+  }
+  try {
+    ensureGrokMcpConfig({ log, env: opts.env });
+  } catch {
+    // ignore
+  }
+  return true;
+}
+
+/**
+ * Remove a previously registered extra server and rewrite the claude config.
+ * @param {string} name
+ * @returns {boolean} true if a server was removed
+ */
+function unregisterMcpServer(name) {
+  const idx = extraServers.findIndex((s) => s.name === name);
+  if (idx < 0) return false;
+  extraServers.splice(idx, 1);
+  if (globalUserDataPath) {
+    try {
+      writeMcpConfig(globalUserDataPath);
+    } catch {
+      // ignore
+    }
+  }
+  return true;
+}
 
 /**
  * Reset module state (tests only).
@@ -35,14 +134,18 @@ function resetMemorySupForTests() {
   globalStatus = { running: false, adopted: false, port: null };
   globalMcpConfigPath = null;
   globalToken = null;
+  globalUserDataPath = null;
+  extraServers = [];
 }
 
 /**
- * Claude argv extras when memory is healthy: ['--mcp-config', path] or [].
+ * Claude argv extras when at least one MCP server is up:
+ * ['--mcp-config', path, '--allowedTools', ...] or [].
  * @returns {string[]}
  */
 function getClaudeMcpArgs() {
-  if (!globalStatus.running || !globalMcpConfigPath) return [];
+  const servers = activeServers();
+  if (servers.length === 0 || !globalMcpConfigPath) return [];
   // Both flags MUST use the single equals form: the claude CLI treats the
   // space-separated variants as variadic and swallows the trailing PROMPT as
   // another value, failing every real run with
@@ -51,22 +154,27 @@ function getClaudeMcpArgs() {
   // The allow rule is required, not cosmetic: in headless -p runs there is
   // nobody to approve a tool prompt, so without it every memory call is
   // silently denied (permission_denials) and the agent reports no memory.
-  // Scope is exactly our own server's tools; nothing else is pre-approved.
+  // Scope is exactly our own servers' tools; nothing else is pre-approved.
   return [
     `--mcp-config=${globalMcpConfigPath}`,
-    "--allowedTools=mcp__coder-memory__*",
+    `--allowedTools=${servers.map((s) => `mcp__${s.name}__*`).join(" ")}`,
   ];
 }
 
 /**
- * Codex argv extras when memory is healthy: two leading -c override args, or [].
- * Value is a TOML string: mcp_servers.coder-memory.url="http://.../mcp?token=..."
+ * Codex argv extras when at least one MCP server is up: two leading -c
+ * override args per server, or [].
+ * Value is a TOML string: mcp_servers.<name>.url="http://.../mcp?token=..."
  * @returns {string[]}
  */
 function getCodexMcpArgs() {
-  if (!globalStatus.running || !globalStatus.port || !globalToken) return [];
-  const url = `http://127.0.0.1:${globalStatus.port}/mcp?token=${globalToken}`;
-  return ["-c", `mcp_servers.coder-memory.url="${url}"`];
+  /** @type {string[]} */
+  const args = [];
+  for (const s of activeServers()) {
+    const url = `http://127.0.0.1:${s.port}/mcp?token=${s.token}`;
+    args.push("-c", `mcp_servers.${s.name}.url="${url}"`);
+  }
+  return args;
 }
 
 /**
@@ -82,11 +190,11 @@ function resolveKimiMcpPath(env = process.env) {
 }
 
 /**
- * Desired coder-memory entry for kimi mcp.json.
+ * Desired kimi mcp.json entry for one of our servers.
  * @param {number} port
  * @param {string} token
  */
-function kimiCoderMemoryEntry(port, token) {
+function kimiHttpEntry(port, token) {
   return {
     type: "http",
     url: `http://127.0.0.1:${port}/mcp`,
@@ -97,9 +205,10 @@ function kimiCoderMemoryEntry(port, token) {
 }
 
 /**
- * When memory is healthy and kimi binary is available, MERGE coder-memory into
- * kimi's mcp.json (never overwrite whole file). Backup once before first edit
- * of an existing file. On parse failure of an existing file: log and leave it.
+ * When at least one MCP server is up and kimi binary is available, MERGE our
+ * servers into kimi's mcp.json (never overwrite whole file). Backup once
+ * before first edit of an existing file. On parse failure of an existing
+ * file: log and leave it.
  *
  * @param {object} [opts]
  * @param {(msg: string) => void} [opts.log]
@@ -111,7 +220,8 @@ function ensureKimiMcpConfig(opts = {}) {
   const log = opts.log || ((msg) => console.warn(msg));
   const env = opts.env || process.env;
 
-  if (!globalStatus.running || !globalStatus.port || !globalToken) {
+  const servers = activeServers();
+  if (servers.length === 0) {
     return false;
   }
 
@@ -140,7 +250,11 @@ function ensureKimiMcpConfig(opts = {}) {
   if (!kimiOk) return false;
 
   const mcpPath = resolveKimiMcpPath(env);
-  const desired = kimiCoderMemoryEntry(globalStatus.port, globalToken);
+  /** @type {Record<string, { type: string, url: string, headers: { Authorization: string } }>} */
+  const desiredByName = {};
+  for (const s of servers) {
+    desiredByName[s.name] = kimiHttpEntry(s.port, s.token);
+  }
 
   /** @type {Record<string, unknown>} */
   let doc = {};
@@ -174,13 +288,15 @@ function ensureKimiMcpConfig(opts = {}) {
   if (!doc.mcpServers || typeof doc.mcpServers !== "object") {
     doc.mcpServers = {};
   }
-  const servers = /** @type {Record<string, unknown>} */ (doc.mcpServers);
-  const existing = servers["coder-memory"];
+  const mcpServersMap = /** @type {Record<string, unknown>} */ (doc.mcpServers);
+  // Already correct when every desired entry is present and identical.
   try {
-    if (
-      existing &&
-      JSON.stringify(existing) === JSON.stringify(desired)
-    ) {
+    const allMatch = Object.entries(desiredByName).every(
+      ([name, desired]) =>
+        mcpServersMap[name] &&
+        JSON.stringify(mcpServersMap[name]) === JSON.stringify(desired),
+    );
+    if (allMatch) {
       return true;
     }
   } catch {
@@ -203,7 +319,9 @@ function ensureKimiMcpConfig(opts = {}) {
     }
   }
 
-  servers["coder-memory"] = desired;
+  for (const [name, desired] of Object.entries(desiredByName)) {
+    mcpServersMap[name] = desired;
+  }
   try {
     const dir = path.dirname(mcpPath);
     if (!fs.existsSync(dir)) {
@@ -223,9 +341,9 @@ function ensureKimiMcpConfig(opts = {}) {
 const GROK_MCP_TIMEOUT_MS = 10000;
 
 /**
- * When memory is healthy and the grok binary is available, register
- * coder-memory via `grok mcp add ...` (idempotent into ~/.grok/config.toml).
- * Never throws; log-and-continue on any failure.
+ * When at least one MCP server is up and the grok binary is available,
+ * register each server via `grok mcp add ...` (idempotent into
+ * ~/.grok/config.toml). Never throws; log-and-continue on any failure.
  *
  * Fire-and-forget async execFile (10s timeout) so a stalling grok binary
  * cannot freeze the Electron main process at boot / adopt.
@@ -248,7 +366,7 @@ function ensureGrokMcpConfig(opts = {}) {
     return false;
   }
 
-  if (!globalStatus.running || !globalStatus.port || !globalToken) {
+  if (activeServers().length === 0) {
     return false;
   }
 
@@ -271,49 +389,52 @@ function ensureGrokMcpConfig(opts = {}) {
     return false;
   }
 
-  const url = `http://127.0.0.1:${globalStatus.port}/mcp`;
-  const header = `Authorization: Bearer ${globalToken}`;
-  const args = [
-    "mcp",
-    "add",
-    "coder-memory",
-    url,
-    "-t",
-    "http",
-    "-H",
-    header,
-    "-s",
-    "user",
-  ];
+  let kicked = 0;
+  for (const s of activeServers()) {
+    const url = `http://127.0.0.1:${s.port}/mcp`;
+    const header = `Authorization: Bearer ${s.token}`;
+    const args = [
+      "mcp",
+      "add",
+      s.name,
+      url,
+      "-t",
+      "http",
+      "-H",
+      header,
+      "-s",
+      "user",
+    ];
 
-  // Fire-and-forget: never block markHealthy / app boot on a slow CLI.
-  try {
-    execFile(
-      bin,
-      args,
-      {
-        timeout: GROK_MCP_TIMEOUT_MS,
-        encoding: "utf8",
-        env,
-      },
-      (err) => {
-        if (err) {
-          log(
-            "memory-server: grok mcp add failed: " +
-              (err && err.message ? err.message : String(err)),
-          );
-        }
-      },
-    );
-    return true;
-  } catch (err) {
-    // Synchronous spawn failures only (callback handles async errors).
-    log(
-      "memory-server: grok mcp add failed: " +
-        (err && err.message ? err.message : String(err)),
-    );
-    return false;
+    // Fire-and-forget: never block markHealthy / app boot on a slow CLI.
+    try {
+      execFile(
+        bin,
+        args,
+        {
+          timeout: GROK_MCP_TIMEOUT_MS,
+          encoding: "utf8",
+          env,
+        },
+        (err) => {
+          if (err) {
+            log(
+              "memory-server: grok mcp add failed: " +
+                (err && err.message ? err.message : String(err)),
+            );
+          }
+        },
+      );
+      kicked += 1;
+    } catch (err) {
+      // Synchronous spawn failures only (callback handles async errors).
+      log(
+        "memory-server: grok mcp add failed: " +
+          (err && err.message ? err.message : String(err)),
+      );
+    }
   }
+  return kicked > 0;
 }
 
 /**
@@ -462,25 +583,29 @@ function resolveEntryPath(appPath, env = process.env) {
 }
 
 /**
- * Write mcp-coder-memory.json once for this healthy session.
+ * Write mcp-coder-memory.json for the current set of active servers.
+ * The file name is historical; it lists every server we inject into claude.
  * @param {string} userDataPath
- * @param {number} port
- * @param {string} token
  */
-function writeMcpConfig(userDataPath, port, token) {
+function writeMcpConfig(userDataPath) {
+  globalUserDataPath = userDataPath;
   const mcpPath = path.join(userDataPath, MCP_CONFIG_NAME);
-  const body = {
-    mcpServers: {
-      "coder-memory": {
-        type: "http",
-        url: `http://127.0.0.1:${port}/mcp`,
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+  /** @type {Record<string, unknown>} */
+  const mcpServers = {};
+  for (const s of activeServers()) {
+    mcpServers[s.name] = {
+      type: "http",
+      url: `http://127.0.0.1:${s.port}/mcp`,
+      headers: {
+        Authorization: `Bearer ${s.token}`,
       },
-    },
-  };
-  fs.writeFileSync(mcpPath, JSON.stringify(body, null, 2), "utf8");
+    };
+  }
+  fs.writeFileSync(
+    mcpPath,
+    JSON.stringify({ mcpServers }, null, 2),
+    "utf8",
+  );
   globalMcpConfigPath = mcpPath;
   return mcpPath;
 }
@@ -500,7 +625,8 @@ function markHealthy(opts) {
     port: opts.port,
   };
   globalToken = opts.token || null;
-  writeMcpConfig(opts.userDataPath, opts.port, opts.token);
+  globalUserDataPath = opts.userDataPath || null;
+  writeMcpConfig(opts.userDataPath);
   // Merge coder-memory into kimi's mcp.json when kimi is installed (best-effort).
   ensureKimiMcpConfig({
     log: opts.log,
@@ -761,6 +887,9 @@ module.exports = {
   getCodexMcpArgs,
   ensureKimiMcpConfig,
   ensureGrokMcpConfig,
+  registerMcpServer,
+  unregisterMcpServer,
+  activeServers,
   resolveKimiMcpPath,
   getMemoryStatus,
   resetMemorySupForTests,

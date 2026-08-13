@@ -13,6 +13,7 @@ const {
   createMemorySupervisor,
   getMemoryStatus,
 } = require("./memory-sup.js");
+const { createOrchServer } = require("./orchServer.js");
 const { createPrStateRefresher } = require("./worktrees.js");
 const { killAll: killAllDevServers } = require("./devservers.js");
 const { startScheduler } = require("./automations.js");
@@ -37,6 +38,9 @@ let memorySupervisor = null;
 
 /** @type {ReturnType<typeof createRunner> | null} */
 let runner = null;
+
+/** @type {ReturnType<typeof createOrchServer> | null} */
+let orchServer = null;
 
 /** @type {ReturnType<typeof createPrStateRefresher> | null} */
 let prStateRefresher = null;
@@ -268,6 +272,25 @@ app.whenReady().then(async () => {
 
   automationScheduler = startScheduler({ store, runner, broadcast });
 
+  // In-main orchestrator MCP server (coder-threads): lets any agent drive
+  // other threads. Needs store + runner, so it starts after both exist.
+  // Fails soft internally; never block app start on it.
+  orchServer = createOrchServer({
+    store,
+    runner,
+    userDataPath: userData,
+    appPath,
+    log: (msg) => console.warn(msg),
+  });
+  try {
+    await orchServer.start();
+  } catch (err) {
+    console.warn(
+      "orch-server: start error; continuing without thread tools:",
+      err && err.message ? err.message : err,
+    );
+  }
+
   createWindow();
 
   app.on("activate", () => {
@@ -324,6 +347,14 @@ app.on("before-quit", () => {
       // ignore
     }
   }
+  if (orchServer) {
+    try {
+      orchServer.stop();
+    } catch {
+      // ignore
+    }
+    orchServer = null;
+  }
   try {
     killAllDevServers();
   } catch {
@@ -344,4 +375,6 @@ app.on("window-all-closed", () => {
 module.exports = {
   getMemoryStatus: () =>
     memorySupervisor ? memorySupervisor.getStatus() : getMemoryStatus(),
+  getOrchStatus: () =>
+    orchServer ? orchServer.getStatus() : { running: false, port: null },
 };
