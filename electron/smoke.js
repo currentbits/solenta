@@ -218,6 +218,8 @@ function emit(obj) { process.stdout.write(JSON.stringify(obj) + "\\n"); }
 
 const userData = fs.mkdtempSync(path.join(os.tmpdir(), "coder-smoke-"));
 app.setPath("userData", userData);
+// Isolated boot: never migrate real userData into this throwaway dir.
+process.env.SOLENTA_SKIP_USERDATA_MIGRATION = "1";
 
 /** Known string emitted by the pass-B fake agent (no spaces: CODER_AGENT_CMD split). */
 const FAKE_AGENT_MARKER = "SMOKE_AGENT_OK";

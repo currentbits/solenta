@@ -188,8 +188,18 @@ app.whenReady().then(async () => {
   const userData = app.getPath("userData");
   // One-time rename Coder -> Solenta: pull the app's own files out of the
   // legacy directory so existing installs keep store, worktrees, and memory.
+  // NEVER in throwaway boots: verify/smoke/acceptance probes run with a temp
+  // userData, and migrating there would move the real data into a directory
+  // that gets deleted. Only migrate when booting the default userData.
+  const defaultUserData = path.join(app.getPath("appData"), app.getName());
+  const canMigrate =
+    path.resolve(userData) === path.resolve(defaultUserData) &&
+    process.env.SOLENTA_SKIP_USERDATA_MIGRATION !== "1";
   try {
-    if (migrateLegacyUserData(app.getPath("appData"), userData)) {
+    if (
+      canMigrate &&
+      migrateLegacyUserData(app.getPath("appData"), userData)
+    ) {
       console.warn("solenta: migrated userData from legacy coder directory");
     }
   } catch (err) {

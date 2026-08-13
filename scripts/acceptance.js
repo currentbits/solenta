@@ -32,6 +32,7 @@ delete process.env.CODER_SIMULATE;
 delete process.env.CODER_AGENT_CMD;
 delete process.env.CODER_CLAUDE_BIN;
 process.env.CODER_GROK_MCP_DISABLE = "1"; // do not touch grok user config
+process.env.SOLENTA_SKIP_USERDATA_MIGRATION = "1"; // isolated userData: never migrate real data into it
 process.env.CODER_KIMI_MCP_PATH = path.join(userData, "kimi-mcp.json");
 
 function out(step, data) {
