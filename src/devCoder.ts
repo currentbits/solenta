@@ -158,6 +158,15 @@ function seedMemoryEntries(t0: number): MemoryRow[] {
   ];
 }
 
+const TRAILER = import.meta.env?.VITE_TRAILER === "1";
+const TRAILER_PROVIDERS = [
+  "claude",
+  "codex",
+  "kimi",
+  "grok",
+  "opencode",
+] as const;
+
 /** Mirrors electron/providers.js registry for browser/dev demos. */
 const DEV_PROVIDERS: ProviderInfo[] = [
   {
@@ -239,7 +248,7 @@ const DEV_PROVIDERS: ProviderInfo[] = [
   {
     id: "grok",
     name: "Grok",
-    available: false,
+    available: TRAILER ? true : false,
     supportsResume: false,
     models: ["grok-4.5"],
     modelInfo: [
@@ -391,7 +400,7 @@ const STANDARD_TEMPLATE: WorkflowTemplateInfo = {
   ],
 };
 
-const TICK_MS = 700;
+const TICK_MS = TRAILER ? 1600 : 700;
 const TITLE_MAX = 60;
 const WORKTREE_DELAY_MS = 450;
 const PUSH_DELAY_MS = 350;
@@ -732,8 +741,8 @@ function seedThreads(projects: ProjectInfo[]): ThreadInfo[] {
     // thread is genuinely unread so dev mode demos the sidebar indicator.
     const unreadDemo = card.id === "thread-2";
     // Round 44: one pinned + one snoozed (~tomorrow) so partition demos.
-    const pinDemo = card.id === "thread-4";
-    const snoozeDemo = card.id === "thread-5";
+    const pinDemo = !TRAILER && card.id === "thread-4";
+    const snoozeDemo = !TRAILER && card.id === "thread-5";
     const dayMs = 24 * 60 * 60 * 1000;
     return {
       id: card.id,
@@ -757,7 +766,13 @@ function seedThreads(projects: ProjectInfo[]): ThreadInfo[] {
       pinnedAt: pinDemo ? t0 - 30 * 60 * 1000 : null,
       snoozedUntil: snoozeDemo ? t0 + dayMs : null,
       snoozedAt: snoozeDemo ? t0 - 5 * 60 * 1000 : null,
-      provider: isSimulate ? "simulate" : index % 3 === 0 ? "codex" : "claude",
+      provider: TRAILER
+        ? (TRAILER_PROVIDERS[index] ?? "claude")
+        : isSimulate
+          ? "simulate"
+          : index % 3 === 0
+            ? "codex"
+            : "claude",
       model: null,
       sessionId: isSimulate
         ? "sim-seed-session-aabbccdd"
@@ -1095,6 +1110,37 @@ function advanceWorkflow(wf: WorkflowView): WorkflowView {
   return recomputeWorkflow(phases, wf);
 }
 
+/** Trailer-only: settle one worker, then fan out a whole phase at once. */
+function advanceWorkflowFanout(wf: WorkflowView): WorkflowView {
+  const phases = wf.phases.map((p) => ({
+    ...p,
+    agents: p.agents.map((a) => ({ ...a })),
+  }));
+
+  for (const phase of phases) {
+    const running = phase.agents.filter((a) => a.status === "running");
+    if (running.length > 0) {
+      const agent = running[0];
+      agent.status = "settled";
+      agent.tokensUsed += 1800 + Math.floor(Math.random() * 900);
+      return recomputeWorkflow(phases, wf);
+    }
+  }
+
+  for (const phase of phases) {
+    const pending = phase.agents.filter((a) => a.status === "pending");
+    if (pending.length > 0) {
+      for (const agent of pending) {
+        agent.status = "running";
+        agent.tokensUsed = 400 + Math.floor(Math.random() * 400);
+      }
+      return recomputeWorkflow(phases, wf);
+    }
+  }
+
+  return recomputeWorkflow(phases, wf);
+}
+
 function syncWorkLogForWorkflow(
   detail: ThreadDetail,
   run: RunState,
@@ -1394,8 +1440,9 @@ function seedDetail(thread: ThreadInfo): ThreadDetail {
     }
   }
 
+  const trailerActive = TRAILER && thread.id === mockData.activeThreadId;
   const usage: SessionUsage | null =
-    thread.provider === "simulate"
+    thread.provider === "simulate" || trailerActive
       ? {
           model: "simulate-multiagent",
           inputTokens: 18400,
@@ -1417,9 +1464,13 @@ function seedDetail(thread: ThreadInfo): ThreadDetail {
     thread,
     messages,
     workLog,
-    workflow: thread.status === "working" && thread.provider === "simulate"
-      ? seedWorkflowMidRun()
-      : null,
+    workflow:
+      (thread.status === "working" && thread.provider === "simulate") ||
+      trailerActive
+        ? TRAILER
+          ? createFreshWorkflow()
+          : seedWorkflowMidRun()
+        : null,
     usage,
   };
 }
@@ -1587,7 +1638,11 @@ function buildDevCoder(): CoderApi {
             detail.messages.find((m) => m.role === "assistant" && m.runId === runId)
               ?.id ?? null,
           sessionStep: 0,
-          kind: t.provider === "simulate" ? "simulate" : "session",
+          kind:
+            t.provider === "simulate" ||
+            (TRAILER && t.id === mockData.activeThreadId)
+              ? "simulate"
+              : "session",
           workflowStep: 0,
           costBaseline: detail.usage?.costUsd ?? 0,
         });
@@ -1639,7 +1694,9 @@ function buildDevCoder(): CoderApi {
     }
   };
 
-  const isSimulate = (thread: ThreadInfo) => thread.provider === "simulate";
+  const isSimulate = (thread: ThreadInfo) =>
+    thread.provider === "simulate" ||
+    (TRAILER && thread.id === mockData.activeThreadId);
 
   /**
    * In-memory checkpoints per thread (dev twin of worktree git log).
@@ -1765,7 +1822,9 @@ function buildDevCoder(): CoderApi {
       detail.workflow &&
       !detail.workflow.complete
     ) {
-      const advanced = advanceWorkflow(detail.workflow);
+      const advanced = TRAILER
+        ? advanceWorkflowFanout(detail.workflow)
+        : advanceWorkflow(detail.workflow);
       detail.workflow = advanced;
       syncWorkLogForWorkflow(detail, run, t);
       streamAssistant(detail, run, t);
