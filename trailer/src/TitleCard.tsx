@@ -34,7 +34,9 @@ export const TitleCard: React.FC<{
       style={{
         justifyContent: "flex-end",
         alignItems: "center",
-        paddingBottom: 120,
+        paddingBottom: 100,
+        background:
+          "linear-gradient(to top, rgba(10,13,19,0.78) 0%, rgba(10,13,19,0.0) 42%)",
         opacity: fadeIn * fadeOut,
         pointerEvents: "none",
       }}

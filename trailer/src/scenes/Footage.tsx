@@ -29,10 +29,10 @@ export const Footage: React.FC<{
           <Video
             src={staticFile(src)}
             muted
+            objectFit="cover"
             style={{
               width: "100%",
               height: "100%",
-              objectFit: "cover",
               objectPosition,
             }}
           />

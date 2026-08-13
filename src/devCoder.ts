@@ -741,8 +741,8 @@ function seedThreads(projects: ProjectInfo[]): ThreadInfo[] {
     // thread is genuinely unread so dev mode demos the sidebar indicator.
     const unreadDemo = card.id === "thread-2";
     // Round 44: one pinned + one snoozed (~tomorrow) so partition demos.
-    const pinDemo = card.id === "thread-4";
-    const snoozeDemo = card.id === "thread-5";
+    const pinDemo = !TRAILER && card.id === "thread-4";
+    const snoozeDemo = !TRAILER && card.id === "thread-5";
     const dayMs = 24 * 60 * 60 * 1000;
     return {
       id: card.id,

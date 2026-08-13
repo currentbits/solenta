@@ -1,54 +1,20 @@
-# Remotion video
+# Solenta launch trailer
 
-<p align="center">
-  <a href="https://github.com/remotion-dev/logo">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://github.com/remotion-dev/logo/raw/main/animated-logo-banner-dark.apng">
-      <img alt="Animated Remotion Logo" src="https://github.com/remotion-dev/logo/raw/main/animated-logo-banner-light.gif">
-    </picture>
-  </a>
-</p>
+32s, 1080×1080 Remotion film for the X launch post.
 
-Welcome to your Remotion project!
-
-## Commands
-
-**Install Dependencies**
-
-```console
+```bash
+cd trailer
 npm i
+npm run dev          # Remotion Studio
+npx remotion render Launch out/solenta-launch.mp4
 ```
 
-**Start Preview**
+Recapture the three real-UI beats (requires Vite with the trailer seed):
 
-```console
-npm run dev
+```bash
+# from repo root
+VITE_TRAILER=1 npx vite --port 5173 --strictPort
+npx electron scripts/capture-trailer.js
 ```
 
-**Render video**
-
-```console
-npx remotion render
-```
-
-**Upgrade Remotion**
-
-```console
-npx remotion upgrade
-```
-
-## Docs
-
-Get started with Remotion by reading the [fundamentals page](https://www.remotion.dev/docs/the-fundamentals).
-
-## Help
-
-We provide help on our [Discord server](https://discord.gg/6VzzNDwUwV).
-
-## Issues
-
-Found an issue with Remotion? [File an issue here](https://github.com/remotion-dev/remotion/issues/new).
-
-## License
-
-Note that for some entities a company license is needed. [Read the terms here](https://github.com/remotion-dev/remotion/blob/main/LICENSE.md).
+Composition `Launch` is 960 frames at 30 fps. Spec: `docs/superpowers/specs/2026-08-13-solenta-launch-trailer-design.md`.
