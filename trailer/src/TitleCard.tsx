@@ -15,7 +15,7 @@ export const TitleCard: React.FC<{
   const frame = useCurrentFrame();
   const { durationInFrames: compDuration } = useVideoConfig();
   const durationInFrames = durationOverride ?? compDuration;
-  const fadeIn = interpolate(frame, [0, 8], [0, 1], {
+  const fadeIn = interpolate(frame, [0, 8], [1, 1], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
     easing: Easing.bezier(...EASE),
