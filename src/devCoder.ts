@@ -408,6 +408,26 @@ const PUSH_DELAY_MS = 350;
 const HANDOFF_ASSISTANT_MAX = 2000;
 
 /**
+ * Mirrors electron/worktrees.js maybeRenameWorktreeBranch: a creation-time
+ * worktree starts on the placeholder branch coder/new-thread-<id6>; when the
+ * first prompt promotes the title, the branch follows. No real git in dev
+ * mode, so this is a pure rename of the thread record.
+ */
+function renamePlaceholderBranch(thread: ThreadInfo): ThreadInfo {
+  if (!thread.worktreePath || !thread.branch) return thread;
+  const shortId = thread.id.slice(0, 6);
+  if (thread.branch !== `coder/new-thread-${shortId}`) return thread;
+  const slug =
+    thread.title
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 40) || "thread";
+  const next = `coder/${slug}-${shortId}`;
+  return next === thread.branch ? thread : { ...thread, branch: next };
+}
+
+/**
  * One-time hand-off CLI prefix. Strings match electron/services.js
  * buildHandoffPrefix exactly (services-level helper + dev twin pattern).
  */
@@ -2286,6 +2306,27 @@ function buildDevCoder(): CoderApi {
         const n = projects.length + 1;
         return api.projects.add(`/Users/demo/demo-org/project-${n}`);
       },
+      async create(input: { name: string; parentDir: string }) {
+        const name = input.name.trim();
+        const parentDir = input.parentDir.trim().replace(/\/+$/, "");
+        if (!name) throw new Error("Project name is required");
+        if (name === "." || name === ".." || /[/\\\0]/.test(name)) {
+          throw new Error("Project name must be a plain folder name (no slashes)");
+        }
+        if (!parentDir) throw new Error("Location is required");
+        const project: ProjectInfo = {
+          id: id("proj"),
+          slug: name,
+          name,
+          path: `${parentDir}/${name}`,
+        };
+        projects.push(project);
+        return { ...project };
+      },
+      async pickDirectory() {
+        // No native dialog in the browser dev mock; cancel like the real one.
+        return null;
+      },
       /** Mirrors services.updateProject: empty host clears the remote fields. */
       async update(input: {
         projectId: string;
@@ -2460,6 +2501,21 @@ function buildDevCoder(): CoderApi {
           worktreePath: null,
           handoffFrom: null,
         };
+        // Mirror the electron threads:create worktree flag: attach a fake
+        // worktree + placeholder-named branch right away (ipc.js calls
+        // setupWorktree after createThread there).
+        if (input.worktree === true) {
+          const shortId = t.id.slice(0, 6);
+          const slug =
+            t.title
+              .toLowerCase()
+              .replace(/[^a-z0-9]+/g, "-")
+              .replace(/^-+|-+$/g, "")
+              .slice(0, 40) || "thread";
+          const project = projects.find((p) => p.id === t.projectId);
+          t.branch = `coder/${slug}-${shortId}`;
+          t.worktreePath = `${project?.path ?? "/Users/demo/project"}/.coder/worktrees/${t.id}`;
+        }
         threads = [t, ...threads];
         details.set(t.id, {
           thread: t,
@@ -2923,6 +2979,7 @@ function buildDevCoder(): CoderApi {
           const firstLine =
             prompt.split("\n")[0]?.slice(0, TITLE_MAX) || "New Thread";
           thread = { ...thread, title: firstLine };
+          thread = renamePlaceholderBranch(thread);
         }
 
         // Persist a session id after the first turn so follow-ups resume.
@@ -3030,6 +3087,7 @@ function buildDevCoder(): CoderApi {
           const firstLine =
             prompt.split("\n")[0]?.slice(0, TITLE_MAX) || "New Thread";
           thread = { ...thread, title: firstLine };
+          thread = renamePlaceholderBranch(thread);
         }
 
         if (!thread.sessionId) {

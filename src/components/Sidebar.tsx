@@ -96,7 +96,7 @@ interface SidebarProps {
   activeThreadId: string | null;
   onSelectThread: (id: string) => void;
   /** Global + uses selected project; per-group New thread passes that projectId. */
-  onCreateThread: (projectId?: string) => void;
+  onCreateThread: (projectId?: string, opts?: { worktree?: boolean }) => void;
   onAddProject: () => void;
   /**
    * t3-style remove project entry (after the sidebar confirm). Caller owns
@@ -938,6 +938,9 @@ export function Sidebar({
   const [forkMenuFor, setForkMenuFor] = useState<string | null>(null);
   useEscapeClose(snoozeMenuFor != null, () => setSnoozeMenuFor(null));
   useEscapeClose(forkMenuFor != null, () => setForkMenuFor(null));
+  /** Project id whose thread-create menu (plain vs worktree) is open. */
+  const [createMenuFor, setCreateMenuFor] = useState<string | null>(null);
+  useEscapeClose(createMenuFor != null, () => setCreateMenuFor(null));
   /** Project id whose "from GitHub issue" form is open. */
   const [issueFormFor, setIssueFormFor] = useState<string | null>(null);
   const [issueRef, setIssueRef] = useState("");
@@ -1422,15 +1425,68 @@ export function Sidebar({
 
   const renderGroupCreateActions = (project: ProjectInfo) => {
     const open = issueFormFor === project.id;
+    const createOpen = createMenuFor === project.id;
+    // Worktree threads are local-only (electron/worktrees.js); remote
+    // projects get the plain button without the caret.
+    const remote = Boolean(project.remoteHost);
     return (
       <div className={styles.groupThreadActions}>
-        <button
-          type="button"
-          className={styles.groupNewThread}
-          onClick={() => onCreateThread(project.id)}
-        >
-          New thread
-        </button>
+        <div className={styles.snoozeWrap}>
+          <button
+            type="button"
+            className={styles.groupNewThread}
+            onClick={() => onCreateThread(project.id)}
+          >
+            New thread
+          </button>
+          {!remote && (
+            <button
+              type="button"
+              className={styles.groupIssueBtn}
+              title="Thread options"
+              aria-label="Thread options"
+              aria-haspopup="menu"
+              aria-expanded={createOpen}
+              data-create-menu-btn={project.id}
+              onClick={() => setCreateMenuFor(createOpen ? null : project.id)}
+            >
+              <svg
+                width="10"
+                height="10"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden
+              >
+                <path d="M4 6.5 8 10.5 12 6.5" />
+              </svg>
+            </button>
+          )}
+          {createOpen && !remote && (
+            <div
+              className={styles.snoozeMenu}
+              role="menu"
+              data-create-menu={project.id}
+            >
+              <button
+                type="button"
+                className={styles.snoozeMenuItem}
+                role="menuitem"
+                data-create-worktree-thread={project.id}
+                title="New thread in an isolated git worktree + branch"
+                onClick={() => {
+                  setCreateMenuFor(null);
+                  onCreateThread(project.id, { worktree: true });
+                }}
+              >
+                New worktree thread
+              </button>
+            </div>
+          )}
+        </div>
         {onCreateThreadFromIssue && (
           <button
             type="button"

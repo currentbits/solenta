@@ -461,6 +461,45 @@ function setupWorktree(opts) {
 }
 
 /**
+ * Rename the auto-generated placeholder branch to match the real title once
+ * the first prompt has promoted it (T3-style: worktree branches start as a
+ * temp name and become human-readable after the first turn). Only touches
+ * branches that still carry the exact placeholder name — user-renamed or
+ * manually created branches are left alone. Best-effort: any git failure
+ * keeps the old branch and never throws, so a rename can never break a run.
+ *
+ * @param {object} opts
+ * @param {import('./store').Store} opts.store
+ * @param {string} opts.threadId
+ * @param {string} opts.newTitle
+ * @returns {object|null} updated ThreadInfo, or null when no rename happened
+ */
+function maybeRenameWorktreeBranch(opts) {
+  const { store, threadId, newTitle } = opts;
+  const thread = store.getThread(threadId);
+  if (!thread || !thread.worktreePath || !thread.branch) {
+    return null;
+  }
+  const shortId = String(thread.id).slice(0, 6);
+  const placeholder = `coder/new-thread-${shortId}`;
+  if (thread.branch !== placeholder) {
+    return null;
+  }
+  const next = `coder/${slugify(newTitle)}-${shortId}`;
+  if (next === thread.branch) {
+    return null;
+  }
+  try {
+    gitOut(thread.worktreePath, ["branch", "-m", thread.branch, next]);
+  } catch {
+    return null;
+  }
+  const updated = store.updateThread(threadId, { branch: next });
+  store.save();
+  return updated ? { ...updated } : null;
+}
+
+/**
  * Working-tree changes in the thread's cwd (worktree if set, else project).
  *
  * @param {object} opts
@@ -2374,6 +2413,7 @@ async function restoreCheckpoint(opts) {
 
 module.exports = {
   setupWorktree,
+  maybeRenameWorktreeBranch,
   diff,
   commit,
   revertFile,

@@ -168,6 +168,57 @@ function addProject(store, projectPath, opts) {
 }
 
 /**
+ * Create a brand-new project folder: mkdir + git init, then add it through
+ * the normal addProject validation. The name must be a plain folder name
+ * (no separators) and the parent directory must already exist.
+ * @param {import('./store').Store} store
+ * @param {{ name?: string, parentDir?: string }} input
+ */
+function createProject(store, input) {
+  const name =
+    input && typeof input.name === "string" ? input.name.trim() : "";
+  const parentDir =
+    input && typeof input.parentDir === "string" ? input.parentDir.trim() : "";
+
+  if (!name) {
+    throw new Error("Project name is required");
+  }
+  if (name === "." || name === ".." || /[/\\\0]/.test(name)) {
+    throw new Error("Project name must be a plain folder name (no slashes)");
+  }
+  if (!parentDir) {
+    throw new Error("Location is required");
+  }
+
+  const parent = path.resolve(parentDir);
+  let stat;
+  try {
+    stat = fs.statSync(parent);
+  } catch {
+    throw new Error(`Path does not exist: ${parent}`);
+  }
+  if (!stat.isDirectory()) {
+    throw new Error(`Path is not a directory: ${parent}`);
+  }
+
+  const target = path.join(parent, name);
+  if (fs.existsSync(target)) {
+    throw new Error(`Already exists: ${target}`);
+  }
+
+  fs.mkdirSync(target);
+  try {
+    gitOut(target, ["init", "-q"]);
+  } catch (err) {
+    fs.rmSync(target, { recursive: true, force: true });
+    const msg = err && err.message ? String(err.message) : String(err);
+    throw new Error(`Could not initialize a git repository: ${msg}`);
+  }
+
+  return addProject(store, target);
+}
+
+/**
  * Patch an existing project. Today: display name and the SSH remote fields.
  * Remote validation mirrors addProject: a non-empty host requires an absolute
  * remotePath; an empty host clears both keys, turning the project local again.
@@ -224,7 +275,9 @@ function updateProject(store, projectId, patch) {
 
 /**
  * @param {import('./store').Store} store
- * @param {{ projectId: string, title: string }} input
+ * @param {{ projectId: string, title: string, worktree?: boolean }} input
+ * `worktree` is only consumed by the IPC layer (threads:create), which calls
+ * setupWorktree after this returns; the service itself stays fs-free.
  */
 function createThread(store, input) {
   const project = store.getProject(input.projectId);
@@ -1607,6 +1660,7 @@ function assertUnderDailyBudget(store) {
 
 module.exports = {
   addProject,
+  createProject,
   removeProject,
   updateProject,
   createThread,

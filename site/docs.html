@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Solenta Docs</title>
+  <meta name="description" content="How Solenta works: threads, providers, worktrees, Build workflows, orchestration, shared memory, automations, spend caps, web mode and SSH remotes." />
+  <link rel="icon" href="assets/icon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="index.html">
+      <img src="assets/icon.svg" alt="" />
+      Solenta
+    </a>
+    <div class="nav-links">
+      <a href="docs.html" class="active">Docs</a>
+      <a href="https://github.com/currentbits/solenta">GitHub</a>
+      <a class="nav-cta" href="https://github.com/currentbits/solenta/releases/latest">
+        Download
+      </a>
+    </div>
+  </div>
+</nav>
+
+<div class="wrap">
+  <div class="docs-layout">
+    <nav class="docs-nav" id="docs-nav">
+      <a href="#getting-started">Getting started</a>
+      <a href="#threads">Threads and providers</a>
+      <a href="#worktrees">Worktrees and PRs</a>
+      <a href="#workflows">Build workflows</a>
+      <a href="#orchestration">Orchestration</a>
+      <a href="#memory">Shared memory</a>
+      <a href="#automations">Automations</a>
+      <a href="#spend">Spend guardrails</a>
+      <a href="#web-mode">Web mode</a>
+      <a href="#ssh">SSH remote projects</a>
+      <a href="#architecture">Architecture</a>
+    </nav>
+
+    <main class="docs-content">
+      <h1>How Solenta works</h1>
+      <p class="lede">
+        Solenta is a local-first desktop app that drives the coding agents you
+        already have installed. Everything below is in the current release.
+      </p>
+
+      <h2 id="getting-started">Getting started</h2>
+      <p>
+        Download the archive for your platform from
+        <a href="https://github.com/currentbits/solenta/releases/latest">the latest release</a>,
+        unpack it, and launch. The builds are unsigned: on macOS right-click and
+        choose Open the first time, on Windows SmartScreen will ask once.
+      </p>
+      <p>
+        Solenta does not bundle any agent. Install the CLIs you want to use and
+        it finds them on your <code>PATH</code>:
+      </p>
+      <ul>
+        <li><strong>Claude Code</strong> (<code>claude</code>)</li>
+        <li><strong>Codex</strong> (<code>codex</code>)</li>
+        <li><strong>Kimi</strong> (<code>kimi</code>)</li>
+        <li><strong>Grok</strong> (<code>grok</code>)</li>
+        <li><strong>OpenCode</strong> (<code>opencode</code>)</li>
+      </ul>
+      <p>
+        Add a project with the <strong>+</strong> button in the sidebar. A
+        project is any local git repository (or a remote one, see
+        <a href="#ssh">SSH remote projects</a>). Create a thread, type a prompt,
+        and the run streams in live.
+      </p>
+
+      <h2 id="threads">Threads and providers</h2>
+      <p>
+        A <strong>thread</strong> is one provider session against one project.
+        It keeps its own permission mode, an optional model override, and its
+        conversation. After the first turn, the provider session id is locked
+        in and follow-up turns resume where the previous one stopped.
+      </p>
+      <ul>
+        <li><strong>Permission mode</strong> is sticky per thread: default, ask-first, or full access.</li>
+        <li><strong>Model picker</strong> lists the provider's known models; providers without a list accept free-form model ids.</li>
+        <li><strong>Reasoning effort</strong> can be set per thread where the provider supports it.</li>
+        <li><strong>Fork and hand off</strong> copies a thread, optionally onto another provider, and starts it on a new prompt.</li>
+        <li><strong>Best of N</strong> sends one prompt to several providers at once so you can compare the results.</li>
+      </ul>
+
+      <h2 id="worktrees">Worktrees and pull requests</h2>
+      <p>
+        Each thread can get its own <strong>git worktree</strong>, so agents
+        work on an isolated branch and never touch your checkout. The
+        Environment panel shows the diff, runs <code>git pull</code>, and opens
+        a pull request straight from the thread.
+      </p>
+      <p>
+        PR state is live: checks show as badges on the thread card, and merging
+        is a button, not a terminal command. Worktree merge and delete are
+        guarded, so you cannot drop unmerged work by accident. Automatic
+        checkpoints are committed as the agent works, and you can restore to
+        any checkpoint from the Changes panel.
+      </p>
+
+      <h2 id="workflows">Build workflows</h2>
+      <p>
+        The <strong>Build</strong> button in the composer runs a multi-phase
+        workflow template instead of a single prompt. Phases run in order
+        (seed, analyze, verify, judge, synthesize), phases can fan out to
+        several agents, and each phase can use a different provider. The Agents
+        panel shows every phase and worker settling in real time. You can write
+        your own templates in the composer.
+      </p>
+
+      <h2 id="orchestration">Orchestration</h2>
+      <p>
+        For ad-hoc fan-out you do not configure anything: you ask. Every agent
+        session gets four MCP tools from the built-in
+        <code>coder-threads</code> server, so any thread can drive the others:
+      </p>
+      <table class="doc-table">
+        <thead>
+          <tr><th>Tool</th><th>What it does</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>threads_list</td><td>Lists every thread with id, title, provider and status.</td></tr>
+          <tr><td>thread_fork</td><td>Copies a thread into a new one, optionally on another provider, and starts it on a prompt.</td></tr>
+          <tr><td>thread_send</td><td>Starts a run with a prompt on an existing thread.</td></tr>
+          <tr><td>thread_status</td><td>Reports a thread's status and the first line of its last reply.</td></tr>
+        </tbody>
+      </table>
+      <p>
+        A prompt like <em>&ldquo;fan out three Grok workers to build this, have
+        Opus review the diffs&rdquo;</em> is enough. Runs are asynchronous: the
+        orchestrating agent sends work, then polls <code>thread_status</code>
+        until each thread settles. Use Build workflows when the pipeline shape
+        is known and repeatable, and plain-language orchestration when it is
+        not.
+      </p>
+
+      <h2 id="memory">Shared memory</h2>
+      <p>
+        Solenta supervises a small local <strong>memory server</strong> (HTTP +
+        MCP, SQLite with full-text and vector search). When it is healthy, it
+        is injected into agent sessions automatically, so decisions and gotchas
+        one thread stores are visible to the next. The Memory tab in the right
+        panel lets you search, read and store entries yourself. The server is
+        localhost-only and bearer-token gated.
+      </p>
+
+      <h2 id="automations">Automations</h2>
+      <p>
+        Automations run a prompt on a schedule: hourly, daily at an hour, or
+        weekly. Each automation targets a project with its own provider and
+        optional model, and can be paused with a toggle. <strong>Run now</strong>
+        fires one immediately. Runs appear as threads, so scheduled work is as
+        inspectable as interactive work.
+      </p>
+
+      <h2 id="spend">Spend guardrails</h2>
+      <p>
+        Set a daily budget in Settings and Solenta tracks today's spend across
+        all providers. Once the cap is reached, new runs are blocked until
+        tomorrow. Token usage and cost are visible per thread in the composer
+        footer, so there are no surprise bills from a runaway loop.
+      </p>
+
+      <h2 id="web-mode">Web mode</h2>
+      <p>
+        Start the app with <code>--serve-web</code> and the same UI is served
+        over HTTP and WebSocket, gated by a session token that is printed once
+        at startup:
+      </p>
+      <pre><code>solenta --serve-web            # 127.0.0.1 only, default port 4620
+solenta --serve-web --serve-host 0.0.0.0   # LAN, your call</code></pre>
+      <p>
+        This is how you check in on runs from a phone or another machine.
+        There is no TLS in v1, so the default bind is loopback; widening it is
+        the operator's informed choice.
+      </p>
+
+      <h2 id="ssh">SSH remote projects</h2>
+      <p>
+        A project can live on another machine. Set <strong>remote host</strong>
+        (<code>user@host</code>) and <strong>remote path</strong> when adding or
+        editing the project, and every command Solenta would run locally is
+        wrapped as:
+      </p>
+      <pre><code>ssh -o BatchMode=yes -o ConnectTimeout=10 user@host 'cd /remote/path && claude ...'</code></pre>
+      <p>
+        The agent CLI executes on the remote and streams back over the pipe, so
+        the UI looks exactly like a local run. Notes:
+      </p>
+      <ul>
+        <li>Auth is key-based only. <code>BatchMode=yes</code> never prompts for a password; a host you cannot key into fails fast.</li>
+        <li>The agent CLIs must be installed on the remote; local installs are not needed.</li>
+        <li>Worktree setup and pull are local-only in v1.</li>
+      </ul>
+
+      <h2 id="architecture">Architecture</h2>
+      <p>
+        Electron main owns the agent processes, the store, the memory
+        supervisor and scheduled automations. The renderer is a React app that
+        talks to main over a typed IPC contract. Providers are data-driven
+        adapters around each CLI's stream format. The full breakdown lives in
+        <a href="https://github.com/currentbits/solenta/blob/main/docs/ARCHITECTURE.md">docs/ARCHITECTURE.md</a>,
+        and contributions are welcome on
+        <a href="https://github.com/currentbits/solenta">GitHub</a>.
+      </p>
+    </main>
+  </div>
+</div>
+
+<footer>
+  <div class="wrap footer-inner">
+    <a class="brand" href="index.html">
+      <img src="assets/icon.svg" alt="" width="18" height="18" />
+      Solenta
+    </a>
+    <span>Free and open source under MIT.</span>
+    <span class="spacer"></span>
+    <a href="docs.html">Docs</a>
+    <a href="https://github.com/currentbits/solenta">GitHub</a>
+    <a href="https://github.com/currentbits/solenta/releases">Releases</a>
+    <a href="https://x.com/currentbitsNET">@currentbitsNET</a>
+  </div>
+</footer>
+
+<script src="main.js"></script>
+</body>
+</html>

@@ -4,23 +4,38 @@ import styles from "./SettingsModal.module.css";
 
 interface AddProjectPathModalProps {
   onClose: () => void;
+  /** Add an existing checkout: path (or remote host/path pair). */
   onSubmit: (
     path: string,
     remotes?: { remoteHost?: string; remotePath?: string },
   ) => Promise<unknown>;
+  /** Create a brand-new folder + git repo inside an existing parent dir. */
+  onCreate: (name: string, parentDir: string) => Promise<unknown>;
+  /**
+   * Native directory picker; omit where no dialog exists (web mode) and the
+   * Browse buttons disappear, leaving plain text inputs.
+   */
+  onPickDirectory?: () => Promise<string | null>;
 }
 
 /**
- * Web fallback for projects.addViaDialog. Reuses the Settings modal chrome
- * so we do not invent a second dialog system. Optional remotes (empty = local).
+ * Add-project dialog in both modes. "Add existing" takes a path (web) or a
+ * picked folder (native), with optional SSH remotes. "Create new" mkdirs and
+ * git-inits a fresh folder via projects.create. Reuses the Settings modal
+ * chrome so we do not invent a second dialog system.
  */
 export function AddProjectPathModal({
   onClose,
   onSubmit,
+  onCreate,
+  onPickDirectory,
 }: AddProjectPathModalProps) {
+  const [mode, setMode] = useState<"existing" | "create">("existing");
   const [path, setPath] = useState("");
   const [remoteHost, setRemoteHost] = useState("");
   const [remotePath, setRemotePath] = useState("");
+  const [name, setName] = useState("");
+  const [location, setLocation] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -33,31 +48,68 @@ export function AddProjectPathModal({
 
   const host = remoteHost.trim();
   const rpath = remotePath.trim();
-  const canSubmit = host ? Boolean(rpath) : Boolean(path.trim());
+  const canSubmit =
+    mode === "create"
+      ? Boolean(name.trim()) && Boolean(location.trim())
+      : host
+        ? Boolean(rpath)
+        : Boolean(path.trim());
+
+  const browse = async (apply: (picked: string) => void) => {
+    if (pending || !onPickDirectory) return;
+    setError(null);
+    try {
+      const picked = await onPickDirectory();
+      if (picked) apply(picked);
+    } catch (err) {
+      setError(
+        err instanceof Error && err.message
+          ? err.message
+          : "Could not open the folder picker.",
+      );
+    }
+  };
 
   const submit = async () => {
-    const trimmed = path.trim();
     if (pending || !canSubmit) return;
-    if (host && !rpath.startsWith("/")) {
-      setError("Remote path must be an absolute path (start with /).");
-      return;
-    }
     setPending(true);
     setError(null);
     try {
-      const remotes = host ? { remoteHost: host, remotePath: rpath } : undefined;
-      const added = await onSubmit(trimmed, remotes);
-      if (!added) {
-        setError("Could not add that path.");
+      if (mode === "create") {
+        const created = await onCreate(name.trim(), location.trim());
+        if (!created) {
+          setError("Could not create that project.");
+        }
+      } else {
+        if (host && !rpath.startsWith("/")) {
+          setError("Remote path must be an absolute path (start with /).");
+          return;
+        }
+        const remotes = host
+          ? { remoteHost: host, remotePath: rpath }
+          : undefined;
+        const added = await onSubmit(path.trim(), remotes);
+        if (!added) {
+          setError("Could not add that path.");
+        }
       }
     } catch (err) {
       setError(
         err instanceof Error && err.message
           ? err.message
-          : "Could not add that path.",
+          : mode === "create"
+            ? "Could not create that project."
+            : "Could not add that path.",
       );
     } finally {
       setPending(false);
+    }
+  };
+
+  const onEnter = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      void submit();
     }
   };
 
@@ -89,72 +141,177 @@ export function AddProjectPathModal({
           </button>
         </div>
         <div className={styles.body}>
-          <div className={styles.field}>
-            <label className={styles.fieldLabel} htmlFor="add-project-path-input">
-              Project path
-            </label>
-            <input
-              id="add-project-path-input"
-              className={styles.input}
-              data-add-project-path-input=""
-              value={path}
-              onChange={(e) => setPath(e.target.value)}
-              placeholder="/absolute/path/to/repo"
-              autoComplete="off"
-              spellCheck={false}
+          <div className={styles.fieldRow} role="group" aria-label="Add mode">
+            <button
+              type="button"
+              className={
+                mode === "existing"
+                  ? `${styles.btn} ${styles.btnPrimary}`
+                  : styles.btn
+              }
+              data-add-project-mode-existing=""
+              aria-pressed={mode === "existing"}
               disabled={pending}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  void submit();
-                }
+              onClick={() => {
+                setMode("existing");
+                setError(null);
               }}
-            />
-          </div>
-          <div className={styles.field}>
-            <label className={styles.fieldLabel} htmlFor="add-project-remote-host">
-              Remote host (user@host)
-            </label>
-            <input
-              id="add-project-remote-host"
-              className={styles.input}
-              data-add-project-remote-host=""
-              value={remoteHost}
-              onChange={(e) => setRemoteHost(e.target.value)}
-              placeholder="user@host"
-              autoComplete="off"
-              spellCheck={false}
+            >
+              Add existing
+            </button>
+            <button
+              type="button"
+              className={
+                mode === "create"
+                  ? `${styles.btn} ${styles.btnPrimary}`
+                  : styles.btn
+              }
+              data-add-project-mode-create=""
+              aria-pressed={mode === "create"}
               disabled={pending}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  void submit();
-                }
+              onClick={() => {
+                setMode("create");
+                setError(null);
               }}
-            />
+            >
+              Create new
+            </button>
           </div>
-          <div className={styles.field}>
-            <label className={styles.fieldLabel} htmlFor="add-project-remote-path">
-              Remote path
-            </label>
-            <input
-              id="add-project-remote-path"
-              className={styles.input}
-              data-add-project-remote-path=""
-              value={remotePath}
-              onChange={(e) => setRemotePath(e.target.value)}
-              placeholder="/absolute/path/on/the/remote"
-              autoComplete="off"
-              spellCheck={false}
-              disabled={pending}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  void submit();
-                }
-              }}
-            />
-          </div>
+
+          {mode === "create" ? (
+            <>
+              <div className={styles.field}>
+                <label
+                  className={styles.fieldLabel}
+                  htmlFor="add-project-create-input"
+                >
+                  Project name
+                </label>
+                <input
+                  id="add-project-create-input"
+                  className={styles.input}
+                  data-add-project-create-input=""
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="my-new-project"
+                  autoComplete="off"
+                  spellCheck={false}
+                  disabled={pending}
+                  onKeyDown={onEnter}
+                />
+              </div>
+              <div className={styles.field}>
+                <label
+                  className={styles.fieldLabel}
+                  htmlFor="add-project-create-location"
+                >
+                  Create in
+                </label>
+                <input
+                  id="add-project-create-location"
+                  className={styles.input}
+                  data-add-project-create-location=""
+                  value={location}
+                  onChange={(e) => setLocation(e.target.value)}
+                  placeholder="/absolute/path/to/parent"
+                  autoComplete="off"
+                  spellCheck={false}
+                  disabled={pending}
+                  onKeyDown={onEnter}
+                />
+                {onPickDirectory && (
+                  <div className={styles.fieldRow}>
+                    <button
+                      type="button"
+                      className={styles.btn}
+                      data-add-project-browse-location=""
+                      disabled={pending}
+                      onClick={() => void browse(setLocation)}
+                    >
+                      Browse…
+                    </button>
+                  </div>
+                )}
+              </div>
+            </>
+          ) : (
+            <>
+              <div className={styles.field}>
+                <label
+                  className={styles.fieldLabel}
+                  htmlFor="add-project-path-input"
+                >
+                  Project path
+                </label>
+                <input
+                  id="add-project-path-input"
+                  className={styles.input}
+                  data-add-project-path-input=""
+                  value={path}
+                  onChange={(e) => setPath(e.target.value)}
+                  placeholder="/absolute/path/to/repo"
+                  autoComplete="off"
+                  spellCheck={false}
+                  disabled={pending}
+                  onKeyDown={onEnter}
+                />
+                {onPickDirectory && (
+                  <div className={styles.fieldRow}>
+                    <button
+                      type="button"
+                      className={styles.btn}
+                      data-add-project-browse-path=""
+                      disabled={pending}
+                      onClick={() => void browse(setPath)}
+                    >
+                      Browse…
+                    </button>
+                  </div>
+                )}
+              </div>
+              <div className={styles.field}>
+                <label
+                  className={styles.fieldLabel}
+                  htmlFor="add-project-remote-host"
+                >
+                  Remote host (user@host)
+                </label>
+                <input
+                  id="add-project-remote-host"
+                  className={styles.input}
+                  data-add-project-remote-host=""
+                  value={remoteHost}
+                  onChange={(e) => setRemoteHost(e.target.value)}
+                  placeholder="user@host"
+                  autoComplete="off"
+                  spellCheck={false}
+                  disabled={pending}
+                  onKeyDown={onEnter}
+                />
+              </div>
+              <div className={styles.field}>
+                <label
+                  className={styles.fieldLabel}
+                  htmlFor="add-project-remote-path"
+                >
+                  Remote path
+                </label>
+                <input
+                  id="add-project-remote-path"
+                  className={styles.input}
+                  data-add-project-remote-path=""
+                  value={remotePath}
+                  onChange={(e) => setRemotePath(e.target.value)}
+                  placeholder="/absolute/path/on/the/remote"
+                  autoComplete="off"
+                  spellCheck={false}
+                  disabled={pending}
+                  onKeyDown={onEnter}
+                />
+              </div>
+            </>
+          )}
+
           {error && (
             <p className={styles.fieldError} role="alert">
               {error}
@@ -168,7 +325,13 @@ export function AddProjectPathModal({
               disabled={pending || !canSubmit}
               onClick={() => void submit()}
             >
-              {pending ? "Adding…" : "Add"}
+              {pending
+                ? mode === "create"
+                  ? "Creating…"
+                  : "Adding…"
+                : mode === "create"
+                  ? "Create"
+                  : "Add"}
             </button>
             <button
               type="button"

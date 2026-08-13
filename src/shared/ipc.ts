@@ -24,6 +24,16 @@ export interface AddProjectOptions {
 }
 
 /**
+ * Input for projects.create: a plain folder name plus the absolute path of
+ * an existing parent directory. The backend mkdirs name inside parentDir,
+ * git-inits it, and adds it as a project.
+ */
+export interface CreateProjectInput {
+  name: string;
+  parentDir: string;
+}
+
+/**
  * Patch for projects.update. An empty remoteHost string clears the remote
  * config, turning the project local again; a non-empty host requires an
  * absolute remotePath.
@@ -673,10 +683,17 @@ export interface CoderApi {
     list(): Promise<ProjectInfo[]>;
     /** Validates the path is a git repo; rejects otherwise. Optional remotes skip the local checkout. */
     add(path: string, opts?: AddProjectOptions): Promise<ProjectInfo>;
+    /** Create a new folder + git repo at parentDir/name, then add it as a project. */
+    create(input: CreateProjectInput): Promise<ProjectInfo>;
     /** Patch name and/or SSH remote fields of an existing project. */
     update(input: ProjectUpdateInput): Promise<ProjectInfo>;
     /** Opens a native folder picker; resolves null if the user cancels. */
     addViaDialog(): Promise<ProjectInfo | null>;
+    /**
+     * Native directory picker without the add: resolves the chosen absolute
+     * path, or null on cancel. Rejects where no native dialog exists (web).
+     */
+    pickDirectory(): Promise<string | null>;
     /**
      * Remove the project ENTRY and delete its threads' conversation history
      * (t3-style "Remove project"). The repository on disk is never touched.
@@ -703,7 +720,12 @@ export interface CoderApi {
      * archived threads; the renderer styles them as usual.
      */
     search(input: { query: string }): Promise<ThreadInfo[]>;
-    create(input: { projectId: string; title: string }): Promise<ThreadInfo>;
+    /**
+     * Create a thread. With `worktree: true` the thread immediately gets its
+     * own git worktree + `coder/<slug>-<id>` branch (local projects only);
+     * creation fails atomically when the worktree cannot be created.
+     */
+    create(input: { projectId: string; title: string; worktree?: boolean }): Promise<ThreadInfo>;
     get(id: string): Promise<ThreadDetail>;
     /** Sticky permission mode for future turns of this thread. */
     setPermissionMode(input: { threadId: string; mode: PermissionMode }): Promise<ThreadInfo>;

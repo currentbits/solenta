@@ -390,6 +390,17 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           }),
         ),
       addViaDialog: () => rec("projects.addViaDialog", [], project()),
+      create: (input: { name: string; parentDir: string }) => {
+        const name = input.name.trim();
+        const created = project({
+          name,
+          slug: name,
+          path: `${input.parentDir.trim().replace(/\/+$/, "")}/${name}`,
+        });
+        return rec("projects.create", [input], created);
+      },
+      pickDirectory: () =>
+        rec("projects.pickDirectory", [], null as string | null),
       update: (input: {
         projectId: string;
         name?: string;
@@ -467,12 +478,24 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       search: (input: unknown) => rec("threads.search", [input], [] as ThreadInfo[]),
       create: (input: unknown) => {
         const createdAt = Date.now();
+        const wantWorktree =
+          typeof input === "object" &&
+          input !== null &&
+          (input as { worktree?: boolean }).worktree === true;
         // Match production createThread: a brand-new thread is visited at birth.
         const t = thread({
           id: "t-new",
           createdAt,
           updatedAt: createdAt,
           lastVisitedAt: createdAt,
+          // Mirror the threads:create worktree flag (electron ipc.js): the
+          // thread starts on the placeholder branch in its own worktree.
+          ...(wantWorktree
+            ? {
+                branch: "coder/new-thread-t-new",
+                worktreePath: "/fake/worktrees/t-new",
+              }
+            : {}),
         });
         threads = [t, ...threads.filter((x) => x.id !== t.id)];
         return rec("threads.create", [input], t);

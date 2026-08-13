@@ -127,6 +127,21 @@ const IPC_HANDLERS = {
   "projects:add": async (ctx, projectPath, opts) => {
     return services.addProject(ctx.store, projectPath, opts);
   },
+  "projects:create": async (ctx, input) => {
+    return services.createProject(ctx.store, input || {});
+  },
+  "projects:pickDirectory": async (ctx) => {
+    if (!ctx.dialog || typeof ctx.dialog.showOpenDialog !== "function") {
+      throw new Error("Folder picker is not available in this mode");
+    }
+    const result = await ctx.dialog.showOpenDialog({
+      properties: ["openDirectory", "createDirectory"],
+    });
+    if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
+      return null;
+    }
+    return result.filePaths[0];
+  },
   "projects:update": async (ctx, input) => {
     return services.updateProject(
       ctx.store,
@@ -164,6 +179,37 @@ const IPC_HANDLERS = {
   },
   "threads:create": async (ctx, input) => {
     const thread = services.createThread(ctx.store, input);
+    if (input && input.worktree === true) {
+      try {
+        if (!ctx.worktreeBase) {
+          throw new Error("worktreeBase is not configured");
+        }
+        const project = ctx.store.getProject(thread.projectId);
+        if (project && project.remoteHost) {
+          throw new Error(
+            "Worktree threads are not available for remote projects",
+          );
+        }
+        // setupWorktree broadcasts threads:changed itself.
+        return setupWorktree({
+          store: ctx.store,
+          threadId: thread.id,
+          worktreeBase: ctx.worktreeBase,
+          broadcast: ctx.broadcast,
+        });
+      } catch (err) {
+        // Atomic create: never leave a thread behind when its worktree
+        // failed. worktreePath is still null here, so deleteThread's guard
+        // does not fire.
+        try {
+          services.deleteThread(ctx.store, { threadId: thread.id });
+        } catch {
+          /* best effort */
+        }
+        ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+        throw err;
+      }
+    }
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     return thread;
   },

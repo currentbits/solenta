@@ -2477,6 +2477,14 @@ function createRunner(opts) {
       { touch: true },
     );
 
+    // A creation-time worktree starts on the placeholder branch
+    // coder/new-thread-<id>; once the first prompt promotes the title, the
+    // branch follows (T3-style). Best-effort: never throws, never blocks.
+    if (title !== thread.title) {
+      const { maybeRenameWorktreeBranch } = require("./worktrees.js");
+      maybeRenameWorktreeBranch({ store, threadId, newTitle: title });
+    }
+
     // Single finalization point for every provider path: prefix only goes to
     // the CLI (buildArgs / runAgent), never into the stored user message.
     const dispatchPrompt =

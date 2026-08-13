@@ -7,6 +7,7 @@ import type {
   AutomationWrite,
   CheckpointInfo,
   CoderApi,
+  CreateProjectInput,
   RunStatInfo,
   DevServerState,
   DiffResult,
@@ -79,6 +80,8 @@ export interface UseCoderResult {
     path?: string,
     opts?: { remoteHost?: string; remotePath?: string },
   ) => Promise<ProjectInfo | null>;
+  /** Create a new folder + git repo (projects.create) and add it. */
+  createProject: (input: CreateProjectInput) => Promise<ProjectInfo | null>;
   /** Patch name and/or SSH remote fields of an existing project. */
   updateProject: (input: {
     projectId: string;
@@ -90,6 +93,7 @@ export interface UseCoderResult {
   createThread: (
     title?: string,
     projectId?: string,
+    opts?: { worktree?: boolean },
   ) => Promise<ThreadInfo | null>;
   /**
    * Fork / hand off a thread (threads.fork). Selects the new thread the same
@@ -483,6 +487,24 @@ export function useCoder(): UseCoderResult {
     }
   }, [api]);
 
+  const createProject = useCallback(async (input: CreateProjectInput) => {
+    try {
+      const p = await api.projects.create({
+        name: input.name.trim(),
+        parentDir: input.parentDir.trim(),
+      });
+      setProjects((prev) => {
+        if (prev.some((x) => x.id === p.id)) return prev;
+        return [...prev, p];
+      });
+      setError(null);
+      return p;
+    } catch (err) {
+      setError({ scope: "project", message: errorMessage(err) });
+      return null;
+    }
+  }, [api]);
+
   const updateProject = useCallback(async (input: {
     projectId: string;
     name?: string;
@@ -503,14 +525,28 @@ export function useCoder(): UseCoderResult {
   }, [api]);
 
   const createThread = useCallback(
-    async (title = "New Thread", projectId?: string) => {
+    async (
+      title = "New Thread",
+      projectId?: string,
+      opts?: { worktree?: boolean },
+    ) => {
       const pid = projectId ?? selectedProjectId;
       if (!pid) return null;
       // Inherit provider+model from the currently selected thread when present.
       const inheritFrom = selectedRef.current
         ? threadsRef.current.find((x) => x.id === selectedRef.current)
         : undefined;
-      let t = await api.threads.create({ projectId: pid, title });
+      let t;
+      try {
+        t = await api.threads.create({
+          projectId: pid,
+          title,
+          ...(opts?.worktree ? { worktree: true } : {}),
+        });
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+        return null;
+      }
       if (inheritFrom) {
         const needsProvider = inheritFrom.provider !== t.provider;
         const needsModel = inheritFrom.model !== t.model;
@@ -1370,6 +1406,7 @@ export function useCoder(): UseCoderResult {
     error,
     clearError,
     addProject,
+    createProject,
     updateProject,
     createThread,
     forkThread,
