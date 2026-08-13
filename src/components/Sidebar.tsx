@@ -249,6 +249,7 @@ export function ThreadCard({
   onToggleSnoozeMenu,
   forkMenuOpen = false,
   onToggleForkMenu,
+  remote = false,
 }: {
   thread: ThreadInfo;
   slug: string;
@@ -275,6 +276,8 @@ export function ThreadCard({
   onToggleSnoozeMenu?: (threadId: string | null) => void;
   forkMenuOpen?: boolean;
   onToggleForkMenu?: (threadId: string | null) => void;
+  /** True when the thread's project lives on an SSH remote. */
+  remote?: boolean;
 }) {
   const branch = thread.branch ?? "";
   const prBadge = sidebarPrBadge({
@@ -342,6 +345,11 @@ export function ThreadCard({
         </div>
         <div className={styles.cardTags}>
           <span className={styles.providerTag}>{providerLabel}</span>
+          {remote && (
+            <span className={styles.sshTag} data-ssh-tag="" title="SSH remote">
+              ssh
+            </span>
+          )}
           {thread.worktreePath && (
             <span className={styles.worktreeTag}>wt</span>
           )}
@@ -1636,6 +1644,7 @@ export function Sidebar({
                         key={thread.id}
                         thread={thread}
                         slug={slug}
+                        remote={Boolean(project?.remoteHost)}
                         providers={providers}
                         active={thread.id === activeThreadId}
                         multiSelected={multiSelected.has(thread.id)}
@@ -1667,6 +1676,7 @@ export function Sidebar({
                           key={thread.id}
                           thread={thread}
                           slug={slug}
+                          remote={Boolean(project?.remoteHost)}
                           providers={providers}
                           active={thread.id === activeThreadId}
                           multiSelected={multiSelected.has(thread.id)}

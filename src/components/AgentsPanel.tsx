@@ -1479,6 +1479,13 @@ export function GitTab({
           hasThread={Boolean(thread)}
           onViewChanges={onViewChanges}
         />
+        {project?.remoteHost ? (
+          <section className={styles.gitCard} data-remote-unavailable="">
+            <div className={styles.gitCardLabel}>Remote</div>
+            <p className={styles.gitHint}>Not available on remote projects</p>
+          </section>
+        ) : (
+          <>
         <WorktreeCard
           thread={thread}
           busy={busy}
@@ -1574,6 +1581,8 @@ export function GitTab({
           onDismissError={() => setCheckpointError(null)}
           now={now}
         />
+          </>
+        )}
       </div>
       <footer className={styles.gitStatus} data-git-status="">
         <span className={styles.gitStatusLine} title={statusLine}>

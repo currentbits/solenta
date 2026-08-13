@@ -69,8 +69,11 @@ export interface UseCoderResult {
   selectedProjectId: string | null;
   error: CoderError | null;
   clearError: () => void;
-  /** Native: folder picker. Web: pass a filesystem path (projects.add). */
-  addProject: (path?: string) => Promise<ProjectInfo | null>;
+  /** Native: folder picker. Web: pass a filesystem path (projects.add). Optional remotes skip the local checkout. */
+  addProject: (
+    path?: string,
+    opts?: { remoteHost?: string; remotePath?: string },
+  ) => Promise<ProjectInfo | null>;
   /** Create in projectId when given; otherwise the currently selected project. */
   createThread: (
     title?: string,
@@ -417,14 +420,24 @@ export function useCoder(): UseCoderResult {
     setSelectedThreadId(id);
   }, []);
 
-  const addProject = useCallback(async (path?: string) => {
+  const addProject = useCallback(async (
+    path?: string,
+    opts?: { remoteHost?: string; remotePath?: string },
+  ) => {
     try {
       const trimmed = typeof path === "string" ? path.trim() : "";
+      const remoteHost = opts?.remoteHost?.trim() || "";
+      const remotes = remoteHost
+        ? {
+            remoteHost,
+            remotePath: opts?.remotePath?.trim() || undefined,
+          }
+        : undefined;
       // Native folder picker cannot run without Electron. Web callers must
       // pass a path (the path-input modal). Never fall through to addViaDialog.
-      if (isWebMode() && !trimmed) return null;
-      const p = trimmed
-        ? await api.projects.add(trimmed)
+      if (isWebMode() && !trimmed && !remoteHost) return null;
+      const p = trimmed || remoteHost
+        ? await api.projects.add(trimmed || remotes?.remotePath || "", remotes)
         : await api.projects.addViaDialog();
       if (p) {
         setProjects((prev) => {

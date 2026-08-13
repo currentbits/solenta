@@ -256,7 +256,8 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
     },
     projects: {
       list: () => call<ProjectInfo[]>("projects:list"),
-      add: (projectPath) => call<ProjectInfo>("projects:add", projectPath),
+      add: (projectPath, opts) =>
+        call<ProjectInfo>("projects:add", projectPath, opts),
       addViaDialog: () => call<ProjectInfo | null>("projects:addViaDialog"),
       remove: (input) => call<void>("projects:remove", input),
     },

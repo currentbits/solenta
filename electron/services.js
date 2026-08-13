@@ -2,7 +2,6 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
-const { execFileSync } = require("node:child_process");
 const { randomUUID } = require("node:crypto");
 const {
   getProvider,
@@ -10,6 +9,7 @@ const {
   listProviders,
 } = require("./providers.js");
 const { getMemoryStatus } = require("./memory-sup.js");
+const { execCommand } = require("./ssh.js");
 
 const PERMISSION_MODES = new Set([
   "default",
@@ -21,14 +21,17 @@ const PERMISSION_MODES = new Set([
 /**
  * @param {string} cwd
  * @param {string[]} args
+ * @param {{ remoteHost?: string, remotePath?: string, path?: string } | null} [project]
  * @returns {string}
  */
-function gitOut(cwd, args) {
-  return execFileSync("git", args, {
-    cwd,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-  }).trim();
+function gitOut(cwd, args, project) {
+  return String(
+    execCommand(project && project.remoteHost ? project : null, "git", args, {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }),
+  ).trim();
 }
 
 /**
@@ -67,11 +70,45 @@ function slugFromRemoteUrl(url) {
 }
 
 /**
- * Validate path is a git work tree; add ProjectInfo to store.
+ * Validate remotes (when set) or a local git work tree; add ProjectInfo.
+ * Empty remotes keep today's local path behavior byte-for-byte.
  * @param {import('./store').Store} store
  * @param {string} projectPath
+ * @param {{ remoteHost?: string, remotePath?: string } | null} [opts]
  */
-function addProject(store, projectPath) {
+function addProject(store, projectPath, opts) {
+  const remoteHost =
+    opts && typeof opts.remoteHost === "string" ? opts.remoteHost.trim() : "";
+  const remotePath =
+    opts && typeof opts.remotePath === "string" ? opts.remotePath.trim() : "";
+
+  if (remoteHost) {
+    if (!remotePath) {
+      throw new Error("Remote path is required when remote host is set");
+    }
+    if (!remotePath.startsWith("/")) {
+      throw new Error("Remote path must be an absolute path (start with /)");
+    }
+    const folderName = path.posix.basename(remotePath) || "remote";
+    const localPath =
+      typeof projectPath === "string" && projectPath.trim()
+        ? path.resolve(projectPath.trim())
+        : remotePath;
+    const project = {
+      id: randomUUID(),
+      slug: folderName,
+      name: folderName,
+      path: localPath,
+      remoteHost,
+      remotePath,
+    };
+    const projects = store.getProjects().slice();
+    projects.push(project);
+    store.setProjects(projects);
+    store.save();
+    return project;
+  }
+
   const resolved = path.resolve(projectPath);
 
   let stat;
@@ -790,13 +827,23 @@ function getThreadDetail(store, threadId, workflow = null, opts) {
 }
 
 /**
- * @param {string} projectPath
+ * @param {string | { path?: string, remoteHost?: string, remotePath?: string }} projectOrPath
  * @returns {{ isRepo: boolean, branch: string, dirty: boolean }}
  */
-function gitStatus(projectPath) {
-  const resolved = path.resolve(projectPath);
+function gitStatus(projectOrPath) {
+  const project =
+    projectOrPath && typeof projectOrPath === "object"
+      ? projectOrPath
+      : { path: projectOrPath };
+  const resolved = project.remoteHost
+    ? project.remotePath || project.path || ""
+    : path.resolve(project.path || "");
   try {
-    const inside = gitOut(resolved, ["rev-parse", "--is-inside-work-tree"]);
+    const inside = gitOut(
+      resolved,
+      ["rev-parse", "--is-inside-work-tree"],
+      project,
+    );
     if (inside !== "true") {
       return { isRepo: false, branch: "", dirty: false };
     }
@@ -806,14 +853,14 @@ function gitStatus(projectPath) {
 
   let branch = "";
   try {
-    branch = gitOut(resolved, ["branch", "--show-current"]);
+    branch = gitOut(resolved, ["branch", "--show-current"], project);
   } catch {
     branch = "";
   }
 
   let dirty = false;
   try {
-    const porcelain = gitOut(resolved, ["status", "--porcelain"]);
+    const porcelain = gitOut(resolved, ["status", "--porcelain"], project);
     dirty = porcelain.length > 0;
   } catch {
     dirty = false;

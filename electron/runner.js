@@ -34,6 +34,7 @@ const {
   mapMessageRole,
 } = require("./session-record.js");
 const workflowEngine = require("./workflow.js");
+const { wrapCommand } = require("./ssh.js");
 
 const KIMI_PUSH_THROTTLE_MS = 250;
 
@@ -197,9 +198,12 @@ function resolveProvider(thread) {
 
 /**
  * Ensure the provider CLI binary is available; throw a clear Error if not.
+ * Remote projects run the CLI on the host, so a missing local binary is fine.
  * @param {import('./providers').ProviderEntry} entry
+ * @param {{ remoteHost?: string } | null} [project]
  */
-function assertProviderBinary(entry) {
+function assertProviderBinary(entry, project) {
+  if (project && project.remoteHost) return;
   if (!entry || entry.kind === "simulate") return;
   const bin = resolveBin(entry);
   if (!isBinAvailable(bin)) {
@@ -207,6 +211,25 @@ function assertProviderBinary(entry) {
       `Provider binary not found: ${bin}. Install it or set ${entry.binEnv || "the provider binary env var"}.`,
     );
   }
+}
+
+/**
+ * Single spawn seam: when the project is remote, spawn ssh with the wrapped
+ * CLI argv instead of the local binary. Local projects are unchanged.
+ * Remote cwd is process.cwd() because the project path is on the other host.
+ *
+ * @param {{ remoteHost?: string, remotePath?: string, path?: string } | null} project
+ * @param {string} binary
+ * @param {string[]} args
+ * @param {string} localCwd
+ * @returns {{ binary: string, args: string[], cwd: string }}
+ */
+function resolveSpawn(project, binary, args, localCwd) {
+  if (!project || !project.remoteHost) {
+    return { binary, args, cwd: localCwd };
+  }
+  const ssh = wrapCommand(project, binary, args);
+  return { binary: ssh.bin, args: ssh.args, cwd: process.cwd() };
 }
 
 /**
@@ -752,7 +775,7 @@ function createRunner(opts) {
     /** @type {string | null} */
     let assistantMsgId = null;
 
-    const cwd = thread.worktreePath || project.path;
+    const localCwd = thread.worktreePath || project.path;
 
     const entry = {
       kind: "generic",
@@ -771,11 +794,15 @@ function createRunner(opts) {
     });
     active.set(threadId, entry);
 
+    const spawn = project.remoteHost
+      ? resolveSpawn(project, command, [...args, String(prompt ?? "")], localCwd)
+      : { binary: command, args, cwd: localCwd };
     const handle = runAgent({
-      command,
-      args,
+      command: spawn.binary,
+      args: spawn.args,
       prompt,
-      cwd,
+      appendPrompt: Boolean(project.remoteHost) ? false : true,
+      cwd: spawn.cwd,
       onChunk: (text) => {
         const e = active.get(threadId);
         if (!e || e.stopping || e.runId !== runId) return;
@@ -902,7 +929,7 @@ function createRunner(opts) {
     }
 
     const entryDef = providerEntry || getProvider("claude");
-    assertProviderBinary(entryDef);
+    assertProviderBinary(entryDef, project);
 
     const claudeState = {
       __claude: true,
@@ -931,7 +958,7 @@ function createRunner(opts) {
     /** Run-local usage for memory footers (not cumulative store totals). */
     const runUsage = { tokensIn: 0, tokensOut: 0, costUsd: 0 };
 
-    const cwd = thread.worktreePath || project.path;
+    const localCwd = thread.worktreePath || project.path;
     const binary = resolveBin(entryDef);
     const args = entryDef.buildArgs({
       prompt,
@@ -950,6 +977,7 @@ function createRunner(opts) {
         args.push(...mcpArgs);
       }
     }
+    const spawn = resolveSpawn(project, binary, args, localCwd);
 
     const entry = {
       kind: "claude",
@@ -977,10 +1005,10 @@ function createRunner(opts) {
     }
 
     const handle = runClaude({
-      binary,
-      args,
+      binary: spawn.binary,
+      args: spawn.args,
       prompt,
-      cwd,
+      cwd: spawn.cwd,
       permissionMode: thread.permissionMode || "default",
       sessionId: thread.sessionId || null,
       model: thread.model || null,
@@ -1314,7 +1342,7 @@ function createRunner(opts) {
       throw new Error(`Unknown project for thread: ${threadId}`);
     }
 
-    assertProviderBinary(providerEntry);
+    assertProviderBinary(providerEntry, project);
 
     const codexState = {
       __codex: true,
@@ -1342,7 +1370,7 @@ function createRunner(opts) {
     /** Run-local usage for memory footers (not cumulative store totals). */
     const runUsage = { tokensIn: 0, tokensOut: 0, costUsd: 0 };
 
-    const cwd = thread.worktreePath || project.path;
+    const localCwd = thread.worktreePath || project.path;
     const binary = resolveBin(providerEntry);
     const args = providerEntry.buildArgs({
       prompt,
@@ -1356,6 +1384,7 @@ function createRunner(opts) {
     if (codexMcpArgs.length > 0) {
       args.unshift(...codexMcpArgs);
     }
+    const spawn = resolveSpawn(project, binary, args, localCwd);
 
     const entry = {
       kind: "codex",
@@ -1423,9 +1452,9 @@ function createRunner(opts) {
     }
 
     const handle = runCodex({
-      binary,
-      args,
-      cwd,
+      binary: spawn.binary,
+      args: spawn.args,
+      cwd: spawn.cwd,
       onEvent: (ev) => {
         if (!guard()) return;
 
@@ -1667,7 +1696,7 @@ function createRunner(opts) {
       throw new Error(`Unknown project for thread: ${threadId}`);
     }
 
-    assertProviderBinary(providerEntry);
+    assertProviderBinary(providerEntry, project);
 
     const kimiState = {
       __kimi: true,
@@ -1701,7 +1730,7 @@ function createRunner(opts) {
      */
     let capturedKimiSessionId = null;
 
-    const cwd = thread.worktreePath || project.path;
+    const localCwd = thread.worktreePath || project.path;
     const binary = resolveBin(providerEntry);
     const args = providerEntry.buildArgs({
       prompt,
@@ -1710,6 +1739,7 @@ function createRunner(opts) {
       model: thread.model || null,
       reasoningEffort: thread.reasoningEffort || null,
     });
+    const spawn = resolveSpawn(project, binary, args, localCwd);
 
     const entry = {
       kind: "kimi",
@@ -1803,9 +1833,9 @@ function createRunner(opts) {
     completeWorkLogStep(threadId, startingId);
 
     const handle = runKimi({
-      binary,
-      args,
-      cwd,
+      binary: spawn.binary,
+      args: spawn.args,
+      cwd: spawn.cwd,
       // No argv route for kimi effort; runKimi flips config.toml (effortVia).
       reasoningEffort: thread.reasoningEffort || null,
       onEvent: (ev) => {
@@ -2029,7 +2059,7 @@ function createRunner(opts) {
       throw new Error(`Unknown project for thread: ${threadId}`);
     }
 
-    assertProviderBinary(providerEntry);
+    assertProviderBinary(providerEntry, project);
 
     const opencodeState = {
       __opencode: true,
@@ -2061,7 +2091,7 @@ function createRunner(opts) {
     /** Run-local usage for memory footers (not cumulative store totals). */
     const runUsage = { tokensIn: 0, tokensOut: 0, costUsd: 0 };
 
-    const cwd = thread.worktreePath || project.path;
+    const localCwd = thread.worktreePath || project.path;
     const binary = resolveBin(providerEntry);
     const args = providerEntry.buildArgs({
       prompt,
@@ -2070,6 +2100,7 @@ function createRunner(opts) {
       model: thread.model || null,
       reasoningEffort: thread.reasoningEffort || null,
     });
+    const spawn = resolveSpawn(project, binary, args, localCwd);
 
     const entry = {
       kind: "opencode",
@@ -2162,9 +2193,9 @@ function createRunner(opts) {
     completeWorkLogStep(threadId, startingId);
 
     const handle = runOpencode({
-      binary,
-      args,
-      cwd,
+      binary: spawn.binary,
+      args: spawn.args,
+      cwd: spawn.cwd,
       onEvent: (ev) => {
         if (!guard()) return;
 
@@ -2412,10 +2443,11 @@ function createRunner(opts) {
     services.assertUnderDailyBudget(store);
 
     const provider = resolveProvider(thread);
+    const projectForGate = store.getProject(thread.projectId);
     // Fail before mutating thread state when the CLI is missing.
     if (provider !== "simulate" && provider !== "generic") {
       const entryDef = getProvider(provider) || getProvider("claude");
-      assertProviderBinary(entryDef);
+      assertProviderBinary(entryDef, projectForGate);
     }
 
     const runId = randomUUID();
@@ -2712,6 +2744,7 @@ module.exports = {
   workflowNameFromThreadId,
   toWorkflowView: mapWorkflowView,
   resolveProvider,
+  resolveSpawn,
   ADJECTIVES,
   NOUNS,
   /** @internal test/diagnostics */

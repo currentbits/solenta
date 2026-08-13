@@ -287,6 +287,24 @@ function migrateAutomation(a) {
   };
 }
 
+/**
+ * Projects: remoteHost/remotePath stay absent on old rows. Empty strings
+ * (or other junk) are dropped so the keys remain optional, not null.
+ * @param {object} p
+ */
+function migrateProject(p) {
+  if (!p || typeof p !== "object") return p;
+  const next = { ...p };
+  const host = typeof next.remoteHost === "string" ? next.remoteHost.trim() : "";
+  const remotePath =
+    typeof next.remotePath === "string" ? next.remotePath.trim() : "";
+  if (host) next.remoteHost = host;
+  else delete next.remoteHost;
+  if (remotePath) next.remotePath = remotePath;
+  else delete next.remotePath;
+  return next;
+}
+
 function migrateThread(t) {
   if (!t || typeof t !== "object") return t;
   return {
@@ -380,7 +398,9 @@ class Store {
         ? parsed.threads.map(migrateThread)
         : [];
       const data = {
-        projects: Array.isArray(parsed.projects) ? parsed.projects : [],
+        projects: Array.isArray(parsed.projects)
+          ? parsed.projects.map(migrateProject)
+          : [],
         threads,
         messagesByThread:
           parsed.messagesByThread && typeof parsed.messagesByThread === "object"
@@ -425,7 +445,7 @@ class Store {
   }
 
   setProjects(projects) {
-    this.data.projects = projects;
+    this.data.projects = (projects || []).map(migrateProject);
   }
 
   getThreads() {
@@ -871,6 +891,7 @@ function cloneEmpty() {
 module.exports = {
   Store,
   EMPTY,
+  migrateProject,
   migrateThread,
   migrateAutomation,
   STANDARD_TEMPLATE,

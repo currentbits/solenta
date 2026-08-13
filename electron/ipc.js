@@ -122,8 +122,8 @@ const IPC_HANDLERS = {
   "projects:list": async (ctx) => {
     return services.listProjects(ctx.store);
   },
-  "projects:add": async (ctx, projectPath) => {
-    return services.addProject(ctx.store, projectPath);
+  "projects:add": async (ctx, projectPath, opts) => {
+    return services.addProject(ctx.store, projectPath, opts);
   },
   "projects:addViaDialog": async (ctx) => {
     const result = await ctx.dialog.showOpenDialog({
@@ -284,7 +284,7 @@ const IPC_HANDLERS = {
     if (!project) {
       return { isRepo: false, branch: "", dirty: false };
     }
-    return services.gitStatus(project.path);
+    return services.gitStatus(project);
   },
   "git:setupWorktree": async (ctx, input) => {
     if (!ctx.worktreeBase) {

@@ -218,8 +218,11 @@ export default function App() {
   }, [addProject]);
 
   const submitAddPath = useCallback(
-    async (path: string) => {
-      const added = await addProject(path);
+    async (
+      path: string,
+      remotes?: { remoteHost?: string; remotePath?: string },
+    ) => {
+      const added = await addProject(path, remotes);
       if (added) setAddPathOpen(false);
       return added;
     },

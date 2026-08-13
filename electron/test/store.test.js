@@ -156,6 +156,71 @@ describe("Store", () => {
     assert.deepEqual(leftovers, []);
   });
 
+  it("leaves remoteHost/remotePath absent on old projects", () => {
+    const old = {
+      projects: [
+        {
+          id: "p-old",
+          slug: "acme/app",
+          name: "app",
+          path: "/tmp/app",
+        },
+      ],
+      threads: [],
+      messagesByThread: {},
+      workLogByThread: {},
+    };
+    fs.writeFileSync(filePath, JSON.stringify(old), "utf8");
+    const store = new Store(filePath);
+    const p = store.getProjects()[0];
+    assert.equal(p.id, "p-old");
+    assert.equal(p.path, "/tmp/app");
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(p, "remoteHost"),
+      false,
+      "old projects must not gain a remoteHost key",
+    );
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(p, "remotePath"),
+      false,
+      "old projects must not gain a remotePath key",
+    );
+  });
+
+  it("keeps remoteHost/remotePath when present and drops empty strings", () => {
+    const old = {
+      projects: [
+        {
+          id: "p-remote",
+          slug: "app",
+          name: "app",
+          path: "/srv/app",
+          remoteHost: "dev@box",
+          remotePath: "/srv/app",
+        },
+        {
+          id: "p-empty",
+          slug: "local",
+          name: "local",
+          path: "/tmp/local",
+          remoteHost: "",
+          remotePath: "  ",
+        },
+      ],
+      threads: [],
+      messagesByThread: {},
+      workLogByThread: {},
+    };
+    fs.writeFileSync(filePath, JSON.stringify(old), "utf8");
+    const store = new Store(filePath);
+    const remote = store.getProjects().find((p) => p.id === "p-remote");
+    const empty = store.getProjects().find((p) => p.id === "p-empty");
+    assert.equal(remote.remoteHost, "dev@box");
+    assert.equal(remote.remotePath, "/srv/app");
+    assert.equal(Object.prototype.hasOwnProperty.call(empty, "remoteHost"), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(empty, "remotePath"), false);
+  });
+
   it("migrates old-shape threads missing session fields on load", () => {
     const old = {
       projects: [],

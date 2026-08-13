@@ -3,6 +3,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { execFileSync, execFile } = require("node:child_process");
+const { execCommand } = require("./ssh.js");
 
 const PATCH_TRUNCATE = 100_000;
 
@@ -29,6 +30,27 @@ function gitOut(cwd, args, opts) {
     maxBuffer: GIT_MAX_BUFFER,
   });
   return opts && opts.raw ? out : out.trim();
+}
+
+/**
+ * gitOut for the diff path: prefix git with ssh when the project is remote.
+ * Other worktrees operations stay local (worktrees/PRs are out of scope on remotes).
+ * @param {{ remoteHost?: string, remotePath?: string, path?: string } | null} project
+ * @param {string} cwd
+ * @param {string[]} args
+ * @param {{ raw?: boolean }} [opts]
+ */
+function gitOutForDiff(project, cwd, args, opts) {
+  if (project && project.remoteHost) {
+    const out = execCommand(project, "git", args, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      maxBuffer: GIT_MAX_BUFFER,
+    });
+    const text = out == null ? "" : String(out);
+    return opts && opts.raw ? text : text.trim();
+  }
+  return gitOut(cwd, args, opts);
 }
 
 /**
@@ -457,7 +479,9 @@ function diff(opts) {
     throw new Error(`Unknown project for thread: ${threadId}`);
   }
 
-  const cwd = thread.worktreePath || project.path;
+  const cwd = project.remoteHost
+    ? project.remotePath || project.path
+    : thread.worktreePath || project.path;
 
   /** @type {Map<string, { path: string, status: string, additions: number, deletions: number }>} */
   const byPath = new Map();
@@ -465,7 +489,9 @@ function diff(opts) {
   // Porcelain status for all entries; -uall lists untracked files
   // individually instead of collapsing whole directories into "?? dir/".
   // raw: the 2-char XY column starts with a significant space.
-  const porcelain = gitOut(cwd, ["status", "--porcelain", "-uall"], { raw: true });
+  const porcelain = gitOutForDiff(project, cwd, ["status", "--porcelain", "-uall"], {
+    raw: true,
+  });
 
   if (porcelain) {
     for (const line of porcelain.split("\n")) {
@@ -493,7 +519,7 @@ function diff(opts) {
   // numstat for tracked diffs vs HEAD
   let numstat = "";
   try {
-    numstat = gitOut(cwd, ["diff", "HEAD", "--numstat"]);
+    numstat = gitOutForDiff(project, cwd, ["diff", "HEAD", "--numstat"]);
   } catch (err) {
     if (!isNoHeadError(err)) {
       throw new Error(`git diff --numstat failed: ${String(err.message || err).split("\n")[0]}`);
@@ -525,9 +551,12 @@ function diff(opts) {
     }
   }
 
-  // Untracked: additions = line count
+  // Untracked: additions = line count. Remote trees are not on this disk.
   for (const entry of byPath.values()) {
     if (entry.status === "??") {
+      if (project.remoteHost) {
+        continue;
+      }
       try {
         const full = path.join(cwd, entry.path);
         const text = fs.readFileSync(full, "utf8");
@@ -548,7 +577,7 @@ function diff(opts) {
 
   let patch = "";
   try {
-    patch = gitOut(cwd, ["diff", "HEAD"]);
+    patch = gitOutForDiff(project, cwd, ["diff", "HEAD"]);
   } catch (err) {
     if (!isNoHeadError(err)) {
       throw new Error(`git diff failed: ${String(err.message || err).split("\n")[0]}`);

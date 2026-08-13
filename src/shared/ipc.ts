@@ -11,6 +11,16 @@ export interface ProjectInfo {
   slug: string;
   name: string;
   path: string;
+  /** When set, the project lives on this host (user@host) and agents run over ssh. */
+  remoteHost?: string;
+  /** Absolute path on the remote host. Required when remoteHost is set. */
+  remotePath?: string;
+}
+
+/** Optional remotes for projects.add. Empty/absent = local project. */
+export interface AddProjectOptions {
+  remoteHost?: string;
+  remotePath?: string;
 }
 
 export type ThreadStatus = "idle" | "working" | "done" | "failed";
@@ -570,8 +580,8 @@ export interface CoderApi {
   };
   projects: {
     list(): Promise<ProjectInfo[]>;
-    /** Validates the path is a git repo; rejects otherwise. */
-    add(path: string): Promise<ProjectInfo>;
+    /** Validates the path is a git repo; rejects otherwise. Optional remotes skip the local checkout. */
+    add(path: string, opts?: AddProjectOptions): Promise<ProjectInfo>;
     /** Opens a native folder picker; resolves null if the user cancels. */
     addViaDialog(): Promise<ProjectInfo | null>;
     /**

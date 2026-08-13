@@ -727,6 +727,19 @@
   font-family: var(--mono);
 }
 
+.sshTag {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 5px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--blue-border);
+  background: var(--blue-soft);
+  color: var(--blue);
+  font-size: 10px;
+  font-weight: 650;
+  font-family: var(--mono);
+}
+
 .archivedTag {
   display: inline-flex;
   align-items: center;

@@ -2111,7 +2111,30 @@ function buildDevCoder(): CoderApi {
       async list() {
         return projects.map((p) => ({ ...p }));
       },
-      async add(path: string) {
+      async add(path: string, opts?: { remoteHost?: string; remotePath?: string }) {
+        const remoteHost = opts?.remoteHost?.trim() || "";
+        const remotePath = opts?.remotePath?.trim() || "";
+        if (remoteHost) {
+          if (!remotePath) {
+            throw new Error("Remote path is required when remote host is set");
+          }
+          if (!remotePath.startsWith("/")) {
+            throw new Error("Remote path must be an absolute path (start with /)");
+          }
+          const folder =
+            remotePath.replace(/\\/g, "/").split("/").filter(Boolean).pop() ||
+            "remote";
+          const project: ProjectInfo = {
+            id: id("proj"),
+            slug: folder,
+            name: folder,
+            path: path || remotePath,
+            remoteHost,
+            remotePath,
+          };
+          projects.push(project);
+          return { ...project };
+        }
         if (/not-a-git|nongit/i.test(path)) {
           throw new Error("Not a git repository...");
         }

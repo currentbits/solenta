@@ -6,6 +6,7 @@ const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 const { Store } = require("../store.js");
 const services = require("../services.js");
+const ssh = require("../ssh.js");
 
 function git(cwd, args) {
   execFileSync("git", args, { cwd, stdio: "ignore" });
@@ -21,6 +22,7 @@ describe("services", () => {
   });
 
   afterEach(() => {
+    ssh.setExecFileSync(null);
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -67,6 +69,46 @@ describe("services", () => {
     const project = services.addProject(store, repo);
     assert.equal(project.slug, "pingdotgg/t3code");
     assert.equal(project.name, "t3code");
+  });
+
+  it("addProject stores remotes without a local checkout", () => {
+    const project = services.addProject(store, "", {
+      remoteHost: "dev@box",
+      remotePath: "/srv/my app",
+    });
+    assert.equal(project.remoteHost, "dev@box");
+    assert.equal(project.remotePath, "/srv/my app");
+    assert.equal(project.path, "/srv/my app");
+    assert.equal(project.slug, "my app");
+    assert.equal(project.name, "my app");
+    assert.equal(store.getProjects().length, 1);
+  });
+
+  it("addProject rejects remotes without an absolute remotePath", () => {
+    assert.throws(
+      () =>
+        services.addProject(store, "", {
+          remoteHost: "dev@box",
+        }),
+      /remote path is required/i,
+    );
+    assert.throws(
+      () =>
+        services.addProject(store, "", {
+          remoteHost: "dev@box",
+          remotePath: "relative/path",
+        }),
+      /absolute/i,
+    );
+  });
+
+  it("addProject without remotes still requires a local git repo", () => {
+    const dir = path.join(tmpDir, "still-local");
+    fs.mkdirSync(dir);
+    assert.throws(
+      () => services.addProject(store, dir),
+      /git|repo|work.tree|not a git/i,
+    );
   });
 
   it("addProject derives slug from ssh origin", () => {
@@ -612,6 +654,35 @@ describe("services", () => {
     fs.writeFileSync(path.join(repo, "dirty.txt"), "x");
     status = services.gitStatus(repo);
     assert.equal(status.dirty, true);
+  });
+
+  it("gitStatus uses ssh when project.remoteHost is set", () => {
+    const calls = [];
+    ssh.setExecFileSync((bin, args) => {
+      calls.push({ bin, args: args.slice() });
+      const remote = String(args[args.length - 1] || "");
+      if (remote.includes("rev-parse")) return "true\n";
+      if (remote.includes("branch")) return "main\n";
+      if (remote.includes("status")) return " M src/a.ts\n";
+      return "";
+    });
+    const status = services.gitStatus({
+      path: "/unused-local",
+      remoteHost: "dev@box",
+      remotePath: "/srv/app",
+    });
+    assert.equal(status.isRepo, true);
+    assert.equal(status.branch, "main");
+    assert.equal(status.dirty, true);
+    assert.ok(calls.length >= 1, "ssh must be spawned");
+    assert.ok(calls.every((c) => c.bin === "ssh"));
+    assert.ok(calls[0].args.includes("dev@box"));
+    assert.ok(calls[0].args.includes("BatchMode=yes"));
+    assert.ok(calls[0].args.includes("ConnectTimeout=10"));
+    assert.ok(
+      calls.some((c) => /cd '\/srv\/app' && 'git'/.test(c.args[c.args.length - 1])),
+      "remote command must cd then run git",
+    );
   });
 
   describe("workflow templates", () => {

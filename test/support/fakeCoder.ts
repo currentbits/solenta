@@ -326,7 +326,16 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     },
     projects: {
       list: () => rec("projects.list", [], projects.map((p) => ({ ...p }))),
-      add: (path: string) => rec("projects.add", [path], project({ path })),
+      add: (path: string, opts?: { remoteHost?: string; remotePath?: string }) =>
+        rec(
+          "projects.add",
+          opts ? [path, opts] : [path],
+          project({
+            path: path || opts?.remotePath || "/tmp/repo",
+            remoteHost: opts?.remoteHost,
+            remotePath: opts?.remotePath,
+          }),
+        ),
       addViaDialog: () => rec("projects.addViaDialog", [], project()),
       remove: (input: unknown) => {
         const projectId = String(
