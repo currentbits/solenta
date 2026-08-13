@@ -1358,6 +1358,7 @@ export function GitTab({
     <>
       <div className={styles.scroll}>
         <RepositoryCard threadId={thread?.id ?? null} gitRepoInfo={gitRepoInfo} />
+        <RecapCard thread={thread} listThreadSummaries={listThreadSummaries} />
         <ChangesCard
           hasThread={Boolean(thread)}
           onViewChanges={onViewChanges}
@@ -1431,7 +1432,6 @@ export function GitTab({
         />
           </>
         )}
-        <RecapCard thread={thread} listThreadSummaries={listThreadSummaries} />
       </div>
       <footer className={styles.gitStatus} data-git-status="">
         <span className={styles.gitStatusLine} title={statusLine}>
