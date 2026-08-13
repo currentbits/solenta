@@ -25,6 +25,7 @@ const {
   loadOrCreateToken,
   HOST_FLAG_HELP,
 } = require("./webServer.js");
+const { migrateLegacyUserData } = require("./legacy-migration.js");
 
 const serveOpts = parseServeWebArgs(process.argv);
 
@@ -185,14 +186,11 @@ app.whenReady().then(async () => {
   const core = await import(pathToFileURL(coreIndex).href);
 
   const userData = app.getPath("userData");
-  // One-time rename Coder -> Solenta: Electron derives the userData directory
-  // from the package name, so adopt the legacy directory whole to keep
-  // existing installs' store, worktrees, and memory db.
+  // One-time rename Coder -> Solenta: pull the app's own files out of the
+  // legacy directory so existing installs keep store, worktrees, and memory.
   try {
-    const legacyUserData = path.join(app.getPath("appData"), "coder");
-    if (!fs.existsSync(userData) && fs.existsSync(legacyUserData)) {
-      fs.renameSync(legacyUserData, userData);
-      console.warn(`solenta: migrated userData from ${legacyUserData}`);
+    if (migrateLegacyUserData(app.getPath("appData"), userData)) {
+      console.warn("solenta: migrated userData from legacy coder directory");
     }
   } catch (err) {
     console.warn(
