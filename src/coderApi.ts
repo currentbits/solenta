@@ -5,12 +5,15 @@ import { devCoder } from "./devCoder";
 
 export const WEB_TOKEN_KEY = "coder.web.token";
 
+/** Mirrors WS_PATH in electron/webBridge.js; the server rejects upgrades elsewhere. */
+const WS_PATH = "/ws";
+
 export function wsUrlFromLocation(loc: {
   protocol: string;
   host: string;
 }): string {
   const protocol = loc.protocol === "https:" ? "wss:" : "ws:";
-  return `${protocol}//${loc.host}`;
+  return `${protocol}//${loc.host}${WS_PATH}`;
 }
 
 export function persistWebToken(

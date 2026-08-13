@@ -1,18 +1,18 @@
 import { useState } from "react";
+import { persistWebToken, resolveWebToken, webNavigation } from "../coderApi";
 import styles from "./SettingsModal.module.css";
 
-const TOKEN_KEY = "coder.webToken";
-
 /**
- * Visual token gate for Coder Web. Worker B owns the transport auth handshake;
- * this is the reachable form that handshake can show. A submitted token is
- * stored on sessionStorage under coder.webToken so the client can pick it up.
+ * Visual token gate for Coder Web. Hidden when a token already resolves
+ * (query param or persisted); submitting persists via the same
+ * persistWebToken path boot.tsx's gate uses and reloads so the wire
+ * client picks it up.
  */
 export function WebTokenGate() {
   const [token, setToken] = useState("");
-  const [open, setOpen] = useState(() => {
+  const [open] = useState(() => {
     try {
-      return !sessionStorage.getItem(TOKEN_KEY);
+      return !resolveWebToken();
     } catch {
       return true;
     }
@@ -23,12 +23,8 @@ export function WebTokenGate() {
   const submit = () => {
     const trimmed = token.trim();
     if (!trimmed) return;
-    try {
-      sessionStorage.setItem(TOKEN_KEY, trimmed);
-    } catch {
-      // Private mode can throw; still dismiss so the shell is usable.
-    }
-    setOpen(false);
+    persistWebToken(trimmed);
+    webNavigation.reload();
   };
 
   return (

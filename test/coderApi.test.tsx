@@ -55,14 +55,14 @@ afterEach(() => {
 });
 
 describe("wsUrlFromLocation", () => {
-  it("maps http origin to ws and https origin to wss", () => {
+  it("maps http origin to ws and https origin to wss, on the bridge path", () => {
     assert.equal(
       wsUrlFromLocation({ protocol: "http:", host: "127.0.0.1:8787" }),
-      "ws://127.0.0.1:8787",
+      "ws://127.0.0.1:8787/ws",
     );
     assert.equal(
       wsUrlFromLocation({ protocol: "https:", host: "coder.example" }),
-      "wss://coder.example",
+      "wss://coder.example/ws",
     );
   });
 });
