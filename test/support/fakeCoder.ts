@@ -20,6 +20,7 @@ import type {
   CoderApi,
   DiffResult,
   GitStatus,
+  GitSyncInfo,
   ListPrsResult,
   LocalServerInfo,
   MemoryEntryInfo,
@@ -661,9 +662,16 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         checkpoints[i.threadId] = list.slice(idx);
         return Promise.resolve(undefined);
       },
+      syncInfo: (input: unknown) =>
+        rec("git.syncInfo", [input], { hasUpstream: false } as GitSyncInfo),
+      fetch: (input: unknown) => rec("git.fetch", [input], undefined),
     },
     servers: {
       list: (input: unknown) => rec("servers.list", [input], [] as LocalServerInfo[]),
+    },
+    shell: {
+      reveal: (input: unknown) => rec("shell.reveal", [input], undefined),
+      openPath: (input: unknown) => rec("shell.openPath", [input], undefined),
     },
     files: {
       list: (input: unknown) => {
@@ -682,6 +690,9 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           const i = threadSubs.indexOf(cb as (t: ThreadInfo[]) => void);
           if (i >= 0) threadSubs.splice(i, 1);
         };
+      }
+      if (channel === "thread:select") {
+        return () => {};
       }
       detailSubs.push(cb as (d: ThreadDetail) => void);
       return () => {

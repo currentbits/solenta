@@ -823,6 +823,67 @@ function gitStatus(projectPath) {
 }
 
 /**
+ * Parse `git rev-list --left-right --count @{upstream}...HEAD` stdout.
+ * Format: "<behind>\\t<ahead>" (left = upstream-only, right = HEAD-only).
+ *
+ * @param {string} text
+ * @returns {{ hasUpstream: false } | { hasUpstream: true, ahead: number, behind: number }}
+ */
+function parseRevListCount(text) {
+  const line = String(text || "").trim().split(/\r?\n/)[0] || "";
+  const m = line.match(/^(\d+)\s+(\d+)$/);
+  if (!m) return { hasUpstream: false };
+  return {
+    hasUpstream: true,
+    behind: Number(m[1]),
+    ahead: Number(m[2]),
+  };
+}
+
+/**
+ * Ahead/behind vs upstream for a checkout. Never throws.
+ *
+ * @param {string} cwd
+ * @returns {{ hasUpstream: false } | { hasUpstream: true, ahead: number, behind: number }}
+ */
+function gitSyncInfo(cwd) {
+  if (!cwd) return { hasUpstream: false };
+  const resolved = path.resolve(cwd);
+  try {
+    const inside = gitOut(resolved, ["rev-parse", "--is-inside-work-tree"]);
+    if (inside !== "true") return { hasUpstream: false };
+  } catch {
+    return { hasUpstream: false };
+  }
+  try {
+    const out = gitOut(resolved, [
+      "rev-list",
+      "--left-right",
+      "--count",
+      "@{upstream}...HEAD",
+    ]);
+    return parseRevListCount(out);
+  } catch {
+    return { hasUpstream: false };
+  }
+}
+
+/**
+ * `git fetch` in a checkout. Rejects with a short message on failure.
+ *
+ * @param {string} cwd
+ */
+function gitFetch(cwd) {
+  const resolved = path.resolve(cwd);
+  try {
+    gitOut(resolved, ["fetch"]);
+  } catch (err) {
+    const msg = err && err.message ? String(err.message) : String(err);
+    throw new Error(`git fetch failed: ${msg.split("\n")[0]}`);
+  }
+}
+
+/**
  * List all projects.
  * @param {import('./store').Store} store
  */
@@ -1133,6 +1194,9 @@ module.exports = {
   searchThreads,
   getThreadDetail,
   gitStatus,
+  parseRevListCount,
+  gitSyncInfo,
+  gitFetch,
   listProjects,
   listProvidersForApi,
   listTemplates,

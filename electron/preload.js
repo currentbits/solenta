@@ -2,7 +2,11 @@
 
 const { contextBridge, ipcRenderer } = require("electron");
 
-const PUSH_CHANNELS = new Set(["threads:changed", "thread:updated"]);
+const PUSH_CHANNELS = new Set([
+  "threads:changed",
+  "thread:updated",
+  "thread:select",
+]);
 
 /**
  * @param {string} channel
@@ -98,12 +102,18 @@ const coder = {
     listPrs: (projectPath) => invoke("git:listPrs", projectPath),
     listCheckpoints: (input) => invoke("git:listCheckpoints", input),
     restoreCheckpoint: (input) => invoke("git:restoreCheckpoint", input),
+    syncInfo: (input) => invoke("git:syncInfo", input),
+    fetch: (input) => invoke("git:fetch", input),
   },
   files: {
     list: (input) => invoke("files:list", input),
   },
   servers: {
     list: (input) => invoke("servers:list", input),
+  },
+  shell: {
+    reveal: (input) => invoke("shell:reveal", input),
+    openPath: (input) => invoke("shell:openPath", input),
   },
   on,
 };

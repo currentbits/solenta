@@ -7,7 +7,7 @@
  *   "threads:fork", ...). The server routes them to the same services the
  *   IPC handlers use — one behavior, two transports.
  * - Push channels are exactly preload's PUSH_CHANNELS ("threads:changed",
- *   "thread:updated"); the server fans every broadcast out to every
+ *   "thread:updated", "thread:select"); the server fans every broadcast out to every
  *   authenticated socket. No subscription protocol: pushes are cheap and
  *   the renderer already tolerates redundant ones.
  * - Auth: the FIRST client message must be {kind:"auth", token}. The token
@@ -37,7 +37,11 @@ export type WireServerMessage =
   | { kind: "push"; channel: string; payload: unknown };
 
 /** Push channels mirrored from preload.js — keep the two in lockstep. */
-export const WIRE_PUSH_CHANNELS = ["threads:changed", "thread:updated"] as const;
+export const WIRE_PUSH_CHANNELS = [
+  "threads:changed",
+  "thread:updated",
+  "thread:select",
+] as const;
 
 /**
  * True when the renderer is served over HTTP (no Electron preload bridge).

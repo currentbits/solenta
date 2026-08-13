@@ -58,6 +58,10 @@ export default function App() {
     listCheckpoints,
     restoreCheckpoint,
     listLocalServers,
+    revealInFinder,
+    openInEditor,
+    gitSyncInfo,
+    gitFetch,
     appStatus,
     settings,
     saveSettings,
@@ -342,6 +346,10 @@ export default function App() {
         listCheckpoints={listCheckpoints}
         restoreCheckpoint={restoreCheckpoint}
         listLocalServers={listLocalServers}
+        revealInFinder={revealInFinder}
+        openInEditor={openInEditor}
+        gitSyncInfo={gitSyncInfo}
+        gitFetch={gitFetch}
         searchMemory={searchMemory}
         recentMemory={recentMemory}
         getMemory={getMemory}

@@ -5,6 +5,7 @@ import type {
   CheckpointInfo,
   CoderApi,
   DiffResult,
+  GitSyncInfo,
   LocalServerInfo,
   MemoryEntryInfo,
   PermissionMode,
@@ -156,6 +157,14 @@ export interface UseCoderResult {
   restoreCheckpoint: (threadId: string, sha: string) => Promise<void>;
   /** Local TCP listeners whose cwd is the thread worktree or project. */
   listLocalServers: (threadId: string) => Promise<LocalServerInfo[]>;
+  /** Reveal the selected thread root in Finder. */
+  revealInFinder: () => Promise<void>;
+  /** Open the selected thread root in the default editor. */
+  openInEditor: () => Promise<void>;
+  /** Ahead/behind vs upstream for a thread root. */
+  gitSyncInfo: (threadId: string) => Promise<GitSyncInfo>;
+  /** Fetch remotes for a thread root. */
+  gitFetch: (threadId: string) => Promise<void>;
   /** Live spend + memory server status. */
   appStatus: AppStatus | null;
   /** Persisted app settings (daily budget). */
@@ -237,10 +246,17 @@ export function useCoder(): UseCoderResult {
     let cancelled = false;
     let unsubChanged: (() => void) | undefined;
     let unsubUpdated: (() => void) | undefined;
+    let unsubSelect: (() => void) | undefined;
 
     unsubChanged = api.on("threads:changed", (next) => {
       threadsListGen.current += 1;
       applyThreads(next);
+    });
+
+    unsubSelect = api.on("thread:select", (id) => {
+      if (typeof id === "string" && id) {
+        setSelectedThreadId(id);
+      }
     });
 
     unsubUpdated = api.on("thread:updated", (next) => {
@@ -310,6 +326,7 @@ export function useCoder(): UseCoderResult {
       cancelled = true;
       unsubChanged?.();
       unsubUpdated?.();
+      unsubSelect?.();
       window.clearInterval(statusHandle);
     };
   }, [api, applyThreads, refreshStatus]);
@@ -942,6 +959,46 @@ export function useCoder(): UseCoderResult {
     [api],
   );
 
+  const threadRootPath = useCallback((threadId: string): string | null => {
+    const t = threadsRef.current.find((x) => x.id === threadId);
+    if (!t) return null;
+    if (t.worktreePath) return t.worktreePath;
+    const p = projectById.get(t.projectId);
+    return p?.path ?? null;
+  }, [projectById]);
+
+  const revealInFinder = useCallback(async () => {
+    if (!selectedThreadId) return;
+    const root = threadRootPath(selectedThreadId);
+    if (!root) return;
+    await api.shell.reveal({ threadId: selectedThreadId, path: root });
+  }, [api, selectedThreadId, threadRootPath]);
+
+  const openInEditor = useCallback(async () => {
+    if (!selectedThreadId) return;
+    const root = threadRootPath(selectedThreadId);
+    if (!root) return;
+    await api.shell.openPath({ threadId: selectedThreadId, path: root });
+  }, [api, selectedThreadId, threadRootPath]);
+
+  const gitSyncInfo = useCallback(
+    async (threadId: string) => {
+      try {
+        return await api.git.syncInfo({ threadId });
+      } catch {
+        return { hasUpstream: false } as GitSyncInfo;
+      }
+    },
+    [api],
+  );
+
+  const gitFetch = useCallback(
+    async (threadId: string) => {
+      await api.git.fetch({ threadId });
+    },
+    [api],
+  );
+
   const saveSettings = useCallback(
     async (patch: Partial<AppSettings>) => {
       const next = await api.settings.set(patch);
@@ -1069,6 +1126,10 @@ export function useCoder(): UseCoderResult {
     listCheckpoints,
     restoreCheckpoint,
     listLocalServers,
+    revealInFinder,
+    openInEditor,
+    gitSyncInfo,
+    gitFetch,
     appStatus,
     settings,
     saveSettings,

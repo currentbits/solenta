@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
   AgentStatus,
   CheckpointInfo,
+  GitSyncInfo,
   LocalServerInfo,
   MemoryEntryInfo,
   PhaseView,
@@ -50,6 +51,10 @@ interface AgentsPanelProps {
   listCheckpoints: (threadId: string) => Promise<CheckpointInfo[]>;
   restoreCheckpoint: (threadId: string, sha: string) => Promise<void>;
   listLocalServers: (threadId: string) => Promise<LocalServerInfo[]>;
+  revealInFinder: () => Promise<void>;
+  openInEditor: () => Promise<void>;
+  gitSyncInfo: (threadId: string) => Promise<GitSyncInfo>;
+  gitFetch: (threadId: string) => Promise<void>;
   searchMemory: (input: {
     query: string;
     project?: string;
@@ -375,6 +380,57 @@ function ChangesCard({
       </div>
     </section>
   );
+}
+
+export function EditorCard({
+  hasThread,
+  onReveal,
+  onOpen,
+}: {
+  hasThread: boolean;
+  onReveal: () => void;
+  onOpen: () => void;
+}) {
+  return (
+    <section className={styles.gitCard} data-editor="">
+      <div className={styles.gitCardLabel}>Editor</div>
+      {!hasThread && (
+        <p className={styles.gitHint} data-editor-hint="">
+          Select a thread to open its folder.
+        </p>
+      )}
+      <div className={styles.gitActions}>
+        <button
+          type="button"
+          className={styles.gitBtn}
+          data-editor-reveal=""
+          onClick={onReveal}
+          disabled={!hasThread}
+        >
+          Open in Finder
+        </button>
+        <button
+          type="button"
+          className={styles.gitBtn}
+          data-editor-open=""
+          onClick={onOpen}
+          disabled={!hasThread}
+        >
+          Open in Editor
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function syncLabel(info: GitSyncInfo): string | null {
+  if (!info.hasUpstream) return null;
+  const { ahead, behind } = info;
+  if (ahead === 0 && behind === 0) return "Synced";
+  const parts: string[] = [];
+  if (ahead > 0) parts.push(`${ahead} ahead`);
+  if (behind > 0) parts.push(`${behind} behind`);
+  return parts.join(" · ") || "Synced";
 }
 
 const SERVER_POLL_MS = 5_000;
@@ -821,6 +877,10 @@ export function GitTab({
   listCheckpoints,
   restoreCheckpoint,
   listLocalServers,
+  revealInFinder,
+  openInEditor,
+  gitSyncInfo,
+  gitFetch,
 }: {
   thread: ThreadInfo | null;
   project: ProjectInfo | null;
@@ -838,6 +898,10 @@ export function GitTab({
   listCheckpoints: (threadId: string) => Promise<CheckpointInfo[]>;
   restoreCheckpoint: (threadId: string, sha: string) => Promise<void>;
   listLocalServers: (threadId: string) => Promise<LocalServerInfo[]>;
+  revealInFinder?: () => Promise<void>;
+  openInEditor?: () => Promise<void>;
+  gitSyncInfo?: (threadId: string) => Promise<GitSyncInfo>;
+  gitFetch?: (threadId: string) => Promise<void>;
 }) {
   const [gitAction, setGitAction] = useState<GitAction>(null);
   const [dirtyMessage, setDirtyMessage] = useState<string | null>(null);
@@ -856,6 +920,8 @@ export function GitTab({
   );
   const [restorePending, setRestorePending] = useState(false);
   const [now, setNow] = useState(() => Date.now());
+  const [sync, setSync] = useState<GitSyncInfo | null>(null);
+  const [syncing, setSyncing] = useState(false);
 
   const isWorking = thread?.status === "working";
   const busy = isWorking || gitAction != null;
@@ -875,6 +941,8 @@ export function GitTab({
     setCheckpointError(null);
     setRestoreConfirm(null);
     setRestorePending(false);
+    setSync(null);
+    setSyncing(false);
     // Only thread id: a title rename must not wipe an in-progress form.
   }, [thread?.id]);
 
@@ -910,6 +978,36 @@ export function GitTab({
   useEffect(() => {
     void refreshCheckpoints();
   }, [refreshCheckpoints, thread?.status]);
+
+  const refreshSync = useCallback(async () => {
+    if (!thread?.id || !gitSyncInfo) {
+      setSync(null);
+      return;
+    }
+    try {
+      const info = await gitSyncInfo(thread.id);
+      setSync(info);
+    } catch {
+      setSync({ hasUpstream: false });
+    }
+  }, [thread?.id, gitSyncInfo]);
+
+  useEffect(() => {
+    void refreshSync();
+  }, [refreshSync, thread?.status]);
+
+  const handleSync = async () => {
+    if (!thread || !gitFetch || syncing) return;
+    setSyncing(true);
+    try {
+      await gitFetch(thread.id);
+      await refreshSync();
+    } catch {
+      // Keep last badge; fetch errors stay quiet in the footer.
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   // Refresh live PR status, but ONLY when this thread already has a PR.
   //
@@ -994,6 +1092,8 @@ export function GitTab({
     return provider;
   })();
 
+  const syncLabelText = sync ? syncLabel(sync) : null;
+
   const handleRestoreConfirm = async () => {
     if (!thread || !restoreConfirm || restorePending || isWorking) return;
     const cp = restoreConfirm;
@@ -1075,6 +1175,17 @@ export function GitTab({
           threadId={thread?.id ?? null}
           listLocalServers={listLocalServers}
         />
+        <EditorCard
+          hasThread={Boolean(thread)}
+          onReveal={() => {
+            if (!thread) return;
+            void revealInFinder?.();
+          }}
+          onOpen={() => {
+            if (!thread) return;
+            void openInEditor?.();
+          }}
+        />
         <CheckpointsCard
           thread={thread}
           checkpoints={checkpoints}
@@ -1091,8 +1202,27 @@ export function GitTab({
           now={now}
         />
       </div>
-      <footer className={styles.gitStatus} title={statusLine}>
-        {statusLine}
+      <footer className={styles.gitStatus} data-git-status="">
+        <span className={styles.gitStatusLine} title={statusLine}>
+          {statusLine}
+        </span>
+        {syncLabelText && (
+          <span className={styles.syncBadge} data-sync-badge="">
+            {syncLabelText}
+          </span>
+        )}
+        {thread && gitFetch && (
+          <button
+            type="button"
+            className={styles.syncBtn}
+            data-sync-btn=""
+            onClick={() => void handleSync()}
+            disabled={syncing}
+            title="Fetch from remote"
+          >
+            {syncing ? "Syncing…" : "Sync"}
+          </button>
+        )}
       </footer>
       {restoreConfirm && thread && (
         <div
@@ -1361,6 +1491,10 @@ export function AgentsPanel({
   listCheckpoints,
   restoreCheckpoint,
   listLocalServers,
+  revealInFinder,
+  openInEditor,
+  gitSyncInfo,
+  gitFetch,
   searchMemory,
   recentMemory,
   getMemory,
@@ -1420,6 +1554,10 @@ export function AgentsPanel({
           listCheckpoints={listCheckpoints}
           restoreCheckpoint={restoreCheckpoint}
           listLocalServers={listLocalServers}
+          revealInFinder={revealInFinder}
+          openInEditor={openInEditor}
+          gitSyncInfo={gitSyncInfo}
+          gitFetch={gitFetch}
         />
       ) : (
         <MemoryTab

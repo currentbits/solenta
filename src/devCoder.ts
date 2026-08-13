@@ -2844,6 +2844,12 @@ function buildDevCoder(): CoderApi {
           ...c,
         }));
       },
+      async syncInfo(_input: { threadId: string }) {
+        return { hasUpstream: false as const };
+      },
+      async fetch(_input: { threadId: string }) {
+        // Dev mock: no remotes.
+      },
       async restoreCheckpoint(input: { threadId: string; sha: string }) {
         // Guard order matches electron/worktrees.js restoreCheckpoint.
         const detail = details.get(input.threadId);
@@ -3037,6 +3043,14 @@ function buildDevCoder(): CoderApi {
         return { files: all.filter((f) => !q || f.toLowerCase().includes(q)) };
       },
     },
+    shell: {
+      async reveal(_input: { threadId: string; path: string }) {
+        // Dev mock: no Finder.
+      },
+      async openPath(_input: { threadId: string; path: string }) {
+        // Dev mock: no editor.
+      },
+    },
     on(channel, cb) {
       if (channel === "threads:changed") {
         const fn = cb as (threads: ThreadInfo[]) => void;
@@ -3044,6 +3058,9 @@ function buildDevCoder(): CoderApi {
         return () => {
           listeners["threads:changed"].delete(fn);
         };
+      }
+      if (channel === "thread:select") {
+        return () => {};
       }
       const fn = cb as (detail: ThreadDetail) => void;
       listeners["thread:updated"].add(fn);

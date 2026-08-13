@@ -5,6 +5,7 @@ import type {
   CoderApi,
   DiffResult,
   GitStatus,
+  GitSyncInfo,
   ListPrsResult,
   LocalServerInfo,
   MemoryEntryInfo,
@@ -287,12 +288,18 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
       listCheckpoints: (input) =>
         call<CheckpointInfo[]>("git:listCheckpoints", input),
       restoreCheckpoint: (input) => call<void>("git:restoreCheckpoint", input),
+      syncInfo: (input) => call<GitSyncInfo>("git:syncInfo", input),
+      fetch: (input) => call<void>("git:fetch", input),
     },
     files: {
       list: (input) => call<{ files: string[] }>("files:list", input),
     },
     servers: {
       list: (input) => call<LocalServerInfo[]>("servers:list", input),
+    },
+    shell: {
+      reveal: (input) => call<void>("shell:reveal", input),
+      openPath: (input) => call<void>("shell:openPath", input),
     },
     on: on as CoderApi["on"],
   };

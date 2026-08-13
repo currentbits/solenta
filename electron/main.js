@@ -1,12 +1,13 @@
 "use strict";
 
-const { app, BrowserWindow, ipcMain, dialog, shell } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, shell, Notification } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
 const { pathToFileURL } = require("node:url");
 const { Store } = require("./store.js");
 const { createRunner } = require("./runner.js");
 const { registerIpc } = require("./ipc.js");
+const { shouldNotify } = require("./notify.js");
 const { windowOpenAction, navigateAction } = require("./links.js");
 const {
   createMemorySupervisor,
@@ -109,6 +110,43 @@ function broadcast(channel, payload) {
   }
 }
 
+function isAnyWindowFocused() {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed() && win.isFocused()) return true;
+  }
+  return false;
+}
+
+function focusMainWindow() {
+  const win = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed());
+  if (!win) return null;
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+  return win;
+}
+
+/**
+ * Desktop notification when a run settles while the window is in the
+ * background. Click focuses the window and selects that thread.
+ * @param {{ id: string, title?: string, status: string }} thread
+ */
+function notifyThreadComplete(thread) {
+  if (typeof Notification !== "function") return;
+  if (Notification.isSupported && !Notification.isSupported()) return;
+  const n = new Notification({
+    title: thread.title || "Thread",
+    body: thread.status === "failed" ? "failed" : "done",
+  });
+  n.on("click", () => {
+    const win = focusMainWindow();
+    if (win && win.webContents && !win.webContents.isDestroyed()) {
+      win.webContents.send("thread:select", thread.id);
+    }
+  });
+  n.show();
+}
+
 app.whenReady().then(async () => {
   // Which build is this? A stale packaged bundle missing recent fixes looks
   // exactly like a broken feature, so say it out loud once at boot.
@@ -160,10 +198,25 @@ app.whenReady().then(async () => {
   const storePath = path.join(userData, "coder-store.json");
   const store = new Store(storePath);
 
+  const lastStatus = new Map();
+  for (const t of store.getThreads()) {
+    lastStatus.set(t.id, t.status);
+  }
+
   runner = createRunner({
     store,
     core,
-    pushFn: (channel, payload) => broadcast(channel, payload),
+    pushFn: (channel, payload) => {
+      if (channel === "thread:updated" && payload && payload.thread) {
+        const prev = lastStatus.get(payload.thread.id);
+        const next = payload.thread.status;
+        if (shouldNotify(prev, next, isAnyWindowFocused())) {
+          notifyThreadComplete(payload.thread);
+        }
+        lastStatus.set(payload.thread.id, next);
+      }
+      broadcast(channel, payload);
+    },
     tickMs: 700,
     userDataPath: userData,
   });

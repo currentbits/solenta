@@ -3,7 +3,7 @@
 // Invoke channel names mirror the method paths: "projects:list", "projects:add",
 // "projects:addViaDialog", "threads:list", "threads:create", "threads:get",
 // "runs:start", "runs:stop", "git:status".
-// Push channels: "threads:changed", "thread:updated".
+// Push channels: "threads:changed", "thread:updated", "thread:select".
 
 export interface ProjectInfo {
   id: string;
@@ -221,6 +221,13 @@ export interface GitStatus {
   branch: string;
   dirty: boolean;
 }
+
+/**
+ * Ahead/behind vs @{upstream}. No repo or no upstream is in-band, not thrown.
+ */
+export type GitSyncInfo =
+  | { hasUpstream: false }
+  | { hasUpstream: true; ahead: number; behind: number };
 
 /** A GitHub pull request opened from a thread's branch. */
 /** One auto-committed turn checkpoint in a thread's worktree. */
@@ -665,6 +672,13 @@ export interface CoderApi {
      */
     listCheckpoints(input: { threadId: string }): Promise<CheckpointInfo[]>;
     restoreCheckpoint(input: { threadId: string; sha: string }): Promise<void>;
+    /**
+     * Ahead/behind vs the thread root's upstream. Never rejects: not a repo
+     * or no upstream returns `{ hasUpstream: false }`.
+     */
+    syncInfo(input: { threadId: string }): Promise<GitSyncInfo>;
+    /** `git fetch` in the thread root. */
+    fetch(input: { threadId: string }): Promise<void>;
   };
   files: {
     /**
@@ -681,9 +695,20 @@ export interface CoderApi {
      */
     list(input: { threadId: string }): Promise<LocalServerInfo[]>;
   };
+  /**
+   * Reveal a path in Finder (`shell.showItemInFolder`) or open it with the
+   * default app (`shell.openPath`). `path` must exist and be the thread
+   * worktree / project root or inside them.
+   */
+  shell: {
+    reveal(input: { threadId: string; path: string }): Promise<void>;
+    openPath(input: { threadId: string; path: string }): Promise<void>;
+  };
   /** Returns an unsubscribe function. */
   on(channel: "threads:changed", cb: (threads: ThreadInfo[]) => void): () => void;
   on(channel: "thread:updated", cb: (detail: ThreadDetail) => void): () => void;
+  /** Desktop notification click: select this thread. */
+  on(channel: "thread:select", cb: (threadId: string) => void): () => void;
 }
 
 declare global {

@@ -1,6 +1,8 @@
 "use strict";
 
-const { BrowserWindow } = require("electron");
+const { BrowserWindow, shell } = require("electron");
+const fs = require("node:fs");
+const path = require("node:path");
 const services = require("./services.js");
 const {
   setupWorktree,
@@ -51,6 +53,52 @@ function makeCtx(deps) {
     userDataPath,
     memory: createMemoryProxy({ userDataPath }),
   };
+}
+
+/**
+ * Thread cwd: worktree when bound, else the project checkout.
+ * @param {import('./store').Store} store
+ * @param {string} threadId
+ */
+function resolveThreadRoot(store, threadId) {
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  const project = store.getProject(thread.projectId);
+  if (!project) {
+    throw new Error(`Unknown project for thread: ${threadId}`);
+  }
+  const root = thread.worktreePath || project.path;
+  if (!root) {
+    throw new Error("Thread has no worktree or project path");
+  }
+  return { thread, project, root: path.resolve(root) };
+}
+
+/**
+ * Validate an absolute path exists and is the thread root or inside it.
+ * @param {import('./store').Store} store
+ * @param {{ threadId?: string, path?: string }} input
+ * @returns {string}
+ */
+function resolveAllowedShellPath(store, input) {
+  if (!input || typeof input !== "object") {
+    throw new Error("threadId is required");
+  }
+  const { root } = resolveThreadRoot(store, input.threadId);
+  const raw = input.path != null ? String(input.path) : root;
+  if (!raw) throw new Error("Path is required");
+  const resolved = path.resolve(raw);
+  if (!fs.existsSync(resolved)) {
+    throw new Error("Path does not exist");
+  }
+  if (resolved === root) return resolved;
+  const rel = path.relative(root, resolved);
+  if (rel.startsWith("..") || path.isAbsolute(rel)) {
+    throw new Error("Path is outside the thread workspace");
+  }
+  return resolved;
 }
 
 /**
@@ -304,6 +352,36 @@ const IPC_HANDLERS = {
       sha: input.sha,
       isRunning: (id) => ctx.runner.isRunning(id),
     });
+  },
+  "git:syncInfo": async (ctx, input) => {
+    try {
+      const threadId = input && input.threadId;
+      if (!threadId) return { hasUpstream: false };
+      const thread = ctx.store.getThread(threadId);
+      if (!thread) return { hasUpstream: false };
+      const project = ctx.store.getProject(thread.projectId);
+      if (!project) return { hasUpstream: false };
+      const root = thread.worktreePath || project.path;
+      if (!root) return { hasUpstream: false };
+      return services.gitSyncInfo(root);
+    } catch {
+      return { hasUpstream: false };
+    }
+  },
+  "git:fetch": async (ctx, input) => {
+    const threadId = input && input.threadId;
+    if (!threadId) throw new Error("threadId is required");
+    const { root } = resolveThreadRoot(ctx.store, threadId);
+    services.gitFetch(root);
+  },
+  "shell:reveal": async (ctx, input) => {
+    const target = resolveAllowedShellPath(ctx.store, input);
+    shell.showItemInFolder(target);
+  },
+  "shell:openPath": async (ctx, input) => {
+    const target = resolveAllowedShellPath(ctx.store, input);
+    const err = await shell.openPath(target);
+    if (err) throw new Error(err);
   },
   "servers:list": async (ctx, input) => {
     try {
