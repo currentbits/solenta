@@ -8,6 +8,7 @@ import type {
   DevServerState,
   DiffResult,
   GitSyncInfo,
+  FetchIssueResult,
   LocalServerInfo,
   MemoryEntryInfo,
   PermissionMode,
@@ -79,7 +80,12 @@ export interface UseCoderResult {
     threadId: string,
     opts?: { provider?: string; model?: string | null },
   ) => Promise<ThreadInfo | null>;
-  startRun: (prompt: string) => Promise<void>;
+  startRun: (prompt: string, threadId?: string) => Promise<void>;
+  /** Fetch a GitHub issue for a project checkout (`gh issue view`). */
+  fetchIssue: (
+    projectPath: string,
+    ref: string,
+  ) => Promise<FetchIssueResult>;
   /**
    * Multi-phase Build workflow for the selected thread. Passes templateId to
    * runs.startWorkflow (backend validates phase providers).
@@ -443,6 +449,7 @@ export function useCoder(): UseCoderResult {
         ? threadsRef.current.map((x) => (x.id === t.id ? t : x))
         : [t, ...threadsRef.current];
       applyThreads(next);
+      selectedRef.current = t.id;
       setSelectedThreadId(t.id);
       return t;
     },
@@ -484,9 +491,9 @@ export function useCoder(): UseCoderResult {
   );
 
   const startRun = useCallback(
-    async (prompt: string) => {
-      if (!selectedThreadId) return;
-      const threadId = selectedThreadId;
+    async (prompt: string, threadIdArg?: string) => {
+      const threadId = threadIdArg || selectedThreadId;
+      if (!threadId) return;
       try {
         await api.runs.start({ threadId, prompt });
         const d = await api.threads.get(threadId);
@@ -971,6 +978,13 @@ export function useCoder(): UseCoderResult {
     [api],
   );
 
+  const fetchIssue = useCallback(
+    async (projectPath: string, ref: string) => {
+      return api.issues.fetch({ projectPath, ref });
+    },
+    [api],
+  );
+
   const listCheckpoints = useCallback(
     async (threadId: string) => {
       return api.git.listCheckpoints({ threadId });
@@ -1205,6 +1219,7 @@ export function useCoder(): UseCoderResult {
     prChecks,
     prMerge,
     listPrs,
+    fetchIssue,
     listCheckpoints,
     restoreCheckpoint,
     runStats,

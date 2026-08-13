@@ -26,6 +26,7 @@ const { suggestCommitMessage } = require("./commitmsg.js");
 const { listLocalServers } = require("./servers.js");
 const devservers = require("./devservers.js");
 const { createMemoryProxy } = require("./memory-proxy.js");
+const { fetchIssue } = require("./issues.js");
 
 /**
  * Default window fan-out (desktop transport). main.js replaces this with a
@@ -355,6 +356,11 @@ const IPC_HANDLERS = {
   },
   "git:listPrs": async (_ctx, projectPath) => {
     return listPrs(projectPath);
+  },
+  "issues:fetch": async (_ctx, input) => {
+    const projectPath = input && input.projectPath;
+    const ref = input && input.ref;
+    return fetchIssue(projectPath, ref);
   },
   "git:listCheckpoints": async (ctx, input) => {
     return listCheckpoints({

@@ -327,6 +327,19 @@ export type ListPrsResult =
   | { ok: true; prs: PrListItem[] }
   | { ok: false; reason: string };
 
+/** A GitHub issue fetched via `gh issue view`. */
+export interface IssueInfo {
+  number: number;
+  title: string;
+  body: string;
+  url: string;
+}
+
+/** Per-project issue fetch. Failures stay in-band so the UI can show them. */
+export type FetchIssueResult =
+  | { ok: true; issue: IssueInfo }
+  | { ok: false; reason: string };
+
 /**
  * How hard a model should think. Persisted per thread, sent to the CLI.
  *
@@ -732,6 +745,14 @@ export interface CoderApi {
      * has no worktree or checkpoints. Never rejects.
      */
     runStats(input: { threadId: string }): Promise<RunStatInfo[]>;
+  };
+  issues: {
+    /**
+     * Fetch a GitHub issue for a project checkout via `gh issue view`.
+     * Never rejects for missing gh / non-GitHub remotes / auth / missing
+     * issue: those come back as `{ ok: false, reason }`.
+     */
+    fetch(input: { projectPath: string; ref: string }): Promise<FetchIssueResult>;
   };
   files: {
     /**

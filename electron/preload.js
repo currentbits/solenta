@@ -108,6 +108,9 @@ const coder = {
     fetch: (input) => invoke("git:fetch", input),
     runStats: (input) => invoke("git:runStats", input),
   },
+  issues: {
+    fetch: (input) => invoke("issues:fetch", input),
+  },
   files: {
     list: (input) => invoke("files:list", input),
   },

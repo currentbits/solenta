@@ -147,6 +147,15 @@ interface SidebarProps {
   activeView?: "thread" | "kanban" | "prs";
   onOpenKanban?: () => void;
   onOpenPrs?: () => void;
+  /**
+   * Paste a GitHub issue into this project. Omitted by existing tests so
+   * the icon button stays hidden.
+   */
+  onCreateThreadFromIssue?: (input: {
+    projectId: string;
+    projectPath: string;
+    ref: string;
+  }) => Promise<{ ok: true } | { ok: false; reason: string }>;
 }
 
 export type SelectOpts = { meta?: boolean; shift?: boolean };
@@ -786,6 +795,7 @@ export function Sidebar({
   activeView = "thread",
   onOpenKanban,
   onOpenPrs,
+  onCreateThreadFromIssue,
 }: SidebarProps) {
   const [query, setQuery] = useState("");
   const [now, setNow] = useState(() => Date.now());
@@ -795,6 +805,18 @@ export function Sidebar({
   const [forkMenuFor, setForkMenuFor] = useState<string | null>(null);
   useEscapeClose(snoozeMenuFor != null, () => setSnoozeMenuFor(null));
   useEscapeClose(forkMenuFor != null, () => setForkMenuFor(null));
+  /** Project id whose "from GitHub issue" form is open. */
+  const [issueFormFor, setIssueFormFor] = useState<string | null>(null);
+  const [issueRef, setIssueRef] = useState("");
+  const [issueError, setIssueError] = useState<string | null>(null);
+  const [issuePending, setIssuePending] = useState(false);
+  const closeIssueForm = useCallback(() => {
+    if (issuePending) return;
+    setIssueFormFor(null);
+    setIssueRef("");
+    setIssueError(null);
+  }, [issuePending]);
+  useEscapeClose(issueFormFor != null && !issuePending, closeIssueForm);
   /**
    * Project pending the destructive remove confirm. Confirm is a dialog, not
    * an archive-style undo toast: history deletion is irreversible.
@@ -1231,6 +1253,133 @@ export function Sidebar({
     return i + 1;
   };
 
+  const openIssueForm = (projectId: string) => {
+    setIssueFormFor(projectId);
+    setIssueRef("");
+    setIssueError(null);
+  };
+
+  const submitIssueForm = (project: ProjectInfo) => {
+    if (!onCreateThreadFromIssue || issuePending) return;
+    const ref = issueRef.trim();
+    if (!ref) return;
+    setIssuePending(true);
+    setIssueError(null);
+    void onCreateThreadFromIssue({
+      projectId: project.id,
+      projectPath: project.path,
+      ref,
+    })
+      .then((result) => {
+        if (result.ok) {
+          setIssueFormFor(null);
+          setIssueRef("");
+          setIssueError(null);
+          return;
+        }
+        setIssueError(result.reason);
+      })
+      .catch((err: unknown) => {
+        setIssueError(err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => {
+        setIssuePending(false);
+      });
+  };
+
+  const renderGroupCreateActions = (project: ProjectInfo) => {
+    const open = issueFormFor === project.id;
+    return (
+      <div className={styles.groupThreadActions}>
+        <button
+          type="button"
+          className={styles.groupNewThread}
+          onClick={() => onCreateThread(project.id)}
+        >
+          New thread
+        </button>
+        {onCreateThreadFromIssue && (
+          <button
+            type="button"
+            className={styles.groupIssueBtn}
+            title="New thread from GitHub issue"
+            aria-label="New thread from GitHub issue"
+            data-issue-thread-btn={project.id}
+            onClick={() => {
+              if (open) closeIssueForm();
+              else openIssueForm(project.id);
+            }}
+          >
+            #
+          </button>
+        )}
+      </div>
+    );
+  };
+
+  const renderGroupIssueForm = (project: ProjectInfo) => {
+    if (issueFormFor !== project.id || !onCreateThreadFromIssue) return null;
+    return (
+      <form
+        className={styles.groupIssueForm}
+        data-issue-form={project.id}
+        onSubmit={(e) => {
+          e.preventDefault();
+          submitIssueForm(project);
+        }}
+      >
+        <input
+          className={styles.groupIssueInput}
+          type="text"
+          value={issueRef}
+          onChange={(e) => setIssueRef(e.target.value)}
+          placeholder="https://github.com/owner/repo/issues/123"
+          aria-label="GitHub issue URL or reference"
+          data-issue-input={project.id}
+          disabled={issuePending}
+          autoComplete="off"
+          spellCheck={false}
+        />
+        {issueError && (
+          <p
+            className={styles.groupIssueError}
+            role="alert"
+            data-issue-error={project.id}
+          >
+            {issueError}
+          </p>
+        )}
+        <div className={styles.groupIssueActions}>
+          <button
+            type="submit"
+            className={styles.groupIssueCreate}
+            data-issue-create={project.id}
+            disabled={issuePending || issueRef.trim() === ""}
+            aria-busy={issuePending || undefined}
+          >
+            {issuePending ? (
+              <>
+                <span className={styles.spinner} aria-hidden />
+                Creating…
+              </>
+            ) : (
+              "Create"
+            )}
+          </button>
+          <button
+            type="button"
+            className={styles.groupIssueCancel}
+            data-issue-cancel={project.id}
+            disabled={issuePending}
+            onClick={closeIssueForm}
+          >
+            Cancel
+          </button>
+        </div>
+      </form>
+    );
+  };
+
   return (
     <aside className={styles.sidebar}>
       {!isWebMode() && <div className={styles.dragRegion} />}
@@ -1441,20 +1590,15 @@ export function Sidebar({
                 </div>
 
                 {collapsed ? null : !hasAnyThreads ? (
-                  <div className={styles.emptyGroup}>
-                    <span className={styles.emptyThreads}>
-                      {settledInProject > 0 ? "All settled" : "No threads yet"}
-                    </span>
-                    {project && !searching && (
-                      <button
-                        type="button"
-                        className={styles.groupNewThread}
-                        onClick={() => onCreateThread(project.id)}
-                      >
-                        New thread
-                      </button>
-                    )}
-                  </div>
+                  <>
+                    <div className={styles.emptyGroup}>
+                      <span className={styles.emptyThreads}>
+                        {settledInProject > 0 ? "All settled" : "No threads yet"}
+                      </span>
+                      {project && !searching && renderGroupCreateActions(project)}
+                    </div>
+                    {project && !searching && renderGroupIssueForm(project)}
+                  </>
                 ) : (
                   <>
                     {attentionThreads.map((thread) => (
@@ -1523,13 +1667,10 @@ export function Sidebar({
                       </button>
                     )}
                     {project && !searching && (
-                      <button
-                        type="button"
-                        className={styles.groupNewThread}
-                        onClick={() => onCreateThread(project.id)}
-                      >
-                        New thread
-                      </button>
+                      <>
+                        {renderGroupCreateActions(project)}
+                        {renderGroupIssueForm(project)}
+                      </>
                     )}
                   </>
                 )}

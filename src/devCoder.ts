@@ -16,6 +16,7 @@ import type {
   RunStatInfo,
   DiffResult,
   DevServerState,
+  FetchIssueResult,
   LocalServerInfo,
   MemoryEntryInfo,
   PermissionMode,
@@ -3095,6 +3096,32 @@ function buildDevCoder(): CoderApi {
         syncThreadRow(thread);
         emitDetail(detail);
         return { ...thread };
+      },
+    },
+    issues: {
+      async fetch(input: {
+        projectPath: string;
+        ref: string;
+      }): Promise<FetchIssueResult> {
+        const raw = String(input.ref || "").trim();
+        const url = raw.match(/\/issues\/(\d+)/);
+        const hashed = raw.match(/#(\d+)$/);
+        const bare = /^\d+$/.test(raw) ? raw : "";
+        const num = Number((url && url[1]) || (hashed && hashed[1]) || bare);
+        if (!Number.isInteger(num) || num <= 0) {
+          return { ok: false, reason: "invalid issue reference" };
+        }
+        const project = projects.find((p) => p.path === input.projectPath);
+        const slug = project?.slug || "acme/demo";
+        return {
+          ok: true,
+          issue: {
+            number: num,
+            title: `Issue #${num}`,
+            body: `Dev stand-in for ${raw}`,
+            url: `https://github.com/${slug}/issues/${num}`,
+          },
+        };
       },
     },
     servers: {

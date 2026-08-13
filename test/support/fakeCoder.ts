@@ -21,6 +21,7 @@ import type {
   RunStatInfo,
   DevServerState,
   DiffResult,
+  FetchIssueResult,
   GitStatus,
   GitSyncInfo,
   ListPrsResult,
@@ -135,6 +136,8 @@ export interface FakeOptions {
   runStats?: Record<string, RunStatInfo[]>;
   /** Force a channel to reject, e.g. { "runs.start": new Error("boom") }. */
   fail?: Record<string, Error>;
+  /** Override issues.fetch result (default: a successful fixture). */
+  issueFetch?: FetchIssueResult;
 }
 
 export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
@@ -705,6 +708,23 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         }));
         return rec("git.runStats", [input], derived);
       },
+    },
+    issues: {
+      fetch: (input: unknown) =>
+        rec(
+          "issues.fetch",
+          [input],
+          opts.issueFetch ??
+            ({
+              ok: true,
+              issue: {
+                number: 12,
+                title: "Fix login",
+                body: "Repro steps",
+                url: "https://github.com/owner/repo/issues/12",
+              },
+            } as FetchIssueResult),
+        ),
     },
     servers: {
       list: (input: unknown) => rec("servers.list", [input], [] as LocalServerInfo[]),

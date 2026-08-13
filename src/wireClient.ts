@@ -7,6 +7,7 @@ import type {
   DiffResult,
   GitStatus,
   GitSyncInfo,
+  FetchIssueResult,
   ListPrsResult,
   DevServerState,
   LocalServerInfo,
@@ -296,6 +297,9 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
       syncInfo: (input) => call<GitSyncInfo>("git:syncInfo", input),
       fetch: (input) => call<void>("git:fetch", input),
       runStats: (input) => call<RunStatInfo[]>("git:runStats", input),
+    },
+    issues: {
+      fetch: (input) => call<FetchIssueResult>("issues:fetch", input),
     },
     files: {
       list: (input) => call<{ files: string[] }>("files:list", input),

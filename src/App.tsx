@@ -30,6 +30,7 @@ export default function App() {
     createThread,
     forkThread,
     startRun,
+    fetchIssue,
     startWorkflowRun,
     saveWorkflow,
     removeWorkflow,
@@ -168,6 +169,38 @@ export default function App() {
     (selectedProjectId ? projectById.get(selectedProjectId) : undefined) ||
     null;
 
+  const handleCreateThreadFromIssue = useCallback(
+    async (input: { projectId: string; projectPath: string; ref: string }) => {
+      const fetched = await fetchIssue(input.projectPath, input.ref);
+      if (!fetched.ok) return fetched;
+      const issue = fetched.issue;
+      let thread;
+      try {
+        thread = await createThread(issue.title, input.projectId);
+      } catch (err) {
+        return {
+          ok: false as const,
+          reason: err instanceof Error ? err.message : String(err),
+        };
+      }
+      if (!thread) {
+        return { ok: false as const, reason: "Could not create thread" };
+      }
+      const body = issue.body || "";
+      const prompt = `GitHub issue #${issue.number}: ${issue.title}\n${issue.url}\n\n${body}`;
+      try {
+        await startRun(prompt, thread.id);
+      } catch (err) {
+        return {
+          ok: false as const,
+          reason: err instanceof Error ? err.message : String(err),
+        };
+      }
+      return { ok: true as const };
+    },
+    [fetchIssue, createThread, startRun],
+  );
+
   const handleAddProject = useCallback(() => {
     if (isWebMode()) {
       setAddPathOpen(true);
@@ -245,6 +278,7 @@ export default function App() {
         onCreateThread={(projectId) => {
           void createThread("New Thread", projectId);
         }}
+        onCreateThreadFromIssue={handleCreateThreadFromIssue}
         onAddProject={handleAddProject}
         onRemoveProject={handleRemoveProject}
         projectError={error?.scope === "project" ? error.message : null}
