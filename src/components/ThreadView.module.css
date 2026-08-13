@@ -601,6 +601,11 @@
   max-width: 800px;
   margin-left: auto;
   margin-right: auto;
+  /* A flex column child with overflow:hidden (tool cards) gets an automatic
+     minimum size of 0, so a full timeline used to squash cards to ~8px
+     slivers once content exceeded the scrollport. Never shrink: the body
+     scrolls instead. */
+  flex-shrink: 0;
 }
 
 /* Extra separation when multiple per-run Work Log cards appear in sequence */
