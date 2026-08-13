@@ -24,6 +24,7 @@ const {
 } = require("./worktrees.js");
 const { suggestCommitMessage } = require("./commitmsg.js");
 const { listLocalServers } = require("./servers.js");
+const devservers = require("./devservers.js");
 const { createMemoryProxy } = require("./memory-proxy.js");
 
 /**
@@ -420,7 +421,58 @@ const IPC_HANDLERS = {
       return [];
     }
   },
+  "devserver:scripts": async (ctx, input) => {
+    const { root } = resolveDevServerRoot(ctx, input && input.threadId);
+    return devservers.detectScripts(root);
+  },
+  "devserver:start": async (ctx, input) => {
+    const threadId = input && input.threadId;
+    const script = input && input.script;
+    const { root } = resolveDevServerRoot(ctx, threadId);
+    const allowed = devservers.detectScripts(root);
+    if (!script || !allowed.includes(script)) {
+      throw new Error(script ? `Unknown script: ${script}` : "Unknown script");
+    }
+    return devservers.start(threadId, root, script);
+  },
+  "devserver:stop": async (ctx, input) => {
+    const threadId = input && input.threadId;
+    resolveDevServerRoot(ctx, threadId);
+    return devservers.stop(threadId);
+  },
+  "devserver:status": async (ctx, input) => {
+    const threadId = input && input.threadId;
+    resolveDevServerRoot(ctx, threadId);
+    return devservers.status(threadId);
+  },
 };
+
+/**
+ * Thread cwd for the dev-server runner: worktree when bound, else the
+ * project path. Same resolution as servers:list / git:diff. Throws a
+ * named Error so the renderer gets an error result instead of a crash.
+ *
+ * @param {object} ctx
+ * @param {unknown} threadId
+ */
+function resolveDevServerRoot(ctx, threadId) {
+  if (!threadId || typeof threadId !== "string") {
+    throw new Error("Unknown thread");
+  }
+  const thread = ctx.store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  const project = ctx.store.getProject(thread.projectId);
+  if (!project) {
+    throw new Error(`Unknown project for thread: ${threadId}`);
+  }
+  const root = thread.worktreePath || project.path;
+  if (!root) {
+    throw new Error(`Unknown project for thread: ${threadId}`);
+  }
+  return { thread, project, root };
+}
 
 /**
  * Bound channel → (...args) map for callers that do not want to pass ctx.

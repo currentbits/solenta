@@ -15,6 +15,7 @@ import type {
   CoderApi,
   RunStatInfo,
   DiffResult,
+  DevServerState,
   LocalServerInfo,
   MemoryEntryInfo,
   PermissionMode,
@@ -1418,6 +1419,8 @@ function buildDevCoder(): CoderApi {
   const prByThread = new Map<string, PrInfo>();
   /** Synthetic PR numbers for harness creates (avoid colliding with seeds). */
   let nextPrNumber = 900;
+  /** In-memory per-thread demo servers (Vite-only; Electron uses electron/devservers.js). */
+  const demoDevServers = new Map<string, DevServerState>();
 
   // Seed prByThread for threads that already carry prNumber/prUrl.
   for (const t of threads) {
@@ -3097,6 +3100,32 @@ function buildDevCoder(): CoderApi {
     servers: {
       async list(_input: { threadId: string }): Promise<LocalServerInfo[]> {
         return [];
+      },
+    },
+    devserver: {
+      async scripts(_input: { threadId: string }): Promise<string[]> {
+        return ["dev"];
+      },
+      async start(input: { threadId: string; script: string }): Promise<DevServerState> {
+        const existing = demoDevServers.get(input.threadId);
+        if (existing?.running) return { ...existing };
+        const state: DevServerState = {
+          running: true,
+          script: input.script,
+          url: "http://localhost:5173/",
+          startedAt: Date.now(),
+          lastLines: ["  Local: http://localhost:5173/"],
+        };
+        demoDevServers.set(input.threadId, state);
+        return { ...state };
+      },
+      async stop(input: { threadId: string }): Promise<DevServerState> {
+        demoDevServers.delete(input.threadId);
+        return { running: false };
+      },
+      async status(input: { threadId: string }): Promise<DevServerState> {
+        const state = demoDevServers.get(input.threadId);
+        return state ? { ...state } : { running: false };
       },
     },
     files: {

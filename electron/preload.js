@@ -118,6 +118,13 @@ const coder = {
     reveal: (input) => invoke("shell:reveal", input),
     openPath: (input) => invoke("shell:openPath", input),
   },
+  devserver: {
+    scripts: (input) => invoke("devserver:scripts", input),
+    start: (input) => invoke("devserver:start", input),
+    stop: (input) => invoke("devserver:stop", input),
+    status: (input) => invoke("devserver:status", input),
+  },
+  },
   on,
 };
 

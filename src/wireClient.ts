@@ -8,6 +8,7 @@ import type {
   GitStatus,
   GitSyncInfo,
   ListPrsResult,
+  DevServerState,
   LocalServerInfo,
   MemoryEntryInfo,
   PrChecksResult,
@@ -305,6 +306,12 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
     shell: {
       reveal: (input) => call<void>("shell:reveal", input),
       openPath: (input) => call<void>("shell:openPath", input),
+    },
+    devserver: {
+      scripts: (input) => call<string[]>("devserver:scripts", input),
+      start: (input) => call<DevServerState>("devserver:start", input),
+      stop: (input) => call<DevServerState>("devserver:stop", input),
+      status: (input) => call<DevServerState>("devserver:status", input),
     },
     on: on as CoderApi["on"],
   };

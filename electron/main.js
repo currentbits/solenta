@@ -14,6 +14,7 @@ const {
   getMemoryStatus,
 } = require("./memory-sup.js");
 const { createPrStateRefresher } = require("./worktrees.js");
+const { killAll: killAllDevServers } = require("./devservers.js");
 const { enrichProcessPath } = require("./pathEnv.js");
 const {
   parseServeWebArgs,
@@ -308,6 +309,11 @@ app.on("before-quit", () => {
     } catch {
       // ignore
     }
+  }
+  try {
+    killAllDevServers();
+  } catch {
+    // ignore
   }
 });
 

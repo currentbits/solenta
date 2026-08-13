@@ -258,6 +258,15 @@ export interface LocalServerInfo {
   url: string;
 }
 
+/** Per-thread `npm run` dev server started from the Environment tab. */
+export interface DevServerState {
+  running: boolean;
+  script?: string;
+  url?: string;
+  startedAt?: number;
+  lastLines?: string[];
+}
+
 export interface PrInfo {
   number: number;
   url: string;
@@ -747,6 +756,16 @@ export interface CoderApi {
   shell: {
     reveal(input: { threadId: string; path: string }): Promise<void>;
     openPath(input: { threadId: string; path: string }): Promise<void>;
+  };
+  devserver: {
+    /** Runnable scripts (dev, start, serve) present in the thread root. */
+    scripts(input: { threadId: string }): Promise<string[]>;
+    /** Start `npm run <script>` for the thread. Already-running is a no-op. */
+    start(input: { threadId: string; script: string }): Promise<DevServerState>;
+    /** Stop the thread's spawned server (process group). */
+    stop(input: { threadId: string }): Promise<DevServerState>;
+    /** Live status, including a captured URL and recent log tail. */
+    status(input: { threadId: string }): Promise<DevServerState>;
   };
   /** Returns an unsubscribe function. */
   on(channel: "threads:changed", cb: (threads: ThreadInfo[]) => void): () => void;

@@ -3,6 +3,7 @@ import type {
   AgentStatus,
   CheckpointInfo,
   GitSyncInfo,
+  DevServerState,
   LocalServerInfo,
   MemoryEntryInfo,
   PhaseView,
@@ -59,6 +60,10 @@ interface AgentsPanelProps {
   openInEditor: () => Promise<void>;
   gitSyncInfo: (threadId: string) => Promise<GitSyncInfo>;
   gitFetch: (threadId: string) => Promise<void>;
+  listDevScripts: (threadId: string) => Promise<string[]>;
+  startDevServer: (threadId: string, script: string) => Promise<DevServerState>;
+  stopDevServer: (threadId: string) => Promise<DevServerState>;
+  devServerStatus: (threadId: string) => Promise<DevServerState>;
   searchMemory: (input: {
     query: string;
     project?: string;
@@ -438,6 +443,240 @@ function syncLabel(info: GitSyncInfo): string | null {
 }
 
 const SERVER_POLL_MS = 5_000;
+const DEV_SERVER_POLL_MS = 3_000;
+
+function formatDevRuntime(startedAt: number, now: number): string {
+  const sec = Math.max(0, Math.floor((now - startedAt) / 1000));
+  if (sec < 60) return `running ${sec}s`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `running ${min}m`;
+  const hours = Math.floor(min / 60);
+  const rem = min % 60;
+  return rem === 0 ? `running ${hours}h` : `running ${hours}h ${rem}m`;
+}
+
+export function DevServerCard({
+  threadId,
+  listDevScripts,
+  startDevServer,
+  stopDevServer,
+  devServerStatus,
+}: {
+  threadId: string | null;
+  listDevScripts: (threadId: string) => Promise<string[]>;
+  startDevServer: (threadId: string, script: string) => Promise<DevServerState>;
+  stopDevServer: (threadId: string) => Promise<DevServerState>;
+  devServerStatus: (threadId: string) => Promise<DevServerState>;
+}) {
+  const [scripts, setScripts] = useState<string[]>([]);
+  const [script, setScript] = useState<string>("");
+  const [state, setState] = useState<DevServerState>({ running: false });
+  const [starting, setStarting] = useState(false);
+  const [stopping, setStopping] = useState(false);
+  const [errorLine, setErrorLine] = useState<string | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      if (!threadId) {
+        if (!cancelled) {
+          setScripts([]);
+          setScript("");
+          setState({ running: false });
+          setErrorLine(null);
+          setStarting(false);
+          setStopping(false);
+        }
+        return;
+      }
+      try {
+        const [list, status] = await Promise.all([
+          listDevScripts(threadId),
+          devServerStatus(threadId),
+        ]);
+        if (cancelled) return;
+        const nextScripts = Array.isArray(list) ? list : [];
+        setScripts(nextScripts);
+        setState(status && typeof status === "object" ? status : { running: false });
+        setScript((prev) =>
+          prev && nextScripts.includes(prev) ? prev : nextScripts[0] ?? "",
+        );
+        setErrorLine(null);
+      } catch (err) {
+        if (cancelled) return;
+        setScripts([]);
+        setState({ running: false });
+        setErrorLine(err instanceof Error ? err.message : String(err));
+      }
+    }
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [threadId, listDevScripts, devServerStatus]);
+
+  const live = starting || state.running;
+  useEffect(() => {
+    if (!threadId || !live) return;
+    let cancelled = false;
+    async function tick() {
+      try {
+        const status = await devServerStatus(threadId!);
+        if (cancelled) return;
+        setState(status && typeof status === "object" ? status : { running: false });
+      } catch {
+        // keep last known state; next tick retries
+      }
+    }
+    const id = window.setInterval(() => void tick(), DEV_SERVER_POLL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [threadId, live, devServerStatus]);
+
+  useEffect(() => {
+    if (!state.running || !state.startedAt) return;
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [state.running, state.startedAt]);
+
+  const lastLine =
+    state.lastLines && state.lastLines.length > 0
+      ? state.lastLines[state.lastLines.length - 1]
+      : null;
+  const failLine =
+    errorLine || (!state.running && !starting && lastLine ? lastLine : null);
+
+  async function onStart() {
+    if (!threadId || !script || starting || state.running) return;
+    setStarting(true);
+    setErrorLine(null);
+    try {
+      const next = await startDevServer(threadId, script);
+      setState(next && typeof next === "object" ? next : { running: false });
+      if (next && !next.running) {
+        const lines = next.lastLines;
+        const tail = lines && lines.length ? lines[lines.length - 1] : null;
+        if (tail) setErrorLine(tail);
+      }
+    } catch (err) {
+      setErrorLine(err instanceof Error ? err.message : String(err));
+    } finally {
+      setStarting(false);
+    }
+  }
+
+  async function onStop() {
+    if (!threadId || stopping || (!state.running && !starting)) return;
+    setStopping(true);
+    setErrorLine(null);
+    try {
+      const next = await stopDevServer(threadId);
+      setState(next && typeof next === "object" ? next : { running: false });
+    } catch (err) {
+      setErrorLine(err instanceof Error ? err.message : String(err));
+    } finally {
+      setStopping(false);
+    }
+  }
+
+  const statusText =
+    state.running && state.startedAt
+      ? formatDevRuntime(state.startedAt, now)
+      : starting
+        ? "starting"
+        : "stopped";
+
+  return (
+    <section className={styles.gitCard} data-dev-server="">
+      <div className={styles.gitCardLabel}>Dev server</div>
+      {!threadId ? (
+        <p className={styles.gitHint}>Select a thread to run its dev server.</p>
+      ) : scripts.length === 0 ? (
+        <p className={styles.gitHint} data-dev-server-empty="">
+          No dev, start, or serve script in package.json
+        </p>
+      ) : (
+        <>
+          <div className={styles.gitActions}>
+            {scripts.length > 1 && (
+              <select
+                className={styles.devScriptSelect}
+                value={script}
+                disabled={state.running || starting || stopping}
+                aria-label="Dev script"
+                data-dev-server-script=""
+                onChange={(e) => setScript(e.target.value)}
+              >
+                {scripts.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+            )}
+            {state.running || starting ? (
+              <button
+                type="button"
+                className={styles.gitBtn}
+                data-dev-server-stop=""
+                disabled={stopping}
+                onClick={() => void onStop()}
+              >
+                {stopping ? (
+                  <>
+                    <span className={styles.btnSpinner} aria-hidden />
+                    Stopping…
+                  </>
+                ) : (
+                  "Stop"
+                )}
+              </button>
+            ) : (
+              <button
+                type="button"
+                className={`${styles.gitBtn} ${styles.gitBtnPrimary}`}
+                data-dev-server-start=""
+                disabled={!script || starting}
+                onClick={() => void onStart()}
+              >
+                {starting ? (
+                  <>
+                    <span className={styles.btnSpinner} aria-hidden />
+                    Starting…
+                  </>
+                ) : (
+                  "Start"
+                )}
+              </button>
+            )}
+          </div>
+          <p className={styles.gitHint} data-dev-server-state="">
+            {statusText}
+          </p>
+          {state.url && (
+            <a
+              className={styles.devServerUrl}
+              href={state.url}
+              target="_blank"
+              rel="noreferrer"
+              data-dev-server-url=""
+            >
+              {state.url}
+            </a>
+          )}
+        </>
+      )}
+      {failLine && (
+        <p className={styles.devServerError} data-dev-server-error="" role="alert">
+          {failLine}
+        </p>
+      )}
+    </section>
+  );
+}
 
 export function LocalServersCard({
   threadId,
@@ -987,6 +1226,10 @@ export function GitTab({
   openInEditor,
   gitSyncInfo,
   gitFetch,
+  listDevScripts,
+  startDevServer,
+  stopDevServer,
+  devServerStatus,
 }: {
   thread: ThreadInfo | null;
   project: ProjectInfo | null;
@@ -1010,6 +1253,10 @@ export function GitTab({
   openInEditor?: () => Promise<void>;
   gitSyncInfo?: (threadId: string) => Promise<GitSyncInfo>;
   gitFetch?: (threadId: string) => Promise<void>;
+  listDevScripts: (threadId: string) => Promise<string[]>;
+  startDevServer: (threadId: string, script: string) => Promise<DevServerState>;
+  stopDevServer: (threadId: string) => Promise<DevServerState>;
+  devServerStatus: (threadId: string) => Promise<DevServerState>;
 }) {
   const [gitAction, setGitAction] = useState<GitAction>(null);
   const [dirtyMessage, setDirtyMessage] = useState<string | null>(null);
@@ -1289,6 +1536,13 @@ export function GitTab({
             )
           }
           onDismissError={() => setPrError(null)}
+        />
+        <DevServerCard
+          threadId={thread?.id ?? null}
+          listDevScripts={listDevScripts}
+          startDevServer={startDevServer}
+          stopDevServer={stopDevServer}
+          devServerStatus={devServerStatus}
         />
         <LocalServersCard
           threadId={thread?.id ?? null}
@@ -1616,6 +1870,10 @@ export function AgentsPanel({
   openInEditor,
   gitSyncInfo,
   gitFetch,
+  listDevScripts,
+  startDevServer,
+  stopDevServer,
+  devServerStatus,
   searchMemory,
   recentMemory,
   getMemory,
@@ -1681,6 +1939,10 @@ export function AgentsPanel({
           openInEditor={openInEditor}
           gitSyncInfo={gitSyncInfo}
           gitFetch={gitFetch}
+          listDevScripts={listDevScripts}
+          startDevServer={startDevServer}
+          stopDevServer={stopDevServer}
+          devServerStatus={devServerStatus}
         />
       ) : (
         <MemoryTab

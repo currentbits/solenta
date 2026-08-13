@@ -65,6 +65,10 @@ export default function App() {
     openInEditor,
     gitSyncInfo,
     gitFetch,
+    listDevScripts,
+    startDevServer,
+    stopDevServer,
+    devServerStatus,
     appStatus,
     settings,
     saveSettings,
@@ -358,6 +362,10 @@ export default function App() {
         openInEditor={openInEditor}
         gitSyncInfo={gitSyncInfo}
         gitFetch={gitFetch}
+        listDevScripts={listDevScripts}
+        startDevServer={startDevServer}
+        stopDevServer={stopDevServer}
+        devServerStatus={devServerStatus}
         searchMemory={searchMemory}
         recentMemory={recentMemory}
         getMemory={getMemory}

@@ -111,6 +111,10 @@ function gitTabProps(
     listCheckpoints: async () => [],
     restoreCheckpoint: async () => {},
     listLocalServers: async () => [],
+    listDevScripts: async () => [],
+    startDevServer: async () => ({ running: false }),
+    stopDevServer: async () => ({ running: false }),
+    devServerStatus: async () => ({ running: false }),
   };
 }
 

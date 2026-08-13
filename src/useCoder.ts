@@ -5,6 +5,7 @@ import type {
   CheckpointInfo,
   CoderApi,
   RunStatInfo,
+  DevServerState,
   DiffResult,
   GitSyncInfo,
   LocalServerInfo,
@@ -173,6 +174,14 @@ export interface UseCoderResult {
   gitSyncInfo: (threadId: string) => Promise<GitSyncInfo>;
   /** Fetch remotes for a thread root. */
   gitFetch: (threadId: string) => Promise<void>;
+  /** Runnable package.json scripts (dev/start/serve) at the thread root. */
+  listDevScripts: (threadId: string) => Promise<string[]>;
+  /** Start the thread's npm dev script. */
+  startDevServer: (threadId: string, script: string) => Promise<DevServerState>;
+  /** Stop the thread's spawned dev server. */
+  stopDevServer: (threadId: string) => Promise<DevServerState>;
+  /** Live status for the thread's spawned dev server. */
+  devServerStatus: (threadId: string) => Promise<DevServerState>;
   /** Live spend + memory server status. */
   appStatus: AppStatus | null;
   /** Persisted app settings (daily budget). */
@@ -1031,9 +1040,41 @@ export function useCoder(): UseCoderResult {
     [api],
   );
 
+  const listDevScripts = useCallback(
+    async (threadId: string) => {
+      try {
+        return await api.devserver.scripts({ threadId });
+      } catch {
+        return [];
+      }
+    },
+    [api],
+  );
+
   const gitFetch = useCallback(
     async (threadId: string) => {
       await api.git.fetch({ threadId });
+    },
+    [api],
+  );
+
+  const startDevServer = useCallback(
+    async (threadId: string, script: string) => {
+      return api.devserver.start({ threadId, script });
+    },
+    [api],
+  );
+
+  const stopDevServer = useCallback(
+    async (threadId: string) => {
+      return api.devserver.stop({ threadId });
+    },
+    [api],
+  );
+
+  const devServerStatus = useCallback(
+    async (threadId: string) => {
+      return api.devserver.status({ threadId });
     },
     [api],
   );
@@ -1172,6 +1213,10 @@ export function useCoder(): UseCoderResult {
     openInEditor,
     gitSyncInfo,
     gitFetch,
+    listDevScripts,
+    startDevServer,
+    stopDevServer,
+    devServerStatus,
     appStatus,
     settings,
     saveSettings,

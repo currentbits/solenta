@@ -213,6 +213,22 @@ exit 1`,
         "main must handle servers:list",
       );
 
+      for (const name of ["scripts", "start", "stop", "status"]) {
+        assert.equal(
+          typeof api.devserver[name],
+          "function",
+          `preload must expose devserver.${name}`,
+        );
+      }
+      for (const ch of [
+        "devserver:scripts",
+        "devserver:start",
+        "devserver:stop",
+        "devserver:status",
+      ]) {
+        assert.ok(handlers.has(ch), `main must handle ${ch}`);
+      }
+
       // Round 44 pin + snooze (mirror setSettled seam).
       for (const name of ["setPinned", "setSnoozed"]) {
         assert.equal(

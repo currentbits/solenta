@@ -771,6 +771,46 @@
   flex-shrink: 0;
 }
 
+.devScriptSelect {
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+}
+
+.devScriptSelect:disabled {
+  opacity: 0.55;
+}
+
+.devServerUrl {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: #93c5fd;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-decoration: none;
+}
+
+.devServerUrl:hover {
+  text-decoration: underline;
+  color: #bfdbfe;
+}
+
+.devServerError {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: #fca5a5;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .gitStatus {
   flex-shrink: 0;
   padding: 10px 16px;

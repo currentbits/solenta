@@ -19,6 +19,7 @@ import type {
   CheckpointInfo,
   CoderApi,
   RunStatInfo,
+  DevServerState,
   DiffResult,
   GitStatus,
   GitSyncInfo,
@@ -711,6 +712,23 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     shell: {
       reveal: (input: unknown) => rec("shell.reveal", [input], undefined),
       openPath: (input: unknown) => rec("shell.openPath", [input], undefined),
+    },
+    devserver: {
+      scripts: (input: unknown) => rec("devserver.scripts", [input], ["dev"]),
+      start: (input: unknown) => {
+        const script = (input as { script?: string }).script ?? "dev";
+        return rec("devserver.start", [input], {
+          running: true,
+          script,
+          url: "http://localhost:5173/",
+          startedAt: Date.now(),
+          lastLines: ["  Local: http://localhost:5173/"],
+        } as DevServerState);
+      },
+      stop: (input: unknown) =>
+        rec("devserver.stop", [input], { running: false } as DevServerState),
+      status: (input: unknown) =>
+        rec("devserver.status", [input], { running: false } as DevServerState),
     },
     files: {
       list: (input: unknown) => {
