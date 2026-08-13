@@ -36,7 +36,8 @@
 .narrowBtn {
   display: inline-flex;
   align-items: center;
-  padding: 6px 10px;
+  height: 28px;
+  padding: 0 12px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   background: var(--card);
@@ -44,6 +45,9 @@
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
 }
 
 .narrowBtn:hover {

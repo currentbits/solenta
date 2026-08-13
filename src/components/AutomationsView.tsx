@@ -193,6 +193,9 @@ export function AutomationsView({
       {automations.length === 0 ? (
         <div className={styles.empty}>
           <p className={styles.emptyTitle}>No automations yet</p>
+          <p className={styles.emptyHint}>
+            Use the form above to run a prompt on a schedule.
+          </p>
         </div>
       ) : (
         <div className={styles.list}>

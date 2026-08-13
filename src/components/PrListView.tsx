@@ -94,6 +94,9 @@ export function PrListView({
       ) : empty || noProjects ? (
         <div className={styles.empty}>
           <p className={styles.emptyTitle}>No open pull requests</p>
+          <p className={styles.emptyHint}>
+            Open pull requests across your projects will show up here.
+          </p>
         </div>
       ) : (
         <div className={styles.list}>

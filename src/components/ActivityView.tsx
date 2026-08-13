@@ -74,6 +74,9 @@ export function ActivityView({
       ) : empty ? (
         <div className={styles.empty}>
           <p className={styles.emptyTitle}>No activity yet</p>
+          <p className={styles.emptyHint}>
+            Runs, replies, and thread updates will show up here.
+          </p>
         </div>
       ) : (
         <div className={styles.list}>

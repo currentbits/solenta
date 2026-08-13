@@ -1,11 +1,12 @@
 :root {
   color-scheme: dark;
-  --bg: #0b0e14;
-  --bg-elevated: #10141c;
-  --card: #161b26;
-  --card-hover: #1b2230;
-  --border: #232a38;
-  --border-soft: #1a2030;
+  --bg: #0a0d13;
+  --bg-elevated: #10151f;
+  --panel: #10151f;
+  --card: #171d29;
+  --card-hover: #1d2534;
+  --border: #2a3242;
+  --border-soft: #202838;
   --text: #e8ecf4;
   --text-muted: #8b95a8;
   --text-dim: #667085;
@@ -16,6 +17,12 @@
   --green-soft: rgba(52, 211, 153, 0.14);
   --amber: #fbbf24;
   --danger: #f87171;
+  /* Shared button + overlay primitives (restyle pass). */
+  --btn-primary-bg: #2563eb;
+  --btn-primary-hover: #3b82f6;
+  --focus-ring: 0 0 0 2px rgba(59, 130, 246, 0.45);
+  --shadow-pop:
+    0 12px 32px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.35);
   --radius: 10px;
   --radius-sm: 6px;
   --radius-pill: 999px;
@@ -68,6 +75,15 @@ button {
 button:disabled {
   cursor: not-allowed;
   opacity: 0.55;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 ::-webkit-scrollbar {

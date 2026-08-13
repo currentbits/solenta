@@ -211,7 +211,18 @@ function StatusBadge({
     return (
       <span className={`${styles.badge} ${styles.badgeDone}`}>
         <span className={styles.check} aria-hidden>
-          ✓
+          <svg
+            width="10"
+            height="10"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="m3 8.75 3.25 3.25L13 5.25" />
+          </svg>
         </span>
         Done
       </span>
@@ -400,7 +411,37 @@ export function ThreadCard({
                 void onSetPinned(thread.id, !isPinned(thread));
               }}
             >
-              {isPinned(thread) ? "★" : "☆"}
+              {isPinned(thread) ? (
+                <svg
+                  width="13"
+                  height="13"
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M12 17v5" />
+                  <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 11 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1" />
+                </svg>
+              ) : (
+                <svg
+                  width="13"
+                  height="13"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M12 17v5" />
+                  <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 11 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1" />
+                </svg>
+              )}
             </button>
           )}
           {onSetSnoozed && (
@@ -419,7 +460,19 @@ export function ThreadCard({
                   onToggleForkMenu?.(null);
                 }}
               >
-                zzz
+                <svg
+                  width="13"
+                  height="13"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" />
+                </svg>
               </button>
               {snoozeMenuOpen && (
                 <div
@@ -509,7 +562,19 @@ export function ThreadCard({
                   onToggleForkMenu?.(forkMenuOpen ? null : thread.id);
                 }}
               >
-                →
+                <svg
+                  width="13"
+                  height="13"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M2.5 8h10M9 4.5 12.5 8 9 11.5" />
+                </svg>
               </button>
               {forkMenuOpen && (
                 <div
@@ -566,7 +631,35 @@ export function ThreadCard({
                 void onSetSettled(thread.id, settleOverride);
               }}
             >
-              {isSettled ? "↑" : "↓"}
+              {isSettled ? (
+                <svg
+                  width="13"
+                  height="13"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M8 13.5v-10M4.5 6.5 8 3l3.5 3.5" />
+                </svg>
+              ) : (
+                <svg
+                  width="13"
+                  height="13"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M8 2.5v10M4.5 9.5 8 13l3.5-3.5" />
+                </svg>
+              )}
             </button>
           )}
         </div>
@@ -668,7 +761,20 @@ export function SettledRow({
               void onSetPinned(thread.id, false);
             }}
           >
-            ★
+            <svg
+              width="13"
+              height="13"
+              viewBox="0 0 24 24"
+              fill="currentColor"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M12 17v5" />
+              <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 11 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1" />
+            </svg>
           </button>
         </div>
       ) : onSetSettled ? (
@@ -683,7 +789,19 @@ export function SettledRow({
               void onSetSettled(thread.id, "active");
             }}
           >
-            ↑
+            <svg
+              width="13"
+              height="13"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M8 13.5v-10M4.5 6.5 8 3l3.5 3.5" />
+            </svg>
           </button>
         </div>
       ) : null}
@@ -1322,7 +1440,20 @@ export function Sidebar({
               else openIssueForm(project.id);
             }}
           >
-            #
+            <svg
+              width="13"
+              height="13"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden
+            >
+              <circle cx="8" cy="8" r="6.25" />
+              <circle cx="8" cy="8" r="1.25" fill="currentColor" stroke="none" />
+            </svg>
           </button>
         )}
       </div>
@@ -1397,7 +1528,21 @@ export function Sidebar({
       {!isWebMode() && <div className={styles.dragRegion} />}
       <header className={styles.header}>
         <div className={styles.brand}>
-          <span className={styles.brandMark}>◇</span>
+          <span className={styles.brandMark} aria-hidden>
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M8 1.75 14.25 8 8 14.25 1.75 8Z" />
+              <path d="M8 5.25 10.75 8 8 10.75 5.25 8Z" />
+            </svg>
+          </span>
           <span className={styles.brandName}>{appName}</span>
         </div>
         <button
@@ -1412,13 +1557,35 @@ export function Sidebar({
           }
           aria-label="New thread"
         >
-          +
+          <svg
+            width="15"
+            height="15"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            aria-hidden="true"
+          >
+            <path d="M8 3.25v9.5M3.25 8h9.5" />
+          </svg>
         </button>
       </header>
 
       <div className={styles.searchRow}>
         <span className={styles.searchIcon} aria-hidden>
-          ⌕
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+          >
+            <circle cx="7" cy="7" r="4.25" />
+            <path d="m10.25 10.25 3 3" />
+          </svg>
         </span>
         <input
           className={styles.searchInput}
@@ -1440,7 +1607,18 @@ export function Sidebar({
           onClick={() => onOpenActivity?.()}
         >
           <span className={styles.viewNavIcon} aria-hidden>
-            ●
+            <svg
+              width="15"
+              height="15"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M1.75 8h2.5l1.75-3.5 2.5 7 1.75-3.5h2.5" />
+            </svg>
           </span>
           Activity
         </button>
@@ -1453,7 +1631,20 @@ export function Sidebar({
           onClick={() => onOpenKanban?.()}
         >
           <span className={styles.viewNavIcon} aria-hidden>
-            ▦
+            <svg
+              width="15"
+              height="15"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <rect x="1.75" y="2.75" width="3.5" height="10.5" rx="1" />
+              <rect x="6.25" y="2.75" width="3.5" height="7" rx="1" />
+              <rect x="10.75" y="2.75" width="3.5" height="4.5" rx="1" />
+            </svg>
           </span>
           Kanban
         </button>
@@ -1466,7 +1657,22 @@ export function Sidebar({
           onClick={() => onOpenPrs?.()}
         >
           <span className={styles.viewNavIcon} aria-hidden>
-            ⇄
+            <svg
+              width="15"
+              height="15"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <circle cx="4" cy="3.5" r="1.75" />
+              <circle cx="4" cy="12.5" r="1.75" />
+              <circle cx="12" cy="5.5" r="1.75" />
+              <path d="M4 5.25v5.5" />
+              <path d="M12 7.25c0 2.5-2.75 3-4.5 3" />
+            </svg>
           </span>
           Pull requests
         </button>
@@ -1479,7 +1685,19 @@ export function Sidebar({
           onClick={() => onOpenAutomations?.()}
         >
           <span className={styles.viewNavIcon} aria-hidden>
-            ⟳
+            <svg
+              width="15"
+              height="15"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M13.5 8a5.5 5.5 0 1 1-1.61-3.89" />
+              <path d="M13.75 1.75v2.75h-2.75" />
+            </svg>
           </span>
           Automations
         </button>
@@ -1500,7 +1718,18 @@ export function Sidebar({
           data-open={anyGroupExpanded}
           aria-hidden="true"
         >
-          ▸
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="m6 3.5 4.5 4.5L6 12.5" />
+          </svg>
         </span>
         <span>{projectsHeader}</span>
         <span className={styles.count}>{sectionCount}</span>
@@ -1596,7 +1825,18 @@ export function Sidebar({
                       data-group-chevron={groupKey}
                       aria-hidden="true"
                     >
-                      ▸
+                      <svg
+                        width="12"
+                        height="12"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <path d="m6 3.5 4.5 4.5L6 12.5" />
+                      </svg>
                     </span>
                     <span className={styles.groupSlug}>{slug}</span>
                     {summary && (
@@ -1622,7 +1862,18 @@ export function Sidebar({
                       data-project-remove={project.id}
                       onClick={() => setRemoveConfirmId(project.id)}
                     >
-                      ×
+                      <svg
+                        width="12"
+                        height="12"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        aria-hidden="true"
+                      >
+                        <path d="m4 4 8 8M12 4l-8 8" />
+                      </svg>
                     </button>
                   )}
                 </div>
@@ -1741,7 +1992,18 @@ export function Sidebar({
               data-snoozed-header=""
             >
               <span className={styles.chevron} data-open={snoozedOpen}>
-                ▸
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="m6 3.5 4.5 4.5L6 12.5" />
+                </svg>
               </span>
               <span>
                 Snoozed · {globalSnoozed.length}
@@ -1787,7 +2049,18 @@ export function Sidebar({
               aria-expanded={settledTailOpen}
             >
               <span className={styles.chevron} data-open={settledTailOpen}>
-                ▸
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="m6 3.5 4.5 4.5L6 12.5" />
+                </svg>
               </span>
               <span>
                 Settled · {globalSettled.length}
@@ -1973,7 +2246,18 @@ export function Sidebar({
               aria-label="Dismiss error"
               title="Dismiss error"
             >
-              ×
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                aria-hidden="true"
+              >
+                <path d="m4 4 8 8M12 4l-8 8" />
+              </svg>
             </button>
           </div>
         )}
@@ -1993,7 +2277,19 @@ export function Sidebar({
             onClick={() => onOpenSettings?.()}
           >
             <span className={styles.settingsIcon} aria-hidden>
-              ⚙
+              <svg
+                width="15"
+                height="15"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+                <circle cx="12" cy="12" r="3" />
+              </svg>
             </span>
             Settings
           </button>
@@ -2005,7 +2301,18 @@ export function Sidebar({
               title="Add project"
               aria-label="Add project"
             >
-              +
+              <svg
+                width="15"
+                height="15"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                aria-hidden="true"
+              >
+                <path d="M8 3.25v9.5M3.25 8h9.5" />
+              </svg>
             </button>
           )}
         </div>
