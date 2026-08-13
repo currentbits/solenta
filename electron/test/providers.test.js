@@ -161,12 +161,16 @@ describe("providers registry", () => {
     });
     assert.ok(args.includes("-p"));
     assert.ok(args.includes("stream-json"));
+    assert.ok(args.includes("--input-format"));
+    assert.ok(args.includes("--permission-prompt-tool"));
+    assert.ok(args.includes("stdio"));
     assert.ok(args.includes("--permission-mode"));
     assert.ok(args.includes("plan"));
     const modelIdx = args.indexOf("--model");
     assert.ok(modelIdx >= 0);
     assert.equal(args[modelIdx + 1], "claude-sonnet-5");
-    assert.equal(args[args.length - 1], "hi");
+    // Prompt travels over stdin (interactive mode), never argv.
+    assert.ok(!args.includes("hi"));
     assert.ok(!args.includes("--resume"));
   });
 

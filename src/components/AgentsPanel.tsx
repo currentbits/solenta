@@ -10,9 +10,6 @@ import type {
   LocalServerInfo,
   MemoryEntryInfo,
   PhaseView,
-  PrCheckInfo,
-  PrChecksResult,
-  PrInfo,
   ProjectInfo,
   ProviderInfo,
   SessionUsage,
@@ -30,7 +27,6 @@ import {
   providerDisplayName,
   shortSessionId,
 } from "../format";
-import { formatChecksRollup, prCardView } from "../prUi";
 import { contextRing, contextWindowFor } from "../contextRing";
 import { MemoryTab } from "./MemoryTab";
 import { SkillsTab } from "./SkillsTab";
@@ -71,16 +67,6 @@ interface AgentsPanelProps {
   onRemoveWorktree: (force?: boolean) => Promise<unknown>;
   /** Opens the center-pane Changes panel (fresh load). */
   onViewChanges: () => void;
-  /** Push the thread branch to origin (Git tab, next to PR). */
-  onPush: () => Promise<{ remote: string; branch: string }>;
-  createPr: (input: {
-    title: string;
-    body?: string;
-    draft?: boolean;
-  }) => Promise<PrInfo>;
-  prStatus: () => Promise<PrInfo | null>;
-  prChecks: () => Promise<PrChecksResult>;
-  prMerge: () => Promise<PrInfo>;
   /** Worktree checkpoints (newest-first). */
   listCheckpoints: (threadId: string) => Promise<CheckpointInfo[]>;
   restoreCheckpoint: (threadId: string, sha: string) => Promise<void>;
@@ -131,7 +117,7 @@ interface AgentsPanelProps {
 
 type PhaseChipStatus = "done" | "active" | "pending" | "failed";
 type DotStatus = "active" | "done" | "pending" | "error";
-type GitAction = "setup" | "merge" | "remove" | "push" | "pr" | "prMerge" | null;
+type GitAction = "setup" | "merge" | "remove" | null;
 
 function phaseStatus(phase: PhaseView): PhaseChipStatus {
   if (phase.agents.length === 0) return "pending";
@@ -1161,383 +1147,6 @@ function CheckpointsCard({
   );
 }
 
-function formatPrStats(pr: {
-  additions?: number;
-  deletions?: number;
-  changedFiles?: number;
-}): string | null {
-  const diff: string[] = [];
-  if (pr.additions != null) diff.push(`+${pr.additions}`);
-  if (pr.deletions != null) diff.push(`-${pr.deletions}`);
-  const files =
-    pr.changedFiles != null ? `${pr.changedFiles} files` : null;
-  if (diff.length === 0 && files == null) return null;
-  if (diff.length > 0 && files) return `${diff.join(" ")} · ${files}`;
-  if (diff.length > 0) return diff.join(" ");
-  return files;
-}
-
-function PrCard({
-  thread,
-  busy,
-  gitAction,
-  cardError,
-  titleDraft,
-  bodyDraft,
-  draft,
-  live,
-  prStatus,
-  prChecks,
-  onTitleChange,
-  onBodyChange,
-  onDraftChange,
-  onPush,
-  onCreate,
-  onMerge,
-  onDismissError,
-}: {
-  thread: ThreadInfo | null;
-  busy: boolean;
-  gitAction: GitAction;
-  cardError: string | null;
-  titleDraft: string;
-  bodyDraft: string;
-  draft: boolean;
-  live: PrInfo | null | undefined;
-  prStatus: () => Promise<PrInfo | null>;
-  prChecks: () => Promise<PrChecksResult>;
-  onTitleChange: (v: string) => void;
-  onBodyChange: (v: string) => void;
-  onDraftChange: (v: boolean) => void;
-  onPush: () => void;
-  onCreate: () => void;
-  onMerge: () => void;
-  onDismissError: () => void;
-}) {
-  const [refreshed, setRefreshed] = useState<PrInfo | null | undefined>(
-    undefined,
-  );
-  const [refreshFailed, setRefreshFailed] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
-  const [checks, setChecks] = useState<PrCheckInfo[] | null>(null);
-  const [mergeArmed, setMergeArmed] = useState(false);
-
-  useEffect(() => {
-    setRefreshed(undefined);
-    setRefreshFailed(false);
-    setRefreshing(false);
-    setChecks(null);
-    setMergeArmed(false);
-  }, [thread?.id]);
-
-  const effectiveLive = refreshed !== undefined ? refreshed : live;
-  const view = prCardView({
-    branch: thread?.branch ?? null,
-    threadPrNumber: thread?.prNumber ?? null,
-    threadPrUrl: thread?.prUrl ?? null,
-    live: effectiveLive,
-    titleDraft,
-    busy,
-  });
-  const statsLine = view.existing ? formatPrStats(view.existing) : null;
-  const checksRollup = checks ? formatChecksRollup(checks) : null;
-
-  useEffect(() => {
-    if (view.existing?.state && view.existing.state !== "OPEN") {
-      setMergeArmed(false);
-    }
-  }, [view.existing?.state]);
-
-  const loadChecks = async (): Promise<boolean> => {
-    try {
-      const result = await prChecks();
-      if (result.ok) {
-        setChecks(result.checks);
-        return true;
-      }
-      return false;
-    } catch {
-      return false;
-    }
-  };
-
-  const refreshPr = async () => {
-    setRefreshing(true);
-    let statusOk = false;
-    let checksOk = false;
-    try {
-      const info = await prStatus();
-      setRefreshed(info);
-      statusOk = true;
-    } catch {
-      statusOk = false;
-    }
-    checksOk = await loadChecks();
-    setRefreshFailed(!statusOk || !checksOk);
-    setRefreshing(false);
-  };
-
-  useEffect(() => {
-    if (!thread || thread.prNumber == null) {
-      setChecks(null);
-      return;
-    }
-    let cancelled = false;
-    void loadChecks().then((ok) => {
-      if (!cancelled && !ok) setRefreshFailed(true);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [thread?.id, thread?.prNumber, prChecks]);
-
-  if (!thread) {
-    return (
-      <section className={styles.gitCard}>
-        <div className={styles.gitCardLabel}>
-          <svg {...LABEL_ICON_PROPS} className={styles.labelIcon}>
-            <circle cx="4" cy="4" r="1.5" />
-            <circle cx="12" cy="12" r="1.5" />
-            <path d="M4 5.5v5M12 10.5V7a2 2 0 0 0-2-2H8" />
-          </svg>
-          Pull request
-        </div>
-        <p className={styles.gitHint}>Select a thread to open a PR.</p>
-      </section>
-    );
-  }
-
-  return (
-    <section className={styles.gitCard}>
-      <div className={styles.gitCardLabel}>
-        <svg {...LABEL_ICON_PROPS} className={styles.labelIcon}>
-          <circle cx="4" cy="4" r="1.5" />
-          <circle cx="12" cy="12" r="1.5" />
-          <path d="M4 5.5v5M12 10.5V7a2 2 0 0 0-2-2H8" />
-        </svg>
-        Pull request
-      </div>
-
-      <div className={styles.gitActions}>
-        <button
-          type="button"
-          className={styles.gitBtn}
-          onClick={onPush}
-          disabled={busy || !thread.branch}
-        >
-          {gitAction === "push" ? (
-            <>
-              <span className={styles.btnSpinner} aria-hidden />
-              Pushing…
-            </>
-          ) : (
-            "Push"
-          )}
-        </button>
-      </div>
-
-      {view.existing ? (
-        <div className={styles.prExisting}>
-          <div className={styles.prRow}>
-            <span className={styles.prNumber}>#{view.existing.number}</span>
-            {view.existing.state && (
-              <span
-                className={styles.prState}
-                data-state={view.existing.state.toLowerCase()}
-              >
-                {view.existing.state}
-              </span>
-            )}
-            <button
-              type="button"
-              className={`${styles.gitBtn} ${styles.prRefresh}`}
-              onClick={() => void refreshPr()}
-              disabled={busy || refreshing}
-              title="Refresh PR data"
-            >
-              {refreshing ? (
-                <>
-                  <span className={styles.btnSpinner} aria-hidden />
-                  Refresh
-                </>
-              ) : (
-                "Refresh"
-              )}
-            </button>
-          </div>
-          {view.existing.title ? (
-            <div className={styles.prTitle} title={view.existing.title}>
-              {view.existing.title}
-            </div>
-          ) : null}
-          {statsLine ? <div className={styles.prStats}>{statsLine}</div> : null}
-          {checksRollup?.line ? (
-            <div
-              className={styles.prChecks}
-              data-pr-checks=""
-              title={checksRollup.tooltip}
-            >
-              {checksRollup.line}
-            </div>
-          ) : null}
-          {view.existing.branch && (
-            <div className={styles.prBranch} title={view.existing.branch}>
-              {view.existing.branch}
-            </div>
-          )}
-          {view.existing.url ? (
-            <a
-              className={styles.prUrl}
-              href={view.existing.url}
-              target="_blank"
-              rel="noreferrer"
-            >
-              {view.existing.url}
-            </a>
-          ) : (
-            <p className={styles.gitHint}>No URL recorded for this PR.</p>
-          )}
-          {refreshFailed ? (
-            <div className={styles.prLoadError} role="alert">
-              <span className={styles.prLoadErrorText}>
-                Couldn&apos;t load PR data
-              </span>
-              <button
-                type="button"
-                className={styles.gitBtn}
-                onClick={() => void refreshPr()}
-                disabled={busy || refreshing}
-                title="Retry loading PR data"
-              >
-                Retry
-              </button>
-            </div>
-          ) : null}
-          {view.existing.state === "OPEN" ? (
-            mergeArmed ? (
-              <div className={styles.prMergeConfirm} data-pr-merge-confirm="">
-                <p className={styles.prMergeConfirmText}>
-                  Confirm merge? This squashes into the base branch.
-                </p>
-                <div className={styles.prMergeConfirmActions}>
-                  <button
-                    type="button"
-                    className={`${styles.gitBtn} ${styles.gitBtnPrimary}`}
-                    onClick={() => onMerge()}
-                    disabled={busy}
-                  >
-                    {gitAction === "prMerge" ? (
-                      <>
-                        <span className={styles.btnSpinner} aria-hidden />
-                        Merging…
-                      </>
-                    ) : (
-                      "Confirm"
-                    )}
-                  </button>
-                  <button
-                    type="button"
-                    className={styles.gitBtn}
-                    onClick={() => setMergeArmed(false)}
-                    disabled={busy}
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className={styles.gitActions}>
-                <button
-                  type="button"
-                  className={`${styles.gitBtn} ${styles.gitBtnPrimary}`}
-                  data-pr-merge=""
-                  onClick={() => setMergeArmed(true)}
-                  disabled={busy || refreshing}
-                >
-                  Merge
-                </button>
-              </div>
-            )
-          ) : null}
-        </div>
-      ) : null}
-      {view.showForm ? (
-        <div className={styles.prForm}>
-          <label className={styles.prField}>
-            <span className={styles.prFieldLabel}>Title</span>
-            <input
-              className={styles.prInput}
-              value={titleDraft}
-              onChange={(e) => onTitleChange(e.target.value)}
-              disabled={busy}
-              placeholder="PR title"
-              aria-label="PR title"
-            />
-          </label>
-          <label className={styles.prField}>
-            <span className={styles.prFieldLabel}>Body (optional)</span>
-            <textarea
-              className={styles.prTextarea}
-              value={bodyDraft}
-              onChange={(e) => onBodyChange(e.target.value)}
-              disabled={busy}
-              rows={3}
-              placeholder="Describe the change"
-              aria-label="PR body"
-            />
-          </label>
-          <label className={styles.prCheckLabel}>
-            <input
-              type="checkbox"
-              checked={draft}
-              onChange={(e) => onDraftChange(e.target.checked)}
-              disabled={busy}
-            />
-            Open as draft
-          </label>
-          <div className={styles.gitActions}>
-            <button
-              type="button"
-              className={`${styles.gitBtn} ${styles.gitBtnPrimary}`}
-              onClick={onCreate}
-              disabled={!view.canCreate}
-            >
-              {gitAction === "pr" ? (
-                <>
-                  <span className={styles.btnSpinner} aria-hidden />
-                  Creating…
-                </>
-              ) : (
-                "Create PR"
-              )}
-            </button>
-          </div>
-          {!thread.branch && (
-            <p className={styles.gitHint}>
-              Set up a worktree (or check out a branch) before opening a PR.
-            </p>
-          )}
-        </div>
-      ) : null}
-
-      {cardError && (
-        <div className={styles.cardError} role="alert">
-          <span className={styles.cardErrorText}>{cardError}</span>
-          <button
-            type="button"
-            className={styles.cardErrorDismiss}
-            onClick={onDismissError}
-            aria-label="Dismiss error"
-            title="Dismiss error"
-          >
-            ×
-          </button>
-        </div>
-      )}
-    </section>
-  );
-}
-
 export function GitTab({
   thread,
   project,
@@ -1545,11 +1154,6 @@ export function GitTab({
   onMergeWorktree,
   onRemoveWorktree,
   onViewChanges,
-  onPush,
-  createPr,
-  prStatus,
-  prChecks,
-  prMerge,
   listCheckpoints,
   restoreCheckpoint,
   listLocalServers,
@@ -1571,15 +1175,6 @@ export function GitTab({
   onMergeWorktree: () => Promise<unknown>;
   onRemoveWorktree: (force?: boolean) => Promise<unknown>;
   onViewChanges: () => void;
-  onPush: () => Promise<{ remote: string; branch: string }>;
-  createPr: (input: {
-    title: string;
-    body?: string;
-    draft?: boolean;
-  }) => Promise<PrInfo>;
-  prStatus: () => Promise<PrInfo | null>;
-  prChecks: () => Promise<PrChecksResult>;
-  prMerge: () => Promise<PrInfo>;
   listCheckpoints: (threadId: string) => Promise<CheckpointInfo[]>;
   restoreCheckpoint: (threadId: string, sha: string) => Promise<void>;
   listLocalServers: (threadId: string) => Promise<LocalServerInfo[]>;
@@ -1599,12 +1194,6 @@ export function GitTab({
   const [gitAction, setGitAction] = useState<GitAction>(null);
   const [dirtyMessage, setDirtyMessage] = useState<string | null>(null);
   const [cardError, setCardError] = useState<string | null>(null);
-  const [prError, setPrError] = useState<string | null>(null);
-  const [titleDraft, setTitleDraft] = useState("");
-  const [bodyDraft, setBodyDraft] = useState("");
-  const [draft, setDraft] = useState(false);
-  /** undefined until first fetch; null = none; PrInfo = known. */
-  const [livePr, setLivePr] = useState<PrInfo | null | undefined>(undefined);
   const [checkpoints, setCheckpoints] = useState<CheckpointInfo[]>([]);
   const [checkpointsLoading, setCheckpointsLoading] = useState(false);
   const [checkpointError, setCheckpointError] = useState<string | null>(null);
@@ -1619,24 +1208,18 @@ export function GitTab({
   const isWorking = thread?.status === "working";
   const busy = isWorking || gitAction != null;
 
-  // Clear per-thread PR form state when the selected thread changes so a
-  // stale error or draft from row A never shows on row B.
+  // Clear per-thread state when the selected thread changes so a stale
+  // error from row A never shows on row B.
   useEffect(() => {
     setDirtyMessage(null);
     setCardError(null);
-    setPrError(null);
     setGitAction(null);
-    setTitleDraft(thread?.title ?? "");
-    setBodyDraft("");
-    setDraft(false);
-    setLivePr(undefined);
     setCheckpoints([]);
     setCheckpointError(null);
     setRestoreConfirm(null);
     setRestorePending(false);
     setSync(null);
     setSyncing(false);
-    // Only thread id: a title rename must not wipe an in-progress form.
   }, [thread?.id]);
 
   // Relative ages tick (same 60s cadence as the sidebar).
@@ -1702,49 +1285,12 @@ export function GitTab({
     }
   };
 
-  // Refresh live PR status, but ONLY when this thread already has a PR.
-  //
-  // Two reasons, both learned from review:
-  // 1. gh runs through execFileSync in the main process, so every call freezes
-  //    the whole app (agent streaming included) for up to the 30s gh timeout.
-  //    Clicking down the sidebar must not pay that per thread.
-  // 2. prStatus throws for a repo whose origin is not github.com, which is a
-  //    supported setup, not an error. Surfacing it painted a permanent red
-  //    banner on the Git tab for every GitLab or remote-less project.
-  // The create path does its own lookup, so nothing is lost by skipping here.
-  useEffect(() => {
-    if (!thread || thread.prNumber == null) {
-      setLivePr(thread ? null : undefined);
-      return;
-    }
-    let cancelled = false;
-    void prStatus()
-      .then((info) => {
-        if (!cancelled) setLivePr(info);
-      })
-      .catch(() => {
-        // undefined, NOT null: null means "confirmed no PR" and would hide the
-        // card behind a create form for a thread that demonstrably has a PR.
-        // undefined falls back to the recorded prNumber/prUrl, which is what a
-        // failed refresh should do.
-        if (!cancelled) setLivePr(undefined);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [thread?.id, thread?.prNumber, thread?.prUrl, prStatus]);
-
   const runAction = async (
     action: Exclude<GitAction, null>,
     fn: () => Promise<unknown>,
-    opts?: { scope?: "worktree" | "pr" },
   ) => {
     setGitAction(action);
-    if (opts?.scope === "pr") {
-      setPrError(null);
-    } else {
-      setCardError(null);
-    }
+    setCardError(null);
     try {
       await fn();
       setDirtyMessage(null);
@@ -1760,8 +1306,6 @@ export function GitTab({
         // strip everything through the marker so only the listed entries show.
         setDirtyMessage(msg.slice(dirtyAt + dirtyMarker.length).trim());
         setCardError(null);
-      } else if (opts?.scope === "pr") {
-        setPrError(msg);
       } else {
         setCardError(msg);
       }
@@ -1848,47 +1392,6 @@ export function GitTab({
           onDismissError={() => setCardError(null)}
         />
         <PullCard threadId={thread?.id ?? null} gitPull={gitPull} />
-        <PrCard
-          thread={thread}
-          busy={busy}
-          gitAction={gitAction}
-          cardError={prError}
-          titleDraft={titleDraft}
-          bodyDraft={bodyDraft}
-          draft={draft}
-          live={livePr}
-          prStatus={prStatus}
-          prChecks={prChecks}
-          onTitleChange={setTitleDraft}
-          onBodyChange={setBodyDraft}
-          onDraftChange={setDraft}
-          onPush={() => void runAction("push", () => onPush(), { scope: "pr" })}
-          onCreate={() =>
-            void runAction(
-              "pr",
-              async () => {
-                const info = await createPr({
-                  title: titleDraft,
-                  body: bodyDraft.trim() ? bodyDraft : undefined,
-                  draft: draft || undefined,
-                });
-                setLivePr(info);
-              },
-              { scope: "pr" },
-            )
-          }
-          onMerge={() =>
-            void runAction(
-              "prMerge",
-              async () => {
-                const info = await prMerge();
-                setLivePr(info);
-              },
-              { scope: "pr" },
-            )
-          }
-          onDismissError={() => setPrError(null)}
-        />
         <DevServerCard
           threadId={thread?.id ?? null}
           listDevScripts={listDevScripts}
@@ -2363,11 +1866,6 @@ export function AgentsPanel({
   onMergeWorktree,
   onRemoveWorktree,
   onViewChanges,
-  onPush,
-  createPr,
-  prStatus,
-  prChecks,
-  prMerge,
   listCheckpoints,
   restoreCheckpoint,
   listLocalServers,
@@ -2450,11 +1948,6 @@ export function AgentsPanel({
           onMergeWorktree={onMergeWorktree}
           onRemoveWorktree={onRemoveWorktree}
           onViewChanges={onViewChanges}
-          onPush={onPush}
-          createPr={createPr}
-          prStatus={prStatus}
-          prChecks={prChecks}
-          prMerge={prMerge}
           listCheckpoints={listCheckpoints}
           restoreCheckpoint={restoreCheckpoint}
           listLocalServers={listLocalServers}

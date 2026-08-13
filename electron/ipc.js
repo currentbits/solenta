@@ -230,7 +230,16 @@ const IPC_HANDLERS = {
         view = ctx.runner.toWorkflowView(workflow);
       }
     }
-    return services.getThreadDetail(ctx.store, id, view);
+    return services.getThreadDetail(ctx.store, id, view, {
+      markVisited: true,
+      pendingPermission: ctx.runner.getPendingPermission
+        ? ctx.runner.getPendingPermission(id)
+        : null,
+    });
+  },
+  "threads:respondPermission": async (ctx, input) => {
+    // runner.respondPermission pushes the updated detail itself.
+    ctx.runner.respondPermission(input);
   },
   "threads:setPermissionMode": async (ctx, input) => {
     const updated = services.setPermissionMode(ctx.store, input);

@@ -191,24 +191,25 @@ describe("reasoning effort: provider modelInfo + efforts", () => {
 });
 
 describe("reasoning effort: buildArgs per provider", () => {
-  it("claude: no flag without effort; --effort before trailing prompt", () => {
+  it("claude: no flag without effort; --effort pair emitted; prompt never in argv", () => {
     const entry = getProvider("claude");
     const bare = entry.buildArgs({
       prompt: PROMPT_CLAUDE,
       permissionMode: "default",
     });
     assert.ok(!bare.includes("--effort"), `no effort flag: ${JSON.stringify(bare)}`);
-    assertPromptLast(bare, PROMPT_CLAUDE);
+    // Claude is interactive: the prompt travels over stdin, never argv.
+    assert.ok(!bare.includes(PROMPT_CLAUDE));
 
     const withEffort = entry.buildArgs({
       prompt: PROMPT_CLAUDE,
       permissionMode: "default",
       reasoningEffort: "xhigh",
     });
-    assertPromptLast(withEffort, PROMPT_CLAUDE, {
-      effortFlag: "--effort",
-      effortValue: "xhigh",
-    });
+    const fi = withEffort.indexOf("--effort");
+    assert.ok(fi >= 0, `missing --effort in ${JSON.stringify(withEffort)}`);
+    assert.equal(withEffort[fi + 1], "xhigh");
+    assert.ok(!withEffort.includes(PROMPT_CLAUDE));
   });
 
   it("codex: -c model_reasoning_effort= before trailing prompt", () => {
@@ -329,6 +330,15 @@ describe("reasoning effort: buildArgs per provider", () => {
           permissionMode: "default",
           reasoningEffort: effort,
         });
+        if (entry.id === "claude") {
+          // Interactive: prompt travels over stdin, never argv.
+          assert.equal(
+            args.filter((a) => a === prompt).length,
+            0,
+            `${entry.id} effort=${effort}: prompt must not be in argv`,
+          );
+          continue;
+        }
         assert.equal(
           args[args.length - 1],
           prompt,
@@ -775,10 +785,9 @@ emit({
         "xhigh",
         `--effort must carry the level, got ${JSON.stringify(argv)}`,
       );
-      assert.equal(
-        argv[argv.length - 1],
-        prompt,
-        `prompt must stay last after effort inject: ${JSON.stringify(argv)}`,
+      assert.ok(
+        !argv.includes(prompt),
+        `claude prompt travels over stdin, not argv: ${JSON.stringify(argv)}`,
       );
     } finally {
       if (runner) runner.stopAll();

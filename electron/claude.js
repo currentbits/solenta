@@ -94,10 +94,14 @@ function flattenContent(content) {
  * @param {string} [opts.permissionMode]
  * @param {string | null} [opts.sessionId]
  * @param {string | null} [opts.model]
+ * @param {boolean} [opts.interactive] - stream-json INPUT mode: the prompt is
+ *   delivered on stdin (args must NOT carry a trailing prompt) and the CLI can
+ *   ask for tool permission via control_request/control_response. stdin is
+ *   closed on the result event so the one-turn-per-process lifecycle holds.
  * @param {(ev: object) => void} opts.onEvent - raw parsed NDJSON event
  * @param {(info: { code: number | null, stderr: string, gotResult: boolean }) => void} opts.onExit
  * @param {(err: Error) => void} [opts.onError]
- * @returns {{ kill: () => void, child: import('node:child_process').ChildProcess | null }}
+ * @returns {{ kill: () => void, respond: (requestId: string, response: object) => boolean, child: import('node:child_process').ChildProcess | null }}
  */
 function runClaude(opts) {
   const {
@@ -107,6 +111,7 @@ function runClaude(opts) {
     permissionMode = "default",
     sessionId = null,
     model = null,
+    interactive = false,
     onEvent,
     onExit,
     onError,
@@ -142,6 +147,19 @@ function runClaude(opts) {
   let killed = false;
   let gotResult = false;
 
+  /** Write one NDJSON line to the CLI's stdin; false when stdin is gone. */
+  function writeLine(obj) {
+    if (!child || !child.stdin || child.stdin.destroyed || finished) {
+      return false;
+    }
+    try {
+      child.stdin.write(JSON.stringify(obj) + "\n");
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   function handleLine(line) {
     const trimmed = line.trim();
     if (!trimmed) return;
@@ -152,7 +170,18 @@ function runClaude(opts) {
       return;
     }
     if (!obj || typeof obj !== "object") return;
-    if (obj.type === "result") gotResult = true;
+    if (obj.type === "result") {
+      gotResult = true;
+      // Interactive mode: the CLI waits for more stdin messages after a
+      // result; end stdin so the process exits and the turn finishes.
+      if (interactive && child && child.stdin && !child.stdin.destroyed) {
+        try {
+          child.stdin.end();
+        } catch {
+          // already closed
+        }
+      }
+    }
     if (typeof onEvent === "function") {
       try {
         onEvent(obj);
@@ -184,7 +213,7 @@ function runClaude(opts) {
     child = spawn(binary, args, {
       cwd,
       shell: false,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: [interactive ? "pipe" : "ignore", "pipe", "pipe"],
     });
   } catch (err) {
     const error = err instanceof Error ? err : new Error(String(err));
@@ -197,6 +226,17 @@ function runClaude(opts) {
 
   child.stdout.setEncoding("utf8");
   child.stderr.setEncoding("utf8");
+
+  if (interactive) {
+    // EPIPE from a dying CLI must not crash the main process.
+    child.stdin.on("error", () => {});
+    writeLine({
+      type: "user",
+      message: { role: "user", content: String(prompt ?? "") },
+      parent_tool_use_id: null,
+      session_id: "",
+    });
+  }
 
   child.stdout.on("data", (chunk) => {
     lineBuf += chunk;
@@ -223,6 +263,38 @@ function runClaude(opts) {
 
   return {
     child,
+    /**
+     * Answer a control_request (permission prompt). `response` is the inner
+     * payload, e.g. { behavior: "allow", updatedInput } or
+     * { behavior: "deny", message }.
+     * @param {string} requestId
+     * @param {object} response
+     */
+    respond(requestId, response) {
+      return writeLine({
+        type: "control_response",
+        response: {
+          subtype: "success",
+          request_id: requestId,
+          response,
+        },
+      });
+    },
+    /**
+     * Reject a control_request we cannot handle (unknown subtype).
+     * @param {string} requestId
+     * @param {string} message
+     */
+    respondError(requestId, message) {
+      return writeLine({
+        type: "control_response",
+        response: {
+          subtype: "error",
+          request_id: requestId,
+          error: String(message),
+        },
+      });
+    },
     kill() {
       if (killed || finished) return;
       killed = true;

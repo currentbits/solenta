@@ -64,6 +64,16 @@ function emit(obj) {
   process.stdout.write(JSON.stringify(obj) + "\\n");
 }
 
+// Record everything received on stdin (interactive mode delivers the prompt
+// and control responses there) for test assertions.
+let stdinRaw = "";
+if (process.env.CODER_FAKE_CLAUDE_STDIN_FILE) {
+  process.stdin.on("data", (c) => {
+    stdinRaw += c;
+    fs.writeFileSync(process.env.CODER_FAKE_CLAUDE_STDIN_FILE, stdinRaw, "utf8");
+  });
+}
+
 async function main() {
   if (scenario === "fail-exit") {
     process.stderr.write("claude-stderr-boom\\n");
@@ -289,6 +299,51 @@ async function main() {
     return;
   }
 
+  // Ask permission for one Bash call, then finish according to the answer.
+  if (scenario === "permission") {
+    emit({ type: "system", subtype: "init", session_id: "sess-perm", model: "m" });
+    await delay(20);
+    emit({
+      type: "control_request",
+      request_id: "req-perm-1",
+      request: {
+        subtype: "can_use_tool",
+        tool_name: "Bash",
+        input: { command: "npm test" },
+      },
+    });
+    let buf = "";
+    process.stdin.on("data", (c) => {
+      buf += c;
+      let nl;
+      while ((nl = buf.indexOf("\\n")) >= 0) {
+        const line = buf.slice(0, nl);
+        buf = buf.slice(nl + 1);
+        if (!line.trim()) continue;
+        let msg;
+        try { msg = JSON.parse(line); } catch { continue; }
+        if (msg.type !== "control_response") continue;
+        if (process.env.CODER_FAKE_CLAUDE_CTRL_FILE) {
+          fs.writeFileSync(process.env.CODER_FAKE_CLAUDE_CTRL_FILE, JSON.stringify(msg), "utf8");
+        }
+        const inner = (msg.response && msg.response.response) || {};
+        emit({
+          type: "result",
+          subtype: "success",
+          result: inner.behavior === "allow" ? "tool allowed" : "tool denied",
+          usage: { input_tokens: 1, output_tokens: 1 },
+          total_cost_usd: 0,
+          num_turns: 1,
+          session_id: "sess-perm",
+        });
+        process.exit(0);
+      }
+    });
+    await delay(30000);
+    process.exit(1);
+    return;
+  }
+
   process.stderr.write("unknown scenario " + scenario + "\\n");
   process.exit(1);
 }
@@ -453,16 +508,98 @@ describe("runner claude provider", () => {
     assert.equal(detail.usage.inputTokens, 100);
     assert.equal(detail.workflow, null);
 
-    // argv should include -p, stream-json, permission-mode, prompt last
+    // argv: -p, stream-json in AND out, permission prompt routed to stdio;
+    // the prompt itself travels over stdin, never argv.
     const argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
     assert.ok(argv.includes("-p"));
     assert.ok(argv.includes("--output-format"));
+    assert.ok(argv.includes("--input-format"));
     assert.ok(argv.includes("stream-json"));
+    assert.ok(argv.includes("--permission-prompt-tool"));
+    assert.ok(argv.includes("stdio"));
     assert.ok(argv.includes("--verbose"));
     assert.ok(argv.includes("--permission-mode"));
     assert.ok(argv.includes("default"));
-    assert.equal(argv[argv.length - 1], "do the thing");
+    assert.ok(!argv.includes("do the thing"));
     assert.ok(!argv.includes("--resume"));
+  });
+
+  it("surfaces permission prompts and answers them over the control protocol", async () => {
+    process.env.CODER_FAKE_CLAUDE_SCENARIO = "permission";
+    const ctrlFile = path.join(tmpDir, "ctrl.json");
+    const stdinFile = path.join(tmpDir, "stdin.txt");
+    process.env.CODER_FAKE_CLAUDE_CTRL_FILE = ctrlFile;
+    process.env.CODER_FAKE_CLAUDE_STDIN_FILE = stdinFile;
+    try {
+      const thread = store.getThreads()[0];
+      await runner.startRun({ threadId: thread.id, prompt: "guarded work" });
+
+      await waitFor(() => runner.getPendingPermission(thread.id) != null);
+      const pending = runner.getPendingPermission(thread.id);
+      assert.equal(pending.toolName, "Bash");
+      assert.equal(pending.summary, "Bash: npm test");
+      assert.ok(pending.requestId);
+
+      // The prompt reached the renderer via a thread:updated push.
+      assert.ok(
+        pushes.some(
+          (p) =>
+            p.channel === "thread:updated" &&
+            p.payload.thread.id === thread.id &&
+            p.payload.pendingPermission &&
+            p.payload.pendingPermission.requestId === pending.requestId,
+        ),
+      );
+
+      runner.respondPermission({
+        threadId: thread.id,
+        requestId: pending.requestId,
+        decision: "allowAlways",
+      });
+      assert.equal(runner.getPendingPermission(thread.id), null);
+
+      await waitFor(() => store.getThread(thread.id).status === "done");
+
+      // The CLI received a well-formed allow with a session-scoped rule.
+      const ctrl = JSON.parse(fs.readFileSync(ctrlFile, "utf8"));
+      assert.equal(ctrl.type, "control_response");
+      assert.equal(ctrl.response.subtype, "success");
+      assert.equal(ctrl.response.request_id, pending.requestId);
+      assert.equal(ctrl.response.response.behavior, "allow");
+      assert.deepEqual(ctrl.response.response.updatedInput, {
+        command: "npm test",
+      });
+      assert.deepEqual(ctrl.response.response.updatedPermissions, [
+        {
+          type: "addRules",
+          rules: [{ toolName: "Bash" }],
+          behavior: "allow",
+          destination: "session",
+        },
+      ]);
+
+      // The prompt was delivered on stdin, not argv.
+      const firstStdinLine = JSON.parse(
+        fs.readFileSync(stdinFile, "utf8").split("\n")[0],
+      );
+      assert.equal(firstStdinLine.type, "user");
+      assert.equal(firstStdinLine.message.content, "guarded work");
+      const argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
+      assert.ok(!argv.includes("guarded work"));
+
+      // The decision is recorded in the conversation.
+      const msgs = store.getMessages(thread.id);
+      assert.ok(
+        msgs.some(
+          (m) =>
+            m.role === "event" &&
+            m.text === "Allowed for session: Bash: npm test",
+        ),
+      );
+    } finally {
+      delete process.env.CODER_FAKE_CLAUDE_CTRL_FILE;
+      delete process.env.CODER_FAKE_CLAUDE_STDIN_FILE;
+    }
   });
 
   it("pairs tool_result is_error into tool message", async () => {
@@ -527,7 +664,7 @@ describe("runner claude provider", () => {
     const resumeIdx = argv.indexOf("--resume");
     assert.ok(resumeIdx >= 0, `expected --resume in ${JSON.stringify(argv)}`);
     assert.equal(argv[resumeIdx + 1], "sess-abc-001");
-    assert.equal(argv[argv.length - 1], "turn two");
+    assert.ok(!argv.includes("turn two"));
   });
 
   it("nonzero exit without result sets failed + Run error", async () => {
@@ -708,9 +845,8 @@ describe("runner claude provider", () => {
       const mcpArg = argv.find((a) => a.startsWith("--mcp-config="));
       assert.ok(mcpArg, `expected --mcp-config= in ${JSON.stringify(argv)}`);
       assert.ok(fs.existsSync(mcpArg.slice("--mcp-config=".length)));
-      // Regression guard for the variadic trap: the prompt must be the LAST
-      // argv element and must not follow --mcp-config as a bare value.
-      assert.equal(argv[argv.length - 1], "with-mem");
+      // Prompt travels over stdin; argv must never carry it.
+      assert.ok(!argv.includes("with-mem"));
       sup.stop();
     } finally {
       await new Promise((r) => server.close(r));

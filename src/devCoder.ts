@@ -2661,6 +2661,10 @@ function buildDevCoder(): CoderApi {
         emitDetail(detail);
         return { ...thread };
       },
+      async respondPermission() {
+        // Dev threads never spawn a real CLI, so nothing is ever pending.
+        throw new Error("No active agent run for this thread");
+      },
       async setArchived(input) {
         const detail = details.get(input.threadId);
         if (!detail) throw new Error(`Thread not found: ${input.threadId}`);

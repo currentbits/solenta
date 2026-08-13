@@ -106,6 +106,7 @@ function view(props: {
   stopDevServer?: (threadId: string) => Promise<DevServerState>;
   devServerStatus?: (threadId: string) => Promise<DevServerState>;
   onPush?: () => Promise<{ remote: string; branch: string }>;
+  onStartRun?: (prompt: string, threadId?: string) => void | Promise<void>;
 }) {
   return (
     <ThreadView
@@ -115,7 +116,7 @@ function view(props: {
       workflows={[]}
       hasProjects={true}
       onAddProject={() => {}}
-      onStartRun={() => {}}
+      onStartRun={props.onStartRun ?? (() => {})}
       onStartWorkflow={() => {}}
       onSaveWorkflow={noopSave}
       onRemoveWorkflow={async () => {}}
@@ -413,6 +414,31 @@ describe("copy thread id", () => {
       (m.query("[data-copy-thread-id]")?.textContent || "").trim(),
       "Copied",
       "inline confirmation",
+    );
+    m.unmount();
+  });
+});
+
+describe("create PR button", () => {
+  it("asks the agent to open a PR with the provider-name bullet", async () => {
+    const prompts: string[] = [];
+    const m = await mount(
+      view({
+        onStartRun: (prompt) => {
+          prompts.push(prompt);
+        },
+      }),
+    );
+    await m.flush();
+    const btn = m.query("[data-create-pr]");
+    assert.ok(btn, "Create PR button");
+    await m.click(btn);
+    await m.flush();
+    assert.equal(prompts.length, 1);
+    assert.ok(prompts[0]!.includes("pull request"));
+    assert.ok(
+      prompts[0]!.includes('"- PR created by the Claude Code agent"'),
+      "prompt must carry the provider-name bullet",
     );
     m.unmount();
   });

@@ -61,15 +61,6 @@ function tab(opts: {
       onMergeWorktree={async () => {}}
       onRemoveWorktree={async () => {}}
       onViewChanges={() => {}}
-      onPush={async () => ({ remote: "origin", branch: "b" })}
-      createPr={async () => ({
-        number: 1,
-        url: "https://github.com/owner/repo/pull/1",
-        state: "OPEN",
-        branch: "b",
-        created: true,
-      })}
-      prStatus={async () => null}
       listCheckpoints={async () => []}
       restoreCheckpoint={async () => {}}
       listLocalServers={async () => []}

@@ -52,7 +52,6 @@ const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 function emit(obj) { process.stdout.write(JSON.stringify(obj) + "\\n"); }
 
 const argv = process.argv.slice(1);
-const prompt = argv[argv.length - 1] || "";
 const modeFile = process.env.CODER_WF_MODE_FILE;
 const markerDir = process.env.CODER_WF_MARKER_DIR;
 const captureFile = process.env.CODER_WF_CAPTURE_FILE;
@@ -64,15 +63,23 @@ if (modeFile && fs.existsSync(modeFile)) {
   mode = fs.readFileSync(modeFile, "utf8").trim() || "happy";
 }
 
-if (captureFile) {
-  let prev = [];
-  try {
-    if (fs.existsSync(captureFile)) {
-      prev = JSON.parse(fs.readFileSync(captureFile, "utf8"));
-    }
-  } catch { prev = []; }
-  prev.push({ provider: "claude", argv, prompt, ts: Date.now() });
-  fs.writeFileSync(captureFile, JSON.stringify(prev, null, 2), "utf8");
+// Interactive claude: the prompt arrives as the first stdin NDJSON line.
+let prompt = "";
+let role = "generic";
+function readPromptFromStdin() {
+  return new Promise((resolve) => {
+    let buf = "";
+    const t = setTimeout(() => resolve(""), 3000);
+    process.stdin.on("data", (c) => {
+      buf += c;
+      const nl = buf.indexOf("\\n");
+      if (nl < 0) return;
+      clearTimeout(t);
+      try { resolve(String(JSON.parse(buf.slice(0, nl)).message.content || "")); }
+      catch { resolve(""); }
+    });
+    process.stdin.on("end", () => { clearTimeout(t); resolve(""); });
+  });
 }
 
 function classify(p) {
@@ -89,8 +96,6 @@ function classify(p) {
   if (/You are agent 2 of 2/i.test(p)) return "analyze2";
   return "generic";
 }
-
-const role = classify(prompt);
 
 function writeMarker(name, phase) {
   if (!markerDir) return;
@@ -133,6 +138,20 @@ async function failExit(msg) {
 }
 
 (async () => {
+  prompt = await readPromptFromStdin();
+  role = classify(prompt);
+
+  if (captureFile) {
+    let prev = [];
+    try {
+      if (fs.existsSync(captureFile)) {
+        prev = JSON.parse(fs.readFileSync(captureFile, "utf8"));
+      }
+    } catch { prev = []; }
+    prev.push({ provider: "claude", argv, prompt, ts: Date.now() });
+    fs.writeFileSync(captureFile, JSON.stringify(prev, null, 2), "utf8");
+  }
+
   if (trapSigterm && (role === "analyze1" || role === "analyze2" || role === "analyze")) {
     writeMarker(role === "analyze" ? "analyze1" : role, "start");
     process.on("SIGTERM", () => {

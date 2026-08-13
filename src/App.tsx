@@ -43,6 +43,7 @@ export default function App() {
     removeWorkflow,
     stopRun,
     setPermissionMode,
+    respondPermission,
     setProvider,
     setReasoningEffort,
     setArchived,
@@ -60,10 +61,6 @@ export default function App() {
     suggestCommitMessage,
     listFiles,
     pushBranch,
-    createPr,
-    prStatus,
-    prChecks,
-    prMerge,
     listPrs,
     listActivity,
     listThreadSummaries,
@@ -415,6 +412,9 @@ export default function App() {
         onRemoveWorkflow={(id) => removeWorkflow(id)}
         onStopRun={() => stopRun()}
         onSetPermissionMode={(mode) => setPermissionMode(mode)}
+        onRespondPermission={(requestId, decision) =>
+          respondPermission(requestId, decision)
+        }
         onSetProvider={(input) => setProvider(input)}
         onSetReasoningEffort={(effort) => setReasoningEffort(effort)}
         onSetArchived={(archived) => {
@@ -467,11 +467,6 @@ export default function App() {
         onMergeWorktree={() => mergeWorktree()}
         onRemoveWorktree={(force) => removeWorktree(force)}
         onViewChanges={openChanges}
-        onPush={() => pushBranch()}
-        createPr={(input) => createPr(input)}
-        prStatus={() => prStatus()}
-        prChecks={() => prChecks()}
-        prMerge={() => prMerge()}
         listCheckpoints={listCheckpoints}
         restoreCheckpoint={restoreCheckpoint}
         listLocalServers={listLocalServers}

@@ -12,7 +12,6 @@ import type {
   ProjectInfo,
   ProviderInfo,
   ThreadInfo,
-  PrInfo,
 } from "../src/shared/ipc";
 
 const providers: ProviderInfo[] = [
@@ -96,17 +95,6 @@ function renderGit(project: ProjectInfo): string {
       onMergeWorktree={async () => {}}
       onRemoveWorktree={async () => {}}
       onViewChanges={() => {}}
-      onPush={async () => ({ remote: "origin", branch: "b" })}
-      createPr={async () =>
-        ({
-          number: 1,
-          url: "https://github.com/owner/repo/pull/1",
-          state: "OPEN",
-          branch: "b",
-          created: true,
-        }) as PrInfo
-      }
-      prStatus={async () => null}
       listCheckpoints={async () => []}
       restoreCheckpoint={async () => {}}
       listLocalServers={async () => []}
@@ -138,7 +126,6 @@ describe("Environment tab remote hint", () => {
     );
     assert.ok(html.includes("Not available on remote projects"));
     assert.ok(!html.includes(">Worktree<"), "WorktreeCard must be hidden");
-    assert.ok(!html.includes("Pull request"), "PrCard must be hidden");
     assert.ok(!html.includes("Local Servers"), "LocalServersCard must be hidden");
     assert.ok(!html.includes("Checkpoints"), "CheckpointsCard must be hidden");
     assert.ok(html.includes("Changes"), "ChangesCard must stay");
@@ -149,7 +136,6 @@ describe("Environment tab remote hint", () => {
     const html = renderGit(localProject);
     assert.ok(!html.includes("data-remote-unavailable"));
     assert.ok(html.includes("Worktree"));
-    assert.ok(html.includes("Pull request"));
     assert.ok(html.includes("Local Servers"));
     assert.ok(html.includes("Changes"));
   });

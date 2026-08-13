@@ -503,9 +503,75 @@ function createRunner(opts) {
     // (user selection) marks a thread visited. See services.getThreadDetail.
     const detail = services.getThreadDetail(store, threadId, view, {
       markVisited: false,
+      pendingPermission: getPendingPermission(threadId),
     });
     pushFn("thread:updated", detail);
     return detail;
+  }
+
+  /**
+   * Oldest unanswered permission prompt of the thread's active run, shaped
+   * for the renderer (no rawInput), or null.
+   * @param {string} threadId
+   */
+  function getPendingPermission(threadId) {
+    const e = active.get(threadId);
+    if (!e || e.kind !== "claude" || !Array.isArray(e.pendingPermissions)) {
+      return null;
+    }
+    const p = e.pendingPermissions[0];
+    if (!p) return null;
+    return {
+      requestId: p.id,
+      toolName: p.toolName,
+      summary: p.summary,
+      input: p.input,
+    };
+  }
+
+  /**
+   * Answer a pending permission prompt.
+   * @param {{ threadId: string, requestId: string, decision: "allow" | "allowAlways" | "deny" }} input
+   */
+  function respondPermission(input) {
+    const { threadId, requestId, decision } = input || {};
+    const e = active.get(threadId);
+    if (!e || e.kind !== "claude" || !e.handle) {
+      throw new Error("No active agent run for this thread");
+    }
+    const idx = e.pendingPermissions.findIndex((p) => p.id === requestId);
+    if (idx < 0) {
+      throw new Error("Permission request no longer pending");
+    }
+    const [pending] = e.pendingPermissions.splice(idx, 1);
+    let response;
+    if (decision === "allow" || decision === "allowAlways") {
+      response = { behavior: "allow", updatedInput: pending.rawInput };
+      if (decision === "allowAlways") {
+        // "Accept all": stop asking for this tool for the rest of the CLI
+        // session (matches Claude Code's own "don't ask again" scope).
+        response.updatedPermissions = [
+          {
+            type: "addRules",
+            rules: [{ toolName: pending.toolName }],
+            behavior: "allow",
+            destination: "session",
+          },
+        ];
+      }
+    } else {
+      response = { behavior: "deny", message: "Denied by user in Coder" };
+    }
+    e.handle.respond(pending.id, response);
+    const label =
+      decision === "deny"
+        ? `Denied: ${pending.summary}`
+        : decision === "allowAlways"
+          ? `Allowed for session: ${pending.summary}`
+          : `Allowed: ${pending.summary}`;
+    appendMessage(threadId, "event", label, e.runId);
+    store.save();
+    pushDetail(threadId, e.claudeState);
   }
 
   function pushThreadsChanged() {
@@ -967,15 +1033,13 @@ function createRunner(opts) {
       model: thread.model || null,
       reasoningEffort: thread.reasoningEffort || null,
     });
-    // Claude-only: inject --mcp-config before the trailing prompt when healthy.
-    // Other claude-stream providers (e.g. grok) use their own MCP injection.
-    if (entryDef.id === "claude") {
-      const mcpArgs = getClaudeMcpArgs();
-      if (mcpArgs.length > 0 && args.length > 0) {
-        args.splice(args.length - 1, 0, ...mcpArgs);
-      } else if (mcpArgs.length > 0) {
-        args.push(...mcpArgs);
-      }
+    // Claude runs interactively: prompt over stdin, permission prompts via
+    // the control protocol. Other claude-stream providers (e.g. grok) keep
+    // the argv prompt and their own MCP injection.
+    const interactive = entryDef.id === "claude";
+    if (interactive) {
+      // No trailing prompt in interactive argv, so appending is safe.
+      args.push(...getClaudeMcpArgs());
     }
     const spawn = resolveSpawn(project, binary, args, localCwd);
 
@@ -988,6 +1052,12 @@ function createRunner(opts) {
       workingId,
       claudeState,
       runUsage,
+      /**
+       * Permission prompts awaiting a user decision, oldest first. Each is
+       * { id, toolName, summary, input (pretty), rawInput (original object) }.
+       * Ephemeral: dies with the run entry; a killed CLI cannot be answered.
+       */
+      pendingPermissions: [],
     };
     Object.defineProperty(entry, "workflow", {
       get() {
@@ -1012,10 +1082,49 @@ function createRunner(opts) {
       permissionMode: thread.permissionMode || "default",
       sessionId: thread.sessionId || null,
       model: thread.model || null,
+      interactive,
       onEvent: (ev) => {
         if (!guard()) return;
 
         const type = ev && ev.type;
+
+        if (type === "control_request") {
+          const requestId = String(ev.request_id || "");
+          const request = ev.request || {};
+          if (request.subtype === "can_use_tool" && requestId) {
+            const toolName = String(request.tool_name || "tool");
+            const rawInput =
+              request.input && typeof request.input === "object"
+                ? request.input
+                : {};
+            let inputStr;
+            try {
+              inputStr = truncate(
+                JSON.stringify(rawInput, null, 2),
+                INPUT_TRUNCATE,
+              );
+            } catch {
+              inputStr = truncate(String(rawInput), INPUT_TRUNCATE);
+            }
+            const e = guard();
+            if (!e) return;
+            e.pendingPermissions.push({
+              id: requestId,
+              toolName,
+              summary: toolSummary(toolName, rawInput),
+              input: inputStr,
+              rawInput,
+            });
+            pushDetail(threadId, claudeState);
+          } else if (requestId) {
+            // Unknown control request: answer so the CLI never hangs on us.
+            handle.respondError(
+              requestId,
+              `Unsupported control request: ${String(request.subtype || "unknown")}`,
+            );
+          }
+          return;
+        }
 
         if (type === "system" && ev.subtype === "init") {
           if (typeof ev.session_id === "string" && ev.session_id) {
@@ -2744,6 +2853,8 @@ function createRunner(opts) {
     workflowNameFromThreadId,
     toWorkflowView,
     resolveProvider,
+    getPendingPermission,
+    respondPermission,
   };
 }
 

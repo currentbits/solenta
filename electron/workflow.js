@@ -275,21 +275,13 @@ function spawnAgentClaude(opts) {
         String(permissionMode || "default"),
         String(prompt ?? ""),
       ];
-  // Claude-only: inject --mcp-config before the trailing prompt when healthy.
-  // Grok (and other claude-stream providers) must not receive --mcp-config.
+  // Claude runs interactively (prompt over stdin, no trailing argv prompt),
+  // so --mcp-config can simply be appended. Grok (and other claude-stream
+  // providers) must not receive --mcp-config and keep the argv prompt.
+  const interactive = Boolean(entry && entry.id === "claude");
   let args = baseArgs;
-  if (entry && entry.id === "claude") {
-    const mcpArgs = getClaudeMcpArgs();
-    args =
-      mcpArgs.length > 0 && baseArgs.length > 0
-        ? [
-            ...baseArgs.slice(0, -1),
-            ...mcpArgs,
-            baseArgs[baseArgs.length - 1],
-          ]
-        : mcpArgs.length > 0
-          ? [...baseArgs, ...mcpArgs]
-          : baseArgs;
+  if (interactive) {
+    args = [...baseArgs, ...getClaudeMcpArgs()];
   }
 
   const handle = runClaude({
@@ -304,8 +296,24 @@ function spawnAgentClaude(opts) {
     permissionMode: permissionMode || "default",
     sessionId: null,
     model: model || null,
+    interactive,
     onEvent: (ev) => {
       if (!ev || typeof ev !== "object") return;
+      if (ev.type === "control_request") {
+        // Workflow agents have no UI to answer prompts; auto-deny keeps the
+        // pre-interactive headless behavior instead of hanging the agent.
+        const rid = String(ev.request_id || "");
+        if (!rid) return;
+        if (ev.request && ev.request.subtype === "can_use_tool") {
+          handle.respond(rid, {
+            behavior: "deny",
+            message: "Permission prompts are not supported for workflow agents",
+          });
+        } else {
+          handle.respondError(rid, "unsupported control request");
+        }
+        return;
+      }
       if (ev.type === "assistant" && ev.message && Array.isArray(ev.message.content)) {
         for (const block of ev.message.content) {
           if (block && block.type === "text" && typeof block.text === "string") {

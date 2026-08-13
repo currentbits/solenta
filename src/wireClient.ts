@@ -282,6 +282,8 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
       get: (id) => call<ThreadDetail>("threads:get", id),
       setPermissionMode: (input) =>
         call<ThreadInfo>("threads:setPermissionMode", input),
+      respondPermission: (input) =>
+        call<void>("threads:respondPermission", input),
       setArchived: (input) => call<ThreadInfo>("threads:setArchived", input),
       setSettled: (input) => call<ThreadInfo>("threads:setSettled", input),
       setPinned: (input) => call<ThreadInfo>("threads:setPinned", input),

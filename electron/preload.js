@@ -89,6 +89,8 @@ const coder = {
     get: (id) => invoke("threads:get", id),
     setPermissionMode: (input) =>
       invoke("threads:setPermissionMode", input),
+    respondPermission: (input) =>
+      invoke("threads:respondPermission", input),
     setArchived: (input) => invoke("threads:setArchived", input),
     setSettled: (input) => invoke("threads:setSettled", input),
     setPinned: (input) => invoke("threads:setPinned", input),

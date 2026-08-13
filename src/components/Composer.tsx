@@ -555,7 +555,7 @@ export function Composer({
         return;
       }
     }
-    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+    if ((e.metaKey || e.ctrlKey || e.shiftKey) && e.key === "Enter") {
       e.preventDefault();
       submitSend();
     }

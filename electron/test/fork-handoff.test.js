@@ -282,22 +282,30 @@ describe("runner hand-off prefix on first turn only", () => {
     argvFile = path.join(tmpDir, "argv.json");
     argvLog = path.join(tmpDir, "argv-log.jsonl");
     const fake = path.join(tmpDir, "fake-claude");
-    // Captures each invocation's argv (prompt is last) and emits a session.
+    // Captures each invocation's CLI prompt (delivered on stdin in
+    // interactive mode) as a one-element array, and emits a session.
     const body = `#!/usr/bin/env node
 "use strict";
 const fs = require("fs");
-const argv = process.argv.slice(1);
-if (process.env.CODER_FAKE_CLAUDE_ARGV_FILE) {
-  fs.writeFileSync(process.env.CODER_FAKE_CLAUDE_ARGV_FILE, JSON.stringify(argv), "utf8");
-}
-if (process.env.CODER_FAKE_CLAUDE_ARGV_LOG) {
-  fs.appendFileSync(process.env.CODER_FAKE_CLAUDE_ARGV_LOG, JSON.stringify(argv) + "\\n", "utf8");
-}
 function emit(o){process.stdout.write(JSON.stringify(o)+"\\n");}
-emit({type:"system",subtype:"init",session_id:"sess-handoff-1",model:"m"});
-emit({type:"assistant",message:{content:[{type:"text",text:"ok"}]}});
-emit({type:"result",subtype:"success",result:"ok",usage:{input_tokens:1,output_tokens:1},total_cost_usd:0,session_id:"sess-handoff-1"});
-process.exit(0);
+let buf = "";
+process.stdin.on("data", (c) => {
+  buf += c;
+  const nl = buf.indexOf("\\n");
+  if (nl < 0) return;
+  let prompt = "";
+  try { prompt = JSON.parse(buf.slice(0, nl)).message.content; } catch {}
+  if (process.env.CODER_FAKE_CLAUDE_ARGV_FILE) {
+    fs.writeFileSync(process.env.CODER_FAKE_CLAUDE_ARGV_FILE, JSON.stringify([prompt]), "utf8");
+  }
+  if (process.env.CODER_FAKE_CLAUDE_ARGV_LOG) {
+    fs.appendFileSync(process.env.CODER_FAKE_CLAUDE_ARGV_LOG, JSON.stringify([prompt]) + "\\n", "utf8");
+  }
+  emit({type:"system",subtype:"init",session_id:"sess-handoff-1",model:"m"});
+  emit({type:"assistant",message:{content:[{type:"text",text:"ok"}]}});
+  emit({type:"result",subtype:"success",result:"ok",usage:{input_tokens:1,output_tokens:1},total_cost_usd:0,session_id:"sess-handoff-1"});
+  process.exit(0);
+});
 `;
     fs.writeFileSync(fake, body, { mode: 0o755 });
     process.env.CODER_CLAUDE_BIN = fake;

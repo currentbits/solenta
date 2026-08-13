@@ -269,6 +269,25 @@ export interface WorkflowView {
   complete: boolean;
 }
 
+/**
+ * A live "may I use this tool?" prompt from the agent CLI, awaiting the
+ * user's decision. Runner-ephemeral: it exists only while the run is active
+ * and is never persisted; answering routes through threads.respondPermission.
+ */
+export interface PendingPermissionInfo {
+  /** Provider control-request id; pass back when responding. */
+  requestId: string;
+  /** Tool name, e.g. "Bash", "Edit". */
+  toolName: string;
+  /** One-line summary, e.g. "Bash: npm test". */
+  summary: string;
+  /** Pretty-printed JSON of the tool input (truncated like ToolCallInfo). */
+  input: string;
+}
+
+/** User decision on a PendingPermissionInfo. "allowAlways" also allows the tool for the rest of the CLI session. */
+export type PermissionDecision = "allow" | "allowAlways" | "deny";
+
 export interface ThreadDetail {
   thread: ThreadInfo;
   messages: ChatMessage[];
@@ -277,6 +296,8 @@ export interface ThreadDetail {
   workflow: WorkflowView | null;
   /** Cumulative provider usage for this thread; null before the first turn. */
   usage: SessionUsage | null;
+  /** Oldest unanswered permission prompt of the active run; absent/null when none. */
+  pendingPermission?: PendingPermissionInfo | null;
 }
 
 export interface GitStatus {
@@ -729,6 +750,16 @@ export interface CoderApi {
     get(id: string): Promise<ThreadDetail>;
     /** Sticky permission mode for future turns of this thread. */
     setPermissionMode(input: { threadId: string; mode: PermissionMode }): Promise<ThreadInfo>;
+    /**
+     * Answer the active run's pending permission prompt (ThreadDetail.
+     * pendingPermission). Rejects when the run ended or the request was
+     * already answered; the updated detail arrives via thread:updated.
+     */
+    respondPermission(input: {
+      threadId: string;
+      requestId: string;
+      decision: PermissionDecision;
+    }): Promise<void>;
     /** Archive or unarchive; archived threads are hidden by default but fully intact. */
     setArchived(input: { threadId: string; archived: boolean }): Promise<ThreadInfo>;
     /**

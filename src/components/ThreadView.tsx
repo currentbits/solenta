@@ -5,6 +5,7 @@ import type {
   DiffResult,
   FileChange,
   GitSyncInfo,
+  PermissionDecision,
   PermissionMode,
   ProjectInfo,
   ProviderInfo,
@@ -41,6 +42,7 @@ import {
   type RunHeader,
 } from "../runHeader";
 import { buildBestOfNPlan } from "../bestOfN";
+import { createPrPrompt } from "../prUi";
 import { useEscapeClose } from "../useEscapeClose";
 import { Composer } from "./Composer";
 import { Markdown } from "./Markdown";
@@ -103,6 +105,11 @@ interface ThreadViewProps {
   onRemoveWorkflow: (id: string) => Promise<void>;
   onStopRun: () => void | Promise<void>;
   onSetPermissionMode: (mode: PermissionMode) => void | Promise<void>;
+  /** Answer the pending permission prompt (detail.pendingPermission). */
+  onRespondPermission: (
+    requestId: string,
+    decision: PermissionDecision,
+  ) => void | Promise<void>;
   onSetProvider: (input: {
     provider?: string;
     model?: string | null;
@@ -994,6 +1001,7 @@ export function ThreadView({
   onRemoveWorkflow,
   onStopRun,
   onSetPermissionMode,
+  onRespondPermission,
   onSetProvider,
   onSetReasoningEffort,
   onSetArchived,
@@ -1631,6 +1639,23 @@ export function ThreadView({
           )}
           <button
             type="button"
+            className={styles.btn}
+            data-create-pr=""
+            disabled={isWorking}
+            aria-disabled={isWorking ? "true" : undefined}
+            title="Ask the agent to open a pull request"
+            onClick={() => {
+              if (isWorking) return;
+              const agent =
+                providers.find((p) => p.id === thread.provider)?.name ??
+                thread.provider;
+              void onStartRun(createPrPrompt(agent));
+            }}
+          >
+            Create PR
+          </button>
+          <button
+            type="button"
             className={`${styles.btn} ${styles.btnPrimary} ${styles.pushBtn}`}
             disabled={pushDisabled}
             aria-disabled={pushDisabled ? "true" : undefined}
@@ -1891,6 +1916,53 @@ export function ThreadView({
             />
           );
         })}
+
+        {detail.pendingPermission && (
+          <div className={styles.permissionCard} role="alertdialog" aria-label="Permission request">
+            <div className={styles.permissionHead}>
+              Agent wants to use <strong>{detail.pendingPermission.toolName}</strong>
+            </div>
+            <pre className={styles.permissionInput}>{detail.pendingPermission.input}</pre>
+            <div className={styles.permissionActions}>
+              <button
+                type="button"
+                className={styles.permissionAllow}
+                onClick={() =>
+                  void onRespondPermission(
+                    detail.pendingPermission!.requestId,
+                    "allow",
+                  )
+                }
+              >
+                Accept
+              </button>
+              <button
+                type="button"
+                className={styles.permissionAllow}
+                onClick={() =>
+                  void onRespondPermission(
+                    detail.pendingPermission!.requestId,
+                    "allowAlways",
+                  )
+                }
+              >
+                Accept all
+              </button>
+              <button
+                type="button"
+                className={styles.permissionDeny}
+                onClick={() =>
+                  void onRespondPermission(
+                    detail.pendingPermission!.requestId,
+                    "deny",
+                  )
+                }
+              >
+                Deny
+              </button>
+            </div>
+          </div>
+        )}
 
         {isWorking && (
           <div className={styles.statusStrip}>

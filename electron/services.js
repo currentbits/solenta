@@ -969,6 +969,8 @@ function getThreadDetail(store, threadId, workflow = null, opts) {
     workLog: store.getWorkLog(threadId).slice(),
     workflow: workflow ?? null,
     usage: store.getUsage(threadId) ?? null,
+    // Live permission prompt (runner-ephemeral, never persisted).
+    pendingPermission: (opts && opts.pendingPermission) || null,
   };
 }
 

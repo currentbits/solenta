@@ -17,6 +17,7 @@ import type {
   FetchIssueResult,
   LocalServerInfo,
   MemoryEntryInfo,
+  PermissionDecision,
   PermissionMode,
   ListPrsResult,
   PrChecksResult,
@@ -130,6 +131,11 @@ export interface UseCoderResult {
   runAutomationNow: (id: string) => Promise<AutomationInfo>;
   stopRun: () => Promise<void>;
   setPermissionMode: (mode: PermissionMode) => Promise<void>;
+  /** Answer the selected thread's pending permission prompt. */
+  respondPermission: (
+    requestId: string,
+    decision: PermissionDecision,
+  ) => Promise<void>;
   /** Set provider and/or model on the selected thread (selectedRef-guarded). */
   setProvider: (input: {
     provider?: string;
@@ -760,6 +766,23 @@ export function useCoder(): UseCoderResult {
       }
     },
     [api, selectedThreadId, applyThreads],
+  );
+
+  const respondPermission = useCallback(
+    async (requestId: string, decision: PermissionDecision) => {
+      if (!selectedThreadId) return;
+      const threadId = selectedThreadId;
+      try {
+        // Updated detail (prompt cleared, decision event) arrives via
+        // thread:updated pushed by the runner.
+        await api.threads.respondPermission({ threadId, requestId, decision });
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+        throw err;
+      }
+    },
+    [api, selectedThreadId],
   );
 
   const setProvider = useCallback(
@@ -1422,6 +1445,7 @@ export function useCoder(): UseCoderResult {
     runAutomationNow,
     stopRun,
     setPermissionMode,
+    respondPermission,
     setProvider,
     setReasoningEffort,
     setArchived,

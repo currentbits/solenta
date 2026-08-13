@@ -113,11 +113,18 @@ const PROVIDERS = [
     // claude --help / live warning: low, medium, high, xhigh, max
     efforts: ["low", "medium", "high", "xhigh", "max"],
     kind: "claude-stream",
-    buildArgs({ prompt, sessionId, permissionMode, model, reasoningEffort }) {
+    buildArgs({ sessionId, permissionMode, model, reasoningEffort }) {
+      // NO trailing prompt: the runner delivers it on stdin (stream-json
+      // input), which is what lets the CLI route permission prompts to us
+      // as control_request/control_response instead of silently denying.
       const args = [
         "-p",
         "--output-format",
         "stream-json",
+        "--input-format",
+        "stream-json",
+        "--permission-prompt-tool",
+        "stdio",
         "--verbose",
         "--permission-mode",
         String(permissionMode || "default"),
@@ -128,8 +135,8 @@ const PROVIDERS = [
       if (sessionId) {
         args.push("--resume", String(sessionId));
       }
-      // Takes exactly one value; placed before trailing prompt so it cannot
-      // swallow the prompt (variadic flags have bitten this project twice).
+      // Takes exactly one value; kept away from other values so it cannot
+      // swallow them (variadic flags have bitten this project twice).
       maybeEmitEffort(
         ["low", "medium", "high", "xhigh", "max"],
         reasoningEffort,
@@ -137,7 +144,6 @@ const PROVIDERS = [
           args.push("--effort", level);
         },
       );
-      args.push(String(prompt ?? ""));
       return args;
     },
   },
