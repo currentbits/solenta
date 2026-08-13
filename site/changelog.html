@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Solenta Changelog</title>
+  <meta name="description" content="What's new in Solenta: every notable change since the first release." />
+  <link rel="icon" href="assets/icon.svg" type="image/svg+xml" />
+  <script>document.documentElement.classList.add("js");</script>
+  <link rel="stylesheet" href="style.css?v=2" />
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="index.html">
+      <img src="assets/icon.svg" alt="" />
+      Solenta
+    </a>
+    <div class="nav-links">
+      <a href="docs.html">Docs</a>
+      <a href="changelog.html" class="active">Changelog</a>
+      <a href="https://github.com/currentbits/solenta">GitHub</a>
+      <a class="nav-cta" href="https://github.com/currentbits/solenta/releases/latest">
+        Download
+      </a>
+    </div>
+  </div>
+</nav>
+
+<div class="wrap">
+  <div class="docs-layout">
+    <main class="docs-content">
+      <h1>Changelog</h1>
+      <p class="lede">
+        Every notable change to Solenta, newest first.
+      </p>
+
+      <h2 id="unreleased">Unreleased</h2>
+      <h3>Added</h3>
+      <ul>
+        <li><strong>Agent-created pull requests.</strong> An agent can open a PR from its own worktree branch, and asks for your approval through an in-app permission prompt instead of stalling in the background.</li>
+        <li><strong>Worktree threads.</strong> A thread can get its own git worktree the moment it is created, so the agent starts on an isolated branch and never touches your checkout.</li>
+        <li><strong>Project create flow.</strong> Add a project from inside the app with a native directory picker, instead of pointing Solenta at a path by hand.</li>
+        <li><strong>Edit projects after the fact.</strong> Rename a project or change its SSH remote host and path from a settings modal, without removing and re-adding it.</li>
+        <li><strong>Model picker for automations.</strong> Scheduled runs can pin a specific model per automation, the same way threads can.</li>
+        <li><strong>Linux and Windows builds.</strong> Releases now ship linux-x64 and win32-x64 archives alongside the macOS build.</li>
+        <li><strong>This website.</strong> A landing page, full docs, and this changelog.</li>
+      </ul>
+      <h3>Fixed</h3>
+      <ul>
+        <li>The final answer of a run now streams as its own message below the tool calls, instead of being interleaved with them.</li>
+        <li>Tool cards in the run timeline no longer collapse into thin bars when the timeline is crowded.</li>
+        <li>A first-boot data migration could run during short-lived probe boots and lose user data; migrations now only run in real app launches.</li>
+        <li>Creating a project from a fresh install failed because two IPC endpoints were missing from the preload bridge.</li>
+      </ul>
+
+      <h2 id="v0-1-0">0.1.0 <small>2026-08-13</small></h2>
+      <p>First public release.</p>
+      <ul>
+        <li>Threads: one agent session per thread, with sticky permission modes, model override, reasoning effort, fork and hand-off, and Best of N across providers.</li>
+        <li>Worktrees and PRs: per-thread branches, live diff, checkpoints with restore, PR checks as badges, and one-click squash merge.</li>
+        <li>Build workflows: multi-phase templates (seed, analyze, verify, judge, synthesize) with per-phase fan-out.</li>
+        <li>Orchestration: every session gets thread tools so any agent can list, fork, drive and poll the others.</li>
+        <li>Shared memory: a supervised local memory server injected into every session.</li>
+        <li>Automations: scheduled prompts with pause and run-now, surfaced as ordinary threads.</li>
+        <li>Spend guardrails: a daily budget that blocks new runs once reached, with per-thread token and cost readouts.</li>
+        <li>Web mode: the full UI served over HTTP and WebSocket behind a session token.</li>
+        <li>SSH remote projects: run agents on another machine over key-based SSH.</li>
+      </ul>
+    </main>
+  </div>
+</div>
+
+<footer>
+  <div class="wrap footer-inner">
+    <a class="brand" href="index.html">
+      <img src="assets/icon.svg" alt="" width="18" height="18" />
+      Solenta
+    </a>
+    <span>Free and open source under MIT.</span>
+    <span class="spacer"></span>
+    <a href="docs.html">Docs</a>
+    <a href="changelog.html">Changelog</a>
+    <a href="https://github.com/currentbits/solenta">GitHub</a>
+    <a href="https://github.com/currentbits/solenta/releases">Releases</a>
+  </div>
+</footer>
+
+</body>
+</html>
