@@ -390,17 +390,6 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           }),
         ),
       addViaDialog: () => rec("projects.addViaDialog", [], project()),
-      create: (input: { name: string; parentDir: string }) => {
-        const name = input.name.trim();
-        const created = project({
-          name,
-          slug: name,
-          path: `${input.parentDir.trim().replace(/\/+$/, "")}/${name}`,
-        });
-        return rec("projects.create", [input], created);
-      },
-      pickDirectory: () =>
-        rec("projects.pickDirectory", [], null as string | null),
       update: (input: {
         projectId: string;
         name?: string;

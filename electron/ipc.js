@@ -127,21 +127,6 @@ const IPC_HANDLERS = {
   "projects:add": async (ctx, projectPath, opts) => {
     return services.addProject(ctx.store, projectPath, opts);
   },
-  "projects:create": async (ctx, input) => {
-    return services.createProject(ctx.store, input || {});
-  },
-  "projects:pickDirectory": async (ctx) => {
-    if (!ctx.dialog || typeof ctx.dialog.showOpenDialog !== "function") {
-      throw new Error("Folder picker is not available in this mode");
-    }
-    const result = await ctx.dialog.showOpenDialog({
-      properties: ["openDirectory", "createDirectory"],
-    });
-    if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
-      return null;
-    }
-    return result.filePaths[0];
-  },
   "projects:update": async (ctx, input) => {
     return services.updateProject(
       ctx.store,

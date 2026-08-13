@@ -20,7 +20,6 @@ export type AppView = "thread" | "kanban" | "prs" | "automations" | "activity";
 
 export default function App() {
   const {
-    api,
     projects,
     threads,
     providers,
@@ -32,7 +31,6 @@ export default function App() {
     error,
     clearError,
     addProject,
-    createProject,
     updateProject,
     createThread,
     forkThread,
@@ -223,8 +221,12 @@ export default function App() {
   );
 
   const handleAddProject = useCallback(() => {
-    setAddPathOpen(true);
-  }, []);
+    if (isWebMode()) {
+      setAddPathOpen(true);
+      return;
+    }
+    void addProject();
+  }, [addProject]);
 
   const submitAddPath = useCallback(
     async (
@@ -236,20 +238,6 @@ export default function App() {
       return added;
     },
     [addProject],
-  );
-
-  const submitCreateProject = useCallback(
-    async (name: string, parentDir: string) => {
-      const created = await createProject({ name, parentDir });
-      if (created) setAddPathOpen(false);
-      return created;
-    },
-    [createProject],
-  );
-
-  const pickProjectDirectory = useCallback(
-    () => api.projects.pickDirectory(),
-    [api],
   );
 
   const editProject =
@@ -524,10 +512,6 @@ export default function App() {
           <AddProjectPathModal
             onClose={() => setAddPathOpen(false)}
             onSubmit={submitAddPath}
-            onCreate={submitCreateProject}
-            onPickDirectory={
-              isWebMode() ? undefined : pickProjectDirectory
-            }
           />
         )}
         {editProject && (

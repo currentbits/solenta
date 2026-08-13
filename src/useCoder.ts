@@ -7,7 +7,6 @@ import type {
   AutomationWrite,
   CheckpointInfo,
   CoderApi,
-  CreateProjectInput,
   RunStatInfo,
   DevServerState,
   DiffResult,
@@ -80,8 +79,6 @@ export interface UseCoderResult {
     path?: string,
     opts?: { remoteHost?: string; remotePath?: string },
   ) => Promise<ProjectInfo | null>;
-  /** Create a new folder + git repo (projects.create) and add it. */
-  createProject: (input: CreateProjectInput) => Promise<ProjectInfo | null>;
   /** Patch name and/or SSH remote fields of an existing project. */
   updateProject: (input: {
     projectId: string;
@@ -480,24 +477,6 @@ export function useCoder(): UseCoderResult {
         });
         setError(null);
       }
-      return p;
-    } catch (err) {
-      setError({ scope: "project", message: errorMessage(err) });
-      return null;
-    }
-  }, [api]);
-
-  const createProject = useCallback(async (input: CreateProjectInput) => {
-    try {
-      const p = await api.projects.create({
-        name: input.name.trim(),
-        parentDir: input.parentDir.trim(),
-      });
-      setProjects((prev) => {
-        if (prev.some((x) => x.id === p.id)) return prev;
-        return [...prev, p];
-      });
-      setError(null);
       return p;
     } catch (err) {
       setError({ scope: "project", message: errorMessage(err) });
@@ -1406,7 +1385,6 @@ export function useCoder(): UseCoderResult {
     error,
     clearError,
     addProject,
-    createProject,
     updateProject,
     createThread,
     forkThread,

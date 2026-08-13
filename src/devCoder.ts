@@ -2306,27 +2306,6 @@ function buildDevCoder(): CoderApi {
         const n = projects.length + 1;
         return api.projects.add(`/Users/demo/demo-org/project-${n}`);
       },
-      async create(input: { name: string; parentDir: string }) {
-        const name = input.name.trim();
-        const parentDir = input.parentDir.trim().replace(/\/+$/, "");
-        if (!name) throw new Error("Project name is required");
-        if (name === "." || name === ".." || /[/\\\0]/.test(name)) {
-          throw new Error("Project name must be a plain folder name (no slashes)");
-        }
-        if (!parentDir) throw new Error("Location is required");
-        const project: ProjectInfo = {
-          id: id("proj"),
-          slug: name,
-          name,
-          path: `${parentDir}/${name}`,
-        };
-        projects.push(project);
-        return { ...project };
-      },
-      async pickDirectory() {
-        // No native dialog in the browser dev mock; cancel like the real one.
-        return null;
-      },
       /** Mirrors services.updateProject: empty host clears the remote fields. */
       async update(input: {
         projectId: string;
