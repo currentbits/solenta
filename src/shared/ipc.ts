@@ -140,6 +140,11 @@ export interface ThreadInfo {
   reasoningEffort: ReasoningEffort | null;
   /** Absolute path of the thread's git worktree, when one was set up. */
   worktreePath: string | null;
+  /**
+   * Worktree requested but not yet created — it materializes at first run
+   * (lazy, t3-style), so a thread that never runs leaves nothing on disk.
+   */
+  pendingWorktree?: boolean;
 }
 
 /**

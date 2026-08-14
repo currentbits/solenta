@@ -294,6 +294,25 @@ app.whenReady().then(async () => {
   });
   prStateRefresher.start();
 
+  // Boot-time worktree GC: reclaim clean worktree dirs no thread references
+  // (crash/store-drift orphans). Conservative by design — dirty trees and
+  // unmerged branches are never touched. Delayed + unref'd like the PR
+  // refresher so startup stays fast and a short-lived process can exit.
+  const sweepTimer = setTimeout(() => {
+    const { sweepOrphanWorktrees } = require("./worktrees.js");
+    void sweepOrphanWorktrees({
+      store,
+      worktreeBase: path.join(userData, "worktrees"),
+    }).then((result) => {
+      if (result.removed.length > 0) {
+        console.warn(
+          `worktree sweep: removed ${result.removed.length} orphan(s)`,
+        );
+      }
+    });
+  }, 15_000);
+  sweepTimer.unref();
+
   automationScheduler = startScheduler({ store, runner, broadcast });
 
   // In-main orchestrator MCP server (coder-threads): lets any agent drive

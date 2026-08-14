@@ -2575,6 +2575,27 @@ function createRunner(opts) {
    * @param {{ threadId: string, prompt: string }} input
    * @returns {Promise<{ runId: string }>}
    */
+  /**
+   * Create the worktree for a pendingWorktree thread before its first run
+   * (lazy, t3-style). No-op for plain threads. Throws on setup failure so
+   * the run never silently drops the isolation the user asked for.
+   * @param {string} threadId
+   */
+  function materializePendingWorktree(threadId) {
+    const thread = store.getThread(threadId);
+    if (!thread || !thread.pendingWorktree || thread.worktreePath) return;
+    if (!userDataPath) {
+      throw new Error("worktreeBase is not configured");
+    }
+    const { ensureWorktree } = require("./worktrees.js");
+    ensureWorktree({
+      store,
+      threadId,
+      worktreeBase: path.join(userDataPath, "worktrees"),
+      broadcast: pushFn,
+    });
+  }
+
   async function startRun(input) {
     const { threadId, prompt } = input;
     if (active.has(threadId)) {
@@ -2596,6 +2617,12 @@ function createRunner(opts) {
       const entryDef = getProvider(provider) || getProvider("claude");
       assertProviderBinary(entryDef, projectForGate);
     }
+
+    // Lazy worktree (t3-style): pendingWorktree threads materialize their
+    // worktree + branch at first run, so never-run threads leave nothing.
+    // Throws before any thread mutation, so a failed setup fails the run
+    // cleanly and the flag survives for a retry.
+    materializePendingWorktree(threadId);
 
     const runId = randomUUID();
     // Transcript stores the RAW user prompt. The hand-off context block (if
@@ -2674,6 +2701,7 @@ function createRunner(opts) {
    * @returns {Promise<{ runId: string }>}
    */
   async function startWorkflowRun(input) {
+    materializePendingWorktree(input.threadId);
     return workflowEngine.startWorkflowRun({
       threadId: input.threadId,
       prompt: input.prompt,

@@ -17,6 +17,7 @@ const {
   prStatus,
   prChecks,
   mergePr,
+  maybeCleanupMergedWorktree,
   listPrs,
   listCheckpoints,
   restoreCheckpoint,
@@ -190,17 +191,15 @@ const IPC_HANDLERS = {
             "Worktree threads are not available for remote projects",
           );
         }
-        // setupWorktree broadcasts threads:changed itself.
-        return setupWorktree({
-          store: ctx.store,
-          threadId: thread.id,
-          worktreeBase: ctx.worktreeBase,
-          broadcast: ctx.broadcast,
-        });
+        // Lazy (t3-style): only mark intent here. The worktree + branch are
+        // created by ensureWorktree at first run start, so a thread that
+        // never runs leaves nothing on disk.
+        ctx.store.updateThread(thread.id, { pendingWorktree: true });
+        ctx.store.save();
       } catch (err) {
         // Atomic create: never leave a thread behind when its worktree
-        // failed. worktreePath is still null here, so deleteThread's guard
-        // does not fire.
+        // intent failed validation. worktreePath is still null here, so
+        // deleteThread's guard does not fire.
         try {
           services.deleteThread(ctx.store, { threadId: thread.id });
         } catch {
@@ -211,7 +210,7 @@ const IPC_HANDLERS = {
       }
     }
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
-    return thread;
+    return ctx.store.getThread(thread.id);
   },
   "threads:fork": async (ctx, input) => {
     const thread = services.forkThread(ctx.store, input);
@@ -458,11 +457,19 @@ const IPC_HANDLERS = {
     });
   },
   "git:prMerge": async (ctx, input) => {
-    return mergePr({
+    const info = mergePr({
       store: ctx.store,
       threadId: input.threadId,
       broadcast: ctx.broadcast,
     });
+    // Merged in-app: reclaim the worktree + branch right away (same rules
+    // as the background refresher — dirty/unpushed trees are left alone).
+    const cleaned = await maybeCleanupMergedWorktree(ctx.store, input.threadId);
+    if (cleaned.cleaned) {
+      ctx.store.save();
+      ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    }
+    return info;
   },
   "git:listPrs": async (_ctx, projectPath) => {
     return listPrs(projectPath);

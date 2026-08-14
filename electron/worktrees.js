@@ -1797,6 +1797,12 @@ async function refreshPrStates(store, opts) {
         prState: nextState,
       });
       changed += 1;
+
+      if (nextState === "MERGED") {
+        // The PR path used to strand worktree+branch forever (t3 deep-dive).
+        // Reclaim now; dirty/unpushed trees are skipped for manual cleanup.
+        await maybeCleanupMergedWorktree(store, threadId);
+      }
     } catch {
       // A refresh failure is not an event. Never throw out of the loop.
       continue;
@@ -2411,6 +2417,199 @@ async function restoreCheckpoint(opts) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Worktree junk collection (t3 deep-dive round): merged-PR reclaim, lazy
+// creation, boot-time orphan sweep. All async git (never block the main
+// process) and all failure-silent where they run unattended.
+// ---------------------------------------------------------------------------
+
+/**
+ * Reclaim a thread's worktree + local branch once its PR has MERGED.
+ * Safe by construction — cleans only when ALL of:
+ * - thread.prState is MERGED (the flip is one-shot: terminal states leave
+ *   the refresh candidate set, so this cannot re-fire)
+ * - the worktree has no uncommitted changes
+ * - local HEAD equals origin/<branch> (everything local was in the PR)
+ * Does NOT save or broadcast; callers own durability (refresher saves once).
+ *
+ * @param {import('./store').Store} store
+ * @param {string} threadId
+ * @returns {Promise<{ cleaned: boolean, reason?: string }>}
+ */
+async function maybeCleanupMergedWorktree(store, threadId) {
+  try {
+    const thread = store.getThread(threadId);
+    if (!thread || !thread.worktreePath || !thread.branch) {
+      return { cleaned: false, reason: "no worktree" };
+    }
+    if (String(thread.prState || "").toUpperCase() !== "MERGED") {
+      return { cleaned: false, reason: "PR not merged" };
+    }
+    const project = store.getProject(thread.projectId);
+    if (!project || project.remoteHost) {
+      return { cleaned: false, reason: "no local project" };
+    }
+    const wtPath = thread.worktreePath;
+    if (!fs.existsSync(wtPath)) {
+      // Dir already gone (manual rm): just drop the registration + fields.
+      await gitTryAsync(project.path, ["worktree", "prune"]);
+      await gitTryAsync(project.path, ["branch", "-D", thread.branch]);
+      store.updateThread(threadId, { worktreePath: null, branch: null });
+      return { cleaned: true };
+    }
+
+    const status = await gitTryAsync(
+      wtPath,
+      ["status", "--porcelain", "-uall"],
+      { raw: true },
+    );
+    if (!status.ok || String(status.stdout || "").trim()) {
+      return { cleaned: false, reason: "uncommitted changes" };
+    }
+
+    const localSha = await gitTryAsync(wtPath, ["rev-parse", "HEAD"]);
+    const remoteSha = await gitTryAsync(wtPath, [
+      "rev-parse",
+      `refs/remotes/origin/${thread.branch}`,
+    ]);
+    if (!localSha.ok || !remoteSha.ok || localSha.stdout !== remoteSha.stdout) {
+      return { cleaned: false, reason: "unpushed commits" };
+    }
+
+    const removed = await gitTryAsync(project.path, [
+      "worktree",
+      "remove",
+      wtPath,
+    ]);
+    if (!removed.ok) {
+      return { cleaned: false, reason: "worktree remove failed" };
+    }
+    // -D: a squash-merged branch is never "merged" in git's own bookkeeping,
+    // but local == origin/<branch> and the PR merged that tip, so it is safe.
+    await gitTryAsync(project.path, ["branch", "-D", thread.branch]);
+    store.updateThread(threadId, { worktreePath: null, branch: null });
+    return { cleaned: true };
+  } catch {
+    return { cleaned: false, reason: "error" };
+  }
+}
+
+/**
+ * Boot-time GC: remove worktree dirs under worktreeBase that no thread
+ * references. Conservative — only CLEAN worktrees are removed (a corrupted
+ * or reset store must never cost uncommitted work), and branches are only
+ * safe-deleted (-d) so unmerged commits always stay reachable.
+ *
+ * @param {object} opts
+ * @param {import('./store').Store} opts.store
+ * @param {string} opts.worktreeBase
+ * @returns {Promise<{ removed: string[], kept: string[] }>}
+ */
+async function sweepOrphanWorktrees(opts) {
+  const { store, worktreeBase } = opts;
+  /** @type {{ removed: string[], kept: string[] }} */
+  const result = { removed: [], kept: [] };
+
+  /** @type {fs.Dirent[]} */
+  let entries = [];
+  try {
+    entries = fs.readdirSync(worktreeBase, { withFileTypes: true });
+  } catch {
+    return result;
+  }
+
+  const referenced = new Set(
+    store
+      .getThreads()
+      .map((t) => t && t.worktreePath)
+      .filter(Boolean)
+      .map((p) => path.resolve(String(p))),
+  );
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const dir = path.join(worktreeBase, entry.name);
+    if (referenced.has(path.resolve(dir))) continue;
+
+    try {
+      // Owning repo: the worktree's common git dir is <repo>/.git.
+      const common = await gitTryAsync(dir, [
+        "rev-parse",
+        "--path-format=absolute",
+        "--git-common-dir",
+      ]);
+      if (!common.ok || !common.stdout) {
+        result.kept.push(dir);
+        continue;
+      }
+      const repoPath = path.dirname(path.resolve(dir, common.stdout));
+
+      const status = await gitTryAsync(
+        dir,
+        ["status", "--porcelain", "-uall"],
+        { raw: true },
+      );
+      if (!status.ok || String(status.stdout || "").trim()) {
+        result.kept.push(dir);
+        continue;
+      }
+
+      const br = await gitTryAsync(dir, ["branch", "--show-current"]);
+      const branch = br.ok ? br.stdout.trim() : "";
+
+      const removed = await gitTryAsync(repoPath, ["worktree", "remove", dir]);
+      if (!removed.ok) {
+        result.kept.push(dir);
+        continue;
+      }
+      if (branch && branch.startsWith("coder/")) {
+        // Non-force: an unmerged orphan branch survives as a recoverable ref.
+        await gitTryAsync(repoPath, ["branch", "-d", branch]);
+      }
+      result.removed.push(dir);
+    } catch {
+      result.kept.push(dir);
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Materialize the worktree for a pendingWorktree thread (lazy, t3-style:
+ * a thread that never runs leaves nothing on disk). No-op for plain threads
+ * and threads that already have one; a stale flag is cleared either way.
+ * Creation failures propagate AND keep the flag so the next run retries.
+ *
+ * @param {object} opts
+ * @param {import('./store').Store} opts.store
+ * @param {string} opts.threadId
+ * @param {string} opts.worktreeBase
+ * @param {(channel: string, payload: unknown) => void} [opts.broadcast]
+ * @returns {object} current ThreadInfo
+ */
+function ensureWorktree(opts) {
+  const { store, threadId, worktreeBase, broadcast } = opts;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  if (thread.worktreePath) {
+    if (thread.pendingWorktree) {
+      store.updateThread(threadId, { pendingWorktree: false });
+      store.save();
+    }
+    return { ...store.getThread(threadId) };
+  }
+  if (!thread.pendingWorktree) {
+    return { ...thread };
+  }
+  setupWorktree({ store, threadId, worktreeBase, broadcast });
+  store.updateThread(threadId, { pendingWorktree: false });
+  store.save();
+  return { ...store.getThread(threadId) };
+}
+
 module.exports = {
   setupWorktree,
   maybeRenameWorktreeBranch,
@@ -2434,6 +2633,9 @@ module.exports = {
   isUnknownJsonField,
   refreshPrStates,
   createPrStateRefresher,
+  maybeCleanupMergedWorktree,
+  sweepOrphanWorktrees,
+  ensureWorktree,
   isPrRefreshCandidate,
   isGitHubRemote,
   gitTry,

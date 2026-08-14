@@ -2511,20 +2511,11 @@ function buildDevCoder(): CoderApi {
           worktreePath: null,
           handoffFrom: null,
         };
-        // Mirror the electron threads:create worktree flag: attach a fake
-        // worktree + placeholder-named branch right away (ipc.js calls
-        // setupWorktree after createThread there).
+        // Mirror the electron threads:create worktree flag: lazy (t3-style).
+        // Only the intent is recorded; the fake worktree + branch materialize
+        // at first run (see runs.start), so never-run threads stay clean.
         if (input.worktree === true) {
-          const shortId = t.id.slice(0, 6);
-          const slug =
-            t.title
-              .toLowerCase()
-              .replace(/[^a-z0-9]+/g, "-")
-              .replace(/^-+|-+$/g, "")
-              .slice(0, 40) || "thread";
-          const project = projects.find((p) => p.id === t.projectId);
-          t.branch = `coder/${slug}-${shortId}`;
-          t.worktreePath = `${project?.path ?? "/Users/demo/project"}/.coder/worktrees/${t.id}`;
+          t.pendingWorktree = true;
         }
         threads = [t, ...threads];
         details.set(t.id, {
@@ -2989,6 +2980,25 @@ function buildDevCoder(): CoderApi {
           });
         }
 
+        // Mirror electron materializePendingWorktree: the worktree + branch
+        // (slugged from the pre-promotion title) appear at first run.
+        if (thread.pendingWorktree && !thread.worktreePath) {
+          const shortId = thread.id.slice(0, 6);
+          const slug =
+            thread.title
+              .toLowerCase()
+              .replace(/[^a-z0-9]+/g, "-")
+              .replace(/^-+|-+$/g, "")
+              .slice(0, 40) || "thread";
+          const project = projects.find((p) => p.id === thread.projectId);
+          thread = {
+            ...thread,
+            pendingWorktree: false,
+            branch: `coder/${slug}-${shortId}`,
+            worktreePath: `${project?.path ?? "/Users/demo/project"}/.coder/worktrees/${thread.id}`,
+          };
+        }
+
         if (thread.title === "New Thread") {
           const firstLine =
             prompt.split("\n")[0]?.slice(0, TITLE_MAX) || "New Thread";
@@ -3097,6 +3107,24 @@ function buildDevCoder(): CoderApi {
         });
 
         let thread = { ...detail.thread };
+        // Same lazy-worktree materialization as runs.start (workflows are
+        // first runs too).
+        if (thread.pendingWorktree && !thread.worktreePath) {
+          const shortId = thread.id.slice(0, 6);
+          const slug =
+            thread.title
+              .toLowerCase()
+              .replace(/[^a-z0-9]+/g, "-")
+              .replace(/^-+|-+$/g, "")
+              .slice(0, 40) || "thread";
+          const project = projects.find((p) => p.id === thread.projectId);
+          thread = {
+            ...thread,
+            pendingWorktree: false,
+            branch: `coder/${slug}-${shortId}`,
+            worktreePath: `${project?.path ?? "/Users/demo/project"}/.coder/worktrees/${thread.id}`,
+          };
+        }
         if (thread.title === "New Thread") {
           const firstLine =
             prompt.split("\n")[0]?.slice(0, TITLE_MAX) || "New Thread";

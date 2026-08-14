@@ -385,7 +385,7 @@ export function ThreadCard({
               ssh
             </span>
           )}
-          {thread.worktreePath && (
+          {(thread.worktreePath || thread.pendingWorktree) && (
             <span className={styles.worktreeTag}>wt</span>
           )}
           {thread.archived && (

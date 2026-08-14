@@ -55,27 +55,36 @@ describe("threads:create with worktree", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("creates the thread with a worktree and placeholder branch", async () => {
+  it("marks the thread pendingWorktree without touching git (lazy, t3-style)", async () => {
     const thread = await IPC_HANDLERS["threads:create"](ctx, {
       projectId: project.id,
       title: "New Thread",
       worktree: true,
     });
 
-    const shortId = thread.id.slice(0, 6);
-    assert.equal(thread.branch, `coder/new-thread-${shortId}`);
-    assert.equal(thread.worktreePath, path.join(worktreeBase, thread.id));
-    assert.ok(fs.existsSync(thread.worktreePath));
-
-    const worktrees = git(repo, ["worktree", "list"]);
-    assert.ok(worktrees.includes(thread.worktreePath));
-    const branches = git(repo, ["branch", "--list"]);
-    assert.ok(branches.includes(`coder/new-thread-${shortId}`));
+    // Nothing on disk until the first run: no dir, no branch, no registration.
+    assert.equal(thread.pendingWorktree, true);
+    assert.equal(thread.worktreePath, null);
+    assert.equal(thread.branch, null);
+    assert.ok(!fs.existsSync(worktreeBase));
+    const branches = git(repo, ["branch", "--list", "coder/*"]);
+    assert.equal(branches, "");
 
     // Persisted, and the renderer was notified.
     const persisted = store.getThread(thread.id);
-    assert.equal(persisted.worktreePath, thread.worktreePath);
+    assert.equal(persisted.pendingWorktree, true);
     assert.ok(broadcasts.some((b) => b.channel === "threads:changed"));
+  });
+
+  it("pendingWorktree threads delete cleanly without a Git-tab detour", async () => {
+    const thread = await IPC_HANDLERS["threads:create"](ctx, {
+      projectId: project.id,
+      title: "New Thread",
+      worktree: true,
+    });
+    // worktreePath is null, so deleteThread's worktree guard must not fire.
+    services.deleteThread(store, { threadId: thread.id });
+    assert.equal(services.listThreads(store).length, 0);
   });
 
   it("without the flag, creates a plain local thread", async () => {
@@ -87,12 +96,8 @@ describe("threads:create with worktree", () => {
     assert.equal(thread.branch, null);
   });
 
-  it("rolls the thread back when worktree creation fails", async () => {
-    // Deterministic failure: worktreeBase is an existing file, so
-    // setupWorktree's mkdirSync(recursive) throws before any git call.
-    const blockedBase = path.join(tmpDir, "blocked-base");
-    fs.writeFileSync(blockedBase, "not a dir\n");
-    const blockedCtx = { ...ctx, worktreeBase: blockedBase };
+  it("rolls the thread back when worktreeBase is not configured", async () => {
+    const blockedCtx = { ...ctx, worktreeBase: "" };
 
     await assert.rejects(
       () =>
@@ -101,6 +106,7 @@ describe("threads:create with worktree", () => {
           title: "New Thread",
           worktree: true,
         }),
+      /worktreeBase is not configured/,
     );
     // Atomic create: no half-created thread left behind.
     assert.equal(services.listThreads(store).length, 0);
