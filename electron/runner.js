@@ -1326,11 +1326,20 @@ function createRunner(opts) {
           }
 
           const ok = ev.subtype === "success";
+          const errors = (Array.isArray(ev.errors) ? ev.errors : [])
+            .map((e) => String(e))
+            .filter(Boolean);
+          // Resume target gone (session file deleted, or captured under a
+          // different cwd): keeping the id would fail every future turn the
+          // same way. Drop it so the next turn starts a fresh conversation.
+          const sessionLost = errors.some((e) =>
+            /No conversation found/i.test(e),
+          );
           store.updateThread(
             threadId,
             {
               status: ok ? "done" : "failed",
-              sessionId: capturedSessionId,
+              sessionId: sessionLost ? null : capturedSessionId,
               runStartedAt: null,
             },
             { touch: true },
@@ -1339,6 +1348,12 @@ function createRunner(opts) {
           let failText = "";
           if (!ok) {
             failText = `Run error: result subtype ${ev.subtype || "unknown"}`;
+            if (errors.length) {
+              failText += `\n${errors.slice(-3).join("\n")}`;
+            }
+            if (sessionLost) {
+              failText += "\nSession reset; the next message starts fresh.";
+            }
             appendMessage(threadId, "event", failText, runId);
             appendDoneWorkLog(threadId, runId, "Run error");
           }

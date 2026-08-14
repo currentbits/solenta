@@ -76,6 +76,33 @@ describe("Store", () => {
     assert.equal(auto.lastError, null);
   });
 
+  it("updateThread clears sessionId when worktreePath changes (cwd-scoped sessions)", () => {
+    const store = new Store(filePath);
+    store.setThreads([
+      { id: "t1", sessionId: "sess-1", worktreePath: null },
+    ]);
+
+    // cwd flips into a worktree → session captured in project.path is stale
+    store.updateThread("t1", { worktreePath: "/tmp/wt" });
+    assert.equal(store.getThread("t1").sessionId, null);
+
+    // same-value worktreePath patch must NOT drop the session
+    store.updateThread("t1", { sessionId: "sess-2" });
+    store.updateThread("t1", { worktreePath: "/tmp/wt", branch: "b" });
+    assert.equal(store.getThread("t1").sessionId, "sess-2");
+
+    // cwd flips back out (merged-worktree reclaim) → stale again
+    store.updateThread("t1", { worktreePath: null, branch: null });
+    assert.equal(store.getThread("t1").sessionId, null);
+
+    // an explicit sessionId in the same patch wins over the guard
+    store.updateThread("t1", {
+      worktreePath: "/tmp/wt2",
+      sessionId: "sess-3",
+    });
+    assert.equal(store.getThread("t1").sessionId, "sess-3");
+  });
+
   it("round-trips projects, threads, messages, work log", () => {
     const store = new Store(filePath);
     const project = {

@@ -769,10 +769,22 @@ class Store {
     const touch = Boolean(options && options.touch);
     const threads = this.data.threads.map((t) => {
       if (t.id !== threadId) return t;
-      if (touch) {
-        return { ...t, ...patch, updatedAt: Date.now() };
+      let p = patch;
+      // CLI sessions are per-cwd (claude stores them under the munged spawn
+      // dir), so a worktreePath change makes the captured sessionId
+      // unresumable: --resume then dies with `error_during_execution` /
+      // "No conversation found". Drop it so the next turn starts fresh.
+      if (
+        Object.prototype.hasOwnProperty.call(patch, "worktreePath") &&
+        patch.worktreePath !== t.worktreePath &&
+        !Object.prototype.hasOwnProperty.call(patch, "sessionId")
+      ) {
+        p = { ...patch, sessionId: null };
       }
-      return { ...t, ...patch };
+      if (touch) {
+        return { ...t, ...p, updatedAt: Date.now() };
+      }
+      return { ...t, ...p };
     });
     this.data.threads = threads;
     return threads.find((t) => t.id === threadId) || null;

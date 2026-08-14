@@ -229,6 +229,28 @@ async function main() {
     return;
   }
 
+  if (scenario === "session-lost") {
+    // Real shape from --resume <id> when the session file lives under a
+    // different cwd's project dir (verified live): no init event, instant
+    // error result carrying the stale id and an errors array.
+    process.stderr.write(
+      "No conversation found with session ID: sess-stale-999\\n",
+    );
+    emit({
+      type: "result",
+      subtype: "error_during_execution",
+      duration_ms: 0,
+      is_error: true,
+      num_turns: 0,
+      session_id: "sess-stale-999",
+      total_cost_usd: 0,
+      usage: { input_tokens: 0, output_tokens: 0 },
+      errors: ["No conversation found with session ID: sess-stale-999"],
+    });
+    process.exit(0);
+    return;
+  }
+
   if (scenario === "result-only") {
     emit({
       type: "system",
@@ -693,6 +715,36 @@ describe("runner claude provider", () => {
           m.runId === runId,
       ),
     );
+  });
+
+  it("stale --resume (session lost) fails with the CLI error surfaced and clears sessionId", async () => {
+    process.env.CODER_FAKE_CLAUDE_SCENARIO = "session-lost";
+
+    const thread = store.getThreads()[0];
+    store.updateThread(thread.id, { sessionId: "sess-stale-999" });
+
+    const { runId } = await runner.startRun({
+      threadId: thread.id,
+      prompt: "follow-up after worktree cleanup",
+    });
+
+    await waitFor(() => store.getThread(thread.id).status === "failed");
+
+    // Self-heal: the stale id is dropped so the next turn starts fresh
+    // instead of failing forever on the same --resume.
+    assert.equal(store.getThread(thread.id).sessionId, null);
+
+    const msgs = store.getMessages(thread.id);
+    const errEvent = msgs.find(
+      (m) =>
+        m.role === "event" &&
+        /error_during_execution/.test(m.text) &&
+        m.runId === runId,
+    );
+    assert.ok(errEvent, "expected Run error event");
+    // The CLI's errors array must be visible, not just the subtype.
+    assert.ok(/No conversation found/.test(errEvent.text), errEvent.text);
+    assert.ok(/starts fresh/.test(errEvent.text), errEvent.text);
   });
 
   it("stopRun kills claude process and leaves idle + Run stopped", async () => {
