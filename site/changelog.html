@@ -36,15 +36,30 @@
         Every notable change to Solenta, newest first.
       </p>
 
-      <h2 id="unreleased">Unreleased</h2>
+      <h2 id="v0-3-0">0.3.0 <small>2026-08-14</small></h2>
       <h3>Added</h3>
       <ul>
         <li><strong>Grok 4.6.</strong> The Grok picker now offers 4.6 (the CLI default) alongside 4.5, and extra-high reasoning effort.</li>
+      </ul>
+      <h3>Fixed</h3>
+      <ul>
+        <li>Orchestration worker threads now archive themselves once their run lands done, instead of piling up in the sidebar.</li>
+        <li>Finished workers no longer show up in the Agents Team list, so the list reflects who is still working.</li>
+      </ul>
+
+      <h2 id="v0-2-1">0.2.1 <small>2026-08-14</small></h2>
+      <p>Includes 0.2.0, released the same morning.</p>
+      <h3>Added</h3>
+      <ul>
+        <li><strong>Auto-updates.</strong> Prod and nightly channels, with a channel picker and a manual check-for-updates in Settings.</li>
         <li><strong>Agent-created pull requests.</strong> An agent can open a PR from its own worktree branch, and asks for your approval through an in-app permission prompt instead of stalling in the background.</li>
         <li><strong>Worktree threads.</strong> A thread can get its own git worktree the moment it is created, so the agent starts on an isolated branch and never touches your checkout.</li>
         <li><strong>Project create flow.</strong> Add a project from inside the app with a native directory picker, instead of pointing Solenta at a path by hand.</li>
         <li><strong>Edit projects after the fact.</strong> Rename a project or change its SSH remote host and path from a settings modal, without removing and re-adding it.</li>
         <li><strong>Model picker for automations.</strong> Scheduled runs can pin a specific model per automation, the same way threads can.</li>
+        <li><strong>Settled tail actions.</strong> Settle all from the collapsed tail bar, and Clear to bulk-archive with an undo toast.</li>
+        <li><strong>Waiting badge.</strong> A thread shows it is blocked on a permission prompt rather than looking idle.</li>
+        <li><strong>Worker threads in the sidebar.</strong> Forked orchestration workers nest under the thread that spawned them.</li>
         <li><strong>Linux and Windows builds.</strong> Releases now ship linux-x64 and win32-x64 archives alongside the macOS build.</li>
         <li><strong>This website.</strong> A landing page, full docs, and this changelog.</li>
       </ul>
@@ -52,6 +67,11 @@
       <ul>
         <li>The final answer of a run now streams as its own message below the tool calls, instead of being interleaved with them.</li>
         <li>Tool cards in the run timeline no longer collapse into thin bars when the timeline is crowded.</li>
+        <li>Headless Grok runs died on the first gated tool; asking modes now map to auto and run errors surface instead of vanishing.</li>
+        <li>The Claude CLI stays alive across turns, so background tasks survive a settle.</li>
+        <li>The New-thread dropdown stays inside the app window instead of opening off-screen.</li>
+        <li>Composer drafts are kept per thread instead of carrying text across switches.</li>
+        <li>The Memory tab is scoped by project path, not display slug.</li>
         <li>A first-boot data migration could run during short-lived probe boots and lose user data; migrations now only run in real app launches.</li>
         <li>Creating a project from a fresh install failed because two IPC endpoints were missing from the preload bridge.</li>
       </ul>
