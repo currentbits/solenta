@@ -113,6 +113,8 @@ export default function App() {
   const [addPathOpen, setAddPathOpen] = useState(false);
   const [editProjectId, setEditProjectId] = useState<string | null>(null);
   const [view, setView] = useState<AppView>("thread");
+  /** Freshly created thread the Sidebar should reveal (expand/scroll/flash). */
+  const [revealThreadId, setRevealThreadId] = useState<string | null>(null);
 
   const handleSelectThread = useCallback(
     (id: string) => {
@@ -336,8 +338,12 @@ export default function App() {
         onOpenAutomations={() => setView("automations")}
         onOpenActivity={() => setView("activity")}
         onCreateThread={(projectId, opts) => {
-          void createThread("New Thread", projectId, opts);
+          void createThread("New Thread", projectId, opts).then((t) => {
+            if (t) setRevealThreadId(t.id);
+          });
         }}
+        revealThreadId={revealThreadId}
+        onRevealHandled={() => setRevealThreadId(null)}
         onCreateThreadFromIssue={handleCreateThreadFromIssue}
         onAddProject={handleAddProject}
         onRemoveProject={handleRemoveProject}

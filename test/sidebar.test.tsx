@@ -86,6 +86,8 @@ function sidebar(
     onSelectThread?: (id: string) => void;
     onRemoveProject?: (projectId: string) => void;
     projectError?: string | null;
+    revealThreadId?: string | null;
+    onRevealHandled?: () => void;
   } = {},
 ) {
   const projects = over.projects ?? [p1];
@@ -104,6 +106,8 @@ function sidebar(
       onRemoveProject={over.onRemoveProject}
       projectError={over.projectError ?? null}
       onSetSettled={over.onSetSettled}
+      revealThreadId={over.revealThreadId ?? null}
+      onRevealHandled={over.onRevealHandled}
       searchThreads={async ({ query }) =>
         threads.filter((t) => t.title.includes(query))
       }
@@ -231,6 +235,17 @@ function collapsedFromStorage(): string[] {
   }
 }
 
+/** Sorted keys from coder.sidebar.settledCollapsed (empty = tail expanded). */
+function settledCollapsedFromStorage(): string[] {
+  try {
+    const raw = window.localStorage.getItem("coder.sidebar.settledCollapsed");
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.map(String).sort() : [];
+  } catch {
+    return [];
+  }
+}
+
 describe("t3 paging constants are fixed facts", () => {
   // Literal pins: a symbolic test that reads SETTLED_TAIL_* survives mutating
   // 10→4 or 25→1. These asserts die if the constants drift from t3.
@@ -242,18 +257,25 @@ describe("t3 paging constants are fixed facts", () => {
 
 describe("Sidebar project groups keep attention only (round 40)", () => {
   it("keeps fresh done in the project list; hides MERGED from project groups", async () => {
+    await clearSidebarStorage();
     const m = await mount(sidebar(THREADS, { projects: [p1, p2] }));
     const ids = cardTitles(m);
     assert.ok(ids.includes("busy"), "working stays in the project list");
     assert.ok(ids.includes("finished"), "fresh done stays visible (not settled)");
     assert.ok(ids.includes("broken"), "failed stays visible");
     assert.ok(ids.includes("billing-idle"), "other project's attention shows");
+    // The tail is expanded by default (t3), so merged rows DO render — but
+    // only as slim settled rows, never as group cards.
+    const onlySettledRows = (id: string) =>
+      m
+        .queryAll(`[data-thread-card="${id}"]`)
+        .every((el) => el.getAttribute("data-settled") === "true");
     assert.ok(
-      !ids.includes("merged-p1"),
+      onlySettledRows("merged-p1"),
       "MERGED must leave the project group for the global tail",
     );
     assert.ok(
-      !ids.includes("merged-p2"),
+      onlySettledRows("merged-p2"),
       "MERGED from a second project also leaves its group",
     );
     m.unmount();
@@ -340,7 +362,8 @@ describe("Sidebar project groups keep attention only (round 40)", () => {
 });
 
 describe("Sidebar global settled tail (round 40)", () => {
-  it("collapses by default with a Settled · N header spanning projects", async () => {
+  it("expands by default (t3) with a Settled · N header spanning projects", async () => {
+    await clearSidebarStorage();
     const m = await mount(sidebar(THREADS, { projects: [p1, p2] }));
     const header = settledTailHeader(m);
     assert.ok(
@@ -349,12 +372,40 @@ describe("Sidebar global settled tail (round 40)", () => {
     );
     assert.equal(
       header.getAttribute("aria-expanded"),
-      "false",
-      "tail is collapsed by default",
+      "true",
+      "tail is expanded by default (t3): settle transitions stay visible",
     );
-    assert.ok(!cardTitles(m).includes("merged-p1"));
-    assert.ok(!cardTitles(m).includes("merged-p2"));
+    assert.ok(cardTitles(m).includes("merged-p1"));
+    assert.ok(cardTitles(m).includes("merged-p2"));
     m.unmount();
+  });
+
+  it("collapsing the tail persists across remounts; absence of the key means expanded", async () => {
+    await clearSidebarStorage();
+    const m1 = await mount(sidebar(THREADS, { projects: [p1, p2] }));
+    await m1.click(settledTailHeader(m1));
+    assert.equal(
+      settledTailHeader(m1).getAttribute("aria-expanded"),
+      "false",
+      "click collapses",
+    );
+    assert.ok(!cardTitles(m1).includes("merged-p1"));
+    assert.deepEqual(
+      settledCollapsedFromStorage(),
+      ["tail"],
+      "collapse persists via coder.sidebar.settledCollapsed",
+    );
+    m1.unmount();
+
+    const m2 = await mount(sidebar(THREADS, { projects: [p1, p2] }));
+    assert.equal(
+      settledTailHeader(m2).getAttribute("aria-expanded"),
+      "false",
+      "stored collapse survives a remount",
+    );
+    assert.ok(!cardTitles(m2).includes("merged-p1"));
+    m2.unmount();
+    await clearSidebarStorage();
   });
 
   it("Settle all on the tail bar settles attention threads, skips working", async () => {
@@ -380,18 +431,23 @@ describe("Sidebar global settled tail (round 40)", () => {
     m.unmount();
   });
 
-  it("expands to show settled from every project, newest first", async () => {
+  it("shows settled from every project, newest first; collapse hides them again", async () => {
+    await clearSidebarStorage();
     const m = await mount(sidebar(THREADS, { projects: [p1, p2] }));
-    const header = settledTailHeader(m);
-    await m.click(header);
-    assert.equal(header.getAttribute("aria-expanded"), "true");
+    assert.equal(settledTailHeader(m).getAttribute("aria-expanded"), "true");
     const ids = cardTitles(m);
     assert.ok(ids.includes("merged-p1"), "p1 settled appears in the global tail");
     assert.ok(ids.includes("merged-p2"), "p2 settled appears in the same tail");
     const i2 = ids.indexOf("merged-p2");
     const i1 = ids.indexOf("merged-p1");
     assert.ok(i2 >= 0 && i1 >= 0 && i2 < i1, "newest-settled first across projects");
+    await m.click(settledTailHeader(m));
+    assert.ok(
+      !cardTitles(m).includes("merged-p1"),
+      "collapsing the tail hides its rows again",
+    );
     m.unmount();
+    await clearSidebarStorage();
   });
 
   it("pages the tail: 40 settled → 10 visible, Show more → 35, header stays Settled · 40", async () => {
@@ -424,7 +480,7 @@ describe("Sidebar global settled tail (round 40)", () => {
       (header.textContent || "").includes("Settled · 40"),
       "header reports the full settled count, not the page size",
     );
-    await m.click(header);
+    // Default-expanded (t3): the first page is already on screen.
     const shown = cardTitles(m).filter((id) => id.startsWith("s"));
     assert.equal(shown.length, 10, "initial expand shows exactly 10 (t3 INITIAL)");
     const more = m.byText("Show more");
@@ -443,7 +499,8 @@ describe("Sidebar global settled tail (round 40)", () => {
     m.unmount();
   });
 
-  it("exactly 10 settled shows no Show more after expand", async () => {
+  it("exactly 10 settled shows no Show more (default-expanded)", async () => {
+    await clearSidebarStorage();
     const many = Array.from({ length: 10 }, (_, i) =>
       thread({
         id: `exact${i}`,
@@ -467,7 +524,6 @@ describe("Sidebar global settled tail (round 40)", () => {
     const m = await mount(sidebar(many, { projects: [p1, p2] }));
     const header = settledTailHeader(m);
     assert.ok((header.textContent || "").includes("Settled · 10"));
-    await m.click(header);
     assert.equal(
       cardTitles(m).filter((id) => id.startsWith("exact")).length,
       10,
@@ -522,12 +578,15 @@ describe("Sidebar global settled tail (round 40)", () => {
 
   it("carve-out: selected settled thread stays visible while the tail is collapsed", async () => {
     // Selected is deliberately NOT index 0 of THREADS (busy is 0).
+    await clearSidebarStorage();
     const m = await mount(
       sidebar(THREADS, {
         projects: [p1, p2],
         activeThreadId: "merged-p2",
       }),
     );
+    // Default is expanded (t3); collapse to exercise the carve-out.
+    await m.click(settledTailHeader(m));
     assert.ok(
       cardTitles(m).includes("merged-p2"),
       "open settled thread must never vanish behind the collapsed shelf",
@@ -537,6 +596,7 @@ describe("Sidebar global settled tail (round 40)", () => {
       "other settled rows stay hidden while collapsed",
     );
     m.unmount();
+    await clearSidebarStorage();
   });
 
   it("opening a settled thread selects it and does not call setSettled", async () => {
@@ -553,7 +613,6 @@ describe("Sidebar global settled tail (round 40)", () => {
         },
       }),
     );
-    await m.click(settledTailHeader(m));
     const select = m.query(
       'button[aria-label="Select thread: merged billing"]',
     );
@@ -578,7 +637,6 @@ describe("Sidebar global settled tail (round 40)", () => {
         },
       }),
     );
-    await m.click(settledTailHeader(m));
     const keep = m
       .queryAll("button")
       .find((b) => b.getAttribute("aria-label") === "Keep thread active") as
@@ -652,7 +710,7 @@ describe("Sidebar project collapse", () => {
     const m = await mount(sidebar(THREADS, { projects: [p1, p2] }));
     await m.click(groupHeader(m, "acme/ledger"));
     assert.ok(!cardTitles(m).includes("busy"), "attention is hidden");
-    await m.click(settledTailHeader(m));
+    // Tail is expanded by default (t3) — no shelf toggle needed.
     assert.ok(
       cardTitles(m).includes("merged-p1"),
       "p1 settled must still show in the global tail while its project is collapsed",
@@ -663,6 +721,8 @@ describe("Sidebar project collapse", () => {
   it("search surfaces settled hits (bypasses the collapsed global tail)", async () => {
     await clearSidebarStorage();
     const m = await mount(sidebar(THREADS, { projects: [p1, p2] }));
+    // Tail defaults to expanded (t3); collapse it so the bypass is exercised.
+    await m.click(settledTailHeader(m));
     assert.ok(!cardTitles(m).includes("merged-p1"));
 
     const input = m.query("input") as HTMLInputElement;
@@ -678,6 +738,7 @@ describe("Sidebar project collapse", () => {
       "a settled thread must surface as a search hit while the tail stays collapsed",
     );
     m.unmount();
+    await clearSidebarStorage();
   });
 
   it("search surfaces hits inside a collapsed project group", async () => {
@@ -835,10 +896,14 @@ describe("Sidebar collapse-all / expand-all (round 42)", () => {
       settledTailHeader(m),
       "settled tail header remains after collapse-all",
     );
-    await m.click(settledTailHeader(m));
+    assert.equal(
+      settledTailHeader(m).getAttribute("aria-expanded"),
+      "true",
+      "tail stays expanded through collapse-all (own toggle)",
+    );
     assert.ok(
       cardTitles(m).includes("merged-p1"),
-      "settled rows still expand independently of collapse-all",
+      "settled rows still show independently of collapse-all",
     );
     m.unmount();
     await clearSidebarStorage();
@@ -1301,11 +1366,11 @@ describe("Sidebar unread indicators (round 43)", () => {
   });
 
   it("shows unread on a settled row when the tail is open", async () => {
+    await clearSidebarStorage();
     const m = await mount(
       sidebar(UNREAD_THREADS, { projects: [p1], activeThreadId: "sel" }),
     );
-    // Tail starts collapsed; expand to paint settled rows.
-    await m.click(settledTailHeader(m));
+    // Tail is open by default (t3), so settled rows paint immediately.
     await m.flush();
     const settledDot = m.query('[data-unread-dot="settled-unread"]');
     assert.ok(settledDot, "settled unread must paint a dot in the tail");
@@ -1332,6 +1397,7 @@ describe("Sidebar unread indicators (round 43)", () => {
    * B3: pin SettledRow's !active guard (selected + technically unread → no dot).
    */
   it("settled tail omits unread when none; selected settled unread paints no dot", async () => {
+    await clearSidebarStorage();
     const settledVisited = thread({
       id: "settled-read",
       title: "settled and read",
@@ -1385,14 +1451,13 @@ describe("Sidebar unread indicators (round 43)", () => {
     const mSel = await mount(
       sidebar([attention, settledVisited, settledSelectedUnread], {
         projects: [p1],
-        // Open the settled unread so the collapsed-shelf carve-out paints it.
+        // Open the settled unread; the expanded tail paints its row.
         activeThreadId: "settled-sel-unread",
       }),
     );
-    // Carve-out shows the open settled row even while the tail is collapsed.
     assert.ok(
       mSel.query('[data-thread-card="settled-sel-unread"]'),
-      "selected settled row must render (shelf carve-out)",
+      "selected settled row must render in the tail",
     );
     assert.equal(
       mSel.query('[data-unread-dot="settled-sel-unread"]') != null,
@@ -1406,5 +1471,89 @@ describe("Sidebar unread indicators (round 43)", () => {
       null,
     );
     mSel.unmount();
+  });
+});
+
+
+describe("Sidebar new-thread reveal (t3: new work must be visible)", () => {
+  it("expands a collapsed target group, flashes the new card, clears the request", async () => {
+    await clearSidebarStorage();
+    // p1 starts collapsed; the reveal must re-expand it (and persist that).
+    window.localStorage.setItem(
+      "coder.sidebar.collapsedGroups",
+      JSON.stringify(["p1"]),
+    );
+    let handledCalls = 0;
+    const m = await mount(
+      sidebar(THREADS, {
+        projects: [p1, p2],
+        revealThreadId: "busy",
+        onRevealHandled: () => {
+          handledCalls += 1;
+        },
+      }),
+    );
+    assert.equal(handledCalls, 1, "onRevealHandled fires exactly once");
+    assert.deepEqual(
+      collapsedFromStorage(),
+      [],
+      "reveal removes the target group from the persisted collapsed set",
+    );
+    assert.equal(
+      groupHeader(m, "acme/ledger").getAttribute("aria-expanded"),
+      "true",
+      "collapsed target group auto-expands",
+    );
+    // Scroll + highlight land on the next animation frame.
+    await inAct(async () => {
+      await new Promise((r) => setTimeout(r, 30));
+    });
+    await m.flush();
+    const card = m.query('[data-thread-card="busy"]');
+    assert.ok(card, "new thread card renders");
+    assert.ok(
+      (card!.getAttribute("class") || "").includes("reveal"),
+      "highlight flash class applied to the new card",
+    );
+    m.unmount();
+    await clearSidebarStorage();
+  });
+
+  it("unknown reveal id just clears the request", async () => {
+    await clearSidebarStorage();
+    let handledCalls = 0;
+    const m = await mount(
+      sidebar(THREADS, {
+        projects: [p1, p2],
+        revealThreadId: "does-not-exist",
+        onRevealHandled: () => {
+          handledCalls += 1;
+        },
+      }),
+    );
+    assert.equal(handledCalls, 1, "missing thread still clears the request");
+    m.unmount();
+  });
+
+  it("global + names the target project: selected thread's project, else first", async () => {
+    await clearSidebarStorage();
+    const m = await mount(
+      sidebar(THREADS, { projects: [p1, p2], activeThreadId: "billing-idle" }),
+    );
+    assert.ok(
+      m.query('button[aria-label="New thread in acme/billing"]'),
+      "aria-label names the selected thread's project",
+    );
+    m.unmount();
+
+    const m2 = await mount(sidebar(THREADS, { projects: [p1, p2] }));
+    const btn = m2.query('button[aria-label="New thread in acme/ledger"]');
+    assert.ok(btn, "no selection falls back to the first project");
+    assert.equal(
+      btn!.getAttribute("title"),
+      "New thread in acme/ledger",
+      "tooltip names the same target",
+    );
+    m2.unmount();
   });
 });

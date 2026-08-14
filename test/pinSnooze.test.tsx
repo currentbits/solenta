@@ -259,7 +259,7 @@ describe("Sidebar pin + snooze shelves (round 44)", () => {
       />,
     );
     try {
-      // Settled tail is collapsed by default — expand to see the override row.
+      // Settled tail defaults to expanded (t3); click only if collapsed.
       assert.ok(
         m.query("[data-settled-tail]"),
         "settled tail present before pin",
@@ -268,8 +268,10 @@ describe("Sidebar pin + snooze shelves (round 44)", () => {
         .queryAll("button")
         .find((b) => (b.textContent || "").includes("Settled ·"));
       assert.ok(settledHeader, "settled tail header");
-      await m.click(settledHeader!);
-      await m.flush();
+      if (settledHeader!.getAttribute("aria-expanded") === "false") {
+        await m.click(settledHeader!);
+        await m.flush();
+      }
       assert.ok(
         m.query('[data-thread-card="t-was-settled"][data-settled="true"]'),
         "settled-override row in expanded tail",

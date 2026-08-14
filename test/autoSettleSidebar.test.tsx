@@ -97,8 +97,11 @@ describe("Sidebar auto-settle window (round 45)", () => {
       .queryAll("button")
       .find((b) => (b.textContent || "").includes("Settled ·"));
     assert.ok(header, "settled header");
-    await m.click(header!);
-    await m.flush();
+    // Default is expanded (t3); click only if a stored collapse is in effect.
+    if (header!.getAttribute("aria-expanded") === "false") {
+      await m.click(header!);
+      await m.flush();
+    }
     assert.ok(
       m.query('[data-thread-card="quiet-4d"][data-settled="true"]'),
       "quiet 4d is settled under window 3",
@@ -182,8 +185,11 @@ describe("App wires autoSettleAfterDays into Sidebar (round 45)", () => {
       .queryAll("button")
       .find((b) => (b.textContent || "").includes("Settled ·"));
     if (!header) return null;
-    await m.click(header);
-    await m.flush();
+    // Default is expanded (t3); click only when actually collapsed.
+    if (header.getAttribute("aria-expanded") === "false") {
+      await m.click(header);
+      await m.flush();
+    }
     return header;
   }
 

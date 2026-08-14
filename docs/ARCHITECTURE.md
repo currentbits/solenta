@@ -114,3 +114,29 @@ are pruned.
 - Composer model pill: always shown. Empty `models` → Default + Custom… (inline
   input, Enter commits, Escape cancels). Non-empty → Default + list only.
 - Dev validation for setProvider mirrors the contract in `src/devCoder.ts`.
+
+## Sidebar ordering and settle model
+
+The sidebar follows the t3code (pingdotgg/t3code, MIT) sidebar behavior as a
+model. No t3code code is vendored; the rules are reimplemented in
+`src/sidebarGroups.ts` / `src/threadSettle.ts` / `src/components/Sidebar.tsx`.
+The one third-party package this uses is `@formkit/auto-animate` (MIT).
+
+- **Static order**: threads within a project group, and the groups themselves,
+  sort by `createdAt` (newest first). Activity NEVER reorders the list; a row
+  moves only at a lifecycle transition (create, settle, unsettle, pin, snooze,
+  archive). `updatedAt` is bumped per streamed message for unread dots and age
+  labels and must never be used as a sidebar sort key.
+- **Partition precedence**: snoozed → pinned → settled → attention
+  (`partitionSidebar`). Settle resolution in `effectiveSettled`: working and
+  pinned never settle, explicit override wins, MERGED/CLOSED PR settles, OPEN
+  PR blocks, otherwise inactivity window (`AUTO_SETTLE_AFTER_DAYS`, default 3).
+- **Settled tail**: one global section, expanded by default (collapse persists
+  in `coder.sidebar.settledCollapsed`), paged 10 + "Show 25 more".
+- **Animation**: `auto-animate` (150ms ease-out) per list container; rows key
+  as `${id}:card` in groups vs `${id}:slim` on shelves so a settle move
+  cross-fades instead of sliding.
+- **New-thread reveal**: creation sets `revealThreadId` in `App.tsx`; the
+  sidebar expands the target project group, scrolls the card into view, and
+  flashes a highlight. The global "+" names its target project
+  ("New thread in \<slug\>").

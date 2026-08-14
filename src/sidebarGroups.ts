@@ -119,10 +119,22 @@ export function defaultSettleOpts(now = Date.now()): SettleOpts {
 }
 
 /**
+ * Sort key for the static sidebar order: creation time. Legacy rows with a
+ * missing/NaN createdAt fall back to updatedAt.
+ */
+function createdKey(t: ThreadInfo): number {
+  return Number.isFinite(t.createdAt) ? t.createdAt : t.updatedAt;
+}
+
+/**
  * Group threads under every registered project.
- * Threads newest-first by updatedAt inside a group.
- * Groups ordered by newest thread activity; empty projects last.
- * Orphan threads (missing project) form a trailing group.
+ *
+ * t3 sidebar rule: activity NEVER reorders the list. A row holds its
+ * position from creation until a lifecycle transition (create / settle /
+ * unsettle / pin / snooze / archive), so both threads-in-a-group and the
+ * groups themselves sort by createdAt — never updatedAt, which streaming
+ * bumps constantly. id tie-break keeps equal timestamps stable.
+ * Empty projects last. Orphan threads (missing project) form a trailing group.
  */
 export function buildSidebarGroups(
   projects: ProjectInfo[],
@@ -136,11 +148,13 @@ export function buildSidebarGroups(
   }
 
   for (const list of byProject.values()) {
-    list.sort((a, b) => b.updatedAt - a.updatedAt);
+    list.sort(
+      (a, b) => createdKey(b) - createdKey(a) || a.id.localeCompare(b.id),
+    );
   }
 
   const newest = (list: ThreadInfo[]) =>
-    list.length === 0 ? 0 : list[0]!.updatedAt;
+    list.length === 0 ? 0 : createdKey(list[0]!);
 
   const withThreads: SidebarGroup[] = [];
   const empty: SidebarGroup[] = [];

@@ -150,7 +150,8 @@ async function openShelves(m: Awaited<ReturnType<typeof mount>>) {
   const settledH = m
     .queryAll("button")
     .find((b) => (b.textContent || "").includes("Settled ·"));
-  if (settledH) {
+  // Settled tail defaults to expanded (t3); click only when collapsed.
+  if (settledH && settledH.getAttribute("aria-expanded") === "false") {
     await m.click(settledH);
     await m.flush();
   }

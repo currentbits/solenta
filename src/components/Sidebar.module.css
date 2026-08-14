@@ -1339,6 +1339,22 @@
   }
 }
 
+/* New-thread reveal (t3): one accent-tinted flash that fades out. The class
+   is added imperatively on the freshly created row; the animation ending
+   transparent is what makes it temporary. */
+.reveal {
+  animation: revealFlash 1.2s ease-out;
+}
+
+@keyframes revealFlash {
+  from {
+    background: rgba(59, 130, 246, 0.18);
+  }
+  to {
+    background: transparent;
+  }
+}
+
 .footer {
   flex-shrink: 0;
   border-top: 1px solid var(--border);

@@ -79,16 +79,57 @@ describe("buildSidebarGroups", () => {
     );
   });
 
-  it("orders threads newest-first by updatedAt inside a group", () => {
+  it("orders threads newest-first by createdAt inside a group (t3 static order)", () => {
+    // updatedAt deliberately disagrees with createdAt: activity must not win.
     const threads = [
-      thread({ id: "old", projectId: "a", updatedAt: 10 }),
-      thread({ id: "new", projectId: "a", updatedAt: 99 }),
-      thread({ id: "mid", projectId: "a", updatedAt: 50 }),
+      thread({ id: "old", projectId: "a", createdAt: 10, updatedAt: 900 }),
+      thread({ id: "new", projectId: "a", createdAt: 99, updatedAt: 100 }),
+      thread({ id: "mid", projectId: "a", createdAt: 50, updatedAt: 500 }),
     ];
     const groups = buildSidebarGroups([pA], threads);
     assert.deepEqual(
       groups[0]!.threads.map((t) => t.id),
       ["new", "mid", "old"],
+      "creation order, not activity order",
+    );
+  });
+
+  it("an updatedAt bump never reorders threads within a group or the groups", () => {
+    // Regression pin for the t3 rule: streamed activity bumps updatedAt on
+    // every message; the sidebar must not move rows for it.
+    const before = [
+      thread({ id: "t1", projectId: "a", createdAt: 100, updatedAt: 100 }),
+      thread({ id: "t2", projectId: "a", createdAt: 200, updatedAt: 200 }),
+      thread({ id: "t3", projectId: "b", createdAt: 300, updatedAt: 300 }),
+    ];
+    const after = [
+      { ...before[0]!, updatedAt: 9999 },
+      before[1]!,
+      before[2]!,
+    ];
+    const shape = (groups: ReturnType<typeof buildSidebarGroups>) =>
+      groups.map((g) => [g.project?.id ?? null, g.threads.map((t) => t.id)]);
+    assert.deepEqual(shape(buildSidebarGroups([pA, pB], after)), [
+      ["b", ["t3"]],
+      ["a", ["t2", "t1"]],
+    ]);
+    assert.deepEqual(
+      shape(buildSidebarGroups([pA, pB], after)),
+      shape(buildSidebarGroups([pA, pB], before)),
+      "bumping updatedAt must leave every position untouched",
+    );
+  });
+
+  it("falls back to updatedAt when createdAt is missing/NaN (legacy rows)", () => {
+    const threads = [
+      thread({ id: "legacy", projectId: "a", createdAt: NaN, updatedAt: 500 }),
+      thread({ id: "normal", projectId: "a", createdAt: 100, updatedAt: 100 }),
+    ];
+    const groups = buildSidebarGroups([pA], threads);
+    assert.deepEqual(
+      groups[0]!.threads.map((t) => t.id),
+      ["legacy", "normal"],
+      "legacy row sorts by its updatedAt fallback",
     );
   });
 

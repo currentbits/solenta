@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import autoAnimate from "@formkit/auto-animate";
 import type { ProjectInfo, ProviderInfo, ThreadInfo } from "../shared/ipc";
 import { isWebMode } from "../shared/wire";
 import {
@@ -43,6 +44,17 @@ const TICK_MS = 5000;
 const SEARCH_DEBOUNCE_MS = 250;
 const MIN_SEARCH_LEN = 2;
 const COLLAPSED_KEY = "coder.sidebar.collapsedGroups";
+/** Settled tail collapse flag: stored "tail" = collapsed, absent = expanded. */
+const SETTLED_COLLAPSED_KEY = "coder.sidebar.settledCollapsed";
+
+/**
+ * t3 list animation (Sidebar.logic.ts): rows glide on lifecycle transitions
+ * instead of the sidebar jumping. Attached per list container via ref
+ * callback; no-ops where ResizeObserver is missing (jsdom).
+ */
+function attachListAnimation(node: HTMLElement | null): void {
+  if (node) autoAnimate(node, { duration: 150, easing: "ease-out" });
+}
 
 /** localStorage set, defensive: private mode / quota / bad JSON all mean "empty". */
 function loadKeySet(key: string): Set<string> {
@@ -162,6 +174,14 @@ interface SidebarProps {
   }) => Promise<{ ok: true } | { ok: false; reason: string }>;
   onOpenAutomations?: () => void;
   onOpenActivity?: () => void;
+  /**
+   * Freshly created thread to reveal (t3: new work must be visible): the
+   * sidebar expands its project group, scrolls the card into view and flashes
+   * a highlight, then calls onRevealHandled.
+   */
+  revealThreadId?: string | null;
+  /** Clears revealThreadId once the reveal ran (or the thread is gone). */
+  onRevealHandled?: () => void;
 }
 
 export type SelectOpts = { meta?: boolean; shift?: boolean };
@@ -932,6 +952,8 @@ export function Sidebar({
   onCreateThreadFromIssue,
   onOpenAutomations,
   onOpenActivity,
+  revealThreadId = null,
+  onRevealHandled,
 }: SidebarProps) {
   const [query, setQuery] = useState("");
   const [now, setNow] = useState(() => Date.now());
@@ -971,15 +993,18 @@ export function Sidebar({
     loadKeySet(COLLAPSED_KEY),
   );
   /**
-   * Global settled tail open state. Session-only (t3: out of the way, never
-   * gone). Collapsed by default so attention work stays scannable.
+   * Global settled tail open state. t3 default: EXPANDED — settled work stays
+   * visible and the settle transition is seen. A user collapse persists like
+   * group collapse (SETTLED_COLLAPSED_KEY holds "tail"; absent = expanded).
    */
-  const [settledTailOpen, setSettledTailOpen] = useState(false);
+  const [settledTailOpen, setSettledTailOpen] = useState(
+    () => !loadKeySet(SETTLED_COLLAPSED_KEY).has("tail"),
+  );
   /** How many settled rows to show when the tail is expanded. */
   const [settledVisibleCount, setSettledVisibleCount] = useState(
     SETTLED_TAIL_INITIAL_COUNT,
   );
-  /** Snoozed shelf open state (session-only, collapsed by default like settled). */
+  /** Snoozed shelf open state (session-only, collapsed by default). */
   const [snoozedOpen, setSnoozedOpen] = useState(false);
   /** Multi-select set (round 46). Distinct from activeThreadId. */
   const [multiSelected, setMultiSelected] = useState<Set<string>>(() => new Set());
@@ -1128,6 +1153,35 @@ export function Sidebar({
   };
 
   /**
+   * Reveal a freshly created thread (t3: new work must be visible). Expand
+   * its project group when collapsed, then next frame — once the expanded
+   * group has rendered the card — scroll it into view and flash a highlight.
+   * Runs on create only; it never touches selection or the carve-out logic.
+   */
+  useEffect(() => {
+    if (!revealThreadId) return;
+    const target = threads.find((t) => t.id === revealThreadId);
+    if (target) {
+      setCollapsedGroups((prev) => {
+        if (!prev.has(target.projectId)) return prev;
+        const next = new Set(prev);
+        next.delete(target.projectId);
+        saveKeySet(COLLAPSED_KEY, next);
+        return next;
+      });
+      // No cleanup: the lookup is null-safe if the row left before the frame.
+      window.requestAnimationFrame(() => {
+        const el = document.querySelector(
+          `[data-thread-card="${revealThreadId}"]`,
+        );
+        el?.scrollIntoView({ block: "nearest" });
+        el?.classList.add(styles.reveal);
+      });
+    }
+    onRevealHandled?.();
+  }, [revealThreadId, threads, onRevealHandled]);
+
+  /**
    * Keys for every project group currently rendered. Collapse-all / expand-all
    * and the ALL PROJECTS aria-expanded state are derived from this list.
    */
@@ -1175,6 +1229,7 @@ export function Sidebar({
 
   const toggleSettledTail = () => {
     setSettledTailOpen((open) => {
+      saveKeySet(SETTLED_COLLAPSED_KEY, open ? new Set(["tail"]) : new Set());
       if (open) {
         // Collapse: reset paging so the next open starts at the initial page.
         setSettledVisibleCount(SETTLED_TAIL_INITIAL_COUNT);
@@ -1193,6 +1248,20 @@ export function Sidebar({
   };
 
   const canCreate = projects.length > 0;
+  /**
+   * Project the global + targets (mirrors useCoder's selectedProjectId):
+   * the selected thread's project, else the first project. Names the button.
+   */
+  const createTargetProject = (() => {
+    if (activeThreadId) {
+      const t = liveById.get(activeThreadId);
+      if (t) return projectById.get(t.projectId) ?? null;
+    }
+    return projects[0] ?? null;
+  })();
+  const createTargetLabel = createTargetProject
+    ? `New thread in ${createTargetProject.slug || createTargetProject.name}`
+    : "New thread";
   const queryLower = trimmedQuery.toLowerCase();
   const sectionCount = searching ? displayThreads.length : projects.length;
   /** Debounce window or in-flight request: show subtle "Searching…" hint. */
@@ -1629,10 +1698,10 @@ export function Sidebar({
           disabled={!canCreate}
           title={
             canCreate
-              ? "New thread"
+              ? createTargetLabel
               : "Add a project before creating a thread"
           }
-          aria-label="New thread"
+          aria-label={createTargetLabel}
         >
           <svg
             width="15"
@@ -1835,13 +1904,17 @@ export function Sidebar({
 
         {/* Global PINNED shelf (t3): always expanded, above project groups. */}
         {!searching && globalPinned.length > 0 && (
-          <div className={styles.pinnedSection} data-pinned-section="">
+          <div
+            className={styles.pinnedSection}
+            data-pinned-section=""
+            ref={attachListAnimation}
+          >
             <div className={styles.pinnedHeader}>
               <span>Pinned · {globalPinned.length}</span>
             </div>
             {globalPinned.map((thread) => (
               <SettledRow
-                key={thread.id}
+                key={`${thread.id}:slim`}
                 thread={thread}
                 slug={slugFor(thread)}
                 active={thread.id === activeThreadId}
@@ -1887,7 +1960,7 @@ export function Sidebar({
             const summary = groupHeaderSummary(attentionThreads);
 
             return (
-              <div key={groupKey} className={styles.group}>
+              <div key={groupKey} className={styles.group} ref={attachListAnimation}>
                 <div className={styles.groupHeaderRow}>
                   <button
                     type="button"
@@ -1991,9 +2064,15 @@ export function Sidebar({
                   </>
                 ) : (
                   <>
+                    {/*
+                      t3 key rule: rows key by id + variant (:card in groups,
+                      :slim on shelves) so a settle/unsettle move unmounts and
+                      remounts — auto-animate cross-fades instead of sliding
+                      one element across lists.
+                    */}
                     {attentionThreads.map((thread) => (
                       <ThreadCard
-                        key={thread.id}
+                        key={`${thread.id}:card`}
                         thread={thread}
                         slug={slug}
                         remote={Boolean(project?.remoteHost)}
@@ -2025,7 +2104,7 @@ export function Sidebar({
                     {archivedExpanded &&
                       archivedThreads.map((thread) => (
                         <ThreadCard
-                          key={thread.id}
+                          key={`${thread.id}:card`}
                           thread={thread}
                           slug={slug}
                           remote={Boolean(project?.remoteHost)}
@@ -2072,7 +2151,11 @@ export function Sidebar({
 
         {/* Global SNOOZED shelf (t3): between groups and settled, collapsed by default. */}
         {!searching && globalSnoozed.length > 0 && (
-          <div className={styles.snoozedShelf} data-snoozed-shelf="">
+          <div
+            className={styles.snoozedShelf}
+            data-snoozed-shelf=""
+            ref={attachListAnimation}
+          >
             {selectedSnoozed && (
               <SnoozedRow
                 thread={selectedSnoozed}
@@ -2113,7 +2196,7 @@ export function Sidebar({
             {snoozedOpen &&
               globalSnoozed.map((thread) => (
                 <SnoozedRow
-                  key={thread.id}
+                  key={`${thread.id}:slim`}
                   thread={thread}
                   slug={slugFor(thread)}
                   active={thread.id === activeThreadId}
@@ -2130,7 +2213,11 @@ export function Sidebar({
         {/* Global settled tail (t3-style): one section at the bottom, all projects.
             Independent of per-project / collapse-all — has its own toggle. */}
         {!searching && globalSettled.length > 0 && (
-          <div className={styles.settledTail} data-settled-tail="">
+          <div
+            className={styles.settledTail}
+            data-settled-tail=""
+            ref={attachListAnimation}
+          >
             {selectedSettled && (
               <SettledRow
                 thread={selectedSettled}
@@ -2202,7 +2289,7 @@ export function Sidebar({
             {settledTailOpen &&
               visibleSettled.map((thread) => (
                 <SettledRow
-                  key={thread.id}
+                  key={`${thread.id}:slim`}
                   thread={thread}
                   slug={slugFor(thread)}
                   active={thread.id === activeThreadId}
