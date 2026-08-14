@@ -357,6 +357,29 @@ describe("Sidebar global settled tail (round 40)", () => {
     m.unmount();
   });
 
+  it("Settle all on the tail bar settles attention threads, skips working", async () => {
+    const calls: Array<[string, string]> = [];
+    const m = await mount(
+      sidebar(THREADS, {
+        projects: [p1, p2],
+        onSetSettled: (id, o) => calls.push([id, o]),
+      }),
+    );
+    const btn = m.query("[data-settle-all]") as HTMLButtonElement | null;
+    assert.ok(btn, "Settle all button must render on the settled tail bar");
+    await m.click(btn!);
+    assert.deepEqual(
+      calls.map(([id]) => id).sort(),
+      ["billing-idle", "broken", "finished"],
+      "settles every attention thread except the working one",
+    );
+    assert.ok(
+      calls.every(([, o]) => o === "settled"),
+      "payload is the settled override",
+    );
+    m.unmount();
+  });
+
   it("expands to show settled from every project, newest first", async () => {
     const m = await mount(sidebar(THREADS, { projects: [p1, p2] }));
     const header = settledTailHeader(m);
