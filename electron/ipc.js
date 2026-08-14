@@ -32,6 +32,7 @@ const skills = require("./skills.js");
 const { fetchIssue } = require("./issues.js");
 const automations = require("./automations.js");
 const { buildActivity } = require("./activity.js");
+const updater = require("./updater.js");
 
 /**
  * Default window fan-out (desktop transport). main.js replaces this with a
@@ -278,6 +279,12 @@ const IPC_HANDLERS = {
   "app:status": async (ctx) => {
     return services.appStatus(ctx.store);
   },
+  "app:checkUpdate": async () => {
+    return updater.checkAndStage();
+  },
+  "app:applyUpdate": async () => {
+    updater.applyUpdate();
+  },
   "memory:search": async (ctx, input) => {
     return ctx.memory.search(input || { query: "" });
   },
@@ -355,6 +362,10 @@ const IPC_HANDLERS = {
     services.deleteThread(ctx.store, input, {
       isRunning: (id) => ctx.runner.isRunning(id),
     });
+    // A kept-alive Claude CLI for this thread has no future turn; kill it.
+    if (typeof ctx.runner.disposeClaudeSession === "function") {
+      ctx.runner.disposeClaudeSession(input.threadId);
+    }
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
   },
   "runs:start": async (ctx, input) => {

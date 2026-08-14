@@ -30,6 +30,7 @@ import type {
   ThreadDetail,
   ThreadInfo,
   ThreadSummaryInfo,
+  UpdateStatus,
   WorkflowTemplateInfo,
 } from "./shared/ipc";
 import { resolveCoderApi } from "./coderApi";
@@ -241,6 +242,10 @@ export interface UseCoderResult {
   saveSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>;
   /** Re-fetch app.status() (e.g. after a run settles). */
   refreshStatus: () => Promise<void>;
+  /** Auto-update check result; null until the boot check settles. */
+  updateStatus: UpdateStatus | null;
+  /** Relaunch into a staged update. */
+  applyUpdate: () => Promise<void>;
   /**
    * Re-fetch providers.list() into state. Cheap and silent: fixes the
    * boot-only fetch going stale when a CLI is installed mid-session.
@@ -293,6 +298,7 @@ export function useCoder(): UseCoderResult {
   const [error, setError] = useState<CoderError | null>(null);
   const [appStatus, setAppStatus] = useState<AppStatus | null>(null);
   const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const selectedRef = useRef<string | null>(null);
   /** Bumped on every threads:changed push so a late initial list cannot clobber it. */
   const threadsListGen = useRef(0);
@@ -320,6 +326,37 @@ export function useCoder(): UseCoderResult {
     } catch {
       // Status is best-effort for the spend meter; ignore transient failures.
     }
+  }, [api]);
+
+  const applyUpdate = useCallback(async () => {
+    await api.app.applyUpdate();
+  }, [api]);
+
+  // Auto-update: check on boot, then every 6h. The check itself downloads and
+  // stages the swap on macOS, so even without a restart click the next launch
+  // runs the new build. Missing handler (old backend) leaves status null.
+  useEffect(() => {
+    let cancelled = false;
+    const check = () => {
+      try {
+        // try/catch: a stale preload/backend without app:checkUpdate must not
+        // take the boot effect down with a synchronous TypeError.
+        void api.app
+          .checkUpdate()
+          .then((u) => {
+            if (!cancelled) setUpdateStatus(u);
+          })
+          .catch(() => {});
+      } catch {
+        // update checks are strictly best-effort
+      }
+    };
+    check();
+    const timer = setInterval(check, 6 * 60 * 60 * 1000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
   }, [api]);
 
   // Initial load + subscriptions
@@ -1495,6 +1532,8 @@ export function useCoder(): UseCoderResult {
     settings,
     saveSettings,
     refreshStatus,
+    updateStatus,
+    applyUpdate,
     refreshProviders,
     projectById,
     searchMemory,

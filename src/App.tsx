@@ -79,6 +79,8 @@ export default function App() {
     stopDevServer,
     devServerStatus,
     appStatus,
+    updateStatus,
+    applyUpdate,
     settings,
     saveSettings,
     refreshProviders,
@@ -325,6 +327,7 @@ export default function App() {
         <div className={styles.sidebarSlot} data-pane="sidebar">
           <Sidebar
         appName="Solenta"
+        channel={appStatus?.build.channel ?? null}
         searchPlaceholder="Search threads…"
         projectsHeader="All projects"
         projects={projects}
@@ -522,6 +525,8 @@ export default function App() {
           onClose={() => setSettingsOpen(false)}
           settings={settings}
           status={appStatus}
+          update={updateStatus}
+          onApplyUpdate={applyUpdate}
           onSaveSettings={(patch) => saveSettings(patch)}
         />
         {archiveToastIds && (

@@ -99,6 +99,8 @@ export function anyGroupExpandedState(
 
 interface SidebarProps {
   appName: string;
+  /** Update channel of the running build; "nightly" tags the wordmark. */
+  channel?: "prod" | "nightly" | null;
   searchPlaceholder: string;
   projectsHeader: string;
   projects: ProjectInfo[];
@@ -922,6 +924,7 @@ export function SnoozedRow({
 
 export function Sidebar({
   appName,
+  channel,
   searchPlaceholder,
   projectsHeader,
   projects,
@@ -1690,6 +1693,9 @@ export function Sidebar({
             </svg>
           </span>
           <span className={styles.brandName}>{appName}</span>
+          {channel === "nightly" && (
+            <span className={styles.brandChannel}>nightly</span>
+          )}
         </div>
         <button
           type="button"
