@@ -88,6 +88,37 @@ describe("updater.checkAndStage", () => {
     assert.equal(res.state, "none");
   });
 
+  it("channelOverride switches a prod build onto the nightly feed", async () => {
+    const res = await updater.checkAndStage({
+      pkg: PROD_PKG,
+      channelOverride: "nightly",
+      bundlePath: null,
+      fetch: fakeFetch({
+        "/releases?": [
+          {
+            tag_name: "nightly-202608140000-def456",
+            prerelease: true,
+            draft: false,
+            html_url: "y",
+            assets: [],
+          },
+        ],
+      }),
+    });
+    assert.equal(res.state, "available");
+    assert.equal(res.channel, "nightly");
+    assert.equal(res.tag, "nightly-202608140000-def456");
+  });
+
+  it("channelOverride does not enable updates in an unstamped dev tree", async () => {
+    const res = await updater.checkAndStage({
+      pkg: {},
+      channelOverride: "nightly",
+      fetch: fakeFetch({}),
+    });
+    assert.equal(res.state, "disabled");
+  });
+
   it("reports error when the check itself fails", async () => {
     const res = await updater.checkAndStage({
       pkg: PROD_PKG,

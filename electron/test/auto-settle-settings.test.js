@@ -20,13 +20,13 @@ describe("normalizeSettings autoSettleAfterDays", () => {
       dailyBudgetUsd: null,
       autoSettleAfterDays: DEFAULT_AUTO_SETTLE_AFTER_DAYS,
       mcpServers: [],
-      defaultWorktree: false,
+      defaultWorktree: false, updateChannel: null,
     });
     assert.deepEqual(normalizeSettings(null), {
       dailyBudgetUsd: null,
       autoSettleAfterDays: 3,
       mcpServers: [],
-      defaultWorktree: false,
+      defaultWorktree: false, updateChannel: null,
     });
     assert.equal(DEFAULT_AUTO_SETTLE_AFTER_DAYS, 3);
   });
@@ -88,13 +88,13 @@ describe("setSettings autoSettleAfterDays validation", () => {
 
     assert.deepEqual(
       services.setSettings(store, { autoSettleAfterDays: 7 }),
-      { dailyBudgetUsd: null, autoSettleAfterDays: 7, mcpServers: [], defaultWorktree: false },
+      { dailyBudgetUsd: null, autoSettleAfterDays: 7, mcpServers: [], defaultWorktree: false, updateChannel: null },
     );
     assert.equal(store.getSettings().autoSettleAfterDays, 7);
 
     assert.deepEqual(
       services.setSettings(store, { autoSettleAfterDays: null }),
-      { dailyBudgetUsd: null, autoSettleAfterDays: null, mcpServers: [], defaultWorktree: false },
+      { dailyBudgetUsd: null, autoSettleAfterDays: null, mcpServers: [], defaultWorktree: false, updateChannel: null },
     );
 
     assert.throws(
@@ -134,7 +134,7 @@ describe("setSettings autoSettleAfterDays validation", () => {
       dailyBudgetUsd: null,
       autoSettleAfterDays: 3,
       mcpServers: [],
-      defaultWorktree: false,
+      defaultWorktree: false, updateChannel: null,
     });
   });
 
@@ -169,5 +169,28 @@ describe("setSettings autoSettleAfterDays validation", () => {
     );
     const reloaded = new Store(filePath);
     assert.equal(reloaded.getSettings().defaultWorktree, true);
+  });
+
+  it("updateChannel: absent/junk → null, prod/nightly kept, persists", () => {
+    assert.equal(normalizeSettings({}).updateChannel, null);
+    assert.equal(normalizeSettings({ updateChannel: "beta" }).updateChannel, null);
+    assert.equal(normalizeSettings({ updateChannel: "nightly" }).updateChannel, "nightly");
+
+    const store = new Store(filePath);
+    assert.equal(store.getSettings().updateChannel, null);
+    assert.equal(
+      services.setSettings(store, { updateChannel: "nightly" }).updateChannel,
+      "nightly",
+    );
+    assert.throws(
+      () => services.setSettings(store, { updateChannel: "beta" }),
+      /updateChannel must be/,
+    );
+    const reloaded = new Store(filePath);
+    assert.equal(reloaded.getSettings().updateChannel, "nightly");
+    assert.equal(
+      services.setSettings(reloaded, { updateChannel: null }).updateChannel,
+      null,
+    );
   });
 });

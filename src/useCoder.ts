@@ -244,6 +244,8 @@ export interface UseCoderResult {
   refreshStatus: () => Promise<void>;
   /** Auto-update check result; null until the boot check settles. */
   updateStatus: UpdateStatus | null;
+  /** Manual "Check for updates" — re-runs the check and refreshes status. */
+  checkUpdate: () => Promise<void>;
   /** Relaunch into a staged update. */
   applyUpdate: () => Promise<void>;
   /**
@@ -330,6 +332,10 @@ export function useCoder(): UseCoderResult {
 
   const applyUpdate = useCallback(async () => {
     await api.app.applyUpdate();
+  }, [api]);
+
+  const checkUpdate = useCallback(async () => {
+    setUpdateStatus(await api.app.checkUpdate());
   }, [api]);
 
   // Auto-update: check on boot, then every 6h. The check itself downloads and
@@ -1533,6 +1539,7 @@ export function useCoder(): UseCoderResult {
     saveSettings,
     refreshStatus,
     updateStatus,
+    checkUpdate,
     applyUpdate,
     refreshProviders,
     projectById,

@@ -179,6 +179,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     autoSettleAfterDays: 3,
     mcpServers: [],
     defaultWorktree: false,
+    updateChannel: null,
     ...(opts.settings ?? {}),
   };
   /** In-memory skill rows for the Skills tab; add/remove mutate this. */
@@ -307,6 +308,16 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
             );
           }
           next.defaultWorktree = v;
+        }
+        if (Object.prototype.hasOwnProperty.call(p, "updateChannel")) {
+          const v = p.updateChannel;
+          if (v !== null && v !== undefined && v !== "prod" && v !== "nightly") {
+            calls.push({ channel: "settings.set", args: [patch] });
+            return Promise.reject(
+              new Error('updateChannel must be "prod", "nightly", or null'),
+            );
+          }
+          next.updateChannel = v ?? null;
         }
         settingsState = next;
         return rec("settings.set", [patch], { ...settingsState });

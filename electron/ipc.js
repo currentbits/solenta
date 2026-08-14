@@ -279,8 +279,10 @@ const IPC_HANDLERS = {
   "app:status": async (ctx) => {
     return services.appStatus(ctx.store);
   },
-  "app:checkUpdate": async () => {
-    return updater.checkAndStage();
+  "app:checkUpdate": async (ctx) => {
+    return updater.checkAndStage({
+      channelOverride: ctx.store.getSettings().updateChannel,
+    });
   },
   "app:applyUpdate": async () => {
     updater.applyUpdate();

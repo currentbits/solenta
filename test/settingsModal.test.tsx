@@ -43,6 +43,7 @@ interface Stubs {
   settings?: AppSettings | null;
   status?: AppStatus | null;
   onSaveSettings?: (patch: Partial<AppSettings>) => Promise<AppSettings>;
+  onCheckUpdate?: () => Promise<void>;
   onClose?: () => void;
 }
 
@@ -53,6 +54,7 @@ function modal(stubs: Stubs = {}) {
       onClose={stubs.onClose ?? (() => {})}
       settings={stubs.settings ?? { dailyBudgetUsd: 5, autoSettleAfterDays: 3 }}
       status={stubs.status === undefined ? status() : stubs.status}
+      onCheckUpdate={stubs.onCheckUpdate}
       onSaveSettings={
         stubs.onSaveSettings ??
         (async (patch) => ({
@@ -171,6 +173,44 @@ describe("SettingsModal build section", () => {
       m.text().includes("unknown"),
       `null status must degrade, got: ${m.text()}`,
     );
+    m.unmount();
+  });
+
+  it("saves the picked update channel and runs a check", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    let checks = 0;
+    const m = await mount(
+      modal({
+        settings: {
+          dailyBudgetUsd: null,
+          autoSettleAfterDays: 3,
+          mcpServers: [],
+          defaultWorktree: false,
+          updateChannel: null,
+        },
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return {
+            dailyBudgetUsd: null,
+            autoSettleAfterDays: 3,
+            mcpServers: [],
+            defaultWorktree: false,
+            updateChannel: patch.updateChannel ?? null,
+          };
+        },
+        onCheckUpdate: async () => {
+          checks += 1;
+        },
+      }),
+    );
+    const select = m.query("[data-update-channel]") as HTMLSelectElement;
+    assert.ok(select, "channel select must render");
+    await m.change(select, "nightly");
+    assert.deepEqual(patches, [{ updateChannel: "nightly" }]);
+    assert.equal(checks, 1, "changing channel must re-check");
+
+    await m.click(m.query("[data-check-update]"));
+    assert.equal(checks, 2, "check button must call onCheckUpdate");
     m.unmount();
   });
 });

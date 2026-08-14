@@ -106,7 +106,11 @@ function checkAndStage(deps = {}) {
 }
 
 async function doCheckAndStage(deps) {
-  const { channel, tag } = buildStamp(deps.pkg);
+  const stamp = buildStamp(deps.pkg);
+  // Settings override wins; the stamped tag is still required so a dev tree
+  // (no releaseTag) can never update itself onto a channel.
+  const channel = deps.channelOverride || stamp.channel;
+  const tag = stamp.tag;
   const status = { state: "disabled", channel, tag: null, url: null, error: null };
   if (!channel || !tag) return status;
   if (stagedTag) return { ...status, state: "staged", tag: stagedTag };

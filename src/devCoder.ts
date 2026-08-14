@@ -1579,6 +1579,8 @@ function buildDevCoder(): CoderApi {
   let mcpServers: McpServerInfo[] = [];
   /** Default new threads into a fake worktree (Settings toggle). */
   let defaultWorktree = false;
+  /** Update channel override; null follows the (absent) dev stamp. */
+  let updateChannel: "prod" | "nightly" | null = null;
   /** In-memory skills (Skills tab); dev twin of the on-disk SKILL.md scan. */
   let skillsList: SkillInfo[] = [
     {
@@ -2048,6 +2050,7 @@ function buildDevCoder(): CoderApi {
           autoSettleAfterDays,
           mcpServers: mcpServers.map((s) => ({ ...s })),
           defaultWorktree,
+          updateChannel,
         };
       },
       async set(patch: Partial<AppSettings>): Promise<AppSettings> {
@@ -2065,11 +2068,19 @@ function buildDevCoder(): CoderApi {
           }
           defaultWorktree = patch.defaultWorktree;
         }
+        if (Object.prototype.hasOwnProperty.call(patch, "updateChannel")) {
+          const v = patch.updateChannel;
+          if (v !== null && v !== "prod" && v !== "nightly") {
+            throw new Error('updateChannel must be "prod", "nightly", or null');
+          }
+          updateChannel = v ?? null;
+        }
         return {
           dailyBudgetUsd,
           autoSettleAfterDays,
           mcpServers: mcpServers.map((s) => ({ ...s })),
           defaultWorktree,
+          updateChannel,
         };
       },
     },

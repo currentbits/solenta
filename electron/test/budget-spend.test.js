@@ -192,19 +192,19 @@ describe("spendByDay and settings", () => {
     ]);
     store.save();
 
-    assert.deepEqual(store.getSettings(), { dailyBudgetUsd: null, autoSettleAfterDays: 3, mcpServers: [], defaultWorktree: false });
-    assert.deepEqual(services.getSettings(store), { dailyBudgetUsd: null, autoSettleAfterDays: 3, mcpServers: [], defaultWorktree: false });
+    assert.deepEqual(store.getSettings(), { dailyBudgetUsd: null, autoSettleAfterDays: 3, mcpServers: [], defaultWorktree: false, updateChannel: null });
+    assert.deepEqual(services.getSettings(store), { dailyBudgetUsd: null, autoSettleAfterDays: 3, mcpServers: [], defaultWorktree: false, updateChannel: null });
 
     const set = services.setSettings(store, { dailyBudgetUsd: 12.5 });
-    assert.deepEqual(set, { dailyBudgetUsd: 12.5, autoSettleAfterDays: 3, mcpServers: [], defaultWorktree: false });
+    assert.deepEqual(set, { dailyBudgetUsd: 12.5, autoSettleAfterDays: 3, mcpServers: [], defaultWorktree: false, updateChannel: null });
     assert.equal(store.getThreads()[0].updatedAt, 2);
 
     store.save();
     const reloaded = new Store(filePath);
-    assert.deepEqual(reloaded.getSettings(), { dailyBudgetUsd: 12.5, autoSettleAfterDays: 3, mcpServers: [], defaultWorktree: false });
+    assert.deepEqual(reloaded.getSettings(), { dailyBudgetUsd: 12.5, autoSettleAfterDays: 3, mcpServers: [], defaultWorktree: false, updateChannel: null });
 
     const cleared = services.setSettings(store, { dailyBudgetUsd: null });
-    assert.deepEqual(cleared, { dailyBudgetUsd: null, autoSettleAfterDays: 3, mcpServers: [], defaultWorktree: false });
+    assert.deepEqual(cleared, { dailyBudgetUsd: null, autoSettleAfterDays: 3, mcpServers: [], defaultWorktree: false, updateChannel: null });
 
     assert.throws(
       () => services.setSettings(store, { dailyBudgetUsd: 0 }),

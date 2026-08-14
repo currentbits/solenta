@@ -594,6 +594,11 @@ export interface AppSettings {
    * The caret's "New worktree thread" stays an explicit opt-in either way.
    */
   defaultWorktree: boolean;
+  /**
+   * Update channel override; null follows the channel stamped at package
+   * time. Has no effect in an unstamped dev tree (updates stay disabled).
+   */
+  updateChannel: "prod" | "nightly" | null;
 }
 
 /** A user-registered MCP server entry (settings slice). */

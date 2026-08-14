@@ -36,6 +36,8 @@ export interface Mounted {
   click(el: Element | null): Promise<void>;
   /** Type into an input/textarea the way React's onChange expects. */
   type(el: Element | null, value: string): Promise<void>;
+  /** Pick a <select> option the way React's onChange expects. */
+  change(el: Element | null, value: string): Promise<void>;
   /**
    * Press a key on whatever is ACTUALLY focused, failing if nothing is.
    *
@@ -242,6 +244,16 @@ export async function mount(element: ReactElement): Promise<Mounted> {
         // events: React maps onChange to "input" for text fields, but some
         // paths only observe "change".
         node.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+        node.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+      });
+      await flush();
+    },
+    change: async (el, value) => {
+      if (!el) throw new Error("change: element not found");
+      const node = el as HTMLSelectElement;
+      await act(async () => {
+        node.value = value;
+        // React maps <select> onChange to the native "change" event.
         node.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
       });
       await flush();

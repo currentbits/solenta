@@ -12,6 +12,8 @@ interface SettingsModalProps {
   status: AppStatus | null;
   /** Auto-update check result for the build section. */
   update?: UpdateStatus | null;
+  /** Manual "Check for updates". */
+  onCheckUpdate?: () => Promise<void>;
   /** Relaunch into a staged update. */
   onApplyUpdate?: () => Promise<void>;
   onSaveSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>;
@@ -34,6 +36,7 @@ export function SettingsModal({
   settings,
   status,
   update,
+  onCheckUpdate,
   onApplyUpdate,
   onSaveSettings,
 }: SettingsModalProps) {
@@ -41,6 +44,7 @@ export function SettingsModal({
   const [settleDaysText, setSettleDaysText] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
   const wasOpen = useRef(false);
   /** Sync guard: blur then Save-click can both fire before setSaving lands. */
   const savingRef = useRef(false);
@@ -331,6 +335,54 @@ export function SettingsModal({
                   }`
                 : "unknown"}
             </p>
+            <div className={styles.fieldRow}>
+              <label className={styles.note} htmlFor="update-channel">
+                Update channel
+              </label>
+              <select
+                id="update-channel"
+                className={styles.input}
+                data-update-channel=""
+                value={settings?.updateChannel ?? status?.build.channel ?? "prod"}
+                disabled={saving || settings == null}
+                onChange={(e) => {
+                  setError(null);
+                  const updateChannel = e.target.value as "prod" | "nightly";
+                  void onSaveSettings({ updateChannel })
+                    .then(() => onCheckUpdate?.())
+                    .catch((err) => {
+                      setError(
+                        err instanceof Error && err.message
+                          ? err.message
+                          : "Failed to save settings",
+                      );
+                    });
+                }}
+              >
+                <option value="prod">Prod</option>
+                <option value="nightly">Nightly</option>
+              </select>
+              <button
+                type="button"
+                className={styles.btn}
+                data-check-update=""
+                disabled={checkingUpdate || onCheckUpdate == null}
+                onClick={() => {
+                  setCheckingUpdate(true);
+                  void onCheckUpdate?.().finally(() => setCheckingUpdate(false));
+                }}
+              >
+                {checkingUpdate ? "Checking…" : "Check for updates"}
+              </button>
+            </div>
+            {update?.state === "none" && (
+              <p className={styles.note}>Up to date.</p>
+            )}
+            {update?.state === "disabled" && (
+              <p className={styles.note}>
+                Auto-update is off in dev/unstamped builds.
+              </p>
+            )}
             {update?.state === "staged" && (
               <div className={styles.fieldRow}>
                 <span className={styles.note}>

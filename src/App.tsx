@@ -80,6 +80,7 @@ export default function App() {
     devServerStatus,
     appStatus,
     updateStatus,
+    checkUpdate,
     applyUpdate,
     settings,
     saveSettings,
@@ -526,6 +527,7 @@ export default function App() {
           settings={settings}
           status={appStatus}
           update={updateStatus}
+          onCheckUpdate={checkUpdate}
           onApplyUpdate={applyUpdate}
           onSaveSettings={(patch) => saveSettings(patch)}
         />

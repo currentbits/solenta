@@ -201,8 +201,11 @@ const DEFAULT_AUTO_SETTLE_AFTER_DAYS = 3;
  * defaultWorktree: absent/junk → false (new threads run in the checkout
  * unless the user opts in).
  *
+ * updateChannel: absent/junk → null (follow the channel stamped at package
+ * time); "prod"/"nightly" override the stamp.
+ *
  * @param {unknown} raw
- * @returns {{ dailyBudgetUsd: number | null, autoSettleAfterDays: number | null, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }>, defaultWorktree: boolean }}
+ * @returns {{ dailyBudgetUsd: number | null, autoSettleAfterDays: number | null, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }>, defaultWorktree: boolean, updateChannel: "prod" | "nightly" | null }}
  */
 function normalizeSettings(raw) {
   const settings = {
@@ -210,6 +213,7 @@ function normalizeSettings(raw) {
     autoSettleAfterDays: DEFAULT_AUTO_SETTLE_AFTER_DAYS,
     mcpServers: [],
     defaultWorktree: false,
+    updateChannel: null,
   };
   if (!raw || typeof raw !== "object") return settings;
   const obj = /** @type {{ dailyBudgetUsd?: unknown, autoSettleAfterDays?: unknown, mcpServers?: unknown }} */ (
@@ -245,6 +249,8 @@ function normalizeSettings(raw) {
   settings.mcpServers = normalizeMcpServers(obj.mcpServers);
   settings.defaultWorktree =
     /** @type {{ defaultWorktree?: unknown }} */ (obj).defaultWorktree === true;
+  const ch = /** @type {{ updateChannel?: unknown }} */ (obj).updateChannel;
+  settings.updateChannel = ch === "prod" || ch === "nightly" ? ch : null;
   return settings;
 }
 
@@ -663,6 +669,7 @@ class Store {
       autoSettleAfterDays: n.autoSettleAfterDays,
       mcpServers: n.mcpServers,
       defaultWorktree: n.defaultWorktree,
+      updateChannel: n.updateChannel,
     };
   }
 
@@ -723,6 +730,13 @@ class Store {
         throw new Error("defaultWorktree must be a boolean");
       }
       this.data.settings.defaultWorktree = v;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "updateChannel")) {
+      const v = patch.updateChannel;
+      if (v !== null && v !== "prod" && v !== "nightly") {
+        throw new Error('updateChannel must be "prod", "nightly", or null');
+      }
+      this.data.settings.updateChannel = v;
     }
     return this.getSettings();
   }
