@@ -10,8 +10,9 @@ const { execFileSync } = require("node:child_process");
  * Effort support (verified against installed CLIs / contract correction):
  * - claude: `--effort <level>` exactly low|medium|high|xhigh|max. Unknown values
  *   are a silent warning + default (not an error), so our boundary must reject.
- * - grok: `--reasoning-effort` (alias `--effort`) errors on unknown; grok-4.5
- *   accepts only low|medium|high.
+ * - grok: `--reasoning-effort` (alias `--effort`) errors on unknown; live CLI
+ *   (1.0.3) accepts xhigh|high|medium|low. grok-4.6 is the default; grok-4.5
+ *   remains listed. No max.
  * - codex: no dedicated flag; config override `-c model_reasoning_effort=<level>`.
  *   Live API rejects bogus with enum none|minimal|low|medium|high|xhigh|max;
  *   contract intersection (no none/minimal) is low|medium|high|xhigh|max.
@@ -232,18 +233,28 @@ const PROVIDERS = [
     binEnv: "CODER_GROK_BIN",
     defaultBin: "grok",
     supportsResume: true,
-    models: ["grok-4.5"],
+    // Live `grok models` (1.0.3) + ~/.grok/models_cache.json. Ids, labels,
+    // descriptions, and context_window copied from the cache; 4.6 is default.
+    models: ["grok-4.6", "grok-4.5"],
     modelInfo: [
+      {
+        id: "grok-4.6",
+        label: "Grok 4.6",
+        description: "SpaceXAI's latest frontier model",
+        vendor: "xAI",
+        recommended: true,
+        contextTokens: 500000,
+      },
       {
         id: "grok-4.5",
         label: "Grok 4.5",
         description: "xAI coding agent with tool use",
         vendor: "xAI",
-        recommended: true,
+        contextTokens: 500000,
       },
     ],
-    // Live CLI: unknown effort level 'bogus'; use one of: high, medium, low
-    efforts: ["low", "medium", "high"],
+    // Live CLI: unknown effort level 'bogus'; use one of: xhigh, high, medium, low
+    efforts: ["low", "medium", "high", "xhigh"],
     kind: "claude-stream",
     /**
      * Grok CLI: options first, then -p/--single <PROMPT> last so the prompt
@@ -276,9 +287,13 @@ const PROVIDERS = [
       if (sessionId) {
         args.push("--resume", String(sessionId));
       }
-      maybeEmitEffort(["low", "medium", "high"], reasoningEffort, (level) => {
-        args.push("--reasoning-effort", level);
-      });
+      maybeEmitEffort(
+        ["low", "medium", "high", "xhigh"],
+        reasoningEffort,
+        (level) => {
+          args.push("--reasoning-effort", level);
+        },
+      );
       // -p/--single takes the prompt as its value; keep it last.
       args.push("-p", String(prompt ?? ""));
       return args;

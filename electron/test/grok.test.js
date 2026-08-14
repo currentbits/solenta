@@ -230,7 +230,10 @@ describe("grok provider registry", () => {
     const grok = getProvider("grok");
     assert.equal(grok.kind, "claude-stream");
     assert.equal(grok.supportsResume, true);
-    assert.deepEqual(grok.models, ["grok-4.5"]);
+    assert.deepEqual(grok.models, ["grok-4.6", "grok-4.5"]);
+    assert.equal(grok.modelInfo[0].id, "grok-4.6");
+    assert.equal(grok.modelInfo[0].recommended, true);
+    assert.deepEqual(grok.efforts, ["low", "medium", "high", "xhigh"]);
     assert.equal(grok.binEnv, "CODER_GROK_BIN");
     assert.equal(grok.defaultBin, "grok");
 
@@ -267,12 +270,12 @@ describe("grok provider registry", () => {
 
     const withModel = grok.buildArgs({
       prompt: "p",
-      model: "grok-4.5",
+      model: "grok-4.6",
       permissionMode: "plan",
     });
     const mIdx = withModel.indexOf("-m");
     assert.ok(mIdx >= 0);
-    assert.equal(withModel[mIdx + 1], "grok-4.5");
+    assert.equal(withModel[mIdx + 1], "grok-4.6");
     assert.ok(!withModel.includes("--model"));
 
     const resume = grok.buildArgs({
