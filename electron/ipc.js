@@ -362,6 +362,10 @@ const IPC_HANDLERS = {
     services.deleteThread(ctx.store, input, {
       isRunning: (id) => ctx.runner.isRunning(id),
     });
+    // A kept-alive Claude CLI for this thread has no future turn; kill it.
+    if (typeof ctx.runner.disposeClaudeSession === "function") {
+      ctx.runner.disposeClaudeSession(input.threadId);
+    }
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
   },
   "runs:start": async (ctx, input) => {
