@@ -5,6 +5,7 @@ import type {
   DiffResult,
   FileChange,
   GitSyncInfo,
+  PendingPermissionInfo,
   PermissionDecision,
   PermissionMode,
   ProjectInfo,
@@ -109,6 +110,7 @@ interface ThreadViewProps {
   onRespondPermission: (
     requestId: string,
     decision: PermissionDecision,
+    answers?: Record<string, string>,
   ) => void | Promise<void>;
   onSetProvider: (input: {
     provider?: string;
@@ -744,6 +746,188 @@ function WorkLogCard({
         </>
       )}
     </section>
+  );
+}
+
+/**
+ * Option picker for an agent question (AskUserQuestion). Options answer with
+ * a click or the 1-9 keys; a lone single-select question submits immediately,
+ * everything else collects picks and submits together. Free text via "Other".
+ */
+function QuestionPrompt({
+  pending,
+  onRespond,
+}: {
+  pending: PendingPermissionInfo;
+  onRespond: (
+    requestId: string,
+    decision: PermissionDecision,
+    answers?: Record<string, string>,
+  ) => void | Promise<void>;
+}) {
+  const questions = pending.questions ?? [];
+  const [picked, setPicked] = useState<Record<number, string[]>>({});
+  const [other, setOther] = useState<Record<number, string>>({});
+  const [sent, setSent] = useState(false);
+
+  const answerFor = useCallback(
+    (i: number): string => {
+      const parts = [...(picked[i] ?? [])];
+      const extra = (other[i] ?? "").trim();
+      if (extra) parts.push(extra);
+      return parts.join(", ");
+    },
+    [picked, other],
+  );
+  const allAnswered = questions.every((_, i) => answerFor(i) !== "");
+  // A lone single-select question answers straight from the click/keypress.
+  const instant = questions.length === 1 && !questions[0].multiSelect;
+
+  const submit = useCallback(
+    (override?: { index: number; label: string }) => {
+      if (sent) return;
+      const answers: Record<string, string> = {};
+      questions.forEach((q, i) => {
+        answers[q.question] =
+          override && override.index === i ? override.label : answerFor(i);
+      });
+      setSent(true);
+      void onRespond(pending.requestId, "allow", answers);
+    },
+    [sent, questions, answerFor, onRespond, pending.requestId],
+  );
+
+  const choose = useCallback(
+    (qi: number, label: string) => {
+      if (instant) {
+        submit({ index: qi, label });
+        return;
+      }
+      setPicked((prev) => {
+        const cur = prev[qi] ?? [];
+        const next = questions[qi].multiSelect
+          ? cur.includes(label)
+            ? cur.filter((l) => l !== label)
+            : [...cur, label]
+          : [label];
+        return { ...prev, [qi]: next };
+      });
+    },
+    [instant, questions, submit],
+  );
+
+  // 1-9 pick an option of the first unanswered question; Enter submits.
+  useEffect(() => {
+    const onKey = (ev: KeyboardEvent) => {
+      const t = ev.target as HTMLElement | null;
+      if (
+        t &&
+        (t.tagName === "INPUT" ||
+          t.tagName === "TEXTAREA" ||
+          t.isContentEditable)
+      ) {
+        return;
+      }
+      if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
+      if (ev.key === "Enter") {
+        if (allAnswered) {
+          ev.preventDefault();
+          submit();
+        }
+        return;
+      }
+      const n = Number(ev.key);
+      if (!Number.isInteger(n) || n < 1) return;
+      let qi = questions.findIndex((_, i) => answerFor(i) === "");
+      if (qi < 0) qi = questions.length - 1;
+      const opt = questions[qi]?.options[n - 1];
+      if (!opt) return;
+      ev.preventDefault();
+      choose(qi, opt.label);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [questions, answerFor, allAnswered, choose, submit]);
+
+  return (
+    <div
+      className={styles.permissionCard}
+      role="alertdialog"
+      aria-label="Agent question"
+    >
+      {questions.map((q, qi) => (
+        <div key={qi} className={styles.questionBlock}>
+          <div className={styles.permissionHead}>
+            {q.header && (
+              <span className={styles.questionChip}>{q.header}</span>
+            )}
+            {q.question}
+          </div>
+          <div className={styles.questionOptions}>
+            {q.options.map((opt, oi) => {
+              const isPicked = (picked[qi] ?? []).includes(opt.label);
+              return (
+                <button
+                  key={oi}
+                  type="button"
+                  className={styles.questionOption}
+                  data-picked={isPicked || undefined}
+                  onClick={() => choose(qi, opt.label)}
+                >
+                  <span className={styles.questionKey}>{oi + 1}</span>
+                  <span className={styles.questionText}>
+                    <span className={styles.questionLabel}>{opt.label}</span>
+                    {opt.description && (
+                      <span className={styles.questionDesc}>
+                        {opt.description}
+                      </span>
+                    )}
+                  </span>
+                </button>
+              );
+            })}
+            <input
+              type="text"
+              className={styles.questionOther}
+              placeholder="Other…"
+              value={other[qi] ?? ""}
+              onChange={(ev) =>
+                setOther((prev) => ({ ...prev, [qi]: ev.target.value }))
+              }
+              onKeyDown={(ev) => {
+                if (ev.key === "Enter" && answerFor(qi) !== "" && allAnswered) {
+                  ev.preventDefault();
+                  submit();
+                }
+              }}
+            />
+          </div>
+        </div>
+      ))}
+      <div className={styles.permissionActions}>
+        {(!instant || (other[0] ?? "").trim() !== "") && (
+          <button
+            type="button"
+            className={styles.permissionAllow}
+            disabled={!allAnswered || sent}
+            onClick={() => submit()}
+          >
+            Answer
+          </button>
+        )}
+        <button
+          type="button"
+          className={styles.permissionDeny}
+          disabled={sent}
+          onClick={() => {
+            setSent(true);
+            void onRespond(pending.requestId, "deny");
+          }}
+        >
+          Dismiss
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -1917,7 +2101,13 @@ export function ThreadView({
           );
         })}
 
-        {detail.pendingPermission && (
+        {detail.pendingPermission?.questions?.length ? (
+          <QuestionPrompt
+            key={detail.pendingPermission.requestId}
+            pending={detail.pendingPermission}
+            onRespond={onRespondPermission}
+          />
+        ) : detail.pendingPermission && (
           <div className={styles.permissionCard} role="alertdialog" aria-label="Permission request">
             <div className={styles.permissionHead}>
               Agent wants to use <strong>{detail.pendingPermission.toolName}</strong>
