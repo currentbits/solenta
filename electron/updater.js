@@ -5,7 +5,7 @@
 //
 // Two channels, stamped into the embedded package.json at package time:
 //   prod    -> newest non-prerelease (GET /releases/latest)
-//   nightly -> newest prerelease (nightly cuts are published as prereleases)
+//   nightly -> newest release of any kind (prereleases included)
 // A build with no channel/releaseTag stamp (dev tree, local install-swap
 // bundle) never updates itself.
 //
@@ -71,8 +71,12 @@ function pickAsset(release, platform, arch) {
 
 /**
  * Latest release for a channel. prod trusts GitHub's "latest" (newest
- * non-prerelease); nightly takes the newest prerelease so a prod release
- * never silently migrates a nightly install onto the prod channel.
+ * non-prerelease); nightly takes the newest release of either kind — the
+ * list endpoint is newest-first. Nightly means "newest code", so it has to
+ * include prod releases: a prerelease-only feed freezes a nightly install
+ * forever as soon as prod moves ahead and no newer nightly is cut. The
+ * channel itself is kept by the settings pin in ipc.js, not by refusing
+ * to see prod tags.
  */
 async function fetchLatest(channel, fetchImpl) {
   const doFetch = fetchImpl || fetch;
@@ -80,7 +84,7 @@ async function fetchLatest(channel, fetchImpl) {
     const res = await doFetch(`${API}?per_page=15`, { headers: HEADERS });
     if (!res.ok) throw new Error(`GitHub releases: HTTP ${res.status}`);
     const list = await res.json();
-    return list.find((r) => r && r.prerelease && !r.draft) || null;
+    return list.find((r) => r && !r.draft) || null;
   }
   const res = await doFetch(`${API}/latest`, { headers: HEADERS });
   if (res.status === 404) return null;

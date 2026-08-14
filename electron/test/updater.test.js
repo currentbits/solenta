@@ -54,28 +54,43 @@ describe("updater.checkAndStage", () => {
     assert.match(res.url, /releases\/tag\/v0.2.0/);
   });
 
-  it("nightly: follows the newest prerelease, never a prod release", async () => {
+  it("nightly: follows the newest release, prerelease or not", async () => {
     const res = await updater.checkAndStage({
       pkg: NIGHTLY_PKG,
       bundlePath: null,
       fetch: fakeFetch({
         "/releases?": [
-          { tag_name: "v0.2.0", prerelease: false, draft: false, assets: [] },
+          { tag_name: "v0.2.0", prerelease: false, draft: false, html_url: "y", assets: [] },
           {
             tag_name: "nightly-202608140000-def456",
             prerelease: true,
             draft: false,
-            html_url: "y",
             assets: [],
           },
         ],
       }),
     });
+    // Newest-first: a prod release cut after the last nightly wins, otherwise
+    // the install freezes as soon as nightlies stop being cut.
     assert.equal(res.state, "available");
-    assert.equal(res.tag, "nightly-202608140000-def456");
+    assert.equal(res.tag, "v0.2.0");
   });
 
-  it("nightly: reports none when the newest prerelease is this build", async () => {
+  it("nightly: skips drafts", async () => {
+    const res = await updater.checkAndStage({
+      pkg: NIGHTLY_PKG,
+      bundlePath: null,
+      fetch: fakeFetch({
+        "/releases?": [
+          { tag_name: "v0.3.0", prerelease: false, draft: true, assets: [] },
+          { tag_name: "v0.2.0", prerelease: false, draft: false, html_url: "y", assets: [] },
+        ],
+      }),
+    });
+    assert.equal(res.tag, "v0.2.0");
+  });
+
+  it("nightly: reports none when the newest release is this build", async () => {
     const res = await updater.checkAndStage({
       pkg: NIGHTLY_PKG,
       bundlePath: null,
@@ -144,6 +159,55 @@ describe("updater.pickAsset", () => {
     assert.match(updater.pickAsset(release, "darwin", "arm64").name, /macos-arm64/);
     assert.match(updater.pickAsset(release, "win32", "x64").name, /win32-x64/);
     assert.equal(updater.pickAsset(release, "linux", "arm64"), null);
+  });
+});
+
+describe("app:checkUpdate handler", () => {
+  /** ipc.js requires electron at load; stub it to run in plain node. */
+  function loadHandlers() {
+    const Module = require("node:module");
+    const orig = Module.prototype.require;
+    Module.prototype.require = function (id) {
+      if (id === "electron") return { BrowserWindow: {}, shell: {} };
+      return orig.apply(this, arguments);
+    };
+    try {
+      delete require.cache[require.resolve("../ipc.js")];
+      return require("../ipc.js").IPC_HANDLERS;
+    } finally {
+      Module.prototype.require = orig;
+    }
+  }
+
+  /** @param {any} status @param {any} stored */
+  async function check(status, stored) {
+    const handlers = loadHandlers();
+    const settings = { updateChannel: stored };
+    const real = updater.checkAndStage;
+    updater.checkAndStage = async () => status;
+    try {
+      await handlers["app:checkUpdate"]({
+        store: {
+          getSettings: () => settings,
+          setSettings: (patch) => Object.assign(settings, patch),
+        },
+      });
+    } finally {
+      updater.checkAndStage = real;
+    }
+    return settings.updateChannel;
+  }
+
+  it("pins the channel when a nightly build stages a (prod-stamped) update", async () => {
+    assert.equal(await check({ state: "staged", channel: "nightly" }, null), "nightly");
+  });
+
+  it("leaves settings alone when nothing was staged", async () => {
+    assert.equal(await check({ state: "none", channel: "nightly" }, null), null);
+  });
+
+  it("never overrides an explicit channel choice", async () => {
+    assert.equal(await check({ state: "staged", channel: "prod" }, "nightly"), "nightly");
   });
 });
 
