@@ -1965,7 +1965,7 @@ export function AgentsPanel({
         />
       ) : tab === "memory" ? (
         <MemoryTab
-          projectSlug={project?.slug ?? null}
+          projectSlug={project?.path ?? project?.slug ?? null}
           searchMemory={searchMemory}
           recentMemory={recentMemory}
           getMemory={getMemory}

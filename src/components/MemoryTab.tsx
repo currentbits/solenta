@@ -29,7 +29,10 @@ const RECENT_LIMIT = 20;
 type StoreType = "knowledge" | "convention" | "task";
 
 export interface MemoryTabProps {
-  /** Project slug of the selected thread (for "this project only"). */
+  /** Project PATH of the selected thread (falls back to slug). The memory
+   *  server canonicalizes a path to the repo-root basename — the same key
+   *  agents store under — while a display slug like "owner/solenta" resolves
+   *  to a scope no agent ever writes to. */
   projectSlug: string | null;
   searchMemory: (input: {
     query: string;
@@ -409,7 +412,7 @@ export function MemoryTab({
           aria-label="Search shared memory"
         />
         <span className={styles.filterLabel} title="Memory is scoped to this project">
-          {projectSlug ? projectSlug : "all projects"}
+          {projectSlug ? projectSlug.split("/").filter(Boolean).pop() : "all projects"}
         </span>
       </div>
 

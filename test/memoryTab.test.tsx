@@ -56,10 +56,15 @@ interface Stubs {
   remove?: (input: { id: string }) => Promise<void>;
 }
 
-function tab(stubs: Stubs = {}, calls: Calls = newCalls(), rows = [entry()]) {
+function tab(
+  stubs: Stubs = {},
+  calls: Calls = newCalls(),
+  rows = [entry()],
+  projectSlug = "coder",
+) {
   return (
     <MemoryTab
-      projectSlug="coder"
+      projectSlug={projectSlug}
       searchMemory={async () => []}
       recentMemory={async (input) => {
         calls.recent.push(input);
@@ -122,6 +127,26 @@ describe("MemoryTab list", () => {
     assert.ok(
       m.queryAll('[title="coder"]').length > 0,
       "the entry's project must be visible on the card",
+    );
+    m.unmount();
+  });
+
+  it("scopes by the raw project path but labels with its basename", async () => {
+    // The caller passes project.path, not the display slug: a slug like
+    // "owner/solenta" canonicalizes to a scope no agent writes to, which is
+    // exactly how the solenta project's memory tab went permanently empty.
+    const calls = newCalls();
+    const m = await mount(
+      tab({}, calls, [entry()], "/Users/willem/code/coder"),
+    );
+    assert.equal(
+      (calls.recent[0] as { project?: string }).project,
+      "/Users/willem/code/coder",
+      "the path must reach the server untouched for canonicalization",
+    );
+    assert.ok(
+      m.queryAll('[class*="filterLabel"]').some((el) => el.textContent === "coder"),
+      "the filter label must show the basename, not the full path",
     );
     m.unmount();
   });
