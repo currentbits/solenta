@@ -609,8 +609,12 @@ function createRunner(opts) {
           ? `Allowed for session: ${pending.summary}`
           : `Allowed: ${pending.summary}`;
     appendMessage(threadId, "event", label, e.runId);
+    if (e.pendingPermissions.length === 0) {
+      store.updateThread(threadId, { awaitingInput: false });
+    }
     store.save();
     pushDetail(threadId, e.claudeState);
+    pushThreadsChanged();
   }
 
   function pushThreadsChanged() {
@@ -1159,6 +1163,16 @@ function createRunner(opts) {
               input: inputStr,
               rawInput,
             });
+            if (e.pendingPermissions.length === 1) {
+              // Run is now blocked on the user: flip the sidebar badge to
+              // Waiting. touch: a prompt is real activity (drives unread).
+              store.updateThread(
+                threadId,
+                { awaitingInput: true },
+                { touch: true },
+              );
+              pushThreadsChanged();
+            }
             pushDetail(threadId, claudeState);
           } else if (requestId) {
             // Unknown control request: answer so the CLI never hangs on us.
@@ -2796,6 +2810,7 @@ function createRunner(opts) {
         status: "working",
         title,
         runStartedAt: Date.now(),
+        awaitingInput: false,
         ...services.clearSettledOnActivity(thread),
       },
       { touch: true },

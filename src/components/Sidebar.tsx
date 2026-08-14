@@ -220,6 +220,15 @@ function StatusBadge({
   thread: ThreadInfo;
   now: number;
 }) {
+  if (thread.status === "working" && thread.awaitingInput) {
+    return (
+      <span className={`${styles.badge} ${styles.badgeWaiting}`}>
+        <span className={styles.waitingDot} aria-hidden />
+        Waiting
+      </span>
+    );
+  }
+
   if (thread.status === "working") {
     const label =
       thread.runStartedAt != null
