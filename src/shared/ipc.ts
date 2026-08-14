@@ -296,6 +296,22 @@ export interface PendingPermissionInfo {
   summary: string;
   /** Pretty-printed JSON of the tool input (truncated like ToolCallInfo). */
   input: string;
+  /**
+   * Present when the agent is asking the user a question (AskUserQuestion):
+   * render an option picker instead of the generic allow/deny prompt and
+   * answer via respondPermission's `answers`.
+   */
+  questions?: PendingQuestion[] | null;
+}
+
+/** One question of an AskUserQuestion prompt. */
+export interface PendingQuestion {
+  question: string;
+  /** Short chip label, e.g. "Auth method". */
+  header: string;
+  /** True: the user may pick several options (answer joins labels with ", "). */
+  multiSelect: boolean;
+  options: { label: string; description: string }[];
 }
 
 /** User decision on a PendingPermissionInfo. "allowAlways" also allows the tool for the rest of the CLI session. */
@@ -807,6 +823,11 @@ export interface CoderApi {
       threadId: string;
       requestId: string;
       decision: PermissionDecision;
+      /**
+       * For question prompts (pendingPermission.questions): the chosen answer
+       * per question text; sent to the agent as updatedInput.answers.
+       */
+      answers?: Record<string, string>;
     }): Promise<void>;
     /** Archive or unarchive; archived threads are hidden by default but fully intact. */
     setArchived(input: { threadId: string; archived: boolean }): Promise<ThreadInfo>;
