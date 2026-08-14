@@ -67,6 +67,13 @@ function makeFakeStore() {
       status: "working",
       handoffFrom: "t1",
     },
+    {
+      id: "t3",
+      title: "Broken",
+      provider: "grok",
+      status: "failed",
+      handoffFrom: null,
+    },
   ];
   const messagesByThread = {
     t1: [
@@ -74,6 +81,12 @@ function makeFakeStore() {
       { role: "assistant", text: "first line\nsecond line" },
     ],
     t2: [{ role: "user", text: "only user" }],
+    t3: [
+      { role: "user", text: "do it" },
+      { role: "assistant", text: "starting" },
+      { role: "event", text: "Allowed: something" },
+      { role: "event", text: "Run error: result subtype error_during_execution" },
+    ],
   };
   return {
     getThreads: () => threads,
@@ -126,6 +139,13 @@ describe("orch-server tool handlers", () => {
         provider: "codex",
         status: "working",
         handoffFrom: "t1",
+      },
+      {
+        id: "t3",
+        title: "Broken",
+        provider: "grok",
+        status: "failed",
+        handoffFrom: null,
       },
     ]);
   });
@@ -185,6 +205,7 @@ describe("orch-server tool handlers", () => {
       title: "First",
       provider: "claude",
       lastAssistantText: "first line",
+      lastError: null,
     });
     // No assistant message: null.
     assert.deepEqual(await h.thread_status({ threadId: "t2" }), {
@@ -192,11 +213,24 @@ describe("orch-server tool handlers", () => {
       title: "Second",
       provider: "codex",
       lastAssistantText: null,
+      lastError: null,
     });
     await assert.rejects(
       () => h.thread_status({ threadId: "ghost" }),
       /Unknown thread: ghost/,
     );
+  });
+
+  it("thread_status surfaces the Run error event on failed threads", async () => {
+    const deps = makeDeps();
+    const h = createToolHandlers(deps);
+    assert.deepEqual(await h.thread_status({ threadId: "t3" }), {
+      status: "failed",
+      title: "Broken",
+      provider: "grok",
+      lastAssistantText: "starting",
+      lastError: "Run error: result subtype error_during_execution",
+    });
   });
 });
 

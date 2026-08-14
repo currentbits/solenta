@@ -222,11 +222,24 @@ function createToolHandlers(deps) {
         break;
       }
     }
+    // Failed runs append a "Run error: ..." event (result subtype, exit code,
+    // stderr tail); surface it so orchestrators can see WHY, not just that.
+    let lastError = null;
+    if (thread.status === "failed") {
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        const m = msgs[i];
+        if (m && m.role === "event" && /^Run error/.test(String(m.text || ""))) {
+          lastError = String(m.text);
+          break;
+        }
+      }
+    }
     return {
       status: thread.status ?? null,
       title: thread.title ?? null,
       provider: thread.provider ?? null,
       lastAssistantText,
+      lastError,
     };
   }
 
@@ -286,7 +299,7 @@ function buildMcpServer(sdk, handlers) {
     "thread_status",
     {
       description:
-        "Status of one thread: status, title, provider, lastAssistantText (first line of the last assistant message, null when none).",
+        "Status of one thread: status, title, provider, lastAssistantText (first line of the last assistant message, null when none), lastError (run error detail when status is failed, null otherwise).",
       inputSchema: {
         threadId: z.string().min(1),
       },
