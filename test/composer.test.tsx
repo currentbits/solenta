@@ -10,6 +10,7 @@
  */
 import assert from "node:assert/strict";
 import { describe, it, afterEach } from "node:test";
+import { useState } from "react";
 import { mount, unmountAll } from "./support/dom.ts";
 import { Composer } from "../src/components/Composer";
 import type {
@@ -159,6 +160,7 @@ function makeHarness(provider = "claude"): Harness {
 function composer(
   harness: Harness,
   over: {
+    threadId?: string;
     permissionMode?: PermissionMode;
     provider?: string;
     model?: string | null;
@@ -177,7 +179,7 @@ function composer(
     over.reasoningEffort === undefined ? null : over.reasoningEffort;
   return (
     <Composer
-      threadId="t1"
+      threadId={over.threadId ?? "t1"}
       branch={over.branch === undefined ? "agentmux/abc" : over.branch}
       permissionMode={over.permissionMode ?? "default"}
       onPermissionModeChange={(mode) => {
@@ -252,6 +254,44 @@ async function openProvider(
   await m.click(providerBtn);
   return m.query('[role="listbox"][aria-label="Model"]') as HTMLElement | null;
 }
+
+describe("Composer per-thread draft", () => {
+  it("keeps an unsent draft with its thread across a switch", async () => {
+    const h = makeHarness();
+    // The app mounts ONE Composer and swaps threadId (ThreadView.tsx), so the
+    // test must do the same: a remount would hide the shared-state bug.
+    function Shell() {
+      const [tid, setTid] = useState("t1");
+      return (
+        <>
+          <button onClick={() => setTid((t) => (t === "t1" ? "t2" : "t1"))}>
+            swap-thread
+          </button>
+          {composer(h, { threadId: tid })}
+        </>
+      );
+    }
+    const m = await mount(<Shell />);
+    const ta = () => m.query("textarea") as HTMLTextAreaElement;
+    await m.type(ta(), "draft for thread A");
+
+    await m.click(m.byText("swap-thread"));
+    assert.equal(
+      ta().value,
+      "",
+      "thread B must not inherit thread A's unsent draft",
+    );
+
+    await m.type(ta(), "draft for thread B");
+    await m.click(m.byText("swap-thread"));
+    assert.equal(
+      ta().value,
+      "draft for thread A",
+      "switching back must restore thread A's draft",
+    );
+    m.unmount();
+  });
+});
 
 describe("Composer send", () => {
   it("types a prompt and submits once with that text", async () => {

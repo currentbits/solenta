@@ -144,7 +144,20 @@ export function Composer({
   onDismissError,
   onListFiles,
 }: ComposerProps) {
-  const [value, setValue] = useState("");
+  /**
+   * Unsent drafts keyed by thread: one Composer instance serves every thread
+   * (ThreadView swaps threadId), so plain state would carry text across a
+   * switch. Mirrors templateByThread below.
+   */
+  const [draftByThread, setDraftByThread] = useState<Record<string, string>>(
+    {},
+  );
+  const value = draftByThread[threadId] ?? "";
+  const setValue = useCallback(
+    (text: string) =>
+      setDraftByThread((drafts) => ({ ...drafts, [threadId]: text })),
+    [threadId],
+  );
   const [sending, setSending] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const [modeOpen, setModeOpen] = useState(false);
