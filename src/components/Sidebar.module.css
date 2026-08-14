@@ -278,6 +278,25 @@
   box-shadow: inset 2px 0 0 0 var(--blue);
 }
 
+/* Fork/worker rows attach under the thread that started them. */
+.card[data-nested="true"] {
+  width: calc(100% - 14px);
+  margin-left: 14px;
+}
+
+.card[data-nested="true"]::before {
+  content: "";
+  position: absolute;
+  left: -9px;
+  top: -6px;
+  bottom: 50%;
+  width: 8px;
+  border-left: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  border-bottom-left-radius: 6px;
+  pointer-events: none;
+}
+
 /* Multi-select highlight (distinct from active). */
 .card[data-multi="true"],
 .settledRow[data-multi="true"] {
