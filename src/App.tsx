@@ -440,8 +440,8 @@ export default function App() {
         onRemoveWorkflow={(id) => removeWorkflow(id)}
         onStopRun={() => stopRun()}
         onSetPermissionMode={(mode) => setPermissionMode(mode)}
-        onRespondPermission={(requestId, decision) =>
-          respondPermission(requestId, decision)
+        onRespondPermission={(requestId, decision, answers) =>
+          respondPermission(requestId, decision, answers)
         }
         onSetProvider={(input) => setProvider(input)}
         onSetReasoningEffort={(effort) => setReasoningEffort(effort)}

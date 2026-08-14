@@ -428,6 +428,62 @@ async function main() {
     return;
   }
 
+  // Ask the user a question (AskUserQuestion), finish echoing the answer.
+  if (scenario === "question") {
+    emit({ type: "system", subtype: "init", session_id: "sess-q", model: "m" });
+    await delay(20);
+    emit({
+      type: "control_request",
+      request_id: "req-q-1",
+      request: {
+        subtype: "can_use_tool",
+        tool_name: "AskUserQuestion",
+        input: {
+          questions: [
+            {
+              question: "Which database?",
+              header: "Database",
+              multiSelect: false,
+              options: [
+                { label: "Postgres", description: "Relational" },
+                { label: "SQLite", description: "Embedded" },
+              ],
+            },
+          ],
+        },
+      },
+    });
+    let buf = "";
+    process.stdin.on("data", (c) => {
+      buf += c;
+      let nl;
+      while ((nl = buf.indexOf("\\n")) >= 0) {
+        const line = buf.slice(0, nl);
+        buf = buf.slice(nl + 1);
+        if (!line.trim()) continue;
+        let msg;
+        try { msg = JSON.parse(line); } catch { continue; }
+        if (msg.type !== "control_response") continue;
+        if (process.env.CODER_FAKE_CLAUDE_CTRL_FILE) {
+          fs.writeFileSync(process.env.CODER_FAKE_CLAUDE_CTRL_FILE, JSON.stringify(msg), "utf8");
+        }
+        emit({
+          type: "result",
+          subtype: "success",
+          result: "answered",
+          usage: { input_tokens: 1, output_tokens: 1 },
+          total_cost_usd: 0,
+          num_turns: 1,
+          session_id: "sess-q",
+        });
+        process.exit(0);
+      }
+    });
+    await delay(30000);
+    process.exit(1);
+    return;
+  }
+
   // Persistent interactive CLI: one turn per stdin user message, process
   // stays alive between turns (issue #8 keep-alive lifecycle).
   if (scenario === "multi-turn") {
@@ -799,6 +855,60 @@ describe("runner claude provider", () => {
     } finally {
       delete process.env.CODER_FAKE_CLAUDE_CTRL_FILE;
       delete process.env.CODER_FAKE_CLAUDE_STDIN_FILE;
+    }
+  });
+
+  it("surfaces AskUserQuestion options and returns answers in updatedInput", async () => {
+    process.env.CODER_FAKE_CLAUDE_SCENARIO = "question";
+    const ctrlFile = path.join(tmpDir, "ctrl-q.json");
+    process.env.CODER_FAKE_CLAUDE_CTRL_FILE = ctrlFile;
+    try {
+      const thread = store.getThreads()[0];
+      await runner.startRun({ threadId: thread.id, prompt: "pick a db" });
+
+      await waitFor(() => runner.getPendingPermission(thread.id) != null);
+      const pending = runner.getPendingPermission(thread.id);
+      assert.equal(pending.toolName, "AskUserQuestion");
+      // The parsed questions ride along for the renderer's option picker.
+      assert.deepEqual(pending.questions, [
+        {
+          question: "Which database?",
+          header: "Database",
+          multiSelect: false,
+          options: [
+            { label: "Postgres", description: "Relational" },
+            { label: "SQLite", description: "Embedded" },
+          ],
+        },
+      ]);
+
+      runner.respondPermission({
+        threadId: thread.id,
+        requestId: pending.requestId,
+        decision: "allow",
+        answers: { "Which database?": "Postgres" },
+      });
+      await waitFor(() => store.getThread(thread.id).status === "done");
+
+      // Answers merged into updatedInput; original questions preserved.
+      const ctrl = JSON.parse(fs.readFileSync(ctrlFile, "utf8"));
+      assert.equal(ctrl.response.response.behavior, "allow");
+      assert.deepEqual(ctrl.response.response.updatedInput.answers, {
+        "Which database?": "Postgres",
+      });
+      assert.equal(
+        ctrl.response.response.updatedInput.questions[0].question,
+        "Which database?",
+      );
+      assert.equal(ctrl.response.response.updatedPermissions, undefined);
+
+      // The chosen answer is recorded in the conversation.
+      const msgs = store.getMessages(thread.id);
+      assert.ok(
+        msgs.some((m) => m.role === "event" && m.text === "Answered: Postgres"),
+      );
+    } finally {
+      delete process.env.CODER_FAKE_CLAUDE_CTRL_FILE;
     }
   });
 

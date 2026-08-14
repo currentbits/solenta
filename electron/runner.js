@@ -702,15 +702,48 @@ function createRunner(opts) {
       toolName: p.toolName,
       summary: p.summary,
       input: p.input,
+      questions: questionInfo(p.toolName, p.rawInput),
     };
   }
 
   /**
-   * Answer a pending permission prompt.
-   * @param {{ threadId: string, requestId: string, decision: "allow" | "allowAlways" | "deny" }} input
+   * AskUserQuestion input -> sanitized questions for the renderer's option
+   * picker, or null when this permission isn't a question prompt.
+   * @param {string} toolName
+   * @param {Record<string, unknown>} rawInput
+   */
+  function questionInfo(toolName, rawInput) {
+    if (toolName !== "AskUserQuestion") return null;
+    const qs = rawInput && Array.isArray(rawInput.questions) ? rawInput.questions : [];
+    const out = [];
+    for (const q of qs) {
+      if (!q || typeof q.question !== "string" || !Array.isArray(q.options)) {
+        continue;
+      }
+      const options = q.options
+        .filter((o) => o && typeof o.label === "string" && o.label)
+        .map((o) => ({
+          label: o.label,
+          description: typeof o.description === "string" ? o.description : "",
+        }));
+      if (options.length === 0) continue;
+      out.push({
+        question: q.question,
+        header: typeof q.header === "string" ? q.header : "",
+        multiSelect: q.multiSelect === true,
+        options,
+      });
+    }
+    return out.length > 0 ? out : null;
+  }
+
+  /**
+   * Answer a pending permission prompt. For question prompts, `answers`
+   * (question text -> chosen label) rides back as updatedInput.answers.
+   * @param {{ threadId: string, requestId: string, decision: "allow" | "allowAlways" | "deny", answers?: Record<string, string> }} input
    */
   function respondPermission(input) {
-    const { threadId, requestId, decision } = input || {};
+    const { threadId, requestId, decision, answers } = input || {};
     const e = active.get(threadId);
     if (!e || e.kind !== "claude" || !e.handle) {
       throw new Error("No active agent run for this thread");
@@ -720,9 +753,18 @@ function createRunner(opts) {
       throw new Error("Permission request no longer pending");
     }
     const [pending] = e.pendingPermissions.splice(idx, 1);
+    const answerMap =
+      answers && typeof answers === "object" && !Array.isArray(answers)
+        ? answers
+        : null;
     let response;
     if (decision === "allow" || decision === "allowAlways") {
-      response = { behavior: "allow", updatedInput: pending.rawInput };
+      response = {
+        behavior: "allow",
+        updatedInput: answerMap
+          ? { ...pending.rawInput, answers: answerMap }
+          : pending.rawInput,
+      };
       if (decision === "allowAlways") {
         // "Accept all": stop asking for this tool for the rest of the CLI
         // session (matches Claude Code's own "don't ask again" scope).
@@ -742,9 +784,11 @@ function createRunner(opts) {
     const label =
       decision === "deny"
         ? `Denied: ${pending.summary}`
-        : decision === "allowAlways"
-          ? `Allowed for session: ${pending.summary}`
-          : `Allowed: ${pending.summary}`;
+        : answerMap
+          ? `Answered: ${truncate(Object.values(answerMap).join("; "), 200)}`
+          : decision === "allowAlways"
+            ? `Allowed for session: ${pending.summary}`
+            : `Allowed: ${pending.summary}`;
     appendMessage(threadId, "event", label, e.runId);
     if (e.pendingPermissions.length === 0) {
       store.updateThread(threadId, { awaitingInput: false });
