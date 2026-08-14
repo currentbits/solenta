@@ -422,6 +422,73 @@ function createRunner(opts) {
    * @param {string | null} [extras.runId] - when set, only that run's msgs
    */
   /**
+   * Pending orchestrator wake-ups: orchestrator threadId -> notice lines.
+   * When an orchWorker's run lands, its parent (handoffFrom) gets a notice
+   * delivered as a new run — immediately when the parent is idle, otherwise
+   * at the parent's own run terminal. The orchestrator no longer needs the
+   * user to relay "the workers are done".
+   * @type {Map<string, string[]>}
+   */
+  const orchNotices = new Map();
+
+  /**
+   * Queue a worker-finished notice for the worker's orchestrator, then try
+   * to deliver. No-op for non-workers. Never throws.
+   * @param {string} threadId - the worker whose run just landed
+   * @param {"done" | "failed"} status
+   */
+  function queueOrchNotice(threadId, status) {
+    const thread = store.getThread(threadId);
+    if (!thread || !thread.orchWorker || !thread.handoffFrom) return;
+    const parentId = String(thread.handoffFrom);
+    if (!store.getThread(parentId)) return;
+    let line = "";
+    const msgs = store.getMessages(threadId) || [];
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const m = msgs[i];
+      if (m && m.role === "assistant" && m.text != null && String(m.text)) {
+        line = String(m.text).split(/\r?\n/)[0];
+        break;
+      }
+    }
+    const title = thread.title ? ` ("${thread.title}")` : "";
+    const notes = orchNotices.get(parentId) || [];
+    notes.push(
+      `Worker thread ${threadId}${title} finished with status ${status}.` +
+        (line ? ` Last reply: ${line}` : ""),
+    );
+    orchNotices.set(parentId, notes);
+    flushOrchNotices(parentId);
+  }
+
+  /**
+   * Deliver queued worker notices as one run on the orchestrator thread.
+   * Skips while the orchestrator is mid-run (every terminal path calls
+   * clearRun before this hook, so its own terminal re-flushes). Never throws.
+   * @param {string} threadId - the orchestrator thread
+   */
+  function flushOrchNotices(threadId) {
+    const notes = orchNotices.get(threadId);
+    if (!notes || notes.length === 0) return;
+    if (active.has(threadId)) return;
+    orchNotices.delete(threadId);
+    if (!store.getThread(threadId)) return;
+    const prompt =
+      "[orchestration] " +
+      notes.join("\n") +
+      "\nContinue orchestrating; thread_status has full details.";
+    startRun({ threadId, prompt }).catch(() => {
+      // Undeliverable (budget gate, missing CLI): leave a visible trace.
+      try {
+        appendMessage(threadId, "event", prompt);
+        store.save();
+      } catch {
+        // silent
+      }
+    });
+  }
+
+  /**
    * After a successful turn lands status "done": best-effort worktree
    * checkpoint commit, and orchestration workers auto-archive so finished
    * workers do not pile up in the sidebar (issue #14). Shared across every
@@ -446,6 +513,12 @@ function createRunner(opts) {
     } catch {
       // silent
     }
+    try {
+      queueOrchNotice(threadId, "done");
+      flushOrchNotices(threadId);
+    } catch {
+      // silent
+    }
   }
 
   function notifyRunTerminal(threadId, status, text, extras = {}) {
@@ -453,6 +526,15 @@ function createRunner(opts) {
     // covered by one call site (generic/claude/codex/kimi/opencode/workflow).
     if (status === "done") {
       afterSuccessfulTurn(threadId);
+    } else {
+      // Failed workers wake the orchestrator too; any terminal on an
+      // orchestrator delivers notices that queued during its run.
+      try {
+        if (status === "failed") queueOrchNotice(threadId, status);
+        flushOrchNotices(threadId);
+      } catch {
+        // silent
+      }
     }
     try {
       if (extras && extras.skip) return;
