@@ -64,7 +64,7 @@ describe("providers registry", () => {
     const grok = getProvider("grok");
     assert.equal(grok.kind, "claude-stream");
     assert.equal(grok.supportsResume, true);
-    assert.deepEqual(grok.models, ["grok-4.5"]);
+    assert.deepEqual(grok.models, ["grok-4.6", "grok-4.5"]);
 
     const opencode = getProvider("opencode");
     assert.equal(opencode.kind, "opencode-json");
@@ -233,11 +233,11 @@ describe("providers registry", () => {
     const grokResume = getProvider("grok").buildArgs({
       prompt: "again",
       sessionId: "g-sess",
-      model: "grok-4.5",
+      model: "grok-4.6",
       permissionMode: "plan",
     });
     assert.equal(grokResume[grokResume.indexOf("--resume") + 1], "g-sess");
-    assert.equal(grokResume[grokResume.indexOf("-m") + 1], "grok-4.5");
+    assert.equal(grokResume[grokResume.indexOf("-m") + 1], "grok-4.6");
     assert.equal(
       grokResume[grokResume.indexOf("--permission-mode") + 1],
       "plan",

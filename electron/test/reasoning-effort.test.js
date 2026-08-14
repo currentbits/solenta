@@ -133,7 +133,7 @@ describe("reasoning effort: provider modelInfo + efforts", () => {
       "xhigh",
       "max",
     ]);
-    assert.deepEqual(byId.grok.efforts, ["low", "medium", "high"]);
+    assert.deepEqual(byId.grok.efforts, ["low", "medium", "high", "xhigh"]);
     assert.deepEqual(byId.opencode.efforts, []);
     // kimi's levels come from config.toml support_efforts, not a CLI flag:
     // low/high/max, with no medium. Applied via config flip (effortVia).
@@ -276,6 +276,16 @@ describe("reasoning effort: buildArgs per provider", () => {
       effortValue: "low",
     });
     assert.equal(withEffort[withEffort.length - 2], "-p");
+
+    const withXhigh = entry.buildArgs({
+      prompt: PROMPT_GROK,
+      permissionMode: "default",
+      reasoningEffort: "xhigh",
+    });
+    assertPromptLast(withXhigh, PROMPT_GROK, {
+      effortFlag: "--reasoning-effort",
+      effortValue: "xhigh",
+    });
   });
 
   it("opencode: empty efforts never invents a flag; prompt last", () => {
@@ -538,12 +548,17 @@ describe("reasoning effort: setReasoningEffort service", () => {
     assert.equal(store.getThread(thread.id).reasoningEffort, null);
   });
 
-  it("rejects grok levels outside low|medium|high and names Grok", () => {
+  it("rejects grok levels outside low|medium|high|xhigh and names Grok", () => {
     const thread = services.createThread(store, {
       projectId: project.id,
       title: "T",
     });
     services.setProvider(store, { threadId: thread.id, provider: "grok" });
+    const accepted = services.setReasoningEffort(store, {
+      threadId: thread.id,
+      effort: "xhigh",
+    });
+    assert.equal(accepted.reasoningEffort, "xhigh");
     assert.throws(
       () =>
         services.setReasoningEffort(store, {
@@ -570,7 +585,7 @@ describe("reasoning effort: setReasoningEffort service", () => {
     services.setReasoningEffort(store, { threadId: thread.id, effort: "max" });
     assert.equal(store.getThread(thread.id).reasoningEffort, "max");
 
-    // grok lists only low, medium, high: max cannot survive the switch.
+    // grok lists low, medium, high, xhigh: max cannot survive the switch.
     services.setProvider(store, { threadId: thread.id, provider: "grok" });
     assert.equal(
       store.getThread(thread.id).reasoningEffort,

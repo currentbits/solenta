@@ -31,7 +31,7 @@ describe("providers.list", () => {
 
     assert.equal(byId.grok?.available, false);
     assert.equal(byId.grok?.name, "Grok");
-    assert.deepEqual(byId.grok?.models, ["grok-4.5"]);
+    assert.deepEqual(byId.grok?.models, ["grok-4.6", "grok-4.5"]);
 
     assert.equal(byId.opencode?.available, true);
     assert.ok(
