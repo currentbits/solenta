@@ -636,7 +636,27 @@ export interface AppStatus {
     /** Short commit the bundle was packaged from; null in a dev tree. */
     sha: string | null;
     time: string | null;
+    /** Update channel stamped at package time; null in a dev tree. */
+    channel: "prod" | "nightly" | null;
   };
+}
+
+/** Result of an auto-update check (app.checkUpdate). */
+export interface UpdateStatus {
+  /**
+   * disabled: build carries no channel/tag stamp (dev tree, local bundle).
+   * none: already on the channel's latest release.
+   * available: newer release exists but was not auto-installed (non-macOS,
+   *   no matching asset, or install failed) — `url` links the release page.
+   * staged: new bundle already swapped into place; restart to run it.
+   */
+  state: "disabled" | "none" | "available" | "staged" | "error";
+  channel: "prod" | "nightly" | null;
+  /** Tag of the newer release, when one exists. */
+  tag: string | null;
+  /** Release page URL for manual installs. */
+  url: string | null;
+  error: string | null;
 }
 
 /** A shared-memory entry as surfaced to the UI (excerpt form unless fetched). */
@@ -655,6 +675,10 @@ export interface MemoryEntryInfo {
 export interface CoderApi {
   app: {
     status(): Promise<AppStatus>;
+    /** Check the release channel; on macOS also downloads + stages the swap. */
+    checkUpdate(): Promise<UpdateStatus>;
+    /** Relaunch into a staged update. */
+    applyUpdate(): Promise<void>;
   };
   /**
    * Proxied to the local shared-memory server by the main process (the

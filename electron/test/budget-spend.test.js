@@ -257,12 +257,14 @@ describe("spendByDay and settings", () => {
         version: "9.9.9",
         buildSha: "deadbee+dirty",
         buildTime: "2026-08-07T14:05:05Z",
+        channel: "nightly",
       },
     });
     assert.deepEqual(status.build, {
       version: "9.9.9",
       sha: "deadbee+dirty",
       time: "2026-08-07T14:05:05Z",
+      channel: "nightly",
     });
   });
 

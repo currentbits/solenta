@@ -170,6 +170,9 @@ app.whenReady().then(async () => {
     // non-fatal
   }
 
+  // Remove the bundle the last auto-update swapped aside (Solenta.app.old).
+  require("./updater.js").cleanupOldBundle();
+
   // Dev dock icon; the packaged app gets its icon from CFBundleIconFile.
   if (process.platform === "darwin" && app.dock) {
     try {

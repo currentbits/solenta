@@ -1574,11 +1574,13 @@ async function appStatus(store, deps = {}) {
   let version = "0.0.0";
   let sha = null;
   let time = null;
+  let channel = null;
   try {
     const pkg = deps.pkg || require("../package.json");
     version = String(pkg.version || version);
     sha = pkg.buildSha ? String(pkg.buildSha) : null;
     time = pkg.buildTime ? String(pkg.buildTime) : null;
+    channel = pkg.channel ? String(pkg.channel) : null;
   } catch {
     // dev tree without a stamped package: leave nulls
   }
@@ -1586,7 +1588,7 @@ async function appStatus(store, deps = {}) {
   return {
     spendTodayUsd,
     memory: { ...base, entries, vectors, lastError },
-    build: { version, sha, time },
+    build: { version, sha, time, channel },
   };
 }
 

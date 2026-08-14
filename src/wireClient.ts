@@ -3,6 +3,7 @@ import type {
   AppSettings,
   AppStatus,
   AutomationInfo,
+  UpdateStatus,
   CheckpointInfo,
   CoderApi,
   RunStatInfo,
@@ -229,6 +230,8 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
   return {
     app: {
       status: () => call<AppStatus>("app:status"),
+      checkUpdate: () => call<UpdateStatus>("app:checkUpdate"),
+      applyUpdate: () => call<void>("app:applyUpdate"),
     },
     memory: {
       search: (input) => call<MemoryEntryInfo[]>("memory:search", input),

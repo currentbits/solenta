@@ -38,6 +38,8 @@ function on(channel, cb) {
 const coder = {
   app: {
     status: () => invoke("app:status"),
+    checkUpdate: () => invoke("app:checkUpdate"),
+    applyUpdate: () => invoke("app:applyUpdate"),
   },
   memory: {
     search: (input) => invoke("memory:search", input),
