@@ -953,7 +953,6 @@
   color: var(--text-muted);
   line-height: 1.6;
   font-size: 13.5px;
-  max-width: 72ch;
 }
 
 .message p:last-child {
