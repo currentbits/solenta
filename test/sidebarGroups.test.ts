@@ -133,6 +133,27 @@ describe("buildSidebarGroups", () => {
     );
   });
 
+  it("attaches forked threads directly under their source thread", () => {
+    const threads = [
+      thread({ id: "orch", projectId: "a", updatedAt: 100 }),
+      thread({ id: "other", projectId: "a", updatedAt: 150 }),
+      thread({ id: "w1", projectId: "a", updatedAt: 200, handoffFrom: "orch" }),
+      thread({ id: "w2", projectId: "a", updatedAt: 300, handoffFrom: "orch" }),
+      thread({
+        id: "stray",
+        projectId: "a",
+        updatedAt: 400,
+        handoffFrom: "gone",
+      }),
+    ];
+    const groups = buildSidebarGroups([pA], threads);
+    assert.deepEqual(
+      groups[0]!.threads.map((t) => t.id),
+      ["stray", "other", "orch", "w2", "w1"],
+      "workers follow their orchestrator; a fork with a missing source keeps sort order",
+    );
+  });
+
   it("keeps orphan threads (missing project) in a trailing group", () => {
     const threads = [
       thread({ id: "orphan", projectId: "gone", updatedAt: 500 }),

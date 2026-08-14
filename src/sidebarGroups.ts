@@ -127,6 +127,39 @@ function createdKey(t: ThreadInfo): number {
 }
 
 /**
+ * Reorder a sorted group list so forked threads (orchestration workers,
+ * manual forks) sit directly under the thread that started them
+ * (handoffFrom), depth-first. Threads whose source is absent from the list
+ * keep their normal position.
+ */
+function attachForks(list: ThreadInfo[]): ThreadInfo[] {
+  const ids = new Set(list.map((t) => t.id));
+  const children = new Map<string, ThreadInfo[]>();
+  const roots: ThreadInfo[] = [];
+  for (const t of list) {
+    if (t.handoffFrom && t.handoffFrom !== t.id && ids.has(t.handoffFrom)) {
+      const kids = children.get(t.handoffFrom) ?? [];
+      kids.push(t);
+      children.set(t.handoffFrom, kids);
+    } else {
+      roots.push(t);
+    }
+  }
+  const out: ThreadInfo[] = [];
+  const seen = new Set<string>();
+  const emit = (t: ThreadInfo) => {
+    if (seen.has(t.id)) return;
+    seen.add(t.id);
+    out.push(t);
+    for (const kid of children.get(t.id) ?? []) emit(kid);
+  };
+  for (const t of roots) emit(t);
+  // Corrupt-data guard: a handoffFrom cycle would strand its members.
+  for (const t of list) emit(t);
+  return out;
+}
+
+/**
  * Group threads under every registered project.
  *
  * t3 sidebar rule: activity NEVER reorders the list. A row holds its
@@ -147,10 +180,11 @@ export function buildSidebarGroups(
     byProject.set(t.projectId, list);
   }
 
-  for (const list of byProject.values()) {
+  for (const [key, list] of byProject) {
     list.sort(
       (a, b) => createdKey(b) - createdKey(a) || a.id.localeCompare(b.id),
     );
+    byProject.set(key, attachForks(list));
   }
 
   const newest = (list: ThreadInfo[]) =>

@@ -287,6 +287,7 @@ export function ThreadCard({
   forkMenuOpen = false,
   onToggleForkMenu,
   remote = false,
+  nested = false,
 }: {
   thread: ThreadInfo;
   slug: string;
@@ -315,6 +316,8 @@ export function ThreadCard({
   onToggleForkMenu?: (threadId: string | null) => void;
   /** True when the thread's project lives on an SSH remote. */
   remote?: boolean;
+  /** Fork/worker rendered attached under its source thread (indent + elbow). */
+  nested?: boolean;
 }) {
   const branch = thread.branch ?? "";
   const prBadge = sidebarPrBadge({
@@ -345,6 +348,7 @@ export function ThreadCard({
       data-archived={thread.archived ? "true" : undefined}
       data-settled={isSettled ? "true" : undefined}
       data-unread={showUnread ? "true" : undefined}
+      data-nested={nested ? "true" : undefined}
     >
       {indexHint != null && (
         <span className={styles.indexHint} data-index-hint={indexHint} aria-hidden>
@@ -1948,6 +1952,10 @@ export function Sidebar({
             // Attention only in normal view (settled are global); search shows all.
             const attentionThreads = groupThreads.filter((t) => !t.archived);
             const archivedThreads = groupThreads.filter((t) => t.archived);
+            // A fork indents only when its source row renders in the same
+            // sublist (buildSidebarGroups already placed it right below).
+            const attentionIdSet = new Set(attentionThreads.map((t) => t.id));
+            const archivedIdSet = new Set(archivedThreads.map((t) => t.id));
             const archivedExpanded = searching
               ? true
               : showArchived.has(groupKey);
@@ -2101,6 +2109,10 @@ export function Sidebar({
                         onToggleSnoozeMenu={setSnoozeMenuFor}
                         forkMenuOpen={forkMenuFor === thread.id}
                         onToggleForkMenu={setForkMenuFor}
+                        nested={
+                          thread.handoffFrom != null &&
+                          attentionIdSet.has(thread.handoffFrom)
+                        }
                         contentMatch={
                           searching &&
                           !thread.title.toLowerCase().includes(queryLower)
@@ -2125,6 +2137,10 @@ export function Sidebar({
                           onFork={onFork}
                           forkMenuOpen={forkMenuFor === thread.id}
                           onToggleForkMenu={setForkMenuFor}
+                          nested={
+                            thread.handoffFrom != null &&
+                            archivedIdSet.has(thread.handoffFrom)
+                          }
                           contentMatch={
                             searching &&
                             !thread.title.toLowerCase().includes(queryLower)
