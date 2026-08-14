@@ -423,7 +423,7 @@ describe("orch-server HTTP", () => {
     });
     assert.equal(res.status, 200);
     const payload = JSON.parse(res.body.result.content[0].text);
-    assert.equal(payload.length, 2);
+    assert.equal(payload.length, 3);
     assert.equal(payload[0].id, "t1");
   });
 
