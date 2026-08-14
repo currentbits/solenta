@@ -67,6 +67,14 @@ export interface ThreadInfo {
   updatedAt: number;
   /** Set while a run is active on this thread; drives the Working elapsed label. */
   runStartedAt: number | null;
+  /**
+   * True while the active run is blocked on the user (a permission prompt or
+   * an agent question). Only meaningful when status is "working" — the
+   * sidebar renders Waiting instead of Working. Cleared when the prompt is
+   * answered and defensively at the next run start (a killed CLI can leave
+   * it stale, but the working guard keeps a stale flag invisible).
+   */
+  awaitingInput?: boolean;
   /** Archived threads keep their history but are hidden from the default sidebar list. */
   archived: boolean;
   /**

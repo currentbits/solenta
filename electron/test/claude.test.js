@@ -662,6 +662,17 @@ describe("runner claude provider", () => {
       assert.equal(pending.summary, "Bash: npm test");
       assert.ok(pending.requestId);
 
+      // The sidebar sees Waiting: awaitingInput set and threads:changed pushed.
+      assert.equal(store.getThread(thread.id).awaitingInput, true);
+      assert.equal(store.getThread(thread.id).status, "working");
+      assert.ok(
+        pushes.some(
+          (p) =>
+            p.channel === "threads:changed" &&
+            p.payload.some((t) => t.id === thread.id && t.awaitingInput === true),
+        ),
+      );
+
       // The prompt reached the renderer via a thread:updated push.
       assert.ok(
         pushes.some(
@@ -679,6 +690,7 @@ describe("runner claude provider", () => {
         decision: "allowAlways",
       });
       assert.equal(runner.getPendingPermission(thread.id), null);
+      assert.equal(store.getThread(thread.id).awaitingInput, false);
 
       await waitFor(() => store.getThread(thread.id).status === "done");
 
