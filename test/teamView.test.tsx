@@ -160,6 +160,41 @@ describe("Agents team view", () => {
     m.unmount();
   });
 
+  it("plain thread: lists Agent-tool subagents with status (issue #21)", async () => {
+    const m = await mount(
+      content(
+        thread({
+          subagents: [
+            {
+              id: "toolu_1",
+              description: "Background research",
+              agentType: "general-purpose",
+              status: "running",
+            },
+            {
+              id: "toolu_2",
+              description: "Map the panel",
+              agentType: "Explore",
+              status: "done",
+            },
+          ],
+        }),
+        [ORCHESTRATOR],
+      ),
+    );
+    await m.flush();
+
+    const text = m.text();
+    assert.ok(m.query('[aria-label="Subagents"]'), "subagents section renders");
+    assert.match(text, /Subagent/, "role chip");
+    assert.match(text, /Background research/);
+    assert.match(text, /working/i, "running subagent shows a live badge");
+    assert.match(text, /Map the panel/);
+    assert.match(text, /done/i, "completed subagent stays listed with done");
+    assert.match(text, /general-purpose/, "agent type shown in provider slot");
+    m.unmount();
+  });
+
   it("orchestrator: omits done workers from the team list", async () => {
     const done = summary({
       id: "t-done",
