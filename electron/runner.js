@@ -423,14 +423,26 @@ function createRunner(opts) {
    */
   /**
    * After a successful turn lands status "done": best-effort worktree
-   * checkpoint commit. Shared across every provider path (and sim). Never
-   * throws into the run lifecycle.
+   * checkpoint commit, and orchestration workers auto-archive so finished
+   * workers do not pile up in the sidebar (issue #14). Shared across every
+   * provider path (and sim). Never throws into the run lifecycle.
    * @param {string} threadId
    */
   function afterSuccessfulTurn(threadId) {
     try {
       const { maybeCreateCheckpoint } = require("./worktrees.js");
       void maybeCreateCheckpoint(store, threadId);
+    } catch {
+      // silent
+    }
+    try {
+      const thread = store.getThread(threadId);
+      if (thread && thread.orchWorker && !thread.archived) {
+        // Not real activity: no touch, same as threads:setArchived.
+        store.updateThread(threadId, { archived: true });
+        store.save();
+        pushThreadsChanged();
+      }
     } catch {
       // silent
     }

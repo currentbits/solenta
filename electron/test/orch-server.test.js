@@ -92,6 +92,13 @@ function makeFakeStore() {
     getThreads: () => threads,
     getThread: (id) => threads.find((t) => t.id === id) || null,
     getMessages: (id) => messagesByThread[id] || [],
+    updateThread: (id, patch) => {
+      const t = threads.find((x) => x.id === id);
+      if (t) Object.assign(t, patch);
+      return t || null;
+    },
+    save: () => {},
+    threads,
   };
 }
 
@@ -108,7 +115,9 @@ function makeDeps() {
     },
     forkThread: (store, input) => {
       forks.push(input);
-      return { id: "fork-" + forks.length };
+      const fork = { id: "fork-" + forks.length, archived: false };
+      store.threads.push(fork);
+      return fork;
     },
     getProvider: (id) =>
       ["claude", "codex", "kimi", "grok", "opencode"].includes(id)
@@ -168,6 +177,34 @@ describe("orch-server tool handlers", () => {
     const h = createToolHandlers(deps);
     await h.thread_fork({ threadId: "t1", prompt: "go" });
     assert.deepEqual(deps.forks, [{ threadId: "t1" }]);
+  });
+
+  it("thread_fork marks the new thread as an orchestration worker", async () => {
+    const deps = makeDeps();
+    const h = createToolHandlers(deps);
+    await h.thread_fork({ threadId: "t1", prompt: "go" });
+    const fork = deps.store.getThread("fork-1");
+    assert.equal(fork.orchWorker, true);
+  });
+
+  it("thread_send unarchives a re-dispatched archived worker", async () => {
+    const deps = makeDeps();
+    deps.store.threads.push({
+      id: "w1",
+      title: "Worker",
+      provider: "claude",
+      status: "done",
+      handoffFrom: "t1",
+      orchWorker: true,
+      archived: true,
+    });
+    const h = createToolHandlers(deps);
+    await h.thread_send({ threadId: "w1", prompt: "more work" });
+    assert.equal(deps.store.getThread("w1").archived, false);
+    // Non-worker archived threads are left alone.
+    deps.store.threads.push({ id: "a1", archived: true });
+    await h.thread_send({ threadId: "a1", prompt: "x" });
+    assert.equal(deps.store.getThread("a1").archived, true);
   });
 
   it("thread_fork rejects unknown thread and unknown provider", async () => {
