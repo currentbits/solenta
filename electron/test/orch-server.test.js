@@ -8,6 +8,7 @@ const http = require("node:http");
 const {
   createOrchServer,
   createToolHandlers,
+  INSTRUCTIONS,
 } = require("../orchServer.js");
 const {
   createMemorySupervisor,
@@ -130,6 +131,12 @@ function makeDeps() {
 }
 
 describe("orch-server tool handlers", () => {
+  it("instructions tell the orchestrator it is woken when workers finish", () => {
+    assert.match(INSTRUCTIONS, /woken on a new turn/);
+    assert.match(INSTRUCTIONS, /do not sit idle waiting for the user/);
+    assert.doesNotMatch(INSTRUCTIONS, /poll thread_status until/);
+  });
+
   it("threads_list maps id, title, provider, status, handoffFrom", async () => {
     const deps = makeDeps();
     const h = createToolHandlers(deps);

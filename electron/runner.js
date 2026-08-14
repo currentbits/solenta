@@ -406,21 +406,87 @@ function createRunner(opts) {
   }
 
   /**
-   * Fire-and-forget memory record for a real run terminal. Never throws.
-   * Skips simulate-provider runs.
-   *
-   * @param {string} threadId
-   * @param {"done" | "failed" | "stopped"} status
-   * @param {string} [text]
-   * @param {object} [extras]
-   * @param {string} [extras.provider]
-   * @param {string | null} [extras.model]
-   * @param {number} [extras.tokensIn]
-   * @param {number} [extras.tokensOut]
-   * @param {number} [extras.costUsd]
-   * @param {boolean} [extras.skip] - force skip (simulate path)
-   * @param {string | null} [extras.runId] - when set, only that run's msgs
+   * Pending orchestrator wake-ups: orchestrator threadId -> notice lines.
+   * When an orchWorker's run lands, its parent (handoffFrom) gets a notice
+   * delivered as a new run — immediately when the parent is idle, otherwise
+   * at the parent's own run terminal. The orchestrator no longer needs the
+   * user to relay "the workers are done".
+   * @type {Map<string, string[]>}
    */
+  const orchNotices = new Map();
+
+  /**
+   * Queue a worker-finished notice for the worker's orchestrator, then try
+   * to deliver. No-op for non-workers. Never throws.
+   * @param {string} threadId - the worker whose run just landed
+   * @param {"done" | "failed"} status
+   */
+  function queueOrchNotice(threadId, status) {
+    const thread = store.getThread(threadId);
+    if (!thread || !thread.orchWorker || !thread.handoffFrom) return;
+    const parentId = String(thread.handoffFrom);
+    if (!store.getThread(parentId)) return;
+    let line = "";
+    const msgs = store.getMessages(threadId) || [];
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const m = msgs[i];
+      if (m && m.role === "assistant" && m.text != null && String(m.text)) {
+        line = String(m.text).split(/\r?\n/)[0];
+        break;
+      }
+    }
+    const title = thread.title ? ` ("${thread.title}")` : "";
+    const notes = orchNotices.get(parentId) || [];
+    notes.push(
+      `Worker thread ${threadId}${title} finished with status ${status}.` +
+        (line ? ` Last reply: ${line}` : ""),
+    );
+    orchNotices.set(parentId, notes);
+    flushOrchNotices(parentId);
+  }
+
+  /**
+   * Deliver queued worker notices as one run on the orchestrator thread.
+   * Skips while the orchestrator is mid-run (every terminal path calls
+   * clearRun before this hook, so its own terminal re-flushes). Never throws.
+   * @param {string} threadId - the orchestrator thread
+   */
+  function flushOrchNotices(threadId) {
+    const notes = orchNotices.get(threadId);
+    if (!notes || notes.length === 0) return;
+    if (active.has(threadId)) return;
+    orchNotices.delete(threadId);
+    if (!store.getThread(threadId)) return;
+    const prompt =
+      "[orchestration] " +
+      notes.join("\n") +
+      "\nContinue orchestrating; thread_status has full details.";
+    startRun({ threadId, prompt }).catch(() => {
+      // Undeliverable (budget gate, missing CLI, already active): leave a
+      // visible trace so the orchestrator still sees the notice.
+      try {
+        appendMessage(threadId, "event", prompt);
+        store.save();
+      } catch {
+        // silent
+      }
+    });
+  }
+
+  /**
+   * Failed worker (or any failed terminal) queues a notice and delivers
+   * whatever was waiting on this thread. Never throws.
+   * @param {string} threadId
+   */
+  function afterFailedTurn(threadId) {
+    try {
+      queueOrchNotice(threadId, "failed");
+      flushOrchNotices(threadId);
+    } catch {
+      // silent
+    }
+  }
+
   /**
    * After a successful turn lands status "done": best-effort worktree
    * checkpoint commit, and orchestration workers auto-archive so finished
@@ -446,13 +512,45 @@ function createRunner(opts) {
     } catch {
       // silent
     }
+    try {
+      queueOrchNotice(threadId, "done");
+      flushOrchNotices(threadId);
+    } catch {
+      // silent
+    }
   }
 
+  /**
+   * Fire-and-forget memory record for a real run terminal. Never throws.
+   * Skips simulate-provider runs.
+   *
+   * @param {string} threadId
+   * @param {"done" | "failed" | "stopped"} status
+   * @param {string} [text]
+   * @param {object} [extras]
+   * @param {string} [extras.provider]
+   * @param {string | null} [extras.model]
+   * @param {number} [extras.tokensIn]
+   * @param {number} [extras.tokensOut]
+   * @param {number} [extras.costUsd]
+   * @param {boolean} [extras.skip] - force skip (simulate path)
+   * @param {string | null} [extras.runId] - when set, only that run's msgs
+   */
   function notifyRunTerminal(threadId, status, text, extras = {}) {
     // Checkpoint first so every provider that signals done through here is
     // covered by one call site (generic/claude/codex/kimi/opencode/workflow).
     if (status === "done") {
       afterSuccessfulTurn(threadId);
+    } else if (status === "failed") {
+      afterFailedTurn(threadId);
+    } else {
+      // stopped (and any other terminal): deliver notices that queued
+      // while this thread was the orchestrator mid-run.
+      try {
+        flushOrchNotices(threadId);
+      } catch {
+        // silent
+      }
     }
     try {
       if (extras && extras.skip) return;
@@ -824,6 +922,7 @@ function createRunner(opts) {
           store.save();
           pushDetail(threadId, current);
           pushThreadsChanged();
+          afterFailedTurn(threadId);
         }
       } catch (err) {
         clearRun(threadId);
@@ -842,6 +941,7 @@ function createRunner(opts) {
         store.save();
         pushDetail(threadId, current);
         pushThreadsChanged();
+        afterFailedTurn(threadId);
       }
     }, tickMs);
 
@@ -2983,6 +3083,14 @@ function createRunner(opts) {
           costUsd: stopUsage.costUsd || 0,
         },
       );
+    } else {
+      // Sim stop skips notifyRunTerminal; still deliver notices that
+      // queued while this thread was an orchestrator mid-run.
+      try {
+        flushOrchNotices(threadId);
+      } catch {
+        // silent
+      }
     }
   }
 
