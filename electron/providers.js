@@ -251,13 +251,24 @@ const PROVIDERS = [
      * streaming-messages-json (NDJSON identical to claude stream-json).
      * Effort via --reasoning-effort <level> (alias --effort).
      * No --verbose and no --mcp-config (memory uses ensureGrokMcpConfig).
+     *
+     * Permission modes: headless -p has NO prompt channel (no
+     * --permission-prompt-tool / stream-json input like claude), so any mode
+     * that would ask auto-cancels the first gated tool and the run dies with
+     * `result subtype error_during_execution` (verified live, issue #3).
+     * Map the asking modes (default, acceptEdits) to grok's non-prompting
+     * "auto"; plan and bypassPermissions never prompt and pass through.
+     * Same spirit as kimi one-shot turns, which cannot ask either.
      */
     buildArgs({ prompt, sessionId, permissionMode, model, reasoningEffort }) {
+      const mode = String(permissionMode || "default");
+      const headlessMode =
+        mode === "default" || mode === "acceptEdits" ? "auto" : mode;
       const args = [
         "--output-format",
         "streaming-messages-json",
         "--permission-mode",
-        String(permissionMode || "default"),
+        headlessMode,
       ];
       if (model) {
         args.push("-m", String(model));
