@@ -406,22 +406,6 @@ function createRunner(opts) {
   }
 
   /**
-   * Fire-and-forget memory record for a real run terminal. Never throws.
-   * Skips simulate-provider runs.
-   *
-   * @param {string} threadId
-   * @param {"done" | "failed" | "stopped"} status
-   * @param {string} [text]
-   * @param {object} [extras]
-   * @param {string} [extras.provider]
-   * @param {string | null} [extras.model]
-   * @param {number} [extras.tokensIn]
-   * @param {number} [extras.tokensOut]
-   * @param {number} [extras.costUsd]
-   * @param {boolean} [extras.skip] - force skip (simulate path)
-   * @param {string | null} [extras.runId] - when set, only that run's msgs
-   */
-  /**
    * Pending orchestrator wake-ups: orchestrator threadId -> notice lines.
    * When an orchWorker's run lands, its parent (handoffFrom) gets a notice
    * delivered as a new run — immediately when the parent is idle, otherwise
@@ -478,7 +462,8 @@ function createRunner(opts) {
       notes.join("\n") +
       "\nContinue orchestrating; thread_status has full details.";
     startRun({ threadId, prompt }).catch(() => {
-      // Undeliverable (budget gate, missing CLI): leave a visible trace.
+      // Undeliverable (budget gate, missing CLI, already active): leave a
+      // visible trace so the orchestrator still sees the notice.
       try {
         appendMessage(threadId, "event", prompt);
         store.save();
@@ -486,6 +471,20 @@ function createRunner(opts) {
         // silent
       }
     });
+  }
+
+  /**
+   * Failed worker (or any failed terminal) queues a notice and delivers
+   * whatever was waiting on this thread. Never throws.
+   * @param {string} threadId
+   */
+  function afterFailedTurn(threadId) {
+    try {
+      queueOrchNotice(threadId, "failed");
+      flushOrchNotices(threadId);
+    } catch {
+      // silent
+    }
   }
 
   /**
@@ -521,16 +520,33 @@ function createRunner(opts) {
     }
   }
 
+  /**
+   * Fire-and-forget memory record for a real run terminal. Never throws.
+   * Skips simulate-provider runs.
+   *
+   * @param {string} threadId
+   * @param {"done" | "failed" | "stopped"} status
+   * @param {string} [text]
+   * @param {object} [extras]
+   * @param {string} [extras.provider]
+   * @param {string | null} [extras.model]
+   * @param {number} [extras.tokensIn]
+   * @param {number} [extras.tokensOut]
+   * @param {number} [extras.costUsd]
+   * @param {boolean} [extras.skip] - force skip (simulate path)
+   * @param {string | null} [extras.runId] - when set, only that run's msgs
+   */
   function notifyRunTerminal(threadId, status, text, extras = {}) {
     // Checkpoint first so every provider that signals done through here is
     // covered by one call site (generic/claude/codex/kimi/opencode/workflow).
     if (status === "done") {
       afterSuccessfulTurn(threadId);
+    } else if (status === "failed") {
+      afterFailedTurn(threadId);
     } else {
-      // Failed workers wake the orchestrator too; any terminal on an
-      // orchestrator delivers notices that queued during its run.
+      // stopped (and any other terminal): deliver notices that queued
+      // while this thread was the orchestrator mid-run.
       try {
-        if (status === "failed") queueOrchNotice(threadId, status);
         flushOrchNotices(threadId);
       } catch {
         // silent
@@ -906,6 +922,7 @@ function createRunner(opts) {
           store.save();
           pushDetail(threadId, current);
           pushThreadsChanged();
+          afterFailedTurn(threadId);
         }
       } catch (err) {
         clearRun(threadId);
@@ -924,6 +941,7 @@ function createRunner(opts) {
         store.save();
         pushDetail(threadId, current);
         pushThreadsChanged();
+        afterFailedTurn(threadId);
       }
     }, tickMs);
 
@@ -3065,6 +3083,14 @@ function createRunner(opts) {
           costUsd: stopUsage.costUsd || 0,
         },
       );
+    } else {
+      // Sim stop skips notifyRunTerminal; still deliver notices that
+      // queued while this thread was an orchestrator mid-run.
+      try {
+        flushOrchNotices(threadId);
+      } catch {
+        // silent
+      }
     }
   }
 
