@@ -200,6 +200,93 @@ async function main() {
     return;
   }
 
+  if (scenario === "subagents") {
+    emit({
+      type: "system",
+      subtype: "init",
+      session_id: "sess-sub",
+      model: "claude-opus-test",
+    });
+    await delay(20);
+    emit({
+      type: "assistant",
+      message: {
+        content: [
+          {
+            type: "tool_use",
+            id: "toolu_sub_sync",
+            name: "Agent",
+            input: { description: "Map the panel", subagent_type: "Explore" },
+          },
+          {
+            type: "tool_use",
+            id: "toolu_sub_bg",
+            name: "Agent",
+            input: {
+              description: "Background research",
+              subagent_type: "general-purpose",
+            },
+          },
+        ],
+      },
+    });
+    await delay(20);
+    emit({
+      type: "user",
+      message: {
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "toolu_sub_sync",
+            content: [{ type: "text", text: "Findings: panel maps to store" }],
+            is_error: false,
+          },
+          {
+            type: "tool_result",
+            tool_use_id: "toolu_sub_bg",
+            content: [
+              {
+                type: "text",
+                text: "Async agent launched successfully. agentId: abc123 The agent is working in the background.",
+              },
+            ],
+            is_error: false,
+          },
+        ],
+      },
+    });
+    // Hold the background agent visibly running before its notification.
+    await delay(150);
+    emit({
+      type: "user",
+      message: {
+        content: [
+          {
+            type: "text",
+            text:
+              "<task-notification>\\n<task-id>abc123</task-id>\\n" +
+              "<tool-use-id>toolu_sub_bg</tool-use-id>\\n" +
+              "<status>completed</status>\\n" +
+              '<summary>Agent "Background research" finished</summary>\\n' +
+              "</task-notification>",
+          },
+        ],
+      },
+    });
+    await delay(20);
+    emit({
+      type: "result",
+      subtype: "success",
+      result: "Both agents done.",
+      usage: { input_tokens: 10, output_tokens: 5 },
+      total_cost_usd: 0.001,
+      num_turns: 1,
+      session_id: "sess-sub",
+    });
+    process.exit(0);
+    return;
+  }
+
   if (scenario === "resume-turn") {
     // Second turn: expect --resume in argv (asserted by test via argv file).
     emit({
@@ -710,6 +797,50 @@ describe("runner claude provider", () => {
     assert.ok(argv.includes("default"));
     assert.ok(!argv.includes("do the thing"));
     assert.ok(!argv.includes("--resume"));
+  });
+
+  it("tracks Agent-tool subagents on the thread: sync → done, background runs until its task-notification (issue #21)", async () => {
+    process.env.CODER_FAKE_CLAUDE_SCENARIO = "subagents";
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "spawn agents" });
+
+    // After both tool_results: the sync agent is done, the background
+    // launch ack keeps its agent running.
+    await waitFor(() => {
+      const subs = store.getThread(thread.id).subagents || [];
+      return (
+        subs.some((s) => s.id === "toolu_sub_sync" && s.status === "done") &&
+        subs.some((s) => s.id === "toolu_sub_bg" && s.status === "running")
+      );
+    });
+
+    // The task-notification settles the background agent.
+    await waitFor(() => {
+      const t = store.getThread(thread.id);
+      return t.status === "done";
+    });
+    const subs = store.getThread(thread.id).subagents;
+    assert.equal(subs.length, 2);
+    const sync = subs.find((s) => s.id === "toolu_sub_sync");
+    assert.equal(sync.description, "Map the panel");
+    assert.equal(sync.agentType, "Explore");
+    assert.equal(sync.status, "done");
+    const bg = subs.find((s) => s.id === "toolu_sub_bg");
+    assert.equal(bg.description, "Background research");
+    assert.equal(bg.agentType, "general-purpose");
+    assert.equal(bg.status, "done");
+
+    // The rows reached the renderer on a thread:updated push.
+    assert.ok(
+      pushes.some(
+        (p) =>
+          p.channel === "thread:updated" &&
+          p.payload.thread &&
+          p.payload.thread.id === thread.id &&
+          Array.isArray(p.payload.thread.subagents) &&
+          p.payload.thread.subagents.length === 2,
+      ),
+    );
   });
 
   it("surfaces permission prompts and answers them over the control protocol", async () => {

@@ -1623,6 +1623,34 @@ export function AgentsContent({
     return null;
   }, [thread, summaries]);
 
+  // In-session subagents (Agent tool) tracked by the runner on the thread
+  // record. Not threads — rows render without navigation. The running →
+  // "working" map reuses the existing status badge styling.
+  const subagents = thread?.subagents ?? [];
+  const subagentSection =
+    subagents.length > 0 ? (
+      <section className={styles.teamSection} aria-label="Subagents">
+        <div className={styles.sessionLabel}>Subagents</div>
+        <ul className={styles.teamList}>
+          {subagents.map((s) => (
+            <TeamRow
+              key={s.id}
+              summary={{
+                id: s.id,
+                title: s.description,
+                provider: s.agentType ?? (thread?.provider || "claude"),
+                status: s.status === "running" ? "working" : s.status,
+                handoffFrom: null,
+                lastActivity: null,
+              }}
+              role="Subagent"
+              providers={providers}
+            />
+          ))}
+        </ul>
+      </section>
+    ) : null;
+
   const groups = useMemo(() => {
     if (!workflow) return [];
     return workflow.phases
@@ -1690,6 +1718,7 @@ export function AgentsContent({
               ))}
             </ul>
           </section>
+          {subagentSection}
         </div>
       );
     }
@@ -1713,12 +1742,14 @@ export function AgentsContent({
               />
             </ul>
           </section>
+          {subagentSection}
         </div>
       );
     }
     return (
       <div className={styles.scroll}>
         <SessionCard thread={thread} usage={usage} providers={providers} />
+        {subagentSection}
       </div>
     );
   }

@@ -153,6 +153,22 @@ export interface ThreadInfo {
    * (lazy, t3-style), so a thread that never runs leaves nothing on disk.
    */
   pendingWorktree?: boolean;
+  /**
+   * In-session subagents spawned via the Agent tool, tracked by the runner
+   * from the CLI stream (issue #21). Newest-last, capped to 20 rows.
+   */
+  subagents?: SubagentInfo[];
+}
+
+/** One in-session subagent (Agent tool call) surfaced in the Agents panel. */
+export interface SubagentInfo {
+  /** tool_use id of the spawning Agent call. */
+  id: string;
+  /** The Agent call's short description (falls back to the tool summary). */
+  description: string;
+  /** subagent_type from the tool input, e.g. "general-purpose"; null when absent. */
+  agentType: string | null;
+  status: "running" | "done" | "failed";
 }
 
 /**
