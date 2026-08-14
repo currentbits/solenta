@@ -31,9 +31,25 @@ BUILD_SHA="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
 git diff --quiet 2>/dev/null || BUILD_SHA="${BUILD_SHA}+dirty"
 BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-TARGETS=("$@")
+# Same channel/tag stamps as package-app.sh: no releaseTag -> the bundle
+# never auto-updates (win/linux builds only surface the release URL anyway).
+CHANNEL="prod"
+RELEASE_TAG=""
+TARGETS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --channel) CHANNEL="$2"; shift ;;
+    --tag) RELEASE_TAG="$2"; shift ;;
+    *) TARGETS+=("$1") ;;
+  esac
+  shift
+done
 if [[ ${#TARGETS[@]} -eq 0 ]]; then
   TARGETS=(linux-x64 win32-x64)
+fi
+if [[ "$CHANNEL" != "prod" && "$CHANNEL" != "nightly" ]]; then
+  echo "ERROR: --channel must be prod or nightly (got: $CHANNEL)" >&2
+  exit 1
 fi
 
 # ---------------------------------------------------------------------------
@@ -51,6 +67,11 @@ echo "building core..."
 PAYLOAD="$(mktemp -d "${TMPDIR:-/tmp}/solenta-cross-payload.XXXXXX")/app"
 mkdir -p "$PAYLOAD"
 
+RELEASE_TAG_JSON="null"
+if [[ -n "$RELEASE_TAG" ]]; then
+  RELEASE_TAG_JSON="\"${RELEASE_TAG}\""
+fi
+
 cat > "$PAYLOAD/package.json" <<EOF
 {
   "name": "solenta",
@@ -58,7 +79,9 @@ cat > "$PAYLOAD/package.json" <<EOF
   "version": "${VERSION}",
   "main": "electron/main.js",
   "buildSha": "${BUILD_SHA}",
-  "buildTime": "${BUILD_TIME}"
+  "buildTime": "${BUILD_TIME}",
+  "channel": "${CHANNEL}",
+  "releaseTag": ${RELEASE_TAG_JSON}
 }
 EOF
 

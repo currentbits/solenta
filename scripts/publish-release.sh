@@ -6,9 +6,9 @@
 #
 # prod builds update from GET /releases/latest; nightly builds update from the
 # newest prerelease. Both compare the release tag against the releaseTag
-# stamped into the bundle by package-app.sh.
-# ponytail: macOS arm64 only; add package-cross.sh assets here if win/linux
-# auto-update ever matters.
+# stamped into the bundle by package-app.sh / package-cross.sh.
+# Assets: macos-arm64 (auto-install), win32-x64 + linux-x64 (updater surfaces
+# the release URL only).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -40,19 +40,32 @@ if ! git branch -r --contains HEAD | grep -q "origin/"; then
 fi
 
 bash scripts/package-app.sh --channel "$CHANNEL" --tag "$TAG"
+bash scripts/package-cross.sh --channel "$CHANNEL" --tag "$TAG"
 
 ZIP="out/Solenta-${TAG}-macos-arm64.zip"
 rm -f "$ZIP"
 ditto -c -k --keepParent out/Solenta.app "$ZIP"
 
+# Cross archives come out versioned; name release assets by tag so every
+# asset in a release carries the tag the updater compares against.
+ASSETS=("$ZIP")
+for cross in "linux-x64.tar.gz" "win32-x64.zip"; do
+  src="out/Solenta-${VERSION}-${cross}"
+  dst="out/Solenta-${TAG}-${cross}"
+  if [[ "$src" != "$dst" ]]; then
+    mv "$src" "$dst"
+  fi
+  ASSETS+=("$dst")
+done
+
 if [[ "$CHANNEL" == "nightly" ]]; then
-  gh release create "$TAG" "$ZIP" \
+  gh release create "$TAG" "${ASSETS[@]}" \
     --prerelease \
     --target "$(git rev-parse HEAD)" \
     --title "Solenta nightly ${TAG#nightly-}" \
     --notes "Nightly build from ${SHA}."
 else
-  gh release create "$TAG" "$ZIP" \
+  gh release create "$TAG" "${ASSETS[@]}" \
     --target "$(git rev-parse HEAD)" \
     --title "Solenta v${VERSION}" \
     --generate-notes
