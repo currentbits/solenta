@@ -39,6 +39,33 @@ const { wrapCommand } = require("./ssh.js");
 const KIMI_PUSH_THROTTLE_MS = 250;
 
 /**
+ * A kept-alive/resumed Claude CLI can emit a result that is not the answer to
+ * the turn we just sent: settling a leftover background-task notification or
+ * "Continue from where you left off." self-turn first (issue #17). Those
+ * phantom results are success-typed with empty text and arrive before the
+ * real turn streams anything. We hold such a result instead of finalizing;
+ * real turn activity discards it and the real result finalizes the run. If
+ * nothing else ever arrives (grace timer, or the process exits), the held
+ * empty result is a failure, not a silent success.
+ */
+// ponytail: shape-based phantom detection (empty success before any content);
+// switch to a per-turn correlation id if the CLI protocol ever grows one.
+const PHANTOM_RESULT_GRACE_MS = 30 * 1000;
+
+function phantomResultGraceMs() {
+  const raw = Number(process.env.CODER_PHANTOM_RESULT_GRACE_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : PHANTOM_RESULT_GRACE_MS;
+}
+
+/** Empty success with no streamed turn content: leftover, not this turn. */
+function isPhantomClaudeResult(ev, sawTurnContent) {
+  if (sawTurnContent) return false;
+  if (!ev || ev.subtype !== "success") return false;
+  const text = typeof ev.result === "string" ? ev.result.trim() : "";
+  return !text;
+}
+
+/**
  * Claude children that outlive their active Map slot (result event clears the
  * run before process exit). stopAll reaps anything still here with SIGTERM.
  * @type {Set<import('node:child_process').ChildProcess>}
@@ -863,6 +890,9 @@ function createRunner(opts) {
     if (entry.timer) {
       clearIntervalFn(entry.timer);
     }
+    if (typeof entry.discardHeldPhantom === "function") {
+      entry.discardHeldPhantom();
+    }
     active.delete(threadId);
   }
 
@@ -1176,8 +1206,26 @@ function createRunner(opts) {
     /** @type {string | null} */
     let capturedSessionId = thread.sessionId || null;
     let sawResult = false;
+    let sawTurnContent = false;
+    /** @type {object | null} */
+    let heldPhantom = null;
+    /** @type {ReturnType<typeof setTimeout> | null} */
+    let phantomTimer = null;
     /** Run-local usage for memory footers (not cumulative store totals). */
     const runUsage = { tokensIn: 0, tokensOut: 0, costUsd: 0 };
+
+    function discardHeldPhantom() {
+      if (phantomTimer) {
+        clearTimeout(phantomTimer);
+        phantomTimer = null;
+      }
+      heldPhantom = null;
+    }
+
+    function markTurnContent() {
+      sawTurnContent = true;
+      discardHeldPhantom();
+    }
 
     const localCwd = thread.worktreePath || project.path;
     const binary = resolveBin(entryDef);
@@ -1207,6 +1255,7 @@ function createRunner(opts) {
       workingId,
       claudeState,
       runUsage,
+      discardHeldPhantom,
       /**
        * Permission prompts awaiting a user decision, oldest first. Each is
        * { id, toolName, summary, input (pretty), rawInput (original object) }.
@@ -1227,6 +1276,40 @@ function createRunner(opts) {
       if (!e || e.stopping || e.runId !== runId) return null;
       if (e.kind !== "claude") return null;
       return e;
+    }
+
+    /** Held empty leftover result never produced a turn. Surface a failure. */
+    function failEmptyPhantom(ev) {
+      sawResult = true;
+      discardHeldPhantom();
+      if (!guard()) return;
+      completeWorkLogStep(threadId, startingId);
+      completeWorkLogStep(threadId, workingId);
+      if (ev && typeof ev.session_id === "string" && ev.session_id) {
+        capturedSessionId = ev.session_id;
+      }
+      const failText = "Run error: no output from agent";
+      appendMessage(threadId, "event", failText, runId);
+      appendDoneWorkLog(threadId, runId, "Run error");
+      store.updateThread(
+        threadId,
+        {
+          status: "failed",
+          sessionId: capturedSessionId,
+          runStartedAt: null,
+        },
+        { touch: true },
+      );
+      store.save();
+      clearRun(threadId);
+      scheduleClaudeIdleReap(threadId);
+      pushDetail(threadId, claudeState);
+      pushThreadsChanged();
+      notifyRunTerminal(threadId, "failed", failText, {
+        tokensIn: runUsage.tokensIn,
+        tokensOut: runUsage.tokensOut,
+        costUsd: runUsage.costUsd,
+      });
     }
 
     /** Assigned below (reused or freshly spawned) before any event fires. */
@@ -1268,6 +1351,7 @@ function createRunner(opts) {
             }
             const e = guard();
             if (!e) return;
+            markTurnContent();
             e.pendingPermissions.push({
               id: requestId,
               toolName,
@@ -1315,6 +1399,7 @@ function createRunner(opts) {
           for (const block of ev.message.content) {
             if (!block || typeof block !== "object") continue;
             if (block.type === "text" && typeof block.text === "string") {
+              if (block.text) markTurnContent();
               assistantText += block.text;
               if (!assistantMsgId) {
                 assistantMsgId = appendMessage(
@@ -1329,6 +1414,7 @@ function createRunner(opts) {
                 });
               }
             } else if (block.type === "tool_use") {
+              markTurnContent();
               const toolId = String(block.id || randomUUID());
               const toolName = String(block.name || "tool");
               const inputObj = block.input != null ? block.input : {};
@@ -1374,6 +1460,7 @@ function createRunner(opts) {
           for (const block of ev.message.content) {
             if (!block || typeof block !== "object") continue;
             if (block.type !== "tool_result") continue;
+            markTurnContent();
             const toolUseId = String(block.tool_use_id || "");
             const msgId = toolMsgById.get(toolUseId);
             if (!msgId) {
@@ -1424,6 +1511,27 @@ function createRunner(opts) {
         }
 
         if (type === "result") {
+          if (isPhantomClaudeResult(ev, sawTurnContent)) {
+            if (heldPhantom) return;
+            heldPhantom = ev;
+            if (typeof ev.session_id === "string" && ev.session_id) {
+              capturedSessionId = ev.session_id;
+              store.updateThread(threadId, { sessionId: capturedSessionId });
+              store.save();
+            }
+            phantomTimer = setTimeout(() => {
+              phantomTimer = null;
+              if (!guard() || !heldPhantom) return;
+              const held = heldPhantom;
+              heldPhantom = null;
+              failEmptyPhantom(held);
+            }, phantomResultGraceMs());
+            if (typeof phantomTimer.unref === "function") {
+              phantomTimer.unref();
+            }
+            return;
+          }
+          discardHeldPhantom();
           sawResult = true;
           if (!guard()) return;
 
@@ -1555,6 +1663,10 @@ function createRunner(opts) {
     };
 
     const onExit = ({ code, stderr, gotResult }) => {
+        if (heldPhantom) {
+          failEmptyPhantom(heldPhantom);
+          return;
+        }
         const e = active.get(threadId);
         // Result already cleared this run, or a newer run owns the slot.
         if (!e || e.stopping || e.runId !== runId) return;
