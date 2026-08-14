@@ -272,6 +272,68 @@ async function main() {
     return;
   }
 
+  // Issue #17: leftover empty success, then the real turn. The runner must
+  // not finalize on the empty result or the real stream is dropped.
+  if (scenario === "phantom-then-real") {
+    emit({
+      type: "system",
+      subtype: "init",
+      session_id: "sess-ph",
+      model: "m",
+    });
+    await delay(20);
+    emit({
+      type: "result",
+      subtype: "success",
+      result: "",
+      usage: { input_tokens: 0, output_tokens: 0 },
+      total_cost_usd: 0,
+      num_turns: 0,
+      session_id: "sess-ph",
+    });
+    await delay(80);
+    emit({
+      type: "assistant",
+      message: { content: [{ type: "text", text: "real reply" }] },
+    });
+    await delay(20);
+    emit({
+      type: "result",
+      subtype: "success",
+      result: "real reply",
+      usage: { input_tokens: 2, output_tokens: 3 },
+      total_cost_usd: 0,
+      num_turns: 1,
+      session_id: "sess-ph",
+    });
+    process.exit(0);
+    return;
+  }
+
+  // Issue #17: empty success and nothing else. Stay alive so a grace timer
+  // (not process exit) is what decides the turn.
+  if (scenario === "phantom-only") {
+    emit({
+      type: "system",
+      subtype: "init",
+      session_id: "sess-po",
+      model: "m",
+    });
+    await delay(20);
+    emit({
+      type: "result",
+      subtype: "success",
+      result: "",
+      usage: { input_tokens: 0, output_tokens: 0 },
+      total_cost_usd: 0,
+      num_turns: 0,
+      session_id: "sess-po",
+    });
+    await delay(30000);
+    process.exit(0);
+    return;
+  }
+
   // Emit result then linger, trapping SIGTERM briefly so stopAll reaper is needed.
   if (scenario === "result-then-hang") {
     const markerDir = process.env.CODER_FAKE_CLAUDE_MARKER_DIR || "";
@@ -499,6 +561,7 @@ describe("runner claude provider", () => {
   let prevGrokMcpDisable;
   let prevGrokBin;
   let prevMarkerDir;
+  let prevPhantomGrace;
 
   beforeEach(async () => {
     prevSimulate = process.env.CODER_SIMULATE;
@@ -509,6 +572,7 @@ describe("runner claude provider", () => {
     prevGrokMcpDisable = process.env.CODER_GROK_MCP_DISABLE;
     prevGrokBin = process.env.CODER_GROK_BIN;
     prevMarkerDir = process.env.CODER_FAKE_CLAUDE_MARKER_DIR;
+    prevPhantomGrace = process.env.CODER_PHANTOM_RESULT_GRACE_MS;
 
     delete process.env.CODER_SIMULATE;
     delete process.env.CODER_AGENT_CMD;
@@ -565,6 +629,8 @@ describe("runner claude provider", () => {
     else process.env.CODER_GROK_MCP_DISABLE = prevGrokMcpDisable;
     if (prevGrokBin === undefined) delete process.env.CODER_GROK_BIN;
     else process.env.CODER_GROK_BIN = prevGrokBin;
+    if (prevPhantomGrace === undefined) delete process.env.CODER_PHANTOM_RESULT_GRACE_MS;
+    else process.env.CODER_PHANTOM_RESULT_GRACE_MS = prevPhantomGrace;
   });
 
   it("captures session id on init, streams text, pairs tools, final answer lands after tools", async () => {
@@ -896,6 +962,63 @@ describe("runner claude provider", () => {
       .filter((m) => m.role === "assistant");
     assert.equal(assistants.length, 1);
     assert.equal(assistants[0].text, "Only result text");
+  });
+
+  it("does not finalize on an empty leftover result; the real turn still lands", async () => {
+    process.env.CODER_FAKE_CLAUDE_SCENARIO = "phantom-then-real";
+
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "do work" });
+
+    await waitFor(() =>
+      store.getWorkLog(thread.id).some(
+        (w) => w.label === "Starting agent" && w.done,
+      ),
+    );
+    // Phantom empty success has already arrived (~20ms after init).
+    await new Promise((r) => setTimeout(r, 40));
+    assert.equal(store.getThread(thread.id).status, "working");
+    const working = store
+      .getWorkLog(thread.id)
+      .find((w) => w.label === "Agent working");
+    assert.ok(working, "Agent working step must exist");
+    assert.equal(working.done, false);
+    assert.equal(
+      store.getMessages(thread.id).filter((m) => m.role === "assistant").length,
+      0,
+    );
+
+    await waitFor(() => store.getThread(thread.id).status === "done");
+    const assistants = store
+      .getMessages(thread.id)
+      .filter((m) => m.role === "assistant");
+    assert.ok(assistants.some((m) => m.text === "real reply"));
+    assert.equal(store.getWorkLog(thread.id).find((w) => w.label === "Agent working").done, true);
+  });
+
+  it("fails a turn that only ever emits an empty leftover result", async () => {
+    process.env.CODER_FAKE_CLAUDE_SCENARIO = "phantom-only";
+    process.env.CODER_PHANTOM_RESULT_GRACE_MS = "80";
+
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "do work" });
+    await waitFor(() => store.getThread(thread.id).status === "failed");
+
+    const events = store
+      .getMessages(thread.id)
+      .filter((m) => m.role === "event");
+    assert.ok(
+      events.some((m) => /no output/i.test(m.text)),
+      `expected a no-output event, got ${JSON.stringify(events.map((e) => e.text))}`,
+    );
+    assert.equal(
+      store.getMessages(thread.id).filter((m) => m.role === "assistant").length,
+      0,
+    );
+    const working = store
+      .getWorkLog(thread.id)
+      .find((w) => w.label === "Agent working");
+    assert.ok(working && working.done);
   });
 
   it("stopAll reaps claude child that hung after result cleared the run slot", async () => {

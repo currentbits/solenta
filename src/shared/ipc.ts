@@ -458,7 +458,7 @@ export type FetchIssueResult =
  *
  * These are the levels the installed CLIs actually accept, verified against
  * them rather than copied from a design: `claude --effort` takes low, medium,
- * high, xhigh, max, and `grok --reasoning-effort` takes low, medium, high.
+ * high, xhigh, max, and `grok --reasoning-effort` takes low, medium, high, xhigh.
  * A provider advertises its own subset through ProviderInfo.efforts.
  *
  * Getting this wrong is silent: claude answers an unknown value with

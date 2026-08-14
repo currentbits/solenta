@@ -251,17 +251,25 @@ const DEV_PROVIDERS: ProviderInfo[] = [
     name: "Grok",
     available: TRAILER ? true : false,
     supportsResume: false,
-    models: ["grok-4.5"],
+    models: ["grok-4.6", "grok-4.5"],
     modelInfo: [
+      {
+        id: "grok-4.6",
+        label: "Grok 4.6",
+        description: "SpaceXAI's latest frontier model",
+        vendor: "xAI",
+        recommended: true,
+        contextTokens: 500000,
+      },
       {
         id: "grok-4.5",
         label: "Grok 4.5",
         description: "xAI coding agent with tool use",
         vendor: "xAI",
-        recommended: true,
+        contextTokens: 500000,
       },
     ],
-    efforts: ["low", "medium", "high"],
+    efforts: ["low", "medium", "high", "xhigh"],
   },
   {
     // Synced from electron/providers.js; dev had NO kimi entry at all, so the

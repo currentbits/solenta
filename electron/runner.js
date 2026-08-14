@@ -39,6 +39,33 @@ const { wrapCommand } = require("./ssh.js");
 const KIMI_PUSH_THROTTLE_MS = 250;
 
 /**
+ * A kept-alive/resumed Claude CLI can emit a result that is not the answer to
+ * the turn we just sent: settling a leftover background-task notification or
+ * "Continue from where you left off." self-turn first (issue #17). Those
+ * phantom results are success-typed with empty text and arrive before the
+ * real turn streams anything. We hold such a result instead of finalizing;
+ * real turn activity discards it and the real result finalizes the run. If
+ * nothing else ever arrives (grace timer, or the process exits), the held
+ * empty result is a failure, not a silent success.
+ */
+// ponytail: shape-based phantom detection (empty success before any content);
+// switch to a per-turn correlation id if the CLI protocol ever grows one.
+const PHANTOM_RESULT_GRACE_MS = 30 * 1000;
+
+function phantomResultGraceMs() {
+  const raw = Number(process.env.CODER_PHANTOM_RESULT_GRACE_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : PHANTOM_RESULT_GRACE_MS;
+}
+
+/** Empty success with no streamed turn content: leftover, not this turn. */
+function isPhantomClaudeResult(ev, sawTurnContent) {
+  if (sawTurnContent) return false;
+  if (!ev || ev.subtype !== "success") return false;
+  const text = typeof ev.result === "string" ? ev.result.trim() : "";
+  return !text;
+}
+
+/**
  * Claude children that outlive their active Map slot (result event clears the
  * run before process exit). stopAll reaps anything still here with SIGTERM.
  * @type {Set<import('node:child_process').ChildProcess>}
@@ -406,21 +433,87 @@ function createRunner(opts) {
   }
 
   /**
-   * Fire-and-forget memory record for a real run terminal. Never throws.
-   * Skips simulate-provider runs.
-   *
-   * @param {string} threadId
-   * @param {"done" | "failed" | "stopped"} status
-   * @param {string} [text]
-   * @param {object} [extras]
-   * @param {string} [extras.provider]
-   * @param {string | null} [extras.model]
-   * @param {number} [extras.tokensIn]
-   * @param {number} [extras.tokensOut]
-   * @param {number} [extras.costUsd]
-   * @param {boolean} [extras.skip] - force skip (simulate path)
-   * @param {string | null} [extras.runId] - when set, only that run's msgs
+   * Pending orchestrator wake-ups: orchestrator threadId -> notice lines.
+   * When an orchWorker's run lands, its parent (handoffFrom) gets a notice
+   * delivered as a new run — immediately when the parent is idle, otherwise
+   * at the parent's own run terminal. The orchestrator no longer needs the
+   * user to relay "the workers are done".
+   * @type {Map<string, string[]>}
    */
+  const orchNotices = new Map();
+
+  /**
+   * Queue a worker-finished notice for the worker's orchestrator, then try
+   * to deliver. No-op for non-workers. Never throws.
+   * @param {string} threadId - the worker whose run just landed
+   * @param {"done" | "failed"} status
+   */
+  function queueOrchNotice(threadId, status) {
+    const thread = store.getThread(threadId);
+    if (!thread || !thread.orchWorker || !thread.handoffFrom) return;
+    const parentId = String(thread.handoffFrom);
+    if (!store.getThread(parentId)) return;
+    let line = "";
+    const msgs = store.getMessages(threadId) || [];
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const m = msgs[i];
+      if (m && m.role === "assistant" && m.text != null && String(m.text)) {
+        line = String(m.text).split(/\r?\n/)[0];
+        break;
+      }
+    }
+    const title = thread.title ? ` ("${thread.title}")` : "";
+    const notes = orchNotices.get(parentId) || [];
+    notes.push(
+      `Worker thread ${threadId}${title} finished with status ${status}.` +
+        (line ? ` Last reply: ${line}` : ""),
+    );
+    orchNotices.set(parentId, notes);
+    flushOrchNotices(parentId);
+  }
+
+  /**
+   * Deliver queued worker notices as one run on the orchestrator thread.
+   * Skips while the orchestrator is mid-run (every terminal path calls
+   * clearRun before this hook, so its own terminal re-flushes). Never throws.
+   * @param {string} threadId - the orchestrator thread
+   */
+  function flushOrchNotices(threadId) {
+    const notes = orchNotices.get(threadId);
+    if (!notes || notes.length === 0) return;
+    if (active.has(threadId)) return;
+    orchNotices.delete(threadId);
+    if (!store.getThread(threadId)) return;
+    const prompt =
+      "[orchestration] " +
+      notes.join("\n") +
+      "\nContinue orchestrating; thread_status has full details.";
+    startRun({ threadId, prompt }).catch(() => {
+      // Undeliverable (budget gate, missing CLI, already active): leave a
+      // visible trace so the orchestrator still sees the notice.
+      try {
+        appendMessage(threadId, "event", prompt);
+        store.save();
+      } catch {
+        // silent
+      }
+    });
+  }
+
+  /**
+   * Failed worker (or any failed terminal) queues a notice and delivers
+   * whatever was waiting on this thread. Never throws.
+   * @param {string} threadId
+   */
+  function afterFailedTurn(threadId) {
+    try {
+      queueOrchNotice(threadId, "failed");
+      flushOrchNotices(threadId);
+    } catch {
+      // silent
+    }
+  }
+
   /**
    * After a successful turn lands status "done": best-effort worktree
    * checkpoint commit, and orchestration workers auto-archive so finished
@@ -446,13 +539,45 @@ function createRunner(opts) {
     } catch {
       // silent
     }
+    try {
+      queueOrchNotice(threadId, "done");
+      flushOrchNotices(threadId);
+    } catch {
+      // silent
+    }
   }
 
+  /**
+   * Fire-and-forget memory record for a real run terminal. Never throws.
+   * Skips simulate-provider runs.
+   *
+   * @param {string} threadId
+   * @param {"done" | "failed" | "stopped"} status
+   * @param {string} [text]
+   * @param {object} [extras]
+   * @param {string} [extras.provider]
+   * @param {string | null} [extras.model]
+   * @param {number} [extras.tokensIn]
+   * @param {number} [extras.tokensOut]
+   * @param {number} [extras.costUsd]
+   * @param {boolean} [extras.skip] - force skip (simulate path)
+   * @param {string | null} [extras.runId] - when set, only that run's msgs
+   */
   function notifyRunTerminal(threadId, status, text, extras = {}) {
     // Checkpoint first so every provider that signals done through here is
     // covered by one call site (generic/claude/codex/kimi/opencode/workflow).
     if (status === "done") {
       afterSuccessfulTurn(threadId);
+    } else if (status === "failed") {
+      afterFailedTurn(threadId);
+    } else {
+      // stopped (and any other terminal): deliver notices that queued
+      // while this thread was the orchestrator mid-run.
+      try {
+        flushOrchNotices(threadId);
+      } catch {
+        // silent
+      }
     }
     try {
       if (extras && extras.skip) return;
@@ -765,6 +890,9 @@ function createRunner(opts) {
     if (entry.timer) {
       clearIntervalFn(entry.timer);
     }
+    if (typeof entry.discardHeldPhantom === "function") {
+      entry.discardHeldPhantom();
+    }
     active.delete(threadId);
   }
 
@@ -824,6 +952,7 @@ function createRunner(opts) {
           store.save();
           pushDetail(threadId, current);
           pushThreadsChanged();
+          afterFailedTurn(threadId);
         }
       } catch (err) {
         clearRun(threadId);
@@ -842,6 +971,7 @@ function createRunner(opts) {
         store.save();
         pushDetail(threadId, current);
         pushThreadsChanged();
+        afterFailedTurn(threadId);
       }
     }, tickMs);
 
@@ -1076,8 +1206,26 @@ function createRunner(opts) {
     /** @type {string | null} */
     let capturedSessionId = thread.sessionId || null;
     let sawResult = false;
+    let sawTurnContent = false;
+    /** @type {object | null} */
+    let heldPhantom = null;
+    /** @type {ReturnType<typeof setTimeout> | null} */
+    let phantomTimer = null;
     /** Run-local usage for memory footers (not cumulative store totals). */
     const runUsage = { tokensIn: 0, tokensOut: 0, costUsd: 0 };
+
+    function discardHeldPhantom() {
+      if (phantomTimer) {
+        clearTimeout(phantomTimer);
+        phantomTimer = null;
+      }
+      heldPhantom = null;
+    }
+
+    function markTurnContent() {
+      sawTurnContent = true;
+      discardHeldPhantom();
+    }
 
     const localCwd = thread.worktreePath || project.path;
     const binary = resolveBin(entryDef);
@@ -1107,6 +1255,7 @@ function createRunner(opts) {
       workingId,
       claudeState,
       runUsage,
+      discardHeldPhantom,
       /**
        * Permission prompts awaiting a user decision, oldest first. Each is
        * { id, toolName, summary, input (pretty), rawInput (original object) }.
@@ -1127,6 +1276,40 @@ function createRunner(opts) {
       if (!e || e.stopping || e.runId !== runId) return null;
       if (e.kind !== "claude") return null;
       return e;
+    }
+
+    /** Held empty leftover result never produced a turn. Surface a failure. */
+    function failEmptyPhantom(ev) {
+      sawResult = true;
+      discardHeldPhantom();
+      if (!guard()) return;
+      completeWorkLogStep(threadId, startingId);
+      completeWorkLogStep(threadId, workingId);
+      if (ev && typeof ev.session_id === "string" && ev.session_id) {
+        capturedSessionId = ev.session_id;
+      }
+      const failText = "Run error: no output from agent";
+      appendMessage(threadId, "event", failText, runId);
+      appendDoneWorkLog(threadId, runId, "Run error");
+      store.updateThread(
+        threadId,
+        {
+          status: "failed",
+          sessionId: capturedSessionId,
+          runStartedAt: null,
+        },
+        { touch: true },
+      );
+      store.save();
+      clearRun(threadId);
+      scheduleClaudeIdleReap(threadId);
+      pushDetail(threadId, claudeState);
+      pushThreadsChanged();
+      notifyRunTerminal(threadId, "failed", failText, {
+        tokensIn: runUsage.tokensIn,
+        tokensOut: runUsage.tokensOut,
+        costUsd: runUsage.costUsd,
+      });
     }
 
     /** Assigned below (reused or freshly spawned) before any event fires. */
@@ -1168,6 +1351,7 @@ function createRunner(opts) {
             }
             const e = guard();
             if (!e) return;
+            markTurnContent();
             e.pendingPermissions.push({
               id: requestId,
               toolName,
@@ -1215,6 +1399,7 @@ function createRunner(opts) {
           for (const block of ev.message.content) {
             if (!block || typeof block !== "object") continue;
             if (block.type === "text" && typeof block.text === "string") {
+              if (block.text) markTurnContent();
               assistantText += block.text;
               if (!assistantMsgId) {
                 assistantMsgId = appendMessage(
@@ -1229,6 +1414,7 @@ function createRunner(opts) {
                 });
               }
             } else if (block.type === "tool_use") {
+              markTurnContent();
               const toolId = String(block.id || randomUUID());
               const toolName = String(block.name || "tool");
               const inputObj = block.input != null ? block.input : {};
@@ -1274,6 +1460,7 @@ function createRunner(opts) {
           for (const block of ev.message.content) {
             if (!block || typeof block !== "object") continue;
             if (block.type !== "tool_result") continue;
+            markTurnContent();
             const toolUseId = String(block.tool_use_id || "");
             const msgId = toolMsgById.get(toolUseId);
             if (!msgId) {
@@ -1324,6 +1511,27 @@ function createRunner(opts) {
         }
 
         if (type === "result") {
+          if (isPhantomClaudeResult(ev, sawTurnContent)) {
+            if (heldPhantom) return;
+            heldPhantom = ev;
+            if (typeof ev.session_id === "string" && ev.session_id) {
+              capturedSessionId = ev.session_id;
+              store.updateThread(threadId, { sessionId: capturedSessionId });
+              store.save();
+            }
+            phantomTimer = setTimeout(() => {
+              phantomTimer = null;
+              if (!guard() || !heldPhantom) return;
+              const held = heldPhantom;
+              heldPhantom = null;
+              failEmptyPhantom(held);
+            }, phantomResultGraceMs());
+            if (typeof phantomTimer.unref === "function") {
+              phantomTimer.unref();
+            }
+            return;
+          }
+          discardHeldPhantom();
           sawResult = true;
           if (!guard()) return;
 
@@ -1455,6 +1663,10 @@ function createRunner(opts) {
     };
 
     const onExit = ({ code, stderr, gotResult }) => {
+        if (heldPhantom) {
+          failEmptyPhantom(heldPhantom);
+          return;
+        }
         const e = active.get(threadId);
         // Result already cleared this run, or a newer run owns the slot.
         if (!e || e.stopping || e.runId !== runId) return;
@@ -2983,6 +3195,14 @@ function createRunner(opts) {
           costUsd: stopUsage.costUsd || 0,
         },
       );
+    } else {
+      // Sim stop skips notifyRunTerminal; still deliver notices that
+      // queued while this thread was an orchestrator mid-run.
+      try {
+        flushOrchNotices(threadId);
+      } catch {
+        // silent
+      }
     }
   }
 

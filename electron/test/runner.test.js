@@ -100,6 +100,27 @@ function fakeAgentSigtermTrapScript() {
 
 const FAKE_AGENT_OUTPUT = "Hello_from_agent";
 
+/** Orchestrator + orchWorker child with handoffFrom set. */
+function orchPair(store) {
+  const orch = store.getThreads()[0];
+  store.updateThread(orch.id, { title: "Orchestrator" });
+  const worker = services.forkThread(store, { threadId: orch.id });
+  store.updateThread(worker.id, { orchWorker: true, title: "Worker A" });
+  store.save();
+  return {
+    orch: store.getThread(orch.id),
+    worker: store.getThread(worker.id),
+  };
+}
+
+function orchNoticeMessages(store, threadId) {
+  return (store.getMessages(threadId) || []).filter(
+    (m) =>
+      (m.role === "user" || m.role === "event") &&
+      String(m.text || "").startsWith("[orchestration]"),
+  );
+}
+
 describe("runner simulated mode", () => {
   let tmpDir;
   let store;
@@ -311,6 +332,46 @@ describe("runner simulated mode", () => {
       const t = store.getThreads().find((x) => x.id === thread.id);
       return t && t.archived === true;
     });
+  });
+
+  it("wakes an idle orchestrator when an orchWorker run lands done", async () => {
+    const { orch, worker } = orchPair(store);
+    await runner.startRun({ threadId: worker.id, prompt: "worker task" });
+    await waitFor(() => {
+      const t = store.getThread(worker.id);
+      return t && t.status === "done";
+    });
+    await waitFor(() => orchNoticeMessages(store, orch.id).length > 0);
+    const notice = orchNoticeMessages(store, orch.id)[0];
+    assert.equal(notice.role, "user");
+    assert.match(notice.text, /\[orchestration\]/);
+    assert.match(notice.text, new RegExp(worker.id));
+    assert.match(notice.text, /Worker A/);
+    assert.match(notice.text, /status done/);
+    assert.match(notice.text, /Last reply:/);
+    assert.match(notice.text, /Continue orchestrating/);
+    // Parent actually started a run, not just an event fallback.
+    const parentUsers = (store.getMessages(orch.id) || []).filter(
+      (m) => m.role === "user",
+    );
+    assert.equal(parentUsers.length, 1);
+    assert.equal(store.getThread(worker.id).archived, true);
+  });
+
+  it("does not wake the parent for a regular fork without orchWorker", async () => {
+    const orch = store.getThreads()[0];
+    store.updateThread(orch.id, { title: "Orchestrator" });
+    const fork = services.forkThread(store, { threadId: orch.id });
+    assert.equal(fork.handoffFrom, orch.id);
+    assert.ok(!fork.orchWorker);
+    await runner.startRun({ threadId: fork.id, prompt: "user fork" });
+    await waitFor(() => {
+      const t = store.getThread(fork.id);
+      return t && t.status === "done";
+    });
+    await new Promise((r) => setTimeout(r, 80));
+    assert.equal(orchNoticeMessages(store, orch.id).length, 0);
+    assert.equal((store.getMessages(orch.id) || []).length, 0);
   });
 
   it("rejects startRun while a run is already active", async () => {
@@ -672,6 +733,50 @@ describe("runner real agent mode", () => {
     assert.equal(detail.workflow.tokensTotal, agent.tokensUsed);
     // model is basename of the binary (node / node.exe)
     assert.equal(agent.model, path.basename(process.execPath));
+  });
+
+  it("queues the notice while the orchestrator is mid-run, then delivers on stop", async () => {
+    process.env.CODER_AGENT_CMD = `${process.execPath} -e ${fakeAgentSlowScript()}`;
+    const { orch, worker } = orchPair(store);
+    await runner.startRun({ threadId: orch.id, prompt: "still planning" });
+    await waitFor(() => store.getThread(orch.id).status === "working");
+
+    process.env.CODER_AGENT_CMD = `${process.execPath} -e ${fakeAgentSuccessScript()}`;
+    await runner.startRun({ threadId: worker.id, prompt: "worker task" });
+    await waitFor(() => {
+      const t = store.getThread(worker.id);
+      return t && t.status === "done";
+    });
+    const midUsers = (store.getMessages(orch.id) || []).filter(
+      (m) => m.role === "user",
+    );
+    assert.equal(midUsers.length, 1);
+    assert.equal(midUsers[0].text, "still planning");
+    assert.equal(orchNoticeMessages(store, orch.id).length, 0);
+    assert.equal(store.getThread(orch.id).status, "working");
+
+    await runner.stopRun({ threadId: orch.id });
+    await waitFor(() => orchNoticeMessages(store, orch.id).length > 0);
+    const notice = orchNoticeMessages(store, orch.id)[0];
+    assert.equal(notice.role, "user");
+    assert.match(notice.text, new RegExp(worker.id));
+    assert.match(notice.text, /status done/);
+    assert.match(notice.text, /Last reply: Hello_from_agent/);
+  });
+
+  it("wakes an idle orchestrator when an orchWorker run fails", async () => {
+    process.env.CODER_AGENT_CMD = `${process.execPath} -e ${fakeAgentFailScript()}`;
+    const { orch, worker } = orchPair(store);
+    await runner.startRun({ threadId: worker.id, prompt: "fail please" });
+    await waitFor(() => {
+      const t = store.getThread(worker.id);
+      return t && t.status === "failed";
+    });
+    await waitFor(() => orchNoticeMessages(store, orch.id).length > 0);
+    const notice = orchNoticeMessages(store, orch.id)[0];
+    assert.equal(notice.role, "user");
+    assert.match(notice.text, new RegExp(worker.id));
+    assert.match(notice.text, /status failed/);
   });
 
   it("nonzero exit sets failed with Run error event containing stderr", async () => {

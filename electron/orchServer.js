@@ -19,8 +19,10 @@ const INSTRUCTIONS =
   "thread_fork copies a thread into a new one (optionally on a different provider) " +
   "and starts it on your prompt. thread_send starts a run with your prompt on an " +
   "existing thread. thread_status reports a thread's status and the first line of " +
-  "its last assistant reply. Runs are asynchronous: send work, then poll " +
-  "thread_status until the status leaves working.";
+  "its last assistant reply. Runs are asynchronous: send work, then continue. " +
+  "When a worker you forked finishes (done or failed) you are woken on a new turn " +
+  "with a notice; do not sit idle waiting for the user to relay that. " +
+  "thread_status still has full details if you need them before the wake-up.";
 
 function timingSafeEqualString(a, b) {
   const bufferA = Buffer.from(a);
@@ -521,4 +523,5 @@ module.exports = {
   loadOrCreateConfig,
   SERVER_NAME,
   CONFIG_NAME,
+  INSTRUCTIONS,
 };
