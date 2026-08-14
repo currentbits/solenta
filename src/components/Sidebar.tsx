@@ -1554,7 +1554,7 @@ export function Sidebar({
           )}
           {createOpen && !remote && (
             <div
-              className={styles.snoozeMenu}
+              className={`${styles.snoozeMenu} ${styles.snoozeMenuLeft}`}
               role="menu"
               data-create-menu={project.id}
             >
