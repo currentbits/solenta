@@ -366,6 +366,101 @@ async function main() {
     return;
   }
 
+  // Persistent interactive CLI: one turn per stdin user message, process
+  // stays alive between turns (issue #8 keep-alive lifecycle).
+  if (scenario === "multi-turn") {
+    const markerDir = process.env.CODER_FAKE_CLAUDE_MARKER_DIR || "";
+    if (markerDir) {
+      try {
+        fs.mkdirSync(markerDir, { recursive: true });
+        fs.appendFileSync(path.join(markerDir, "spawns"), String(process.pid) + "\\n");
+      } catch { /* ignore */ }
+    }
+    emit({ type: "system", subtype: "init", session_id: "sess-multi", model: "m" });
+    let turn = 0;
+    let buf = "";
+    process.stdin.on("data", (c) => {
+      buf += c;
+      let nl;
+      while ((nl = buf.indexOf("\\n")) >= 0) {
+        const line = buf.slice(0, nl);
+        buf = buf.slice(nl + 1);
+        if (!line.trim()) continue;
+        let msg;
+        try { msg = JSON.parse(line); } catch { continue; }
+        if (msg.type !== "user") continue;
+        turn += 1;
+        const n = turn;
+        emit({
+          type: "assistant",
+          message: { content: [{ type: "text", text: "reply " + n }] },
+        });
+        emit({
+          type: "result",
+          subtype: "success",
+          result: "reply " + n,
+          usage: { input_tokens: 1, output_tokens: 1 },
+          total_cost_usd: 0,
+          num_turns: n,
+          session_id: "sess-multi",
+        });
+      }
+    });
+    await delay(30000);
+    process.exit(0);
+    return;
+  }
+
+  // Emit a result, then a control_request AFTER the turn settled (idle
+  // window). Records the runner's control_response to CTRL_FILE.
+  if (scenario === "late-permission") {
+    emit({ type: "system", subtype: "init", session_id: "sess-late", model: "m" });
+    let buf = "";
+    let sentReq = false;
+    process.stdin.on("data", (c) => {
+      buf += c;
+      let nl;
+      while ((nl = buf.indexOf("\\n")) >= 0) {
+        const line = buf.slice(0, nl);
+        buf = buf.slice(nl + 1);
+        if (!line.trim()) continue;
+        let msg;
+        try { msg = JSON.parse(line); } catch { continue; }
+        if (msg.type === "user" && !sentReq) {
+          sentReq = true;
+          emit({
+            type: "result",
+            subtype: "success",
+            result: "late done",
+            usage: { input_tokens: 1, output_tokens: 1 },
+            total_cost_usd: 0,
+            num_turns: 1,
+            session_id: "sess-late",
+          });
+          setTimeout(() => {
+            emit({
+              type: "control_request",
+              request_id: "req-late-1",
+              request: {
+                subtype: "can_use_tool",
+                tool_name: "Bash",
+                input: { command: "echo hi" },
+              },
+            });
+          }, 150);
+        } else if (msg.type === "control_response") {
+          if (process.env.CODER_FAKE_CLAUDE_CTRL_FILE) {
+            fs.writeFileSync(process.env.CODER_FAKE_CLAUDE_CTRL_FILE, JSON.stringify(msg), "utf8");
+          }
+          process.exit(0);
+        }
+      }
+    });
+    await delay(30000);
+    process.exit(1);
+    return;
+  }
+
   process.stderr.write("unknown scenario " + scenario + "\\n");
   process.exit(1);
 }
@@ -909,6 +1004,69 @@ describe("runner claude provider", () => {
       await new Promise((r) => server.close(r));
       resetMemorySupForTests();
       fs.rmSync(memDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the CLI alive across turns and reuses it for the next turn", async () => {
+    process.env.CODER_FAKE_CLAUDE_SCENARIO = "multi-turn";
+    const markerDir = path.join(tmpDir, "multi-markers");
+    process.env.CODER_FAKE_CLAUDE_MARKER_DIR = markerDir;
+
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "turn one" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    // Turn settled but the CLI process must survive (background tasks live
+    // inside it — killing it here is issue #8's symptom 1).
+    const spawnsFile = path.join(markerDir, "spawns");
+    const spawns = fs
+      .readFileSync(spawnsFile, "utf8")
+      .trim()
+      .split("\n");
+    assert.equal(spawns.length, 1);
+    const pid = Number(spawns[0]);
+    // Give any wrong-lifecycle teardown a beat to land, then probe liveness.
+    await new Promise((r) => setTimeout(r, 200));
+    assert.doesNotThrow(
+      () => process.kill(pid, 0),
+      "CLI process must survive turn settle",
+    );
+
+    await runner.startRun({ threadId: thread.id, prompt: "turn two" });
+    await waitFor(() => {
+      const msgs = store.getMessages(thread.id);
+      return msgs.some((m) => m.role === "assistant" && m.text === "reply 2");
+    });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    // Same process handled turn two: no second spawn.
+    const spawns2 = fs
+      .readFileSync(spawnsFile, "utf8")
+      .trim()
+      .split("\n");
+    assert.equal(spawns2.length, 1);
+  });
+
+  it("answers a control_request arriving while settled with a retryable error, not silence", async () => {
+    process.env.CODER_FAKE_CLAUDE_SCENARIO = "late-permission";
+    const ctrlFile = path.join(tmpDir, "late-ctrl.json");
+    process.env.CODER_FAKE_CLAUDE_CTRL_FILE = ctrlFile;
+    try {
+      const thread = store.getThreads()[0];
+      await runner.startRun({ threadId: thread.id, prompt: "late perms" });
+      await waitFor(() => store.getThread(thread.id).status === "done");
+
+      // The CLI raises can_use_tool after the run slot cleared. The runner
+      // must answer with an error response (retryable, distinguishable from
+      // a user deny) instead of dropping it on the floor.
+      await waitFor(() => fs.existsSync(ctrlFile), { timeoutMs: 5000 });
+      const msg = JSON.parse(fs.readFileSync(ctrlFile, "utf8"));
+      assert.equal(msg.type, "control_response");
+      assert.equal(msg.response.subtype, "error");
+      assert.equal(msg.response.request_id, "req-late-1");
+      assert.match(String(msg.response.error), /retry/i);
+    } finally {
+      delete process.env.CODER_FAKE_CLAUDE_CTRL_FILE;
     }
   });
 });

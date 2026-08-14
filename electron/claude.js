@@ -96,12 +96,16 @@ function flattenContent(content) {
  * @param {string | null} [opts.model]
  * @param {boolean} [opts.interactive] - stream-json INPUT mode: the prompt is
  *   delivered on stdin (args must NOT carry a trailing prompt) and the CLI can
- *   ask for tool permission via control_request/control_response. stdin is
- *   closed on the result event so the one-turn-per-process lifecycle holds.
+ *   ask for tool permission via control_request/control_response. Without
+ *   keepAlive, stdin is closed on the result event so the one-turn-per-process
+ *   lifecycle holds.
+ * @param {boolean} [opts.keepAlive] - interactive only: do NOT close stdin on
+ *   result. The process outlives the turn so harness background tasks survive
+ *   settle and later turns reuse it via send() (issue #8).
  * @param {(ev: object) => void} opts.onEvent - raw parsed NDJSON event
  * @param {(info: { code: number | null, stderr: string, gotResult: boolean }) => void} opts.onExit
  * @param {(err: Error) => void} [opts.onError]
- * @returns {{ kill: () => void, respond: (requestId: string, response: object) => boolean, child: import('node:child_process').ChildProcess | null }}
+ * @returns {{ kill: () => void, send: (prompt: string) => boolean, respond: (requestId: string, response: object) => boolean, respondError: (requestId: string, message: string) => boolean, child: import('node:child_process').ChildProcess | null }}
  */
 function runClaude(opts) {
   const {
@@ -112,6 +116,7 @@ function runClaude(opts) {
     sessionId = null,
     model = null,
     interactive = false,
+    keepAlive = false,
     onEvent,
     onExit,
     onError,
@@ -174,7 +179,9 @@ function runClaude(opts) {
       gotResult = true;
       // Interactive mode: the CLI waits for more stdin messages after a
       // result; end stdin so the process exits and the turn finishes.
-      if (interactive && child && child.stdin && !child.stdin.destroyed) {
+      // keepAlive skips this so the process (and its background tasks)
+      // survives the turn and can take the next one via send().
+      if (interactive && !keepAlive && child && child.stdin && !child.stdin.destroyed) {
         try {
           child.stdin.end();
         } catch {
@@ -208,6 +215,17 @@ function runClaude(opts) {
     }
   }
 
+  /** Deliver one user turn on stdin; resets per-turn result tracking. */
+  function sendUser(promptText) {
+    gotResult = false;
+    return writeLine({
+      type: "user",
+      message: { role: "user", content: String(promptText ?? "") },
+      parent_tool_use_id: null,
+      session_id: "",
+    });
+  }
+
   let child;
   try {
     child = spawn(binary, args, {
@@ -221,7 +239,13 @@ function runClaude(opts) {
     if (typeof onExit === "function") {
       onExit({ code: 1, stderr: error.message, gotResult: false });
     }
-    return { kill() {}, child: null };
+    return {
+      kill() {},
+      send: () => false,
+      respond: () => false,
+      respondError: () => false,
+      child: null,
+    };
   }
 
   child.stdout.setEncoding("utf8");
@@ -230,12 +254,7 @@ function runClaude(opts) {
   if (interactive) {
     // EPIPE from a dying CLI must not crash the main process.
     child.stdin.on("error", () => {});
-    writeLine({
-      type: "user",
-      message: { role: "user", content: String(prompt ?? "") },
-      parent_tool_use_id: null,
-      session_id: "",
-    });
+    sendUser(prompt);
   }
 
   child.stdout.on("data", (chunk) => {
@@ -263,6 +282,7 @@ function runClaude(opts) {
 
   return {
     child,
+    send: sendUser,
     /**
      * Answer a control_request (permission prompt). `response` is the inner
      * payload, e.g. { behavior: "allow", updatedInput } or

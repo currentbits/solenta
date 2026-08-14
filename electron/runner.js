@@ -260,6 +260,45 @@ function createRunner(opts) {
    */
   const active = new Map();
 
+  /**
+   * Live interactive Claude CLI processes per thread, kept across turns so
+   * harness background tasks survive turn settle and the permission channel
+   * never closes mid-request (issue #8). Reused when the spawn parameters
+   * still match; killed on param change, thread delete, idle timeout, or
+   * app quit. `dispatch` rebinds to the current turn's handlers on reuse.
+   * @type {Map<string, { handle: object, dispatch: { onEvent: Function, onExit: Function, onError: Function }, key: string, idleTimer: ReturnType<typeof setTimeout> | null }>}
+   */
+  const claudeSessions = new Map();
+
+  // ponytail: fixed idle ceiling — background work longer than this must
+  // detach (nohup); add child-process introspection if that ever hurts.
+  const CLAUDE_IDLE_REAP_MS = 30 * 60 * 1000;
+
+  /** Kill and forget a thread's kept-alive Claude CLI (if any). */
+  function disposeClaudeSession(threadId) {
+    const sess = claudeSessions.get(threadId);
+    if (!sess) return;
+    claudeSessions.delete(threadId);
+    if (sess.idleTimer) clearTimeout(sess.idleTimer);
+    try {
+      if (sess.handle) sess.handle.kill();
+    } catch {
+      // already dead
+    }
+  }
+
+  /** Arm the idle reaper after a turn settles; disarmed on reuse. */
+  function scheduleClaudeIdleReap(threadId) {
+    const sess = claudeSessions.get(threadId);
+    if (!sess || sess.idleTimer) return;
+    sess.idleTimer = setTimeout(
+      () => disposeClaudeSession(threadId),
+      CLAUDE_IDLE_REAP_MS,
+    );
+    // Never hold the process open for a reap timer.
+    if (typeof sess.idleTimer.unref === "function") sess.idleTimer.unref();
+  }
+
   /** Last known workflow (core Workflow or real state) per thread. */
   /** @type {Map<string, object>} */
   const lastWorkflowByThread = new Map();
@@ -1074,19 +1113,24 @@ function createRunner(opts) {
       return e;
     }
 
-    const handle = runClaude({
-      binary: spawn.binary,
-      args: spawn.args,
-      prompt,
-      cwd: spawn.cwd,
-      permissionMode: thread.permissionMode || "default",
-      sessionId: thread.sessionId || null,
-      model: thread.model || null,
-      interactive,
-      onEvent: (ev) => {
-        if (!guard()) return;
+    /** Assigned below (reused or freshly spawned) before any event fires. */
+    let handle;
 
+    const onEvent = (ev) => {
         const type = ev && ev.type;
+
+        if (!guard()) {
+          // Kept-alive CLI, no active turn (settling/idle): never leave a
+          // permission request hanging or aborted — answer with an error the
+          // agent can retry, distinct from a user deny ("Denied by user").
+          if (type === "control_request" && ev.request_id && handle) {
+            handle.respondError(
+              String(ev.request_id),
+              "No active turn in Solenta (run settling); retry on the next turn",
+            );
+          }
+          return;
+        }
 
         if (type === "control_request") {
           const requestId = String(ev.request_id || "");
@@ -1362,6 +1406,8 @@ function createRunner(opts) {
           // Free the thread slot immediately so the next turn can start;
           // onExit will no-op via the runId identity guard.
           clearRun(threadId);
+          // Process stays alive (keepAlive); reap it if no turn reuses it.
+          scheduleClaudeIdleReap(threadId);
           pushDetail(threadId, claudeState);
           pushThreadsChanged();
           notifyRunTerminal(
@@ -1380,8 +1426,9 @@ function createRunner(opts) {
           );
           return;
         }
-      },
-      onExit: ({ code, stderr, gotResult }) => {
+    };
+
+    const onExit = ({ code, stderr, gotResult }) => {
         const e = active.get(threadId);
         // Result already cleared this run, or a newer run owns the slot.
         if (!e || e.stopping || e.runId !== runId) return;
@@ -1426,8 +1473,9 @@ function createRunner(opts) {
           tokensOut: runUsage.tokensOut,
           costUsd: runUsage.costUsd,
         });
-      },
-      onError: (err) => {
+    };
+
+    const onError = (err) => {
         const e = active.get(threadId);
         if (!e || e.stopping || e.runId !== runId) return;
         if (e.kind !== "claude") return;
@@ -1452,11 +1500,98 @@ function createRunner(opts) {
           tokensOut: runUsage.tokensOut,
           costUsd: runUsage.costUsd,
         });
-      },
+    };
+
+    // Reuse key: everything a spawn bakes into argv/env EXCEPT the session
+    // id (--resume changes after turn one; the live process needs no resume).
+    const sessionKey = JSON.stringify({
+      cwd: localCwd,
+      remote: project.remoteHost || null,
+      binary,
+      model: thread.model || null,
+      permissionMode: thread.permissionMode || "default",
+      reasoningEffort: thread.reasoningEffort || null,
+      mcp: interactive ? getClaudeMcpArgs() : [],
     });
 
+    const prevSess = claudeSessions.get(threadId);
+    const prevChild =
+      prevSess && prevSess.handle ? prevSess.handle.child : null;
+    const prevAlive =
+      prevChild && prevChild.exitCode === null && !prevChild.killed;
+
+    let reused = false;
+    if (interactive && prevSess && prevAlive && prevSess.key === sessionKey) {
+      // Same params, live process: deliver the turn on its stdin. Background
+      // tasks from earlier turns keep running; the CLI reports their
+      // completion within this session.
+      if (prevSess.idleTimer) {
+        clearTimeout(prevSess.idleTimer);
+        prevSess.idleTimer = null;
+      }
+      prevSess.dispatch = { onEvent, onExit, onError };
+      handle = prevSess.handle;
+      reused = handle.send(prompt);
+      if (reused) {
+        // A reused process emits no second system/init; close the step now.
+        completeWorkLogStep(threadId, startingId);
+      }
+    }
+    if (!reused) {
+      // Params changed (cwd/model/mode/effort/mcp), process gone, or its
+      // stdin already closed (send failed): replace it.
+      if (prevSess) disposeClaudeSession(threadId);
+      if (interactive) {
+        const sess = {
+          handle: null,
+          dispatch: { onEvent, onExit, onError },
+          key: sessionKey,
+          idleTimer: null,
+        };
+        claudeSessions.set(threadId, sess);
+        handle = runClaude({
+          binary: spawn.binary,
+          args: spawn.args,
+          prompt,
+          cwd: spawn.cwd,
+          permissionMode: thread.permissionMode || "default",
+          sessionId: thread.sessionId || null,
+          model: thread.model || null,
+          interactive,
+          keepAlive: true,
+          onEvent: (ev) => sess.dispatch.onEvent(ev),
+          onExit: (info) => {
+            // Process death always retires the session, whatever turn (if
+            // any) is current.
+            if (claudeSessions.get(threadId) === sess) {
+              if (sess.idleTimer) clearTimeout(sess.idleTimer);
+              claudeSessions.delete(threadId);
+            }
+            sess.dispatch.onExit(info);
+          },
+          onError: (err) => sess.dispatch.onError(err),
+        });
+        sess.handle = handle;
+      } else {
+        // Non-interactive claude-stream (e.g. grok): unchanged per-turn CLI.
+        handle = runClaude({
+          binary: spawn.binary,
+          args: spawn.args,
+          prompt,
+          cwd: spawn.cwd,
+          permissionMode: thread.permissionMode || "default",
+          sessionId: thread.sessionId || null,
+          model: thread.model || null,
+          interactive,
+          onEvent,
+          onExit,
+          onError,
+        });
+      }
+      trackLiveClaudeChild(handle.child);
+    }
+
     entry.handle = handle;
-    trackLiveClaudeChild(handle.child);
     store.save();
     pushDetail(threadId, claudeState);
 
@@ -2877,6 +3012,10 @@ function createRunner(opts) {
       );
       marked = true;
     }
+    // Kept-alive Claude sessions (idle between turns): kill + clear timers.
+    for (const threadId of [...claudeSessions.keys()]) {
+      disposeClaudeSession(threadId);
+    }
     // Reap claude children that emitted result (clearRun) then hung: no longer
     // reachable via active Map handles.
     for (const child of [...liveClaudeChildren]) {
@@ -2936,6 +3075,7 @@ function createRunner(opts) {
     resolveProvider,
     getPendingPermission,
     respondPermission,
+    disposeClaudeSession,
   };
 }
 
