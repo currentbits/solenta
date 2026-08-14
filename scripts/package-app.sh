@@ -13,11 +13,24 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 NO_VERIFY=0
-for arg in "$@"; do
-  case "$arg" in
+# Update channel + release tag stamped into the bundle. A bundle without a
+# releaseTag (default: any local build) never auto-updates, so install-swap
+# bundles built from a working tree are left alone. publish-release.sh sets
+# both.
+CHANNEL="prod"
+RELEASE_TAG=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
     --no-verify) NO_VERIFY=1 ;;
+    --channel) CHANNEL="$2"; shift ;;
+    --tag) RELEASE_TAG="$2"; shift ;;
   esac
+  shift
 done
+if [[ "$CHANNEL" != "prod" && "$CHANNEL" != "nightly" ]]; then
+  echo "ERROR: --channel must be prod or nightly (got: $CHANNEL)" >&2
+  exit 1
+fi
 
 # ---------------------------------------------------------------------------
 # Preconditions
@@ -89,6 +102,11 @@ BUILD_DIRTY=""
 git diff --quiet 2>/dev/null || BUILD_DIRTY="+dirty"
 BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
+RELEASE_TAG_JSON="null"
+if [[ -n "$RELEASE_TAG" ]]; then
+  RELEASE_TAG_JSON="\"${RELEASE_TAG}\""
+fi
+
 cat > "$APP_DIR/package.json" <<EOF
 {
   "name": "solenta",
@@ -96,7 +114,9 @@ cat > "$APP_DIR/package.json" <<EOF
   "version": "${VERSION}",
   "main": "electron/main.js",
   "buildSha": "${BUILD_SHA}${BUILD_DIRTY}",
-  "buildTime": "${BUILD_TIME}"
+  "buildTime": "${BUILD_TIME}",
+  "channel": "${CHANNEL}",
+  "releaseTag": ${RELEASE_TAG_JSON}
 }
 EOF
 

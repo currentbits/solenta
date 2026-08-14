@@ -32,6 +32,7 @@ const skills = require("./skills.js");
 const { fetchIssue } = require("./issues.js");
 const automations = require("./automations.js");
 const { buildActivity } = require("./activity.js");
+const updater = require("./updater.js");
 
 /**
  * Default window fan-out (desktop transport). main.js replaces this with a
@@ -277,6 +278,12 @@ const IPC_HANDLERS = {
   },
   "app:status": async (ctx) => {
     return services.appStatus(ctx.store);
+  },
+  "app:checkUpdate": async () => {
+    return updater.checkAndStage();
+  },
+  "app:applyUpdate": async () => {
+    updater.applyUpdate();
   },
   "memory:search": async (ctx, input) => {
     return ctx.memory.search(input || { query: "" });

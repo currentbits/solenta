@@ -12,6 +12,7 @@ import type {
   AppSettings,
   AppStatus,
   AutomationInfo,
+  UpdateStatus,
   AutomationWrite,
   ChatMessage,
   CheckpointInfo,
@@ -1920,9 +1921,19 @@ function buildDevCoder(): CoderApi {
             vectors: memoryEntries.length,
             lastError: null,
           },
-          build: { version: "0.1.0-dev", sha: null, time: null },
+          build: { version: "0.1.0-dev", sha: null, time: null, channel: null },
         };
       },
+      async checkUpdate(): Promise<UpdateStatus> {
+        return {
+          state: "disabled",
+          channel: null,
+          tag: null,
+          url: null,
+          error: null,
+        };
+      },
+      async applyUpdate(): Promise<void> {},
     },
     memory: {
       async search(input: {

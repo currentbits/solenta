@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { AppSettings, AppStatus } from "../shared/ipc";
+import type { AppSettings, AppStatus, UpdateStatus } from "../shared/ipc";
 import { useEscapeClose } from "../useEscapeClose";
 import styles from "./SettingsModal.module.css";
 
@@ -10,6 +10,10 @@ interface SettingsModalProps {
   settings: AppSettings | null;
   /** Live app status for the memory section. */
   status: AppStatus | null;
+  /** Auto-update check result for the build section. */
+  update?: UpdateStatus | null;
+  /** Relaunch into a staged update. */
+  onApplyUpdate?: () => Promise<void>;
   onSaveSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>;
 }
 
@@ -29,6 +33,8 @@ export function SettingsModal({
   onClose,
   settings,
   status,
+  update,
+  onApplyUpdate,
   onSaveSettings,
 }: SettingsModalProps) {
   const [budgetText, setBudgetText] = useState("");
@@ -320,9 +326,44 @@ export function SettingsModal({
               {status?.build
                 ? `${status.build.version}${
                     status.build.sha ? ` · ${status.build.sha}` : " · dev tree"
-                  }${status.build.time ? ` · ${status.build.time}` : ""}`
+                  }${status.build.time ? ` · ${status.build.time}` : ""}${
+                    status.build.channel ? ` · ${status.build.channel}` : ""
+                  }`
                 : "unknown"}
             </p>
+            {update?.state === "staged" && (
+              <div className={styles.fieldRow}>
+                <span className={styles.note}>
+                  Update {update.tag} downloaded.
+                </span>
+                <button
+                  type="button"
+                  className={`${styles.btn} ${styles.btnPrimary}`}
+                  onClick={() => void onApplyUpdate?.()}
+                >
+                  Restart to update
+                </button>
+              </div>
+            )}
+            {update?.state === "available" && (
+              <p className={styles.note}>
+                Update {update.tag} available
+                {update.url ? (
+                  <>
+                    {" — "}
+                    <a href={update.url} target="_blank" rel="noreferrer">
+                      release page
+                    </a>
+                  </>
+                ) : null}
+                {update.error ? ` (auto-install failed: ${update.error})` : ""}
+              </p>
+            )}
+            {update?.state === "error" && (
+              <p className={styles.fieldError} role="alert">
+                Update check failed: {update.error}
+              </p>
+            )}
           </section>
         </div>
       </div>

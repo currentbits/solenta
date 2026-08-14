@@ -17,6 +17,7 @@ import type {
   AppSettings,
   AppStatus,
   AutomationInfo,
+  UpdateStatus,
   CheckpointInfo,
   CoderApi,
   RunStatInfo,
@@ -217,9 +218,18 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
                 vectors: null,
                 lastError: null,
               },
-              build: { version: "0.0.0-test", sha: null, time: null },
+              build: { version: "0.0.0-test", sha: null, time: null, channel: null },
             } as AppStatus),
         ),
+      checkUpdate: () =>
+        rec("app.checkUpdate", [], {
+          state: "disabled",
+          channel: null,
+          tag: null,
+          url: null,
+          error: null,
+        } as UpdateStatus),
+      applyUpdate: () => rec("app.applyUpdate", [], undefined),
     },
     memory: {
       search: (input: unknown) => rec("memory.search", [input], [] as MemoryEntryInfo[]),

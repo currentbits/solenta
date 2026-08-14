@@ -186,8 +186,10 @@ fi
 echo "  POST /api/store -> $STORE_BODY"
 
 COUNT_OK=0
-# 30s budget: first-boot may download ~25MB MiniLM weights into the transformers cache.
-COUNT_DEADLINE=$((SECONDS + 30))
+# 180s budget: first-boot downloads ~25MB MiniLM weights into a FRESH temp
+# userData every verify run, so this wait is network-bound each time; 30s
+# flaked on a busy connection (release cut 2026-08-14).
+COUNT_DEADLINE=$((SECONDS + 180))
 while (( SECONDS < COUNT_DEADLINE )); do
   set +e
   LAST_BODY="$(curl -fsS --max-time 2 "http://127.0.0.1:${PORT}/health" 2>/dev/null)"
@@ -209,7 +211,7 @@ while (( SECONDS < COUNT_DEADLINE )); do
 done
 
 if [[ "$COUNT_OK" -ne 1 ]]; then
-  echo "ERROR: /health vectors.count did not increase above BEFORE_COUNT=$BEFORE_COUNT within 30s after store" >&2
+  echo "ERROR: /health vectors.count did not increase above BEFORE_COUNT=$BEFORE_COUNT within 180s after store" >&2
   echo "  (first-boot model download ~25MB may need more time, or embed path is broken)" >&2
   echo "  last health body: ${LAST_BODY:-<empty>}" >&2
   echo "--- boot log ---" >&2
