@@ -491,6 +491,13 @@
   gap: 1px;
 }
 
+/* Left-anchored variant: the group-header create menu sits at the sidebar's
+   left edge, so the default right-aligned menu would extend past the window. */
+.snoozeMenuLeft {
+  right: auto;
+  left: 0;
+}
+
 .snoozeMenuItem {
   display: block;
   width: 100%;
