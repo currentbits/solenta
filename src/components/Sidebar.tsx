@@ -1323,6 +1323,21 @@ export function Sidebar({
     setMultiSelected(new Set());
   }, [multiSelected, onSetSettled, threads]);
 
+  /** Settle every attention thread (working ones skipped, same as batch settle). */
+  const runSettleAll = useCallback(async () => {
+    if (!onSetSettled || attentionThreads.length === 0) return;
+    const { toSettle, skippedWorking } = planBatchSettle(
+      attentionThreads.map((t) => t.id),
+      new Map(attentionThreads.map((t) => [t.id, t])),
+    );
+    for (const id of toSettle) {
+      await onSetSettled(id, "settled");
+    }
+    setBatchFeedback(
+      formatBatchSettleFeedback(toSettle.length, skippedWorking),
+    );
+  }, [attentionThreads, onSetSettled]);
+
   // Jump shortcuts + cmd index hints + keyboard sheet.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -2157,6 +2172,18 @@ export function Sidebar({
                   })()}
                 </span>
               </button>
+              {onSetSettled && attentionThreads.length > 0 && (
+                <button
+                  type="button"
+                  className={styles.settledClear}
+                  data-settle-all=""
+                  aria-label="Settle all threads"
+                  title="Settle every attention thread (running threads skipped)"
+                  onClick={() => void runSettleAll()}
+                >
+                  Settle all
+                </button>
+              )}
               {onClearSettled && (
                 <button
                   type="button"
