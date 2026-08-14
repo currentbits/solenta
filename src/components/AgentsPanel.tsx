@@ -1604,9 +1604,13 @@ export function AgentsContent({
 
   // Roles derive from handoffFrom: a thread WITH one is a Worker; a thread
   // another summary points to is an Orchestrator. Neither = plain session.
+  // Done workers drop out so a long orchestration does not pile finished
+  // rows under Team; failed / idle / working stay visible.
   const team = useMemo(() => {
     if (!thread || !summaries) return null;
-    const workers = summaries.filter((s) => s.handoffFrom === thread.id);
+    const workers = summaries.filter(
+      (s) => s.handoffFrom === thread.id && s.status !== "done",
+    );
     if (workers.length > 0) {
       return { kind: "orchestrator" as const, workers };
     }

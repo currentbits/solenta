@@ -159,4 +159,63 @@ describe("Agents team view", () => {
     assert.match(text, /Session/, "plain session card still renders");
     m.unmount();
   });
+
+  it("orchestrator: omits done workers from the team list", async () => {
+    const done = summary({
+      id: "t-done",
+      title: "Fork: already finished",
+      provider: "grok",
+      status: "done",
+      handoffFrom: "t-orch",
+    });
+    const failed = summary({
+      id: "t-fail",
+      title: "Fork: blew up",
+      provider: "grok",
+      status: "failed",
+      handoffFrom: "t-orch",
+    });
+    const idle = summary({
+      id: "t-idle",
+      title: "Fork: waiting to start",
+      provider: "claude",
+      status: "idle",
+      handoffFrom: "t-orch",
+    });
+    const m = await mount(
+      content(thread(), [ORCHESTRATOR, WORKER, done, failed, idle]),
+    );
+    await m.flush();
+
+    const text = m.text();
+    assert.match(text, /Fork: Plan the fix/, "working worker stays");
+    assert.match(text, /Fork: blew up/, "failed worker stays");
+    assert.match(text, /Fork: waiting to start/, "idle worker stays");
+    assert.doesNotMatch(text, /already finished/, "done worker is gone");
+    assert.ok(
+      m.query('[aria-label="Team"]'),
+      "team section still renders while live workers remain",
+    );
+    m.unmount();
+  });
+
+  it("orchestrator: no team section when every worker is done", async () => {
+    const done = summary({
+      id: "t-done",
+      title: "Fork: already finished",
+      provider: "grok",
+      status: "done",
+      handoffFrom: "t-orch",
+    });
+    const m = await mount(content(thread(), [ORCHESTRATOR, done]));
+    await m.flush();
+
+    const text = m.text();
+    assert.doesNotMatch(text, /Orchestrator/);
+    assert.doesNotMatch(text, /Worker/);
+    assert.doesNotMatch(text, /already finished/);
+    assert.equal(m.query('[aria-label="Team"]'), null);
+    assert.match(text, /Session/, "falls back to a plain session card");
+    m.unmount();
+  });
 });
