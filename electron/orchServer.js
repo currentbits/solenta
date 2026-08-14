@@ -196,13 +196,23 @@ function createToolHandlers(deps) {
       input.provider = String(args.provider);
     }
     const fork = forkThread(store, input);
+    // Orchestration worker: the runner auto-archives it when its run lands
+    // "done" so finished workers do not pile up in the sidebar (issue #14).
+    store.updateThread(fork.id, { orchWorker: true });
+    store.save();
     await runner.startRun({ threadId: fork.id, prompt: args.prompt });
     return { threadId: fork.id };
   }
 
   async function thread_send(args) {
-    if (!store.getThread(args.threadId)) {
+    const thread = store.getThread(args.threadId);
+    if (!thread) {
       throw new Error(`Unknown thread: ${args.threadId}`);
+    }
+    // Re-dispatched worker: unarchive so the new run is visible again.
+    if (thread.orchWorker && thread.archived) {
+      store.updateThread(args.threadId, { archived: false });
+      store.save();
     }
     await runner.startRun({ threadId: args.threadId, prompt: args.prompt });
     return { threadId: args.threadId };

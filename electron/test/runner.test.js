@@ -299,6 +299,20 @@ describe("runner simulated mode", () => {
     assert.ok(runner.getActiveWorkflow(thread.id));
   });
 
+  it("archives an orchestration worker thread when its run lands done", async () => {
+    const thread = store.getThreads()[0];
+    store.updateThread(thread.id, { orchWorker: true });
+    await runner.startRun({ threadId: thread.id, prompt: "worker task" });
+    await waitFor(() => {
+      const t = store.getThreads().find((x) => x.id === thread.id);
+      return t && t.status === "done";
+    });
+    await waitFor(() => {
+      const t = store.getThreads().find((x) => x.id === thread.id);
+      return t && t.archived === true;
+    });
+  });
+
   it("rejects startRun while a run is already active", async () => {
     const thread = store.getThreads()[0];
     await runner.startRun({ threadId: thread.id, prompt: "first" });
