@@ -148,7 +148,8 @@ for target in "${TARGETS[@]}"; do
   if [[ "$os" == "linux" ]]; then
     LIBC_FLAG=(--libc=glibc)
   fi
-  (cd "$APP_DIR/memory-server" && npm ci --omit=dev --no-audit --no-fund --os="$os" --cpu="$cpu" "${LIBC_FLAG[@]}" --loglevel=error)
+  # ${arr[@]+...}: bash 3.2 (macOS) treats an empty array as unbound under set -u.
+  (cd "$APP_DIR/memory-server" && npm ci --omit=dev --no-audit --no-fund --os="$os" --cpu="$cpu" ${LIBC_FLAG[@]+"${LIBC_FLAG[@]}"} --loglevel=error)
 
   # Prune: onnxruntime-web (browser WASM, unreachable from Node) and the
   # onnxruntime-node binaries for platforms this archive does not run on.
