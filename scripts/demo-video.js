@@ -1,7 +1,7 @@
 // Record a feature tour of the app with AppVideo, driving the real cursor.
 //
 // Usage:
-//   npx vite --port 5173 --strictPort          # dev build, devCoder mock data
+//   npm run dev:browser                        # devCoder fixtures, no Electron
 //   npx electron scripts/demo-video.js
 //
 // Why one script owns both halves: AppVideo records the real screen and moves
