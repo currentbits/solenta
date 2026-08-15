@@ -175,8 +175,117 @@ function fetchIssue(projectPath, ref) {
   }
 }
 
+/**
+ * Parse `gh issue list --json ...` stdout into PlanIssue rows.
+ * Rows missing a positive number, title, or url are dropped.
+ *
+ * @param {string} stdout
+ * @returns {{ number: number, title: string, url: string, state: "OPEN" | "CLOSED", labels: string[], updatedAt?: string }[]}
+ */
+function parseIssueListJson(stdout) {
+  let data;
+  try {
+    const trimmed = String(stdout || "").trim();
+    data = JSON.parse(trimmed === "" ? "[]" : trimmed);
+  } catch {
+    throw new Error("gh returned unparseable issue list JSON");
+  }
+  if (!Array.isArray(data)) {
+    throw new Error("gh returned incomplete issue list JSON");
+  }
+  const issues = [];
+  for (const row of data) {
+    const number = Number(row && row.number);
+    const title = row && row.title != null ? String(row.title) : "";
+    const url = row && row.url != null ? String(row.url) : "";
+    if (!Number.isInteger(number) || number <= 0 || !title || !url) continue;
+    const labels = Array.isArray(row.labels)
+      ? row.labels
+          .map((l) => (l && l.name != null ? String(l.name) : ""))
+          .filter(Boolean)
+      : [];
+    const issue = {
+      number,
+      title,
+      url,
+      state:
+        String(row.state || "").toUpperCase() === "CLOSED"
+          ? "CLOSED"
+          : "OPEN",
+      labels,
+    };
+    if (row.updatedAt != null && String(row.updatedAt).trim() !== "") {
+      issue.updatedAt = String(row.updatedAt);
+    }
+    issues.push(issue);
+  }
+  return issues;
+}
+
+/**
+ * Issues for a project checkout (Planboard). Never throws: missing gh, a
+ * non-GitHub remote, or auth failure come back as `{ ok: false, reason }`.
+ *
+ * @param {string} projectPath
+ * @returns {{ ok: true, issues: ReturnType<typeof parseIssueListJson> } | { ok: false, reason: string }}
+ */
+function listIssues(projectPath) {
+  const cwd = String(projectPath || "");
+  if (!cwd) {
+    return { ok: false, reason: "not a GitHub repo" };
+  }
+
+  const remote = gitTry(cwd, ["remote", "get-url", "origin"]);
+  if (!remote.ok) {
+    return { ok: false, reason: "not a GitHub repo" };
+  }
+  const originUrl = String(remote.stdout || "").trim();
+  if (!isGitHubRemote(originUrl)) {
+    return { ok: false, reason: "not a GitHub repo" };
+  }
+
+  const listed = ghTry(cwd, [
+    "issue",
+    "list",
+    "--state",
+    "all",
+    "--json",
+    "number,title,labels,state,url,updatedAt",
+    "--limit",
+    "100",
+  ]);
+  if (!listed.ok) {
+    if (listed.enoent) {
+      return { ok: false, reason: "gh missing" };
+    }
+    if (isGhAuthFailure(listed.stderr || listed.combined || listed.stdout)) {
+      return { ok: false, reason: "auth" };
+    }
+    return {
+      ok: false,
+      reason: tailErr(
+        listed.stderr || listed.combined,
+        "gh issue list failed",
+      ),
+    };
+  }
+  try {
+    return { ok: true, issues: parseIssueListJson(listed.stdout) };
+  } catch (err) {
+    return {
+      ok: false,
+      reason:
+        err && err.message
+          ? String(err.message)
+          : "gh returned unparseable issue list JSON",
+    };
+  }
+}
+
 module.exports = {
   parseIssueRef,
   fetchIssue,
+  listIssues,
+  parseIssueListJson,
   ownerRepoFromRemote,
 };

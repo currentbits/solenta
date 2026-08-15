@@ -162,8 +162,15 @@ interface SidebarProps {
     opts?: { provider?: string },
   ) => void | Promise<void>;
   /** Which main view is showing. Defaults to thread so existing callers stay idle. */
-  activeView?: "thread" | "kanban" | "prs" | "automations" | "activity";
+  activeView?:
+    | "thread"
+    | "kanban"
+    | "planboard"
+    | "prs"
+    | "automations"
+    | "activity";
   onOpenKanban?: () => void;
+  onOpenPlanboard?: () => void;
   onOpenPrs?: () => void;
   /**
    * Paste a GitHub issue into this project. Omitted by existing tests so
@@ -964,6 +971,7 @@ export function Sidebar({
   onFork,
   activeView = "thread",
   onOpenKanban,
+  onOpenPlanboard,
   onOpenPrs,
   onCreateThreadFromIssue,
   onOpenAutomations,
@@ -1812,6 +1820,33 @@ export function Sidebar({
             </svg>
           </span>
           Kanban
+        </button>
+        <button
+          type="button"
+          className={styles.viewNavRow}
+          data-view-nav="planboard"
+          data-active={activeView === "planboard" ? "true" : undefined}
+          title="Planboard"
+          onClick={() => onOpenPlanboard?.()}
+        >
+          <span className={styles.viewNavIcon} aria-hidden>
+            <svg
+              width="15"
+              height="15"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <rect x="1.75" y="1.75" width="12.5" height="12.5" rx="1.5" />
+              <path d="M4.75 5.25h6.5" />
+              <path d="M4.75 8h4.5" />
+              <path d="M4.75 10.75h2.5" />
+            </svg>
+          </span>
+          Planboard
         </button>
         <button
           type="button"

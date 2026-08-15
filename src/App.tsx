@@ -4,6 +4,7 @@ import { Sidebar } from "./components/Sidebar";
 import { ThreadView } from "./components/ThreadView";
 import { PrListView } from "./components/PrListView";
 import { KanbanView } from "./components/KanbanView";
+import { PlanboardView } from "./components/PlanboardView";
 import { AutomationsView } from "./components/AutomationsView";
 import { ActivityView } from "./components/ActivityView";
 import { AgentsPanel } from "./components/AgentsPanel";
@@ -16,7 +17,13 @@ import { isWebMode } from "./shared/wire";
 import type { ProjectUpdateInput } from "./shared/ipc";
 import styles from "./App.module.css";
 
-export type AppView = "thread" | "kanban" | "prs" | "automations" | "activity";
+export type AppView =
+  | "thread"
+  | "kanban"
+  | "planboard"
+  | "prs"
+  | "automations"
+  | "activity";
 
 export default function App() {
   const {
@@ -62,6 +69,7 @@ export default function App() {
     listFiles,
     pushBranch,
     listPrs,
+    listIssues,
     listActivity,
     listThreadSummaries,
     listCheckpoints,
@@ -338,6 +346,7 @@ export default function App() {
         onSelectThread={handleSelectThread}
         activeView={view}
         onOpenKanban={() => setView("kanban")}
+        onOpenPlanboard={() => setView("planboard")}
         onOpenPrs={() => setView("prs")}
         onOpenAutomations={() => setView("automations")}
         onOpenActivity={() => setView("activity")}
@@ -411,6 +420,8 @@ export default function App() {
                 await runAutomationNow(id);
               }}
             />
+          ) : view === "planboard" ? (
+            <PlanboardView projects={projects} listIssues={listIssues} />
           ) : view === "kanban" ? (
             <KanbanView
               threads={threads}
