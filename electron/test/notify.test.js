@@ -29,6 +29,15 @@ describe("shouldNotify", () => {
     assert.equal(shouldNotify("waiting", "failed", false), true);
   });
 
+  it("notifies a background failure with no live run (issue #34)", () => {
+    // Budget-gated orchestrator wake-up: the thread was idle/done, not working.
+    assert.equal(shouldNotify("done", "failed", false), true);
+    assert.equal(shouldNotify("idle", "failed", false), true);
+    assert.equal(shouldNotify("done", "failed", true), false);
+    // One failure, one notification.
+    assert.equal(shouldNotify("failed", "failed", false), false);
+  });
+
   it("does not notify other status transitions", () => {
     assert.equal(shouldNotify("working", "working", false), false);
     assert.equal(shouldNotify("working", "idle", false), false);

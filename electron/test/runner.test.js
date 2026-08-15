@@ -492,6 +492,53 @@ describe("runner simulated mode", () => {
     await waitFor(() => store.getThread(worker.id).archived === true);
   });
 
+  it("an undeliverable wake-up lands the orchestrator failed with the reason (issue #34)", async () => {
+    // Manual timers so the daily cap can trip while the worker is in flight:
+    // the run that gets rejected is the orchestrator wake-up, not the worker.
+    const timers = new Map();
+    let nextTimerId = 0;
+    const manual = createRunner({
+      store,
+      core,
+      pushFn: () => {},
+      tickMs: 15,
+      setIntervalFn: (fn) => {
+        const id = ++nextTimerId;
+        timers.set(id, fn);
+        return id;
+      },
+      clearIntervalFn: (id) => timers.delete(id),
+    });
+    try {
+      const { orch, worker } = orchPair(store);
+      await manual.startRun({ threadId: worker.id, prompt: "worker task" });
+      services.setSettings(store, { dailyBudgetUsd: 1 });
+      store.recordSpend(1);
+      store.saveNow();
+
+      for (let i = 0; i < 500; i++) {
+        if (store.getThread(worker.id).status === "done") break;
+        const fn = timers.get(1);
+        if (!fn) break;
+        fn();
+      }
+      assert.equal(store.getThread(worker.id).status, "done");
+
+      // The rejection lands on a microtask after the terminal.
+      await waitFor(() => store.getThread(orch.id).status === "failed");
+      const msgs = store.getMessages(orch.id) || [];
+      const last = msgs[msgs.length - 1];
+      assert.equal(last.role, "event");
+      assert.match(last.text, /^\[orchestration\]/);
+      assert.match(last.text, new RegExp(worker.id));
+      assert.match(last.text, /Not delivered: Daily budget reached/);
+      // Never silently started anyway.
+      assert.equal(msgs.filter((m) => m.role === "user").length, 0);
+    } finally {
+      manual.stopAll();
+    }
+  });
+
   it("stopping an orchestrator stops its crew and stays stopped", async () => {
     const { orch, worker } = orchPair(store);
     await runner.startRun({ threadId: worker.id, prompt: "worker task" });

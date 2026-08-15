@@ -572,12 +572,22 @@ function createRunner(opts) {
       "[orchestration] " +
       notes.join("\n") +
       "\nContinue orchestrating; thread_status has full details.";
-    startRun({ threadId, prompt }).catch(() => {
-      // Undeliverable (budget gate, missing CLI, already active): leave a
-      // visible trace so the orchestrator still sees the notice.
+    startRun({ threadId, prompt }).catch((err) => {
+      // Undeliverable (budget gate, missing CLI): the orchestration stops
+      // advancing right here, so say why and land the thread "failed" —
+      // that badges the sidebar, arms "Retry turn", and fires the desktop
+      // notification (issue #34). A quiet event alone reads as "still going".
       try {
-        appendMessage(threadId, "event", prompt);
+        const reason = err && err.message ? String(err.message) : String(err);
+        appendMessage(threadId, "event", `${prompt}\n\nNot delivered: ${reason}`);
+        // A run that raced in after the active guard above owns the status;
+        // only an idle orchestrator is really stalled.
+        if (!active.has(threadId)) {
+          store.updateThread(threadId, { status: "failed" }, { touch: true });
+        }
         store.save();
+        pushDetail(threadId, lastWorkflowByThread.get(threadId) || null);
+        pushThreadsChanged();
       } catch {
         // silent
       }
