@@ -498,6 +498,8 @@ function syncLabel(info: GitSyncInfo): string | null {
 
 const SERVER_POLL_MS = 5_000;
 const DEV_SERVER_POLL_MS = 3_000;
+/** Team-view lastActivity refresh while any thread is working. */
+const SUMMARY_POLL_MS = 2_000;
 
 function formatDevRuntime(startedAt: number, now: number): string {
   const sec = Math.max(0, Math.floor((now - startedAt) / 1000));
@@ -1582,25 +1584,35 @@ export function AgentsContent({
     setManual({});
   }, [workflow?.id]);
 
-  // Team view data. Refetches when the thread list changes (a worker's
-  // status or lastActivity moves with it); null when no fetcher is wired.
+  // Team view data. The `threads` array gets a new identity on every stream
+  // event, so key the refetch on ids + statuses instead; lastActivity is kept
+  // fresh by a slow poll while something is working. Null when no fetcher.
+  // ponytail: poll, not per-event; summaries walk every thread's messages.
+  const rosterKey = (threads ?? []).map((t) => `${t.id}:${t.status}`).join(",");
   useEffect(() => {
     if (!listThreadSummaries) {
       setSummaries(null);
       return;
     }
     let cancelled = false;
-    listThreadSummaries()
-      .then((list) => {
-        if (!cancelled) setSummaries(list);
-      })
-      .catch(() => {
-        if (!cancelled) setSummaries(null);
-      });
+    const fetch = () =>
+      listThreadSummaries()
+        .then((list) => {
+          if (!cancelled) setSummaries(list);
+        })
+        .catch(() => {
+          if (!cancelled) setSummaries(null);
+        });
+    void fetch();
+    const working = rosterKey.includes(":working");
+    const id = working
+      ? window.setInterval(() => void fetch(), SUMMARY_POLL_MS)
+      : null;
     return () => {
       cancelled = true;
+      if (id !== null) window.clearInterval(id);
     };
-  }, [listThreadSummaries, threads]);
+  }, [listThreadSummaries, rosterKey]);
 
   // Roles derive from handoffFrom: a thread WITH one is a Worker; a thread
   // another summary points to is an Orchestrator. Neither = plain session.
