@@ -1557,3 +1557,91 @@ describe("Sidebar new-thread reveal (t3: new work must be visible)", () => {
     m2.unmount();
   });
 });
+
+describe("Sidebar waiting-on badge (issue #42)", () => {
+  const ORCH = thread({
+    id: "orch",
+    title: "orchestrate the fix",
+    status: "done",
+    updatedAt: FRESH,
+  });
+  const worker = (over: Partial<ThreadInfo> & Pick<ThreadInfo, "id">) =>
+    thread({
+      handoffFrom: "orch",
+      status: "working",
+      runStartedAt: FRESH - 3 * 60 * 1000,
+      updatedAt: FRESH,
+      ...over,
+    });
+
+  it("an orchestrator with live workers says what it is waiting on", async () => {
+    await clearSidebarStorage();
+    const m = await mount(
+      sidebar([ORCH, worker({ id: "w1" }), worker({ id: "w2" })]),
+    );
+
+    const badge = m.query('[data-wait-badge="orch"]');
+    assert.ok(badge, "orchestrator card carries the wait badge");
+    assert.match(badge!.textContent || "", /Waiting on 2 workers · 3m/);
+    assert.equal(
+      badge!.getAttribute("data-attention"),
+      null,
+      "nothing blocked: quiet styling",
+    );
+    assert.match(badge!.getAttribute("title") || "", /w1/, "tooltip names workers");
+    assert.equal(
+      m.query('[data-wait-badge="w1"]'),
+      null,
+      "a leaf worker waits on nothing",
+    );
+    m.unmount();
+  });
+
+  it("a worker blocked on a prompt turns the badge into attention", async () => {
+    await clearSidebarStorage();
+    const m = await mount(
+      sidebar([ORCH, worker({ id: "w1", awaitingInput: true })]),
+    );
+
+    const badge = m.query('[data-wait-badge="orch"]');
+    assert.match(badge!.textContent || "", /1 blocked/);
+    assert.equal(badge!.getAttribute("data-attention"), "true");
+    assert.match(badge!.getAttribute("title") || "", /blocked on you/);
+    m.unmount();
+  });
+
+  it("no badge once the fan-out lands", async () => {
+    await clearSidebarStorage();
+    const m = await mount(
+      sidebar([ORCH, worker({ id: "w1", status: "done", runStartedAt: null })]),
+    );
+    assert.equal(m.query('[data-wait-badge="orch"]'), null);
+    m.unmount();
+  });
+
+  it("in-agent subagents count too, without a false elapsed", async () => {
+    await clearSidebarStorage();
+    const m = await mount(
+      sidebar([
+        thread({
+          id: "solo",
+          status: "working",
+          runStartedAt: FRESH,
+          subagents: [
+            {
+              id: "toolu_1",
+              description: "Background research",
+              agentType: "general-purpose",
+              status: "running",
+            },
+          ],
+        }),
+      ]),
+    );
+
+    const badge = m.query('[data-wait-badge="solo"]');
+    assert.equal(badge!.textContent, "Waiting on 1 worker");
+    assert.match(badge!.getAttribute("title") || "", /Background research/);
+    m.unmount();
+  });
+});

@@ -28,6 +28,7 @@ import {
   shortSessionId,
 } from "../format";
 import { contextRing, contextWindowFor } from "../contextRing";
+import { buildWaitStates, waitLabel, type WaitState } from "../waiting";
 import { MemoryTab } from "./MemoryTab";
 import { SkillsTab } from "./SkillsTab";
 import styles from "./AgentsPanel.module.css";
@@ -1542,8 +1543,19 @@ function TeamRow({
           {providerDisplayName(summary.provider, providers)}
         </span>
         <span className={styles.teamTitle}>{summary.title}</span>
-        <span className={styles.teamStatus} data-status={summary.status}>
-          {summary.status}
+        {/* A worker stalled on a permission prompt still reads "working"
+            (issue #31) — call it out so a stuck fan-out is obvious here. */}
+        <span
+          className={styles.teamStatus}
+          data-status={
+            summary.status === "working" && summary.awaitingInput
+              ? "waiting"
+              : summary.status
+          }
+        >
+          {summary.status === "working" && summary.awaitingInput
+            ? "waiting"
+            : summary.status}
         </span>
         {summary.lastActivity && (
           <span className={styles.teamActivity}>
@@ -1552,6 +1564,24 @@ function TeamRow({
         )}
       </button>
     </li>
+  );
+}
+
+/**
+ * "Waiting on 2 · 3m · 1 blocked" above a roster (issue #42): the thread
+ * handed work off and cannot move until it comes back.
+ * ponytail: elapsed refreshes on the summaries poll (2s while anything is
+ * working), so no clock of its own.
+ */
+function WaitLine({ wait }: { wait: WaitState }) {
+  return (
+    <div
+      className={styles.waitLine}
+      data-wait-line=""
+      data-attention={wait.blocked > 0 ? "true" : undefined}
+    >
+      {waitLabel(wait, Date.now())}
+    </div>
   );
 }
 
@@ -1641,10 +1671,21 @@ export function AgentsContent({
   // record. Not threads — rows render without navigation. The running →
   // "working" map reuses the existing status badge styling.
   const subagents = thread?.subagents ?? [];
+
+  // What this thread is blocked on right now: live worker forks (from the
+  // summaries roster) plus its own running subagents. The thread's own row in
+  // summaries is swapped for the ThreadInfo so the subagents come along.
+  const wait = useMemo(() => {
+    if (!thread || !summaries) return null;
+    const rows = summaries.filter((s) => s.id !== thread.id);
+    return buildWaitStates([...rows, thread]).get(thread.id) ?? null;
+  }, [thread, summaries]);
   const subagentSection =
     subagents.length > 0 ? (
       <section className={styles.teamSection} aria-label="Subagents">
         <div className={styles.sessionLabel}>Subagents</div>
+        {/* Orchestrators show the wait line above their Team roster instead. */}
+        {!team && wait && <WaitLine wait={wait} />}
         <ul className={styles.teamList}>
           {subagents.map((s) => (
             <TeamRow
@@ -1655,6 +1696,7 @@ export function AgentsContent({
                 provider: s.agentType ?? (thread?.provider || "claude"),
                 status: s.status === "running" ? "working" : s.status,
                 handoffFrom: null,
+                runStartedAt: null,
                 lastActivity: null,
               }}
               role="Subagent"
@@ -1720,6 +1762,7 @@ export function AgentsContent({
           />
           <section className={styles.teamSection} aria-label="Team">
             <div className={styles.sessionLabel}>Team</div>
+            {wait && <WaitLine wait={wait} />}
             <ul className={styles.teamList}>
               {team.workers.map((w) => (
                 <TeamRow

@@ -55,19 +55,28 @@ describe("threads summaries", () => {
         provider: "grok",
         status: "working",
         handoffFrom: "orch",
+        runStartedAt: 90,
+        awaitingInput: true,
       }),
     ]);
     const rows = services.threadSummaries(store);
     assert.equal(rows.length, 2);
     const work = rows.find((r) => r.id === "work");
+    // runStartedAt + awaitingInput ride along so the Agents panel can render
+    // "waiting on N · elapsed" and flag a blocked worker (issue #42).
     assert.deepEqual(work, {
       id: "work",
       title: "Fork: Plan",
       provider: "grok",
       status: "working",
       handoffFrom: "orch",
+      runStartedAt: 90,
+      awaitingInput: true,
       lastActivity: null,
     });
+    const orch = rows.find((r) => r.id === "orch");
+    assert.equal(orch.runStartedAt, null);
+    assert.equal(orch.awaitingInput, false);
   });
 
   it("lastActivity is the first line of the LAST assistant message", () => {
