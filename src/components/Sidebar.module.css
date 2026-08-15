@@ -1009,6 +1009,26 @@
   border: 1px solid rgba(248, 113, 113, 0.35);
 }
 
+/* "Waiting on 2 workers · 3m" (issue #42): its own line under the meta row,
+   so the count survives on a narrow card. Amber when a child is blocked on
+   the user — that wait needs an answer, not patience. */
+.waitRow {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 3px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--text-dim);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.waitRow[data-attention="true"] {
+  color: #fbbf24;
+}
+
 .group {
   display: flex;
   flex-direction: column;

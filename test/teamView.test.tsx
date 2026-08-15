@@ -75,6 +75,7 @@ function summary(over: Partial<ThreadSummaryInfo> = {}): ThreadSummaryInfo {
     provider: "claude",
     status: "idle",
     handoffFrom: null,
+    runStartedAt: null,
     lastActivity: null,
     ...over,
   };
@@ -280,6 +281,52 @@ describe("Agents team view", () => {
     await m.click(m.byText("work"));
     await m.flush();
     assert.equal(calls, 2, "a status change still refetches");
+    m.unmount();
+  });
+
+  it("orchestrator: says it is waiting, for how long, on what (issue #42)", async () => {
+    const running = summary({
+      id: "t-work",
+      title: "Fork: Plan the fix",
+      provider: "grok",
+      status: "working",
+      handoffFrom: "t-orch",
+      runStartedAt: Date.now() - 3 * 60 * 1000,
+    });
+    const blocked = summary({
+      id: "t-block",
+      title: "Fork: needs a yes",
+      provider: "grok",
+      status: "working",
+      handoffFrom: "t-orch",
+      awaitingInput: true,
+      runStartedAt: Date.now() - 60 * 1000,
+    });
+    const m = await mount(content(thread(), [ORCHESTRATOR, running, blocked]));
+    await m.flush();
+
+    const line = m.query("[data-wait-line]");
+    assert.ok(line, "wait line renders above the roster");
+    assert.match(line!.textContent || "", /Waiting on 2 workers · 3m · 1 blocked/);
+    assert.equal(line!.getAttribute("data-attention"), "true");
+    assert.match(
+      m.text(),
+      /waiting/,
+      "the stalled worker's row reads waiting, not working",
+    );
+    m.unmount();
+  });
+
+  it("no wait line once every worker has landed", async () => {
+    const done = summary({
+      id: "t-done",
+      title: "Fork: finished",
+      status: "done",
+      handoffFrom: "t-orch",
+    });
+    const m = await mount(content(thread(), [ORCHESTRATOR, done]));
+    await m.flush();
+    assert.equal(m.query("[data-wait-line]"), null);
     m.unmount();
   });
 

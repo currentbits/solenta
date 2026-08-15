@@ -13,20 +13,25 @@ export function formatRelativeAge(updatedAt: number, now = Date.now()): string {
   return `${days}d`;
 }
 
+/** Elapsed duration since a unix-ms stamp: "12s", "3m", "1h 4m". */
+export function formatElapsed(from: number, now = Date.now()): string {
+  const diff = Math.max(0, now - from);
+  const seconds = Math.floor(diff / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const remMin = minutes % 60;
+  if (remMin === 0) return `${hours}h`;
+  return `${hours}h ${remMin}m`;
+}
+
 /**
  * Elapsed working label from runStartedAt.
  * Examples: "Working 12s", "Working 3m", "Working 1h 4m".
  */
 export function formatWorkingLabel(runStartedAt: number, now = Date.now()): string {
-  const diff = Math.max(0, now - runStartedAt);
-  const seconds = Math.floor(diff / 1000);
-  if (seconds < 60) return `Working ${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `Working ${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  const remMin = minutes % 60;
-  if (remMin === 0) return `Working ${hours}h`;
-  return `Working ${hours}h ${remMin}m`;
+  return `Working ${formatElapsed(runStartedAt, now)}`;
 }
 
 /** Token sum like "Σ 52.0k". */

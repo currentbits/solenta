@@ -206,6 +206,22 @@
   flex-shrink: 0;
 }
 
+/* "Waiting on 2 · 3m" above the roster (issue #42). */
+.waitLine {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+.waitLine[data-attention="true"] {
+  color: #fbbf24;
+}
+
+.teamStatus[data-status="waiting"] {
+  color: #fbbf24;
+  border-color: rgba(251, 191, 36, 0.45);
+}
+
 .teamStatus[data-status="working"] {
   color: var(--blue);
   border-color: rgba(59, 130, 246, 0.4);
