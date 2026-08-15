@@ -16,8 +16,10 @@ const MAX_BODY_BYTES = 1024 * 1024;
 const INSTRUCTIONS =
   "Solenta thread orchestrator: drive other agent threads in this Solenta workspace. " +
   "threads_list shows every thread with id, title, provider, status and handoffFrom. " +
-  "thread_fork copies a thread into a new one (optionally on a different provider) " +
-  "and starts it on your prompt; the worker runs in its own git worktree and branch " +
+  "thread_fork starts a new thread (optionally on a different provider) on your " +
+  "prompt; the worker does NOT inherit the source session, only a truncated digest " +
+  "of its last messages, so write a self-contained prompt with every fact the worker " +
+  "needs. The worker runs in its own git worktree and branch " +
   "so parallel workers never edit the same files (pass worktree:false to share the " +
   "project checkout, and merge a worker's branch when its work lands). " +
   "thread_send starts a run with your prompt on an " +
@@ -334,6 +336,8 @@ function buildMcpServer(sdk, handlers) {
     {
       description:
         "Fork a thread into a new one (optionally on another provider) and start it on prompt. " +
+        "The fork carries only a truncated digest of the source thread's last messages, not the " +
+        "whole conversation — the prompt must be self-contained. " +
         "The worker gets its own git worktree so parallel workers never edit the same files; " +
         "pass worktree:false to run it in the project checkout instead. Returns the new threadId.",
       inputSchema: {
