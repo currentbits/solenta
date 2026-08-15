@@ -3421,11 +3421,67 @@ function createRunner(opts) {
   }
 
   /**
-   * @param {{ threadId: string }} input
+   * Stop is sacred (issue #32): stopping an orchestrator takes its crew with
+   * it. Depth-first, so a worker that is itself an orchestrator brings its own
+   * crew down too. Every stopped worker lands as "stopped", which queues no
+   * wake-up notice, and pending ones are demoted to an event once the crew is
+   * down, so nothing restarts the orchestrator the user just stopped.
+   * @param {string} threadId - the orchestrator being stopped
+   * @param {Set<string>} seen - guards a handoffFrom cycle
+   * @returns {Promise<{ stopped: number, traced: boolean }>} workers whose
+   *   live run was stopped, and whether a notice trace was written
    */
-  async function stopRun(input) {
+  async function stopCrew(threadId, seen) {
+    if (seen.has(threadId)) return { stopped: 0, traced: false };
+    seen.add(threadId);
+    const crew = store
+      .getThreads()
+      .filter((t) => t.orchWorker && String(t.handoffFrom) === threadId);
+    let stopped = 0;
+    for (const worker of crew) {
+      const id = String(worker.id);
+      const wasActive = active.has(id);
+      await stopRun({ threadId: id }, seen);
+      if (wasActive) stopped++;
+    }
+    const pending = orchNotices.get(threadId);
+    orchNotices.delete(threadId);
+    if (pending && pending.length > 0) {
+      // Same trace as flushOrchNotices' undeliverable path: the orchestrator
+      // still sees what its crew did, as an event that starts no run.
+      appendMessage(threadId, "event", "[orchestration] " + pending.join("\n"));
+    }
+    return { stopped, traced: !!(pending && pending.length > 0) };
+  }
+
+  /**
+   * @param {{ threadId: string }} input
+   * @param {Set<string>} [seen] - internal: crew cascade cycle guard
+   */
+  async function stopRun(input, seen = new Set()) {
     const { threadId } = input;
+    // Cascade first: a worker outliving its stopped orchestrator keeps
+    // burning tokens and re-wakes the parent through queueOrchNotice. Doing
+    // it before this thread's own terminal also means a notice that races in
+    // during the kills is stopped again by the run below.
+    const crew = await stopCrew(String(threadId), seen);
+    if (crew.stopped > 0) {
+      const own = active.get(threadId);
+      appendMessage(
+        threadId,
+        "event",
+        `Stopped ${crew.stopped} worker thread${crew.stopped === 1 ? "" : "s"}`,
+        own ? own.runId : null,
+      );
+    }
     if (!active.has(threadId)) {
+      // Idle orchestrator whose crew was still running: no terminal follows,
+      // so publish the crew-stop events here.
+      if (crew.stopped > 0 || crew.traced) {
+        store.save();
+        pushDetail(threadId, lastWorkflowByThread.get(threadId) || null);
+        pushThreadsChanged();
+      }
       return;
     }
 
