@@ -437,8 +437,10 @@ function isKnownProviderId(id) {
   );
 }
 
-/** Max chars of the source assistant message injected into a hand-off prefix. */
-const HANDOFF_ASSISTANT_MAX = 2000;
+/** Hand-off digest limits: chars per message, messages kept, chars total. */
+const HANDOFF_MESSAGE_MAX = 2000;
+const HANDOFF_MESSAGE_COUNT = 12;
+const HANDOFF_TOTAL_MAX = 12000;
 
 /**
  * Standing note appended to every dispatched prompt (CLI-only, never stored
@@ -479,9 +481,14 @@ function planboardNoteFor(projectPath) {
 }
 
 /**
- * One-time hand-off context prefix for the CLI (NOT stored in the transcript).
+ * One-time hand-off context prefix for the CLI (NOT stored in the transcript):
+ * a digest of the tail of the source thread, newest-last, each message capped.
  * Returns "" when no prefix applies: no handoffFrom, session already exists,
  * source missing/deleted, or source has no assistant message.
+ *
+ * ponytail: tail digest, not a summary — a fork still needs a self-contained
+ * prompt (the MCP tool description says so). Summarize here only if the tail
+ * proves too thin in practice.
  *
  * Strings are mirrored in src/devCoder.ts (services-level helper + dev twin —
  * the established pattern for shared electron/dev logic).
@@ -505,24 +512,36 @@ function buildHandoffPrefix(thread, getMessages) {
   }
   if (!Array.isArray(msgs) || msgs.length === 0) return "";
 
-  let lastAssistant = null;
-  for (let i = msgs.length - 1; i >= 0; i--) {
-    const m = msgs[i];
-    if (m && m.role === "assistant" && m.text != null && String(m.text)) {
-      lastAssistant = String(m.text);
-      break;
-    }
+  if (
+    !msgs.some(
+      (m) => m && m.role === "assistant" && m.text != null && String(m.text),
+    )
+  ) {
+    return "";
   }
-  if (!lastAssistant) return "";
 
-  const body =
-    lastAssistant.length > HANDOFF_ASSISTANT_MAX
-      ? lastAssistant.slice(0, HANDOFF_ASSISTANT_MAX)
-      : lastAssistant;
+  const picked = [];
+  let total = 0;
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    if (picked.length >= HANDOFF_MESSAGE_COUNT) break;
+    const m = msgs[i];
+    if (!m || (m.role !== "assistant" && m.role !== "user")) continue;
+    const text = m.text == null ? "" : String(m.text);
+    if (!text) continue;
+    const body =
+      text.length > HANDOFF_MESSAGE_MAX
+        ? text.slice(0, HANDOFF_MESSAGE_MAX) + "\n[…truncated]"
+        : text;
+    if (picked.length && total + body.length > HANDOFF_TOTAL_MAX) break;
+    picked.push(`${m.role}: ${body}`);
+    total += body.length;
+  }
+  picked.reverse();
 
   return (
-    "[Hand-off context from a previous thread]\n" +
-    body +
+    "[Hand-off context: the last messages of the source thread, truncated — " +
+    "not the full transcript]\n" +
+    picked.join("\n\n") +
     "\n[End context]\n\n"
   );
 }
@@ -1712,10 +1731,11 @@ module.exports = {
   setProvider,
   // normalizeModelForProvider / isKnownProviderId / truncateThreadTitle stay
   // module-private (round-49 review A-n2: dead exports). Tests use
-  // THREAD_TITLE_MAX / HANDOFF_ASSISTANT_MAX / buildHandoffPrefix.
+  // THREAD_TITLE_MAX / HANDOFF_MESSAGE_MAX / buildHandoffPrefix.
   buildHandoffPrefix,
   THREAD_TITLE_MAX,
-  HANDOFF_ASSISTANT_MAX,
+  HANDOFF_MESSAGE_MAX,
+  HANDOFF_MESSAGE_COUNT,
   PLANBOARD_NOTE,
   planboardNoteFor,
   setArchived,
