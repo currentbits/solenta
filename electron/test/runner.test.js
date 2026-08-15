@@ -492,6 +492,29 @@ describe("runner simulated mode", () => {
     await waitFor(() => store.getThread(worker.id).archived === true);
   });
 
+  it("stopping an orchestrator stops its crew and stays stopped", async () => {
+    const { orch, worker } = orchPair(store);
+    await runner.startRun({ threadId: worker.id, prompt: "worker task" });
+    await runner.startRun({ threadId: orch.id, prompt: "orchestrate" });
+    assert.equal(runner.isRunning(worker.id), true);
+
+    await runner.stopRun({ threadId: orch.id });
+
+    assert.equal(runner.isRunning(worker.id), false, "crew must stop too");
+    assert.equal(store.getThread(worker.id).status, "idle");
+    assert.equal(store.getThread(orch.id).status, "idle");
+    assert.ok(
+      (store.getMessages(orch.id) || []).some(
+        (m) => m.role === "event" && /Stopped 1 worker thread$/.test(m.text),
+      ),
+      "orchestrator records the crew stop",
+    );
+    // Stop is sacred: no worker terminal re-wakes the orchestrator.
+    await new Promise((r) => setTimeout(r, 150));
+    assert.equal(orchNoticeMessages(store, orch.id).length, 0);
+    assert.equal(store.getThread(orch.id).status, "idle");
+  });
+
   it("does not wake the parent for a regular fork without orchWorker", async () => {
     const orch = store.getThreads()[0];
     store.updateThread(orch.id, { title: "Orchestrator" });
@@ -869,7 +892,7 @@ describe("runner real agent mode", () => {
     assert.equal(agent.model, path.basename(process.execPath));
   });
 
-  it("queues the notice while the orchestrator is mid-run, then delivers on stop", async () => {
+  it("queues the notice while the orchestrator is mid-run, then traces it on stop", async () => {
     process.env.CODER_AGENT_CMD = `${process.execPath} -e ${fakeAgentSlowScript()}`;
     const { orch, worker } = orchPair(store);
     await runner.startRun({ threadId: orch.id, prompt: "still planning" });
@@ -892,10 +915,19 @@ describe("runner real agent mode", () => {
     await runner.stopRun({ threadId: orch.id });
     await waitFor(() => orchNoticeMessages(store, orch.id).length > 0);
     const notice = orchNoticeMessages(store, orch.id)[0];
-    assert.equal(notice.role, "user");
+    // Stop is sacred (issue #32): the result is visible as an event, but it
+    // starts no run — a stopped orchestrator stays stopped.
+    assert.equal(notice.role, "event");
     assert.match(notice.text, new RegExp(worker.id));
     assert.match(notice.text, /status done/);
     assert.match(notice.text, /Last reply: Hello_from_agent/);
+    await new Promise((r) => setTimeout(r, 150));
+    assert.equal(store.getThread(orch.id).status, "idle");
+    assert.equal(
+      (store.getMessages(orch.id) || []).filter((m) => m.role === "user").length,
+      1,
+      "no wake-up run on a stopped orchestrator",
+    );
   });
 
   it("wakes an idle orchestrator when an orchWorker run fails", async () => {
