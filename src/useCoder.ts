@@ -36,6 +36,7 @@ import type {
 import { resolveCoderApi } from "./coderApi";
 import { isWebMode } from "./shared/wire";
 import { nextVisibleThreadId } from "./threadSelection";
+import { mergeThreadPatch } from "./threadPatch";
 
 const STATUS_POLL_MS = 60_000;
 
@@ -308,10 +309,40 @@ export function useCoder(): UseCoderResult {
   const threadsRef = useRef<ThreadInfo[]>([]);
   /** Prior status by thread id; used to detect working → settled for spend refresh. */
   const prevStatusRef = useRef<Map<string, ThreadInfo["status"]>>(new Map());
+  /** Open detail, for merging streamed tails (thread:updated is a ThreadPatch). */
+  const detailRef = useRef<ThreadDetail | null>(null);
+  /** Threads with a full-detail refetch in flight, so pushes can't storm it. */
+  const refetchRef = useRef<Set<string>>(new Set());
+  /** Last thread:updated seq per thread; a gap means pushes were dropped. */
+  const patchSeqRef = useRef<Map<string, number>>(new Map());
 
   useEffect(() => {
     selectedRef.current = selectedThreadId;
   }, [selectedThreadId]);
+
+  useEffect(() => {
+    detailRef.current = detail;
+  }, [detail]);
+
+  /** Refetch the whole transcript after a patch could not be merged. */
+  const reloadDetail = useCallback(
+    (threadId: string) => {
+      if (refetchRef.current.has(threadId)) return;
+      refetchRef.current.add(threadId);
+      void api.threads
+        .get(threadId)
+        .then((d) => {
+          if (selectedRef.current === threadId) setDetail(d);
+        })
+        .catch(() => {
+          // Best effort; the next mergeable push repairs the view.
+        })
+        .finally(() => {
+          refetchRef.current.delete(threadId);
+        });
+    },
+    [api],
+  );
 
   const applyThreads = useCallback((next: ThreadInfo[]) => {
     threadsRef.current = next;
@@ -392,8 +423,22 @@ export function useCoder(): UseCoderResult {
           t.id === next.thread.id ? next.thread : t,
         ),
       );
+      const lastSeq = patchSeqRef.current.get(next.thread.id);
+      if (next.seq != null) patchSeqRef.current.set(next.thread.id, next.seq);
+      // A gap means a push was dropped (web reconnect): the prefix we hold may
+      // be stale, so refetch rather than merge onto it.
+      const dropped =
+        next.seq != null && lastSeq != null && next.seq !== lastSeq + 1;
       if (selectedRef.current === next.thread.id) {
-        setDetail(next);
+        const open = detailRef.current;
+        if (open && open.thread.id === next.thread.id) {
+          const merged = dropped ? null : mergeThreadPatch(open, next);
+          if (merged) setDetail(merged);
+          else reloadDetail(next.thread.id);
+        } else if (!next.messagesFrom && !next.workLogFrom) {
+          setDetail(next);
+        }
+        // Nothing open and only a tail: the in-flight threads.get lands it.
       }
       // Refresh spend when a thread leaves "working" (run finished or stopped).
       if (prev === "working" && next.thread.status !== "working") {
@@ -456,7 +501,7 @@ export function useCoder(): UseCoderResult {
       unsubSelect?.();
       window.clearInterval(statusHandle);
     };
-  }, [api, applyThreads, refreshStatus]);
+  }, [api, applyThreads, refreshStatus, reloadDetail]);
 
   // Load ThreadDetail when selection changes. threads.get stamps lastVisitedAt
   // (select = visit); merge the returned row into the list so the sidebar

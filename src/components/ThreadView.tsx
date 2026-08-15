@@ -1,4 +1,12 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Fragment,
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type {
   ChatMessage,
   DevServerState,
@@ -243,21 +251,30 @@ function ToolCallCard({
   );
 }
 
-function MessageBlock({
+/**
+ * One timeline row. memo'd because a streamed update re-renders the whole
+ * timeline while only the message being written actually changed — so the
+ * props are flat scalars, keeping the default shallow compare honest.
+ */
+const MessageBlock = memo(function MessageBlock({
   message,
   autoExpandTool,
   showRetry,
   retryTitle,
   onRetry,
-  meta,
+  metaModel = null,
+  metaEffort = null,
+  metaDuration = null,
 }: {
   message: ChatMessage;
   autoExpandTool: boolean;
   showRetry?: boolean;
   retryTitle?: string;
   onRetry?: () => void;
-  /** Assistant footer segments; null/empty fields are omitted inside. */
-  meta?: { model: string | null; effort: string | null; duration: string | null };
+  /** Assistant footer segments; null fields are omitted inside. */
+  metaModel?: string | null;
+  metaEffort?: string | null;
+  metaDuration?: string | null;
 }) {
   if (message.role === "tool") {
     return <ToolCallCard message={message} autoExpand={autoExpandTool} />;
@@ -293,9 +310,9 @@ function MessageBlock({
 
   const metaLine = messageMetaLine({
     createdAt: message.createdAt,
-    model: meta?.model ?? null,
-    effort: meta?.effort ?? null,
-    duration: meta?.duration ?? null,
+    model: metaModel,
+    effort: metaEffort,
+    duration: metaDuration,
   });
   return (
     <article className={styles.message}>
@@ -303,7 +320,7 @@ function MessageBlock({
       <footer className={styles.msgMeta}>{metaLine}</footer>
     </article>
   );
-}
+});
 
 function ReviewBarStrip({
   bar,
@@ -2065,14 +2082,15 @@ export function ThreadView({
                       showRetry={isRetrySurface}
                       retryTitle={isRetrySurface ? retryTitle : undefined}
                       onRetry={isRetrySurface ? handleRetry : undefined}
-                      meta={{
-                        model:
-                          detail?.usage?.model ?? detail?.thread.model ?? null,
-                        effort: detail?.thread.reasoningEffort ?? null,
-                        duration: entry.message.runId
+                      metaModel={
+                        detail?.usage?.model ?? detail?.thread.model ?? null
+                      }
+                      metaEffort={detail?.thread.reasoningEffort ?? null}
+                      metaDuration={
+                        entry.message.runId
                           ? (durationByRunId.get(entry.message.runId) ?? null)
-                          : null,
-                      }}
+                          : null
+                      }
                     />
                     {bar && (
                       <ReviewBarStrip
