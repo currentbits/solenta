@@ -27,6 +27,7 @@ const { suggestCommitMessage } = require("./commitmsg.js");
 const { listLocalServers } = require("./servers.js");
 const devservers = require("./devservers.js");
 const { createMemoryProxy } = require("./memory-proxy.js");
+const { readToolImage } = require("./tool-images.js");
 const { syncUserMcpServers } = require("./memory-sup.js");
 const skills = require("./skills.js");
 const { fetchIssue, listIssues } = require("./issues.js");
@@ -429,6 +430,11 @@ const IPC_HANDLERS = {
       threadId: input.threadId,
       query: input.query,
     });
+  },
+  "files:image": async (ctx, input) => {
+    return {
+      dataUrl: readToolImage(ctx.userDataPath, input && input.name),
+    };
   },
   "git:mergeWorktree": async (ctx, input) => {
     return mergeWorktree({

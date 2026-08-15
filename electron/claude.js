@@ -66,6 +66,9 @@ function flattenContent(content) {
         if (block && typeof block === "object") {
           const b = /** @type {{ type?: string, text?: string }} */ (block);
           if (b.type === "text" && typeof b.text === "string") return b.text;
+          // Images are rendered from tool.images; stringifying the block here
+          // would fill the output pane with truncated base64.
+          if (b.type === "image") return "[image]";
           try {
             return JSON.stringify(block);
           } catch {

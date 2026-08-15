@@ -140,6 +140,7 @@ const coder = {
   },
   files: {
     list: (input) => invoke("files:list", input),
+    image: (input) => invoke("files:image", input),
   },
   servers: {
     list: (input) => invoke("servers:list", input),

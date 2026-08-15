@@ -67,6 +67,7 @@ export default function App() {
     revertFile,
     suggestCommitMessage,
     listFiles,
+    loadToolImage,
     pushBranch,
     listPrs,
     listIssues,
@@ -472,6 +473,7 @@ export default function App() {
         onRevertFile={(path, status) => revertFile(path, status)}
         onSuggestCommitMessage={() => suggestCommitMessage()}
         onListFiles={(query) => listFiles(query)}
+        onLoadImage={loadToolImage}
         onPush={() => pushBranch()}
         gitSyncInfo={gitSyncInfo}
         gitFetch={gitFetch}

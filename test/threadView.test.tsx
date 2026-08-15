@@ -120,6 +120,7 @@ function view(props: {
   onViewChanges?: () => void;
   runStats?: (threadId: string) => Promise<RunStatInfo[]>;
   restoreCheckpoint?: (threadId: string, sha: string) => Promise<void>;
+  onLoadImage?: (name: string) => Promise<string | null>;
 }) {
   return (
     <ThreadView
@@ -150,6 +151,7 @@ function view(props: {
       onRevertFile={async (path) => ({ path })}
       onSuggestCommitMessage={async () => ({ message: "feat: x" })}
       onPush={async () => ({ remote: "origin", branch: "main" })}
+      onLoadImage={props.onLoadImage}
     />
   );
 }
@@ -477,6 +479,48 @@ describe("ThreadView mounted interactions", () => {
       m.text().includes("TOOL_INPUT_SECRET_PAYLOAD"),
       `expanded tool body must show input, got: ${m.text().slice(0, 200)}`,
     );
+    m.unmount();
+  });
+
+  it("renders images a tool returned once the card is open", async () => {
+    const dataUrl = "data:image/png;base64,AAAA";
+    const asked: string[] = [];
+    const m = await mount(
+      view({
+        onLoadImage: async (name) => {
+          asked.push(name);
+          return dataUrl;
+        },
+        detail: detail({
+          messages: [
+            msg({
+              id: "t1",
+              role: "tool",
+              text: "Read: /tmp/shot-home.png",
+              createdAt: 1,
+              runId: "run-1",
+              tool: {
+                id: "tc1",
+                name: "Read",
+                input: "{}",
+                output: "[image]",
+                done: true,
+                isError: false,
+                images: ["shot.png"],
+              },
+            }),
+          ],
+          workLog: [],
+        }),
+      }),
+    );
+    assert.equal(m.queryAll("img").length, 0, "collapsed card shows no image");
+    await m.click(m.query("button.toolHeader"));
+    await m.flush();
+    assert.deepEqual(asked, ["shot.png"]);
+    const img = m.query("img");
+    assert.ok(img, `expanded card must render the image, got: ${m.html().slice(0, 300)}`);
+    assert.equal(img.getAttribute("src"), dataUrl);
     m.unmount();
   });
 });
