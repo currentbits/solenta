@@ -7,6 +7,7 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { useState } from "react";
 import { mount } from "./support/dom.ts";
 import { AgentsContent } from "../src/components/AgentsPanel";
 import type {
@@ -237,6 +238,48 @@ describe("Agents team view", () => {
     text = m.text();
     assert.match(text, /already finished/, "expanded done worker appears");
     assert.match(text, /Hide done/, "toggle flips to hide");
+    m.unmount();
+  });
+
+  it("stream pushes that change no id or status do not refetch (issue #29)", async () => {
+    let calls = 0;
+    const orch = thread();
+    // Stable identity, like useCoder's useCallback fetcher.
+    const fetcher = async () => {
+      calls += 1;
+      return [ORCHESTRATOR, WORKER];
+    };
+    function Harness() {
+      const [threads, setThreads] = useState<ThreadInfo[]>([orch]);
+      return (
+        <>
+          <button onClick={() => setThreads([{ ...orch }])}>push</button>
+          <button onClick={() => setThreads([{ ...orch, status: "working" }])}>
+            work
+          </button>
+          <AgentsContent
+            workflow={null}
+            thread={orch}
+            usage={null}
+            providers={PROVIDERS}
+            threads={threads}
+            listThreadSummaries={fetcher}
+          />
+        </>
+      );
+    }
+    const m = await mount(<Harness />);
+    await m.flush();
+    assert.equal(calls, 1, "initial fetch");
+
+    await m.click(m.byText("push"));
+    await m.click(m.byText("push"));
+    await m.flush();
+    assert.equal(calls, 1, "new threads array, same roster: no refetch");
+
+    await m.click(m.byText("work"));
+    await m.flush();
+    assert.equal(calls, 2, "a status change still refetches");
     m.unmount();
   });
 
