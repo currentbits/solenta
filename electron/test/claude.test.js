@@ -435,8 +435,8 @@ async function main() {
     return;
   }
 
-  // Issue #17: empty success and nothing else. Stay alive so a grace timer
-  // (not process exit) is what decides the turn.
+  // Issue #17: empty success and nothing else, then death. Process exit is
+  // the only evidence that the empty result really was the whole turn.
   if (scenario === "phantom-only") {
     emit({
       type: "system",
@@ -454,8 +454,78 @@ async function main() {
       num_turns: 0,
       session_id: "sess-po",
     });
-    await delay(30000);
+    await delay(20);
     process.exit(0);
+    return;
+  }
+
+  // Issue #17, real trace: a resumed CLI settles a queued task-notification
+  // as its own turn (empty success), and the real turn's first token lands
+  // long after — 48s in the wild, on Opus with a large session. Nothing may
+  // fail the turn while the CLI is alive and still working on it.
+  if (scenario === "phantom-then-slow-real") {
+    emit({
+      type: "system",
+      subtype: "init",
+      session_id: "sess-psr",
+      model: "m",
+    });
+    await delay(20);
+    emit({
+      type: "result",
+      subtype: "success",
+      result: "",
+      usage: { input_tokens: 0, output_tokens: 0 },
+      total_cost_usd: 0,
+      num_turns: 0,
+      session_id: "sess-psr",
+    });
+    await delay(400);
+    emit({
+      type: "assistant",
+      message: { content: [{ type: "text", text: "slow real reply" }] },
+    });
+    await delay(20);
+    emit({
+      type: "result",
+      subtype: "success",
+      result: "slow real reply",
+      usage: { input_tokens: 2, output_tokens: 3 },
+      total_cost_usd: 0,
+      num_turns: 1,
+      session_id: "sess-psr",
+    });
+    process.exit(0);
+    return;
+  }
+
+  // Issue #17: phantom, then real content, then death with no result of our
+  // own. The exit must be surfaced, not silently checkmarked.
+  if (scenario === "phantom-then-die") {
+    emit({
+      type: "system",
+      subtype: "init",
+      session_id: "sess-pd",
+      model: "m",
+    });
+    await delay(20);
+    emit({
+      type: "result",
+      subtype: "success",
+      result: "",
+      usage: { input_tokens: 0, output_tokens: 0 },
+      total_cost_usd: 0,
+      num_turns: 0,
+      session_id: "sess-pd",
+    });
+    await delay(20);
+    emit({
+      type: "assistant",
+      message: { content: [{ type: "text", text: "partial work" }] },
+    });
+    await delay(20);
+    process.stderr.write("claude-died-mid-turn\\n");
+    process.exit(3);
     return;
   }
 
@@ -1309,9 +1379,57 @@ describe("runner claude provider", () => {
     assert.equal(store.getWorkLog(thread.id).find((w) => w.label === "Agent working").done, true);
   });
 
-  it("fails a turn that only ever emits an empty leftover result", async () => {
-    process.env.CODER_FAKE_CLAUDE_SCENARIO = "phantom-only";
+  it("keeps waiting when the real turn is slower than any fixed grace window", async () => {
+    process.env.CODER_FAKE_CLAUDE_SCENARIO = "phantom-then-slow-real";
+    // A short grace would fire ~300ms before the real turn streams anything.
+    // Nothing may fail a turn whose CLI is alive and still working (#17).
     process.env.CODER_PHANTOM_RESULT_GRACE_MS = "80";
+
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "do work" });
+    await waitFor(() =>
+      ["done", "failed", "idle"].includes(store.getThread(thread.id).status),
+    );
+
+    assert.equal(store.getThread(thread.id).status, "done");
+    const msgs = store.getMessages(thread.id);
+    assert.ok(
+      msgs.some((m) => m.role === "assistant" && m.text === "slow real reply"),
+      "the real turn must land",
+    );
+    assert.deepEqual(
+      msgs.filter((m) => m.role === "event").map((m) => m.text),
+      [],
+      "no fabricated failure while the CLI was still working",
+    );
+  });
+
+  it("reports the exit when the CLI dies after a discarded leftover result", async () => {
+    process.env.CODER_FAKE_CLAUDE_SCENARIO = "phantom-then-die";
+
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "do work" });
+    await waitFor(() => store.getThread(thread.id).status === "failed");
+
+    const events = store
+      .getMessages(thread.id)
+      .filter((m) => m.role === "event");
+    assert.ok(
+      events.some((m) => /Run error \(exit 3\)/.test(m.text)),
+      `expected an exit-3 error, got ${JSON.stringify(events.map((e) => e.text))}`,
+    );
+    const work = store.getWorkLog(thread.id);
+    assert.ok(work.some((w) => w.label === "Run error" && w.done));
+    // The partial content the CLI did produce must survive.
+    assert.ok(
+      store
+        .getMessages(thread.id)
+        .some((m) => m.role === "assistant" && m.text === "partial work"),
+    );
+  });
+
+  it("fails a turn that only ever emits an empty leftover result, then exits", async () => {
+    process.env.CODER_FAKE_CLAUDE_SCENARIO = "phantom-only";
 
     const thread = store.getThreads()[0];
     await runner.startRun({ threadId: thread.id, prompt: "do work" });
