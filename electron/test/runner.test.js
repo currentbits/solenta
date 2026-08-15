@@ -320,25 +320,23 @@ describe("runner simulated mode", () => {
     assert.ok(runner.getActiveWorkflow(thread.id));
   });
 
-  it("keeps a finished worker visible until the orchestrator's run lands", async () => {
+  it("archives a finished worker once the crew is quiet", async () => {
     const { orch, worker } = orchPair(store);
     await runner.startRun({ threadId: worker.id, prompt: "worker task" });
     await waitFor(() => {
       const t = store.getThread(worker.id);
       return t && t.status === "done";
     });
-    // Worker landing does NOT archive it — the roster stays visible while
-    // the orchestration is still going.
-    assert.equal(store.getThread(worker.id).archived, false);
-    // The wake-up run on the orchestrator lands → sweep archives the worker.
     await waitFor(() => store.getThread(worker.id).archived === true);
     assert.equal(store.getThread(orch.id).archived, false);
   });
 
-  it("does not archive done workers while a sibling is still working", async () => {
+  it("a stale 'working' sibling with no live run does not block the sweep", async () => {
     const { orch, worker } = orchPair(store);
-    const other = services.forkThread(store, { threadId: orch.id });
-    store.updateThread(other.id, {
+    // Worker B died mid-run (crash / hung CLI): status says working but the
+    // runner has no run for it. It must not pin the crew open forever.
+    const zombie = services.forkThread(store, { threadId: orch.id });
+    store.updateThread(zombie.id, {
       orchWorker: true,
       title: "Worker B",
       status: "working",
@@ -349,14 +347,76 @@ describe("runner simulated mode", () => {
       const t = store.getThread(worker.id);
       return t && t.status === "done";
     });
-    // Orchestrator wake-up run lands, but Worker B is still working: no sweep.
-    await waitFor(() => orchNoticeMessages(store, orch.id).length > 0);
-    await waitFor(() => {
-      const t = store.getThread(orch.id);
-      return t && t.status !== "working";
+    await waitFor(() => store.getThread(worker.id).archived === true);
+    // Only done workers are archived; the zombie stays visible.
+    assert.equal(store.getThread(zombie.id).archived, false);
+  });
+
+  it("holds the sweep while a sibling has a live run", async () => {
+    // Manual timers: each sim run only advances when its own tick is driven,
+    // so Worker B can stay genuinely in-flight while Worker A lands.
+    const timers = new Map();
+    let nextTimerId = 0;
+    const manual = createRunner({
+      store,
+      core,
+      pushFn: () => {},
+      tickMs: 15,
+      setIntervalFn: (fn) => {
+        const id = ++nextTimerId;
+        timers.set(id, fn);
+        return id;
+      },
+      clearIntervalFn: (id) => timers.delete(id),
     });
-    await new Promise((r) => setTimeout(r, 80));
-    assert.equal(store.getThread(worker.id).archived, false);
+    const drive = (id, until) => {
+      for (let i = 0; i < 500 && !until(); i++) {
+        const fn = timers.get(id);
+        if (!fn) break;
+        fn();
+      }
+    };
+    try {
+      const { orch, worker } = orchPair(store);
+      const busy = services.forkThread(store, { threadId: orch.id });
+      store.updateThread(busy.id, { orchWorker: true, title: "Worker B" });
+      store.save();
+
+      await manual.startRun({ threadId: busy.id, prompt: "long task" });
+      await manual.startRun({ threadId: worker.id, prompt: "worker task" });
+      drive(2, () => store.getThread(worker.id).status === "done");
+      assert.equal(store.getThread(worker.id).status, "done");
+      assert.equal(
+        store.getThread(worker.id).archived,
+        false,
+        "Worker B is still running: no sweep yet",
+      );
+
+      drive(1, () => store.getThread(busy.id).status === "done");
+      assert.equal(store.getThread(busy.id).status, "done");
+      assert.equal(store.getThread(worker.id).archived, true);
+      assert.equal(store.getThread(busy.id).archived, true);
+    } finally {
+      manual.stopAll();
+    }
+  });
+
+  it("archives leftover done workers at startup", async () => {
+    const { worker } = orchPair(store);
+    // Landed while the app was down (or its sweep never came).
+    store.updateThread(worker.id, { status: "done" });
+    store.save();
+    const booted = createRunner({
+      store,
+      core,
+      pushFn: () => {},
+      tickMs: 15,
+    });
+    try {
+      assert.equal(store.getThread(worker.id).archived, true);
+    } finally {
+      booted.stopAll();
+    }
   });
 
   it("wakes an idle orchestrator when an orchWorker run lands done", async () => {
