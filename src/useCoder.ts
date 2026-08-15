@@ -19,6 +19,7 @@ import type {
   MemoryEntryInfo,
   PermissionDecision,
   PermissionMode,
+  ListIssuesResult,
   ListPrsResult,
   PrChecksResult,
   PrInfo,
@@ -203,6 +204,8 @@ export interface UseCoderResult {
   prMerge: () => Promise<PrInfo>;
   /** Open PRs for a project checkout (`gh pr list`). Failures are in-band. */
   listPrs: (projectPath: string) => Promise<ListPrsResult>;
+  /** Issues for a project checkout (`gh issue list`). Failures are in-band. */
+  listIssues: (projectPath: string) => Promise<ListIssuesResult>;
   /** Cross-thread newest-first activity feed. */
   listActivity: () => Promise<ActivityItem[]>;
   /** Per-thread summaries for the Agents tab team view. */
@@ -1215,6 +1218,13 @@ export function useCoder(): UseCoderResult {
     [api],
   );
 
+  const listIssues = useCallback(
+    async (projectPath: string) => {
+      return api.issues.list(projectPath);
+    },
+    [api],
+  );
+
   const fetchIssue = useCallback(
     async (projectPath: string, ref: string) => {
       return api.issues.fetch({ projectPath, ref });
@@ -1527,6 +1537,7 @@ export function useCoder(): UseCoderResult {
     prChecks,
     prMerge,
     listPrs,
+    listIssues,
     fetchIssue,
     listActivity,
     listThreadSummaries,

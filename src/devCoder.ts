@@ -21,6 +21,7 @@ import type {
   DiffResult,
   DevServerState,
   FetchIssueResult,
+  ListIssuesResult,
   LocalServerInfo,
   MemoryEntryInfo,
   McpServerInfo,
@@ -3674,6 +3675,36 @@ function buildDevCoder(): CoderApi {
             body: `Dev stand-in for ${raw}`,
             url: `https://github.com/${slug}/issues/${num}`,
           },
+        };
+      },
+      async list(projectPath: string): Promise<ListIssuesResult> {
+        const project = projects.find((p) => p.path === projectPath);
+        const slug = project?.slug || "acme/demo";
+        return {
+          ok: true,
+          issues: [
+            {
+              number: 1,
+              title: "Ship the planboard",
+              url: `https://github.com/${slug}/issues/1`,
+              state: "OPEN",
+              labels: ["plan:doing", "roadmap"],
+            },
+            {
+              number: 2,
+              title: "Write the docs",
+              url: `https://github.com/${slug}/issues/2`,
+              state: "OPEN",
+              labels: ["plan:todo", "task"],
+            },
+            {
+              number: 3,
+              title: "Pick the label convention",
+              url: `https://github.com/${slug}/issues/3`,
+              state: "CLOSED",
+              labels: ["plan:done"],
+            },
+          ],
         };
       },
     },

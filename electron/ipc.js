@@ -29,7 +29,7 @@ const devservers = require("./devservers.js");
 const { createMemoryProxy } = require("./memory-proxy.js");
 const { syncUserMcpServers } = require("./memory-sup.js");
 const skills = require("./skills.js");
-const { fetchIssue } = require("./issues.js");
+const { fetchIssue, listIssues } = require("./issues.js");
 const automations = require("./automations.js");
 const { buildActivity } = require("./activity.js");
 const updater = require("./updater.js");
@@ -491,6 +491,9 @@ const IPC_HANDLERS = {
     const projectPath = input && input.projectPath;
     const ref = input && input.ref;
     return fetchIssue(projectPath, ref);
+  },
+  "issues:list": async (_ctx, projectPath) => {
+    return listIssues(projectPath);
   },
   "git:listCheckpoints": async (ctx, input) => {
     return listCheckpoints({

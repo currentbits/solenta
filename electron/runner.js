@@ -3284,7 +3284,8 @@ function createRunner(opts) {
     // the CLI (buildArgs / runAgent), never into the stored user message.
     const dispatchPrompt =
       services.buildHandoffPrefix(thread, (id) => store.getMessages(id)) +
-      String(prompt ?? "");
+      String(prompt ?? "") +
+      services.planboardNoteFor(projectForGate && projectForGate.path);
 
     const name = workflowNameFromThreadId(threadId);
 
