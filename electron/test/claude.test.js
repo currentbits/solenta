@@ -679,6 +679,47 @@ async function main() {
     return;
   }
 
+  // Ask to leave plan mode (ExitPlanMode) with a markdown plan.
+  if (scenario === "plan") {
+    emit({ type: "system", subtype: "init", session_id: "sess-plan", model: "m" });
+    await delay(20);
+    emit({
+      type: "control_request",
+      request_id: "req-plan-1",
+      request: {
+        subtype: "can_use_tool",
+        tool_name: "ExitPlanMode",
+        input: { plan: "## Steps\\n\\n1. Add the card\\n2. Wire the buttons" },
+      },
+    });
+    let buf = "";
+    process.stdin.on("data", (c) => {
+      buf += c;
+      let nl;
+      while ((nl = buf.indexOf("\\n")) >= 0) {
+        const line = buf.slice(0, nl);
+        buf = buf.slice(nl + 1);
+        if (!line.trim()) continue;
+        let msg;
+        try { msg = JSON.parse(line); } catch { continue; }
+        if (msg.type !== "control_response") continue;
+        emit({
+          type: "result",
+          subtype: "success",
+          result: "planned",
+          usage: { input_tokens: 1, output_tokens: 1 },
+          total_cost_usd: 0,
+          num_turns: 1,
+          session_id: "sess-plan",
+        });
+        process.exit(0);
+      }
+    });
+    await delay(30000);
+    process.exit(1);
+    return;
+  }
+
   // Persistent interactive CLI: one turn per stdin user message, process
   // stays alive between turns (issue #8 keep-alive lifecycle).
   if (scenario === "multi-turn") {
@@ -1149,6 +1190,32 @@ describe("runner claude provider", () => {
     } finally {
       delete process.env.CODER_FAKE_CLAUDE_CTRL_FILE;
     }
+  });
+
+  it("surfaces an ExitPlanMode plan and leaves plan mode on approval", async () => {
+    process.env.CODER_FAKE_CLAUDE_SCENARIO = "plan";
+    const thread = store.getThreads()[0];
+    store.updateThread(thread.id, { permissionMode: "plan" });
+    await runner.startRun({ threadId: thread.id, prompt: "plan it" });
+
+    await waitFor(() => runner.getPendingPermission(thread.id) != null);
+    const pending = runner.getPendingPermission(thread.id);
+    assert.equal(pending.toolName, "ExitPlanMode");
+    // The plan markdown rides along for the renderer's plan card.
+    assert.equal(pending.plan, "## Steps\n\n1. Add the card\n2. Wire the buttons");
+    assert.equal(pending.questions, null);
+
+    runner.respondPermission({
+      threadId: thread.id,
+      requestId: pending.requestId,
+      decision: "allow",
+    });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    // Approval ends plan mode so the next run executes instead of re-planning.
+    assert.equal(store.getThread(thread.id).permissionMode, "default");
+    const msgs = store.getMessages(thread.id);
+    assert.ok(msgs.some((m) => m.role === "event" && m.text === "Plan approved"));
   });
 
   it("pairs tool_result is_error into tool message", async () => {

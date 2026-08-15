@@ -1069,6 +1069,16 @@
   word-break: break-word;
 }
 
+/* Plan approval (ExitPlanMode): rendered markdown, scrolls when long. */
+.planBody {
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--text);
+  max-height: 420px;
+  overflow: auto;
+}
+
 .permissionActions {
   display: flex;
   gap: 8px;

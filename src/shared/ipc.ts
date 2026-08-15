@@ -318,6 +318,11 @@ export interface PendingPermissionInfo {
    * answer via respondPermission's `answers`.
    */
   questions?: PendingQuestion[] | null;
+  /**
+   * Present when the agent is asking to leave plan mode (ExitPlanMode): the
+   * plan markdown, rendered in the prompt panel instead of the raw JSON.
+   */
+  plan?: string | null;
 }
 
 /** One question of an AskUserQuestion prompt. */

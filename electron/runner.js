@@ -38,6 +38,9 @@ const { wrapCommand } = require("./ssh.js");
 
 const KIMI_PUSH_THROTTLE_MS = 250;
 
+/** Plan markdown shown in the approval panel; long enough for a real plan. */
+const PLAN_TRUNCATE = 20000;
+
 /**
  * A kept-alive/resumed Claude CLI can emit a result that is not the answer to
  * the turn we just sent: settling a leftover background-task notification or
@@ -819,7 +822,21 @@ function createRunner(opts) {
       summary: p.summary,
       input: p.input,
       questions: questionInfo(p.toolName, p.rawInput),
+      plan: planText(p.toolName, p.rawInput),
     };
+  }
+
+  /**
+   * ExitPlanMode input -> the plan markdown for the renderer's plan card, or
+   * null when this permission isn't a plan approval. Plans are prose, not tool
+   * args, so they get their own (larger) budget than the JSON preview.
+   * @param {string} toolName
+   * @param {Record<string, unknown>} rawInput
+   */
+  function planText(toolName, rawInput) {
+    if (toolName !== "ExitPlanMode") return null;
+    const plan = rawInput && typeof rawInput.plan === "string" ? rawInput.plan : "";
+    return plan ? truncate(plan, PLAN_TRUNCATE) : null;
   }
 
   /**
@@ -873,6 +890,7 @@ function createRunner(opts) {
       answers && typeof answers === "object" && !Array.isArray(answers)
         ? answers
         : null;
+    const isPlan = pending.toolName === "ExitPlanMode";
     let response;
     if (decision === "allow" || decision === "allowAlways") {
       response = {
@@ -894,11 +912,27 @@ function createRunner(opts) {
         ];
       }
     } else {
-      response = { behavior: "deny", message: "Denied by user in Coder" };
+      response = {
+        behavior: "deny",
+        message: isPlan
+          ? "Plan rejected by user in Coder; keep planning"
+          : "Denied by user in Coder",
+      };
     }
     e.handle.respond(pending.id, response);
-    const label =
-      decision === "deny"
+    if (isPlan && decision !== "deny") {
+      // Approving the plan leaves plan mode, so the next run must not re-enter
+      // it — the CLI only exits for the process that asked.
+      const t = store.getThread(threadId);
+      if (t && t.permissionMode === "plan") {
+        store.updateThread(threadId, { permissionMode: "default" });
+      }
+    }
+    const label = isPlan
+      ? decision === "deny"
+        ? "Plan rejected"
+        : "Plan approved"
+      : decision === "deny"
         ? `Denied: ${pending.summary}`
         : answerMap
           ? `Answered: ${truncate(Object.values(answerMap).join("; "), 200)}`

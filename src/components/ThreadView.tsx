@@ -931,6 +931,58 @@ function QuestionPrompt({
   );
 }
 
+/**
+ * Plan approval (ExitPlanMode): the plan rendered as markdown in the prompt
+ * panel, approve or send the agent back to planning.
+ */
+function PlanPrompt({
+  pending,
+  onRespond,
+}: {
+  pending: PendingPermissionInfo;
+  onRespond: (
+    requestId: string,
+    decision: PermissionDecision,
+  ) => void | Promise<void>;
+}) {
+  const [sent, setSent] = useState(false);
+  const answer = (decision: PermissionDecision) => {
+    if (sent) return;
+    setSent(true);
+    void onRespond(pending.requestId, decision);
+  };
+  return (
+    <div
+      className={styles.permissionCard}
+      role="alertdialog"
+      aria-label="Plan approval"
+    >
+      <div className={styles.permissionHead}>Agent proposed a plan</div>
+      <div className={styles.planBody}>
+        <Markdown text={pending.plan ?? ""} />
+      </div>
+      <div className={styles.permissionActions}>
+        <button
+          type="button"
+          className={styles.permissionAllow}
+          disabled={sent}
+          onClick={() => answer("allow")}
+        >
+          Approve plan
+        </button>
+        <button
+          type="button"
+          className={styles.permissionDeny}
+          disabled={sent}
+          onClick={() => answer("deny")}
+        >
+          Keep planning
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function DiffLine({ line }: { line: string }) {
   const kind = diffLineKind(line);
   return (
@@ -2103,6 +2155,12 @@ export function ThreadView({
 
         {detail.pendingPermission?.questions?.length ? (
           <QuestionPrompt
+            key={detail.pendingPermission.requestId}
+            pending={detail.pendingPermission}
+            onRespond={onRespondPermission}
+          />
+        ) : detail.pendingPermission?.plan ? (
+          <PlanPrompt
             key={detail.pendingPermission.requestId}
             pending={detail.pendingPermission}
             onRespond={onRespondPermission}
