@@ -302,6 +302,10 @@ function createRunner(opts) {
   // detach (nohup); add child-process introspection if that ever hurts.
   const CLAUDE_IDLE_REAP_MS = 30 * 60 * 1000;
 
+  // ponytail: fixed LRU cap — an 8-worker fan-out otherwise leaves 8 idle CLIs
+  // resident for the full half hour (issue #36). Make it a setting if 3 chafes.
+  const CLAUDE_IDLE_MAX = 3;
+
   /** Kill and forget a thread's kept-alive Claude CLI (if any). */
   function disposeClaudeSession(threadId) {
     const sess = claudeSessions.get(threadId);
@@ -400,6 +404,17 @@ function createRunner(opts) {
     );
     // Never hold the process open for a reap timer.
     if (typeof sess.idleTimer.unref === "function") sess.idleTimer.unref();
+    // Re-insert so Map order reads least → most recently idled, then reap
+    // everything past the cap. Sessions mid-turn have no timer: never counted,
+    // never killed.
+    claudeSessions.delete(threadId);
+    claudeSessions.set(threadId, sess);
+    const idle = [...claudeSessions]
+      .filter(([, s]) => s.idleTimer)
+      .map(([id]) => id);
+    for (const id of idle.slice(0, Math.max(0, idle.length - CLAUDE_IDLE_MAX))) {
+      disposeClaudeSession(id);
+    }
   }
 
   /** Last known workflow (core Workflow or real state) per thread. */
