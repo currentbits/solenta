@@ -290,6 +290,16 @@ async function main() {
   if (scenario === "linger-then-exit") {
     // A complete turn, then the process stays alive (so the runner keeps it
     // for reuse) and dies without ever reading the next turn off stdin.
+    // Death is triggered by that turn's stdin write, not a timer: a fixed
+    // delay can expire before turn two on a loaded machine, and then the
+    // runner declines the reuse and the test stops covering the respawn
+    // without ever going red. The listener attaches first so turn one's
+    // already-buffered prompt is consumed before the gate opens.
+    let answered = false;
+    process.stdin.resume();
+    process.stdin.on("data", () => {
+      if (answered) process.exit(0);
+    });
     emit({
       type: "system",
       subtype: "init",
@@ -311,8 +321,7 @@ async function main() {
       num_turns: 1,
       session_id: "sess-abc-001",
     });
-    await delay(400);
-    process.exit(0);
+    answered = true;
     return;
   }
 
