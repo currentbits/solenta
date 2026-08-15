@@ -304,9 +304,15 @@ const IPC_HANDLERS = {
     });
   },
   "app:downloadUpdate": async (ctx) => {
-    return updater.downloadUpdate({
-      channelOverride: ctx.store.getSettings().updateChannel,
-    });
+    const { updateChannel } = ctx.store.getSettings();
+    const status = await updater.downloadUpdate({ channelOverride: updateChannel });
+    // The staged bundle carries its own channel stamp, so a nightly install
+    // swapping in a prod build would silently leave the nightly channel.
+    // Pin the channel we were on into settings before that happens.
+    if (status.state === "staged" && !updateChannel && status.channel) {
+      ctx.store.setSettings({ updateChannel: status.channel });
+    }
+    return status;
   },
   "app:applyUpdate": async () => {
     updater.applyUpdate();
