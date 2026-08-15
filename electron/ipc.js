@@ -48,6 +48,20 @@ function defaultWindowBroadcast(channel, payload) {
 }
 
 /**
+ * A thread the user pushed out of attention (settled, archived, deleted) has
+ * no next turn: kill its kept-alive Claude CLI now instead of holding the
+ * process for the 30-minute idle reaper (issue #48).
+ *
+ * @param {object} ctx
+ * @param {string} threadId
+ */
+function retireAgent(ctx, threadId) {
+  if (typeof ctx.runner.disposeClaudeSession === "function") {
+    ctx.runner.disposeClaudeSession(threadId);
+  }
+}
+
+/**
  * Bind store/runner/dialog into a ctx the shared handler map closes over
  * via its first argument. One ctx per process boot.
  *
@@ -249,11 +263,15 @@ const IPC_HANDLERS = {
   },
   "threads:setArchived": async (ctx, input) => {
     const updated = services.setArchived(ctx.store, input);
+    if (updated && updated.archived) retireAgent(ctx, updated.id);
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     return updated;
   },
   "threads:setSettled": async (ctx, input) => {
     const updated = services.setSettled(ctx.store, input);
+    if (updated && updated.settledOverride === "settled") {
+      retireAgent(ctx, updated.id);
+    }
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     return updated;
   },
@@ -370,10 +388,7 @@ const IPC_HANDLERS = {
     services.deleteThread(ctx.store, input, {
       isRunning: (id) => ctx.runner.isRunning(id),
     });
-    // A kept-alive Claude CLI for this thread has no future turn; kill it.
-    if (typeof ctx.runner.disposeClaudeSession === "function") {
-      ctx.runner.disposeClaudeSession(input.threadId);
-    }
+    retireAgent(ctx, input.threadId);
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
   },
   "runs:start": async (ctx, input) => {
