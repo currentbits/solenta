@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="robots" content="noindex" />
+  <title>Solenta OG card</title>
+  <style>
+    @font-face {
+      font-family: "Geist";
+      src: url("fonts/Geist-Variable.woff2") format("woff2");
+      font-weight: 100 900;
+      font-display: block;
+    }
+    @font-face {
+      font-family: "Geist Mono";
+      src: url("fonts/GeistMono-Variable.woff2") format("woff2");
+      font-weight: 100 900;
+      font-display: block;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 1200px;
+      height: 630px;
+      overflow: hidden;
+      background: #0b0e14;
+      color: #e6e9f0;
+      font-family: "Geist", -apple-system, sans-serif;
+      -webkit-font-smoothing: antialiased;
+      font-synthesis: none;
+    }
+
+    .card {
+      position: relative;
+      width: 1200px;
+      height: 630px;
+      overflow: hidden;
+      background:
+        radial-gradient(720px 520px at 12% 8%, rgba(59, 130, 246, 0.22), transparent 62%),
+        radial-gradient(640px 480px at 92% 88%, rgba(59, 130, 246, 0.10), transparent 64%),
+        #0b0e14;
+    }
+
+    .grid {
+      position: absolute;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(255, 255, 255, 0.028) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.028) 1px, transparent 1px);
+      background-size: 48px 48px;
+      mask-image: radial-gradient(ellipse 80% 70% at 50% 40%, #000 20%, transparent 78%);
+      pointer-events: none;
+    }
+
+    .watermark {
+      position: absolute;
+      left: -90px;
+      top: 70px;
+      width: 560px;
+      height: 560px;
+      opacity: 0.13;
+      filter: drop-shadow(0 0 36px rgba(59, 130, 246, 0.45));
+      pointer-events: none;
+    }
+
+    .noise {
+      position: absolute;
+      inset: 0;
+      opacity: 0.045;
+      pointer-events: none;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    }
+
+    .copy {
+      position: absolute;
+      left: 72px;
+      top: 0;
+      bottom: 0;
+      width: 500px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      z-index: 2;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 34px;
+    }
+    .brand-mark {
+      width: 36px;
+      height: 36px;
+      flex: none;
+      filter: drop-shadow(0 0 10px rgba(59, 130, 246, 0.55));
+    }
+    .brand-name {
+      font-size: 22px;
+      font-weight: 600;
+      letter-spacing: -0.03em;
+      color: #e6e9f0;
+    }
+
+    h1 {
+      font-size: 58px;
+      font-weight: 650;
+      letter-spacing: -0.038em;
+      line-height: 1.04;
+      color: #e6e9f0;
+      margin: 0 0 26px;
+    }
+
+    .rule {
+      width: 48px;
+      height: 2px;
+      background: #3b82f6;
+      border-radius: 2px;
+      margin: 0 0 22px;
+    }
+
+    .sub {
+      font-size: 20px;
+      font-weight: 500;
+      line-height: 1.35;
+      color: #98a1b3;
+      margin: 0 0 40px;
+      max-width: 18ch;
+    }
+
+    .meta {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .providers {
+      font-family: "Geist Mono", ui-monospace, monospace;
+      font-size: 13px;
+      font-weight: 500;
+      color: #6b7386;
+      letter-spacing: 0.01em;
+    }
+    .url {
+      font-family: "Geist Mono", ui-monospace, monospace;
+      font-size: 13px;
+      font-weight: 500;
+      color: #3b82f6;
+    }
+
+    .shot-shell {
+      position: absolute;
+      right: -72px;
+      top: 84px;
+      width: 720px;
+      padding: 6px;
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.035);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      box-shadow:
+        0 28px 80px rgba(0, 0, 0, 0.55),
+        0 0 0 1px rgba(59, 130, 246, 0.08);
+      z-index: 1;
+    }
+    .shot {
+      border-radius: 11px;
+      overflow: hidden;
+      background: #11151f;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .shot-bar {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 10px 12px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      background: #11151f;
+    }
+    .shot-bar i {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: #161b26;
+      border: 1px solid rgba(255, 255, 255, 0.10);
+    }
+    .shot img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+
+    .vignette {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background:
+        linear-gradient(90deg, transparent 58%, rgba(11, 14, 20, 0.18) 100%),
+        linear-gradient(180deg, transparent 78%, rgba(11, 14, 20, 0.55) 100%);
+      z-index: 3;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="grid"></div>
+    <svg class="watermark" viewBox="0 0 1024 1024" aria-hidden="true">
+      <path d="M512 236 L788 512 L512 788 L236 512 Z"
+            fill="none" stroke="#3b82f6" stroke-width="44" stroke-linejoin="round"/>
+    </svg>
+
+    <div class="copy">
+      <div class="brand">
+        <svg class="brand-mark" viewBox="0 0 1024 1024" aria-hidden="true">
+          <rect x="32" y="32" width="960" height="960" rx="180" fill="#0b0e14"/>
+          <rect x="56" y="56" width="912" height="912" rx="164" fill="none" stroke="#232a38" stroke-width="8"/>
+          <path d="M512 236 L788 512 L512 788 L236 512 Z"
+                fill="none" stroke="#3b82f6" stroke-width="56" stroke-linejoin="round"/>
+        </svg>
+        <span class="brand-name">Solenta</span>
+      </div>
+      <h1>Every coding agent.<br />One window.</h1>
+      <div class="rule"></div>
+      <p class="sub">Desktop control for coding agents.</p>
+      <div class="meta">
+        <div class="providers">Claude · Codex · Kimi · Grok · OpenCode</div>
+        <div class="url">solenta.app</div>
+      </div>
+    </div>
+
+    <div class="shot-shell">
+      <div class="shot">
+        <div class="shot-bar"><i></i><i></i><i></i></div>
+        <img src="assets/screen-main.png" alt="" />
+      </div>
+    </div>
+
+    <div class="vignette"></div>
+    <div class="noise"></div>
+  </div>
+</body>
+</html>

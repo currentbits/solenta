@@ -27,9 +27,10 @@ const { suggestCommitMessage } = require("./commitmsg.js");
 const { listLocalServers } = require("./servers.js");
 const devservers = require("./devservers.js");
 const { createMemoryProxy } = require("./memory-proxy.js");
+const { readToolImage } = require("./tool-images.js");
 const { syncUserMcpServers } = require("./memory-sup.js");
 const skills = require("./skills.js");
-const { fetchIssue } = require("./issues.js");
+const { fetchIssue, listIssues } = require("./issues.js");
 const automations = require("./automations.js");
 const { buildActivity } = require("./activity.js");
 const updater = require("./updater.js");
@@ -43,6 +44,20 @@ function defaultWindowBroadcast(channel, payload) {
     if (!win.isDestroyed()) {
       win.webContents.send(channel, payload);
     }
+  }
+}
+
+/**
+ * A thread the user pushed out of attention (settled, archived, deleted) has
+ * no next turn: kill its kept-alive Claude CLI now instead of holding the
+ * process for the 30-minute idle reaper (issue #48).
+ *
+ * @param {object} ctx
+ * @param {string} threadId
+ */
+function retireAgent(ctx, threadId) {
+  if (typeof ctx.runner.disposeClaudeSession === "function") {
+    ctx.runner.disposeClaudeSession(threadId);
   }
 }
 
@@ -248,11 +263,15 @@ const IPC_HANDLERS = {
   },
   "threads:setArchived": async (ctx, input) => {
     const updated = services.setArchived(ctx.store, input);
+    if (updated && updated.archived) retireAgent(ctx, updated.id);
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     return updated;
   },
   "threads:setSettled": async (ctx, input) => {
     const updated = services.setSettled(ctx.store, input);
+    if (updated && updated.settledOverride === "settled") {
+      retireAgent(ctx, updated.id);
+    }
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     return updated;
   },
@@ -280,8 +299,13 @@ const IPC_HANDLERS = {
     return services.appStatus(ctx.store);
   },
   "app:checkUpdate": async (ctx) => {
+    return updater.checkUpdate({
+      channelOverride: ctx.store.getSettings().updateChannel,
+    });
+  },
+  "app:downloadUpdate": async (ctx) => {
     const { updateChannel } = ctx.store.getSettings();
-    const status = await updater.checkAndStage({ channelOverride: updateChannel });
+    const status = await updater.downloadUpdate({ channelOverride: updateChannel });
     // The staged bundle carries its own channel stamp, so a nightly install
     // swapping in a prod build would silently leave the nightly channel.
     // Pin the channel we were on into settings before that happens.
@@ -370,10 +394,7 @@ const IPC_HANDLERS = {
     services.deleteThread(ctx.store, input, {
       isRunning: (id) => ctx.runner.isRunning(id),
     });
-    // A kept-alive Claude CLI for this thread has no future turn; kill it.
-    if (typeof ctx.runner.disposeClaudeSession === "function") {
-      ctx.runner.disposeClaudeSession(input.threadId);
-    }
+    retireAgent(ctx, input.threadId);
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
   },
   "runs:start": async (ctx, input) => {
@@ -430,6 +451,11 @@ const IPC_HANDLERS = {
       threadId: input.threadId,
       query: input.query,
     });
+  },
+  "files:image": async (ctx, input) => {
+    return {
+      dataUrl: readToolImage(ctx.userDataPath, input && input.name),
+    };
   },
   "git:mergeWorktree": async (ctx, input) => {
     return mergeWorktree({
@@ -497,6 +523,9 @@ const IPC_HANDLERS = {
     const projectPath = input && input.projectPath;
     const ref = input && input.ref;
     return fetchIssue(projectPath, ref);
+  },
+  "issues:list": async (_ctx, projectPath) => {
+    return listIssues(projectPath);
   },
   "git:listCheckpoints": async (ctx, input) => {
     return listCheckpoints({

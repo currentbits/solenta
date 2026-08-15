@@ -380,6 +380,15 @@
   max-width: 100%;
 }
 
+.toolImage {
+  display: block;
+  max-width: calc(100% - 24px);
+  height: auto;
+  margin: 10px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+}
+
 .toolDivider {
   height: 1px;
   background: var(--border-soft);
@@ -589,6 +598,9 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  /* Never scroll horizontally: wide message content wraps or scrolls inside
+     its own block (code blocks, tables), the pane itself stays fixed. */
+  overflow-x: hidden;
   padding: 24px 24px 16px;
   display: flex;
   flex-direction: column;
@@ -706,6 +718,7 @@
 .eventTitle {
   font-weight: 600;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
   line-height: 1.45;
   min-width: 0;
   flex: 1;
@@ -1065,6 +1078,16 @@
   word-break: break-word;
 }
 
+/* Plan approval (ExitPlanMode): rendered markdown, scrolls when long. */
+.planBody {
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--text);
+  max-height: 420px;
+  overflow: auto;
+}
+
 .permissionActions {
   display: flex;
   gap: 8px;
@@ -1096,6 +1119,102 @@
 
 .permissionDeny:hover {
   background: rgba(248, 113, 113, 0.2);
+}
+
+/* Agent question (AskUserQuestion): options rendered as a numbered picker. */
+.questionBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.questionChip {
+  display: inline-block;
+  margin-right: 8px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #fbbf24;
+}
+
+.questionOptions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.questionOption {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--text);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.questionOption:hover {
+  border-color: rgba(251, 191, 36, 0.45);
+}
+
+.questionOption[data-picked] {
+  border-color: rgba(74, 222, 128, 0.55);
+  background: rgba(74, 222, 128, 0.1);
+}
+
+.questionKey {
+  flex: none;
+  min-width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.questionText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.questionLabel {
+  font-weight: 600;
+}
+
+.questionDesc {
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+
+.questionOther {
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--text);
+  font-size: 12.5px;
+}
+
+.questionOther::placeholder {
+  color: var(--text-dim);
+}
+
+.permissionAllow:disabled,
+.permissionDeny:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .statusStrip {

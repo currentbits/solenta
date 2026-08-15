@@ -5,9 +5,33 @@ const os = require("node:os");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 const { execFileSync } = require("node:child_process");
+const Module = require("node:module");
+
+// ipc.js requires("electron") at load; electron is not installed for tests.
+{
+  const origLoad = Module._load;
+  Module._load = function (request) {
+    if (request === "electron") {
+      return {
+        ipcMain: { handle() {} },
+        BrowserWindow: { getAllWindows: () => [] },
+        dialog: {},
+        shell: {},
+        app: { getPath: () => os.tmpdir() },
+      };
+    }
+    return origLoad.apply(this, arguments);
+  };
+}
+
+const ipc = require("../ipc.js");
 const { Store } = require("../store.js");
 const services = require("../services.js");
 const { createRunner, liveClaudeChildren } = require("../runner.js");
+
+/** 1x1 transparent PNG, the "tool-image" scenario's payload. */
+const PNG_B64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
 
 function git(cwd, args) {
   execFileSync("git", args, { cwd, stdio: "ignore" });
@@ -151,6 +175,60 @@ async function main() {
     return;
   }
 
+  if (scenario === "tool-image") {
+    emit({ type: "system", subtype: "init", session_id: "sess-img", model: "claude-opus-test" });
+    await delay(20);
+    emit({
+      type: "assistant",
+      message: {
+        content: [
+          {
+            type: "tool_use",
+            id: "toolu_img",
+            name: "Read",
+            input: { file_path: "/tmp/shot-home.png" },
+          },
+        ],
+      },
+    });
+    await delay(20);
+    emit({
+      type: "user",
+      message: {
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "toolu_img",
+            content: [
+              { type: "text", text: "Read image" },
+              {
+                type: "image",
+                source: {
+                  type: "base64",
+                  media_type: "image/png",
+                  data: "${PNG_B64}",
+                },
+              },
+            ],
+            is_error: false,
+          },
+        ],
+      },
+    });
+    await delay(20);
+    emit({
+      type: "result",
+      subtype: "success",
+      result: "looks good",
+      usage: { input_tokens: 10, output_tokens: 5 },
+      total_cost_usd: 0.001,
+      num_turns: 1,
+      session_id: "sess-img",
+    });
+    process.exit(0);
+    return;
+  }
+
   if (scenario === "tool-error") {
     emit({
       type: "system",
@@ -197,6 +275,131 @@ async function main() {
       session_id: "sess-err",
     });
     process.exit(0);
+    return;
+  }
+
+  if (scenario === "subagents") {
+    emit({
+      type: "system",
+      subtype: "init",
+      session_id: "sess-sub",
+      model: "claude-opus-test",
+    });
+    await delay(20);
+    emit({
+      type: "assistant",
+      message: {
+        content: [
+          {
+            type: "tool_use",
+            id: "toolu_sub_sync",
+            name: "Agent",
+            input: { description: "Map the panel", subagent_type: "Explore" },
+          },
+          {
+            type: "tool_use",
+            id: "toolu_sub_bg",
+            name: "Agent",
+            input: {
+              description: "Background research",
+              subagent_type: "general-purpose",
+            },
+          },
+        ],
+      },
+    });
+    await delay(20);
+    emit({
+      type: "user",
+      message: {
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "toolu_sub_sync",
+            content: [{ type: "text", text: "Findings: panel maps to store" }],
+            is_error: false,
+          },
+          {
+            type: "tool_result",
+            tool_use_id: "toolu_sub_bg",
+            content: [
+              {
+                type: "text",
+                text: "Async agent launched successfully. agentId: abc123 The agent is working in the background.",
+              },
+            ],
+            is_error: false,
+          },
+        ],
+      },
+    });
+    // Hold the background agent visibly running before its notification.
+    await delay(150);
+    emit({
+      type: "user",
+      message: {
+        content: [
+          {
+            type: "text",
+            text:
+              "<task-notification>\\n<task-id>abc123</task-id>\\n" +
+              "<tool-use-id>toolu_sub_bg</tool-use-id>\\n" +
+              "<status>completed</status>\\n" +
+              '<summary>Agent "Background research" finished</summary>\\n' +
+              "</task-notification>",
+          },
+        ],
+      },
+    });
+    await delay(20);
+    emit({
+      type: "result",
+      subtype: "success",
+      result: "Both agents done.",
+      usage: { input_tokens: 10, output_tokens: 5 },
+      total_cost_usd: 0.001,
+      num_turns: 1,
+      session_id: "sess-sub",
+    });
+    process.exit(0);
+    return;
+  }
+
+  if (scenario === "linger-then-exit") {
+    // A complete turn, then the process stays alive (so the runner keeps it
+    // for reuse) and dies without ever reading the next turn off stdin.
+    // Death is triggered by that turn's stdin write, not a timer: a fixed
+    // delay can expire before turn two on a loaded machine, and then the
+    // runner declines the reuse and the test stops covering the respawn
+    // without ever going red. The listener attaches first so turn one's
+    // already-buffered prompt is consumed before the gate opens.
+    let answered = false;
+    process.stdin.resume();
+    process.stdin.on("data", () => {
+      if (answered) process.exit(0);
+    });
+    emit({
+      type: "system",
+      subtype: "init",
+      session_id: "sess-abc-001",
+      model: "claude-opus-test",
+    });
+    await delay(20);
+    emit({
+      type: "assistant",
+      message: { content: [{ type: "text", text: "First turn reply" }] },
+    });
+    await delay(20);
+    emit({
+      type: "result",
+      subtype: "success",
+      result: "First done.",
+      usage: { input_tokens: 100, output_tokens: 50 },
+      total_cost_usd: 0.01,
+      num_turns: 1,
+      session_id: "sess-abc-001",
+    });
+    answered = true;
     return;
   }
 
@@ -310,8 +513,8 @@ async function main() {
     return;
   }
 
-  // Issue #17: empty success and nothing else. Stay alive so a grace timer
-  // (not process exit) is what decides the turn.
+  // Issue #17: empty success and nothing else, then death. Process exit is
+  // the only evidence that the empty result really was the whole turn.
   if (scenario === "phantom-only") {
     emit({
       type: "system",
@@ -329,8 +532,78 @@ async function main() {
       num_turns: 0,
       session_id: "sess-po",
     });
-    await delay(30000);
+    await delay(20);
     process.exit(0);
+    return;
+  }
+
+  // Issue #17, real trace: a resumed CLI settles a queued task-notification
+  // as its own turn (empty success), and the real turn's first token lands
+  // long after — 48s in the wild, on Opus with a large session. Nothing may
+  // fail the turn while the CLI is alive and still working on it.
+  if (scenario === "phantom-then-slow-real") {
+    emit({
+      type: "system",
+      subtype: "init",
+      session_id: "sess-psr",
+      model: "m",
+    });
+    await delay(20);
+    emit({
+      type: "result",
+      subtype: "success",
+      result: "",
+      usage: { input_tokens: 0, output_tokens: 0 },
+      total_cost_usd: 0,
+      num_turns: 0,
+      session_id: "sess-psr",
+    });
+    await delay(400);
+    emit({
+      type: "assistant",
+      message: { content: [{ type: "text", text: "slow real reply" }] },
+    });
+    await delay(20);
+    emit({
+      type: "result",
+      subtype: "success",
+      result: "slow real reply",
+      usage: { input_tokens: 2, output_tokens: 3 },
+      total_cost_usd: 0,
+      num_turns: 1,
+      session_id: "sess-psr",
+    });
+    process.exit(0);
+    return;
+  }
+
+  // Issue #17: phantom, then real content, then death with no result of our
+  // own. The exit must be surfaced, not silently checkmarked.
+  if (scenario === "phantom-then-die") {
+    emit({
+      type: "system",
+      subtype: "init",
+      session_id: "sess-pd",
+      model: "m",
+    });
+    await delay(20);
+    emit({
+      type: "result",
+      subtype: "success",
+      result: "",
+      usage: { input_tokens: 0, output_tokens: 0 },
+      total_cost_usd: 0,
+      num_turns: 0,
+      session_id: "sess-pd",
+    });
+    await delay(20);
+    emit({
+      type: "assistant",
+      message: { content: [{ type: "text", text: "partial work" }] },
+    });
+    await delay(20);
+    process.stderr.write("claude-died-mid-turn\\n");
+    process.exit(3);
     return;
   }
 
@@ -419,6 +692,103 @@ async function main() {
           total_cost_usd: 0,
           num_turns: 1,
           session_id: "sess-perm",
+        });
+        process.exit(0);
+      }
+    });
+    await delay(30000);
+    process.exit(1);
+    return;
+  }
+
+  // Ask the user a question (AskUserQuestion), finish echoing the answer.
+  if (scenario === "question") {
+    emit({ type: "system", subtype: "init", session_id: "sess-q", model: "m" });
+    await delay(20);
+    emit({
+      type: "control_request",
+      request_id: "req-q-1",
+      request: {
+        subtype: "can_use_tool",
+        tool_name: "AskUserQuestion",
+        input: {
+          questions: [
+            {
+              question: "Which database?",
+              header: "Database",
+              multiSelect: false,
+              options: [
+                { label: "Postgres", description: "Relational" },
+                { label: "SQLite", description: "Embedded" },
+              ],
+            },
+          ],
+        },
+      },
+    });
+    let buf = "";
+    process.stdin.on("data", (c) => {
+      buf += c;
+      let nl;
+      while ((nl = buf.indexOf("\\n")) >= 0) {
+        const line = buf.slice(0, nl);
+        buf = buf.slice(nl + 1);
+        if (!line.trim()) continue;
+        let msg;
+        try { msg = JSON.parse(line); } catch { continue; }
+        if (msg.type !== "control_response") continue;
+        if (process.env.CODER_FAKE_CLAUDE_CTRL_FILE) {
+          fs.writeFileSync(process.env.CODER_FAKE_CLAUDE_CTRL_FILE, JSON.stringify(msg), "utf8");
+        }
+        emit({
+          type: "result",
+          subtype: "success",
+          result: "answered",
+          usage: { input_tokens: 1, output_tokens: 1 },
+          total_cost_usd: 0,
+          num_turns: 1,
+          session_id: "sess-q",
+        });
+        process.exit(0);
+      }
+    });
+    await delay(30000);
+    process.exit(1);
+    return;
+  }
+
+  // Ask to leave plan mode (ExitPlanMode) with a markdown plan.
+  if (scenario === "plan") {
+    emit({ type: "system", subtype: "init", session_id: "sess-plan", model: "m" });
+    await delay(20);
+    emit({
+      type: "control_request",
+      request_id: "req-plan-1",
+      request: {
+        subtype: "can_use_tool",
+        tool_name: "ExitPlanMode",
+        input: { plan: "## Steps\\n\\n1. Add the card\\n2. Wire the buttons" },
+      },
+    });
+    let buf = "";
+    process.stdin.on("data", (c) => {
+      buf += c;
+      let nl;
+      while ((nl = buf.indexOf("\\n")) >= 0) {
+        const line = buf.slice(0, nl);
+        buf = buf.slice(nl + 1);
+        if (!line.trim()) continue;
+        let msg;
+        try { msg = JSON.parse(line); } catch { continue; }
+        if (msg.type !== "control_response") continue;
+        emit({
+          type: "result",
+          subtype: "success",
+          result: "planned",
+          usage: { input_tokens: 1, output_tokens: 1 },
+          total_cost_usd: 0,
+          num_turns: 1,
+          session_id: "sess-plan",
         });
         process.exit(0);
       }
@@ -598,6 +968,7 @@ describe("runner claude provider", () => {
         pushes.push({ channel, payload });
       },
       tickMs: 15,
+      userDataPath: tmpDir,
     });
 
     const repo = path.join(tmpDir, "app");
@@ -712,6 +1083,50 @@ describe("runner claude provider", () => {
     assert.ok(!argv.includes("--resume"));
   });
 
+  it("tracks Agent-tool subagents on the thread: sync → done, background runs until its task-notification (issue #21)", async () => {
+    process.env.CODER_FAKE_CLAUDE_SCENARIO = "subagents";
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "spawn agents" });
+
+    // After both tool_results: the sync agent is done, the background
+    // launch ack keeps its agent running.
+    await waitFor(() => {
+      const subs = store.getThread(thread.id).subagents || [];
+      return (
+        subs.some((s) => s.id === "toolu_sub_sync" && s.status === "done") &&
+        subs.some((s) => s.id === "toolu_sub_bg" && s.status === "running")
+      );
+    });
+
+    // The task-notification settles the background agent.
+    await waitFor(() => {
+      const t = store.getThread(thread.id);
+      return t.status === "done";
+    });
+    const subs = store.getThread(thread.id).subagents;
+    assert.equal(subs.length, 2);
+    const sync = subs.find((s) => s.id === "toolu_sub_sync");
+    assert.equal(sync.description, "Map the panel");
+    assert.equal(sync.agentType, "Explore");
+    assert.equal(sync.status, "done");
+    const bg = subs.find((s) => s.id === "toolu_sub_bg");
+    assert.equal(bg.description, "Background research");
+    assert.equal(bg.agentType, "general-purpose");
+    assert.equal(bg.status, "done");
+
+    // The rows reached the renderer on a thread:updated push.
+    assert.ok(
+      pushes.some(
+        (p) =>
+          p.channel === "thread:updated" &&
+          p.payload.thread &&
+          p.payload.thread.id === thread.id &&
+          Array.isArray(p.payload.thread.subagents) &&
+          p.payload.thread.subagents.length === 2,
+      ),
+    );
+  });
+
   it("surfaces permission prompts and answers them over the control protocol", async () => {
     process.env.CODER_FAKE_CLAUDE_SCENARIO = "permission";
     const ctrlFile = path.join(tmpDir, "ctrl.json");
@@ -802,6 +1217,86 @@ describe("runner claude provider", () => {
     }
   });
 
+  it("surfaces AskUserQuestion options and returns answers in updatedInput", async () => {
+    process.env.CODER_FAKE_CLAUDE_SCENARIO = "question";
+    const ctrlFile = path.join(tmpDir, "ctrl-q.json");
+    process.env.CODER_FAKE_CLAUDE_CTRL_FILE = ctrlFile;
+    try {
+      const thread = store.getThreads()[0];
+      await runner.startRun({ threadId: thread.id, prompt: "pick a db" });
+
+      await waitFor(() => runner.getPendingPermission(thread.id) != null);
+      const pending = runner.getPendingPermission(thread.id);
+      assert.equal(pending.toolName, "AskUserQuestion");
+      // The parsed questions ride along for the renderer's option picker.
+      assert.deepEqual(pending.questions, [
+        {
+          question: "Which database?",
+          header: "Database",
+          multiSelect: false,
+          options: [
+            { label: "Postgres", description: "Relational" },
+            { label: "SQLite", description: "Embedded" },
+          ],
+        },
+      ]);
+
+      runner.respondPermission({
+        threadId: thread.id,
+        requestId: pending.requestId,
+        decision: "allow",
+        answers: { "Which database?": "Postgres" },
+      });
+      await waitFor(() => store.getThread(thread.id).status === "done");
+
+      // Answers merged into updatedInput; original questions preserved.
+      const ctrl = JSON.parse(fs.readFileSync(ctrlFile, "utf8"));
+      assert.equal(ctrl.response.response.behavior, "allow");
+      assert.deepEqual(ctrl.response.response.updatedInput.answers, {
+        "Which database?": "Postgres",
+      });
+      assert.equal(
+        ctrl.response.response.updatedInput.questions[0].question,
+        "Which database?",
+      );
+      assert.equal(ctrl.response.response.updatedPermissions, undefined);
+
+      // The chosen answer is recorded in the conversation.
+      const msgs = store.getMessages(thread.id);
+      assert.ok(
+        msgs.some((m) => m.role === "event" && m.text === "Answered: Postgres"),
+      );
+    } finally {
+      delete process.env.CODER_FAKE_CLAUDE_CTRL_FILE;
+    }
+  });
+
+  it("surfaces an ExitPlanMode plan and leaves plan mode on approval", async () => {
+    process.env.CODER_FAKE_CLAUDE_SCENARIO = "plan";
+    const thread = store.getThreads()[0];
+    store.updateThread(thread.id, { permissionMode: "plan" });
+    await runner.startRun({ threadId: thread.id, prompt: "plan it" });
+
+    await waitFor(() => runner.getPendingPermission(thread.id) != null);
+    const pending = runner.getPendingPermission(thread.id);
+    assert.equal(pending.toolName, "ExitPlanMode");
+    // The plan markdown rides along for the renderer's plan card.
+    assert.equal(pending.plan, "## Steps\n\n1. Add the card\n2. Wire the buttons");
+    assert.equal(pending.questions, null);
+
+    runner.respondPermission({
+      threadId: thread.id,
+      requestId: pending.requestId,
+      decision: "allow",
+    });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    // Approval ends plan mode so the next run executes instead of re-planning.
+    assert.equal(store.getThread(thread.id).permissionMode, "default");
+    const msgs = store.getMessages(thread.id);
+    assert.ok(msgs.some((m) => m.role === "event" && m.text === "Plan approved"));
+  });
+
   it("pairs tool_result is_error into tool message", async () => {
     process.env.CODER_FAKE_CLAUDE_SCENARIO = "tool-error";
 
@@ -818,6 +1313,32 @@ describe("runner claude provider", () => {
     assert.equal(tool.tool.done, true);
     assert.equal(tool.tool.isError, true);
     assert.match(tool.tool.output, /command failed/);
+  });
+
+  it("saves tool_result images to disk and names them on the tool message", async () => {
+    process.env.CODER_FAKE_CLAUDE_SCENARIO = "tool-image";
+
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "screenshot it" });
+
+    await waitFor(() => {
+      const t = store.getThreads().find((x) => x.id === thread.id);
+      return t && t.status === "done";
+    });
+
+    const tool = store.getMessages(thread.id).find((m) => m.role === "tool");
+    assert.ok(tool);
+    assert.equal(tool.tool.done, true);
+    assert.equal(tool.tool.images.length, 1);
+    // The base64 stays out of the transcript; only the file name is stored.
+    assert.ok(!JSON.stringify(tool).includes(PNG_B64));
+    const file = path.join(tmpDir, "tool-images", tool.tool.images[0]);
+    assert.equal(fs.readFileSync(file).toString("base64"), PNG_B64);
+    const { readToolImage } = require("../tool-images.js");
+    assert.equal(
+      readToolImage(tmpDir, tool.tool.images[0]),
+      `data:image/png;base64,${PNG_B64}`,
+    );
   });
 
   it("accumulates usage across two turns and passes --resume", async () => {
@@ -865,6 +1386,40 @@ describe("runner claude provider", () => {
     assert.ok(resumeIdx >= 0, `expected --resume in ${JSON.stringify(argv)}`);
     assert.equal(argv[resumeIdx + 1], "sess-abc-001");
     assert.ok(!argv.includes("turn two"));
+  });
+
+  it("respawns when the reused CLI exits without taking the turn", async () => {
+    process.env.CODER_FAKE_CLAUDE_SCENARIO = "linger-then-exit";
+
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "turn one" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    // Turn two lands while turn one's process is still alive but on its way
+    // out: the runner reuses it, the prompt goes nowhere, and its exit(0)
+    // must not fail a turn the CLI never saw.
+    process.env.CODER_FAKE_CLAUDE_SCENARIO = "resume-turn";
+    fs.unlinkSync(argvFile);
+
+    await runner.startRun({ threadId: thread.id, prompt: "turn two" });
+
+    await waitFor(() =>
+      store
+        .getMessages(thread.id)
+        .some((m) => m.role === "assistant" && m.text === "Second turn reply"),
+    );
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    const errs = store
+      .getMessages(thread.id)
+      .filter((m) => m.role === "event" && /Run error/i.test(m.text));
+    assert.deepEqual(errs, [], `unexpected run errors: ${JSON.stringify(errs)}`);
+
+    // The respawn is a real new process, resuming the same session.
+    const argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
+    const resumeIdx = argv.indexOf("--resume");
+    assert.ok(resumeIdx >= 0, `expected --resume in ${JSON.stringify(argv)}`);
+    assert.equal(argv[resumeIdx + 1], "sess-abc-001");
   });
 
   it("nonzero exit without result sets failed + Run error", async () => {
@@ -996,9 +1551,57 @@ describe("runner claude provider", () => {
     assert.equal(store.getWorkLog(thread.id).find((w) => w.label === "Agent working").done, true);
   });
 
-  it("fails a turn that only ever emits an empty leftover result", async () => {
-    process.env.CODER_FAKE_CLAUDE_SCENARIO = "phantom-only";
+  it("keeps waiting when the real turn is slower than any fixed grace window", async () => {
+    process.env.CODER_FAKE_CLAUDE_SCENARIO = "phantom-then-slow-real";
+    // A short grace would fire ~300ms before the real turn streams anything.
+    // Nothing may fail a turn whose CLI is alive and still working (#17).
     process.env.CODER_PHANTOM_RESULT_GRACE_MS = "80";
+
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "do work" });
+    await waitFor(() =>
+      ["done", "failed", "idle"].includes(store.getThread(thread.id).status),
+    );
+
+    assert.equal(store.getThread(thread.id).status, "done");
+    const msgs = store.getMessages(thread.id);
+    assert.ok(
+      msgs.some((m) => m.role === "assistant" && m.text === "slow real reply"),
+      "the real turn must land",
+    );
+    assert.deepEqual(
+      msgs.filter((m) => m.role === "event").map((m) => m.text),
+      [],
+      "no fabricated failure while the CLI was still working",
+    );
+  });
+
+  it("reports the exit when the CLI dies after a discarded leftover result", async () => {
+    process.env.CODER_FAKE_CLAUDE_SCENARIO = "phantom-then-die";
+
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "do work" });
+    await waitFor(() => store.getThread(thread.id).status === "failed");
+
+    const events = store
+      .getMessages(thread.id)
+      .filter((m) => m.role === "event");
+    assert.ok(
+      events.some((m) => /Run error \(exit 3\)/.test(m.text)),
+      `expected an exit-3 error, got ${JSON.stringify(events.map((e) => e.text))}`,
+    );
+    const work = store.getWorkLog(thread.id);
+    assert.ok(work.some((w) => w.label === "Run error" && w.done));
+    // The partial content the CLI did produce must survive.
+    assert.ok(
+      store
+        .getMessages(thread.id)
+        .some((m) => m.role === "assistant" && m.text === "partial work"),
+    );
+  });
+
+  it("fails a turn that only ever emits an empty leftover result, then exits", async () => {
+    process.env.CODER_FAKE_CLAUDE_SCENARIO = "phantom-only";
 
     const thread = store.getThreads()[0];
     await runner.startRun({ threadId: thread.id, prompt: "do work" });
@@ -1180,6 +1783,109 @@ describe("runner claude provider", () => {
       .trim()
       .split("\n");
     assert.equal(spawns2.length, 1);
+  });
+
+  it("keeps only the 3 most recently idled CLIs alive (issue #36)", async () => {
+    process.env.CODER_FAKE_CLAUDE_SCENARIO = "multi-turn";
+    const markerDir = path.join(tmpDir, "lru-markers");
+    process.env.CODER_FAKE_CLAUDE_MARKER_DIR = markerDir;
+
+    const project = store.getProjects()[0];
+    const threads = [store.getThreads()[0]];
+    for (let i = 2; i <= 4; i += 1) {
+      threads.push(
+        services.createThread(store, { projectId: project.id, title: `T${i}` }),
+      );
+    }
+
+    // One turn each, settled in order: four kept-alive CLIs, cap is three.
+    for (const t of threads) {
+      await runner.startRun({ threadId: t.id, prompt: "hi" });
+      await waitFor(() => store.getThread(t.id).status === "done");
+    }
+
+    const pids = fs
+      .readFileSync(path.join(markerDir, "spawns"), "utf8")
+      .trim()
+      .split("\n")
+      .map(Number);
+    assert.equal(pids.length, 4);
+
+    const alive = (pid) => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    await waitFor(() => !alive(pids[0]), { timeoutMs: 5000 });
+    // Give a wrong cap (killing more than the excess) a beat to show itself.
+    await new Promise((r) => setTimeout(r, 200));
+    assert.deepEqual(
+      pids.slice(1).map(alive),
+      [true, true, true],
+      "the three newest idle CLIs must survive",
+    );
+  });
+
+  it("settling or archiving a thread kills its kept-alive CLI (issue #48)", async () => {
+    process.env.CODER_FAKE_CLAUDE_SCENARIO = "multi-turn";
+    const markerDir = path.join(tmpDir, "retire-markers");
+    process.env.CODER_FAKE_CLAUDE_MARKER_DIR = markerDir;
+
+    const ctx = ipc.makeCtx({
+      dialog: {},
+      store,
+      runner,
+      broadcast() {},
+      worktreeBase: "",
+      userDataPath: tmpDir,
+    });
+
+    const project = store.getProjects()[0];
+    const settleThread = store.getThreads()[0];
+    const archiveThread = services.createThread(store, {
+      projectId: project.id,
+      title: "To archive",
+    });
+
+    for (const t of [settleThread, archiveThread]) {
+      await runner.startRun({ threadId: t.id, prompt: "hi" });
+      await waitFor(() => store.getThread(t.id).status === "done");
+    }
+
+    const pids = fs
+      .readFileSync(path.join(markerDir, "spawns"), "utf8")
+      .trim()
+      .split("\n")
+      .map(Number);
+    assert.equal(pids.length, 2);
+
+    const alive = (pid) => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    // Both CLIs are within the idle cap: only the fold may kill them.
+    assert.deepEqual(pids.map(alive), [true, true]);
+
+    await ipc.IPC_HANDLERS["threads:setSettled"](ctx, {
+      threadId: settleThread.id,
+      override: "settled",
+    });
+    await waitFor(() => !alive(pids[0]), { timeoutMs: 5000 });
+    assert.equal(alive(pids[1]), true, "settling one thread must not touch others");
+
+    await ipc.IPC_HANDLERS["threads:setArchived"](ctx, {
+      threadId: archiveThread.id,
+      archived: true,
+    });
+    await waitFor(() => !alive(pids[1]), { timeoutMs: 5000 });
   });
 
   it("answers a control_request arriving while settled with a retryable error, not silence", async () => {

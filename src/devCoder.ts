@@ -21,6 +21,7 @@ import type {
   DiffResult,
   DevServerState,
   FetchIssueResult,
+  ListIssuesResult,
   LocalServerInfo,
   MemoryEntryInfo,
   McpServerInfo,
@@ -413,8 +414,10 @@ const TICK_MS = TRAILER ? 1600 : 700;
 const TITLE_MAX = 60;
 const WORKTREE_DELAY_MS = 450;
 const PUSH_DELAY_MS = 350;
-/** Mirrors electron/services.js HANDOFF_ASSISTANT_MAX. */
-const HANDOFF_ASSISTANT_MAX = 2000;
+/** Mirrors electron/services.js hand-off digest limits. */
+const HANDOFF_MESSAGE_MAX = 2000;
+const HANDOFF_MESSAGE_COUNT = 12;
+const HANDOFF_TOTAL_MAX = 12000;
 
 /**
  * Mirrors electron/worktrees.js maybeRenameWorktreeBranch: a creation-time
@@ -459,22 +462,34 @@ export function buildHandoffPrefix(
     return "";
   }
   if (!Array.isArray(msgs) || msgs.length === 0) return "";
-  let lastAssistant: string | null = null;
-  for (let i = msgs.length - 1; i >= 0; i--) {
-    const m = msgs[i];
-    if (m && m.role === "assistant" && m.text != null && String(m.text)) {
-      lastAssistant = String(m.text);
-      break;
-    }
+  if (
+    !msgs.some(
+      (m) => m && m.role === "assistant" && m.text != null && String(m.text),
+    )
+  ) {
+    return "";
   }
-  if (!lastAssistant) return "";
-  const body =
-    lastAssistant.length > HANDOFF_ASSISTANT_MAX
-      ? lastAssistant.slice(0, HANDOFF_ASSISTANT_MAX)
-      : lastAssistant;
+  const picked: string[] = [];
+  let total = 0;
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    if (picked.length >= HANDOFF_MESSAGE_COUNT) break;
+    const m = msgs[i];
+    if (!m || (m.role !== "assistant" && m.role !== "user")) continue;
+    const text = m.text == null ? "" : String(m.text);
+    if (!text) continue;
+    const body =
+      text.length > HANDOFF_MESSAGE_MAX
+        ? text.slice(0, HANDOFF_MESSAGE_MAX) + "\n[…truncated]"
+        : text;
+    if (picked.length && total + body.length > HANDOFF_TOTAL_MAX) break;
+    picked.push(`${m.role}: ${body}`);
+    total += body.length;
+  }
+  picked.reverse();
   return (
-    "[Hand-off context from a previous thread]\n" +
-    body +
+    "[Hand-off context: the last messages of the source thread, truncated — " +
+    "not the full transcript]\n" +
+    picked.join("\n\n") +
     "\n[End context]\n\n"
   );
 }
@@ -1943,6 +1958,9 @@ function buildDevCoder(): CoderApi {
           error: null,
         };
       },
+      async downloadUpdate(): Promise<UpdateStatus> {
+        return this.checkUpdate();
+      },
       async applyUpdate(): Promise<void> {},
     },
     memory: {
@@ -2467,6 +2485,8 @@ function buildDevCoder(): CoderApi {
             provider: t.provider,
             status: t.status,
             handoffFrom: t.handoffFrom ?? null,
+            runStartedAt: t.runStartedAt ?? null,
+            awaitingInput: t.awaitingInput === true,
             lastActivity: last
               ? {
                   text: last.text.split(/\r?\n/, 1)[0].trim(),
@@ -3676,6 +3696,36 @@ function buildDevCoder(): CoderApi {
           },
         };
       },
+      async list(projectPath: string): Promise<ListIssuesResult> {
+        const project = projects.find((p) => p.path === projectPath);
+        const slug = project?.slug || "acme/demo";
+        return {
+          ok: true,
+          issues: [
+            {
+              number: 1,
+              title: "Ship the planboard",
+              url: `https://github.com/${slug}/issues/1`,
+              state: "OPEN",
+              labels: ["plan:doing", "roadmap"],
+            },
+            {
+              number: 2,
+              title: "Write the docs",
+              url: `https://github.com/${slug}/issues/2`,
+              state: "OPEN",
+              labels: ["plan:todo", "task"],
+            },
+            {
+              number: 3,
+              title: "Pick the label convention",
+              url: `https://github.com/${slug}/issues/3`,
+              state: "CLOSED",
+              labels: ["plan:done"],
+            },
+          ],
+        };
+      },
     },
     servers: {
       async list(_input: { threadId: string }): Promise<LocalServerInfo[]> {
@@ -3721,6 +3771,9 @@ function buildDevCoder(): CoderApi {
           "package.json",
         ];
         return { files: all.filter((f) => !q || f.toLowerCase().includes(q)) };
+      },
+      async image(_input: { name: string }) {
+        return { dataUrl: null };
       },
     },
     shell: {

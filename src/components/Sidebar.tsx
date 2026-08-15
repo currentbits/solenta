@@ -27,6 +27,12 @@ import {
   snoozePresetUntil,
 } from "../threadSnooze";
 import { countUnread, isUnread } from "../threadUnread";
+import {
+  buildWaitStates,
+  waitLabel,
+  waitTooltip,
+  type WaitState,
+} from "../waiting";
 import { useEscapeClose } from "../useEscapeClose";
 import {
   buildVisibleThreadIds,
@@ -162,8 +168,15 @@ interface SidebarProps {
     opts?: { provider?: string },
   ) => void | Promise<void>;
   /** Which main view is showing. Defaults to thread so existing callers stay idle. */
-  activeView?: "thread" | "kanban" | "prs" | "automations" | "activity";
+  activeView?:
+    | "thread"
+    | "kanban"
+    | "planboard"
+    | "prs"
+    | "automations"
+    | "activity";
   onOpenKanban?: () => void;
+  onOpenPlanboard?: () => void;
   onOpenPrs?: () => void;
   /**
    * Paste a GitHub issue into this project. Omitted by existing tests so
@@ -297,6 +310,7 @@ export function ThreadCard({
   onToggleForkMenu,
   remote = false,
   nested = false,
+  wait = null,
 }: {
   thread: ThreadInfo;
   slug: string;
@@ -327,6 +341,8 @@ export function ThreadCard({
   remote?: boolean;
   /** Fork/worker rendered attached under its source thread (indent + elbow). */
   nested?: boolean;
+  /** Live delegated work this thread is blocked on (issue #42); null when none. */
+  wait?: WaitState | null;
 }) {
   const branch = thread.branch ?? "";
   const prBadge = sidebarPrBadge({
@@ -435,6 +451,20 @@ export function ThreadCard({
           </div>
           <StatusBadge thread={thread} now={now} />
         </div>
+        {/* Own row, not a chip beside the status badge: on a narrow card the
+            branch + PR chip squeeze a chip down to "Waiting on…", which loses
+            the count that is the whole point (issue #42). */}
+        {wait && (
+          <div
+            className={styles.waitRow}
+            data-wait-badge={thread.id}
+            data-attention={wait.blocked > 0 ? "true" : undefined}
+            title={waitTooltip(wait)}
+          >
+            <span className={styles.waitingDot} aria-hidden />
+            {waitLabel(wait, now)}
+          </div>
+        )}
       </div>
       {(onSetSettled || onSetPinned || onSetSnoozed || onFork) && (
         <div className={styles.cardActions} data-card-actions="">
@@ -964,6 +994,7 @@ export function Sidebar({
   onFork,
   activeView = "thread",
   onOpenKanban,
+  onOpenPlanboard,
   onOpenPrs,
   onCreateThreadFromIssue,
   onOpenAutomations,
@@ -1076,6 +1107,13 @@ export function Sidebar({
     for (const t of threads) m.set(t.id, t);
     return m;
   }, [threads]);
+
+  /**
+   * Live delegated work per parent thread (issue #42). Built from the FULL
+   * threads prop, never the filtered view: a worker hidden by search or by a
+   * collapsed group still has its orchestrator waiting on it.
+   */
+  const waitStates = useMemo(() => buildWaitStates(threads), [threads]);
 
   const trimmedQuery = query.trim();
   /** Active full-content search mode (2+ chars). */
@@ -1816,6 +1854,33 @@ export function Sidebar({
         <button
           type="button"
           className={styles.viewNavRow}
+          data-view-nav="planboard"
+          data-active={activeView === "planboard" ? "true" : undefined}
+          title="Planboard"
+          onClick={() => onOpenPlanboard?.()}
+        >
+          <span className={styles.viewNavIcon} aria-hidden>
+            <svg
+              width="15"
+              height="15"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <rect x="1.75" y="1.75" width="12.5" height="12.5" rx="1.5" />
+              <path d="M4.75 5.25h6.5" />
+              <path d="M4.75 8h4.5" />
+              <path d="M4.75 10.75h2.5" />
+            </svg>
+          </span>
+          Planboard
+        </button>
+        <button
+          type="button"
+          className={styles.viewNavRow}
           data-view-nav="prs"
           data-active={activeView === "prs" ? "true" : undefined}
           title="Pull requests"
@@ -2122,6 +2187,7 @@ export function Sidebar({
                           thread.handoffFrom != null &&
                           attentionIdSet.has(thread.handoffFrom)
                         }
+                        wait={waitStates.get(thread.id) ?? null}
                         contentMatch={
                           searching &&
                           !thread.title.toLowerCase().includes(queryLower)
@@ -2150,6 +2216,7 @@ export function Sidebar({
                             thread.handoffFrom != null &&
                             archivedIdSet.has(thread.handoffFrom)
                           }
+                          wait={waitStates.get(thread.id) ?? null}
                           contentMatch={
                             searching &&
                             !thread.title.toLowerCase().includes(queryLower)

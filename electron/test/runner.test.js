@@ -106,7 +106,7 @@ function orchPair(store) {
   store.updateThread(orch.id, { title: "Orchestrator" });
   const worker = services.forkThread(store, { threadId: orch.id });
   store.updateThread(worker.id, { orchWorker: true, title: "Worker A" });
-  store.save();
+  store.saveNow();
   return {
     orch: store.getThread(orch.id),
     worker: store.getThread(worker.id),
@@ -119,6 +119,28 @@ function orchNoticeMessages(store, threadId) {
       (m.role === "user" || m.role === "event") &&
       String(m.text || "").startsWith("[orchestration]"),
   );
+}
+
+/**
+ * Fold thread:updated tails into a full detail, the way the renderer does
+ * (src/threadPatch.ts). Pushes carry only what changed since the last one.
+ */
+function foldPushes(pushes, threadId) {
+  let messages = [];
+  let workLog = [];
+  let last = null;
+  for (const p of pushes) {
+    if (p.channel !== "thread:updated") continue;
+    if (!p.payload || p.payload.thread.id !== threadId) continue;
+    messages = messages
+      .slice(0, p.payload.messagesFrom || 0)
+      .concat(p.payload.messages);
+    workLog = workLog
+      .slice(0, p.payload.workLogFrom || 0)
+      .concat(p.payload.workLog);
+    last = p.payload;
+  }
+  return last ? { ...last, messages, workLog } : null;
 }
 
 describe("runner simulated mode", () => {
@@ -273,11 +295,8 @@ describe("runner simulated mode", () => {
     const doneThread = store.getThreads().find((t) => t.id === thread.id);
     assert.equal(doneThread.runStartedAt, null);
 
-    const lastPush = [...pushes]
-      .reverse()
-      .find((p) => p.channel === "thread:updated");
-    assert.ok(lastPush, "expected thread:updated push");
-    const detail = lastPush.payload;
+    const detail = foldPushes(pushes, thread.id);
+    assert.ok(detail, "expected thread:updated push");
     assert.equal(detail.thread.status, "done");
     assert.ok(detail.workflow);
     assert.equal(detail.workflow.complete, true);
@@ -320,18 +339,131 @@ describe("runner simulated mode", () => {
     assert.ok(runner.getActiveWorkflow(thread.id));
   });
 
-  it("archives an orchestration worker thread when its run lands done", async () => {
+  it("streams tails, not the whole transcript, and they fold back to it", async () => {
     const thread = store.getThreads()[0];
-    store.updateThread(thread.id, { orchWorker: true });
-    await runner.startRun({ threadId: thread.id, prompt: "worker task" });
+    await runner.startRun({ threadId: thread.id, prompt: "stream tails" });
     await waitFor(() => {
-      const t = store.getThreads().find((x) => x.id === thread.id);
+      const t = store.getThread(thread.id);
       return t && t.status === "done";
     });
+
+    const full = services.getThreadDetail(store, thread.id);
+    const folded = foldPushes(pushes, thread.id);
+    assert.deepEqual(folded.messages, full.messages);
+    assert.deepEqual(folded.workLog, full.workLog);
+
+    const streamed = pushes.filter((p) => p.channel === "thread:updated");
+    assert.ok(streamed.length > 2);
+    // Only the first push may carry everything; the rest are tails.
+    assert.ok(
+      streamed
+        .slice(1)
+        .every((p) => p.payload.messages.length < full.messages.length),
+      "later pushes must not re-send the whole message array",
+    );
+    assert.ok(
+      streamed.some((p) => p.payload.messagesFrom > 0),
+      "expected at least one push to skip an unchanged prefix",
+    );
+  });
+
+  it("archives a finished worker once the crew is quiet", async () => {
+    const { orch, worker } = orchPair(store);
+    await runner.startRun({ threadId: worker.id, prompt: "worker task" });
     await waitFor(() => {
-      const t = store.getThreads().find((x) => x.id === thread.id);
-      return t && t.archived === true;
+      const t = store.getThread(worker.id);
+      return t && t.status === "done";
     });
+    await waitFor(() => store.getThread(worker.id).archived === true);
+    assert.equal(store.getThread(orch.id).archived, false);
+  });
+
+  it("a stale 'working' sibling with no live run does not block the sweep", async () => {
+    const { orch, worker } = orchPair(store);
+    // Worker B died mid-run (crash / hung CLI): status says working but the
+    // runner has no run for it. It must not pin the crew open forever.
+    const zombie = services.forkThread(store, { threadId: orch.id });
+    store.updateThread(zombie.id, {
+      orchWorker: true,
+      title: "Worker B",
+      status: "working",
+    });
+    store.saveNow();
+    await runner.startRun({ threadId: worker.id, prompt: "worker task" });
+    await waitFor(() => {
+      const t = store.getThread(worker.id);
+      return t && t.status === "done";
+    });
+    await waitFor(() => store.getThread(worker.id).archived === true);
+    // Only done workers are archived; the zombie stays visible.
+    assert.equal(store.getThread(zombie.id).archived, false);
+  });
+
+  it("holds the sweep while a sibling has a live run", async () => {
+    // Manual timers: each sim run only advances when its own tick is driven,
+    // so Worker B can stay genuinely in-flight while Worker A lands.
+    const timers = new Map();
+    let nextTimerId = 0;
+    const manual = createRunner({
+      store,
+      core,
+      pushFn: () => {},
+      tickMs: 15,
+      setIntervalFn: (fn) => {
+        const id = ++nextTimerId;
+        timers.set(id, fn);
+        return id;
+      },
+      clearIntervalFn: (id) => timers.delete(id),
+    });
+    const drive = (id, until) => {
+      for (let i = 0; i < 500 && !until(); i++) {
+        const fn = timers.get(id);
+        if (!fn) break;
+        fn();
+      }
+    };
+    try {
+      const { orch, worker } = orchPair(store);
+      const busy = services.forkThread(store, { threadId: orch.id });
+      store.updateThread(busy.id, { orchWorker: true, title: "Worker B" });
+      store.saveNow();
+
+      await manual.startRun({ threadId: busy.id, prompt: "long task" });
+      await manual.startRun({ threadId: worker.id, prompt: "worker task" });
+      drive(2, () => store.getThread(worker.id).status === "done");
+      assert.equal(store.getThread(worker.id).status, "done");
+      assert.equal(
+        store.getThread(worker.id).archived,
+        false,
+        "Worker B is still running: no sweep yet",
+      );
+
+      drive(1, () => store.getThread(busy.id).status === "done");
+      assert.equal(store.getThread(busy.id).status, "done");
+      assert.equal(store.getThread(worker.id).archived, true);
+      assert.equal(store.getThread(busy.id).archived, true);
+    } finally {
+      manual.stopAll();
+    }
+  });
+
+  it("archives leftover done workers at startup", async () => {
+    const { worker } = orchPair(store);
+    // Landed while the app was down (or its sweep never came).
+    store.updateThread(worker.id, { status: "done" });
+    store.saveNow();
+    const booted = createRunner({
+      store,
+      core,
+      pushFn: () => {},
+      tickMs: 15,
+    });
+    try {
+      assert.equal(store.getThread(worker.id).archived, true);
+    } finally {
+      booted.stopAll();
+    }
   });
 
   it("wakes an idle orchestrator when an orchWorker run lands done", async () => {
@@ -355,7 +487,79 @@ describe("runner simulated mode", () => {
       (m) => m.role === "user",
     );
     assert.equal(parentUsers.length, 1);
-    assert.equal(store.getThread(worker.id).archived, true);
+    // Archive happens when the wake-up run itself lands (sweep), not at
+    // notice time.
+    await waitFor(() => store.getThread(worker.id).archived === true);
+  });
+
+  it("an undeliverable wake-up lands the orchestrator failed with the reason (issue #34)", async () => {
+    // Manual timers so the daily cap can trip while the worker is in flight:
+    // the run that gets rejected is the orchestrator wake-up, not the worker.
+    const timers = new Map();
+    let nextTimerId = 0;
+    const manual = createRunner({
+      store,
+      core,
+      pushFn: () => {},
+      tickMs: 15,
+      setIntervalFn: (fn) => {
+        const id = ++nextTimerId;
+        timers.set(id, fn);
+        return id;
+      },
+      clearIntervalFn: (id) => timers.delete(id),
+    });
+    try {
+      const { orch, worker } = orchPair(store);
+      await manual.startRun({ threadId: worker.id, prompt: "worker task" });
+      services.setSettings(store, { dailyBudgetUsd: 1 });
+      store.recordSpend(1);
+      store.saveNow();
+
+      for (let i = 0; i < 500; i++) {
+        if (store.getThread(worker.id).status === "done") break;
+        const fn = timers.get(1);
+        if (!fn) break;
+        fn();
+      }
+      assert.equal(store.getThread(worker.id).status, "done");
+
+      // The rejection lands on a microtask after the terminal.
+      await waitFor(() => store.getThread(orch.id).status === "failed");
+      const msgs = store.getMessages(orch.id) || [];
+      const last = msgs[msgs.length - 1];
+      assert.equal(last.role, "event");
+      assert.match(last.text, /^\[orchestration\]/);
+      assert.match(last.text, new RegExp(worker.id));
+      assert.match(last.text, /Not delivered: Daily budget reached/);
+      // Never silently started anyway.
+      assert.equal(msgs.filter((m) => m.role === "user").length, 0);
+    } finally {
+      manual.stopAll();
+    }
+  });
+
+  it("stopping an orchestrator stops its crew and stays stopped", async () => {
+    const { orch, worker } = orchPair(store);
+    await runner.startRun({ threadId: worker.id, prompt: "worker task" });
+    await runner.startRun({ threadId: orch.id, prompt: "orchestrate" });
+    assert.equal(runner.isRunning(worker.id), true);
+
+    await runner.stopRun({ threadId: orch.id });
+
+    assert.equal(runner.isRunning(worker.id), false, "crew must stop too");
+    assert.equal(store.getThread(worker.id).status, "idle");
+    assert.equal(store.getThread(orch.id).status, "idle");
+    assert.ok(
+      (store.getMessages(orch.id) || []).some(
+        (m) => m.role === "event" && /Stopped 1 worker thread$/.test(m.text),
+      ),
+      "orchestrator records the crew stop",
+    );
+    // Stop is sacred: no worker terminal re-wakes the orchestrator.
+    await new Promise((r) => setTimeout(r, 150));
+    assert.equal(orchNoticeMessages(store, orch.id).length, 0);
+    assert.equal(store.getThread(orch.id).status, "idle");
   });
 
   it("does not wake the parent for a regular fork without orchWorker", async () => {
@@ -735,7 +939,7 @@ describe("runner real agent mode", () => {
     assert.equal(agent.model, path.basename(process.execPath));
   });
 
-  it("queues the notice while the orchestrator is mid-run, then delivers on stop", async () => {
+  it("queues the notice while the orchestrator is mid-run, then traces it on stop", async () => {
     process.env.CODER_AGENT_CMD = `${process.execPath} -e ${fakeAgentSlowScript()}`;
     const { orch, worker } = orchPair(store);
     await runner.startRun({ threadId: orch.id, prompt: "still planning" });
@@ -758,10 +962,19 @@ describe("runner real agent mode", () => {
     await runner.stopRun({ threadId: orch.id });
     await waitFor(() => orchNoticeMessages(store, orch.id).length > 0);
     const notice = orchNoticeMessages(store, orch.id)[0];
-    assert.equal(notice.role, "user");
+    // Stop is sacred (issue #32): the result is visible as an event, but it
+    // starts no run — a stopped orchestrator stays stopped.
+    assert.equal(notice.role, "event");
     assert.match(notice.text, new RegExp(worker.id));
     assert.match(notice.text, /status done/);
     assert.match(notice.text, /Last reply: Hello_from_agent/);
+    await new Promise((r) => setTimeout(r, 150));
+    assert.equal(store.getThread(orch.id).status, "idle");
+    assert.equal(
+      (store.getMessages(orch.id) || []).filter((m) => m.role === "user").length,
+      1,
+      "no wake-up run on a stopped orchestrator",
+    );
   });
 
   it("wakes an idle orchestrator when an orchWorker run fails", async () => {
@@ -1006,7 +1219,7 @@ describe("runner real agent mode", () => {
     assert.equal(runner.isRunning(threadId), true);
     // Simulate delete race: thread gone while agent still streaming.
     store.removeThread(threadId);
-    store.save();
+    store.saveNow();
     assert.equal(store.getThread(threadId), null);
 
     // Wait past agent exit; pushDetail/onChunk/onDone must not throw.

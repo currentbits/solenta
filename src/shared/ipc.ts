@@ -153,6 +153,22 @@ export interface ThreadInfo {
    * (lazy, t3-style), so a thread that never runs leaves nothing on disk.
    */
   pendingWorktree?: boolean;
+  /**
+   * In-session subagents spawned via the Agent tool, tracked by the runner
+   * from the CLI stream (issue #21). Newest-last, capped to 20 rows.
+   */
+  subagents?: SubagentInfo[];
+}
+
+/** One in-session subagent (Agent tool call) surfaced in the Agents panel. */
+export interface SubagentInfo {
+  /** tool_use id of the spawning Agent call. */
+  id: string;
+  /** The Agent call's short description (falls back to the tool summary). */
+  description: string;
+  /** subagent_type from the tool input, e.g. "general-purpose"; null when absent. */
+  agentType: string | null;
+  status: "running" | "done" | "failed";
 }
 
 /**
@@ -166,6 +182,10 @@ export interface ThreadSummaryInfo {
   provider: string;
   status: ThreadStatus;
   handoffFrom: string | null;
+  /** Mirrors ThreadInfo: drives the "waiting on N · elapsed" line (issue #42). */
+  runStartedAt: number | null;
+  /** Mirrors ThreadInfo: a worker stalled on a permission prompt. */
+  awaitingInput?: boolean;
   /**
    * First line of the thread's last assistant message and its timestamp;
    * null when the thread has no assistant message yet.
@@ -185,6 +205,11 @@ export interface ToolCallInfo {
   output: string | null;
   isError: boolean;
   done: boolean;
+  /**
+   * Filenames of images the tool returned (screenshots, Read of a PNG), kept
+   * under userData/tool-images. Load one with files.image({ name }).
+   */
+  images?: string[];
 }
 
 export interface ChatMessage {
@@ -296,6 +321,27 @@ export interface PendingPermissionInfo {
   summary: string;
   /** Pretty-printed JSON of the tool input (truncated like ToolCallInfo). */
   input: string;
+  /**
+   * Present when the agent is asking the user a question (AskUserQuestion):
+   * render an option picker instead of the generic allow/deny prompt and
+   * answer via respondPermission's `answers`.
+   */
+  questions?: PendingQuestion[] | null;
+  /**
+   * Present when the agent is asking to leave plan mode (ExitPlanMode): the
+   * plan markdown, rendered in the prompt panel instead of the raw JSON.
+   */
+  plan?: string | null;
+}
+
+/** One question of an AskUserQuestion prompt. */
+export interface PendingQuestion {
+  question: string;
+  /** Short chip label, e.g. "Auth method". */
+  header: string;
+  /** True: the user may pick several options (answer joins labels with ", "). */
+  multiSelect: boolean;
+  options: { label: string; description: string }[];
 }
 
 /** User decision on a PendingPermissionInfo. "allowAlways" also allows the tool for the rest of the CLI session. */
@@ -311,6 +357,24 @@ export interface ThreadDetail {
   usage: SessionUsage | null;
   /** Oldest unanswered permission prompt of the active run; absent/null when none. */
   pendingPermission?: PendingPermissionInfo | null;
+}
+
+/**
+ * A streamed thread update ("thread:updated"). `messages` and `workLog` are
+ * TAILS: everything from `messagesFrom` / `workLogFrom` onward, with the
+ * untouched prefix left out (the biggest transcripts are megabytes and this
+ * is pushed on every chunk). Merge with mergeThreadPatch; a missing index
+ * means 0, so a plain full ThreadDetail is also a valid patch.
+ */
+export interface ThreadPatch extends ThreadDetail {
+  messagesFrom?: number;
+  workLogFrom?: number;
+  /**
+   * Push counter for this thread, 1-based. A gap means a push was dropped
+   * (web socket reconnect), so the prefix we hold may be stale: refetch
+   * instead of merging. Absent on full pushes.
+   */
+  seq?: number;
 }
 
 export interface GitStatus {
@@ -451,6 +515,23 @@ export interface IssueInfo {
 /** Per-project issue fetch. Failures stay in-band so the UI can show them. */
 export type FetchIssueResult =
   | { ok: true; issue: IssueInfo }
+  | { ok: false; reason: string };
+
+/** One row from `gh issue list`, for the Planboard. */
+export interface PlanIssue {
+  number: number;
+  title: string;
+  url: string;
+  state: "OPEN" | "CLOSED";
+  /** Label names, e.g. ["plan:doing", "roadmap"]. */
+  labels: string[];
+  /** ISO timestamp from gh, when present. */
+  updatedAt?: string;
+}
+
+/** Per-project listIssues result. Failures stay in-band so the UI can retry. */
+export type ListIssuesResult =
+  | { ok: true; issues: PlanIssue[] }
   | { ok: false; reason: string };
 
 /**
@@ -659,9 +740,10 @@ export interface UpdateStatus {
   /**
    * disabled: build carries no channel/tag stamp (dev tree, local bundle).
    * none: already on the channel's latest release.
-   * available: newer release exists but was not auto-installed (non-macOS,
-   *   no matching asset, or install failed) — `url` links the release page.
-   * staged: new bundle already swapped into place; restart to run it.
+   * available: newer release exists and has not been installed — it never is
+   *   without a user click, and on non-macOS / no matching asset / a failed
+   *   install it never is at all; `url` links the release page.
+   * staged: new bundle downloaded, verified and swapped in; restart to run it.
    */
   state: "disabled" | "none" | "available" | "staged" | "error";
   channel: "prod" | "nightly" | null;
@@ -688,8 +770,10 @@ export interface MemoryEntryInfo {
 export interface CoderApi {
   app: {
     status(): Promise<AppStatus>;
-    /** Check the release channel; on macOS also downloads + stages the swap. */
+    /** Check the release channel. Read-only: never installs anything. */
     checkUpdate(): Promise<UpdateStatus>;
+    /** User-initiated install: download, verify the digest, stage the swap. */
+    downloadUpdate(): Promise<UpdateStatus>;
     /** Relaunch into a staged update. */
     applyUpdate(): Promise<void>;
   };
@@ -807,6 +891,11 @@ export interface CoderApi {
       threadId: string;
       requestId: string;
       decision: PermissionDecision;
+      /**
+       * For question prompts (pendingPermission.questions): the chosen answer
+       * per question text; sent to the agent as updatedInput.answers.
+       */
+      answers?: Record<string, string>;
     }): Promise<void>;
     /** Archive or unarchive; archived threads are hidden by default but fully intact. */
     setArchived(input: { threadId: string; archived: boolean }): Promise<ThreadInfo>;
@@ -1028,6 +1117,12 @@ export interface CoderApi {
      * issue: those come back as `{ ok: false, reason }`.
      */
     fetch(input: { projectPath: string; ref: string }): Promise<FetchIssueResult>;
+    /**
+     * Issues for a project checkout via `gh issue list --state all`, for the
+     * Planboard. Never rejects for missing gh / non-GitHub remotes / auth:
+     * those come back as `{ ok: false, reason }`.
+     */
+    list(projectPath: string): Promise<ListIssuesResult>;
   };
   files: {
     /**
@@ -1036,6 +1131,11 @@ export interface CoderApi {
      * thread's worktree when bound, else the project checkout.
      */
     list(input: { threadId: string; query?: string }): Promise<{ files: string[] }>;
+    /**
+     * One image a tool produced, as a data URL (ToolCallInfo.images holds the
+     * names). null when the file is gone or the name is not an image.
+     */
+    image(input: { name: string }): Promise<{ dataUrl: string | null }>;
   };
   servers: {
     /**
@@ -1065,7 +1165,7 @@ export interface CoderApi {
   };
   /** Returns an unsubscribe function. */
   on(channel: "threads:changed", cb: (threads: ThreadInfo[]) => void): () => void;
-  on(channel: "thread:updated", cb: (detail: ThreadDetail) => void): () => void;
+  on(channel: "thread:updated", cb: (patch: ThreadPatch) => void): () => void;
   /** Desktop notification click: select this thread. */
   on(channel: "thread:select", cb: (threadId: string) => void): () => void;
 }

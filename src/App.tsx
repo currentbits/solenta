@@ -4,6 +4,7 @@ import { Sidebar } from "./components/Sidebar";
 import { ThreadView } from "./components/ThreadView";
 import { PrListView } from "./components/PrListView";
 import { KanbanView } from "./components/KanbanView";
+import { PlanboardView } from "./components/PlanboardView";
 import { AutomationsView } from "./components/AutomationsView";
 import { ActivityView } from "./components/ActivityView";
 import { AgentsPanel } from "./components/AgentsPanel";
@@ -16,7 +17,13 @@ import { isWebMode } from "./shared/wire";
 import type { ProjectUpdateInput } from "./shared/ipc";
 import styles from "./App.module.css";
 
-export type AppView = "thread" | "kanban" | "prs" | "automations" | "activity";
+export type AppView =
+  | "thread"
+  | "kanban"
+  | "planboard"
+  | "prs"
+  | "automations"
+  | "activity";
 
 export default function App() {
   const {
@@ -60,8 +67,10 @@ export default function App() {
     revertFile,
     suggestCommitMessage,
     listFiles,
+    loadToolImage,
     pushBranch,
     listPrs,
+    listIssues,
     listActivity,
     listThreadSummaries,
     listCheckpoints,
@@ -81,6 +90,7 @@ export default function App() {
     appStatus,
     updateStatus,
     checkUpdate,
+    downloadUpdate,
     applyUpdate,
     settings,
     saveSettings,
@@ -338,6 +348,7 @@ export default function App() {
         onSelectThread={handleSelectThread}
         activeView={view}
         onOpenKanban={() => setView("kanban")}
+        onOpenPlanboard={() => setView("planboard")}
         onOpenPrs={() => setView("prs")}
         onOpenAutomations={() => setView("automations")}
         onOpenActivity={() => setView("activity")}
@@ -411,6 +422,8 @@ export default function App() {
                 await runAutomationNow(id);
               }}
             />
+          ) : view === "planboard" ? (
+            <PlanboardView projects={projects} listIssues={listIssues} />
           ) : view === "kanban" ? (
             <KanbanView
               threads={threads}
@@ -440,8 +453,8 @@ export default function App() {
         onRemoveWorkflow={(id) => removeWorkflow(id)}
         onStopRun={() => stopRun()}
         onSetPermissionMode={(mode) => setPermissionMode(mode)}
-        onRespondPermission={(requestId, decision) =>
-          respondPermission(requestId, decision)
+        onRespondPermission={(requestId, decision, answers) =>
+          respondPermission(requestId, decision, answers)
         }
         onSetProvider={(input) => setProvider(input)}
         onSetReasoningEffort={(effort) => setReasoningEffort(effort)}
@@ -460,6 +473,7 @@ export default function App() {
         onRevertFile={(path, status) => revertFile(path, status)}
         onSuggestCommitMessage={() => suggestCommitMessage()}
         onListFiles={(query) => listFiles(query)}
+        onLoadImage={loadToolImage}
         onPush={() => pushBranch()}
         gitSyncInfo={gitSyncInfo}
         gitFetch={gitFetch}
@@ -528,6 +542,7 @@ export default function App() {
           status={appStatus}
           update={updateStatus}
           onCheckUpdate={checkUpdate}
+          onDownloadUpdate={downloadUpdate}
           onApplyUpdate={applyUpdate}
           onSaveSettings={(patch) => saveSettings(patch)}
         />

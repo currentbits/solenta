@@ -142,7 +142,7 @@ describe("setSettings autoSettleAfterDays validation", () => {
     const store = new Store(filePath);
     services.setSettings(store, { autoSettleAfterDays: null });
     assert.equal(store.getSettings().autoSettleAfterDays, null);
-    store.save();
+    store.saveNow();
     const reloaded = new Store(filePath);
     assert.equal(
       reloaded.getSettings().autoSettleAfterDays,
@@ -167,6 +167,7 @@ describe("setSettings autoSettleAfterDays validation", () => {
       () => services.setSettings(store, { defaultWorktree: "yes" }),
       /defaultWorktree must be a boolean/,
     );
+    store.saveNow();
     const reloaded = new Store(filePath);
     assert.equal(reloaded.getSettings().defaultWorktree, true);
   });
@@ -186,6 +187,7 @@ describe("setSettings autoSettleAfterDays validation", () => {
       () => services.setSettings(store, { updateChannel: "beta" }),
       /updateChannel must be/,
     );
+    store.saveNow();
     const reloaded = new Store(filePath);
     assert.equal(reloaded.getSettings().updateChannel, "nightly");
     assert.equal(

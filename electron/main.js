@@ -1,5 +1,11 @@
 "use strict";
 
+// Electron's patched fs treats .asar files as directories, so the updater's
+// recursive rms (temp work dir, Solenta.app.old) die with ENOTDIR on the
+// bundle's default_app.asar. We ship app code as a plain directory, so asar
+// support buys nothing — turn it off for the whole main process.
+process.noAsar = true;
+
 const { app, BrowserWindow, ipcMain, dialog, shell, Notification } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
@@ -138,8 +144,20 @@ function focusMainWindow() {
 }
 
 /**
- * Desktop notification when a run settles while the window is in the
- * background. Click focuses the window and selects that thread.
+ * Notification state of a thread: its status, or "waiting" when the run is
+ * blocked on a permission prompt (same guard the sidebar badge uses).
+ * @param {{ status?: string, awaitingInput?: boolean }} thread
+ */
+function threadNotifyState(thread) {
+  return thread.status === "working" && thread.awaitingInput
+    ? "waiting"
+    : thread.status;
+}
+
+/**
+ * Desktop notification when a run settles or blocks on a prompt while the
+ * window is in the background. Click focuses the window and selects that
+ * thread.
  * @param {{ id: string, title?: string, status: string }} thread
  */
 function notifyThreadComplete(thread) {
@@ -147,7 +165,11 @@ function notifyThreadComplete(thread) {
   if (Notification.isSupported && !Notification.isSupported()) return;
   const n = new Notification({
     title: thread.title || "Thread",
-    body: thread.status === "failed" ? "failed" : "done",
+    body: threadNotifyState(thread) === "waiting"
+      ? "needs permission"
+      : thread.status === "failed"
+        ? "failed"
+        : "done",
   });
   n.on("click", () => {
     const win = focusMainWindow();
@@ -236,7 +258,7 @@ app.whenReady().then(async () => {
 
   const lastStatus = new Map();
   for (const t of store.getThreads()) {
-    lastStatus.set(t.id, t.status);
+    lastStatus.set(t.id, threadNotifyState(t));
   }
 
   runner = createRunner({
@@ -245,7 +267,7 @@ app.whenReady().then(async () => {
     pushFn: (channel, payload) => {
       if (channel === "thread:updated" && payload && payload.thread) {
         const prev = lastStatus.get(payload.thread.id);
-        const next = payload.thread.status;
+        const next = threadNotifyState(payload.thread);
         if (shouldNotify(prev, next, isAnyWindowFocused())) {
           notifyThreadComplete(payload.thread);
         }

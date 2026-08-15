@@ -29,6 +29,7 @@ const {
 const opencodeParse = require("./opencode.js");
 const { runOpencode } = opencodeParse;
 const { recordRunOutcome } = require("./memory-record.js");
+const { extractImages, saveToolImages } = require("./tool-images.js");
 const {
   createSessionRecorder,
   mapMessageRole,
@@ -38,24 +39,25 @@ const { wrapCommand } = require("./ssh.js");
 
 const KIMI_PUSH_THROTTLE_MS = 250;
 
+/** Plan markdown shown in the approval panel; long enough for a real plan. */
+const PLAN_TRUNCATE = 20000;
+
 /**
  * A kept-alive/resumed Claude CLI can emit a result that is not the answer to
  * the turn we just sent: settling a leftover background-task notification or
  * "Continue from where you left off." self-turn first (issue #17). Those
  * phantom results are success-typed with empty text and arrive before the
  * real turn streams anything. We hold such a result instead of finalizing;
- * real turn activity discards it and the real result finalizes the run. If
- * nothing else ever arrives (grace timer, or the process exits), the held
- * empty result is a failure, not a silent success.
+ * real turn activity discards it and the real result finalizes the run. The
+ * held result only becomes a failure when the process EXITS without ever
+ * answering — the one piece of evidence that the turn is really over. A
+ * wall-clock grace window cannot stand in for that: the CLI's first token
+ * legitimately lands minutes later (observed: 48s of thinking on a large
+ * resumed session), and failing early both fabricates an error and drops the
+ * whole real turn, which is issue #17's "nothing happens".
  */
 // ponytail: shape-based phantom detection (empty success before any content);
 // switch to a per-turn correlation id if the CLI protocol ever grows one.
-const PHANTOM_RESULT_GRACE_MS = 30 * 1000;
-
-function phantomResultGraceMs() {
-  const raw = Number(process.env.CODER_PHANTOM_RESULT_GRACE_MS);
-  return Number.isFinite(raw) && raw > 0 ? raw : PHANTOM_RESULT_GRACE_MS;
-}
 
 /** Empty success with no streamed turn content: leftover, not this turn. */
 function isPhantomClaudeResult(ev, sawTurnContent) {
@@ -301,6 +303,10 @@ function createRunner(opts) {
   // detach (nohup); add child-process introspection if that ever hurts.
   const CLAUDE_IDLE_REAP_MS = 30 * 60 * 1000;
 
+  // ponytail: fixed LRU cap — an 8-worker fan-out otherwise leaves 8 idle CLIs
+  // resident for the full half hour (issue #36). Make it a setting if 3 chafes.
+  const CLAUDE_IDLE_MAX = 3;
+
   /** Kill and forget a thread's kept-alive Claude CLI (if any). */
   function disposeClaudeSession(threadId) {
     const sess = claudeSessions.get(threadId);
@@ -312,6 +318,81 @@ function createRunner(opts) {
     } catch {
       // already dead
     }
+    finishRunningSubagents(threadId);
+  }
+
+  /**
+   * In-session subagents spawned via the Agent tool (issue #21). The CLI
+   * runs them internally, so the only trace is its stream: the spawning
+   * tool_use, its tool_result, and — for background agents — a later
+   * <task-notification> user text. Rows live on the thread record (keyed by
+   * tool_use id) so the Agents panel can list them; capped to the newest 20
+   * so a long thread never accumulates unbounded rows.
+   */
+  const SUBAGENT_ROWS_MAX = 20;
+
+  function subagentRows(threadId) {
+    const thread = store.getThread(threadId);
+    return thread && Array.isArray(thread.subagents) ? thread.subagents : [];
+  }
+
+  function addSubagentRow(threadId, row) {
+    if (!store.getThread(threadId)) return;
+    store.updateThread(threadId, {
+      subagents: [...subagentRows(threadId), row].slice(-SUBAGENT_ROWS_MAX),
+    });
+  }
+
+  /** Flip a running row's status; false when no such row (not a subagent). */
+  function setSubagentStatus(threadId, toolUseId, status) {
+    const rows = subagentRows(threadId);
+    if (!rows.some((r) => r.id === toolUseId && r.status === "running")) {
+      return false;
+    }
+    store.updateThread(threadId, {
+      subagents: rows.map((r) =>
+        r.id === toolUseId ? { ...r, status } : r,
+      ),
+    });
+    return true;
+  }
+
+  /**
+   * A <task-notification> block pairs back to the Agent call that spawned
+   * the finished background agent via its <tool-use-id>.
+   */
+  function applyTaskNotifications(threadId, text) {
+    let changed = false;
+    const blocks = text.matchAll(
+      /<task-notification>([\s\S]*?)<\/task-notification>/g,
+    );
+    for (const [, body] of blocks) {
+      const id = body.match(/<tool-use-id>\s*([^<\s]+)\s*<\/tool-use-id>/);
+      if (!id) continue;
+      const status = body.match(/<status>\s*([^<\s]+)\s*<\/status>/);
+      const failed = status ? /fail|error|cancel|kill/i.test(status[1]) : false;
+      changed =
+        setSubagentStatus(threadId, id[1], failed ? "failed" : "done") ||
+        changed;
+    }
+    return changed;
+  }
+
+  /**
+   * CLI death (idle reap, param change, thread delete, quit) takes its
+   * background subagents with it — settle any still-running rows so the
+   * panel never shows a live badge for a dead agent.
+   */
+  function finishRunningSubagents(threadId) {
+    const rows = subagentRows(threadId);
+    if (!rows.some((r) => r.status === "running")) return;
+    store.updateThread(threadId, {
+      subagents: rows.map((r) =>
+        r.status === "running" ? { ...r, status: "done" } : r,
+      ),
+    });
+    store.save();
+    pushDetail(threadId, null);
   }
 
   /** Arm the idle reaper after a turn settles; disarmed on reuse. */
@@ -324,11 +405,30 @@ function createRunner(opts) {
     );
     // Never hold the process open for a reap timer.
     if (typeof sess.idleTimer.unref === "function") sess.idleTimer.unref();
+    // Re-insert so Map order reads least → most recently idled, then reap
+    // everything past the cap. Sessions mid-turn have no timer: never counted,
+    // never killed.
+    claudeSessions.delete(threadId);
+    claudeSessions.set(threadId, sess);
+    const idle = [...claudeSessions]
+      .filter(([, s]) => s.idleTimer)
+      .map(([id]) => id);
+    for (const id of idle.slice(0, Math.max(0, idle.length - CLAUDE_IDLE_MAX))) {
+      disposeClaudeSession(id);
+    }
   }
 
   /** Last known workflow (core Workflow or real state) per thread. */
   /** @type {Map<string, object>} */
   const lastWorkflowByThread = new Map();
+
+  /**
+   * Arrays as last pushed per thread, for the tail diff in pushDetail, plus
+   * the push counter the renderer uses to spot dropped pushes. Holds element
+   * references only (the arrays are store slices), never clones.
+   * @type {Map<string, { messages: object[], workLog: object[], seq: number }>}
+   */
+  const lastPushByThread = new Map();
 
   /** Batched session transcript recorder (POST /api/session). */
   const sessionRecorder = createSessionRecorder({
@@ -488,12 +588,22 @@ function createRunner(opts) {
       "[orchestration] " +
       notes.join("\n") +
       "\nContinue orchestrating; thread_status has full details.";
-    startRun({ threadId, prompt }).catch(() => {
-      // Undeliverable (budget gate, missing CLI, already active): leave a
-      // visible trace so the orchestrator still sees the notice.
+    startRun({ threadId, prompt }).catch((err) => {
+      // Undeliverable (budget gate, missing CLI): the orchestration stops
+      // advancing right here, so say why and land the thread "failed" —
+      // that badges the sidebar, arms "Retry turn", and fires the desktop
+      // notification (issue #34). A quiet event alone reads as "still going".
       try {
-        appendMessage(threadId, "event", prompt);
+        const reason = err && err.message ? String(err.message) : String(err);
+        appendMessage(threadId, "event", `${prompt}\n\nNot delivered: ${reason}`);
+        // A run that raced in after the active guard above owns the status;
+        // only an idle orchestrator is really stalled.
+        if (!active.has(threadId)) {
+          store.updateThread(threadId, { status: "failed" }, { touch: true });
+        }
         store.save();
+        pushDetail(threadId, lastWorkflowByThread.get(threadId) || null);
+        pushThreadsChanged();
       } catch {
         // silent
       }
@@ -512,12 +622,12 @@ function createRunner(opts) {
     } catch {
       // silent
     }
+    sweepDoneWorkers(threadId);
   }
 
   /**
    * After a successful turn lands status "done": best-effort worktree
-   * checkpoint commit, and orchestration workers auto-archive so finished
-   * workers do not pile up in the sidebar (issue #14). Shared across every
+   * checkpoint commit and orchestrator wake-up. Shared across every
    * provider path (and sim). Never throws into the run lifecycle.
    * @param {string} threadId
    */
@@ -529,19 +639,58 @@ function createRunner(opts) {
       // silent
     }
     try {
-      const thread = store.getThread(threadId);
-      if (thread && thread.orchWorker && !thread.archived) {
-        // Not real activity: no touch, same as threads:setArchived.
-        store.updateThread(threadId, { archived: true });
-        store.save();
-        pushThreadsChanged();
-      }
+      queueOrchNotice(threadId, "done");
+      flushOrchNotices(threadId);
     } catch {
       // silent
     }
+    sweepDoneWorkers(threadId);
+  }
+
+  /**
+   * Archive one orchestrator's finished workers once its crew is quiet.
+   * "Quiet" means no crew member has a LIVE run: a worker left at "working"
+   * by a crash or a CLI that never lands would otherwise pin the whole crew
+   * open forever (issue #15).
+   * @param {string} threadId - the orchestrator thread
+   */
+  function sweepCrew(threadId) {
+    const crew = store
+      .getThreads()
+      .filter((t) => t.orchWorker && t.handoffFrom === threadId);
+    if (crew.length === 0) return;
+    // Every terminal path calls clearRun before this hook, so a worker that
+    // just landed is already out of `active`.
+    if (crew.some((t) => t.status === "working" && active.has(t.id))) return;
+    let changed = false;
+    for (const t of crew) {
+      if (t.status === "done" && !t.archived) {
+        // Not real activity: no touch, same as threads:setArchived.
+        store.updateThread(t.id, { archived: true });
+        changed = true;
+      }
+    }
+    if (changed) {
+      store.save();
+      pushThreadsChanged();
+    }
+  }
+
+  /**
+   * Sweep the crews this run terminal can settle: the thread's own workers
+   * (it is an orchestrator) and, when the thread is itself a worker, its
+   * orchestrator's crew — the orchestrator can be finished for good, in
+   * which case its terminal never comes again and waiting for it leaves the
+   * workers open forever (issue #15). Never throws.
+   * @param {string} threadId
+   */
+  function sweepDoneWorkers(threadId) {
     try {
-      queueOrchNotice(threadId, "done");
-      flushOrchNotices(threadId);
+      sweepCrew(threadId);
+      const self = store.getThread(threadId);
+      if (self && self.orchWorker && self.handoffFrom) {
+        sweepCrew(String(self.handoffFrom));
+      }
     } catch {
       // silent
     }
@@ -578,6 +727,10 @@ function createRunner(opts) {
       } catch {
         // silent
       }
+      // A stopped orchestrator still tidies its crew (done/failed paths
+      // sweep inside afterSuccessfulTurn/afterFailedTurn, which the sim
+      // path calls directly without ever reaching notifyRunTerminal).
+      sweepDoneWorkers(threadId);
     }
     try {
       if (extras && extras.skip) return;
@@ -648,9 +801,26 @@ function createRunner(opts) {
     return "";
   }
 
+  /**
+   * Index of the first element that differs, by reference. The store patches
+   * messages/work-log items immutably ({...old, ...patch}), so an unchanged
+   * item keeps its identity and everything before the first difference is
+   * already on the renderer.
+   * @param {unknown[] | undefined} prev
+   * @param {unknown[]} next
+   */
+  function firstChanged(prev, next) {
+    if (!prev) return 0;
+    const n = Math.min(prev.length, next.length);
+    let i = 0;
+    while (i < n && prev[i] === next[i]) i++;
+    return i;
+  }
+
   function pushDetail(threadId, workflow) {
     // Deleted threads must not resurrect via late agent/sim pushes.
     if (threadId == null || !store.getThread(threadId)) {
+      lastPushByThread.delete(threadId);
       return null;
     }
     if (workflow) {
@@ -681,7 +851,25 @@ function createRunner(opts) {
       markVisited: false,
       pendingPermission: getPendingPermission(threadId),
     });
-    pushFn("thread:updated", detail);
+    // Stream tails, not the transcript: the largest threads are megabytes and
+    // this runs on every chunk. The renderer merges (src/threadPatch.ts).
+    const prev = lastPushByThread.get(threadId);
+    const messagesFrom = firstChanged(prev && prev.messages, detail.messages);
+    const workLogFrom = firstChanged(prev && prev.workLog, detail.workLog);
+    const seq = (prev ? prev.seq : 0) + 1;
+    lastPushByThread.set(threadId, {
+      messages: detail.messages,
+      workLog: detail.workLog,
+      seq,
+    });
+    pushFn("thread:updated", {
+      ...detail,
+      messages: detail.messages.slice(messagesFrom),
+      messagesFrom,
+      workLog: detail.workLog.slice(workLogFrom),
+      workLogFrom,
+      seq,
+    });
     return detail;
   }
 
@@ -702,15 +890,62 @@ function createRunner(opts) {
       toolName: p.toolName,
       summary: p.summary,
       input: p.input,
+      questions: questionInfo(p.toolName, p.rawInput),
+      plan: planText(p.toolName, p.rawInput),
     };
   }
 
   /**
-   * Answer a pending permission prompt.
-   * @param {{ threadId: string, requestId: string, decision: "allow" | "allowAlways" | "deny" }} input
+   * ExitPlanMode input -> the plan markdown for the renderer's plan card, or
+   * null when this permission isn't a plan approval. Plans are prose, not tool
+   * args, so they get their own (larger) budget than the JSON preview.
+   * @param {string} toolName
+   * @param {Record<string, unknown>} rawInput
+   */
+  function planText(toolName, rawInput) {
+    if (toolName !== "ExitPlanMode") return null;
+    const plan = rawInput && typeof rawInput.plan === "string" ? rawInput.plan : "";
+    return plan ? truncate(plan, PLAN_TRUNCATE) : null;
+  }
+
+  /**
+   * AskUserQuestion input -> sanitized questions for the renderer's option
+   * picker, or null when this permission isn't a question prompt.
+   * @param {string} toolName
+   * @param {Record<string, unknown>} rawInput
+   */
+  function questionInfo(toolName, rawInput) {
+    if (toolName !== "AskUserQuestion") return null;
+    const qs = rawInput && Array.isArray(rawInput.questions) ? rawInput.questions : [];
+    const out = [];
+    for (const q of qs) {
+      if (!q || typeof q.question !== "string" || !Array.isArray(q.options)) {
+        continue;
+      }
+      const options = q.options
+        .filter((o) => o && typeof o.label === "string" && o.label)
+        .map((o) => ({
+          label: o.label,
+          description: typeof o.description === "string" ? o.description : "",
+        }));
+      if (options.length === 0) continue;
+      out.push({
+        question: q.question,
+        header: typeof q.header === "string" ? q.header : "",
+        multiSelect: q.multiSelect === true,
+        options,
+      });
+    }
+    return out.length > 0 ? out : null;
+  }
+
+  /**
+   * Answer a pending permission prompt. For question prompts, `answers`
+   * (question text -> chosen label) rides back as updatedInput.answers.
+   * @param {{ threadId: string, requestId: string, decision: "allow" | "allowAlways" | "deny", answers?: Record<string, string> }} input
    */
   function respondPermission(input) {
-    const { threadId, requestId, decision } = input || {};
+    const { threadId, requestId, decision, answers } = input || {};
     const e = active.get(threadId);
     if (!e || e.kind !== "claude" || !e.handle) {
       throw new Error("No active agent run for this thread");
@@ -720,9 +955,19 @@ function createRunner(opts) {
       throw new Error("Permission request no longer pending");
     }
     const [pending] = e.pendingPermissions.splice(idx, 1);
+    const answerMap =
+      answers && typeof answers === "object" && !Array.isArray(answers)
+        ? answers
+        : null;
+    const isPlan = pending.toolName === "ExitPlanMode";
     let response;
     if (decision === "allow" || decision === "allowAlways") {
-      response = { behavior: "allow", updatedInput: pending.rawInput };
+      response = {
+        behavior: "allow",
+        updatedInput: answerMap
+          ? { ...pending.rawInput, answers: answerMap }
+          : pending.rawInput,
+      };
       if (decision === "allowAlways") {
         // "Accept all": stop asking for this tool for the rest of the CLI
         // session (matches Claude Code's own "don't ask again" scope).
@@ -736,15 +981,33 @@ function createRunner(opts) {
         ];
       }
     } else {
-      response = { behavior: "deny", message: "Denied by user in Coder" };
+      response = {
+        behavior: "deny",
+        message: isPlan
+          ? "Plan rejected by user in Coder; keep planning"
+          : "Denied by user in Coder",
+      };
     }
     e.handle.respond(pending.id, response);
-    const label =
-      decision === "deny"
+    if (isPlan && decision !== "deny") {
+      // Approving the plan leaves plan mode, so the next run must not re-enter
+      // it — the CLI only exits for the process that asked.
+      const t = store.getThread(threadId);
+      if (t && t.permissionMode === "plan") {
+        store.updateThread(threadId, { permissionMode: "default" });
+      }
+    }
+    const label = isPlan
+      ? decision === "deny"
+        ? "Plan rejected"
+        : "Plan approved"
+      : decision === "deny"
         ? `Denied: ${pending.summary}`
-        : decision === "allowAlways"
-          ? `Allowed for session: ${pending.summary}`
-          : `Allowed: ${pending.summary}`;
+        : answerMap
+          ? `Answered: ${truncate(Object.values(answerMap).join("; "), 200)}`
+          : decision === "allowAlways"
+            ? `Allowed for session: ${pending.summary}`
+            : `Allowed: ${pending.summary}`;
     appendMessage(threadId, "event", label, e.runId);
     if (e.pendingPermissions.length === 0) {
       store.updateThread(threadId, { awaitingInput: false });
@@ -1209,16 +1472,10 @@ function createRunner(opts) {
     let sawTurnContent = false;
     /** @type {object | null} */
     let heldPhantom = null;
-    /** @type {ReturnType<typeof setTimeout> | null} */
-    let phantomTimer = null;
     /** Run-local usage for memory footers (not cumulative store totals). */
     const runUsage = { tokensIn: 0, tokensOut: 0, costUsd: 0 };
 
     function discardHeldPhantom() {
-      if (phantomTimer) {
-        clearTimeout(phantomTimer);
-        phantomTimer = null;
-      }
       heldPhantom = null;
     }
 
@@ -1314,9 +1571,45 @@ function createRunner(opts) {
 
     /** Assigned below (reused or freshly spawned) before any event fires. */
     let handle;
+    /** This turn was delivered to a kept-alive CLI instead of a new spawn. */
+    let reused = false;
+    /** Any event at all reached this turn (the CLI is really taking it). */
+    let sawAnyEvent = false;
+    /** The dead-reuse respawn below fires at most once per turn. */
+    let respawned = false;
 
     const onEvent = (ev) => {
+        sawAnyEvent = true;
         const type = ev && ev.type;
+
+        // Background-subagent task notifications can land between turns on a
+        // kept-alive CLI (guard() is null then), so scan user text first.
+        if (type === "user" && ev.message) {
+          const c = ev.message.content;
+          const texts =
+            typeof c === "string"
+              ? [c]
+              : Array.isArray(c)
+                ? c
+                    .filter(
+                      (b) =>
+                        b &&
+                        b.type === "text" &&
+                        typeof b.text === "string",
+                    )
+                    .map((b) => b.text)
+                : [];
+          let changed = false;
+          for (const t of texts) {
+            if (t.includes("<task-notification>")) {
+              changed = applyTaskNotifications(threadId, t) || changed;
+            }
+          }
+          if (changed) {
+            store.save();
+            pushDetail(threadId, claudeState);
+          }
+        }
 
         if (!guard()) {
           // Kept-alive CLI, no active turn (settling/idle): never leave a
@@ -1444,6 +1737,22 @@ function createRunner(opts) {
                 tool,
               );
               toolMsgById.set(toolId, msgId);
+              // "Task" is the Agent tool's name in older Claude Code CLIs.
+              if (toolName === "Agent" || toolName === "Task") {
+                addSubagentRow(threadId, {
+                  id: toolId,
+                  description:
+                    typeof inputObj.description === "string" &&
+                    inputObj.description
+                      ? inputObj.description
+                      : summary,
+                  agentType:
+                    typeof inputObj.subagent_type === "string"
+                      ? inputObj.subagent_type
+                      : null,
+                  status: "running",
+                });
+              }
               // Post-tool text starts a fresh message so the final answer
               // renders below the tool calls, not merged into the first
               // (earlier-timestamped) bubble.
@@ -1462,46 +1771,46 @@ function createRunner(opts) {
             if (block.type !== "tool_result") continue;
             markTurnContent();
             const toolUseId = String(block.tool_use_id || "");
-            const msgId = toolMsgById.get(toolUseId);
-            if (!msgId) {
-              // Fall back: search messages for matching tool.id
-              const found = store
-                .getMessages(threadId)
-                .find(
-                  (m) =>
-                    m.role === "tool" &&
-                    m.tool &&
-                    m.tool.id === toolUseId,
-                );
-              if (!found) continue;
-              const output = truncate(
-                flattenContent(block.content),
-                OUTPUT_TRUNCATE,
-              );
-              store.updateMessage(threadId, found.id, {
-                tool: {
-                  ...found.tool,
-                  output,
-                  isError: Boolean(block.is_error),
-                  done: true,
-                },
-              });
-              continue;
+            // Subagent lifecycle: a sync Agent's result is its report →
+            // done. A background launch acks with "Async agent launched"
+            // and stays running until its task-notification (or CLI death).
+            if (toolUseId) {
+              if (block.is_error) {
+                setSubagentStatus(threadId, toolUseId, "failed");
+              } else if (
+                !/async agent launched/i.test(flattenContent(block.content))
+              ) {
+                setSubagentStatus(threadId, toolUseId, "done");
+              }
             }
-            const existing = store
-              .getMessages(threadId)
-              .find((m) => m.id === msgId);
+            const msgId = toolMsgById.get(toolUseId);
+            const existing = msgId
+              ? store.getMessages(threadId).find((m) => m.id === msgId)
+              : // Fall back: search messages for matching tool.id
+                store
+                  .getMessages(threadId)
+                  .find(
+                    (m) =>
+                      m.role === "tool" && m.tool && m.tool.id === toolUseId,
+                  );
             if (!existing || !existing.tool) continue;
             const output = truncate(
               flattenContent(block.content),
               OUTPUT_TRUNCATE,
             );
-            store.updateMessage(threadId, msgId, {
+            // Screenshots and Read-of-an-image land here as base64 blocks;
+            // keep the bytes on disk and the filenames in the message.
+            const images = saveToolImages(
+              userDataPath,
+              extractImages(block.content),
+            );
+            store.updateMessage(threadId, existing.id, {
               tool: {
                 ...existing.tool,
                 output,
                 isError: Boolean(block.is_error),
                 done: true,
+                ...(images.length ? { images } : {}),
               },
             });
           }
@@ -1518,16 +1827,6 @@ function createRunner(opts) {
               capturedSessionId = ev.session_id;
               store.updateThread(threadId, { sessionId: capturedSessionId });
               store.save();
-            }
-            phantomTimer = setTimeout(() => {
-              phantomTimer = null;
-              if (!guard() || !heldPhantom) return;
-              const held = heldPhantom;
-              heldPhantom = null;
-              failEmptyPhantom(held);
-            }, phantomResultGraceMs());
-            if (typeof phantomTimer.unref === "function") {
-              phantomTimer.unref();
             }
             return;
           }
@@ -1672,10 +1971,25 @@ function createRunner(opts) {
         if (!e || e.stopping || e.runId !== runId) return;
         if (e.kind !== "claude") return;
 
+        // A kept-alive CLI can be on its way out when this turn's send()
+        // lands: the write succeeds (EPIPE is async), nothing reads it, and
+        // the exit that follows belongs to the PREVIOUS turn. Nothing of ours
+        // ever reached the CLI, so respawn instead of failing a turn the
+        // agent never saw. Once only, and never once output has arrived.
+        if (reused && !respawned && !sawAnyEvent && !sawResult && !gotResult) {
+          respawned = true;
+          spawnForTurn();
+          return;
+        }
+
         clearRun(threadId);
 
-        // If we already handled a result event, finalize work-log and exit.
-        if (sawResult || gotResult) {
+        // If WE finalized on a result event, close the work-log and stop.
+        // gotResult is not that proof: claude.js sets it for any result line
+        // including a leftover empty one we deliberately did not finalize on,
+        // and trusting it checkmarks both steps with no message, no status and
+        // no notification — issue #17's silent black hole.
+        if (sawResult) {
           completeWorkLogStep(threadId, e.startingId);
           completeWorkLogStep(threadId, e.workingId);
           store.save();
@@ -1758,27 +2072,11 @@ function createRunner(opts) {
     const prevAlive =
       prevChild && prevChild.exitCode === null && !prevChild.killed;
 
-    let reused = false;
-    if (interactive && prevSess && prevAlive && prevSess.key === sessionKey) {
-      // Same params, live process: deliver the turn on its stdin. Background
-      // tasks from earlier turns keep running; the CLI reports their
-      // completion within this session.
-      if (prevSess.idleTimer) {
-        clearTimeout(prevSess.idleTimer);
-        prevSess.idleTimer = null;
-      }
-      prevSess.dispatch = { onEvent, onExit, onError };
-      handle = prevSess.handle;
-      reused = handle.send(prompt);
-      if (reused) {
-        // A reused process emits no second system/init; close the step now.
-        completeWorkLogStep(threadId, startingId);
-      }
-    }
-    if (!reused) {
-      // Params changed (cwd/model/mode/effort/mcp), process gone, or its
-      // stdin already closed (send failed): replace it.
-      if (prevSess) disposeClaudeSession(threadId);
+    /**
+     * Spawn this turn's own CLI and take ownership of it. Also the respawn
+     * path in onExit when a reused kept-alive process was already dying.
+     */
+    function spawnForTurn() {
       if (interactive) {
         const sess = {
           handle: null,
@@ -1827,6 +2125,31 @@ function createRunner(opts) {
         });
       }
       trackLiveClaudeChild(handle.child);
+      const own = active.get(threadId);
+      if (own && own.runId === runId) own.handle = handle;
+    }
+
+    if (interactive && prevSess && prevAlive && prevSess.key === sessionKey) {
+      // Same params, live process: deliver the turn on its stdin. Background
+      // tasks from earlier turns keep running; the CLI reports their
+      // completion within this session.
+      if (prevSess.idleTimer) {
+        clearTimeout(prevSess.idleTimer);
+        prevSess.idleTimer = null;
+      }
+      prevSess.dispatch = { onEvent, onExit, onError };
+      handle = prevSess.handle;
+      reused = handle.send(prompt);
+      if (reused) {
+        // A reused process emits no second system/init; close the step now.
+        completeWorkLogStep(threadId, startingId);
+      }
+    }
+    if (!reused) {
+      // Params changed (cwd/model/mode/effort/mcp), process gone, or its
+      // stdin already closed (send failed): replace it.
+      if (prevSess) disposeClaudeSession(threadId);
+      spawnForTurn();
     }
 
     entry.handle = handle;
@@ -3052,7 +3375,8 @@ function createRunner(opts) {
     // the CLI (buildArgs / runAgent), never into the stored user message.
     const dispatchPrompt =
       services.buildHandoffPrefix(thread, (id) => store.getMessages(id)) +
-      String(prompt ?? "");
+      String(prompt ?? "") +
+      services.planboardNoteFor(projectForGate && projectForGate.path);
 
     const name = workflowNameFromThreadId(threadId);
 
@@ -3111,11 +3435,67 @@ function createRunner(opts) {
   }
 
   /**
-   * @param {{ threadId: string }} input
+   * Stop is sacred (issue #32): stopping an orchestrator takes its crew with
+   * it. Depth-first, so a worker that is itself an orchestrator brings its own
+   * crew down too. Every stopped worker lands as "stopped", which queues no
+   * wake-up notice, and pending ones are demoted to an event once the crew is
+   * down, so nothing restarts the orchestrator the user just stopped.
+   * @param {string} threadId - the orchestrator being stopped
+   * @param {Set<string>} seen - guards a handoffFrom cycle
+   * @returns {Promise<{ stopped: number, traced: boolean }>} workers whose
+   *   live run was stopped, and whether a notice trace was written
    */
-  async function stopRun(input) {
+  async function stopCrew(threadId, seen) {
+    if (seen.has(threadId)) return { stopped: 0, traced: false };
+    seen.add(threadId);
+    const crew = store
+      .getThreads()
+      .filter((t) => t.orchWorker && String(t.handoffFrom) === threadId);
+    let stopped = 0;
+    for (const worker of crew) {
+      const id = String(worker.id);
+      const wasActive = active.has(id);
+      await stopRun({ threadId: id }, seen);
+      if (wasActive) stopped++;
+    }
+    const pending = orchNotices.get(threadId);
+    orchNotices.delete(threadId);
+    if (pending && pending.length > 0) {
+      // Same trace as flushOrchNotices' undeliverable path: the orchestrator
+      // still sees what its crew did, as an event that starts no run.
+      appendMessage(threadId, "event", "[orchestration] " + pending.join("\n"));
+    }
+    return { stopped, traced: !!(pending && pending.length > 0) };
+  }
+
+  /**
+   * @param {{ threadId: string }} input
+   * @param {Set<string>} [seen] - internal: crew cascade cycle guard
+   */
+  async function stopRun(input, seen = new Set()) {
     const { threadId } = input;
+    // Cascade first: a worker outliving its stopped orchestrator keeps
+    // burning tokens and re-wakes the parent through queueOrchNotice. Doing
+    // it before this thread's own terminal also means a notice that races in
+    // during the kills is stopped again by the run below.
+    const crew = await stopCrew(String(threadId), seen);
+    if (crew.stopped > 0) {
+      const own = active.get(threadId);
+      appendMessage(
+        threadId,
+        "event",
+        `Stopped ${crew.stopped} worker thread${crew.stopped === 1 ? "" : "s"}`,
+        own ? own.runId : null,
+      );
+    }
     if (!active.has(threadId)) {
+      // Idle orchestrator whose crew was still running: no terminal follows,
+      // so publish the crew-stop events here.
+      if (crew.stopped > 0 || crew.traced) {
+        store.save();
+        pushDetail(threadId, lastWorkflowByThread.get(threadId) || null);
+        pushThreadsChanged();
+      }
       return;
     }
 
@@ -3274,9 +3654,10 @@ function createRunner(opts) {
     }
     // Drain any pending session transcript posts before process exit.
     void sessionRecorder.flush();
-    if (marked) {
-      store.save();
-    }
+    // App quit (main.js before-quit): save() only arms a 250 ms unref'd timer,
+    // and a SIGTERM never runs the exit hook that flushes it, so the idle
+    // marking above would be lost. Put the bytes on disk now.
+    store.saveNow();
   }
 
   /**
@@ -3307,6 +3688,13 @@ function createRunner(opts) {
       return null;
     }
     return mapWorkflowView(workflow, core);
+  }
+
+  // Boot: nothing runs yet, so every crew is quiet. Archives workers whose
+  // sweep never came — the app died mid-orchestration, or a sibling hung and
+  // the orchestrator was already finished for good (issue #15).
+  for (const t of store.getThreads()) {
+    if (t.orchWorker && t.handoffFrom) sweepCrew(String(t.handoffFrom));
   }
 
   return {

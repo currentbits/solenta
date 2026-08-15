@@ -39,6 +39,7 @@ const coder = {
   app: {
     status: () => invoke("app:status"),
     checkUpdate: () => invoke("app:checkUpdate"),
+    downloadUpdate: () => invoke("app:downloadUpdate"),
     applyUpdate: () => invoke("app:applyUpdate"),
   },
   memory: {
@@ -135,9 +136,11 @@ const coder = {
   },
   issues: {
     fetch: (input) => invoke("issues:fetch", input),
+    list: (projectPath) => invoke("issues:list", projectPath),
   },
   files: {
     list: (input) => invoke("files:list", input),
+    image: (input) => invoke("files:image", input),
   },
   servers: {
     list: (input) => invoke("servers:list", input),

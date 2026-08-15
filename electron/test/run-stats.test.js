@@ -190,7 +190,7 @@ describe("runStats", () => {
       "coder-checkpoint: turn 1",
     ]);
     fx.store.updateThread(fx.thread.id, { worktreePath: orphan });
-    fx.store.save();
+    fx.store.saveNow();
 
     const stats = await runStats({
       store: fx.store,

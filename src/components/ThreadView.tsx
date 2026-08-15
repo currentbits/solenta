@@ -1,10 +1,19 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Fragment,
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type {
   ChatMessage,
   DevServerState,
   DiffResult,
   FileChange,
   GitSyncInfo,
+  PendingPermissionInfo,
   PermissionDecision,
   PermissionMode,
   ProjectInfo,
@@ -109,6 +118,7 @@ interface ThreadViewProps {
   onRespondPermission: (
     requestId: string,
     decision: PermissionDecision,
+    answers?: Record<string, string>,
   ) => void | Promise<void>;
   onSetProvider: (input: {
     provider?: string;
@@ -139,6 +149,8 @@ interface ThreadViewProps {
   onSuggestCommitMessage: () => Promise<{ message: string }>;
   /** File lookup for the composer @-mention popup. */
   onListFiles?: (query: string) => Promise<string[]>;
+  /** Loads an image a tool returned (ToolCallInfo.images) as a data URL. */
+  onLoadImage?: (name: string) => Promise<string | null>;
   /** Push the thread's current branch to origin. */
   onPush: () => Promise<{ remote: string; branch: string }>;
   /** Upstream state for the header sync pill; absent hides the pill. */
@@ -173,13 +185,31 @@ interface ThreadViewProps {
 function ToolCallCard({
   message,
   autoExpand,
+  onLoadImage,
 }: {
   message: ChatMessage;
   autoExpand: boolean;
+  onLoadImage?: (name: string) => Promise<string | null>;
 }) {
   const tool = message.tool;
   const [manual, setManual] = useState<boolean | null>(null);
   const open = manual ?? autoExpand;
+  const [imageUrls, setImageUrls] = useState<string[]>([]);
+  // Bytes live under userData, not in the message: fetch them as data URLs the
+  // first time the card is open.
+  const imageKey = (tool?.images ?? []).join("\n");
+  useEffect(() => {
+    if (!open || !imageKey || !onLoadImage) return;
+    let live = true;
+    void Promise.all(imageKey.split("\n").map((name) => onLoadImage(name)))
+      .then((urls) => {
+        if (live) setImageUrls(urls.filter((u): u is string => Boolean(u)));
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [open, imageKey, onLoadImage]);
 
   if (!tool) {
     return (
@@ -235,30 +265,55 @@ function ToolCallCard({
               <pre className={styles.toolPre}>{tool.output}</pre>
             </>
           )}
+          {imageUrls.map((url) => (
+            <img
+              key={url.slice(-32)}
+              className={styles.toolImage}
+              src={url}
+              alt={`Image from ${tool.name}`}
+            />
+          ))}
         </div>
       )}
     </section>
   );
 }
 
-function MessageBlock({
+/**
+ * One timeline row. memo'd because a streamed update re-renders the whole
+ * timeline while only the message being written actually changed — so the
+ * props are flat scalars, keeping the default shallow compare honest.
+ */
+const MessageBlock = memo(function MessageBlock({
   message,
   autoExpandTool,
   showRetry,
   retryTitle,
   onRetry,
-  meta,
+  metaModel = null,
+  metaEffort = null,
+  metaDuration = null,
+  onLoadImage,
 }: {
   message: ChatMessage;
   autoExpandTool: boolean;
+  onLoadImage?: (name: string) => Promise<string | null>;
   showRetry?: boolean;
   retryTitle?: string;
   onRetry?: () => void;
-  /** Assistant footer segments; null/empty fields are omitted inside. */
-  meta?: { model: string | null; effort: string | null; duration: string | null };
+  /** Assistant footer segments; null fields are omitted inside. */
+  metaModel?: string | null;
+  metaEffort?: string | null;
+  metaDuration?: string | null;
 }) {
   if (message.role === "tool") {
-    return <ToolCallCard message={message} autoExpand={autoExpandTool} />;
+    return (
+      <ToolCallCard
+        message={message}
+        autoExpand={autoExpandTool}
+        onLoadImage={onLoadImage}
+      />
+    );
   }
 
   if (message.role === "user") {
@@ -291,9 +346,9 @@ function MessageBlock({
 
   const metaLine = messageMetaLine({
     createdAt: message.createdAt,
-    model: meta?.model ?? null,
-    effort: meta?.effort ?? null,
-    duration: meta?.duration ?? null,
+    model: metaModel,
+    effort: metaEffort,
+    duration: metaDuration,
   });
   return (
     <article className={styles.message}>
@@ -301,7 +356,7 @@ function MessageBlock({
       <footer className={styles.msgMeta}>{metaLine}</footer>
     </article>
   );
-}
+});
 
 function ReviewBarStrip({
   bar,
@@ -747,6 +802,240 @@ function WorkLogCard({
   );
 }
 
+/**
+ * Option picker for an agent question (AskUserQuestion). Options answer with
+ * a click or the 1-9 keys; a lone single-select question submits immediately,
+ * everything else collects picks and submits together. Free text via "Other".
+ */
+function QuestionPrompt({
+  pending,
+  onRespond,
+}: {
+  pending: PendingPermissionInfo;
+  onRespond: (
+    requestId: string,
+    decision: PermissionDecision,
+    answers?: Record<string, string>,
+  ) => void | Promise<void>;
+}) {
+  const questions = pending.questions ?? [];
+  const [picked, setPicked] = useState<Record<number, string[]>>({});
+  const [other, setOther] = useState<Record<number, string>>({});
+  const [sent, setSent] = useState(false);
+
+  const answerFor = useCallback(
+    (i: number): string => {
+      const parts = [...(picked[i] ?? [])];
+      const extra = (other[i] ?? "").trim();
+      if (extra) parts.push(extra);
+      return parts.join(", ");
+    },
+    [picked, other],
+  );
+  const allAnswered = questions.every((_, i) => answerFor(i) !== "");
+  // A lone single-select question answers straight from the click/keypress.
+  const instant = questions.length === 1 && !questions[0].multiSelect;
+
+  const submit = useCallback(
+    (override?: { index: number; label: string }) => {
+      if (sent) return;
+      const answers: Record<string, string> = {};
+      questions.forEach((q, i) => {
+        answers[q.question] =
+          override && override.index === i ? override.label : answerFor(i);
+      });
+      setSent(true);
+      void onRespond(pending.requestId, "allow", answers);
+    },
+    [sent, questions, answerFor, onRespond, pending.requestId],
+  );
+
+  const choose = useCallback(
+    (qi: number, label: string) => {
+      if (instant) {
+        submit({ index: qi, label });
+        return;
+      }
+      setPicked((prev) => {
+        const cur = prev[qi] ?? [];
+        const next = questions[qi].multiSelect
+          ? cur.includes(label)
+            ? cur.filter((l) => l !== label)
+            : [...cur, label]
+          : [label];
+        return { ...prev, [qi]: next };
+      });
+    },
+    [instant, questions, submit],
+  );
+
+  // 1-9 pick an option of the first unanswered question; Enter submits.
+  useEffect(() => {
+    const onKey = (ev: KeyboardEvent) => {
+      const t = ev.target as HTMLElement | null;
+      if (
+        t &&
+        (t.tagName === "INPUT" ||
+          t.tagName === "TEXTAREA" ||
+          t.isContentEditable)
+      ) {
+        return;
+      }
+      if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
+      if (ev.key === "Enter") {
+        if (allAnswered) {
+          ev.preventDefault();
+          submit();
+        }
+        return;
+      }
+      const n = Number(ev.key);
+      if (!Number.isInteger(n) || n < 1) return;
+      let qi = questions.findIndex((_, i) => answerFor(i) === "");
+      if (qi < 0) qi = questions.length - 1;
+      const opt = questions[qi]?.options[n - 1];
+      if (!opt) return;
+      ev.preventDefault();
+      choose(qi, opt.label);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [questions, answerFor, allAnswered, choose, submit]);
+
+  return (
+    <div
+      className={styles.permissionCard}
+      role="alertdialog"
+      aria-label="Agent question"
+    >
+      {questions.map((q, qi) => (
+        <div key={qi} className={styles.questionBlock}>
+          <div className={styles.permissionHead}>
+            {q.header && (
+              <span className={styles.questionChip}>{q.header}</span>
+            )}
+            {q.question}
+          </div>
+          <div className={styles.questionOptions}>
+            {q.options.map((opt, oi) => {
+              const isPicked = (picked[qi] ?? []).includes(opt.label);
+              return (
+                <button
+                  key={oi}
+                  type="button"
+                  className={styles.questionOption}
+                  data-picked={isPicked || undefined}
+                  onClick={() => choose(qi, opt.label)}
+                >
+                  <span className={styles.questionKey}>{oi + 1}</span>
+                  <span className={styles.questionText}>
+                    <span className={styles.questionLabel}>{opt.label}</span>
+                    {opt.description && (
+                      <span className={styles.questionDesc}>
+                        {opt.description}
+                      </span>
+                    )}
+                  </span>
+                </button>
+              );
+            })}
+            <input
+              type="text"
+              className={styles.questionOther}
+              placeholder="Other…"
+              value={other[qi] ?? ""}
+              onChange={(ev) =>
+                setOther((prev) => ({ ...prev, [qi]: ev.target.value }))
+              }
+              onKeyDown={(ev) => {
+                if (ev.key === "Enter" && answerFor(qi) !== "" && allAnswered) {
+                  ev.preventDefault();
+                  submit();
+                }
+              }}
+            />
+          </div>
+        </div>
+      ))}
+      <div className={styles.permissionActions}>
+        {(!instant || (other[0] ?? "").trim() !== "") && (
+          <button
+            type="button"
+            className={styles.permissionAllow}
+            disabled={!allAnswered || sent}
+            onClick={() => submit()}
+          >
+            Answer
+          </button>
+        )}
+        <button
+          type="button"
+          className={styles.permissionDeny}
+          disabled={sent}
+          onClick={() => {
+            setSent(true);
+            void onRespond(pending.requestId, "deny");
+          }}
+        >
+          Dismiss
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Plan approval (ExitPlanMode): the plan rendered as markdown in the prompt
+ * panel, approve or send the agent back to planning.
+ */
+function PlanPrompt({
+  pending,
+  onRespond,
+}: {
+  pending: PendingPermissionInfo;
+  onRespond: (
+    requestId: string,
+    decision: PermissionDecision,
+  ) => void | Promise<void>;
+}) {
+  const [sent, setSent] = useState(false);
+  const answer = (decision: PermissionDecision) => {
+    if (sent) return;
+    setSent(true);
+    void onRespond(pending.requestId, decision);
+  };
+  return (
+    <div
+      className={styles.permissionCard}
+      role="alertdialog"
+      aria-label="Plan approval"
+    >
+      <div className={styles.permissionHead}>Agent proposed a plan</div>
+      <div className={styles.planBody}>
+        <Markdown text={pending.plan ?? ""} />
+      </div>
+      <div className={styles.permissionActions}>
+        <button
+          type="button"
+          className={styles.permissionAllow}
+          disabled={sent}
+          onClick={() => answer("allow")}
+        >
+          Approve plan
+        </button>
+        <button
+          type="button"
+          className={styles.permissionDeny}
+          disabled={sent}
+          onClick={() => answer("deny")}
+        >
+          Keep planning
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function DiffLine({ line }: { line: string }) {
   const kind = diffLineKind(line);
   return (
@@ -1017,6 +1306,7 @@ export function ThreadView({
   onRevertFile,
   onSuggestCommitMessage,
   onListFiles,
+  onLoadImage,
   onPush,
   gitSyncInfo,
   gitFetch,
@@ -1878,17 +2168,19 @@ export function ThreadView({
                     <MessageBlock
                       message={entry.message}
                       autoExpandTool={entry.message.id === latestRunningToolId}
+                      onLoadImage={onLoadImage}
                       showRetry={isRetrySurface}
                       retryTitle={isRetrySurface ? retryTitle : undefined}
                       onRetry={isRetrySurface ? handleRetry : undefined}
-                      meta={{
-                        model:
-                          detail?.usage?.model ?? detail?.thread.model ?? null,
-                        effort: detail?.thread.reasoningEffort ?? null,
-                        duration: entry.message.runId
+                      metaModel={
+                        detail?.usage?.model ?? detail?.thread.model ?? null
+                      }
+                      metaEffort={detail?.thread.reasoningEffort ?? null}
+                      metaDuration={
+                        entry.message.runId
                           ? (durationByRunId.get(entry.message.runId) ?? null)
-                          : null,
-                      }}
+                          : null
+                      }
                     />
                     {bar && (
                       <ReviewBarStrip
@@ -1917,7 +2209,19 @@ export function ThreadView({
           );
         })}
 
-        {detail.pendingPermission && (
+        {detail.pendingPermission?.questions?.length ? (
+          <QuestionPrompt
+            key={detail.pendingPermission.requestId}
+            pending={detail.pendingPermission}
+            onRespond={onRespondPermission}
+          />
+        ) : detail.pendingPermission?.plan ? (
+          <PlanPrompt
+            key={detail.pendingPermission.requestId}
+            pending={detail.pendingPermission}
+            onRespond={onRespondPermission}
+          />
+        ) : detail.pendingPermission && (
           <div className={styles.permissionCard} role="alertdialog" aria-label="Permission request">
             <div className={styles.permissionHead}>
               Agent wants to use <strong>{detail.pendingPermission.toolName}</strong>

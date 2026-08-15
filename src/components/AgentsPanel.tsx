@@ -28,6 +28,7 @@ import {
   shortSessionId,
 } from "../format";
 import { contextRing, contextWindowFor } from "../contextRing";
+import { buildWaitStates, waitLabel, type WaitState } from "../waiting";
 import { MemoryTab } from "./MemoryTab";
 import { SkillsTab } from "./SkillsTab";
 import styles from "./AgentsPanel.module.css";
@@ -498,6 +499,8 @@ function syncLabel(info: GitSyncInfo): string | null {
 
 const SERVER_POLL_MS = 5_000;
 const DEV_SERVER_POLL_MS = 3_000;
+/** Team-view lastActivity refresh while any thread is working. */
+const SUMMARY_POLL_MS = 2_000;
 
 function formatDevRuntime(startedAt: number, now: number): string {
   const sec = Math.max(0, Math.floor((now - startedAt) / 1000));
@@ -1540,8 +1543,19 @@ function TeamRow({
           {providerDisplayName(summary.provider, providers)}
         </span>
         <span className={styles.teamTitle}>{summary.title}</span>
-        <span className={styles.teamStatus} data-status={summary.status}>
-          {summary.status}
+        {/* A worker stalled on a permission prompt still reads "working"
+            (issue #31) — call it out so a stuck fan-out is obvious here. */}
+        <span
+          className={styles.teamStatus}
+          data-status={
+            summary.status === "working" && summary.awaitingInput
+              ? "waiting"
+              : summary.status
+          }
+        >
+          {summary.status === "working" && summary.awaitingInput
+            ? "waiting"
+            : summary.status}
         </span>
         {summary.lastActivity && (
           <span className={styles.teamActivity}>
@@ -1550,6 +1564,24 @@ function TeamRow({
         )}
       </button>
     </li>
+  );
+}
+
+/**
+ * "Waiting on 2 · 3m · 1 blocked" above a roster (issue #42): the thread
+ * handed work off and cannot move until it comes back.
+ * ponytail: elapsed refreshes on the summaries poll (2s while anything is
+ * working), so no clock of its own.
+ */
+function WaitLine({ wait }: { wait: WaitState }) {
+  return (
+    <div
+      className={styles.waitLine}
+      data-wait-line=""
+      data-attention={wait.blocked > 0 ? "true" : undefined}
+    >
+      {waitLabel(wait, Date.now())}
+    </div>
   );
 }
 
@@ -1582,37 +1614,49 @@ export function AgentsContent({
     setManual({});
   }, [workflow?.id]);
 
-  // Team view data. Refetches when the thread list changes (a worker's
-  // status or lastActivity moves with it); null when no fetcher is wired.
+  // Team view data. The `threads` array gets a new identity on every stream
+  // event, so key the refetch on ids + statuses instead; lastActivity is kept
+  // fresh by a slow poll while something is working. Null when no fetcher.
+  // ponytail: poll, not per-event; summaries walk every thread's messages.
+  const rosterKey = (threads ?? []).map((t) => `${t.id}:${t.status}`).join(",");
   useEffect(() => {
     if (!listThreadSummaries) {
       setSummaries(null);
       return;
     }
     let cancelled = false;
-    listThreadSummaries()
-      .then((list) => {
-        if (!cancelled) setSummaries(list);
-      })
-      .catch(() => {
-        if (!cancelled) setSummaries(null);
-      });
+    const fetch = () =>
+      listThreadSummaries()
+        .then((list) => {
+          if (!cancelled) setSummaries(list);
+        })
+        .catch(() => {
+          if (!cancelled) setSummaries(null);
+        });
+    void fetch();
+    const working = rosterKey.includes(":working");
+    const id = working
+      ? window.setInterval(() => void fetch(), SUMMARY_POLL_MS)
+      : null;
     return () => {
       cancelled = true;
+      if (id !== null) window.clearInterval(id);
     };
-  }, [listThreadSummaries, threads]);
+  }, [listThreadSummaries, rosterKey]);
 
   // Roles derive from handoffFrom: a thread WITH one is a Worker; a thread
   // another summary points to is an Orchestrator. Neither = plain session.
-  // Done workers drop out so a long orchestration does not pile finished
-  // rows under Team; failed / idle / working stay visible.
+  // Done workers fold behind a "N done" toggle so a long orchestration stays
+  // scannable, but the roster never vanishes; failed / idle / working stay
+  // as plain rows.
+  const [showDoneWorkers, setShowDoneWorkers] = useState(false);
   const team = useMemo(() => {
     if (!thread || !summaries) return null;
-    const workers = summaries.filter(
-      (s) => s.handoffFrom === thread.id && s.status !== "done",
-    );
-    if (workers.length > 0) {
-      return { kind: "orchestrator" as const, workers };
+    const all = summaries.filter((s) => s.handoffFrom === thread.id);
+    const workers = all.filter((s) => s.status !== "done");
+    const doneWorkers = all.filter((s) => s.status === "done");
+    if (all.length > 0) {
+      return { kind: "orchestrator" as const, workers, doneWorkers };
     }
     const orchestrator = thread.handoffFrom
       ? summaries.find((s) => s.id === thread.handoffFrom)
@@ -1622,6 +1666,46 @@ export function AgentsContent({
     }
     return null;
   }, [thread, summaries]);
+
+  // In-session subagents (Agent tool) tracked by the runner on the thread
+  // record. Not threads — rows render without navigation. The running →
+  // "working" map reuses the existing status badge styling.
+  const subagents = thread?.subagents ?? [];
+
+  // What this thread is blocked on right now: live worker forks (from the
+  // summaries roster) plus its own running subagents. The thread's own row in
+  // summaries is swapped for the ThreadInfo so the subagents come along.
+  const wait = useMemo(() => {
+    if (!thread || !summaries) return null;
+    const rows = summaries.filter((s) => s.id !== thread.id);
+    return buildWaitStates([...rows, thread]).get(thread.id) ?? null;
+  }, [thread, summaries]);
+  const subagentSection =
+    subagents.length > 0 ? (
+      <section className={styles.teamSection} aria-label="Subagents">
+        <div className={styles.sessionLabel}>Subagents</div>
+        {/* Orchestrators show the wait line above their Team roster instead. */}
+        {!team && wait && <WaitLine wait={wait} />}
+        <ul className={styles.teamList}>
+          {subagents.map((s) => (
+            <TeamRow
+              key={s.id}
+              summary={{
+                id: s.id,
+                title: s.description,
+                provider: s.agentType ?? (thread?.provider || "claude"),
+                status: s.status === "running" ? "working" : s.status,
+                handoffFrom: null,
+                runStartedAt: null,
+                lastActivity: null,
+              }}
+              role="Subagent"
+              providers={providers}
+            />
+          ))}
+        </ul>
+      </section>
+    ) : null;
 
   const groups = useMemo(() => {
     if (!workflow) return [];
@@ -1678,6 +1762,7 @@ export function AgentsContent({
           />
           <section className={styles.teamSection} aria-label="Team">
             <div className={styles.sessionLabel}>Team</div>
+            {wait && <WaitLine wait={wait} />}
             <ul className={styles.teamList}>
               {team.workers.map((w) => (
                 <TeamRow
@@ -1688,8 +1773,31 @@ export function AgentsContent({
                   onSelect={onSelectThread}
                 />
               ))}
+              {showDoneWorkers &&
+                team.doneWorkers.map((w) => (
+                  <TeamRow
+                    key={w.id}
+                    summary={w}
+                    role="Worker"
+                    providers={providers}
+                    onSelect={onSelectThread}
+                  />
+                ))}
             </ul>
+            {team.doneWorkers.length > 0 && (
+              <button
+                type="button"
+                className={styles.doneToggle}
+                onClick={() => setShowDoneWorkers((v) => !v)}
+                aria-expanded={showDoneWorkers}
+              >
+                {showDoneWorkers
+                  ? "Hide done"
+                  : `${team.doneWorkers.length} done`}
+              </button>
+            )}
           </section>
+          {subagentSection}
         </div>
       );
     }
@@ -1713,12 +1821,14 @@ export function AgentsContent({
               />
             </ul>
           </section>
+          {subagentSection}
         </div>
       );
     }
     return (
       <div className={styles.scroll}>
         <SessionCard thread={thread} usage={usage} providers={providers} />
+        {subagentSection}
       </div>
     );
   }

@@ -13,6 +13,7 @@ import type {
   GitRepoInfo,
   GitPullResult,
   FetchIssueResult,
+  ListIssuesResult,
   ListPrsResult,
   DevServerState,
   LocalServerInfo,
@@ -231,6 +232,7 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
     app: {
       status: () => call<AppStatus>("app:status"),
       checkUpdate: () => call<UpdateStatus>("app:checkUpdate"),
+      downloadUpdate: () => call<UpdateStatus>("app:downloadUpdate"),
       applyUpdate: () => call<void>("app:applyUpdate"),
     },
     memory: {
@@ -333,9 +335,12 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
     },
     issues: {
       fetch: (input) => call<FetchIssueResult>("issues:fetch", input),
+      list: (projectPath) => call<ListIssuesResult>("issues:list", projectPath),
     },
     files: {
       list: (input) => call<{ files: string[] }>("files:list", input),
+      image: (input) =>
+        call<{ dataUrl: string | null }>("files:image", input),
     },
     servers: {
       list: (input) => call<LocalServerInfo[]>("servers:list", input),

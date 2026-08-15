@@ -159,7 +159,7 @@ describe("maybeCreateCheckpoint", () => {
     fs.mkdirSync(junk);
     fs.writeFileSync(path.join(junk, "x.txt"), "x");
     fx.store.updateThread(fx.thread.id, { worktreePath: junk });
-    fx.store.save();
+    fx.store.saveNow();
     const r = await maybeCreateCheckpoint(fx.store, fx.thread.id);
     assert.equal(r, null);
   });

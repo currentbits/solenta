@@ -7,6 +7,7 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { useState } from "react";
 import { mount } from "./support/dom.ts";
 import { AgentsContent } from "../src/components/AgentsPanel";
 import type {
@@ -74,6 +75,7 @@ function summary(over: Partial<ThreadSummaryInfo> = {}): ThreadSummaryInfo {
     provider: "claude",
     status: "idle",
     handoffFrom: null,
+    runStartedAt: null,
     lastActivity: null,
     ...over,
   };
@@ -160,7 +162,42 @@ describe("Agents team view", () => {
     m.unmount();
   });
 
-  it("orchestrator: omits done workers from the team list", async () => {
+  it("plain thread: lists Agent-tool subagents with status (issue #21)", async () => {
+    const m = await mount(
+      content(
+        thread({
+          subagents: [
+            {
+              id: "toolu_1",
+              description: "Background research",
+              agentType: "general-purpose",
+              status: "running",
+            },
+            {
+              id: "toolu_2",
+              description: "Map the panel",
+              agentType: "Explore",
+              status: "done",
+            },
+          ],
+        }),
+        [ORCHESTRATOR],
+      ),
+    );
+    await m.flush();
+
+    const text = m.text();
+    assert.ok(m.query('[aria-label="Subagents"]'), "subagents section renders");
+    assert.match(text, /Subagent/, "role chip");
+    assert.match(text, /Background research/);
+    assert.match(text, /working/i, "running subagent shows a live badge");
+    assert.match(text, /Map the panel/);
+    assert.match(text, /done/i, "completed subagent stays listed with done");
+    assert.match(text, /general-purpose/, "agent type shown in provider slot");
+    m.unmount();
+  });
+
+  it("orchestrator: folds done workers behind a toggle", async () => {
     const done = summary({
       id: "t-done",
       title: "Fork: already finished",
@@ -187,19 +224,113 @@ describe("Agents team view", () => {
     );
     await m.flush();
 
-    const text = m.text();
+    let text = m.text();
     assert.match(text, /Fork: Plan the fix/, "working worker stays");
     assert.match(text, /Fork: blew up/, "failed worker stays");
     assert.match(text, /Fork: waiting to start/, "idle worker stays");
-    assert.doesNotMatch(text, /already finished/, "done worker is gone");
-    assert.ok(
-      m.query('[aria-label="Team"]'),
-      "team section still renders while live workers remain",
+    assert.doesNotMatch(
+      text,
+      /already finished/,
+      "done worker folded by default",
+    );
+    assert.match(text, /1 done/, "toggle advertises the folded count");
+
+    await m.click(m.byText("1 done"));
+    text = m.text();
+    assert.match(text, /already finished/, "expanded done worker appears");
+    assert.match(text, /Hide done/, "toggle flips to hide");
+    m.unmount();
+  });
+
+  it("stream pushes that change no id or status do not refetch (issue #29)", async () => {
+    let calls = 0;
+    const orch = thread();
+    // Stable identity, like useCoder's useCallback fetcher.
+    const fetcher = async () => {
+      calls += 1;
+      return [ORCHESTRATOR, WORKER];
+    };
+    function Harness() {
+      const [threads, setThreads] = useState<ThreadInfo[]>([orch]);
+      return (
+        <>
+          <button onClick={() => setThreads([{ ...orch }])}>push</button>
+          <button onClick={() => setThreads([{ ...orch, status: "working" }])}>
+            work
+          </button>
+          <AgentsContent
+            workflow={null}
+            thread={orch}
+            usage={null}
+            providers={PROVIDERS}
+            threads={threads}
+            listThreadSummaries={fetcher}
+          />
+        </>
+      );
+    }
+    const m = await mount(<Harness />);
+    await m.flush();
+    assert.equal(calls, 1, "initial fetch");
+
+    await m.click(m.byText("push"));
+    await m.click(m.byText("push"));
+    await m.flush();
+    assert.equal(calls, 1, "new threads array, same roster: no refetch");
+
+    await m.click(m.byText("work"));
+    await m.flush();
+    assert.equal(calls, 2, "a status change still refetches");
+    m.unmount();
+  });
+
+  it("orchestrator: says it is waiting, for how long, on what (issue #42)", async () => {
+    const running = summary({
+      id: "t-work",
+      title: "Fork: Plan the fix",
+      provider: "grok",
+      status: "working",
+      handoffFrom: "t-orch",
+      runStartedAt: Date.now() - 3 * 60 * 1000,
+    });
+    const blocked = summary({
+      id: "t-block",
+      title: "Fork: needs a yes",
+      provider: "grok",
+      status: "working",
+      handoffFrom: "t-orch",
+      awaitingInput: true,
+      runStartedAt: Date.now() - 60 * 1000,
+    });
+    const m = await mount(content(thread(), [ORCHESTRATOR, running, blocked]));
+    await m.flush();
+
+    const line = m.query("[data-wait-line]");
+    assert.ok(line, "wait line renders above the roster");
+    assert.match(line!.textContent || "", /Waiting on 2 workers · 3m · 1 blocked/);
+    assert.equal(line!.getAttribute("data-attention"), "true");
+    assert.match(
+      m.text(),
+      /waiting/,
+      "the stalled worker's row reads waiting, not working",
     );
     m.unmount();
   });
 
-  it("orchestrator: no team section when every worker is done", async () => {
+  it("no wait line once every worker has landed", async () => {
+    const done = summary({
+      id: "t-done",
+      title: "Fork: finished",
+      status: "done",
+      handoffFrom: "t-orch",
+    });
+    const m = await mount(content(thread(), [ORCHESTRATOR, done]));
+    await m.flush();
+    assert.equal(m.query("[data-wait-line]"), null);
+    m.unmount();
+  });
+
+  it("orchestrator: team section survives when every worker is done", async () => {
     const done = summary({
       id: "t-done",
       title: "Fork: already finished",
@@ -210,12 +341,15 @@ describe("Agents team view", () => {
     const m = await mount(content(thread(), [ORCHESTRATOR, done]));
     await m.flush();
 
-    const text = m.text();
-    assert.doesNotMatch(text, /Orchestrator/);
-    assert.doesNotMatch(text, /Worker/);
+    let text = m.text();
+    assert.match(text, /Orchestrator/, "card keeps the orchestrator chip");
+    assert.ok(m.query('[aria-label="Team"]'), "team section still renders");
+    assert.match(text, /1 done/, "roster folded, not gone");
     assert.doesNotMatch(text, /already finished/);
-    assert.equal(m.query('[aria-label="Team"]'), null);
-    assert.match(text, /Session/, "falls back to a plain session card");
+
+    await m.click(m.byText("1 done"));
+    text = m.text();
+    assert.match(text, /already finished/, "done worker recoverable");
     m.unmount();
   });
 });

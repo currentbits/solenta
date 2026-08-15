@@ -469,7 +469,7 @@ describe("kimi runner integration", () => {
       title: "Kimi Thread",
     });
     services.setProvider(store, { threadId: thread.id, provider: "kimi" });
-    store.save();
+    store.saveNow();
 
     pushes = [];
     const core = await loadCore();
@@ -623,7 +623,7 @@ describe("kimi runner integration", () => {
     // old-kimi turn silently demoted -S resume back to the cwd sentinel.
     const thread = store.getThreads()[0];
     store.updateThread(thread.id, { sessionId: "session_prior" });
-    store.save();
+    store.saveNow();
     process.env.CODER_FAKE_KIMI_SCENARIO = "legacy-types"; // emits no hint
 
     await runner.startRun({ threadId: thread.id, prompt: "no hint" });
@@ -643,7 +643,7 @@ describe("kimi runner integration", () => {
   it("a legacy cwd thread keeps resuming with -c until a hint upgrades it", async () => {
     const thread = store.getThreads()[0];
     store.updateThread(thread.id, { sessionId: "cwd" });
-    store.save();
+    store.saveNow();
     process.env.CODER_FAKE_KIMI_SCENARIO = "continue-turn";
 
     await runner.startRun({ threadId: thread.id, prompt: "legacy resume" });
@@ -668,7 +668,7 @@ describe("kimi runner integration", () => {
         permissionMode,
         model: "kimi-code/kimi-for-coding-highspeed",
       });
-      store.save();
+      store.saveNow();
 
       await runner.startRun({ threadId: thread.id, prompt: "flagged" });
       await waitFor(() => store.getThread(thread.id).status === "done");

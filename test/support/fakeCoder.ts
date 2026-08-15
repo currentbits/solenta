@@ -37,6 +37,7 @@ import type {
   ProviderInfo,
   SkillInfo,
   ThreadDetail,
+  ThreadPatch,
   ThreadInfo,
   ThreadSummaryInfo,
   WorkLogItem,
@@ -60,8 +61,8 @@ export interface FakeCoder {
   only(channel: string): Call;
   /** Push a threads:changed event to whatever subscribed. */
   emitThreads(threads: ThreadInfo[]): void;
-  /** Push a thread:updated event. */
-  emitThread(detail: ThreadDetail): void;
+  /** Push a thread:updated event (a full detail is a valid ThreadPatch). */
+  emitThread(detail: ThreadPatch): void;
   /** Subscriptions that have not been torn down. */
   liveSubscriptions(): number;
 }
@@ -192,7 +193,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
   ];
 
   const threadSubs: Array<(t: ThreadInfo[]) => void> = [];
-  const detailSubs: Array<(d: ThreadDetail) => void> = [];
+  const detailSubs: Array<(d: ThreadPatch) => void> = [];
 
   /** Record the call, then either reject (if configured) or resolve. */
   function rec<T>(channel: string, args: unknown[], value: T): Promise<T> {
@@ -224,6 +225,14 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         ),
       checkUpdate: () =>
         rec("app.checkUpdate", [], {
+          state: "disabled",
+          channel: null,
+          tag: null,
+          url: null,
+          error: null,
+        } as UpdateStatus),
+      downloadUpdate: () =>
+        rec("app.downloadUpdate", [], {
           state: "disabled",
           channel: null,
           tag: null,
@@ -1020,9 +1029,9 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       if (channel === "thread:select") {
         return () => {};
       }
-      detailSubs.push(cb as (d: ThreadDetail) => void);
+      detailSubs.push(cb as (d: ThreadPatch) => void);
       return () => {
-        const i = detailSubs.indexOf(cb as (d: ThreadDetail) => void);
+        const i = detailSubs.indexOf(cb as (d: ThreadPatch) => void);
         if (i >= 0) detailSubs.splice(i, 1);
       };
     },

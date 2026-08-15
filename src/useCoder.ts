@@ -19,6 +19,7 @@ import type {
   MemoryEntryInfo,
   PermissionDecision,
   PermissionMode,
+  ListIssuesResult,
   ListPrsResult,
   PrChecksResult,
   PrInfo,
@@ -36,6 +37,7 @@ import type {
 import { resolveCoderApi } from "./coderApi";
 import { isWebMode } from "./shared/wire";
 import { nextVisibleThreadId } from "./threadSelection";
+import { mergeThreadPatch } from "./threadPatch";
 
 const STATUS_POLL_MS = 60_000;
 
@@ -136,6 +138,7 @@ export interface UseCoderResult {
   respondPermission: (
     requestId: string,
     decision: PermissionDecision,
+    answers?: Record<string, string>,
   ) => Promise<void>;
   /** Set provider and/or model on the selected thread (selectedRef-guarded). */
   setProvider: (input: {
@@ -186,6 +189,8 @@ export interface UseCoderResult {
   suggestCommitMessage: () => Promise<{ message: string }>;
   /** File paths for the composer @-mention popup. */
   listFiles: (query: string) => Promise<string[]>;
+  /** Data URL for one image a tool returned; null when it is gone. */
+  loadToolImage: (name: string) => Promise<string | null>;
   /** Push the selected thread's branch to origin. */
   pushBranch: () => Promise<{ remote: string; branch: string }>;
   /** Open (or re-return) a GitHub PR for the selected thread's branch. */
@@ -202,6 +207,8 @@ export interface UseCoderResult {
   prMerge: () => Promise<PrInfo>;
   /** Open PRs for a project checkout (`gh pr list`). Failures are in-band. */
   listPrs: (projectPath: string) => Promise<ListPrsResult>;
+  /** Issues for a project checkout (`gh issue list`). Failures are in-band. */
+  listIssues: (projectPath: string) => Promise<ListIssuesResult>;
   /** Cross-thread newest-first activity feed. */
   listActivity: () => Promise<ActivityItem[]>;
   /** Per-thread summaries for the Agents tab team view. */
@@ -246,6 +253,8 @@ export interface UseCoderResult {
   updateStatus: UpdateStatus | null;
   /** Manual "Check for updates" — re-runs the check and refreshes status. */
   checkUpdate: () => Promise<void>;
+  /** User-initiated download+install of the available update. */
+  downloadUpdate: () => Promise<void>;
   /** Relaunch into a staged update. */
   applyUpdate: () => Promise<void>;
   /**
@@ -307,10 +316,40 @@ export function useCoder(): UseCoderResult {
   const threadsRef = useRef<ThreadInfo[]>([]);
   /** Prior status by thread id; used to detect working → settled for spend refresh. */
   const prevStatusRef = useRef<Map<string, ThreadInfo["status"]>>(new Map());
+  /** Open detail, for merging streamed tails (thread:updated is a ThreadPatch). */
+  const detailRef = useRef<ThreadDetail | null>(null);
+  /** Threads with a full-detail refetch in flight, so pushes can't storm it. */
+  const refetchRef = useRef<Set<string>>(new Set());
+  /** Last thread:updated seq per thread; a gap means pushes were dropped. */
+  const patchSeqRef = useRef<Map<string, number>>(new Map());
 
   useEffect(() => {
     selectedRef.current = selectedThreadId;
   }, [selectedThreadId]);
+
+  useEffect(() => {
+    detailRef.current = detail;
+  }, [detail]);
+
+  /** Refetch the whole transcript after a patch could not be merged. */
+  const reloadDetail = useCallback(
+    (threadId: string) => {
+      if (refetchRef.current.has(threadId)) return;
+      refetchRef.current.add(threadId);
+      void api.threads
+        .get(threadId)
+        .then((d) => {
+          if (selectedRef.current === threadId) setDetail(d);
+        })
+        .catch(() => {
+          // Best effort; the next mergeable push repairs the view.
+        })
+        .finally(() => {
+          refetchRef.current.delete(threadId);
+        });
+    },
+    [api],
+  );
 
   const applyThreads = useCallback((next: ThreadInfo[]) => {
     threadsRef.current = next;
@@ -338,9 +377,13 @@ export function useCoder(): UseCoderResult {
     setUpdateStatus(await api.app.checkUpdate());
   }, [api]);
 
-  // Auto-update: check on boot, then every 6h. The check itself downloads and
-  // stages the swap on macOS, so even without a restart click the next launch
-  // runs the new build. Missing handler (old backend) leaves status null.
+  const downloadUpdate = useCallback(async () => {
+    setUpdateStatus(await api.app.downloadUpdate());
+  }, [api]);
+
+  // Auto-update: check on boot, then every 6h. The check only asks the release
+  // API — downloading and swapping the bundle waits for a user click.
+  // Missing handler (old backend) leaves status null.
   useEffect(() => {
     let cancelled = false;
     const check = () => {
@@ -391,8 +434,22 @@ export function useCoder(): UseCoderResult {
           t.id === next.thread.id ? next.thread : t,
         ),
       );
+      const lastSeq = patchSeqRef.current.get(next.thread.id);
+      if (next.seq != null) patchSeqRef.current.set(next.thread.id, next.seq);
+      // A gap means a push was dropped (web reconnect): the prefix we hold may
+      // be stale, so refetch rather than merge onto it.
+      const dropped =
+        next.seq != null && lastSeq != null && next.seq !== lastSeq + 1;
       if (selectedRef.current === next.thread.id) {
-        setDetail(next);
+        const open = detailRef.current;
+        if (open && open.thread.id === next.thread.id) {
+          const merged = dropped ? null : mergeThreadPatch(open, next);
+          if (merged) setDetail(merged);
+          else reloadDetail(next.thread.id);
+        } else if (!next.messagesFrom && !next.workLogFrom) {
+          setDetail(next);
+        }
+        // Nothing open and only a tail: the in-flight threads.get lands it.
       }
       // Refresh spend when a thread leaves "working" (run finished or stopped).
       if (prev === "working" && next.thread.status !== "working") {
@@ -455,7 +512,7 @@ export function useCoder(): UseCoderResult {
       unsubSelect?.();
       window.clearInterval(statusHandle);
     };
-  }, [api, applyThreads, refreshStatus]);
+  }, [api, applyThreads, refreshStatus, reloadDetail]);
 
   // Load ThreadDetail when selection changes. threads.get stamps lastVisitedAt
   // (select = visit); merge the returned row into the list so the sidebar
@@ -818,13 +875,22 @@ export function useCoder(): UseCoderResult {
   );
 
   const respondPermission = useCallback(
-    async (requestId: string, decision: PermissionDecision) => {
+    async (
+      requestId: string,
+      decision: PermissionDecision,
+      answers?: Record<string, string>,
+    ) => {
       if (!selectedThreadId) return;
       const threadId = selectedThreadId;
       try {
         // Updated detail (prompt cleared, decision event) arrives via
         // thread:updated pushed by the runner.
-        await api.threads.respondPermission({ threadId, requestId, decision });
+        await api.threads.respondPermission({
+          threadId,
+          requestId,
+          decision,
+          answers,
+        });
         setError(null);
       } catch (err) {
         setError({ scope: "run", message: errorMessage(err) });
@@ -1134,6 +1200,18 @@ export function useCoder(): UseCoderResult {
     [api, selectedThreadId],
   );
 
+  const loadToolImage = useCallback(
+    async (name: string) => {
+      try {
+        const result = await api.files.image({ name });
+        return result.dataUrl;
+      } catch {
+        return null;
+      }
+    },
+    [api],
+  );
+
   const pushBranch = useCallback(async () => {
     if (!selectedThreadId) {
       throw new Error("No thread selected");
@@ -1201,6 +1279,13 @@ export function useCoder(): UseCoderResult {
   const listPrs = useCallback(
     async (projectPath: string) => {
       return api.git.listPrs(projectPath);
+    },
+    [api],
+  );
+
+  const listIssues = useCallback(
+    async (projectPath: string) => {
+      return api.issues.list(projectPath);
     },
     [api],
   );
@@ -1511,12 +1596,14 @@ export function useCoder(): UseCoderResult {
     revertFile,
     suggestCommitMessage,
     listFiles,
+    loadToolImage,
     pushBranch,
     createPr,
     prStatus,
     prChecks,
     prMerge,
     listPrs,
+    listIssues,
     fetchIssue,
     listActivity,
     listThreadSummaries,
@@ -1540,6 +1627,7 @@ export function useCoder(): UseCoderResult {
     refreshStatus,
     updateStatus,
     checkUpdate,
+    downloadUpdate,
     applyUpdate,
     refreshProviders,
     projectById,

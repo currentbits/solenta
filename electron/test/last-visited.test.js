@@ -79,7 +79,7 @@ describe("lastVisitedAt (round 43)", () => {
     });
     // Backdate visit so a re-get is observable; leave updatedAt alone.
     store.updateThread(thread.id, { lastVisitedAt: 1 });
-    store.save();
+    store.saveNow();
     const beforeUpdated = store.getThread(thread.id).updatedAt;
     assert.equal(store.getThread(thread.id).lastVisitedAt, 1);
 
@@ -107,7 +107,7 @@ describe("lastVisitedAt (round 43)", () => {
       title: "Background",
     });
     store.updateThread(thread.id, { lastVisitedAt: 42 });
-    store.save();
+    store.saveNow();
 
     const detail = services.getThreadDetail(store, thread.id, null, {
       markVisited: false,
@@ -139,7 +139,7 @@ describe("lastVisitedAt (round 43)", () => {
         title: "Streaming",
       });
       store.updateThread(thread.id, { lastVisitedAt: 99 });
-      store.save();
+      store.saveNow();
       assert.equal(store.getThread(thread.id).lastVisitedAt, 99);
 
       await runner.startRun({
@@ -173,7 +173,7 @@ describe("lastVisitedAt (round 43)", () => {
       title: "Persist",
     });
     store.updateThread(thread.id, { lastVisitedAt: 1234567890 });
-    store.save();
+    store.saveNow();
 
     const reloaded = new Store(path.join(tmpDir, "store.json"));
     assert.equal(reloaded.getThread(thread.id).lastVisitedAt, 1234567890);
@@ -204,7 +204,7 @@ describe("lastVisitedAt (round 43)", () => {
     );
     const loaded = new Store(filePath);
     assert.equal(loaded.getThread("legacy-1").lastVisitedAt, null);
-    loaded.save();
+    loaded.saveNow();
     const again = new Store(filePath);
     assert.equal(again.getThread("legacy-1").lastVisitedAt, null);
   });

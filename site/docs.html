@@ -4,7 +4,25 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Solenta Docs</title>
-  <meta name="description" content="How Solenta works: threads, providers, worktrees, Build workflows, orchestration, shared memory, automations, spend caps, web mode and SSH remotes." />
+  <meta name="description" content="How Solenta works: threads, providers, worktrees, Kanban and Planboard, Build workflows, orchestration, shared memory, skills, automations, spend caps, web mode and SSH remotes." />
+  <link rel="canonical" href="https://solenta.app/docs.html" />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Solenta" />
+  <meta property="og:url" content="https://solenta.app/docs.html" />
+  <meta property="og:title" content="Solenta Docs" />
+  <meta property="og:description" content="How Solenta works: threads, providers, worktrees, Kanban and Planboard, Build workflows, orchestration, shared memory, skills, automations, spend caps, web mode and SSH remotes." />
+  <meta property="og:image" content="https://solenta.app/assets/og.png" />
+  <meta property="og:image:type" content="image/png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="Solenta. Every coding agent. One window." />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:site" content="@currentbitsNET" />
+  <meta name="twitter:title" content="Solenta Docs" />
+  <meta name="twitter:description" content="How Solenta works: threads, providers, worktrees, Kanban and Planboard, Build workflows, orchestration, shared memory, skills, automations, spend caps, web mode and SSH remotes." />
+  <meta name="twitter:image" content="https://solenta.app/assets/og.png" />
+  <meta name="twitter:image:alt" content="Solenta. Every coding agent. One window." />
+  <meta name="theme-color" content="#0b0e14" />
   <link rel="icon" href="assets/icon.svg" type="image/svg+xml" />
   <script>document.documentElement.classList.add("js");</script>
   <link rel="stylesheet" href="style.css?v=2" />
@@ -34,11 +52,15 @@
       <a href="#getting-started">Getting started</a>
       <a href="#threads">Threads and providers</a>
       <a href="#worktrees">Worktrees and PRs</a>
+      <a href="#views">Kanban, Planboard, PRs, Activity</a>
       <a href="#workflows">Build workflows</a>
       <a href="#orchestration">Orchestration</a>
       <a href="#memory">Shared memory</a>
+      <a href="#skills">Skills</a>
       <a href="#automations">Automations</a>
+      <a href="#dev-servers">Dev servers</a>
       <a href="#spend">Spend guardrails</a>
+      <a href="#updates">Notifications and updates</a>
       <a href="#web-mode">Web mode</a>
       <a href="#ssh">SSH remote projects</a>
       <a href="#architecture">Architecture</a>
@@ -105,6 +127,32 @@
         checkpoints are committed as the agent works, and you can restore to
         any checkpoint from the Changes panel.
       </p>
+      <p>
+        Work can also start from an issue: paste a GitHub issue reference and
+        Solenta pulls the title and body in as the thread's first prompt.
+      </p>
+
+      <h2 id="views">Kanban, Planboard, PRs, Activity</h2>
+      <p>
+        Next to the thread view, the sidebar has four views over everything
+        that is running:
+      </p>
+      <ul>
+        <li><strong>Kanban</strong> groups every thread by status — working, waiting on you, done, failed — so a pile of parallel runs stays readable.</li>
+        <li><strong>Planboard</strong> shows one project's plan as its GitHub issues in Todo / In progress / Done. It is read-only; cards open the issue on GitHub.</li>
+        <li><strong>Pull requests</strong> lists the open PRs per project with their checks, and jumps to the thread that opened one.</li>
+        <li><strong>Activity</strong> is a chronological feed, grouped by day, of everything your agents did.</li>
+      </ul>
+      <p>
+        Planboard reads the board from labels, so agents can write to it with
+        nothing but <code>gh</code>: an issue labelled <code>plan:doing</code>
+        lands in In progress, <code>plan:done</code> or a closed issue in Done,
+        and any other open issue in Todo. Other labels show as badges on the
+        card. Agent sessions are told this convention, so &ldquo;keep the plan
+        on the board&rdquo; is enough to have multi-step work tracked as
+        issues. The view needs the GitHub CLI installed and authenticated, and
+        a project whose <code>origin</code> is on GitHub.
+      </p>
 
       <h2 id="workflows">Build workflows</h2>
       <p>
@@ -152,6 +200,16 @@
         localhost-only and bearer-token gated.
       </p>
 
+      <h2 id="skills">Skills</h2>
+      <p>
+        The <strong>Skills</strong> tab lists the <code>SKILL.md</code> files
+        your agents can reach: the two user directories
+        (<code>~/.claude/skills</code>, <code>~/.agents/skills</code>) and the
+        selected project's <code>.claude/skills</code>. You can read all three
+        from the app and add or delete skills in the user directories; project
+        skills are read-only, so a stray click cannot delete repo content.
+      </p>
+
       <h2 id="automations">Automations</h2>
       <p>
         Automations run a prompt on a schedule: hourly, daily at an hour, or
@@ -161,12 +219,40 @@
         inspectable as interactive work.
       </p>
 
+      <h2 id="dev-servers">Dev servers</h2>
+      <p>
+        A project's dev server starts from the app: Solenta reads
+        <code>package.json</code> and offers the <code>dev</code>,
+        <code>start</code> or <code>serve</code> script, keeps the log, and
+        picks the URL out of the output (the usual
+        <code>Local: http://localhost:5173/</code> banner) so it is one click
+        away. Stopping the server is a button too — no orphaned process on a
+        port you have to hunt down later.
+      </p>
+
       <h2 id="spend">Spend guardrails</h2>
       <p>
         Set a daily budget in Settings and Solenta tracks today's spend across
         all providers. Once the cap is reached, new runs are blocked until
         tomorrow. Token usage and cost are visible per thread in the composer
         footer, so there are no surprise bills from a runaway loop.
+      </p>
+
+      <h2 id="updates">Notifications and updates</h2>
+      <p>
+        A desktop notification fires when a thread finishes or needs a
+        decision from you — never while the window is focused, so parallel
+        runs do not turn into a stream of pings while you watch them.
+      </p>
+      <p>
+        Updates come from plain GitHub releases on two channels:
+        <strong>prod</strong> follows the newest normal release,
+        <strong>nightly</strong> the newest prerelease, and a nightly install
+        never migrates itself onto prod. Checking is automatic; installing is
+        not. Solenta downloads only when you click, verifies the archive
+        against the sha256 digest GitHub stamps on the asset, and then swaps
+        the bundle in place (macOS; Windows and Linux open the release page).
+        Builds from a dev tree carry no channel stamp and never self-update.
       </p>
 
       <h2 id="web-mode">Web mode</h2>
