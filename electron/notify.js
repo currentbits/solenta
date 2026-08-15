@@ -16,8 +16,12 @@
  */
 function shouldNotify(prevStatus, nextStatus, windowFocused) {
   if (windowFocused) return false;
-  if (prevStatus !== "working" && prevStatus !== "waiting") return false;
   if (prevStatus === nextStatus) return false;
+  // A thread that lands "failed" with no run of its own — an orchestrator
+  // wake-up the budget gate rejected (issue #34) — is exactly the stall the
+  // user must hear about. A never-seen thread (no prev) stays quiet.
+  if (nextStatus === "failed" && prevStatus) return true;
+  if (prevStatus !== "working" && prevStatus !== "waiting") return false;
   return (
     nextStatus === "done" || nextStatus === "failed" || nextStatus === "waiting"
   );
