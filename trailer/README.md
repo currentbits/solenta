@@ -13,7 +13,7 @@ Recapture the three real-UI beats (requires Vite with the trailer seed):
 
 ```bash
 # from repo root
-VITE_TRAILER=1 npx vite --port 5173 --strictPort
+VITE_TRAILER=1 npm run dev:browser   # in the repo root
 npx electron scripts/capture-trailer.js
 ```
 

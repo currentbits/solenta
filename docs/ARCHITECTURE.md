@@ -14,11 +14,13 @@ React UI, and preload exposes a typed `window.coder` API. The contract lives in
 | Preload | `electron/preload.js` | Context-isolated `window.coder` (invoke + subscribe) |
 | Services | `electron/services.js` | Projects, threads, providers, settings, spend gate, worktree wrappers |
 | Renderer | `src/` | React app (`App.tsx` → Sidebar, ThreadView, AgentsPanel) |
-| Dev mock | `src/devCoder.ts` | In-browser `CoderApi` for Vite without Electron |
+| Dev fixtures | `src/devCoder.ts` | Seeded `CoderApi` for browser-only Vite + demo captures |
 | Hook | `src/useCoder.ts` | State, subscriptions, error banners |
 
 `CODER_PROD=1` or packaged builds load `dist/`; otherwise main points at the Vite
-dev server.
+dev server. `npm run dev` starts both halves (`scripts/dev.js`), so dev exercises
+the real main process; `npm run dev:browser` is the Electron-less demo, and it is
+fixtures all the way down.
 
 ## Provider registry
 
@@ -113,7 +115,8 @@ are pruned.
 
 - Composer model pill: always shown. Empty `models` → Default + Custom… (inline
   input, Enter commits, Escape cancels). Non-empty → Default + list only.
-- Dev validation for setProvider mirrors the contract in `src/devCoder.ts`.
+- setProvider validation lives in `electron/services.js` only. `src/devCoder.ts`
+  assigns what the picker sends: it is a fixture, not a second contract.
 
 ## Sidebar ordering and settle model
 

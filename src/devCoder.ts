@@ -1,10 +1,16 @@
 /**
- * In-memory CoderApi for plain Vite browser dev (no Electron preload).
- * Seeded from mockData so the built SPA remains demoable.
+ * Fixture CoderApi for plain Vite browser dev (`npm run dev:browser`) and for
+ * the demo/trailer captures. Seeded from mockData.
  *
- * Real provider sessions (provider !== "simulate"): streams text + tool cards,
- * accumulates SessionUsage, no workflow. Simulate provider keeps the old
- * multi-agent workflow tick for the seeded mid-run demo.
+ * NOT a second implementation of the app. `npm run dev` runs the renderer
+ * against the real main process, so nothing here has to agree with
+ * electron/services.js — and when the two disagree, electron is right. Keep
+ * this file dumb: store what you are given, return something plausible, and
+ * leave rules (validation, guards, git, PR state machines) to main.
+ *
+ * The one thing it must keep doing is MOVE: real provider sessions stream text
+ * and tool cards, and the seeded simulate thread ticks a workflow, because the
+ * trailer records this UI.
  */
 import type {
   ActivityItem,
@@ -169,216 +175,41 @@ const TRAILER_PROVIDERS = [
   "opencode",
 ] as const;
 
-/** Mirrors electron/providers.js registry for browser/dev demos. */
-const DEV_PROVIDERS: ProviderInfo[] = [
-  {
-    id: "claude",
-    name: "Claude Code",
-    available: true,
+/**
+ * Fixture providers for the browser demo. NOT a copy of
+ * electron/providers.js — `npm run dev` runs the real registry, so this only
+ * has to make the picker look populated.
+ */
+function devProvider(
+  id: string,
+  name: string,
+  models: string[],
+  available = true,
+): ProviderInfo {
+  return {
+    id,
+    name,
+    available,
     supportsResume: true,
-    models: [
-      "claude-fable-5",
-      "claude-opus-5",
-      "claude-sonnet-5",
-      "claude-haiku-4-5",
-    ],
-    modelInfo: [
-      {
-        id: "claude-fable-5",
-        label: "Fable",
-        description: "Fast everyday coding and chat",
-        vendor: "Anthropic",
-        recommended: true,
-      },
-      {
-        id: "claude-opus-5",
-        label: "Opus 5",
-        description: "Deepest reasoning for hard problems",
-        vendor: "Anthropic",
-      },
-      {
-        id: "claude-sonnet-5",
-        label: "Sonnet 5",
-        description: "Best for everyday complex tasks",
-        vendor: "Anthropic",
-      },
-      {
-        id: "claude-haiku-4-5",
-        label: "Haiku 4.5",
-        description: "Lightweight and cheap for simple turns",
-        vendor: "Anthropic",
-      },
-    ],
-    // claude --effort: low, medium, high, xhigh, max (all five).
-    efforts: ["low", "medium", "high", "xhigh", "max"],
-  },
-  {
-    id: "codex",
-    name: "Codex",
-    available: true,
-    supportsResume: true,
-    models: ["gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4-mini"],
-    modelInfo: [
-      {
-        id: "gpt-5.6-terra",
-        label: "GPT-5.6-Terra",
-        description: "Balanced agentic coding model for everyday work.",
-        vendor: "OpenAI",
-      },
-      {
-        id: "gpt-5.6-luna",
-        label: "GPT-5.6-Luna",
-        description: "Fast and affordable agentic coding model.",
-        vendor: "OpenAI",
-      },
-      {
-        id: "gpt-5.5",
-        label: "GPT-5.5",
-        description: "Frontier model for complex coding, research, and real-world work.",
-        vendor: "OpenAI",
-        recommended: true,
-      },
-      {
-        id: "gpt-5.4-mini",
-        label: "GPT-5.4-Mini",
-        description: "Small, fast, and cost-efficient model for simpler coding tasks.",
-        vendor: "OpenAI",
-      },
-    ],
-    efforts: ["low", "medium", "high", "xhigh", "max"],
-  },
-  {
-    id: "grok",
-    name: "Grok",
-    available: TRAILER ? true : false,
-    supportsResume: false,
-    models: ["grok-4.6", "grok-4.5"],
-    modelInfo: [
-      {
-        id: "grok-4.6",
-        label: "Grok 4.6",
-        description: "SpaceXAI's latest frontier model",
-        vendor: "xAI",
-        recommended: true,
-        contextTokens: 500000,
-      },
-      {
-        id: "grok-4.5",
-        label: "Grok 4.5",
-        description: "xAI coding agent with tool use",
-        vendor: "xAI",
-        contextTokens: 500000,
-      },
-    ],
-    efforts: ["low", "medium", "high", "xhigh"],
-  },
-  {
-    // Synced from electron/providers.js; dev had NO kimi entry at all, so the
-    // dev picker showed a different provider list than the packaged app.
-    id: "kimi",
-    name: "Kimi Code",
-    available: true,
-    supportsResume: true,
-    // Ids are config.toml alias keys: `-m k3` fails config.invalid,
-    // `-m kimi-code/k3` runs (verified against the real CLI).
-    models: [
-      "kimi-code/k3",
-      "kimi-code/k3-256k",
-      "kimi-code/kimi-for-coding",
-      "kimi-code/kimi-for-coding-highspeed",
-    ],
-    modelInfo: [
-      {
-        id: "kimi-code/k3",
-        label: "K3",
-        description: "Default Kimi coding model (1M context)",
-        vendor: "Moonshot",
-        recommended: true,
-      },
-      {
-        id: "kimi-code/k3-256k",
-        label: "K3-256k",
-        description: "K3 with a 256k context window",
-        vendor: "Moonshot",
-      },
-      {
-        id: "kimi-code/kimi-for-coding",
-        label: "K2.7 Coding",
-        description: "Coding-tuned Kimi (K2.7)",
-        vendor: "Moonshot",
-      },
-      {
-        id: "kimi-code/kimi-for-coding-highspeed",
-        label: "K2.7 Coding Highspeed",
-        description: "Faster coding-tuned Kimi (K2.7)",
-        vendor: "Moonshot",
-      },
-    ],
-    // Per-model support_efforts in kimi's config.toml (k3 family).
-    efforts: ["low", "high", "max"],
-  },
-  {
-    id: "opencode",
-    name: "OpenCode",
-    available: true,
-    supportsResume: false,
-    models: ["opencode/big-pickle", "opencode/deepseek-v4-flash-free", "opencode/laguna-s-2.1-free", "opencode/ling-3.0-tiny-free", "opencode/longcat-2.0-free", "opencode/mimo-v2.5-free", "opencode/nemotron-3-ultra-free", "opencode/north-mini-code-free"],
-    modelInfo: [
-      {
-        id: "opencode/big-pickle",
-        label: "Big Pickle",
-        description: "Reasoning model for deliberate analysis, multi-step problem solving, and tool use",
-        vendor: "OpenCode",
-      },
-      {
-        id: "opencode/deepseek-v4-flash-free",
-        label: "DeepSeek V4 Flash Free",
-        description: "Official DeepSeek V4 Flash release with enhanced agentic capabilities and integrated DSpark speculative decoding",
-        vendor: "DeepSeek",
-      },
-      {
-        id: "opencode/laguna-s-2.1-free",
-        label: "Laguna S 2.1 Free",
-        description: "Agentic coding model from Poolside in the XS size class for local deployment",
-        vendor: "Poolside",
-      },
-      {
-        id: "opencode/ling-3.0-tiny-free",
-        label: "Ling-3.0-tiny Free",
-        description: "Compact MoE model for responsive agents, instruction following, and multi-turn conversations",
-        vendor: "InclusionAI",
-      },
-      {
-        id: "opencode/longcat-2.0-free",
-        label: "LongCat-2.0 Free",
-        description: "Meituan LongCat-2.0, a reasoning model with tool calling and a 1M-token context window",
-        vendor: "Meituan",
-      },
-      {
-        id: "opencode/mimo-v2.5-free",
-        label: "MiMo V2.5 Free",
-        description: "MiMo omni model for text, image, video, audio, and agents",
-        vendor: "Xiaomi",
-      },
-      {
-        id: "opencode/nemotron-3-ultra-free",
-        label: "Nemotron 3 Ultra Free",
-        description: "Largest Nemotron 3 model for maximum open-weight reasoning and agent accuracy",
-        vendor: "NVIDIA",
-      },
-      {
-        id: "opencode/north-mini-code-free",
-        label: "North Mini Code Free",
-        description: "Cohere coding model for practical software engineering and agentic edits",
-        vendor: "Cohere",
-        recommended: true,
-      },
-    ],
-    efforts: [],
-  },
-];
+    models,
+    modelInfo: models.map((m, i) => ({
+      id: m,
+      label: m,
+      description: `${name} model`,
+      vendor: name,
+      recommended: i === 0,
+    })),
+    efforts: ["low", "medium", "high"],
+  };
+}
 
-const KNOWN_PROVIDER_IDS = new Set(DEV_PROVIDERS.map((p) => p.id));
+const DEV_PROVIDERS: ProviderInfo[] = [
+  devProvider("claude", "Claude Code", ["claude-opus-5", "claude-sonnet-5"]),
+  devProvider("codex", "Codex", ["gpt-5.3-codex", "gpt-5.3"]),
+  devProvider("kimi", "Kimi", ["kimi-k3-thinking"]),
+  devProvider("grok", "Grok", ["grok-4.6"], TRAILER),
+  devProvider("opencode", "OpenCode", ["opencode/grok-code"]),
+];
 
 /** Builtin Standard template (id "standard"). Seeded into every dev session. */
 const STANDARD_TEMPLATE: WorkflowTemplateInfo = {
@@ -414,86 +245,6 @@ const TICK_MS = TRAILER ? 1600 : 700;
 const TITLE_MAX = 60;
 const WORKTREE_DELAY_MS = 450;
 const PUSH_DELAY_MS = 350;
-/** Mirrors electron/services.js hand-off digest limits. */
-const HANDOFF_MESSAGE_MAX = 2000;
-const HANDOFF_MESSAGE_COUNT = 12;
-const HANDOFF_TOTAL_MAX = 12000;
-
-/**
- * Mirrors electron/worktrees.js maybeRenameWorktreeBranch: a creation-time
- * worktree starts on the placeholder branch coder/new-thread-<id6>; when the
- * first prompt promotes the title, the branch follows. No real git in dev
- * mode, so this is a pure rename of the thread record.
- */
-function renamePlaceholderBranch(thread: ThreadInfo): ThreadInfo {
-  if (!thread.worktreePath || !thread.branch) return thread;
-  const shortId = thread.id.slice(0, 6);
-  if (thread.branch !== `coder/new-thread-${shortId}`) return thread;
-  const slug =
-    thread.title
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 40) || "thread";
-  const next = `coder/${slug}-${shortId}`;
-  return next === thread.branch ? thread : { ...thread, branch: next };
-}
-
-/**
- * One-time hand-off CLI prefix. Strings match electron/services.js
- * buildHandoffPrefix exactly (services-level helper + dev twin pattern).
- */
-export function buildHandoffPrefix(
-  thread: { handoffFrom?: string | null; sessionId?: string | null } | null,
-  getMessages: (
-    sourceId: string,
-  ) => Array<{ role?: string; text?: string }> | null | undefined,
-): string {
-  if (!thread || thread.handoffFrom == null || thread.handoffFrom === "") {
-    return "";
-  }
-  if (thread.sessionId != null && thread.sessionId !== "") {
-    return "";
-  }
-  let msgs: Array<{ role?: string; text?: string }> | null | undefined;
-  try {
-    msgs = getMessages(String(thread.handoffFrom));
-  } catch {
-    return "";
-  }
-  if (!Array.isArray(msgs) || msgs.length === 0) return "";
-  if (
-    !msgs.some(
-      (m) => m && m.role === "assistant" && m.text != null && String(m.text),
-    )
-  ) {
-    return "";
-  }
-  const picked: string[] = [];
-  let total = 0;
-  for (let i = msgs.length - 1; i >= 0; i--) {
-    if (picked.length >= HANDOFF_MESSAGE_COUNT) break;
-    const m = msgs[i];
-    if (!m || (m.role !== "assistant" && m.role !== "user")) continue;
-    const text = m.text == null ? "" : String(m.text);
-    if (!text) continue;
-    const body =
-      text.length > HANDOFF_MESSAGE_MAX
-        ? text.slice(0, HANDOFF_MESSAGE_MAX) + "\n[…truncated]"
-        : text;
-    if (picked.length && total + body.length > HANDOFF_TOTAL_MAX) break;
-    picked.push(`${m.role}: ${body}`);
-    total += body.length;
-  }
-  picked.reverse();
-  return (
-    "[Hand-off context: the last messages of the source thread, truncated — " +
-    "not the full transcript]\n" +
-    picked.join("\n\n") +
-    "\n[End context]\n\n"
-  );
-}
-
 const SETTINGS_BUDGET_ERROR =
   "Daily budget must be a positive number or null";
 
@@ -518,105 +269,21 @@ function cloneTemplate(t: WorkflowTemplateInfo): WorkflowTemplateInfo {
   };
 }
 
-/**
- * Validate a workflow template before save.
- * Error copy mirrors electron/services.js validateWorkflowTemplate VERBATIM
- * so the Manage modal shows the same messages in dev and prod.
- */
-function validateTemplate(
-  input: TemplateSaveInput,
-  providers: ProviderInfo[],
-): { name: string; phases: WorkflowPhaseSpec[] } {
-  const name = input.name != null ? String(input.name).trim() : "";
-  if (!name) {
-    throw new Error("Template name is required");
-  }
-
-  const phases = input.phases;
-  if (!Array.isArray(phases)) {
-    throw new Error("Template phases must be an array");
-  }
-  if (phases.length < 1 || phases.length > 6) {
-    throw new Error("Template must have between 1 and 6 phases");
-  }
-
-  const providerById = new Map(providers.map((p) => [p.id, p]));
-  const cleaned: WorkflowPhaseSpec[] = [];
-
-  for (let i = 0; i < phases.length; i++) {
-    const raw = phases[i];
-    if (!raw || typeof raw !== "object") {
-      throw new Error(`Phase ${i + 1}: invalid phase object`);
-    }
-    const phaseName = raw.name != null ? String(raw.name).trim() : "";
-    if (!phaseName) {
-      throw new Error(`Phase ${i + 1}: name is required`);
-    }
-    if (phaseName.length > 24) {
-      throw new Error(
-        `Phase "${phaseName}": name must be at most 24 characters`,
-      );
-    }
-
-    const agentCount = raw.agentCount;
-    if (
-      typeof agentCount !== "number" ||
-      !Number.isInteger(agentCount) ||
-      agentCount < 1 ||
-      agentCount > 4
-    ) {
-      throw new Error(
-        `Phase "${phaseName}": agentCount must be an integer from 1 to 4`,
-      );
-    }
-
-    const instruction =
-      raw.instruction != null ? String(raw.instruction).trim() : "";
-    if (!instruction) {
-      throw new Error(`Phase "${phaseName}": instruction is required`);
-    }
-    if (String(raw.instruction).length > 2000) {
-      throw new Error(
-        `Phase "${phaseName}": instruction must be at most 2000 characters`,
-      );
-    }
-
-    const providerId =
-      raw.provider != null ? String(raw.provider).trim() : "";
-    if (!providerId) {
-      throw new Error(`Phase "${phaseName}": provider is required`);
-    }
-    const entry = providerById.get(providerId);
-    // simulate is a dev-only harness; never a selectable workflow provider.
-    if (!entry || providerId === "simulate") {
-      throw new Error(
-        `Phase "${phaseName}": unknown provider "${providerId}"`,
-      );
-    }
-
-    const model =
-      raw.model == null || raw.model === "" ? null : String(raw.model);
-    if (
-      model != null &&
-      Array.isArray(entry.models) &&
-      entry.models.length > 0 &&
-      !entry.models.includes(model)
-    ) {
-      throw new Error(
-        `Phase "${phaseName}": model "${model}" is not in provider ${providerId}'s model list`,
-      );
-    }
-
-    cleaned.push({
-      name: phaseName,
-      agentCount,
-      instruction,
-      provider: providerId,
-      model,
-    });
-  }
-
-  return { name, phases: cleaned };
+/** Shape-only. electron/services.js validateWorkflowTemplate owns the rules. */
+function normalizeTemplate(input: TemplateSaveInput): {
+  name: string;
+  phases: WorkflowPhaseSpec[];
+} {
+  return {
+    name: String(input.name ?? "").trim() || "Untitled",
+    phases: (input.phases ?? []).map((p) => ({
+      name: String(p?.name ?? "").trim() || "Phase",
+      agentCount: Number(p?.agentCount) || 1,
+      instruction: String(p?.instruction ?? "").trim(),
+      provider: String(p?.provider ?? "claude"),
+      model: p?.model || null,
+    })),
+  };
 }
 
 type ListenerMap = {
@@ -1734,6 +1401,85 @@ function buildDevCoder(): CoderApi {
     emitThreads();
   };
 
+  /** Apply a field patch to a thread and push it to the UI. */
+  const patchThread = (
+    threadId: string,
+    patch: Partial<ThreadInfo>,
+  ): ThreadInfo => {
+    const detail = details.get(threadId);
+    if (!detail) throw new Error(`Thread not found: ${threadId}`);
+    const thread: ThreadInfo = { ...detail.thread, ...patch };
+    detail.thread = thread;
+    details.set(threadId, detail);
+    syncThreadRow(thread);
+    emitDetail(detail);
+    return { ...thread };
+  };
+
+  /** A fresh ThreadInfo with every field at its idle default. */
+  const newThread = (over: Partial<ThreadInfo> = {}): ThreadInfo => {
+    const t0 = now();
+    return {
+      id: id("thread"),
+      projectId: "",
+      branch: null,
+      prNumber: null,
+      prUrl: null,
+      status: "idle",
+      createdAt: t0,
+      updatedAt: t0,
+      runStartedAt: null,
+      archived: false,
+      settledOverride: null,
+      settledAt: null,
+      prState: null,
+      // Just-created is not unread.
+      lastVisitedAt: t0,
+      pinnedAt: null,
+      snoozedUntil: null,
+      snoozedAt: null,
+      provider: "claude",
+      model: null,
+      sessionId: null,
+      permissionMode: "default",
+      reasoningEffort: null,
+      worktreePath: null,
+      handoffFrom: null,
+      ...over,
+      title: (over.title || "New Thread").slice(0, TITLE_MAX),
+    };
+  };
+
+  /** Put a new thread at the top of the list with an empty transcript. */
+  const registerThread = (t: ThreadInfo): ThreadInfo => {
+    threads = [t, ...threads];
+    details.set(t.id, {
+      thread: t,
+      messages: [],
+      workLog: [],
+      workflow: null,
+      usage: null,
+    });
+    emitThreads();
+    return { ...t };
+  };
+
+  /** Plausible branch + worktree path for the demo. No rules, just strings. */
+  const fakeWorktree = (thread: ThreadInfo): Partial<ThreadInfo> => {
+    const slug =
+      thread.title
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 40) || "thread";
+    const project = projects.find((p) => p.id === thread.projectId);
+    return {
+      pendingWorktree: false,
+      branch: thread.branch ?? `coder/${slug}-${thread.id.slice(0, 6)}`,
+      worktreePath: `${project?.path ?? "/Users/demo/project"}/.coder/worktrees/${thread.id}`,
+    };
+  };
+
   const clearRunTimer = (threadId: string) => {
     const handle = runTimers.get(threadId);
     if (handle != null) {
@@ -1747,13 +1493,11 @@ function buildDevCoder(): CoderApi {
     (TRAILER && thread.id === mockData.activeThreadId);
 
   /**
-   * In-memory checkpoints per thread (dev twin of worktree git log).
-   * Appended on successful run complete when the thread has a fake worktreePath.
-   * Newest-first list order matches electron listCheckpoints.
+   * In-memory checkpoints per thread, newest first: enough for the timeline
+   * to render. electron/worktrees.js owns the real git log.
    */
   const checkpointsByThread = new Map<string, CheckpointInfo[]>();
 
-  /** Mirror electron maybeCreateCheckpoint — best-effort, worktree-only. */
   const appendDevCheckpoint = (thread: ThreadInfo) => {
     if (!thread.worktreePath) return;
     const prev = checkpointsByThread.get(thread.id) || [];
@@ -1911,7 +1655,6 @@ function buildDevCoder(): CoderApi {
         runStartedAt: null,
       };
       clearRunTimer(threadId);
-      // Successful turn + fake worktree → in-memory checkpoint (electron twin).
       appendDevCheckpoint(thread);
     }
 
@@ -2160,7 +1903,7 @@ function buildDevCoder(): CoderApi {
         return templates.map(cloneTemplate);
       },
       async save(input) {
-        const cleaned = validateTemplate(input, DEV_PROVIDERS);
+        const cleaned = normalizeTemplate(input);
         const existing =
           input.id != null
             ? templates.find((t) => t.id === input.id)
@@ -2168,7 +1911,6 @@ function buildDevCoder(): CoderApi {
 
         // Saving a builtin always creates a copy (never mutates the builtin).
         // Name: append " (copy)" when the submitted name equals the builtin name
-        // (matches electron/store.js saveTemplate).
         if (existing?.builtin) {
           const renamed =
             cleaned.name.length > 0 &&
@@ -2385,7 +2127,7 @@ function buildDevCoder(): CoderApi {
         // No native dialog in the browser dev mock; cancel like the real one.
         return null;
       },
-      /** Mirrors services.updateProject: empty host clears the remote fields. */
+      /** Empty host clears the remote fields. */
       async update(input: {
         projectId: string;
         name?: string;
@@ -2425,34 +2167,13 @@ function buildDevCoder(): CoderApi {
         }
         return { ...project };
       },
-      /**
-       * t3-style remove project entry + thread history. Repo on disk untouched.
-       * Guard order and strings match electron/services.js removeProject.
-       */
+      /** Drops the project entry + its thread history. Repo on disk untouched. */
       async remove(input: { projectId: string }) {
         const projectId = String(input.projectId ?? "");
-        const project = projects.find((p) => p.id === projectId);
-        if (!project) {
+        if (!projects.some((p) => p.id === projectId)) {
           throw new Error(`Unknown project: ${projectId}`);
         }
-        const projectThreads = threads.filter((t) => t.projectId === projectId);
-
-        // All guards before any deletion (same order as production).
-        for (const t of projectThreads) {
-          if (t.status === "working" || runTimers.has(t.id)) {
-            throw new Error("Cannot remove a project while a run is active");
-          }
-        }
-        for (const t of projectThreads) {
-          if (t.worktreePath) {
-            // Match electron/services.js THREAD_STILL_HAS_WORKTREE exactly.
-            throw new Error(
-              "Thread still has a worktree. Merge or delete it in the Git tab first.",
-            );
-          }
-        }
-
-        for (const t of projectThreads) {
+        for (const t of threads.filter((t) => t.projectId === projectId)) {
           clearRunTimer(t.id);
           runStates.delete(t.id);
           clearedDiff.delete(t.id);
@@ -2467,7 +2188,7 @@ function buildDevCoder(): CoderApi {
       async list() {
         return threads.map((t) => ({ ...t }));
       },
-      /** Mirror electron services.threadSummaries (team view). */
+      /** Team-view rows: newest assistant line per thread. */
       async summaries() {
         return threads.map((t) => {
           const msgs = details.get(t.id)?.messages ?? [];
@@ -2527,167 +2248,41 @@ function buildDevCoder(): CoderApi {
         return hits.slice(0, 50);
       },
       async create(input) {
-        const t0 = now();
-        const rawTitle = input.title || "New Thread";
-        const t: ThreadInfo = {
-          id: id("thread"),
+        const t = newThread({
           projectId: input.projectId,
-          // Match electron createThread truncateThreadTitle (TITLE_MAX).
-          title:
-            rawTitle.length > TITLE_MAX
-              ? rawTitle.slice(0, TITLE_MAX)
-              : rawTitle,
-          branch: null,
-          prNumber: null,
-          prUrl: null,
-          status: "idle",
-          createdAt: t0,
-          updatedAt: t0,
-          runStartedAt: null,
-          archived: false,
-          settledOverride: null,
-          settledAt: null,
-          prState: null,
-          // Match electron createThread: just-created is not unread.
-          lastVisitedAt: t0,
-          pinnedAt: null,
-          snoozedUntil: null,
-          snoozedAt: null,
-          provider: "claude",
-          model: null,
-          sessionId: null,
-          permissionMode: "default",
-          reasoningEffort: null,
-          worktreePath: null,
-          handoffFrom: null,
-        };
-        // Mirror the electron threads:create worktree flag: lazy (t3-style).
-        // Only the intent is recorded; the fake worktree + branch materialize
-        // at first run (see runs.start), so never-run threads stay clean.
-        if (input.worktree === true) {
-          t.pendingWorktree = true;
-        }
-        threads = [t, ...threads];
-        details.set(t.id, {
-          thread: t,
-          messages: [],
-          workLog: [],
-          workflow: null,
-          usage: null,
+          title: input.title || "New Thread",
+          // Lazy worktree: only the intent is recorded, the fake worktree
+          // materializes at first run.
+          pendingWorktree: input.worktree === true,
         });
-        emitThreads();
-        return { ...t };
+        return registerThread(t);
       },
       async fork(input) {
-        // Mirror electron/services.js forkThread rules and error strings.
         const sourceDetail = details.get(input.threadId);
-        if (!sourceDetail) {
-          throw new Error(`Unknown thread: ${input.threadId}`);
-        }
+        if (!sourceDetail) throw new Error(`Unknown thread: ${input.threadId}`);
         const source = sourceDetail.thread;
-
-        const providerProvided = Object.prototype.hasOwnProperty.call(
-          input,
-          "provider",
-        );
-        const modelProvided = Object.prototype.hasOwnProperty.call(
-          input,
-          "model",
-        );
-
-        let nextProvider = source.provider;
-        if (providerProvided) {
-          const pid = String(input.provider || "");
-          const known =
-            KNOWN_PROVIDER_IDS.has(pid) || pid === "simulate";
-          if (!known) {
-            throw new Error(`Unknown provider: ${input.provider}`);
-          }
-          nextProvider = pid;
-        }
-
         const providerChanging =
-          providerProvided &&
-          String(nextProvider) !== String(source.provider);
-
-        const resolveModel = (
-          providerId: string,
-          raw: string | null | undefined,
-        ): string | null => {
-          if (raw == null || raw === "") return null;
-          const trimmed = String(raw).trim();
-          if (!trimmed) {
-            throw new Error("Model must be a non-empty string");
-          }
-          void providerId;
-          if (trimmed.length > 100) {
-            throw new Error("Model must be at most 100 characters");
-          }
-          return trimmed;
-        };
-
-        let nextModel = source.model;
-        if (providerChanging) {
-          nextModel = modelProvided
-            ? resolveModel(nextProvider, input.model)
-            : null;
-        } else if (modelProvided) {
-          nextModel = resolveModel(nextProvider, input.model);
-        }
-
-        const sourceTitle =
-          source.title != null && source.title !== ""
-            ? source.title
-            : "New Thread";
-        const rawTitle = `Fork: ${sourceTitle}`;
-        const t0 = now();
-        const created: ThreadInfo = {
-          id: id("thread"),
+          input.provider != null && String(input.provider) !== source.provider;
+        const created = newThread({
           projectId: source.projectId,
-          title:
-            rawTitle.length > TITLE_MAX
-              ? rawTitle.slice(0, TITLE_MAX)
-              : rawTitle,
-          branch: null,
-          prNumber: null,
-          prUrl: null,
-          status: "idle",
-          createdAt: t0,
-          updatedAt: t0,
-          runStartedAt: null,
-          archived: false,
-          settledOverride: null,
-          settledAt: null,
-          prState: null,
-          lastVisitedAt: t0,
-          pinnedAt: null,
-          snoozedUntil: null,
-          snoozedAt: null,
-          provider: nextProvider,
-          model: nextModel,
-          sessionId: null,
+          title: `Fork: ${source.title || "New Thread"}`,
+          provider: input.provider ? String(input.provider) : source.provider,
+          // A model belongs to the provider that offered it.
+          model: input.model
+            ? String(input.model).trim()
+            : providerChanging
+              ? null
+              : source.model,
           permissionMode: source.permissionMode,
-          reasoningEffort: null,
-          worktreePath: null,
           handoffFrom: source.id,
-        };
-        threads = [created, ...threads];
-        details.set(created.id, {
-          thread: created,
-          messages: [],
-          workLog: [],
-          workflow: null,
-          usage: null,
         });
-        emitThreads();
-        return { ...created };
+        return registerThread(created);
       },
       async get(threadId) {
         const d = details.get(threadId);
         if (!d) throw new Error(`Thread not found: ${threadId}`);
         const row = threads.find((t) => t.id === threadId);
-        // Selecting IS visiting (matches electron threads:get). Do not bump
-        // updatedAt — visiting is not activity.
+        // Selecting IS visiting; visiting is not activity, so updatedAt stays.
         const visitedAt = now();
         if (row) {
           row.lastVisitedAt = visitedAt;
@@ -2699,243 +2294,67 @@ function buildDevCoder(): CoderApi {
         return cloneDetail(d);
       },
       async setPermissionMode(input) {
-        const detail = details.get(input.threadId);
-        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
-        const thread: ThreadInfo = {
-          ...detail.thread,
+        return patchThread(input.threadId, {
           permissionMode: input.mode,
           updatedAt: now(),
-        };
-        detail.thread = thread;
-        details.set(input.threadId, detail);
-        syncThreadRow(thread);
-        emitDetail(detail);
-        return { ...thread };
+        });
       },
       async respondPermission() {
         // Dev threads never spawn a real CLI, so nothing is ever pending.
         throw new Error("No active agent run for this thread");
       },
+      // Bookkeeping setters below leave updatedAt alone: visiting, pinning and
+      // settling are not activity. The rules they used to mirror (invalid
+      // override, settle-while-working, pin/settle mutual exclusion, past
+      // snooze times, unsupported effort levels) live in electron/services.js.
       async setArchived(input) {
-        const detail = details.get(input.threadId);
-        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
-        // Archive bookkeeping is not "activity"; leave updatedAt alone.
-        const thread: ThreadInfo = {
-          ...detail.thread,
-          archived: input.archived,
-        };
-        detail.thread = thread;
-        details.set(input.threadId, detail);
-        syncThreadRow(thread);
-        emitDetail(detail);
-        return { ...thread };
+        return patchThread(input.threadId, { archived: input.archived });
       },
       async setSettled(input: {
         threadId: string;
         override: "settled" | "active" | null;
       }) {
-        // Match electron/services.js setSettled exactly (same error strings).
-        const detail = details.get(input.threadId);
-        if (!detail) throw new Error(`Unknown thread: ${input.threadId}`);
-        const override = input.override;
-        if (override !== "settled" && override !== "active" && override !== null) {
-          throw new Error(
-            `Invalid settle override: ${JSON.stringify(override)}. Expected "settled", "active", or null`,
-          );
-        }
-        if (override === "settled" && detail.thread.status === "working") {
-          throw new Error("Cannot settle a thread while a run is active");
-        }
-        // Settling is bookkeeping; leave updatedAt alone.
-        // Mutual exclusion with pin: settle clears pin (mirror of setPinned).
-        const thread: ThreadInfo = {
-          ...detail.thread,
-          settledOverride: override,
-          settledAt: override != null ? now() : null,
-          ...(override === "settled" ? { pinnedAt: null } : {}),
-        };
-        detail.thread = thread;
-        details.set(input.threadId, detail);
-        syncThreadRow(thread);
-        emitDetail(detail);
-        return { ...thread };
+        return patchThread(input.threadId, {
+          settledOverride: input.override,
+          settledAt: input.override != null ? now() : null,
+        });
       },
       async setPinned(input: { threadId: string; pinned: boolean }) {
-        // Match electron/services.js setPinned (same mutual-exclusion rules).
-        const detail = details.get(input.threadId);
-        if (!detail) throw new Error(`Unknown thread: ${input.threadId}`);
-        let thread: ThreadInfo;
-        if (input.pinned) {
-          thread = {
-            ...detail.thread,
-            pinnedAt: now(),
-            ...(detail.thread.settledOverride === "settled"
-              ? { settledOverride: null, settledAt: null }
-              : {}),
-          };
-        } else {
-          thread = { ...detail.thread, pinnedAt: null };
-        }
-        detail.thread = thread;
-        details.set(input.threadId, detail);
-        syncThreadRow(thread);
-        emitDetail(detail);
-        return { ...thread };
+        return patchThread(input.threadId, {
+          pinnedAt: input.pinned ? now() : null,
+        });
       },
       async setSnoozed(input: { threadId: string; until: number | null }) {
-        // Match electron/services.js setSnoozed (same error strings).
-        const detail = details.get(input.threadId);
-        if (!detail) throw new Error(`Unknown thread: ${input.threadId}`);
-        let thread: ThreadInfo;
-        if (input.until === null || input.until === undefined) {
-          thread = {
-            ...detail.thread,
-            snoozedUntil: null,
-            snoozedAt: null,
-          };
-        } else {
-          const t = Number(input.until);
-          if (!Number.isFinite(t) || !(t > Date.now())) {
-            throw new Error(`Snooze time ${input.until} is not in the future`);
-          }
-          thread = {
-            ...detail.thread,
-            snoozedUntil: t,
-            snoozedAt: now(),
-          };
-        }
-        detail.thread = thread;
-        details.set(input.threadId, detail);
-        syncThreadRow(thread);
-        emitDetail(detail);
-        return { ...thread };
+        return patchThread(input.threadId, {
+          snoozedUntil: input.until ?? null,
+          snoozedAt: input.until == null ? null : now(),
+        });
       },
       async setReasoningEffort(input: {
         threadId: string;
         effort: ReasoningEffort | null;
       }) {
-        const detail = details.get(input.threadId);
-        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
-        const providerId = detail.thread.provider;
-        const entry = DEV_PROVIDERS.find((p) => p.id === providerId);
-        const efforts = entry?.efforts ?? [];
-        if (input.effort != null) {
-          if (efforts.length === 0) {
-            throw new Error(
-              `Provider ${providerId} does not support reasoning effort`,
-            );
-          }
-          if (!efforts.includes(input.effort)) {
-            throw new Error(
-              `Provider ${providerId} does not support effort "${input.effort}"`,
-            );
-          }
-        }
-        // Effort bookkeeping is not "activity"; leave updatedAt alone.
-        const thread: ThreadInfo = {
-          ...detail.thread,
-          reasoningEffort: input.effort,
-        };
-        detail.thread = thread;
-        details.set(input.threadId, detail);
-        syncThreadRow(thread);
-        emitDetail(detail);
-        return { ...thread };
+        return patchThread(input.threadId, { reasoningEffort: input.effort });
       },
       async setProvider(input) {
         const detail = details.get(input.threadId);
         if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
         const thread = detail.thread;
 
-        const providerProvided = Object.prototype.hasOwnProperty.call(
-          input,
-          "provider",
-        );
-        const modelProvided = Object.prototype.hasOwnProperty.call(
-          input,
-          "model",
-        );
-
-        if (!providerProvided && !modelProvided) {
-          return { ...thread };
-        }
-
-        const nextProvider = providerProvided
-          ? String(input.provider)
-          : thread.provider;
-
-        if (providerProvided) {
-          const known =
-            KNOWN_PROVIDER_IDS.has(nextProvider) || nextProvider === "simulate";
-          if (!known) {
-            throw new Error(`Unknown provider: ${input.provider}`);
-          }
-        }
-
-        const providerChanging =
-          providerProvided && String(input.provider) !== String(thread.provider);
-
-
-        /**
-         * Normalize/validate a model for the target provider.
-         * - null / "" → null (provider default)
-         * - non-empty models list → must be a list member
-         * - empty models list → any non-empty trimmed string ≤ 100 chars
-         */
-        const resolveModel = (
-          providerId: string,
-          raw: string | null | undefined,
-        ): string | null => {
-          // Match electron/services.js normalizeModelForProvider: trim first.
-          if (raw == null || raw === "") return null;
-          const trimmed = String(raw).trim();
-          if (!trimmed) {
-            throw new Error("Model must be a non-empty string");
-          }
-          const entry = DEV_PROVIDERS.find((p) => p.id === providerId);
-          // Mirrors services.normalizeModelForProvider: the published list is
-          // a suggestion, not an allowlist, so an id the snapshot does not
-          // know is still accepted and reaches the CLI.
-          void entry;
-          if (trimmed.length > 100) {
-            throw new Error("Model must be at most 100 characters");
-          }
-          return trimmed;
-        };
-
-        // Provider/model bookkeeping is not "activity"; leave updatedAt alone.
+        // Fixture: assign what the picker sends. The rules (unknown provider,
+        // run-active refusal, session drop, effort reset) live in
+        // electron/services.js setProvider and are exercised by npm run dev.
         const patch: Partial<ThreadInfo> = {};
-        if (providerProvided) patch.provider = String(input.provider);
-
-        if (
-          providerChanging &&
-          (thread.status === "working" || runTimers.has(input.threadId))
-        ) {
-          // Match electron/services.js setProvider exactly.
-          throw new Error("Cannot switch provider while a run is active");
+        if (Object.prototype.hasOwnProperty.call(input, "provider")) {
+          patch.provider = String(input.provider);
+          if (patch.provider !== thread.provider) {
+            patch.sessionId = null;
+            patch.model = null;
+            patch.reasoningEffort = null;
+          }
         }
-
-        if (providerChanging && thread.sessionId) {
-          // Match electron/services.js setProvider exactly: switching harness
-          // drops the session (not portable across CLIs); next send starts fresh.
-          patch.sessionId = null;
-        }
-
-        if (providerChanging) {
-          // Drop the old provider's model unless this call supplies one that
-          // validates for the NEW provider (including free-form custom ids).
-          const incoming =
-            modelProvided && input.model != null && input.model !== ""
-              ? resolveModel(nextProvider, input.model)
-              : null;
-          patch.model = incoming;
-          // Same as production: a level the new provider cannot honour would
-          // be shown by the picker and never reach the CLI. Without this the
-          // dev harness reproduces the very bug the shipped path fixed, which
-          // would convince the next person the fix did not land.
-          patch.reasoningEffort = null;
-        } else if (modelProvided) {
-          patch.model = resolveModel(nextProvider, input.model);
+        if (Object.prototype.hasOwnProperty.call(input, "model")) {
+          patch.model = input.model ? String(input.model).trim() : null;
         }
 
         const next: ThreadInfo = { ...thread, ...patch };
@@ -2952,11 +2371,9 @@ function buildDevCoder(): CoderApi {
           detail.thread.status === "working" ||
           runTimers.has(input.threadId)
         ) {
-          // Match electron/services.js deleteThread exactly.
           throw new Error("Cannot delete thread while a run is active");
         }
         if (detail.thread.worktreePath) {
-          // Match electron/services.js deleteThread exactly.
           throw new Error(
             "Thread still has a worktree. Merge or delete it in the Git tab first.",
           );
@@ -3001,9 +2418,6 @@ function buildDevCoder(): CoderApi {
         };
         runStates.set(input.threadId, run);
 
-        // Transcript stores the RAW prompt (match electron/runner.js). The
-        // hand-off prefix is CLI-only; compute it for the dispatch path and
-        // keep it off the stored user message.
         detail.messages.push({
           id: id("msg"),
           role: "user",
@@ -3013,14 +2427,10 @@ function buildDevCoder(): CoderApi {
         });
 
         let thread = { ...detail.thread };
-        // Build prefix while sessionId is still null (first turn only).
-        // Helper is tested directly; wiring keeps the same prefix rules as
-        // electron without stashing a dead dispatchPrompt field (r49 A-n1).
-        const handoffPrefix = buildHandoffPrefix(thread, (sourceId) => {
-          const src = details.get(sourceId);
-          return src ? src.messages : null;
-        });
-        if (handoffPrefix) {
+        // A forked thread carries its source transcript on the first turn.
+        // electron/services.js buildHandoffPrefix builds the real digest; dev
+        // never spawns a CLI, so only the work-log line is visible.
+        if (thread.handoffFrom && !thread.sessionId) {
           detail.workLog.push({
             id: id("wl"),
             runId,
@@ -3030,30 +2440,15 @@ function buildDevCoder(): CoderApi {
           });
         }
 
-        // Mirror electron materializePendingWorktree: the worktree + branch
-        // (slugged from the pre-promotion title) appear at first run.
+        // A worktree the demo asked for appears at first run.
         if (thread.pendingWorktree && !thread.worktreePath) {
-          const shortId = thread.id.slice(0, 6);
-          const slug =
-            thread.title
-              .toLowerCase()
-              .replace(/[^a-z0-9]+/g, "-")
-              .replace(/^-+|-+$/g, "")
-              .slice(0, 40) || "thread";
-          const project = projects.find((p) => p.id === thread.projectId);
-          thread = {
-            ...thread,
-            pendingWorktree: false,
-            branch: `coder/${slug}-${shortId}`,
-            worktreePath: `${project?.path ?? "/Users/demo/project"}/.coder/worktrees/${thread.id}`,
-          };
+          thread = { ...thread, ...fakeWorktree(thread) };
         }
 
         if (thread.title === "New Thread") {
           const firstLine =
             prompt.split("\n")[0]?.slice(0, TITLE_MAX) || "New Thread";
           thread = { ...thread, title: firstLine };
-          thread = renamePlaceholderBranch(thread);
         }
 
         // Persist a session id after the first turn so follow-ups resume.
@@ -3061,7 +2456,7 @@ function buildDevCoder(): CoderApi {
           thread = { ...thread, sessionId: id("sess") };
         }
 
-        // Real activity clears a stale "settled" pin (match electron/runner.js).
+        // Real activity clears a stale "settled" pin.
         // An explicit "active" pin survives.
         thread = {
           ...thread,
@@ -3157,36 +2552,20 @@ function buildDevCoder(): CoderApi {
         });
 
         let thread = { ...detail.thread };
-        // Same lazy-worktree materialization as runs.start (workflows are
-        // first runs too).
         if (thread.pendingWorktree && !thread.worktreePath) {
-          const shortId = thread.id.slice(0, 6);
-          const slug =
-            thread.title
-              .toLowerCase()
-              .replace(/[^a-z0-9]+/g, "-")
-              .replace(/^-+|-+$/g, "")
-              .slice(0, 40) || "thread";
-          const project = projects.find((p) => p.id === thread.projectId);
-          thread = {
-            ...thread,
-            pendingWorktree: false,
-            branch: `coder/${slug}-${shortId}`,
-            worktreePath: `${project?.path ?? "/Users/demo/project"}/.coder/worktrees/${thread.id}`,
-          };
+          thread = { ...thread, ...fakeWorktree(thread) };
         }
         if (thread.title === "New Thread") {
           const firstLine =
             prompt.split("\n")[0]?.slice(0, TITLE_MAX) || "New Thread";
           thread = { ...thread, title: firstLine };
-          thread = renamePlaceholderBranch(thread);
         }
 
         if (!thread.sessionId) {
           thread = { ...thread, sessionId: id("sess") };
         }
 
-        // Real activity clears a stale "settled" pin (match electron/workflow.js).
+        // Real activity clears a stale "settled" pin.
         // An explicit "active" pin survives.
         thread = {
           ...thread,
@@ -3292,91 +2671,48 @@ function buildDevCoder(): CoderApi {
         await new Promise((r) => setTimeout(r, PUSH_DELAY_MS));
         return { remote: "origin", branch };
       },
+      // PR fixture: one open PR per thread, merged on demand. The real
+      // guards (branch/title required, re-open returns created:false, merge
+      // state machine) live in electron/worktrees.js.
       async createPr(input) {
         const detail = details.get(input.threadId);
         if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
-        const branch = detail.thread.branch;
-        if (!branch) {
-          throw new Error(
-            "No branch to open a PR from. Set up a worktree or check out a branch first.",
-          );
-        }
-        const title = input.title?.trim() ?? "";
-        if (!title) {
-          throw new Error("PR title is required");
-        }
-
         const existing = prByThread.get(input.threadId);
         if (existing) {
-          // Keep prState in sync with the live PR (match electron/worktrees.js).
-          const thread: ThreadInfo = {
-            ...detail.thread,
+          patchThread(input.threadId, {
             prNumber: existing.number,
             prUrl: existing.url,
             prState: existing.state,
-          };
-          detail.thread = thread;
-          details.set(input.threadId, detail);
-          syncThreadRow(thread);
-          emitDetail(detail);
-          return {
-            number: existing.number,
-            url: existing.url,
-            state: existing.state,
-            branch: existing.branch || branch,
-            created: false,
-          };
+          });
+          return { ...existing, created: false };
         }
-
         const project = projects.find((p) => p.id === detail.thread.projectId);
-        const slug = project?.slug ?? "owner/repo";
         const number = nextPrNumber++;
-        const url = `https://github.com/${slug}/pull/${number}`;
         const info: PrInfo = {
           number,
-          url,
+          url: `https://github.com/${project?.slug ?? "owner/repo"}/pull/${number}`,
           state: "OPEN",
-          branch,
+          branch: detail.thread.branch ?? "main",
           created: true,
         };
         prByThread.set(input.threadId, { ...info, created: false });
-
-        const thread: ThreadInfo = {
-          ...detail.thread,
-          prNumber: number,
-          prUrl: url,
+        patchThread(input.threadId, {
+          prNumber: info.number,
+          prUrl: info.url,
           prState: info.state,
           updatedAt: now(),
-        };
-        detail.thread = thread;
-        details.set(input.threadId, detail);
-        syncThreadRow(thread);
-        emitDetail(detail);
+        });
         return info;
       },
       async prStatus(input) {
-        const detail = details.get(input.threadId);
-        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
         const existing = prByThread.get(input.threadId);
         if (!existing) return null;
-        // Persist last-known PR state (match electron/worktrees.js prStatus).
-        const thread: ThreadInfo = {
-          ...detail.thread,
+        patchThread(input.threadId, {
           prNumber: existing.number,
           prUrl: existing.url,
           prState: existing.state,
-        };
-        detail.thread = thread;
-        details.set(input.threadId, detail);
-        syncThreadRow(thread);
-        emitDetail(detail);
-        return {
-          number: existing.number,
-          url: existing.url,
-          state: existing.state,
-          branch: existing.branch || detail.thread.branch || "",
-          created: false,
-        };
+        });
+        return { ...existing, created: false };
       },
       async prChecks(input) {
         const detail = details.get(input.threadId);
@@ -3396,37 +2732,19 @@ function buildDevCoder(): CoderApi {
         return { ok: true as const, checks };
       },
       async prMerge(input) {
-        const detail = details.get(input.threadId);
-        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
         const existing = prByThread.get(input.threadId);
         if (!existing) {
           throw new Error("No pull request found for this branch");
         }
-        if (existing.state !== "OPEN") {
-          throw new Error(
-            `Pull request #${existing.number} is not open`,
-          );
-        }
         const merged: PrInfo = { ...existing, state: "MERGED", created: false };
         prByThread.set(input.threadId, merged);
-        const thread: ThreadInfo = {
-          ...detail.thread,
+        patchThread(input.threadId, {
           prNumber: merged.number,
           prUrl: merged.url,
           prState: merged.state,
           updatedAt: now(),
-        };
-        detail.thread = thread;
-        details.set(input.threadId, detail);
-        syncThreadRow(thread);
-        emitDetail(detail);
-        return {
-          number: merged.number,
-          url: merged.url,
-          state: merged.state,
-          branch: merged.branch || detail.thread.branch || "",
-          created: false,
-        };
+        });
+        return merged;
       },
       async listPrs(projectPath: string) {
         const project = projects.find((p) => p.path === projectPath);
@@ -3480,45 +2798,19 @@ function buildDevCoder(): CoderApi {
         return { ok: true as const, summary: "Already up to date" };
       },
       async restoreCheckpoint(input: { threadId: string; sha: string }) {
-        // Guard order matches electron/worktrees.js restoreCheckpoint.
+        // Fixture: drop the newer checkpoints and stamp the transcript. The
+        // guards and the real `git reset --hard` are in electron/worktrees.js.
         const detail = details.get(input.threadId);
-        if (!detail) {
-          throw new Error(`Unknown thread: ${input.threadId}`);
-        }
-        if (
-          detail.thread.status === "working" ||
-          runTimers.has(input.threadId)
-        ) {
-          throw new Error(
-            "Cannot restore a checkpoint while a run is active",
-          );
-        }
-        if (!detail.thread.worktreePath) {
-          throw new Error(
-            `Thread ${input.threadId} has no worktree; call setupWorktree first`,
-          );
-        }
+        if (!detail) throw new Error(`Unknown thread: ${input.threadId}`);
         const list = checkpointsByThread.get(input.threadId) || [];
         const want = String(input.sha || "").trim();
-        const idx = list.findIndex(
-          (c) =>
-            c.sha === want ||
-            c.sha.startsWith(want) ||
-            want.startsWith(c.sha),
-        );
-        if (idx < 0) {
-          throw new Error(`Unknown checkpoint: ${input.sha}`);
-        }
-        const match = list[idx]!;
-        // Mirror electron HEAD-reachable truncation: restoring turn k drops
-        // every newer checkpoint so the next commit reuses turn k+1, not
-        // stale length+1 (fakeCoder / git log after reset --hard).
+        const idx = list.findIndex((c) => c.sha.startsWith(want));
+        if (idx < 0) throw new Error(`Unknown checkpoint: ${input.sha}`);
         checkpointsByThread.set(input.threadId, list.slice(idx));
-        // Dev has no real files to reset; stamp an event on the transcript.
         detail.messages.push({
           id: id("msg"),
           role: "event",
-          text: `Restored checkpoint turn ${match.turn} (${match.sha.slice(0, 7)})`,
+          text: `Restored checkpoint turn ${list[idx]!.turn} (${list[idx]!.sha.slice(0, 7)})`,
           createdAt: now(),
         });
         details.set(input.threadId, detail);
@@ -3546,34 +2838,12 @@ function buildDevCoder(): CoderApi {
       async setupWorktree(input) {
         const detail = details.get(input.threadId);
         if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
-
         await new Promise((r) => setTimeout(r, WORKTREE_DELAY_MS));
-
-        const short =
-          detail.thread.branch?.replace(/^.*\//, "") ||
-          detail.thread.title
-            .toLowerCase()
-            .replace(/[^a-z0-9]+/g, "-")
-            .replace(/^-|-$/g, "")
-            .slice(0, 24) ||
-          "local-run";
-        const branch = detail.thread.branch ?? `feat/${short}`;
-        const project = projects.find((p) => p.id === detail.thread.projectId);
-        const worktreePath = `${project?.path ?? "/Users/demo/project"}/.coder/worktrees/${short}`;
-
         clearedDiff.delete(input.threadId);
-
-        const thread: ThreadInfo = {
-          ...detail.thread,
-          branch,
-          worktreePath,
+        return patchThread(input.threadId, {
+          ...fakeWorktree(detail.thread),
           updatedAt: now(),
-        };
-        detail.thread = thread;
-        details.set(input.threadId, detail);
-        syncThreadRow(thread);
-        emitDetail(detail);
-        return { ...thread };
+        });
       },
       async diff(input) {
         const detail = details.get(input.threadId);

@@ -1,6 +1,6 @@
 // Capture the three Solenta proof beats for the launch trailer.
 // Usage:
-//   VITE_TRAILER=1 npx vite --port 5173 --strictPort
+//   VITE_TRAILER=1 npm run dev:browser
 //   npx electron scripts/capture-trailer.js
 "use strict";
 

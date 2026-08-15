@@ -159,18 +159,25 @@ Full detail: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 ```bash
 npm install
 cd core && npm install && npm run build && cd ..
-npx vite build
-CODER_PROD=1 npx electron .
+npm run dev              # Vite (HMR) + Electron against the real main process
 ```
 
-Browser-only mock, no Electron: `npx vite` — `src/devCoder.ts` implements
-`window.coder`.
+`npm run dev` is the loop to develop in: the window loads the Vite dev server,
+so every renderer edit hot-reloads while `electron/` runs for real — real
+services, real git, real providers, real store.
+
+To check a production bundle instead: `npx vite build && CODER_PROD=1 npx electron .`
+
+`npm run dev:browser` opens the renderer in a browser with no Electron, backed
+by the fixtures in `src/devCoder.ts` (demo and trailer captures). Fixtures are
+not the app: they store what you give them and return something plausible. Do
+not read behaviour off them, and never fix a bug there.
 
 ```bash
 npm test                 # all four suites, same as CI (.github/workflows/test.yml)
 
 npm run test:core        # workflow engine — also builds core/dist, which electron needs
-npm run test:renderer    # renderer / devCoder
+npm run test:renderer    # renderer
 npm run test:electron    # electron main
 npm run test:memory      # memory server (needs `npm ci --prefix memory-server`)
 ```
