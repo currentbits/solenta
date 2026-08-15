@@ -1,5 +1,11 @@
 "use strict";
 
+// Electron's patched fs treats .asar files as directories, so the updater's
+// recursive rms (temp work dir, Solenta.app.old) die with ENOTDIR on the
+// bundle's default_app.asar. We ship app code as a plain directory, so asar
+// support buys nothing — turn it off for the whole main process.
+process.noAsar = true;
+
 const { app, BrowserWindow, ipcMain, dialog, shell, Notification } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
