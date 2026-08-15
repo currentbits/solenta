@@ -17,12 +17,30 @@ const INSTRUCTIONS =
   "Solenta thread orchestrator: drive other agent threads in this Solenta workspace. " +
   "threads_list shows every thread with id, title, provider, status and handoffFrom. " +
   "thread_fork copies a thread into a new one (optionally on a different provider) " +
-  "and starts it on your prompt. thread_send starts a run with your prompt on an " +
+  "and starts it on your prompt; the worker runs in its own git worktree and branch " +
+  "so parallel workers never edit the same files (pass worktree:false to share the " +
+  "project checkout, and merge a worker's branch when its work lands). " +
+  "thread_send starts a run with your prompt on an " +
   "existing thread. thread_status reports a thread's status and the first line of " +
   "its last assistant reply. Runs are asynchronous: send work, then continue. " +
   "When a worker you forked finishes (done or failed) you are woken on a new turn " +
   "with a notice; do not sit idle waiting for the user to relay that. " +
   "thread_status still has full details if you need them before the wake-up.";
+
+/**
+ * Can this project host a git worktree? Remote projects are excluded (same
+ * rule as threads:create) and so are non-repos, where `git worktree add`
+ * would just fail the worker's run.
+ * @param {{ path?: string, remoteHost?: string | null } | null | undefined} project
+ */
+function canHostWorktree(project) {
+  return Boolean(
+    project &&
+      !project.remoteHost &&
+      project.path &&
+      fs.existsSync(path.join(project.path, ".git")),
+  );
+}
 
 function timingSafeEqualString(a, b) {
   const bufferA = Buffer.from(a);
@@ -200,7 +218,22 @@ function createToolHandlers(deps) {
     const fork = forkThread(store, input);
     // Orchestration worker: the runner auto-archives it when its run lands
     // "done" so finished workers do not pile up in the sidebar (issue #14).
-    store.updateThread(fork.id, { orchWorker: true });
+    const patch = { orchWorker: true };
+    // Isolation by default (issue #30): workers get their own worktree so N
+    // parallel forks never edit the same checkout. Lazy, like threads:create —
+    // startRun materializes it. Skipped when the project cannot host one, or
+    // when the caller opts out; the fork then shares the project checkout.
+    if (
+      args.worktree !== false &&
+      canHostWorktree(
+        typeof store.getProject === "function"
+          ? store.getProject(fork.projectId ?? source.projectId)
+          : null,
+      )
+    ) {
+      patch.pendingWorktree = true;
+    }
+    store.updateThread(fork.id, patch);
     store.save();
     await runner.startRun({ threadId: fork.id, prompt: args.prompt });
     return { threadId: fork.id };
@@ -284,11 +317,14 @@ function buildMcpServer(sdk, handlers) {
     "thread_fork",
     {
       description:
-        "Fork a thread into a new one (optionally on another provider) and start it on prompt. Returns the new threadId.",
+        "Fork a thread into a new one (optionally on another provider) and start it on prompt. " +
+        "The worker gets its own git worktree so parallel workers never edit the same files; " +
+        "pass worktree:false to run it in the project checkout instead. Returns the new threadId.",
       inputSchema: {
         threadId: z.string().min(1),
         provider: z.string().min(1).optional(),
         prompt: z.string().min(1),
+        worktree: z.boolean().optional(),
       },
     },
     async (args) => json(await handlers.thread_fork(args)),
