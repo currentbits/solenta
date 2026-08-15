@@ -149,6 +149,8 @@ interface ThreadViewProps {
   onSuggestCommitMessage: () => Promise<{ message: string }>;
   /** File lookup for the composer @-mention popup. */
   onListFiles?: (query: string) => Promise<string[]>;
+  /** Loads an image a tool returned (ToolCallInfo.images) as a data URL. */
+  onLoadImage?: (name: string) => Promise<string | null>;
   /** Push the thread's current branch to origin. */
   onPush: () => Promise<{ remote: string; branch: string }>;
   /** Upstream state for the header sync pill; absent hides the pill. */
@@ -183,13 +185,31 @@ interface ThreadViewProps {
 function ToolCallCard({
   message,
   autoExpand,
+  onLoadImage,
 }: {
   message: ChatMessage;
   autoExpand: boolean;
+  onLoadImage?: (name: string) => Promise<string | null>;
 }) {
   const tool = message.tool;
   const [manual, setManual] = useState<boolean | null>(null);
   const open = manual ?? autoExpand;
+  const [imageUrls, setImageUrls] = useState<string[]>([]);
+  // Bytes live under userData, not in the message: fetch them as data URLs the
+  // first time the card is open.
+  const imageKey = (tool?.images ?? []).join("\n");
+  useEffect(() => {
+    if (!open || !imageKey || !onLoadImage) return;
+    let live = true;
+    void Promise.all(imageKey.split("\n").map((name) => onLoadImage(name)))
+      .then((urls) => {
+        if (live) setImageUrls(urls.filter((u): u is string => Boolean(u)));
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [open, imageKey, onLoadImage]);
 
   if (!tool) {
     return (
@@ -245,6 +265,14 @@ function ToolCallCard({
               <pre className={styles.toolPre}>{tool.output}</pre>
             </>
           )}
+          {imageUrls.map((url) => (
+            <img
+              key={url.slice(-32)}
+              className={styles.toolImage}
+              src={url}
+              alt={`Image from ${tool.name}`}
+            />
+          ))}
         </div>
       )}
     </section>
@@ -265,9 +293,11 @@ const MessageBlock = memo(function MessageBlock({
   metaModel = null,
   metaEffort = null,
   metaDuration = null,
+  onLoadImage,
 }: {
   message: ChatMessage;
   autoExpandTool: boolean;
+  onLoadImage?: (name: string) => Promise<string | null>;
   showRetry?: boolean;
   retryTitle?: string;
   onRetry?: () => void;
@@ -277,7 +307,13 @@ const MessageBlock = memo(function MessageBlock({
   metaDuration?: string | null;
 }) {
   if (message.role === "tool") {
-    return <ToolCallCard message={message} autoExpand={autoExpandTool} />;
+    return (
+      <ToolCallCard
+        message={message}
+        autoExpand={autoExpandTool}
+        onLoadImage={onLoadImage}
+      />
+    );
   }
 
   if (message.role === "user") {
@@ -1270,6 +1306,7 @@ export function ThreadView({
   onRevertFile,
   onSuggestCommitMessage,
   onListFiles,
+  onLoadImage,
   onPush,
   gitSyncInfo,
   gitFetch,
@@ -2131,6 +2168,7 @@ export function ThreadView({
                     <MessageBlock
                       message={entry.message}
                       autoExpandTool={entry.message.id === latestRunningToolId}
+                      onLoadImage={onLoadImage}
                       showRetry={isRetrySurface}
                       retryTitle={isRetrySurface ? retryTitle : undefined}
                       onRetry={isRetrySurface ? handleRetry : undefined}

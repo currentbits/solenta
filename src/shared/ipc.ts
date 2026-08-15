@@ -201,6 +201,11 @@ export interface ToolCallInfo {
   output: string | null;
   isError: boolean;
   done: boolean;
+  /**
+   * Filenames of images the tool returned (screenshots, Read of a PNG), kept
+   * under userData/tool-images. Load one with files.image({ name }).
+   */
+  images?: string[];
 }
 
 export interface ChatMessage {
@@ -1119,6 +1124,11 @@ export interface CoderApi {
      * thread's worktree when bound, else the project checkout.
      */
     list(input: { threadId: string; query?: string }): Promise<{ files: string[] }>;
+    /**
+     * One image a tool produced, as a data URL (ToolCallInfo.images holds the
+     * names). null when the file is gone or the name is not an image.
+     */
+    image(input: { name: string }): Promise<{ dataUrl: string | null }>;
   };
   servers: {
     /**

@@ -338,6 +338,8 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
     },
     files: {
       list: (input) => call<{ files: string[] }>("files:list", input),
+      image: (input) =>
+        call<{ dataUrl: string | null }>("files:image", input),
     },
     servers: {
       list: (input) => call<LocalServerInfo[]>("servers:list", input),

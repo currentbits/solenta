@@ -3767,6 +3767,9 @@ function buildDevCoder(): CoderApi {
         ];
         return { files: all.filter((f) => !q || f.toLowerCase().includes(q)) };
       },
+      async image(_input: { name: string }) {
+        return { dataUrl: null };
+      },
     },
     shell: {
       async reveal(_input: { threadId: string; path: string }) {

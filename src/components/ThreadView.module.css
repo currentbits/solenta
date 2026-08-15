@@ -380,6 +380,15 @@
   max-width: 100%;
 }
 
+.toolImage {
+  display: block;
+  max-width: calc(100% - 24px);
+  height: auto;
+  margin: 10px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+}
+
 .toolDivider {
   height: 1px;
   background: var(--border-soft);
