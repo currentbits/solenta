@@ -194,6 +194,44 @@ describe("orch-server tool handlers", () => {
     assert.equal(fork.orchWorker, true);
   });
 
+  it("thread_fork isolates the worker in its own worktree by default", async () => {
+    // Real dir with a .git entry: the repo check is fs-based (issue #30).
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "orch-wt-"));
+    fs.mkdirSync(path.join(dir, ".git"));
+    const projects = { p1: { id: "p1", path: dir } };
+    /** @param {object} project */
+    const forkInto = async (project, args) => {
+      const deps = makeDeps();
+      projects.p1 = project;
+      deps.store.getThread("t1").projectId = "p1";
+      deps.store.getProject = (id) => projects[id] || null;
+      const h = createToolHandlers(deps);
+      await h.thread_fork({ threadId: "t1", prompt: "go", ...args });
+      return deps.store.getThread("fork-1");
+    };
+
+    try {
+      assert.equal((await forkInto(projects.p1, {})).pendingWorktree, true);
+      // Opt-out, remote project and non-repo all share the project checkout.
+      assert.equal(
+        (await forkInto(projects.p1, { worktree: false })).pendingWorktree,
+        undefined,
+      );
+      assert.equal(
+        (await forkInto({ id: "p1", path: dir, remoteHost: "box" }, {}))
+          .pendingWorktree,
+        undefined,
+      );
+      assert.equal(
+        (await forkInto({ id: "p1", path: path.join(dir, "not-a-repo") }, {}))
+          .pendingWorktree,
+        undefined,
+      );
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("thread_send unarchives a re-dispatched archived worker", async () => {
     const deps = makeDeps();
     deps.store.threads.push({
