@@ -1017,6 +1017,15 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         });
       },
     },
+    attachments: {
+      pick: () => rec("attachments.pick", [], { attachments: [] }),
+      fromPaths: (input: unknown) =>
+        rec("attachments.fromPaths", [input], { attachments: [] }),
+      saveImage: (input: unknown) =>
+        rec("attachments.saveImage", [input], { attachment: null }),
+      readImage: (input: unknown) =>
+        rec("attachments.readImage", [input], { dataUrl: null }),
+    },
     on: (channel: string, cb: unknown) => {
       calls.push({ channel: `on:${channel}`, args: [] });
       if (channel === "threads:changed") {

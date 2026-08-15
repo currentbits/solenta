@@ -3,6 +3,7 @@ import type {
   ActivityItem,
   AppSettings,
   AppStatus,
+  AttachmentInfo,
   AutomationInfo,
   AutomationWrite,
   CheckpointInfo,
@@ -108,7 +109,11 @@ export interface UseCoderResult {
     threadId: string,
     opts?: { provider?: string; model?: string | null },
   ) => Promise<ThreadInfo | null>;
-  startRun: (prompt: string, threadId?: string) => Promise<void>;
+  startRun: (
+    prompt: string,
+    threadId?: string,
+    attachments?: AttachmentInfo[],
+  ) => Promise<void>;
   /** Fetch a GitHub issue for a project checkout (`gh issue view`). */
   fetchIssue: (
     projectPath: string,
@@ -191,6 +196,17 @@ export interface UseCoderResult {
   listFiles: (query: string) => Promise<string[]>;
   /** Data URL for one image a tool returned; null when it is gone. */
   loadToolImage: (name: string) => Promise<string | null>;
+  /** Native image/folder picker for composer attachments. */
+  pickAttachments: () => Promise<AttachmentInfo[]>;
+  /** Persist a pasted image for the selected thread; null when rejected. */
+  saveAttachmentImage: (dataUrl: string) => Promise<AttachmentInfo | null>;
+  /** Data URL for one attached image; null when it is gone. */
+  loadAttachmentImage: (path: string) => Promise<string | null>;
+  /**
+   * Classify drag-dropped files as attachments. Resolves absolute paths via
+   * the Electron preload; resolves [] where no such bridge exists (web).
+   */
+  dropAttachmentFiles: (files: File[]) => Promise<AttachmentInfo[]>;
   /** Push the selected thread's branch to origin. */
   pushBranch: () => Promise<{ remote: string; branch: string }>;
   /** Open (or re-return) a GitHub PR for the selected thread's branch. */
@@ -718,11 +734,15 @@ export function useCoder(): UseCoderResult {
   );
 
   const startRun = useCallback(
-    async (prompt: string, targetThreadId?: string) => {
+    async (
+      prompt: string,
+      targetThreadId?: string,
+      attachments?: AttachmentInfo[],
+    ) => {
       const threadId = targetThreadId ?? selectedThreadId;
       if (!threadId) return;
       try {
-        await api.runs.start({ threadId, prompt });
+        await api.runs.start({ threadId, prompt, attachments });
         const d = await api.threads.get(threadId);
         if (selectedRef.current !== threadId) return;
         setDetail(d);
@@ -1212,6 +1232,59 @@ export function useCoder(): UseCoderResult {
     [api],
   );
 
+  const pickAttachments = useCallback(async () => {
+    const result = await api.attachments.pick();
+    return result.attachments;
+  }, [api]);
+
+  const saveAttachmentImage = useCallback(
+    async (dataUrl: string) => {
+      if (!selectedThreadId) return null;
+      const threadId = selectedThreadId;
+      try {
+        const result = await api.attachments.saveImage({ threadId, dataUrl });
+        return result.attachment;
+      } catch {
+        return null;
+      }
+    },
+    [api, selectedThreadId],
+  );
+
+  const loadAttachmentImage = useCallback(
+    async (path: string) => {
+      try {
+        const result = await api.attachments.readImage({ path });
+        return result.dataUrl;
+      } catch {
+        return null;
+      }
+    },
+    [api],
+  );
+
+  const dropAttachmentFiles = useCallback(
+    async (files: File[]) => {
+      // Absolute paths of dropped Files exist only behind the Electron
+      // preload (webUtils); web/dev bridges leave drop unsupported.
+      const pathOf = api.attachments.droppedFilePath;
+      if (!pathOf) return [];
+      const paths = files
+        .map((file) => {
+          try {
+            return pathOf(file);
+          } catch {
+            return "";
+          }
+        })
+        .filter((p) => p.length > 0);
+      if (!paths.length) return [];
+      const result = await api.attachments.fromPaths({ paths });
+      return result.attachments;
+    },
+    [api],
+  );
+
   const pushBranch = useCallback(async () => {
     if (!selectedThreadId) {
       throw new Error("No thread selected");
@@ -1597,6 +1670,10 @@ export function useCoder(): UseCoderResult {
     suggestCommitMessage,
     listFiles,
     loadToolImage,
+    pickAttachments,
+    saveAttachmentImage,
+    loadAttachmentImage,
+    dropAttachmentFiles,
     pushBranch,
     createPr,
     prStatus,

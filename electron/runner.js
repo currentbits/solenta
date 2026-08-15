@@ -1071,9 +1071,17 @@ function createRunner(opts) {
    * @param {string} text
    * @param {string | null} [runId]
    * @param {object | null} [tool]
+   * @param {{ kind: string, path: string, name: string }[] | null} [attachments]
    */
-  function appendMessage(threadId, role, text, runId = null, tool = null) {
-    /** @type {{ id: string, role: string, text: string, createdAt: number, runId?: string, tool?: object }} */
+  function appendMessage(
+    threadId,
+    role,
+    text,
+    runId = null,
+    tool = null,
+    attachments = null,
+  ) {
+    /** @type {{ id: string, role: string, text: string, createdAt: number, runId?: string, tool?: object, attachments?: object[] }} */
     const msg = {
       id: randomUUID(),
       role,
@@ -1082,6 +1090,7 @@ function createRunner(opts) {
     };
     if (runId) msg.runId = runId;
     if (tool) msg.tool = tool;
+    if (attachments && attachments.length) msg.attachments = attachments;
     store.appendMessage(threadId, msg);
     // Session mirror: user + event immediately; assistant/tool at terminal.
     recordSessionOnAppend(threadId, role, text);
@@ -3283,7 +3292,7 @@ function createRunner(opts) {
   }
 
   /**
-   * @param {{ threadId: string, prompt: string }} input
+   * @param {{ threadId: string, prompt: string, attachments?: { kind: "image" | "folder", path: string, name: string }[] }} input
    * @returns {Promise<{ runId: string }>}
    */
   /**
@@ -3307,8 +3316,51 @@ function createRunner(opts) {
     });
   }
 
+  /**
+   * Keep only well-formed image/folder attachments (absolute paths). The web
+   * bridge is remote-controlled, so never trust the wire shape.
+   * @param {unknown} input
+   * @returns {{ kind: "image" | "folder", path: string, name: string }[]}
+   */
+  function sanitizeAttachments(input) {
+    if (!Array.isArray(input)) return [];
+    const out = [];
+    for (const a of input) {
+      if (!a || typeof a !== "object") continue;
+      const kind = a.kind === "folder" ? "folder" : a.kind === "image" ? "image" : null;
+      const p = typeof a.path === "string" ? a.path : "";
+      if (!kind || !p || !path.isAbsolute(p)) continue;
+      out.push({
+        kind,
+        path: p,
+        name: typeof a.name === "string" && a.name ? a.name : path.basename(p),
+      });
+    }
+    return out;
+  }
+
+  /**
+   * CLI-only section listing the user's attachments. The transcript message
+   * keeps the raw prompt; agents read the paths with their own file tools.
+   * @param {{ kind: string, path: string }[]} attachments
+   * @returns {string}
+   */
+  function attachmentPromptSection(attachments) {
+    if (!attachments.length) return "";
+    const lines = attachments.map(
+      (a) => `- ${a.kind === "folder" ? "Folder" : "Image"}: ${a.path}`,
+    );
+    return (
+      "\n\n[The user attached the following items. Inspect them with your " +
+      "file tools as needed.\n" +
+      lines.join("\n") +
+      "]"
+    );
+  }
+
   async function startRun(input) {
     const { threadId, prompt } = input;
+    const attachments = sanitizeAttachments(input.attachments);
     if (active.has(threadId)) {
       throw new Error("A run is already active on this thread");
     }
@@ -3339,7 +3391,7 @@ function createRunner(opts) {
     // Transcript stores the RAW user prompt. The hand-off context block (if
     // any) is CLI-only — applied once below when handoffFrom is set and no
     // sessionId exists yet.
-    appendMessage(threadId, "user", prompt, runId);
+    appendMessage(threadId, "user", prompt, runId, null, attachments);
 
     let title = thread.title;
     if (title === "New Thread") {
@@ -3373,9 +3425,11 @@ function createRunner(opts) {
 
     // Single finalization point for every provider path: prefix only goes to
     // the CLI (buildArgs / runAgent), never into the stored user message.
+    // Live-session follow-ups (handle.send) receive this same string.
     const dispatchPrompt =
       services.buildHandoffPrefix(thread, (id) => store.getMessages(id)) +
       String(prompt ?? "") +
+      attachmentPromptSection(attachments) +
       services.planboardNoteFor(projectForGate && projectForGate.path);
 
     const name = workflowNameFromThreadId(threadId);

@@ -8,6 +8,7 @@ import {
   useState,
 } from "react";
 import type {
+  AttachmentInfo,
   ChatMessage,
   DevServerState,
   DiffResult,
@@ -104,7 +105,11 @@ interface ThreadViewProps {
   workflows: WorkflowTemplateInfo[];
   hasProjects: boolean;
   onAddProject: () => void;
-  onStartRun: (prompt: string, threadId?: string) => void | Promise<void>;
+  onStartRun: (
+    prompt: string,
+    threadId?: string,
+    attachments?: AttachmentInfo[],
+  ) => void | Promise<void>;
   /** Multi-phase Build workflow (Build pill) with selected template id. */
   onStartWorkflow: (
     prompt: string,
@@ -151,6 +156,14 @@ interface ThreadViewProps {
   onListFiles?: (query: string) => Promise<string[]>;
   /** Loads an image a tool returned (ToolCallInfo.images) as a data URL. */
   onLoadImage?: (name: string) => Promise<string | null>;
+  /** Native image/folder picker for composer attachments (Electron only). */
+  onPickAttachments?: () => Promise<AttachmentInfo[]>;
+  /** Persist a pasted image; returns its attachment or null when rejected. */
+  onSaveAttachmentImage?: (dataUrl: string) => Promise<AttachmentInfo | null>;
+  /** Loads one attached image (absolute path) as a data URL. */
+  onLoadAttachmentImage?: (path: string) => Promise<string | null>;
+  /** Classify drag-dropped files into attachments (Electron only). */
+  onDropAttachmentFiles?: (files: File[]) => Promise<AttachmentInfo[]>;
   /** Push the thread's current branch to origin. */
   onPush: () => Promise<{ remote: string; branch: string }>;
   /** Upstream state for the header sync pill; absent hides the pill. */
@@ -280,6 +293,91 @@ function ToolCallCard({
 }
 
 /**
+ * Attachments on a user transcript message: image thumbnails load lazily as
+ * data URLs (the CSP allows data:, not file:), folders render as icon + name.
+ */
+function TranscriptAttachments({
+  attachments,
+  onLoadImage,
+}: {
+  attachments: AttachmentInfo[];
+  onLoadImage?: (path: string) => Promise<string | null>;
+}) {
+  return (
+    <div className={styles.attachmentChips}>
+      {attachments.map((a) => (
+        <TranscriptAttachmentChip
+          key={a.path}
+          attachment={a}
+          onLoadImage={onLoadImage}
+        />
+      ))}
+    </div>
+  );
+}
+
+function TranscriptAttachmentChip({
+  attachment,
+  onLoadImage,
+}: {
+  attachment: AttachmentInfo;
+  onLoadImage?: (path: string) => Promise<string | null>;
+}) {
+  const [thumb, setThumb] = useState<string | null>(null);
+  useEffect(() => {
+    if (attachment.kind !== "image" || !onLoadImage) return;
+    let live = true;
+    void onLoadImage(attachment.path)
+      .then((url) => {
+        if (live) setThumb(url);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [attachment.kind, attachment.path, onLoadImage]);
+  return (
+    <span
+      className={styles.attachmentChip}
+      data-attachment-kind={attachment.kind}
+      title={attachment.path}
+    >
+      {attachment.kind === "image" && thumb ? (
+        <img
+          className={styles.attachmentThumb}
+          src={thumb}
+          alt={attachment.name}
+        />
+      ) : (
+        <svg
+          className={styles.attachmentIcon}
+          width="12"
+          height="12"
+          viewBox="0 0 16 16"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          {attachment.kind === "folder" ? (
+            <path d="M2.5 4A1.5 1.5 0 0 1 4 2.5h2.2a1.5 1.5 0 0 1 1.1.5l.8 1a1.5 1.5 0 0 0 1.1.5H12A1.5 1.5 0 0 1 13.5 6v5A1.5 1.5 0 0 1 12 12.5H4A1.5 1.5 0 0 1 2.5 11V4Z" />
+          ) : (
+            <>
+              <rect x="2.5" y="2.5" width="11" height="11" rx="1.5" />
+              <circle cx="5.8" cy="6" r="1" />
+              <path d="m3 12 3.5-3.5 2.5 2.5 2-2L13.5 12" />
+            </>
+          )}
+        </svg>
+      )}
+      <span className={styles.attachmentName}>{attachment.name}</span>
+    </span>
+  );
+}
+
+/**
  * One timeline row. memo'd because a streamed update re-renders the whole
  * timeline while only the message being written actually changed — so the
  * props are flat scalars, keeping the default shallow compare honest.
@@ -294,10 +392,12 @@ const MessageBlock = memo(function MessageBlock({
   metaEffort = null,
   metaDuration = null,
   onLoadImage,
+  onLoadAttachmentImage,
 }: {
   message: ChatMessage;
   autoExpandTool: boolean;
   onLoadImage?: (name: string) => Promise<string | null>;
+  onLoadAttachmentImage?: (path: string) => Promise<string | null>;
   showRetry?: boolean;
   retryTitle?: string;
   onRetry?: () => void;
@@ -319,7 +419,15 @@ const MessageBlock = memo(function MessageBlock({
   if (message.role === "user") {
     return (
       <article className={`${styles.message} ${styles.messageUser}`}>
-        <div className={styles.userBubble}>{message.text}</div>
+        <div className={styles.userBubble}>
+          {message.text}
+          {message.attachments && message.attachments.length > 0 && (
+            <TranscriptAttachments
+              attachments={message.attachments}
+              onLoadImage={onLoadAttachmentImage}
+            />
+          )}
+        </div>
       </article>
     );
   }
@@ -1307,6 +1415,10 @@ export function ThreadView({
   onSuggestCommitMessage,
   onListFiles,
   onLoadImage,
+  onPickAttachments,
+  onSaveAttachmentImage,
+  onLoadAttachmentImage,
+  onDropAttachmentFiles,
   onPush,
   gitSyncInfo,
   gitFetch,
@@ -1454,7 +1566,7 @@ export function ThreadView({
   );
   const handleRetry = useCallback(() => {
     if (!retryUser || isWorking) return;
-    void onStartRun(retryUser.text);
+    void onStartRun(retryUser.text, undefined, retryUser.attachments);
   }, [retryUser, isWorking, onStartRun]);
 
   /**
@@ -2169,6 +2281,7 @@ export function ThreadView({
                       message={entry.message}
                       autoExpandTool={entry.message.id === latestRunningToolId}
                       onLoadImage={onLoadImage}
+                      onLoadAttachmentImage={onLoadAttachmentImage}
                       showRetry={isRetrySurface}
                       retryTitle={isRetrySurface ? retryTitle : undefined}
                       onRetry={isRetrySurface ? handleRetry : undefined}
@@ -2311,7 +2424,9 @@ export function ThreadView({
             ? "Unarchive to continue this thread"
             : undefined
         }
-        onSend={onStartRun}
+        onSend={(prompt, messageAttachments) =>
+          onStartRun(prompt, undefined, messageAttachments)
+        }
         onBuild={onStartWorkflow}
         onBestOfN={onFork ? runBestOfN : undefined}
         onDelegate={onFork ? runDelegate : undefined}
@@ -2319,6 +2434,10 @@ export function ThreadView({
         error={runError}
         onDismissError={onDismissRunError}
         onListFiles={onListFiles}
+        onPickAttachments={onPickAttachments}
+        onSaveAttachmentImage={onSaveAttachmentImage}
+        onLoadAttachmentImage={onLoadAttachmentImage}
+        onDropAttachmentFiles={onDropAttachmentFiles}
       />
 
       {restoreError && (

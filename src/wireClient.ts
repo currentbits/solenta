@@ -2,6 +2,7 @@ import type {
   ActivityItem,
   AppSettings,
   AppStatus,
+  AttachmentInfo,
   AutomationInfo,
   UpdateStatus,
   CheckpointInfo,
@@ -341,6 +342,19 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
       list: (input) => call<{ files: string[] }>("files:list", input),
       image: (input) =>
         call<{ dataUrl: string | null }>("files:image", input),
+    },
+    attachments: {
+      pick: () =>
+        call<{ attachments: AttachmentInfo[] }>("attachments:pick"),
+      fromPaths: (input) =>
+        call<{ attachments: AttachmentInfo[] }>("attachments:fromPaths", input),
+      saveImage: (input) =>
+        call<{ attachment: AttachmentInfo | null }>(
+          "attachments:saveImage",
+          input,
+        ),
+      readImage: (input) =>
+        call<{ dataUrl: string | null }>("attachments:readImage", input),
     },
     servers: {
       list: (input) => call<LocalServerInfo[]>("servers:list", input),
