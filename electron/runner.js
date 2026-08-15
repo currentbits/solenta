@@ -613,31 +613,48 @@ function createRunner(opts) {
   }
 
   /**
-   * Archive this thread's finished workers once the whole crew is quiet.
-   * Runs at the ORCHESTRATOR's run terminal, not at each worker's own: a
-   * finished worker stays visible (Team list, sidebar nesting) while the
-   * orchestration is still going, and the sidebar cleanup issue #14 asked
-   * for happens when the orchestrator's turn lands. Never throws.
+   * Archive one orchestrator's finished workers once its crew is quiet.
+   * "Quiet" means no crew member has a LIVE run: a worker left at "working"
+   * by a crash or a CLI that never lands would otherwise pin the whole crew
+   * open forever (issue #15).
+   * @param {string} threadId - the orchestrator thread
+   */
+  function sweepCrew(threadId) {
+    const crew = store
+      .getThreads()
+      .filter((t) => t.orchWorker && t.handoffFrom === threadId);
+    if (crew.length === 0) return;
+    // Every terminal path calls clearRun before this hook, so a worker that
+    // just landed is already out of `active`.
+    if (crew.some((t) => t.status === "working" && active.has(t.id))) return;
+    let changed = false;
+    for (const t of crew) {
+      if (t.status === "done" && !t.archived) {
+        // Not real activity: no touch, same as threads:setArchived.
+        store.updateThread(t.id, { archived: true });
+        changed = true;
+      }
+    }
+    if (changed) {
+      store.save();
+      pushThreadsChanged();
+    }
+  }
+
+  /**
+   * Sweep the crews this run terminal can settle: the thread's own workers
+   * (it is an orchestrator) and, when the thread is itself a worker, its
+   * orchestrator's crew — the orchestrator can be finished for good, in
+   * which case its terminal never comes again and waiting for it leaves the
+   * workers open forever (issue #15). Never throws.
    * @param {string} threadId
    */
   function sweepDoneWorkers(threadId) {
     try {
-      const crew = store
-        .getThreads()
-        .filter((t) => t.orchWorker && t.handoffFrom === threadId);
-      if (crew.length === 0) return;
-      if (crew.some((t) => t.status === "working")) return;
-      let changed = false;
-      for (const t of crew) {
-        if (t.status === "done" && !t.archived) {
-          // Not real activity: no touch, same as threads:setArchived.
-          store.updateThread(t.id, { archived: true });
-          changed = true;
-        }
-      }
-      if (changed) {
-        store.save();
-        pushThreadsChanged();
+      sweepCrew(threadId);
+      const self = store.getThread(threadId);
+      if (self && self.orchWorker && self.handoffFrom) {
+        sweepCrew(String(self.handoffFrom));
       }
     } catch {
       // silent
@@ -3536,6 +3553,13 @@ function createRunner(opts) {
       return null;
     }
     return mapWorkflowView(workflow, core);
+  }
+
+  // Boot: nothing runs yet, so every crew is quiet. Archives workers whose
+  // sweep never came — the app died mid-orchestration, or a sibling hung and
+  // the orchestrator was already finished for good (issue #15).
+  for (const t of store.getThreads()) {
+    if (t.orchWorker && t.handoffFrom) sweepCrew(String(t.handoffFrom));
   }
 
   return {
