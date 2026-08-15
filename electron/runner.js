@@ -44,18 +44,16 @@ const KIMI_PUSH_THROTTLE_MS = 250;
  * "Continue from where you left off." self-turn first (issue #17). Those
  * phantom results are success-typed with empty text and arrive before the
  * real turn streams anything. We hold such a result instead of finalizing;
- * real turn activity discards it and the real result finalizes the run. If
- * nothing else ever arrives (grace timer, or the process exits), the held
- * empty result is a failure, not a silent success.
+ * real turn activity discards it and the real result finalizes the run. The
+ * held result only becomes a failure when the process EXITS without ever
+ * answering — the one piece of evidence that the turn is really over. A
+ * wall-clock grace window cannot stand in for that: the CLI's first token
+ * legitimately lands minutes later (observed: 48s of thinking on a large
+ * resumed session), and failing early both fabricates an error and drops the
+ * whole real turn, which is issue #17's "nothing happens".
  */
 // ponytail: shape-based phantom detection (empty success before any content);
 // switch to a per-turn correlation id if the CLI protocol ever grows one.
-const PHANTOM_RESULT_GRACE_MS = 30 * 1000;
-
-function phantomResultGraceMs() {
-  const raw = Number(process.env.CODER_PHANTOM_RESULT_GRACE_MS);
-  return Number.isFinite(raw) && raw > 0 ? raw : PHANTOM_RESULT_GRACE_MS;
-}
 
 /** Empty success with no streamed turn content: leftover, not this turn. */
 function isPhantomClaudeResult(ev, sawTurnContent) {
@@ -1371,16 +1369,10 @@ function createRunner(opts) {
     let sawTurnContent = false;
     /** @type {object | null} */
     let heldPhantom = null;
-    /** @type {ReturnType<typeof setTimeout> | null} */
-    let phantomTimer = null;
     /** Run-local usage for memory footers (not cumulative store totals). */
     const runUsage = { tokensIn: 0, tokensOut: 0, costUsd: 0 };
 
     function discardHeldPhantom() {
-      if (phantomTimer) {
-        clearTimeout(phantomTimer);
-        phantomTimer = null;
-      }
       heldPhantom = null;
     }
 
@@ -1745,16 +1737,6 @@ function createRunner(opts) {
               store.updateThread(threadId, { sessionId: capturedSessionId });
               store.save();
             }
-            phantomTimer = setTimeout(() => {
-              phantomTimer = null;
-              if (!guard() || !heldPhantom) return;
-              const held = heldPhantom;
-              heldPhantom = null;
-              failEmptyPhantom(held);
-            }, phantomResultGraceMs());
-            if (typeof phantomTimer.unref === "function") {
-              phantomTimer.unref();
-            }
             return;
           }
           discardHeldPhantom();
@@ -1911,8 +1893,12 @@ function createRunner(opts) {
 
         clearRun(threadId);
 
-        // If we already handled a result event, finalize work-log and exit.
-        if (sawResult || gotResult) {
+        // If WE finalized on a result event, close the work-log and stop.
+        // gotResult is not that proof: claude.js sets it for any result line
+        // including a leftover empty one we deliberately did not finalize on,
+        // and trusting it checkmarks both steps with no message, no status and
+        // no notification — issue #17's silent black hole.
+        if (sawResult) {
           completeWorkLogStep(threadId, e.startingId);
           completeWorkLogStep(threadId, e.workingId);
           store.save();
