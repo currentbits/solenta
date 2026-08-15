@@ -2,6 +2,7 @@
 
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
+const { Readable } = require("node:stream");
 
 const updater = require("../updater.js");
 
@@ -20,14 +21,46 @@ function fakeFetch(routes) {
 const PROD_PKG = { channel: "prod", releaseTag: "v0.1.0" };
 const NIGHTLY_PKG = { channel: "nightly", releaseTag: "nightly-202608130000-abc123" };
 
-describe("updater.checkAndStage", () => {
+describe("updater.checkUpdate", () => {
+  it("never downloads or swaps, even with a matching asset and bundle", async () => {
+    const seen = [];
+    const res = await updater.checkUpdate({
+      pkg: PROD_PKG,
+      platform: "darwin",
+      arch: "arm64",
+      bundlePath: "/Applications/Solenta.app",
+      fetch: async (url) => {
+        seen.push(String(url));
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            tag_name: "v0.2.0",
+            html_url: "u",
+            assets: [
+              {
+                name: "Solenta-v0.2.0-macos-arm64.zip",
+                browser_download_url: "https://example.invalid/app.zip",
+              },
+            ],
+          }),
+        };
+      },
+    });
+    assert.equal(res.state, "available");
+    assert.ok(
+      !seen.some((u) => u.includes("example.invalid")),
+      "check must not fetch the asset",
+    );
+  });
+
   it("is disabled without a channel/tag stamp (dev tree)", async () => {
-    const res = await updater.checkAndStage({ pkg: {}, fetch: fakeFetch({}) });
+    const res = await updater.checkUpdate({ pkg: {}, fetch: fakeFetch({}) });
     assert.equal(res.state, "disabled");
   });
 
   it("prod: reports none when already on the latest tag", async () => {
-    const res = await updater.checkAndStage({
+    const res = await updater.checkUpdate({
       pkg: PROD_PKG,
       bundlePath: null,
       fetch: fakeFetch({
@@ -38,7 +71,7 @@ describe("updater.checkAndStage", () => {
   });
 
   it("prod: reports available (with url) when latest tag differs and no bundle to swap", async () => {
-    const res = await updater.checkAndStage({
+    const res = await updater.checkUpdate({
       pkg: PROD_PKG,
       bundlePath: null,
       fetch: fakeFetch({
@@ -55,7 +88,7 @@ describe("updater.checkAndStage", () => {
   });
 
   it("nightly: follows the newest prerelease, never a prod release", async () => {
-    const res = await updater.checkAndStage({
+    const res = await updater.checkUpdate({
       pkg: NIGHTLY_PKG,
       bundlePath: null,
       fetch: fakeFetch({
@@ -76,7 +109,7 @@ describe("updater.checkAndStage", () => {
   });
 
   it("nightly: reports none when the newest prerelease is this build", async () => {
-    const res = await updater.checkAndStage({
+    const res = await updater.checkUpdate({
       pkg: NIGHTLY_PKG,
       bundlePath: null,
       fetch: fakeFetch({
@@ -89,7 +122,7 @@ describe("updater.checkAndStage", () => {
   });
 
   it("channelOverride switches a prod build onto the nightly feed", async () => {
-    const res = await updater.checkAndStage({
+    const res = await updater.checkUpdate({
       pkg: PROD_PKG,
       channelOverride: "nightly",
       bundlePath: null,
@@ -111,7 +144,7 @@ describe("updater.checkAndStage", () => {
   });
 
   it("channelOverride does not enable updates in an unstamped dev tree", async () => {
-    const res = await updater.checkAndStage({
+    const res = await updater.checkUpdate({
       pkg: {},
       channelOverride: "nightly",
       fetch: fakeFetch({}),
@@ -120,7 +153,7 @@ describe("updater.checkAndStage", () => {
   });
 
   it("reports error when the check itself fails", async () => {
-    const res = await updater.checkAndStage({
+    const res = await updater.checkUpdate({
       pkg: PROD_PKG,
       bundlePath: null,
       fetch: async () => {
@@ -129,6 +162,41 @@ describe("updater.checkAndStage", () => {
     });
     assert.equal(res.state, "error");
     assert.match(res.error, /offline/);
+  });
+});
+
+describe("updater.stage digest verification", () => {
+  const bytes = Buffer.from("pretend this is a zip");
+  const sum = require("node:crypto").createHash("sha256").update(bytes).digest("hex");
+  const deps = {
+    fetch: async () => ({
+      ok: true,
+      status: 200,
+      body: Readable.toWeb(Readable.from(bytes)),
+    }),
+  };
+  const asset = (digest) => ({ browser_download_url: "https://example.invalid/a.zip", digest });
+
+  it("refuses an asset with no digest", async () => {
+    await assert.rejects(
+      updater.stage(asset(undefined), "/nope.app", "v1", deps),
+      /no sha256 digest/,
+    );
+  });
+
+  it("refuses a digest that does not match the bytes", async () => {
+    await assert.rejects(
+      updater.stage(asset(`sha256:${"0".repeat(64)}`), "/nope.app", "v1", deps),
+      /digest mismatch/,
+    );
+  });
+
+  it("gets past verification when the digest matches", async () => {
+    // Extraction then fails (not a real zip) — that it got that far is the point.
+    await assert.rejects(
+      updater.stage(asset(`sha256:${sum}`), "/nope.app", "v1", deps),
+      (err) => !/digest/.test(err.message),
+    );
   });
 });
 

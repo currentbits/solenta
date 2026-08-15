@@ -1958,6 +1958,9 @@ function buildDevCoder(): CoderApi {
           error: null,
         };
       },
+      async downloadUpdate(): Promise<UpdateStatus> {
+        return this.checkUpdate();
+      },
       async applyUpdate(): Promise<void> {},
     },
     memory: {

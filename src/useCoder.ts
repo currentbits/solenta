@@ -251,6 +251,8 @@ export interface UseCoderResult {
   updateStatus: UpdateStatus | null;
   /** Manual "Check for updates" — re-runs the check and refreshes status. */
   checkUpdate: () => Promise<void>;
+  /** User-initiated download+install of the available update. */
+  downloadUpdate: () => Promise<void>;
   /** Relaunch into a staged update. */
   applyUpdate: () => Promise<void>;
   /**
@@ -373,9 +375,13 @@ export function useCoder(): UseCoderResult {
     setUpdateStatus(await api.app.checkUpdate());
   }, [api]);
 
-  // Auto-update: check on boot, then every 6h. The check itself downloads and
-  // stages the swap on macOS, so even without a restart click the next launch
-  // runs the new build. Missing handler (old backend) leaves status null.
+  const downloadUpdate = useCallback(async () => {
+    setUpdateStatus(await api.app.downloadUpdate());
+  }, [api]);
+
+  // Auto-update: check on boot, then every 6h. The check only asks the release
+  // API — downloading and swapping the bundle waits for a user click.
+  // Missing handler (old backend) leaves status null.
   useEffect(() => {
     let cancelled = false;
     const check = () => {
@@ -1606,6 +1612,7 @@ export function useCoder(): UseCoderResult {
     refreshStatus,
     updateStatus,
     checkUpdate,
+    downloadUpdate,
     applyUpdate,
     refreshProviders,
     projectById,
