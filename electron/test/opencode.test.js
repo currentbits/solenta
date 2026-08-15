@@ -278,7 +278,7 @@ describe("opencode runner integration", () => {
       title: "OpenCode Thread",
     });
     services.setProvider(store, { threadId: thread.id, provider: "opencode" });
-    store.save();
+    store.saveNow();
 
     const core = await loadCore();
     runner = createRunner({

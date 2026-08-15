@@ -94,7 +94,7 @@ describe("removeProject", () => {
       outputTokens: 1,
       costUsd: 0,
     });
-    store.save();
+    store.saveNow();
 
     services.removeProject(store, { projectId: projectA.id });
 
@@ -153,7 +153,7 @@ describe("removeProject", () => {
     // SECOND thread is the working one — proves we do not delete the first
     // before noticing the second's active run.
     store.updateThread(tSecond.id, { status: "working" });
-    store.save();
+    store.saveNow();
 
     assert.throws(
       () => services.removeProject(store, { projectId: projectA.id }),
@@ -190,7 +190,7 @@ describe("removeProject", () => {
     store.updateThread(t2.id, {
       worktreePath: path.join(tmpDir, "some-worktree"),
     });
-    store.save();
+    store.saveNow();
 
     assert.throws(
       () => services.removeProject(store, { projectId: project.id }),
@@ -258,9 +258,10 @@ describe("removeProject", () => {
       outputTokens: 1,
       costUsd: 0,
     });
-    store.save();
+    store.saveNow();
 
     services.removeProject(store, { projectId: projectA.id });
+    store.saveNow();
 
     const reloaded = new Store(storePath);
     assert.equal(reloaded.getProject(projectA.id), null);

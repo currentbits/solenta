@@ -112,7 +112,7 @@ describe("automation CRUD + scheduler", () => {
     store.setProjects([
       { id: "p1", slug: "acme/app", name: "app", path: tmpDir },
     ]);
-    store.save();
+    store.saveNow();
   });
 
   afterEach(() => {
@@ -186,7 +186,7 @@ describe("automation CRUD + scheduler", () => {
     store.setAutomations([
       { ...store.getAutomation(created.id), nextRunAt: Date.now() - 1000 },
     ]);
-    store.save();
+    store.saveNow();
 
     const started = [];
     const runner = {

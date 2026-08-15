@@ -101,7 +101,7 @@ function seedPr(fx, state) {
     prUrl: "https://github.com/acme/demo/pull/7",
     prState: state,
   });
-  fx.store.save();
+  fx.store.saveNow();
 }
 
 describe("maybeCleanupMergedWorktree", () => {
@@ -248,7 +248,7 @@ describe("sweepOrphanWorktrees", () => {
       broadcast: () => {},
     });
     fx.store.removeThread(orphanThread.id);
-    fx.store.save();
+    fx.store.saveNow();
 
     const result = await sweepOrphanWorktrees({
       store: fx.store,
@@ -278,7 +278,7 @@ describe("sweepOrphanWorktrees", () => {
     });
     fs.writeFileSync(path.join(orphan.worktreePath, "precious.txt"), "wip\n");
     fx.store.removeThread(orphanThread.id);
-    fx.store.save();
+    fx.store.saveNow();
 
     const result = await sweepOrphanWorktrees({
       store: fx.store,
@@ -401,7 +401,7 @@ describe("ensureWorktree (lazy creation)", () => {
         title: "New Thread",
       });
       store.updateThread(thread.id, { pendingWorktree: true });
-      store.save();
+      store.saveNow();
 
       await runner.startRun({ threadId: thread.id, prompt: "Do the thing" });
 

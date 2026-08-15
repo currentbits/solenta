@@ -145,6 +145,9 @@ function validateMcpServers(raw) {
 
 const SPEND_RETENTION_DAYS = 90;
 
+// Longest a save() may sit in memory before it hits disk.
+const SAVE_DEBOUNCE_MS = 250;
+
 /**
  * Local calendar day key YYYY-MM-DD (LOCAL timezone, not UTC).
  * @param {Date} [now]
@@ -491,6 +494,11 @@ class Store {
    */
   constructor(filePath) {
     this.filePath = filePath;
+    this._dirty = false;
+    this._timer = null;
+    this._flushOnExit = () => {
+      if (this._dirty) this.saveNow();
+    };
     this.data = this._load();
     if (this._recoveredOnLoad) {
       this.save();
@@ -542,7 +550,29 @@ class Store {
     }
   }
 
+  /**
+   * Mark dirty and coalesce writes: the whole store is one JSON blob, so a
+   * per-stream-event save re-stringifies ~15 MB and blocks the main process.
+   * Callers that need the bytes on disk right now use saveNow().
+   * ponytail: debounce only. The stringify is still sync on the flush tick
+   * (~19 ms at 15 MB); split into per-thread files if that shows up.
+   */
   save() {
+    this._dirty = true;
+    if (this._timer) return;
+    this._timer = setTimeout(() => this.saveNow(), SAVE_DEBOUNCE_MS);
+    // Never hold the event loop open; the exit hook is what guarantees the write.
+    this._timer.unref?.();
+    process.once("exit", this._flushOnExit);
+  }
+
+  saveNow() {
+    if (this._timer) {
+      clearTimeout(this._timer);
+      this._timer = null;
+    }
+    process.off("exit", this._flushOnExit);
+    this._dirty = false;
     const dir = path.dirname(this.filePath);
     fs.mkdirSync(dir, { recursive: true });
     const tmp = `${this.filePath}.${process.pid}.${Date.now()}.tmp`;

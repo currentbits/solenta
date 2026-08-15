@@ -86,7 +86,7 @@ describe("setProvider lock semantics", () => {
     // send starts fresh. The thread itself survives the switch.
     const thread = store.getThreads()[0];
     store.updateThread(thread.id, { sessionId: "sess-live" });
-    store.save();
+    store.saveNow();
     const updated = services.setProvider(store, {
       threadId: thread.id,
       provider: "codex",
@@ -105,7 +105,7 @@ describe("setProvider lock semantics", () => {
       status: "working",
       sessionId: "sess-mid-run",
     });
-    store.save();
+    store.saveNow();
     assert.throws(
       () =>
         services.setProvider(store, { threadId: thread.id, provider: "codex" }),
@@ -123,7 +123,7 @@ describe("setProvider lock semantics", () => {
       provider: "claude",
       sessionId: "sess-keep",
     });
-    store.save();
+    store.saveNow();
     const updated = services.setProvider(store, {
       threadId: thread.id,
       provider: "claude",
