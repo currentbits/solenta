@@ -3046,6 +3046,21 @@ function buildDevCoder(): CoderApi {
         return { dataUrl: null };
       },
     },
+    attachments: {
+      async pick() {
+        // Dev mock: no native dialog in a browser.
+        return { attachments: [] };
+      },
+      async fromPaths(_input: { paths: string[] }) {
+        return { attachments: [] };
+      },
+      async saveImage(_input: { threadId: string; dataUrl: string }) {
+        return { attachment: null };
+      },
+      async readImage(_input: { path: string }) {
+        return { dataUrl: null };
+      },
+    },
     shell: {
       async reveal(_input: { threadId: string; path: string }) {
         // Dev mock: no Finder.
