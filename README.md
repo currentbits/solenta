@@ -167,11 +167,15 @@ Browser-only mock, no Electron: `npx vite` — `src/devCoder.ts` implements
 `window.coder`.
 
 ```bash
+npm test                 # all four suites, same as CI (.github/workflows/test.yml)
+
+npm run test:core        # workflow engine — also builds core/dist, which electron needs
 npm run test:renderer    # renderer / devCoder
 npm run test:electron    # electron main
-npm run test:memory      # memory server
-cd core && npm test       # workflow engine
+npm run test:memory      # memory server (needs `npm ci --prefix memory-server`)
 ```
+
+`npm run acceptance` stays manual: one real claude turn, not part of CI.
 
 **Env:** `CODER_CLAUDE_BIN`, `CODER_CODEX_BIN`, `CODER_KIMI_BIN`,
 `CODER_GROK_BIN`, `CODER_OPENCODE_BIN` (CLI paths) · `CODER_SIMULATE=1` (fake
