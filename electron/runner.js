@@ -587,12 +587,12 @@ function createRunner(opts) {
     } catch {
       // silent
     }
+    sweepDoneWorkers(threadId);
   }
 
   /**
    * After a successful turn lands status "done": best-effort worktree
-   * checkpoint commit, and orchestration workers auto-archive so finished
-   * workers do not pile up in the sidebar (issue #14). Shared across every
+   * checkpoint commit and orchestrator wake-up. Shared across every
    * provider path (and sim). Never throws into the run lifecycle.
    * @param {string} threadId
    */
@@ -604,19 +604,41 @@ function createRunner(opts) {
       // silent
     }
     try {
-      const thread = store.getThread(threadId);
-      if (thread && thread.orchWorker && !thread.archived) {
-        // Not real activity: no touch, same as threads:setArchived.
-        store.updateThread(threadId, { archived: true });
-        store.save();
-        pushThreadsChanged();
-      }
+      queueOrchNotice(threadId, "done");
+      flushOrchNotices(threadId);
     } catch {
       // silent
     }
+    sweepDoneWorkers(threadId);
+  }
+
+  /**
+   * Archive this thread's finished workers once the whole crew is quiet.
+   * Runs at the ORCHESTRATOR's run terminal, not at each worker's own: a
+   * finished worker stays visible (Team list, sidebar nesting) while the
+   * orchestration is still going, and the sidebar cleanup issue #14 asked
+   * for happens when the orchestrator's turn lands. Never throws.
+   * @param {string} threadId
+   */
+  function sweepDoneWorkers(threadId) {
     try {
-      queueOrchNotice(threadId, "done");
-      flushOrchNotices(threadId);
+      const crew = store
+        .getThreads()
+        .filter((t) => t.orchWorker && t.handoffFrom === threadId);
+      if (crew.length === 0) return;
+      if (crew.some((t) => t.status === "working")) return;
+      let changed = false;
+      for (const t of crew) {
+        if (t.status === "done" && !t.archived) {
+          // Not real activity: no touch, same as threads:setArchived.
+          store.updateThread(t.id, { archived: true });
+          changed = true;
+        }
+      }
+      if (changed) {
+        store.save();
+        pushThreadsChanged();
+      }
     } catch {
       // silent
     }
@@ -653,6 +675,10 @@ function createRunner(opts) {
       } catch {
         // silent
       }
+      // A stopped orchestrator still tidies its crew (done/failed paths
+      // sweep inside afterSuccessfulTurn/afterFailedTurn, which the sim
+      // path calls directly without ever reaching notifyRunTerminal).
+      sweepDoneWorkers(threadId);
     }
     try {
       if (extras && extras.skip) return;

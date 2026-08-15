@@ -1,0 +1,20 @@
+# The gate: every suite on every push. `npm run acceptance` stays manual —
+# it spends a real claude turn and needs credentials.
+name: test
+
+on: push
+
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: "**/package-lock.json"
+      - run: npm ci
+      - run: npm ci --prefix core
+      - run: npm ci --prefix memory-server
+      - run: npm test

@@ -320,18 +320,43 @@ describe("runner simulated mode", () => {
     assert.ok(runner.getActiveWorkflow(thread.id));
   });
 
-  it("archives an orchestration worker thread when its run lands done", async () => {
-    const thread = store.getThreads()[0];
-    store.updateThread(thread.id, { orchWorker: true });
-    await runner.startRun({ threadId: thread.id, prompt: "worker task" });
+  it("keeps a finished worker visible until the orchestrator's run lands", async () => {
+    const { orch, worker } = orchPair(store);
+    await runner.startRun({ threadId: worker.id, prompt: "worker task" });
     await waitFor(() => {
-      const t = store.getThreads().find((x) => x.id === thread.id);
+      const t = store.getThread(worker.id);
       return t && t.status === "done";
     });
-    await waitFor(() => {
-      const t = store.getThreads().find((x) => x.id === thread.id);
-      return t && t.archived === true;
+    // Worker landing does NOT archive it — the roster stays visible while
+    // the orchestration is still going.
+    assert.equal(store.getThread(worker.id).archived, false);
+    // The wake-up run on the orchestrator lands → sweep archives the worker.
+    await waitFor(() => store.getThread(worker.id).archived === true);
+    assert.equal(store.getThread(orch.id).archived, false);
+  });
+
+  it("does not archive done workers while a sibling is still working", async () => {
+    const { orch, worker } = orchPair(store);
+    const other = services.forkThread(store, { threadId: orch.id });
+    store.updateThread(other.id, {
+      orchWorker: true,
+      title: "Worker B",
+      status: "working",
     });
+    store.save();
+    await runner.startRun({ threadId: worker.id, prompt: "worker task" });
+    await waitFor(() => {
+      const t = store.getThread(worker.id);
+      return t && t.status === "done";
+    });
+    // Orchestrator wake-up run lands, but Worker B is still working: no sweep.
+    await waitFor(() => orchNoticeMessages(store, orch.id).length > 0);
+    await waitFor(() => {
+      const t = store.getThread(orch.id);
+      return t && t.status !== "working";
+    });
+    await new Promise((r) => setTimeout(r, 80));
+    assert.equal(store.getThread(worker.id).archived, false);
   });
 
   it("wakes an idle orchestrator when an orchWorker run lands done", async () => {
@@ -355,7 +380,9 @@ describe("runner simulated mode", () => {
       (m) => m.role === "user",
     );
     assert.equal(parentUsers.length, 1);
-    assert.equal(store.getThread(worker.id).archived, true);
+    // Archive happens when the wake-up run itself lands (sweep), not at
+    // notice time.
+    await waitFor(() => store.getThread(worker.id).archived === true);
   });
 
   it("does not wake the parent for a regular fork without orchWorker", async () => {
