@@ -438,6 +438,7 @@ describe("services", () => {
     assert.ok(pinnedAt != null);
     assert.ok(snoozedAt != null);
 
+    store.saveNow();
     const reloaded = new Store(path.join(tmpDir, "store.json"));
     const t = reloaded.getThread(thread.id);
     assert.equal(t.pinnedAt, pinnedAt);

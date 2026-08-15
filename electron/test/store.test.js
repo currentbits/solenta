@@ -155,7 +155,7 @@ describe("Store", () => {
     store.setThreads([thread]);
     store.setMessages("t1", [msg]);
     store.setWorkLog("t1", [log]);
-    store.save();
+    store.saveNow();
 
     const reloaded = new Store(filePath);
     assert.deepEqual(reloaded.getProjects(), [project]);
@@ -174,13 +174,43 @@ describe("Store", () => {
   it("writes atomically via tmp then rename", () => {
     const store = new Store(filePath);
     store.setProjects([{ id: "p", slug: "a/b", name: "b", path: "/x" }]);
-    store.save();
+    store.saveNow();
     assert.equal(fs.existsSync(filePath), true);
     // no leftover tmp in same dir
     const leftovers = fs
       .readdirSync(tmpDir)
       .filter((n) => n !== "coder-store.json");
     assert.deepEqual(leftovers, []);
+  });
+
+  it("coalesces a burst of save() into one debounced write", async () => {
+    const store = new Store(filePath);
+    let writes = 0;
+    const realWrite = fs.writeFileSync;
+    fs.writeFileSync = (...args) => {
+      writes += 1;
+      return realWrite(...args);
+    };
+    try {
+      for (let i = 0; i < 20; i += 1) {
+        store.setProjects([{ id: `p${i}`, slug: "a/b", name: "b", path: "/x" }]);
+        store.save();
+      }
+      assert.equal(writes, 0, "nothing written while the burst is in flight");
+      await new Promise((r) => setTimeout(r, 400));
+      assert.equal(writes, 1);
+    } finally {
+      fs.writeFileSync = realWrite;
+    }
+    assert.equal(new Store(filePath).getProjects()[0].id, "p19");
+  });
+
+  it("saveNow() flushes a pending debounced save immediately", () => {
+    const store = new Store(filePath);
+    store.setProjects([{ id: "p", slug: "a/b", name: "b", path: "/x" }]);
+    store.save();
+    store.saveNow();
+    assert.equal(new Store(filePath).getProjects()[0].id, "p");
   });
 
   it("leaves remoteHost/remotePath absent on old projects", () => {
@@ -567,7 +597,7 @@ describe("Store", () => {
     }
 
     store.removeThread("t1");
-    store.save();
+    store.saveNow();
 
     assert.equal(store.getThread("t1"), null);
     assert.equal(store.getThreads().length, 1);
@@ -621,7 +651,7 @@ describe("Store", () => {
       costUsd: 0.02,
       turns: 1,
     });
-    store.save();
+    store.saveNow();
     const reloaded = new Store(filePath);
     assert.deepEqual(reloaded.getUsage("t1"), {
       model: "m",
@@ -909,7 +939,7 @@ describe("Store", () => {
     assert.notEqual(saved.id, "standard");
     assert.equal(saved.builtin, false);
     assert.equal(saved.name, "Custom");
-    store.save();
+    store.saveNow();
     const reloaded = new Store(filePath);
     assert.equal(reloaded.listTemplates().length, 2);
     assert.ok(reloaded.getTemplate(saved.id));

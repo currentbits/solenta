@@ -303,6 +303,7 @@ describe("mcpServers settings slice", () => {
     assert.equal(next.mcpServers.length, 1);
     assert.equal(next.mcpServers[0].name, "team-tools");
 
+    store.saveNow();
     const reloaded = new Store(path.join(tmp, "store.json"));
     assert.deepEqual(reloaded.getSettings().mcpServers, [
       { name: "team-tools", url: "https://tools.example.com/mcp", enabled: true },

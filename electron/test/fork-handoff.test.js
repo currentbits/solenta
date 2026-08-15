@@ -157,7 +157,7 @@ describe("forkThread + handoff (services)", () => {
     const long = "L".repeat(80);
     services.setProvider(store, { threadId: source.id }); // no-op keep
     store.updateThread(source.id, { title: long });
-    store.save();
+    store.saveNow();
     const forked = services.forkThread(store, { threadId: source.id });
     assert.equal(forked.title.length, services.THREAD_TITLE_MAX);
     assert.ok(forked.title.startsWith("Fork: "));
@@ -171,6 +171,7 @@ describe("forkThread + handoff (services)", () => {
 
   it("handoffFrom provenance persists across reload", () => {
     const forked = services.forkThread(store, { threadId: source.id });
+    store.saveNow();
     const reloaded = new Store(path.join(tmpDir, "store.json"));
     const t = reloaded.getThread(forked.id);
     assert.equal(t.handoffFrom, source.id);
@@ -354,7 +355,7 @@ process.stdin.on("data", (c) => {
       text: "PRIOR CONTEXT FROM SOURCE",
       createdAt: Date.now(),
     });
-    store.save();
+    store.saveNow();
 
     const forked = services.forkThread(store, {
       threadId: source.id,
@@ -441,14 +442,14 @@ process.stdin.on("data", (c) => {
       text: "gone soon",
       createdAt: Date.now(),
     });
-    store.save();
+    store.saveNow();
     const forked = services.forkThread(store, {
       threadId: source.id,
       provider: "claude",
     });
     // Delete source without touching the fork.
     store.removeThread(source.id);
-    store.save();
+    store.saveNow();
     await runner.startRun({ threadId: forked.id, prompt: "after delete" });
     await waitFor(() => !runner.isRunning(forked.id));
     assert.equal(lastArgvPrompt(), "after delete");

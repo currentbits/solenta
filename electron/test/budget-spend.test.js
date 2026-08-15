@@ -96,7 +96,7 @@ describe("spendByDay and settings", () => {
 
     store.recordSpend(0.01, new Date(2026, 7, 6, 10, 0, 0));
     store.recordSpend(0.02, new Date(2026, 7, 6, 22, 0, 0));
-    store.save();
+    store.saveNow();
 
     assert.equal(store.getSpendToday(new Date(2026, 7, 6, 12, 0, 0)), 0.03);
     assert.equal(store.data.spendByDay["2026-08-06"], 0.03);
@@ -190,7 +190,7 @@ describe("spendByDay and settings", () => {
         worktreePath: null,
       },
     ]);
-    store.save();
+    store.saveNow();
 
     assert.deepEqual(store.getSettings(), { dailyBudgetUsd: null, autoSettleAfterDays: 3, mcpServers: [], defaultWorktree: false, updateChannel: null });
     assert.deepEqual(services.getSettings(store), { dailyBudgetUsd: null, autoSettleAfterDays: 3, mcpServers: [], defaultWorktree: false, updateChannel: null });
@@ -199,7 +199,7 @@ describe("spendByDay and settings", () => {
     assert.deepEqual(set, { dailyBudgetUsd: 12.5, autoSettleAfterDays: 3, mcpServers: [], defaultWorktree: false, updateChannel: null });
     assert.equal(store.getThreads()[0].updatedAt, 2);
 
-    store.save();
+    store.saveNow();
     const reloaded = new Store(filePath);
     assert.deepEqual(reloaded.getSettings(), { dailyBudgetUsd: 12.5, autoSettleAfterDays: 3, mcpServers: [], defaultWorktree: false, updateChannel: null });
 
@@ -232,7 +232,7 @@ describe("spendByDay and settings", () => {
     resetMemorySupForTests();
     const store = new Store(filePath);
     store.recordSpend(1.23456);
-    store.save();
+    store.saveNow();
     const status = await services.appStatus(store);
     assert.equal(status.spendTodayUsd, 1.23);
     // Memory is down here: counts must be null, never missing or throwing.
@@ -382,7 +382,7 @@ describe("budget gate and spend on real runs", () => {
   it("rejects startRun with exact message and does not spawn when over budget", async () => {
     services.setSettings(store, { dailyBudgetUsd: 1.0 });
     store.recordSpend(1.0);
-    store.save();
+    store.saveNow();
 
     if (fs.existsSync(argvFile)) fs.unlinkSync(argvFile);
 
@@ -406,7 +406,7 @@ describe("budget gate and spend on real runs", () => {
   it("rejects startWorkflow with exact message and does not spawn", async () => {
     services.setSettings(store, { dailyBudgetUsd: 0.5 });
     store.recordSpend(0.75);
-    store.save();
+    store.saveNow();
     if (fs.existsSync(argvFile)) fs.unlinkSync(argvFile);
 
     const thread = store.getThreads()[0];
@@ -430,7 +430,7 @@ describe("budget gate and spend on real runs", () => {
   it("allows start when budget is null or spend is under cap", async () => {
     services.setSettings(store, { dailyBudgetUsd: null });
     store.recordSpend(99);
-    store.save();
+    store.saveNow();
 
     const thread = store.getThreads()[0];
     const { runId } = await runner.startRun({

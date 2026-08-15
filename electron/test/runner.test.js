@@ -106,7 +106,7 @@ function orchPair(store) {
   store.updateThread(orch.id, { title: "Orchestrator" });
   const worker = services.forkThread(store, { threadId: orch.id });
   store.updateThread(worker.id, { orchWorker: true, title: "Worker A" });
-  store.save();
+  store.saveNow();
   return {
     orch: store.getThread(orch.id),
     worker: store.getThread(worker.id),
@@ -341,7 +341,7 @@ describe("runner simulated mode", () => {
       title: "Worker B",
       status: "working",
     });
-    store.save();
+    store.saveNow();
     await runner.startRun({ threadId: worker.id, prompt: "worker task" });
     await waitFor(() => {
       const t = store.getThread(worker.id);
@@ -380,7 +380,7 @@ describe("runner simulated mode", () => {
       const { orch, worker } = orchPair(store);
       const busy = services.forkThread(store, { threadId: orch.id });
       store.updateThread(busy.id, { orchWorker: true, title: "Worker B" });
-      store.save();
+      store.saveNow();
 
       await manual.startRun({ threadId: busy.id, prompt: "long task" });
       await manual.startRun({ threadId: worker.id, prompt: "worker task" });
@@ -405,7 +405,7 @@ describe("runner simulated mode", () => {
     const { worker } = orchPair(store);
     // Landed while the app was down (or its sweep never came).
     store.updateThread(worker.id, { status: "done" });
-    store.save();
+    store.saveNow();
     const booted = createRunner({
       store,
       core,
@@ -1093,7 +1093,7 @@ describe("runner real agent mode", () => {
     assert.equal(runner.isRunning(threadId), true);
     // Simulate delete race: thread gone while agent still streaming.
     store.removeThread(threadId);
-    store.save();
+    store.saveNow();
     assert.equal(store.getThread(threadId), null);
 
     // Wait past agent exit; pushDetail/onChunk/onDone must not throw.

@@ -265,7 +265,7 @@ function seedOpenPr(fx, threadId, number, state) {
     prUrl: url,
     prState: st === "null" ? null : st,
   });
-  fx.store.save();
+  fx.store.saveNow();
   const gh = JSON.parse(fs.readFileSync(fx.statePath, "utf8"));
   gh.prsByNumber = gh.prsByNumber || {};
   gh.prsByNumber[String(number)] = { number, url, state: st === "null" ? "OPEN" : st };
@@ -384,7 +384,7 @@ describe("refreshPrStates (round 47)", () => {
     fx = makeFixture();
     seedOpenPr(fx, fx.thread.id, 8, "OPEN");
     fx.store.updateThread(fx.thread.id, { archived: true });
-    fx.store.save();
+    fx.store.saveNow();
     const result = await refreshPrStates(fx.store, { broadcast: () => {} });
     assert.equal(result.examined, 0);
     assert.equal(result.spawned, 0);
@@ -413,7 +413,7 @@ describe("refreshPrStates (round 47)", () => {
 
     assert.equal(result.spawned, 1);
     assert.equal(result.changed, 1);
-    assert.equal(saveCount.n, 1, "exactly one store.save()");
+    assert.equal(saveCount.n, 1, "exactly one store.saveNow()");
     assert.equal(broadcasts.length, 1);
     assert.equal(broadcasts[0].ch, "threads:changed");
     const row = broadcasts[0].payload.find((t) => t.id === fx.thread.id);
