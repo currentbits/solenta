@@ -969,6 +969,8 @@ function threadSummaries(store) {
       provider: t.provider,
       status: t.status,
       handoffFrom: t.handoffFrom ?? null,
+      runStartedAt: t.runStartedAt ?? null,
+      awaitingInput: t.awaitingInput === true,
       lastActivity: last
         ? {
             text: String(last.text).split(/\r?\n/, 1)[0].trim(),

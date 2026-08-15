@@ -182,6 +182,10 @@ export interface ThreadSummaryInfo {
   provider: string;
   status: ThreadStatus;
   handoffFrom: string | null;
+  /** Mirrors ThreadInfo: drives the "waiting on N · elapsed" line (issue #42). */
+  runStartedAt: number | null;
+  /** Mirrors ThreadInfo: a worker stalled on a permission prompt. */
+  awaitingInput?: boolean;
   /**
    * First line of the thread's last assistant message and its timestamp;
    * null when the thread has no assistant message yet.
