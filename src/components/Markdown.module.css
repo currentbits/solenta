@@ -3,6 +3,8 @@
   line-height: 1.6;
   color: var(--text);
   user-select: text;
+  /* Long unbroken strings (URLs, hashes, paths) wrap instead of widening the pane. */
+  overflow-wrap: anywhere;
 }
 
 .md > :first-child {
@@ -74,6 +76,10 @@
   border-collapse: collapse;
   margin: 8px 0;
   font-size: 12.5px;
+  /* Wide tables scroll inside their own box, like code blocks. */
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
 }
 
 .md th,
