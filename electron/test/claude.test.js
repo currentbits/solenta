@@ -5,6 +5,26 @@ const os = require("node:os");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 const { execFileSync } = require("node:child_process");
+const Module = require("node:module");
+
+// ipc.js requires("electron") at load; electron is not installed for tests.
+{
+  const origLoad = Module._load;
+  Module._load = function (request) {
+    if (request === "electron") {
+      return {
+        ipcMain: { handle() {} },
+        BrowserWindow: { getAllWindows: () => [] },
+        dialog: {},
+        shell: {},
+        app: { getPath: () => os.tmpdir() },
+      };
+    }
+    return origLoad.apply(this, arguments);
+  };
+}
+
+const ipc = require("../ipc.js");
 const { Store } = require("../store.js");
 const services = require("../services.js");
 const { createRunner, liveClaudeChildren } = require("../runner.js");
@@ -1807,6 +1827,65 @@ describe("runner claude provider", () => {
       [true, true, true],
       "the three newest idle CLIs must survive",
     );
+  });
+
+  it("settling or archiving a thread kills its kept-alive CLI (issue #48)", async () => {
+    process.env.CODER_FAKE_CLAUDE_SCENARIO = "multi-turn";
+    const markerDir = path.join(tmpDir, "retire-markers");
+    process.env.CODER_FAKE_CLAUDE_MARKER_DIR = markerDir;
+
+    const ctx = ipc.makeCtx({
+      dialog: {},
+      store,
+      runner,
+      broadcast() {},
+      worktreeBase: "",
+      userDataPath: tmpDir,
+    });
+
+    const project = store.getProjects()[0];
+    const settleThread = store.getThreads()[0];
+    const archiveThread = services.createThread(store, {
+      projectId: project.id,
+      title: "To archive",
+    });
+
+    for (const t of [settleThread, archiveThread]) {
+      await runner.startRun({ threadId: t.id, prompt: "hi" });
+      await waitFor(() => store.getThread(t.id).status === "done");
+    }
+
+    const pids = fs
+      .readFileSync(path.join(markerDir, "spawns"), "utf8")
+      .trim()
+      .split("\n")
+      .map(Number);
+    assert.equal(pids.length, 2);
+
+    const alive = (pid) => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    // Both CLIs are within the idle cap: only the fold may kill them.
+    assert.deepEqual(pids.map(alive), [true, true]);
+
+    await ipc.IPC_HANDLERS["threads:setSettled"](ctx, {
+      threadId: settleThread.id,
+      override: "settled",
+    });
+    await waitFor(() => !alive(pids[0]), { timeoutMs: 5000 });
+    assert.equal(alive(pids[1]), true, "settling one thread must not touch others");
+
+    await ipc.IPC_HANDLERS["threads:setArchived"](ctx, {
+      threadId: archiveThread.id,
+      archived: true,
+    });
+    await waitFor(() => !alive(pids[1]), { timeoutMs: 5000 });
   });
 
   it("answers a control_request arriving while settled with a retryable error, not silence", async () => {
