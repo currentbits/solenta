@@ -3549,9 +3549,10 @@ function createRunner(opts) {
     }
     // Drain any pending session transcript posts before process exit.
     void sessionRecorder.flush();
-    if (marked) {
-      store.save();
-    }
+    // App quit (main.js before-quit): save() only arms a 250 ms unref'd timer,
+    // and a SIGTERM never runs the exit hook that flushes it, so the idle
+    // marking above would be lost. Put the bytes on disk now.
+    store.saveNow();
   }
 
   /**
