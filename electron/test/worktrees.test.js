@@ -846,7 +846,7 @@ describe("worktrees", () => {
         prUrl: null,
         prState: null,
       });
-      store.save();
+      store.saveNow();
       assert.equal(store.getThread(thread.id).prState, null);
 
       const live = prStatus({ store, threadId: thread.id });
