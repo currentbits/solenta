@@ -90,11 +90,15 @@ Vite-only mock (no Electron): `npx vite` (`src/devCoder.ts` implements
 ### Tests
 
 ```bash
-node --experimental-strip-types --test test/*.test.ts   # renderer / devCoder
-node --test electron/test/*.test.js                     # electron main
-cd core && npm test
-cd memory-server && npm test
+npm test              # all four suites, same as CI (.github/workflows/test.yml)
+
+npm run test:core     # core engine — also builds core/dist, which the electron suite needs
+npm run test:renderer # renderer / devCoder
+npm run test:electron # electron main
+npm run test:memory   # memory server (needs `npm ci --prefix memory-server`)
 ```
+
+`npm run acceptance` stays manual: one real claude turn, not part of CI.
 
 ### Env
 
