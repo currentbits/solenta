@@ -1604,15 +1604,17 @@ export function AgentsContent({
 
   // Roles derive from handoffFrom: a thread WITH one is a Worker; a thread
   // another summary points to is an Orchestrator. Neither = plain session.
-  // Done workers drop out so a long orchestration does not pile finished
-  // rows under Team; failed / idle / working stay visible.
+  // Done workers fold behind a "N done" toggle so a long orchestration stays
+  // scannable, but the roster never vanishes; failed / idle / working stay
+  // as plain rows.
+  const [showDoneWorkers, setShowDoneWorkers] = useState(false);
   const team = useMemo(() => {
     if (!thread || !summaries) return null;
-    const workers = summaries.filter(
-      (s) => s.handoffFrom === thread.id && s.status !== "done",
-    );
-    if (workers.length > 0) {
-      return { kind: "orchestrator" as const, workers };
+    const all = summaries.filter((s) => s.handoffFrom === thread.id);
+    const workers = all.filter((s) => s.status !== "done");
+    const doneWorkers = all.filter((s) => s.status === "done");
+    if (all.length > 0) {
+      return { kind: "orchestrator" as const, workers, doneWorkers };
     }
     const orchestrator = thread.handoffFrom
       ? summaries.find((s) => s.id === thread.handoffFrom)
@@ -1716,7 +1718,29 @@ export function AgentsContent({
                   onSelect={onSelectThread}
                 />
               ))}
+              {showDoneWorkers &&
+                team.doneWorkers.map((w) => (
+                  <TeamRow
+                    key={w.id}
+                    summary={w}
+                    role="Worker"
+                    providers={providers}
+                    onSelect={onSelectThread}
+                  />
+                ))}
             </ul>
+            {team.doneWorkers.length > 0 && (
+              <button
+                type="button"
+                className={styles.doneToggle}
+                onClick={() => setShowDoneWorkers((v) => !v)}
+                aria-expanded={showDoneWorkers}
+              >
+                {showDoneWorkers
+                  ? "Hide done"
+                  : `${team.doneWorkers.length} done`}
+              </button>
+            )}
           </section>
           {subagentSection}
         </div>

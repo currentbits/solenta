@@ -183,11 +183,13 @@ describe("App memory wiring", () => {
     assert.ok(recent.length > 0, "memory.recent must be called");
     const arg = recent[recent.length - 1].args[0] as { project?: string };
     // The VALUE, not just the key: asserting "project" in arg passed while the
-    // app scoped memory to a project that does not exist.
+    // app scoped memory to a project that does not exist. Scope is the repo
+    // PATH, never the display slug — the memory server canonicalizes paths,
+    // and a slug like "owner/repo" lands in a scope no agent writes to.
     assert.equal(
       arg?.project,
-      "owner/repo",
-      `memory.recent must be scoped to the selected project, got: ${JSON.stringify(arg)}`,
+      "/tmp/repo",
+      `memory.recent must be scoped to the selected project's path, got: ${JSON.stringify(arg)}`,
     );
     m.unmount();
   });

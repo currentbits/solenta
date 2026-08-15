@@ -140,6 +140,23 @@
   gap: 2px;
 }
 
+.doneToggle {
+  align-self: flex-start;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 550;
+  text-align: left;
+}
+
+.doneToggle:hover {
+  color: var(--text-muted);
+  background: var(--bg);
+}
+
 .teamRow {
   display: flex;
   align-items: center;

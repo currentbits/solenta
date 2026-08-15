@@ -195,7 +195,7 @@ describe("Agents team view", () => {
     m.unmount();
   });
 
-  it("orchestrator: omits done workers from the team list", async () => {
+  it("orchestrator: folds done workers behind a toggle", async () => {
     const done = summary({
       id: "t-done",
       title: "Fork: already finished",
@@ -222,19 +222,25 @@ describe("Agents team view", () => {
     );
     await m.flush();
 
-    const text = m.text();
+    let text = m.text();
     assert.match(text, /Fork: Plan the fix/, "working worker stays");
     assert.match(text, /Fork: blew up/, "failed worker stays");
     assert.match(text, /Fork: waiting to start/, "idle worker stays");
-    assert.doesNotMatch(text, /already finished/, "done worker is gone");
-    assert.ok(
-      m.query('[aria-label="Team"]'),
-      "team section still renders while live workers remain",
+    assert.doesNotMatch(
+      text,
+      /already finished/,
+      "done worker folded by default",
     );
+    assert.match(text, /1 done/, "toggle advertises the folded count");
+
+    await m.click(m.byText("1 done"));
+    text = m.text();
+    assert.match(text, /already finished/, "expanded done worker appears");
+    assert.match(text, /Hide done/, "toggle flips to hide");
     m.unmount();
   });
 
-  it("orchestrator: no team section when every worker is done", async () => {
+  it("orchestrator: team section survives when every worker is done", async () => {
     const done = summary({
       id: "t-done",
       title: "Fork: already finished",
@@ -245,12 +251,15 @@ describe("Agents team view", () => {
     const m = await mount(content(thread(), [ORCHESTRATOR, done]));
     await m.flush();
 
-    const text = m.text();
-    assert.doesNotMatch(text, /Orchestrator/);
-    assert.doesNotMatch(text, /Worker/);
+    let text = m.text();
+    assert.match(text, /Orchestrator/, "card keeps the orchestrator chip");
+    assert.ok(m.query('[aria-label="Team"]'), "team section still renders");
+    assert.match(text, /1 done/, "roster folded, not gone");
     assert.doesNotMatch(text, /already finished/);
-    assert.equal(m.query('[aria-label="Team"]'), null);
-    assert.match(text, /Session/, "falls back to a plain session card");
+
+    await m.click(m.byText("1 done"));
+    text = m.text();
+    assert.match(text, /already finished/, "done worker recoverable");
     m.unmount();
   });
 });
