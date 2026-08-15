@@ -29,6 +29,7 @@ const {
 const opencodeParse = require("./opencode.js");
 const { runOpencode } = opencodeParse;
 const { recordRunOutcome } = require("./memory-record.js");
+const { extractImages, saveToolImages } = require("./tool-images.js");
 const {
   createSessionRecorder,
   mapMessageRole,
@@ -1783,45 +1784,33 @@ function createRunner(opts) {
               }
             }
             const msgId = toolMsgById.get(toolUseId);
-            if (!msgId) {
-              // Fall back: search messages for matching tool.id
-              const found = store
-                .getMessages(threadId)
-                .find(
-                  (m) =>
-                    m.role === "tool" &&
-                    m.tool &&
-                    m.tool.id === toolUseId,
-                );
-              if (!found) continue;
-              const output = truncate(
-                flattenContent(block.content),
-                OUTPUT_TRUNCATE,
-              );
-              store.updateMessage(threadId, found.id, {
-                tool: {
-                  ...found.tool,
-                  output,
-                  isError: Boolean(block.is_error),
-                  done: true,
-                },
-              });
-              continue;
-            }
-            const existing = store
-              .getMessages(threadId)
-              .find((m) => m.id === msgId);
+            const existing = msgId
+              ? store.getMessages(threadId).find((m) => m.id === msgId)
+              : // Fall back: search messages for matching tool.id
+                store
+                  .getMessages(threadId)
+                  .find(
+                    (m) =>
+                      m.role === "tool" && m.tool && m.tool.id === toolUseId,
+                  );
             if (!existing || !existing.tool) continue;
             const output = truncate(
               flattenContent(block.content),
               OUTPUT_TRUNCATE,
             );
-            store.updateMessage(threadId, msgId, {
+            // Screenshots and Read-of-an-image land here as base64 blocks;
+            // keep the bytes on disk and the filenames in the message.
+            const images = saveToolImages(
+              userDataPath,
+              extractImages(block.content),
+            );
+            store.updateMessage(threadId, existing.id, {
               tool: {
                 ...existing.tool,
                 output,
                 isError: Boolean(block.is_error),
                 done: true,
+                ...(images.length ? { images } : {}),
               },
             });
           }

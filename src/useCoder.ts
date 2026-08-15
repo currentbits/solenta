@@ -189,6 +189,8 @@ export interface UseCoderResult {
   suggestCommitMessage: () => Promise<{ message: string }>;
   /** File paths for the composer @-mention popup. */
   listFiles: (query: string) => Promise<string[]>;
+  /** Data URL for one image a tool returned; null when it is gone. */
+  loadToolImage: (name: string) => Promise<string | null>;
   /** Push the selected thread's branch to origin. */
   pushBranch: () => Promise<{ remote: string; branch: string }>;
   /** Open (or re-return) a GitHub PR for the selected thread's branch. */
@@ -1198,6 +1200,18 @@ export function useCoder(): UseCoderResult {
     [api, selectedThreadId],
   );
 
+  const loadToolImage = useCallback(
+    async (name: string) => {
+      try {
+        const result = await api.files.image({ name });
+        return result.dataUrl;
+      } catch {
+        return null;
+      }
+    },
+    [api],
+  );
+
   const pushBranch = useCallback(async () => {
     if (!selectedThreadId) {
       throw new Error("No thread selected");
@@ -1582,6 +1596,7 @@ export function useCoder(): UseCoderResult {
     revertFile,
     suggestCommitMessage,
     listFiles,
+    loadToolImage,
     pushBranch,
     createPr,
     prStatus,

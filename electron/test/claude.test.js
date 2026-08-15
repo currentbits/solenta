@@ -9,6 +9,10 @@ const { Store } = require("../store.js");
 const services = require("../services.js");
 const { createRunner, liveClaudeChildren } = require("../runner.js");
 
+/** 1x1 transparent PNG, the "tool-image" scenario's payload. */
+const PNG_B64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+
 function git(cwd, args) {
   execFileSync("git", args, { cwd, stdio: "ignore" });
 }
@@ -146,6 +150,60 @@ async function main() {
       total_cost_usd: 0.01,
       num_turns: 1,
       session_id: "sess-abc-001",
+    });
+    process.exit(0);
+    return;
+  }
+
+  if (scenario === "tool-image") {
+    emit({ type: "system", subtype: "init", session_id: "sess-img", model: "claude-opus-test" });
+    await delay(20);
+    emit({
+      type: "assistant",
+      message: {
+        content: [
+          {
+            type: "tool_use",
+            id: "toolu_img",
+            name: "Read",
+            input: { file_path: "/tmp/shot-home.png" },
+          },
+        ],
+      },
+    });
+    await delay(20);
+    emit({
+      type: "user",
+      message: {
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "toolu_img",
+            content: [
+              { type: "text", text: "Read image" },
+              {
+                type: "image",
+                source: {
+                  type: "base64",
+                  media_type: "image/png",
+                  data: "${PNG_B64}",
+                },
+              },
+            ],
+            is_error: false,
+          },
+        ],
+      },
+    });
+    await delay(20);
+    emit({
+      type: "result",
+      subtype: "success",
+      result: "looks good",
+      usage: { input_tokens: 10, output_tokens: 5 },
+      total_cost_usd: 0.001,
+      num_turns: 1,
+      session_id: "sess-img",
     });
     process.exit(0);
     return;
@@ -890,6 +948,7 @@ describe("runner claude provider", () => {
         pushes.push({ channel, payload });
       },
       tickMs: 15,
+      userDataPath: tmpDir,
     });
 
     const repo = path.join(tmpDir, "app");
@@ -1234,6 +1293,32 @@ describe("runner claude provider", () => {
     assert.equal(tool.tool.done, true);
     assert.equal(tool.tool.isError, true);
     assert.match(tool.tool.output, /command failed/);
+  });
+
+  it("saves tool_result images to disk and names them on the tool message", async () => {
+    process.env.CODER_FAKE_CLAUDE_SCENARIO = "tool-image";
+
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "screenshot it" });
+
+    await waitFor(() => {
+      const t = store.getThreads().find((x) => x.id === thread.id);
+      return t && t.status === "done";
+    });
+
+    const tool = store.getMessages(thread.id).find((m) => m.role === "tool");
+    assert.ok(tool);
+    assert.equal(tool.tool.done, true);
+    assert.equal(tool.tool.images.length, 1);
+    // The base64 stays out of the transcript; only the file name is stored.
+    assert.ok(!JSON.stringify(tool).includes(PNG_B64));
+    const file = path.join(tmpDir, "tool-images", tool.tool.images[0]);
+    assert.equal(fs.readFileSync(file).toString("base64"), PNG_B64);
+    const { readToolImage } = require("../tool-images.js");
+    assert.equal(
+      readToolImage(tmpDir, tool.tool.images[0]),
+      `data:image/png;base64,${PNG_B64}`,
+    );
   });
 
   it("accumulates usage across two turns and passes --resume", async () => {
