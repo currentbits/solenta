@@ -203,31 +203,54 @@ describe("forkThread + handoff (services)", () => {
 });
 
 describe("buildHandoffPrefix", () => {
-  it("builds the context block from the last assistant message", () => {
+  it("digests the tail of the thread, both roles, oldest first", () => {
     const prefix = services.buildHandoffPrefix(
       { handoffFrom: "src", sessionId: null },
       () => [
         { role: "user", text: "hi" },
         { role: "assistant", text: "first" },
+        { role: "user", text: "and then?" },
         { role: "assistant", text: "LAST ANSWER" },
       ],
     );
     assert.equal(
       prefix,
-      "[Hand-off context from a previous thread]\nLAST ANSWER\n[End context]\n\n",
+      "[Hand-off context: the last messages of the source thread, truncated — " +
+        "not the full transcript]\n" +
+        "user: hi\n\nassistant: first\n\nuser: and then?\n\n" +
+        "assistant: LAST ANSWER\n[End context]\n\n",
     );
   });
 
-  it("truncates long assistant text to HANDOFF_ASSISTANT_MAX", () => {
-    const long = "A".repeat(services.HANDOFF_ASSISTANT_MAX + 50);
+  it("keeps at most HANDOFF_MESSAGE_COUNT messages, newest kept", () => {
+    const msgs = Array.from({ length: 40 }, (_, i) => ({
+      role: i % 2 ? "assistant" : "user",
+      text: `m${i}`,
+    }));
+    const prefix = services.buildHandoffPrefix(
+      { handoffFrom: "src", sessionId: null },
+      () => msgs,
+    );
+    const bodies = prefix
+      .split("\n")
+      .filter((l) => l.startsWith("user: ") || l.startsWith("assistant: "));
+    assert.equal(bodies.length, services.HANDOFF_MESSAGE_COUNT);
+    assert.ok(prefix.includes("assistant: m39"));
+    assert.ok(!prefix.includes("user: m0\n"));
+  });
+
+  it("truncates a long message to HANDOFF_MESSAGE_MAX", () => {
+    const long = "A".repeat(services.HANDOFF_MESSAGE_MAX + 50);
     const prefix = services.buildHandoffPrefix(
       { handoffFrom: "src", sessionId: null },
       () => [{ role: "assistant", text: long }],
     );
-    const body = prefix
-      .replace("[Hand-off context from a previous thread]\n", "")
-      .replace("\n[End context]\n\n", "");
-    assert.equal(body.length, services.HANDOFF_ASSISTANT_MAX);
+    assert.ok(
+      prefix.includes(
+        "assistant: " + "A".repeat(services.HANDOFF_MESSAGE_MAX) + "\n[…truncated]",
+      ),
+    );
+    assert.ok(!prefix.includes("A".repeat(services.HANDOFF_MESSAGE_MAX + 1)));
   });
 
   it("skips silently when session exists, no assistant, or missing source", () => {
@@ -373,7 +396,7 @@ process.stdin.on("data", (c) => {
 
     const cliPrompt1 = lastArgvPrompt();
     assert.ok(
-      cliPrompt1.startsWith("[Hand-off context from a previous thread]\n"),
+      cliPrompt1.startsWith("[Hand-off context:"),
       `CLI must see prefix: ${cliPrompt1.slice(0, 80)}`,
     );
     assert.ok(cliPrompt1.includes("PRIOR CONTEXT FROM SOURCE"));

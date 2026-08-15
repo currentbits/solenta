@@ -414,8 +414,10 @@ const TICK_MS = TRAILER ? 1600 : 700;
 const TITLE_MAX = 60;
 const WORKTREE_DELAY_MS = 450;
 const PUSH_DELAY_MS = 350;
-/** Mirrors electron/services.js HANDOFF_ASSISTANT_MAX. */
-const HANDOFF_ASSISTANT_MAX = 2000;
+/** Mirrors electron/services.js hand-off digest limits. */
+const HANDOFF_MESSAGE_MAX = 2000;
+const HANDOFF_MESSAGE_COUNT = 12;
+const HANDOFF_TOTAL_MAX = 12000;
 
 /**
  * Mirrors electron/worktrees.js maybeRenameWorktreeBranch: a creation-time
@@ -460,22 +462,34 @@ export function buildHandoffPrefix(
     return "";
   }
   if (!Array.isArray(msgs) || msgs.length === 0) return "";
-  let lastAssistant: string | null = null;
-  for (let i = msgs.length - 1; i >= 0; i--) {
-    const m = msgs[i];
-    if (m && m.role === "assistant" && m.text != null && String(m.text)) {
-      lastAssistant = String(m.text);
-      break;
-    }
+  if (
+    !msgs.some(
+      (m) => m && m.role === "assistant" && m.text != null && String(m.text),
+    )
+  ) {
+    return "";
   }
-  if (!lastAssistant) return "";
-  const body =
-    lastAssistant.length > HANDOFF_ASSISTANT_MAX
-      ? lastAssistant.slice(0, HANDOFF_ASSISTANT_MAX)
-      : lastAssistant;
+  const picked: string[] = [];
+  let total = 0;
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    if (picked.length >= HANDOFF_MESSAGE_COUNT) break;
+    const m = msgs[i];
+    if (!m || (m.role !== "assistant" && m.role !== "user")) continue;
+    const text = m.text == null ? "" : String(m.text);
+    if (!text) continue;
+    const body =
+      text.length > HANDOFF_MESSAGE_MAX
+        ? text.slice(0, HANDOFF_MESSAGE_MAX) + "\n[…truncated]"
+        : text;
+    if (picked.length && total + body.length > HANDOFF_TOTAL_MAX) break;
+    picked.push(`${m.role}: ${body}`);
+    total += body.length;
+  }
+  picked.reverse();
   return (
-    "[Hand-off context from a previous thread]\n" +
-    body +
+    "[Hand-off context: the last messages of the source thread, truncated — " +
+    "not the full transcript]\n" +
+    picked.join("\n\n") +
     "\n[End context]\n\n"
   );
 }

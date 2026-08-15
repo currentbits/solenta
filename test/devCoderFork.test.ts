@@ -66,11 +66,15 @@ describe("devCoder threads.fork", () => {
   it("buildHandoffPrefix strings match electron services twin", () => {
     const prefix = buildHandoffPrefix(
       { handoffFrom: "x", sessionId: null },
-      () => [{ role: "assistant", text: "HELLO" }],
+      () => [
+        { role: "user", text: "ASK" },
+        { role: "assistant", text: "HELLO" },
+      ],
     );
     assert.equal(
       prefix,
-      "[Hand-off context from a previous thread]\nHELLO\n[End context]\n\n",
+      "[Hand-off context: the last messages of the source thread, truncated — " +
+        "not the full transcript]\nuser: ASK\n\nassistant: HELLO\n[End context]\n\n",
     );
     assert.equal(
       buildHandoffPrefix({ handoffFrom: "x", sessionId: "s" }, () => [
