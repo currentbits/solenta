@@ -9,12 +9,17 @@
 // A build with no channel/releaseTag stamp (dev tree, local install-swap
 // bundle) never updates itself.
 //
+// Checks are automatic; installs are not. checkUpdate() only asks the API;
+// downloadUpdate() is what the user clicks, and it verifies the asset against
+// the sha256 digest GitHub stamps on it before anything touches the bundle.
+//
 // Install on macOS reuses the proven swap: mv the running bundle aside as
 // Solenta.app.old, ditto the new one into place, delete .old on next boot.
 // The swapped-in bundle also means a plain quit+relaunch picks up the new
 // build even if the user never clicks "Restart".
 // ponytail: auto-install is macOS-only; win/linux get the release URL.
 
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -88,24 +93,37 @@ async function fetchLatest(channel, fetchImpl) {
   return res.json();
 }
 
-/** @type {Promise<any> | null} one check/stage at a time */
-let inflight = null;
+/** @type {Promise<any> | null} */
+let checking = null;
+/** @type {Promise<any> | null} */
+let installing = null;
 /** @type {string | null} tag already swapped into place this boot */
 let stagedTag = null;
 
 /**
- * Check the channel for a newer release and, on macOS, download + swap it
- * into place. Resolves to an UpdateStatus (src/shared/ipc.ts).
+ * Check the channel for a newer release. Never touches the installed bundle.
+ * Resolves to an UpdateStatus (src/shared/ipc.ts).
  */
-function checkAndStage(deps = {}) {
-  if (inflight) return inflight;
-  inflight = doCheckAndStage(deps).finally(() => {
-    inflight = null;
-  });
-  return inflight;
+function checkUpdate(deps = {}) {
+  if (!checking) {
+    checking = doCheck(deps, false).finally(() => {
+      checking = null;
+    });
+  }
+  return checking;
 }
 
-async function doCheckAndStage(deps) {
+/** Download + verify + swap the new bundle in. User-initiated only. */
+function downloadUpdate(deps = {}) {
+  if (!installing) {
+    installing = doCheck(deps, true).finally(() => {
+      installing = null;
+    });
+  }
+  return installing;
+}
+
+async function doCheck(deps, install) {
   const stamp = buildStamp(deps.pkg);
   // Settings override wins; the stamped tag is still required so a dev tree
   // (no releaseTag) can never update itself onto a channel.
@@ -125,9 +143,9 @@ async function doCheckAndStage(deps) {
 
     const asset = pickAsset(latest, deps.platform, deps.arch);
     const bundle = deps.bundlePath !== undefined ? deps.bundlePath : bundlePath();
-    if (!asset || !bundle) return { ...status, state: "available" };
+    if (!install || !asset || !bundle) return { ...status, state: "available" };
 
-    await stage(asset.browser_download_url, bundle, status.tag, deps);
+    await stage(asset, bundle, status.tag, deps);
     stagedTag = status.tag;
     return { ...status, state: "staged" };
   } catch (err) {
@@ -139,17 +157,29 @@ async function doCheckAndStage(deps) {
   }
 }
 
-/** Download the zip, extract, swap the bundle (mv aside + ditto in). */
-async function stage(assetUrl, bundle, tag, deps) {
+/** Download the zip, check its digest, swap the bundle (mv aside + ditto in). */
+async function stage(asset, bundle, tag, deps) {
   const doFetch = deps.fetch || fetch;
+  // GitHub stamps `digest` ("sha256:<hex>") on release assets server-side. The
+  // artifact is unsigned, so this is the only integrity check there is: no
+  // digest means no auto-install, and the user installs from the release page.
+  const want = /^sha256:([0-9a-f]{64})$/.exec(String(asset.digest || ""));
+  if (!want) throw new Error("release asset carries no sha256 digest");
   const work = path.join(os.tmpdir(), `solenta-update-${tag.replace(/[^\w.-]/g, "_")}`);
   fs.rmSync(work, { recursive: true, force: true });
   fs.mkdirSync(work, { recursive: true });
   try {
     const zip = path.join(work, "update.zip");
-    const res = await doFetch(assetUrl, { headers: { "User-Agent": HEADERS["User-Agent"] } });
+    const res = await doFetch(asset.browser_download_url, {
+      headers: { "User-Agent": HEADERS["User-Agent"] },
+    });
     if (!res.ok || !res.body) throw new Error(`download: HTTP ${res.status}`);
     await pipeline(Readable.fromWeb(res.body), fs.createWriteStream(zip));
+
+    const hash = crypto.createHash("sha256");
+    await pipeline(fs.createReadStream(zip), hash);
+    const got = hash.digest("hex");
+    if (got !== want[1]) throw new Error(`digest mismatch: expected ${want[1]}, got ${got}`);
 
     await run("ditto", ["-x", "-k", zip, work]);
     const newApp = fs
@@ -190,7 +220,8 @@ function cleanupOldBundle(deps = {}) {
 }
 
 module.exports = {
-  checkAndStage,
+  checkUpdate,
+  downloadUpdate,
   applyUpdate,
   cleanupOldBundle,
   // seams for tests
@@ -198,4 +229,5 @@ module.exports = {
   bundlePath,
   pickAsset,
   fetchLatest,
+  stage,
 };

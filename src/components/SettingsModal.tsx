@@ -14,6 +14,8 @@ interface SettingsModalProps {
   update?: UpdateStatus | null;
   /** Manual "Check for updates". */
   onCheckUpdate?: () => Promise<void>;
+  /** Download + install an available update. Nothing installs without this. */
+  onDownloadUpdate?: () => Promise<void>;
   /** Relaunch into a staged update. */
   onApplyUpdate?: () => Promise<void>;
   onSaveSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>;
@@ -37,6 +39,7 @@ export function SettingsModal({
   status,
   update,
   onCheckUpdate,
+  onDownloadUpdate,
   onApplyUpdate,
   onSaveSettings,
 }: SettingsModalProps) {
@@ -45,6 +48,7 @@ export function SettingsModal({
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [downloadingUpdate, setDownloadingUpdate] = useState(false);
   const wasOpen = useRef(false);
   /** Sync guard: blur then Save-click can both fire before setSaving lands. */
   const savingRef = useRef(false);
@@ -398,18 +402,32 @@ export function SettingsModal({
               </div>
             )}
             {update?.state === "available" && (
-              <p className={styles.note}>
-                Update {update.tag} available
-                {update.url ? (
-                  <>
-                    {" — "}
-                    <a href={update.url} target="_blank" rel="noreferrer">
-                      release page
-                    </a>
-                  </>
-                ) : null}
-                {update.error ? ` (auto-install failed: ${update.error})` : ""}
-              </p>
+              <div className={styles.fieldRow}>
+                <span className={styles.note}>
+                  Update {update.tag} available
+                  {update.url ? (
+                    <>
+                      {" — "}
+                      <a href={update.url} target="_blank" rel="noreferrer">
+                        release page
+                      </a>
+                    </>
+                  ) : null}
+                  {update.error ? ` (install failed: ${update.error})` : ""}
+                </span>
+                <button
+                  type="button"
+                  className={`${styles.btn} ${styles.btnPrimary}`}
+                  data-download-update=""
+                  disabled={downloadingUpdate || onDownloadUpdate == null}
+                  onClick={() => {
+                    setDownloadingUpdate(true);
+                    void onDownloadUpdate?.().finally(() => setDownloadingUpdate(false));
+                  }}
+                >
+                  {downloadingUpdate ? "Downloading…" : "Download and install"}
+                </button>
+              </div>
             )}
             {update?.state === "error" && (
               <p className={styles.fieldError} role="alert">
