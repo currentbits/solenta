@@ -16,7 +16,7 @@
     "test": "npm run test:core && npm run test:renderer && npm run test:electron && npm run test:memory",
     "test:core": "cd core && npm run build && npm test",
     "test:renderer": "CODER_GROK_MCP_DISABLE=1 node --import=./test/support/render.mjs --experimental-strip-types --test --test-timeout=20000 test/*.test.ts test/*.test.tsx",
-    "test:electron": "node --import=./test/support/render.mjs --experimental-strip-types --test --test-concurrency=4 electron/test/*.test.js",
+    "test:electron": "node --import=./test/support/render.mjs --experimental-strip-types --test electron/test/*.test.js",
     "test:memory": "cd memory-server && node --test test/*.test.js"
   },
   "dependencies": {
