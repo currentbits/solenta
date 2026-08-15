@@ -1680,6 +1680,50 @@ describe("runner claude provider", () => {
     assert.equal(spawns2.length, 1);
   });
 
+  it("keeps only the 3 most recently idled CLIs alive (issue #36)", async () => {
+    process.env.CODER_FAKE_CLAUDE_SCENARIO = "multi-turn";
+    const markerDir = path.join(tmpDir, "lru-markers");
+    process.env.CODER_FAKE_CLAUDE_MARKER_DIR = markerDir;
+
+    const project = store.getProjects()[0];
+    const threads = [store.getThreads()[0]];
+    for (let i = 2; i <= 4; i += 1) {
+      threads.push(
+        services.createThread(store, { projectId: project.id, title: `T${i}` }),
+      );
+    }
+
+    // One turn each, settled in order: four kept-alive CLIs, cap is three.
+    for (const t of threads) {
+      await runner.startRun({ threadId: t.id, prompt: "hi" });
+      await waitFor(() => store.getThread(t.id).status === "done");
+    }
+
+    const pids = fs
+      .readFileSync(path.join(markerDir, "spawns"), "utf8")
+      .trim()
+      .split("\n")
+      .map(Number);
+    assert.equal(pids.length, 4);
+
+    const alive = (pid) => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    await waitFor(() => !alive(pids[0]), { timeoutMs: 5000 });
+    // Give a wrong cap (killing more than the excess) a beat to show itself.
+    await new Promise((r) => setTimeout(r, 200));
+    assert.deepEqual(
+      pids.slice(1).map(alive),
+      [true, true, true],
+      "the three newest idle CLIs must survive",
+    );
+  });
+
   it("answers a control_request arriving while settled with a retryable error, not silence", async () => {
     process.env.CODER_FAKE_CLAUDE_SCENARIO = "late-permission";
     const ctrlFile = path.join(tmpDir, "late-ctrl.json");
