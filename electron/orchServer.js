@@ -25,7 +25,10 @@ const INSTRUCTIONS =
   "its last assistant reply. Runs are asynchronous: send work, then continue. " +
   "When a worker you forked finishes (done or failed) you are woken on a new turn " +
   "with a notice; do not sit idle waiting for the user to relay that. " +
-  "thread_status still has full details if you need them before the wake-up.";
+  "thread_status still has full details if you need them before the wake-up. " +
+  "A worker can also stall on a permission prompt only the user can answer: that " +
+  "sends no notice and stays \"working\", so if one goes quiet check thread_status " +
+  "for awaitingInput and tell the user what it is waiting on.";
 
 /**
  * Can this project host a git worktree? Remote projects are excluded (same
@@ -279,12 +282,25 @@ function createToolHandlers(deps) {
         }
       }
     }
+    // A worker blocked on a permission prompt stays "working" forever and
+    // never fires a wake-up notice, so the orchestrator must be able to see
+    // it (issue #31). Same guard as the sidebar badge: a stale flag left by
+    // a run that died mid-prompt must not read as blocked.
+    const awaitingInput =
+      thread.status === "working" && thread.awaitingInput === true;
+    let awaitingPermission = null;
+    if (awaitingInput && typeof runner.getPendingPermission === "function") {
+      const pending = runner.getPendingPermission(args.threadId);
+      if (pending) awaitingPermission = pending.summary || pending.toolName;
+    }
     return {
       status: thread.status ?? null,
       title: thread.title ?? null,
       provider: thread.provider ?? null,
       lastAssistantText,
       lastError,
+      awaitingInput,
+      awaitingPermission,
     };
   }
 
@@ -347,7 +363,7 @@ function buildMcpServer(sdk, handlers) {
     "thread_status",
     {
       description:
-        "Status of one thread: status, title, provider, lastAssistantText (first line of the last assistant message, null when none), lastError (run error detail when status is failed, null otherwise).",
+        "Status of one thread: status, title, provider, lastAssistantText (first line of the last assistant message, null when none), lastError (run error detail when status is failed, null otherwise), awaitingInput (true when the run is stalled on a permission prompt only the user can answer) and awaitingPermission (what it is asking for).",
       inputSchema: {
         threadId: z.string().min(1),
       },

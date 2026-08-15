@@ -16,6 +16,19 @@ describe("shouldNotify", () => {
     assert.equal(shouldNotify("working", "failed", true), false);
   });
 
+  it("notifies working -> waiting: a run blocked on a prompt is a stall", () => {
+    assert.equal(shouldNotify("working", "waiting", false), true);
+    assert.equal(shouldNotify("working", "waiting", true), false);
+    // One prompt, one notification.
+    assert.equal(shouldNotify("waiting", "waiting", false), false);
+  });
+
+  it("still notifies once the answered run settles", () => {
+    assert.equal(shouldNotify("waiting", "working", false), false);
+    assert.equal(shouldNotify("waiting", "done", false), true);
+    assert.equal(shouldNotify("waiting", "failed", false), true);
+  });
+
   it("does not notify other status transitions", () => {
     assert.equal(shouldNotify("working", "working", false), false);
     assert.equal(shouldNotify("working", "idle", false), false);

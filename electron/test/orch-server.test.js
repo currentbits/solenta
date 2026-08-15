@@ -288,6 +288,8 @@ describe("orch-server tool handlers", () => {
       provider: "claude",
       lastAssistantText: "first line",
       lastError: null,
+      awaitingInput: false,
+      awaitingPermission: null,
     });
     // No assistant message: null.
     assert.deepEqual(await h.thread_status({ threadId: "t2" }), {
@@ -296,6 +298,8 @@ describe("orch-server tool handlers", () => {
       provider: "codex",
       lastAssistantText: null,
       lastError: null,
+      awaitingInput: false,
+      awaitingPermission: null,
     });
     await assert.rejects(
       () => h.thread_status({ threadId: "ghost" }),
@@ -312,7 +316,26 @@ describe("orch-server tool handlers", () => {
       provider: "grok",
       lastAssistantText: "starting",
       lastError: "Run error: result subtype error_during_execution",
+      awaitingInput: false,
+      awaitingPermission: null,
     });
+  });
+
+  it("thread_status reports a worker blocked on a permission prompt", async () => {
+    const deps = makeDeps();
+    deps.runner.getPendingPermission = (id) =>
+      id === "t2" ? { toolName: "Bash", summary: "Bash(rm -rf build)" } : null;
+    deps.store.getThread("t2").awaitingInput = true;
+    const h = createToolHandlers(deps);
+    const status = await h.thread_status({ threadId: "t2" });
+    assert.equal(status.awaitingInput, true);
+    assert.equal(status.awaitingPermission, "Bash(rm -rf build)");
+
+    // Flag left behind by a run that died mid-prompt must not read as blocked.
+    deps.store.getThread("t3").awaitingInput = true;
+    const dead = await h.thread_status({ threadId: "t3" });
+    assert.equal(dead.awaitingInput, false);
+    assert.equal(dead.awaitingPermission, null);
   });
 });
 
