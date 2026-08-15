@@ -991,6 +991,47 @@
   user-select: text;
 }
 
+/* Attachments listed under the message text they were sent with. */
+.attachmentChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.attachmentChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px 3px 4px;
+  border-radius: var(--radius-pill);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--blue-border);
+  color: #e0ecff;
+  font-size: 11.5px;
+  max-width: 240px;
+}
+
+.attachmentIcon {
+  flex-shrink: 0;
+  opacity: 0.8;
+  margin-left: 4px;
+}
+
+.attachmentThumb {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.attachmentName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .empty {
   flex: 1;
   display: flex;

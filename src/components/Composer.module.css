@@ -832,6 +832,68 @@
   font-family: var(--mono);
 }
 
+/* Pending attachments sit inside the card, above the textarea, so they read
+   as part of the message about to be sent. */
+.attachmentRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 2px 2px 8px;
+}
+
+.attachmentChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px 3px 4px;
+  border-radius: var(--radius-pill);
+  background: var(--card-hover);
+  border: 1px solid var(--border-soft);
+  color: var(--text-muted);
+  font-size: 11.5px;
+  max-width: 220px;
+}
+
+.attachmentIcon {
+  flex-shrink: 0;
+  opacity: 0.8;
+  margin-left: 4px;
+}
+
+.attachmentThumb {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.attachmentName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachmentRemove {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1;
+  flex-shrink: 0;
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease;
+}
+
+.attachmentRemove:hover {
+  background: var(--border-soft);
+  color: var(--text);
+}
+
 /* Free-text model entry: the published list is a suggestion, so a user must be
    able to name an id it does not know yet. */
 .customModelWrap {

@@ -1,6 +1,6 @@
 "use strict";
 
-const { contextBridge, ipcRenderer } = require("electron");
+const { contextBridge, ipcRenderer, webUtils } = require("electron");
 
 const PUSH_CHANNELS = new Set([
   "threads:changed",
@@ -141,6 +141,15 @@ const coder = {
   files: {
     list: (input) => invoke("files:list", input),
     image: (input) => invoke("files:image", input),
+  },
+  attachments: {
+    pick: () => invoke("attachments:pick"),
+    fromPaths: (input) => invoke("attachments:fromPaths", input),
+    saveImage: (input) => invoke("attachments:saveImage", input),
+    readImage: (input) => invoke("attachments:readImage", input),
+    // Drag-drop helper: File objects cannot cross IPC, so the path is
+    // resolved in the preload (Electron >= 29) instead of via a channel.
+    droppedFilePath: (file) => webUtils.getPathForFile(file),
   },
   servers: {
     list: (input) => invoke("servers:list", input),

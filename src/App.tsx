@@ -68,6 +68,10 @@ export default function App() {
     suggestCommitMessage,
     listFiles,
     loadToolImage,
+    pickAttachments,
+    saveAttachmentImage,
+    loadAttachmentImage,
+    dropAttachmentFiles,
     pushBranch,
     listPrs,
     listIssues,
@@ -445,7 +449,9 @@ export default function App() {
         workflows={workflows}
         hasProjects={projects.length > 0}
         onAddProject={handleAddProject}
-        onStartRun={(prompt, threadId) => startRun(prompt, threadId)}
+        onStartRun={(prompt, threadId, attachments) =>
+          startRun(prompt, threadId, attachments)
+        }
         onStartWorkflow={(prompt, templateId) =>
           startWorkflowRun(prompt, templateId)
         }
@@ -474,6 +480,10 @@ export default function App() {
         onSuggestCommitMessage={() => suggestCommitMessage()}
         onListFiles={(query) => listFiles(query)}
         onLoadImage={loadToolImage}
+        onPickAttachments={isWebMode() ? undefined : pickAttachments}
+        onSaveAttachmentImage={saveAttachmentImage}
+        onLoadAttachmentImage={loadAttachmentImage}
+        onDropAttachmentFiles={isWebMode() ? undefined : dropAttachmentFiles}
         onPush={() => pushBranch()}
         gitSyncInfo={gitSyncInfo}
         gitFetch={gitFetch}

@@ -28,6 +28,7 @@ const { listLocalServers } = require("./servers.js");
 const devservers = require("./devservers.js");
 const { createMemoryProxy } = require("./memory-proxy.js");
 const { readToolImage } = require("./tool-images.js");
+const attachments = require("./attachments.js");
 const { syncUserMcpServers } = require("./memory-sup.js");
 const skills = require("./skills.js");
 const { fetchIssue, listIssues } = require("./issues.js");
@@ -456,6 +457,29 @@ const IPC_HANDLERS = {
     return {
       dataUrl: readToolImage(ctx.userDataPath, input && input.name),
     };
+  },
+  "attachments:pick": async (ctx) => {
+    if (!ctx.dialog || typeof ctx.dialog.showOpenDialog !== "function") {
+      throw new Error("Attachment picker is not available in this mode");
+    }
+    return { attachments: await attachments.pickAttachments(ctx.dialog) };
+  },
+  "attachments:fromPaths": async (ctx, input) => {
+    return {
+      attachments: attachments.classifyPaths(input && input.paths),
+    };
+  },
+  "attachments:saveImage": async (ctx, input) => {
+    return {
+      attachment: attachments.saveImage(
+        ctx.userDataPath,
+        input && input.threadId,
+        input && input.dataUrl,
+      ),
+    };
+  },
+  "attachments:readImage": async (ctx, input) => {
+    return { dataUrl: attachments.readImage(input && input.path) };
   },
   "git:mergeWorktree": async (ctx, input) => {
     return mergeWorktree({

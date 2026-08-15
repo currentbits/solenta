@@ -4,10 +4,13 @@ import {
   useId,
   useRef,
   useState,
+  type ClipboardEvent,
   type CSSProperties,
+  type DragEvent,
   type KeyboardEvent,
 } from "react";
 import type {
+  AttachmentInfo,
   PermissionMode,
   ProviderInfo,
   ReasoningEffort,
@@ -80,7 +83,7 @@ interface ComposerProps {
   hasWorktree: boolean;
   disabled?: boolean;
   /** Single session turn (send arrow + ⌘Enter). */
-  onSend: (prompt: string) => void | Promise<void>;
+  onSend: (prompt: string, attachments?: AttachmentInfo[]) => void | Promise<void>;
   /** Multi-phase Build workflow (Build pill main segment). */
   onBuild: (prompt: string, templateId: string) => void | Promise<void>;
   /**
@@ -105,6 +108,20 @@ interface ComposerProps {
    * mock shells without a repo behind them).
    */
   onListFiles?: (query: string) => Promise<string[]>;
+  /**
+   * Native image/folder picker for attachments. Absent hides the attach
+   * button (web mode has no native dialog).
+   */
+  onPickAttachments?: () => Promise<AttachmentInfo[]>;
+  /** Persist a pasted image; returns its attachment or null when rejected. */
+  onSaveAttachmentImage?: (dataUrl: string) => Promise<AttachmentInfo | null>;
+  /** Thumbnail data URL for an attached image; null when unavailable. */
+  onLoadAttachmentImage?: (path: string) => Promise<string | null>;
+  /**
+   * Classify drag-dropped files into attachments (Electron resolves their
+   * absolute paths). Absent disables drop (web mode).
+   */
+  onDropAttachmentFiles?: (files: File[]) => Promise<AttachmentInfo[]>;
 }
 
 const STATIC = {
@@ -116,6 +133,79 @@ const DEFAULT_TEMPLATE_ID = "standard";
 /** Capped cascade index: row 30 shouldn't wait half a second to appear. */
 const rowEnterStyle = (index: number): CSSProperties =>
   ({ "--i": String(Math.min(index, 10)) }) as CSSProperties;
+
+/** One pending attachment: thumbnail for images, folder glyph for folders. */
+function AttachmentChip({
+  attachment,
+  onRemove,
+  onLoadImage,
+}: {
+  attachment: AttachmentInfo;
+  onRemove: () => void;
+  onLoadImage?: (path: string) => Promise<string | null>;
+}) {
+  const [thumb, setThumb] = useState<string | null>(null);
+  useEffect(() => {
+    if (attachment.kind !== "image" || !onLoadImage) return;
+    let live = true;
+    void onLoadImage(attachment.path)
+      .then((url) => {
+        if (live) setThumb(url);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [attachment.kind, attachment.path, onLoadImage]);
+  return (
+    <span
+      className={styles.attachmentChip}
+      data-attachment-kind={attachment.kind}
+      title={attachment.path}
+    >
+      {attachment.kind === "image" && thumb ? (
+        <img
+          className={styles.attachmentThumb}
+          src={thumb}
+          alt={attachment.name}
+        />
+      ) : (
+        <svg
+          className={styles.attachmentIcon}
+          width="12"
+          height="12"
+          viewBox="0 0 16 16"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          {attachment.kind === "folder" ? (
+            <path d="M2.5 4A1.5 1.5 0 0 1 4 2.5h2.2a1.5 1.5 0 0 1 1.1.5l.8 1a1.5 1.5 0 0 0 1.1.5H12A1.5 1.5 0 0 1 13.5 6v5A1.5 1.5 0 0 1 12 12.5H4A1.5 1.5 0 0 1 2.5 11V4Z" />
+          ) : (
+            <>
+              <rect x="2.5" y="2.5" width="11" height="11" rx="1.5" />
+              <circle cx="5.8" cy="6" r="1" />
+              <path d="m3 12 3.5-3.5 2.5 2.5 2-2L13.5 12" />
+            </>
+          )}
+        </svg>
+      )}
+      <span className={styles.attachmentName}>{attachment.name}</span>
+      <button
+        type="button"
+        className={styles.attachmentRemove}
+        aria-label={`Remove ${attachment.name}`}
+        title={`Remove ${attachment.name}`}
+        onClick={onRemove}
+      >
+        ×
+      </button>
+    </span>
+  );
+}
 
 export function Composer({
   threadId,
@@ -143,6 +233,10 @@ export function Composer({
   error = null,
   onDismissError,
   onListFiles,
+  onPickAttachments,
+  onSaveAttachmentImage,
+  onLoadAttachmentImage,
+  onDropAttachmentFiles,
 }: ComposerProps) {
   /**
    * Unsent drafts keyed by thread: one Composer instance serves every thread
@@ -156,6 +250,44 @@ export function Composer({
   const setValue = useCallback(
     (text: string) =>
       setDraftByThread((drafts) => ({ ...drafts, [threadId]: text })),
+    [threadId],
+  );
+  /**
+   * Pending attachments keyed by thread, mirroring draftByThread: chips must
+   * not leak across a thread switch. Cleared together with the draft on a
+   * successful action.
+   */
+  const [attachmentsByThread, setAttachmentsByThread] = useState<
+    Record<string, AttachmentInfo[]>
+  >({});
+  const attachments = attachmentsByThread[threadId] ?? [];
+  const addAttachments = useCallback(
+    (items: AttachmentInfo[]) => {
+      if (!items.length) return;
+      setAttachmentsByThread((prev) => {
+        const existing = prev[threadId] ?? [];
+        const seen = new Set(existing.map((a) => a.path));
+        const fresh = items.filter((a) => !seen.has(a.path));
+        return fresh.length
+          ? { ...prev, [threadId]: [...existing, ...fresh] }
+          : prev;
+      });
+    },
+    [threadId],
+  );
+  const removeAttachment = useCallback(
+    (path: string) =>
+      setAttachmentsByThread((prev) => ({
+        ...prev,
+        [threadId]: (prev[threadId] ?? []).filter((a) => a.path !== path),
+      })),
+    [threadId],
+  );
+  const clearAttachments = useCallback(
+    () =>
+      setAttachmentsByThread((prev) =>
+        (prev[threadId] ?? []).length ? { ...prev, [threadId]: [] } : prev,
+      ),
     [threadId],
   );
   const [sending, setSending] = useState(false);
@@ -475,6 +607,7 @@ export function Composer({
     try {
       await action(prompt);
       setValue("");
+      clearAttachments();
       closeMention();
     } catch (err) {
       const msg =
@@ -501,7 +634,7 @@ export function Composer({
         await onDelegate(delegation.provider, delegation.task);
         return;
       }
-      await onSend(prompt);
+      await onSend(prompt, attachments.length ? attachments : undefined);
     }, "Failed to start run");
   };
 
@@ -577,6 +710,54 @@ export function Composer({
   const dismiss = () => {
     setLocalError(null);
     onDismissError?.();
+  };
+
+  const pickAttachments = () => {
+    if (!onPickAttachments || disabled || sending) return;
+    onPickAttachments()
+      .then(addAttachments)
+      .catch((err) => {
+        const msg =
+          err instanceof Error && err.message
+            ? err.message
+            : "Failed to attach";
+        setLocalError(msg);
+      });
+  };
+
+  /** Clipboard images become saved attachments; text pastes untouched. */
+  const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
+    if (!onSaveAttachmentImage || disabled || sending) return;
+    const items = Array.from(e.clipboardData?.items ?? []).filter(
+      (item) => item.kind === "file" && item.type.startsWith("image/"),
+    );
+    if (items.length === 0) return;
+    e.preventDefault();
+    for (const item of items) {
+      const blob = item.getAsFile();
+      if (!blob) continue;
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataUrl = typeof reader.result === "string" ? reader.result : "";
+        if (!dataUrl) return;
+        onSaveAttachmentImage(dataUrl)
+          .then((attachment) => {
+            if (attachment) addAttachments([attachment]);
+          })
+          .catch(() => {});
+      };
+      reader.readAsDataURL(blob);
+    }
+  };
+
+  const onDrop = (e: DragEvent<HTMLDivElement>) => {
+    if (!onDropAttachmentFiles || disabled || sending) return;
+    const files = Array.from(e.dataTransfer?.files ?? []);
+    if (files.length === 0) return;
+    e.preventDefault();
+    onDropAttachmentFiles(files)
+      .then(addAttachments)
+      .catch(() => {});
   };
 
   const pickMode = async (mode: PermissionMode) => {
@@ -712,7 +893,13 @@ export function Composer({
   };
 
   return (
-    <div className={styles.composer}>
+    <div
+      className={styles.composer}
+      onDragOver={(e) => {
+        if (onDropAttachmentFiles) e.preventDefault();
+      }}
+      onDrop={onDrop}
+    >
       {shownError && (
         <div className={styles.errorBanner} role="alert">
           <span className={styles.errorText}>{shownError}</span>
@@ -749,6 +936,18 @@ export function Composer({
             ))}
           </ul>
         )}
+        {attachments.length > 0 && (
+          <div className={styles.attachmentRow} aria-label="Attachments">
+            {attachments.map((a) => (
+              <AttachmentChip
+                key={a.path}
+                attachment={a}
+                onRemove={() => removeAttachment(a.path)}
+                onLoadImage={onLoadAttachmentImage}
+              />
+            ))}
+          </div>
+        )}
         <textarea
           ref={textareaRef}
           className={styles.textarea}
@@ -761,10 +960,36 @@ export function Composer({
           }}
           onSelect={refreshMention}
           onKeyDown={onKeyDown}
+          onPaste={onPaste}
           disabled={disabled || sending}
         />
         <div className={styles.controls}>
           <div className={styles.pills}>
+            {onPickAttachments && (
+              <button
+                type="button"
+                className={styles.pill}
+                disabled={disabled || sending}
+                aria-disabled={disabled || sending ? "true" : undefined}
+                aria-label="Attach image or folder"
+                title="Attach image or folder"
+                onClick={pickAttachments}
+              >
+                <svg
+                  width="13"
+                  height="13"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="m12.5 7.5-4.95 4.95a3.5 3.5 0 0 1-4.95-4.95l5.3-5.3a2.33 2.33 0 0 1 3.3 3.3l-5.3 5.3a1.17 1.17 0 0 1-1.65-1.65l4.6-4.6" />
+                </svg>
+              </button>
+            )}
             <div className={styles.modeWrap} ref={modelWrapRef}>
               <button
                 ref={modelTriggerRef}

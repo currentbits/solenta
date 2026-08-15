@@ -212,6 +212,18 @@ export interface ToolCallInfo {
   images?: string[];
 }
 
+/**
+ * An image or folder the user attached to a chat message (composer chips).
+ * `path` is absolute: agents run on this machine and read it with their
+ * normal file tools, so nothing is copied or embedded.
+ */
+export interface AttachmentInfo {
+  kind: "image" | "folder";
+  path: string;
+  /** Display name (basename of path). */
+  name: string;
+}
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant" | "event" | "tool";
@@ -222,6 +234,8 @@ export interface ChatMessage {
   runId?: string | null;
   /** Present exactly when role === "tool". */
   tool?: ToolCallInfo;
+  /** Images/folders the user attached (role "user" only). */
+  attachments?: AttachmentInfo[];
 }
 
 /** Cumulative session usage across turns of a thread. */
@@ -976,7 +990,11 @@ export interface CoderApi {
      * If the thread title is still the default "New Thread", main renames it
      * from the first line of the prompt.
      */
-    start(input: { threadId: string; prompt: string }): Promise<{ runId: string }>;
+    start(input: {
+      threadId: string;
+      prompt: string;
+      attachments?: AttachmentInfo[];
+    }): Promise<{ runId: string }>;
     /**
      * Starts an orchestrated multi-phase workflow run (the Build action)
      * from a template (default template when templateId omitted). Each phase
@@ -1136,6 +1154,42 @@ export interface CoderApi {
      * names). null when the file is gone or the name is not an image.
      */
     image(input: { name: string }): Promise<{ dataUrl: string | null }>;
+  };
+  /**
+   * Composer attachments: images and folders the user pins to a message.
+   * Only absolute paths travel; the agent reads them with its file tools.
+   * pick needs a native dialog, so it rejects in web mode (the renderer
+   * hides the attach button when no Electron bridge is present).
+   */
+  attachments: {
+    /**
+     * Native picker for images and folders (multi-select). Non-image files
+     * are skipped: those belong to the @-mention flow instead.
+     */
+    pick(): Promise<{ attachments: AttachmentInfo[] }>;
+    /**
+     * Classify absolute paths (e.g. resolved from a drag-drop) as image or
+     * folder via statSync; anything else is skipped.
+     */
+    fromPaths(input: { paths: string[] }): Promise<{ attachments: AttachmentInfo[] }>;
+    /**
+     * Persist a pasted image (data URL) under userData/attachments/<threadId>
+     * and return its AttachmentInfo. null when the payload is not an image.
+     */
+    saveImage(input: {
+      threadId: string;
+      dataUrl: string;
+    }): Promise<{ attachment: AttachmentInfo | null }>;
+    /**
+     * One attached image as a data URL (the CSP allows data:, not file:).
+     * null when the path is missing, not an image, or too large.
+     */
+    readImage(input: { path: string }): Promise<{ dataUrl: string | null }>;
+    /**
+     * Electron-only (preload, webUtils.getPathForFile): absolute path of a
+     * drag-dropped File. Absent on web/dev bridges, where drop is disabled.
+     */
+    droppedFilePath?(file: File): string;
   };
   servers: {
     /**
