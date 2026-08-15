@@ -231,6 +231,14 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           url: null,
           error: null,
         } as UpdateStatus),
+      downloadUpdate: () =>
+        rec("app.downloadUpdate", [], {
+          state: "disabled",
+          channel: null,
+          tag: null,
+          url: null,
+          error: null,
+        } as UpdateStatus),
       applyUpdate: () => rec("app.applyUpdate", [], undefined),
     },
     memory: {

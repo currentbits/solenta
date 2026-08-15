@@ -232,6 +232,7 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
     app: {
       status: () => call<AppStatus>("app:status"),
       checkUpdate: () => call<UpdateStatus>("app:checkUpdate"),
+      downloadUpdate: () => call<UpdateStatus>("app:downloadUpdate"),
       applyUpdate: () => call<void>("app:applyUpdate"),
     },
     memory: {

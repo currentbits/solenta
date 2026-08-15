@@ -39,6 +39,7 @@ const coder = {
   app: {
     status: () => invoke("app:status"),
     checkUpdate: () => invoke("app:checkUpdate"),
+    downloadUpdate: () => invoke("app:downloadUpdate"),
     applyUpdate: () => invoke("app:applyUpdate"),
   },
   memory: {

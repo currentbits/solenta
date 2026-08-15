@@ -89,6 +89,7 @@ export default function App() {
     appStatus,
     updateStatus,
     checkUpdate,
+    downloadUpdate,
     applyUpdate,
     settings,
     saveSettings,
@@ -539,6 +540,7 @@ export default function App() {
           status={appStatus}
           update={updateStatus}
           onCheckUpdate={checkUpdate}
+          onDownloadUpdate={downloadUpdate}
           onApplyUpdate={applyUpdate}
           onSaveSettings={(patch) => saveSettings(patch)}
         />

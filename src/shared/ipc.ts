@@ -731,9 +731,10 @@ export interface UpdateStatus {
   /**
    * disabled: build carries no channel/tag stamp (dev tree, local bundle).
    * none: already on the channel's latest release.
-   * available: newer release exists but was not auto-installed (non-macOS,
-   *   no matching asset, or install failed) — `url` links the release page.
-   * staged: new bundle already swapped into place; restart to run it.
+   * available: newer release exists and has not been installed — it never is
+   *   without a user click, and on non-macOS / no matching asset / a failed
+   *   install it never is at all; `url` links the release page.
+   * staged: new bundle downloaded, verified and swapped in; restart to run it.
    */
   state: "disabled" | "none" | "available" | "staged" | "error";
   channel: "prod" | "nightly" | null;
@@ -760,8 +761,10 @@ export interface MemoryEntryInfo {
 export interface CoderApi {
   app: {
     status(): Promise<AppStatus>;
-    /** Check the release channel; on macOS also downloads + stages the swap. */
+    /** Check the release channel. Read-only: never installs anything. */
     checkUpdate(): Promise<UpdateStatus>;
+    /** User-initiated install: download, verify the digest, stage the swap. */
+    downloadUpdate(): Promise<UpdateStatus>;
     /** Relaunch into a staged update. */
     applyUpdate(): Promise<void>;
   };
