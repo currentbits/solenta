@@ -589,6 +589,9 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  /* Never scroll horizontally: wide message content wraps or scrolls inside
+     its own block (code blocks, tables), the pane itself stays fixed. */
+  overflow-x: hidden;
   padding: 24px 24px 16px;
   display: flex;
   flex-direction: column;
@@ -706,6 +709,7 @@
 .eventTitle {
   font-weight: 600;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
   line-height: 1.45;
   min-width: 0;
   flex: 1;
