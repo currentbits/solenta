@@ -121,6 +121,28 @@ function orchNoticeMessages(store, threadId) {
   );
 }
 
+/**
+ * Fold thread:updated tails into a full detail, the way the renderer does
+ * (src/threadPatch.ts). Pushes carry only what changed since the last one.
+ */
+function foldPushes(pushes, threadId) {
+  let messages = [];
+  let workLog = [];
+  let last = null;
+  for (const p of pushes) {
+    if (p.channel !== "thread:updated") continue;
+    if (!p.payload || p.payload.thread.id !== threadId) continue;
+    messages = messages
+      .slice(0, p.payload.messagesFrom || 0)
+      .concat(p.payload.messages);
+    workLog = workLog
+      .slice(0, p.payload.workLogFrom || 0)
+      .concat(p.payload.workLog);
+    last = p.payload;
+  }
+  return last ? { ...last, messages, workLog } : null;
+}
+
 describe("runner simulated mode", () => {
   let tmpDir;
   let store;
@@ -273,11 +295,8 @@ describe("runner simulated mode", () => {
     const doneThread = store.getThreads().find((t) => t.id === thread.id);
     assert.equal(doneThread.runStartedAt, null);
 
-    const lastPush = [...pushes]
-      .reverse()
-      .find((p) => p.channel === "thread:updated");
-    assert.ok(lastPush, "expected thread:updated push");
-    const detail = lastPush.payload;
+    const detail = foldPushes(pushes, thread.id);
+    assert.ok(detail, "expected thread:updated push");
     assert.equal(detail.thread.status, "done");
     assert.ok(detail.workflow);
     assert.equal(detail.workflow.complete, true);
@@ -318,6 +337,34 @@ describe("runner simulated mode", () => {
     assert.equal(assistant[assistant.length - 1].runId, runId);
 
     assert.ok(runner.getActiveWorkflow(thread.id));
+  });
+
+  it("streams tails, not the whole transcript, and they fold back to it", async () => {
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "stream tails" });
+    await waitFor(() => {
+      const t = store.getThread(thread.id);
+      return t && t.status === "done";
+    });
+
+    const full = services.getThreadDetail(store, thread.id);
+    const folded = foldPushes(pushes, thread.id);
+    assert.deepEqual(folded.messages, full.messages);
+    assert.deepEqual(folded.workLog, full.workLog);
+
+    const streamed = pushes.filter((p) => p.channel === "thread:updated");
+    assert.ok(streamed.length > 2);
+    // Only the first push may carry everything; the rest are tails.
+    assert.ok(
+      streamed
+        .slice(1)
+        .every((p) => p.payload.messages.length < full.messages.length),
+      "later pushes must not re-send the whole message array",
+    );
+    assert.ok(
+      streamed.some((p) => p.payload.messagesFrom > 0),
+      "expected at least one push to skip an unchanged prefix",
+    );
   });
 
   it("archives a finished worker once the crew is quiet", async () => {

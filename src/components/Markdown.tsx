@@ -1,4 +1,4 @@
-import { isValidElement, useState, type ReactNode } from "react";
+import { isValidElement, memo, useState, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import styles from "./Markdown.module.css";
@@ -67,8 +67,11 @@ function CodeBlock({ children }: { children?: ReactNode }) {
  * Assistant-message markdown. react-markdown renders to React elements (no
  * dangerouslySetInnerHTML), so raw HTML in agent output is dropped, not
  * executed.
+ *
+ * memo: parsing is the expensive part of a streamed update, and only the
+ * message being written has new text.
  */
-export function Markdown({ text }: { text: string }) {
+export const Markdown = memo(function Markdown({ text }: { text: string }) {
   return (
     <div className={styles.md}>
       <ReactMarkdown
@@ -89,4 +92,4 @@ export function Markdown({ text }: { text: string }) {
       </ReactMarkdown>
     </div>
   );
-}
+});

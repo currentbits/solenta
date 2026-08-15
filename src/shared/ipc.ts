@@ -345,6 +345,24 @@ export interface ThreadDetail {
   pendingPermission?: PendingPermissionInfo | null;
 }
 
+/**
+ * A streamed thread update ("thread:updated"). `messages` and `workLog` are
+ * TAILS: everything from `messagesFrom` / `workLogFrom` onward, with the
+ * untouched prefix left out (the biggest transcripts are megabytes and this
+ * is pushed on every chunk). Merge with mergeThreadPatch; a missing index
+ * means 0, so a plain full ThreadDetail is also a valid patch.
+ */
+export interface ThreadPatch extends ThreadDetail {
+  messagesFrom?: number;
+  workLogFrom?: number;
+  /**
+   * Push counter for this thread, 1-based. A gap means a push was dropped
+   * (web socket reconnect), so the prefix we hold may be stale: refetch
+   * instead of merging. Absent on full pushes.
+   */
+  seq?: number;
+}
+
 export interface GitStatus {
   isRepo: boolean;
   branch: string;
@@ -1102,7 +1120,7 @@ export interface CoderApi {
   };
   /** Returns an unsubscribe function. */
   on(channel: "threads:changed", cb: (threads: ThreadInfo[]) => void): () => void;
-  on(channel: "thread:updated", cb: (detail: ThreadDetail) => void): () => void;
+  on(channel: "thread:updated", cb: (patch: ThreadPatch) => void): () => void;
   /** Desktop notification click: select this thread. */
   on(channel: "thread:select", cb: (threadId: string) => void): () => void;
 }

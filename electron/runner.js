@@ -403,6 +403,14 @@ function createRunner(opts) {
   /** @type {Map<string, object>} */
   const lastWorkflowByThread = new Map();
 
+  /**
+   * Arrays as last pushed per thread, for the tail diff in pushDetail, plus
+   * the push counter the renderer uses to spot dropped pushes. Holds element
+   * references only (the arrays are store slices), never clones.
+   * @type {Map<string, { messages: object[], workLog: object[], seq: number }>}
+   */
+  const lastPushByThread = new Map();
+
   /** Batched session transcript recorder (POST /api/session). */
   const sessionRecorder = createSessionRecorder({
     userDataPath,
@@ -764,9 +772,26 @@ function createRunner(opts) {
     return "";
   }
 
+  /**
+   * Index of the first element that differs, by reference. The store patches
+   * messages/work-log items immutably ({...old, ...patch}), so an unchanged
+   * item keeps its identity and everything before the first difference is
+   * already on the renderer.
+   * @param {unknown[] | undefined} prev
+   * @param {unknown[]} next
+   */
+  function firstChanged(prev, next) {
+    if (!prev) return 0;
+    const n = Math.min(prev.length, next.length);
+    let i = 0;
+    while (i < n && prev[i] === next[i]) i++;
+    return i;
+  }
+
   function pushDetail(threadId, workflow) {
     // Deleted threads must not resurrect via late agent/sim pushes.
     if (threadId == null || !store.getThread(threadId)) {
+      lastPushByThread.delete(threadId);
       return null;
     }
     if (workflow) {
@@ -797,7 +822,25 @@ function createRunner(opts) {
       markVisited: false,
       pendingPermission: getPendingPermission(threadId),
     });
-    pushFn("thread:updated", detail);
+    // Stream tails, not the transcript: the largest threads are megabytes and
+    // this runs on every chunk. The renderer merges (src/threadPatch.ts).
+    const prev = lastPushByThread.get(threadId);
+    const messagesFrom = firstChanged(prev && prev.messages, detail.messages);
+    const workLogFrom = firstChanged(prev && prev.workLog, detail.workLog);
+    const seq = (prev ? prev.seq : 0) + 1;
+    lastPushByThread.set(threadId, {
+      messages: detail.messages,
+      workLog: detail.workLog,
+      seq,
+    });
+    pushFn("thread:updated", {
+      ...detail,
+      messages: detail.messages.slice(messagesFrom),
+      messagesFrom,
+      workLog: detail.workLog.slice(workLogFrom),
+      workLogFrom,
+      seq,
+    });
     return detail;
   }
 
