@@ -441,6 +441,44 @@ function isKnownProviderId(id) {
 const HANDOFF_ASSISTANT_MAX = 2000;
 
 /**
+ * Standing note appended to every dispatched prompt (CLI-only, never stored
+ * in the transcript) so every provider's agent knows the Planboard
+ * convention. The Planboard view reads these labels back via
+ * `gh issue list`.
+ */
+const PLANBOARD_NOTE =
+  "\n\n[Planboard] This workspace tracks project plans as GitHub issues. " +
+  "For multi-step work, record and maintain your plan/roadmap/issues as " +
+  "GitHub issues in this repo's origin using `gh`, with status labels " +
+  "plan:todo, plan:doing, plan:done (create the labels if missing, move " +
+  "them as you progress, close finished issues). Skip this for trivial " +
+  "tasks.";
+
+/**
+ * PLANBOARD_NOTE when the project checkout has a GitHub origin, else "".
+ * Keeps the note out of prompts where it isn't actionable.
+ *
+ * ponytail: checks the LOCAL path only, so remote-host projects never get
+ * the note; route the check over ssh if remote planboards matter.
+ *
+ * @param {string | null | undefined} projectPath
+ * @returns {string}
+ */
+function planboardNoteFor(projectPath) {
+  try {
+    const { gitTry, isGitHubRemote } = require("./worktrees.js");
+    const cwd = String(projectPath || "");
+    if (!cwd) return "";
+    const remote = gitTry(cwd, ["remote", "get-url", "origin"]);
+    if (!remote.ok) return "";
+    if (!isGitHubRemote(String(remote.stdout || "").trim())) return "";
+    return PLANBOARD_NOTE;
+  } catch {
+    return "";
+  }
+}
+
+/**
  * One-time hand-off context prefix for the CLI (NOT stored in the transcript).
  * Returns "" when no prefix applies: no handoffFrom, session already exists,
  * source missing/deleted, or source has no assistant message.
@@ -1678,6 +1716,8 @@ module.exports = {
   buildHandoffPrefix,
   THREAD_TITLE_MAX,
   HANDOFF_ASSISTANT_MAX,
+  PLANBOARD_NOTE,
+  planboardNoteFor,
   setArchived,
   setSettled,
   setPinned,

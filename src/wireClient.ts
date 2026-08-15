@@ -13,6 +13,7 @@ import type {
   GitRepoInfo,
   GitPullResult,
   FetchIssueResult,
+  ListIssuesResult,
   ListPrsResult,
   DevServerState,
   LocalServerInfo,
@@ -333,6 +334,7 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
     },
     issues: {
       fetch: (input) => call<FetchIssueResult>("issues:fetch", input),
+      list: (projectPath) => call<ListIssuesResult>("issues:list", projectPath),
     },
     files: {
       list: (input) => call<{ files: string[] }>("files:list", input),

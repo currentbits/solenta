@@ -503,6 +503,23 @@ export type FetchIssueResult =
   | { ok: true; issue: IssueInfo }
   | { ok: false; reason: string };
 
+/** One row from `gh issue list`, for the Planboard. */
+export interface PlanIssue {
+  number: number;
+  title: string;
+  url: string;
+  state: "OPEN" | "CLOSED";
+  /** Label names, e.g. ["plan:doing", "roadmap"]. */
+  labels: string[];
+  /** ISO timestamp from gh, when present. */
+  updatedAt?: string;
+}
+
+/** Per-project listIssues result. Failures stay in-band so the UI can retry. */
+export type ListIssuesResult =
+  | { ok: true; issues: PlanIssue[] }
+  | { ok: false; reason: string };
+
 /**
  * How hard a model should think. Persisted per thread, sent to the CLI.
  *
@@ -1083,6 +1100,12 @@ export interface CoderApi {
      * issue: those come back as `{ ok: false, reason }`.
      */
     fetch(input: { projectPath: string; ref: string }): Promise<FetchIssueResult>;
+    /**
+     * Issues for a project checkout via `gh issue list --state all`, for the
+     * Planboard. Never rejects for missing gh / non-GitHub remotes / auth:
+     * those come back as `{ ok: false, reason }`.
+     */
+    list(projectPath: string): Promise<ListIssuesResult>;
   };
   files: {
     /**
