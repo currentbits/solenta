@@ -287,6 +287,35 @@ async function main() {
     return;
   }
 
+  if (scenario === "linger-then-exit") {
+    // A complete turn, then the process stays alive (so the runner keeps it
+    // for reuse) and dies without ever reading the next turn off stdin.
+    emit({
+      type: "system",
+      subtype: "init",
+      session_id: "sess-abc-001",
+      model: "claude-opus-test",
+    });
+    await delay(20);
+    emit({
+      type: "assistant",
+      message: { content: [{ type: "text", text: "First turn reply" }] },
+    });
+    await delay(20);
+    emit({
+      type: "result",
+      subtype: "success",
+      result: "First done.",
+      usage: { input_tokens: 100, output_tokens: 50 },
+      total_cost_usd: 0.01,
+      num_turns: 1,
+      session_id: "sess-abc-001",
+    });
+    await delay(400);
+    process.exit(0);
+    return;
+  }
+
   if (scenario === "resume-turn") {
     // Second turn: expect --resume in argv (asserted by test via argv file).
     emit({
@@ -1106,6 +1135,40 @@ describe("runner claude provider", () => {
     assert.ok(resumeIdx >= 0, `expected --resume in ${JSON.stringify(argv)}`);
     assert.equal(argv[resumeIdx + 1], "sess-abc-001");
     assert.ok(!argv.includes("turn two"));
+  });
+
+  it("respawns when the reused CLI exits without taking the turn", async () => {
+    process.env.CODER_FAKE_CLAUDE_SCENARIO = "linger-then-exit";
+
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "turn one" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    // Turn two lands while turn one's process is still alive but on its way
+    // out: the runner reuses it, the prompt goes nowhere, and its exit(0)
+    // must not fail a turn the CLI never saw.
+    process.env.CODER_FAKE_CLAUDE_SCENARIO = "resume-turn";
+    fs.unlinkSync(argvFile);
+
+    await runner.startRun({ threadId: thread.id, prompt: "turn two" });
+
+    await waitFor(() =>
+      store
+        .getMessages(thread.id)
+        .some((m) => m.role === "assistant" && m.text === "Second turn reply"),
+    );
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    const errs = store
+      .getMessages(thread.id)
+      .filter((m) => m.role === "event" && /Run error/i.test(m.text));
+    assert.deepEqual(errs, [], `unexpected run errors: ${JSON.stringify(errs)}`);
+
+    // The respawn is a real new process, resuming the same session.
+    const argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
+    const resumeIdx = argv.indexOf("--resume");
+    assert.ok(resumeIdx >= 0, `expected --resume in ${JSON.stringify(argv)}`);
+    assert.equal(argv[resumeIdx + 1], "sess-abc-001");
   });
 
   it("nonzero exit without result sets failed + Run error", async () => {

@@ -1459,8 +1459,15 @@ function createRunner(opts) {
 
     /** Assigned below (reused or freshly spawned) before any event fires. */
     let handle;
+    /** This turn was delivered to a kept-alive CLI instead of a new spawn. */
+    let reused = false;
+    /** Any event at all reached this turn (the CLI is really taking it). */
+    let sawAnyEvent = false;
+    /** The dead-reuse respawn below fires at most once per turn. */
+    let respawned = false;
 
     const onEvent = (ev) => {
+        sawAnyEvent = true;
         const type = ev && ev.type;
 
         // Background-subagent task notifications can land between turns on a
@@ -1874,6 +1881,17 @@ function createRunner(opts) {
         if (!e || e.stopping || e.runId !== runId) return;
         if (e.kind !== "claude") return;
 
+        // A kept-alive CLI can be on its way out when this turn's send()
+        // lands: the write succeeds (EPIPE is async), nothing reads it, and
+        // the exit that follows belongs to the PREVIOUS turn. Nothing of ours
+        // ever reached the CLI, so respawn instead of failing a turn the
+        // agent never saw. Once only, and never once output has arrived.
+        if (reused && !respawned && !sawAnyEvent && !sawResult && !gotResult) {
+          respawned = true;
+          spawnForTurn();
+          return;
+        }
+
         clearRun(threadId);
 
         // If we already handled a result event, finalize work-log and exit.
@@ -1960,27 +1978,11 @@ function createRunner(opts) {
     const prevAlive =
       prevChild && prevChild.exitCode === null && !prevChild.killed;
 
-    let reused = false;
-    if (interactive && prevSess && prevAlive && prevSess.key === sessionKey) {
-      // Same params, live process: deliver the turn on its stdin. Background
-      // tasks from earlier turns keep running; the CLI reports their
-      // completion within this session.
-      if (prevSess.idleTimer) {
-        clearTimeout(prevSess.idleTimer);
-        prevSess.idleTimer = null;
-      }
-      prevSess.dispatch = { onEvent, onExit, onError };
-      handle = prevSess.handle;
-      reused = handle.send(prompt);
-      if (reused) {
-        // A reused process emits no second system/init; close the step now.
-        completeWorkLogStep(threadId, startingId);
-      }
-    }
-    if (!reused) {
-      // Params changed (cwd/model/mode/effort/mcp), process gone, or its
-      // stdin already closed (send failed): replace it.
-      if (prevSess) disposeClaudeSession(threadId);
+    /**
+     * Spawn this turn's own CLI and take ownership of it. Also the respawn
+     * path in onExit when a reused kept-alive process was already dying.
+     */
+    function spawnForTurn() {
       if (interactive) {
         const sess = {
           handle: null,
@@ -2029,6 +2031,31 @@ function createRunner(opts) {
         });
       }
       trackLiveClaudeChild(handle.child);
+      const own = active.get(threadId);
+      if (own && own.runId === runId) own.handle = handle;
+    }
+
+    if (interactive && prevSess && prevAlive && prevSess.key === sessionKey) {
+      // Same params, live process: deliver the turn on its stdin. Background
+      // tasks from earlier turns keep running; the CLI reports their
+      // completion within this session.
+      if (prevSess.idleTimer) {
+        clearTimeout(prevSess.idleTimer);
+        prevSess.idleTimer = null;
+      }
+      prevSess.dispatch = { onEvent, onExit, onError };
+      handle = prevSess.handle;
+      reused = handle.send(prompt);
+      if (reused) {
+        // A reused process emits no second system/init; close the step now.
+        completeWorkLogStep(threadId, startingId);
+      }
+    }
+    if (!reused) {
+      // Params changed (cwd/model/mode/effort/mcp), process gone, or its
+      // stdin already closed (send failed): replace it.
+      if (prevSess) disposeClaudeSession(threadId);
+      spawnForTurn();
     }
 
     entry.handle = handle;
