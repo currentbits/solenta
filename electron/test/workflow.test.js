@@ -635,7 +635,9 @@ describe("workflow orchestration", () => {
       assert.ok(!c.argv.includes("--resume"), "workflow agents must not pass --resume");
     }
 
-    const detail = push.payload;
+    // Pushes carry only work-log tails now (see runner.pushDetail), so the
+    // one-item-per-phase check reads the store's full log.
+    const detail = services.getThreadDetail(store, thread.id);
     for (const pl of ["seed", "analyze", "synthesize"]) {
       const items = detail.workLog.filter((w) => w.label.toLowerCase() === pl);
       assert.equal(items.length, 1, `expected one work log for ${pl}`);
