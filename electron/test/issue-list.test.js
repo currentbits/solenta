@@ -105,4 +105,34 @@ describe("planboardNoteFor", () => {
     assert.equal(planboardNoteFor(gh), PLANBOARD_NOTE);
     assert.match(PLANBOARD_NOTE, /plan:todo, plan:doing, plan:done/);
   });
+
+  it("maps a TodoWrite todo list onto plan steps", () => {
+    const { planStepsFrom } = require("../services.js");
+    assert.deepEqual(
+      planStepsFrom([
+        { content: "Read the store", status: "completed" },
+        { content: " Wire the runner ", status: "in_progress" },
+        { content: "Add a test", status: "pending" },
+        { content: "Weird", status: "who-knows" },
+        { content: "   ", status: "pending" },
+        null,
+      ]),
+      [
+        { step: "Read the store", status: "done" },
+        { step: "Wire the runner", status: "doing" },
+        { step: "Add a test", status: "todo" },
+        { step: "Weird", status: "todo" },
+      ],
+    );
+    // Nothing usable -> null, so the caller keeps the previous plan.
+    assert.equal(planStepsFrom(undefined), null);
+    assert.equal(planStepsFrom([]), null);
+    assert.equal(planStepsFrom([{ content: "" }]), null);
+    // Bounded: 50 steps, 200 chars each.
+    const big = planStepsFrom(
+      Array.from({ length: 60 }, () => ({ content: "x".repeat(500) })),
+    );
+    assert.equal(big.length, 50);
+    assert.equal(big[0].step.length, 200);
+  });
 });

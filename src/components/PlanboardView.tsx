@@ -6,12 +6,19 @@ import {
   issueUpdatedMs,
   planColumns,
 } from "../planboard";
-import type { ListIssuesResult, ProjectInfo } from "../shared/ipc";
+import type { ListIssuesResult, ProjectInfo, ThreadInfo } from "../shared/ipc";
 import styles from "./PlanboardView.module.css";
 
 export interface PlanboardViewProps {
   projects: ProjectInfo[];
   listIssues: (projectPath: string) => Promise<ListIssuesResult>;
+  /**
+   * Threads of every project; those of the selected one with a mirrored plan
+   * (ThreadInfo.planSteps) render under the issue columns. Omitted by older
+   * tests, which keeps that section off those boards.
+   */
+  threads?: ThreadInfo[];
+  onSelectThread?: (id: string) => void;
   /**
    * Start a thread on a Todo issue and move it to plan:doing. Omitted by
    * existing tests, which keeps the button off those boards.
@@ -26,6 +33,8 @@ export interface PlanboardViewProps {
 export function PlanboardView({
   projects,
   listIssues,
+  threads,
+  onSelectThread,
   onStartTask,
 }: PlanboardViewProps) {
   const [projectId, setProjectId] = useState<string | null>(null);
@@ -83,7 +92,21 @@ export function PlanboardView({
     () => planColumns(result && result.ok ? result.issues : []),
     [result],
   );
-  const empty = result?.ok === true && isPlanEmpty(columns);
+  // Live agent plans for this project, newest thread first.
+  const plans = useMemo(
+    () =>
+      (threads ?? [])
+        .filter(
+          (t) =>
+            t.projectId === project?.id &&
+            !t.archived &&
+            (t.planSteps?.length ?? 0) > 0,
+        )
+        .sort((a, b) => b.updatedAt - a.updatedAt),
+    [threads, project],
+  );
+  const empty =
+    result?.ok === true && isPlanEmpty(columns) && plans.length === 0;
 
   return (
     <main className={styles.main} data-planboard="">
@@ -221,6 +244,45 @@ export function PlanboardView({
           ))}
         </div>
       )}
+
+      {plans.length > 0 ? (
+        <section className={styles.plans} data-thread-plans="">
+          <header className={styles.columnHeader}>
+            <span>Thread plans</span>
+            <span className={styles.count}>{plans.length}</span>
+          </header>
+          <div className={styles.plansBody}>
+            {plans.map((thread) => (
+              <div
+                key={thread.id}
+                className={styles.planCard}
+                data-thread-plan={thread.id}
+              >
+                <button
+                  type="button"
+                  className={styles.planTitle}
+                  onClick={() => onSelectThread?.(thread.id)}
+                  disabled={!onSelectThread}
+                  title={`Open ${thread.title}`}
+                >
+                  {thread.title}
+                </button>
+                <ol className={styles.steps}>
+                  {(thread.planSteps ?? []).map((s, i) => (
+                    <li
+                      key={`${i}-${s.step}`}
+                      className={styles.step}
+                      data-plan-step={s.status}
+                    >
+                      {s.step}
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
     </main>
   );
 }

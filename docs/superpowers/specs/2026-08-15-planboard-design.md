@@ -56,6 +56,22 @@ labels via `gh`; skip when the repo has no GitHub remote. One constant in
 Unit tests for the column bucketing and the gh issue-list parsing, matching
 the existing kanban/prList test style.
 
+## Live thread plans (issue #76, 2026-08-16)
+
+GitHub issues stay the roadmap source; the agent's *working* plan is a second
+source. The runner mirrors claude's `TodoWrite` list onto the thread as
+`ThreadInfo.planSteps` (`{ step, status }`, statuses `completed → done`,
+`in_progress → doing`, else `todo`), so no new IPC channel, store, or agent
+ceremony: the steps ride the existing `threads:changed` push and update live.
+
+Decisions on the issue's open questions: the app parses the agent's own todo
+list rather than asking for an explicit call; the plan lives on the thread and
+dies with it; steps keep their own order in a separate "Thread plans" section
+under the issue columns, so they never mix into the issue columns.
+
+Skipped: codex/opencode plan formats (claude only, `planStepsFrom` is where
+they'd map), per-step history, plans surviving thread deletion.
+
 ## Skipped (YAGNI)
 
 Drag-and-drop, milestones, GitHub Projects v2, creating/editing issues from

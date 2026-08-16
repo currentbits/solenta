@@ -158,6 +158,19 @@ export interface ThreadInfo {
    * from the CLI stream (issue #21). Newest-last, capped to 20 rows.
    */
   subagents?: SubagentInfo[];
+  /**
+   * The agent's live working plan, mirrored by the runner from its todo list
+   * (claude TodoWrite) and shown on the Planboard next to the GitHub issues
+   * (issue #76). Absent until the agent writes a todo list; the newest list
+   * replaces the previous one and outlives the run.
+   */
+  planSteps?: PlanStep[];
+}
+
+/** One step of an agent's working plan, in the agent's own order. */
+export interface PlanStep {
+  step: string;
+  status: PlanStatus;
 }
 
 /** One in-session subagent (Agent tool call) surfaced in the Agents panel. */
