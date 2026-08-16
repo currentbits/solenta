@@ -43,6 +43,12 @@ const KIMI_PUSH_THROTTLE_MS = 250;
 const PLAN_TRUNCATE = 20000;
 
 /**
+ * Approved plan kept on the thread for its plan card. Tighter than the prompt's
+ * budget: this one rides every threads:changed push, for every thread.
+ */
+const PLAN_STORE = 4000;
+
+/**
  * A kept-alive/resumed Claude CLI can emit a result that is not the answer to
  * the turn we just sent: settling a leftover background-task notification or
  * "Continue from where you left off." self-turn first (issue #17). Those
@@ -990,11 +996,17 @@ function createRunner(opts) {
     }
     e.handle.respond(pending.id, response);
     if (isPlan && decision !== "deny") {
+      const t = store.getThread(threadId);
+      const patch = {};
+      // The approved plan outlives this prompt: the thread's plan card shows
+      // it once the prompt is answered and gone (issue #75).
+      const approved = planText(pending.toolName, pending.rawInput);
+      if (approved) patch.plan = truncate(approved, PLAN_STORE);
       // Approving the plan leaves plan mode, so the next run must not re-enter
       // it — the CLI only exits for the process that asked.
-      const t = store.getThread(threadId);
-      if (t && t.permissionMode === "plan") {
-        store.updateThread(threadId, { permissionMode: "default" });
+      if (t && t.permissionMode === "plan") patch.permissionMode = "default";
+      if (t && Object.keys(patch).length > 0) {
+        store.updateThread(threadId, patch);
       }
     }
     const label = isPlan

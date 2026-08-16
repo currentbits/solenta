@@ -1347,8 +1347,32 @@ describe("runner claude provider", () => {
 
     // Approval ends plan mode so the next run executes instead of re-planning.
     assert.equal(store.getThread(thread.id).permissionMode, "default");
+    // ...and the plan outlives the prompt, for the thread's plan card.
+    assert.equal(
+      store.getThread(thread.id).plan,
+      "## Steps\n\n1. Add the card\n2. Wire the buttons",
+    );
     const msgs = store.getMessages(thread.id);
     assert.ok(msgs.some((m) => m.role === "event" && m.text === "Plan approved"));
+  });
+
+  it("does not persist a rejected plan", async () => {
+    process.env.CODER_FAKE_CLAUDE_SCENARIO = "plan";
+    const thread = store.getThreads()[0];
+    store.updateThread(thread.id, { permissionMode: "plan" });
+    await runner.startRun({ threadId: thread.id, prompt: "plan it" });
+
+    await waitFor(() => runner.getPendingPermission(thread.id) != null);
+    runner.respondPermission({
+      threadId: thread.id,
+      requestId: runner.getPendingPermission(thread.id).requestId,
+      decision: "deny",
+    });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    // The agent is still planning: no card, and plan mode stays on.
+    assert.equal(store.getThread(thread.id).plan, undefined);
+    assert.equal(store.getThread(thread.id).permissionMode, "plan");
   });
 
   it("pairs tool_result is_error into tool message", async () => {
