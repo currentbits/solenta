@@ -81,7 +81,14 @@ interface ComposerProps {
   sessionId: string | null;
   /** Whether a worktree has been set up. */
   hasWorktree: boolean;
+  /** Hard lock (archived thread): nothing can be typed or started. */
   disabled?: boolean;
+  /**
+   * A run is active. The prompt stays live so the next instruction can be
+   * typed and sent — the parent queues it for when the run lands (issue #92).
+   * Controls that only make sense between runs stay locked.
+   */
+  busy?: boolean;
   /** Single session turn (send arrow + ⌘Enter). */
   onSend: (prompt: string, attachments?: AttachmentInfo[]) => void | Promise<void>;
   /** Multi-phase Build workflow (Build pill main segment). */
@@ -224,6 +231,7 @@ export function Composer({
   sessionId,
   hasWorktree,
   disabled = false,
+  busy = false,
   onSend,
   onBuild,
   onBestOfN,
@@ -394,10 +402,11 @@ export function Composer({
   /**
    * Focus the input when a thread is opened (mount, or ThreadView swapping
    * threadId on the same instance) and the composer can accept text, so the
-   * user can type without clicking first (issue #73). A thread opened
-   * mid-run is focused once it becomes enabled; an already-focused thread is
-   * NOT re-focused when a run finishes, so a background completion never
-   * steals focus from wherever the user went.
+   * user can type without clicking first (issue #73). A working thread is
+   * focused too — its prompt takes type-ahead (issue #92); only an archived
+   * thread waits for unarchive. An already-focused thread is NOT re-focused
+   * when a run finishes, so a background completion never steals focus from
+   * wherever the user went.
    */
   const focusedThread = useRef<string | null>(null);
   useEffect(() => {
@@ -436,8 +445,13 @@ export function Composer({
 
   const hasPrompt = value.trim().length > 0;
   const canSend = !disabled && !sending && hasPrompt;
+  /**
+   * Everything that cannot be queued (workflow start, model, permission mode)
+   * waits for the run to land; only the prompt and Send stay live while busy.
+   */
+  const locked = disabled || busy;
   /** Build is enabled for any provider; backend validates phase providers. */
-  const canBuild = !disabled && !sending && hasPrompt;
+  const canBuild = !locked && !sending && hasPrompt;
   const shownError = error ?? localError;
   const shortSess = shortSessionId(sessionId);
   const sessionLocked = Boolean(sessionId);
@@ -668,7 +682,7 @@ export function Composer({
   };
 
   const installedProviders = providers.filter((p) => p.available);
-  const canBestOfN = Boolean(onBestOfN) && canSend;
+  const canBestOfN = Boolean(onBestOfN) && !busy && canSend;
   const toggleBestId = (id: string) => {
     setBestIds((prev) =>
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
@@ -1015,15 +1029,15 @@ export function Composer({
                 ref={modelTriggerRef}
                 type="button"
                 className={styles.pill}
-                disabled={disabled}
-                aria-disabled={disabled ? "true" : undefined}
+                disabled={locked}
+                aria-disabled={locked ? "true" : undefined}
                 aria-haspopup="dialog"
                 aria-expanded={modelOpen}
                 aria-controls={modelOpen ? modelListId : undefined}
                 aria-label={`Model: ${triggerLabel}`}
                 title={`Model: ${triggerLabel}`}
                 onClick={() => {
-                  if (disabled) return;
+                  if (locked) return;
                   if (modelOpen) {
                     closeModelPicker(false);
                   } else {
@@ -1355,12 +1369,12 @@ export function Composer({
               <button
                 type="button"
                 className={styles.pill}
-                disabled={disabled}
-                aria-disabled={disabled ? "true" : undefined}
+                disabled={locked}
+                aria-disabled={locked ? "true" : undefined}
                 aria-haspopup="listbox"
                 aria-expanded={modeOpen}
                 onClick={() => {
-                  if (!disabled) {
+                  if (!locked) {
                     setModeOpen((v) => !v);
                     setModelOpen(false);
                     setBuildMenuOpen(false);
@@ -1429,10 +1443,10 @@ export function Composer({
                 title="Choose workflow template"
                 aria-haspopup="menu"
                 aria-expanded={buildMenuOpen}
-                disabled={disabled || sending}
-                aria-disabled={disabled || sending ? "true" : undefined}
+                disabled={locked || sending}
+                aria-disabled={locked || sending ? "true" : undefined}
                 onClick={() => {
-                  if (disabled || sending) return;
+                  if (locked || sending) return;
                   setBuildMenuOpen((v) => !v);
                   setModeOpen(false);
                   setModelOpen(false);
@@ -1598,7 +1612,12 @@ export function Composer({
             className={styles.send}
             aria-label="Send"
             disabled={!canSend}
-            title="Send (⌘Enter)"
+            data-queues={busy ? "" : undefined}
+            title={
+              busy
+                ? "Queue for when this run lands (⌘Enter)"
+                : "Send (⌘Enter)"
+            }
             onClick={() => submitSend()}
           >
             <svg

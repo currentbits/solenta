@@ -57,6 +57,12 @@ function errorMessage(err: unknown): string {
   return String(err);
 }
 
+/** A follow-up typed during a run, waiting for that run to land. */
+export interface QueuedMessage {
+  prompt: string;
+  attachments?: AttachmentInfo[];
+}
+
 export type CoderErrorScope = "project" | "run";
 
 export interface CoderError {
@@ -115,11 +121,19 @@ export interface UseCoderResult {
     threadId: string,
     opts?: { provider?: string; model?: string | null },
   ) => Promise<ThreadInfo | null>;
+  /**
+   * Start a run, or queue the prompt when that thread is already working:
+   * the queued text is delivered at the run's terminal (issue #92).
+   */
   startRun: (
     prompt: string,
     threadId?: string,
     attachments?: AttachmentInfo[],
   ) => Promise<void>;
+  /** Follow-ups waiting for a run to land, keyed by thread id. */
+  queued: Record<string, QueuedMessage>;
+  /** Drop a thread's queued follow-up. Defaults to the selected thread. */
+  cancelQueued: (threadId?: string) => void;
   /** Fetch a GitHub issue for a project checkout (`gh issue view`). */
   fetchIssue: (
     projectPath: string,
@@ -354,6 +368,21 @@ export function useCoder(): UseCoderResult {
   const refetchRef = useRef<Set<string>>(new Set());
   /** Last thread:updated seq per thread; a gap means pushes were dropped. */
   const patchSeqRef = useRef<Map<string, number>>(new Map());
+  /**
+   * Follow-ups typed while a thread was working (issue #92), delivered at that
+   * thread's next run terminal — including "stopped", since interrupting and
+   * then running the queued instruction is the point of typing it mid-run.
+   * The ref backs the long-lived thread:updated subscription; the state is for
+   * rendering (same split as threadsRef/setThreads).
+   * ponytail: renderer-side and in-memory, so a reload mid-run drops the
+   * queue. Move it into the thread record if it needs to survive a restart.
+   */
+  const [queued, setQueued] = useState<Record<string, QueuedMessage>>({});
+  const queuedRef = useRef<Record<string, QueuedMessage>>({});
+  const applyQueued = useCallback((next: Record<string, QueuedMessage>) => {
+    queuedRef.current = next;
+    setQueued(next);
+  }, []);
 
   useEffect(() => {
     selectedRef.current = selectedThreadId;
@@ -387,6 +416,38 @@ export function useCoder(): UseCoderResult {
     threadsRef.current = next;
     setThreads(next);
   }, []);
+
+  /** Send a thread's queued follow-up, if any. Safe to call twice. */
+  const flushQueued = useCallback(
+    (threadId: string) => {
+      const pending = queuedRef.current[threadId];
+      if (!pending) return;
+      const rest = { ...queuedRef.current };
+      delete rest[threadId];
+      applyQueued(rest);
+      void api.runs
+        .start({
+          threadId,
+          prompt: pending.prompt,
+          attachments: pending.attachments,
+        })
+        .catch((err) => {
+          setError({ scope: "run", message: errorMessage(err) });
+        });
+    },
+    [api, applyQueued],
+  );
+
+  const cancelQueued = useCallback(
+    (threadId?: string) => {
+      const id = threadId ?? selectedRef.current;
+      if (!id || !queuedRef.current[id]) return;
+      const rest = { ...queuedRef.current };
+      delete rest[id];
+      applyQueued(rest);
+    },
+    [applyQueued],
+  );
 
   const clearError = useCallback(() => {
     setError(null);
@@ -512,6 +573,10 @@ export function useCoder(): UseCoderResult {
       // Refresh spend when a thread leaves "working" (run finished or stopped).
       if (prev === "working" && next.thread.status !== "working") {
         void refreshStatus();
+        // The run landed: deliver whatever the user queued while it ran. This
+        // fires for any thread, not just the selected one, so switching away
+        // from a queued thread still sends.
+        flushQueued(next.thread.id);
       }
     });
 
@@ -570,7 +635,7 @@ export function useCoder(): UseCoderResult {
       unsubSelect?.();
       window.clearInterval(statusHandle);
     };
-  }, [api, applyThreads, refreshStatus, reloadDetail]);
+  }, [api, applyThreads, refreshStatus, reloadDetail, flushQueued]);
 
   // Load ThreadDetail when selection changes. threads.get stamps lastVisitedAt
   // (select = visit); merge the returned row into the list so the sidebar
@@ -795,6 +860,23 @@ export function useCoder(): UseCoderResult {
     ) => {
       const threadId = targetThreadId ?? selectedThreadId;
       if (!threadId) return;
+      // Busy thread: hold the prompt instead of bouncing off the backend's
+      // "run already active" (issue #92). Queueing again appends, so a second
+      // thought never silently replaces the first.
+      if (
+        threadsRef.current.find((t) => t.id === threadId)?.status === "working"
+      ) {
+        const prev = queuedRef.current[threadId];
+        const files = [...(prev?.attachments ?? []), ...(attachments ?? [])];
+        applyQueued({
+          ...queuedRef.current,
+          [threadId]: {
+            prompt: prev ? `${prev.prompt}\n\n${prompt}` : prompt,
+            attachments: files.length ? files : undefined,
+          },
+        });
+        return;
+      }
       try {
         await api.runs.start({ threadId, prompt, attachments });
         const d = await api.threads.get(threadId);
@@ -811,7 +893,7 @@ export function useCoder(): UseCoderResult {
         throw err;
       }
     },
-    [api, selectedThreadId, applyThreads],
+    [api, selectedThreadId, applyThreads, applyQueued],
   );
 
   const refreshWorkflows = useCallback(async () => {
@@ -1722,6 +1804,8 @@ export function useCoder(): UseCoderResult {
     createThread,
     forkThread,
     startRun,
+    queued,
+    cancelQueued,
     startWorkflowRun,
     saveWorkflow,
     removeWorkflow,
