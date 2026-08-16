@@ -31,7 +31,7 @@ const { readToolImage } = require("./tool-images.js");
 const attachments = require("./attachments.js");
 const { syncUserMcpServers } = require("./memory-sup.js");
 const skills = require("./skills.js");
-const { fetchIssue, listIssues } = require("./issues.js");
+const { fetchIssue, listIssues, setPlanStatus } = require("./issues.js");
 const automations = require("./automations.js");
 const { buildActivity } = require("./activity.js");
 const updater = require("./updater.js");
@@ -550,6 +550,13 @@ const IPC_HANDLERS = {
   },
   "issues:list": async (_ctx, projectPath) => {
     return listIssues(projectPath);
+  },
+  "issues:setPlanStatus": async (_ctx, input) => {
+    return setPlanStatus(
+      input && input.projectPath,
+      input && input.number,
+      input && input.status,
+    );
   },
   "git:listCheckpoints": async (ctx, input) => {
     return listCheckpoints({

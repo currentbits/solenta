@@ -16,6 +16,7 @@ import type {
   FetchIssueResult,
   ListIssuesResult,
   ListPrsResult,
+  SetPlanStatusResult,
   DevServerState,
   LocalServerInfo,
   MemoryEntryInfo,
@@ -337,6 +338,8 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
     issues: {
       fetch: (input) => call<FetchIssueResult>("issues:fetch", input),
       list: (projectPath) => call<ListIssuesResult>("issues:list", projectPath),
+      setPlanStatus: (input) =>
+        call<SetPlanStatusResult>("issues:setPlanStatus", input),
     },
     files: {
       list: (input) => call<{ files: string[] }>("files:list", input),

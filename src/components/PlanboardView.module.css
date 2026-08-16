@@ -132,6 +132,48 @@
   border-color: var(--border);
 }
 
+.cardWrap {
+  position: relative;
+}
+
+/* Sits on the card, only shown on hover/focus so Todo stays readable. */
+.start {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 550;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.cardWrap:hover .start,
+.start:focus-visible,
+.startActive {
+  opacity: 1;
+}
+
+.start:hover:not(:disabled) {
+  background: var(--card-hover);
+}
+
+.start:disabled {
+  color: var(--text-muted);
+  cursor: default;
+}
+
+.startNote {
+  margin: 0;
+  padding: 10px 24px 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
 .cardTop {
   display: flex;
   align-items: baseline;

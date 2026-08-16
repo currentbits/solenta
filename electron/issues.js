@@ -282,10 +282,62 @@ function listIssues(projectPath) {
   }
 }
 
+const PLAN_LABELS = ["plan:todo", "plan:doing", "plan:done"];
+
+/**
+ * Move an issue's plan:* label (Planboard "Start task" → plan:doing).
+ * Never throws; failures come back as `{ ok: false, reason }`.
+ *
+ * gh refuses the whole edit when a --remove-label name is not a label in the
+ * repo, so a repo that only has some of the plan:* labels falls back to
+ * adding the new one and leaving the stale one — the column still moves
+ * (plan:doing outranks plan:todo).
+ *
+ * @param {string} projectPath
+ * @param {unknown} number
+ * @param {unknown} status one of "todo" | "doing" | "done"
+ * @returns {{ ok: true } | { ok: false, reason: string }}
+ */
+function setPlanStatus(projectPath, number, status) {
+  const cwd = String(projectPath || "");
+  const issueNumber = Number(number);
+  const label = `plan:${String(status || "")}`;
+  if (!cwd) return { ok: false, reason: "not a GitHub repo" };
+  if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
+    return { ok: false, reason: "invalid issue reference" };
+  }
+  if (!PLAN_LABELS.includes(label)) {
+    return { ok: false, reason: `unknown plan status: ${status}` };
+  }
+
+  const remote = gitTry(cwd, ["remote", "get-url", "origin"]);
+  if (!remote.ok || !isGitHubRemote(String(remote.stdout || "").trim())) {
+    return { ok: false, reason: "not a GitHub repo" };
+  }
+
+  const base = ["issue", "edit", String(issueNumber), "--add-label", label];
+  let edited = ghTry(cwd, [
+    ...base,
+    "--remove-label",
+    PLAN_LABELS.filter((l) => l !== label).join(","),
+  ]);
+  let errText = edited.stderr || edited.combined || edited.stdout || "";
+  if (!edited.ok && !edited.enoent && /not found/i.test(errText)) {
+    edited = ghTry(cwd, base);
+    errText = edited.stderr || edited.combined || edited.stdout || "";
+  }
+  if (edited.ok) return { ok: true };
+  if (edited.enoent) return { ok: false, reason: "gh missing" };
+  if (isGhAuthFailure(errText)) return { ok: false, reason: "auth" };
+  if (isIssueNotFound(errText)) return { ok: false, reason: "issue not found" };
+  return { ok: false, reason: tailErr(errText, "gh issue edit failed") };
+}
+
 module.exports = {
   parseIssueRef,
   fetchIssue,
   listIssues,
+  setPlanStatus,
   parseIssueListJson,
   ownerRepoFromRemote,
 };
