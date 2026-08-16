@@ -158,19 +158,19 @@ fi
 echo "  /health ok:true"
 echo "  health body (first): $LAST_BODY"
 
-# Isolation hard-assert: dbPath MUST live under TMP_USERDATA. This would have
-# caught the live-db writes a round ago.
-DB_PATH="$(node -p "JSON.parse(process.argv[1]).dbPath || ''" "$LAST_BODY")"
-case "$DB_PATH" in
-  "$TMP_USERDATA"/*) echo "  isolation ok: dbPath under TMP_USERDATA ($DB_PATH)" ;;
-  *)
-    echo "ERROR: isolation broken — /health dbPath is not under TMP_USERDATA" >&2
-    echo "  dbPath: ${DB_PATH:-<missing>}" >&2
-    echo "  expected prefix: $TMP_USERDATA/" >&2
-    echo "  health body: $LAST_BODY" >&2
-    exit 1
-    ;;
-esac
+# Isolation hard-assert: the probe MUST have opened the isolated db under
+# TMP_USERDATA. This would have caught the live-db writes a round ago.
+# /health no longer echoes dbPath (it must not leak it), so ask the OS which
+# file the server actually has open instead.
+DB_HOLDERS="$(lsof -t -- "$DB_FILE" 2>/dev/null || true)"
+if [[ ! -s "$DB_FILE" || -z "$DB_HOLDERS" ]]; then
+  echo "ERROR: isolation broken — nothing has the isolated db open" >&2
+  echo "  expected db: $DB_FILE ($([[ -s "$DB_FILE" ]] && echo present || echo missing/empty))" >&2
+  echo "  holders: ${DB_HOLDERS:-<none>}" >&2
+  echo "  health body: $LAST_BODY" >&2
+  exit 1
+fi
+echo "  isolation ok: $DB_FILE open by pid(s) $(echo "$DB_HOLDERS" | tr '\n' ' ')"
 
 BEFORE_COUNT="$(node -p "const h=JSON.parse(process.argv[1]); (h.vectors && typeof h.vectors.count==='number') ? h.vectors.count : 0" "$LAST_BODY")"
 echo "  BEFORE_COUNT=$BEFORE_COUNT"
