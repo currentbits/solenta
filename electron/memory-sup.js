@@ -54,10 +54,10 @@ function chmodSecret(file) {
 
 /**
  * All MCP servers currently available for injection, coder-memory first.
- * @returns {Array<{ name: string, port: number | null, token: string, url: string }>}
+ * @returns {Array<{ name: string, port: number | null, token: string, url: string, user?: boolean }>}
  */
 function activeServers() {
-  /** @type {Array<{ name: string, port: number | null, token: string, url: string }>} */
+  /** @type {Array<{ name: string, port: number | null, token: string, url: string, user?: boolean }>} */
   const list = [];
   if (globalStatus.running && globalStatus.port && globalToken) {
     list.push({
@@ -251,11 +251,20 @@ function getClaudeMcpArgs() {
   // The allow rule is required, not cosmetic: in headless -p runs there is
   // nobody to approve a tool prompt, so without it every memory call is
   // silently denied (permission_denials) and the agent reports no memory.
-  // Scope is exactly our own servers' tools; nothing else is pre-approved.
-  return [
-    `--mcp-config=${globalMcpConfigPath}`,
-    `--allowedTools=${servers.map((s) => `mcp__${s.name}__*`).join(" ")}`,
-  ];
+  //
+  // Scope is exactly our OWN servers (coder-memory, coder-threads). A
+  // user-registered endpoint stays in the mcp config but is never blanket
+  // approved: `mcp__<name>__*` would pre-approve every tool it exposes now
+  // and any it adds later, which is a silent code-execution channel for a
+  // compromised remote server in every headless turn.
+  const args = [`--mcp-config=${globalMcpConfigPath}`];
+  const ours = servers.filter((s) => !s.user);
+  if (ours.length > 0) {
+    args.push(
+      `--allowedTools=${ours.map((s) => `mcp__${s.name}__*`).join(" ")}`,
+    );
+  }
+  return args;
 }
 
 /**
