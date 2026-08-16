@@ -110,7 +110,7 @@ export interface UseCoderResult {
   createThread: (
     title?: string,
     projectId?: string,
-    opts?: { worktree?: boolean },
+    opts?: { worktree?: boolean; orchestrate?: boolean },
   ) => Promise<ThreadInfo | null>;
   /**
    * Fork / hand off a thread (threads.fork). Selects the new thread the same
@@ -770,16 +770,21 @@ export function useCoder(): UseCoderResult {
     async (
       title = "New Thread",
       projectId?: string,
-      opts?: { worktree?: boolean },
+      opts?: { worktree?: boolean; orchestrate?: boolean },
     ) => {
       const pid = projectId ?? selectedProjectId;
       if (!pid) return null;
-      // Settings can default new threads into a worktree; explicit opts win.
-      // Worktrees are local-only, so remote projects always get plain threads.
+      // Settings can default new threads into a worktree or into an
+      // orchestrator; explicit opts win. Both are local-only, so remote
+      // projects always get plain threads. An orchestrator never holds a
+      // worktree itself — its worker does — so it wins over `worktree`.
       const project = projects.find((p) => p.id === pid);
+      const local = !project?.remoteHost;
+      const orchestrate =
+        opts?.orchestrate ?? (settings?.defaultOrchestrate === true && local);
       const worktree =
-        opts?.worktree ??
-        (settings?.defaultWorktree === true && !project?.remoteHost);
+        !orchestrate &&
+        (opts?.worktree ?? (settings?.defaultWorktree === true && local));
       // Inherit provider+model from the currently selected thread when present.
       const inheritFrom = selectedRef.current
         ? threadsRef.current.find((x) => x.id === selectedRef.current)
@@ -790,6 +795,7 @@ export function useCoder(): UseCoderResult {
           projectId: pid,
           title,
           ...(worktree ? { worktree: true } : {}),
+          ...(orchestrate ? { orchestrate: true } : {}),
         });
       } catch (err) {
         setError({ scope: "run", message: errorMessage(err) });

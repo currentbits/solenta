@@ -168,7 +168,7 @@ export default function App() {
   const clearReveal = useCallback(() => setRevealThreadId(null), []);
 
   const handleCreateThread = useCallback(
-    (projectId?: string, opts?: { worktree?: boolean }) => {
+    (projectId?: string, opts?: { worktree?: boolean; orchestrate?: boolean }) => {
       void createThread("New Thread", projectId, opts).then((t) => {
         if (t) setRevealThreadId(t.id);
       });
