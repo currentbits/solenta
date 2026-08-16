@@ -21,14 +21,14 @@ describe("normalizeSettings autoSettleAfterDays", () => {
       orchestrationBudgetUsd: null,
       autoSettleAfterDays: DEFAULT_AUTO_SETTLE_AFTER_DAYS,
       mcpServers: [],
-      defaultWorktree: false, updateChannel: null, notifications: true,
+      defaultWorktree: false, defaultOrchestrate: false, updateChannel: null, notifications: true,
     });
     assert.deepEqual(normalizeSettings(null), {
       dailyBudgetUsd: null,
       orchestrationBudgetUsd: null,
       autoSettleAfterDays: 3,
       mcpServers: [],
-      defaultWorktree: false, updateChannel: null, notifications: true,
+      defaultWorktree: false, defaultOrchestrate: false, updateChannel: null, notifications: true,
     });
     assert.equal(DEFAULT_AUTO_SETTLE_AFTER_DAYS, 3);
   });
@@ -90,13 +90,13 @@ describe("setSettings autoSettleAfterDays validation", () => {
 
     assert.deepEqual(
       services.setSettings(store, { autoSettleAfterDays: 7 }),
-      { dailyBudgetUsd: null, orchestrationBudgetUsd: null, autoSettleAfterDays: 7, mcpServers: [], defaultWorktree: false, updateChannel: null, notifications: true },
+      { dailyBudgetUsd: null, orchestrationBudgetUsd: null, autoSettleAfterDays: 7, mcpServers: [], defaultWorktree: false, defaultOrchestrate: false, updateChannel: null, notifications: true },
     );
     assert.equal(store.getSettings().autoSettleAfterDays, 7);
 
     assert.deepEqual(
       services.setSettings(store, { autoSettleAfterDays: null }),
-      { dailyBudgetUsd: null, orchestrationBudgetUsd: null, autoSettleAfterDays: null, mcpServers: [], defaultWorktree: false, updateChannel: null, notifications: true },
+      { dailyBudgetUsd: null, orchestrationBudgetUsd: null, autoSettleAfterDays: null, mcpServers: [], defaultWorktree: false, defaultOrchestrate: false, updateChannel: null, notifications: true },
     );
 
     assert.throws(
@@ -137,7 +137,7 @@ describe("setSettings autoSettleAfterDays validation", () => {
       orchestrationBudgetUsd: null,
       autoSettleAfterDays: 3,
       mcpServers: [],
-      defaultWorktree: false, updateChannel: null, notifications: true,
+      defaultWorktree: false, defaultOrchestrate: false, updateChannel: null, notifications: true,
     });
   });
 
@@ -173,6 +173,36 @@ describe("setSettings autoSettleAfterDays validation", () => {
     store.saveNow();
     const reloaded = new Store(filePath);
     assert.equal(reloaded.getSettings().defaultWorktree, true);
+  });
+
+  it("defaultOrchestrate: absent/junk → false, boolean kept, persists", () => {
+    assert.equal(normalizeSettings({}).defaultOrchestrate, false);
+    assert.equal(
+      normalizeSettings({ defaultOrchestrate: "yes" }).defaultOrchestrate,
+      false,
+    );
+    assert.equal(
+      normalizeSettings({ defaultOrchestrate: 1 }).defaultOrchestrate,
+      false,
+    );
+    assert.equal(
+      normalizeSettings({ defaultOrchestrate: true }).defaultOrchestrate,
+      true,
+    );
+
+    const store = new Store(filePath);
+    assert.equal(store.getSettings().defaultOrchestrate, false);
+    assert.equal(
+      services.setSettings(store, { defaultOrchestrate: true }).defaultOrchestrate,
+      true,
+    );
+    assert.throws(
+      () => services.setSettings(store, { defaultOrchestrate: "yes" }),
+      /defaultOrchestrate must be a boolean/,
+    );
+    store.saveNow();
+    const reloaded = new Store(filePath);
+    assert.equal(reloaded.getSettings().defaultOrchestrate, true);
   });
 
   it("updateChannel: absent/junk → null, prod/nightly kept, persists", () => {
