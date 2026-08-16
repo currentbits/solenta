@@ -539,6 +539,108 @@ describe("runner simulated mode", () => {
     }
   });
 
+  it("a wake-up over the per-orchestration ceiling lands the orchestrator failed with the reason (issue #67)", async () => {
+    // Manual timers so the worker's recorded spend can cross the ceiling
+    // while the worker is in flight: the refused run is the wake-up.
+    const timers = new Map();
+    let nextTimerId = 0;
+    const manual = createRunner({
+      store,
+      core,
+      pushFn: () => {},
+      tickMs: 15,
+      setIntervalFn: (fn) => {
+        const id = ++nextTimerId;
+        timers.set(id, fn);
+        return id;
+      },
+      clearIntervalFn: (id) => timers.delete(id),
+    });
+    try {
+      const { orch, worker } = orchPair(store);
+      await manual.startRun({ threadId: worker.id, prompt: "worker task" });
+      services.setSettings(store, { orchestrationBudgetUsd: 1 });
+      store.setUsage(worker.id, {
+        model: null,
+        inputTokens: 0,
+        outputTokens: 0,
+        costUsd: 1,
+        turns: 1,
+      });
+      store.saveNow();
+
+      for (let i = 0; i < 500; i++) {
+        if (store.getThread(worker.id).status === "done") break;
+        const fn = timers.get(1);
+        if (!fn) break;
+        fn();
+      }
+      assert.equal(store.getThread(worker.id).status, "done");
+
+      // The refusal lands on a microtask after the terminal.
+      await waitFor(() => store.getThread(orch.id).status === "failed");
+      const msgs = store.getMessages(orch.id) || [];
+      const last = msgs[msgs.length - 1];
+      assert.equal(last.role, "event");
+      assert.match(last.text, /^\[orchestration\]/);
+      assert.match(last.text, new RegExp(worker.id));
+      assert.match(last.text, /Not delivered: Orchestration budget reached/);
+      assert.match(last.text, /\$1\.00 of \$1\.00/);
+      // The daily cap is unset: only the per-orchestration ceiling bit, and
+      // the wake-up never silently started anyway.
+      assert.equal(msgs.filter((m) => m.role === "user").length, 0);
+    } finally {
+      manual.stopAll();
+    }
+  });
+
+  it("a crew under the per-orchestration ceiling still wakes the orchestrator (issue #67)", async () => {
+    const { orch, worker } = orchPair(store);
+    services.setSettings(store, { orchestrationBudgetUsd: 10 });
+    store.setUsage(worker.id, {
+      model: null,
+      inputTokens: 0,
+      outputTokens: 0,
+      costUsd: 1,
+      turns: 1,
+    });
+    store.saveNow();
+    await runner.startRun({ threadId: worker.id, prompt: "worker task" });
+    await waitFor(() => {
+      const t = store.getThread(worker.id);
+      return t && t.status === "done";
+    });
+    await waitFor(() => orchNoticeMessages(store, orch.id).length > 0);
+    const notice = orchNoticeMessages(store, orch.id)[0];
+    assert.equal(notice.role, "user");
+    assert.match(notice.text, /\[orchestration\]/);
+  });
+
+  it("a user-sent turn still runs when the crew is over the ceiling (issue #67)", async () => {
+    // The ceiling refuses orchestration wake-ups only; the orchestrator stays
+    // resumable by the user (Retry turn after raising the cap).
+    const { orch, worker } = orchPair(store);
+    services.setSettings(store, { orchestrationBudgetUsd: 1 });
+    store.setUsage(worker.id, {
+      model: null,
+      inputTokens: 0,
+      outputTokens: 0,
+      costUsd: 2,
+      turns: 1,
+    });
+    store.saveNow();
+    await runner.startRun({ threadId: orch.id, prompt: "keep going" });
+    await waitFor(() => {
+      const t = store.getThread(orch.id);
+      return t && t.status === "done";
+    });
+    const users = (store.getMessages(orch.id) || []).filter(
+      (m) => m.role === "user",
+    );
+    assert.equal(users.length, 1);
+    assert.equal(users[0].text, "keep going");
+  });
+
   it("stopping an orchestrator stops its crew and stays stopped", async () => {
     const { orch, worker } = orchPair(store);
     await runner.startRun({ threadId: worker.id, prompt: "worker task" });

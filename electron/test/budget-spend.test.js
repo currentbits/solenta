@@ -192,19 +192,19 @@ describe("spendByDay and settings", () => {
     ]);
     store.saveNow();
 
-    assert.deepEqual(store.getSettings(), { dailyBudgetUsd: null, autoSettleAfterDays: 3, mcpServers: [], defaultWorktree: false, updateChannel: null });
-    assert.deepEqual(services.getSettings(store), { dailyBudgetUsd: null, autoSettleAfterDays: 3, mcpServers: [], defaultWorktree: false, updateChannel: null });
+    assert.deepEqual(store.getSettings(), { dailyBudgetUsd: null, orchestrationBudgetUsd: null, autoSettleAfterDays: 3, mcpServers: [], defaultWorktree: false, updateChannel: null, notifications: true });
+    assert.deepEqual(services.getSettings(store), { dailyBudgetUsd: null, orchestrationBudgetUsd: null, autoSettleAfterDays: 3, mcpServers: [], defaultWorktree: false, updateChannel: null, notifications: true });
 
     const set = services.setSettings(store, { dailyBudgetUsd: 12.5 });
-    assert.deepEqual(set, { dailyBudgetUsd: 12.5, autoSettleAfterDays: 3, mcpServers: [], defaultWorktree: false, updateChannel: null });
+    assert.deepEqual(set, { dailyBudgetUsd: 12.5, orchestrationBudgetUsd: null, autoSettleAfterDays: 3, mcpServers: [], defaultWorktree: false, updateChannel: null, notifications: true });
     assert.equal(store.getThreads()[0].updatedAt, 2);
 
     store.saveNow();
     const reloaded = new Store(filePath);
-    assert.deepEqual(reloaded.getSettings(), { dailyBudgetUsd: 12.5, autoSettleAfterDays: 3, mcpServers: [], defaultWorktree: false, updateChannel: null });
+    assert.deepEqual(reloaded.getSettings(), { dailyBudgetUsd: 12.5, orchestrationBudgetUsd: null, autoSettleAfterDays: 3, mcpServers: [], defaultWorktree: false, updateChannel: null, notifications: true });
 
     const cleared = services.setSettings(store, { dailyBudgetUsd: null });
-    assert.deepEqual(cleared, { dailyBudgetUsd: null, autoSettleAfterDays: 3, mcpServers: [], defaultWorktree: false, updateChannel: null });
+    assert.deepEqual(cleared, { dailyBudgetUsd: null, orchestrationBudgetUsd: null, autoSettleAfterDays: 3, mcpServers: [], defaultWorktree: false, updateChannel: null, notifications: true });
 
     assert.throws(
       () => services.setSettings(store, { dailyBudgetUsd: 0 }),
@@ -226,6 +226,43 @@ describe("spendByDay and settings", () => {
       () => services.setSettings(store, { dailyBudgetUsd: Infinity }),
       /Daily budget must be a positive number or null/,
     );
+  });
+
+  it("orchestrationBudgetUsd: default null; set, clear, validate, persist (issue #67)", () => {
+    const store = new Store(filePath);
+    assert.equal(store.getSettings().orchestrationBudgetUsd, null);
+
+    const set = services.setSettings(store, { orchestrationBudgetUsd: 2.5 });
+    assert.equal(set.orchestrationBudgetUsd, 2.5);
+    // A partial patch leaves the daily cap untouched.
+    assert.equal(set.dailyBudgetUsd, null);
+
+    store.saveNow();
+    const reloaded = new Store(filePath);
+    assert.equal(reloaded.getSettings().orchestrationBudgetUsd, 2.5);
+
+    const cleared = services.setSettings(store, {
+      orchestrationBudgetUsd: null,
+    });
+    assert.equal(cleared.orchestrationBudgetUsd, null);
+
+    for (const junk of [0, -1, NaN, "5", Infinity]) {
+      assert.throws(
+        () => services.setSettings(store, { orchestrationBudgetUsd: junk }),
+        /Orchestration budget must be a positive number or null/,
+      );
+    }
+    // Junk on disk heals to null (no ceiling) on load.
+    fs.writeFileSync(
+      filePath,
+      JSON.stringify({
+        version: 1,
+        projects: [],
+        threads: [],
+        settings: { orchestrationBudgetUsd: "lots" },
+      }),
+    );
+    assert.equal(new Store(filePath).getSettings().orchestrationBudgetUsd, null);
   });
 
   it("app.status returns spend, memory stats and the build stamp", async () => {

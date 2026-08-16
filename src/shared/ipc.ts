@@ -704,6 +704,13 @@ export interface AppSettings {
   /** Hard daily spend cap across all providers; null = no cap. */
   dailyBudgetUsd: number | null;
   /**
+   * Per-orchestration spend ceiling (USD): an orchestrator thread's own
+   * turns plus its orchWorker crew may not collectively exceed this. When
+   * they do, the next orchestration wake-up is refused and the thread lands
+   * failed with the reason (issue #67). null = no ceiling.
+   */
+  orchestrationBudgetUsd: number | null;
+  /**
    * Days of silence before a quiet thread auto-settles (t3's window).
    * null disables the inactivity path entirely — threads then settle only
    * via PR state or an explicit settle. Positive integer when set. The

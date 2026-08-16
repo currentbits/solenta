@@ -331,6 +331,104 @@ describe("SettingsModal daily budget", () => {
 });
 
 
+describe("SettingsModal per-orchestration budget (issue #67)", () => {
+  /** Save buttons in DOM order: daily budget, orchestration budget, settle. */
+  function saveButtons(m: any) {
+    return m
+      .queryAll("button")
+      .filter((b: HTMLElement) => (b.textContent || "").includes("Save"));
+  }
+
+  it("accepts a valid number and saves orchestrationBudgetUsd", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const m = await mount(
+      modal({
+        settings: { dailyBudgetUsd: null, autoSettleAfterDays: 3 },
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return {
+            dailyBudgetUsd: patch.dailyBudgetUsd ?? null,
+            orchestrationBudgetUsd: patch.orchestrationBudgetUsd ?? null,
+            autoSettleAfterDays: 3,
+          };
+        },
+      }),
+    );
+    const input = m.query("#orch-budget");
+    assert.ok(input, "per-orchestration budget input must render");
+    assert.ok(
+      m.text().includes("Per-orchestration budget"),
+      "label must match the brief",
+    );
+    await m.type(input, "4.5");
+    const saves = saveButtons(m);
+    assert.ok(saves.length >= 3, "budget + orchestration + settle Save buttons");
+    await m.click(saves[1]);
+    assert.equal(patches.length, 1, "save must call onSaveSettings once");
+    assert.equal(patches[0].orchestrationBudgetUsd, 4.5);
+    m.unmount();
+  });
+
+  it("pre-fills from settings and clearing saves null (no ceiling)", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const m = await mount(
+      modal({
+        settings: {
+          dailyBudgetUsd: null,
+          orchestrationBudgetUsd: 7,
+          autoSettleAfterDays: 3,
+        } as AppSettings,
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return {
+            dailyBudgetUsd: null,
+            orchestrationBudgetUsd:
+              patch.orchestrationBudgetUsd === undefined
+                ? null
+                : patch.orchestrationBudgetUsd,
+            autoSettleAfterDays: 3,
+          };
+        },
+      }),
+    );
+    const input = m.query("#orch-budget") as HTMLInputElement;
+    assert.equal(input.value, "7", "existing ceiling must pre-fill");
+    await m.type(input, "");
+    await m.click(saveButtons(m)[1]);
+    assert.equal(patches[0].orchestrationBudgetUsd, null);
+    m.unmount();
+  });
+
+  it("surfaces the backend rejection with role=alert", async () => {
+    const m = await mount(
+      modal({
+        settings: { dailyBudgetUsd: null, autoSettleAfterDays: 3 },
+        onSaveSettings: async (patch) => {
+          const n = patch.orchestrationBudgetUsd;
+          if (n != null && (!Number.isFinite(n) || n <= 0)) {
+            throw new Error(
+              "Orchestration budget must be a positive number or null",
+            );
+          }
+          return {
+            dailyBudgetUsd: null,
+            orchestrationBudgetUsd: n ?? null,
+            autoSettleAfterDays: 3,
+          };
+        },
+      }),
+    );
+    await m.type(m.query("#orch-budget"), "0");
+    await m.click(saveButtons(m)[1]);
+    assert.ok(m.query('[role="alert"]'), "validation must use role=alert");
+    assert.ok(
+      m.text().includes("Orchestration budget must be a positive number"),
+      `got: ${m.text().slice(-160)}`,
+    );
+    m.unmount();
+  });
+});
+
 describe("SettingsModal auto-settle window", () => {
   it("sets a positive day count and reports it", async () => {
     const patches: Partial<AppSettings>[] = [];

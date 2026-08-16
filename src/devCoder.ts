@@ -250,6 +250,8 @@ const WORKTREE_DELAY_MS = 450;
 const PUSH_DELAY_MS = 350;
 const SETTINGS_BUDGET_ERROR =
   "Daily budget must be a positive number or null";
+const SETTINGS_ORCH_BUDGET_ERROR =
+  "Orchestration budget must be a positive number or null";
 
 function formatUsd(n: number): string {
   return n.toFixed(2);
@@ -1277,6 +1279,8 @@ function buildDevCoder(): CoderApi {
   /** Aggregated cost of finished fake runs this session (stands in for "today"). */
   let spendTodayUsd = 0;
   let dailyBudgetUsd: number | null = null;
+  /** Per-orchestration crew spend ceiling (Settings); null = no cap. */
+  let orchestrationBudgetUsd: number | null = null;
   /** Default 3 = AUTO_SETTLE_AFTER_DAYS; null disables. */
   let autoSettleAfterDays: number | null = 3;
   /** User MCP servers (Skills tab), in-memory. */
@@ -1561,6 +1565,18 @@ function buildDevCoder(): CoderApi {
     return v;
   };
 
+  const parseOrchBudgetPatch = (patch: Partial<AppSettings>): number | null => {
+    if (!Object.prototype.hasOwnProperty.call(patch, "orchestrationBudgetUsd")) {
+      return orchestrationBudgetUsd;
+    }
+    const v = patch.orchestrationBudgetUsd;
+    if (v === null) return null;
+    if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) {
+      throw new Error(SETTINGS_ORCH_BUDGET_ERROR);
+    }
+    return v;
+  };
+
   const SETTINGS_SETTLE_ERROR =
     "Auto-settle days must be a positive integer or null";
 
@@ -1834,6 +1850,7 @@ function buildDevCoder(): CoderApi {
       async get(): Promise<AppSettings> {
         return {
           dailyBudgetUsd,
+          orchestrationBudgetUsd,
           autoSettleAfterDays,
           mcpServers: mcpServers.map((s) => ({ ...s })),
           defaultWorktree,
@@ -1843,6 +1860,7 @@ function buildDevCoder(): CoderApi {
       },
       async set(patch: Partial<AppSettings>): Promise<AppSettings> {
         dailyBudgetUsd = parseBudgetPatch(patch);
+        orchestrationBudgetUsd = parseOrchBudgetPatch(patch);
         autoSettleAfterDays = parseSettleDaysPatch(patch);
         if (Object.prototype.hasOwnProperty.call(patch, "mcpServers")) {
           if (!Array.isArray(patch.mcpServers)) {
@@ -1871,6 +1889,7 @@ function buildDevCoder(): CoderApi {
         }
         return {
           dailyBudgetUsd,
+          orchestrationBudgetUsd,
           autoSettleAfterDays,
           mcpServers: mcpServers.map((s) => ({ ...s })),
           defaultWorktree,

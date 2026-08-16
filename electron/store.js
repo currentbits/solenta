@@ -47,7 +47,12 @@ const EMPTY = {
   spendByDay: {},
   automations: [],
   // autoSettleAfterDays defaults to 3 (AUTO_SETTLE_AFTER_DAYS); null = disabled.
-  settings: { dailyBudgetUsd: null, autoSettleAfterDays: 3, mcpServers: [] },
+  settings: {
+    dailyBudgetUsd: null,
+    orchestrationBudgetUsd: null,
+    autoSettleAfterDays: 3,
+    mcpServers: [],
+  },
 };
 
 /** User MCP server names: lowercase slug, same rule as skill names. */
@@ -236,7 +241,8 @@ const DEFAULT_AUTO_SETTLE_AFTER_DAYS = 3;
  *   - positive integer          → kept
  *   - junk on disk              → DEFAULT (3)  (heal; setSettings rejects junk)
  *
- * dailyBudgetUsd still collapses absent/junk → null (no-cap).
+ * dailyBudgetUsd and orchestrationBudgetUsd still collapse absent/junk →
+ * null (no-cap).
  *
  * mcpServers: absent/junk → []; entries are healed entry-by-entry
  * (normalizeMcpServers), never throwing on a corrupt store.
@@ -251,11 +257,12 @@ const DEFAULT_AUTO_SETTLE_AFTER_DAYS = 3;
  * absent/junk keeps the pre-setting behaviour (notify).
  *
  * @param {unknown} raw
- * @returns {{ dailyBudgetUsd: number | null, autoSettleAfterDays: number | null, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }>, defaultWorktree: boolean, updateChannel: "prod" | "nightly" | null, notifications: boolean }}
+ * @returns {{ dailyBudgetUsd: number | null, orchestrationBudgetUsd: number | null, autoSettleAfterDays: number | null, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }>, defaultWorktree: boolean, updateChannel: "prod" | "nightly" | null, notifications: boolean }}
  */
 function normalizeSettings(raw) {
   const settings = {
     dailyBudgetUsd: null,
+    orchestrationBudgetUsd: null,
     autoSettleAfterDays: DEFAULT_AUTO_SETTLE_AFTER_DAYS,
     mcpServers: [],
     defaultWorktree: false,
@@ -263,7 +270,7 @@ function normalizeSettings(raw) {
     notifications: true,
   };
   if (!raw || typeof raw !== "object") return settings;
-  const obj = /** @type {{ dailyBudgetUsd?: unknown, autoSettleAfterDays?: unknown, mcpServers?: unknown }} */ (
+  const obj = /** @type {{ dailyBudgetUsd?: unknown, orchestrationBudgetUsd?: unknown, autoSettleAfterDays?: unknown, mcpServers?: unknown }} */ (
     raw
   );
   const v = obj.dailyBudgetUsd;
@@ -273,6 +280,13 @@ function normalizeSettings(raw) {
     settings.dailyBudgetUsd = v;
   } else {
     settings.dailyBudgetUsd = null;
+  }
+
+  const ov = obj.orchestrationBudgetUsd;
+  if (typeof ov === "number" && Number.isFinite(ov) && ov > 0) {
+    settings.orchestrationBudgetUsd = ov;
+  } else {
+    settings.orchestrationBudgetUsd = null;
   }
 
   if (Object.prototype.hasOwnProperty.call(obj, "autoSettleAfterDays")) {
@@ -817,12 +831,13 @@ class Store {
   }
 
   /**
-   * @returns {{ dailyBudgetUsd: number | null, autoSettleAfterDays: number | null, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }>, defaultWorktree: boolean }}
+   * @returns {{ dailyBudgetUsd: number | null, orchestrationBudgetUsd: number | null, autoSettleAfterDays: number | null, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }>, defaultWorktree: boolean }}
    */
   getSettings() {
     if (!this.data.settings || typeof this.data.settings !== "object") {
       this.data.settings = {
         dailyBudgetUsd: null,
+        orchestrationBudgetUsd: null,
         autoSettleAfterDays: DEFAULT_AUTO_SETTLE_AFTER_DAYS,
         mcpServers: [],
       };
@@ -832,6 +847,7 @@ class Store {
     this.data.settings = n;
     return {
       dailyBudgetUsd: n.dailyBudgetUsd,
+      orchestrationBudgetUsd: n.orchestrationBudgetUsd,
       autoSettleAfterDays: n.autoSettleAfterDays,
       mcpServers: n.mcpServers,
       defaultWorktree: n.defaultWorktree,
@@ -843,8 +859,8 @@ class Store {
   /**
    * Validate and merge settings. Does not touch threads.
    * Does not save; caller must save.
-   * @param {Partial<{ dailyBudgetUsd: number | null, autoSettleAfterDays: number | null, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }>, defaultWorktree: boolean }>} patch
-   * @returns {{ dailyBudgetUsd: number | null, autoSettleAfterDays: number | null, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }>, defaultWorktree: boolean }}
+   * @param {Partial<{ dailyBudgetUsd: number | null, orchestrationBudgetUsd: number | null, autoSettleAfterDays: number | null, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }>, defaultWorktree: boolean }>} patch
+   * @returns {{ dailyBudgetUsd: number | null, orchestrationBudgetUsd: number | null, autoSettleAfterDays: number | null, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }>, defaultWorktree: boolean }}
    */
   setSettings(patch) {
     if (!patch || typeof patch !== "object") {
@@ -853,6 +869,7 @@ class Store {
     if (!this.data.settings || typeof this.data.settings !== "object") {
       this.data.settings = {
         dailyBudgetUsd: null,
+        orchestrationBudgetUsd: null,
         autoSettleAfterDays: DEFAULT_AUTO_SETTLE_AFTER_DAYS,
         mcpServers: [],
       };
@@ -870,6 +887,17 @@ class Store {
         }
       }
       this.data.settings.dailyBudgetUsd = v === null ? null : v;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "orchestrationBudgetUsd")) {
+      const v = patch.orchestrationBudgetUsd;
+      if (v !== null) {
+        if (typeof v !== "number" || !Number.isFinite(v) || !(v > 0)) {
+          throw new Error(
+            "Orchestration budget must be a positive number or null",
+          );
+        }
+      }
+      this.data.settings.orchestrationBudgetUsd = v === null ? null : v;
     }
     if (Object.prototype.hasOwnProperty.call(patch, "autoSettleAfterDays")) {
       const v = patch.autoSettleAfterDays;
@@ -1201,7 +1229,12 @@ function cloneEmpty() {
     spendByDay: {},
     automations: [],
     // autoSettleAfterDays defaults to 3 (AUTO_SETTLE_AFTER_DAYS); null = disabled.
-  settings: { dailyBudgetUsd: null, autoSettleAfterDays: 3, mcpServers: [] },
+    settings: {
+      dailyBudgetUsd: null,
+      orchestrationBudgetUsd: null,
+      autoSettleAfterDays: 3,
+      mcpServers: [],
+    },
   };
   ensureWorkflowTemplates(data);
   return data;
