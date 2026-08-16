@@ -207,8 +207,11 @@ const DEFAULT_AUTO_SETTLE_AFTER_DAYS = 3;
  * updateChannel: absent/junk → null (follow the channel stamped at package
  * time); "prod"/"nightly" override the stamp.
  *
+ * notifications: only an explicit false turns desktop notifications off, so
+ * absent/junk keeps the pre-setting behaviour (notify).
+ *
  * @param {unknown} raw
- * @returns {{ dailyBudgetUsd: number | null, autoSettleAfterDays: number | null, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }>, defaultWorktree: boolean, updateChannel: "prod" | "nightly" | null }}
+ * @returns {{ dailyBudgetUsd: number | null, autoSettleAfterDays: number | null, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }>, defaultWorktree: boolean, updateChannel: "prod" | "nightly" | null, notifications: boolean }}
  */
 function normalizeSettings(raw) {
   const settings = {
@@ -217,6 +220,7 @@ function normalizeSettings(raw) {
     mcpServers: [],
     defaultWorktree: false,
     updateChannel: null,
+    notifications: true,
   };
   if (!raw || typeof raw !== "object") return settings;
   const obj = /** @type {{ dailyBudgetUsd?: unknown, autoSettleAfterDays?: unknown, mcpServers?: unknown }} */ (
@@ -254,6 +258,8 @@ function normalizeSettings(raw) {
     /** @type {{ defaultWorktree?: unknown }} */ (obj).defaultWorktree === true;
   const ch = /** @type {{ updateChannel?: unknown }} */ (obj).updateChannel;
   settings.updateChannel = ch === "prod" || ch === "nightly" ? ch : null;
+  settings.notifications =
+    /** @type {{ notifications?: unknown }} */ (obj).notifications !== false;
   return settings;
 }
 
@@ -450,6 +456,8 @@ function migrateThread(t) {
     snoozedAt: t.snoozedAt !== undefined ? t.snoozedAt : null,
     // Round 49 fork/hand-off: null = not a fork (provenance only).
     handoffFrom: t.handoffFrom !== undefined ? t.handoffFrom : null,
+    // Per-thread desktop-notification mute (issue #87): absent → not muted.
+    muted: t.muted === true,
   };
 }
 
@@ -700,6 +708,7 @@ class Store {
       mcpServers: n.mcpServers,
       defaultWorktree: n.defaultWorktree,
       updateChannel: n.updateChannel,
+      notifications: n.notifications,
     };
   }
 
@@ -767,6 +776,13 @@ class Store {
         throw new Error('updateChannel must be "prod", "nightly", or null');
       }
       this.data.settings.updateChannel = v;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "notifications")) {
+      const v = patch.notifications;
+      if (typeof v !== "boolean") {
+        throw new Error("notifications must be a boolean");
+      }
+      this.data.settings.notifications = v;
     }
     return this.getSettings();
   }

@@ -60,6 +60,7 @@ export default function App() {
     setSettled,
     setPinned,
     setSnoozed,
+    setMuted,
     deleteThread,
     removeProject,
     setupWorktree,
@@ -407,6 +408,9 @@ export default function App() {
         }}
         onSetSnoozed={(threadId, until) => {
           void setSnoozed(threadId, until);
+        }}
+        onSetMuted={(threadId, muted) => {
+          void setMuted(threadId, muted);
         }}
         onSetArchived={(threadId, archived) => {
           void setArchived(archived, threadId);

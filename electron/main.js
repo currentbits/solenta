@@ -268,7 +268,13 @@ app.whenReady().then(async () => {
       if (channel === "thread:updated" && payload && payload.thread) {
         const prev = lastStatus.get(payload.thread.id);
         const next = threadNotifyState(payload.thread);
-        if (shouldNotify(prev, next, isAnyWindowFocused())) {
+        // Mute checks come after shouldNotify: this runs on every stream
+        // chunk, and getSettings() re-normalizes the whole settings blob.
+        if (
+          shouldNotify(prev, next, isAnyWindowFocused()) &&
+          !payload.thread.muted &&
+          store.getSettings().notifications
+        ) {
           notifyThreadComplete(payload.thread);
         }
         lastStatus.set(payload.thread.id, next);

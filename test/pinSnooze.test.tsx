@@ -546,4 +546,67 @@ describe("fakeCoder setPinned/setSnoozed honesty (round 44)", () => {
       Date.now = realNow;
     }
   });
+
+  /**
+   * Issue #87: the mute item lives in the same menu. Round-trip through
+   * useCoder + fakeCoder, and the label must follow the thread's own flag
+   * (a hardcoded "Mute" would pass a click test but strand a muted thread).
+   */
+  it("App mute menu item round-trips through fakeCoder and flips its label", async () => {
+    const tOpen = thread({ id: "t-open", projectId: "p1", title: "open" });
+    const tMid = thread({
+      id: "t-mute-mid",
+      projectId: "p1",
+      title: "noisy worker",
+      updatedAt: FRESH - 50,
+    });
+    const fake = createFakeCoder({
+      projects: [project({ id: "p1" })],
+      threads: [tOpen, tMid],
+      details: {
+        "t-open": detail({ thread: tOpen }),
+        "t-mute-mid": detail({ thread: tMid }),
+      },
+    });
+    const m = await boot(fake);
+    try {
+      await m.flush();
+
+      await m.click(m.query('[data-snooze-btn="t-mute-mid"]'));
+      await m.flush();
+      const item = m.query('[data-mute-toggle="t-mute-mid"]');
+      assert.ok(item, "mute item must be in the snooze menu");
+      assert.equal(item!.textContent, "Mute notifications");
+
+      await m.click(item!);
+      await m.flush();
+      await inAct(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      await m.flush();
+
+      const calls = fake.of("threads.setMuted");
+      assert.equal(calls.length, 1, "setMuted must fire once");
+      assert.deepEqual(calls[0]!.args[0], {
+        threadId: "t-mute-mid",
+        muted: true,
+      });
+      assert.equal(
+        (await fake.api.threads.list()).find((x) => x.id === "t-mute-mid")
+          ?.muted,
+        true,
+      );
+
+      // Reopen: the item now offers the way back out.
+      await m.click(m.query('[data-snooze-btn="t-mute-mid"]'));
+      await m.flush();
+      assert.equal(
+        m.query('[data-mute-toggle="t-mute-mid"]')?.textContent,
+        "Unmute notifications",
+      );
+    } finally {
+      m.unmount();
+    }
+  });
 });

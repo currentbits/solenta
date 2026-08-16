@@ -115,6 +115,13 @@ export interface ThreadInfo {
   /** Epoch ms when the snooze was set; the raised-hand comparisons anchor here. */
   snoozedAt: number | null;
   /**
+   * Muted: this thread never posts a desktop notification, however loud its
+   * run gets. Notification-only — it does not hide the thread, pause it, or
+   * change settle classification. For fan-outs where every worker settling
+   * would otherwise ping (issue #87).
+   */
+  muted: boolean;
+  /**
    * Epoch ms of the last time the user LOOKED at this thread. Stamped by the
    * main process inside threads.get — selecting a thread IS visiting it; no
    * separate markVisited channel. Unread = updatedAt > lastVisitedAt. Null on
@@ -718,6 +725,12 @@ export interface AppSettings {
    */
   defaultWorktree: boolean;
   /**
+   * Global desktop-notification switch. False silences every thread; true
+   * (the default) leaves per-thread mute in charge. Only an explicit false
+   * on disk turns it off, so upgrades keep notifying.
+   */
+  notifications: boolean;
+  /**
    * Update channel override; null follows the channel stamped at package
    * time. Has no effect in an unstamped dev tree (updates stay disabled).
    */
@@ -964,6 +977,8 @@ export interface CoderApi {
      * agent or the run lifecycle.
      */
     setSnoozed(input: { threadId: string; until: number | null }): Promise<ThreadInfo>;
+    /** Mute/unmute desktop notifications for one thread. Never bumps updatedAt. */
+    setMuted(input: { threadId: string; muted: boolean }): Promise<ThreadInfo>;
     /**
      * Fork / hand off a thread: creates a NEW thread in the same project,
      * copying provider/model/permissionMode unless overridden (a provider
