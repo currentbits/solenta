@@ -165,6 +165,13 @@ export interface ThreadInfo {
    * replaces the previous one and outlives the run.
    */
   planSteps?: PlanStep[];
+  /**
+   * The last plan the user APPROVED (ExitPlanMode), kept so the thread's plan
+   * card outlives the approval prompt (issue #75). Truncated on write — this
+   * rides every threads:changed push. Absent until a plan is approved; a
+   * rejected plan never lands here and the newest approved plan replaces it.
+   */
+  plan?: string;
 }
 
 /** One step of an agent's working plan, in the agent's own order. */
