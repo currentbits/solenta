@@ -391,6 +391,26 @@ export function Composer({
     [mention, closeMention],
   );
 
+  /**
+   * Focus the input when a thread is opened (mount, or ThreadView swapping
+   * threadId on the same instance) and the composer can accept text, so the
+   * user can type without clicking first (issue #73). A thread opened
+   * mid-run is focused once it becomes enabled; an already-focused thread is
+   * NOT re-focused when a run finishes, so a background completion never
+   * steals focus from wherever the user went.
+   */
+  const focusedThread = useRef<string | null>(null);
+  useEffect(() => {
+    if (disabled || sending) return;
+    if (focusedThread.current === threadId) return;
+    const el = textareaRef.current;
+    if (!el) return;
+    focusedThread.current = threadId;
+    el.focus();
+    // Land at the end so a restored draft continues where it left off.
+    el.setSelectionRange(el.value.length, el.value.length);
+  }, [threadId, disabled, sending]);
+
   // Restore the caret after an accepted mention re-renders the textarea.
   useEffect(() => {
     if (pendingCaret.current != null && textareaRef.current) {

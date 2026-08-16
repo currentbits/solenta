@@ -293,6 +293,131 @@ describe("Composer per-thread draft", () => {
   });
 });
 
+describe("Composer focus on thread open (issue #73)", () => {
+  it("focuses the textarea on mount so typing works without a click", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h));
+    const ta = m.query("textarea") as HTMLTextAreaElement;
+    assert.ok(ta, "composer must render a prompt textarea");
+    assert.equal(
+      document.activeElement,
+      ta,
+      "opening a thread must move keyboard focus to the composer",
+    );
+    m.unmount();
+  });
+
+  it("focuses the textarea when ThreadView swaps threadId", async () => {
+    const h = makeHarness();
+    function Shell() {
+      const [tid, setTid] = useState("t1");
+      return (
+        <>
+          <button onClick={() => setTid("t2")}>swap-thread</button>
+          {composer(h, { threadId: tid })}
+        </>
+      );
+    }
+    const m = await mount(<Shell />);
+    const ta = () => m.query("textarea") as HTMLTextAreaElement;
+    (document.activeElement as HTMLElement)?.blur();
+    assert.notEqual(document.activeElement, ta(), "precondition: blurred");
+
+    await m.click(m.byText("swap-thread"));
+    assert.equal(
+      document.activeElement,
+      ta(),
+      "selecting another thread must focus its composer",
+    );
+    m.unmount();
+  });
+
+  it("waits while disabled, then focuses once the composer enables", async () => {
+    const h = makeHarness();
+    function Shell() {
+      const [off, setOff] = useState(true);
+      return (
+        <>
+          <button onClick={() => setOff(false)}>enable</button>
+          {composer(h, { disabled: off })}
+        </>
+      );
+    }
+    const m = await mount(<Shell />);
+    const ta = () => m.query("textarea") as HTMLTextAreaElement;
+    assert.notEqual(
+      document.activeElement,
+      ta(),
+      "a disabled composer (running/archived thread) must not take focus",
+    );
+
+    await m.click(m.byText("enable"));
+    assert.equal(
+      document.activeElement,
+      ta(),
+      "a thread opened mid-run must focus once the input enables",
+    );
+    m.unmount();
+  });
+
+  it("does not re-focus an already-focused thread when a run finishes", async () => {
+    const h = makeHarness();
+    function Shell() {
+      const [off, setOff] = useState(false);
+      return (
+        <>
+          <button onClick={() => setOff((v) => !v)}>toggle-run</button>
+          {composer(h, { disabled: off })}
+        </>
+      );
+    }
+    const m = await mount(<Shell />);
+    const ta = () => m.query("textarea") as HTMLTextAreaElement;
+    assert.equal(document.activeElement, ta(), "precondition: focused on open");
+
+    // Blur BEFORE disabling: jsdom keeps a disabled element "focused" and
+    // ignores blur() on it (real browsers blur on disable), so blurring after
+    // the toggle would silently no-op.
+    ta().blur();
+    await m.click(m.byText("toggle-run")); // run starts: disabled
+    await m.click(m.byText("toggle-run")); // run finishes: enabled again
+    assert.notEqual(
+      document.activeElement,
+      ta(),
+      "a background run finishing must not steal focus back",
+    );
+    m.unmount();
+  });
+
+  it("places the caret at the end of a restored draft", async () => {
+    const h = makeHarness();
+    function Shell() {
+      const [tid, setTid] = useState("t1");
+      return (
+        <>
+          <button onClick={() => setTid((t) => (t === "t1" ? "t2" : "t1"))}>
+            swap-thread
+          </button>
+          {composer(h, { threadId: tid })}
+        </>
+      );
+    }
+    const m = await mount(<Shell />);
+    const ta = () => m.query("textarea") as HTMLTextAreaElement;
+    await m.type(ta(), "draft for A");
+    await m.click(m.byText("swap-thread")); // to t2
+    await m.click(m.byText("swap-thread")); // back to t1
+
+    assert.equal(document.activeElement, ta(), "returning to a thread refocuses");
+    assert.equal(
+      ta().selectionStart,
+      "draft for A".length,
+      "caret must sit at the end of the restored draft, not the start",
+    );
+    m.unmount();
+  });
+});
+
 describe("Composer send", () => {
   it("types a prompt and submits once with that text", async () => {
     const h = makeHarness();
