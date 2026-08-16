@@ -90,6 +90,18 @@ export function buildWaitStates(
   return out;
 }
 
+/**
+ * A parent whose own turn ended while its workers run reads "done" (or
+ * "idle") from the runner, which tells the wrong story: it is delegating,
+ * not finished. Failure stays failure — that is the news, workers or not.
+ */
+export function isDelegating(
+  status: ThreadStatus,
+  wait: WaitState | null | undefined,
+): boolean {
+  return wait != null && (status === "done" || status === "idle");
+}
+
 /** "Waiting on 2 workers · 3m · 1 blocked". */
 export function waitLabel(state: WaitState, now = Date.now()): string {
   const n = state.children.length;

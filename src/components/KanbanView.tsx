@@ -5,6 +5,7 @@ import {
   type SettleOpts,
 } from "../threadSettle";
 import type { ProjectInfo, ProviderInfo, ThreadInfo } from "../shared/ipc";
+import { buildWaitStates } from "../waiting";
 import { ThreadCard } from "./Sidebar";
 import styles from "./KanbanView.module.css";
 
@@ -49,6 +50,7 @@ export function KanbanView({
     [threads, settleOpts],
   );
   const empty = isKanbanEmpty(columns);
+  const waitStates = useMemo(() => buildWaitStates(threads), [threads]);
 
   const slugFor = (thread: ThreadInfo): string =>
     projects.find((p) => p.id === thread.projectId)?.slug ?? "unknown";
@@ -97,6 +99,7 @@ export function KanbanView({
                     active={false}
                     now={now}
                     onSelect={(id) => onSelectThread(id)}
+                    wait={waitStates.get(thread.id) ?? null}
                   />
                 ))}
               </div>
