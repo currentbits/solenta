@@ -18,6 +18,40 @@ export interface SidebarGroup {
   threads: ThreadInfo[];
 }
 
+/**
+ * Max attention threads rendered per project group before a "Show more"
+ * disclosure (session-only, like the archived toggle). Group order is static
+ * createdAt desc, so the cap hides the OLDEST threads — newest work and
+ * fresh runs are always visible. Search bypasses the cap.
+ */
+export const GROUP_ATTENTION_CAP = 8;
+
+/**
+ * How many attention threads of one group render before the "Show more"
+ * disclosure. When capped, the slice extends past the cap to include any
+ * keepIds (active / revealed thread) — the open thread never vanishes.
+ * Pure: Sidebar render and buildVisibleThreadIds share it so keyboard
+ * navigation mirrors the render exactly.
+ */
+export function visibleAttentionCount(
+  attention: readonly ThreadInfo[],
+  opts: {
+    capped: boolean;
+    keepIds?: readonly (string | null | undefined)[];
+  },
+): number {
+  if (!opts.capped || attention.length <= GROUP_ATTENTION_CAP) {
+    return attention.length;
+  }
+  let count = GROUP_ATTENTION_CAP;
+  for (const id of opts.keepIds ?? []) {
+    if (!id) continue;
+    const idx = attention.findIndex((t) => t.id === id);
+    if (idx >= count) count = idx + 1;
+  }
+  return count;
+}
+
 export type { SettleOpts };
 
 /**

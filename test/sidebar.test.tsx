@@ -1645,3 +1645,103 @@ describe("Sidebar waiting-on badge (issue #42)", () => {
     m.unmount();
   });
 });
+
+describe("Sidebar group overflow cap + card density (issue #70)", () => {
+  /** 12 attention threads in p1, createdAt desc: t0 newest … t11 oldest. */
+  const manyThreads = (n: number, projectId = "p1") =>
+    Array.from({ length: n }, (_, i) =>
+      thread({
+        id: `${projectId}-t${i}`,
+        title: `${projectId} thread ${i}`,
+        createdAt: FRESH + 1000 - i,
+        updatedAt: FRESH + 1000 - i,
+        projectId,
+      }),
+    );
+
+  const p1Cards = (m: Awaited<ReturnType<typeof mount>>) =>
+    cardTitles(m).filter((id) => id.startsWith("p1-t"));
+
+  it("caps a group at 8 attention cards behind a 'Show N more' disclosure", async () => {
+    const m = await mount(sidebar(manyThreads(12)));
+    assert.deepEqual(
+      p1Cards(m),
+      Array.from({ length: 8 }, (_, i) => `p1-t${i}`),
+      "newest 8 render in order; the oldest hide behind the disclosure",
+    );
+    const more = m.byText("Show 4 more");
+    assert.ok(more, "disclosure counts the hidden remainder");
+    await m.click(more!);
+    assert.equal(p1Cards(m).length, 12, "expanded group renders everything");
+    const fewer = m.byText("Show fewer");
+    assert.ok(fewer, "expanded group offers to re-cap");
+    await m.click(fewer!);
+    assert.equal(p1Cards(m).length, 8, "re-capped back to the newest 8");
+    m.unmount();
+  });
+
+  it("no disclosure at or under the cap", async () => {
+    const m = await mount(sidebar(manyThreads(8)));
+    assert.equal(p1Cards(m).length, 8);
+    assert.ok(!m.byText("Show fewer"), "exactly at the cap: no toggle");
+    m.unmount();
+  });
+
+  it("the open thread never vanishes past the cap", async () => {
+    const m = await mount(
+      sidebar(manyThreads(12), { activeThreadId: "p1-t10" }),
+    );
+    const shown = p1Cards(m);
+    assert.equal(shown.length, 11, "slice extends to include the active thread");
+    assert.ok(shown.includes("p1-t10"));
+    assert.ok(!shown.includes("p1-t11"), "threads past the open one stay hidden");
+    m.unmount();
+  });
+
+  it("search bypasses the cap so every hit renders", async () => {
+    const m = await mount(sidebar(manyThreads(12)));
+    assert.equal(p1Cards(m).length, 8);
+    const input = m.query("input") as HTMLInputElement;
+    assert.ok(input);
+    await m.type(input, "p1 thread");
+    await inAct(async () => {
+      await new Promise((r) => setTimeout(r, 350));
+    });
+    await m.flush();
+    assert.equal(p1Cards(m).length, 12, "search renders all hits, uncapped");
+    assert.ok(!m.byText("Show 4 more"), "no disclosure while searching");
+    m.unmount();
+  });
+
+  it("cards in a named group drop the duplicated slug; orphan cards keep it", async () => {
+    const orphan = thread({
+      id: "orphan-1",
+      title: "orphan work",
+      projectId: "p-gone",
+      createdAt: FRESH + 2000,
+      updatedAt: FRESH + 2000,
+    });
+    const m = await mount(
+      sidebar([thread({ id: "home", title: "home work" }), orphan], {
+        projects: [p1],
+      }),
+    );
+    const homeCard = m.query('[data-thread-card="home"]');
+    assert.ok(homeCard, "named-group card renders");
+    assert.ok(
+      !(homeCard!.textContent || "").includes("acme/ledger"),
+      "group header already carries the slug — the card must not repeat it",
+    );
+    assert.ok(
+      (homeCard!.textContent || "").includes("Claude Code"),
+      "provider tag survives the row merge",
+    );
+    const orphanCard = m.query('[data-thread-card="orphan-1"]');
+    assert.ok(orphanCard, "orphan card renders");
+    assert.ok(
+      (orphanCard!.textContent || "").includes("unknown"),
+      "orphan group has no header slug, so the card keeps it",
+    );
+    m.unmount();
+  });
+});

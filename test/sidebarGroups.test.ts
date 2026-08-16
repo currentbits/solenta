@@ -5,10 +5,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  GROUP_ATTENTION_CAP,
   buildSidebarGroups,
   groupHeaderSummary,
   partitionSidebar,
   splitSettled,
+  visibleAttentionCount,
 } from "../src/sidebarGroups.ts";
 import { AUTO_SETTLE_AFTER_DAYS } from "../src/threadSettle.ts";
 import type { ProjectInfo, ThreadInfo } from "../src/shared/ipc.ts";
@@ -388,5 +390,50 @@ describe("groupHeaderSummary (round 40 working + round 43 unread)", () => {
 
   it("says nothing for empty groups", () => {
     assert.equal(groupHeaderSummary([]), null);
+  });
+});
+
+describe("GROUP_ATTENTION_CAP + visibleAttentionCount (issue #70)", () => {
+  it("cap is the fixed fact 8 (pinned like the 10/25 tail constants)", () => {
+    assert.equal(GROUP_ATTENTION_CAP, 8);
+  });
+
+  const many = (n: number) =>
+    Array.from({ length: n }, (_, i) =>
+      thread({ id: `t${i}`, projectId: "p1", updatedAt: NOW - i }),
+    );
+
+  it("uncapped returns the full length", () => {
+    assert.equal(
+      visibleAttentionCount(many(20), { capped: false }),
+      20,
+    );
+  });
+
+  it("at or under the cap nothing is hidden, even when capped", () => {
+    assert.equal(visibleAttentionCount(many(8), { capped: true }), 8);
+    assert.equal(visibleAttentionCount(many(3), { capped: true }), 3);
+  });
+
+  it("capped hides everything past the cap", () => {
+    assert.equal(visibleAttentionCount(many(12), { capped: true }), 8);
+  });
+
+  it("keepIds carve-out extends the slice to include the open thread", () => {
+    const list = many(12);
+    assert.equal(
+      visibleAttentionCount(list, { capped: true, keepIds: ["t10"] }),
+      11,
+    );
+    // Inside the cap: no extension.
+    assert.equal(
+      visibleAttentionCount(list, { capped: true, keepIds: ["t3"] }),
+      8,
+    );
+    // Unknown / null ids are ignored.
+    assert.equal(
+      visibleAttentionCount(list, { capped: true, keepIds: [null, "nope"] }),
+      8,
+    );
   });
 });
