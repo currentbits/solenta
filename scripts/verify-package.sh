@@ -41,17 +41,18 @@ fi
 # Install cleanup before any probe so the temp dir cannot leak.
 TMP_USERDATA="$(mktemp -d "${TMPDIR:-/tmp}/solenta-pkg-verify.XXXXXX")"
 ELECTRON_PID=""
+# Kill the whole process group, not just the parent: the app's memory-server
+# child (electron/memory-sup.js, detached:false) reparents to launchd the
+# instant the parent dies, so a parent-then-`pgrep -P` sweep always finds
+# nothing and leaks the server onto a temp db we then rm -rf (issue #99).
+# `set -m` at launch gives the job its own pgid == ELECTRON_PID; the plain-pid
+# kill is the fallback if that ever stops holding.
 cleanup() {
-  if [[ -n "${ELECTRON_PID}" ]] && kill -0 "$ELECTRON_PID" 2>/dev/null; then
-    kill "$ELECTRON_PID" 2>/dev/null || true
-    sleep 1
-    kill -9 "$ELECTRON_PID" 2>/dev/null || true
-    wait "$ELECTRON_PID" 2>/dev/null || true
-  fi
   if [[ -n "${ELECTRON_PID}" ]]; then
-    for cpid in $(pgrep -P "$ELECTRON_PID" 2>/dev/null || true); do
-      kill -9 "$cpid" 2>/dev/null || true
-    done
+    kill -TERM -"$ELECTRON_PID" 2>/dev/null || kill -TERM "$ELECTRON_PID" 2>/dev/null || true
+    sleep 1
+    kill -9 -"$ELECTRON_PID" 2>/dev/null || kill -9 "$ELECTRON_PID" 2>/dev/null || true
+    wait "$ELECTRON_PID" 2>/dev/null || true
   fi
   rm -rf "$TMP_USERDATA"
 }
@@ -85,13 +86,24 @@ LOG="$TMP_USERDATA/boot.log"
 # CODER_MEMORY_CONFIG forces the memory-server child (and any default-path reader)
 # onto the isolated config; --user-data-dir keeps Electron userData in TMP too.
 set +e
+set -m  # job control: put the probe in its own process group so cleanup can kill the tree
 ELECTRON_ENABLE_LOGGING=1 \
   CODER_MEMORY_CONFIG="$CONFIG_FILE" \
   SOLENTA_SKIP_USERDATA_MIGRATION=1 \
   "$BIN" --user-data-dir="$TMP_USERDATA" \
   >"$LOG" 2>&1 &
 ELECTRON_PID=$!
+set +m
 set -e
+
+# Assert the group kill in cleanup() has something to aim at. Loud now beats
+# six orphaned memory-servers found two days later.
+APP_PGID="$(ps -o pgid= -p "$ELECTRON_PID" 2>/dev/null | tr -d ' ')"
+if [[ "$APP_PGID" != "$ELECTRON_PID" ]]; then
+  echo "ERROR: boot probe is not its own process group leader (pid=$ELECTRON_PID pgid=${APP_PGID:-<none>})" >&2
+  echo "  cleanup() would leak the memory-server child; check 'set -m' above" >&2
+  exit 1
+fi
 
 # Wait up to 10s for the process to stay alive and for /health on the isolated port.
 DEADLINE=$((SECONDS + 10))
