@@ -252,24 +252,30 @@ function WorktreeCard({
   busy,
   gitAction,
   dirtyMessage,
+  conflictMessage,
   cardError,
   onSetup,
   onMerge,
   onDelete,
   onForceDelete,
   onCancelDirty,
+  onDismissConflict,
+  onOpenWorktree,
   onDismissError,
 }: {
   thread: ThreadInfo | null;
   busy: boolean;
   gitAction: GitAction;
   dirtyMessage: string | null;
+  conflictMessage: string | null;
   cardError: string | null;
   onSetup: () => void;
   onMerge: () => void;
   onDelete: () => void;
   onForceDelete: () => void;
   onCancelDirty: () => void;
+  onDismissConflict: () => void;
+  onOpenWorktree: (() => void) | null;
   onDismissError: () => void;
 }) {
   const hasWorktree = Boolean(thread?.worktreePath);
@@ -387,6 +393,45 @@ function WorktreeCard({
               disabled={busy}
             >
               Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {conflictMessage && (
+        <div className={styles.dirtyBlock} role="alert">
+          <pre className={styles.dirtyMessage}>{conflictMessage}</pre>
+          <div className={styles.gitActions}>
+            {onOpenWorktree && (
+              <button
+                type="button"
+                className={styles.gitBtn}
+                onClick={onOpenWorktree}
+              >
+                Open worktree
+              </button>
+            )}
+            <button
+              type="button"
+              className={`${styles.gitBtn} ${styles.gitBtnPrimary}`}
+              onClick={onMerge}
+              disabled={busy}
+            >
+              {gitAction === "merge" ? (
+                <>
+                  <span className={styles.btnSpinner} aria-hidden />
+                  Merging…
+                </>
+              ) : (
+                "Merge again"
+              )}
+            </button>
+            <button
+              type="button"
+              className={styles.gitBtn}
+              onClick={onDismissConflict}
+            >
+              Dismiss
             </button>
           </div>
         </div>
@@ -1196,6 +1241,7 @@ export function GitTab({
 }) {
   const [gitAction, setGitAction] = useState<GitAction>(null);
   const [dirtyMessage, setDirtyMessage] = useState<string | null>(null);
+  const [conflictMessage, setConflictMessage] = useState<string | null>(null);
   const [cardError, setCardError] = useState<string | null>(null);
   const [checkpoints, setCheckpoints] = useState<CheckpointInfo[]>([]);
   const [checkpointsLoading, setCheckpointsLoading] = useState(false);
@@ -1215,6 +1261,7 @@ export function GitTab({
   // error from row A never shows on row B.
   useEffect(() => {
     setDirtyMessage(null);
+    setConflictMessage(null);
     setCardError(null);
     setGitAction(null);
     setCheckpoints([]);
@@ -1294,6 +1341,7 @@ export function GitTab({
   ) => {
     setGitAction(action);
     setCardError(null);
+    setConflictMessage(null);
     try {
       await fn();
       setDirtyMessage(null);
@@ -1302,13 +1350,18 @@ export function GitTab({
         err instanceof Error && err.message
           ? err.message
           : "Git action failed";
-      const dirtyMarker = "WORKTREE_DIRTY:";
-      const dirtyAt = msg.indexOf(dirtyMarker);
-      if (dirtyAt !== -1) {
-        // Electron wraps invoke rejections ("Error invoking remote method …");
-        // strip everything through the marker so only the listed entries show.
-        setDirtyMessage(msg.slice(dirtyAt + dirtyMarker.length).trim());
-        setCardError(null);
+      // Electron wraps invoke rejections ("Error invoking remote method …");
+      // strip everything through the marker so only the listed entries show.
+      const after = (marker: string) => {
+        const at = msg.indexOf(marker);
+        return at === -1 ? null : msg.slice(at + marker.length).trim();
+      };
+      const dirty = after("WORKTREE_DIRTY:");
+      const conflict = after("MERGE_CONFLICT:");
+      if (dirty) {
+        setDirtyMessage(dirty);
+      } else if (conflict) {
+        setConflictMessage(conflict);
       } else {
         setCardError(msg);
       }
@@ -1383,7 +1436,14 @@ export function GitTab({
           busy={busy}
           gitAction={gitAction}
           dirtyMessage={dirtyMessage}
+          conflictMessage={conflictMessage}
           cardError={cardError}
+          onOpenWorktree={
+            openInEditor && thread?.worktreePath
+              ? () => void openInEditor()
+              : null
+          }
+          onDismissConflict={() => setConflictMessage(null)}
           onSetup={() => void runAction("setup", () => onSetupWorktree())}
           onMerge={() => void runAction("merge", () => onMergeWorktree())}
           onDelete={() =>
