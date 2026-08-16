@@ -10,6 +10,7 @@ import { z } from 'zod'
 import { Memory } from './memory.js'
 import { runJanitor, readJanitorSnapshot } from './janitor.js'
 import { createRealEmbedder, semanticEnabled } from './embedder.js'
+import { exitWhenOrphaned } from './orphan.js'
 
 const INSTRUCTIONS =
   'Solenta shared memory, PROJECT-SCOPED: everything you read and write belongs to the project you name, and other projects never see it. MEMORY PREFLIGHT: at session start call memory_bootstrap with project set to your working directory and treat its conventions as standing instructions. Always pass that same project on every memory call. While working, store durable non-obvious findings (decisions, gotchas, conventions) with memory_store; before finishing, record what a future agent must know. Search returns excerpts; use memory_get for full bodies. Record notable turns with session_record; session_search finds past conversation excerpts. memory_maintenance reports queue items to resolve with memory_resolve.'
@@ -670,6 +671,7 @@ function isMain() {
 }
 
 if (isMain()) {
+  exitWhenOrphaned()
   const config = loadOrCreateConfig()
   const embedder = semanticEnabled() ? createRealEmbedder() : null
   const memory = new Memory(config.dbPath, { embedder })
