@@ -557,27 +557,32 @@ async function handleApi(req, res, url, memory) {
  * @param {Memory} memory
  * @param {{ port: number, token: string, dbPath: string }} config
  * @param {string} [host]
+ * @param {string} [configFile] when set, EADDRINUSE rewrites this file onto a fresh port and retries
  * @returns {Promise<http.Server>}
  */
-export function startServer(memory, config, host = '127.0.0.1') {
+export function startServer(memory, config, host = '127.0.0.1', configFile) {
   // The Memory constructor already ran the janitor once; running it again
   // here would double-decay access counts on every boot.
 
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', `http://${host}`)
 
-    // Health is open (no auth).
+    // Health is open (no auth) but must not leak dbPath.
     if (req.method === 'GET' && url.pathname === '/health') {
+      const body = {
+        ok: true,
+        entryCount: memory.entryCount(),
+        janitor: memory.janitorSnapshot?.() ?? readJanitorSnapshot(memory.db),
+        vectors: memory.vectorsHealth?.() ?? { enabled: false, count: 0, model: null },
+      }
+      // Proof that we know the shared secret, without echoing the token.
+      // A client sends a nonce; we never require the secret on this open endpoint.
+      const nonce = url.searchParams.get('nonce')
+      if (nonce != null && nonce.length >= 1 && nonce.length <= 256) {
+        body.proof = crypto.createHmac('sha256', config.token).update(nonce).digest('hex')
+      }
       res.writeHead(200, { 'content-type': 'application/json' })
-      res.end(
-        JSON.stringify({
-          ok: true,
-          entryCount: memory.entryCount(),
-          dbPath: config.dbPath,
-          janitor: memory.janitorSnapshot?.() ?? readJanitorSnapshot(memory.db),
-          vectors: memory.vectorsHealth?.() ?? { enabled: false, count: 0, model: null },
-        }),
-      )
+      res.end(JSON.stringify(body))
       return
     }
 
@@ -654,10 +659,53 @@ export function startServer(memory, config, host = '127.0.0.1') {
     res.writeHead(404).end()
   })
 
-  return new Promise((resolve, reject) => {
-    server.once('error', reject)
-    server.listen(config.port, host, () => resolve(server))
-  })
+  return listenWithPortFallback(server, config, host, configFile)
+}
+
+const PORT_FALLBACK_ATTEMPTS = 20
+
+/**
+ * Bind `config.port`. On EADDRINUSE with a configFile, pick a fresh port in
+ * the same range as loadOrCreateConfig, persist it, and retry so a squatter
+ * cannot wedge us on the recorded port.
+ * @param {http.Server} server
+ * @param {{ port: number, token: string, dbPath: string }} config
+ * @param {string} host
+ * @param {string} [configFile]
+ * @returns {Promise<http.Server>}
+ */
+async function listenWithPortFallback(server, config, host, configFile) {
+  let lastErr
+  for (let n = 0; n < PORT_FALLBACK_ATTEMPTS; n++) {
+    try {
+      await new Promise((resolve, reject) => {
+        const onError = (err) => reject(err)
+        server.once('error', onError)
+        server.listen(config.port, host, () => {
+          server.removeListener('error', onError)
+          resolve()
+        })
+      })
+      return server
+    } catch (err) {
+      lastErr = err
+      if (!(err && err.code === 'EADDRINUSE' && configFile)) throw err
+      if (n === PORT_FALLBACK_ATTEMPTS - 1) break
+      config.port = 49500 + crypto.randomInt(500)
+      const next = {
+        port: config.port,
+        token: config.token,
+        dbPath: config.dbPath,
+      }
+      fs.writeFileSync(configFile, JSON.stringify(next, null, 2), { mode: 0o600 })
+      try {
+        fs.chmodSync(configFile, 0o600)
+      } catch {
+        // best-effort
+      }
+    }
+  }
+  throw lastErr
 }
 
 function isMain() {
@@ -675,7 +723,7 @@ if (isMain()) {
   const config = loadOrCreateConfig()
   const embedder = semanticEnabled() ? createRealEmbedder() : null
   const memory = new Memory(config.dbPath, { embedder })
-  startServer(memory, config, '127.0.0.1').then((server) => {
+  startServer(memory, config, '127.0.0.1', configPath()).then((server) => {
     const address = server.address()
     console.log(
       `coder-memory listening on 127.0.0.1:${address.port} (db: ${config.dbPath})`,

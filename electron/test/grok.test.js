@@ -8,6 +8,7 @@ const path = require("node:path");
 const http = require("node:http");
 const { pathToFileURL } = require("node:url");
 const { execFileSync } = require("node:child_process");
+const crypto = require("node:crypto");
 const { Store } = require("../store.js");
 const services = require("../services.js");
 const { createRunner } = require("../runner.js");
@@ -488,10 +489,20 @@ describe("runner grok provider (claude-stream path)", () => {
       }),
       "utf8",
     );
+    const token = "mcp-test-token";
     const server = http.createServer((req, res) => {
-      if (req.url === "/health") {
+      const url = new URL(req.url, "http://127.0.0.1");
+      if (url.pathname === "/health") {
+        const body = { ok: true };
+        const nonce = url.searchParams.get("nonce");
+        if (nonce) {
+          body.proof = crypto
+            .createHmac("sha256", token)
+            .update(nonce)
+            .digest("hex");
+        }
         res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ ok: true }));
+        res.end(JSON.stringify(body));
         return;
       }
       res.writeHead(404);
