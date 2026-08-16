@@ -163,6 +163,8 @@ interface SidebarProps {
   ) => void | Promise<void>;
   onSetPinned?: (threadId: string, pinned: boolean) => void | Promise<void>;
   onSetSnoozed?: (threadId: string, until: number | null) => void | Promise<void>;
+  /** Mute/unmute desktop notifications for one thread. */
+  onSetMuted?: (threadId: string, muted: boolean) => void | Promise<void>;
   /** Archive a thread (batch toolbar). */
   onSetArchived?: (threadId: string, archived: boolean) => void | Promise<void>;
   /** Clear the settled tail: archive all settled threads (Synara-style, undo via toast). */
@@ -311,6 +313,7 @@ export function ThreadCard({
   onSetSettled,
   onSetPinned,
   onSetSnoozed,
+  onSetMuted,
   onFork,
   snoozeMenuOpen = false,
   onToggleSnoozeMenu,
@@ -338,6 +341,8 @@ export function ThreadCard({
   ) => void | Promise<void>;
   onSetPinned?: (threadId: string, pinned: boolean) => void | Promise<void>;
   onSetSnoozed?: (threadId: string, until: number | null) => void | Promise<void>;
+  /** Mute/unmute desktop notifications for this thread (snooze menu item). */
+  onSetMuted?: (threadId: string, muted: boolean) => void | Promise<void>;
   onFork?: (
     threadId: string,
     opts?: { provider?: string },
@@ -597,6 +602,21 @@ export function ThreadCard({
                       }}
                     >
                       Clear snooze
+                    </button>
+                  )}
+                  {onSetMuted && (
+                    <button
+                      type="button"
+                      className={styles.snoozeMenuItem}
+                      role="menuitem"
+                      data-mute-toggle={thread.id}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void onSetMuted(thread.id, !thread.muted);
+                        onToggleSnoozeMenu?.(null);
+                      }}
+                    >
+                      {thread.muted ? "Unmute notifications" : "Mute notifications"}
                     </button>
                   )}
                 </div>
@@ -1006,6 +1026,7 @@ export function Sidebar({
   onSetSettled,
   onSetPinned,
   onSetSnoozed,
+  onSetMuted,
   onSetArchived,
   onClearSettled,
   onFork,
@@ -2244,6 +2265,7 @@ export function Sidebar({
                         onSetSettled={onSetSettled}
                         onSetPinned={onSetPinned}
                         onSetSnoozed={onSetSnoozed}
+                        onSetMuted={onSetMuted}
                         onFork={onFork}
                         snoozeMenuOpen={snoozeMenuFor === thread.id}
                         onToggleSnoozeMenu={setSnoozeMenuFor}

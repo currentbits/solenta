@@ -501,6 +501,7 @@ function seedThreads(projects: ProjectInfo[]): ThreadInfo[] {
       reasoningEffort: null,
       worktreePath: null,
       handoffFrom: null,
+      muted: false,
       // One working thread carries a mirrored plan so the Planboard's
       // "Thread plans" section has something to show in dev mode.
       planSteps:
@@ -1284,6 +1285,7 @@ function buildDevCoder(): CoderApi {
   let defaultWorktree = false;
   /** Update channel override; null follows the (absent) dev stamp. */
   let updateChannel: "prod" | "nightly" | null = null;
+  let notifications = true;
   /** In-memory skills (Skills tab); dev twin of the on-disk SKILL.md scan. */
   let skillsList: SkillInfo[] = [
     {
@@ -1460,6 +1462,7 @@ function buildDevCoder(): CoderApi {
       reasoningEffort: null,
       worktreePath: null,
       handoffFrom: null,
+      muted: false,
       ...over,
       title: (over.title || "New Thread").slice(0, TITLE_MAX),
     };
@@ -1835,6 +1838,7 @@ function buildDevCoder(): CoderApi {
           mcpServers: mcpServers.map((s) => ({ ...s })),
           defaultWorktree,
           updateChannel,
+          notifications,
         };
       },
       async set(patch: Partial<AppSettings>): Promise<AppSettings> {
@@ -1859,12 +1863,19 @@ function buildDevCoder(): CoderApi {
           }
           updateChannel = v ?? null;
         }
+        if (Object.prototype.hasOwnProperty.call(patch, "notifications")) {
+          if (typeof patch.notifications !== "boolean") {
+            throw new Error("notifications must be a boolean");
+          }
+          notifications = patch.notifications;
+        }
         return {
           dailyBudgetUsd,
           autoSettleAfterDays,
           mcpServers: mcpServers.map((s) => ({ ...s })),
           defaultWorktree,
           updateChannel,
+          notifications,
         };
       },
     },
@@ -2344,6 +2355,9 @@ function buildDevCoder(): CoderApi {
           snoozedUntil: input.until ?? null,
           snoozedAt: input.until == null ? null : now(),
         });
+      },
+      async setMuted(input: { threadId: string; muted: boolean }) {
+        return patchThread(input.threadId, { muted: input.muted });
       },
       async setReasoningEffort(input: {
         threadId: string;

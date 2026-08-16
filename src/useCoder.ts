@@ -178,6 +178,7 @@ export interface UseCoderResult {
    * Snooze until an epoch ms, or clear with null. Does not require selection.
    */
   setSnoozed: (threadId: string, until: number | null) => Promise<void>;
+  setMuted: (threadId: string, muted: boolean) => Promise<void>;
   /** Permanently delete the selected thread (after caller confirms). */
   deleteThread: () => Promise<void>;
   /**
@@ -1094,6 +1095,24 @@ export function useCoder(): UseCoderResult {
     [api, applyThreads],
   );
 
+  const setMuted = useCallback(
+    async (threadId: string, muted: boolean) => {
+      try {
+        const thread = await api.threads.setMuted({ threadId, muted });
+        applyThreads(
+          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
+        );
+        setDetail((prev) =>
+          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
+        );
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+      }
+    },
+    [api, applyThreads],
+  );
+
   const deleteThread = useCallback(async () => {
     if (!selectedThreadId) return;
     const threadId = selectedThreadId;
@@ -1695,6 +1714,7 @@ export function useCoder(): UseCoderResult {
     setSettled,
     setPinned,
     setSnoozed,
+    setMuted,
     deleteThread,
     removeProject,
     setupWorktree,

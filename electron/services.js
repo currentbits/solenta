@@ -925,6 +925,25 @@ function setSnoozed(store, input) {
 }
 
 /**
+ * Mute/unmute desktop notifications for one thread (issue #87). Notification
+ * only: no run-state or visibility effect, and never bumps updatedAt.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, muted: boolean }} input
+ */
+function setMuted(store, input) {
+  const { threadId, muted } = input;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  const patch = { muted: muted === true };
+  const updated = store.updateThread(threadId, patch);
+  store.save();
+  return updated ? { ...updated } : { ...thread, ...patch };
+}
+
+/**
  * Shared with deleteThread and removeProject — one string so the two cannot
  * drift. Renderer and Git tab copy depend on this exact wording.
  */
@@ -1823,6 +1842,7 @@ module.exports = {
   setSettled,
   setPinned,
   setSnoozed,
+  setMuted,
   clearSettledOnActivity,
   deleteThread,
   purgeThread,
