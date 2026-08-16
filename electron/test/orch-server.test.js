@@ -53,6 +53,12 @@ function freePort() {
 
 /** Fake store over plain data, matching the Store read API. */
 function makeFakeStore() {
+  // t1/t2 in one project, t3 in another: the cross-project guard needs a
+  // thread on the far side of a project boundary to reject (issue #109).
+  const projects = {
+    p1: { id: "p1", name: "Alpha", path: "/tmp/alpha" },
+    p2: { id: "p2", name: "Beta", path: "/tmp/beta" },
+  };
   const threads = [
     {
       id: "t1",
@@ -60,6 +66,7 @@ function makeFakeStore() {
       provider: "claude",
       status: "idle",
       handoffFrom: null,
+      projectId: "p1",
     },
     {
       id: "t2",
@@ -67,6 +74,7 @@ function makeFakeStore() {
       provider: "codex",
       status: "working",
       handoffFrom: "t1",
+      projectId: "p1",
     },
     {
       id: "t3",
@@ -74,6 +82,7 @@ function makeFakeStore() {
       provider: "grok",
       status: "failed",
       handoffFrom: null,
+      projectId: "p2",
     },
   ];
   const messagesByThread = {
@@ -92,6 +101,7 @@ function makeFakeStore() {
   return {
     getThreads: () => threads,
     getThread: (id) => threads.find((t) => t.id === id) || null,
+    getProject: (id) => projects[id] || null,
     getMessages: (id) => messagesByThread[id] || [],
     updateThread: (id, patch) => {
       const t = threads.find((x) => x.id === id);
@@ -137,7 +147,7 @@ describe("orch-server tool handlers", () => {
     assert.doesNotMatch(INSTRUCTIONS, /poll thread_status until/);
   });
 
-  it("threads_list maps id, title, provider, status, handoffFrom", async () => {
+  it("threads_list maps id, title, provider, status, handoffFrom, project", async () => {
     const deps = makeDeps();
     const h = createToolHandlers(deps);
     const list = await h.threads_list();
@@ -148,6 +158,8 @@ describe("orch-server tool handlers", () => {
         provider: "claude",
         status: "idle",
         handoffFrom: null,
+        projectId: "p1",
+        projectName: "Alpha",
       },
       {
         id: "t2",
@@ -155,6 +167,8 @@ describe("orch-server tool handlers", () => {
         provider: "codex",
         status: "working",
         handoffFrom: "t1",
+        projectId: "p1",
+        projectName: "Alpha",
       },
       {
         id: "t3",
@@ -162,6 +176,8 @@ describe("orch-server tool handlers", () => {
         provider: "grok",
         status: "failed",
         handoffFrom: null,
+        projectId: "p2",
+        projectName: "Beta",
       },
     ]);
   });
@@ -171,6 +187,7 @@ describe("orch-server tool handlers", () => {
     const h = createToolHandlers(deps);
     const out = await h.thread_fork({
       threadId: "t1",
+      projectId: "p1",
       provider: "codex",
       prompt: "take over",
     });
@@ -182,14 +199,14 @@ describe("orch-server tool handlers", () => {
   it("thread_fork omits provider key when not given", async () => {
     const deps = makeDeps();
     const h = createToolHandlers(deps);
-    await h.thread_fork({ threadId: "t1", prompt: "go" });
+    await h.thread_fork({ threadId: "t1", projectId: "p1", prompt: "go" });
     assert.deepEqual(deps.forks, [{ threadId: "t1" }]);
   });
 
   it("thread_fork marks the new thread as an orchestration worker", async () => {
     const deps = makeDeps();
     const h = createToolHandlers(deps);
-    await h.thread_fork({ threadId: "t1", prompt: "go" });
+    await h.thread_fork({ threadId: "t1", projectId: "p1", prompt: "go" });
     const fork = deps.store.getThread("fork-1");
     assert.equal(fork.orchWorker, true);
   });
@@ -206,7 +223,7 @@ describe("orch-server tool handlers", () => {
       deps.store.getThread("t1").projectId = "p1";
       deps.store.getProject = (id) => projects[id] || null;
       const h = createToolHandlers(deps);
-      await h.thread_fork({ threadId: "t1", prompt: "go", ...args });
+      await h.thread_fork({ threadId: "t1", projectId: "p1", prompt: "go", ...args });
       return deps.store.getThread("fork-1");
     };
 
@@ -242,13 +259,14 @@ describe("orch-server tool handlers", () => {
       handoffFrom: "t1",
       orchWorker: true,
       archived: true,
+      projectId: "p1",
     });
     const h = createToolHandlers(deps);
-    await h.thread_send({ threadId: "w1", prompt: "more work" });
+    await h.thread_send({ threadId: "w1", projectId: "p1", prompt: "more work" });
     assert.equal(deps.store.getThread("w1").archived, false);
     // Non-worker archived threads are left alone.
-    deps.store.threads.push({ id: "a1", archived: true });
-    await h.thread_send({ threadId: "a1", prompt: "x" });
+    deps.store.threads.push({ id: "a1", archived: true, projectId: "p1" });
+    await h.thread_send({ threadId: "a1", projectId: "p1", prompt: "x" });
     assert.equal(deps.store.getThread("a1").archived, true);
   });
 
@@ -256,11 +274,11 @@ describe("orch-server tool handlers", () => {
     const deps = makeDeps();
     const h = createToolHandlers(deps);
     await assert.rejects(
-      () => h.thread_fork({ threadId: "nope", prompt: "x" }),
+      () => h.thread_fork({ threadId: "nope", projectId: "p1", prompt: "x" }),
       /Unknown thread: nope/,
     );
     await assert.rejects(
-      () => h.thread_fork({ threadId: "t1", provider: "nope", prompt: "x" }),
+      () => h.thread_fork({ threadId: "t1", projectId: "p1", provider: "nope", prompt: "x" }),
       /Unknown provider: nope/,
     );
     assert.equal(deps.forks.length, 0);
@@ -270,13 +288,39 @@ describe("orch-server tool handlers", () => {
   it("thread_send starts a run; rejects unknown thread", async () => {
     const deps = makeDeps();
     const h = createToolHandlers(deps);
-    const out = await h.thread_send({ threadId: "t2", prompt: "ping" });
+    const out = await h.thread_send({ threadId: "t2", projectId: "p1", prompt: "ping" });
     assert.deepEqual(out, { threadId: "t2" });
     assert.deepEqual(deps.runs, [{ threadId: "t2", prompt: "ping" }]);
     await assert.rejects(
-      () => h.thread_send({ threadId: "ghost", prompt: "x" }),
+      () => h.thread_send({ threadId: "ghost", projectId: "p1", prompt: "x" }),
       /Unknown thread: ghost/,
     );
+  });
+
+  // Issue #109: an agent in one project forked a thread it picked off
+  // threads_list by title, spawning workers on another project's repo.
+  it("thread_fork and thread_send reject a thread in another project", async () => {
+    const deps = makeDeps();
+    const h = createToolHandlers(deps);
+
+    // t3 lives in p2; a caller working in p1 must not reach it.
+    await assert.rejects(
+      () => h.thread_fork({ threadId: "t3", projectId: "p1", prompt: "x" }),
+      /belongs to "Beta".*not to "Alpha"/s,
+    );
+    await assert.rejects(
+      () => h.thread_send({ threadId: "t3", projectId: "p1", prompt: "x" }),
+      /belongs to "Beta".*not to "Alpha"/s,
+    );
+    // Rejected before anything is forked or started.
+    assert.equal(deps.forks.length, 0);
+    assert.equal(deps.runs.length, 0);
+
+    // Same project still works, including a sibling thread that is not the
+    // caller's own: the guard blocks the boundary, not ordinary forking.
+    await h.thread_fork({ threadId: "t2", projectId: "p1", prompt: "go" });
+    assert.equal(deps.forks.length, 1);
+    assert.equal(deps.runs.length, 1);
   });
 
   it("thread_status returns first line of last assistant text", async () => {
@@ -807,6 +851,39 @@ process.exit(0);
       sup.stop();
       await new Promise((r) => server.close(r));
     }
+  });
+
+  // The self-id note is the only channel by which an agent learns its own
+  // thread/project id — without it, calling the guarded tools is a guess.
+  it("selfIdNoteFor states the ids, and only while coder-threads is up", () => {
+    const services = require("../services.js");
+    const thread = { id: "t1", projectId: "p1" };
+    const project = { name: "Alpha" };
+
+    // Server down: nothing to pass ids to, so no note.
+    assert.equal(services.selfIdNoteFor(thread, project, "/tmp/alpha"), "");
+
+    assert.equal(
+      registerMcpServer({
+        name: "coder-threads",
+        port: 1234,
+        token: "tok",
+        userDataPath: fs.mkdtempSync(path.join(os.tmpdir(), "orch-note-")),
+      }),
+      true,
+    );
+    try {
+      const note = services.selfIdNoteFor(thread, project, "/tmp/alpha");
+      assert.match(note, /thread t1/);
+      assert.match(note, /projectId p1/);
+      assert.match(note, /"Alpha"/);
+      assert.match(note, /\/tmp\/alpha/);
+      // A thread with no project cannot state ids at all.
+      assert.equal(services.selfIdNoteFor({ id: "t1" }, project, null), "");
+    } finally {
+      unregisterMcpServer("coder-threads");
+    }
+    assert.equal(services.selfIdNoteFor(thread, project, "/tmp/alpha"), "");
   });
 
   it("register/unregister validate input and keep memory-only output stable", () => {

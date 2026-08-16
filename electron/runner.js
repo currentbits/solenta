@@ -3483,11 +3483,21 @@ function createRunner(opts) {
     // Single finalization point for every provider path: prefix only goes to
     // the CLI (buildArgs / runAgent), never into the stored user message.
     // Live-session follow-ups (handle.send) receive this same string.
+    // Re-read: materializePendingWorktree may have just set worktreePath, and
+    // the self-id note quotes the cwd the CLI actually gets.
+    const dispatchThread = store.getThread(threadId) || thread;
     const dispatchPrompt =
       services.buildHandoffPrefix(thread, (id) => store.getMessages(id)) +
       String(prompt ?? "") +
       attachmentPromptSection(attachments) +
-      services.planboardNoteFor(projectForGate && projectForGate.path);
+      services.planboardNoteFor(projectForGate && projectForGate.path) +
+      services.selfIdNoteFor(
+        dispatchThread,
+        projectForGate,
+        dispatchThread.worktreePath ||
+          (projectForGate && projectForGate.path) ||
+          null,
+      );
 
     const name = workflowNameFromThreadId(threadId);
 
