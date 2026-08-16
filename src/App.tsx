@@ -381,6 +381,7 @@ export default function App() {
             if (t) setRevealThreadId(t.id);
           });
         }}
+        defaultWorktree={settings?.defaultWorktree ?? false}
         revealThreadId={revealThreadId}
         onRevealHandled={() => setRevealThreadId(null)}
         onCreateThreadFromIssue={handleCreateThreadFromIssue}

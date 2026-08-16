@@ -71,6 +71,7 @@ const thread: ThreadInfo = {
 function mountSidebar(
   projects: ProjectInfo[],
   onCreateThread: (projectId?: string, opts?: { worktree?: boolean }) => void,
+  defaultWorktree = false,
 ) {
   return mount(
     <Sidebar
@@ -83,6 +84,7 @@ function mountSidebar(
       activeThreadId={null}
       onSelectThread={() => {}}
       onCreateThread={onCreateThread}
+      defaultWorktree={defaultWorktree}
       onAddProject={() => {}}
       searchThreads={async () => []}
     />,
@@ -131,5 +133,41 @@ describe("Sidebar worktree thread creation", () => {
     const m = await mountSidebar([remoteProject], () => {});
     assert.equal(m.query('[data-create-menu-btn="p2"]'), null);
     assert.ok(m.query(".groupNewThread"), "plain button still renders");
+  });
+
+  it("offers a no-worktree opt-out when defaultWorktree is on (issue #72)", async () => {
+    const calls: Array<[string | undefined, { worktree?: boolean } | undefined]> =
+      [];
+    const m = await mountSidebar(
+      [project],
+      (pid, opts) => {
+        calls.push([pid, opts]);
+      },
+      true,
+    );
+
+    const caret = m.query('[data-create-menu-btn="p1"]');
+    assert.ok(caret, "caret renders for a local project");
+    await m.click(caret);
+
+    const item = m.query('[data-create-plain-thread="p1"]');
+    assert.ok(item, "menu offers the no-worktree variant");
+
+    await m.click(item);
+    assert.deepEqual(calls, [["p1", { worktree: false }]]);
+    assert.equal(
+      m.query('[data-create-menu="p1"]'),
+      null,
+      "menu closes after selection",
+    );
+  });
+
+  it("hides the no-worktree item when defaultWorktree is off (redundant with plain button)", async () => {
+    const m = await mountSidebar([project], () => {});
+    const caret = m.query('[data-create-menu-btn="p1"]');
+    assert.ok(caret);
+    await m.click(caret);
+    assert.ok(m.query('[data-create-worktree-thread="p1"]'));
+    assert.equal(m.query('[data-create-plain-thread="p1"]'), null);
   });
 });
