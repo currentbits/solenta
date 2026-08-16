@@ -119,6 +119,12 @@ interface SidebarProps {
   onSelectThread: (id: string) => void;
   /** Global + uses selected project; per-group New thread passes that projectId. */
   onCreateThread: (projectId?: string, opts?: { worktree?: boolean }) => void;
+  /**
+   * Mirrors SettingsInfo.defaultWorktree. When true, plain "New thread"
+   * already creates a worktree thread, so the caret menu also offers an
+   * explicit "no worktree" variant (issue #72).
+   */
+  defaultWorktree?: boolean;
   onAddProject: () => void;
   /**
    * t3-style remove project entry (after the sidebar confirm). Caller owns
@@ -986,6 +992,7 @@ export function Sidebar({
   activeThreadId,
   onSelectThread,
   onCreateThread,
+  defaultWorktree = false,
   onAddProject,
   onRemoveProject,
   onEditProject,
@@ -1656,6 +1663,21 @@ export function Sidebar({
               >
                 New worktree thread
               </button>
+              {defaultWorktree && (
+                <button
+                  type="button"
+                  className={styles.snoozeMenuItem}
+                  role="menuitem"
+                  data-create-plain-thread={project.id}
+                  title="New thread directly in the project checkout (no worktree)"
+                  onClick={() => {
+                    setCreateMenuFor(null);
+                    onCreateThread(project.id, { worktree: false });
+                  }}
+                >
+                  New thread (no worktree)
+                </button>
+              )}
             </div>
           )}
         </div>
