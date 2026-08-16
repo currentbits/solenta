@@ -225,6 +225,75 @@ describe("App thread selection wiring", () => {
       m.unmount();
     }
   });
+
+  it("surfaces a failed detail load with an error + retry that re-fetches the same thread (issue #82)", async () => {
+    // threads.get rejecting used to dead-end on the neutral "Select a thread"
+    // state, and re-clicking the same thread was a no-op (selection state
+    // unchanged, so the effect never re-ran). The UI must show the failure
+    // and Retry must re-run the fetch for the ALREADY-selected thread.
+    const ta = thread({ id: "ta", title: "alpha thread" });
+    const taDetail = detail({
+      thread: ta,
+      messages: [
+        {
+          id: "ma",
+          role: "assistant",
+          text: "alpha transcript marker",
+          createdAt: Date.now(),
+        },
+      ],
+    });
+    const fake = createFakeCoder({
+      threads: [ta],
+      details: { ta: taDetail },
+    });
+    const origGet = fake.api.threads.get;
+    let failing = true;
+    fake.api.threads.get = ((id: string) => {
+      if (failing) {
+        fake.calls.push({ channel: "threads.get", args: [id] });
+        return Promise.reject(new Error("disk on fire"));
+      }
+      return origGet(id);
+    }) as typeof fake.api.threads.get;
+
+    const m = await boot(fake);
+    try {
+      await m.flush();
+      assert.ok(
+        fake.of("threads.get").some((c) => c.args[0] === "ta"),
+        "precondition: boot selected alpha and fetched its detail",
+      );
+      assert.ok(
+        m.text().includes("Couldn’t load this thread"),
+        `the load failure must surface, got: ${m.text().slice(0, 200)}`,
+      );
+      assert.ok(
+        m.text().includes("disk on fire"),
+        "the rejection message must be visible",
+      );
+      assert.ok(
+        !m.text().includes("Choose a thread from the sidebar"),
+        "a failed load must not fall back to the neutral empty state",
+      );
+
+      failing = false;
+      await m.click(m.byText("Retry"));
+      await m.flush();
+
+      assert.equal(
+        fake.of("threads.get").filter((c) => c.args[0] === "ta").length,
+        2,
+        "retry must re-run threads.get for the already-selected thread",
+      );
+      assert.ok(
+        m.text().includes("alpha transcript marker"),
+        "the detail must render after a successful retry",
+      );
+    } finally {
+      m.unmount();
+    }
+  });
 });
 
 describe("App memory wiring", () => {
