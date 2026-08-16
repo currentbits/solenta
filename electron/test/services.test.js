@@ -894,3 +894,66 @@ describe("services", () => {
     });
   });
 });
+
+describe("forkWorkerThread", () => {
+  let tmpDir;
+  let store;
+  let repo;
+  let project;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-forkworker-"));
+    store = new Store(path.join(tmpDir, "store.json"));
+    repo = path.join(tmpDir, "repo");
+    fs.mkdirSync(repo);
+    // addProject requires a real work tree (`git rev-parse`), not just a
+    // `.git` directory. canHostWorktree still keys off `.git` existing.
+    git(repo, ["init"]);
+    project = services.addProject(store, repo);
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("marks the fork an orchWorker isolated in its own worktree", () => {
+    const source = services.createThread(store, {
+      projectId: project.id,
+      title: "Orchestrator",
+    });
+    const worker = services.forkWorkerThread(store, { threadId: source.id });
+    const stored = store.getThread(worker.id);
+    assert.equal(stored.orchWorker, true);
+    assert.equal(stored.pendingWorktree, true);
+    assert.equal(stored.handoffFrom, source.id);
+    // The source is never modified.
+    assert.equal(store.getThread(source.id).orchWorker, undefined);
+  });
+
+  it("shares the checkout when the caller opts out or the project cannot host one", () => {
+    const source = services.createThread(store, {
+      projectId: project.id,
+      title: "Orchestrator",
+    });
+    const optedOut = services.forkWorkerThread(store, {
+      threadId: source.id,
+      worktree: false,
+    });
+    assert.equal(store.getThread(optedOut.id).pendingWorktree, undefined);
+
+    fs.rmSync(path.join(repo, ".git"), { recursive: true, force: true });
+    const nonRepo = services.forkWorkerThread(store, { threadId: source.id });
+    assert.equal(store.getThread(nonRepo.id).pendingWorktree, undefined);
+  });
+
+  it("canHostWorktree rejects remote projects and non-repos", () => {
+    assert.equal(services.canHostWorktree({ path: repo }), true);
+    assert.equal(
+      services.canHostWorktree({ path: repo, remoteHost: "box" }),
+      false,
+    );
+    assert.equal(services.canHostWorktree({ path: "/nope/nowhere" }), false);
+    assert.equal(services.canHostWorktree(null), false);
+  });
+});
+
