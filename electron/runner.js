@@ -3387,11 +3387,31 @@ function createRunner(opts) {
     // cleanly and the flag survives for a retry.
     materializePendingWorktree(threadId);
 
+    // Worktree deleted behind our back (agent ran `git worktree remove`, or
+    // the folder was thrown away): spawning into a missing cwd fails as
+    // "spawn <cli> ENOENT", which reads as a missing CLI. Drop the stale
+    // pointer so this and every later turn run in the project folder.
+    const { clearMissingWorktree } = require("./worktrees.js");
+    const droppedWorktree = clearMissingWorktree({
+      store,
+      threadId,
+      broadcast: pushFn,
+    });
+
     const runId = randomUUID();
     // Transcript stores the RAW user prompt. The hand-off context block (if
     // any) is CLI-only — applied once below when handoffFrom is set and no
     // sessionId exists yet.
     appendMessage(threadId, "user", prompt, runId, null, attachments);
+
+    if (droppedWorktree) {
+      appendMessage(
+        threadId,
+        "event",
+        `Worktree folder is gone (${droppedWorktree}); running in the project folder instead.`,
+        runId,
+      );
+    }
 
     let title = thread.title;
     if (title === "New Thread") {

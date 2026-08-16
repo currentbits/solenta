@@ -26,6 +26,7 @@ const {
   maybeCleanupMergedWorktree,
   sweepOrphanWorktrees,
   ensureWorktree,
+  clearMissingWorktree,
 } = require("../worktrees.js");
 
 function git(cwd, args) {
@@ -298,6 +299,104 @@ describe("sweepOrphanWorktrees", () => {
       worktreeBase: path.join(fx.tmpDir, "nope"),
     });
     assert.deepEqual(result.removed, []);
+  });
+});
+
+describe("clearMissingWorktree (worktree deleted behind our back)", () => {
+  let tmpDir;
+  let store;
+  let worktreeBase;
+  let repo;
+  let project;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-wtgone-"));
+    store = new Store(path.join(tmpDir, "store.json"));
+    worktreeBase = path.join(tmpDir, "worktrees");
+
+    repo = path.join(tmpDir, "repo");
+    fs.mkdirSync(repo);
+    git(repo, ["init"]);
+    git(repo, ["config", "user.email", "test@example.com"]);
+    git(repo, ["config", "user.name", "Test"]);
+    fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
+    git(repo, ["add", "README.md"]);
+    git(repo, ["commit", "-m", "init"]);
+
+    project = services.addProject(store, repo);
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  /** Thread with a worktree whose folder is then removed outside the app. */
+  function threadWithRemovedWorktree(title) {
+    const thread = services.createThread(store, {
+      projectId: project.id,
+      title,
+    });
+    const setup = setupWorktree({ store, threadId: thread.id, worktreeBase });
+    git(repo, ["worktree", "remove", "--force", setup.worktreePath]);
+    return { threadId: thread.id, worktreePath: setup.worktreePath };
+  }
+
+  it("leaves a live worktree alone", () => {
+    const thread = services.createThread(store, {
+      projectId: project.id,
+      title: "Live",
+    });
+    const setup = setupWorktree({ store, threadId: thread.id, worktreeBase });
+
+    assert.equal(clearMissingWorktree({ store, threadId: thread.id }), null);
+    assert.equal(store.getThread(thread.id).worktreePath, setup.worktreePath);
+  });
+
+  it("drops the stale pointer and reports the path", () => {
+    const { threadId, worktreePath } = threadWithRemovedWorktree("Gone");
+
+    assert.equal(
+      clearMissingWorktree({ store, threadId }),
+      worktreePath,
+    );
+    const thread = store.getThread(threadId);
+    assert.equal(thread.worktreePath, null);
+    assert.equal(thread.branch, null);
+  });
+
+  // The bug: spawn() into a missing cwd fails as "spawn kimi ENOENT", so
+  // every turn on such a thread died looking like a missing CLI (#74).
+  it("startRun falls back to the project folder and says so", async () => {
+    const prevSimulate = process.env.CODER_SIMULATE;
+    process.env.CODER_SIMULATE = "1";
+    let runner = null;
+    try {
+      const corePath = path.join(__dirname, "../../core/dist/index.js");
+      const core = await import(pathToFileURL(corePath).href);
+      runner = createRunner({
+        store,
+        core,
+        pushFn: () => {},
+        tickMs: 15,
+        userDataPath: tmpDir,
+      });
+
+      const { threadId, worktreePath } = threadWithRemovedWorktree("Merged");
+      await runner.startRun({ threadId, prompt: "Keep going" });
+
+      assert.equal(store.getThread(threadId).worktreePath, null);
+      const events = store
+        .getMessages(threadId)
+        .filter((m) => m.role === "event");
+      assert.ok(
+        events.some((m) => String(m.text).includes(worktreePath)),
+        `expected an event naming ${worktreePath}, got ${JSON.stringify(events.map((m) => m.text))}`,
+      );
+    } finally {
+      if (runner) runner.stopAll();
+      if (prevSimulate === undefined) delete process.env.CODER_SIMULATE;
+      else process.env.CODER_SIMULATE = prevSimulate;
+    }
   });
 });
 
