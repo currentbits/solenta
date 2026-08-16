@@ -98,6 +98,55 @@ function ContextRingBadge({ ring }: { ring: ContextRingView }) {
   );
 }
 
+/**
+ * Full-size viewer for an image clicked anywhere in the thread body. Clicking
+ * the image toggles fit-to-window / native resolution (the overlay scrolls);
+ * backdrop, close button and Escape all dismiss.
+ */
+function ImageLightbox({
+  src,
+  alt,
+  onClose,
+}: {
+  src: string;
+  alt: string;
+  onClose: () => void;
+}) {
+  const [zoomed, setZoomed] = useState(false);
+  useEscapeClose(true, onClose);
+  return (
+    <div
+      className={styles.lightbox}
+      role="dialog"
+      aria-modal="true"
+      aria-label={alt || "Image"}
+      data-image-lightbox=""
+      onClick={onClose}
+    >
+      <img
+        className={styles.lightboxImg}
+        data-zoom={zoomed ? "1" : undefined}
+        src={src}
+        alt={alt}
+        title={zoomed ? "Fit to window" : "View at full size"}
+        onClick={(e) => {
+          e.stopPropagation();
+          setZoomed((v) => !v);
+        }}
+      />
+      <button
+        type="button"
+        className={styles.lightboxClose}
+        aria-label="Close image"
+        title="Close (Esc)"
+        onClick={onClose}
+      >
+        ×
+      </button>
+    </div>
+  );
+}
+
 interface ThreadViewProps {
   detail: ThreadDetail | null;
   /** threads.get failure for the selected thread; shown with a retry. */
@@ -288,6 +337,8 @@ function ToolCallCard({
               className={styles.toolImage}
               src={url}
               alt={`Image from ${tool.name}`}
+              title="Click to view full size"
+              tabIndex={0}
             />
           ))}
         </div>
@@ -351,6 +402,7 @@ function TranscriptAttachmentChip({
           className={styles.attachmentThumb}
           src={thumb}
           alt={attachment.name}
+          tabIndex={0}
         />
       ) : (
         <svg
@@ -1469,6 +1521,10 @@ export function ThreadView({
   const [syncRefreshNonce, setSyncRefreshNonce] = useState(0);
   /** Brief inline confirmation after copying the thread id. */
   const [copiedThreadId, setCopiedThreadId] = useState(false);
+  /** Image opened in the lightbox; null when closed. */
+  const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(
+    null,
+  );
   const copyFlashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const runningAgents = useMemo(() => {
@@ -1647,6 +1703,7 @@ export function ThreadView({
       setCollapsedRuns(new Set<string>());
       setSyncRefreshNonce(0);
       setCopiedThreadId(false);
+      setLightbox(null);
       if (pushFlashTimer.current != null) {
         clearTimeout(pushFlashTimer.current);
         pushFlashTimer.current = null;
@@ -1794,6 +1851,17 @@ export function ThreadView({
     if (!el || !stickToBottom.current) return;
     el.scrollTop = el.scrollHeight;
   }, [timeline, isWorking, detail?.messages, detail?.workLog]);
+
+  /**
+   * Delegated: any image in the timeline (tool output, attachment thumb,
+   * markdown) opens the lightbox, so new image sources need no extra wiring.
+   */
+  const openClickedImage = (target: EventTarget | null) => {
+    const img = target as HTMLImageElement | null;
+    if (!img || img.tagName !== "IMG") return false;
+    setLightbox({ src: img.src, alt: img.alt });
+    return true;
+  };
 
   const onBodyScroll = () => {
     const el = bodyRef.current;
@@ -2262,6 +2330,11 @@ export function ThreadView({
         className={styles.body}
         ref={bodyRef}
         onScroll={onBodyScroll}
+        onClick={(e) => openClickedImage(e.target)}
+        onKeyDown={(e) => {
+          if (e.key !== "Enter" && e.key !== " ") return;
+          if (openClickedImage(e.target)) e.preventDefault();
+        }}
       >
         {emptyMessages && !hasTimeline && (
           <div className={styles.emptyInline}>
@@ -2480,6 +2553,14 @@ export function ThreadView({
         onLoadAttachmentImage={onLoadAttachmentImage}
         onDropAttachmentFiles={onDropAttachmentFiles}
       />
+
+      {lightbox && (
+        <ImageLightbox
+          src={lightbox.src}
+          alt={lightbox.alt}
+          onClose={() => setLightbox(null)}
+        />
+      )}
 
       {restoreError && (
         <p className={styles.reviewError} role="alert" data-review-undo-error="">
