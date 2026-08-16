@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import * as React from "react";
 import { mount, inAct } from "./support/dom.ts";
+import { thread } from "./support/fakeCoder.ts";
 import { PlanboardView } from "../src/components/PlanboardView";
 import type { ListIssuesResult, ProjectInfo } from "../src/shared/ipc";
 
@@ -148,6 +149,47 @@ describe("PlanboardView", () => {
     );
     assert.ok(m.text().includes("Nothing on the plan yet"));
     assert.ok(m.text().includes("plan:todo"));
+    m.unmount();
+  });
+
+  it("shows the selected project's thread plans and opens the thread", async () => {
+    const threads = [
+      thread({
+        id: "t1",
+        projectId: "p1",
+        title: "ledger thread",
+        planSteps: [
+          { step: "read the store", status: "done" },
+          { step: "wire the runner", status: "doing" },
+        ],
+      }),
+      thread({ id: "t2", projectId: "p2", title: "site thread",
+        planSteps: [{ step: "other project", status: "todo" }] }),
+      thread({ id: "t3", projectId: "p1", title: "no plan yet" }),
+    ];
+    const opened: string[] = [];
+    const m = await mount(
+      <PlanboardView
+        projects={projects}
+        listIssues={async () => ({ ok: true, issues: [] })}
+        threads={threads}
+        onSelectThread={(id) => opened.push(id)}
+      />,
+    );
+    const section = m.query("[data-thread-plans]");
+    assert.ok(section, "thread plans section");
+    assert.ok(section.textContent?.includes("wire the runner"));
+    assert.ok(!section.textContent?.includes("other project"), "other project");
+    assert.ok(!section.textContent?.includes("no plan yet"), "plan-less thread");
+    assert.equal(
+      m.query('[data-thread-plan="t1"] [data-plan-step="doing"]')?.textContent,
+      "wire the runner",
+    );
+    // Plans alone keep the board out of the empty state.
+    assert.ok(!m.text().includes("Nothing on the plan yet"));
+    const open = m.query('[data-thread-plan="t1"] button') as HTMLButtonElement;
+    await inAct(() => open.click());
+    assert.deepEqual(opened, ["t1"]);
     m.unmount();
   });
 });
