@@ -1173,6 +1173,91 @@
   overflow: auto;
 }
 
+/* Plan overview card (issue #75) — quieter than the amber permission card:
+   it is standing context, not something to answer. */
+.planCard {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-soft);
+  background: var(--card);
+  font-size: 12.5px;
+}
+
+.planCardHead {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.planCardTitle {
+  font-weight: 500;
+  color: var(--text);
+}
+
+.planProgress {
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+
+.planToggle {
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.planToggle:hover {
+  color: var(--text);
+}
+
+.planStepList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.planStep {
+  display: flex;
+  gap: 6px;
+  line-height: 1.4;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.planStep::before {
+  content: "○";
+  flex-shrink: 0;
+  color: var(--text-dim);
+}
+
+.planStep[data-plan-step="doing"] {
+  color: var(--text);
+}
+
+.planStep[data-plan-step="doing"]::before {
+  content: "◐";
+  color: var(--blue);
+}
+
+.planStep[data-plan-step="done"] {
+  color: var(--text-dim);
+}
+
+.planStep[data-plan-step="done"]::before {
+  content: "●";
+  color: var(--green);
+}
+
 .permissionActions {
   display: flex;
   gap: 8px;

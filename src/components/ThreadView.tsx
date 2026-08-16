@@ -1200,6 +1200,57 @@ function PlanPrompt({
   );
 }
 
+/**
+ * The thread's plan overview (issue #75): the agent's live steps, mirrored
+ * from its todo list, plus the plan it had approved. Unlike PlanPrompt this
+ * outlives the approval — it is what the thread intends to do, at a glance.
+ */
+function PlanCard({ thread }: { thread: ThreadInfo }) {
+  const steps = thread.planSteps ?? [];
+  // No steps yet means the prose IS the overview, so it starts expanded.
+  const [open, setOpen] = useState(steps.length === 0);
+  const done = steps.filter((s) => s.status === "done").length;
+  return (
+    <div className={styles.planCard} data-plan-card="">
+      <div className={styles.planCardHead}>
+        <span className={styles.planCardTitle}>Plan</span>
+        {steps.length > 0 && (
+          <span className={styles.planProgress}>
+            {done}/{steps.length} done
+          </span>
+        )}
+        {thread.plan && (
+          <button
+            type="button"
+            className={styles.planToggle}
+            onClick={() => setOpen((v) => !v)}
+          >
+            {open ? "Hide full plan" : "Show full plan"}
+          </button>
+        )}
+      </div>
+      {steps.length > 0 && (
+        <ol className={styles.planStepList}>
+          {steps.map((s, i) => (
+            <li
+              key={`${i}-${s.step}`}
+              className={styles.planStep}
+              data-plan-step={s.status}
+            >
+              {s.step}
+            </li>
+          ))}
+        </ol>
+      )}
+      {thread.plan && open && (
+        <div className={styles.planBody}>
+          <Markdown text={thread.plan} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DiffLine({ line }: { line: string }) {
   const kind = diffLineKind(line);
   return (
@@ -2435,6 +2486,12 @@ export function ThreadView({
             />
           );
         })}
+
+        {/* A pending plan prompt already shows the plan — don't show it twice. */}
+        {(thread.planSteps?.length || thread.plan) &&
+        !detail.pendingPermission?.plan ? (
+          <PlanCard thread={thread} />
+        ) : null}
 
         {detail.pendingPermission?.questions?.length ? (
           <QuestionPrompt
