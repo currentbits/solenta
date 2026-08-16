@@ -192,19 +192,19 @@ describe("spendByDay and settings", () => {
     ]);
     store.saveNow();
 
-    assert.deepEqual(store.getSettings(), { dailyBudgetUsd: null, orchestrationBudgetUsd: null, autoSettleAfterDays: 3, mcpServers: [], defaultWorktree: false, updateChannel: null, notifications: true });
-    assert.deepEqual(services.getSettings(store), { dailyBudgetUsd: null, orchestrationBudgetUsd: null, autoSettleAfterDays: 3, mcpServers: [], defaultWorktree: false, updateChannel: null, notifications: true });
+    assert.deepEqual(store.getSettings(), { dailyBudgetUsd: null, orchestrationBudgetUsd: null, autoSettleAfterDays: 3, mcpServers: [], defaultWorktree: false, defaultOrchestrate: false, updateChannel: null, notifications: true });
+    assert.deepEqual(services.getSettings(store), { dailyBudgetUsd: null, orchestrationBudgetUsd: null, autoSettleAfterDays: 3, mcpServers: [], defaultWorktree: false, defaultOrchestrate: false, updateChannel: null, notifications: true });
 
     const set = services.setSettings(store, { dailyBudgetUsd: 12.5 });
-    assert.deepEqual(set, { dailyBudgetUsd: 12.5, orchestrationBudgetUsd: null, autoSettleAfterDays: 3, mcpServers: [], defaultWorktree: false, updateChannel: null, notifications: true });
+    assert.deepEqual(set, { dailyBudgetUsd: 12.5, orchestrationBudgetUsd: null, autoSettleAfterDays: 3, mcpServers: [], defaultWorktree: false, defaultOrchestrate: false, updateChannel: null, notifications: true });
     assert.equal(store.getThreads()[0].updatedAt, 2);
 
     store.saveNow();
     const reloaded = new Store(filePath);
-    assert.deepEqual(reloaded.getSettings(), { dailyBudgetUsd: 12.5, orchestrationBudgetUsd: null, autoSettleAfterDays: 3, mcpServers: [], defaultWorktree: false, updateChannel: null, notifications: true });
+    assert.deepEqual(reloaded.getSettings(), { dailyBudgetUsd: 12.5, orchestrationBudgetUsd: null, autoSettleAfterDays: 3, mcpServers: [], defaultWorktree: false, defaultOrchestrate: false, updateChannel: null, notifications: true });
 
     const cleared = services.setSettings(store, { dailyBudgetUsd: null });
-    assert.deepEqual(cleared, { dailyBudgetUsd: null, orchestrationBudgetUsd: null, autoSettleAfterDays: 3, mcpServers: [], defaultWorktree: false, updateChannel: null, notifications: true });
+    assert.deepEqual(cleared, { dailyBudgetUsd: null, orchestrationBudgetUsd: null, autoSettleAfterDays: 3, mcpServers: [], defaultWorktree: false, defaultOrchestrate: false, updateChannel: null, notifications: true });
 
     assert.throws(
       () => services.setSettings(store, { dailyBudgetUsd: 0 }),

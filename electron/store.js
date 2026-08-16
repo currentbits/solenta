@@ -250,6 +250,9 @@ const DEFAULT_AUTO_SETTLE_AFTER_DAYS = 3;
  * defaultWorktree: absent/junk → false (new threads run in the checkout
  * unless the user opts in).
  *
+ * defaultOrchestrate: absent/junk → false (plain "New thread" is not an
+ * orchestrator unless the user opts in).
+ *
  * updateChannel: absent/junk → null (follow the channel stamped at package
  * time); "prod"/"nightly" override the stamp.
  *
@@ -257,7 +260,7 @@ const DEFAULT_AUTO_SETTLE_AFTER_DAYS = 3;
  * absent/junk keeps the pre-setting behaviour (notify).
  *
  * @param {unknown} raw
- * @returns {{ dailyBudgetUsd: number | null, orchestrationBudgetUsd: number | null, autoSettleAfterDays: number | null, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }>, defaultWorktree: boolean, updateChannel: "prod" | "nightly" | null, notifications: boolean }}
+ * @returns {{ dailyBudgetUsd: number | null, orchestrationBudgetUsd: number | null, autoSettleAfterDays: number | null, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }>, defaultWorktree: boolean, defaultOrchestrate: boolean, updateChannel: "prod" | "nightly" | null, notifications: boolean }}
  */
 function normalizeSettings(raw) {
   const settings = {
@@ -266,6 +269,7 @@ function normalizeSettings(raw) {
     autoSettleAfterDays: DEFAULT_AUTO_SETTLE_AFTER_DAYS,
     mcpServers: [],
     defaultWorktree: false,
+    defaultOrchestrate: false,
     updateChannel: null,
     notifications: true,
   };
@@ -310,6 +314,9 @@ function normalizeSettings(raw) {
   settings.mcpServers = normalizeMcpServers(obj.mcpServers);
   settings.defaultWorktree =
     /** @type {{ defaultWorktree?: unknown }} */ (obj).defaultWorktree === true;
+  settings.defaultOrchestrate =
+    /** @type {{ defaultOrchestrate?: unknown }} */ (obj).defaultOrchestrate ===
+    true;
   const ch = /** @type {{ updateChannel?: unknown }} */ (obj).updateChannel;
   settings.updateChannel = ch === "prod" || ch === "nightly" ? ch : null;
   settings.notifications =
@@ -831,7 +838,7 @@ class Store {
   }
 
   /**
-   * @returns {{ dailyBudgetUsd: number | null, orchestrationBudgetUsd: number | null, autoSettleAfterDays: number | null, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }>, defaultWorktree: boolean }}
+   * @returns {{ dailyBudgetUsd: number | null, orchestrationBudgetUsd: number | null, autoSettleAfterDays: number | null, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }>, defaultWorktree: boolean, defaultOrchestrate: boolean }}
    */
   getSettings() {
     if (!this.data.settings || typeof this.data.settings !== "object") {
@@ -851,6 +858,7 @@ class Store {
       autoSettleAfterDays: n.autoSettleAfterDays,
       mcpServers: n.mcpServers,
       defaultWorktree: n.defaultWorktree,
+      defaultOrchestrate: n.defaultOrchestrate,
       updateChannel: n.updateChannel,
       notifications: n.notifications,
     };
@@ -859,8 +867,8 @@ class Store {
   /**
    * Validate and merge settings. Does not touch threads.
    * Does not save; caller must save.
-   * @param {Partial<{ dailyBudgetUsd: number | null, orchestrationBudgetUsd: number | null, autoSettleAfterDays: number | null, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }>, defaultWorktree: boolean }>} patch
-   * @returns {{ dailyBudgetUsd: number | null, orchestrationBudgetUsd: number | null, autoSettleAfterDays: number | null, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }>, defaultWorktree: boolean }}
+   * @param {Partial<{ dailyBudgetUsd: number | null, orchestrationBudgetUsd: number | null, autoSettleAfterDays: number | null, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }>, defaultWorktree: boolean, defaultOrchestrate: boolean }>} patch
+   * @returns {{ dailyBudgetUsd: number | null, orchestrationBudgetUsd: number | null, autoSettleAfterDays: number | null, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }>, defaultWorktree: boolean, defaultOrchestrate: boolean }}
    */
   setSettings(patch) {
     if (!patch || typeof patch !== "object") {
@@ -925,6 +933,13 @@ class Store {
         throw new Error("defaultWorktree must be a boolean");
       }
       this.data.settings.defaultWorktree = v;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "defaultOrchestrate")) {
+      const v = patch.defaultOrchestrate;
+      if (typeof v !== "boolean") {
+        throw new Error("defaultOrchestrate must be a boolean");
+      }
+      this.data.settings.defaultOrchestrate = v;
     }
     if (Object.prototype.hasOwnProperty.call(patch, "updateChannel")) {
       const v = patch.updateChannel;
