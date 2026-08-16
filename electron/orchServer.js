@@ -15,7 +15,12 @@ const MAX_BODY_BYTES = 1024 * 1024;
 
 const INSTRUCTIONS =
   "Solenta thread orchestrator: drive other agent threads in this Solenta workspace. " +
-  "threads_list shows every thread with id, title, provider, status and handoffFrom. " +
+  "The workspace holds SEVERAL projects and this server sees all of them, but you may " +
+  "only drive threads in your own. Your thread id and project id are stated at the end " +
+  "of your prompt; pass them, never guess an id from a title. " +
+  "threads_list shows every thread with id, title, provider, status, handoffFrom, " +
+  "projectId and projectName — filter it by your own projectId first. " +
+  "thread_fork and thread_send reject a thread outside the projectId you pass. " +
   "thread_fork starts a new thread (optionally on a different provider) on your " +
   "prompt; the worker does NOT inherit the source session, only a truncated digest " +
   "of its last messages, so write a self-contained prompt with every fact the worker " +
@@ -197,14 +202,61 @@ async function loadOrCreateConfig(file) {
 function createToolHandlers(deps) {
   const { store, runner, forkThread, getProvider } = deps;
 
+  /**
+   * The project a thread belongs to, or null when it has been deleted.
+   * @param {{ projectId?: string } | null | undefined} thread
+   */
+  function projectOf(thread) {
+    if (!thread || !thread.projectId) return null;
+    if (typeof store.getProject !== "function") return null;
+    return store.getProject(thread.projectId);
+  }
+
+  /**
+   * Guard against driving a thread in ANOTHER project (issue #109). The
+   * server has no caller identity, so the caller must STATE the project it
+   * believes it is acting in and we reject a mismatch.
+   *
+   * ponytail: a self-declared claim, not proof — it catches a confused
+   * caller, not a malicious one. Upgrade to per-run bearer tokens mapped to
+   * threadIds if forgery ever matters (costly: grok/kimi register MCP
+   * globally at user scope, so a per-run token cannot reach them).
+   *
+   * @param {{ id: string, projectId?: string }} thread - the target thread
+   * @param {unknown} claimed - projectId the caller says it is working in
+   */
+  function assertSameProject(thread, claimed) {
+    const want = String(claimed || "");
+    const got = String(thread.projectId || "");
+    if (want === got) return;
+    const name = (p) => (p && p.name ? `"${p.name}"` : "unknown project");
+    const target = name(projectOf(thread));
+    const caller = name(
+      typeof store.getProject === "function" ? store.getProject(want) : null,
+    );
+    throw new Error(
+      `Thread ${thread.id} belongs to ${target} (projectId ${got}), not to ` +
+        `${caller} (projectId ${want}). A thread can only drive threads in ` +
+        `its own project. Use your own projectId and a threadId from ` +
+        `threads_list with that same projectId.`,
+    );
+  }
+
   async function threads_list() {
-    return store.getThreads().map((t) => ({
-      id: t.id,
-      title: t.title ?? null,
-      provider: t.provider ?? null,
-      status: t.status ?? null,
-      handoffFrom: t.handoffFrom ?? null,
-    }));
+    return store.getThreads().map((t) => {
+      const project = projectOf(t);
+      return {
+        id: t.id,
+        title: t.title ?? null,
+        provider: t.provider ?? null,
+        status: t.status ?? null,
+        handoffFrom: t.handoffFrom ?? null,
+        // Without these, picking a thread is a guess — which is exactly how
+        // one project's agent spawned workers on another project's repo.
+        projectId: t.projectId ?? null,
+        projectName: project ? (project.name ?? null) : null,
+      };
+    });
   }
 
   async function thread_fork(args) {
@@ -212,6 +264,7 @@ function createToolHandlers(deps) {
     if (!source) {
       throw new Error(`Unknown thread: ${args.threadId}`);
     }
+    assertSameProject(source, args.projectId);
     /** @type {{ threadId: string, provider?: string }} */
     const input = { threadId: args.threadId };
     if (args.provider != null) {
@@ -249,6 +302,7 @@ function createToolHandlers(deps) {
     if (!thread) {
       throw new Error(`Unknown thread: ${args.threadId}`);
     }
+    assertSameProject(thread, args.projectId);
     // Re-dispatched worker: unarchive so the new run is visible again.
     if (thread.orchWorker && thread.archived) {
       store.updateThread(args.threadId, { archived: false });
@@ -325,7 +379,9 @@ function buildMcpServer(sdk, handlers) {
     "threads_list",
     {
       description:
-        "List every thread: id, title, provider, status, handoffFrom.",
+        "List every thread: id, title, provider, status, handoffFrom, " +
+        "projectId, projectName. Threads from EVERY project are listed — " +
+        "match projectId against your own before touching one.",
       inputSchema: {},
     },
     async () => json(await handlers.threads_list()),
@@ -336,12 +392,17 @@ function buildMcpServer(sdk, handlers) {
     {
       description:
         "Fork a thread into a new one (optionally on another provider) and start it on prompt. " +
+        "threadId is normally YOUR OWN thread id, and projectId YOUR OWN project id — both are " +
+        "stated at the end of your prompt. The fork lands in the source thread's project, so " +
+        "forking a thread from another project spawns workers on the WRONG repo: projectId must " +
+        "match the source thread's project or the call is rejected. " +
         "The fork carries only a truncated digest of the source thread's last messages, not the " +
         "whole conversation — the prompt must be self-contained. " +
         "The worker gets its own git worktree so parallel workers never edit the same files; " +
         "pass worktree:false to run it in the project checkout instead. Returns the new threadId.",
       inputSchema: {
         threadId: z.string().min(1),
+        projectId: z.string().min(1),
         provider: z.string().min(1).optional(),
         prompt: z.string().min(1),
         worktree: z.boolean().optional(),
@@ -354,9 +415,12 @@ function buildMcpServer(sdk, handlers) {
     "thread_send",
     {
       description:
-        "Start a run with prompt on an existing thread. Rejects unknown threads.",
+        "Start a run with prompt on an existing thread. projectId is YOUR OWN project id " +
+        "(stated at the end of your prompt); the thread must belong to it. Rejects unknown " +
+        "threads and threads in another project.",
       inputSchema: {
         threadId: z.string().min(1),
+        projectId: z.string().min(1),
         prompt: z.string().min(1),
       },
     },
