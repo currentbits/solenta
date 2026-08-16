@@ -805,6 +805,9 @@ function createMemorySupervisor(opts) {
           CODER_MEMORY_CONFIG: configPath,
         },
         stdio: ["ignore", "ignore", "pipe"],
+        // detached:false only shares our process group; it does NOT kill the
+        // child if we crash. The server watches its own ppid for that
+        // (memory-server/src/orphan.js).
         detached: false,
       });
       ownedChild = child;
