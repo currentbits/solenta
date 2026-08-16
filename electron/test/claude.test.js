@@ -1772,10 +1772,21 @@ describe("runner claude provider", () => {
       }),
       "utf8",
     );
+    const crypto = require("node:crypto");
+    const token = "mcp-test-token";
     const server = http.createServer((req, res) => {
-      if (req.url === "/health") {
+      const url = new URL(req.url, "http://127.0.0.1");
+      if (url.pathname === "/health") {
+        const body = { ok: true };
+        const nonce = url.searchParams.get("nonce");
+        if (nonce) {
+          body.proof = crypto
+            .createHmac("sha256", token)
+            .update(nonce)
+            .digest("hex");
+        }
         res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ ok: true }));
+        res.end(JSON.stringify(body));
         return;
       }
       res.writeHead(404);

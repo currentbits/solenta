@@ -3,6 +3,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const http = require("node:http");
+const crypto = require("node:crypto");
 const { spawn, execFileSync, execFile } = require("node:child_process");
 
 const CONFIG_NAME = "memory-server.json";
@@ -725,17 +726,23 @@ function getMemoryStatus() {
 
 /**
  * Probe GET /health with a timeout.
+ * When `token` is a non-empty string, challenge with a nonce and require an
+ * HMAC proof so we never send the bearer token to an unverified listener.
  * @param {number} port
  * @param {number} [timeoutMs]
+ * @param {string} [token]
  * @returns {Promise<boolean>}
  */
-function probeHealth(port, timeoutMs = HEALTH_TIMEOUT_MS) {
+function probeHealth(port, timeoutMs = HEALTH_TIMEOUT_MS, token) {
   return new Promise((resolve) => {
+    const useProof = typeof token === "string" && token.length > 0;
+    // Nonce is a challenge, not a secret: the token stays on this side.
+    const nonce = useProof ? crypto.randomBytes(16).toString("hex") : null;
     const req = http.get(
       {
         host: "127.0.0.1",
         port,
-        path: "/health",
+        path: useProof ? `/health?nonce=${encodeURIComponent(nonce)}` : "/health",
         timeout: timeoutMs,
       },
       (res) => {
@@ -751,7 +758,27 @@ function probeHealth(port, timeoutMs = HEALTH_TIMEOUT_MS) {
           }
           try {
             const obj = JSON.parse(body);
-            resolve(Boolean(obj && obj.ok === true));
+            if (!(obj && obj.ok === true)) {
+              resolve(false);
+              return;
+            }
+            if (!useProof) {
+              resolve(true);
+              return;
+            }
+            const proof = typeof obj.proof === "string" ? obj.proof : "";
+            const expected = crypto
+              .createHmac("sha256", token)
+              .update(nonce)
+              .digest("hex");
+            const a = Buffer.from(proof);
+            const b = Buffer.from(expected);
+            // timingSafeEqual throws on mismatched lengths.
+            if (a.length !== b.length) {
+              resolve(false);
+              return;
+            }
+            resolve(crypto.timingSafeEqual(a, b));
           } catch {
             resolve(false);
           }
@@ -767,14 +794,15 @@ function probeHealth(port, timeoutMs = HEALTH_TIMEOUT_MS) {
 }
 
 /**
- * Wait until /health is ok or timeout.
+ * Wait until /health is ok (and token-proofed when given) or timeout.
  * @param {number} port
  * @param {number} maxMs
+ * @param {string} [token]
  */
-async function waitForHealth(port, maxMs = SPAWN_WAIT_MS) {
+async function waitForHealth(port, maxMs = SPAWN_WAIT_MS, token) {
   const start = Date.now();
   while (Date.now() - start < maxMs) {
-    if (await probeHealth(port, Math.min(HEALTH_TIMEOUT_MS, 400))) {
+    if (await probeHealth(port, Math.min(HEALTH_TIMEOUT_MS, 400), token)) {
       return true;
     }
     await new Promise((r) => setTimeout(r, HEALTH_POLL_MS));
@@ -971,18 +999,27 @@ function createMemorySupervisor(opts) {
       }
     }
 
-    // (b) Probe health; adopt if already up.
-    if (cfg && (await probeHealth(cfg.port, HEALTH_TIMEOUT_MS))) {
-      markHealthy({
-        port: cfg.port,
-        token: cfg.token,
-        userDataPath,
-        adopted: true,
-        log,
-        env,
-      });
-      log(`memory-server: adopted existing server on port ${cfg.port}`);
-      return;
+    // (b) Adopt only a listener that proves it knows our token.
+    // A config with no token is unverifiable — do not adopt.
+    if (cfg && typeof cfg.token === "string" && cfg.token.length > 0) {
+      if (await probeHealth(cfg.port, HEALTH_TIMEOUT_MS, cfg.token)) {
+        markHealthy({
+          port: cfg.port,
+          token: cfg.token,
+          userDataPath,
+          adopted: true,
+          log,
+          env,
+        });
+        log(`memory-server: adopted existing server on port ${cfg.port}`);
+        return;
+      }
+      // Listener answered /health but could not prove the shared secret.
+      if (await probeHealth(cfg.port, HEALTH_TIMEOUT_MS)) {
+        log(
+          `memory-server: unverified listener on port ${cfg.port} (not ours); spawning our own`,
+        );
+      }
     }
 
     // (c) Spawn
@@ -1055,59 +1092,61 @@ function createMemorySupervisor(opts) {
       return;
     }
 
-    // First run: the server writes the config itself; poll for it.
-    if (!cfg) {
-      cfg = await waitForConfig(configPath, SPAWN_WAIT_MS);
-      if (!cfg) {
-        log(
-          "memory-server: config never appeared within " +
-            SPAWN_WAIT_MS +
-            "ms; continuing without memory",
-        );
-        killOwnedChild();
+    // Port may move: the server rewrites memory-server.json on EADDRINUSE.
+    // Re-read the file each tick and prove the current port knows our token.
+    const deadline = Date.now() + SPAWN_WAIT_MS * 2;
+    let sawConfig = Boolean(cfg);
+    while (Date.now() < deadline) {
+      if (fs.existsSync(configPath)) {
+        try {
+          const parsed = JSON.parse(fs.readFileSync(configPath, "utf8"));
+          const port = Number(parsed.port);
+          const token = typeof parsed.token === "string" ? parsed.token : "";
+          if (port && Number.isFinite(port)) {
+            sawConfig = true;
+            cfg = { port, token };
+          }
+        } catch {
+          // partially written; keep polling
+        }
+      }
+      if (
+        cfg &&
+        cfg.token &&
+        (await probeHealth(
+          cfg.port,
+          Math.min(HEALTH_TIMEOUT_MS, 400),
+          cfg.token,
+        ))
+      ) {
+        markHealthy({
+          port: cfg.port,
+          token: cfg.token,
+          userDataPath,
+          adopted: false,
+          log,
+          env,
+        });
+        log(`memory-server: spawned and healthy on port ${cfg.port}`);
         return;
       }
+      await new Promise((r) => setTimeout(r, HEALTH_POLL_MS));
     }
 
-    const up = await waitForHealth(cfg.port, SPAWN_WAIT_MS);
-    if (!up) {
+    if (!sawConfig) {
+      log(
+        "memory-server: config never appeared within " +
+          SPAWN_WAIT_MS +
+          "ms; continuing without memory",
+      );
+    } else {
       log(
         "memory-server: health never came up within " +
           SPAWN_WAIT_MS +
           "ms; continuing without memory",
       );
-      killOwnedChild();
-      return;
     }
-
-    markHealthy({
-      port: cfg.port,
-      token: cfg.token,
-      userDataPath,
-      adopted: false,
-      log,
-      env,
-    });
-    log(`memory-server: spawned and healthy on port ${cfg.port}`);
-  }
-
-  /** Poll for the server-created config file; null on timeout or bad shape. */
-  async function waitForConfig(file, timeoutMs) {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-      if (fs.existsSync(file)) {
-        try {
-          const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
-          const port = Number(parsed.port);
-          const token = typeof parsed.token === "string" ? parsed.token : "";
-          if (port && Number.isFinite(port)) return { port, token };
-        } catch {
-          // partially written; keep polling
-        }
-      }
-      await new Promise((r) => setTimeout(r, 250));
-    }
-    return null;
+    killOwnedChild();
   }
 
   /** Kill a hung spawn attempt if still around. */

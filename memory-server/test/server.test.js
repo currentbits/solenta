@@ -1,6 +1,8 @@
 import { describe, it, before, after } from 'node:test'
 import assert from 'node:assert/strict'
+import crypto from 'node:crypto'
 import fs from 'node:fs'
+import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
@@ -106,10 +108,21 @@ describe('HTTP auth and health', () => {
     const body = await res.json()
     assert.equal(body.ok, true)
     assert.equal(typeof body.entryCount, 'number')
-    assert.ok('dbPath' in body)
+    assert.ok(!('dbPath' in body))
     assert.ok(body.vectors)
     assert.equal(typeof body.vectors.enabled, 'boolean')
     assert.equal(typeof body.vectors.count, 'number')
+  })
+
+  it('GET /health?nonce= returns HMAC proof of the token', async () => {
+    const nonce = 'abc'
+    const res = await fetch(`${baseURL}/health?nonce=${nonce}`)
+    assert.equal(res.status, 200)
+    const body = await res.json()
+    const expected = crypto.createHmac('sha256', TOKEN).update(nonce).digest('hex')
+    assert.equal(body.proof, expected)
+    const wrong = crypto.createHmac('sha256', 'wrong-token-xxxxxxxx').update(nonce).digest('hex')
+    assert.notEqual(body.proof, wrong)
   })
 
   it('store/get/supersede round-trip over real MCP HTTP', async () => {
@@ -253,10 +266,48 @@ describe('standalone smoke via spawn', () => {
       assert.equal(res.status, 200)
       const body = await res.json()
       assert.equal(body.ok, true)
-      assert.equal(body.dbPath, dbPath)
+      assert.ok(!('dbPath' in body))
     } finally {
       child.kill('SIGTERM')
       await new Promise((r) => child.once('exit', r))
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('EADDRINUSE port fallback', () => {
+  it('binds a different port and rewrites configFile', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'coder-mem-eaddr-'))
+    const cfgFile = path.join(dir, 'memory-server.json')
+    const dbPath = path.join(dir, 'm.db')
+    const blocker = http.createServer()
+    const port = await new Promise((resolve, reject) => {
+      blocker.once('error', reject)
+      blocker.listen(0, '127.0.0.1', () => resolve(blocker.address().port))
+    })
+    const config = { port, token: TOKEN, dbPath }
+    fs.writeFileSync(cfgFile, JSON.stringify(config, null, 2), { mode: 0o600 })
+    const memory = new Memory(':memory:')
+    let server
+    try {
+      server = await startServer(memory, config, '127.0.0.1', cfgFile)
+      const addr = server.address()
+      assert.notEqual(addr.port, port)
+      assert.equal(config.port, addr.port)
+      const onDisk = JSON.parse(fs.readFileSync(cfgFile, 'utf8'))
+      assert.equal(onDisk.port, addr.port)
+      assert.equal(onDisk.token, TOKEN)
+      assert.equal(onDisk.dbPath, dbPath)
+    } finally {
+      if (server) {
+        await new Promise((resolve, reject) => {
+          server.close((err) => (err ? reject(err) : resolve()))
+        })
+      }
+      await new Promise((resolve, reject) => {
+        blocker.close((err) => (err ? reject(err) : resolve()))
+      })
+      memory.close()
       fs.rmSync(dir, { recursive: true, force: true })
     }
   })
