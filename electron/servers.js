@@ -1,11 +1,16 @@
 "use strict";
 
 const path = require("node:path");
+const http = require("node:http");
 const { execFile } = require("node:child_process");
 
 const CACHE_TTL_MS = 5_000;
 const LSOF_TIMEOUT_MS = 8_000;
 const LSOF_MAX_BUFFER = 8 * 1024 * 1024;
+/** IANA/macOS dynamic port range. Dev servers pick a memorable port; MCP
+ *  stdio helpers and other plumbing get handed one from here by the OS. */
+const EPHEMERAL_MIN_PORT = 49152;
+const PROBE_TIMEOUT_MS = 700;
 
 /** @type {Map<string, { at: number, value: object[] }>} */
 const cache = new Map();
@@ -172,6 +177,88 @@ function filterServersByRoot(entries, cwdByPid, rootPath) {
 }
 
 /**
+ * @param {number} port
+ */
+function isEphemeralPort(port) {
+  return Number(port) >= EPHEMERAL_MIN_PORT;
+}
+
+/**
+ * True when a plain `GET /` answers with a non-error status. Used only to tell
+ * a real dev server on an OS-assigned port apart from MCP/debug plumbing,
+ * which answers 403/404 or nothing at all.
+ *
+ * ponytail: `GET /` with status < 400 is the whole test. An API-only server on
+ * an ephemeral port that 404s its root gets dropped; probe a couple of common
+ * paths if that ever bites.
+ *
+ * @param {string} host
+ * @param {number} port
+ * @param {number} [timeoutMs]
+ * @returns {Promise<boolean>}
+ */
+function probeHttp(host, port, timeoutMs = PROBE_TIMEOUT_MS) {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (ok) => {
+      if (done) return;
+      done = true;
+      resolve(ok);
+    };
+    let req;
+    try {
+      req = http.request(
+        {
+          host: isWildcardHost(host) ? "127.0.0.1" : stripBrackets(host),
+          port,
+          path: "/",
+          method: "GET",
+          timeout: timeoutMs,
+        },
+        (res) => {
+          const ok = Number(res.statusCode) < 400;
+          res.resume();
+          finish(ok);
+        },
+      );
+    } catch {
+      finish(false);
+      return;
+    }
+    req.on("error", () => finish(false));
+    req.on("timeout", () => {
+      req.destroy();
+      finish(false);
+    });
+    req.end();
+  });
+}
+
+/**
+ * @param {string} host
+ */
+function stripBrackets(host) {
+  return String(host || "").replace(/^\[|\]$/g, "");
+}
+
+/**
+ * Drop ephemeral-port listeners that do not answer a plain GET. Well-known
+ * ports are kept without probing: a dev server that is slow to boot should
+ * still show up.
+ *
+ * @param {Array<{ pid: number, command: string, host: string, port: number, url: string }>} servers
+ * @param {(host: string, port: number) => Promise<boolean>} [probe]
+ */
+async function dropDeadEphemeral(servers, probe = probeHttp) {
+  const checks = await Promise.all(
+    servers.map((s) =>
+      isEphemeralPort(s.port) ? probe(s.host, s.port) : Promise.resolve(true),
+    ),
+  );
+  return servers.filter((_, i) => checks[i]);
+}
+
+/**
  * @param {string[]} args
  * @returns {Promise<string>}
  */
@@ -240,7 +327,9 @@ async function listLocalServers(rootPath) {
       "cwd",
       "-Fn",
     ]);
-    const value = filterServersByRoot(entries, parseLsofCwds(cwdOut), root);
+    const value = await dropDeadEphemeral(
+      filterServersByRoot(entries, parseLsofCwds(cwdOut), root),
+    );
     cache.set(root, { at: now, value });
     return value;
   } catch {
@@ -256,4 +345,7 @@ module.exports = {
   buildServerUrl,
   cwdInsideRoot,
   filterServersByRoot,
+  isEphemeralPort,
+  dropDeadEphemeral,
+  probeHttp,
 };
