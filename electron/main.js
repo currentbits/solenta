@@ -32,6 +32,24 @@ const {
   HOST_FLAG_HELP,
 } = require("./webServer.js");
 const { migrateLegacyUserData } = require("./legacy-migration.js");
+const { installCrashGuard } = require("./crash-guard.js");
+
+// Before anything else can throw: the app is full of fire-and-forget `void`
+// calls, and one unhandled rejection would otherwise kill the process with
+// every in-flight run inside it (issue #129).
+installCrashGuard({
+  userDataPath: app.getPath("userData"),
+  notify: (message, logPath) => {
+    if (typeof Notification !== "function" || !app.isReady()) return;
+    if (Notification.isSupported && !Notification.isSupported()) return;
+    const n = new Notification({
+      title: "Solenta hit an internal error",
+      body: message,
+    });
+    if (logPath) n.on("click", () => shell.showItemInFolder(logPath));
+    n.show();
+  },
+});
 
 const serveOpts = parseServeWebArgs(process.argv);
 
