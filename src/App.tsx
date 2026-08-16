@@ -248,8 +248,7 @@ export default function App() {
         const id = selectedThreadId;
         if (!id) return;
         setRemoveFailSlug(null);
-        await setArchived(true, id);
-        setArchiveToastIds([id]);
+        if (await setArchived(true, id)) setArchiveToastIds([id]);
       } else {
         setArchiveToastIds(null);
         await setArchived(false);
@@ -263,10 +262,14 @@ export default function App() {
     async (ids: string[]) => {
       if (ids.length === 0) return;
       setRemoveFailSlug(null);
+      // Offer undo only for what actually archived: a mid-loop failure (its
+      // message lands in the run-error banner) used to leave a partial
+      // archive whose undo toast still claimed every id (issue #85).
+      const archived: string[] = [];
       for (const id of ids) {
-        await setArchived(true, id);
+        if (await setArchived(true, id)) archived.push(id);
       }
-      setArchiveToastIds(ids);
+      if (archived.length > 0) setArchiveToastIds(archived);
     },
     [setArchived],
   );

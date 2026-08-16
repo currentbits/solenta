@@ -130,6 +130,28 @@ describe("AutomationsView", () => {
     m.unmount();
   });
 
+  it("shows a rejected Run now on the row instead of rejecting (issue #85)", async () => {
+    const m = await mount(
+      <AutomationsView
+        automations={[auto({ id: "a1", name: "Hourly" })]}
+        projects={[p1]}
+        providers={providers}
+        onCreate={() => {}}
+        onUpdate={() => {}}
+        onRemove={() => {}}
+        onRunNow={() => Promise.reject(new Error("claude CLI missing"))}
+      />,
+    );
+    await m.click(m.query('[data-automation-run=""]'));
+    assert.ok(
+      (m.query('[data-automation-error=""]')?.textContent || "").includes(
+        "claude CLI missing",
+      ),
+      "row must show the run failure",
+    );
+    m.unmount();
+  });
+
   it("validates the create form before calling onCreate", async () => {
     const created: unknown[] = [];
     const m = await mount(
