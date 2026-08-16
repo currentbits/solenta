@@ -2610,8 +2610,39 @@ function ensureWorktree(opts) {
   return { ...store.getThread(threadId) };
 }
 
+/**
+ * Drop a worktreePath that no longer exists on disk. A worktree removed
+ * outside the app (an agent running `git worktree remove`, or the folder
+ * deleted by hand) leaves the thread pointing at nothing, and spawning a CLI
+ * into a missing cwd fails as "spawn kimi ENOENT" — which reads as a missing
+ * binary (#74). Leaves the thread in the same state the app's own removal
+ * does, so it falls back to the project folder.
+ *
+ * @param {object} opts
+ * @param {import('./store').Store} opts.store
+ * @param {string} opts.threadId
+ * @param {(channel: string, payload: unknown) => void} [opts.broadcast]
+ * @returns {string | null} the dropped path, or null when nothing was stale
+ */
+function clearMissingWorktree(opts) {
+  const { store, threadId, broadcast } = opts;
+  const thread = store.getThread(threadId);
+  const wtPath = thread && thread.worktreePath;
+  if (!wtPath || fs.existsSync(wtPath)) return null;
+
+  store.updateThread(threadId, { worktreePath: null, branch: null });
+  store.save();
+
+  if (typeof broadcast === "function") {
+    const { listThreads } = require("./services.js");
+    broadcast("threads:changed", listThreads(store));
+  }
+  return wtPath;
+}
+
 module.exports = {
   setupWorktree,
+  clearMissingWorktree,
   maybeRenameWorktreeBranch,
   diff,
   commit,
