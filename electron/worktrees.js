@@ -175,6 +175,55 @@ function cleanupWorktree(opts) {
 }
 
 /**
+ * Paths with unmerged index entries (conflict markers on disk).
+ * @param {string} cwd
+ * @returns {string[]}
+ */
+function unmergedFiles(cwd) {
+  const res = gitTry(cwd, ["diff", "--name-only", "--diff-filter=U"]);
+  if (!res.ok) return [];
+  return res.stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+/**
+ * Unmerged paths that still carry conflict markers on disk. Editing the file
+ * counts as resolved even without `git add` — the merge path stages with
+ * `add -A` anyway, and requiring the stage would strand anyone resolving in an
+ * editor.
+ *
+ * @param {string} cwd
+ * @returns {string[]}
+ */
+function unresolvedFiles(cwd) {
+  return unmergedFiles(cwd).filter((file) => {
+    try {
+      return /^<{7}[ \t]/m.test(fs.readFileSync(path.join(cwd, file), "utf8"));
+    } catch {
+      // Binary or deleted (delete/modify): nothing to strip, let it through.
+      return false;
+    }
+  });
+}
+
+/**
+ * Conflict error carrying the file list. The MERGE_CONFLICT marker tells the
+ * renderer to show a resolution block instead of a raw git dump (same trick as
+ * WORKTREE_DIRTY).
+ *
+ * @param {string} headline
+ * @param {string[]} files
+ * @param {string|null} footer
+ */
+function conflictError(headline, files, footer) {
+  const lines = [headline, ...files.map((f) => `  ${f}`)];
+  if (footer) lines.push(footer);
+  return new Error(`MERGE_CONFLICT:${lines.join("\n")}`);
+}
+
+/**
  * Squash-merge the thread worktree into the project default branch, then remove
  * the worktree and branch. Commits any uncommitted worktree changes first.
  *
@@ -208,7 +257,17 @@ function mergeWorktree(opts) {
   const wtPath = thread.worktreePath;
   const branch = thread.branch;
 
-  // (a) Commit any uncommitted worktree changes
+  // (a) Commit any uncommitted worktree changes. Refuse while conflicts are
+  // unresolved: `add -A` would happily commit the markers.
+  const pending = unresolvedFiles(wtPath);
+  if (pending.length) {
+    throw conflictError(
+      "Unresolved conflicts in the worktree:",
+      pending,
+      "Resolve them in the worktree, then merge again.",
+    );
+  }
+
   const wtStatus = gitOut(wtPath, ["status", "--porcelain", "-uall"], {
     raw: true,
   }).trim();
@@ -236,14 +295,33 @@ function mergeWorktree(opts) {
     );
   }
 
-  const mergeResult = gitTry(project.path, ["merge", "--squash", branch]);
-  if (!mergeResult.ok) {
-    // Restore clean checkout after conflict / failed squash
+  // Squash into the project checkout, always restoring it on failure.
+  const squash = () => {
+    const res = gitTry(project.path, ["merge", "--squash", branch]);
+    if (res.ok) return null;
+    const files = unmergedFiles(project.path);
     gitTry(project.path, ["merge", "--abort"]);
     gitTry(project.path, ["reset", "--hard", "HEAD"]);
-    throw new Error(
-      `Merge conflict while squash-merging ${branch}:\n${mergeResult.combined}`,
-    );
+    return { files, combined: res.combined };
+  };
+
+  let failed = squash();
+  if (failed) {
+    // Replay the conflict inside the worktree — that is where the agent, the
+    // editor and the user can actually resolve it. A clean replay means the
+    // branch only needed the newer base commits, so the squash can retry.
+    const replay = gitTry(wtPath, ["merge", baseBranch]);
+    failed = replay.ok ? squash() : failed;
+    if (failed) {
+      const inWorktree = unmergedFiles(wtPath);
+      throw conflictError(
+        `${branch} conflicts with ${baseBranch}:`,
+        inWorktree.length ? inWorktree : failed.files,
+        inWorktree.length
+          ? `${baseBranch} was merged into the worktree — resolve these files there, then merge again.`
+          : failed.combined.split("\n")[0],
+      );
+    }
   }
 
   const commitMsg = `Merge worktree ${branch}: ${thread.title}`;

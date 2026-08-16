@@ -421,10 +421,9 @@ describe("worktrees", () => {
         }),
       (err) => {
         assert.ok(err instanceof Error);
-        assert.ok(
-          /conflict|CONFLICT|merge/i.test(err.message),
-          `expected conflict message, got: ${err.message}`,
-        );
+        assert.match(err.message, /MERGE_CONFLICT:/);
+        assert.match(err.message, /README\.md/);
+        assert.match(err.message, /resolve/i);
         return true;
       },
     );
@@ -441,6 +440,44 @@ describe("worktrees", () => {
     const still = store.getThread(thread.id);
     assert.ok(still.worktreePath);
     assert.ok(fs.existsSync(still.worktreePath));
+
+    // Conflict was replayed into the worktree, so it is resolvable there
+    const wtConflicts = git(setup.worktreePath, [
+      "diff",
+      "--name-only",
+      "--diff-filter=U",
+    ]);
+    assert.equal(wtConflicts, "README.md");
+    assert.match(
+      fs.readFileSync(path.join(setup.worktreePath, "README.md"), "utf8"),
+      /<<<<<<</,
+    );
+
+    // Merging again without resolving refuses instead of committing markers
+    assert.throws(
+      () => mergeWorktree({ store, threadId: thread.id, broadcast: () => {} }),
+      (err) => {
+        assert.match(err.message, /MERGE_CONFLICT:[\s\S]*README\.md/);
+        return true;
+      },
+    );
+    assert.doesNotMatch(
+      fs.readFileSync(path.join(repo, "README.md"), "utf8"),
+      /<<<<<<</,
+    );
+
+    // Resolve in the worktree, then merge again: lands on the project branch
+    fs.writeFileSync(
+      path.join(setup.worktreePath, "README.md"),
+      "resolved\n",
+    );
+    const merged = mergeWorktree({
+      store,
+      threadId: thread.id,
+      broadcast: () => {},
+    });
+    assert.equal(merged.worktreePath, null);
+    assert.equal(fs.readFileSync(path.join(repo, "README.md"), "utf8"), "resolved\n");
   });
 
   it("removeWorktree without force rejects dirty worktree with WORKTREE_DIRTY", () => {
