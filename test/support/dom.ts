@@ -144,6 +144,23 @@ export function unmountAll(): void {
   }
 }
 
+/**
+ * Tests that DELIBERATELY crash a component (error-boundary tests) make React
+ * log the caught error via console.error, which the unmountAll gate would
+ * turn into a failure. Acknowledge the expected noise: remove and return the
+ * captured entries matching `match`; anything else stays and still fails.
+ */
+export function drainConsoleErrors(match: RegExp): string[] {
+  const drained: string[] = [];
+  const kept: string[] = [];
+  for (const entry of consoleErrors) {
+    (match.test(entry) ? drained : kept).push(entry);
+  }
+  consoleErrors.length = 0;
+  consoleErrors.push(...kept);
+  return drained;
+}
+
 // Registered here, not per file. Relying on each test file to remember
 // afterEach(unmountAll) meant one forgotten line wedged the WHOLE run forever:
 // the component's interval stays armed, --test-timeout does not bound it, and
