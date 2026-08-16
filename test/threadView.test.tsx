@@ -548,6 +548,56 @@ describe("ThreadView mounted interactions", () => {
     assert.equal(img.getAttribute("src"), dataUrl);
     m.unmount();
   });
+
+  it("opens a clicked image full size and closes it with Escape", async () => {
+    const dataUrl = "data:image/png;base64,AAAA";
+    const m = await mount(
+      view({
+        onLoadImage: async () => dataUrl,
+        detail: detail({
+          messages: [
+            msg({
+              id: "t1",
+              role: "tool",
+              text: "Read: /tmp/shot.png",
+              createdAt: 1,
+              runId: "run-1",
+              tool: {
+                id: "tc1",
+                name: "Read",
+                input: "{}",
+                output: "[image]",
+                done: true,
+                isError: false,
+                images: ["shot.png"],
+              },
+            }),
+          ],
+          workLog: [],
+        }),
+      }),
+    );
+    await m.click(m.query("button.toolHeader"));
+    await m.flush();
+    assert.equal(m.query("[data-image-lightbox]"), null, "closed by default");
+
+    await m.click(m.query("img.toolImage"));
+    const box = m.query("[data-image-lightbox]");
+    assert.ok(box, `clicking the image must open the lightbox, got: ${m.html().slice(0, 400)}`);
+    assert.equal(
+      m.query("img.lightboxImg")?.getAttribute("src"),
+      dataUrl,
+      "lightbox shows the clicked image",
+    );
+
+    await m.press(box, "Escape");
+    assert.equal(
+      m.query("[data-image-lightbox]"),
+      null,
+      "Escape must dismiss the lightbox",
+    );
+    m.unmount();
+  });
 });
 
 describe("ThreadView review bar", () => {

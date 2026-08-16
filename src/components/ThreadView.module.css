@@ -387,6 +387,7 @@
   margin: 10px 12px;
   border: 1px solid var(--border-soft);
   border-radius: 6px;
+  cursor: zoom-in;
 }
 
 .toolDivider {
@@ -853,6 +854,48 @@
   border-top: 1px solid var(--border);
 }
 
+.lightbox {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  overflow: auto;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.78);
+}
+
+/* margin auto, not justify/align: centring a zoomed image with those clips
+   the overflowing edges out of reach of the scrollbars. */
+.lightboxImg {
+  margin: auto;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 6px;
+  cursor: zoom-in;
+}
+
+.lightboxImg[data-zoom="1"] {
+  max-width: none;
+  max-height: none;
+  cursor: zoom-out;
+}
+
+.lightboxClose {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
 .confirmOverlay {
   position: absolute;
   inset: 0;
@@ -1024,6 +1067,7 @@
   border-radius: 6px;
   object-fit: cover;
   flex-shrink: 0;
+  cursor: zoom-in;
 }
 
 .attachmentName {
