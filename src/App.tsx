@@ -218,8 +218,16 @@ export default function App() {
     setChangesNonce((n) => n + 1);
   };
 
+  // Gate the open detail on the current selection: while threads.get for a
+  // freshly clicked thread is in flight (visible over --serve-web latency),
+  // `detail` still holds the PREVIOUS thread. Rendering it under the new
+  // sidebar selection shows a stale transcript, and a fast send would go to
+  // the new thread while the user reads the old one (issue #83).
+  const visibleDetail =
+    detail && detail.thread.id === selectedThreadId ? detail : null;
+
   const project =
-    (detail && projectById.get(detail.thread.projectId)) ||
+    (visibleDetail && projectById.get(visibleDetail.thread.projectId)) ||
     (selectedProjectId ? projectById.get(selectedProjectId) : undefined) ||
     null;
 
@@ -467,7 +475,7 @@ export default function App() {
             />
           ) : (
             <ThreadView
-        detail={detail}
+        detail={visibleDetail}
         project={project}
         providers={providers}
         workflows={workflows}
@@ -533,9 +541,9 @@ export default function App() {
         <div className={styles.agentsSlot} data-pane="agents">
           <ErrorBoundary pane="Agents panel">
             <AgentsPanel
-        workflow={detail?.workflow ?? null}
-        thread={detail?.thread ?? null}
-        usage={detail?.usage ?? null}
+        workflow={visibleDetail?.workflow ?? null}
+        thread={visibleDetail?.thread ?? null}
+        usage={visibleDetail?.usage ?? null}
         providers={providers}
         project={project}
         threads={threads}
