@@ -97,7 +97,9 @@ async function pickAttachments(dialog) {
  */
 function saveImage(userDataPath, threadId, dataUrl) {
   const tid = String(threadId || "");
-  if (!userDataPath || !tid) return null;
+  // Thread ids are UUIDs; anything else is a caller trying to escape the
+  // attachments dir with `..`, a separator, or a Windows drive/stream colon.
+  if (!userDataPath || !/^[A-Za-z0-9_-]+$/.test(tid)) return null;
   const m = /^data:([a-z]+\/[a-z0-9.+-]+);base64,(.*)$/is.exec(
     String(dataUrl || ""),
   );
