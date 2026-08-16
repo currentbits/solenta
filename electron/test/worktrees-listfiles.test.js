@@ -86,6 +86,14 @@ describe("worktrees listFiles", () => {
     assert.ok(files.length <= 20);
   });
 
+  it("reuses the cached file list across queries", () => {
+    listFiles({ store, threadId: thread.id, query: "src" });
+    fs.writeFileSync(path.join(repo, "fresh.ts"), "x\n");
+    // Within the TTL the new file is invisible: proof git was not re-run.
+    const { files } = listFiles({ store, threadId: thread.id, query: "fresh" });
+    assert.deepEqual(files, []);
+  });
+
   it("rejects unknown threads", () => {
     assert.throws(() => listFiles({ store, threadId: "nope" }), /unknown/i);
   });
