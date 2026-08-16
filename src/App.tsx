@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useCoder } from "./useCoder";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Sidebar } from "./components/Sidebar";
 import { ThreadView } from "./components/ThreadView";
 import { PrListView } from "./components/PrListView";
@@ -350,7 +351,8 @@ export default function App() {
           aria-hidden
         />
         <div className={styles.sidebarSlot} data-pane="sidebar">
-          <Sidebar
+          <ErrorBoundary pane="Sidebar">
+            <Sidebar
         appName="Solenta"
         channel={appStatus?.build.channel ?? null}
         searchPlaceholder="Search threads…"
@@ -404,9 +406,11 @@ export default function App() {
         onFork={(threadId, opts) => {
           void forkThread(threadId, opts);
         }}
-          />
+            />
+          </ErrorBoundary>
         </div>
         <div className={styles.threadSlot} data-pane="thread">
+          <ErrorBoundary pane="Thread view">
           {view === "activity" ? (
             <ActivityView
               projects={projects}
@@ -524,9 +528,11 @@ export default function App() {
         }}
             />
           )}
+          </ErrorBoundary>
         </div>
         <div className={styles.agentsSlot} data-pane="agents">
-          <AgentsPanel
+          <ErrorBoundary pane="Agents panel">
+            <AgentsPanel
         workflow={detail?.workflow ?? null}
         thread={detail?.thread ?? null}
         usage={detail?.usage ?? null}
@@ -564,6 +570,7 @@ export default function App() {
         addSkill={addSkill}
         removeSkill={removeSkill}
           />
+          </ErrorBoundary>
         </div>
         <SettingsModal
           open={settingsOpen}
