@@ -7,6 +7,15 @@ const { execFileSync: defaultExecFileSync } = require("node:child_process");
 let execFileSyncImpl = defaultExecFileSync;
 
 /**
+ * Hard cap for synchronous git/ssh on the main process. execFileSync blocks
+ * the event loop — agent streaming and every window — so one hung filesystem
+ * or unreachable remote must kill the child instead of freezing the app.
+ * ssh's ConnectTimeout=10 only bounds the connect, not the command.
+ * Callers pass their own timeout for genuinely slow work (push, fetch).
+ */
+const SYNC_TIMEOUT_MS = 15_000;
+
+/**
  * Test hook: swap execFileSync (git/ssh) for a fake spawn. Pass null/undefined
  * to restore the real implementation.
  * @param {typeof defaultExecFileSync | null | undefined} fn
@@ -91,6 +100,7 @@ function wrapCommand(project, bin, argv) {
 function execCommand(project, bin, argv, execOpts) {
   const cmd = wrapCommand(project, bin, argv);
   const opts = { ...(execOpts || {}) };
+  if (opts.timeout == null) opts.timeout = SYNC_TIMEOUT_MS;
   if (project && project.remoteHost) {
     delete opts.cwd;
   }
@@ -103,4 +113,5 @@ module.exports = {
   wrapCommand,
   execCommand,
   setExecFileSync,
+  SYNC_TIMEOUT_MS,
 };
