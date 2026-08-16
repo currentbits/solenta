@@ -857,12 +857,17 @@ function createRunner(opts) {
       markVisited: false,
       pendingPermission: getPendingPermission(threadId),
     });
-    // Stream tails, not the transcript: the largest threads are megabytes and
-    // this runs on every chunk. The renderer merges (src/threadPatch.ts).
+    // Stream tails, not the transcript: this runs on every chunk and even
+    // capped threads (store.js retention cap) are large. The renderer merges
+    // (src/threadPatch.ts); a cap drop shifts every index, so the prefix diff
+    // falls back to a full push, which the overflow slack keeps rare.
     const prev = lastPushByThread.get(threadId);
     const messagesFrom = firstChanged(prev && prev.messages, detail.messages);
     const workLogFrom = firstChanged(prev && prev.workLog, detail.workLog);
     const seq = (prev ? prev.seq : 0) + 1;
+    // Retained per thread for the next diff; element refs are shared with the
+    // store (getThreadDetail shallow-slices) and counts are bounded by the
+    // store's per-thread retention caps, so this stays flat per thread.
     lastPushByThread.set(threadId, {
       messages: detail.messages,
       workLog: detail.workLog,

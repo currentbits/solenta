@@ -103,6 +103,12 @@ settings: { dailyBudgetUsd: number | null }
 `updateThread` does not bump `updatedAt` unless the caller opts in (sidebar age
 must reflect real activity). Interrupted "working" threads are recovered on load.
 
+Transcripts are capped per thread (1000 messages / 500 work-log items, plus
+overflow slack; oldest dropped, an event marker notes the gap) so the
+single-blob stringify stays bounded. Debounced `save()` flushes write
+tmp-then-rename off the event loop; `saveNow()` stays synchronous for
+exit/shutdown/tests.
+
 ## Spend
 
 Usage deltas from provider result events call `store.recordSpend`.

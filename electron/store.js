@@ -149,6 +149,46 @@ const SPEND_RETENTION_DAYS = 90;
 const SAVE_DEBOUNCE_MS = 250;
 
 /**
+ * Per-thread transcript retention (issue #89). Threads never shrank, so a few
+ * heavy long-lived threads grew the one-JSON-blob store to megabytes and every
+ * debounced flush re-stringified all of it on the main process. Appends may
+ * overshoot the cap by the slack; crossing cap + slack drops the oldest
+ * entries back to the cap. The slack keeps the drop (which shifts every index,
+ * invalidates the runner's prefix diff and forces one full transcript push)
+ * amortized over ~slack appends instead of every append.
+ */
+const MAX_MESSAGES_PER_THREAD = 1000;
+const MESSAGE_OVERFLOW_SLACK = 100;
+const MAX_WORKLOG_ITEMS_PER_THREAD = 500;
+const WORKLOG_OVERFLOW_SLACK = 50;
+
+/**
+ * Bound a per-thread list to its retention cap, dropping the oldest entries
+ * on overflow. Message lists get an event marker in the oldest kept slot so
+ * the gap is visible in the transcript instead of silent.
+ * @param {unknown} list
+ * @param {number} max
+ * @param {number} slack
+ * @param {string | null} markerText
+ * @returns {object[]}
+ */
+function capList(list, max, slack, markerText) {
+  if (!Array.isArray(list)) return [];
+  if (list.length <= max + slack) return list;
+  const kept = list.slice(-max);
+  if (markerText) {
+    const first = kept[0] && typeof kept[0] === "object" ? kept[0] : {};
+    kept[0] = {
+      id: typeof first.id === "string" ? first.id : randomUUID(),
+      role: "event",
+      text: markerText,
+      createdAt: Number(first.createdAt) || Date.now(),
+    };
+  }
+  return kept;
+}
+
+/**
  * Local calendar day key YYYY-MM-DD (LOCAL timezone, not UTC).
  * @param {Date} [now]
  * @returns {string}
@@ -494,7 +534,8 @@ function recoverInterruptedRuns(data) {
 /**
  * JSON persistence for Solenta main-process state.
  * Constructor takes a file path; load on start; tolerate missing/corrupt.
- * Atomic-ish save: write tmp then rename.
+ * Atomic-ish save: write tmp then rename. Debounced flushes (save()) write
+ * off the event loop; saveNow() is the synchronous exit/shutdown/test path.
  */
 class Store {
   /**
@@ -504,6 +545,11 @@ class Store {
     this.filePath = filePath;
     this._dirty = false;
     this._timer = null;
+    this._flushing = false;
+    this._flushPromise = null;
+    // Bumped by saveNow() so an in-flight async flush knows its payload is stale.
+    this._writeGen = 0;
+    this._exitHookArmed = false;
     this._flushOnExit = () => {
       if (this._dirty) this.saveNow();
     };
@@ -560,27 +606,99 @@ class Store {
 
   /**
    * Mark dirty and coalesce writes: the whole store is one JSON blob, so a
-   * per-stream-event save re-stringifies ~15 MB and blocks the main process.
+   * per-stream-event save would re-stringify everything every time. The
+   * debounced flush stringifies once per burst (bounded by the per-thread
+   * transcript caps) and writes tmp-then-rename off the event loop.
    * Callers that need the bytes on disk right now use saveNow().
-   * ponytail: debounce only. The stringify is still sync on the flush tick
-   * (~19 ms at 15 MB); split into per-thread files if that shows up.
    */
   save() {
     this._dirty = true;
-    if (this._timer) return;
-    this._timer = setTimeout(() => this.saveNow(), SAVE_DEBOUNCE_MS);
-    // Never hold the event loop open; the exit hook is what guarantees the write.
-    this._timer.unref?.();
-    process.once("exit", this._flushOnExit);
+    this._scheduleFlush();
+    // At most one exit hook no matter how often save() is called.
+    if (!this._exitHookArmed) {
+      this._exitHookArmed = true;
+      process.once("exit", this._flushOnExit);
+    }
   }
 
+  _scheduleFlush() {
+    if (this._timer) return;
+    this._timer = setTimeout(() => {
+      this._timer = null;
+      this._flushAsync();
+    }, SAVE_DEBOUNCE_MS);
+    // Never hold the event loop open; the exit hook is what guarantees the write.
+    this._timer.unref?.();
+  }
+
+  /**
+   * Debounced flush: stringify (bounded by the transcript caps), then write
+   * tmp + rename via fs.promises so the disk IO stays off the event loop.
+   * A flush that turns stale mid-flight (newer mutations pending their own
+   * flush, or a synchronous saveNow) drops its tmp file instead of renaming
+   * over newer data. Never throws: failures re-mark dirty so the next
+   * save()/exit hook retries.
+   */
+  _flushAsync() {
+    if (this._flushing) {
+      // The in-flight flush re-checks dirty on completion and reschedules.
+      if (this._dirty) this._scheduleFlush();
+      return;
+    }
+    if (!this._dirty) return;
+    this._flushing = true;
+    this._dirty = false;
+    const gen = this._writeGen;
+    const dir = path.dirname(this.filePath);
+    const tmp = `${this.filePath}.${process.pid}.${Date.now()}.tmp`;
+    const payload = JSON.stringify(this.data, null, 2);
+    this._flushPromise = (async () => {
+      try {
+        await fs.promises.mkdir(dir, { recursive: true });
+        await fs.promises.writeFile(tmp, payload, "utf8");
+        if (this._writeGen === gen && !this._dirty) {
+          await fs.promises.rename(tmp, this.filePath);
+        }
+        // else: stale payload; the tmp unlink below discards it.
+      } catch (err) {
+        this._dirty = true;
+        console.error(
+          `[store] async flush failed (will retry): ${err && err.message}`,
+        );
+      } finally {
+        // No-op after a successful rename (tmp path is gone).
+        await fs.promises.unlink(tmp).catch(() => {});
+        this._flushing = false;
+        this._flushPromise = null;
+        if (this._dirty) this._scheduleFlush();
+      }
+    })();
+  }
+
+  /**
+   * Test hook: resolves once any in-flight async flush has settled.
+   * @returns {Promise<void>}
+   */
+  flushPending() {
+    return this._flushPromise || Promise.resolve();
+  }
+
+  /**
+   * Synchronous flush for the exit hook, shutdown and tests. Cancels any
+   * pending debounce and aborts any in-flight async flush (its payload is
+   * older than what this writes).
+   */
   saveNow() {
     if (this._timer) {
       clearTimeout(this._timer);
       this._timer = null;
     }
-    process.off("exit", this._flushOnExit);
+    if (this._exitHookArmed) {
+      this._exitHookArmed = false;
+      process.off("exit", this._flushOnExit);
+    }
     this._dirty = false;
+    this._writeGen += 1;
     const dir = path.dirname(this.filePath);
     fs.mkdirSync(dir, { recursive: true });
     const tmp = `${this.filePath}.${process.pid}.${Date.now()}.tmp`;
@@ -610,7 +728,12 @@ class Store {
   }
 
   setMessages(threadId, messages) {
-    this.data.messagesByThread[threadId] = messages;
+    this.data.messagesByThread[threadId] = capList(
+      messages,
+      MAX_MESSAGES_PER_THREAD,
+      MESSAGE_OVERFLOW_SLACK,
+      `Older messages were dropped to cap this transcript at ${MAX_MESSAGES_PER_THREAD}.`,
+    );
   }
 
   /**
@@ -630,7 +753,12 @@ class Store {
   }
 
   setWorkLog(threadId, items) {
-    this.data.workLogByThread[threadId] = items;
+    this.data.workLogByThread[threadId] = capList(
+      items,
+      MAX_WORKLOG_ITEMS_PER_THREAD,
+      WORKLOG_OVERFLOW_SLACK,
+      null,
+    );
   }
 
   appendWorkLog(threadId, item) {
@@ -1097,4 +1225,8 @@ module.exports = {
   DEFAULT_AUTO_SETTLE_AFTER_DAYS,
   normalizeSpendByDay,
   SPEND_RETENTION_DAYS,
+  MAX_MESSAGES_PER_THREAD,
+  MESSAGE_OVERFLOW_SLACK,
+  MAX_WORKLOG_ITEMS_PER_THREAD,
+  WORKLOG_OVERFLOW_SLACK,
 };
