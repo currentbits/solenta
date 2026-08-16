@@ -135,6 +135,96 @@ describe("App thread selection wiring", () => {
     );
     m.unmount();
   });
+
+  it("never renders the previous thread's transcript under a new selection (issue #83)", async () => {
+    // Over --serve-web latency the detail fetch for a freshly clicked thread
+    // stays pending while the sidebar already shows the new selection. The
+    // old transcript must not render in that window — a fast send would go
+    // to the new thread while the user reads the old one.
+    const ta = thread({ id: "ta", title: "alpha thread" });
+    const tb = thread({ id: "tb", title: "beta thread" });
+    const tbDetail = detail({
+      thread: tb,
+      messages: [
+        {
+          id: "mb",
+          role: "assistant",
+          text: "beta transcript marker",
+          createdAt: Date.now(),
+        },
+      ],
+    });
+    const fake = createFakeCoder({
+      threads: [ta, tb],
+      details: {
+        ta: detail({
+          thread: ta,
+          messages: [
+            {
+              id: "ma",
+              role: "assistant",
+              text: "alpha transcript marker",
+              createdAt: Date.now(),
+            },
+          ],
+        }),
+        tb: tbDetail,
+      },
+    });
+    const m = await boot(fake);
+    try {
+      await m.flush();
+      assert.ok(
+        m.text().includes("alpha transcript marker"),
+        "precondition: the boot-selected thread's transcript renders",
+      );
+
+      // Simulate latency: threads.get for tb stays pending until the test
+      // resolves it. Recording continues so the fetch is still observable.
+      const origGet = fake.api.threads.get;
+      let resolveTb: ((d: typeof tbDetail) => void) | null = null;
+      fake.api.threads.get = ((id: string) => {
+        if (id === "tb") {
+          fake.calls.push({ channel: "threads.get", args: [id] });
+          return new Promise((res) => {
+            resolveTb = res;
+          });
+        }
+        return origGet(id);
+      }) as typeof fake.api.threads.get;
+
+      const card = m.query('button[aria-label="Select thread: beta thread"]');
+      assert.ok(card, "the beta thread card must be present");
+      await m.click(card);
+      await m.flush();
+
+      assert.ok(
+        fake.of("threads.get").some((c) => c.args[0] === "tb"),
+        "selecting beta must fetch its detail",
+      );
+      assert.ok(
+        !m.text().includes("alpha transcript marker"),
+        "the previous thread's transcript must not render under the new selection",
+      );
+      assert.ok(
+        m.text().includes("Select a thread"),
+        "the gated view must fall back to the empty state while loading",
+      );
+
+      // When the fetch resolves, the NEW thread's transcript appears.
+      await inAct(async () => {
+        resolveTb!(tbDetail);
+        await Promise.resolve();
+      });
+      await m.flush();
+      assert.ok(
+        m.text().includes("beta transcript marker"),
+        "the fetched detail must render once it resolves",
+      );
+    } finally {
+      m.unmount();
+    }
+  });
 });
 
 describe("App memory wiring", () => {
