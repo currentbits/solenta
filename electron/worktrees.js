@@ -294,22 +294,69 @@ function mergeWorktree(opts) {
   // (b) Project default branch (must not be detached)
   const baseBranch = defaultBranch(project.path);
 
-  // (c) Refuse a dirty project checkout — TRACKED changes only. Plain
-  // `status --porcelain` also lists untracked files, so a single stray scratch
-  // file in the project blocked every thread's merge until someone noticed it
-  // (issue #198). A squash merge cannot clobber an untracked file unless the
-  // branch writes that same path, which is the check right below.
+  // (c) A dirty project checkout used to be a hard refusal — TRACKED changes
+  // only, since a stray untracked scratch file blocked every merge forever
+  // (issue #198). But the checkout is shared by every thread in the project,
+  // so one uncommitted edit still blocked every merge in the app until someone
+  // stashed it by hand. Stash it here and put it back below. (git's own
+  // `merge --autostash` is no use: `--squash` leaves the merge uncommitted, so
+  // the pop would land in a half-merged index before our commit.)
   const mainStatus = gitOut(
     project.path,
     ["status", "--porcelain", "--untracked-files=no"],
     { raw: true },
   ).trim();
+  let stashed = false;
   if (mainStatus) {
-    throw new Error(
-      `Project checkout has uncommitted changes; commit or stash before merging:\n${mainStatus}`,
-    );
+    const push = gitTry(project.path, [
+      "stash",
+      "push",
+      "-m",
+      `solenta: project changes set aside to merge ${branch}`,
+    ]);
+    if (!push.ok) {
+      throw new Error(
+        `Project checkout has uncommitted changes that could not be stashed; commit or stash before merging:\n${mainStatus}`,
+      );
+    }
+    stashed = true;
   }
 
+  // Everything from here can throw, and the stash must come back either way.
+  let mergeError = null;
+  try {
+    mergeInto(project, branch, baseBranch, wtPath, thread);
+  } catch (err) {
+    mergeError = err;
+  }
+  if (stashed) {
+    const popped = gitTry(project.path, ["stash", "pop"]);
+    if (!popped.ok && !mergeError) {
+      // The entry stays in the stash list when a pop fails, so nothing is
+      // lost — but say where it is instead of leaving a silently empty tree.
+      throw new Error(
+        `Merged ${branch}, but the project checkout's own changes did not come back cleanly. They are safe in \`git stash\` (stash@{0}): ${popped.combined.split("\n")[0]}`,
+      );
+    }
+  }
+  if (mergeError) throw mergeError;
+
+  // (d) Remove worktree + branch, clear thread fields
+  return cleanupWorktree({
+    store,
+    thread,
+    project,
+    broadcast,
+    forceRemove: false,
+  });
+}
+
+/**
+ * Squash `branch` into the project checkout's default branch and commit it.
+ * Split out of mergeWorktree so every throw in here unwinds through the one
+ * stash-restore step there.
+ */
+function mergeInto(project, branch, baseBranch, wtPath, thread) {
   // Untracked files the merge WOULD write over: git refuses these too, but
   // only mid-merge, reported as a conflict against files nobody edited.
   const incoming = gitTry(
@@ -382,15 +429,6 @@ function mergeWorktree(opts) {
     // Empty squash (no net changes): still clean up worktree
     gitTry(project.path, ["reset", "--hard", "HEAD"]);
   }
-
-  // (d) Remove worktree + branch, clear thread fields
-  return cleanupWorktree({
-    store,
-    thread,
-    project,
-    broadcast,
-    forceRemove: false,
-  });
 }
 
 /**

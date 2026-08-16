@@ -445,19 +445,59 @@ describe("worktrees", () => {
     );
   });
 
-  it("mergeWorktree still refuses tracked uncommitted changes", () => {
-    setupWorktree({
+  it("mergeWorktree stashes and restores tracked project changes", () => {
+    const setup = setupWorktree({
       store,
       threadId: thread.id,
       worktreeBase,
       broadcast: () => {},
     });
+    fs.writeFileSync(path.join(setup.worktreePath, "feature.txt"), "work\n");
+    // Someone's uncommitted edit in the shared checkout used to block every
+    // thread's merge until it was stashed by hand.
     fs.writeFileSync(path.join(repo, "README.md"), "edited in project\n");
 
-    assert.throws(
-      () => mergeWorktree({ store, threadId: thread.id, broadcast: () => {} }),
-      /uncommitted changes[\s\S]*README\.md/,
+    const merged = mergeWorktree({
+      store,
+      threadId: thread.id,
+      broadcast: () => {},
+    });
+
+    assert.equal(merged.worktreePath, null);
+    assert.ok(fs.existsSync(path.join(repo, "feature.txt")), "merge landed");
+    assert.equal(
+      fs.readFileSync(path.join(repo, "README.md"), "utf8"),
+      "edited in project\n",
+      "the project's own changes come back after the merge",
     );
+    assert.equal(git(repo, ["stash", "list"]), "", "and are not left stashed");
+  });
+
+  it("mergeWorktree restores the stash when the merge fails", () => {
+    const setup = setupWorktree({
+      store,
+      threadId: thread.id,
+      worktreeBase,
+      broadcast: () => {},
+    });
+    // Conflicting edits to the same file, plus an unrelated dirty project file.
+    fs.writeFileSync(path.join(setup.worktreePath, "conflict.txt"), "theirs\n");
+    git(setup.worktreePath, ["add", "conflict.txt"]);
+    git(setup.worktreePath, ["commit", "-m", "theirs"]);
+    fs.writeFileSync(path.join(repo, "conflict.txt"), "ours\n");
+    git(repo, ["add", "conflict.txt"]);
+    git(repo, ["commit", "-m", "ours"]);
+    fs.writeFileSync(path.join(repo, "README.md"), "edited in project\n");
+
+    assert.throws(() =>
+      mergeWorktree({ store, threadId: thread.id, broadcast: () => {} }),
+    );
+    assert.equal(
+      fs.readFileSync(path.join(repo, "README.md"), "utf8"),
+      "edited in project\n",
+      "a failed merge must not eat the project's uncommitted work",
+    );
+    assert.equal(git(repo, ["stash", "list"]), "");
   });
 
   it("mergeWorktree rejects on conflict and restores clean project checkout", () => {
