@@ -431,7 +431,7 @@ export function SettingsModal({
             )}
             {update?.state === "error" && (
               <p className={styles.fieldError} role="alert">
-                Update check failed: {update.error}
+                Update failed: {update.error}
               </p>
             )}
           </section>

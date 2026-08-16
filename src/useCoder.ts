@@ -400,17 +400,43 @@ export function useCoder(): UseCoderResult {
     }
   }, [api]);
 
+  // A rejected update call used to be an unhandled rejection: the spinner
+  // stopped, nothing was said, and a stale "Up to date." stayed on screen.
+  // The updater's own failures already come back as state:"error", so reuse
+  // that shape for transport/handler failures instead of a second channel.
+  const failUpdate = useCallback((err: unknown) => {
+    setUpdateStatus((prev) => ({
+      channel: prev?.channel ?? null,
+      tag: prev?.tag ?? null,
+      url: prev?.url ?? null,
+      state: "error",
+      error: err instanceof Error && err.message ? err.message : String(err),
+    }));
+  }, []);
+
   const applyUpdate = useCallback(async () => {
-    await api.app.applyUpdate();
-  }, [api]);
+    try {
+      await api.app.applyUpdate();
+    } catch (err) {
+      failUpdate(err);
+    }
+  }, [api, failUpdate]);
 
   const checkUpdate = useCallback(async () => {
-    setUpdateStatus(await api.app.checkUpdate());
-  }, [api]);
+    try {
+      setUpdateStatus(await api.app.checkUpdate());
+    } catch (err) {
+      failUpdate(err);
+    }
+  }, [api, failUpdate]);
 
   const downloadUpdate = useCallback(async () => {
-    setUpdateStatus(await api.app.downloadUpdate());
-  }, [api]);
+    try {
+      setUpdateStatus(await api.app.downloadUpdate());
+    } catch (err) {
+      failUpdate(err);
+    }
+  }, [api, failUpdate]);
 
   // Auto-update: check on boot, then every 6h. The check only asks the release
   // API — downloading and swapping the bundle waits for a user click.
