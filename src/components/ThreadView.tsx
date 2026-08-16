@@ -171,6 +171,10 @@ interface ThreadViewProps {
   onSaveWorkflow: (template: WorkflowSaveInput) => Promise<WorkflowTemplateInfo>;
   onRemoveWorkflow: (id: string) => Promise<void>;
   onStopRun: () => void | Promise<void>;
+  /** Follow-up typed during the run, waiting for it to land (issue #92). */
+  queuedPrompt?: string | null;
+  /** Drop the queued follow-up. */
+  onCancelQueued?: () => void;
   onSetPermissionMode: (mode: PermissionMode) => void | Promise<void>;
   /** Answer the pending permission prompt (detail.pendingPermission). */
   onRespondPermission: (
@@ -1506,6 +1510,8 @@ export function ThreadView({
   onSaveWorkflow,
   onRemoveWorkflow,
   onStopRun,
+  queuedPrompt = null,
+  onCancelQueued,
   onSetPermissionMode,
   onRespondPermission,
   onSetProvider,
@@ -2571,6 +2577,25 @@ export function ThreadView({
             </button>
           </div>
         )}
+
+        {queuedPrompt != null && (
+          <div className={styles.queuedStrip} data-queued-prompt="">
+            <div className={styles.statusLeft}>
+              <span className={styles.queuedLabel}>Queued</span>
+              <span className={styles.queuedText}>{queuedPrompt}</span>
+            </div>
+            {onCancelQueued && (
+              <button
+                type="button"
+                className={styles.stopBtn}
+                onClick={onCancelQueued}
+                data-cancel-queued=""
+              >
+                Cancel
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       <Composer
@@ -2589,11 +2614,14 @@ export function ThreadView({
         onRemoveWorkflow={onRemoveWorkflow}
         sessionId={thread.sessionId}
         hasWorktree={hasWorktree}
-        disabled={isWorking || isArchived}
+        disabled={isArchived}
+        busy={isWorking}
         placeholder={
           isArchived
             ? "Unarchive to continue this thread"
-            : undefined
+            : isWorking
+              ? "Queue the next instruction…"
+              : undefined
         }
         onSend={(prompt, messageAttachments) =>
           onStartRun(prompt, undefined, messageAttachments)

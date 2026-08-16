@@ -169,6 +169,7 @@ function composer(
     branch?: string | null;
     hasWorktree?: boolean;
     disabled?: boolean;
+    busy?: boolean;
     providers?: ProviderInfo[];
   } = {},
 ) {
@@ -218,6 +219,7 @@ function composer(
       sessionId={over.sessionId === undefined ? null : over.sessionId}
       hasWorktree={over.hasWorktree ?? true}
       disabled={over.disabled ?? false}
+      busy={over.busy ?? false}
       onSend={(prompt) => {
         harness.sends.push(prompt);
       }}
@@ -1269,24 +1271,24 @@ describe("Composer permission mode", () => {
   });
 });
 
-describe("Composer while a run is active", () => {
-  it("disables start actions and cannot start a second run", async () => {
+describe("Composer while hard-disabled (archived thread)", () => {
+  it("disables start actions and cannot start a run", async () => {
     const h = makeHarness();
-    // Parent passes disabled while isWorking (see ThreadView).
+    // Parent passes disabled while isArchived (see ThreadView).
     const m = await mount(composer(h, { disabled: true }));
 
     const ta = m.query("textarea") as HTMLTextAreaElement;
-    assert.equal(ta.disabled, true, "prompt must be locked while a run is active");
+    assert.equal(ta.disabled, true, "prompt must be locked on an archived thread");
 
     const send = m.query('button[aria-label="Send"]') as HTMLButtonElement;
     const build = m.byText("Build") as HTMLButtonElement;
-    assert.equal(send.disabled, true, "Send disabled during active run");
-    assert.equal(build.disabled, true, "Build disabled during active run");
+    assert.equal(send.disabled, true, "Send disabled while archived");
+    assert.equal(build.disabled, true, "Build disabled while archived");
 
     await m.click(send);
     await m.click(build);
-    assert.equal(h.sends.length, 0, "active run must block onSend");
-    assert.equal(h.builds.length, 0, "active run must block onBuild");
+    assert.equal(h.sends.length, 0, "archived thread must block onSend");
+    assert.equal(h.builds.length, 0, "archived thread must block onBuild");
     m.unmount();
   });
 
@@ -1303,6 +1305,49 @@ describe("Composer while a run is active", () => {
     await m2.click(send);
     assert.equal(h.sends.length, 0);
     m2.unmount();
+  });
+});
+
+/**
+ * Issue #92: the composer used to be dead while a run was active, so the next
+ * instruction had to wait on the spinner. Busy keeps the prompt and Send live
+ * (the parent queues the send); only what cannot be queued stays locked.
+ */
+describe("Composer while a run is active (busy)", () => {
+  it("takes type-ahead and sends it for queueing", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h, { busy: true }));
+
+    const ta = m.query("textarea") as HTMLTextAreaElement;
+    assert.equal(ta.disabled, false, "type-ahead must be allowed mid-run");
+
+    await m.type(ta, "then run the tests");
+    const send = m.query('button[aria-label="Send"]') as HTMLButtonElement;
+    assert.equal(send.disabled, false, "Send must stay live to queue");
+    await m.click(send);
+    assert.deepEqual(
+      h.sends,
+      ["then run the tests"],
+      "the follow-up must reach the parent, which queues it",
+    );
+    m.unmount();
+  });
+
+  it("still locks what cannot be queued", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h, { busy: true }));
+    await m.type(m.query("textarea"), "a prompt");
+
+    const build = m.byText("Build") as HTMLButtonElement;
+    assert.equal(build.disabled, true, "Build cannot start during a run");
+    await m.click(build);
+    assert.equal(h.builds.length, 0, "active run must block onBuild");
+
+    const model = m.query(
+      'button[aria-haspopup="dialog"][aria-label^="Model:"]',
+    ) as HTMLButtonElement;
+    assert.equal(model.disabled, true, "model cannot change mid-run");
+    m.unmount();
   });
 });
 

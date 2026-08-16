@@ -47,6 +47,8 @@ export default function App() {
     createThread,
     forkThread,
     startRun,
+    queued,
+    cancelQueued,
     fetchIssue,
     startWorkflowRun,
     saveWorkflow,
@@ -497,6 +499,10 @@ export default function App() {
         onSaveWorkflow={(template) => saveWorkflow(template)}
         onRemoveWorkflow={(id) => removeWorkflow(id)}
         onStopRun={() => stopRun()}
+        queuedPrompt={
+          selectedThreadId ? (queued[selectedThreadId]?.prompt ?? null) : null
+        }
+        onCancelQueued={() => cancelQueued()}
         onSetPermissionMode={(mode) => setPermissionMode(mode)}
         onRespondPermission={(requestId, decision, answers) =>
           respondPermission(requestId, decision, answers)
