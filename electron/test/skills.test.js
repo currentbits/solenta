@@ -25,6 +25,7 @@ const {
 const services = require("../services.js");
 const {
   activeServers,
+  getClaudeMcpArgs,
   registerMcpServer,
   resetMemorySupForTests,
   syncUserMcpServers,
@@ -352,6 +353,43 @@ describe("syncUserMcpServers", () => {
     assert.deepEqual(
       activeServers().map((s) => s.name),
       ["coder-threads"],
+    );
+  });
+
+  it("keeps user servers out of the claude allow rule", () => {
+    isolateMcpSideEffects();
+    registerMcpServer({
+      name: "coder-threads",
+      port: 4317,
+      token: "secret",
+      userDataPath: tmp,
+    });
+    syncUserMcpServers(
+      [{ name: "team-tools", url: "https://tools.example.com/mcp", enabled: true }],
+      { userDataPath: tmp },
+    );
+
+    const args = getClaudeMcpArgs();
+    assert.equal(args.length, 2);
+    assert.equal(args[1], "--allowedTools=mcp__coder-threads__*");
+    // Still reachable, just not pre-approved: the config lists both.
+    const cfg = JSON.parse(
+      fs.readFileSync(args[0].slice("--mcp-config=".length), "utf8"),
+    );
+    assert.deepEqual(Object.keys(cfg.mcpServers).sort(), [
+      "coder-threads",
+      "team-tools",
+    ]);
+
+    // Only user servers left -> no allow rule at all (never an empty one).
+    resetMemorySupForTests();
+    syncUserMcpServers(
+      [{ name: "team-tools", url: "https://tools.example.com/mcp", enabled: true }],
+      { userDataPath: tmp },
+    );
+    assert.deepEqual(
+      getClaudeMcpArgs().map((a) => a.split("=")[0]),
+      ["--mcp-config"],
     );
   });
 
