@@ -738,6 +738,13 @@ export interface AppSettings {
    */
   defaultWorktree: boolean;
   /**
+   * When true, plain "New thread" creates an ORCHESTRATOR thread: its first
+   * prompt is forked to a worker that holds the worktree (issue #202). Wins
+   * over defaultWorktree — an orchestrator never holds one itself. Local
+   * projects only; remote projects always get plain threads.
+   */
+  defaultOrchestrate: boolean;
+  /**
    * Global desktop-notification switch. False silences every thread; true
    * (the default) leaves per-thread mute in charge. Only an explicit false
    * on disk turns it off, so upgrades keep notifying.
