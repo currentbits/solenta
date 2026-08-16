@@ -94,6 +94,31 @@ describe("attachments module", () => {
     assert.ok(other.path.startsWith(path.join(tmpDir, "attachments", "t2")));
   });
 
+  it("refuses thread ids that escape the attachments dir (issue #127)", () => {
+    const dataUrl = `data:image/png;base64,${Buffer.from("x").toString("base64")}`;
+    for (const tid of [
+      "../../escaped",
+      "..",
+      "a/b",
+      "a\\b",
+      path.join(tmpDir, "abs"),
+      "C:evil",
+      "t1\0",
+      "",
+    ]) {
+      assert.equal(
+        attachments.saveImage(tmpDir, tid, dataUrl),
+        null,
+        `threadId ${JSON.stringify(tid)} must be refused`,
+      );
+    }
+    assert.deepEqual(
+      fs.readdirSync(tmpDir),
+      [],
+      "nothing may be written outside a valid thread dir",
+    );
+  });
+
   it("rejects non-image payloads and paths", () => {
     assert.equal(
       attachments.saveImage(tmpDir, "t1", "data:text/plain;base64,aGk="),
