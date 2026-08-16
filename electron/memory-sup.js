@@ -32,6 +32,27 @@ let extraServers = [];
 let ownedChild = null;
 
 /**
+ * Write a file that carries bearer tokens: owner-only, even when it already
+ * existed with looser permissions (writeFileSync's `mode` only applies on
+ * create). Best-effort chmod: foreign files may not be ours to change.
+ * @param {string} file
+ * @param {string} data
+ */
+function writeSecretFile(file, data) {
+  fs.writeFileSync(file, data, { mode: 0o600, encoding: "utf8" });
+  chmodSecret(file);
+}
+
+/** @param {string} file */
+function chmodSecret(file) {
+  try {
+    fs.chmodSync(file, 0o600);
+  } catch {
+    // ignore
+  }
+}
+
+/**
  * All MCP servers currently available for injection, coder-memory first.
  * @returns {Array<{ name: string, port: number | null, token: string, url: string }>}
  */
@@ -122,11 +143,16 @@ function registerMcpServer(opts) {
 }
 
 /**
- * Remove a previously registered extra server and rewrite the claude config.
+ * Remove a previously registered extra server: rewrite the claude config and
+ * revoke the copies kimi/grok persisted in the user's home, so the bearer
+ * token does not outlive the server it authenticates against.
  * @param {string} name
+ * @param {object} [opts]
+ * @param {(msg: string) => void} [opts.log]
+ * @param {NodeJS.ProcessEnv} [opts.env]
  * @returns {boolean} true if a server was removed
  */
-function unregisterMcpServer(name) {
+function unregisterMcpServer(name, opts = {}) {
   const idx = extraServers.findIndex((s) => s.name === name);
   if (idx < 0) return false;
   extraServers.splice(idx, 1);
@@ -137,6 +163,7 @@ function unregisterMcpServer(name) {
       // ignore
     }
   }
+  forgetExternalMcp([name], opts);
   return true;
 }
 
@@ -232,21 +259,49 @@ function getClaudeMcpArgs() {
 }
 
 /**
- * Codex argv extras when at least one MCP server is up: two leading -c
- * override args per server, or [].
- * Value is a TOML string: mcp_servers.<name>.url="http://.../mcp?token=..."
- * (the ?token= query carries loopback auth for our own servers only; user
- * servers keep their URL as-is).
+ * Env var codex reads a server's bearer token from. Never put the token in
+ * argv: `ps` exposes the full command line of every process to every local
+ * user, and these tokens drive thread_fork/thread_send (arbitrary agent runs).
+ * @param {string} name
+ */
+function codexTokenEnvVar(name) {
+  return "CODER_MCP_TOKEN_" + name.toUpperCase().replace(/[^A-Z0-9]/g, "_");
+}
+
+/**
+ * Codex argv extras when at least one MCP server is up, or [].
+ * Values are TOML strings: mcp_servers.<name>.url="http://.../mcp" plus
+ * mcp_servers.<name>.bearer_token_env_var="CODER_MCP_TOKEN_<NAME>"; pair with
+ * getCodexMcpEnv() on the spawn or codex sees no credential.
  * @returns {string[]}
  */
 function getCodexMcpArgs() {
   /** @type {string[]} */
   const args = [];
   for (const s of activeServers()) {
-    const url = s.port ? `${s.url}?token=${s.token}` : s.url;
-    args.push("-c", `mcp_servers.${s.name}.url="${url}"`);
+    args.push("-c", `mcp_servers.${s.name}.url="${s.url}"`);
+    if (s.token) {
+      args.push(
+        "-c",
+        `mcp_servers.${s.name}.bearer_token_env_var="${codexTokenEnvVar(s.name)}"`,
+      );
+    }
   }
   return args;
+}
+
+/**
+ * Token env vars for a codex child, matching getCodexMcpArgs(). Empty when no
+ * server is up.
+ * @returns {Record<string, string>}
+ */
+function getCodexMcpEnv() {
+  /** @type {Record<string, string>} */
+  const env = {};
+  for (const s of activeServers()) {
+    if (s.token) env[codexTokenEnvVar(s.name)] = s.token;
+  }
+  return env;
 }
 
 /**
@@ -401,7 +456,7 @@ function ensureKimiMcpConfig(opts = {}) {
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
-    fs.writeFileSync(mcpPath, JSON.stringify(doc, null, 2) + "\n", "utf8");
+    writeSecretFile(mcpPath, JSON.stringify(doc, null, 2) + "\n");
   } catch (err) {
     log(
       "memory-server: failed to write kimi mcp.json: " +
@@ -413,6 +468,170 @@ function ensureKimiMcpConfig(opts = {}) {
 }
 
 const GROK_MCP_TIMEOUT_MS = 10000;
+
+/**
+ * Drop our entries from kimi's mcp.json. Their bearer tokens must not outlive
+ * the server they authenticate against: the file is user-global, so a stale
+ * entry follows every kimi session on the machine. Best-effort, never throws.
+ *
+ * Runs regardless of whether the kimi binary is still installed — an
+ * uninstalled kimi leaves the config (and the token) behind all the same.
+ *
+ * @param {string[]} names
+ * @param {object} [opts]
+ * @param {(msg: string) => void} [opts.log]
+ * @param {NodeJS.ProcessEnv} [opts.env]
+ * @returns {boolean} true if the file was rewritten
+ */
+function removeKimiMcpEntries(names, opts = {}) {
+  const log = opts.log || ((msg) => console.warn(msg));
+  const env = opts.env || process.env;
+  if (!Array.isArray(names) || names.length === 0) return false;
+
+  const mcpPath = resolveKimiMcpPath(env);
+  if (!fs.existsSync(mcpPath)) return false;
+  /** @type {Record<string, unknown>} */
+  let doc;
+  try {
+    doc = JSON.parse(fs.readFileSync(mcpPath, "utf8"));
+  } catch (err) {
+    log(
+      "memory-server: cannot read kimi mcp.json for cleanup; leaving untouched: " +
+        (err && err.message ? err.message : String(err)),
+    );
+    return false;
+  }
+  if (!doc || typeof doc !== "object" || Array.isArray(doc)) return false;
+  const map = doc.mcpServers;
+  if (!map || typeof map !== "object") return false;
+
+  let changed = false;
+  for (const name of names) {
+    if (Object.prototype.hasOwnProperty.call(map, name)) {
+      delete map[name];
+      changed = true;
+    }
+  }
+  if (!changed) return false;
+  try {
+    writeSecretFile(mcpPath, JSON.stringify(doc, null, 2) + "\n");
+  } catch (err) {
+    log(
+      "memory-server: failed to clean kimi mcp.json: " +
+        (err && err.message ? err.message : String(err)),
+    );
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Resolve grok's user config (env override for tests; grok itself has none).
+ * @param {NodeJS.ProcessEnv} [env]
+ */
+function resolveGrokConfigPath(env = process.env) {
+  if (env.CODER_GROK_CONFIG_PATH) return String(env.CODER_GROK_CONFIG_PATH);
+  return path.join(osHomedir(), ".grok", "config.toml");
+}
+
+/**
+ * Grok binary path when grok is installed and the MCP integration is enabled,
+ * else "". Shared by the add and remove paths.
+ * @param {NodeJS.ProcessEnv} env
+ * @param {(msg: string) => void} log
+ */
+function resolveGrokBin(env, log) {
+  // Structural test kill switch: -s user has no path override.
+  if (String(env.CODER_GROK_MCP_DISABLE || "") === "1") return "";
+  try {
+    const {
+      getProvider,
+      resolveBin,
+      isBinAvailable,
+    } = require("./providers.js");
+    const entry = getProvider("grok");
+    if (!entry) return "";
+    const bin = resolveBin(entry, env);
+    return isBinAvailable(bin, undefined, env) ? bin : "";
+  } catch (err) {
+    log(
+      "memory-server: grok availability check failed: " +
+        (err && err.message ? err.message : String(err)),
+    );
+    return "";
+  }
+}
+
+/**
+ * `grok mcp remove <name> -s user` for each name, so the bearer tokens grok
+ * persisted in ~/.grok/config.toml die with the server. Fire-and-forget like
+ * the add path; best-effort, never throws.
+ *
+ * @param {string[]} names
+ * @param {object} [opts]
+ * @param {(msg: string) => void} [opts.log]
+ * @param {NodeJS.ProcessEnv} [opts.env]
+ * @returns {boolean} true if at least one removal was kicked off
+ */
+function removeGrokMcpEntries(names, opts = {}) {
+  const log = opts.log || ((msg) => console.warn(msg));
+  const env = opts.env || process.env;
+  if (!Array.isArray(names) || names.length === 0) return false;
+
+  const bin = resolveGrokBin(env, log);
+  if (!bin) return false;
+
+  let kicked = 0;
+  for (const name of names) {
+    try {
+      execFile(
+        bin,
+        ["mcp", "remove", name, "-s", "user"],
+        { timeout: GROK_MCP_TIMEOUT_MS, encoding: "utf8", env },
+        (err) => {
+          // grok exits 1 when the name was never registered, which is the
+          // common case on quit; the log line is informational, not an alarm.
+          if (err) {
+            log(
+              "memory-server: grok mcp remove failed: " +
+                (err && err.message ? err.message : String(err)),
+            );
+          }
+        },
+      );
+      kicked += 1;
+    } catch (err) {
+      log(
+        "memory-server: grok mcp remove failed: " +
+          (err && err.message ? err.message : String(err)),
+      );
+    }
+  }
+  return kicked > 0;
+}
+
+/**
+ * Revoke persisted registrations for `names` from the providers that store
+ * them in user-global config (kimi's mcp.json, grok's config.toml). Claude and
+ * codex read config we own per launch, so they need no cleanup.
+ *
+ * @param {string[]} names
+ * @param {object} [opts]
+ * @param {(msg: string) => void} [opts.log]
+ * @param {NodeJS.ProcessEnv} [opts.env]
+ */
+function forgetExternalMcp(names, opts = {}) {
+  try {
+    removeKimiMcpEntries(names, opts);
+  } catch {
+    // ignore
+  }
+  try {
+    removeGrokMcpEntries(names, opts);
+  } catch {
+    // ignore
+  }
+}
 
 /**
  * When at least one MCP server is up and the grok binary is available,
@@ -435,33 +654,12 @@ function ensureGrokMcpConfig(opts = {}) {
   const log = opts.log || ((msg) => console.warn(msg));
   const env = opts.env || process.env;
 
-  // Structural test kill switch: -s user has no path override.
-  if (String(env.CODER_GROK_MCP_DISABLE || "") === "1") {
-    return false;
-  }
-
   if (activeServers().length === 0) {
     return false;
   }
 
-  let bin = "";
-  try {
-    const {
-      getProvider,
-      resolveBin,
-      isBinAvailable,
-    } = require("./providers.js");
-    const entry = getProvider("grok");
-    if (!entry) return false;
-    bin = resolveBin(entry, env);
-    if (!isBinAvailable(bin, undefined, env)) return false;
-  } catch (err) {
-    log(
-      "memory-server: grok availability check failed: " +
-        (err && err.message ? err.message : String(err)),
-    );
-    return false;
-  }
+  const bin = resolveGrokBin(env, log);
+  if (!bin) return false;
 
   let kicked = 0;
   for (const s of activeServers()) {
@@ -487,7 +685,10 @@ function ensureGrokMcpConfig(opts = {}) {
               "memory-server: grok mcp add failed: " +
                 (err && err.message ? err.message : String(err)),
             );
+            return;
           }
+          // grok writes config.toml 0644; it now holds our bearer token.
+          chmodSecret(resolveGrokConfigPath(env));
         },
       );
       kicked += 1;
@@ -668,11 +869,7 @@ function writeMcpConfig(userDataPath) {
     }
     mcpServers[s.name] = entry;
   }
-  fs.writeFileSync(
-    mcpPath,
-    JSON.stringify({ mcpServers }, null, 2),
-    "utf8",
-  );
+  writeSecretFile(mcpPath, JSON.stringify({ mcpServers }, null, 2));
   globalMcpConfigPath = mcpPath;
   return mcpPath;
 }
@@ -920,6 +1117,16 @@ function createMemorySupervisor(opts) {
    * Terminate only a child we spawned (not an adopted server).
    */
   function stop() {
+    // Revoke the registrations that live in the user's home before we drop the
+    // servers: their tokens are useless once we exit, but kimi/grok would keep
+    // offering them to every session on the machine forever (issue #125). An
+    // adopted server belongs to another instance, which is still serving it.
+    if (!globalStatus.adopted) {
+      forgetExternalMcp(
+        activeServers().map((s) => s.name),
+        { log, env },
+      );
+    }
     if (ownedChild && !globalStatus.adopted) {
       const child = ownedChild;
       ownedChild = null;
@@ -955,13 +1162,18 @@ module.exports = {
   createMemorySupervisor,
   getClaudeMcpArgs,
   getCodexMcpArgs,
+  getCodexMcpEnv,
   ensureKimiMcpConfig,
   ensureGrokMcpConfig,
+  removeKimiMcpEntries,
+  removeGrokMcpEntries,
+  forgetExternalMcp,
   registerMcpServer,
   unregisterMcpServer,
   syncUserMcpServers,
   activeServers,
   resolveKimiMcpPath,
+  resolveGrokConfigPath,
   getMemoryStatus,
   resetMemorySupForTests,
   resolveNodeBinary,

@@ -13,7 +13,11 @@ const {
   resolveBin,
   isBinAvailable,
 } = require("./providers.js");
-const { getClaudeMcpArgs, getCodexMcpArgs } = require("./memory-sup.js");
+const {
+  getClaudeMcpArgs,
+  getCodexMcpArgs,
+  getCodexMcpEnv,
+} = require("./memory-sup.js");
 const {
   runOpencode,
   extractTextPart: opencodeExtractText,
@@ -400,6 +404,7 @@ function spawnAgentCodex(opts) {
     binary: binary || resolveBin(entry),
     args,
     cwd,
+    envExtra: getCodexMcpEnv(),
     onEvent: (ev) => {
       if (!ev || typeof ev !== "object") return;
       const agentText = extractAgentMessageText(ev);

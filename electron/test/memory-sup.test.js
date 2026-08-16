@@ -9,8 +9,11 @@ const {
   createMemorySupervisor,
   getClaudeMcpArgs,
   getCodexMcpArgs,
+  getCodexMcpEnv,
   ensureKimiMcpConfig,
   ensureGrokMcpConfig,
+  registerMcpServer,
+  unregisterMcpServer,
   resolveKimiMcpPath,
   resetMemorySupForTests,
 } = require("../memory-sup.js");
@@ -186,12 +189,17 @@ describe("memory-sup supervisor", () => {
       );
 
       const codexArgs = getCodexMcpArgs();
-      assert.equal(codexArgs.length, 2);
+      assert.equal(codexArgs.length, 4);
       assert.equal(codexArgs[0], "-c");
       assert.equal(
         codexArgs[1],
-        `mcp_servers.coder-memory.url="http://127.0.0.1:${port}/mcp?token=${token}"`,
+        `mcp_servers.coder-memory.url="http://127.0.0.1:${port}/mcp"`,
       );
+      // The token rides the env, never argv (ps is world-readable).
+      assert.ok(!codexArgs.some((a) => a.includes(token)));
+      assert.deepEqual(getCodexMcpEnv(), {
+        CODER_MCP_TOKEN_CODER_MEMORY: token,
+      });
 
       // Adopted: stop must not try to kill a child we never owned.
       sup.stop();
@@ -422,8 +430,13 @@ describe("memory-sup supervisor", () => {
       const args = getCodexMcpArgs();
       assert.deepEqual(args, [
         "-c",
-        `mcp_servers.coder-memory.url="http://127.0.0.1:${port}/mcp?token=${token}"`,
+        `mcp_servers.coder-memory.url="http://127.0.0.1:${port}/mcp"`,
+        "-c",
+        'mcp_servers.coder-memory.bearer_token_env_var="CODER_MCP_TOKEN_CODER_MEMORY"',
       ]);
+      assert.deepEqual(getCodexMcpEnv(), {
+        CODER_MCP_TOKEN_CODER_MEMORY: token,
+      });
       sup.stop();
     } finally {
       await new Promise((r) => server.close(r));
@@ -700,8 +713,13 @@ describe("ensureGrokMcpConfig", () => {
       CODER_GROK_BIN: process.env.CODER_GROK_BIN,
       CODER_FAKE_GROK_MCP_ARGV_FILE: process.env.CODER_FAKE_GROK_MCP_ARGV_FILE,
       CODER_KIMI_BIN: process.env.CODER_KIMI_BIN,
+      CODER_KIMI_MCP_PATH: process.env.CODER_KIMI_MCP_PATH,
+      CODER_GROK_CONFIG_PATH: process.env.CODER_GROK_CONFIG_PATH,
       CODER_GROK_MCP_DISABLE: process.env.CODER_GROK_MCP_DISABLE,
     };
+    // Keep every home-directory side effect (kimi cleanup, grok chmod) in tmp.
+    process.env.CODER_KIMI_MCP_PATH = path.join(tmpDir, "kimi-mcp.json");
+    process.env.CODER_GROK_CONFIG_PATH = path.join(tmpDir, "grok-config.toml");
     // Default: kill switch on so accidental markHealthy cannot touch real config.
     process.env.CODER_GROK_MCP_DISABLE = "1";
     // Fake grok that records `mcp add` argv and exits 0.
@@ -886,5 +904,152 @@ process.exit(0);
       sup.stop();
       await new Promise((r) => server.close(r));
     }
+  });
+});
+
+describe("MCP registration cleanup (issue #125)", () => {
+  let tmpDir;
+  let logs;
+  let prevEnv;
+  let mcpArgvFile;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-mcp-revoke-"));
+    logs = [];
+    mcpArgvFile = path.join(tmpDir, "mcp-argv.json");
+    prevEnv = {
+      CODER_KIMI_MCP_PATH: process.env.CODER_KIMI_MCP_PATH,
+      CODER_KIMI_BIN: process.env.CODER_KIMI_BIN,
+      CODER_GROK_BIN: process.env.CODER_GROK_BIN,
+      CODER_GROK_CONFIG_PATH: process.env.CODER_GROK_CONFIG_PATH,
+      CODER_GROK_MCP_DISABLE: process.env.CODER_GROK_MCP_DISABLE,
+      CODER_FAKE_GROK_MCP_ARGV_FILE: process.env.CODER_FAKE_GROK_MCP_ARGV_FILE,
+    };
+    process.env.CODER_KIMI_MCP_PATH = path.join(tmpDir, "mcp.json");
+    process.env.CODER_GROK_CONFIG_PATH = path.join(tmpDir, "grok-config.toml");
+    process.env.CODER_GROK_MCP_DISABLE = "1";
+    process.env.CODER_GROK_BIN = path.join(tmpDir, "no-grok");
+    // Fake kimi so the availability probe passes without the real CLI.
+    const fakeKimi = path.join(tmpDir, "fake-kimi");
+    fs.writeFileSync(fakeKimi, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    process.env.CODER_KIMI_BIN = fakeKimi;
+    resetMemorySupForTests();
+  });
+
+  afterEach(() => {
+    resetMemorySupForTests();
+    for (const [k, v] of Object.entries(prevEnv)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  /** Fake grok that appends every `mcp ...` argv it sees. */
+  function installFakeGrok() {
+    const body = `#!/usr/bin/env node
+"use strict";
+const fs = require("fs");
+const file = process.env.CODER_FAKE_GROK_MCP_ARGV_FILE;
+const prev = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : [];
+prev.push(process.argv.slice(2));
+fs.writeFileSync(file, JSON.stringify(prev), "utf8");
+process.exit(0);
+`;
+    const bin = path.join(tmpDir, "fake-grok");
+    fs.writeFileSync(bin, body, { mode: 0o755 });
+    process.env.CODER_GROK_BIN = bin;
+    process.env.CODER_FAKE_GROK_MCP_ARGV_FILE = mcpArgvFile;
+    const env = { ...process.env };
+    delete env.CODER_GROK_MCP_DISABLE;
+    return env;
+  }
+
+  it("writes kimi mcp.json owner-only even when it already existed 0644", () => {
+    const mcpPath = process.env.CODER_KIMI_MCP_PATH;
+    fs.writeFileSync(mcpPath, JSON.stringify({ mcpServers: {} }), {
+      mode: 0o644,
+    });
+    fs.chmodSync(mcpPath, 0o644);
+
+    registerMcpServer({
+      name: "coder-threads",
+      port: 45999,
+      token: "orch-token",
+      userDataPath: tmpDir,
+      log: (m) => logs.push(m),
+    });
+
+    const doc = JSON.parse(fs.readFileSync(mcpPath, "utf8"));
+    assert.equal(
+      doc.mcpServers["coder-threads"].headers.Authorization,
+      "Bearer orch-token",
+    );
+    assert.equal(fs.statSync(mcpPath).mode & 0o777, 0o600);
+    // Our own claude config carries the same token; same rule.
+    assert.equal(
+      fs.statSync(path.join(tmpDir, "mcp-coder-memory.json")).mode & 0o777,
+      0o600,
+    );
+  });
+
+  it("unregister drops the kimi entry and leaves foreign servers alone", () => {
+    const mcpPath = process.env.CODER_KIMI_MCP_PATH;
+    fs.writeFileSync(
+      mcpPath,
+      JSON.stringify({ mcpServers: { someone_else: { type: "stdio" } } }),
+      "utf8",
+    );
+
+    registerMcpServer({
+      name: "coder-threads",
+      port: 45999,
+      token: "orch-token",
+      userDataPath: tmpDir,
+      log: (m) => logs.push(m),
+    });
+    assert.ok(
+      JSON.parse(fs.readFileSync(mcpPath, "utf8")).mcpServers["coder-threads"],
+    );
+
+    unregisterMcpServer("coder-threads", { log: (m) => logs.push(m) });
+
+    const doc = JSON.parse(fs.readFileSync(mcpPath, "utf8"));
+    assert.equal(doc.mcpServers["coder-threads"], undefined);
+    assert.ok(doc.mcpServers.someone_else, "foreign entry must survive");
+    assert.ok(
+      !fs.readFileSync(mcpPath, "utf8").includes("orch-token"),
+      "token must not survive the server",
+    );
+  });
+
+  it("unregister runs `grok mcp remove <name> -s user`", async () => {
+    const env = installFakeGrok();
+    registerMcpServer({
+      name: "coder-threads",
+      port: 45999,
+      token: "orch-token",
+      userDataPath: tmpDir,
+      log: (m) => logs.push(m),
+      env,
+    });
+    await waitFor(() => fs.existsSync(mcpArgvFile), { timeoutMs: 3000 });
+
+    unregisterMcpServer("coder-threads", { log: (m) => logs.push(m), env });
+    await waitFor(
+      () =>
+        JSON.parse(fs.readFileSync(mcpArgvFile, "utf8")).some(
+          (a) => a[1] === "remove",
+        ),
+      { timeoutMs: 3000 },
+    );
+    const calls = JSON.parse(fs.readFileSync(mcpArgvFile, "utf8"));
+    assert.deepEqual(calls.at(-1), [
+      "mcp",
+      "remove",
+      "coder-threads",
+      "-s",
+      "user",
+    ]);
   });
 });

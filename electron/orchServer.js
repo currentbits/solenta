@@ -157,6 +157,7 @@ function probeFreePort() {
  * @returns {Promise<{ port: number, token: string }>}
  */
 async function loadOrCreateConfig(file) {
+  let port = 0;
   if (fs.existsSync(file)) {
     let parsed;
     try {
@@ -164,27 +165,23 @@ async function loadOrCreateConfig(file) {
     } catch {
       throw new Error(`config at ${file} is not valid JSON`);
     }
-    const port = Number(parsed && parsed.port);
-    const token =
-      parsed && typeof parsed.token === "string" ? parsed.token : "";
-    if (
-      !Number.isInteger(port) ||
-      port < 1 ||
-      port > 65535 ||
-      token.length < 16 ||
-      /\s/.test(token)
-    ) {
-      throw new Error(`config at ${file} is missing a valid port/token`);
+    port = Number(parsed && parsed.port);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      throw new Error(`config at ${file} is missing a valid port`);
     }
-    return { port, token };
   }
 
   const config = {
-    port: await probeFreePort(),
+    port: port || (await probeFreePort()),
+    // Fresh token every launch. These tokens drive thread_fork/thread_send
+    // (arbitrary agent runs in any registered project) and leak into
+    // user-global CLI configs, so a rotation is what actually revokes a copy
+    // we failed to clean up: it is dead the next time Solenta starts (#125).
     token: crypto.randomBytes(32).toString("hex"),
   };
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify(config, null, 2), { mode: 0o600 });
+  fs.chmodSync(file, 0o600);
   return config;
 }
 
@@ -615,7 +612,8 @@ function createOrchServer(opts) {
 
   function stop() {
     try {
-      unregisterMcpServer(SERVER_NAME);
+      // Also drops the token kimi/grok persisted in the user's home.
+      unregisterMcpServer(SERVER_NAME, { log, env });
     } catch {
       // ignore
     }
