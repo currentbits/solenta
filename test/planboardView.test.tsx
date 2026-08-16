@@ -7,7 +7,11 @@ import { describe, it } from "node:test";
 import * as React from "react";
 import { mount, inAct } from "./support/dom.ts";
 import { PlanboardView } from "../src/components/PlanboardView";
-import type { ListIssuesResult, ProjectInfo } from "../src/shared/ipc";
+import type {
+  ListIssuesResult,
+  ListPlansResult,
+  ProjectInfo,
+} from "../src/shared/ipc";
 
 const projects: ProjectInfo[] = [
   { id: "p1", slug: "acme/ledger", name: "ledger", path: "/tmp/ledger" },
@@ -148,6 +152,100 @@ describe("PlanboardView", () => {
     );
     assert.ok(m.text().includes("Nothing on the plan yet"));
     assert.ok(m.text().includes("plan:todo"));
+    m.unmount();
+  });
+});
+
+describe("PlanboardView thread plans", () => {
+  const okPlans: ListPlansResult = {
+    ok: true,
+    plans: [
+      {
+        threadId: "t1",
+        threadTitle: "Ship the planboard",
+        title: "Rollout",
+        steps: [
+          { text: "Read gh issues into columns", status: "done" },
+          { text: "Render thread plans", status: "doing" },
+          { text: "Polish the cards", status: "todo" },
+        ],
+        updatedMs: Date.now(),
+      },
+    ],
+  };
+
+  it("renders the Thread plans section with step statuses", async () => {
+    const asked: string[] = [];
+    const m = await mount(
+      <PlanboardView
+        projects={projects}
+        listIssues={async () => okResult}
+        listPlans={async (input) => {
+          asked.push(input.projectId);
+          return okPlans;
+        }}
+      />,
+    );
+    assert.deepEqual(asked, ["p1"]);
+    const section = m.query("[data-thread-plans]");
+    assert.ok(section, "Thread plans section");
+    const card = m.query('[data-thread-plan="t1"]');
+    assert.ok(card, "plan card");
+    assert.ok(card.textContent?.includes("Ship the planboard"));
+    assert.ok(card.textContent?.includes("Rollout"));
+    assert.ok(
+      m
+        .query('[data-plan-step-status="done"]')
+        ?.textContent?.includes("Read gh issues into columns"),
+    );
+    assert.ok(
+      m
+        .query('[data-plan-step-status="doing"]')
+        ?.textContent?.includes("Render thread plans"),
+    );
+    assert.ok(
+      m
+        .query('[data-plan-step-status="todo"]')
+        ?.textContent?.includes("Polish the cards"),
+    );
+    m.unmount();
+  });
+
+  it("keeps the section off when no plans come back", async () => {
+    const m = await mount(
+      <PlanboardView
+        projects={projects}
+        listIssues={async () => okResult}
+        listPlans={async () => ({ ok: true, plans: [] })}
+      />,
+    );
+    assert.ok(!m.query("[data-thread-plans]"));
+    m.unmount();
+  });
+
+  it("keeps thread plans visible when the issue list fails", async () => {
+    const m = await mount(
+      <PlanboardView
+        projects={projects}
+        listIssues={async () => ({ ok: false, reason: "auth" })}
+        listPlans={async () => okPlans}
+      />,
+    );
+    assert.ok(m.query("[data-thread-plans]"), "plans survive a gh failure");
+    assert.ok(m.query("[data-planboard-error]"), "issue error still shown");
+    m.unmount();
+  });
+
+  it("plans alone keep the board out of the empty state", async () => {
+    const m = await mount(
+      <PlanboardView
+        projects={projects}
+        listIssues={async () => ({ ok: true, issues: [] })}
+        listPlans={async () => okPlans}
+      />,
+    );
+    assert.ok(m.query("[data-thread-plans]"));
+    assert.ok(!m.text().includes("Nothing on the plan yet"));
     m.unmount();
   });
 });

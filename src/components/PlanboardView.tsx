@@ -6,12 +6,23 @@ import {
   issueUpdatedMs,
   planColumns,
 } from "../planboard";
-import type { ListIssuesResult, ProjectInfo } from "../shared/ipc";
+import type {
+  ListIssuesResult,
+  ListPlansResult,
+  ProjectInfo,
+  ThreadPlan,
+} from "../shared/ipc";
 import styles from "./PlanboardView.module.css";
 
 export interface PlanboardViewProps {
   projects: ProjectInfo[];
   listIssues: (projectPath: string) => Promise<ListIssuesResult>;
+  /**
+   * Agent-published thread plans (.solenta/plan.json) for the selected
+   * project. Omitted by existing tests, which keeps the Thread plans
+   * section off those boards.
+   */
+  listPlans?: (input: { projectId: string }) => Promise<ListPlansResult>;
   /**
    * Start a thread on a Todo issue and move it to plan:doing. Omitted by
    * existing tests, which keeps the button off those boards.
@@ -26,10 +37,12 @@ export interface PlanboardViewProps {
 export function PlanboardView({
   projects,
   listIssues,
+  listPlans,
   onStartTask,
 }: PlanboardViewProps) {
   const [projectId, setProjectId] = useState<string | null>(null);
   const [result, setResult] = useState<ListIssuesResult | null>(null);
+  const [plans, setPlans] = useState<ThreadPlan[]>([]);
   const [loading, setLoading] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   /** Issue number whose start is in flight, and the last start's message. */
@@ -44,16 +57,23 @@ export function PlanboardView({
     if (!project) return;
     const gen = ++loadGen.current;
     setLoading(true);
-    const res = await listIssues(project.path);
+    // Plans come from local plan files, issues from gh — fetch together; a
+    // gh failure must not hide the thread plans.
+    const [res, plansRes] = await Promise.all([
+      listIssues(project.path),
+      listPlans ? listPlans({ projectId: project.id }) : null,
+    ]);
     // Drop a stale response if the selector moved on meanwhile.
     if (gen !== loadGen.current) return;
     setResult(res);
+    setPlans(plansRes && plansRes.ok ? plansRes.plans : []);
     setLoading(false);
     setNow(Date.now());
-  }, [project, listIssues]);
+  }, [project, listIssues, listPlans]);
 
   useEffect(() => {
     setResult(null);
+    setPlans([]);
     void load();
   }, [load]);
 
@@ -83,7 +103,8 @@ export function PlanboardView({
     () => planColumns(result && result.ok ? result.issues : []),
     [result],
   );
-  const empty = result?.ok === true && isPlanEmpty(columns);
+  const empty =
+    result?.ok === true && isPlanEmpty(columns) && plans.length === 0;
 
   return (
     <main className={styles.main} data-planboard="">
@@ -122,6 +143,50 @@ export function PlanboardView({
         </p>
       ) : null}
 
+      {plans.length > 0 ? (
+        <section className={styles.plansSection} data-thread-plans="">
+          <header className={styles.plansHeader}>
+            <span>Thread plans</span>
+            <span className={styles.count}>{plans.length}</span>
+          </header>
+          <div className={styles.plansBody}>
+            {plans.map((plan) => (
+              <article
+                key={plan.threadId}
+                className={styles.planCard}
+                data-thread-plan={plan.threadId}
+              >
+                <header className={styles.planCardHeader}>
+                  <span className={styles.planThreadTitle}>
+                    {plan.threadTitle}
+                  </span>
+                  {plan.updatedMs != null ? (
+                    <span className={styles.age}>
+                      {formatRelativeAge(plan.updatedMs, now)}
+                    </span>
+                  ) : null}
+                </header>
+                {plan.title ? (
+                  <p className={styles.planTitle}>{plan.title}</p>
+                ) : null}
+                <ol className={styles.stepList}>
+                  {plan.steps.map((step, i) => (
+                    <li
+                      key={i}
+                      className={styles.step}
+                      data-plan-step-status={step.status}
+                    >
+                      <span className={styles.stepDot} aria-hidden="true" />
+                      <span className={styles.stepText}>{step.text}</span>
+                    </li>
+                  ))}
+                </ol>
+              </article>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
       {!project ? (
         <div className={styles.empty}>
           <p className={styles.emptyTitle}>No projects</p>
@@ -151,7 +216,8 @@ export function PlanboardView({
           <p className={styles.emptyTitle}>Nothing on the plan yet</p>
           <p className={styles.emptyHint}>
             Agents track plan items as GitHub issues in this repo, labeled
-            plan:todo, plan:doing, and plan:done.
+            plan:todo, plan:doing, and plan:done — and publish their live
+            working plan to .solenta/plan.json in a thread&apos;s checkout.
           </p>
         </div>
       ) : (

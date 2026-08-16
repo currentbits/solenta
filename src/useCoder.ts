@@ -23,6 +23,7 @@ import type {
   PlanStatus,
   SetPlanStatusResult,
   ListIssuesResult,
+  ListPlansResult,
   ListPrsResult,
   PrChecksResult,
   PrInfo,
@@ -227,6 +228,8 @@ export interface UseCoderResult {
   listPrs: (projectPath: string) => Promise<ListPrsResult>;
   /** Issues for a project checkout (`gh issue list`). Failures are in-band. */
   listIssues: (projectPath: string) => Promise<ListIssuesResult>;
+  /** Agent-published thread plans for a project (Planboard). In-band failure. */
+  listPlans: (input: { projectId: string }) => Promise<ListPlansResult>;
   /** Move an issue's plan:* label (Planboard). Failures are in-band. */
   setIssuePlanStatus: (
     projectPath: string,
@@ -1371,6 +1374,13 @@ export function useCoder(): UseCoderResult {
     [api],
   );
 
+  const listPlans = useCallback(
+    async (input: { projectId: string }) => {
+      return api.plans.list(input);
+    },
+    [api],
+  );
+
   const setIssuePlanStatus = useCallback(
     async (projectPath: string, number: number, status: PlanStatus) => {
       return api.issues.setPlanStatus({ projectPath, number, status });
@@ -1696,6 +1706,7 @@ export function useCoder(): UseCoderResult {
     prMerge,
     listPrs,
     listIssues,
+    listPlans,
     setIssuePlanStatus,
     fetchIssue,
     listActivity,

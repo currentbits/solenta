@@ -60,3 +60,33 @@ the existing kanban/prList test style.
 
 Drag-and-drop, milestones, GitHub Projects v2, creating/editing issues from
 the UI, caching, per-project opt-out.
+
+## Addendum 2026-08-16: thread plans (issue #76)
+
+A second, non-GitHub source next to the issues roadmap: an agent publishes
+its live working plan by writing `.solenta/plan.json` in its checkout root
+(worktree when bound, else the project checkout):
+
+```json
+{ "title": "optional", "steps": [{ "text": "...", "status": "todo" }] }
+```
+
+`status` is `todo` / `doing` / `done`; agents move steps by rewriting the
+file. `electron/plans.js` parses it tolerantly (bad files/steps are skipped,
+unknown statuses become `todo`, steps capped at 50) and `plans:list` (IPC +
+preload + `CoderApi.plans.list` + wireClient + devCoder/fakeCoder fallbacks)
+returns one plan per non-archived thread of a project, newest file first.
+Threads sharing one root dedupe to the first thread.
+
+Decisions on the issue's open questions:
+
+- Agents write steps explicitly via the plan file — provider-agnostic, no
+  `ExitPlanMode` prose parsing. `planboardNoteFor` teaches it in every
+  dispatch prompt (the `gh` labels note still only appears for GitHub
+  origins).
+- A plan dies with its thread: archived threads drop off the board, a
+  removed worktree takes the file with it. Roadmap items that must outlive
+  a thread belong in GitHub issues.
+- Rendering is a separate "Thread plans" shelf above the issue columns, not
+  merged into the three `plan:*` columns; a `gh` failure never hides plans.
+

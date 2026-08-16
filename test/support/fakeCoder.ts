@@ -24,6 +24,7 @@ import type {
   DevServerState,
   DiffResult,
   FetchIssueResult,
+  ListPlansResult,
   GitStatus,
   GitSyncInfo,
   GitRepoInfo,
@@ -983,6 +984,10 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
               },
             } as FetchIssueResult),
         ),
+    },
+    plans: {
+      list: (input: unknown) =>
+        rec("plans.list", [input], { ok: true, plans: [] } as ListPlansResult),
     },
     servers: {
       list: (input: unknown) => rec("servers.list", [input], [] as LocalServerInfo[]),

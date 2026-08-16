@@ -139,6 +139,9 @@ const coder = {
     list: (projectPath) => invoke("issues:list", projectPath),
     setPlanStatus: (input) => invoke("issues:setPlanStatus", input),
   },
+  plans: {
+    list: (input) => invoke("plans:list", input),
+  },
   files: {
     list: (input) => invoke("files:list", input),
     image: (input) => invoke("files:image", input),

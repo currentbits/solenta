@@ -32,6 +32,7 @@ const attachments = require("./attachments.js");
 const { syncUserMcpServers } = require("./memory-sup.js");
 const skills = require("./skills.js");
 const { fetchIssue, listIssues, setPlanStatus } = require("./issues.js");
+const { listPlans } = require("./plans.js");
 const automations = require("./automations.js");
 const { buildActivity } = require("./activity.js");
 const updater = require("./updater.js");
@@ -557,6 +558,15 @@ const IPC_HANDLERS = {
       input && input.number,
       input && input.status,
     );
+  },
+  "plans:list": async (ctx, input) => {
+    // Never throws: file problems skip the thread; anything unexpected comes
+    // back in-band like the issues:list failure modes.
+    try {
+      return listPlans(ctx.store, input && input.projectId);
+    } catch {
+      return { ok: false, reason: "could not list thread plans" };
+    }
   },
   "git:listCheckpoints": async (ctx, input) => {
     return listCheckpoints({

@@ -2,7 +2,8 @@
 
 /**
  * parseIssueListJson: gh issue list JSON → PlanIssue rows.
- * planboardNoteFor: note only for checkouts with a GitHub origin.
+ * planboardNoteFor: plan-file note for any checkout; the GitHub-issues note
+ * only on top when the origin is GitHub.
  */
 const { describe, it, after } = require("node:test");
 const assert = require("node:assert/strict");
@@ -11,7 +12,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 const { parseIssueListJson } = require("../issues.js");
-const { planboardNoteFor, PLANBOARD_NOTE } = require("../services.js");
+const { planboardNoteFor, PLANBOARD_NOTE, PLAN_FILE_NOTE } = require("../services.js");
 
 describe("parseIssueListJson", () => {
   it("maps rows, label names, state, and updatedAt", () => {
@@ -86,23 +87,30 @@ describe("planboardNoteFor", () => {
     execFileSync("git", args, { cwd, stdio: "ignore" });
   }
 
-  it("empty for a missing path and for a repo without a GitHub origin", () => {
+  it("empty for a missing path and for a repo without an origin", () => {
     assert.equal(planboardNoteFor(""), "");
     assert.equal(planboardNoteFor(path.join(tmp, "nope")), "");
     const plain = path.join(tmp, "plain");
     fs.mkdirSync(plain);
     git(plain, ["init", "-q"]);
     assert.equal(planboardNoteFor(plain), "");
-    git(plain, ["remote", "add", "origin", "https://gitlab.com/a/b.git"]);
-    assert.equal(planboardNoteFor(plain), "");
   });
 
-  it("returns the note for a GitHub origin", () => {
+  it("plan-file note only for a non-GitHub origin", () => {
+    const gl = path.join(tmp, "gitlab");
+    fs.mkdirSync(gl);
+    git(gl, ["init", "-q"]);
+    git(gl, ["remote", "add", "origin", "https://gitlab.com/a/b.git"]);
+    assert.equal(planboardNoteFor(gl), PLAN_FILE_NOTE);
+    assert.match(PLAN_FILE_NOTE, /\.solenta\/plan\.json/);
+  });
+
+  it("returns both notes for a GitHub origin", () => {
     const gh = path.join(tmp, "gh");
     fs.mkdirSync(gh);
     git(gh, ["init", "-q"]);
     git(gh, ["remote", "add", "origin", "git@github.com:acme/demo.git"]);
-    assert.equal(planboardNoteFor(gh), PLANBOARD_NOTE);
+    assert.equal(planboardNoteFor(gh), PLAN_FILE_NOTE + PLANBOARD_NOTE);
     assert.match(PLANBOARD_NOTE, /plan:todo, plan:doing, plan:done/);
   });
 });

@@ -28,6 +28,7 @@ import type {
   DevServerState,
   FetchIssueResult,
   ListIssuesResult,
+  ListPlansResult,
   LocalServerInfo,
   MemoryEntryInfo,
   McpServerInfo,
@@ -3019,6 +3020,36 @@ function buildDevCoder(): CoderApi {
               labels: ["plan:done"],
             },
           ]),
+        };
+      },
+    },
+    plans: {
+      async list(_input: { projectId: string }): Promise<ListPlansResult> {
+        return {
+          ok: true,
+          plans: [
+            {
+              threadId: "demo-thread-1",
+              threadTitle: "Ship the planboard",
+              title: "Planboard rollout",
+              steps: [
+                { text: "Read gh issues into columns", status: "done" },
+                { text: "Render thread plans section", status: "doing" },
+                { text: "Wire Refresh to re-read plan files", status: "todo" },
+              ],
+              updatedMs: Date.now() - 5 * 60_000,
+            },
+            {
+              threadId: "demo-thread-2",
+              threadTitle: "Write the docs",
+              title: null,
+              steps: [
+                { text: "Draft the plan-file convention", status: "done" },
+                { text: "Add a screenshot to the docs page", status: "todo" },
+              ],
+              updatedMs: Date.now() - 60 * 60_000,
+            },
+          ],
         };
       },
     },

@@ -75,6 +75,7 @@ export default function App() {
     pushBranch,
     listPrs,
     listIssues,
+    listPlans,
     setIssuePlanStatus,
     listActivity,
     listThreadSummaries,
@@ -440,6 +441,7 @@ export default function App() {
             <PlanboardView
               projects={projects}
               listIssues={listIssues}
+              listPlans={listPlans}
               onStartTask={async (input) => {
                 const res = await handleCreateThreadFromIssue(input);
                 // Land on the thread we just started, unless there is a

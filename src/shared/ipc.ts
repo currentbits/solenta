@@ -556,6 +556,31 @@ export type SetPlanStatusResult =
   | { ok: true }
   | { ok: false; reason: string };
 
+/** One step of a thread's live working plan (.solenta/plan.json). */
+export interface ThreadPlanStep {
+  text: string;
+  status: PlanStatus;
+}
+
+/**
+ * A thread's agent-published working plan, shown on the Planboard next to
+ * the GitHub-issue roadmap. Follows its thread: archived threads drop off.
+ */
+export interface ThreadPlan {
+  threadId: string;
+  threadTitle: string;
+  /** Optional plan title from the plan file; null when it has none. */
+  title: string | null;
+  steps: ThreadPlanStep[];
+  /** Plan file mtime in epoch ms; null when unknown. */
+  updatedMs: number | null;
+}
+
+/** Per-project listPlans result. Only an unknown project fails. */
+export type ListPlansResult =
+  | { ok: true; plans: ThreadPlan[] }
+  | { ok: false; reason: string };
+
 /**
  * How hard a model should think. Persisted per thread, sent to the CLI.
  *
@@ -1159,6 +1184,15 @@ export interface CoderApi {
       number: number;
       status: PlanStatus;
     }): Promise<SetPlanStatusResult>;
+  };
+  plans: {
+    /**
+     * Live working plans agents published via .solenta/plan.json, per
+     * non-archived thread of a project (Planboard "Thread plans" section).
+     * Never rejects for missing/malformed plan files — those threads are
+     * skipped; an unknown project comes back as `{ ok: false, reason }`.
+     */
+    list(input: { projectId: string }): Promise<ListPlansResult>;
   };
   files: {
     /**

@@ -15,6 +15,7 @@ import type {
   GitPullResult,
   FetchIssueResult,
   ListIssuesResult,
+  ListPlansResult,
   ListPrsResult,
   SetPlanStatusResult,
   DevServerState,
@@ -340,6 +341,9 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
       list: (projectPath) => call<ListIssuesResult>("issues:list", projectPath),
       setPlanStatus: (input) =>
         call<SetPlanStatusResult>("issues:setPlanStatus", input),
+    },
+    plans: {
+      list: (input) => call<ListPlansResult>("plans:list", input),
     },
     files: {
       list: (input) => call<{ files: string[] }>("files:list", input),

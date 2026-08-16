@@ -457,8 +457,23 @@ const PLANBOARD_NOTE =
   "tasks.";
 
 /**
- * PLANBOARD_NOTE when the project checkout has a GitHub origin, else "".
- * Keeps the note out of prompts where it isn't actionable.
+ * Standing note teaching agents to publish their LIVE working plan (the
+ * concrete steps of the current task) as PLAN_FILE_REL in the checkout
+ * root. The Planboard renders it next to the GitHub-issue roadmap; unlike
+ * the issues convention this needs no GitHub remote, so it goes out for
+ * every project with a checkout.
+ */
+const PLAN_FILE_NOTE =
+  "\n\n[Plan] For multi-step work, also publish your live working plan to " +
+  ".solenta/plan.json in the checkout root as " +
+  '{"steps":[{"text":"...","status":"todo"}]} with status ' +
+  "todo|doing|done, rewriting the file as steps progress. The app's " +
+  "Planboard shows it next to the roadmap. Skip this for trivial tasks.";
+
+/**
+ * Plan-file note always; PLANBOARD_NOTE added when the project checkout has
+ * a GitHub origin. Keeps the issues half out of prompts where it isn't
+ * actionable.
  *
  * ponytail: checks the LOCAL path only, so remote-host projects never get
  * the note; route the check over ssh if remote planboards matter.
@@ -473,8 +488,9 @@ function planboardNoteFor(projectPath) {
     if (!cwd) return "";
     const remote = gitTry(cwd, ["remote", "get-url", "origin"]);
     if (!remote.ok) return "";
-    if (!isGitHubRemote(String(remote.stdout || "").trim())) return "";
-    return PLANBOARD_NOTE;
+    const origin = String(remote.stdout || "").trim();
+    if (!isGitHubRemote(origin)) return PLAN_FILE_NOTE;
+    return PLAN_FILE_NOTE + PLANBOARD_NOTE;
   } catch {
     return "";
   }
@@ -1739,6 +1755,7 @@ module.exports = {
   HANDOFF_MESSAGE_MAX,
   HANDOFF_MESSAGE_COUNT,
   PLANBOARD_NOTE,
+  PLAN_FILE_NOTE,
   planboardNoteFor,
   setArchived,
   setSettled,
