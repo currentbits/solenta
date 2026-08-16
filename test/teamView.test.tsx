@@ -91,6 +91,11 @@ const WORKER = summary({
   lastActivity: { text: "Found the race in runner", at: 42 },
 });
 
+/** Same derivation App does; the panel takes the key, not the list. */
+function rosterKey(threads: ThreadInfo[]): string {
+  return threads.map((t) => `${t.id}:${t.status}`).join(",");
+}
+
 function content(
   selected: ThreadInfo,
   summaries: ThreadSummaryInfo[],
@@ -102,7 +107,7 @@ function content(
       thread={selected}
       usage={null}
       providers={PROVIDERS}
-      threads={[selected]}
+      rosterKey={rosterKey([selected])}
       listThreadSummaries={async () => summaries}
       onSelectThread={onSelectThread}
     />
@@ -263,7 +268,7 @@ describe("Agents team view", () => {
             thread={orch}
             usage={null}
             providers={PROVIDERS}
-            threads={threads}
+            rosterKey={rosterKey(threads)}
             listThreadSummaries={fetcher}
           />
         </>

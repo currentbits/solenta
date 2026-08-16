@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useCoder } from "./useCoder";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Sidebar } from "./components/Sidebar";
@@ -148,6 +148,99 @@ export default function App() {
     [selectThread],
   );
 
+  // The three panes are memo'd (issue #91): a 700ms stream tick must only
+  // re-render the pane whose data moved. That only holds while EVERY prop
+  // stays identical, so the handlers below are stable and the list-derived
+  // ones (handoffSource, rosterKey) collapse the churning array to a value
+  // that moves when the thing the pane cares about moves.
+  const openKanban = useCallback(() => setView("kanban"), []);
+  const openPlanboard = useCallback(() => setView("planboard"), []);
+  const openPrs = useCallback(() => setView("prs"), []);
+  const openAutomations = useCallback(() => setView("automations"), []);
+  const openActivity = useCallback(() => setView("activity"), []);
+  const openSettings = useCallback(() => setSettingsOpen(true), []);
+  const closeSettings = useCallback(() => setSettingsOpen(false), []);
+  const closeChanges = useCallback(() => setChangesOpen(false), []);
+  const openChanges = useCallback(() => {
+    setChangesOpen(true);
+    setChangesNonce((n) => n + 1);
+  }, []);
+  const clearReveal = useCallback(() => setRevealThreadId(null), []);
+
+  const handleCreateThread = useCallback(
+    (projectId?: string, opts?: { worktree?: boolean }) => {
+      void createThread("New Thread", projectId, opts).then((t) => {
+        if (t) setRevealThreadId(t.id);
+      });
+    },
+    [createThread],
+  );
+
+  const handleCreateThreadPlain = useCallback(() => {
+    void createThread("New Thread");
+  }, [createThread]);
+
+  const handleSetSettled = useCallback(
+    (threadId: string, override: "settled" | "active" | null) => {
+      void setSettled(threadId, override);
+    },
+    [setSettled],
+  );
+
+  const handleSetPinned = useCallback(
+    (threadId: string, pinned: boolean) => {
+      void setPinned(threadId, pinned);
+    },
+    [setPinned],
+  );
+
+  const handleSetSnoozed = useCallback(
+    (threadId: string, until: number | null) => {
+      void setSnoozed(threadId, until);
+    },
+    [setSnoozed],
+  );
+
+  const handleSetMuted = useCallback(
+    (threadId: string, muted: boolean) => {
+      void setMuted(threadId, muted);
+    },
+    [setMuted],
+  );
+
+  const handleRowArchived = useCallback(
+    (threadId: string, archived: boolean) => {
+      void setArchived(archived, threadId);
+    },
+    [setArchived],
+  );
+
+  const handleRowFork = useCallback(
+    (threadId: string, opts?: { provider?: string }) => {
+      void forkThread(threadId, opts);
+    },
+    [forkThread],
+  );
+
+  const handleForkOpen = useCallback(
+    async (opts?: { provider?: string }) => {
+      if (!selectedThreadId) return null;
+      return forkThread(selectedThreadId, opts);
+    },
+    [selectedThreadId, forkThread],
+  );
+
+  const handleModelPickerOpen = useCallback(() => {
+    void refreshProviders();
+  }, [refreshProviders]);
+
+  // Wrapped, not passed through: this one is bound straight to a button's
+  // onClick, so cancelQueued's optional threadId would swallow the DOM event
+  // and cancel nothing.
+  const handleCancelQueued = useCallback(() => {
+    cancelQueued();
+  }, [cancelQueued]);
+
   const handleSetArchived = useCallback(
     async (archived: boolean) => {
       if (archived) {
@@ -218,11 +311,6 @@ export default function App() {
     setChangesOpen(false);
   }, [selectedThreadId]);
 
-  const openChanges = () => {
-    setChangesOpen(true);
-    setChangesNonce((n) => n + 1);
-  };
-
   // Gate the open detail on the current selection: while threads.get for a
   // freshly clicked thread is in flight (visible over --serve-web latency),
   // `detail` still holds the PREVIOUS thread. Rendering it under the new
@@ -235,6 +323,19 @@ export default function App() {
     (visibleDetail && projectById.get(visibleDetail.thread.projectId)) ||
     (selectedProjectId ? projectById.get(selectedProjectId) : undefined) ||
     null;
+
+  /** Provenance of a handed-off thread; a stable object while the row is. */
+  const handoffFrom = visibleDetail?.thread.handoffFrom ?? null;
+  const handoffSource = useMemo(
+    () => (handoffFrom ? threads.find((t) => t.id === handoffFrom) ?? null : null),
+    [threads, handoffFrom],
+  );
+
+  /** What the Agents team view refetches on: ids + statuses, not identity. */
+  const rosterKey = useMemo(
+    () => threads.map((t) => `${t.id}:${t.status}`).join(","),
+    [threads],
+  );
 
   const handleCreateThreadFromIssue = useCallback(
     async (input: { projectId: string; projectPath: string; ref: string }) => {
@@ -376,53 +477,35 @@ export default function App() {
         activeThreadId={selectedThreadId}
         onSelectThread={handleSelectThread}
         activeView={view}
-        onOpenKanban={() => setView("kanban")}
-        onOpenPlanboard={() => setView("planboard")}
-        onOpenPrs={() => setView("prs")}
-        onOpenAutomations={() => setView("automations")}
-        onOpenActivity={() => setView("activity")}
-        onCreateThread={(projectId, opts) => {
-          void createThread("New Thread", projectId, opts).then((t) => {
-            if (t) setRevealThreadId(t.id);
-          });
-        }}
+        onOpenKanban={openKanban}
+        onOpenPlanboard={openPlanboard}
+        onOpenPrs={openPrs}
+        onOpenAutomations={openAutomations}
+        onOpenActivity={openActivity}
+        onCreateThread={handleCreateThread}
         defaultWorktree={settings?.defaultWorktree ?? false}
         revealThreadId={revealThreadId}
-        onRevealHandled={() => setRevealThreadId(null)}
+        onRevealHandled={clearReveal}
         onCreateThreadFromIssue={handleCreateThreadFromIssue}
         onAddProject={handleAddProject}
         onRemoveProject={handleRemoveProject}
         onEditProject={setEditProjectId}
         projectError={error?.scope === "project" ? error.message : null}
         onDismissProjectError={clearError}
-        onOpenSettings={() => setSettingsOpen(true)}
+        onOpenSettings={openSettings}
         spendTodayUsd={appStatus?.spendTodayUsd ?? null}
         dailyBudgetUsd={settings?.dailyBudgetUsd ?? null}
         autoSettleAfterDays={
           settings == null ? undefined : settings.autoSettleAfterDays
         }
         searchThreads={searchThreads}
-        onSetSettled={(threadId, override) => {
-          void setSettled(threadId, override);
-        }}
-        onSetPinned={(threadId, pinned) => {
-          void setPinned(threadId, pinned);
-        }}
-        onSetSnoozed={(threadId, until) => {
-          void setSnoozed(threadId, until);
-        }}
-        onSetMuted={(threadId, muted) => {
-          void setMuted(threadId, muted);
-        }}
-        onSetArchived={(threadId, archived) => {
-          void setArchived(archived, threadId);
-        }}
-        onClearSettled={(ids) => {
-          void handleClearSettled(ids);
-        }}
-        onFork={(threadId, opts) => {
-          void forkThread(threadId, opts);
-        }}
+        onSetSettled={handleSetSettled}
+        onSetPinned={handleSetPinned}
+        onSetSnoozed={handleSetSnoozed}
+        onSetMuted={handleSetMuted}
+        onSetArchived={handleRowArchived}
+        onClearSettled={handleClearSettled}
+        onFork={handleRowFork}
             />
           </ErrorBoundary>
         </div>
@@ -477,9 +560,7 @@ export default function App() {
               projects={projects}
               providers={providers}
               onSelectThread={handleSelectThread}
-              onCreateThread={() => {
-                void createThread("New Thread");
-              }}
+              onCreateThread={handleCreateThreadPlain}
               autoSettleAfterDays={
                 settings == null ? undefined : settings.autoSettleAfterDays
               }
@@ -494,46 +575,38 @@ export default function App() {
         workflows={workflows}
         hasProjects={projects.length > 0}
         onAddProject={handleAddProject}
-        onStartRun={(prompt, threadId, attachments) =>
-          startRun(prompt, threadId, attachments)
-        }
-        onStartWorkflow={(prompt, templateId) =>
-          startWorkflowRun(prompt, templateId)
-        }
-        onSaveWorkflow={(template) => saveWorkflow(template)}
-        onRemoveWorkflow={(id) => removeWorkflow(id)}
-        onStopRun={() => stopRun()}
+        onStartRun={startRun}
+        onStartWorkflow={startWorkflowRun}
+        onSaveWorkflow={saveWorkflow}
+        onRemoveWorkflow={removeWorkflow}
+        onStopRun={stopRun}
         queuedPrompt={
           selectedThreadId ? (queued[selectedThreadId]?.prompt ?? null) : null
         }
-        onCancelQueued={() => cancelQueued()}
-        onSetPermissionMode={(mode) => setPermissionMode(mode)}
-        onRespondPermission={(requestId, decision, answers) =>
-          respondPermission(requestId, decision, answers)
-        }
-        onSetProvider={(input) => setProvider(input)}
-        onSetReasoningEffort={(effort) => setReasoningEffort(effort)}
-        onSetArchived={(archived) => {
-          void handleSetArchived(archived);
-        }}
-        onDeleteThread={() => deleteThread()}
+        onCancelQueued={handleCancelQueued}
+        onSetPermissionMode={setPermissionMode}
+        onRespondPermission={respondPermission}
+        onSetProvider={setProvider}
+        onSetReasoningEffort={setReasoningEffort}
+        onSetArchived={handleSetArchived}
+        onDeleteThread={deleteThread}
         changesOpen={changesOpen}
         changesNonce={changesNonce}
-        onCloseChanges={() => setChangesOpen(false)}
+        onCloseChanges={closeChanges}
         onViewChanges={openChanges}
         runStats={runStats}
         restoreCheckpoint={restoreCheckpoint}
-        onFetchDiff={() => fetchDiff()}
-        onCommitChanges={(message) => commitChanges(message)}
-        onRevertFile={(path, status) => revertFile(path, status)}
-        onSuggestCommitMessage={() => suggestCommitMessage()}
-        onListFiles={(query) => listFiles(query)}
+        onFetchDiff={fetchDiff}
+        onCommitChanges={commitChanges}
+        onRevertFile={revertFile}
+        onSuggestCommitMessage={suggestCommitMessage}
+        onListFiles={listFiles}
         onLoadImage={loadToolImage}
         onPickAttachments={isWebMode() ? undefined : pickAttachments}
         onSaveAttachmentImage={saveAttachmentImage}
         onLoadAttachmentImage={loadAttachmentImage}
         onDropAttachmentFiles={isWebMode() ? undefined : dropAttachmentFiles}
-        onPush={() => pushBranch()}
+        onPush={pushBranch}
         gitSyncInfo={gitSyncInfo}
         gitFetch={gitFetch}
         listDevScripts={listDevScripts}
@@ -542,15 +615,10 @@ export default function App() {
         devServerStatus={devServerStatus}
         runError={error?.scope === "run" ? error.message : null}
         onDismissRunError={clearError}
-        onFork={async (opts) => {
-          if (!selectedThreadId) return null;
-          return forkThread(selectedThreadId, opts);
-        }}
-        threads={threads}
+        onFork={handleForkOpen}
+        handoffSource={handoffSource}
         onSelectThread={handleSelectThread}
-        onModelPickerOpen={() => {
-          void refreshProviders();
-        }}
+        onModelPickerOpen={handleModelPickerOpen}
             />
           )}
           </ErrorBoundary>
@@ -563,12 +631,12 @@ export default function App() {
         usage={visibleDetail?.usage ?? null}
         providers={providers}
         project={project}
-        threads={threads}
+        rosterKey={rosterKey}
         listThreadSummaries={listThreadSummaries}
         onSelectThread={handleSelectThread}
-        onSetupWorktree={() => setupWorktree()}
-        onMergeWorktree={() => mergeWorktree()}
-        onRemoveWorktree={(force) => removeWorktree(force)}
+        onSetupWorktree={setupWorktree}
+        onMergeWorktree={mergeWorktree}
+        onRemoveWorktree={removeWorktree}
         onViewChanges={openChanges}
         listCheckpoints={listCheckpoints}
         restoreCheckpoint={restoreCheckpoint}
@@ -599,7 +667,7 @@ export default function App() {
         </div>
         <SettingsModal
           open={settingsOpen}
-          onClose={() => setSettingsOpen(false)}
+          onClose={closeSettings}
           settings={settings}
           status={appStatus}
           update={updateStatus}

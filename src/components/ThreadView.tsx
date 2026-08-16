@@ -244,8 +244,12 @@ interface ThreadViewProps {
   onFork?: (
     opts?: { provider?: string },
   ) => void | Promise<void | ThreadInfo | null>;
-  /** Full thread list for handoffFrom provenance lookup. */
-  threads?: ThreadInfo[];
+  /**
+   * The thread this one was handed off from (handoffFrom), already resolved.
+   * Resolved by App rather than passing the whole list: the list gets a new
+   * identity on every stream tick, which would defeat the memo (issue #91).
+   */
+  handoffSource?: ThreadInfo | null;
   /** Select another thread (provenance chip → source). */
   onSelectThread?: (id: string) => void;
   /** Fired when the composer model picker opens (provider list refresh). */
@@ -1496,7 +1500,12 @@ function ChangesPanel({
   );
 }
 
-export function ThreadView({
+/**
+ * memo'd: only the OPEN thread's stream should re-render this pane. Four other
+ * threads streaming in the sidebar used to re-render it every 700ms each
+ * (issue #91) — hence `handoffSource` rather than the whole thread list.
+ */
+export const ThreadView = memo(function ThreadView({
   detail,
   detailError = null,
   onRetryDetail,
@@ -1544,7 +1553,7 @@ export function ThreadView({
   runError = null,
   onDismissRunError,
   onFork,
-  threads = [],
+  handoffSource = null,
   onSelectThread,
   onModelPickerOpen,
 }: ThreadViewProps) {
@@ -2023,10 +2032,6 @@ export function ThreadView({
   const { thread } = detail;
 
   const handoffSourceId = thread.handoffFrom;
-  const handoffSource =
-    handoffSourceId != null
-      ? threads.find((t) => t.id === handoffSourceId) ?? null
-      : null;
   const showHandoffBanner =
     handoffSourceId != null && !handoffBannerDismissed;
   const otherProviders = providers.filter((p) => p.id !== thread.provider);
@@ -2708,4 +2713,4 @@ export function ThreadView({
       )}
     </main>
   );
-}
+});
