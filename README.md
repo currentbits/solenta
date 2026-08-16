@@ -75,9 +75,14 @@ GitHub release check for updates.
 
 **Beyond one prompt**
 
+- **Orchestrator threads** — a thread that hands its first prompt to a worker in
+  its own worktree and supervises instead of editing. Pick it per thread, or make
+  it the default for every new thread in Settings.
 - **Build workflows** — multi-phase pipelines (plan → analyze → verify …) with a
   provider per phase, fan-out, and a judge step. Each phase settles visibly in
   the Agents panel.
+- **Planboard** — a project's plan as its GitHub issues, written by agents with
+  nothing but `gh`, with **Start task** to open a thread on a card.
 - **Shared agent memory** — a supervised local memory server (MCP + HTTP) is
   auto-injected into sessions, so what one thread learns, the next one knows.
 - **Automations** — recurring prompts (hourly / daily / weekly) against any
@@ -88,7 +93,8 @@ GitHub release check for updates.
 **Control**
 
 - **Spend guardrails** — an optional daily budget cap blocks new runs once the
-  day's spend hits the limit; token usage is visible per thread.
+  day's spend hits the limit, and a per-orchestration cap bounds what one
+  fan-out can spend across its crew; token usage is visible per thread.
 - **Web mode** — `--serve-web` serves the same UI over HTTP + WebSocket behind a
   session token, so you can check in from a browser or your phone.
 - **SSH remote projects** — register projects on other hosts and run agents

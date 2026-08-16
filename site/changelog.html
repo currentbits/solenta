@@ -54,6 +54,60 @@
         Every notable change to Solenta, newest first.
       </p>
 
+      <h2 id="v0-5-0">0.5.0 <small>2026-08-16</small></h2>
+      <h3>Added</h3>
+      <ul>
+        <li><strong>Orchestrator threads.</strong> A new thread mode hands the thread's first prompt straight to a worker in its own worktree, and the thread itself stays back to supervise. Pick it from the caret next to <strong>+</strong> in the sidebar, which now offers all three modes: worktree, orchestrator, and plain (straight in your checkout).</li>
+        <li><strong>Delegate new threads by default.</strong> A Settings toggle makes every new thread an orchestrator, so fan-out is the default rather than something you remember to choose.</li>
+        <li><strong>Start task picks the mode.</strong> Starting work from a Planboard card lets you choose worktree, orchestrator or plain instead of always following the app default.</li>
+        <li><strong>Delegating status.</strong> A thread whose workers are still running reads <em>Delegating</em> and stays in Working on the Kanban, instead of claiming it is done while its crew is mid-run.</li>
+        <li><strong>Per-orchestration budget ceiling.</strong> A second cap in Settings, alongside the daily budget, bounds what one fan-out can spend. Empty means no cap.</li>
+      </ul>
+      <h3>Security</h3>
+      <ul>
+        <li>MCP bearer tokens are written <code>0600</code>, revoked on shutdown, and kept out of the Codex command line, so they no longer leak into user config or the process table.</li>
+        <li>Adopting a running memory server now requires proof the process knows the shared secret, so nothing squatting on the port can be handed your memory traffic.</li>
+        <li>User-registered MCP servers no longer get blanket tool auto-approval in headless Claude runs.</li>
+        <li>Saving an image from a thread is confined to that thread's directory, closing a path traversal.</li>
+      </ul>
+      <h3>Fixed</h3>
+      <ul>
+        <li>The main process survives an unhandled rejection instead of taking the app down with it.</li>
+        <li>Merging a worktree no longer refuses on a dirty project checkout — it auto-stashes — and untracked files stopped blocking merges outright.</li>
+        <li><strong>Run now</strong> failures on an automation surface on the row instead of vanishing.</li>
+      </ul>
+
+      <h2 id="v0-4-0">0.4.0 <small>2026-08-16</small></h2>
+      <h3>Added</h3>
+      <ul>
+        <li><strong>Planboard.</strong> One project's plan as its GitHub issues in Todo / In progress / Done, with a per-project selector. Agents write to it with nothing but <code>gh</code>, their todo list is mirrored as live plan steps, and you can start a thread straight from a Todo card.</li>
+        <li><strong>Plan overview card.</strong> When an agent writes a plan, it is pinned in the thread panel instead of scrolling away, and plans in permission prompts render as a plan rather than a wall of text.</li>
+        <li><strong>Images and folders in the composer.</strong> Attach them to a message, see images agents produce inline, and click any image to view it full size.</li>
+        <li><strong>Type-ahead during a run.</strong> The composer stays live while an agent works and queues your next message instead of dropping it.</li>
+        <li><strong>Desktop notification controls.</strong> A global toggle in Settings and a per-thread mute.</li>
+        <li><strong>Cascade stop.</strong> Stopping an orchestrator stops its crew, and workers run in their own git worktree so they never collide.</li>
+        <li><strong>Better hand-offs.</strong> A fork now carries a tail digest of the source thread rather than one truncated reply, and a thread shows what it is waiting on — including workers blocked on a permission prompt, and orchestrator wake-ups held back by the budget.</li>
+        <li><strong>Question prompts as a picker.</strong> An agent asking you to choose renders as options with keyboard shortcuts, and Agent-tool subagents appear in the Agents panel.</li>
+        <li><strong>Denser sidebar.</strong> Smaller thread cards, sticky group headers, and a per-group overflow cap so a busy day stays readable.</li>
+        <li><strong>Safer auto-update.</strong> Installing is gated behind a click and the downloaded asset's digest is verified first.</li>
+      </ul>
+      <h3>Fixed</h3>
+      <ul>
+        <li>Streaming no longer re-renders all three panes on every tick, the Agents panel stopped re-querying every thread's messages per event, thread tails stream over IPC instead of the whole transcript, and <code>@</code>-mention search caches its file list.</li>
+        <li>Transcripts are capped per thread and the store flushes off the event loop, so a long-running thread no longer rewrites megabytes on every token.</li>
+        <li>Every synchronous git and ssh call on the main process is bounded by a timeout, so a hung remote cannot freeze the window.</li>
+        <li>A web-server port conflict no longer kills app boot with no window and no error.</li>
+        <li>Squash-merge conflicts get a resolution path instead of a raw git dump.</li>
+        <li>The memory server exits when its parent does, so an ungraceful quit stops leaving orphans behind.</li>
+        <li>React error boundaries around the three main panes turn a render bug into one broken pane instead of a blank app.</li>
+        <li>Idle agent CLIs are retired when a thread settles or is archived, and kept-alive Claude processes are capped at three.</li>
+        <li>A Claude turn no longer fails on a timer while the CLI is still working.</li>
+        <li>Switching threads no longer shows the previous transcript under the new selection, and a failed thread load offers a retry.</li>
+        <li>A thread can no longer spawn workers into another project's repository.</li>
+        <li>Update-check failures are surfaced instead of leaving a stale &ldquo;Up to date&rdquo;.</li>
+        <li>Local Servers hides ephemeral-port listeners that are not web servers.</li>
+      </ul>
+
       <h2 id="v0-3-0">0.3.0 <small>2026-08-14</small></h2>
       <h3>Added</h3>
       <ul>

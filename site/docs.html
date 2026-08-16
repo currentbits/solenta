@@ -112,6 +112,20 @@
         <li><strong>Fork and hand off</strong> copies a thread, optionally onto another provider, and starts it on a new prompt.</li>
         <li><strong>Best of N</strong> sends one prompt to several providers at once so you can compare the results.</li>
       </ul>
+      <p>
+        The caret next to <strong>+</strong> in the sidebar creates a thread in
+        one of three modes:
+      </p>
+      <ul>
+        <li><strong>New worktree thread</strong> — its own git worktree and branch, so the agent never touches your checkout.</li>
+        <li><strong>New orchestrator thread</strong> — the thread hands its first prompt to a worker in a worktree and supervises instead of editing (see <a href="#orchestration">Orchestration</a>).</li>
+        <li><strong>New plain thread</strong> — straight in the project checkout, no worktree.</li>
+      </ul>
+      <p>
+        Plain <strong>+</strong> follows your defaults: <em>Isolate new threads
+        in a git worktree</em> and <em>Delegate new threads to a worker</em> in
+        Settings, the second winning over the first.
+      </p>
 
       <h2 id="worktrees">Worktrees and pull requests</h2>
       <p>
@@ -139,7 +153,7 @@
       </p>
       <ul>
         <li><strong>Kanban</strong> groups every thread by status — working, waiting on you, done, failed — so a pile of parallel runs stays readable.</li>
-        <li><strong>Planboard</strong> shows one project's plan as its GitHub issues in Todo / In progress / Done. It is read-only; cards open the issue on GitHub.</li>
+        <li><strong>Planboard</strong> shows one project's plan as its GitHub issues in Todo / In progress / Done. Cards open the issue on GitHub, and <strong>Start task</strong> on a Todo card opens a thread on it — in worktree, orchestrator or plain mode.</li>
         <li><strong>Pull requests</strong> lists the open PRs per project with their checks, and jumps to the thread that opened one.</li>
         <li><strong>Activity</strong> is a chronological feed, grouped by day, of everything your agents did.</li>
       </ul>
@@ -165,6 +179,22 @@
       </p>
 
       <h2 id="orchestration">Orchestration</h2>
+      <p>
+        An <strong>orchestrator thread</strong> never edits your code itself.
+        Its first prompt goes straight to a worker thread in its own worktree,
+        and the orchestrator supervises: it can fork more workers, poll them,
+        review what they produce, and merge. Create one from the sidebar caret,
+        from a Planboard card, or make it the default for every new thread with
+        <em>Delegate new threads to a worker</em> in Settings.
+      </p>
+      <p>
+        Workers nest under the thread that spawned them in the sidebar. While
+        any of them is still running, the parent reads <strong>Delegating</strong>
+        and stays in Working on the Kanban rather than reporting itself done.
+        Stopping an orchestrator stops its crew. Like worktrees, orchestrator
+        threads are local-only: an <a href="#ssh">SSH remote project</a> always
+        gets a plain thread.
+      </p>
       <p>
         For ad-hoc fan-out you do not configure anything: you ask. Every agent
         session gets four MCP tools from the built-in
@@ -236,6 +266,13 @@
         all providers. Once the cap is reached, new runs are blocked until
         tomorrow. Token usage and cost are visible per thread in the composer
         footer, so there are no surprise bills from a runaway loop.
+      </p>
+      <p>
+        A second cap, <strong>per-orchestration budget</strong>, bounds what one
+        fan-out can spend across all the workers it spawns — the case where a
+        runaway loop gets expensive fastest. Leave it empty for no ceiling; when
+        a wake-up is held back by it, the thread says so instead of stalling
+        silently.
       </p>
 
       <h2 id="updates">Notifications and updates</h2>

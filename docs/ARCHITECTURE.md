@@ -97,8 +97,17 @@ Config file (env `CODER_MEMORY_CONFIG` or default under Application Support/code
 projects[], threads[],
 messagesByThread{}, workLogByThread{}, usageByThread{},
 workflowTemplates[], spendByDay{ "YYYY-MM-DD": number },
-settings: { dailyBudgetUsd: number | null, orchestrationBudgetUsd: number | null }
+settings: { dailyBudgetUsd: number | null, orchestrationBudgetUsd: number | null,
+            autoSettleAfterDays: number | null, mcpServers[],
+            defaultWorktree: boolean, defaultOrchestrate: boolean,
+            updateChannel: "prod" | "nightly" | null, notifications: boolean }
 ```
+
+`defaultOrchestrate` wins over `defaultWorktree` when `useCoder.createThread`
+resolves the defaults — an orchestrator never holds a worktree itself, its
+worker does — and `threads:create` applies the same precedence on the options.
+Explicit `worktree` / `orchestrate` options override the defaults; both modes
+are local-only, so remote projects always get plain threads.
 
 `updateThread` does not bump `updatedAt` unless the caller opts in (sidebar age
 must reflect real activity). Interrupted "working" threads are recovered on load.
