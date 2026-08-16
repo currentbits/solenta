@@ -90,9 +90,12 @@ ceiling, next to the equivalent one on `assertSameProject`
 
 ### 3. Claude auto-allow
 
-A pure helper — `autoAllowRead(toolName, input, roots)` — lives in `core/` so
-it is testable without spawning anything. It returns true only when **both**
-hold:
+A pure helper — `autoAllowRead(toolName, input, roots)` — lives in a new CJS
+module `electron/readReach.js`, testable without spawning anything. (Not
+`core/`: that package is the TypeScript workflow engine, built to `core/dist`
+and reached through a dynamic import; every pure main-process helper in this
+codebase — `links.js`, `pathEnv.js` — is a plain CJS module next to its
+caller.) It returns true only when **both** hold:
 
 - `toolName` is one of `Read`, `Grep`, `Glob`, `NotebookRead`;
 - every path-shaped input value (`file_path`, `path`, `notebook_path`)
@@ -135,7 +138,7 @@ from the guard work: nothing changes.
 
 ## Tests
 
-- **Pure** (`core/`): `autoAllowRead` matrix — read tool inside a root; read
+- **Pure** (`electron/test/read-reach.test.js`): `autoAllowRead` matrix — read tool inside a root; read
   tool outside every root; a `..` escape that resolves outside; `Edit` and
   `Bash` inside a root; empty roots; tool with no path input.
 - **Services**: `readRootsFor` drops unknown ids, the thread's own project and
