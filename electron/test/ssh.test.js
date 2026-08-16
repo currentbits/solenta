@@ -1,6 +1,14 @@
-const { describe, it } = require("node:test");
+const { describe, it, afterEach } = require("node:test");
 const assert = require("node:assert/strict");
-const { buildSshCommand, posixQuote, wrapCommand } = require("../ssh.js");
+const ssh = require("../ssh.js");
+const {
+  buildSshCommand,
+  posixQuote,
+  wrapCommand,
+  execCommand,
+  SYNC_TIMEOUT_MS,
+} = ssh;
+const { gitTry } = require("../worktrees.js");
 
 describe("posixQuote", () => {
   it("wraps a plain token in single quotes", () => {
@@ -110,5 +118,47 @@ describe("wrapCommand", () => {
       "remote must see the CLI name, not the local path",
     );
     assert.ok(!cmd.args[cmd.args.length - 1].includes("/usr/local/bin"));
+  });
+});
+
+describe("execCommand timeout", () => {
+  /** @returns {{ calls: any[] }} */
+  function capture() {
+    const calls = [];
+    ssh.setExecFileSync((bin, args, opts) => {
+      calls.push({ bin, args, opts });
+      return "";
+    });
+    return { calls };
+  }
+
+  afterEach(() => ssh.setExecFileSync(null));
+
+  it("defaults a hard timeout so sync git cannot hang the main process", () => {
+    const { calls } = capture();
+    execCommand(null, "git", ["status"], { cwd: "/repo", encoding: "utf8" });
+    assert.equal(calls[0].opts.timeout, SYNC_TIMEOUT_MS);
+    assert.ok(SYNC_TIMEOUT_MS > 0);
+  });
+
+  it("applies the default to remote (ssh) commands too", () => {
+    const { calls } = capture();
+    execCommand({ remoteHost: "dev@box", remotePath: "/srv/app" }, "git", ["diff"], {});
+    assert.equal(calls[0].bin, "ssh");
+    assert.equal(calls[0].opts.timeout, SYNC_TIMEOUT_MS);
+  });
+
+  it("lets the caller override it", () => {
+    const { calls } = capture();
+    execCommand(null, "git", ["fetch"], { timeout: 60_000 });
+    assert.equal(calls[0].opts.timeout, 60_000);
+  });
+
+  it("bounds worktrees.gitTry, and its own timeout still wins", () => {
+    const { calls } = capture();
+    gitTry("/repo", ["ls-files"]);
+    assert.equal(calls[0].opts.timeout, SYNC_TIMEOUT_MS);
+    gitTry("/repo", ["push"], { timeout: 30_000 });
+    assert.equal(calls[1].opts.timeout, 30_000);
   });
 });

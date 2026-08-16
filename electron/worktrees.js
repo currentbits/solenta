@@ -23,12 +23,15 @@ const TERMINAL_PR_STATES = new Set(["MERGED", "CLOSED"]);
  * @returns {string}
  */
 function gitOut(cwd, args, opts) {
-  const out = execFileSync("git", args, {
+  // execCommand, not execFileSync: it owns the default timeout that keeps a
+  // hung git off the main-process event loop.
+  const raw = execCommand(null, "git", args, {
     cwd,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
     maxBuffer: GIT_MAX_BUFFER,
   });
+  const out = raw == null ? "" : String(raw);
   return opts && opts.raw ? out : out.trim();
 }
 
@@ -74,7 +77,9 @@ function gitTry(cwd, args, opts) {
     if (opts && opts.timeout != null) {
       execOpts.timeout = opts.timeout;
     }
-    const out = execFileSync("git", args, execOpts);
+    // execCommand defaults the timeout when the caller did not set one.
+    const raw = execCommand(null, "git", args, execOpts);
+    const out = raw == null ? "" : String(raw);
     const stdout = opts && opts.raw ? out : out.trim();
     return { ok: true, stdout, stderr: "", combined: stdout };
   } catch (err) {
