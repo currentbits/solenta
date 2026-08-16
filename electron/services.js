@@ -18,18 +18,23 @@ const PERMISSION_MODES = new Set([
   "bypassPermissions",
 ]);
 
+/** Network git (fetch/pull) is legitimately slower than execCommand's local default. */
+const GIT_NETWORK_TIMEOUT_MS = 60_000;
+
 /**
  * @param {string} cwd
  * @param {string[]} args
  * @param {{ remoteHost?: string, remotePath?: string, path?: string } | null} [project]
+ * @param {{ timeout?: number }} [opts]
  * @returns {string}
  */
-function gitOut(cwd, args, project) {
+function gitOut(cwd, args, project, opts) {
   return String(
     execCommand(project && project.remoteHost ? project : null, "git", args, {
       cwd,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
+      ...(opts || {}),
     }),
   ).trim();
 }
@@ -1226,7 +1231,7 @@ function gitSyncInfo(cwd) {
 function gitFetch(cwd) {
   const resolved = path.resolve(cwd);
   try {
-    gitOut(resolved, ["fetch"]);
+    gitOut(resolved, ["fetch"], null, { timeout: GIT_NETWORK_TIMEOUT_MS });
   } catch (err) {
     const msg = err && err.message ? String(err.message) : String(err);
     throw new Error(`git fetch failed: ${msg.split("\n")[0]}`);
@@ -1360,7 +1365,9 @@ function gitPull(cwd) {
   }
   let out;
   try {
-    out = gitOut(resolved, ["pull", "--ff-only"]);
+    out = gitOut(resolved, ["pull", "--ff-only"], null, {
+      timeout: GIT_NETWORK_TIMEOUT_MS,
+    });
   } catch (err) {
     const msg = err && err.message ? String(err.message) : String(err);
     return { ok: false, reason: pullFailureReason(msg) };
