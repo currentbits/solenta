@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const http = require("node:http");
+const crypto = require("node:crypto");
 const { spawn } = require("node:child_process");
 const {
   createMemorySupervisor,
@@ -36,6 +37,28 @@ function waitFor(predicate, { timeoutMs = 10000, intervalMs = 30 } = {}) {
   });
 }
 
+/** Answer /health; HMAC-prove `token` when ?nonce= is present. */
+function serveProvenHealth(token) {
+  return (req, res) => {
+    const url = new URL(req.url, "http://127.0.0.1");
+    if (url.pathname !== "/health") {
+      res.writeHead(404);
+      res.end();
+      return;
+    }
+    const body = { ok: true };
+    const nonce = url.searchParams.get("nonce");
+    if (nonce) {
+      body.proof = crypto
+        .createHmac("sha256", token)
+        .update(nonce)
+        .digest("hex");
+    }
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify(body));
+  };
+}
+
 /**
  * Minimal fake memory server entry: HTTP /health and /mcp stub.
  * Reads CODER_MEMORY_CONFIG for port/token.
@@ -46,6 +69,7 @@ function writeFakeMemoryEntry(dir) {
 "use strict";
 const http = require("http");
 const fs = require("fs");
+const crypto = require("crypto");
 
 const configPath = process.env.CODER_MEMORY_CONFIG;
 if (!configPath) {
@@ -69,9 +93,15 @@ if (!port) {
 }
 
 const server = http.createServer((req, res) => {
-  if (req.url === "/health") {
+  const url = new URL(req.url, "http://127.0.0.1");
+  if (url.pathname === "/health") {
+    const body = { ok: true, port };
+    const nonce = url.searchParams.get("nonce");
+    if (nonce) {
+      body.proof = crypto.createHmac("sha256", cfg.token).update(nonce).digest("hex");
+    }
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ ok: true, port }));
+    res.end(JSON.stringify(body));
     return;
   }
   res.writeHead(404);
@@ -145,15 +175,7 @@ describe("memory-sup supervisor", () => {
       "utf8",
     );
 
-    const server = http.createServer((req, res) => {
-      if (req.url === "/health") {
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ ok: true }));
-        return;
-      }
-      res.writeHead(404);
-      res.end();
-    });
+    const server = http.createServer(serveProvenHealth(token));
     await new Promise((r) => server.listen(port, "127.0.0.1", r));
 
     try {
@@ -206,6 +228,111 @@ describe("memory-sup supervisor", () => {
       // Server still up after stop
       const health = await fetch(`http://127.0.0.1:${port}/health`);
       assert.equal(health.ok, true);
+    } finally {
+      await new Promise((r) => server.close(r));
+    }
+  });
+
+  it("does not adopt a listener that cannot prove the token", async () => {
+    const port = await freePort();
+    const token = "squatter-token-xxxxxxxx";
+    const configPath = path.join(tmpDir, "memory-server.json");
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        port,
+        token,
+        dbPath: path.join(tmpDir, "mem.db"),
+      }),
+      "utf8",
+    );
+
+    const server = http.createServer((req, res) => {
+      const url = new URL(req.url, "http://127.0.0.1");
+      if (url.pathname === "/health") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: true, proof: "deadbeef" }));
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    await new Promise((r) => server.listen(port, "127.0.0.1", r));
+
+    try {
+      const sup = createMemorySupervisor({
+        userDataPath: tmpDir,
+        appPath: path.join(tmpDir, "app"),
+        log: (m) => logs.push(m),
+      });
+      await sup.start();
+      const st = sup.getStatus();
+      assert.notEqual(st.adopted, true);
+      assert.ok(
+        logs.some((m) =>
+          String(m).includes(`unverified listener on port ${port}`),
+        ),
+        `expected unverified-listener warning, got: ${JSON.stringify(logs)}`,
+      );
+
+      const mcpPath = path.join(tmpDir, "mcp-coder-memory.json");
+      if (fs.existsSync(mcpPath)) {
+        const mcp = JSON.parse(fs.readFileSync(mcpPath, "utf8"));
+        const url = mcp.mcpServers?.["coder-memory"]?.url || "";
+        assert.ok(
+          !url.includes(`:${port}`),
+          `mcp config must not point at squatter port: ${url}`,
+        );
+      }
+      const mcpArgs = getClaudeMcpArgs();
+      assert.ok(
+        !mcpArgs.some((a) => String(a).includes(`:${port}`)),
+        `getClaudeMcpArgs must not point at squatter: ${JSON.stringify(mcpArgs)}`,
+      );
+    } finally {
+      await new Promise((r) => server.close(r));
+    }
+  });
+
+  it("adopts a fake that serves the correct HMAC proof", async () => {
+    const port = await freePort();
+    const token = "proof-token-xxxxxxxx";
+    fs.writeFileSync(
+      path.join(tmpDir, "memory-server.json"),
+      JSON.stringify({
+        port,
+        token,
+        dbPath: path.join(tmpDir, "mem.db"),
+      }),
+      "utf8",
+    );
+
+    const server = http.createServer(serveProvenHealth(token));
+    await new Promise((r) => server.listen(port, "127.0.0.1", r));
+    try {
+      const sup = createMemorySupervisor({
+        userDataPath: tmpDir,
+        appPath: path.join(tmpDir, "app"),
+        log: (m) => logs.push(m),
+      });
+      await sup.start();
+      const st = sup.getStatus();
+      assert.equal(st.running, true);
+      assert.equal(st.adopted, true);
+      assert.equal(st.port, port);
+      const mcpArgs = getClaudeMcpArgs();
+      assert.ok(mcpArgs[0].startsWith("--mcp-config="));
+      const mcpPath = mcpArgs[0].slice("--mcp-config=".length);
+      const mcp = JSON.parse(fs.readFileSync(mcpPath, "utf8"));
+      assert.equal(
+        mcp.mcpServers["coder-memory"].url,
+        `http://127.0.0.1:${port}/mcp`,
+      );
+      assert.equal(
+        mcp.mcpServers["coder-memory"].headers.Authorization,
+        `Bearer ${token}`,
+      );
+      sup.stop();
     } finally {
       await new Promise((r) => server.close(r));
     }
@@ -410,15 +537,7 @@ describe("memory-sup supervisor", () => {
       }),
       "utf8",
     );
-    const server = http.createServer((req, res) => {
-      if (req.url === "/health") {
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ ok: true }));
-        return;
-      }
-      res.writeHead(404);
-      res.end();
-    });
+    const server = http.createServer(serveProvenHealth(token));
     await new Promise((r) => server.listen(port, "127.0.0.1", r));
     try {
       const sup = createMemorySupervisor({
@@ -483,15 +602,7 @@ describe("ensureKimiMcpConfig", () => {
       }),
       "utf8",
     );
-    const server = http.createServer((req, res) => {
-      if (req.url === "/health") {
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ ok: true }));
-        return;
-      }
-      res.writeHead(404);
-      res.end();
-    });
+    const server = http.createServer(serveProvenHealth(token));
     await new Promise((r) => server.listen(port, "127.0.0.1", r));
     // Disable auto-write by making kimi/grok unavailable during start; tests call ensure explicitly.
     const sup = createMemorySupervisor({
@@ -762,15 +873,7 @@ process.exit(0);
       }),
       "utf8",
     );
-    const server = http.createServer((req, res) => {
-      if (req.url === "/health") {
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ ok: true }));
-        return;
-      }
-      res.writeHead(404);
-      res.end();
-    });
+    const server = http.createServer(serveProvenHealth(token));
     await new Promise((r) => server.listen(port, "127.0.0.1", r));
     const env = {
       ...process.env,

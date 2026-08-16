@@ -3425,6 +3425,64 @@ function createRunner(opts) {
       throw new Error(`Unknown thread: ${threadId}`);
     }
 
+    // Orchestrator thread (issue #202): the first prompt is not run here. It
+    // is forked to a worker that holds the worktree and does the work; from
+    // the second prompt on the flag is gone and this thread runs its own LLM,
+    // supervising the crew through the coder-threads tools. The gates below
+    // belong to the run that actually happens — the worker's — so they are
+    // deliberately skipped on this hop.
+    if (thread.pendingFork) {
+      // Promote the title BEFORE forking so the worker is "Fork: <task>"
+      // rather than "Fork: New Thread".
+      let forkTitle = thread.title;
+      if (forkTitle === "New Thread") {
+        const firstLine = String(prompt).split(/\r?\n/)[0].trim();
+        forkTitle =
+          firstLine.slice(0, services.THREAD_TITLE_MAX || 60) || "New Thread";
+      }
+      if (forkTitle !== thread.title) {
+        store.updateThread(threadId, { title: forkTitle }, { touch: true });
+      }
+
+      const worker = services.forkWorkerThread(store, { threadId });
+      let started;
+      try {
+        started = await startRun({
+          threadId: worker.id,
+          prompt,
+          attachments,
+        });
+      } catch (err) {
+        // The worker could not start (missing CLI, budget gate, worktree
+        // setup): drop the orphan and keep pendingFork so the next prompt
+        // retries the fork, the same contract as a failed lazy worktree.
+        try {
+          services.deleteThread(store, { threadId: worker.id });
+        } catch {
+          /* best effort */
+        }
+        pushThreadsChanged();
+        throw err;
+      }
+
+      const forkRunId = randomUUID();
+      appendMessage(threadId, "user", prompt, forkRunId, null, attachments);
+      appendMessage(
+        threadId,
+        "event",
+        `[orchestration] Forked worker ${worker.id} for this prompt; it works in its own worktree and wakes this thread when it lands.`,
+        forkRunId,
+      );
+      store.updateThread(
+        threadId,
+        { pendingFork: false, ...services.clearSettledOnActivity(thread) },
+        { touch: true },
+      );
+      pushDetail(threadId);
+      pushThreadsChanged();
+      return started;
+    }
+
     // Budget gate is start-time only; never kills an in-flight run.
     services.assertUnderDailyBudget(store);
 

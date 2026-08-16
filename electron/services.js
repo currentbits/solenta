@@ -629,6 +629,22 @@ function buildHandoffPrefix(thread, getMessages) {
 }
 
 /**
+ * Can this project host a git worktree? Remote projects are excluded (same
+ * rule as threads:create) and so are non-repos, where `git worktree add`
+ * would just fail the worker's run.
+ * @param {{ path?: string, remoteHost?: string | null } | null | undefined} project
+ * @returns {boolean}
+ */
+function canHostWorktree(project) {
+  return Boolean(
+    project &&
+      !project.remoteHost &&
+      project.path &&
+      fs.existsSync(path.join(project.path, ".git")),
+  );
+}
+
+/**
  * Fork / hand off: new thread in the source's project. Source is never modified.
  *
  * @param {import('./store').Store} store
@@ -695,6 +711,42 @@ function forkThread(store, input) {
   });
   store.save();
   return updated ? { ...updated } : { ...created, handoffFrom: source.id };
+}
+
+/**
+ * Fork a thread into an orchestration WORKER: flagged orchWorker (the runner
+ * auto-archives it when its run lands, issue #14) and isolated in its own
+ * worktree so N parallel workers never edit the same checkout (issue #30).
+ * Lazy like threads:create — startRun materializes the worktree.
+ *
+ * Shared by orchServer's thread_fork tool and the runner's pendingFork
+ * dispatch so the two definitions of "a worker" cannot drift apart. Starting
+ * the run is the caller's job: services must not depend on the runner.
+ *
+ * @param {any} store
+ * @param {{ threadId: string, provider?: string, worktree?: boolean }} input
+ * @param {(store: any, input: any) => any} [forkImpl] seam for tests
+ * @returns {any} the new worker thread
+ */
+function forkWorkerThread(store, input, forkImpl = forkThread) {
+  /** @type {{ threadId: string, provider?: string }} */
+  const forkInput = { threadId: input.threadId };
+  if (input.provider != null) forkInput.provider = input.provider;
+  const fork = forkImpl(store, forkInput);
+
+  const patch = { orchWorker: true };
+  const source = store.getThread(input.threadId);
+  const projectId = fork.projectId ?? (source ? source.projectId : null);
+  const project =
+    typeof store.getProject === "function" && projectId != null
+      ? store.getProject(projectId)
+      : null;
+  if (input.worktree !== false && canHostWorktree(project)) {
+    patch.pendingWorktree = true;
+  }
+  store.updateThread(fork.id, patch);
+  store.save();
+  return fork;
 }
 
 /**
@@ -1875,6 +1927,8 @@ module.exports = {
   updateProject,
   createThread,
   forkThread,
+  canHostWorktree,
+  forkWorkerThread,
   setPermissionMode,
   setReasoningEffort,
   setProvider,
