@@ -58,6 +58,18 @@ if (process.env.CODER_FAKE_CODEX_ARGV_FILE) {
     JSON.stringify(process.argv.slice(1)),
     "utf8",
   );
+  // MCP bearer tokens must arrive by env, not argv (issue #125).
+  fs.writeFileSync(
+    process.env.CODER_FAKE_CODEX_ARGV_FILE + ".env.json",
+    JSON.stringify(
+      Object.fromEntries(
+        Object.entries(process.env).filter(([k]) =>
+          k.startsWith("CODER_MCP_TOKEN_"),
+        ),
+      ),
+    ),
+    "utf8",
+  );
 }
 
 const scenario = process.env.CODER_FAKE_CODEX_SCENARIO || "success";
@@ -426,11 +438,15 @@ describe("runner codex provider", () => {
       await sup.start();
       assert.equal(sup.getStatus().running, true);
       const mcpArgs = getCodexMcpArgs();
-      assert.equal(mcpArgs.length, 2);
+      assert.equal(mcpArgs.length, 4);
       assert.equal(mcpArgs[0], "-c");
       assert.equal(
         mcpArgs[1],
-        `mcp_servers.coder-memory.url="http://127.0.0.1:${freePort}/mcp?token=${token}"`,
+        `mcp_servers.coder-memory.url="http://127.0.0.1:${freePort}/mcp"`,
+      );
+      assert.equal(
+        mcpArgs[3],
+        'mcp_servers.coder-memory.bearer_token_env_var="CODER_MCP_TOKEN_CODER_MEMORY"',
       );
 
       const project = store.getProjects()[0];
@@ -447,10 +463,20 @@ describe("runner codex provider", () => {
       assert.ok(cIdx >= 0, `expected -c in ${JSON.stringify(argv)}`);
       assert.equal(
         argv[cIdx + 1],
-        `mcp_servers.coder-memory.url="http://127.0.0.1:${freePort}/mcp?token=${token}"`,
+        `mcp_servers.coder-memory.url="http://127.0.0.1:${freePort}/mcp"`,
       );
       // Leading args before exec
       assert.ok(cIdx < argv.indexOf("exec"));
+      // The token reaches codex by env only: argv is visible to every local
+      // process via `ps` for the whole run (issue #125).
+      assert.ok(
+        !argv.some((a) => String(a).includes(token)),
+        `token leaked into argv: ${JSON.stringify(argv)}`,
+      );
+      assert.deepEqual(
+        JSON.parse(fs.readFileSync(argvFile + ".env.json", "utf8")),
+        { CODER_MCP_TOKEN_CODER_MEMORY: token },
+      );
       sup.stop();
     } finally {
       await new Promise((r) => server.close(r));

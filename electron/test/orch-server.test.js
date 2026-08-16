@@ -14,6 +14,7 @@ const {
   createMemorySupervisor,
   getClaudeMcpArgs,
   getCodexMcpArgs,
+  getCodexMcpEnv,
   ensureKimiMcpConfig,
   registerMcpServer,
   unregisterMcpServer,
@@ -435,6 +436,7 @@ describe("orch-server HTTP", () => {
       CODER_KIMI_MCP_PATH: process.env.CODER_KIMI_MCP_PATH,
       CODER_KIMI_BIN: process.env.CODER_KIMI_BIN,
       CODER_GROK_BIN: process.env.CODER_GROK_BIN,
+      CODER_GROK_CONFIG_PATH: process.env.CODER_GROK_CONFIG_PATH,
       CODER_GROK_MCP_DISABLE: process.env.CODER_GROK_MCP_DISABLE,
     };
     // Keep provider side effects inside the test dir / turned off.
@@ -442,6 +444,8 @@ describe("orch-server HTTP", () => {
     process.env.CODER_KIMI_BIN = path.join(tmpDir, "no-kimi");
     process.env.CODER_GROK_MCP_DISABLE = "1";
     process.env.CODER_GROK_BIN = path.join(tmpDir, "no-grok-not-a-real-binary");
+    // A fake grok still triggers the post-add chmod; keep it off the real file.
+    process.env.CODER_GROK_CONFIG_PATH = path.join(tmpDir, "grok-config.toml");
     resetMemorySupForTests();
   });
 
@@ -494,6 +498,31 @@ describe("orch-server HTTP", () => {
     assert.equal(health.status, 200);
     const body = await health.json();
     assert.equal(body.ok, true);
+  });
+
+  it("keeps the port but mints a fresh token every start", async () => {
+    const cfgPath = path.join(tmpDir, "orch-server.json");
+    const { orch } = await startOrch();
+    const first = JSON.parse(fs.readFileSync(cfgPath, "utf8"));
+    orch.stop();
+
+    // A token that leaked into a user-global CLI config must be dead by the
+    // next launch, even if cleanup never ran (issue #125).
+    const { orch: again } = await startOrch();
+    const second = JSON.parse(fs.readFileSync(cfgPath, "utf8"));
+    assert.equal(second.port, first.port, "port is stable across launches");
+    assert.notEqual(second.token, first.token);
+    assert.equal((fs.statSync(cfgPath).mode & 0o777).toString(8), "600");
+
+    const stale = await fetch(`http://127.0.0.1:${again.getStatus().port}/mcp`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${first.token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+    });
+    assert.equal(stale.status, 401);
   });
 
   it("rejects /mcp without a token or with a wrong token", async () => {
@@ -627,12 +656,15 @@ describe("orch-server provider injection", () => {
       CODER_KIMI_MCP_PATH: process.env.CODER_KIMI_MCP_PATH,
       CODER_KIMI_BIN: process.env.CODER_KIMI_BIN,
       CODER_GROK_BIN: process.env.CODER_GROK_BIN,
+      CODER_GROK_CONFIG_PATH: process.env.CODER_GROK_CONFIG_PATH,
       CODER_GROK_MCP_DISABLE: process.env.CODER_GROK_MCP_DISABLE,
     };
     process.env.CODER_KIMI_MCP_PATH = path.join(tmpDir, "kimi-mcp.json");
     process.env.CODER_KIMI_BIN = path.join(tmpDir, "no-kimi");
     process.env.CODER_GROK_MCP_DISABLE = "1";
     process.env.CODER_GROK_BIN = path.join(tmpDir, "no-grok-not-a-real-binary");
+    // A fake grok still triggers the post-add chmod; keep it off the real file.
+    process.env.CODER_GROK_CONFIG_PATH = path.join(tmpDir, "grok-config.toml");
     resetMemorySupForTests();
   });
 
@@ -748,12 +780,22 @@ describe("orch-server provider injection", () => {
       const orchToken = JSON.parse(
         fs.readFileSync(path.join(tmpDir, "orch-server.json"), "utf8"),
       ).token;
+      // URLs in argv, tokens in env: `ps` shows argv to every local user and
+      // the coder-threads token drives arbitrary agent runs (issue #125).
       assert.deepEqual(getCodexMcpArgs(), [
         "-c",
-        `mcp_servers.coder-memory.url="http://127.0.0.1:${memPort}/mcp?token=${memToken}"`,
+        `mcp_servers.coder-memory.url="http://127.0.0.1:${memPort}/mcp"`,
         "-c",
-        `mcp_servers.coder-threads.url="http://127.0.0.1:${orchPort}/mcp?token=${orchToken}"`,
+        'mcp_servers.coder-memory.bearer_token_env_var="CODER_MCP_TOKEN_CODER_MEMORY"',
+        "-c",
+        `mcp_servers.coder-threads.url="http://127.0.0.1:${orchPort}/mcp"`,
+        "-c",
+        'mcp_servers.coder-threads.bearer_token_env_var="CODER_MCP_TOKEN_CODER_THREADS"',
       ]);
+      assert.deepEqual(getCodexMcpEnv(), {
+        CODER_MCP_TOKEN_CODER_MEMORY: memToken,
+        CODER_MCP_TOKEN_CODER_THREADS: orchToken,
+      });
     } finally {
       sup.stop();
       await new Promise((r) => server.close(r));

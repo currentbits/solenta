@@ -24,6 +24,7 @@ const {
 const {
   getClaudeMcpArgs,
   getCodexMcpArgs,
+  getCodexMcpEnv,
   getMemoryStatus,
 } = require("./memory-sup.js");
 const opencodeParse = require("./opencode.js");
@@ -2270,11 +2271,13 @@ function createRunner(opts) {
       model: thread.model || null,
       reasoningEffort: thread.reasoningEffort || null,
     });
-    // Leading -c MCP override when memory server is healthy.
+    // Leading -c MCP override when memory server is healthy. The matching
+    // bearer tokens ride the child's env, never argv (issue #125).
     const codexMcpArgs = getCodexMcpArgs();
     if (codexMcpArgs.length > 0) {
       args.unshift(...codexMcpArgs);
     }
+    const codexMcpEnv = getCodexMcpEnv();
     const spawn = resolveSpawn(project, binary, args, localCwd);
 
     const entry = {
@@ -2346,6 +2349,7 @@ function createRunner(opts) {
       binary: spawn.binary,
       args: spawn.args,
       cwd: spawn.cwd,
+      envExtra: codexMcpEnv,
       onEvent: (ev) => {
         if (!guard()) return;
 

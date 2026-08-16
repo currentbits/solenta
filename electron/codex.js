@@ -11,6 +11,8 @@ const SIGKILL_AFTER_MS = 3000;
  * @param {string} [opts.binary]
  * @param {string[]} [opts.args] - full argv after binary (from providers.buildArgs)
  * @param {string} opts.cwd
+ * @param {Record<string, string>} [opts.envExtra] - added to the inherited env
+ *   (MCP bearer tokens: env is per-process, argv is world-readable via ps)
  * @param {(ev: object) => void} opts.onEvent - raw parsed JSONL event
  * @param {(info: { code: number | null, stderr: string }) => void} opts.onExit
  * @param {(err: Error) => void} [opts.onError]
@@ -21,6 +23,7 @@ function runCodex(opts) {
     binary = process.env.CODER_CODEX_BIN || "codex",
     args = [],
     cwd,
+    envExtra,
     onEvent,
     onExit,
     onError,
@@ -73,6 +76,7 @@ function runCodex(opts) {
       cwd,
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
+      ...(envExtra ? { env: { ...process.env, ...envExtra } } : {}),
     });
   } catch (err) {
     const error = err instanceof Error ? err : new Error(String(err));
