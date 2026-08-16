@@ -298,6 +298,33 @@ export function SettingsModal({
                 only.
               </p>
             </div>
+            <div className={styles.field}>
+              <label className={styles.fieldRow}>
+                <input
+                  type="checkbox"
+                  data-notifications=""
+                  checked={settings?.notifications ?? true}
+                  disabled={saving || settings == null}
+                  onChange={(e) => {
+                    setError(null);
+                    void onSaveSettings({
+                      notifications: e.target.checked,
+                    }).catch((err) => {
+                      setError(
+                        err instanceof Error && err.message
+                          ? err.message
+                          : "Failed to save settings",
+                      );
+                    });
+                  }}
+                />
+                <span>Desktop notification when a thread finishes</span>
+              </label>
+              <p className={styles.note}>
+                Only fires while the window is in the background. Mute a
+                single noisy thread from its snooze menu in the sidebar.
+              </p>
+            </div>
           </section>
 
           <section className={styles.section}>

@@ -99,6 +99,7 @@ export function thread(over: Partial<ThreadInfo> = {}): ThreadInfo {
     settledAt: null,
     // Round 49: null unless created by threads.fork.
     handoffFrom: null,
+    muted: false,
     pinnedAt: null,
     snoozedUntil: null,
     snoozedAt: null,
@@ -665,6 +666,18 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         } else {
           threads = [next, ...threads];
         }
+        return Promise.resolve(next);
+      },
+      /** Honest mute: flips the flag in place, never bumps updatedAt. */
+      setMuted: (input: unknown) => {
+        const i = input as { threadId: string; muted: boolean };
+        calls.push({ channel: "threads.setMuted", args: [input] });
+        const base =
+          threads.find((t) => t.id === i.threadId) ?? thread({ id: i.threadId });
+        const next: ThreadInfo = { ...base, muted: i.muted === true };
+        threads = threads.some((t) => t.id === i.threadId)
+          ? threads.map((t) => (t.id === i.threadId ? next : t))
+          : [next, ...threads];
         return Promise.resolve(next);
       },
       setProvider: (input: unknown) => rec("threads.setProvider", [input], thread()),

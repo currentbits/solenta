@@ -137,6 +137,7 @@ describe("Store", () => {
       reasoningEffort: null,
       worktreePath: null,
       handoffFrom: null,
+      muted: false,
     };
     const msg = {
       id: "m1",
