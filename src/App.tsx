@@ -5,7 +5,7 @@ import { Sidebar } from "./components/Sidebar";
 import { ThreadView } from "./components/ThreadView";
 import { PrListView } from "./components/PrListView";
 import { KanbanView } from "./components/KanbanView";
-import { PlanboardView } from "./components/PlanboardView";
+import { PlanboardView, type ThreadStartMode } from "./components/PlanboardView";
 import { AutomationsView } from "./components/AutomationsView";
 import { ActivityView } from "./components/ActivityView";
 import { AgentsPanel } from "./components/AgentsPanel";
@@ -168,7 +168,7 @@ export default function App() {
   const clearReveal = useCallback(() => setRevealThreadId(null), []);
 
   const handleCreateThread = useCallback(
-    (projectId?: string, opts?: { worktree?: boolean }) => {
+    (projectId?: string, opts?: { worktree?: boolean; orchestrate?: boolean }) => {
       void createThread("New Thread", projectId, opts).then((t) => {
         if (t) setRevealThreadId(t.id);
       });
@@ -341,13 +341,28 @@ export default function App() {
   );
 
   const handleCreateThreadFromIssue = useCallback(
-    async (input: { projectId: string; projectPath: string; ref: string }) => {
+    async (input: {
+      projectId: string;
+      projectPath: string;
+      ref: string;
+      mode?: ThreadStartMode;
+    }) => {
       const fetched = await fetchIssue(input.projectPath, input.ref);
       if (!fetched.ok) return fetched;
       const issue = fetched.issue;
       let thread;
       try {
-        thread = await createThread(issue.title, input.projectId);
+        // "default" (and the sidebar's issue button, which sends no mode)
+        // follows the app setting; the rest are explicit overrides.
+        const opts =
+          input.mode === "orchestrator"
+            ? { orchestrate: true }
+            : input.mode === "worktree"
+              ? { worktree: true }
+              : input.mode === "plain"
+                ? { worktree: false, orchestrate: false }
+                : undefined;
+        thread = await createThread(issue.title, input.projectId, opts);
       } catch (err) {
         return {
           ok: false as const,

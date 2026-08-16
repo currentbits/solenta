@@ -367,6 +367,32 @@ export function SettingsModal({
                 parallel agents never touch your checkout. Local projects
                 only.
               </p>
+              <label className={styles.fieldRow}>
+                <input
+                  type="checkbox"
+                  data-default-orchestrate=""
+                  checked={settings?.defaultOrchestrate ?? false}
+                  disabled={saving || settings == null}
+                  onChange={(e) => {
+                    setError(null);
+                    void onSaveSettings({
+                      defaultOrchestrate: e.target.checked,
+                    }).catch((err) => {
+                      setError(
+                        err instanceof Error && err.message
+                          ? err.message
+                          : "Failed to save settings",
+                      );
+                    });
+                  }}
+                />
+                <span>Delegate new threads to a worker</span>
+              </label>
+              <p className={styles.note}>
+                The thread&apos;s first prompt is handed to a worker thread in
+                its own worktree; the thread itself supervises. Wins over the
+                worktree option above.
+              </p>
             </div>
             <div className={styles.field}>
               <label className={styles.fieldRow}>

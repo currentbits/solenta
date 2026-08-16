@@ -1287,6 +1287,8 @@ function buildDevCoder(): CoderApi {
   let mcpServers: McpServerInfo[] = [];
   /** Default new threads into a fake worktree (Settings toggle). */
   let defaultWorktree = false;
+  /** Default new threads as orchestrators (Settings toggle). */
+  let defaultOrchestrate = false;
   /** Update channel override; null follows the (absent) dev stamp. */
   let updateChannel: "prod" | "nightly" | null = null;
   let notifications = true;
@@ -1497,6 +1499,7 @@ function buildDevCoder(): CoderApi {
     const project = projects.find((p) => p.id === thread.projectId);
     return {
       pendingWorktree: false,
+      pendingFork: false,
       branch: thread.branch ?? `coder/${slug}-${thread.id.slice(0, 6)}`,
       worktreePath: `${project?.path ?? "/Users/demo/project"}/.coder/worktrees/${thread.id}`,
     };
@@ -1854,6 +1857,7 @@ function buildDevCoder(): CoderApi {
           autoSettleAfterDays,
           mcpServers: mcpServers.map((s) => ({ ...s })),
           defaultWorktree,
+          defaultOrchestrate,
           updateChannel,
           notifications,
         };
@@ -1874,6 +1878,12 @@ function buildDevCoder(): CoderApi {
           }
           defaultWorktree = patch.defaultWorktree;
         }
+        if (Object.prototype.hasOwnProperty.call(patch, "defaultOrchestrate")) {
+          if (typeof patch.defaultOrchestrate !== "boolean") {
+            throw new Error("defaultOrchestrate must be a boolean");
+          }
+          defaultOrchestrate = patch.defaultOrchestrate;
+        }
         if (Object.prototype.hasOwnProperty.call(patch, "updateChannel")) {
           const v = patch.updateChannel;
           if (v !== null && v !== "prod" && v !== "nightly") {
@@ -1893,6 +1903,7 @@ function buildDevCoder(): CoderApi {
           autoSettleAfterDays,
           mcpServers: mcpServers.map((s) => ({ ...s })),
           defaultWorktree,
+          defaultOrchestrate,
           updateChannel,
           notifications,
         };
@@ -2297,8 +2308,10 @@ function buildDevCoder(): CoderApi {
           projectId: input.projectId,
           title: input.title || "New Thread",
           // Lazy worktree: only the intent is recorded, the fake worktree
-          // materializes at first run.
-          pendingWorktree: input.worktree === true,
+          // materializes at first run. An orchestrator holds neither — its
+          // worker does.
+          pendingWorktree: input.orchestrate !== true && input.worktree === true,
+          pendingFork: input.orchestrate === true,
         });
         return registerThread(t);
       },

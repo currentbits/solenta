@@ -192,4 +192,37 @@ describe("PlanboardView", () => {
     assert.deepEqual(opened, ["t1"]);
     m.unmount();
   });
+
+  it("Start task passes the header's mode", async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const m = await mount(
+      <PlanboardView
+        projects={projects}
+        listIssues={async () => okResult}
+        onStartTask={async (input) => {
+          calls.push(input);
+          return { ok: true as const };
+        }}
+      />,
+    );
+
+    const select = m.query("[data-plan-start-mode]") as HTMLSelectElement | null;
+    assert.ok(select, "the board has a start-mode selector");
+    // Defaults to the app setting, i.e. no explicit override.
+    assert.equal(select.value, "default");
+
+    await inAct(() => {
+      select.value = "orchestrator";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await inAct(() => {
+      (m.query("[data-plan-start='1']") as HTMLElement).click();
+    });
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].ref, "1");
+    assert.equal(calls[0].mode, "orchestrator");
+    m.unmount();
+  });
 });
+

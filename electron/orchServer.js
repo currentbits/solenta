@@ -7,6 +7,7 @@ const path = require("node:path");
 const { createRequire } = require("node:module");
 
 const { registerMcpServer, unregisterMcpServer } = require("./memory-sup.js");
+const { forkWorkerThread } = require("./services.js");
 
 const SERVER_NAME = "coder-threads";
 const CONFIG_NAME = "orch-server.json";
@@ -36,21 +37,6 @@ const INSTRUCTIONS =
   "A worker can also stall on a permission prompt only the user can answer: that " +
   "sends no notice and stays \"working\", so if one goes quiet check thread_status " +
   "for awaitingInput and tell the user what it is waiting on.";
-
-/**
- * Can this project host a git worktree? Remote projects are excluded (same
- * rule as threads:create) and so are non-repos, where `git worktree add`
- * would just fail the worker's run.
- * @param {{ path?: string, remoteHost?: string | null } | null | undefined} project
- */
-function canHostWorktree(project) {
-  return Boolean(
-    project &&
-      !project.remoteHost &&
-      project.path &&
-      fs.existsSync(path.join(project.path, ".git")),
-  );
-}
 
 function timingSafeEqualString(a, b) {
   const bufferA = Buffer.from(a);
@@ -262,7 +248,7 @@ function createToolHandlers(deps) {
       throw new Error(`Unknown thread: ${args.threadId}`);
     }
     assertSameProject(source, args.projectId);
-    /** @type {{ threadId: string, provider?: string }} */
+    /** @type {{ threadId: string, provider?: string, worktree?: boolean }} */
     const input = { threadId: args.threadId };
     if (args.provider != null) {
       if (!getProvider(String(args.provider))) {
@@ -270,26 +256,10 @@ function createToolHandlers(deps) {
       }
       input.provider = String(args.provider);
     }
-    const fork = forkThread(store, input);
-    // Orchestration worker: the runner auto-archives it when its run lands
-    // "done" so finished workers do not pile up in the sidebar (issue #14).
-    const patch = { orchWorker: true };
-    // Isolation by default (issue #30): workers get their own worktree so N
-    // parallel forks never edit the same checkout. Lazy, like threads:create —
-    // startRun materializes it. Skipped when the project cannot host one, or
-    // when the caller opts out; the fork then shares the project checkout.
-    if (
-      args.worktree !== false &&
-      canHostWorktree(
-        typeof store.getProject === "function"
-          ? store.getProject(fork.projectId ?? source.projectId)
-          : null,
-      )
-    ) {
-      patch.pendingWorktree = true;
-    }
-    store.updateThread(fork.id, patch);
-    store.save();
+    if (args.worktree === false) input.worktree = false;
+    // orchWorker + lazy worktree live in services.forkWorkerThread, shared
+    // with the runner's pendingFork dispatch.
+    const fork = forkWorkerThread(store, input, forkThread);
     await runner.startRun({ threadId: fork.id, prompt: args.prompt });
     return { threadId: fork.id };
   }
