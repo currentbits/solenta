@@ -501,6 +501,16 @@ function seedThreads(projects: ProjectInfo[]): ThreadInfo[] {
       reasoningEffort: null,
       worktreePath: null,
       handoffFrom: null,
+      // One working thread carries a mirrored plan so the Planboard's
+      // "Thread plans" section has something to show in dev mode.
+      planSteps:
+        card.id === "thread-1"
+          ? [
+              { step: "Read the provider settings store", status: "done" },
+              { step: "Move per-device overrides to the store", status: "doing" },
+              { step: "Backfill the migration test", status: "todo" },
+            ]
+          : undefined,
     };
   });
 }

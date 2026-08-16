@@ -454,7 +454,8 @@ const PLANBOARD_NOTE =
   "GitHub issues in this repo's origin using `gh`, with status labels " +
   "plan:todo, plan:doing, plan:done (create the labels if missing, move " +
   "them as you progress, close finished issues). Skip this for trivial " +
-  "tasks.";
+  "tasks. Your own todo list is mirrored onto the board as live steps, so " +
+  "keep it current instead of filing issues for individual steps.";
 
 /**
  * PLANBOARD_NOTE when the project checkout has a GitHub origin, else "".
@@ -478,6 +479,42 @@ function planboardNoteFor(projectPath) {
   } catch {
     return "";
   }
+}
+
+/** Keep a persisted plan bounded: it rides every threads:changed push. */
+const PLAN_STEP_MAX = 200;
+const PLAN_STEPS_MAX = 50;
+
+/**
+ * A TodoWrite input's `todos` -> planboard steps, or null when there is
+ * nothing usable (caller then keeps the thread's previous plan). The agent's
+ * live plan is already its todo list, so the board costs the agent nothing.
+ *
+ * ponytail: TodoWrite (claude) only — codex/opencode carry their own plan
+ * shapes; map them onto this same {step,status} list when one matters.
+ *
+ * @param {unknown} todos
+ * @returns {{ step: string, status: "todo" | "doing" | "done" }[] | null}
+ */
+function planStepsFrom(todos) {
+  if (!Array.isArray(todos)) return null;
+  const steps = [];
+  for (const t of todos) {
+    if (!t || typeof t !== "object") continue;
+    const step = typeof t.content === "string" ? t.content.trim() : "";
+    if (!step) continue;
+    const status = String(t.status || "");
+    steps.push({
+      step: step.slice(0, PLAN_STEP_MAX),
+      status:
+        status === "completed"
+          ? "done"
+          : status === "in_progress"
+            ? "doing"
+            : "todo",
+    });
+  }
+  return steps.length > 0 ? steps.slice(0, PLAN_STEPS_MAX) : null;
 }
 
 /**
@@ -1740,6 +1777,7 @@ module.exports = {
   HANDOFF_MESSAGE_COUNT,
   PLANBOARD_NOTE,
   planboardNoteFor,
+  planStepsFrom,
   setArchived,
   setSettled,
   setPinned,

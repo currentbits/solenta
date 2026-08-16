@@ -455,6 +455,8 @@ export default function App() {
             <PlanboardView
               projects={projects}
               listIssues={listIssues}
+              threads={threads}
+              onSelectThread={handleSelectThread}
               onStartTask={async (input) => {
                 const res = await handleCreateThreadFromIssue(input);
                 // Land on the thread we just started, unless there is a

@@ -278,6 +278,44 @@ async function main() {
     return;
   }
 
+  if (scenario === "todos") {
+    emit({
+      type: "system",
+      subtype: "init",
+      session_id: "sess-todos",
+      model: "claude-opus-test",
+    });
+    await delay(20);
+    emit({
+      type: "assistant",
+      message: {
+        content: [
+          {
+            type: "tool_use",
+            id: "toolu_todo_1",
+            name: "TodoWrite",
+            input: {
+              todos: [
+                { content: "Read the store", status: "completed" },
+                { content: "Wire the runner", status: "in_progress" },
+                { content: "Add a test", status: "pending" },
+              ],
+            },
+          },
+        ],
+      },
+    });
+    await delay(20);
+    emit({
+      type: "result",
+      subtype: "success",
+      result: "done",
+      session_id: "sess-todos",
+    });
+    process.exit(0);
+    return;
+  }
+
   if (scenario === "subagents") {
     emit({
       type: "system",
@@ -1081,6 +1119,22 @@ describe("runner claude provider", () => {
     assert.ok(argv.includes("default"));
     assert.ok(!argv.includes("do the thing"));
     assert.ok(!argv.includes("--resume"));
+  });
+
+  it("mirrors the agent's TodoWrite list onto the thread as plan steps (issue #76)", async () => {
+    process.env.CODER_FAKE_CLAUDE_SCENARIO = "todos";
+    const thread = store.getThreads()[0];
+    const updatedBefore = thread.updatedAt;
+    await runner.startRun({ threadId: thread.id, prompt: "plan it" });
+
+    await waitFor(() => (store.getThread(thread.id).planSteps || []).length > 0);
+    assert.deepEqual(store.getThread(thread.id).planSteps, [
+      { step: "Read the store", status: "done" },
+      { step: "Wire the runner", status: "doing" },
+      { step: "Add a test", status: "todo" },
+    ]);
+    // The run itself bumps updatedAt; the mirror must not be the reason.
+    assert.ok(store.getThread(thread.id).updatedAt >= updatedBefore);
   });
 
   it("tracks Agent-tool subagents on the thread: sync → done, background runs until its task-notification (issue #21)", async () => {

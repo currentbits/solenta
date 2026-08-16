@@ -1022,6 +1022,25 @@ function createRunner(opts) {
   }
 
   /**
+   * Persist the agent's todo list as the thread's plan (Planboard steps).
+   * No-op when it parses to nothing or hasn't changed — this rides every
+   * threads:changed push.
+   * @param {string} threadId
+   * @param {unknown} todos
+   */
+  function savePlanSteps(threadId, todos) {
+    const steps = services.planStepsFrom(todos);
+    if (!steps) return;
+    const thread = store.getThread(threadId);
+    if (!thread) return;
+    if (JSON.stringify(thread.planSteps || null) === JSON.stringify(steps)) {
+      return;
+    }
+    store.updateThread(threadId, { planSteps: steps });
+    pushThreadsChanged();
+  }
+
+  /**
    * Create a work-log step item (done:false). Returns its id.
    * @param {string} threadId
    * @param {string} runId
@@ -1746,6 +1765,12 @@ function createRunner(opts) {
                 tool,
               );
               toolMsgById.set(toolId, msgId);
+              // The agent's todo list IS its working plan: mirror it onto the
+              // thread so the Planboard shows live steps without the agent
+              // filing GitHub issues for them (issue #76).
+              if (toolName === "TodoWrite") {
+                savePlanSteps(threadId, inputObj.todos);
+              }
               // "Task" is the Agent tool's name in older Claude Code CLIs.
               if (toolName === "Agent" || toolName === "Task") {
                 addSubagentRow(threadId, {
