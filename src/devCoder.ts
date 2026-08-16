@@ -1497,6 +1497,7 @@ function buildDevCoder(): CoderApi {
     const project = projects.find((p) => p.id === thread.projectId);
     return {
       pendingWorktree: false,
+      pendingFork: false,
       branch: thread.branch ?? `coder/${slug}-${thread.id.slice(0, 6)}`,
       worktreePath: `${project?.path ?? "/Users/demo/project"}/.coder/worktrees/${thread.id}`,
     };
@@ -2297,8 +2298,10 @@ function buildDevCoder(): CoderApi {
           projectId: input.projectId,
           title: input.title || "New Thread",
           // Lazy worktree: only the intent is recorded, the fake worktree
-          // materializes at first run.
-          pendingWorktree: input.worktree === true,
+          // materializes at first run. An orchestrator holds neither — its
+          // worker does.
+          pendingWorktree: input.orchestrate !== true && input.worktree === true,
+          pendingFork: input.orchestrate === true,
         });
         return registerThread(t);
       },

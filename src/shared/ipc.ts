@@ -161,6 +161,12 @@ export interface ThreadInfo {
    */
   pendingWorktree?: boolean;
   /**
+   * Orchestrator thread: the first prompt is forked to a worker that holds
+   * the worktree and does the work, instead of running here (issue #202).
+   * Cleared once that fork happens; later prompts run this thread's own LLM.
+   */
+  pendingFork?: boolean;
+  /**
    * In-session subagents spawned via the Agent tool, tracked by the runner
    * from the CLI stream (issue #21). Newest-last, capped to 20 rows.
    */
@@ -939,8 +945,18 @@ export interface CoderApi {
      * Create a thread. With `worktree: true` the thread immediately gets its
      * own git worktree + `coder/<slug>-<id>` branch (local projects only);
      * creation fails atomically when the worktree cannot be created.
+     *
+     * With `orchestrate: true` the thread is an ORCHESTRATOR: its first
+     * prompt is forked to a worker thread which holds the worktree and does
+     * the work. Wins over `worktree` — an orchestrator never holds one
+     * itself — and rejects on remote projects. Also fails atomically.
      */
-    create(input: { projectId: string; title: string; worktree?: boolean }): Promise<ThreadInfo>;
+    create(input: {
+      projectId: string;
+      title: string;
+      worktree?: boolean;
+      orchestrate?: boolean;
+    }): Promise<ThreadInfo>;
     get(id: string): Promise<ThreadDetail>;
     /** Sticky permission mode for future turns of this thread. */
     setPermissionMode(input: { threadId: string; mode: PermissionMode }): Promise<ThreadInfo>;

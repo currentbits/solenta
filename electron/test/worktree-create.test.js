@@ -130,6 +130,41 @@ describe("threads:create with worktree", () => {
     );
     assert.equal(services.listThreads(store).length, 0);
   });
+
+  it("orchestrate marks pendingFork and never a worktree of its own", async () => {
+    const thread = await IPC_HANDLERS["threads:create"](ctx, {
+      projectId: project.id,
+      title: "New Thread",
+      orchestrate: true,
+      // Ignored: the WORKER holds the worktree, never the orchestrator.
+      worktree: true,
+    });
+
+    assert.equal(thread.pendingFork, true);
+    assert.equal(thread.pendingWorktree, undefined);
+    assert.equal(thread.worktreePath, null);
+    assert.ok(!fs.existsSync(worktreeBase));
+  });
+
+  it("orchestrate is rejected for remote projects, atomically", async () => {
+    const remote = services.addProject(store, repo);
+    services.updateProject(store, remote.id, {
+      remoteHost: "box",
+      remotePath: "/srv/app",
+    });
+    const before = store.getThreads().length;
+
+    await assert.rejects(
+      () =>
+        IPC_HANDLERS["threads:create"](ctx, {
+          projectId: remote.id,
+          title: "New Thread",
+          orchestrate: true,
+        }),
+      /not available for remote projects/,
+    );
+    assert.equal(store.getThreads().length, before);
+  });
 });
 
 describe("maybeRenameWorktreeBranch", () => {

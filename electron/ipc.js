@@ -197,6 +197,32 @@ const IPC_HANDLERS = {
   },
   "threads:create": async (ctx, input) => {
     const thread = services.createThread(ctx.store, input);
+    // Orchestrator thread (issue #202): the first prompt is forked to a
+    // worker, which is what gets the worktree — so this branch wins over
+    // `worktree` and never touches the filesystem itself.
+    if (input && input.orchestrate === true) {
+      try {
+        const project = ctx.store.getProject(thread.projectId);
+        if (project && project.remoteHost) {
+          throw new Error(
+            "Orchestrator threads are not available for remote projects",
+          );
+        }
+        ctx.store.updateThread(thread.id, { pendingFork: true });
+        ctx.store.save();
+      } catch (err) {
+        // Atomic create, same as the worktree path below.
+        try {
+          services.deleteThread(ctx.store, { threadId: thread.id });
+        } catch {
+          /* best effort */
+        }
+        ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+        throw err;
+      }
+      ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+      return ctx.store.getThread(thread.id);
+    }
     if (input && input.worktree === true) {
       try {
         if (!ctx.worktreeBase) {
