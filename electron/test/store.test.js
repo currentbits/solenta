@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { Store } = require("../store.js");
+const { Store, MAX_MESSAGES_PER_THREAD, MESSAGE_OVERFLOW_SLACK, MAX_WORKLOG_ITEMS_PER_THREAD, WORKLOG_OVERFLOW_SLACK } = require("../store.js");
 
 describe("Store", () => {
   let tmpDir;
@@ -187,8 +187,8 @@ describe("Store", () => {
   it("coalesces a burst of save() into one debounced write", async () => {
     const store = new Store(filePath);
     let writes = 0;
-    const realWrite = fs.writeFileSync;
-    fs.writeFileSync = (...args) => {
+    const realWrite = fs.promises.writeFile;
+    fs.promises.writeFile = (...args) => {
       writes += 1;
       return realWrite(...args);
     };
@@ -199,11 +199,41 @@ describe("Store", () => {
       }
       assert.equal(writes, 0, "nothing written while the burst is in flight");
       await new Promise((r) => setTimeout(r, 400));
+      await store.flushPending();
       assert.equal(writes, 1);
     } finally {
-      fs.writeFileSync = realWrite;
+      fs.promises.writeFile = realWrite;
     }
     assert.equal(new Store(filePath).getProjects()[0].id, "p19");
+  });
+
+  it("debounced save() writes asynchronously and never renames a stale payload", async () => {
+    const store = new Store(filePath);
+    store.setProjects([{ id: "p1", slug: "a/b", name: "b", path: "/x" }]);
+    store.save();
+    // Hold the in-flight flush inside writeFile, then land a synchronous
+    // saveNow() with newer data: the async flush must not rename over it.
+    let release;
+    const gate = new Promise((r) => {
+      release = r;
+    });
+    const realWrite = fs.promises.writeFile;
+    fs.promises.writeFile = (...args) => gate.then(() => realWrite(...args));
+    try {
+      await new Promise((r) => setTimeout(r, 300)); // debounce fired, flush gated
+      store.setProjects([{ id: "p2", slug: "a/b", name: "b", path: "/x" }]);
+      store.saveNow();
+      release();
+      await store.flushPending();
+    } finally {
+      fs.promises.writeFile = realWrite;
+    }
+    assert.equal(new Store(filePath).getProjects()[0].id, "p2");
+    // No leftover tmp files from the discarded flush.
+    const leftovers = fs
+      .readdirSync(tmpDir)
+      .filter((n) => n !== "coder-store.json");
+    assert.deepEqual(leftovers, []);
   });
 
   it("saveNow() flushes a pending debounced save immediately", () => {
@@ -757,6 +787,68 @@ describe("Store", () => {
     });
     const t = store.getThread("t1");
     assert.ok(t.updatedAt > fixed);
+  });
+
+  it("leaves transcripts at or under cap + slack untouched", () => {
+    const store = new Store(filePath);
+    const msgs = [];
+    for (let i = 0; i < MAX_MESSAGES_PER_THREAD + MESSAGE_OVERFLOW_SLACK; i += 1) {
+      msgs.push({ id: `m${i}`, role: "assistant", text: `msg ${i}`, createdAt: i });
+    }
+    store.setMessages("t1", msgs);
+    assert.deepEqual(store.getMessages("t1"), msgs);
+  });
+
+  it("caps transcript growth, dropping oldest behind a marker", () => {
+    const store = new Store(filePath);
+    const total = MAX_MESSAGES_PER_THREAD + MESSAGE_OVERFLOW_SLACK + 1;
+    const msgs = [];
+    for (let i = 0; i < total; i += 1) {
+      msgs.push({ id: `m${i}`, role: "assistant", text: `msg ${i}`, createdAt: i });
+    }
+    store.setMessages("t1", msgs);
+    const kept = store.getMessages("t1");
+    assert.equal(kept.length, MAX_MESSAGES_PER_THREAD);
+    assert.equal(kept[0].role, "event");
+    assert.match(kept[0].text, /dropped to cap this transcript/);
+    assert.equal(kept[0].id, msgs[total - MAX_MESSAGES_PER_THREAD].id);
+    assert.equal(kept[1].text, `msg ${total - MAX_MESSAGES_PER_THREAD + 1}`);
+    assert.equal(kept[kept.length - 1].text, `msg ${total - 1}`);
+  });
+
+  it("appendMessage caps growth and keeps exactly one marker", () => {
+    const store = new Store(filePath);
+    // Seed just under the overflow threshold, then append across it.
+    const seed = MAX_MESSAGES_PER_THREAD + MESSAGE_OVERFLOW_SLACK;
+    const msgs = [];
+    for (let i = 0; i < seed; i += 1) {
+      msgs.push({ id: `m${i}`, role: "assistant", text: `msg ${i}`, createdAt: i });
+    }
+    store.setMessages("t1", msgs);
+    store.appendMessage("t1", {
+      id: "m-new",
+      role: "assistant",
+      text: "newest",
+      createdAt: seed,
+    });
+    const kept = store.getMessages("t1");
+    assert.equal(kept.length, MAX_MESSAGES_PER_THREAD);
+    assert.equal(kept.filter((m) => m.role === "event").length, 1);
+    assert.equal(kept[kept.length - 1].text, "newest");
+  });
+
+  it("caps work-log growth without a marker", () => {
+    const store = new Store(filePath);
+    const total = MAX_WORKLOG_ITEMS_PER_THREAD + WORKLOG_OVERFLOW_SLACK + 1;
+    const items = [];
+    for (let i = 0; i < total; i += 1) {
+      items.push({ id: `w${i}`, label: `step ${i}`, done: true, timestamp: i });
+    }
+    store.setWorkLog("t1", items);
+    const kept = store.getWorkLog("t1");
+    assert.equal(kept.length, MAX_WORKLOG_ITEMS_PER_THREAD);
+    assert.equal(kept[0].label, `step ${total - MAX_WORKLOG_ITEMS_PER_THREAD}`);
+    assert.equal(kept[kept.length - 1].label, `step ${total - 1}`);
   });
 
   it("migration adds runStartedAt null without changing updatedAt", () => {
