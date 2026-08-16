@@ -9,6 +9,9 @@ const {
   cwdInsideRoot,
   filterServersByRoot,
   buildServerUrl,
+  isEphemeralPort,
+  dropDeadEphemeral,
+  probeHttp,
 } = require("../servers.js");
 
 const LISTEN_FIXTURE = [
@@ -127,5 +130,61 @@ describe("cwd-root filter", () => {
     assert.equal(buildServerUrl("[::]", 80), "http://localhost:80");
     assert.equal(buildServerUrl("127.0.0.1", 5173), "http://127.0.0.1:5173");
     assert.equal(buildServerUrl("[::1]", 8080), "http://[::1]:8080");
+  });
+});
+
+describe("ephemeral-port filter", () => {
+  const srv = (port) => ({
+    pid: port,
+    command: "node",
+    host: "127.0.0.1",
+    port,
+    url: `http://127.0.0.1:${port}`,
+  });
+
+  it("keeps well-known ports without probing", async () => {
+    let probed = 0;
+    const kept = await dropDeadEphemeral([srv(3000), srv(5173), srv(8080)], () => {
+      probed += 1;
+      return Promise.resolve(false);
+    });
+    assert.equal(probed, 0);
+    assert.deepEqual(kept.map((s) => s.port), [3000, 5173, 8080]);
+  });
+
+  it("drops ephemeral ports that fail the probe, keeps ones that answer", async () => {
+    const alive = new Set([49999]);
+    const kept = await dropDeadEphemeral(
+      [srv(3000), srv(49829), srv(49999), srv(54897)],
+      (_host, port) => Promise.resolve(alive.has(port)),
+    );
+    assert.deepEqual(kept.map((s) => s.port), [3000, 49999]);
+  });
+
+  it("treats 4xx/5xx as dead and 2xx/3xx as alive", async () => {
+    const http = require("node:http");
+    const start = (status) =>
+      new Promise((resolve) => {
+        const s = http.createServer((_req, res) => {
+          res.statusCode = status;
+          res.end();
+        });
+        s.listen(0, "127.0.0.1", () => resolve(s));
+      });
+    const ok = await start(200);
+    const forbidden = await start(403);
+    try {
+      assert.equal(await probeHttp("127.0.0.1", ok.address().port), true);
+      assert.equal(await probeHttp("127.0.0.1", forbidden.address().port), false);
+    } finally {
+      ok.close();
+      forbidden.close();
+    }
+  });
+
+  it("classifies the dynamic range", () => {
+    assert.equal(isEphemeralPort(49151), false);
+    assert.equal(isEphemeralPort(49152), true);
+    assert.equal(isEphemeralPort(3000), false);
   });
 });
