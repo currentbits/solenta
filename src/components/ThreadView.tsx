@@ -100,6 +100,10 @@ function ContextRingBadge({ ring }: { ring: ContextRingView }) {
 
 interface ThreadViewProps {
   detail: ThreadDetail | null;
+  /** threads.get failure for the selected thread; shown with a retry. */
+  detailError?: string | null;
+  /** Re-fetch the selected thread's detail after a load failure. */
+  onRetryDetail?: () => void;
   project: ProjectInfo | null;
   providers: ProviderInfo[];
   workflows: WorkflowTemplateInfo[];
@@ -1387,6 +1391,8 @@ function ChangesPanel({
 
 export function ThreadView({
   detail,
+  detailError = null,
+  onRetryDetail,
   project,
   providers,
   workflows,
@@ -1828,6 +1834,41 @@ export function ThreadView({
   }
 
   if (!detail) {
+    if (detailError) {
+      return (
+        <main className={styles.main}>
+          <div className={styles.empty}>
+            <div className={styles.emptyGlyph} aria-hidden="true">
+              <svg
+                width="22"
+                height="22"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M8 4.5v4" />
+                <path d="M8 11h.01" />
+                <path d="M6.9 2.3 1.6 11.6A1.5 1.5 0 0 0 2.9 13.9h10.2a1.5 1.5 0 0 0 1.3-2.3L9.1 2.3a1.5 1.5 0 0 0-2.2 0Z" />
+              </svg>
+            </div>
+            <p className={styles.emptyTitle}>Couldn’t load this thread</p>
+            <p className={styles.emptyHint}>{detailError}</p>
+            {onRetryDetail && (
+              <button
+                type="button"
+                className={`${styles.btn} ${styles.btnPrimary}`}
+                onClick={onRetryDetail}
+              >
+                Retry
+              </button>
+            )}
+          </div>
+        </main>
+      );
+    }
     return (
       <main className={styles.main}>
         <div className={styles.empty}>

@@ -36,6 +36,8 @@ export default function App() {
     selectedThreadId,
     selectThread,
     detail,
+    detailError,
+    retryDetail,
     selectedProjectId,
     error,
     clearError,
@@ -476,6 +478,8 @@ export default function App() {
           ) : (
             <ThreadView
         detail={visibleDetail}
+        detailError={selectedThreadId ? detailError : null}
+        onRetryDetail={retryDetail}
         project={project}
         providers={providers}
         workflows={workflows}

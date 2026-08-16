@@ -77,6 +77,10 @@ export interface UseCoderResult {
   selectedThreadId: string | null;
   selectThread: (id: string | null) => void;
   detail: ThreadDetail | null;
+  /** threads.get rejection for the selected thread, shown with a retry. */
+  detailError: string | null;
+  /** Re-fetch the selected thread's detail after a load failure. */
+  retryDetail: () => void;
   loading: boolean;
   /** Project of the selected thread, or first project if none selected. */
   selectedProjectId: string | null;
@@ -329,6 +333,9 @@ export function useCoder(): UseCoderResult {
   const [automations, setAutomations] = useState<AutomationInfo[]>([]);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
   const [detail, setDetail] = useState<ThreadDetail | null>(null);
+  /** Last threads.get failure for the selected thread; retry bumps the nonce. */
+  const [detailError, setDetailError] = useState<string | null>(null);
+  const [detailRetryNonce, setDetailRetryNonce] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<CoderError | null>(null);
   const [appStatus, setAppStatus] = useState<AppStatus | null>(null);
@@ -544,27 +551,33 @@ export function useCoder(): UseCoderResult {
   useEffect(() => {
     if (!selectedThreadId) {
       setDetail(null);
+      setDetailError(null);
       return;
     }
     let cancelled = false;
+    setDetailError(null);
     (async () => {
       try {
         const d = await api.threads.get(selectedThreadId);
         if (cancelled) return;
         setDetail(d);
+        setDetailError(null);
         applyThreads(
           threadsRef.current.map((t) =>
             t.id === d.thread.id ? d.thread : t,
           ),
         );
-      } catch {
-        if (!cancelled) setDetail(null);
+      } catch (err) {
+        if (!cancelled) {
+          setDetail(null);
+          setDetailError(errorMessage(err));
+        }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [api, selectedThreadId, applyThreads]);
+  }, [api, selectedThreadId, applyThreads, detailRetryNonce]);
 
   const projectById = useMemo(() => {
     const m = new Map<string, ProjectInfo>();
@@ -582,6 +595,12 @@ export function useCoder(): UseCoderResult {
 
   const selectThread = useCallback((id: string | null) => {
     setSelectedThreadId(id);
+  }, []);
+
+  /** Re-run the detail fetch for the already-selected thread (error retry). */
+  const retryDetail = useCallback(() => {
+    setDetailError(null);
+    setDetailRetryNonce((n) => n + 1);
   }, []);
 
   const addProject = useCallback(async (
@@ -1646,6 +1665,8 @@ export function useCoder(): UseCoderResult {
     selectedThreadId,
     selectThread,
     detail,
+    detailError,
+    retryDetail,
     loading,
     selectedProjectId,
     error,

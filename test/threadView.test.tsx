@@ -114,6 +114,8 @@ const noopSave = async () =>
 
 function view(props: {
   detail?: ThreadDetail | null;
+  detailError?: string | null;
+  onRetryDetail?: () => void;
   hasProjects?: boolean;
   project?: ProjectInfo | null;
   changesOpen?: boolean;
@@ -125,6 +127,8 @@ function view(props: {
   return (
     <ThreadView
       detail={props.detail === undefined ? detail() : props.detail}
+      detailError={props.detailError}
+      onRetryDetail={props.onRetryDetail}
       project={props.project === undefined ? project : props.project}
       providers={providers}
       workflows={workflows}
@@ -204,6 +208,27 @@ describe("ThreadView empty states", () => {
       html.includes("Select a thread"),
       `expected no-thread state, got: ${html.slice(0, 200)}`,
     );
+  });
+
+  it("shows the load failure with a retry action instead of the neutral empty state (issue #82)", () => {
+    const html = render({ detail: null, detailError: "disk on fire" });
+    assert.ok(
+      html.includes("Couldn’t load this thread"),
+      `expected error state, got: ${html.slice(0, 200)}`,
+    );
+    assert.ok(html.includes("disk on fire"), "the failure message must render");
+    assert.ok(
+      !html.includes("Select a thread"),
+      "a failed load must not masquerade as no selection",
+    );
+    // Retry only renders when the caller hands a retry callback.
+    assert.ok(!html.includes("Retry"), "no retry button without onRetryDetail");
+    const withRetry = render({
+      detail: null,
+      detailError: "disk on fire",
+      onRetryDetail: () => {},
+    });
+    assert.ok(withRetry.includes("Retry"), "retry action must be offered");
   });
 
   it("shows the start prompt when the open thread has no messages", () => {
