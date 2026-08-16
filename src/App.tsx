@@ -75,6 +75,7 @@ export default function App() {
     pushBranch,
     listPrs,
     listIssues,
+    setIssuePlanStatus,
     listActivity,
     listThreadSummaries,
     listCheckpoints,
@@ -248,9 +249,18 @@ export default function App() {
           reason: err instanceof Error ? err.message : String(err),
         };
       }
-      return { ok: true as const };
+      // The run is live either way, so a failed label move is a warning,
+      // not a failure: say so instead of pretending the card moved.
+      const moved = await setIssuePlanStatus(
+        input.projectPath,
+        issue.number,
+        "doing",
+      );
+      return moved.ok
+        ? { ok: true as const }
+        : { ok: true as const, warning: `plan:doing not set (${moved.reason})` };
     },
-    [fetchIssue, createThread, startRun],
+    [fetchIssue, createThread, startRun, setIssuePlanStatus],
   );
 
   const handleAddProject = useCallback(() => {
@@ -427,7 +437,17 @@ export default function App() {
               }}
             />
           ) : view === "planboard" ? (
-            <PlanboardView projects={projects} listIssues={listIssues} />
+            <PlanboardView
+              projects={projects}
+              listIssues={listIssues}
+              onStartTask={async (input) => {
+                const res = await handleCreateThreadFromIssue(input);
+                // Land on the thread we just started, unless there is a
+                // warning to read here first.
+                if (res.ok && !("warning" in res)) setView("thread");
+                return res;
+              }}
+            />
           ) : view === "kanban" ? (
             <KanbanView
               threads={threads}

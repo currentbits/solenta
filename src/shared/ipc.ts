@@ -548,6 +548,14 @@ export type ListIssuesResult =
   | { ok: true; issues: PlanIssue[] }
   | { ok: false; reason: string };
 
+/** Planboard column an issue can be moved to, as a plan:* label. */
+export type PlanStatus = "todo" | "doing" | "done";
+
+/** Label-move result. Failures stay in-band (missing gh, auth, label). */
+export type SetPlanStatusResult =
+  | { ok: true }
+  | { ok: false; reason: string };
+
 /**
  * How hard a model should think. Persisted per thread, sent to the CLI.
  *
@@ -1141,6 +1149,16 @@ export interface CoderApi {
      * those come back as `{ ok: false, reason }`.
      */
     list(projectPath: string): Promise<ListIssuesResult>;
+    /**
+     * Swap an issue's plan:* label via `gh issue edit`, so starting work from
+     * the Planboard moves the card. Never rejects: failures come back as
+     * `{ ok: false, reason }`.
+     */
+    setPlanStatus(input: {
+      projectPath: string;
+      number: number;
+      status: PlanStatus;
+    }): Promise<SetPlanStatusResult>;
   };
   files: {
     /**

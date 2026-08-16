@@ -95,6 +95,50 @@ describe("PlanboardView", () => {
     m.unmount();
   });
 
+  it("starts a task from a Todo card only, and reloads the board", async () => {
+    const started: { projectPath: string; ref: string }[] = [];
+    let loads = 0;
+    const m = await mount(
+      <PlanboardView
+        projects={projects}
+        listIssues={async () => {
+          loads++;
+          return okResult;
+        }}
+        onStartTask={async (input) => {
+          started.push({ projectPath: input.projectPath, ref: input.ref });
+          return { ok: true };
+        }}
+      />,
+    );
+    assert.ok(!m.query('[data-plan-start="2"]'), "no button on In progress");
+    assert.ok(!m.query('[data-plan-start="3"]'), "no button on Done");
+    const button = m.query('[data-plan-start="1"]') as HTMLButtonElement | null;
+    assert.ok(button, "Start task on the Todo card");
+    await inAct(() => button.click());
+    assert.deepEqual(started, [{ projectPath: "/tmp/ledger", ref: "1" }]);
+    assert.equal(loads, 2, "board reloads so the card moves");
+    m.unmount();
+  });
+
+  it("keeps the thread but reports a failed or partial start", async () => {
+    const m = await mount(
+      <PlanboardView
+        projects={projects}
+        listIssues={async () => okResult}
+        onStartTask={async () => ({
+          ok: true,
+          warning: "plan:doing not set (auth)",
+        })}
+      />,
+    );
+    const button = m.query('[data-plan-start="1"]') as HTMLButtonElement | null;
+    assert.ok(button);
+    await inAct(() => button.click());
+    assert.ok(m.text().includes("plan:doing not set (auth)"));
+    m.unmount();
+  });
+
   it("explains the plan:* convention when the board is empty", async () => {
     const m = await mount(
       <PlanboardView

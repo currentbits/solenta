@@ -1,7 +1,8 @@
 "use strict";
 
 /**
- * parseIssueRef fixtures + fetchIssue mapping (fake gh via CODER_GH_BIN).
+ * parseIssueRef fixtures + fetchIssue/setPlanStatus mapping
+ * (fake gh via CODER_GH_BIN).
  */
 const { describe, it, beforeEach, afterEach } = require("node:test");
 const assert = require("node:assert/strict");
@@ -9,7 +10,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
-const { parseIssueRef, fetchIssue } = require("../issues.js");
+const { parseIssueRef, fetchIssue, setPlanStatus } = require("../issues.js");
 
 function git(cwd, args) {
   return execFileSync("git", args, {
@@ -191,5 +192,104 @@ process.exit(0);
     const result = fetchIssue(repo, "1");
     assert.equal(result.ok, false);
     assert.match(result.reason, /unparseable issue JSON/);
+  });
+});
+
+describe("setPlanStatus", () => {
+  let tmp;
+  let repo;
+  let prevGh;
+  let callsPath;
+
+  /** Fake gh that appends each invocation's args to callsPath. */
+  function writeFakeGh(body) {
+    const bin = path.join(tmp, "fake-gh");
+    fs.writeFileSync(
+      bin,
+      `#!/usr/bin/env node
+"use strict";
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+const file = ${JSON.stringify(callsPath)};
+const prev = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : [];
+prev.push(args);
+fs.writeFileSync(file, JSON.stringify(prev));
+${body}
+`,
+      { mode: 0o755 },
+    );
+    process.env.CODER_GH_BIN = bin;
+  }
+
+  function calls() {
+    return fs.existsSync(callsPath)
+      ? JSON.parse(fs.readFileSync(callsPath, "utf8"))
+      : [];
+  }
+
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "coder-plan-"));
+    repo = path.join(tmp, "repo");
+    fs.mkdirSync(repo);
+    git(repo, ["init", "-q", "-b", "main"]);
+    git(repo, ["remote", "add", "origin", "https://github.com/acme/demo.git"]);
+    callsPath = path.join(tmp, "gh-calls.json");
+    prevGh = process.env.CODER_GH_BIN;
+    writeFakeGh("process.exit(0);");
+  });
+
+  afterEach(() => {
+    if (prevGh == null) delete process.env.CODER_GH_BIN;
+    else process.env.CODER_GH_BIN = prevGh;
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("adds the new plan label and removes the other two", () => {
+    assert.deepEqual(setPlanStatus(repo, 5, "doing"), { ok: true });
+    assert.deepEqual(calls(), [
+      [
+        "issue",
+        "edit",
+        "5",
+        "--add-label",
+        "plan:doing",
+        "--remove-label",
+        "plan:todo,plan:done",
+      ],
+    ]);
+  });
+
+  it("retries add-only when a removed label is not in the repo", () => {
+    writeFakeGh(`
+if (args.includes("--remove-label")) {
+  process.stderr.write("failed to update ...: 'plan:done' not found\\n");
+  process.exit(1);
+}
+process.exit(0);
+`);
+    assert.deepEqual(setPlanStatus(repo, 5, "doing"), { ok: true });
+    const seen = calls();
+    assert.equal(seen.length, 2);
+    assert.deepEqual(seen[1], ["issue", "edit", "5", "--add-label", "plan:doing"]);
+  });
+
+  it("reports auth failure and never throws", () => {
+    writeFakeGh(`
+process.stderr.write("To get started with GitHub CLI, please run: gh auth login\\n");
+process.exit(1);
+`);
+    assert.deepEqual(setPlanStatus(repo, 5, "doing"), { ok: false, reason: "auth" });
+  });
+
+  it("rejects a bad status or number without spawning gh", () => {
+    assert.deepEqual(setPlanStatus(repo, 5, "nope"), {
+      ok: false,
+      reason: "unknown plan status: nope",
+    });
+    assert.deepEqual(setPlanStatus(repo, 0, "doing"), {
+      ok: false,
+      reason: "invalid issue reference",
+    });
+    assert.deepEqual(calls(), []);
   });
 });

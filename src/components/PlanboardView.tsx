@@ -12,13 +12,29 @@ import styles from "./PlanboardView.module.css";
 export interface PlanboardViewProps {
   projects: ProjectInfo[];
   listIssues: (projectPath: string) => Promise<ListIssuesResult>;
+  /**
+   * Start a thread on a Todo issue and move it to plan:doing. Omitted by
+   * existing tests, which keeps the button off those boards.
+   */
+  onStartTask?: (input: {
+    projectId: string;
+    projectPath: string;
+    ref: string;
+  }) => Promise<{ ok: true; warning?: string } | { ok: false; reason: string }>;
 }
 
-export function PlanboardView({ projects, listIssues }: PlanboardViewProps) {
+export function PlanboardView({
+  projects,
+  listIssues,
+  onStartTask,
+}: PlanboardViewProps) {
   const [projectId, setProjectId] = useState<string | null>(null);
   const [result, setResult] = useState<ListIssuesResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [now, setNow] = useState(() => Date.now());
+  /** Issue number whose start is in flight, and the last start's message. */
+  const [starting, setStarting] = useState<number | null>(null);
+  const [startNote, setStartNote] = useState<string | null>(null);
   const loadGen = useRef(0);
 
   const project =
@@ -40,6 +56,28 @@ export function PlanboardView({ projects, listIssues }: PlanboardViewProps) {
     setResult(null);
     void load();
   }, [load]);
+
+  const startTask = useCallback(
+    async (issueNumber: number) => {
+      if (!onStartTask || !project || starting != null) return;
+      setStarting(issueNumber);
+      setStartNote(null);
+      const res = await onStartTask({
+        projectId: project.id,
+        projectPath: project.path,
+        ref: String(issueNumber),
+      });
+      setStarting(null);
+      if (!res.ok) {
+        setStartNote(`#${issueNumber}: ${res.reason}`);
+        return;
+      }
+      if (res.warning) setStartNote(`#${issueNumber}: ${res.warning}`);
+      // Card moved to In progress on GitHub; pull the board back in sync.
+      void load();
+    },
+    [onStartTask, project, starting, load],
+  );
 
   const columns = useMemo(
     () => planColumns(result && result.ok ? result.issues : []),
@@ -77,6 +115,12 @@ export function PlanboardView({ projects, listIssues }: PlanboardViewProps) {
           </button>
         </div>
       </header>
+
+      {startNote ? (
+        <p className={styles.startNote} aria-live="polite" data-plan-start-note="">
+          {startNote}
+        </p>
+      ) : null}
 
       {!project ? (
         <div className={styles.empty}>
@@ -125,9 +169,10 @@ export function PlanboardView({ projects, listIssues }: PlanboardViewProps) {
               <div className={styles.columnBody}>
                 {column.issues.map((issue) => {
                   const updatedMs = issueUpdatedMs(issue);
+                  const canStart = onStartTask && column.id === "todo";
                   return (
+                    <div key={issue.number} className={styles.cardWrap}>
                     <a
-                      key={issue.number}
                       className={styles.card}
                       href={issue.url}
                       target="_blank"
@@ -152,6 +197,23 @@ export function PlanboardView({ projects, listIssues }: PlanboardViewProps) {
                         ) : null}
                       </span>
                     </a>
+                    {canStart ? (
+                      <button
+                        type="button"
+                        className={
+                          starting === issue.number
+                            ? `${styles.start} ${styles.startActive}`
+                            : styles.start
+                        }
+                        onClick={() => void startTask(issue.number)}
+                        disabled={starting != null}
+                        data-plan-start={issue.number}
+                        title={`Start a thread on #${issue.number}`}
+                      >
+                        {starting === issue.number ? "Starting…" : "Start task"}
+                      </button>
+                    ) : null}
+                    </div>
                   );
                 })}
               </div>

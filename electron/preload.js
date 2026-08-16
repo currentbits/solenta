@@ -137,6 +137,7 @@ const coder = {
   issues: {
     fetch: (input) => invoke("issues:fetch", input),
     list: (projectPath) => invoke("issues:list", projectPath),
+    setPlanStatus: (input) => invoke("issues:setPlanStatus", input),
   },
   files: {
     list: (input) => invoke("files:list", input),
