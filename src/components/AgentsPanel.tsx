@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import type {
   AgentStatus,
   AppSettings,
@@ -55,10 +55,11 @@ interface AgentsPanelProps {
   providers: ProviderInfo[];
   project: ProjectInfo | null;
   /**
-   * Full thread list; changing it refetches summaries for the Agents tab
-   * team view. Absent (tests) disables the team view.
+   * "id:status,…" over the thread list (see App). Changing it refetches
+   * summaries for the Agents tab team view; a string rather than the array
+   * because the array's identity churns on every stream tick (issue #91).
    */
-  threads?: ThreadInfo[];
+  rosterKey?: string;
   /** threads:summaries passthrough powering the team view. */
   listThreadSummaries?: () => Promise<ThreadSummaryInfo[]>;
   /** Select a thread (team row click). */
@@ -1650,7 +1651,7 @@ export function AgentsContent({
   thread,
   usage,
   providers,
-  threads,
+  rosterKey = "",
   listThreadSummaries,
   onSelectThread,
 }: {
@@ -1658,7 +1659,7 @@ export function AgentsContent({
   thread: ThreadInfo | null;
   usage: SessionUsage | null;
   providers: ProviderInfo[];
-  threads?: ThreadInfo[];
+  rosterKey?: string;
   listThreadSummaries?: () => Promise<ThreadSummaryInfo[]>;
   onSelectThread?: (id: string) => void;
 }) {
@@ -1674,11 +1675,11 @@ export function AgentsContent({
     setManual({});
   }, [workflow?.id]);
 
-  // Team view data. The `threads` array gets a new identity on every stream
-  // event, so key the refetch on ids + statuses instead; lastActivity is kept
-  // fresh by a slow poll while something is working. Null when no fetcher.
+  // Team view data. The refetch is keyed on ids + statuses (`rosterKey`, built
+  // in App) rather than the thread array, whose identity churns on every
+  // stream event; lastActivity is kept fresh by a slow poll while something is
+  // working. Null when no fetcher.
   // ponytail: poll, not per-event; summaries walk every thread's messages.
-  const rosterKey = (threads ?? []).map((t) => `${t.id}:${t.status}`).join(",");
   useEffect(() => {
     if (!listThreadSummaries) {
       setSummaries(null);
@@ -2027,13 +2028,18 @@ export function AgentsContent({
   );
 }
 
-export function AgentsPanel({
+/**
+ * memo'd: another thread's 700ms stream tick must not re-render this pane
+ * (issue #91). It takes `rosterKey` instead of the thread list for the same
+ * reason — the array's identity churns, the key only moves on a real change.
+ */
+export const AgentsPanel = memo(function AgentsPanel({
   workflow,
   thread,
   usage,
   providers,
   project,
-  threads,
+  rosterKey,
   listThreadSummaries,
   onSelectThread,
   onSetupWorktree,
@@ -2110,7 +2116,7 @@ export function AgentsPanel({
           thread={thread}
           usage={usage}
           providers={providers}
-          threads={threads}
+          rosterKey={rosterKey}
           listThreadSummaries={listThreadSummaries}
           onSelectThread={onSelectThread}
         />
@@ -2159,4 +2165,4 @@ export function AgentsPanel({
       )}
     </aside>
   );
-}
+});

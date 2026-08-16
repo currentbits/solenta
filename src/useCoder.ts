@@ -40,7 +40,7 @@ import type {
 import { resolveCoderApi } from "./coderApi";
 import { isWebMode } from "./shared/wire";
 import { nextVisibleThreadId } from "./threadSelection";
-import { mergeThreadPatch } from "./threadPatch";
+import { mergeThreadPatch, patchThreadList } from "./threadPatch";
 
 const STATUS_POLL_MS = 60_000;
 
@@ -548,11 +548,11 @@ export function useCoder(): UseCoderResult {
     unsubUpdated = api.on("thread:updated", (next) => {
       const prev = prevStatusRef.current.get(next.thread.id);
       prevStatusRef.current.set(next.thread.id, next.thread.status);
-      applyThreads(
-        threadsRef.current.map((t) =>
-          t.id === next.thread.id ? next.thread : t,
-        ),
-      );
+      // List and open detail are separate subscribers of the same push: a tick
+      // that only moved the transcript must not hand the list a new array, or
+      // every pane holding it re-renders (issue #91).
+      const nextList = patchThreadList(threadsRef.current, next.thread);
+      if (nextList !== threadsRef.current) applyThreads(nextList);
       const lastSeq = patchSeqRef.current.get(next.thread.id);
       if (next.seq != null) patchSeqRef.current.set(next.thread.id, next.seq);
       // A gap means a push was dropped (web reconnect): the prefix we hold may

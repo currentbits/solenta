@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import autoAnimate from "@formkit/auto-animate";
 import type { ProjectInfo, ProviderInfo, ThreadInfo } from "../shared/ipc";
 import { isWebMode } from "../shared/wire";
@@ -1001,7 +1001,12 @@ export function SnoozedRow({
   );
 }
 
-export function Sidebar({
+/**
+ * memo'd: a streaming thread pushes an update every 700ms, and the sidebar
+ * must only re-render when the LIST moved — not when the open transcript did
+ * (issue #91). App keeps every prop stable for that to bite.
+ */
+export const Sidebar = memo(function Sidebar({
   appName,
   channel,
   searchPlaceholder,
@@ -2739,4 +2744,4 @@ export function Sidebar({
       />
     </aside>
   );
-}
+});
