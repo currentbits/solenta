@@ -481,6 +481,46 @@ function planboardNoteFor(projectPath) {
   }
 }
 
+/**
+ * Standing note appended to every dispatched prompt (CLI-only, never stored
+ * in the transcript) telling the agent WHICH thread and project it is, so the
+ * coder-threads tools can be called with real ids instead of a guess.
+ *
+ * The orchestrator server has no caller identity (one workspace-wide token,
+ * stateless HTTP), so this note is the only channel by which an agent learns
+ * its own id. Without it an agent picked thread ids off threads_list by title
+ * and spawned workers on another project's repo (issue #109).
+ *
+ * Rides every dispatch rather than only the first turn: context compaction
+ * and resumed sessions would otherwise lose it.
+ *
+ * Emitted only when the coder-threads server is actually registered: with no
+ * thread tools in the run there is nothing to pass these ids to, and the note
+ * would just be noise. Same rule as planboardNoteFor's GitHub-origin gate.
+ *
+ * @param {{ id?: string, projectId?: string } | null | undefined} thread
+ * @param {{ name?: string } | null | undefined} project
+ * @param {string | null | undefined} cwd - worktree path, else project path
+ * @returns {string}
+ */
+function selfIdNoteFor(thread, project, cwd) {
+  if (!thread || !thread.id || !thread.projectId) return "";
+  try {
+    const { activeServers } = require("./memory-sup.js");
+    if (!activeServers().some((s) => s.name === "coder-threads")) return "";
+  } catch {
+    return "";
+  }
+  const name = project && project.name ? String(project.name) : "this project";
+  const where = cwd ? `, checked out at ${cwd}` : "";
+  return (
+    `\n\n[Thread] You are thread ${thread.id} in project "${name}" ` +
+    `(projectId ${thread.projectId})${where}. Pass these ids to the ` +
+    `coder-threads tools; never guess another thread's id from its title. ` +
+    `Threads in other projects are off limits.`
+  );
+}
+
 /** Keep a persisted plan bounded: it rides every threads:changed push. */
 const PLAN_STEP_MAX = 200;
 const PLAN_STEPS_MAX = 50;
@@ -1777,6 +1817,7 @@ module.exports = {
   HANDOFF_MESSAGE_COUNT,
   PLANBOARD_NOTE,
   planboardNoteFor,
+  selfIdNoteFor,
   planStepsFrom,
   setArchived,
   setSettled,
