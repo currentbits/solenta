@@ -736,6 +736,47 @@ function revertFile(opts) {
 
 const LS_FILES_CAP = 20000;
 const LIST_FILES_RESULT = 20;
+const LS_FILES_TTL_MS = 5000;
+
+/**
+ * Last `git ls-files` result, so a burst of @-mention keystrokes filters an
+ * in-memory list instead of forking git (synchronously, on the main process)
+ * for every one.
+ *
+ * ponytail: single entry, not a per-cwd map — the popup only looks at one cwd
+ * at a time. Key it by cwd if two threads start thrashing it.
+ *
+ * @type {{ cwd: string, at: number, files: string[] } | null}
+ */
+let lsFilesCache = null;
+
+/**
+ * Tracked plus untracked (gitignored excluded) paths for a repo, cached for
+ * LS_FILES_TTL_MS.
+ *
+ * @param {string} cwd
+ * @returns {string[]}
+ */
+function lsFiles(cwd) {
+  const now = Date.now();
+  const hit =
+    lsFilesCache &&
+    lsFilesCache.cwd === cwd &&
+    now - lsFilesCache.at < LS_FILES_TTL_MS;
+  if (hit) return lsFilesCache.files;
+  const out = gitTry(cwd, [
+    "ls-files",
+    "--cached",
+    "--others",
+    "--exclude-standard",
+  ]);
+  if (!out.ok) {
+    throw new Error(tailErr(out.stderr || out.combined, "git ls-files failed"));
+  }
+  const files = out.stdout.split("\n").filter(Boolean).slice(0, LS_FILES_CAP);
+  lsFilesCache = { cwd, at: now, files };
+  return files;
+}
 
 /**
  * Files matchable by the composer's @-mention popup: tracked plus untracked
@@ -752,21 +793,11 @@ function listFiles(opts) {
   const { store, threadId } = opts;
   const query = String(opts.query || "").toLowerCase();
   const { cwd } = threadGitCwd(store, threadId);
-  const out = gitTry(cwd, [
-    "ls-files",
-    "--cached",
-    "--others",
-    "--exclude-standard",
-  ]);
-  if (!out.ok) {
-    throw new Error(
-      tailErr(out.stderr || out.combined, "git ls-files failed"),
-    );
-  }
-  const all = out.stdout.split("\n").filter(Boolean).slice(0, LS_FILES_CAP);
+  const all = lsFiles(cwd);
+  // Copy when unfiltered: the sort below must not reorder the cached list.
   const matched = query
     ? all.filter((p) => p.toLowerCase().includes(query))
-    : all;
+    : all.slice();
   matched.sort((a, b) => {
     const aPrefix = a.toLowerCase().startsWith(query) ? 0 : 1;
     const bPrefix = b.toLowerCase().startsWith(query) ? 0 : 1;
