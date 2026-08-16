@@ -719,11 +719,16 @@
   background: var(--card);
 }
 
+/*
+ * Top row: [slug?] [tag pills] … [age]. The slug only renders for orphan
+ * groups (issue #70) — inside a named group the header already carries it.
+ * The tag cluster is flexible so the age stays pinned right.
+ */
 .cardTop {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
+  min-width: 0;
 }
 
 .repo {
@@ -795,11 +800,14 @@
   border: 0;
 }
 
+/* Tag cluster lives inline on .cardTop (issue #70): flexes so .age stays right. */
 .cardTags {
   display: flex;
   align-items: center;
   gap: 5px;
-  margin-top: 1px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .providerTag {
@@ -1036,13 +1044,18 @@
   margin-bottom: 6px;
 }
 
-/* Collapse control + remove control as siblings (not nested). */
+/* Collapse control + remove control as siblings (not nested).
+   Sticky: the project context stays visible while scrolling long groups. */
 .groupHeaderRow {
+  position: sticky;
+  top: 0;
+  z-index: 2;
   display: flex;
   align-items: center;
   gap: 2px;
   min-width: 0;
   padding-right: 4px;
+  background: var(--bg-elevated);
 }
 
 .groupHeader {

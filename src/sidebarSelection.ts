@@ -1,5 +1,9 @@
 import type { ThreadInfo } from "./shared/ipc";
-import type { SidebarGroup } from "./sidebarGroups";
+import {
+  GROUP_ATTENTION_CAP,
+  visibleAttentionCount,
+  type SidebarGroup,
+} from "./sidebarGroups";
 
 /**
  * Inputs for the ordered visible sidebar list (round 46).
@@ -12,6 +16,10 @@ interface VisibleListInput {
   groups: readonly SidebarGroup[];
   /** Group keys currently collapsed (non-search). */
   collapsedGroupKeys: ReadonlySet<string>;
+  /** Group keys expanded past GROUP_ATTENTION_CAP (non-search). */
+  expandedGroupKeys?: ReadonlySet<string>;
+  /** Thread ids the cap must keep visible (active / revealed). */
+  keepThreadIds?: readonly (string | null | undefined)[];
   /** Group keys with archived rows expanded. */
   showArchivedKeys: ReadonlySet<string>;
   snoozed: readonly ThreadInfo[];
@@ -22,7 +30,7 @@ interface VisibleListInput {
   settledOpen: boolean;
   settledVisibleCount: number;
   selectedSettledId: string | null;
-  /** Search mode: flat groups only (no shelves). */
+  /** Search mode: flat groups only (no shelves, no cap). */
   searching?: boolean;
 }
 
@@ -51,7 +59,17 @@ export function buildVisibleThreadIds(input: VisibleListInput): string[] {
       continue;
     }
     const attention = g.threads.filter((t) => !t.archived);
-    for (const t of attention) push(t.id);
+    // Mirror the render's overflow cap (GROUP_ATTENTION_CAP + keepIds
+    // carve-out); search shows everything.
+    const capped =
+      !input.searching &&
+      attention.length > GROUP_ATTENTION_CAP &&
+      !input.expandedGroupKeys?.has(groupKey);
+    const visibleCount = visibleAttentionCount(attention, {
+      capped,
+      keepIds: input.keepThreadIds,
+    });
+    for (const t of attention.slice(0, visibleCount)) push(t.id);
     const archived = g.threads.filter((t) => t.archived);
     if (
       input.searching ||
