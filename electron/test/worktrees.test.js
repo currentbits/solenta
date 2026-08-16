@@ -395,6 +395,71 @@ describe("worktrees", () => {
     assert.ok(broadcasts.some((b) => b.ch === "threads:changed"));
   });
 
+  it("mergeWorktree ignores an unrelated untracked file in the project (#198)", () => {
+    const setup = setupWorktree({
+      store,
+      threadId: thread.id,
+      worktreeBase,
+      broadcast: () => {},
+    });
+    fs.writeFileSync(path.join(setup.worktreePath, "feature.txt"), "work\n");
+    // A scratch file nobody committed used to block every merge, forever.
+    fs.writeFileSync(path.join(repo, "tweet-0.4.0.txt"), "draft\n");
+
+    const merged = mergeWorktree({
+      store,
+      threadId: thread.id,
+      broadcast: () => {},
+    });
+
+    assert.equal(merged.worktreePath, null);
+    assert.ok(fs.existsSync(path.join(repo, "feature.txt")));
+    assert.ok(fs.existsSync(path.join(repo, "tweet-0.4.0.txt")), "left alone");
+  });
+
+  it("mergeWorktree refuses when an untracked project file is in the way", () => {
+    const setup = setupWorktree({
+      store,
+      threadId: thread.id,
+      worktreeBase,
+      broadcast: () => {},
+    });
+    fs.writeFileSync(path.join(setup.worktreePath, "feature.txt"), "work\n");
+    fs.writeFileSync(path.join(repo, "feature.txt"), "mine, unstaged\n");
+
+    assert.throws(
+      () => mergeWorktree({ store, threadId: thread.id, broadcast: () => {} }),
+      (err) => {
+        // Our pre-check, not git's mid-merge complaint about phantom conflicts.
+        assert.match(
+          err.message,
+          /^Untracked files in the project checkout would be overwritten[\s\S]*feature\.txt/,
+        );
+        return true;
+      },
+    );
+    assert.equal(
+      fs.readFileSync(path.join(repo, "feature.txt"), "utf8"),
+      "mine, unstaged\n",
+      "the untracked file must survive the refusal",
+    );
+  });
+
+  it("mergeWorktree still refuses tracked uncommitted changes", () => {
+    setupWorktree({
+      store,
+      threadId: thread.id,
+      worktreeBase,
+      broadcast: () => {},
+    });
+    fs.writeFileSync(path.join(repo, "README.md"), "edited in project\n");
+
+    assert.throws(
+      () => mergeWorktree({ store, threadId: thread.id, broadcast: () => {} }),
+      /uncommitted changes[\s\S]*README\.md/,
+    );
+  });
+
   it("mergeWorktree rejects on conflict and restores clean project checkout", () => {
     const setup = setupWorktree({
       store,
