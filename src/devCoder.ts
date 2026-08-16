@@ -32,6 +32,9 @@ import type {
   MemoryEntryInfo,
   McpServerInfo,
   PermissionMode,
+  PlanIssue,
+  PlanStatus,
+  SetPlanStatusResult,
   PrCheckInfo,
   PrInfo,
   ProjectInfo,
@@ -1292,6 +1295,8 @@ function buildDevCoder(): CoderApi {
   let nextPrNumber = 900;
   /** In-memory per-thread demo servers (Vite-only; Electron uses electron/devservers.js). */
   const demoDevServers = new Map<string, DevServerState>();
+  /** Planboard label moves made this session (issue number → plan status). */
+  const demoPlanStatus = new Map<number, PlanStatus>();
 
   // Seed prByThread for threads that already carry prNumber/prUrl.
   for (const t of threads) {
@@ -2966,12 +2971,32 @@ function buildDevCoder(): CoderApi {
           },
         };
       },
+      async setPlanStatus(input: {
+        projectPath: string;
+        number: number;
+        status: PlanStatus;
+      }): Promise<SetPlanStatusResult> {
+        demoPlanStatus.set(input.number, input.status);
+        return { ok: true };
+      },
       async list(projectPath: string): Promise<ListIssuesResult> {
         const project = projects.find((p) => p.path === projectPath);
         const slug = project?.slug || "acme/demo";
+        const withPlanStatus = (issues: PlanIssue[]): PlanIssue[] =>
+          issues.map((issue) => {
+            const moved = demoPlanStatus.get(issue.number);
+            if (!moved) return issue;
+            return {
+              ...issue,
+              labels: [
+                ...issue.labels.filter((l) => !l.startsWith("plan:")),
+                `plan:${moved}`,
+              ],
+            };
+          });
         return {
           ok: true,
-          issues: [
+          issues: withPlanStatus([
             {
               number: 1,
               title: "Ship the planboard",
@@ -2993,7 +3018,7 @@ function buildDevCoder(): CoderApi {
               state: "CLOSED",
               labels: ["plan:done"],
             },
-          ],
+          ]),
         };
       },
     },
