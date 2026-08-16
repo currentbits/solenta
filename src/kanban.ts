@@ -8,6 +8,7 @@ import {
   effectiveSettled,
   type SettleOpts,
 } from "./threadSettle";
+import { buildWaitStates, isDelegating } from "./waiting";
 
 export type KanbanColumnId = ThreadStatus;
 
@@ -49,8 +50,14 @@ export function kanbanColumns(
     done: [],
     failed: [],
   };
+  // Wait states come from ALL threads: a worker can be live while its own card
+  // is settled/archived out of `visible`.
+  const waits = buildWaitStates(threads);
   for (const thread of visible) {
-    buckets[thread.status].push(thread);
+    // Delegating threads are in flight, so they belong with Working rather
+    // than Done — no column of their own, the card badge says which is which.
+    const delegating = isDelegating(thread.status, waits.get(thread.id));
+    buckets[delegating ? "working" : thread.status].push(thread);
   }
   return COLUMN_ORDER.map(({ id, title }) => ({
     id,

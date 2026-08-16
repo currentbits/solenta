@@ -67,6 +67,20 @@ describe("kanbanColumns", () => {
     );
   });
 
+  it("keeps a delegating orchestrator out of Done", () => {
+    const columns = kanbanColumns(
+      [
+        thread({ id: "orch", status: "done" }),
+        thread({ id: "w1", status: "working", handoffFrom: "orch" }),
+      ],
+      settleOpts,
+    );
+    assert.deepEqual(
+      columns.map((c) => c.threads.map((t) => t.id)),
+      [["orch", "w1"], [], [], []],
+    );
+  });
+
   it("excludes archived threads and threads shelved as settled", () => {
     const columns = kanbanColumns(
       [

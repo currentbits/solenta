@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   buildWaitStates,
+  isDelegating,
   waitLabel,
   waitTooltip,
   type WaitRow,
@@ -98,6 +99,18 @@ describe("buildWaitStates", () => {
     assert.equal(wait.since, null, "no spawn stamp: elapsed stays off");
     assert.equal(waitLabel(wait, NOW), "Waiting on 1 worker");
     assert.match(waitTooltip(wait), /Map the panel/);
+  });
+
+  it("isDelegating: a finished turn with live workers is not done", () => {
+    const wait = buildWaitStates([
+      row({ id: "orch", status: "done" }),
+      row({ id: "w1", handoffFrom: "orch", status: "working" }),
+    ]).get("orch")!;
+    assert.equal(isDelegating("done", wait), true);
+    assert.equal(isDelegating("idle", wait), true);
+    assert.equal(isDelegating("working", wait), false, "already reads Working");
+    assert.equal(isDelegating("failed", wait), false, "failure is the news");
+    assert.equal(isDelegating("done", null), false, "no workers: plain done");
   });
 
   it("ignores a self-referential handoffFrom (corrupt row)", () => {

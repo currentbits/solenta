@@ -1005,6 +1005,14 @@
   }
 }
 
+/* Own turn ended, workers still running: in flight, not finished. Violet so
+   it reads as neither done (green) nor blocked on you (amber). */
+.badgeDelegating {
+  color: #c4b5fd;
+  background: rgba(167, 139, 250, 0.12);
+  border: 1px solid rgba(167, 139, 250, 0.35);
+}
+
 .badgeDone {
   color: var(--green);
   background: var(--green-soft);

@@ -31,6 +31,7 @@ import {
 import { countUnread, isUnread } from "../threadUnread";
 import {
   buildWaitStates,
+  isDelegating,
   waitLabel,
   waitTooltip,
   type WaitState,
@@ -239,9 +240,12 @@ function spendMeterTone(
 function StatusBadge({
   thread,
   now,
+  wait = null,
 }: {
   thread: ThreadInfo;
   now: number;
+  /** Live delegated work; turns a done/idle turn into "Delegating". */
+  wait?: WaitState | null;
 }) {
   if (thread.status === "working" && thread.awaitingInput) {
     return (
@@ -261,6 +265,18 @@ function StatusBadge({
       <span className={`${styles.badge} ${styles.badgeWorking}`}>
         <span className={styles.spinner} aria-hidden />
         {label}
+      </span>
+    );
+  }
+
+  if (isDelegating(thread.status, wait)) {
+    return (
+      <span
+        className={`${styles.badge} ${styles.badgeDelegating}`}
+        data-delegating={thread.id}
+      >
+        <span className={styles.waitingDot} aria-hidden />
+        Delegating
       </span>
     );
   }
@@ -470,7 +486,7 @@ export function ThreadCard({
               <span className={styles.prLabel}>{prBadge.label}</span>
             ) : null}
           </div>
-          <StatusBadge thread={thread} now={now} />
+          <StatusBadge thread={thread} now={now} wait={wait} />
         </div>
         {/* Own row, not a chip beside the status badge: on a narrow card the
             branch + PR chip squeeze a chip down to "Waiting on…", which loses
