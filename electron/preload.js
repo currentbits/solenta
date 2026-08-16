@@ -9,11 +9,27 @@ const PUSH_CHANNELS = new Set([
 ]);
 
 /**
+ * Electron wraps every invoke rejection as
+ * "Error invoking remote method 'chan': Error: <message>", which the UI then
+ * shows verbatim — a main-process sentence reads like an internal crash
+ * (issue #198). Markers (WORKTREE_DIRTY:, MERGE_CONFLICT:) sit after the
+ * prefix, so stripping it leaves them intact.
+ *
+ * ponytail: inline and untested on purpose — this preload runs with
+ * sandbox: true (main.js), which cannot require a local module to share or
+ * unit-test the regex.
+ */
+const INVOKE_WRAP = /^Error invoking remote method '[^']*':\s*(?:\w*Error:\s*)?/;
+
+/**
  * @param {string} channel
  * @param  {...unknown} args
  */
 function invoke(channel, ...args) {
-  return ipcRenderer.invoke(channel, ...args);
+  return ipcRenderer.invoke(channel, ...args).catch((err) => {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(message.replace(INVOKE_WRAP, "") || message);
+  });
 }
 
 /**

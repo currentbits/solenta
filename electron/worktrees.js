@@ -182,7 +182,16 @@ function cleanupWorktree(opts) {
 function unmergedFiles(cwd) {
   const res = gitTry(cwd, ["diff", "--name-only", "--diff-filter=U"]);
   if (!res.ok) return [];
-  return res.stdout
+  return splitLines(res.stdout);
+}
+
+/**
+ * git output (one path per line) as a trimmed, non-empty list.
+ * @param {string} text
+ * @returns {string[]}
+ */
+function splitLines(text) {
+  return text
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean);
@@ -285,14 +294,45 @@ function mergeWorktree(opts) {
   // (b) Project default branch (must not be detached)
   const baseBranch = defaultBranch(project.path);
 
-  // (c) Refuse dirty project checkout; squash-merge then commit
-  const mainStatus = gitOut(project.path, ["status", "--porcelain"], {
-    raw: true,
-  }).trim();
+  // (c) Refuse a dirty project checkout — TRACKED changes only. Plain
+  // `status --porcelain` also lists untracked files, so a single stray scratch
+  // file in the project blocked every thread's merge until someone noticed it
+  // (issue #198). A squash merge cannot clobber an untracked file unless the
+  // branch writes that same path, which is the check right below.
+  const mainStatus = gitOut(
+    project.path,
+    ["status", "--porcelain", "--untracked-files=no"],
+    { raw: true },
+  ).trim();
   if (mainStatus) {
     throw new Error(
-      "Project checkout has uncommitted changes; commit or stash before merging",
+      `Project checkout has uncommitted changes; commit or stash before merging:\n${mainStatus}`,
     );
+  }
+
+  // Untracked files the merge WOULD write over: git refuses these too, but
+  // only mid-merge, reported as a conflict against files nobody edited.
+  const incoming = gitTry(
+    project.path,
+    ["diff", "--name-only", `${baseBranch}...${branch}`],
+    { raw: true },
+  );
+  if (incoming.ok) {
+    const untracked = new Set(splitLines(
+      gitOut(project.path, ["ls-files", "--others", "--exclude-standard"], {
+        raw: true,
+      }),
+    ));
+    const clobbered = splitLines(incoming.stdout).filter((f) =>
+      untracked.has(f),
+    );
+    if (clobbered.length) {
+      throw new Error(
+        `Untracked files in the project checkout would be overwritten by this merge; move or remove them:\n${clobbered
+          .map((f) => `  ${f}`)
+          .join("\n")}`,
+      );
+    }
   }
 
   // Squash into the project checkout, always restoring it on failure.
