@@ -1522,7 +1522,7 @@ function removeTemplate(store, input) {
 
 /**
  * @param {import('./store').Store} store
- * @returns {{ dailyBudgetUsd: number | null, autoSettleAfterDays: number | null }}
+ * @returns {{ dailyBudgetUsd: number | null, orchestrationBudgetUsd: number | null, autoSettleAfterDays: number | null }}
  */
 function getSettings(store) {
   return store.getSettings();
@@ -1531,8 +1531,8 @@ function getSettings(store) {
 /**
  * Validate and persist settings. Does not touch threads.
  * @param {import('./store').Store} store
- * @param {Partial<{ dailyBudgetUsd: number | null, autoSettleAfterDays: number | null }>} patch
- * @returns {{ dailyBudgetUsd: number | null, autoSettleAfterDays: number | null }}
+ * @param {Partial<{ dailyBudgetUsd: number | null, orchestrationBudgetUsd: number | null, autoSettleAfterDays: number | null }>} patch
+ * @returns {{ dailyBudgetUsd: number | null, orchestrationBudgetUsd: number | null, autoSettleAfterDays: number | null }}
  */
 function setSettings(store, patch) {
   const next = store.setSettings(patch || {});
@@ -1824,6 +1824,50 @@ function assertUnderDailyBudget(store) {
   }
 }
 
+/**
+ * Total lifetime cost (USD) of an orchestration: the orchestrator thread's own
+ * usage plus every direct orchWorker forked from it. Nested crews are NOT
+ * rolled up — each worker that fans out is its own orchestrator with its own
+ * ceiling check.
+ * @param {import('./store').Store} store
+ * @param {string} threadId orchestrator thread id
+ * @returns {number}
+ */
+function orchestrationSpend(store, threadId) {
+  let total = 0;
+  const own = store.getUsage(threadId);
+  if (own && Number.isFinite(own.costUsd)) total += own.costUsd;
+  for (const t of store.getThreads()) {
+    if (!t || !t.orchWorker || t.handoffFrom !== threadId) continue;
+    const u = store.getUsage(t.id);
+    if (u && Number.isFinite(u.costUsd)) total += u.costUsd;
+  }
+  return total;
+}
+
+/**
+ * Reject when a per-orchestration ceiling is set and this orchestrator's crew
+ * (its own turns plus its workers') has already reached it. Checked at
+ * orchestration wake-up time only (issue #67); never kills in-flight runs and
+ * never blocks a user-sent turn, so the thread stays resumable via Retry.
+ * @param {import('./store').Store} store
+ * @param {string} threadId orchestrator thread id
+ */
+function assertUnderOrchestrationBudget(store, threadId) {
+  const settings = store.getSettings();
+  const ceiling = settings.orchestrationBudgetUsd;
+  if (ceiling == null) return;
+  if (typeof ceiling !== "number" || !Number.isFinite(ceiling) || ceiling <= 0) {
+    return;
+  }
+  const spent = orchestrationSpend(store, threadId);
+  if (spent >= ceiling) {
+    throw new Error(
+      `Orchestration budget reached ($${spent.toFixed(2)} of $${ceiling.toFixed(2)} for this thread's crew). Raise or clear the per-orchestration cap in Settings.`,
+    );
+  }
+}
+
 module.exports = {
   addProject,
   createProject,
@@ -1882,5 +1926,7 @@ module.exports = {
   removeAutomation,
   appStatus,
   assertUnderDailyBudget,
+  assertUnderOrchestrationBudget,
+  orchestrationSpend,
   PERMISSION_MODES,
 };

@@ -97,7 +97,7 @@ Config file (env `CODER_MEMORY_CONFIG` or default under Application Support/code
 projects[], threads[],
 messagesByThread{}, workLogByThread{}, usageByThread{},
 workflowTemplates[], spendByDay{ "YYYY-MM-DD": number },
-settings: { dailyBudgetUsd: number | null }
+settings: { dailyBudgetUsd: number | null, orchestrationBudgetUsd: number | null }
 ```
 
 `updateThread` does not bump `updatedAt` unless the caller opts in (sidebar age
@@ -116,6 +116,15 @@ Usage deltas from provider result events call `store.recordSpend`.
 `assertUnderDailyBudget` rejects `runs:start` / workflow start when
 `spendTodayUsd >= dailyBudgetUsd`. Retention: spend buckets older than 90 days
 are pruned.
+
+Per-orchestration ceiling (issue #67): `orchestrationBudgetUsd` caps one
+orchestrator's crew — its own turns plus direct `orchWorker` forks, summed
+from `usageByThread.costUsd` (`services.orchestrationSpend`). Enforced by
+`assertUnderOrchestrationBudget` in `flushOrchNotices` only: a crew at the cap
+has its next wake-up refused and lands failed with the reason via the #34
+surfacing path, while user-sent turns (Retry after raising the cap) still run.
+Nested crews are not rolled up; each worker that fans out is its own
+orchestrator.
 
 ## Renderer notes
 

@@ -178,6 +178,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
   };
   let settingsState: AppSettings = {
     dailyBudgetUsd: null,
+    orchestrationBudgetUsd: null,
     autoSettleAfterDays: 3,
     mcpServers: [],
     defaultWorktree: false,
@@ -280,6 +281,20 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
             }
           }
           next.dailyBudgetUsd = v === null || v === undefined ? null : v;
+        }
+        if (Object.prototype.hasOwnProperty.call(p, "orchestrationBudgetUsd")) {
+          const v = p.orchestrationBudgetUsd;
+          if (v !== null && v !== undefined) {
+            if (typeof v !== "number" || !Number.isFinite(v) || !(v > 0)) {
+              calls.push({ channel: "settings.set", args: [patch] });
+              return Promise.reject(
+                new Error(
+                  "Orchestration budget must be a positive number or null",
+                ),
+              );
+            }
+          }
+          next.orchestrationBudgetUsd = v === null || v === undefined ? null : v;
         }
         if (Object.prototype.hasOwnProperty.call(p, "autoSettleAfterDays")) {
           const v = p.autoSettleAfterDays;

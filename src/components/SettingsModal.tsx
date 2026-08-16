@@ -44,6 +44,7 @@ export function SettingsModal({
   onSaveSettings,
 }: SettingsModalProps) {
   const [budgetText, setBudgetText] = useState("");
+  const [orchBudgetText, setOrchBudgetText] = useState("");
   const [settleDaysText, setSettleDaysText] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -61,11 +62,14 @@ export function SettingsModal({
     if (wasOpen.current) return;
     wasOpen.current = true;
     setBudgetText(budgetToInput(settings?.dailyBudgetUsd ?? null));
+    setOrchBudgetText(
+      budgetToInput(settings?.orchestrationBudgetUsd ?? null),
+    );
     setSettleDaysText(settleDaysToInput(settings?.autoSettleAfterDays ?? null));
     setError(null);
     setSaving(false);
     savingRef.current = false;
-  }, [open, settings?.dailyBudgetUsd, settings?.autoSettleAfterDays]);
+  }, [open, settings?.dailyBudgetUsd, settings?.orchestrationBudgetUsd, settings?.autoSettleAfterDays]);
 
   const handleClose = useCallback(() => {
     onClose();
@@ -87,6 +91,11 @@ export function SettingsModal({
       const dailyBudgetUsd: number | null =
         budgetRaw === "" ? null : Number(budgetRaw);
 
+      const orchBudgetRaw = orchBudgetText.trim();
+      // Same contract as the daily cap: empty = no per-orchestration ceiling.
+      const orchestrationBudgetUsd: number | null =
+        orchBudgetRaw === "" ? null : Number(orchBudgetRaw);
+
       const settleRaw = settleDaysText.trim();
       // Empty = Never (null disables inactivity settle). Otherwise parse.
       const autoSettleAfterDays: number | null =
@@ -94,9 +103,11 @@ export function SettingsModal({
 
       const saved = await onSaveSettings({
         dailyBudgetUsd,
+        orchestrationBudgetUsd,
         autoSettleAfterDays,
       });
       setBudgetText(budgetToInput(saved.dailyBudgetUsd));
+      setOrchBudgetText(budgetToInput(saved.orchestrationBudgetUsd));
       setSettleDaysText(settleDaysToInput(saved.autoSettleAfterDays));
     } catch (err) {
       const msg =
@@ -120,6 +131,21 @@ export function SettingsModal({
         Number.isFinite(next) &&
         next === current &&
         budgetText.trim() !== "");
+    if (same && error == null) return;
+    void save();
+  };
+
+  const onBlurOrchBudget = () => {
+    // Skip if unchanged from last known settings value.
+    const current = settings?.orchestrationBudgetUsd ?? null;
+    const next =
+      orchBudgetText.trim() === "" ? null : Number(orchBudgetText.trim());
+    const same =
+      (current == null && (orchBudgetText.trim() === "" || next === null)) ||
+      (current != null &&
+        Number.isFinite(next) &&
+        next === current &&
+        orchBudgetText.trim() !== "");
     if (same && error == null) return;
     void save();
   };
@@ -218,6 +244,50 @@ export function SettingsModal({
                   {error}
                 </p>
               )}
+            </div>
+            <div className={styles.field}>
+              <label className={styles.fieldLabel} htmlFor="orch-budget">
+                Per-orchestration budget (USD)
+              </label>
+              <div className={styles.fieldRow}>
+                <input
+                  id="orch-budget"
+                  className={styles.input}
+                  type="number"
+                  inputMode="decimal"
+                  min="0"
+                  step="any"
+                  placeholder="No cap"
+                  value={orchBudgetText}
+                  disabled={saving}
+                  data-orch-budget=""
+                  onChange={(e) => {
+                    setOrchBudgetText(e.target.value);
+                    setError(null);
+                  }}
+                  onBlur={() => onBlurOrchBudget()}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      void save();
+                    }
+                  }}
+                />
+                <button
+                  type="button"
+                  className={`${styles.btn} ${styles.btnPrimary}`}
+                  disabled={saving}
+                  onClick={() => void save()}
+                >
+                  {saving ? "Saving…" : "Save"}
+                </button>
+              </div>
+              <p className={styles.note}>
+                Caps the combined spend of one orchestrator thread and its
+                fan-out workers. When a crew reaches it, the next worker
+                wake-up is refused and the thread lands failed with the
+                reason — raise or clear the cap, then Retry turn.
+              </p>
             </div>
           </section>
 

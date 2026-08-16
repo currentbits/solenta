@@ -594,7 +594,16 @@ function createRunner(opts) {
       "[orchestration] " +
       notes.join("\n") +
       "\nContinue orchestrating; thread_status has full details.";
-    startRun({ threadId, prompt }).catch((err) => {
+    // Per-orchestration ceiling (issue #67): refuse the wake-up when this
+    // crew's collective spend reached the cap. Checked here, not in startRun,
+    // so user-sent turns (and "Retry turn" after raising the cap) still run.
+    // The catch below surfaces the refusal exactly like the daily-budget gate.
+    Promise.resolve()
+      .then(() => {
+        services.assertUnderOrchestrationBudget(store, threadId);
+        return startRun({ threadId, prompt });
+      })
+      .catch((err) => {
       // Undeliverable (budget gate, missing CLI): the orchestration stops
       // advancing right here, so say why and land the thread "failed" —
       // that badges the sidebar, arms "Retry turn", and fires the desktop
