@@ -303,14 +303,25 @@ app.whenReady().then(async () => {
       process.stdout.write(`solenta-web: ${HOST_FLAG_HELP}\n`);
     }
     const staticDir = path.join(__dirname, "../dist");
-    webServer = await startWebServer({
-      host: serveOpts.host,
-      port: serveOpts.port,
-      staticDir: fs.existsSync(staticDir) ? staticDir : null,
-      token,
-      ctx: registered.ctx,
-      log: (msg) => console.warn(msg),
-    });
+    // The port is fixed, so EADDRINUSE is routine (a previous instance still
+    // holds it). Never let that reject out of whenReady: createWindow() below
+    // would be skipped and the app would boot with no window and no error.
+    try {
+      webServer = await startWebServer({
+        host: serveOpts.host,
+        port: serveOpts.port,
+        staticDir: fs.existsSync(staticDir) ? staticDir : null,
+        token,
+        ctx: registered.ctx,
+        log: (msg) => console.warn(msg),
+      });
+    } catch (err) {
+      // No listener means nothing to keep the process alive headless either.
+      serveOpts.enabled = false;
+      process.stdout.write(
+        `solenta-web: cannot listen on ${serveOpts.host}:${serveOpts.port} (${err && err.message ? err.message : err}); continuing without web serve\n`,
+      );
+    }
   }
 
   // Round 47: lazy PR-state freshness. Async/serialized/latched so a slow gh

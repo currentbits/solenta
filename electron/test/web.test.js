@@ -491,6 +491,19 @@ describe("one map, two transports + packaging", () => {
     assert.match(main, /process\.stdout\.write\(`solenta-web: token/);
   });
 
+  it("main.js survives a web-server bind failure and still opens a window", () => {
+    const main = fs.readFileSync(path.join(__dirname, "../main.js"), "utf8");
+    // EADDRINUSE on the fixed port must not reject out of whenReady, or
+    // createWindow() never runs: app up, no window, no error anywhere.
+    assert.match(main, /try \{\s*webServer = await startWebServer\(/);
+    const guard = main.slice(
+      main.indexOf("webServer = await startWebServer("),
+      main.indexOf("createWindow();"),
+    );
+    assert.match(guard, /\} catch \(err\) \{/);
+    assert.match(guard, /serveOpts\.enabled = false/);
+  });
+
   it("ws is a pinned production dependency", () => {
     const pkg = JSON.parse(
       fs.readFileSync(path.join(__dirname, "../../package.json"), "utf8"),
