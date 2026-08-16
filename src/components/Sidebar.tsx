@@ -9,9 +9,11 @@ import {
 } from "../format";
 import { sidebarPrBadge } from "../prUi";
 import {
+  GROUP_ATTENTION_CAP,
   buildSidebarGroups,
   groupHeaderSummary,
   partitionSidebar,
+  visibleAttentionCount,
 } from "../sidebarGroups";
 import {
   AUTO_SETTLE_AFTER_DAYS,
@@ -311,6 +313,7 @@ export function ThreadCard({
   remote = false,
   nested = false,
   wait = null,
+  showSlug = true,
 }: {
   thread: ThreadInfo;
   slug: string;
@@ -343,6 +346,13 @@ export function ThreadCard({
   nested?: boolean;
   /** Live delegated work this thread is blocked on (issue #42); null when none. */
   wait?: WaitState | null;
+  /**
+   * Render the project slug on the top row. False inside named project
+   * groups — the group header already carries the slug, repeating it per
+   * card is pure noise. True for orphan groups (no header) and standalone
+   * renders (tests).
+   */
+  showSlug?: boolean;
 }) {
   const branch = thread.branch ?? "";
   const prBadge = sidebarPrBadge({
@@ -393,7 +403,24 @@ export function ThreadCard({
       />
       <div className={styles.cardBody}>
         <div className={styles.cardTop}>
-          <span className={styles.repo}>{slug}</span>
+          {showSlug && <span className={styles.repo}>{slug}</span>}
+          <span className={styles.cardTags}>
+            <span className={styles.providerTag}>{providerLabel}</span>
+            {remote && (
+              <span className={styles.sshTag} data-ssh-tag="" title="SSH remote">
+                ssh
+              </span>
+            )}
+            {(thread.worktreePath || thread.pendingWorktree) && (
+              <span className={styles.worktreeTag}>wt</span>
+            )}
+            {thread.archived && (
+              <span className={styles.archivedTag}>archived</span>
+            )}
+            {contentMatch && (
+              <span className={styles.inMessagesTag}>in messages</span>
+            )}
+          </span>
           <span className={styles.age}>
             {formatRelativeAge(thread.updatedAt, now)}
           </span>
@@ -408,23 +435,6 @@ export function ThreadCard({
           )}
           {showUnread && <span className={styles.srOnly}>unread</span>}
           <div className={styles.cardTitle}>{thread.title}</div>
-        </div>
-        <div className={styles.cardTags}>
-          <span className={styles.providerTag}>{providerLabel}</span>
-          {remote && (
-            <span className={styles.sshTag} data-ssh-tag="" title="SSH remote">
-              ssh
-            </span>
-          )}
-          {(thread.worktreePath || thread.pendingWorktree) && (
-            <span className={styles.worktreeTag}>wt</span>
-          )}
-          {thread.archived && (
-            <span className={styles.archivedTag}>archived</span>
-          )}
-          {contentMatch && (
-            <span className={styles.inMessagesTag}>in messages</span>
-          )}
         </div>
         <div className={styles.cardMeta}>
           <div className={styles.branchRow}>
@@ -1034,6 +1044,13 @@ export function Sidebar({
   const [removePending, setRemovePending] = useState(false);
   /** Project ids whose archived threads are shown inline (normal view only). */
   const [showArchived, setShowArchived] = useState<Set<string>>(() => new Set());
+  /**
+   * Group keys fully expanded past GROUP_ATTENTION_CAP (session-only, like
+   * showArchived). Absent = capped at the newest 8 attention threads.
+   */
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
+    () => new Set(),
+  );
   /** Group keys the user collapsed. Survives restarts: collapsing a noisy
    *  project is a lasting choice, not a per-session whim. */
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() =>
@@ -1301,6 +1318,15 @@ export function Sidebar({
     });
   };
 
+  const toggleGroupExpanded = (groupKey: string) => {
+    setExpandedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(groupKey)) next.delete(groupKey);
+      else next.add(groupKey);
+      return next;
+    });
+  };
+
   const canCreate = projects.length > 0;
   /**
    * Project the global + targets (mirrors useCoder's selectedProjectId):
@@ -1357,6 +1383,8 @@ export function Sidebar({
         pinned: searching ? [] : globalPinned,
         groups,
         collapsedGroupKeys: searching ? new Set() : collapsedGroups,
+        expandedGroupKeys: searching ? new Set() : expandedGroups,
+        keepThreadIds: [activeThreadId, revealThreadId ?? null],
         showArchivedKeys: searching
           ? new Set(groups.map((g) => g.project?.id ?? g.threads[0]?.projectId ?? "orphan"))
           : showArchived,
@@ -1374,6 +1402,9 @@ export function Sidebar({
       globalPinned,
       groups,
       collapsedGroups,
+      expandedGroups,
+      activeThreadId,
+      revealThreadId,
       showArchived,
       globalSnoozed,
       snoozedOpen,
@@ -2046,6 +2077,18 @@ export function Sidebar({
             // collapse: hiding hits inside a collapsed group makes results lie.
             const collapsed = !searching && collapsedGroups.has(groupKey);
             const summary = groupHeaderSummary(attentionThreads);
+            // Overflow cap (issue #70): a group renders its newest
+            // GROUP_ATTENTION_CAP attention threads; the rest hide behind a
+            // session-only "Show more". Search bypasses the cap like every
+            // other collapse. The active/revealed thread never vanishes.
+            const groupCapped = !searching && !expandedGroups.has(groupKey);
+            const visibleCount = visibleAttentionCount(attentionThreads, {
+              capped: groupCapped,
+              keepIds: [activeThreadId, revealThreadId ?? null],
+            });
+            const visibleAttention = attentionThreads.slice(0, visibleCount);
+            const showOverflowToggle =
+              !searching && attentionThreads.length > GROUP_ATTENTION_CAP;
 
             return (
               <div key={groupKey} className={styles.group} ref={attachListAnimation}>
@@ -2158,11 +2201,12 @@ export function Sidebar({
                       remounts — auto-animate cross-fades instead of sliding
                       one element across lists.
                     */}
-                    {attentionThreads.map((thread) => (
+                    {visibleAttention.map((thread) => (
                       <ThreadCard
                         key={`${thread.id}:card`}
                         thread={thread}
                         slug={slug}
+                        showSlug={project == null}
                         remote={Boolean(project?.remoteHost)}
                         providers={providers}
                         active={thread.id === activeThreadId}
@@ -2194,12 +2238,26 @@ export function Sidebar({
                         }
                       />
                     ))}
+                    {showOverflowToggle && (
+                      <button
+                        type="button"
+                        className={styles.settledShowMore}
+                        data-group-overflow={groupKey}
+                        onClick={() => toggleGroupExpanded(groupKey)}
+                        aria-expanded={!groupCapped}
+                      >
+                        {groupCapped
+                          ? `Show ${attentionThreads.length - visibleCount} more`
+                          : "Show fewer"}
+                      </button>
+                    )}
                     {archivedExpanded &&
                       archivedThreads.map((thread) => (
                         <ThreadCard
                           key={`${thread.id}:card`}
                           thread={thread}
                           slug={slug}
+                          showSlug={project == null}
                           remote={Boolean(project?.remoteHost)}
                           providers={providers}
                           active={thread.id === activeThreadId}

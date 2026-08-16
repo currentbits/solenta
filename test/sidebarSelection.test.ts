@@ -288,3 +288,66 @@ describe("isShortcutBlocked", () => {
     assert.equal(isShortcutBlocked(null, true), true);
   });
 });
+
+describe("buildVisibleThreadIds group overflow cap (issue #70)", () => {
+  const bigGroup = (n: number): SidebarGroup => ({
+    project: { id: "p1", slug: "acme/a", name: "a", path: "/a" },
+    // createdAt desc like the real group builder: t0 newest … t(n-1) oldest.
+    threads: Array.from({ length: n }, (_, i) =>
+      t(`t${i}`, { createdAt: NOW - i, updatedAt: NOW - i }),
+    ),
+  });
+
+  const baseInput = {
+    pinned: [],
+    collapsedGroupKeys: new Set<string>(),
+    showArchivedKeys: new Set<string>(),
+    snoozed: [],
+    snoozedOpen: false,
+    selectedSnoozedId: null,
+    settled: [],
+    settledOpen: false,
+    settledVisibleCount: 0,
+    selectedSettledId: null,
+  };
+
+  it("a capped group contributes only the newest 8 attention threads", () => {
+    const ids = buildVisibleThreadIds({ ...baseInput, groups: [bigGroup(12)] });
+    assert.deepEqual(ids, ["t0", "t1", "t2", "t3", "t4", "t5", "t6", "t7"]);
+  });
+
+  it("an expanded group contributes all attention threads", () => {
+    const ids = buildVisibleThreadIds({
+      ...baseInput,
+      groups: [bigGroup(12)],
+      expandedGroupKeys: new Set(["p1"]),
+    });
+    assert.equal(ids.length, 12);
+    assert.equal(ids[11], "t11");
+  });
+
+  it("keepThreadIds carve-out keeps the open thread visible past the cap", () => {
+    const ids = buildVisibleThreadIds({
+      ...baseInput,
+      groups: [bigGroup(12)],
+      keepThreadIds: ["t10"],
+    });
+    assert.equal(ids.length, 11);
+    assert.equal(ids[10], "t10");
+    assert.ok(!ids.includes("t11"));
+  });
+
+  it("search mode ignores the cap", () => {
+    const ids = buildVisibleThreadIds({
+      ...baseInput,
+      groups: [bigGroup(12)],
+      searching: true,
+    });
+    assert.equal(ids.length, 12);
+  });
+
+  it("groups at the cap are untouched", () => {
+    const ids = buildVisibleThreadIds({ ...baseInput, groups: [bigGroup(8)] });
+    assert.equal(ids.length, 8);
+  });
+});
