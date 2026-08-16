@@ -177,7 +177,8 @@ export interface UseCoderResult {
    * Pass threadId when undoing archive after selection has already moved.
    * Archiving the selected thread moves selection off it.
    */
-  setArchived: (archived: boolean, threadId?: string) => Promise<void>;
+  /** Resolves false when the archive failed (message lands in error scope "run"). */
+  setArchived: (archived: boolean, threadId?: string) => Promise<boolean>;
   /**
    * Set the settle override for a thread (sidebar hover action).
    * Does not require the thread to be selected.
@@ -934,9 +935,14 @@ export function useCoder(): UseCoderResult {
 
   const runAutomationNow = useCallback(
     async (automationId: string) => {
-      const updated = await api.automations.runNow({ id: automationId });
-      await refreshAutomations();
-      return updated;
+      try {
+        return await api.automations.runNow({ id: automationId });
+      } finally {
+        // runNow rethrows the agent failure AFTER the main process has already
+        // written lastError, so the row only shows it if we resync on the
+        // throwing path too (issue #85).
+        await refreshAutomations();
+      }
     },
     [api, refreshAutomations],
   );
@@ -1113,7 +1119,7 @@ export function useCoder(): UseCoderResult {
   const setArchived = useCallback(
     async (archived: boolean, threadIdArg?: string) => {
       const threadId = threadIdArg ?? selectedThreadId;
-      if (!threadId) return;
+      if (!threadId) return false;
       try {
         const thread = await api.threads.setArchived({ threadId, archived });
         const next = threadsRef.current.map((t) =>
@@ -1133,8 +1139,10 @@ export function useCoder(): UseCoderResult {
           );
         }
         setError(null);
+        return true;
       } catch (err) {
         setError({ scope: "run", message: errorMessage(err) });
+        return false;
       }
     },
     [api, selectedThreadId, applyThreads],

@@ -43,7 +43,30 @@ export function AutomationsView({
   const [hour, setHour] = useState("9");
   const [formError, setFormError] = useState<string | null>(null);
   const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [rowError, setRowError] = useState<{
+    id: string;
+    message: string;
+  } | null>(null);
   const [now] = useState(() => Date.now());
+
+  /**
+   * Row actions are fire-and-forget from an onClick, so a rejection has to
+   * land somewhere visible instead of becoming an unhandled rejection (#85).
+   */
+  const runRowAction = (id: string, action: () => Promise<void> | void) => {
+    setRowError(null);
+    void (async () => {
+      try {
+        await action();
+      } catch (err) {
+        setRowError({
+          id,
+          message:
+            err instanceof Error && err.message ? err.message : String(err),
+        });
+      }
+    })();
+  };
 
   const projectById = useMemo(
     () => new Map(projects.map((p) => [p.id, p])),
@@ -240,6 +263,10 @@ export function AutomationsView({
         <div className={styles.list}>
           {automations.map((auto) => {
             const project = projectById.get(auto.projectId);
+            const error =
+              rowError && rowError.id === auto.id
+                ? rowError.message
+                : auto.lastError;
             return (
               <div
                 key={auto.id}
@@ -262,9 +289,9 @@ export function AutomationsView({
                   <span className={styles.next}>
                     {formatNextRun(auto.nextRunAt, now)}
                   </span>
-                  {auto.lastError ? (
+                  {error ? (
                     <span className={styles.error} data-automation-error="">
-                      {auto.lastError}
+                      {error}
                     </span>
                   ) : null}
                 </div>
@@ -277,7 +304,9 @@ export function AutomationsView({
                       title={auto.enabled ? "Disable" : "Enable"}
                       aria-label={auto.enabled ? "Disable" : "Enable"}
                       onChange={() => {
-                        void onUpdate({ id: auto.id, enabled: !auto.enabled });
+                        runRowAction(auto.id, () =>
+                          onUpdate({ id: auto.id, enabled: !auto.enabled }),
+                        );
                       }}
                     />
                     {auto.enabled ? "On" : "Off"}
@@ -288,7 +317,7 @@ export function AutomationsView({
                     data-automation-run=""
                     title="Run now"
                     onClick={() => {
-                      void onRunNow(auto.id);
+                      runRowAction(auto.id, () => onRunNow(auto.id));
                     }}
                   >
                     Run now
@@ -307,7 +336,7 @@ export function AutomationsView({
                         return;
                       }
                       setConfirmId(null);
-                      void onRemove(auto.id);
+                      runRowAction(auto.id, () => onRemove(auto.id));
                     }}
                   >
                     {confirmId === auto.id ? "Confirm delete" : "Delete"}
