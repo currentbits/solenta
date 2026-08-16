@@ -162,12 +162,15 @@ describe("Sidebar worktree thread creation", () => {
     );
   });
 
-  it("hides the no-worktree item when defaultWorktree is off (redundant with plain button)", async () => {
+  it("offers the no-worktree item even when defaultWorktree is off", async () => {
     const m = await mountSidebar([project], () => {});
     const caret = m.query('[data-create-menu-btn="p1"]');
     assert.ok(caret);
     await m.click(caret);
     assert.ok(m.query('[data-create-worktree-thread="p1"]'));
-    assert.equal(m.query('[data-create-plain-thread="p1"]'), null);
+    assert.ok(
+      m.query('[data-create-plain-thread="p1"]'),
+      "plain-thread item is always listed",
+    );
   });
 });

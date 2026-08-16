@@ -118,11 +118,14 @@ interface SidebarProps {
   activeThreadId: string | null;
   onSelectThread: (id: string) => void;
   /** Global + uses selected project; per-group New thread passes that projectId. */
-  onCreateThread: (projectId?: string, opts?: { worktree?: boolean }) => void;
+  onCreateThread: (
+    projectId?: string,
+    opts?: { worktree?: boolean; orchestrate?: boolean },
+  ) => void;
   /**
-   * Mirrors SettingsInfo.defaultWorktree. When true, plain "New thread"
-   * already creates a worktree thread, so the caret menu also offers an
-   * explicit "no worktree" variant (issue #72).
+   * Mirrors SettingsInfo.defaultWorktree. The caret always lists all three
+   * modes; this only documents the setting the plain "New thread" button
+   * follows (issue #72). Unused in the menu itself.
    */
   defaultWorktree?: boolean;
   onAddProject: () => void;
@@ -1017,7 +1020,6 @@ export const Sidebar = memo(function Sidebar({
   activeThreadId,
   onSelectThread,
   onCreateThread,
-  defaultWorktree = false,
   onAddProject,
   onRemoveProject,
   onEditProject,
@@ -1689,21 +1691,32 @@ export const Sidebar = memo(function Sidebar({
               >
                 New worktree thread
               </button>
-              {defaultWorktree && (
-                <button
-                  type="button"
-                  className={styles.snoozeMenuItem}
-                  role="menuitem"
-                  data-create-plain-thread={project.id}
-                  title="New thread directly in the project checkout (no worktree)"
-                  onClick={() => {
-                    setCreateMenuFor(null);
-                    onCreateThread(project.id, { worktree: false });
-                  }}
-                >
-                  New thread (no worktree)
-                </button>
-              )}
+              <button
+                type="button"
+                className={styles.snoozeMenuItem}
+                role="menuitem"
+                data-create-orchestrator-thread={project.id}
+                title="New thread that hands its first prompt to a worker in its own worktree"
+                onClick={() => {
+                  setCreateMenuFor(null);
+                  onCreateThread(project.id, { orchestrate: true });
+                }}
+              >
+                New orchestrator thread
+              </button>
+              <button
+                type="button"
+                className={styles.snoozeMenuItem}
+                role="menuitem"
+                data-create-plain-thread={project.id}
+                title="New thread directly in the project checkout (no worktree)"
+                onClick={() => {
+                  setCreateMenuFor(null);
+                  onCreateThread(project.id, { worktree: false });
+                }}
+              >
+                New plain thread
+              </button>
             </div>
           )}
         </div>

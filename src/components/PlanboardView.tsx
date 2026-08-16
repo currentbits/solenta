@@ -9,6 +9,9 @@ import {
 import type { ListIssuesResult, ProjectInfo, ThreadInfo } from "../shared/ipc";
 import styles from "./PlanboardView.module.css";
 
+/** How the Planboard's Start task button creates its thread. */
+export type ThreadStartMode = "default" | "plain" | "worktree" | "orchestrator";
+
 export interface PlanboardViewProps {
   projects: ProjectInfo[];
   listIssues: (projectPath: string) => Promise<ListIssuesResult>;
@@ -27,6 +30,7 @@ export interface PlanboardViewProps {
     projectId: string;
     projectPath: string;
     ref: string;
+    mode: ThreadStartMode;
   }) => Promise<{ ok: true; warning?: string } | { ok: false; reason: string }>;
 }
 
@@ -44,6 +48,8 @@ export function PlanboardView({
   /** Issue number whose start is in flight, and the last start's message. */
   const [starting, setStarting] = useState<number | null>(null);
   const [startNote, setStartNote] = useState<string | null>(null);
+  /** Thread mode for Start task; "default" follows the app setting. */
+  const [startMode, setStartMode] = useState<ThreadStartMode>("default");
   const loadGen = useRef(0);
 
   const project =
@@ -75,6 +81,7 @@ export function PlanboardView({
         projectId: project.id,
         projectPath: project.path,
         ref: String(issueNumber),
+        mode: startMode,
       });
       setStarting(null);
       if (!res.ok) {
@@ -85,7 +92,7 @@ export function PlanboardView({
       // Card moved to In progress on GitHub; pull the board back in sync.
       void load();
     },
-    [onStartTask, project, starting, load],
+    [onStartTask, project, starting, load, startMode],
   );
 
   const columns = useMemo(
@@ -125,6 +132,23 @@ export function PlanboardView({
                   {p.slug}
                 </option>
               ))}
+            </select>
+          ) : null}
+          {onStartTask ? (
+            <select
+              className={styles.startMode}
+              value={startMode}
+              onChange={(e) =>
+                setStartMode(e.target.value as ThreadStartMode)
+              }
+              data-plan-start-mode=""
+              aria-label="Start tasks as"
+              title="How Start task creates its thread"
+            >
+              <option value="default">Start as: Default</option>
+              <option value="plain">Start as: Plain</option>
+              <option value="worktree">Start as: Worktree</option>
+              <option value="orchestrator">Start as: Orchestrator</option>
             </select>
           ) : null}
           <button
