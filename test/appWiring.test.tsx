@@ -833,4 +833,29 @@ describe("App selection stamps lastVisitedAt (round 43 unread)", () => {
       m.unmount();
     }
   });
+
+  it("Fleet nav opens the fleet view on the fleet.evidence channel", async () => {
+    const fake = createFakeCoder();
+    const m = await boot(fake);
+    try {
+      const nav = m.query('[data-view-nav="fleet"]');
+      assert.ok(nav, "sidebar must offer a Fleet nav row");
+      await m.click(nav as HTMLElement);
+      await m.flush();
+      await inAct(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      await m.flush();
+
+      assert.equal(
+        fake.of("fleet.evidence").length,
+        1,
+        "opening Fleet must read evidence exactly once",
+      );
+      assert.ok(m.query("[data-fleet]"), "fleet view must render");
+    } finally {
+      m.unmount();
+    }
+  });
 });
