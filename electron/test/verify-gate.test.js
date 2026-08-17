@@ -218,13 +218,13 @@ describe("runner verification gate", () => {
     assert.match(String(t.lastError || ""), /Verification failed: echo still-failing; exit 1/);
     assert.equal(t.verify && t.verify.ok, false);
     const fixes = fixPrompts(fx.store, fx.thread.id);
-    assert.equal(fixes.length, MAX_FIX_ATTEMPTS - 1);
+    assert.equal(fixes.length, MAX_FIX_ATTEMPTS);
 
     await new Promise((r) => setTimeout(r, 250));
     assert.equal(runner.isRunning(fx.thread.id), false);
     assert.equal(
       fixPrompts(fx.store, fx.thread.id).length,
-      MAX_FIX_ATTEMPTS - 1,
+      MAX_FIX_ATTEMPTS,
     );
     assert.equal(fx.store.getThread(fx.thread.id).status, "failed");
   });

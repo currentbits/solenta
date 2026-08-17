@@ -686,7 +686,14 @@ function createRunner(opts) {
     }
     if (gated) {
       try {
-        store.updateThread(threadId, { status: "working" }, { touch: true });
+        // runStartedAt was cleared at the terminal; restamp it or the
+        // sidebar shows "Working" with no elapsed time for however many
+        // minutes the verify command takes.
+        store.updateThread(
+          threadId,
+          { status: "working", runStartedAt: Date.now() },
+          { touch: true },
+        );
         store.save();
         pushThreadsChanged();
       } catch {
@@ -796,6 +803,7 @@ function createRunner(opts) {
       threadId,
       {
         status: "failed",
+        runStartedAt: null,
         lastError: shortError(`Verification error: ${reason}`),
       },
       { touch: true },
@@ -817,7 +825,11 @@ function createRunner(opts) {
     const command = normalizeCommand(thread.verifyCommand);
     // Cleared mid-flight: settle as if the gate was never armed.
     if (!command) {
-      store.updateThread(threadId, { status: "done" }, { touch: true });
+      store.updateThread(
+        threadId,
+        { status: "done", runStartedAt: null },
+        { touch: true },
+      );
       store.save();
       finishSuccessfulTurn(threadId);
       return;
@@ -842,7 +854,11 @@ function createRunner(opts) {
     const latest = store.getThread(threadId);
     if (!latest || !normalizeCommand(latest.verifyCommand)) {
       if (latest) {
-        store.updateThread(threadId, { status: "done" }, { touch: true });
+        store.updateThread(
+        threadId,
+        { status: "done", runStartedAt: null },
+        { touch: true },
+      );
         store.save();
         finishSuccessfulTurn(threadId);
       }
@@ -871,7 +887,7 @@ function createRunner(opts) {
       );
       store.updateThread(
         threadId,
-        { verify: result, status: "done" },
+        { verify: result, status: "done", runStartedAt: null },
         { touch: true },
       );
       store.save();
@@ -881,7 +897,10 @@ function createRunner(opts) {
       return;
     }
 
-    if (attempt + 1 < MAX_FIX_ATTEMPTS) {
+    // `attempt` is how many fix prompts already went back, so this hands
+    // out exactly MAX_FIX_ATTEMPTS of them — matching the "Fix attempt N
+    // of M" line buildFixPrompt shows the agent.
+    if (attempt < MAX_FIX_ATTEMPTS) {
       appendMessage(threadId, "event", `Verification failed: ${command}`);
       store.updateThread(threadId, { verify: result }, { touch: true });
       store.save();
@@ -925,6 +944,7 @@ function createRunner(opts) {
       {
         verify: result,
         status: "failed",
+        runStartedAt: null,
         lastError: shortError(`Verification failed: ${command}`),
       },
       { touch: true },
