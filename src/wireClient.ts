@@ -1,5 +1,6 @@
 import type {
   ActivityItem,
+  FailureMode,
   AppSettings,
   AppStatus,
   AttachmentInfo,
@@ -372,6 +373,9 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
     },
     usage: {
       byDay: () => call<UsageByDay>("usage:byDay"),
+    },
+    insights: {
+      failureModes: () => call<FailureMode[]>("insights:failureModes"),
     },
     digest: {
       list: (input) => call<DigestResult>("digest:list", input),

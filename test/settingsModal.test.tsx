@@ -564,3 +564,160 @@ describe("SettingsModal structure", () => {
     m.unmount();
   });
 });
+
+describe("SettingsModal OpenTelemetry (issue #280)", () => {
+  it("renders the export fields and says empty means off", async () => {
+    const m = await mount(
+      modal({
+        settings: {
+          dailyBudgetUsd: null,
+          autoSettleAfterDays: 3,
+          otel: { endpoint: null, headers: {}, claudeMetrics: false },
+        } as AppSettings,
+      }),
+    );
+    assert.ok(m.query("[data-otel-settings]"), "otel section");
+    assert.ok(m.query("[data-otel-endpoint]"), "endpoint input");
+    assert.ok(m.query("[data-otel-headers]"), "headers textarea");
+    assert.ok(m.query("[data-otel-claude-metrics]"), "claude metrics toggle");
+    assert.ok(
+      m.text().includes("Empty turns export off"),
+      "copy must say empty endpoint turns export off",
+    );
+    assert.ok(
+      m.text().includes("Does nothing unless an endpoint is set"),
+      "copy must say the Claude toggle needs an endpoint",
+    );
+    m.unmount();
+  });
+
+  it("saves a URL endpoint and a null when cleared", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const m = await mount(
+      modal({
+        settings: {
+          dailyBudgetUsd: null,
+          autoSettleAfterDays: 3,
+          otel: { endpoint: null, headers: {}, claudeMetrics: false },
+        } as AppSettings,
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return {
+            dailyBudgetUsd: null,
+            autoSettleAfterDays: 3,
+            otel: patch.otel ?? {
+              endpoint: null,
+              headers: {},
+              claudeMetrics: false,
+            },
+          } as AppSettings;
+        },
+      }),
+    );
+    const input = m.query("[data-otel-endpoint]");
+    assert.ok(input, "endpoint input");
+    await m.type(input, "http://127.0.0.1:4318");
+    await m.press(input, "Enter");
+    assert.equal(patches.length, 1);
+    assert.equal(patches[0].otel?.endpoint, "http://127.0.0.1:4318");
+    assert.equal(patches[0].otel?.claudeMetrics, false);
+
+    await m.type(input, "");
+    await m.press(input, "Enter");
+    assert.equal(patches[1].otel?.endpoint, null);
+    m.unmount();
+  });
+
+  it("surfaces a rejected endpoint with role=alert", async () => {
+    const m = await mount(
+      modal({
+        settings: {
+          dailyBudgetUsd: null,
+          autoSettleAfterDays: 3,
+          otel: { endpoint: null, headers: {}, claudeMetrics: false },
+        } as AppSettings,
+        onSaveSettings: async () => {
+          throw new Error("OTLP endpoint must be an http(s) URL or null");
+        },
+      }),
+    );
+    const input = m.query("[data-otel-endpoint]");
+    await m.type(input, "not-a-url");
+    await m.press(input, "Enter");
+    assert.ok(m.query('[role="alert"]'), "validation must use role=alert");
+    assert.ok(
+      m.text().includes("OTLP endpoint must be an http(s) URL or null"),
+      `got: ${m.text().slice(-160)}`,
+    );
+    m.unmount();
+  });
+
+  it("parses one key: value per line into headers", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const m = await mount(
+      modal({
+        settings: {
+          dailyBudgetUsd: null,
+          autoSettleAfterDays: 3,
+          otel: { endpoint: "http://127.0.0.1:4318", headers: {}, claudeMetrics: false },
+        } as AppSettings,
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return {
+            dailyBudgetUsd: null,
+            autoSettleAfterDays: 3,
+            otel: patch.otel ?? {
+              endpoint: "http://127.0.0.1:4318",
+              headers: {},
+              claudeMetrics: false,
+            },
+          } as AppSettings;
+        },
+      }),
+    );
+    const area = m.query("[data-otel-headers]");
+    assert.ok(area, "headers textarea");
+    await m.type(area, "Authorization: Bearer secret\nx-foo: bar");
+    // Checkbox persist sends the whole otel draft, including parsed headers.
+    await m.click(m.query("[data-otel-claude-metrics]"));
+    assert.equal(patches.length, 1);
+    assert.deepEqual(patches[0].otel?.headers, {
+      Authorization: "Bearer secret",
+      "x-foo": "bar",
+    });
+    m.unmount();
+  });
+
+  it("saves the Claude metrics toggle immediately", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const m = await mount(
+      modal({
+        settings: {
+          dailyBudgetUsd: null,
+          autoSettleAfterDays: 3,
+          otel: { endpoint: "http://127.0.0.1:4318", headers: {}, claudeMetrics: false },
+        } as AppSettings,
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return {
+            dailyBudgetUsd: null,
+            autoSettleAfterDays: 3,
+            otel: patch.otel ?? {
+              endpoint: "http://127.0.0.1:4318",
+              headers: {},
+              claudeMetrics: false,
+            },
+          } as AppSettings;
+        },
+      }),
+    );
+    const box = m.query("[data-otel-claude-metrics]") as HTMLInputElement;
+    assert.ok(box, "claude metrics checkbox");
+    assert.equal(box.checked, false);
+    await m.click(box);
+    assert.equal(patches.length, 1);
+    assert.equal(patches[0].otel?.claudeMetrics, true);
+    assert.equal(patches[0].otel?.endpoint, "http://127.0.0.1:4318");
+    m.unmount();
+  });
+});

@@ -106,6 +106,7 @@ function flattenContent(content) {
  * @param {boolean} [opts.keepAlive] - interactive only: do NOT close stdin on
  *   result. The process outlives the turn so harness background tasks survive
  *   settle and later turns reuse it via send() (issue #8).
+ * @param {Record<string, string>} [opts.envExtra] - added to the inherited env
  * @param {(ev: object) => void} opts.onEvent - raw parsed NDJSON event
  * @param {(info: { code: number | null, stderr: string, gotResult: boolean }) => void} opts.onExit
  * @param {(err: Error) => void} [opts.onError]
@@ -121,6 +122,7 @@ function runClaude(opts) {
     model = null,
     interactive = false,
     keepAlive = false,
+    envExtra,
     onEvent,
     onExit,
     onError,
@@ -237,6 +239,7 @@ function runClaude(opts) {
       shell: false,
       detached: true,
       stdio: [interactive ? "pipe" : "ignore", "pipe", "pipe"],
+      ...(envExtra ? { env: { ...process.env, ...envExtra } } : {}),
     });
   } catch (err) {
     const error = err instanceof Error ? err : new Error(String(err));

@@ -948,6 +948,62 @@ export interface AppSettings {
    * combination, it does not introduce a fourth kind of thread state.
    */
   agentProfiles: AgentProfile[];
+  /** OpenTelemetry export (issue #280). */
+  otel: OtelSettings;
+}
+
+/**
+ * OTLP export config. Solenta is the only place a cross-provider trace tree
+ * exists, so it emits GenAI spans itself rather than relying on any one CLI.
+ */
+export interface OtelSettings {
+  /**
+   * OTLP/HTTP base endpoint, e.g. "http://127.0.0.1:4318". Spans POST to
+   * `<endpoint>/v1/traces`. null (the default) turns export off entirely —
+   * nothing is buffered and no network call is ever made.
+   */
+  endpoint: string | null;
+  /** Extra headers on every OTLP POST (auth). Values are never echoed back. */
+  headers: Record<string, string>;
+  /**
+   * When true, Claude Code spawns also get CLAUDE_CODE_ENABLE_TELEMETRY=1 and
+   * OTEL_EXPORTER_OTLP_ENDPOINT pointed at the same collector, so its native
+   * metrics land beside our spans. No effect when endpoint is null.
+   */
+  claudeMetrics: boolean;
+}
+
+/** Why a thread counted as an offender in failure-mode clustering. */
+export type FailureKind = "failed" | "stalled" | "retried";
+
+/** One offending thread inside a FailureMode. */
+export interface FailureOffender {
+  threadId: string;
+  threadTitle: string;
+  projectId: string;
+  provider: string;
+  kind: FailureKind;
+  /** Epoch ms of the failure. */
+  at: number;
+}
+
+/**
+ * A recurring failure mode: one normalized error signature seen across
+ * threads. Derived from the event log on demand — no LLM, no stored state.
+ */
+export interface FailureMode {
+  /** Stable id: hash of the signature. */
+  id: string;
+  /** Normalized signature — paths, ids, numbers and quotes redacted. */
+  signature: string;
+  /** First raw error text that produced this signature, for display. */
+  sample: string;
+  /** Offender count (>= 2; one-offs are not a recurring mode). */
+  count: number;
+  /** Newest first, capped at 20. */
+  offenders: FailureOffender[];
+  /** Epoch ms of the newest offender. */
+  lastAt: number;
 }
 
 /**
@@ -1324,6 +1380,16 @@ export interface CoderApi {
   usage: {
     /** Per-day / provider / model usage ledger (90-day retention). */
     byDay(): Promise<UsageByDay>;
+  };
+  insights: {
+    /**
+     * Recurring failure modes across every thread, ranked most-severe first
+     * (count, then recency). Grouped by NORMALIZED error signature, so the
+     * same failure in six threads is one mode with six offenders. Computed
+     * from the stored transcripts on each call; cheap enough that the view
+     * just re-reads it.
+     */
+    failureModes(): Promise<FailureMode[]>;
   };
   digest: {
     /**

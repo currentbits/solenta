@@ -135,6 +135,9 @@ const coder = {
   usage: {
     byDay: () => invoke("usage:byDay"),
   },
+  insights: {
+    failureModes: () => invoke("insights:failureModes"),
+  },
   digest: {
     list: (input) => invoke("digest:list", input),
     markSeen: (input) => invoke("digest:markSeen", input),
