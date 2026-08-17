@@ -7,7 +7,8 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { mount } from "./support/dom.ts";
+import { useState } from "react";
+import { mount, inAct } from "./support/dom.ts";
 import { Markdown } from "../src/components/Markdown";
 
 describe("Markdown", () => {
@@ -56,6 +57,34 @@ describe("Markdown", () => {
       <Markdown text={"before<script>alert(1)</script>after"} />,
     );
     assert.equal(m.container.querySelector("script"), null);
+  });
+
+  it("throttles the re-parse while text streams in", async () => {
+    // Streaming pushes new text several times a second and every push re-parses
+    // the whole message, so without this the cost is O(n^2) over a run.
+    let push: (t: string) => void = () => {};
+    function Streaming() {
+      const [text, setText] = useState("one");
+      push = setText;
+      return <Markdown text={text} />;
+    }
+    const m = await mount(<Streaming />);
+    assert.equal(m.text(), "one");
+
+    // First chunk after mount draws straight away: a reply must start showing.
+    await inAct(() => push("one two"));
+    await m.flush();
+    assert.equal(m.text(), "one two");
+
+    // The next one lands within the interval, so it waits.
+    await inAct(() => push("one two three"));
+    await m.flush();
+    assert.equal(m.text(), "one two", "a chunk right after a parse waits");
+
+    await inAct(async () => {
+      await new Promise((r) => setTimeout(r, 150));
+    });
+    assert.equal(m.text(), "one two three", "and lands once the interval passes");
   });
 
   it("links open externally with noreferrer", async () => {
