@@ -127,6 +127,173 @@ describe("spendByDay and settings", () => {
     assert.equal(store.getSpendToday(nextDay), 4);
   });
 
+  it("recordUsage accumulates per day/provider/model and persists", () => {
+    const store = new Store(filePath);
+    const morning = new Date(2026, 7, 6, 10, 0, 0);
+    const evening = new Date(2026, 7, 6, 22, 0, 0);
+    const nextDay = new Date(2026, 7, 7, 9, 0, 0);
+
+    store.recordUsage(
+      { provider: "claude", model: "opus", costUsd: 0.01, inputTokens: 100, outputTokens: 20 },
+      morning,
+    );
+    store.recordUsage(
+      { provider: "claude", model: "opus", costUsd: 0.02, inputTokens: 50, outputTokens: 10 },
+      evening,
+    );
+    store.recordUsage(
+      { provider: "grok", model: "grok-4", costUsd: 0.05, inputTokens: 200, outputTokens: 40 },
+      evening,
+    );
+    store.recordUsage(
+      { provider: "claude", model: "sonnet", costUsd: 0.03, inputTokens: 80, outputTokens: 8 },
+      nextDay,
+    );
+    store.saveNow();
+
+    const day = store.getUsageByDay();
+    assert.deepEqual(day["2026-08-06"].claude.opus, {
+      costUsd: 0.03,
+      inputTokens: 150,
+      outputTokens: 30,
+      turns: 2,
+    });
+    assert.deepEqual(day["2026-08-06"].grok["grok-4"], {
+      costUsd: 0.05,
+      inputTokens: 200,
+      outputTokens: 40,
+      turns: 1,
+    });
+    assert.deepEqual(day["2026-08-07"].claude.sonnet, {
+      costUsd: 0.03,
+      inputTokens: 80,
+      outputTokens: 8,
+      turns: 1,
+    });
+
+    const reloaded = new Store(filePath);
+    assert.deepEqual(
+      reloaded.getUsageByDay()["2026-08-06"].claude.opus,
+      day["2026-08-06"].claude.opus,
+    );
+  });
+
+  it("recordUsage records tokens when costUsd is 0", () => {
+    const store = new Store(filePath);
+    store.recordUsage(
+      { provider: "grok", model: "grok-4", costUsd: 0, inputTokens: 1200, outputTokens: 80 },
+      new Date(2026, 7, 6, 12, 0, 0),
+    );
+    assert.deepEqual(store.getUsageByDay()["2026-08-06"].grok["grok-4"], {
+      costUsd: 0,
+      inputTokens: 1200,
+      outputTokens: 80,
+      turns: 1,
+    });
+    // All-zero / missing provider are ignored.
+    store.recordUsage(
+      { provider: "grok", model: "grok-4", costUsd: 0, inputTokens: 0, outputTokens: 0 },
+      new Date(2026, 7, 6, 12, 0, 0),
+    );
+    store.recordUsage(
+      { provider: "", model: "x", costUsd: 1, inputTokens: 1, outputTokens: 1 },
+      new Date(2026, 7, 6, 12, 0, 0),
+    );
+    assert.equal(store.getUsageByDay()["2026-08-06"].grok["grok-4"].turns, 1);
+  });
+
+  it("usageByDay buckets older than 90 days are pruned on load", () => {
+    const now = new Date();
+    const keep = new Date(now);
+    keep.setDate(keep.getDate() - 30);
+    const edge = new Date(now);
+    edge.setDate(edge.getDate() - 90);
+    const old = new Date(now);
+    old.setDate(old.getDate() - 91);
+    const keepKey = localDayKey(keep);
+    const edgeKey = localDayKey(edge);
+    const oldKey = localDayKey(old);
+    const todayKey = localDayKey(now);
+    const entry = {
+      claude: { opus: { costUsd: 1, inputTokens: 10, outputTokens: 2, turns: 1 } },
+    };
+
+    fs.writeFileSync(
+      filePath,
+      JSON.stringify({
+        projects: [],
+        threads: [],
+        messagesByThread: {},
+        workLogByThread: {},
+        usageByThread: {},
+        spendByDay: {},
+        usageByDay: {
+          [oldKey]: entry,
+          [edgeKey]: entry,
+          [keepKey]: entry,
+          [todayKey]: entry,
+        },
+        settings: { dailyBudgetUsd: null },
+      }),
+      "utf8",
+    );
+
+    const loaded = new Store(filePath).getUsageByDay();
+    assert.equal(loaded[oldKey], undefined);
+    assert.ok(loaded[edgeKey]);
+    assert.ok(loaded[keepKey]);
+    assert.ok(loaded[todayKey]);
+  });
+
+  it("malformed usageByDay input normalizes to {} instead of throwing", () => {
+    for (const junk of ["nope", [], 12, null]) {
+      fs.writeFileSync(
+        filePath,
+        JSON.stringify({
+          projects: [],
+          threads: [],
+          usageByDay: junk,
+        }),
+        "utf8",
+      );
+      const store = new Store(filePath);
+      assert.deepEqual(store.getUsageByDay(), {});
+    }
+
+    const today = localDayKey();
+    const yesterday = localDayKey(new Date(Date.now() - 24 * 60 * 60 * 1000));
+    fs.writeFileSync(
+      filePath,
+      JSON.stringify({
+        projects: [],
+        threads: [],
+        usageByDay: {
+          [yesterday]: "bad",
+          "not-a-day": { claude: { opus: { costUsd: 1 } } },
+          [today]: {
+            claude: "nope",
+            grok: {
+              "grok-4": { costUsd: "0.5", inputTokens: 10, outputTokens: null, turns: 2 },
+              bad: 3,
+            },
+          },
+        },
+      }),
+      "utf8",
+    );
+    const store = new Store(filePath);
+    const map = store.getUsageByDay();
+    assert.equal(map[yesterday], undefined);
+    assert.deepEqual(map[today].grok["grok-4"], {
+      costUsd: 0.5,
+      inputTokens: 10,
+      outputTokens: 0,
+      turns: 2,
+    });
+    assert.equal(map[today].claude, undefined);
+    assert.equal(map[today].grok.bad, undefined);
+  });
+
   it("prunes spendByDay buckets older than 90 days on load", () => {
     const now = new Date(2026, 7, 6); // Aug 6 2026
     const keepKey = localDayKey(new Date(2026, 7, 6 - 30)); // ~30 days ago

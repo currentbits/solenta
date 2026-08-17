@@ -361,6 +361,15 @@ export interface ActivityItem {
   threadTitle: string;
 }
 
+export interface UsageEntry {
+  costUsd: number;
+  inputTokens: number;
+  outputTokens: number;
+  turns: number;
+}
+
+export type UsageByDay = Record<string, Record<string, Record<string, UsageEntry>>>; // day -> provider -> model -> entry
+
 export type AgentStatus = "pending" | "running" | "settled" | "failed";
 
 export interface AgentView {
@@ -1122,6 +1131,10 @@ export interface CoderApi {
   activity: {
     /** Cross-thread newest-first feed of created/started/done/failed. */
     list(): Promise<ActivityItem[]>;
+  };
+  usage: {
+    /** Per-day / provider / model usage ledger (90-day retention). */
+    byDay(): Promise<UsageByDay>;
   };
   runs: {
     /**

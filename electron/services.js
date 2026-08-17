@@ -1910,6 +1910,14 @@ function removeAutomation(store, input) {
 }
 
 /**
+ * Read-only usage ledger: day -> provider -> model -> totals.
+ * @param {import('./store').Store} store
+ */
+function getUsageByDay(store) {
+  return store.getUsageByDay();
+}
+
+/**
  * Live app status: today's spend, memory health (with counts), and which build
  * is running. A /health failure degrades to nulls; status must never throw.
  * @param {import('./store').Store} store
@@ -2142,6 +2150,7 @@ module.exports = {
   updateAutomation,
   removeAutomation,
   appStatus,
+  getUsageByDay,
   assertUnderDailyBudget,
   assertUnderOrchestrationBudget,
   orchestrationSpend,

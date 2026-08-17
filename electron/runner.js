@@ -1984,6 +1984,7 @@ function createRunner(opts) {
           if (costDelta > 0) {
             store.recordSpend(costDelta);
           }
+          store.recordUsage({ provider: thread.provider, model, costUsd: costDelta, inputTokens: turnIn, outputTokens: turnOut });
 
           // Assistant text from stream, or fall back to result field
           // (skip when result merely repeats the last streamed bubble).
@@ -2417,6 +2418,7 @@ function createRunner(opts) {
       if (costDelta > 0) {
         store.recordSpend(costDelta);
       }
+      store.recordUsage({ provider: thread.provider, model: usageInfo.model || prev.model || thread.model || null, costUsd: costDelta, inputTokens: inDelta, outputTokens: outDelta });
       sawTerminalUsage = true;
     }
 
@@ -2810,6 +2812,7 @@ function createRunner(opts) {
       if (costDelta > 0) {
         store.recordSpend(costDelta);
       }
+      store.recordUsage({ provider: thread.provider, model: prev.model || thread.model || null, costUsd: costDelta, inputTokens: inDelta, outputTokens: outDelta });
       sawUsage = true;
     }
 
@@ -3187,6 +3190,7 @@ function createRunner(opts) {
       if (costDelta > 0) {
         store.recordSpend(costDelta);
       }
+      store.recordUsage({ provider: thread.provider, model: usageInfo.model || prev.model || thread.model || null, costUsd: costDelta, inputTokens: inDelta, outputTokens: outDelta });
     }
 
     completeWorkLogStep(threadId, startingId);

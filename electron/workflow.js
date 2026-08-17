@@ -1289,6 +1289,7 @@ async function startWorkflowRun(deps) {
           costUsd: prev.costUsd + aggCost,
           turns: prev.turns + 1,
         });
+        store.recordUsage({ provider: thread.provider, model: prev.model || thread.model || agentModelLabel(phaseSpec), costUsd: aggCost, inputTokens: aggInput, outputTokens: aggOutput });
         // spendByDay is updated per agent above; do not re-record aggCost here.
 
         recomputeView(view);

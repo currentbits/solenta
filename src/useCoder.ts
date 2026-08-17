@@ -36,6 +36,7 @@ import type {
   ThreadInfo,
   ThreadSummaryInfo,
   UpdateStatus,
+  UsageByDay,
   WorkflowTemplateInfo,
 } from "./shared/ipc";
 import { resolveCoderApi } from "./coderApi";
@@ -315,6 +316,8 @@ export interface UseCoderResult {
   ) => Promise<SetPlanStatusResult>;
   /** Cross-thread newest-first activity feed. */
   listActivity: () => Promise<ActivityItem[]>;
+  /** Per-day / provider / model usage ledger. */
+  listUsageByDay: () => Promise<UsageByDay>;
   /** Per-thread summaries for the Agents tab team view. */
   listThreadSummaries: () => Promise<ThreadSummaryInfo[]>;
   /** Worktree checkpoints for a thread (newest-first). */
@@ -1741,6 +1744,10 @@ export function useCoder(): UseCoderResult {
     return api.activity.list();
   }, [api]);
 
+  const listUsageByDay = useCallback(async () => {
+    return api.usage.byDay();
+  }, [api]);
+
   const listThreadSummaries = useCallback(async () => {
     return api.threads.summaries();
   }, [api]);
@@ -2064,6 +2071,7 @@ export function useCoder(): UseCoderResult {
     setIssuePlanStatus,
     fetchIssue,
     listActivity,
+    listUsageByDay,
     listThreadSummaries,
     listCheckpoints,
     restoreCheckpoint,
