@@ -472,6 +472,7 @@ function seedThreads(projects: ProjectInfo[]): ThreadInfo[] {
           ? `https://github.com/${card.repoSlug}/pull/${card.prNumber}`
           : null,
       status: card.status,
+      lastError: null,
       createdAt,
       updatedAt,
       runStartedAt: card.status === "working" ? t0 - workingMs : null,
@@ -1451,6 +1452,7 @@ function buildDevCoder(): CoderApi {
       prNumber: null,
       prUrl: null,
       status: "idle",
+      lastError: null,
       createdAt: t0,
       updatedAt: t0,
       runStartedAt: null,
