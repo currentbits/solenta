@@ -144,6 +144,9 @@ const coder = {
   insights: {
     failureModes: () => invoke("insights:failureModes"),
   },
+  fleet: {
+    evidence: (input) => invoke("fleet:evidence", input),
+  },
   digest: {
     list: (input) => invoke("digest:list", input),
     markSeen: (input) => invoke("digest:markSeen", input),

@@ -1483,14 +1483,16 @@ function parsePrListJson(stdout) {
 }
 
 /**
- * Open PRs for a project checkout. Never throws: missing gh, a non-GitHub
- * remote, or auth failure come back as `{ ok: false, reason }` so the UI
- * can render a per-project error row.
+ * Raw `gh pr list --json` for a checkout. Same origin / unknown-field /
+ * auth dance as `listPrs`, but returns the parsed JSON rows so callers that
+ * need extra keys (fleet: createdAt, reviews) do not re-implement the
+ * fallback. Never throws.
  *
  * @param {string} projectPath
- * @returns {Promise<{ ok: true, prs: ReturnType<typeof parsePrListItem>[] } | { ok: false, reason: string }>}
+ * @param {{ fields?: string, fallbackFields?: string, extraArgs?: string[] }} [opts]
+ * @returns {Promise<{ ok: true, prs: any[] } | { ok: false, reason: string }>}
  */
-async function listPrs(projectPath) {
+async function listPrsRaw(projectPath, opts) {
   const cwd = String(projectPath || "");
   if (!cwd) {
     return { ok: false, reason: "not a GitHub repo" };
@@ -1505,26 +1507,24 @@ async function listPrs(projectPath) {
     return { ok: false, reason: "not a GitHub repo" };
   }
 
-  let listed = await ghTryAsync(cwd, [
-    "pr",
-    "list",
-    "--json",
-    PR_LIST_FIELDS,
-    "--limit",
-    "50",
-  ], { timeout: GH_TIMEOUT_MS });
+  const fields = (opts && opts.fields) || PR_LIST_FIELDS;
+  const fallback = (opts && opts.fallbackFields) || PR_LIST_FIELDS_FALLBACK;
+  const extraArgs = (opts && opts.extraArgs) || ["--limit", "50"];
+
+  let listed = await ghTryAsync(
+    cwd,
+    ["pr", "list", "--json", fields, ...extraArgs],
+    { timeout: GH_TIMEOUT_MS },
+  );
   if (
     !listed.ok &&
     isUnknownJsonField(listed.stderr || listed.combined || listed.stdout)
   ) {
-    listed = await ghTryAsync(cwd, [
-      "pr",
-      "list",
-      "--json",
-      PR_LIST_FIELDS_FALLBACK,
-      "--limit",
-      "50",
-    ], { timeout: GH_TIMEOUT_MS });
+    listed = await ghTryAsync(
+      cwd,
+      ["pr", "list", "--json", fallback, ...extraArgs],
+      { timeout: GH_TIMEOUT_MS },
+    );
   }
   if (!listed.ok) {
     if (listed.enoent) {
@@ -1539,7 +1539,30 @@ async function listPrs(projectPath) {
     };
   }
   try {
-    return { ok: true, prs: parsePrListJson(listed.stdout) };
+    const trimmed = String(listed.stdout || "").trim();
+    const data = JSON.parse(trimmed === "" ? "[]" : trimmed);
+    if (!Array.isArray(data)) {
+      return { ok: false, reason: "gh returned incomplete PR list JSON" };
+    }
+    return { ok: true, prs: data };
+  } catch {
+    return { ok: false, reason: "gh returned unparseable PR list JSON" };
+  }
+}
+
+/**
+ * Open PRs for a project checkout. Never throws: missing gh, a non-GitHub
+ * remote, or auth failure come back as `{ ok: false, reason }` so the UI
+ * can render a per-project error row.
+ *
+ * @param {string} projectPath
+ * @returns {Promise<{ ok: true, prs: ReturnType<typeof parsePrListItem>[] } | { ok: false, reason: string }>}
+ */
+async function listPrs(projectPath) {
+  const raw = await listPrsRaw(projectPath);
+  if (!raw.ok) return raw;
+  try {
+    return { ok: true, prs: raw.prs.map(parsePrListItem) };
   } catch (err) {
     return {
       ok: false,
@@ -3586,8 +3609,11 @@ module.exports = {
   parsePrChecksText,
   rollupPrChecks,
   listPrs,
+  listPrsRaw,
   parsePrListJson,
   isUnknownJsonField,
+  PR_LIST_FIELDS,
+  PR_LIST_FIELDS_FALLBACK,
   refreshPrStates,
   createPrStateRefresher,
   maybeCleanupMergedWorktree,
