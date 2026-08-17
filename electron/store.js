@@ -39,6 +39,7 @@ const STANDARD_TEMPLATE = {
 
 const EMPTY = {
   projects: [],
+  spaces: [],
   threads: [],
   messagesByThread: {},
   workLogByThread: {},
@@ -474,6 +475,7 @@ function migrateAutomation(a) {
 /**
  * Projects: remoteHost/remotePath stay absent on old rows. Empty strings
  * (or other junk) are dropped so the keys remain optional, not null.
+ * Spaces (#159): spaceId is the same optional-key shape.
  * @param {object} p
  */
 function migrateProject(p) {
@@ -486,7 +488,24 @@ function migrateProject(p) {
   else delete next.remoteHost;
   if (remotePath) next.remotePath = remotePath;
   else delete next.remotePath;
+  // Spaces (#159): empty/junk spaceId must stay absent, not null.
+  const spaceId = typeof next.spaceId === "string" ? next.spaceId.trim() : "";
+  if (spaceId) next.spaceId = spaceId;
+  else delete next.spaceId;
   return next;
+}
+
+/**
+ * A space row is { id, name }. Drop anything else so a corrupt store
+ * cannot invent groups; old files without `spaces` load as [].
+ * @param {unknown} s
+ * @returns {{ id: string, name: string } | null}
+ */
+function migrateSpace(s) {
+  if (!s || typeof s !== "object") return null;
+  const id = typeof s.id === "string" ? s.id.trim() : "";
+  if (!id || typeof s.name !== "string") return null;
+  return { id, name: s.name };
 }
 
 function migrateThread(t) {
@@ -609,6 +628,9 @@ class Store {
     const data = {
       projects: Array.isArray(parsed.projects)
         ? parsed.projects.map(migrateProject)
+        : [],
+      spaces: Array.isArray(parsed.spaces)
+        ? parsed.spaces.map(migrateSpace).filter(Boolean)
         : [],
       threads,
       messagesByThread:
@@ -823,6 +845,14 @@ class Store {
 
   setProjects(projects) {
     this.data.projects = (projects || []).map(migrateProject);
+  }
+
+  getSpaces() {
+    return this.data.spaces;
+  }
+
+  setSpaces(spaces) {
+    this.data.spaces = (spaces || []).map(migrateSpace).filter(Boolean);
   }
 
   getThreads() {
@@ -1362,6 +1392,7 @@ class Store {
 function cloneEmpty() {
   const data = {
     projects: [],
+    spaces: [],
     threads: [],
     messagesByThread: {},
     workLogByThread: {},

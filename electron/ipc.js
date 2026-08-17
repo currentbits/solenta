@@ -182,6 +182,18 @@ const IPC_HANDLERS = {
     });
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
   },
+  "spaces:list": async (ctx) => {
+    return services.listSpaces(ctx.store);
+  },
+  "spaces:add": async (ctx, input) => {
+    return services.addSpace(ctx.store, input || {});
+  },
+  "spaces:update": async (ctx, input) => {
+    return services.updateSpace(ctx.store, input || {});
+  },
+  "spaces:remove": async (ctx, input) => {
+    return services.removeSpace(ctx.store, input || {});
+  },
   "threads:list": async (ctx) => {
     return services.listThreads(ctx.store);
   },
