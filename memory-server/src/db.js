@@ -306,6 +306,8 @@ export function createSchema(db) {
   }
   addColumnIfMissing(db, 'entries', 'helpful_count', 'INTEGER NOT NULL DEFAULT 0')
   addColumnIfMissing(db, 'entries', 'harmful_count', 'INTEGER NOT NULL DEFAULT 0')
+  // Provenance (#309): `agent` is the writer, `source` the surface it came in on.
+  addColumnIfMissing(db, 'entries', 'source', 'TEXT')
   addColumnIfMissing(db, 'entries', 'invalid_at', 'TEXT')
   addColumnIfMissing(db, 'entries', 'invalidated_by', 'TEXT')
   addColumnIfMissing(db, 'entries', 'invalidation_reason', 'TEXT')
