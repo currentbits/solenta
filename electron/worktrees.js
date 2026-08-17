@@ -3,7 +3,19 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { execFileSync, execFile } = require("node:child_process");
-const { execCommand } = require("./ssh.js");
+const { execCommand, wrapCommand, SYNC_TIMEOUT_MS } = require("./ssh.js");
+
+/** @type {typeof execFile} */
+let execFileImpl = execFile;
+
+/**
+ * Test hook: swap async execFile (hot git reads) for a fake spawn.
+ * Pass null/undefined to restore the real implementation.
+ * @param {typeof execFile | null | undefined} fn
+ */
+function setExecFile(fn) {
+  execFileImpl = typeof fn === "function" ? fn : execFile;
+}
 
 const PATCH_TRUNCATE = 100_000;
 
@@ -23,6 +35,8 @@ const TERMINAL_PR_STATES = new Set(["MERGED", "CLOSED"]);
  * @returns {string}
  */
 function gitOut(cwd, args, opts) {
+  // ponytail: write paths (merge/push/PR/setup) stay sync — they fire once per
+  // click and are already bounded at 15s by #88. Hot reads use the Async pair.
   // execCommand, not execFileSync: it owns the default timeout that keeps a
   // hung git off the main-process event loop.
   const raw = execCommand(null, "git", args, {
@@ -99,6 +113,69 @@ function gitTry(cwd, args, opts) {
       timedOut: Boolean(timedOut),
     };
   }
+}
+
+/**
+ * Async gitOut. Never blocks the Electron main process.
+ * @param {string} cwd
+ * @param {string[]} args
+ * @param {{ raw?: boolean, timeout?: number }} [opts]
+ * @returns {Promise<string>}
+ */
+function gitOutAsync(cwd, args, opts) {
+  return gitExecThrowAsync(null, cwd, args, opts);
+}
+
+/**
+ * Async gitOutForDiff: prefix git with ssh when the project is remote.
+ * @param {{ remoteHost?: string, remotePath?: string, path?: string } | null} project
+ * @param {string} cwd
+ * @param {string[]} args
+ * @param {{ raw?: boolean, timeout?: number }} [opts]
+ * @returns {Promise<string>}
+ */
+function gitOutForDiffAsync(project, cwd, args, opts) {
+  if (project && project.remoteHost) {
+    return gitExecThrowAsync(project, cwd, args, opts);
+  }
+  return gitOutAsync(cwd, args, opts);
+}
+
+/**
+ * execFile through wrapCommand. Drops cwd on remotes (same as execCommand).
+ * Throws on failure so callers match gitOut / gitOutForDiff.
+ * @param {{ remoteHost?: string, remotePath?: string, path?: string } | null} project
+ * @param {string} cwd
+ * @param {string[]} args
+ * @param {{ raw?: boolean, timeout?: number }} [opts]
+ * @returns {Promise<string>}
+ */
+function gitExecThrowAsync(project, cwd, args, opts) {
+  const cmd = wrapCommand(project, "git", args);
+  const timeout =
+    opts && opts.timeout != null ? opts.timeout : SYNC_TIMEOUT_MS;
+  /** @type {import("node:child_process").ExecFileOptionsWithStringEncoding} */
+  const execOpts = {
+    encoding: "utf8",
+    maxBuffer: GIT_MAX_BUFFER,
+    timeout,
+    stdio: ["ignore", "pipe", "pipe"],
+  };
+  if (!(project && project.remoteHost)) {
+    execOpts.cwd = cwd;
+  }
+  return new Promise((resolve, reject) => {
+    execFileImpl(cmd.bin, cmd.args, execOpts, (err, stdout, stderr) => {
+      if (err) {
+        if (err.stdout == null && stdout != null) err.stdout = stdout;
+        if (err.stderr == null && stderr != null) err.stderr = stderr;
+        reject(err);
+        return;
+      }
+      const out = stdout == null ? "" : String(stdout);
+      resolve(opts && opts.raw ? out : out.trim());
+    });
+  });
 }
 
 /**
@@ -666,9 +743,9 @@ function maybeRenameWorktreeBranch(opts) {
  * @param {object} opts
  * @param {import('./store').Store} opts.store
  * @param {string} opts.threadId
- * @returns {{ files: Array<{path: string, status: string, additions: number, deletions: number}>, patch: string, truncated: boolean }}
+ * @returns {Promise<{ files: Array<{path: string, status: string, additions: number, deletions: number}>, patch: string, truncated: boolean }>}
  */
-function diff(opts) {
+async function diff(opts) {
   const { store, threadId } = opts;
   const thread = store.getThread(threadId);
   if (!thread) {
@@ -689,7 +766,7 @@ function diff(opts) {
   // Porcelain status for all entries; -uall lists untracked files
   // individually instead of collapsing whole directories into "?? dir/".
   // raw: the 2-char XY column starts with a significant space.
-  const porcelain = gitOutForDiff(project, cwd, ["status", "--porcelain", "-uall"], {
+  const porcelain = await gitOutForDiffAsync(project, cwd, ["status", "--porcelain", "-uall"], {
     raw: true,
   });
 
@@ -719,7 +796,7 @@ function diff(opts) {
   // numstat for tracked diffs vs HEAD
   let numstat = "";
   try {
-    numstat = gitOutForDiff(project, cwd, ["diff", "HEAD", "--numstat"]);
+    numstat = await gitOutForDiffAsync(project, cwd, ["diff", "HEAD", "--numstat"]);
   } catch (err) {
     if (!isNoHeadError(err)) {
       throw new Error(`git diff --numstat failed: ${String(err.message || err).split("\n")[0]}`);
@@ -777,7 +854,7 @@ function diff(opts) {
 
   let patch = "";
   try {
-    patch = gitOutForDiff(project, cwd, ["diff", "HEAD"]);
+    patch = await gitOutForDiffAsync(project, cwd, ["diff", "HEAD"]);
   } catch (err) {
     if (!isNoHeadError(err)) {
       throw new Error(`git diff failed: ${String(err.message || err).split("\n")[0]}`);
@@ -901,8 +978,7 @@ const LS_FILES_TTL_MS = 5000;
 
 /**
  * Last `git ls-files` result, so a burst of @-mention keystrokes filters an
- * in-memory list instead of forking git (synchronously, on the main process)
- * for every one.
+ * in-memory list instead of forking git on every one.
  *
  * ponytail: single entry, not a per-cwd map — the popup only looks at one cwd
  * at a time. Key it by cwd if two threads start thrashing it.
@@ -916,21 +992,21 @@ let lsFilesCache = null;
  * LS_FILES_TTL_MS.
  *
  * @param {string} cwd
- * @returns {string[]}
+ * @returns {Promise<string[]>}
  */
-function lsFiles(cwd) {
+async function lsFiles(cwd) {
   const now = Date.now();
   const hit =
     lsFilesCache &&
     lsFilesCache.cwd === cwd &&
     now - lsFilesCache.at < LS_FILES_TTL_MS;
   if (hit) return lsFilesCache.files;
-  const out = gitTry(cwd, [
+  const out = await gitTryAsync(cwd, [
     "ls-files",
     "--cached",
     "--others",
     "--exclude-standard",
-  ]);
+  ], { timeout: SYNC_TIMEOUT_MS });
   if (!out.ok) {
     throw new Error(tailErr(out.stderr || out.combined, "git ls-files failed"));
   }
@@ -948,13 +1024,13 @@ function lsFiles(cwd) {
  * @param {import('./store').Store} opts.store
  * @param {string} opts.threadId
  * @param {string} [opts.query]
- * @returns {{ files: string[] }}
+ * @returns {Promise<{ files: string[] }>}
  */
-function listFiles(opts) {
+async function listFiles(opts) {
   const { store, threadId } = opts;
   const query = String(opts.query || "").toLowerCase();
   const { cwd } = threadGitCwd(store, threadId);
-  const all = lsFiles(cwd);
+  const all = await lsFiles(cwd);
   // Copy when unfiltered: the sort below must not reorder the cached list.
   const matched = query
     ? all.filter((p) => p.toLowerCase().includes(query))
@@ -2308,7 +2384,7 @@ const CHECKPOINT_GIT_TIMEOUT_MS = 30_000;
  * @param {string} cwd
  * @param {string[]} args
  * @param {{ timeout?: number, env?: NodeJS.ProcessEnv, raw?: boolean }} [opts]
- * @returns {Promise<{ ok: boolean, stdout: string, stderr: string, combined: string, timedOut?: boolean }>}
+ * @returns {Promise<{ ok: boolean, stdout: string, stderr: string, combined: string, error?: any, timedOut?: boolean }>}
  */
 function gitTryAsync(cwd, args, opts) {
   const timeout =
@@ -2319,7 +2395,7 @@ function gitTryAsync(cwd, args, opts) {
     GIT_TERMINAL_PROMPT: "0",
   };
   return new Promise((resolve) => {
-    execFile(
+    execFileImpl(
       "git",
       args,
       {
@@ -2339,14 +2415,18 @@ function gitTryAsync(cwd, args, opts) {
         const errText =
           err && err.stderr != null ? String(err.stderr) : String(stderr || "");
         const msg = err && err.message ? String(err.message) : String(err);
+        // execFileSync sets code=ETIMEDOUT; async execFile kills with
+        // SIGTERM and leaves code=null. Both are a timeout.
         const timedOut =
           (err && err.code === "ETIMEDOUT") ||
-          (err && err.killed && /ETIMEDOUT|timed out/i.test(msg));
+          (err && err.killed && /ETIMEDOUT|timed out/i.test(msg)) ||
+          (err && err.killed && err.signal != null && err.code == null);
         resolve({
           ok: false,
           stdout: out,
           stderr: errText,
           combined: [out, errText, msg].filter(Boolean).join("\n"),
+          error: err,
           timedOut: Boolean(timedOut),
         });
       },
@@ -2870,6 +2950,9 @@ module.exports = {
   isPrRefreshCandidate,
   isGitHubRemote,
   gitTry,
+  gitOutAsync,
+  gitOutForDiffAsync,
+  setExecFile,
   ghTry,
   isGhAuthFailure,
   tailErr,

@@ -194,7 +194,7 @@ async function suggestCommitMessage(opts) {
     throw new Error(`${entry.name} CLI is not installed`);
   }
 
-  const d = diff({ store, threadId });
+  const d = await diff({ store, threadId });
   if (d.files.length === 0 && !d.patch.trim()) {
     throw new Error("No changes to describe");
   }
