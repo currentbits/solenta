@@ -224,13 +224,14 @@ async function createProject(store, input) {
 }
 
 /**
- * Patch an existing project. Today: display name and the SSH remote fields.
- * Remote validation mirrors addProject: a non-empty host requires an absolute
- * remotePath; an empty host clears both keys, turning the project local again.
- * The local checkout path is never edited here.
+ * Patch an existing project. Today: display name, SSH remote fields, and
+ * space membership (issue #159). Remote validation mirrors addProject: a
+ * non-empty host requires an absolute remotePath; an empty host clears both
+ * keys, turning the project local again. The local checkout path is never
+ * edited here.
  * @param {import('./store').Store} store
  * @param {string} projectId
- * @param {{ name?: string, remoteHost?: string, remotePath?: string }} patch
+ * @param {{ name?: string, remoteHost?: string, remotePath?: string, spaceId?: string }} patch
  */
 function updateProject(store, projectId, patch) {
   const projects = store.getProjects().slice();
@@ -272,10 +273,96 @@ function updateProject(store, projectId, patch) {
     }
   }
 
+  if (typeof input.spaceId === "string") {
+    const spaceId = input.spaceId.trim();
+    if (spaceId) {
+      const known = store.getSpaces().some((s) => s && s.id === spaceId);
+      if (!known) {
+        throw new Error(`Unknown space: ${spaceId}`);
+      }
+      next.spaceId = spaceId;
+    } else {
+      delete next.spaceId;
+    }
+  }
+
   projects[idx] = next;
   store.setProjects(projects);
   store.save();
   return next;
+}
+
+/**
+ * @param {import('./store').Store} store
+ * @returns {{ id: string, name: string }[]}
+ */
+function listSpaces(store) {
+  return store.getSpaces().slice();
+}
+
+/**
+ * @param {import('./store').Store} store
+ * @param {{ name?: string }} input
+ */
+function addSpace(store, input) {
+  const name =
+    input && typeof input.name === "string" ? input.name.trim() : "";
+  if (!name) {
+    throw new Error("Name cannot be empty");
+  }
+  const space = { id: randomUUID(), name };
+  const spaces = store.getSpaces().slice();
+  spaces.push(space);
+  store.setSpaces(spaces);
+  store.save();
+  return space;
+}
+
+/**
+ * @param {import('./store').Store} store
+ * @param {{ id?: string, name?: string }} input
+ */
+function updateSpace(store, input) {
+  const id = input && input.id != null ? String(input.id) : "";
+  const spaces = store.getSpaces().slice();
+  const idx = spaces.findIndex((s) => s && s.id === id);
+  if (idx === -1) {
+    throw new Error(`Unknown space: ${id}`);
+  }
+  const name =
+    input && typeof input.name === "string" ? input.name.trim() : "";
+  if (!name) {
+    throw new Error("Name cannot be empty");
+  }
+  const next = { ...spaces[idx], name };
+  spaces[idx] = next;
+  store.setSpaces(spaces);
+  store.save();
+  return next;
+}
+
+/**
+ * Drops the space and clears spaceId on every project that used it.
+ * Threads and on-disk repos are never touched.
+ * @param {import('./store').Store} store
+ * @param {{ id?: string }} input
+ */
+function removeSpace(store, input) {
+  const id = input && input.id != null ? String(input.id) : "";
+  const spaces = store.getSpaces();
+  if (!spaces.some((s) => s && s.id === id)) {
+    throw new Error(`Unknown space: ${id}`);
+  }
+  store.setSpaces(spaces.filter((s) => !s || s.id !== id));
+  store.setProjects(
+    store.getProjects().map((p) => {
+      if (!p || p.spaceId !== id) return p;
+      const next = { ...p };
+      delete next.spaceId;
+      return next;
+    }),
+  );
+  store.save();
 }
 
 /**
@@ -2012,6 +2099,10 @@ module.exports = {
   pullFailureReason,
   gitPull,
   listProjects,
+  listSpaces,
+  addSpace,
+  updateSpace,
+  removeSpace,
   listProvidersForApi,
   listTemplates,
   saveTemplate,

@@ -1,8 +1,17 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type DragEvent,
+} from "react";
 import autoAnimate from "@formkit/auto-animate";
 import type {
   ProjectInfo,
   ProviderInfo,
+  SpaceInfo,
   ThreadInfo,
   UpdateStatus,
 } from "../shared/ipc";
@@ -15,7 +24,7 @@ import {
 import { sidebarPrBadge } from "../prUi";
 import {
   GROUP_ATTENTION_CAP,
-  buildSidebarGroups,
+  buildSidebarSections,
   groupHeaderSummary,
   partitionSidebar,
   visibleAttentionCount,
@@ -60,6 +69,10 @@ const MIN_SEARCH_LEN = 2;
 const COLLAPSED_KEY = "coder.sidebar.collapsedGroups";
 /** Settled tail collapse flag: stored "tail" = collapsed, absent = expanded. */
 const SETTLED_COLLAPSED_KEY = "coder.sidebar.settledCollapsed";
+const SPACES_COLLAPSED_KEY = "coder.sidebar.collapsedSpaces";
+/** Distinct from file drops on the composer. */
+const PROJECT_DRAG_TYPE = "application/x-solenta-project";
+const UNASSIGNED_SPACE_KEY = "unassigned";
 
 /**
  * t3 list animation (Sidebar.logic.ts): rows glide on lifecycle transitions
@@ -120,6 +133,8 @@ interface SidebarProps {
   searchPlaceholder: string;
   projectsHeader: string;
   projects: ProjectInfo[];
+  /** Named sidebar groups. Empty = today's flat list (no section headers). */
+  spaces?: SpaceInfo[];
   threads: ThreadInfo[];
   /** Provider registry for display names on thread cards. */
   providers: ProviderInfo[];
@@ -145,6 +160,14 @@ interface SidebarProps {
   onRemoveProject?: (projectId: string) => void | Promise<void>;
   /** Opens the edit-project modal (name + SSH remote fields). */
   onEditProject?: (projectId: string) => void;
+  onAddSpace?: (name: string) => void | Promise<unknown>;
+  onRenameSpace?: (id: string, name: string) => void | Promise<unknown>;
+  onRemoveSpace?: (id: string) => void | Promise<void>;
+  /** Empty string unassigns. */
+  onAssignProjectToSpace?: (
+    projectId: string,
+    spaceId: string,
+  ) => void | Promise<unknown>;
   projectError?: string | null;
   onDismissProjectError?: () => void;
   /** Opens the Settings modal. */
@@ -1112,6 +1135,7 @@ export const Sidebar = memo(function Sidebar({
   searchPlaceholder,
   projectsHeader,
   projects,
+  spaces = [],
   threads,
   providers,
   activeThreadId,
@@ -1120,6 +1144,10 @@ export const Sidebar = memo(function Sidebar({
   onAddProject,
   onRemoveProject,
   onEditProject,
+  onAddSpace,
+  onRenameSpace,
+  onRemoveSpace,
+  onAssignProjectToSpace,
   projectError = null,
   onDismissProjectError,
   onOpenSettings,
@@ -1189,6 +1217,18 @@ export const Sidebar = memo(function Sidebar({
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() =>
     loadKeySet(COLLAPSED_KEY),
   );
+  const [collapsedSpaces, setCollapsedSpaces] = useState<Set<string>>(() =>
+    loadKeySet(SPACES_COLLAPSED_KEY),
+  );
+  const [addingSpace, setAddingSpace] = useState(false);
+  const [spaceDraft, setSpaceDraft] = useState("");
+  const [renamingSpaceId, setRenamingSpaceId] = useState<string | null>(null);
+  const [renameSpaceDraft, setRenameSpaceDraft] = useState("");
+  const [removeSpaceConfirmId, setRemoveSpaceConfirmId] = useState<
+    string | null
+  >(null);
+  const [removeSpacePending, setRemoveSpacePending] = useState(false);
+  const [spaceDropOver, setSpaceDropOver] = useState<string | null>(null);
   /**
    * Global settled tail open state. t3 default: EXPANDED — settled work stays
    * visible and the settle transition is seen. A user collapse persists like
@@ -1331,20 +1371,26 @@ export const Sidebar = memo(function Sidebar({
    * Project groups for the main list.
    * Normal view: attention + archived only (pin/snooze/settled pulled out).
    * Search: full hit list including shelves, so hits surface inline.
+   * Spaces wrap the same groups; zero spaces is one Unassigned section.
    */
-  const groups = useMemo(() => {
+  const sections = useMemo(() => {
     if (searching) {
       const projectsWithHits = projects.filter((p) =>
         displayThreads.some((t) => t.projectId === p.id),
       );
-      return buildSidebarGroups(projectsWithHits, displayThreads);
+      return buildSidebarSections(spaces, projectsWithHits, displayThreads);
     }
     const attentionIds = new Set(attentionThreads.map((t) => t.id));
     const forGroups = displayThreads.filter(
       (t) => t.archived || attentionIds.has(t.id),
     );
-    return buildSidebarGroups(projects, forGroups);
-  }, [projects, displayThreads, searching, attentionThreads]);
+    return buildSidebarSections(spaces, projects, forGroups);
+  }, [spaces, projects, displayThreads, searching, attentionThreads]);
+
+  const groups = useMemo(
+    () => sections.flatMap((s) => s.groups),
+    [sections],
+  );
 
   const toggleCollapsed = (groupKey: string) => {
     setCollapsedGroups((prev) => {
@@ -1352,6 +1398,16 @@ export const Sidebar = memo(function Sidebar({
       if (next.has(groupKey)) next.delete(groupKey);
       else next.add(groupKey);
       saveKeySet(COLLAPSED_KEY, next);
+      return next;
+    });
+  };
+
+  const toggleCollapsedSpace = (spaceKey: string) => {
+    setCollapsedSpaces((prev) => {
+      const next = new Set(prev);
+      if (next.has(spaceKey)) next.delete(spaceKey);
+      else next.add(spaceKey);
+      saveKeySet(SPACES_COLLAPSED_KEY, next);
       return next;
     });
   };
@@ -1373,6 +1429,16 @@ export const Sidebar = memo(function Sidebar({
         saveKeySet(COLLAPSED_KEY, next);
         return next;
       });
+      const home =
+        projects.find((p) => p.id === target.projectId)?.spaceId ??
+        UNASSIGNED_SPACE_KEY;
+      setCollapsedSpaces((prev) => {
+        if (!prev.has(home)) return prev;
+        const next = new Set(prev);
+        next.delete(home);
+        saveKeySet(SPACES_COLLAPSED_KEY, next);
+        return next;
+      });
       // No cleanup: the lookup is null-safe if the row left before the frame.
       window.requestAnimationFrame(() => {
         const el = document.querySelector(
@@ -1383,7 +1449,7 @@ export const Sidebar = memo(function Sidebar({
       });
     }
     onRevealHandled?.();
-  }, [revealThreadId, threads, onRevealHandled]);
+  }, [revealThreadId, threads, projects, onRevealHandled]);
 
   /**
    * Keys for every project group currently rendered. Collapse-all / expand-all
@@ -1509,12 +1575,24 @@ export const Sidebar = memo(function Sidebar({
   const slugFor = (t: ThreadInfo) =>
     projectById.get(t.projectId)?.slug ?? "unknown";
 
+  /**
+   * Groups that actually render. A collapsed space drops its project
+   * groups so ⌘1-9 / ⌘J/K stay in lockstep with the list.
+   */
+  const visibleSectionGroups = useMemo(() => {
+    if (searching || spaces.length === 0) return groups;
+    return sections.flatMap((s) => {
+      const key = s.space?.id ?? UNASSIGNED_SPACE_KEY;
+      return collapsedSpaces.has(key) ? [] : s.groups;
+    });
+  }, [searching, spaces.length, groups, sections, collapsedSpaces]);
+
   /** Ordered visible ids — matches render order (round 46). */
   const visibleIds = useMemo(
     () =>
       buildVisibleThreadIds({
         pinned: searching ? [] : globalPinned,
-        groups,
+        groups: visibleSectionGroups,
         collapsedGroupKeys: searching ? new Set() : collapsedGroups,
         expandedGroupKeys: searching ? new Set() : expandedGroups,
         keepThreadIds: [activeThreadId, revealThreadId ?? null],
@@ -1533,7 +1611,7 @@ export const Sidebar = memo(function Sidebar({
     [
       searching,
       globalPinned,
-      groups,
+      visibleSectionGroups,
       collapsedGroups,
       expandedGroups,
       activeThreadId,
@@ -2123,37 +2201,87 @@ export const Sidebar = memo(function Sidebar({
         </button>
       </nav>
 
-      <button
-        type="button"
-        className={styles.sectionHeader}
-        onClick={toggleCollapseAll}
-        aria-expanded={anyGroupExpanded}
-        title={
-          anyGroupExpanded ? "Collapse all projects" : "Expand all projects"
-        }
-        data-projects-section=""
-      >
-        <span
-          className={styles.chevron}
-          data-open={anyGroupExpanded}
-          aria-hidden="true"
+      <div className={styles.sectionHeaderRow}>
+        <button
+          type="button"
+          className={styles.sectionHeader}
+          onClick={toggleCollapseAll}
+          aria-expanded={anyGroupExpanded}
+          title={
+            anyGroupExpanded ? "Collapse all projects" : "Expand all projects"
+          }
+          data-projects-section=""
         >
-          <svg
-            width="12"
-            height="12"
-            viewBox="0 0 16 16"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
+          <span
+            className={styles.chevron}
+            data-open={anyGroupExpanded}
+            aria-hidden="true"
           >
-            <path d="m6 3.5 4.5 4.5L6 12.5" />
-          </svg>
-        </span>
-        <span>{projectsHeader}</span>
-        <span className={styles.count}>{sectionCount}</span>
-      </button>
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="m6 3.5 4.5 4.5L6 12.5" />
+            </svg>
+          </span>
+          <span>{projectsHeader}</span>
+          <span className={styles.count}>{sectionCount}</span>
+        </button>
+        {onAddSpace && (
+          <button
+            type="button"
+            className={styles.spaceAddBtn}
+            aria-label="Add space"
+            title="Add space"
+            data-space-add=""
+            onClick={() => {
+              setAddingSpace(true);
+              setSpaceDraft("");
+            }}
+          >
+            +
+          </button>
+        )}
+      </div>
+      {addingSpace && (
+        <input
+          className={styles.spaceInput}
+          data-space-add-input=""
+          value={spaceDraft}
+          placeholder="Space name"
+          aria-label="New space name"
+          autoFocus
+          autoComplete="off"
+          spellCheck={false}
+          onChange={(e) => setSpaceDraft(e.target.value)}
+          onBlur={() => {
+            if (!spaceDraft.trim()) {
+              setAddingSpace(false);
+              setSpaceDraft("");
+            }
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              const name = spaceDraft.trim();
+              if (!name) return;
+              void onAddSpace?.(name);
+              setAddingSpace(false);
+              setSpaceDraft("");
+            } else if (e.key === "Escape") {
+              e.preventDefault();
+              setAddingSpace(false);
+              setSpaceDraft("");
+            }
+          }}
+        />
+      )}
 
       <div className={styles.list}>
         {projects.length === 0 && (
@@ -2204,127 +2332,171 @@ export const Sidebar = memo(function Sidebar({
           </div>
         )}
 
-        {groups.map(({ project, threads: groupThreads }) => {
-            const groupKey =
-              project?.id ?? groupThreads[0]?.projectId ?? "orphan";
-            const slug =
-              project?.slug ??
-              (groupThreads[0]
-                ? projectById.get(groupThreads[0].projectId)?.slug
-                : undefined) ??
-              "unknown";
-            // Attention only in normal view (settled are global); search shows all.
-            const attentionThreads = groupThreads.filter((t) => !t.archived);
-            const archivedThreads = groupThreads.filter((t) => t.archived);
-            // A fork indents only when its source row renders in the same
-            // sublist (buildSidebarGroups already placed it right below).
-            const attentionIdSet = new Set(attentionThreads.map((t) => t.id));
-            const archivedIdSet = new Set(archivedThreads.map((t) => t.id));
-            const archivedExpanded = searching
-              ? true
-              : showArchived.has(groupKey);
-            const hasAnyThreads = groupThreads.length > 0;
-            // Fully-settled projects have zero attention/archived rows here but
-            // their threads still live in the global tail — "No threads yet"
-            // would be a lie.
-            const settledInProject = project
-              ? globalSettled.filter((t) => t.projectId === project.id).length
-              : globalSettled.filter(
-                  (t) => t.projectId === (groupThreads[0]?.projectId ?? ""),
-                ).length;
-            // A collapsed project shows only its header. Search overrides the
-            // collapse: hiding hits inside a collapsed group makes results lie.
-            const collapsed = !searching && collapsedGroups.has(groupKey);
-            const summary = groupHeaderSummary(attentionThreads);
-            // Overflow cap (issue #70): a group renders its newest
-            // GROUP_ATTENTION_CAP attention threads; the rest hide behind a
-            // session-only "Show more". Search bypasses the cap like every
-            // other collapse. The active/revealed thread never vanishes.
-            const groupCapped = !searching && !expandedGroups.has(groupKey);
-            const visibleCount = visibleAttentionCount(attentionThreads, {
-              capped: groupCapped,
-              keepIds: [activeThreadId, revealThreadId ?? null],
-            });
-            const visibleAttention = attentionThreads.slice(0, visibleCount);
-            const showOverflowToggle =
-              !searching && attentionThreads.length > GROUP_ATTENTION_CAP;
-
-            return (
-              <div key={groupKey} className={styles.group} ref={attachListAnimation}>
-                <div className={styles.groupHeaderRow}>
-                  <button
-                    type="button"
-                    className={styles.groupHeader}
-                    onClick={() => toggleCollapsed(groupKey)}
-                    aria-expanded={!collapsed}
-                    title={collapsed ? "Expand project" : "Collapse project"}
-                  >
-                    <span
-                      className={styles.chevron}
-                      data-open={!collapsed}
-                      data-group-chevron={groupKey}
-                      aria-hidden="true"
-                    >
-                      <svg
-                        width="12"
-                        height="12"
-                        viewBox="0 0 16 16"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="1.5"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <path d="m6 3.5 4.5 4.5L6 12.5" />
-                      </svg>
-                    </span>
-                    <span className={styles.groupSlug}>{slug}</span>
-                    {summary && (
-                      <span className={styles.groupSummary}>{summary}</span>
-                    )}
-                    <span className={styles.groupCount}>
-                      {searching
-                        ? groupThreads.length
-                        : attentionThreads.length}
-                    </span>
-                  </button>
-                  {/*
-                    Remove is a sibling of the collapse control — separately
-                    focusable, not nested inside it — so keyboard users can
-                    reach it without toggling the group.
-                  */}
-                  {project && onEditProject && !searching && (
+        {sections.map((section) => {
+          const spaceKey = section.space?.id ?? UNASSIGNED_SPACE_KEY;
+          const showSpaceHeader = section.space != null || spaces.length > 0;
+          const spaceCollapsed =
+            !searching && showSpaceHeader && collapsedSpaces.has(spaceKey);
+          const spaceName = section.space?.name ?? "Unassigned";
+          const projectCount = section.groups.filter((g) => g.project).length;
+          const acceptSpaceDrop = (e: DragEvent) => {
+            if (!onAssignProjectToSpace) return;
+            if (!Array.from(e.dataTransfer.types).includes(PROJECT_DRAG_TYPE)) {
+              return;
+            }
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "move";
+            setSpaceDropOver(spaceKey);
+          };
+          return (
+            <div
+              key={spaceKey}
+              className={styles.spaceSection}
+              data-space-section={spaceKey}
+            >
+              {showSpaceHeader && (
+                <div
+                  className={
+                    spaceDropOver === spaceKey
+                      ? `${styles.spaceHeaderRow} ${styles.spaceDropOver}`
+                      : styles.spaceHeaderRow
+                  }
+                  data-space-drop={spaceKey}
+                  data-space-over={
+                    spaceDropOver === spaceKey ? "true" : undefined
+                  }
+                  onDragOver={acceptSpaceDrop}
+                  onDragEnter={acceptSpaceDrop}
+                  onDragLeave={(e) => {
+                    if (
+                      e.relatedTarget instanceof Node &&
+                      e.currentTarget.contains(e.relatedTarget)
+                    ) {
+                      return;
+                    }
+                    setSpaceDropOver((cur) =>
+                      cur === spaceKey ? null : cur,
+                    );
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    setSpaceDropOver(null);
+                    const projectId =
+                      e.dataTransfer.getData(PROJECT_DRAG_TYPE);
+                    if (!projectId || !onAssignProjectToSpace) return;
+                    void onAssignProjectToSpace(
+                      projectId,
+                      section.space?.id ?? "",
+                    );
+                  }}
+                >
+                  {renamingSpaceId === section.space?.id ? (
+                    <input
+                      className={styles.spaceInput}
+                      data-space-rename-input={section.space.id}
+                      value={renameSpaceDraft}
+                      aria-label={`Rename space ${spaceName}`}
+                      autoFocus
+                      autoComplete="off"
+                      spellCheck={false}
+                      onChange={(e) => setRenameSpaceDraft(e.target.value)}
+                      onBlur={() => {
+                        const next = renameSpaceDraft.trim();
+                        const id = section.space?.id;
+                        setRenamingSpaceId(null);
+                        if (id && next && next !== section.space?.name) {
+                          void onRenameSpace?.(id, next);
+                        }
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          (e.currentTarget as HTMLInputElement).blur();
+                        } else if (e.key === "Escape") {
+                          e.preventDefault();
+                          setRenamingSpaceId(null);
+                        }
+                      }}
+                    />
+                  ) : (
                     <button
                       type="button"
-                      className={styles.groupRemove}
-                      aria-label={`Edit project ${slug}`}
-                      title="Edit project"
-                      data-project-edit={project.id}
-                      onClick={() => onEditProject(project.id)}
+                      className={styles.spaceHeader}
+                      data-space-header={spaceKey}
+                      onClick={() => toggleCollapsedSpace(spaceKey)}
+                      aria-expanded={!spaceCollapsed}
+                      aria-label={
+                        spaceCollapsed
+                          ? `Expand space ${spaceName}`
+                          : `Collapse space ${spaceName}`
+                      }
+                      title={
+                        spaceCollapsed ? "Expand space" : "Collapse space"
+                      }
                     >
-                      <svg
-                        width="12"
-                        height="12"
-                        viewBox="0 0 16 16"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="1.5"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
+                      <span
+                        className={styles.chevron}
+                        data-open={!spaceCollapsed}
+                        data-space-chevron={spaceKey}
                         aria-hidden="true"
                       >
-                        <path d="M11.3 2.7a1.4 1.4 0 0 1 2 2L5 13H3v-2l8.3-8.3Z" />
-                      </svg>
+                        <svg
+                          width="12"
+                          height="12"
+                          viewBox="0 0 16 16"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.5"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
+                          <path d="m6 3.5 4.5 4.5L6 12.5" />
+                        </svg>
+                      </span>
+                      <span className={styles.spaceName}>{spaceName}</span>
+                      <span className={styles.count}>{projectCount}</span>
                     </button>
                   )}
-                  {project && onRemoveProject && !searching && (
+                  {section.space &&
+                    onRenameSpace &&
+                    !searching &&
+                    renamingSpaceId !== section.space.id && (
+                      <button
+                        type="button"
+                        className={styles.groupRemove}
+                        aria-label={`Rename space ${spaceName}`}
+                        title="Rename space"
+                        data-space-edit={section.space.id}
+                        onClick={() => {
+                          setRenamingSpaceId(section.space!.id);
+                          setRenameSpaceDraft(section.space!.name);
+                        }}
+                      >
+                        <svg
+                          width="12"
+                          height="12"
+                          viewBox="0 0 16 16"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.5"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          aria-hidden="true"
+                        >
+                          <path d="M11.3 2.7a1.4 1.4 0 0 1 2 2L5 13H3v-2l8.3-8.3Z" />
+                        </svg>
+                      </button>
+                    )}
+                  {section.space && onRemoveSpace && !searching && (
                     <button
                       type="button"
                       className={styles.groupRemove}
-                      aria-label={`Remove project ${slug}`}
-                      title="Remove project"
-                      data-project-remove={project.id}
-                      onClick={() => setRemoveConfirmId(project.id)}
+                      aria-label={`Delete space ${spaceName}`}
+                      title="Delete space"
+                      data-space-remove={section.space.id}
+                      onClick={() =>
+                        setRemoveSpaceConfirmId(section.space!.id)
+                      }
                     >
                       <svg
                         width="12"
@@ -2341,130 +2513,287 @@ export const Sidebar = memo(function Sidebar({
                     </button>
                   )}
                 </div>
+              )}
+              {spaceCollapsed
+                ? null
+                : section.groups.map(({ project, threads: groupThreads }) => {
+                  const groupKey =
+                    project?.id ?? groupThreads[0]?.projectId ?? "orphan";
+                  const slug =
+                    project?.slug ??
+                    (groupThreads[0]
+                      ? projectById.get(groupThreads[0].projectId)?.slug
+                      : undefined) ??
+                    "unknown";
+                  // Attention only in normal view (settled are global); search shows all.
+                  const attentionThreads = groupThreads.filter((t) => !t.archived);
+                  const archivedThreads = groupThreads.filter((t) => t.archived);
+                  // A fork indents only when its source row renders in the same
+                  // sublist (buildSidebarGroups already placed it right below).
+                  const attentionIdSet = new Set(attentionThreads.map((t) => t.id));
+                  const archivedIdSet = new Set(archivedThreads.map((t) => t.id));
+                  const archivedExpanded = searching
+                    ? true
+                    : showArchived.has(groupKey);
+                  const hasAnyThreads = groupThreads.length > 0;
+                  // Fully-settled projects have zero attention/archived rows here but
+                  // their threads still live in the global tail — "No threads yet"
+                  // would be a lie.
+                  const settledInProject = project
+                    ? globalSettled.filter((t) => t.projectId === project.id).length
+                    : globalSettled.filter(
+                        (t) => t.projectId === (groupThreads[0]?.projectId ?? ""),
+                      ).length;
+                  // A collapsed project shows only its header. Search overrides the
+                  // collapse: hiding hits inside a collapsed group makes results lie.
+                  const collapsed = !searching && collapsedGroups.has(groupKey);
+                  const summary = groupHeaderSummary(attentionThreads);
+                  // Overflow cap (issue #70): a group renders its newest
+                  // GROUP_ATTENTION_CAP attention threads; the rest hide behind a
+                  // session-only "Show more". Search bypasses the cap like every
+                  // other collapse. The active/revealed thread never vanishes.
+                  const groupCapped = !searching && !expandedGroups.has(groupKey);
+                  const visibleCount = visibleAttentionCount(attentionThreads, {
+                    capped: groupCapped,
+                    keepIds: [activeThreadId, revealThreadId ?? null],
+                  });
+                  const visibleAttention = attentionThreads.slice(0, visibleCount);
+                  const showOverflowToggle =
+                    !searching && attentionThreads.length > GROUP_ATTENTION_CAP;
 
-                {collapsed ? null : !hasAnyThreads ? (
-                  <>
-                    <div className={styles.emptyGroup}>
-                      <span className={styles.emptyThreads}>
-                        {settledInProject > 0 ? "All settled" : "No threads yet"}
-                      </span>
-                      {project && !searching && renderGroupCreateActions(project)}
+                  return (
+                    <div key={groupKey} className={styles.group} ref={attachListAnimation}>
+                      <div
+                        className={styles.groupHeaderRow}
+                        draggable={Boolean(
+                          project && onAssignProjectToSpace && !searching,
+                        )}
+                        data-project-drag={project?.id}
+                        onDragStart={(e) => {
+                          if (!project) {
+                            e.preventDefault();
+                            return;
+                          }
+                          e.dataTransfer.setData(PROJECT_DRAG_TYPE, project.id);
+                          e.dataTransfer.effectAllowed = "move";
+                        }}
+                      >
+                        <button
+                          type="button"
+                          className={styles.groupHeader}
+                          onClick={() => toggleCollapsed(groupKey)}
+                          aria-expanded={!collapsed}
+                          title={collapsed ? "Expand project" : "Collapse project"}
+                        >
+                          <span
+                            className={styles.chevron}
+                            data-open={!collapsed}
+                            data-group-chevron={groupKey}
+                            aria-hidden="true"
+                          >
+                            <svg
+                              width="12"
+                              height="12"
+                              viewBox="0 0 16 16"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="1.5"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            >
+                              <path d="m6 3.5 4.5 4.5L6 12.5" />
+                            </svg>
+                          </span>
+                          <span className={styles.groupSlug}>{slug}</span>
+                          {summary && (
+                            <span className={styles.groupSummary}>{summary}</span>
+                          )}
+                          <span className={styles.groupCount}>
+                            {searching
+                              ? groupThreads.length
+                              : attentionThreads.length}
+                          </span>
+                        </button>
+                        {/*
+                          Remove is a sibling of the collapse control — separately
+                          focusable, not nested inside it — so keyboard users can
+                          reach it without toggling the group.
+                        */}
+                        {project && onEditProject && !searching && (
+                          <button
+                            type="button"
+                            className={styles.groupRemove}
+                            aria-label={`Edit project ${slug}`}
+                            title="Edit project"
+                            data-project-edit={project.id}
+                            onClick={() => onEditProject(project.id)}
+                          >
+                            <svg
+                              width="12"
+                              height="12"
+                              viewBox="0 0 16 16"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="1.5"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              aria-hidden="true"
+                            >
+                              <path d="M11.3 2.7a1.4 1.4 0 0 1 2 2L5 13H3v-2l8.3-8.3Z" />
+                            </svg>
+                          </button>
+                        )}
+                        {project && onRemoveProject && !searching && (
+                          <button
+                            type="button"
+                            className={styles.groupRemove}
+                            aria-label={`Remove project ${slug}`}
+                            title="Remove project"
+                            data-project-remove={project.id}
+                            onClick={() => setRemoveConfirmId(project.id)}
+                          >
+                            <svg
+                              width="12"
+                              height="12"
+                              viewBox="0 0 16 16"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="1.5"
+                              strokeLinecap="round"
+                              aria-hidden="true"
+                            >
+                              <path d="m4 4 8 8M12 4l-8 8" />
+                            </svg>
+                          </button>
+                        )}
+                      </div>
+
+                      {collapsed ? null : !hasAnyThreads ? (
+                        <>
+                          <div className={styles.emptyGroup}>
+                            <span className={styles.emptyThreads}>
+                              {settledInProject > 0 ? "All settled" : "No threads yet"}
+                            </span>
+                            {project && !searching && renderGroupCreateActions(project)}
+                          </div>
+                          {project && !searching && renderGroupIssueForm(project)}
+                        </>
+                      ) : (
+                        <>
+                          {/*
+                            t3 key rule: rows key by id + variant (:card in groups,
+                            :slim on shelves) so a settle/unsettle move unmounts and
+                            remounts — auto-animate cross-fades instead of sliding
+                            one element across lists.
+                          */}
+                          {visibleAttention.map((thread) => (
+                            <ThreadCard
+                              key={`${thread.id}:card`}
+                              thread={thread}
+                              slug={slug}
+                              showSlug={project == null}
+                              remote={Boolean(project?.remoteHost)}
+                              providers={providers}
+                              active={thread.id === activeThreadId}
+                              multiSelected={multiSelected.has(thread.id)}
+                              indexHint={indexHintFor(thread.id)}
+                              now={now}
+                              onSelect={handleSelect}
+                              isSettled={
+                                searching
+                                  ? effectiveSettled(thread, settleOpts)
+                                  : false
+                              }
+                              onSetSettled={onSetSettled}
+                              onSetPinned={onSetPinned}
+                              onSetSnoozed={onSetSnoozed}
+                              onSetMuted={onSetMuted}
+                              onRenameThread={onRenameThread}
+                              onFork={onFork}
+                              snoozeMenuOpen={snoozeMenuFor === thread.id}
+                              onToggleSnoozeMenu={setSnoozeMenuFor}
+                              forkMenuOpen={forkMenuFor === thread.id}
+                              onToggleForkMenu={setForkMenuFor}
+                              nested={
+                                thread.handoffFrom != null &&
+                                attentionIdSet.has(thread.handoffFrom)
+                              }
+                              wait={waitStates.get(thread.id) ?? null}
+                              contentMatch={
+                                searching &&
+                                !thread.title.toLowerCase().includes(queryLower)
+                              }
+                            />
+                          ))}
+                          {showOverflowToggle && (
+                            <button
+                              type="button"
+                              className={styles.settledShowMore}
+                              data-group-overflow={groupKey}
+                              onClick={() => toggleGroupExpanded(groupKey)}
+                              aria-expanded={!groupCapped}
+                            >
+                              {groupCapped
+                                ? `Show ${attentionThreads.length - visibleCount} more`
+                                : "Show fewer"}
+                            </button>
+                          )}
+                          {archivedExpanded &&
+                            archivedThreads.map((thread) => (
+                              <ThreadCard
+                                key={`${thread.id}:card`}
+                                thread={thread}
+                                slug={slug}
+                                showSlug={project == null}
+                                remote={Boolean(project?.remoteHost)}
+                                providers={providers}
+                                active={thread.id === activeThreadId}
+                                multiSelected={multiSelected.has(thread.id)}
+                                indexHint={indexHintFor(thread.id)}
+                                now={now}
+                                onSelect={handleSelect}
+                                isSettled={effectiveSettled(thread, settleOpts)}
+                                onSetSettled={onSetSettled}
+                                onFork={onFork}
+                                forkMenuOpen={forkMenuFor === thread.id}
+                                onToggleForkMenu={setForkMenuFor}
+                                nested={
+                                  thread.handoffFrom != null &&
+                                  archivedIdSet.has(thread.handoffFrom)
+                                }
+                                wait={waitStates.get(thread.id) ?? null}
+                                contentMatch={
+                                  searching &&
+                                  !thread.title.toLowerCase().includes(queryLower)
+                                }
+                              />
+                            ))}
+                          {!searching && archivedThreads.length > 0 && (
+                            <button
+                              type="button"
+                              className={styles.archivedToggle}
+                              onClick={() => toggleArchived(groupKey)}
+                              aria-expanded={archivedExpanded}
+                            >
+                              {archivedExpanded
+                                ? "Hide archived"
+                                : `${archivedThreads.length} archived`}
+                            </button>
+                          )}
+                          {project && !searching && (
+                            <>
+                              {renderGroupCreateActions(project)}
+                              {renderGroupIssueForm(project)}
+                            </>
+                          )}
+                        </>
+                      )}
                     </div>
-                    {project && !searching && renderGroupIssueForm(project)}
-                  </>
-                ) : (
-                  <>
-                    {/*
-                      t3 key rule: rows key by id + variant (:card in groups,
-                      :slim on shelves) so a settle/unsettle move unmounts and
-                      remounts — auto-animate cross-fades instead of sliding
-                      one element across lists.
-                    */}
-                    {visibleAttention.map((thread) => (
-                      <ThreadCard
-                        key={`${thread.id}:card`}
-                        thread={thread}
-                        slug={slug}
-                        showSlug={project == null}
-                        remote={Boolean(project?.remoteHost)}
-                        providers={providers}
-                        active={thread.id === activeThreadId}
-                        multiSelected={multiSelected.has(thread.id)}
-                        indexHint={indexHintFor(thread.id)}
-                        now={now}
-                        onSelect={handleSelect}
-                        isSettled={
-                          searching
-                            ? effectiveSettled(thread, settleOpts)
-                            : false
-                        }
-                        onSetSettled={onSetSettled}
-                        onSetPinned={onSetPinned}
-                        onSetSnoozed={onSetSnoozed}
-                        onSetMuted={onSetMuted}
-                        onRenameThread={onRenameThread}
-                        onFork={onFork}
-                        snoozeMenuOpen={snoozeMenuFor === thread.id}
-                        onToggleSnoozeMenu={setSnoozeMenuFor}
-                        forkMenuOpen={forkMenuFor === thread.id}
-                        onToggleForkMenu={setForkMenuFor}
-                        nested={
-                          thread.handoffFrom != null &&
-                          attentionIdSet.has(thread.handoffFrom)
-                        }
-                        wait={waitStates.get(thread.id) ?? null}
-                        contentMatch={
-                          searching &&
-                          !thread.title.toLowerCase().includes(queryLower)
-                        }
-                      />
-                    ))}
-                    {showOverflowToggle && (
-                      <button
-                        type="button"
-                        className={styles.settledShowMore}
-                        data-group-overflow={groupKey}
-                        onClick={() => toggleGroupExpanded(groupKey)}
-                        aria-expanded={!groupCapped}
-                      >
-                        {groupCapped
-                          ? `Show ${attentionThreads.length - visibleCount} more`
-                          : "Show fewer"}
-                      </button>
-                    )}
-                    {archivedExpanded &&
-                      archivedThreads.map((thread) => (
-                        <ThreadCard
-                          key={`${thread.id}:card`}
-                          thread={thread}
-                          slug={slug}
-                          showSlug={project == null}
-                          remote={Boolean(project?.remoteHost)}
-                          providers={providers}
-                          active={thread.id === activeThreadId}
-                          multiSelected={multiSelected.has(thread.id)}
-                          indexHint={indexHintFor(thread.id)}
-                          now={now}
-                          onSelect={handleSelect}
-                          isSettled={effectiveSettled(thread, settleOpts)}
-                          onSetSettled={onSetSettled}
-                          onFork={onFork}
-                          forkMenuOpen={forkMenuFor === thread.id}
-                          onToggleForkMenu={setForkMenuFor}
-                          nested={
-                            thread.handoffFrom != null &&
-                            archivedIdSet.has(thread.handoffFrom)
-                          }
-                          wait={waitStates.get(thread.id) ?? null}
-                          contentMatch={
-                            searching &&
-                            !thread.title.toLowerCase().includes(queryLower)
-                          }
-                        />
-                      ))}
-                    {!searching && archivedThreads.length > 0 && (
-                      <button
-                        type="button"
-                        className={styles.archivedToggle}
-                        onClick={() => toggleArchived(groupKey)}
-                        aria-expanded={archivedExpanded}
-                      >
-                        {archivedExpanded
-                          ? "Hide archived"
-                          : `${archivedThreads.length} archived`}
-                      </button>
-                    )}
-                    {project && !searching && (
-                      <>
-                        {renderGroupCreateActions(project)}
-                        {renderGroupIssueForm(project)}
-                      </>
-                    )}
-                  </>
-                )}
-              </div>
-            );
-          })}
+                  );
+                })}
+            </div>
+          );
+        })}
 
         {/* Global SNOOZED shelf (t3): between groups and settled, collapsed by default. */}
         {!searching && globalSnoozed.length > 0 && (
@@ -2706,6 +3035,76 @@ export const Sidebar = memo(function Sidebar({
                     type="button"
                     className={styles.removeConfirmCancel}
                     disabled={removePending}
+                    onClick={closeConfirm}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
+      {removeSpaceConfirmId &&
+        (() => {
+          const confirmSpace = spaces.find(
+            (s) => s.id === removeSpaceConfirmId,
+          );
+          if (!confirmSpace) return null;
+          const closeConfirm = () => {
+            if (removeSpacePending) return;
+            setRemoveSpaceConfirmId(null);
+          };
+          return (
+            <div
+              className={styles.removeConfirmOverlay}
+              role="presentation"
+              onClick={closeConfirm}
+            >
+              <div
+                className={styles.removeConfirm}
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="remove-space-title"
+                data-space-remove-confirm={confirmSpace.id}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <h2
+                  id="remove-space-title"
+                  className={styles.removeConfirmTitle}
+                >
+                  Delete space {confirmSpace.name}?
+                </h2>
+                <p className={styles.removeConfirmBody}>
+                  Projects in this space will be unassigned, not deleted.
+                </p>
+                <div className={styles.removeConfirmActions}>
+                  <button
+                    type="button"
+                    className={styles.removeConfirmDanger}
+                    data-space-remove-confirm-submit={confirmSpace.id}
+                    disabled={removeSpacePending}
+                    aria-busy={removeSpacePending || undefined}
+                    onClick={() => {
+                      if (removeSpacePending || !onRemoveSpace) return;
+                      const id = confirmSpace.id;
+                      setRemoveSpacePending(true);
+                      void Promise.resolve(onRemoveSpace(id))
+                        .catch(() => {
+                          // Failure toast is the caller's job; always close.
+                        })
+                        .finally(() => {
+                          setRemoveSpacePending(false);
+                          setRemoveSpaceConfirmId(null);
+                        });
+                    }}
+                  >
+                    {removeSpacePending ? "Deleting…" : "Delete space"}
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.removeConfirmCancel}
+                    disabled={removeSpacePending}
                     onClick={closeConfirm}
                   >
                     Cancel

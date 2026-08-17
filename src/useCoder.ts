@@ -28,6 +28,7 @@ import type {
   PrInfo,
   ProjectInfo,
   ProviderInfo,
+  SpaceInfo,
   ReasoningEffort,
   SkillInfo,
   SkillWrite,
@@ -117,6 +118,7 @@ export interface CoderError {
 export interface UseCoderResult {
   api: CoderApi;
   projects: ProjectInfo[];
+  spaces: SpaceInfo[];
   threads: ThreadInfo[];
   /** Provider registry loaded once at startup. */
   providers: ProviderInfo[];
@@ -149,7 +151,17 @@ export interface UseCoderResult {
     name?: string;
     remoteHost?: string;
     remotePath?: string;
+    spaceId?: string;
   }) => Promise<ProjectInfo | null>;
+  addSpace: (name: string) => Promise<SpaceInfo | null>;
+  renameSpace: (id: string, name: string) => Promise<SpaceInfo | null>;
+  /** Drops the space and re-lists projects (their spaceId was cleared). */
+  removeSpace: (id: string) => Promise<void>;
+  /** Assign a project to a space. Empty string unassigns. */
+  assignProjectToSpace: (
+    projectId: string,
+    spaceId: string,
+  ) => Promise<ProjectInfo | null>;
   /** Create in projectId when given; otherwise the currently selected project. */
   createThread: (
     title?: string,
@@ -389,6 +401,7 @@ export interface UseCoderResult {
 export function useCoder(): UseCoderResult {
   const api = useMemo(() => resolveApi(), []);
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
+  const [spaces, setSpaces] = useState<SpaceInfo[]>([]);
   const [threads, setThreads] = useState<ThreadInfo[]>([]);
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [workflows, setWorkflows] = useState<WorkflowTemplateInfo[]>([]);
@@ -655,7 +668,7 @@ export function useCoder(): UseCoderResult {
       try {
         // status/settings are best-effort: missing IPC handlers (merge before
         // backend) must not blank the whole boot (no catch on this IIFE).
-        const [p, list, prov, wfs, autos, status, sett] = await Promise.all([
+        const [p, list, prov, wfs, autos, status, sett, sp] = await Promise.all([
           api.projects.list(),
           api.threads.list(),
           api.providers.list(),
@@ -663,9 +676,12 @@ export function useCoder(): UseCoderResult {
           api.automations.list().catch(() => [] as AutomationInfo[]),
           api.app.status().catch(() => null),
           api.settings.get().catch(() => null),
+          // Missing handler while the electron half is mid-flight: boot empty.
+          api.spaces.list().catch(() => [] as SpaceInfo[]),
         ]);
         if (cancelled) return;
         setProjects(p);
+        setSpaces(sp);
         setProviders(prov);
         setWorkflows(wfs);
         setAutomations(autos);
@@ -825,6 +841,7 @@ export function useCoder(): UseCoderResult {
     name?: string;
     remoteHost?: string;
     remotePath?: string;
+    spaceId?: string;
   }) => {
     try {
       const updated = await api.projects.update(input);
@@ -838,6 +855,56 @@ export function useCoder(): UseCoderResult {
       return null;
     }
   }, [api]);
+
+  const addSpace = useCallback(async (name: string) => {
+    try {
+      const s = await api.spaces.add({ name: name.trim() });
+      setSpaces((prev) => {
+        if (prev.some((x) => x.id === s.id)) return prev;
+        return [...prev, s];
+      });
+      setError(null);
+      return s;
+    } catch (err) {
+      setError({ scope: "project", message: errorMessage(err) });
+      return null;
+    }
+  }, [api]);
+
+  const renameSpace = useCallback(async (id: string, name: string) => {
+    try {
+      const updated = await api.spaces.update({ id, name: name.trim() });
+      setSpaces((prev) =>
+        prev.map((s) => (s.id === updated.id ? updated : s)),
+      );
+      setError(null);
+      return updated;
+    } catch (err) {
+      setError({ scope: "project", message: errorMessage(err) });
+      return null;
+    }
+  }, [api]);
+
+  const removeSpace = useCallback(async (id: string) => {
+    try {
+      await api.spaces.remove({ id });
+      const [nextSpaces, nextProjects] = await Promise.all([
+        api.spaces.list(),
+        api.projects.list(),
+      ]);
+      setSpaces(nextSpaces);
+      setProjects(nextProjects);
+      setError(null);
+    } catch (err) {
+      throw err instanceof Error ? err : new Error(errorMessage(err));
+    }
+  }, [api]);
+
+  const assignProjectToSpace = useCallback(
+    (projectId: string, spaceId: string) =>
+      updateProject({ projectId, spaceId }),
+    [updateProject],
+  );
 
   const createThread = useCallback(
     async (
@@ -1905,6 +1972,7 @@ export function useCoder(): UseCoderResult {
   return {
     api,
     projects,
+    spaces,
     threads,
     providers,
     workflows,
@@ -1921,6 +1989,10 @@ export function useCoder(): UseCoderResult {
     addProject,
     createProject,
     updateProject,
+    addSpace,
+    renameSpace,
+    removeSpace,
+    assignProjectToSpace,
     createThread,
     forkThread,
     startRun,

@@ -37,6 +37,7 @@ import type {
   ProjectInfo,
   ProviderInfo,
   SkillInfo,
+  SpaceInfo,
   ThreadDetail,
   ThreadPatch,
   ThreadInfo,
@@ -76,6 +77,10 @@ export function project(over: Partial<ProjectInfo> = {}): ProjectInfo {
     path: "/tmp/repo",
     ...over,
   };
+}
+
+export function space(over: Partial<SpaceInfo> = {}): SpaceInfo {
+  return { id: "s1", name: "Client work", ...over };
 }
 
 /** Fresh activity clock so round-39 inactivity settle does not fold fixtures. */
@@ -134,6 +139,7 @@ export function detail(over: Partial<ThreadDetail> = {}): ThreadDetail {
 
 export interface FakeOptions {
   projects?: ProjectInfo[];
+  spaces?: SpaceInfo[];
   threads?: ThreadInfo[];
   providers?: ProviderInfo[];
   workflows?: WorkflowTemplateInfo[];
@@ -159,7 +165,9 @@ export interface FakeOptions {
 export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
   const calls: Call[] = [];
   let projects = opts.projects ?? [project()];
+  let spaces = opts.spaces ?? [];
   let threads = opts.threads ?? [thread()];
+  let nextSpaceId = 1;
   const providers =
     opts.providers ??
     ([
@@ -468,11 +476,17 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         name?: string;
         remoteHost?: string;
         remotePath?: string;
+        spaceId?: string;
       }) => {
         const found = projects.find((p) => p.id === input.projectId);
         const updated = found ? { ...found } : project();
         if (typeof input.name === "string" && input.name.trim()) {
           updated.name = input.name.trim();
+        }
+        if (typeof input.spaceId === "string") {
+          const spaceId = input.spaceId.trim();
+          if (spaceId) updated.spaceId = spaceId;
+          else delete updated.spaceId;
         }
         const host = input.remoteHost?.trim() ?? "";
         if (host) {
@@ -504,6 +518,35 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           return v;
         });
       },
+    },
+    spaces: {
+      list: () => rec("spaces.list", [], spaces.map((s) => ({ ...s }))),
+      add: (input: { name: string }) => {
+        const created = space({
+          id: `s-new-${nextSpaceId++}`,
+          name: input.name.trim(),
+        });
+        return rec("spaces.add", [input], created).then((v) => {
+          spaces = [...spaces, created];
+          return v;
+        });
+      },
+      update: (input: { id: string; name: string }) => {
+        const found = spaces.find((s) => s.id === input.id);
+        const updated = { ...(found ?? space({ id: input.id })), name: input.name.trim() };
+        return rec("spaces.update", [input], updated).then((v) => {
+          spaces = spaces.map((s) => (s.id === updated.id ? updated : s));
+          return v;
+        });
+      },
+      remove: (input: { id: string }) =>
+        rec("spaces.remove", [input], undefined).then((v) => {
+          spaces = spaces.filter((s) => s.id !== input.id);
+          projects = projects.map((p) =>
+            p.spaceId === input.id ? (({ spaceId, ...rest }) => rest)(p) : p,
+          );
+          return v;
+        }),
     },
     threads: {
       list: () => rec("threads.list", [], threads.map((t) => ({ ...t }))),

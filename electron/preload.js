@@ -99,6 +99,12 @@ const coder = {
     addViaDialog: () => invoke("projects:addViaDialog"),
     remove: (input) => invoke("projects:remove", input),
   },
+  spaces: {
+    list: () => invoke("spaces:list"),
+    add: (input) => invoke("spaces:add", input),
+    update: (input) => invoke("spaces:update", input),
+    remove: (input) => invoke("spaces:remove", input),
+  },
   threads: {
     list: () => invoke("threads:list"),
     summaries: () => invoke("threads:summaries"),
