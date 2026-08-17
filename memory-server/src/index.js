@@ -8,6 +8,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { z } from 'zod'
 import { Memory } from './memory.js'
+import { SOURCES } from './trust.js'
 import { runJanitor, readJanitorSnapshot } from './janitor.js'
 import { createRealEmbedder, semanticEnabled } from './embedder.js'
 import { exitWhenOrphaned } from './orphan.js'
@@ -151,12 +152,16 @@ export function buildServer(memory) {
         body: z.string().min(1),
         project: z.string().optional(),
         agent: z.string().optional(),
+        source: z
+          .string()
+          .optional()
+          .describe(`Write surface (${SOURCES.join(', ')}); free text still allowed`),
         status: taskStatus.optional(),
         importance: z.number().int().min(1).max(5).optional(),
         force: z.boolean().optional(),
       },
     },
-    async (args) => json(memory.store(args)),
+    async (args) => json(memory.store({ ...args, source: args.source ?? 'mcp' })),
   )
 
   server.registerTool(
@@ -178,6 +183,7 @@ export function buildServer(memory) {
       inputSchema: {
         query: z.string().min(1),
         project: z.string().optional(),
+        agent: z.string().optional().describe('Only return entries written by this agent'),
         limit: z.number().int().positive().max(100).optional(),
       },
     },
@@ -212,12 +218,16 @@ export function buildServer(memory) {
         status: taskStatus.optional(),
         importance: z.number().int().min(1).max(5).optional(),
         agent: z.string().optional(),
+        source: z
+          .string()
+          .optional()
+          .describe(`Write surface (${SOURCES.join(', ')}); free text still allowed`),
         project: z.string().optional(),
       },
     },
     async (args) => {
       const { id, ...fields } = args
-      return json(memory.supersede(id, fields))
+      return json(memory.supersede(id, { ...fields, source: fields.source ?? 'mcp' }))
     },
   )
 
@@ -383,6 +393,8 @@ function toApiRow(r) {
     title: r.title,
     body: r.excerpt ?? r.body ?? '',
     project: r.project ?? null,
+    agent: r.agent ?? null,
+    source: r.source ?? null,
     importance: r.importance,
     created_at: r.created_at,
     updated_at: r.updated_at ?? r.created_at,
@@ -407,10 +419,12 @@ async function handleApi(req, res, url, memory) {
     if (req.method === 'GET' && url.pathname === '/api/search') {
       const query = url.searchParams.get('query') ?? ''
       const project = url.searchParams.get('project') ?? undefined
+      const agent = url.searchParams.get('agent') ?? undefined
       const limit = url.searchParams.get('limit')
       const result = await memory.search({
         query,
         project,
+        agent,
         limit: limit != null ? Number(limit) : undefined,
       })
       sendJson(res, 200, result.map(toApiRow))
@@ -434,7 +448,7 @@ async function handleApi(req, res, url, memory) {
         return true
       }
       try {
-        sendJson(res, 200, memory.supersede(id, body))
+        sendJson(res, 200, memory.supersede(id, { ...body, source: body.source ?? 'rest' }))
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
         sendJson(res, /no entry with id|unknown|not found/i.test(msg) ? 404 : 400, {
@@ -506,7 +520,7 @@ async function handleApi(req, res, url, memory) {
         sendJson(res, 400, { error: 'valid JSON required' })
         return true
       }
-      const result = memory.store(body)
+      const result = memory.store({ ...body, source: body.source ?? 'rest' })
       sendJson(res, 200, result)
       return true
     }

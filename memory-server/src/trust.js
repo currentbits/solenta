@@ -39,6 +39,51 @@ export function trustFactor(evidence = {}) {
 }
 
 /**
+ * Per-agent evidence rollup. One grouped query; trust is derived, never stored.
+ * NULL/empty writers are skipped (they stay at the 1.0 default in ranking).
+ *
+ * @param {import('node:sqlite').DatabaseSync} db
+ * @returns {{ agent: string, entries: number, helpful: number, harmful: number, invalidated: number, trust: number }[]}
+ */
+export function agentTrust(db) {
+  try {
+    const rows = db
+      .prepare(
+        `SELECT agent,
+                COUNT(*) AS entries,
+                COALESCE(SUM(helpful_count), 0) AS helpful,
+                COALESCE(SUM(harmful_count), 0) AS harmful,
+                COALESCE(SUM(invalid_at IS NOT NULL), 0) AS invalidated
+         FROM entries
+         WHERE agent IS NOT NULL AND trim(agent) != ''
+         GROUP BY agent`,
+      )
+      .all()
+    const out = []
+    for (const r of rows) {
+      const entries = Number(r.entries) || 0
+      if (entries <= 0) continue
+      const helpful = Number(r.helpful) || 0
+      const harmful = Number(r.harmful) || 0
+      const invalidated = Number(r.invalidated) || 0
+      out.push({
+        agent: r.agent,
+        entries,
+        helpful,
+        harmful,
+        invalidated,
+        trust: trustFactor({ helpful, harmful, invalidated }),
+      })
+    }
+    out.sort((a, b) => a.trust - b.trust || a.agent.localeCompare(b.agent))
+    return out
+  } catch (err) {
+    console.error('agentTrust failed (non-fatal):', err)
+    return []
+  }
+}
+
+/**
  * Source surfaces an entry can come from. Free text is still accepted (the
  * column is plain TEXT); this is the vocabulary the UI and reports expect.
  */
