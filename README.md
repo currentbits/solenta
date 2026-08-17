@@ -59,6 +59,11 @@ GitHub release check for updates.
   and session resume where the provider supports it.
 - **Hand off mid-task** — switch a thread's provider and let a second model pick
   up the same context.
+- **Agent profiles** — save a provider + model + effort + permission combination
+  and apply it in one click.
+- **Edit and resubmit** any past message of yours and run again from that point.
+- **Per-thread scratch notes** and **rename**, previewed in the sidebar.
+- **Spaces** — named groups for organizing projects in the sidebar.
 - **Three-pane workspace** — projects and threads on the left, conversation +
   work log in the middle, live agent / git / memory panel on the right.
 - **Desktop notifications** when a thread finishes or needs you — never while
@@ -72,6 +77,9 @@ GitHub release check for updates.
   on the thread row.
 - **Issue ingestion** — paste a GitHub issue ref and start a thread from it.
 - **Generated commit messages** from the actual diff.
+- **Conflict forecast** — parallel worktrees heading for the same lines are
+  flagged while both are still cheap to redirect, not at the merge.
+- **Worktree GC** — per-project retention, batch cleanup, and visible disk usage.
 
 **Beyond one prompt**
 
@@ -85,11 +93,23 @@ GitHub release check for updates.
   nothing but `gh`, with **Start task** to open a thread on a card. Opt a project
   in to **auto-dispatch** and every issue that enters `plan:todo` starts its own
   worktree thread and moves to `plan:doing`, up to three running at once.
+- **Agent teams** — workers under one orchestrator share a crew task list and
+  message each other directly, with loop guardrails so a crew cannot talk in
+  circles.
 - **Shared agent memory** — a supervised local memory server (MCP + HTTP) is
   auto-injected into sessions, so what one thread learns, the next one knows.
+  Entries carry provenance and per-agent trust; embeddings drive near-dup and
+  contradiction detection. A **hypothesis ledger** hands the next thread what
+  the last one already ruled out.
+- **Shared code index** — a per-repo symbol index built once and injected into
+  every dispatched prompt, so a fresh worker starts knowing where things live.
+- **Spec mode** — gated requirements → design → tasks artifacts per thread, each
+  approved before the next unlocks.
 - **Automations** — recurring prompts (hourly / daily / weekly) against any
-  project.
-- **Skills** — browse and edit the `SKILL.md` files your agents can reach.
+  project, and **repeat a finished thread**: put its prompt on a schedule or
+  distill the run into a Build workflow.
+- **Skills** — browse and edit the `SKILL.md` files your agents can reach, and
+  install a skill once to fan it out to every provider's skills directory.
 - **Dev servers** — start a project's `dev` script from the app and get the URL.
 
 **Control**
@@ -97,6 +117,17 @@ GitHub release check for updates.
 - **Spend guardrails** — an optional daily budget cap blocks new runs once the
   day's spend hits the limit, and a per-orchestration cap bounds what one
   fan-out can spend across its crew; token usage is visible per thread.
+- **Verification gate** — a thread only settles green once its verify command
+  exits 0, so nothing reports itself done over a red build.
+- **Orchestrator guardrails** — protected config a worker may not edit, hook
+  packs installed at spawn time, and injection + secret scanning on what comes
+  back.
+- **Usage and fleet analytics** — cost and tokens per provider/model over
+  7/30/90 days, plus merge rate, review tax, rework and cost per merged PR read
+  off git and GitHub rather than off the agents' own reports. OTel GenAI spans
+  ship to your tracing backend.
+- **Morning digest** — one summary of everything that ran unattended: what ran,
+  what it cost, what changed.
 - **Web mode** — `--serve-web` serves the same UI over HTTP + WebSocket behind a
   session token, so you can check in from a browser or your phone.
 - **SSH remote projects** — register projects on other hosts and run agents

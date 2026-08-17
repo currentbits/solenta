@@ -54,6 +54,52 @@
         Every notable change to Solenta, newest first.
       </p>
 
+      <h2 id="v0-6-0">0.6.0 <small>2026-08-17</small></h2>
+      <h3>Added</h3>
+      <ul>
+        <li><strong>Agent teams.</strong> Workers under one orchestrator share a crew task list and message each other directly, instead of every fact having to route back through the orchestrator. Loop guardrails stop a crew from talking in circles.</li>
+        <li><strong>Shared code index.</strong> A per-repo symbol index is built once and injected into every dispatched prompt, so a worker starts out knowing where things live instead of grepping its way in.</li>
+        <li><strong>Orchestrator-owned guardrails.</strong> Config files a worker is not allowed to touch, hook packs installed at spawn time, and prompt-injection plus secret scanning on what comes back.</li>
+        <li><strong>Spec mode.</strong> A thread can be gated on requirements, design and tasks artifacts, each one approved before the next unlocks.</li>
+        <li><strong>Verification gate.</strong> A thread only goes green once its verify command exits 0, so nothing reports itself done over a red build.</li>
+        <li><strong>Conflict forecast.</strong> Parallel worktrees heading for the same lines are flagged before the merge instead of during it.</li>
+        <li><strong>Hypothesis ledger.</strong> What each agent tried and ruled out is recorded and handed to the next one, so the second thread does not walk back into the first one's dead ends.</li>
+        <li><strong>Morning digest.</strong> One summary of everything that ran unattended: what it did, what it cost, what changed.</li>
+        <li><strong>Fleet analytics.</strong> Merge rate, review tax, rework and cost per merged PR, computed from git and GitHub ground truth rather than from what the agents claim.</li>
+        <li><strong>Usage view.</strong> Cost and token analytics per provider and model over 7, 30 or 90 days.</li>
+        <li><strong>Named agent profiles.</strong> Save a provider + model + reasoning effort + permission mode combination and apply it to a thread in one click.</li>
+        <li><strong>Spaces.</strong> Named groups for organizing projects in the sidebar.</li>
+        <li><strong>Auto-dispatch from the Planboard.</strong> An issue entering <code>plan:todo</code> can start its own thread, so the board itself becomes the queue.</li>
+        <li><strong>Repeat a finished thread.</strong> Put its prompt on a schedule, or distill the run into a Build workflow.</li>
+        <li><strong>Edit and resubmit any past message.</strong> Rewind to a message, change it, and run from there.</li>
+        <li><strong>Skill manager.</strong> Install a skill once and fan it out to every provider's skills directory.</li>
+        <li><strong>Free local model for chores.</strong> On macOS 27, the built-in <code>fm</code> CLI is used as a local LLM for housekeeping work that does not need a paid model.</li>
+        <li><strong>Worktree GC.</strong> Per-project retention, batch cleanup, and disk usage you can actually see.</li>
+        <li><strong>Per-thread scratch notes.</strong> A notes field on the thread, editable from the header and previewed in the sidebar.</li>
+        <li><strong>Thread rename</strong>, from the header or the sidebar menu.</li>
+        <li><strong>Memory provenance and trust.</strong> Every entry records which agent wrote it, and per-agent trust scores rank what comes back. The stored embeddings now also drive near-duplicate detection and contradiction ranking, and the memory graph writes co-occurrence edges, so the graph retriever finally has something to walk.</li>
+        <li><strong>Observability.</strong> OTel GenAI spans from the orchestrator, plus failure-mode clustering across threads.</li>
+        <li><strong>Failure reasons</strong> are kept on a failed thread and shown in the sidebar and the Agents panel, instead of a bare red dot.</li>
+        <li><strong>An update dot</strong> on the sidebar Settings button, so a waiting release is visible without opening Settings.</li>
+      </ul>
+      <h3>Fixed</h3>
+      <ul>
+        <li>The app no longer beachballs while several threads run: synchronous git and <code>gh</code> calls are off the main-process event loop, and the PR read paths stopped shelling out for the default branch on every poll.</li>
+        <li>A corrupt store file is quarantined and a rolling <code>.bak</code> kept, instead of silently discarding every thread in it; writes <code>fsync</code> before rename.</li>
+        <li>Restoring a checkpoint checkpoints your uncommitted work first, so a restore cannot eat unsaved changes.</li>
+        <li>Kimi threads can no longer resume each other's session.</li>
+        <li>Stopping a run kills the whole CLI process tree, so agent grandchildren do not survive the stop.</li>
+        <li>A renderer left over from an older main-process build is detected, and offers a restart rather than failing in odd ways.</li>
+        <li>Follow-up messages queued mid-run live on the thread record, so a reload no longer drops them.</li>
+        <li>Web mode attaches images over the save-image bridge instead of hiding the button.</li>
+        <li>Markdown is re-parsed on a throttle while a message streams, and the last-assistant lookup behind thread summaries is memoized.</li>
+        <li>WebSocket broadcast has a ping/pong heartbeat and backpressure, and the wire client bounds its offline queue, times out invokes, and dedupes reconnect flushes.</li>
+        <li>Dev-server log buffers are bounded and dead records evicted, so output without newlines cannot grow without limit.</li>
+        <li>A kept-alive Claude CLI that stops reading stdin is detected instead of leaving the thread hanging.</li>
+        <li>Automation threads are capped at the newest 20 per automation, and an orchestrator retains only its last 20 workers.</li>
+        <li>Narrow-window drawer controls are real buttons instead of a checkbox and label hack.</li>
+      </ul>
+
       <h2 id="v0-5-0">0.5.0 <small>2026-08-16</small></h2>
       <h3>Added</h3>
       <ul>

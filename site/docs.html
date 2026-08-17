@@ -56,10 +56,13 @@
       <a href="#worktrees">Worktrees and PRs</a>
       <a href="#workflows">Build workflows</a>
       <a href="#orchestration">Orchestration</a>
+      <a href="#guardrails">Guardrails and verification</a>
+      <a href="#spec">Spec mode</a>
       <a href="#skills">Skills</a>
       <a href="#automations">Automations</a>
       <a href="#dev-servers">Dev servers</a>
       <a href="#spend">Spend guardrails</a>
+      <a href="#analytics">Usage and fleet analytics</a>
       <a href="#updates">Notifications and updates</a>
       <a href="#web-mode">Web mode</a>
       <a href="#ssh">SSH remote projects</a>
@@ -110,6 +113,22 @@
         panel lets you search, read and store entries yourself. The server is
         localhost-only and bearer-token gated.
       </p>
+      <p>
+        Entries carry <strong>provenance</strong> — which agent wrote them —
+        and each agent builds a trust score from how its entries hold up, which
+        ranks what comes back on a search. The stored embeddings are reused to
+        fold near-duplicates together and to surface entries that contradict
+        each other, and the memory graph records co-occurrence edges so related
+        entries can be walked, not just matched on text.
+      </p>
+      <p>
+        Alongside it, a <strong>hypothesis ledger</strong> records what an agent
+        tried and ruled out. The next thread on the same problem is handed that
+        list, so it does not spend its first ten minutes re-walking dead ends.
+        A per-repo <strong>code index</strong> of symbols is built once and
+        injected into every dispatched prompt, so a fresh worker starts knowing
+        where things live.
+      </p>
 
       <h2 id="views">Kanban, Planboard, PRs, Activity</h2>
       <p>
@@ -132,6 +151,16 @@
         issues. The view needs the GitHub CLI installed and authenticated, and
         a project whose <code>origin</code> is on GitHub.
       </p>
+      <p>
+        The board can also dispatch for you: turn on auto-dispatch and an issue
+        entering <code>plan:todo</code> starts its own thread, so labelling a
+        ticket is the same act as queueing the work.
+      </p>
+      <p>
+        Projects themselves group into <strong>Spaces</strong> — named sections
+        in the sidebar — once you are running more repositories than fit
+        comfortably in one list.
+      </p>
 
       <h2 id="threads">Threads and providers</h2>
       <p>
@@ -146,7 +175,16 @@
         <li><strong>Reasoning effort</strong> can be set per thread where the provider supports it.</li>
         <li><strong>Fork and hand off</strong> copies a thread, optionally onto another provider, and starts it on a new prompt.</li>
         <li><strong>Best of N</strong> sends one prompt to several providers at once so you can compare the results.</li>
+        <li><strong>Agent profiles</strong> save a provider + model + effort + permission combination under a name, so a thread can be set up in one click instead of four.</li>
+        <li><strong>Edit and resubmit</strong> rewinds to any past message of yours, lets you change it, and runs again from that point.</li>
+        <li><strong>Scratch notes</strong> are a free-text field per thread, edited from the header and previewed in the sidebar, for the context that is not worth a memory entry.</li>
+        <li><strong>Rename</strong> a thread from its header or the sidebar menu when the auto-generated title stops describing the work.</li>
       </ul>
+      <p>
+        A thread that fails keeps its <strong>failure reason</strong> and shows
+        it on the sidebar card and in the Agents panel, so a red thread says
+        what went wrong without being opened.
+      </p>
       <p>
         The caret next to <strong>+</strong> in the sidebar creates a thread in
         one of three modes:
@@ -180,6 +218,18 @@
         Work can also start from an issue: paste a GitHub issue reference and
         Solenta pulls the title and body in as the thread's first prompt.
       </p>
+      <p>
+        When several worktrees run in parallel, <strong>conflict forecast</strong>
+        compares what they are touching and warns that two branches are heading
+        for the same lines while both are still cheap to redirect — rather than
+        at the merge, when one of them has to be redone.
+      </p>
+      <p>
+        Finished worktrees are cleaned up rather than accumulating:
+        <strong>worktree GC</strong> gives each project a retention setting,
+        batch cleanup, and a visible disk-usage figure so you can see what the
+        branches are costing you.
+      </p>
 
       <h2 id="workflows">Build workflows</h2>
       <p>
@@ -209,6 +259,14 @@
         gets a plain thread.
       </p>
       <p>
+        A crew is not just a fan-out. Workers under one orchestrator share a
+        <strong>crew task list</strong>, so each can see what the others have
+        claimed and finished, and they can <strong>message each other
+        directly</strong> instead of routing every fact back through the
+        orchestrator. Loop guardrails cut the case where two workers keep
+        handing the same question back and forth.
+      </p>
+      <p>
         For ad-hoc fan-out you do not configure anything: you ask. Every agent
         session gets four MCP tools from the built-in
         <code>coder-threads</code> server, so any thread can drive the others:
@@ -233,6 +291,36 @@
         not.
       </p>
 
+      <h2 id="guardrails">Guardrails and verification</h2>
+      <p>
+        An orchestrator owns the rules its workers run under. It can mark
+        <strong>protected config</strong> — files a worker is not allowed to
+        edit, so an agent cannot quietly loosen the settings it is working
+        inside. <strong>Hook packs</strong> are installed into a worker at spawn
+        time, so the checks apply from its first tool call rather than being
+        remembered later. What comes back is scanned for
+        <strong>prompt injection</strong> and for <strong>secrets</strong>,
+        because content a worker read from an issue, a page or a dependency is
+        untrusted input.
+      </p>
+      <p>
+        Separately, a thread can carry a <strong>verify command</strong>. The
+        thread only settles green once that command exits 0; if it fails, the
+        thread stays open with the output attached. It is the difference between
+        an agent saying it is done and the build agreeing.
+      </p>
+
+      <h2 id="spec">Spec mode</h2>
+      <p>
+        For work where the plan matters more than the first patch, a thread can
+        run in <strong>spec mode</strong>: it produces
+        <strong>requirements</strong>, then <strong>design</strong>, then
+        <strong>tasks</strong> as separate artifacts, and each one is gated —
+        the next stage does not unlock until you approve the previous one. The
+        artifacts live with the thread, so the tasks that come out the end are
+        traceable back to the requirement that asked for them.
+      </p>
+
       <h2 id="skills">Skills</h2>
       <p>
         The <strong>Skills</strong> tab lists the <code>SKILL.md</code> files
@@ -242,6 +330,12 @@
         from the app and add or delete skills in the user directories; project
         skills are read-only, so a stray click cannot delete repo content.
       </p>
+      <p>
+        Skills also <strong>fan out</strong>: install one once and Solenta
+        copies it into every provider's skills directory it finds on your
+        machine, so a skill you wrote for Claude Code is available to Codex,
+        Grok, Kimi and OpenCode without five manual copies.
+      </p>
 
       <h2 id="automations">Automations</h2>
       <p>
@@ -250,6 +344,12 @@
         optional model, and can be paused with a toggle. <strong>Run now</strong>
         fires one immediately. Runs appear as threads, so scheduled work is as
         inspectable as interactive work.
+      </p>
+      <p>
+        A finished thread can be <strong>repeated</strong> rather than retyped:
+        put its prompt on a schedule as a new automation, or distill the run
+        into a <a href="#workflows">Build workflow</a> when the shape of it is
+        worth keeping.
       </p>
 
       <h2 id="dev-servers">Dev servers</h2>
@@ -278,11 +378,38 @@
         silently.
       </p>
 
+      <h2 id="analytics">Usage and fleet analytics</h2>
+      <p>
+        The <strong>Usage</strong> view breaks spend and token burn down per
+        provider and per model over the last 7, 30 or 90 days, so the question
+        of which model is actually costing you money has an answer.
+      </p>
+      <p>
+        <strong>Fleet analytics</strong> asks the harder question: is the work
+        any good. It is computed from git and GitHub ground truth rather than
+        from what the agents report about themselves — merge rate, review tax
+        (how much human review each PR pulls in), rework (work that had to be
+        redone), and cost per merged PR. Failure modes are clustered across
+        threads, so a mistake several agents keep making shows up as one
+        pattern instead of ten separate red threads.
+      </p>
+      <p>
+        Under it, the orchestrator emits <strong>OpenTelemetry GenAI spans</strong>,
+        so runs can be sent to whatever tracing backend you already have.
+      </p>
+
       <h2 id="updates">Notifications and updates</h2>
       <p>
         A desktop notification fires when a thread finishes or needs a
         decision from you — never while the window is focused, so parallel
         runs do not turn into a stream of pings while you watch them.
+      </p>
+      <p>
+        For work that ran while you were not watching, the
+        <strong>morning digest</strong> collects it into one summary: what ran,
+        what it cost, and what changed. A waiting update shows as a dot on the
+        sidebar Settings button, so you do not have to open Settings to find
+        out there is one.
       </p>
       <p>
         Updates come from plain GitHub releases on two channels:
@@ -332,7 +459,11 @@ solenta --serve-web --serve-host 0.0.0.0   # LAN, your call</code></pre>
         Electron main owns the agent processes, the store, the memory
         supervisor and scheduled automations. The renderer is a React app that
         talks to main over a typed IPC contract. Providers are data-driven
-        adapters around each CLI's stream format. The full breakdown lives in
+        adapters around each CLI's stream format. Housekeeping work — titles,
+        summaries, small classifications — is handed to Apple's built-in
+        <code>fm</code> CLI on macOS 27 when it is present, so the chores run
+        locally and free instead of billing a frontier model. The full
+        breakdown lives in
         <a href="https://github.com/currentbits/solenta/blob/main/docs/ARCHITECTURE.md">docs/ARCHITECTURE.md</a>,
         and contributions are welcome on
         <a href="https://github.com/currentbits/solenta">GitHub</a>.
