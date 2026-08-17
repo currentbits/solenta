@@ -309,6 +309,7 @@ function createRunner(opts) {
   // ponytail: fixed idle ceiling — background work longer than this must
   // detach (nohup); add child-process introspection if that ever hurts.
   const CLAUDE_IDLE_REAP_MS = 30 * 60 * 1000;
+  const CLAUDE_ACK_MS = Number(process.env.CODER_CLAUDE_ACK_MS) || 60_000;
 
   // ponytail: fixed LRU cap — an 8-worker fan-out otherwise leaves 8 idle CLIs
   // resident for the full half hour (issue #36). Make it a setting if 3 chafes.
@@ -1208,6 +1209,10 @@ function createRunner(opts) {
     if (entry.timer) {
       clearIntervalFn(entry.timer);
     }
+    if (entry.ackTimer) {
+      clearTimeout(entry.ackTimer);
+      entry.ackTimer = null;
+    }
     if (typeof entry.discardHeldPhantom === "function") {
       entry.discardHeldPhantom();
     }
@@ -1633,8 +1638,17 @@ function createRunner(opts) {
     /** The dead-reuse respawn below fires at most once per turn. */
     let respawned = false;
 
+    function disarmAck() {
+      const e = active.get(threadId);
+      if (e && e.ackTimer) {
+        clearTimeout(e.ackTimer);
+        e.ackTimer = null;
+      }
+    }
+
     const onEvent = (ev) => {
         sawAnyEvent = true;
+        disarmAck();
         const type = ev && ev.type;
 
         // Background-subagent task notifications can land between turns on a
@@ -2023,6 +2037,7 @@ function createRunner(opts) {
     };
 
     const onExit = ({ code, stderr, gotResult }) => {
+        disarmAck();
         if (heldPhantom) {
           failEmptyPhantom(heldPhantom);
           return;
@@ -2089,6 +2104,7 @@ function createRunner(opts) {
     };
 
     const onError = (err) => {
+        disarmAck();
         const e = active.get(threadId);
         if (!e || e.stopping || e.runId !== runId) return;
         if (e.kind !== "claude") return;
@@ -2204,6 +2220,23 @@ function createRunner(opts) {
       if (reused) {
         // A reused process emits no second system/init; close the step now.
         completeWorkLogStep(threadId, startingId);
+        // ponytail: any line from the CLI counts as the ACK (we deliberately
+        // do not correlate per-turn uuids), so a stray background
+        // task-notification from an earlier turn could satisfy it and mask
+        // a hang (fail-safe direction). Upgrade path is the
+        // command_lifecycle correlation id (set uuid on the user line in
+        // electron/claude.js sendUser, match command_uuid) if that ever
+        // matters.
+        const own = active.get(threadId);
+        if (own && own.runId === runId) {
+          const ackMs = Number(process.env.CODER_CLAUDE_ACK_MS) || CLAUDE_ACK_MS;
+          own.ackTimer = setTimeout(() => {
+            if (!guard()) return;
+            if (sawAnyEvent || sawResult) return;
+            disposeClaudeSession(threadId);
+          }, ackMs);
+          if (typeof own.ackTimer.unref === "function") own.ackTimer.unref();
+        }
       }
     }
     if (!reused) {
