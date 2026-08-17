@@ -307,6 +307,11 @@ const IPC_HANDLERS = {
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     return updated;
   },
+  "threads:setQueued": async (ctx, input) => {
+    const updated = services.setQueued(ctx.store, input);
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    return updated;
+  },
   "threads:setSnoozed": async (ctx, input) => {
     const updated = services.setSnoozed(ctx.store, input);
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));

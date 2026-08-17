@@ -122,6 +122,12 @@ export interface ThreadInfo {
    */
   muted: boolean;
   /**
+   * Follow-up typed while a run was active (issue #92/#137); flushed at the
+   * next settle. Persisted on the thread so a reload cannot drop it and the
+   * sidebar can show a queue pending on an unselected thread.
+   */
+  queued: { prompt: string; attachments?: AttachmentInfo[] } | null;
+  /**
    * Epoch ms of the last time the user LOOKED at this thread. Stamped by the
    * main process inside threads.get — selecting a thread IS visiting it; no
    * separate markVisited channel. Unread = updatedAt > lastVisitedAt. Null on
@@ -1000,6 +1006,17 @@ export interface CoderApi {
      * see pinnedAt doc); settling clears the pin. Never bumps updatedAt.
      */
     setPinned(input: { threadId: string; pinned: boolean }): Promise<ThreadInfo>;
+    /**
+     * Persist or clear the type-ahead queue (issue #137). prompt === null
+     * clears; a non-null prompt APPENDS to any existing queue so two mid-run
+     * sends cannot race-replace each other across the async hop. Never
+     * bumps updatedAt: queueing is not activity, same rule as setPinned.
+     */
+    setQueued(input: {
+      threadId: string;
+      prompt: string | null;
+      attachments?: AttachmentInfo[];
+    }): Promise<ThreadInfo>;
     /**
      * Snooze until an epoch ms, or clear with null. Rejects a non-null
      * `until` that is not strictly in the future, naming the value. Stamps

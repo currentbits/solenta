@@ -170,4 +170,94 @@ describe("queued follow-up (issue #92)", () => {
     );
     m.unmount();
   });
+
+  it("round-trips the queue through the thread record so a remount still shows it", async () => {
+    const { fake, m } = await bootOnBusyThread();
+
+    await m.type(m.query("textarea"), "then update the changelog");
+    await m.click(m.query('button[aria-label="Send"]'));
+    await m.flush();
+
+    const queuedCalls = fake.of("threads.setQueued");
+    assert.ok(
+      queuedCalls.length >= 1,
+      "queueing must persist via threads.setQueued, not renderer-only state",
+    );
+    assert.deepEqual(queuedCalls[0]!.args[0], {
+      threadId: "t-busy",
+      prompt: "then update the changelog",
+      attachments: undefined,
+    });
+
+    m.unmount();
+    const remounted = await mount(<App />);
+    await remounted.flush();
+
+    assert.equal(
+      fake.of("runs.start").length,
+      0,
+      "a still-working thread must not flush its queue on remount",
+    );
+    const card = remounted.query(
+      'button[aria-label="Select thread: busy target thread"]',
+    );
+    assert.ok(card, "busy thread card must exist after remount");
+    await remounted.click(card);
+    await remounted.flush();
+    assert.ok(
+      remounted.text().includes("then update the changelog"),
+      "the queued follow-up must survive a remount from the thread record",
+    );
+    const queuedDot = remounted.query('[data-queued-dot="t-busy"]');
+    assert.ok(queuedDot, "sidebar must hint a queue pending on this thread");
+    assert.equal(
+      queuedDot.getAttribute("title"),
+      "then update the changelog",
+      "the sidebar hint must surface the queued text",
+    );
+    remounted.unmount();
+  });
+
+  it("flushes a persisted queue on a thread that is no longer working", async () => {
+    const idle = thread({
+      id: "t-idle-q",
+      title: "idle with leftover queue",
+      status: "idle",
+      queued: { prompt: "finish the changelog" },
+    });
+    const fake = createFakeCoder({
+      projects: [project()],
+      threads: [decoy(), idle],
+      details: {
+        "t-decoy": detail({ thread: decoy() }),
+        "t-idle-q": detail({ thread: idle }),
+      },
+    });
+    const m = await boot(fake);
+    await m.flush();
+
+    const started = fake.of("runs.start");
+    assert.equal(
+      started.length,
+      1,
+      "a leftover queue on a non-working thread must flush after load",
+    );
+    assert.deepEqual(
+      started[0]!.args[0],
+      {
+        threadId: "t-idle-q",
+        prompt: "finish the changelog",
+        attachments: undefined,
+      },
+      "the leftover prompt must go to the thread it was queued on",
+    );
+    const clears = fake
+      .of("threads.setQueued")
+      .filter((c) => (c.args[0] as { prompt: string | null }).prompt === null);
+    assert.ok(
+      clears.length >= 1,
+      "flush must clear the persisted queue before starting the run",
+    );
+    m.unmount();
+  });
 });

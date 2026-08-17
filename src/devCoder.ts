@@ -17,6 +17,7 @@ import type {
   AgentView,
   AppSettings,
   AppStatus,
+  AttachmentInfo,
   AutomationInfo,
   UpdateStatus,
   AutomationWrite,
@@ -504,6 +505,7 @@ function seedThreads(projects: ProjectInfo[]): ThreadInfo[] {
       worktreePath: null,
       handoffFrom: null,
       muted: false,
+      queued: null,
       // One working thread carries a mirrored plan so the Planboard's
       // "Thread plans" section has something to show in dev mode.
       planSteps:
@@ -1469,6 +1471,7 @@ function buildDevCoder(): CoderApi {
       worktreePath: null,
       handoffFrom: null,
       muted: false,
+      queued: null,
       ...over,
       title: (over.title || "New Thread").slice(0, TITLE_MAX),
     };
@@ -2381,6 +2384,27 @@ function buildDevCoder(): CoderApi {
         return patchThread(input.threadId, {
           pinnedAt: input.pinned ? now() : null,
         });
+      },
+      async setQueued(input: {
+        threadId: string;
+        prompt: string | null;
+        attachments?: AttachmentInfo[];
+      }) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
+        let queued: ThreadInfo["queued"] = null;
+        if (input.prompt !== null) {
+          const prev = detail.thread.queued;
+          const files = [
+            ...(prev?.attachments ?? []),
+            ...(input.attachments ?? []),
+          ];
+          queued = {
+            prompt: prev ? `${prev.prompt}\n\n${input.prompt}` : input.prompt,
+            attachments: files.length ? files : undefined,
+          };
+        }
+        return patchThread(input.threadId, { queued });
       },
       async setSnoozed(input: { threadId: string; until: number | null }) {
         return patchThread(input.threadId, {

@@ -322,6 +322,7 @@ function createThread(store, input) {
     worktreePath: null,
     handoffFrom: null,
     automationId: input.automationId || null,
+    queued: null,
   };
 
   const threads = store.getThreads().slice();
@@ -953,6 +954,36 @@ function setPinned(store, input) {
   const updated = store.updateThread(threadId, patch);
   store.save();
   return updated ? { ...updated } : { ...thread, ...patch };
+}
+
+/**
+ * Persist or clear the type-ahead queue for a thread (issue #137).
+ * prompt === null clears. A non-null prompt APPENDS to any existing queue
+ * (same join as the old renderer startRun) so two mid-run sends cannot
+ * race-replace each other across the async IPC hop. Never bumps updatedAt:
+ * queueing is not activity, same rule as setPinned.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, prompt: string | null, attachments?: object[] }} input
+ */
+function setQueued(store, input) {
+  const { threadId, prompt, attachments } = input;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  let queued = null;
+  if (prompt !== null) {
+    const prev = thread.queued;
+    const files = [...(prev?.attachments ?? []), ...(attachments ?? [])];
+    queued = {
+      prompt: prev ? `${prev.prompt}\n\n${prompt}` : prompt,
+      attachments: files.length ? files : undefined,
+    };
+  }
+  const updated = store.updateThread(threadId, { queued });
+  store.save();
+  return updated ? { ...updated } : { ...thread, queued };
 }
 
 /**
@@ -1936,6 +1967,7 @@ module.exports = {
   setArchived,
   setSettled,
   setPinned,
+  setQueued,
   setSnoozed,
   setMuted,
   clearSettledOnActivity,

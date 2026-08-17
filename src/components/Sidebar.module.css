@@ -783,6 +783,17 @@
   box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.25);
 }
 
+/* Quiet hint that a follow-up is waiting on this thread (issue #137). */
+.queuedDot {
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--text-dim) 35%, transparent);
+}
+
 .settledBody .unreadDot {
   margin-top: 0;
   align-self: center;

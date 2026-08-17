@@ -519,6 +519,8 @@ function migrateThread(t) {
     handoffFrom: t.handoffFrom !== undefined ? t.handoffFrom : null,
     // Per-thread desktop-notification mute (issue #87): absent → not muted.
     muted: t.muted === true,
+    // Type-ahead queue (issue #137): absent → nothing waiting.
+    queued: t.queued !== undefined ? t.queued : null,
   };
 }
 

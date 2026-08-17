@@ -113,6 +113,7 @@ const coder = {
     setArchived: (input) => invoke("threads:setArchived", input),
     setSettled: (input) => invoke("threads:setSettled", input),
     setPinned: (input) => invoke("threads:setPinned", input),
+    setQueued: (input) => invoke("threads:setQueued", input),
     setSnoozed: (input) => invoke("threads:setSnoozed", input),
     setMuted: (input) => invoke("threads:setMuted", input),
     setProvider: (input) => invoke("threads:setProvider", input),

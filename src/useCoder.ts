@@ -370,20 +370,19 @@ export function useCoder(): UseCoderResult {
   /** Last thread:updated seq per thread; a gap means pushes were dropped. */
   const patchSeqRef = useRef<Map<string, number>>(new Map());
   /**
-   * Follow-ups typed while a thread was working (issue #92), delivered at that
-   * thread's next run terminal — including "stopped", since interrupting and
-   * then running the queued instruction is the point of typing it mid-run.
-   * The ref backs the long-lived thread:updated subscription; the state is for
-   * rendering (same split as threadsRef/setThreads).
-   * ponytail: renderer-side and in-memory, so a reload mid-run drops the
-   * queue. Move it into the thread record if it needs to survive a restart.
+   * Follow-ups typed while a thread was working (issue #92/#137), delivered
+   * at that thread's next run terminal — including "stopped", since
+   * interrupting and then running the queued instruction is the point of
+   * typing it mid-run. Derived from the persisted thread.queued field so a
+   * reload cannot drop it and an unselected thread can still show a hint.
    */
-  const [queued, setQueued] = useState<Record<string, QueuedMessage>>({});
-  const queuedRef = useRef<Record<string, QueuedMessage>>({});
-  const applyQueued = useCallback((next: Record<string, QueuedMessage>) => {
-    queuedRef.current = next;
-    setQueued(next);
-  }, []);
+  const queued = useMemo(() => {
+    const next: Record<string, QueuedMessage> = {};
+    for (const t of threads) {
+      if (t.queued) next[t.id] = t.queued;
+    }
+    return next;
+  }, [threads]);
 
   useEffect(() => {
     selectedRef.current = selectedThreadId;
@@ -421,33 +420,47 @@ export function useCoder(): UseCoderResult {
   /** Send a thread's queued follow-up, if any. Safe to call twice. */
   const flushQueued = useCallback(
     (threadId: string) => {
-      const pending = queuedRef.current[threadId];
+      const pending = threadsRef.current.find((t) => t.id === threadId)?.queued;
       if (!pending) return;
-      const rest = { ...queuedRef.current };
-      delete rest[threadId];
-      applyQueued(rest);
-      void api.runs
-        .start({
-          threadId,
-          prompt: pending.prompt,
-          attachments: pending.attachments,
-        })
-        .catch((err) => {
+      // Clear first so a second settle (or a remount mid-flush) cannot
+      // deliver the same prompt twice.
+      applyThreads(
+        threadsRef.current.map((t) =>
+          t.id === threadId ? { ...t, queued: null } : t,
+        ),
+      );
+      void (async () => {
+        try {
+          await api.threads.setQueued({ threadId, prompt: null });
+          await api.runs.start({
+            threadId,
+            prompt: pending.prompt,
+            attachments: pending.attachments,
+          });
+        } catch (err) {
           setError({ scope: "run", message: errorMessage(err) });
-        });
+        }
+      })();
     },
-    [api, applyQueued],
+    [api, applyThreads],
   );
 
   const cancelQueued = useCallback(
     (threadId?: string) => {
       const id = threadId ?? selectedRef.current;
-      if (!id || !queuedRef.current[id]) return;
-      const rest = { ...queuedRef.current };
-      delete rest[id];
-      applyQueued(rest);
+      if (!id) return;
+      const held = threadsRef.current.find((t) => t.id === id);
+      if (!held?.queued) return;
+      applyThreads(
+        threadsRef.current.map((t) =>
+          t.id === id ? { ...t, queued: null } : t,
+        ),
+      );
+      void api.threads.setQueued({ threadId: id, prompt: null }).catch((err) => {
+        setError({ scope: "run", message: errorMessage(err) });
+      });
     },
-    [applyQueued],
+    [api, applyThreads],
   );
 
   const clearError = useCallback(() => {
@@ -548,11 +561,20 @@ export function useCoder(): UseCoderResult {
 
     unsubUpdated = api.on("thread:updated", (next) => {
       const prev = prevStatusRef.current.get(next.thread.id);
+      const held = threadsRef.current.find((t) => t.id === next.thread.id);
       prevStatusRef.current.set(next.thread.id, next.thread.status);
+      // Runner snapshots include queued. Test fixtures (and any partial
+      // push that omits it) would otherwise wipe the persisted queue
+      // before flushQueued can fire on settle.
+      const incoming = next.thread;
+      const row =
+        incoming.queued == null && held?.queued
+          ? { ...incoming, queued: held.queued }
+          : incoming;
       // List and open detail are separate subscribers of the same push: a tick
       // that only moved the transcript must not hand the list a new array, or
       // every pane holding it re-renders (issue #91).
-      const nextList = patchThreadList(threadsRef.current, next.thread);
+      const nextList = patchThreadList(threadsRef.current, row);
       if (nextList !== threadsRef.current) applyThreads(nextList);
       const lastSeq = patchSeqRef.current.get(next.thread.id);
       if (next.seq != null) patchSeqRef.current.set(next.thread.id, next.seq);
@@ -618,6 +640,11 @@ export function useCoder(): UseCoderResult {
         setSelectedThreadId((prev) => prev ?? preferred);
         if (selectedRef.current == null && preferred) {
           selectedRef.current = preferred;
+        }
+        // A queue that outlived a crash/reload never sees the settle
+        // transition that normally flushes it — fire those now.
+        for (const t of source) {
+          if (t.queued && t.status !== "working") flushQueued(t.id);
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -868,20 +895,31 @@ export function useCoder(): UseCoderResult {
       const threadId = targetThreadId ?? selectedThreadId;
       if (!threadId) return;
       // Busy thread: hold the prompt instead of bouncing off the backend's
-      // "run already active" (issue #92). Queueing again appends, so a second
-      // thought never silently replaces the first.
+      // "run already active" (issue #92). Append lives in setQueued so two
+      // mid-run sends cannot race-replace each other across the IPC hop.
       if (
         threadsRef.current.find((t) => t.id === threadId)?.status === "working"
       ) {
-        const prev = queuedRef.current[threadId];
-        const files = [...(prev?.attachments ?? []), ...(attachments ?? [])];
-        applyQueued({
-          ...queuedRef.current,
-          [threadId]: {
-            prompt: prev ? `${prev.prompt}\n\n${prompt}` : prompt,
-            attachments: files.length ? files : undefined,
-          },
-        });
+        try {
+          const updated = await api.threads.setQueued({
+            threadId,
+            prompt,
+            attachments,
+          });
+          applyThreads(
+            threadsRef.current.map((t) =>
+              t.id === updated.id ? updated : t,
+            ),
+          );
+          setDetail((prev) =>
+            prev && prev.thread.id === updated.id
+              ? { ...prev, thread: updated }
+              : prev,
+          );
+          setError(null);
+        } catch (err) {
+          setError({ scope: "run", message: errorMessage(err) });
+        }
         return;
       }
       try {
@@ -900,7 +938,7 @@ export function useCoder(): UseCoderResult {
         throw err;
       }
     },
-    [api, selectedThreadId, applyThreads, applyQueued],
+    [api, selectedThreadId, applyThreads],
   );
 
   const refreshWorkflows = useCallback(async () => {
