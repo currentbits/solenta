@@ -29,6 +29,7 @@ import type {
   ThreadDetail,
   ThreadInfo,
   ThreadSummaryInfo,
+  DigestResult,
   UsageByDay,
   WorkflowTemplateInfo,
 } from "./shared/ipc";
@@ -365,6 +366,10 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
     },
     usage: {
       byDay: () => call<UsageByDay>("usage:byDay"),
+    },
+    digest: {
+      list: (input) => call<DigestResult>("digest:list", input),
+      markSeen: (input) => call<{ seenAt: number }>("digest:markSeen", input),
     },
     runs: {
       start: (input) => call<{ runId: string }>("runs:start", input),
