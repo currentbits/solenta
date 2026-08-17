@@ -169,6 +169,16 @@ export interface ThreadInfo {
    * thread; OPEN blocks inactivity auto-settle entirely.
    */
   prState: "OPEN" | "CLOSED" | "MERGED" | null;
+  /**
+   * Verification gate (issue #296): a shell command the thread must pass
+   * before a run may land "done". Null/empty = unarmed, runs settle on the
+   * agent's word alone. Run in the thread's worktree (project root when the
+   * thread has none) at every successful run terminal, so "done" means
+   * proven, not claimed.
+   */
+  verifyCommand: string | null;
+  /** Evidence from the latest verification attempt; null before the first. */
+  verify: VerifyResult | null;
   /** Agent harness backing this thread: a ProviderInfo.id ("claude", "codex", "grok", "opencode", "simulate"). */
   provider: string;
   /** Model override passed to the provider CLI when set (e.g. claude --model). */
@@ -568,6 +578,30 @@ export interface RunStatInfo {
   files: number;
   additions: number;
   deletions: number;
+}
+
+/**
+ * Evidence from one run of a thread's verification command (issue #296).
+ * `ok` is the only thing that lets a run go green; everything else is what
+ * the fixer gets handed when it doesn't.
+ */
+export interface VerifyResult {
+  /** Run whose terminal triggered this check; "manual" for threads.runVerify. */
+  runId: string;
+  command: string;
+  ok: boolean;
+  /** Process exit code; null when it was killed (timeout). */
+  exitCode: number | null;
+  /** True when the command was killed at VERIFY_TIMEOUT_MS. */
+  timedOut: boolean;
+  /** Tail of combined stdout+stderr, capped at VERIFY_LOG_MAX chars. */
+  log: string;
+  /** Checkpoint sha the evidence is pinned to; null outside a worktree. */
+  sha: string | null;
+  durationMs: number;
+  at: number;
+  /** 0 on the first check of a turn, +1 for each fix handed back. */
+  attempt: number;
 }
 
 /** A TCP listener whose process cwd is the thread worktree or project. */
@@ -1205,6 +1239,22 @@ export interface CoderApi {
       threadId: string;
       effort: ReasoningEffort | null;
     }): Promise<ThreadInfo>;
+    /**
+     * Sets the thread's verification command (issue #296). A non-empty
+     * command arms the gate: from the next turn on, a run that would land
+     * "done" instead runs this command and only goes green when it exits 0.
+     * Empty / null disarms it. Trimmed, capped at 500 chars.
+     */
+    setVerifyCommand(input: {
+      threadId: string;
+      command: string | null;
+    }): Promise<ThreadInfo>;
+    /**
+     * Runs the thread's verification command now and stores the result as
+     * the thread's latest evidence. Rejects when no command is set or a run
+     * is active. Manual counterpart to the automatic gate.
+     */
+    runVerify(input: { threadId: string }): Promise<VerifyResult>;
     /**
      * Permanently deletes the thread with its messages and work log. Rejects
      * while a run is active, and rejects when the thread still has a worktree

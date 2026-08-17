@@ -25,6 +25,7 @@ import type {
   CheckpointInfo,
   CoderApi,
   RunStatInfo,
+  VerifyResult,
   DiffResult,
   DevServerState,
   FetchIssueResult,
@@ -515,6 +516,9 @@ function seedThreads(projects: ProjectInfo[]): ThreadInfo[] {
         card.id === "thread-4"
           ? "Merge after #42 lands - waiting on the API rename."
           : "",
+      // One seeded verify command so the browser demo shows the #296 gate.
+      verifyCommand: card.id === "thread-1" ? "npm test" : null,
+      verify: null,
       queued: null,
       // One working thread carries a mirrored plan so the Planboard's
       // "Thread plans" section has something to show in dev mode.
@@ -1487,6 +1491,8 @@ function buildDevCoder(): CoderApi {
       muted: false,
       notes: "",
       queued: null,
+      verifyCommand: null,
+      verify: null,
       ...over,
       title: (over.title || "New Thread").slice(0, TITLE_MAX),
     };
@@ -2499,6 +2505,40 @@ function buildDevCoder(): CoderApi {
         effort: ReasoningEffort | null;
       }) {
         return patchThread(input.threadId, { reasoningEffort: input.effort });
+      },
+      async setVerifyCommand(input: {
+        threadId: string;
+        command: string | null;
+      }) {
+        const command = String(input.command ?? "").trim().slice(0, 500);
+        return patchThread(input.threadId, {
+          verifyCommand: command || null,
+        });
+      },
+      async runVerify(input: { threadId: string }) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
+        const command = detail.thread.verifyCommand;
+        if (!command) throw new Error("No verify command set for this thread");
+        // Fixture: alternate pass/fail so both evidence states are reachable
+        // in the browser demo. The real spawn lives in electron/verify.js.
+        const ok = (detail.thread.verify?.attempt ?? 0) % 2 === 0;
+        const result: VerifyResult = {
+          runId: "manual",
+          command,
+          ok,
+          exitCode: ok ? 0 : 1,
+          timedOut: false,
+          log: ok
+            ? "Test files 12 passed (12)\nTests 148 passed (148)"
+            : "FAIL src/threadSettle.test.ts > settles a merged PR\nExpected true, got false\n\n1 failed | 147 passed",
+          sha: "a1b2c3d",
+          durationMs: 4200,
+          at: now(),
+          attempt: (detail.thread.verify?.attempt ?? 0) + 1,
+        };
+        patchThread(input.threadId, { verify: result });
+        return result;
       },
       async setProvider(input) {
         const detail = details.get(input.threadId);
