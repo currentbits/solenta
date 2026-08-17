@@ -79,6 +79,28 @@ describe("orchestrator threads", () => {
   const workersOf = (id) =>
     store.getThreads().filter((t) => t.handoffFrom === id);
 
+  // Re-declared: runner.js does not export the cap (see issue #213).
+  const MAX_WORKERS_PER_ORCHESTRATOR = 20;
+
+  /**
+   * Mint a worker on `orchId` and apply `patch`. Boot-time sweepCrew in
+   * createRunner is the public path that exercises the real prune.
+   */
+  function mintWorker(orchId, patch) {
+    const worker = services.forkWorkerThread(store, {
+      threadId: orchId,
+      worktree: false,
+    });
+    store.updateThread(worker.id, patch);
+    store.appendMessage(worker.id, {
+      id: `m-${worker.id}`,
+      role: "assistant",
+      text: "settled",
+      createdAt: patch.createdAt ?? Date.now(),
+    });
+    return store.getThread(worker.id);
+  }
+
   it("forks the first prompt to a worker instead of running here", async () => {
     await makeRunner(tmpDir).startRun({
       threadId: thread.id,
@@ -138,5 +160,99 @@ describe("orchestrator threads", () => {
     );
     assert.equal(store.getThread(thread.id).pendingFork, true);
     assert.equal(workersOf(thread.id).length, 0);
+  });
+
+  it("retains only the newest MAX workers per orchestrator and drops their messages", () => {
+    const base = Date.now() - 60_000;
+    const ids = [];
+    for (let i = 0; i < MAX_WORKERS_PER_ORCHESTRATOR + 5; i++) {
+      ids.push(
+        mintWorker(thread.id, { status: "done", createdAt: base + i }).id,
+      );
+    }
+
+    makeRunner(tmpDir);
+
+    const mine = workersOf(thread.id);
+    assert.equal(mine.length, MAX_WORKERS_PER_ORCHESTRATOR);
+    const surviving = new Set(mine.map((t) => t.id));
+    const expected = ids.slice(-MAX_WORKERS_PER_ORCHESTRATOR);
+    assert.deepEqual([...surviving].sort(), [...expected].sort());
+    for (const id of ids.slice(0, 5)) {
+      assert.equal(surviving.has(id), false);
+      assert.equal(
+        Object.prototype.hasOwnProperty.call(store.data.messagesByThread, id),
+        false,
+      );
+    }
+    for (const id of expected) {
+      assert.equal(
+        Object.prototype.hasOwnProperty.call(store.data.messagesByThread, id),
+        true,
+      );
+    }
+  });
+
+  it("does not purge working, worktree, or pinned workers past the cap", () => {
+    const base = Date.now() - 60_000;
+    const withWorktree = mintWorker(thread.id, {
+      status: "done",
+      createdAt: base,
+      worktreePath: path.join(tmpDir, "wt"),
+    });
+    const working = mintWorker(thread.id, {
+      status: "working",
+      createdAt: base + 1,
+    });
+    const pinned = mintWorker(thread.id, {
+      status: "done",
+      createdAt: base + 2,
+      pinnedAt: Date.now(),
+    });
+
+    for (let i = 0; i < MAX_WORKERS_PER_ORCHESTRATOR + 2; i++) {
+      mintWorker(thread.id, { status: "done", createdAt: base + 10 + i });
+    }
+
+    makeRunner(tmpDir);
+
+    assert.ok(store.getThread(withWorktree.id));
+    assert.ok(store.getThread(working.id));
+    assert.ok(store.getThread(pinned.id));
+    // Newest MAX kept, plus the 3 skipped live/pinned/worktree threads
+    // past the keep set.
+    assert.equal(
+      workersOf(thread.id).length,
+      MAX_WORKERS_PER_ORCHESTRATOR + 3,
+    );
+  });
+
+  it("leaves a non-worker and another orchestrator's crew untouched", () => {
+    const handmade = services.createThread(store, {
+      projectId: thread.projectId,
+      title: "Manual",
+    });
+    const otherOrch = services.createThread(store, {
+      projectId: thread.projectId,
+      title: "Other orch",
+    });
+    const base = Date.now() - 60_000;
+    const otherWorker = mintWorker(otherOrch.id, {
+      status: "done",
+      createdAt: base,
+    });
+
+    for (let i = 0; i < MAX_WORKERS_PER_ORCHESTRATOR + 5; i++) {
+      mintWorker(thread.id, { status: "done", createdAt: base + i });
+    }
+
+    makeRunner(tmpDir);
+
+    assert.ok(store.getThread(handmade.id));
+    assert.equal(store.getThread(handmade.id).orchWorker, undefined);
+    assert.ok(store.getThread(otherWorker.id));
+    assert.equal(store.getThread(otherWorker.id).handoffFrom, otherOrch.id);
+    assert.equal(workersOf(thread.id).length, MAX_WORKERS_PER_ORCHESTRATOR);
+    assert.equal(workersOf(otherOrch.id).length, 1);
   });
 });

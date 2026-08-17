@@ -22,6 +22,8 @@ const {
   listCheckpoints,
   restoreCheckpoint,
   runStats,
+  gcScan,
+  gcClean,
 } = require("./worktrees.js");
 const { suggestCommitMessage } = require("./commitmsg.js");
 const { listLocalServers } = require("./servers.js");
@@ -34,6 +36,7 @@ const skills = require("./skills.js");
 const { fetchIssue, listIssues, setPlanStatus } = require("./issues.js");
 const automations = require("./automations.js");
 const { buildActivity } = require("./activity.js");
+const { collectDigest } = require("./digest.js");
 const updater = require("./updater.js");
 
 /**
@@ -206,6 +209,20 @@ const IPC_HANDLERS = {
   },
   "usage:byDay": async (ctx) => {
     return ctx.store.getUsageByDay();
+  },
+  "digest:list": async (ctx, input) => {
+    return collectDigest({
+      store: ctx.store,
+      sinceMs: input && input.sinceMs,
+      nowMs: Date.now(),
+    });
+  },
+  "digest:markSeen": async (ctx, input) => {
+    const at =
+      input && Number.isFinite(input.atMs) ? input.atMs : Date.now();
+    ctx.store.setDigestSeenAt(at);
+    ctx.store.save();
+    return { seenAt: at };
   },
   "threads:search": async (ctx, input) => {
     return services.searchThreads(ctx.store, input || { query: "" });
@@ -711,6 +728,17 @@ const IPC_HANDLERS = {
     const target = resolveAllowedShellPath(ctx.store, input);
     const err = await shell.openPath(target);
     if (err) throw new Error(err);
+  },
+  "git:gcScan": async (ctx) => {
+    return gcScan({ store: ctx.store, worktreeBase: ctx.worktreeBase });
+  },
+  "git:gcClean": async (ctx, input) => {
+    return gcClean({
+      store: ctx.store,
+      worktreeBase: ctx.worktreeBase,
+      paths: (input && input.paths) || [],
+      broadcast: ctx.broadcast,
+    });
   },
   "git:runStats": async (ctx, input) => {
     return runStats({

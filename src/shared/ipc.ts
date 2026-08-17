@@ -28,6 +28,13 @@ export interface ProjectInfo {
   remotePath?: string;
   /** Space membership. Absent = unassigned (renders in the trailing group). */
   spaceId?: string;
+  /**
+   * Worktree retention (#316): how many SETTLED threads keep their worktree
+   * on disk. Absent or 0 = keep everything (today's behaviour). Reclaiming
+   * only ever removes the worktree directory — the branch always survives,
+   * so no commit is ever lost to GC.
+   */
+  worktreeRetention?: number;
 }
 
 /** Optional remotes for projects.add. Empty/absent = local project. */
@@ -58,6 +65,54 @@ export interface ProjectUpdateInput {
   remotePath?: string;
   /** Space membership: an id assigns, empty string ("") unassigns. */
   spaceId?: string;
+  /** Worktree retention (#316): 0 clears the limit, N > 0 sets it. */
+  worktreeRetention?: number;
+}
+
+/**
+ * One reclaimable worktree directory in a GC scan (#316).
+ *
+ * `orphan`    - no thread references the directory (crashed/reset store).
+ * `retention` - a settled thread's worktree past its project's limit.
+ * `blocked` names why a candidate is NOT safe to reclaim (uncommitted
+ * changes, git refused). Blocked rows are shown but never pre-selected,
+ * and gcClean skips them.
+ */
+export interface GcCandidate {
+  path: string;
+  bytes: number;
+  reason: "orphan" | "retention";
+  threadId: string | null;
+  title: string | null;
+  projectId: string | null;
+  branch: string | null;
+  blocked?: string;
+}
+
+/** Worktree disk usage rolled up per project (#316). */
+export interface ProjectDiskUsage {
+  projectId: string;
+  worktrees: number;
+  bytes: number;
+}
+
+export interface GcScanResult {
+  candidates: GcCandidate[];
+  usage: ProjectDiskUsage[];
+  /** Total bytes of every worktree under the worktree base. */
+  totalBytes: number;
+}
+
+/** Batch cleanup: one dialog, one confirm, N directories (#316). */
+export interface GcCleanInput {
+  paths: string[];
+}
+
+export interface GcCleanResult {
+  removed: string[];
+  failed: Array<{ path: string; error: string }>;
+  /** Bytes reclaimed, summed from the scan sizes of removed directories. */
+  bytes: number;
 }
 
 export type ThreadStatus = "idle" | "working" | "done" | "failed";
@@ -1425,6 +1480,18 @@ export interface CoderApi {
      * has no worktree or checkpoints. Never rejects.
      */
     runStats(input: { threadId: string }): Promise<RunStatInfo[]>;
+    /**
+     * Worktree GC scan (#316): every reclaimable worktree with its size, plus
+     * per-project disk usage. Read-only and never rejects — a directory git
+     * cannot read comes back `blocked`.
+     */
+    gcScan(): Promise<GcScanResult>;
+    /**
+     * Batch cleanup: remove the given worktree directories in one shot (one
+     * dialog, one confirm). Only ever removes directories a fresh scan still
+     * reports as unblocked candidates; branches are never deleted.
+     */
+    gcClean(input: GcCleanInput): Promise<GcCleanResult>;
   };
   issues: {
     /**

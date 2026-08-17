@@ -5,6 +5,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  formatBytes,
   formatRelativeAge,
   formatWorkingLabel,
   shortModelName,
@@ -65,6 +66,16 @@ describe("shortModelName", () => {
 
   it("returns the id unchanged when there is no hyphen", () => {
     assert.equal(shortModelName("default"), "default");
+  });
+});
+
+describe("formatBytes", () => {
+  it("formats bytes, kilobytes, and megabytes", () => {
+    assert.equal(formatBytes(0), "0 B");
+    assert.equal(formatBytes(512), "512 B");
+    assert.equal(formatBytes(1024), "1.0 KB");
+    assert.equal(formatBytes(5 * 1024 * 1024), "5.0 MB");
+    assert.equal(formatBytes(12 * 1024 * 1024), "12 MB");
   });
 });
 

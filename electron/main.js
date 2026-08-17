@@ -364,17 +364,30 @@ app.whenReady().then(async () => {
   // unmerged branches are never touched. Delayed + unref'd like the PR
   // refresher so startup stays fast and a short-lived process can exit.
   const sweepTimer = setTimeout(() => {
-    const { sweepOrphanWorktrees } = require("./worktrees.js");
-    void sweepOrphanWorktrees({
-      store,
-      worktreeBase: path.join(userData, "worktrees"),
-    }).then((result) => {
-      if (result.removed.length > 0) {
-        console.warn(
-          `worktree sweep: removed ${result.removed.length} orphan(s)`,
-        );
-      }
-    });
+    const {
+      sweepOrphanWorktrees,
+      enforceRetention,
+    } = require("./worktrees.js");
+    const worktreeBase = path.join(userData, "worktrees");
+    void sweepOrphanWorktrees({ store, worktreeBase })
+      .then((result) => {
+        if (result.removed.length > 0) {
+          console.warn(
+            `worktree sweep: removed ${result.removed.length} orphan(s)`,
+          );
+        }
+        // Per-project retention (#316): projects that opted in shed the
+        // settled worktrees past their limit. Directories only — branches
+        // always survive, so this can never lose a commit.
+        return enforceRetention({ store, worktreeBase, broadcast });
+      })
+      .then((result) => {
+        if (result.removed.length > 0) {
+          console.warn(
+            `worktree retention: reclaimed ${result.removed.length} worktree(s)`,
+          );
+        }
+      });
   }, 15_000);
   sweepTimer.unref();
 

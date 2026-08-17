@@ -1289,6 +1289,8 @@ function buildDevCoder(): CoderApi {
   const runStates = new Map<string, RunState>();
   /** Threads whose worktree was merged/removed; fakeDiff stays empty until re-setup. */
   const clearedDiff = new Set<string>();
+  /** Directories already reclaimed by the #316 GC demo stubs. */
+  const gcRemoved = new Set<string>();
   /** User-defined + builtin workflow templates (in-memory). */
   let templates: WorkflowTemplateInfo[] = [cloneTemplate(STANDARD_TEMPLATE)];
   /** Scheduled agent runs. */
@@ -3168,6 +3170,81 @@ function buildDevCoder(): CoderApi {
         } catch {
           return [];
         }
+      },
+      async gcScan() {
+        const first = projects[0];
+        const second = projects[1] ?? first;
+        if (!first) return { candidates: [], usage: [], totalBytes: 0 };
+        const all = [
+          {
+            path: "/tmp/solenta-worktrees/orphan-abc",
+            bytes: 48 * 1024 * 1024,
+            reason: "orphan" as const,
+            threadId: null,
+            title: null,
+            projectId: first.id,
+            branch: "solenta/orphan-abc",
+          },
+          {
+            path: "/tmp/solenta-worktrees/old-thread",
+            bytes: 12 * 1024 * 1024,
+            reason: "retention" as const,
+            threadId: threads[0]?.id ?? null,
+            title: "old settled thread",
+            projectId: first.id,
+            branch: "solenta/old-thread",
+          },
+          {
+            path: "/tmp/solenta-worktrees/dirty",
+            bytes: 8 * 1024 * 1024,
+            reason: "orphan" as const,
+            threadId: null,
+            title: null,
+            projectId: second.id,
+            branch: "solenta/dirty",
+            blocked: "uncommitted changes",
+          },
+        ].filter((c) => !gcRemoved.has(c.path));
+        const byProject = new Map<string, { worktrees: number; bytes: number }>();
+        for (const c of all) {
+          if (!c.projectId) continue;
+          const row = byProject.get(c.projectId) ?? { worktrees: 0, bytes: 0 };
+          row.worktrees += 1;
+          row.bytes += c.bytes;
+          byProject.set(c.projectId, row);
+        }
+        const usage = [...byProject.entries()].map(([projectId, row]) => ({
+          projectId,
+          worktrees: row.worktrees,
+          bytes: row.bytes,
+        }));
+        return {
+          candidates: all,
+          usage,
+          totalBytes: all.reduce((sum, c) => sum + c.bytes, 0),
+        };
+      },
+      async gcClean(input) {
+        const paths = Array.isArray(input?.paths) ? input.paths : [];
+        const scan = await api.git.gcScan();
+        const byPath = new Map(scan.candidates.map((c) => [c.path, c]));
+        const removed: string[] = [];
+        const failed: Array<{ path: string; error: string }> = [];
+        let bytes = 0;
+        for (const path of paths) {
+          const row = byPath.get(path);
+          if (!row || row.blocked) {
+            failed.push({
+              path,
+              error: row?.blocked ?? "not a reclaimable worktree",
+            });
+            continue;
+          }
+          gcRemoved.add(path);
+          removed.push(path);
+          bytes += row.bytes;
+        }
+        return { removed, failed, bytes };
       },
       async setupWorktree(input) {
         const detail = details.get(input.threadId);

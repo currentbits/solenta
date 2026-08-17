@@ -48,6 +48,7 @@ const EMPTY = {
   spendByDay: {},
   usageByDay: {},
   automations: [],
+  digestSeenAt: null,
   // autoSettleAfterDays defaults to 3 (AUTO_SETTLE_AFTER_DAYS); null = disabled.
   settings: {
     dailyBudgetUsd: null,
@@ -645,6 +646,7 @@ function migrateAutomation(a) {
  * Projects: remoteHost/remotePath stay absent on old rows. Empty strings
  * (or other junk) are dropped so the keys remain optional, not null.
  * Spaces (#159): spaceId is the same optional-key shape.
+ * Worktree retention (#316): keep a finite number > 0; drop otherwise.
  * @param {object} p
  */
 function migrateProject(p) {
@@ -661,6 +663,12 @@ function migrateProject(p) {
   const spaceId = typeof next.spaceId === "string" ? next.spaceId.trim() : "";
   if (spaceId) next.spaceId = spaceId;
   else delete next.spaceId;
+  const retention = next.worktreeRetention;
+  if (typeof retention === "number" && Number.isFinite(retention) && retention > 0) {
+    next.worktreeRetention = retention;
+  } else {
+    delete next.worktreeRetention;
+  }
   return next;
 }
 
@@ -828,6 +836,11 @@ class Store {
       automations: Array.isArray(parsed.automations)
         ? parsed.automations.map(migrateAutomation)
         : [],
+      digestSeenAt:
+        typeof parsed.digestSeenAt === "number" &&
+        Number.isFinite(parsed.digestSeenAt)
+          ? parsed.digestSeenAt
+          : null,
       settings: normalizeSettings(parsed.settings),
     };
     ensureWorkflowTemplates(data);
@@ -1206,6 +1219,23 @@ class Store {
     const raw = this.data.usageByDay;
     if (!raw || typeof raw !== "object") return {};
     return { ...raw };
+  }
+
+  /**
+   * Last time the morning digest was marked seen (epoch ms), or null.
+   * @returns {number | null}
+   */
+  getDigestSeenAt() {
+    const v = this.data.digestSeenAt;
+    return typeof v === "number" && Number.isFinite(v) ? v : null;
+  }
+
+  /**
+   * @param {number | null} ms
+   */
+  setDigestSeenAt(ms) {
+    this.data.digestSeenAt =
+      typeof ms === "number" && Number.isFinite(ms) ? ms : null;
   }
 
   /**
@@ -1640,6 +1670,7 @@ function cloneEmpty() {
     spendByDay: {},
     usageByDay: {},
     automations: [],
+    digestSeenAt: null,
     // autoSettleAfterDays defaults to 3 (AUTO_SETTLE_AFTER_DAYS); null = disabled.
     settings: {
       dailyBudgetUsd: null,
