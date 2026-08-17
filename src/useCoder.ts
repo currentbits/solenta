@@ -187,6 +187,16 @@ export interface UseCoderResult {
     threadId?: string,
     attachments?: AttachmentInfo[],
   ) => Promise<void>;
+  /**
+   * Edit-and-resubmit (#254): rewind the transcript to just before
+   * messageId, then start a run with the edited prompt. Rewind starts
+   * nothing; this is rewind then the ordinary startRun path.
+   */
+  rewindAndResubmit: (
+    messageId: string,
+    prompt: string,
+    restoreFiles?: boolean,
+  ) => Promise<void>;
   /** Follow-ups waiting for a run to land, keyed by thread id. */
   queued: Record<string, QueuedMessage>;
   /** Drop a thread's queued follow-up. Defaults to the selected thread. */
@@ -1084,6 +1094,27 @@ export function useCoder(): UseCoderResult {
       }
     },
     [api, selectedThreadId, applyThreads],
+  );
+
+  const rewindAndResubmit = useCallback(
+    async (messageId: string, prompt: string, restoreFiles?: boolean) => {
+      const threadId = selectedThreadId;
+      if (!threadId) return;
+      try {
+        await api.threads.rewind({
+          threadId,
+          messageId,
+          prompt,
+          restoreFiles,
+        });
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+        throw err;
+      }
+      await startRun(prompt, threadId);
+    },
+    [api, selectedThreadId, startRun],
   );
 
   const refreshWorkflows = useCallback(async () => {
@@ -2156,6 +2187,7 @@ export function useCoder(): UseCoderResult {
     createThread,
     forkThread,
     startRun,
+    rewindAndResubmit,
     queued,
     cancelQueued,
     startWorkflowRun,

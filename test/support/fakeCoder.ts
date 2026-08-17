@@ -43,6 +43,7 @@ import type {
   ThreadPatch,
   ThreadInfo,
   ThreadSummaryInfo,
+  RewindResult,
   UsageByDay,
   WorkLogItem,
   WorkflowTemplateInfo,
@@ -1011,6 +1012,57 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         threads = [forked, ...threads];
         details[forked.id] = detail({ thread: forked, messages: [] });
         return Promise.resolve(forked);
+      },
+      /**
+       * Edit-and-resubmit rewind (#254). Truncates at the target user
+       * message and returns; does not start a run. Fail injection still
+       * records the call then rejects, matching restoreCheckpoint.
+       */
+      rewind: (input: unknown) => {
+        const i = input as {
+          threadId: string;
+          messageId: string;
+          prompt: string;
+          restoreFiles?: boolean;
+        };
+        calls.push({ channel: "threads.rewind", args: [input] });
+        const err = fail["threads.rewind"];
+        if (err) return Promise.reject(err);
+
+        const existing = threads.find((t) => t.id === i.threadId);
+        if (!existing) {
+          return Promise.reject(new Error(`Unknown thread: ${i.threadId}`));
+        }
+        if (existing.status === "working") {
+          return Promise.reject(
+            new Error("Cannot rewind while a run is active"),
+          );
+        }
+        if (!String(i.prompt ?? "").trim()) {
+          return Promise.reject(new Error("Prompt cannot be empty"));
+        }
+        const d = details[i.threadId];
+        const at = d?.messages.findIndex((m) => m.id === i.messageId) ?? -1;
+        if (!d || at < 0 || d.messages[at]!.role !== "user") {
+          return Promise.reject(
+            new Error(`Not a user message: ${i.messageId}`),
+          );
+        }
+        const dropped = d.messages.slice(at);
+        d.messages = d.messages.slice(0, at);
+        const next: ThreadInfo = {
+          ...existing,
+          sessionId: null,
+          replayContext: true,
+        };
+        threads = threads.map((t) => (t.id === i.threadId ? next : t));
+        d.thread = next;
+        const result: RewindResult = {
+          thread: next,
+          droppedMessages: dropped.length,
+          restoredSha: i.restoreFiles ? "deadbeef" : null,
+        };
+        return Promise.resolve(result);
       },
       delete: (input: unknown) => rec("threads.delete", [input], undefined),
     },
