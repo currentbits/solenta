@@ -583,6 +583,7 @@ describe("orch-server HTTP", () => {
     const names = list.body.result.tools.map((t) => t.name).sort();
     assert.deepEqual(names, [
       "hypothesis_record",
+      "spec_submit",
       "thread_fork",
       "thread_send",
       "thread_status",

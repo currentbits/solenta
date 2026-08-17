@@ -4097,7 +4097,13 @@ function createRunner(opts) {
           (projectForGate && projectForGate.path) ||
           null,
       ) +
-      services.hypothesisNoteFor(dispatchThread, (id) => store.getThread(id));
+      services.hypothesisNoteFor(dispatchThread, (id) => store.getThread(id)) +
+      services.specNoteFor(
+        dispatchThread,
+        dispatchThread.worktreePath ||
+          (projectForGate && projectForGate.path) ||
+          null,
+      );
 
     const name = workflowNameFromThreadId(threadId);
 
