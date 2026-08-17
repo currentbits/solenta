@@ -212,7 +212,6 @@ const IPC_HANDLERS = {
     return clusterFailureModes({
       threads: ctx.store.getThreads(),
       messagesByThread: ctx.store.data.messagesByThread,
-      workLogByThread: ctx.store.data.workLogByThread,
     });
   },
   "threads:search": async (ctx, input) => {

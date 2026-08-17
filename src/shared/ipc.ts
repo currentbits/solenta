@@ -1231,8 +1231,10 @@ export interface CoderApi {
   insights: {
     /**
      * Recurring failure modes across every thread, ranked most-severe first
-     * (count, then recency). Computed from the stored transcripts on each
-     * call; cheap enough that the view just re-reads it.
+     * (count, then recency). Grouped by NORMALIZED error signature, so the
+     * same failure in six threads is one mode with six offenders. Computed
+     * from the stored transcripts on each call; cheap enough that the view
+     * just re-reads it.
      */
     failureModes(): Promise<FailureMode[]>;
   };

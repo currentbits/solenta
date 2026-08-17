@@ -130,7 +130,7 @@ function collectFromThread(thread, messages, nowMs) {
     const prev = seen.get(signature) || 0;
     seen.set(signature, prev + 1);
     const kind = hit.kindHint === "stalled" ? "stalled" : prev > 0 ? "retried" : "failed";
-    return { ...base, raw: hit.raw, at: hit.at, kind };
+    return { ...base, raw: hit.raw, at: hit.at, kind, signature };
   });
 }
 
@@ -149,7 +149,6 @@ function collectFromThread(thread, messages, nowMs) {
  * @param {object} input
  * @param {Array<object>} input.threads
  * @param {Record<string, Array<object> | undefined>} input.messagesByThread
- * @param {Record<string, Array<object> | undefined>} input.workLogByThread
  * @param {number} [input.nowMs]
  * @returns {Array<{ id: string, signature: string, sample: string, count: number, offenders: Array<{ threadId: string, threadTitle: string, projectId: string, provider: string, kind: "failed" | "stalled" | "retried", at: number }>, lastAt: number }>}
  */
@@ -170,7 +169,9 @@ function clusterFailureModes(input) {
         continue;
       }
       for (const row of rows) {
-        const signature = normalizeSignature(row.raw);
+        // collectFromThread already normalized it to spot repeats within
+        // the thread ("retried"); re-deriving it here would be the same work.
+        const signature = row.signature;
         if (!isMeaningfulSignature(signature)) continue;
         let group = groups.get(signature);
         const sample = asText(row.raw).trim().slice(0, MAX_SAMPLE);
