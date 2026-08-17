@@ -378,6 +378,54 @@ export type UsageByDay = Record<
   Record<string, Record<string, UsageEntry>>
 >;
 
+/**
+ * Raw evidence for ONE thread that ran inside an unattended window (issue
+ * #323). Main collects facts only — every judgement (merge-ready / needs-you
+ * / discard, risk flags) is pure and lives in src/digest.ts, so the receipt
+ * can be re-ranked without re-walking git.
+ */
+export interface DigestRun {
+  threadId: string;
+  projectId: string;
+  /** Project slug, so a row reads without a projects lookup. */
+  projectSlug: string;
+  title: string;
+  provider: string;
+  status: ThreadStatus;
+  /** The run stalled on a permission prompt / question nobody answered. */
+  awaitingInput: boolean;
+  lastError: string | null;
+  /** Epoch ms of the thread's last real activity (ThreadInfo.updatedAt). */
+  endedAt: number;
+  /** Cumulative session cost and turns; 0 when the provider never billed. */
+  costUsd: number;
+  turns: number;
+  /** Uncommitted working-tree changes in the thread's cwd. */
+  filesChanged: number;
+  additions: number;
+  deletions: number;
+  /** Commits on the thread's branch ahead of the project's default branch. */
+  commits: number;
+  prNumber: number | null;
+  prState: "OPEN" | "CLOSED" | "MERGED" | null;
+  /**
+   * Execution evidence scraped from the run's tool calls: did a test/build
+   * command actually run in the window, did the last one fail, and its label
+   * ("npm test"). This stands in for the verification stage of #296 until
+   * that lands — a claim in prose is not evidence, a command that ran is.
+   */
+  checks: { ran: boolean; failed: boolean; label: string | null };
+}
+
+/** One unattended window's receipt: what ran since `sinceMs`. */
+export interface DigestResult {
+  /** Start of the window (the last time the digest was marked seen). */
+  sinceMs: number;
+  /** Epoch ms this receipt was collected. */
+  generatedAt: number;
+  runs: DigestRun[];
+}
+
 export type AgentStatus = "pending" | "running" | "settled" | "failed";
 
 export interface AgentView {
@@ -1171,6 +1219,17 @@ export interface CoderApi {
   usage: {
     /** Per-day / provider / model usage ledger (90-day retention). */
     byDay(): Promise<UsageByDay>;
+  };
+  digest: {
+    /**
+     * Receipt for the unattended window (issue #323): every non-archived
+     * thread whose last activity falls after `sinceMs`, with cost, change
+     * stats and check evidence. `sinceMs` defaults to the last markSeen
+     * (12 hours ago when the digest has never been read).
+     */
+    list(input?: { sinceMs?: number }): Promise<DigestResult>;
+    /** Closes the window: the next digest starts at `atMs` (default now). */
+    markSeen(input?: { atMs?: number }): Promise<{ seenAt: number }>;
   };
   runs: {
     /**
