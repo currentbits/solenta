@@ -2415,6 +2415,14 @@ function buildDevCoder(): CoderApi {
       async setMuted(input: { threadId: string; muted: boolean }) {
         return patchThread(input.threadId, { muted: input.muted });
       },
+      async rename(input: { threadId: string; title: string }) {
+        const title = String(input.title ?? "").trim().slice(0, TITLE_MAX);
+        if (!title) throw new Error("Thread title cannot be empty");
+        if (!details.get(input.threadId)) {
+          throw new Error(`Unknown thread: ${input.threadId}`);
+        }
+        return patchThread(input.threadId, { title });
+      },
       async setReasoningEffort(input: {
         threadId: string;
         effort: ReasoningEffort | null;

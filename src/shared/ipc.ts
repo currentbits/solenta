@@ -1027,6 +1027,11 @@ export interface CoderApi {
     /** Mute/unmute desktop notifications for one thread. Never bumps updatedAt. */
     setMuted(input: { threadId: string; muted: boolean }): Promise<ThreadInfo>;
     /**
+     * Rename a thread. Trims, truncates to THREAD_TITLE_MAX, rejects an
+     * empty title. Never bumps updatedAt.
+     */
+    rename(input: { threadId: string; title: string }): Promise<ThreadInfo>;
+    /**
      * Fork / hand off a thread: creates a NEW thread in the same project,
      * copying provider/model/permissionMode unless overridden (a provider
      * override is the hand-off case). The new thread starts with sessionId

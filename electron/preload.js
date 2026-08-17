@@ -116,6 +116,7 @@ const coder = {
     setQueued: (input) => invoke("threads:setQueued", input),
     setSnoozed: (input) => invoke("threads:setSnoozed", input),
     setMuted: (input) => invoke("threads:setMuted", input),
+    rename: (input) => invoke("threads:rename", input),
     setProvider: (input) => invoke("threads:setProvider", input),
     setReasoningEffort: (input) =>
       invoke("threads:setReasoningEffort", input),

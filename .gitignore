@@ -1,4 +1,6 @@
-node_modules/
+# No trailing slash: worktrees symlink node_modules at the main checkout,
+# and "node_modules/" only matches directories.
+node_modules
 dist/
 out/
 .vite/
