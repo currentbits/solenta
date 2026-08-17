@@ -409,6 +409,26 @@ describe("syncSkills", () => {
     assert.deepEqual(list[0].installedIn, ["claude", "agents", "codex"]);
     assert.deepEqual(list[0].missingFrom, []);
   });
+
+  it("skips a name it could never write back instead of aborting the sync", () => {
+    const env = { HOME: tmp };
+    activate(env, "claude", "agents");
+    const claude = path.join(tmp, ".claude", "skills");
+    // A marketplace can install a dir our name rule rejects; it must not take
+    // the whole fan-out down with it.
+    writeSkill(claude, "Legacy.Skill", "---\ndescription: Old\n---\n\nx\n");
+    writeSkill(claude, "ship-it", "---\ndescription: Ship it\n---\n\nGo.\n");
+
+    assert.deepEqual(syncSkills(env), { copied: 1, skills: ["ship-it"] });
+    const dirs = SKILL_DIRS(env);
+    assert.equal(fs.existsSync(path.join(dirs.agents, "ship-it")), true);
+    assert.equal(fs.existsSync(path.join(dirs.agents, "Legacy.Skill")), false);
+
+    // Still listed, but never reported as drift we cannot actually clear.
+    const odd = listSkills(null, env).find((s) => s.name === "Legacy.Skill");
+    assert.deepEqual(odd.installedIn, ["claude"]);
+    assert.deepEqual(odd.missingFrom, []);
+  });
 });
 
 describe("mcpServers settings slice", () => {

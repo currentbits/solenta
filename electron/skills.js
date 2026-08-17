@@ -222,9 +222,14 @@ function listSkills(projectPath, env = process.env) {
 
   const userRows = [];
   for (const row of byName.values()) {
-    row.missingFrom = SKILL_TARGETS.filter(
-      (t) => active.has(t) && !row.installedIn.includes(t),
-    );
+    // A dir a marketplace installed under a name we cannot write (uppercase,
+    // dots) is listed but never reported as drift — sync would refuse it, so
+    // claiming it is missing somewhere would be a promise we cannot keep.
+    row.missingFrom = !SKILL_NAME_RE.test(row.name)
+      ? []
+      : SKILL_TARGETS.filter(
+          (t) => active.has(t) && !row.installedIn.includes(t),
+        );
     userRows.push(row);
   }
   userRows.sort((a, b) => a.name.localeCompare(b.name));
@@ -347,6 +352,9 @@ function syncSkills(env = process.env) {
   const byName = new Map();
   for (const target of SKILL_TARGETS) {
     for (const skill of scanSkillDir(dirs[target])) {
+      // Skip what we could never write back (resolveSkillDir would throw and
+      // take the whole sync with it); listSkills reports these as drift-free.
+      if (!SKILL_NAME_RE.test(skill.name)) continue;
       const existing = byName.get(skill.name);
       if (!existing) {
         byName.set(skill.name, {
