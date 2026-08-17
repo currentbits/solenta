@@ -106,4 +106,49 @@ describe("threads summaries", () => {
     const [row] = services.threadSummaries(store);
     assert.deepEqual(row.lastActivity, { text: "no timestamp", at: 555 });
   });
+
+  it("summaries reflect an assistant message appended after a previous summaries call", () => {
+    store.setThreads([makeThread({ id: "a" })]);
+    store.setMessages("a", [
+      { id: "m1", role: "assistant", text: "first", createdAt: 10 },
+    ]);
+    const [before] = services.threadSummaries(store);
+    assert.deepEqual(before.lastActivity, { text: "first", at: 10 });
+
+    store.appendMessage("a", {
+      id: "m2",
+      role: "assistant",
+      text: "second\nmore",
+      createdAt: 20,
+    });
+    const [after] = services.threadSummaries(store);
+    assert.deepEqual(after.lastActivity, { text: "second", at: 20 });
+  });
+
+  it("summaries reflect a streamed assistant message edited via updateMessage", () => {
+    store.setThreads([makeThread({ id: "a" })]);
+    store.setMessages("a", [
+      { id: "m1", role: "assistant", text: "partial", createdAt: 10 },
+    ]);
+    const [before] = services.threadSummaries(store);
+    assert.deepEqual(before.lastActivity, { text: "partial", at: 10 });
+
+    store.updateMessage("a", "m1", { text: "partial, then more" });
+    const [after] = services.threadSummaries(store);
+    assert.deepEqual(after.lastActivity, { text: "partial, then more", at: 10 });
+  });
+
+  it("summaries skip a last assistant message that is later blanked", () => {
+    store.setThreads([makeThread({ id: "a" })]);
+    store.setMessages("a", [
+      { id: "m1", role: "assistant", text: "kept", createdAt: 10 },
+      { id: "m2", role: "assistant", text: "will blank", createdAt: 20 },
+    ]);
+    const [before] = services.threadSummaries(store);
+    assert.deepEqual(before.lastActivity, { text: "will blank", at: 20 });
+
+    store.updateMessage("a", "m2", { text: "   " });
+    const [after] = services.threadSummaries(store);
+    assert.deepEqual(after.lastActivity, { text: "kept", at: 10 });
+  });
 });

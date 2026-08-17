@@ -577,6 +577,8 @@ class Store {
     this._flushOnExit = () => {
       if (this._dirty) this.saveNow();
     };
+    // Not persisted — last-assistant lookup for threads:summaries (#136).
+    this._lastAssistantByThread = new Map();
     this.data = this._load();
     if (this._recoveredOnLoad) {
       this.save();
@@ -623,6 +625,7 @@ class Store {
     };
     ensureWorkflowTemplates(data);
     this._recoveredOnLoad = recoverInterruptedRuns(data);
+    this._lastAssistantByThread.clear();
     return data;
   }
 
@@ -664,6 +667,7 @@ class Store {
       }
     }
 
+    this._lastAssistantByThread.clear();
     return cloneEmpty();
   }
 
@@ -810,7 +814,36 @@ class Store {
     return this.data.messagesByThread[threadId] || [];
   }
 
+  /**
+   * Last assistant message with non-empty text. Memoized until the thread's
+   * message list changes. Not persisted.
+   * @param {string} threadId
+   * @returns {object | null}
+   */
+  getLastAssistantMessage(threadId) {
+    if (this._lastAssistantByThread.has(threadId)) {
+      return this._lastAssistantByThread.get(threadId);
+    }
+    const msgs = this.getMessages(threadId);
+    let last = null;
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const m = msgs[i];
+      if (
+        m &&
+        m.role === "assistant" &&
+        typeof m.text === "string" &&
+        m.text.trim() !== ""
+      ) {
+        last = m;
+        break;
+      }
+    }
+    this._lastAssistantByThread.set(threadId, last);
+    return last;
+  }
+
   setMessages(threadId, messages) {
+    this._lastAssistantByThread.delete(threadId);
     this.data.messagesByThread[threadId] = capList(
       messages,
       MAX_MESSAGES_PER_THREAD,
@@ -1142,6 +1175,7 @@ class Store {
    */
   removeThread(threadId) {
     if (threadId == null) return false;
+    this._lastAssistantByThread.delete(threadId);
     const before = this.data.threads.length;
     this.data.threads = this.data.threads.filter((t) => t.id !== threadId);
     // Cascade: drop every *ByThread map key so nothing is orphaned on disk.
