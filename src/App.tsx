@@ -15,6 +15,7 @@ import { KanbanView } from "./components/KanbanView";
 import { PlanboardView, type ThreadStartMode } from "./components/PlanboardView";
 import { AutomationsView } from "./components/AutomationsView";
 import { ActivityView } from "./components/ActivityView";
+import { InsightsView } from "./components/InsightsView";
 import { UsageView } from "./components/UsageView";
 import { DigestView } from "./components/DigestView";
 import { AgentsPanel } from "./components/AgentsPanel";
@@ -36,6 +37,7 @@ export type AppView =
   | "automations"
   | "activity"
   | "usage"
+  | "insights"
   | "digest";
 
 type DrawerId = "sidebar" | "agents";
@@ -212,6 +214,11 @@ export default function App() {
   const openAutomations = useCallback(() => setView("automations"), []);
   const openActivity = useCallback(() => setView("activity"), []);
   const openUsage = useCallback(() => setView("usage"), []);
+  const openInsights = useCallback(() => setView("insights"), []);
+  const loadFailureModes = useCallback(
+    () => api.insights.failureModes(),
+    [api],
+  );
   const openDigest = useCallback(() => setView("digest"), []);
   const openSettings = useCallback(() => setSettingsOpen(true), []);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
@@ -638,6 +645,7 @@ export default function App() {
         onOpenAutomations={openAutomations}
         onOpenActivity={openActivity}
         onOpenUsage={openUsage}
+        onOpenInsights={openInsights}
         onOpenDigest={openDigest}
         onCreateThread={handleCreateThread}
         defaultWorktree={settings?.defaultWorktree ?? false}
@@ -685,6 +693,11 @@ export default function App() {
             />
           ) : view === "usage" ? (
             <UsageView loadUsage={listUsageByDay} />
+          ) : view === "insights" ? (
+            <InsightsView
+              loadFailureModes={loadFailureModes}
+              onSelectThread={handleSelectThread}
+            />
           ) : view === "digest" ? (
             <DigestView
               projects={projects}

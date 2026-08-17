@@ -210,6 +210,13 @@ const IPC_HANDLERS = {
   "usage:byDay": async (ctx) => {
     return ctx.store.getUsageByDay();
   },
+  "insights:failureModes": async (ctx) => {
+    const { clusterFailureModes } = require("./failuremodes.js");
+    return clusterFailureModes({
+      threads: ctx.store.getThreads(),
+      messagesByThread: ctx.store.data.messagesByThread,
+    });
+  },
   "digest:list": async (ctx, input) => {
     return collectDigest({
       store: ctx.store,

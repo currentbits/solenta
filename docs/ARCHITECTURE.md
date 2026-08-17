@@ -102,7 +102,8 @@ usageByDay{ "YYYY-MM-DD": { provider: { model: { costUsd, inputTokens,
 settings: { dailyBudgetUsd: number | null, orchestrationBudgetUsd: number | null,
             autoSettleAfterDays: number | null, mcpServers[],
             defaultWorktree: boolean, defaultOrchestrate: boolean,
-            updateChannel: "prod" | "nightly" | null, notifications: boolean }
+            updateChannel: "prod" | "nightly" | null, notifications: boolean,
+            otel: { endpoint, headers, claudeMetrics } }
 ```
 
 `defaultOrchestrate` wins over `defaultWorktree` when `useCoder.createThread`
@@ -136,6 +137,41 @@ has its next wake-up refused and lands failed with the reason via the #34
 surfacing path, while user-sent turns (Retry after raising the cap) still run.
 Nested crews are not rolled up; each worker that fans out is its own
 orchestrator.
+
+## Observability
+
+Solenta drives claude/codex/kimi/grok from the outside, so it is the only place
+a cross-provider trace tree exists. Issue #280 makes that tree exportable.
+
+| Piece | Path |
+|-------|------|
+| Exporter | `electron/otel.js`: OTLP/HTTP **JSON** POST to `<endpoint>/v1/traces`, batched like `session-record.js` |
+| Emission | `electron/runner.js`: `startRun` opens, `notifyRunTerminal` closes, `appendMessage` + `noteToolSpan` bracket tool calls |
+| Clustering | `electron/failuremodes.js` → `insights:failureModes` → `src/components/InsightsView.tsx` |
+
+No `@opentelemetry/*` dependency: OTLP/JSON is a stable documented encoding, so
+the exporter is a batched `fetch` of a plain object. Ids are **derived**, never
+stored — `traceId` from the ROOT thread (walking `handoffFrom`), so an
+orchestrator and its whole forked crew share one trace; `spanId` from the run id,
+and tool span ids from `runId:toolId`. A restart mid-thread keeps the same trace.
+
+Attributes follow the OTel GenAI conventions: `gen_ai.operation.name`,
+`gen_ai.provider.name`, `gen_ai.agent.id` (provider + profile),
+`gen_ai.request.model`, `gen_ai.usage.*`, and `session.id` = the **thread** id.
+
+Claude Code's native metrics are not received, they are redirected:
+`otel.claudeEnv()` returns `CLAUDE_CODE_ENABLE_TELEMETRY` +
+`OTEL_EXPORTER_OTLP_*` pointed at the same collector, spread into the spawn via
+`claude.js` `envExtra`. Because that is env-only it joins the warm-CLI reuse key
+in `startClaudeRun` — otherwise a process spawned before the toggle would mask it.
+
+Everything is inert while `settings.otel.endpoint` is null: nothing buffered, no
+request made, no exception path into a run.
+
+`insights:failureModes` clusters errored/stalled/retried threads by a
+**normalized** error signature (paths, ids, numbers, quotes redacted) and ranks
+by count then recency. Deterministic and computed on demand — no LLM, no stored
+state, no scheduler.
 
 ## Renderer notes
 
