@@ -61,7 +61,6 @@ import { useEscapeClose } from "../useEscapeClose";
 import { Composer } from "./Composer";
 import { Markdown } from "./Markdown";
 import styles from "./ThreadView.module.css";
-import appStyles from "../App.module.css";
 
 const PUSH_FLASH_MS = 3000;
 const COPY_FLASH_MS = 1500;
@@ -1363,22 +1362,22 @@ function SpecCard({
         <Markdown text={artifact.text} />
       </div>
     ) : (
-      <p className={appStyles.specStatus}>
+      <p className={styles.specStatus}>
         {artifact.path} not written yet
       </p>
     ));
 
   return (
-    <div className={appStyles.specCard} data-spec-card="">
-      <div className={appStyles.specCardHead}>
-        <span className={appStyles.specCardTitle}>Spec</span>
-        <span className={appStyles.specStatus}>{spec.stage}</span>
+    <div className={styles.specCard} data-spec-card="">
+      <div className={styles.specCardHead}>
+        <span className={styles.specCardTitle}>Spec</span>
+        <span className={styles.specStatus}>{spec.stage}</span>
       </div>
-      <ol className={appStyles.specStageList}>
+      <ol className={styles.specStageList}>
         {SPEC_STAGES.map((step) => (
           <li
             key={step}
-            className={appStyles.specStage}
+            className={styles.specStage}
             data-spec-stage={step}
             data-plan-step={specStepStatus(step, spec.stage)}
           >
@@ -1387,7 +1386,7 @@ function SpecCard({
         ))}
       </ol>
       {spec.stage === "build" ? (
-        <p className={appStyles.specStatus}>The spec is approved.</p>
+        <p className={styles.specStatus}>The spec is approved.</p>
       ) : spec.awaitingApproval ? (
         <>
           {artifactBody}
@@ -1436,7 +1435,7 @@ function SpecCard({
       ) : (
         <>
           {artifactBody}
-          <p className={appStyles.specStatus}>
+          <p className={styles.specStatus}>
             The agent is working on this stage.
           </p>
         </>
