@@ -645,6 +645,7 @@ function migrateAutomation(a) {
  * Projects: remoteHost/remotePath stay absent on old rows. Empty strings
  * (or other junk) are dropped so the keys remain optional, not null.
  * Spaces (#159): spaceId is the same optional-key shape.
+ * Worktree retention (#316): keep a finite number > 0; drop otherwise.
  * @param {object} p
  */
 function migrateProject(p) {
@@ -661,6 +662,12 @@ function migrateProject(p) {
   const spaceId = typeof next.spaceId === "string" ? next.spaceId.trim() : "";
   if (spaceId) next.spaceId = spaceId;
   else delete next.spaceId;
+  const retention = next.worktreeRetention;
+  if (typeof retention === "number" && Number.isFinite(retention) && retention > 0) {
+    next.worktreeRetention = retention;
+  } else {
+    delete next.worktreeRetention;
+  }
   return next;
 }
 
