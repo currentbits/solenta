@@ -173,6 +173,14 @@ request made, no exception path into a run.
 by count then recency. Deterministic and computed on demand — no LLM, no stored
 state, no scheduler.
 
+## Hypothesis ledger
+
+Agents write what they tried, and how it turned out, via the
+`hypothesis_record` MCP tool. The ledger is never inferred from the
+transcript. Entries live on the thread (`ThreadInfo.hypotheses`, newest-last,
+capped) and `hypothesisNoteFor` injects the invalidated ones into the next
+dispatch so a later agent, or a best-of-N fork, does not re-tread a dead end.
+
 ## Renderer notes
 
 - Composer model pill: always shown. Empty `models` → Default + Custom… (inline

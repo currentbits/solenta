@@ -146,6 +146,7 @@ describe("orch-server tool handlers", () => {
   it("instructions tell the orchestrator it is woken when workers finish", () => {
     assert.match(INSTRUCTIONS, /woken on a new turn/);
     assert.match(INSTRUCTIONS, /do not sit idle waiting for the user/);
+    assert.match(INSTRUCTIONS, /hypothesis_record/);
     assert.doesNotMatch(INSTRUCTIONS, /poll thread_status until/);
   });
 
@@ -581,6 +582,7 @@ describe("orch-server HTTP", () => {
     assert.equal(list.status, 200);
     const names = list.body.result.tools.map((t) => t.name).sort();
     assert.deepEqual(names, [
+      "hypothesis_record",
       "thread_fork",
       "thread_send",
       "thread_status",
