@@ -941,6 +941,16 @@ export interface WorkflowTemplateInfo {
   phases: WorkflowPhaseSpec[];
 }
 
+/**
+ * Issue #285: a workflow template distilled from a finished thread. Shaped
+ * like a save-ready template minus the ids so the user reviews and edits it
+ * in the workflows editor before anything is stored.
+ */
+export interface DistilledWorkflow {
+  name: string;
+  phases: WorkflowPhaseSpec[];
+}
+
 export type AutomationPreset = "hourly" | "daily" | "weekly";
 
 /** A scheduled agent run (Synara-style automation). */
@@ -1553,6 +1563,12 @@ export interface CoderApi {
      * binary is unavailable (naming it).
      */
     startWorkflow(input: { threadId: string; prompt: string; templateId?: string }): Promise<{ runId: string }>;
+    /**
+     * #285: reads a finished thread's transcript and distills it into a
+     * reusable workflow template draft. Nothing is saved — the caller shows
+     * the draft for review and saves it through workflows.save.
+     */
+    distill(input: { threadId: string }): Promise<DistilledWorkflow>;
     stop(input: { threadId: string }): Promise<void>;
   };
   git: {

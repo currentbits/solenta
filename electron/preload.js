@@ -149,6 +149,7 @@ const coder = {
   runs: {
     start: (input) => invoke("runs:start", input),
     startWorkflow: (input) => invoke("runs:startWorkflow", input),
+    distill: (input) => invoke("runs:distill", input),
     stop: (input) => invoke("runs:stop", input),
   },
   git: {

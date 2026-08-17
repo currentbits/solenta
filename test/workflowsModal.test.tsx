@@ -77,6 +77,10 @@ interface Stubs {
   onRemove?: (id: string) => Promise<void>;
   onClose?: () => void;
   initialSelectedId?: string | null;
+  initialDraft?: {
+    name: string;
+    phases: WorkflowPhaseSpec[];
+  } | null;
 }
 
 function modal(stubs: Stubs = {}) {
@@ -87,6 +91,7 @@ function modal(stubs: Stubs = {}) {
       workflows={stubs.workflows ?? [workflow()]}
       providers={providers}
       initialSelectedId={stubs.initialSelectedId}
+      initialDraft={stubs.initialDraft}
       onSave={
         stubs.onSave ??
         (async (t) =>
@@ -103,6 +108,36 @@ function modal(stubs: Stubs = {}) {
 }
 
 afterEach(unmountAll);
+
+describe("WorkflowsModal distilled draft", () => {
+  it("opens as a new template with the supplied name and phases", async () => {
+    const m = await mount(
+      modal({
+        workflows: [workflow({ name: "Ship checklist" })],
+        initialDraft: {
+          name: "Distilled workflow",
+          phases: [phase({ name: "replay", instruction: "Replay what worked" })],
+        },
+      }),
+    );
+    const values = m
+      .queryAll("input")
+      .map((el) => (el as HTMLInputElement).value);
+    assert.ok(
+      values.includes("Distilled workflow"),
+      `name must come from the draft, got: ${JSON.stringify(values)}`,
+    );
+    assert.ok(
+      values.includes("replay"),
+      `phase name must come from the draft, got: ${JSON.stringify(values)}`,
+    );
+    assert.ok(
+      m.text().includes("Phases (1/6)"),
+      "draft must land as a new unsaved template",
+    );
+    m.unmount();
+  });
+});
 
 describe("WorkflowsModal list", () => {
   it("renders the workflows it was given, with their phases", async () => {
