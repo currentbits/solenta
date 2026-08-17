@@ -30,6 +30,7 @@ import type {
   PrInfo,
   ProjectInfo,
   ProviderInfo,
+  RewindResult,
   SkillInfo,
   SkillTarget,
   SpaceInfo,
@@ -352,6 +353,7 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
       search: (input) => call<ThreadInfo[]>("threads:search", input),
       create: (input) => call<ThreadInfo>("threads:create", input),
       fork: (input) => call<ThreadInfo>("threads:fork", input),
+      rewind: (input) => call<RewindResult>("threads:rewind", input),
       get: (id) => call<ThreadDetail>("threads:get", id),
       setPermissionMode: (input) =>
         call<ThreadInfo>("threads:setPermissionMode", input),
