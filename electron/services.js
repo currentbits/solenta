@@ -224,14 +224,14 @@ async function createProject(store, input) {
 }
 
 /**
- * Patch an existing project. Today: display name, SSH remote fields, and
- * space membership (issue #159). Remote validation mirrors addProject: a
- * non-empty host requires an absolute remotePath; an empty host clears both
- * keys, turning the project local again. The local checkout path is never
- * edited here.
+ * Patch an existing project. Today: display name, SSH remote fields,
+ * space membership (issue #159), and the autoDispatch opt-in (issue #165).
+ * Remote validation mirrors addProject: a non-empty host requires an
+ * absolute remotePath; an empty host clears both keys, turning the
+ * project local again. The local checkout path is never edited here.
  * @param {import('./store').Store} store
  * @param {string} projectId
- * @param {{ name?: string, remoteHost?: string, remotePath?: string, spaceId?: string }} patch
+ * @param {{ name?: string, remoteHost?: string, remotePath?: string, spaceId?: string, autoDispatch?: boolean }} patch
  */
 function updateProject(store, projectId, patch) {
   const projects = store.getProjects().slice();
@@ -284,6 +284,14 @@ function updateProject(store, projectId, patch) {
     } else {
       delete next.spaceId;
     }
+  }
+
+  // true persists the key; false deletes it so old stores stay clean.
+  // Non-boolean input is ignored, not an error.
+  if (input.autoDispatch === true) {
+    next.autoDispatch = true;
+  } else if (input.autoDispatch === false) {
+    delete next.autoDispatch;
   }
 
   projects[idx] = next;

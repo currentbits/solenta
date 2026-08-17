@@ -28,6 +28,8 @@ export interface ProjectInfo {
   remotePath?: string;
   /** Space membership. Absent = unassigned (renders in the trailing group). */
   spaceId?: string;
+  /** When true, a background poller starts a thread for every issue that enters plan:todo (issue #165). Absent = off. */
+  autoDispatch?: boolean;
 }
 
 /** Optional remotes for projects.add. Empty/absent = local project. */
@@ -58,6 +60,8 @@ export interface ProjectUpdateInput {
   remotePath?: string;
   /** Space membership: an id assigns, empty string ("") unassigns. */
   spaceId?: string;
+  /** When true, a background poller starts a thread for every issue that enters plan:todo (issue #165). Absent = off. */
+  autoDispatch?: boolean;
 }
 
 export type ThreadStatus = "idle" | "working" | "done" | "failed";
