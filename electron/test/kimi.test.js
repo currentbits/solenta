@@ -124,7 +124,7 @@ async function main() {
 
   if (scenario === "legacy-types") {
     // Old type-based shapes: kept parseable so a downgrade or older kimi
-    // still streams; no resume hint, so sessionId falls back to "cwd".
+    // still streams; no resume hint, so sessionId stays null (no -c).
     emit({ type: "text", text: "Legacy " });
     await delay(20);
     emit({ type: "assistant", delta: "reply" });
@@ -358,7 +358,7 @@ describe("kimi extract helpers", () => {
 });
 
 describe("kimi provider buildArgs", () => {
-  it("builds stream-json args with model, no permission flags, -S/-c resume", () => {
+  it("builds stream-json args with model, no permission flags, -S resume", () => {
     const entry = getProvider("kimi");
     assert.ok(entry);
     assert.equal(entry.kind, "kimi-stream");
@@ -403,12 +403,12 @@ describe("kimi provider buildArgs", () => {
       );
     }
 
-    // Legacy cwd sentinel keeps -c; a real session id resumes with -S.
+    // Leftover "cwd" sentinel must not emit -c (per-dir bleed) or -S cwd.
     const cont = entry.buildArgs({
       prompt: "again",
       sessionId: "cwd",
     });
-    assert.ok(cont.includes("-c"));
+    assert.ok(!cont.includes("-c"));
     assert.ok(!cont.includes("-S"));
     assert.ok(!cont.includes("cwd"));
 
@@ -547,7 +547,7 @@ describe("kimi runner integration", () => {
     assert.ok(!argv.includes("-S"));
   });
 
-  it("legacy type-based shapes still parse, with cwd fallback", async () => {
+  it("legacy type-based shapes still parse, with no session stamp", async () => {
     process.env.CODER_FAKE_KIMI_SCENARIO = "legacy-types";
     const thread = store.getThreads()[0];
     await runner.startRun({ threadId: thread.id, prompt: "legacy" });
@@ -555,8 +555,8 @@ describe("kimi runner integration", () => {
 
     assert.equal(
       store.getThread(thread.id).sessionId,
-      "cwd",
-      "no resume hint means the legacy per-cwd sentinel",
+      null,
+      "no resume hint must not invent the per-cwd sentinel",
     );
     const msgs = store.getMessages(thread.id);
     const assistants = msgs.filter((m) => m.role === "assistant");
@@ -606,7 +606,7 @@ describe("kimi runner integration", () => {
     const sIdx = argv.indexOf("-S");
     assert.ok(sIdx >= 0, `expected -S in ${JSON.stringify(argv)}`);
     assert.equal(argv[sIdx + 1], "session_fake123");
-    assert.ok(!argv.includes("-c"), "-c is only for legacy cwd threads");
+    assert.ok(!argv.includes("-c"), "-c is never emitted");
     assert.equal(argv[argv.indexOf("-p") + 1], "turn two");
     assert.equal(
       store.getThread(thread.id).sessionId,
@@ -617,10 +617,8 @@ describe("kimi runner integration", () => {
   });
 
   it("a hint-less turn never downgrades a real session id", async () => {
-    // The terminal stamp is captured || prior || "cwd". Every other hint-less
-    // test starts from null/"cwd", so the middle term could be deleted with
-    // the suite green (round 37 review, surviving mutation) while a single
-    // old-kimi turn silently demoted -S resume back to the cwd sentinel.
+    // The terminal stamp is captured || prior-real-id. A hint-less turn
+    // must keep a real -S id, not wipe it and not invent "cwd".
     const thread = store.getThreads()[0];
     store.updateThread(thread.id, { sessionId: "session_prior" });
     store.saveNow();
@@ -640,68 +638,48 @@ describe("kimi runner integration", () => {
     );
   });
 
-  it("a legacy cwd thread keeps resuming with -c until a hint upgrades it", async () => {
-    const thread = store.getThreads()[0];
-    store.updateThread(thread.id, { sessionId: "cwd" });
-    // -c is only for a thread that already talked to kimi. A prior
-    // assistant reply is what distinguishes that from a brand-new
-    // planboard thread that inherited the sentinel (issue #220).
-    store.setMessages(thread.id, [
-      { id: "prior", role: "assistant", text: "earlier turn", createdAt: 1 },
-    ]);
+  it("thread A's second turn does not -c into a session only thread B created", async () => {
+    // Two no-worktree kimi threads share the project directory. A hint-less
+    // turn used to stamp sessionId "cwd"; A's next -c then resumed whichever
+    // session last ran in that dir (B's). Issue #220.
+    const projectId = store.getThreads()[0].projectId;
+    const threadA = store.getThreads()[0];
+    const threadB = services.createThread(store, {
+      projectId,
+      title: "Kimi Thread B",
+    });
+    services.setProvider(store, { threadId: threadB.id, provider: "kimi" });
     store.saveNow();
+
+    process.env.CODER_FAKE_KIMI_SCENARIO = "legacy-types";
+    await runner.startRun({ threadId: threadA.id, prompt: "A turn one" });
+    await waitFor(() => store.getThread(threadA.id).status === "done");
+    assert.equal(
+      store.getThread(threadA.id).sessionId,
+      null,
+      "hint-less A must not be stamped cwd",
+    );
+
+    process.env.CODER_FAKE_KIMI_SCENARIO = "success";
+    fs.unlinkSync(argvFile);
+    await runner.startRun({ threadId: threadB.id, prompt: "B turn one" });
+    await waitFor(() => store.getThread(threadB.id).status === "done");
+    assert.equal(store.getThread(threadB.id).sessionId, "session_fake123");
+
     process.env.CODER_FAKE_KIMI_SCENARIO = "continue-turn";
-
-    await runner.startRun({ threadId: thread.id, prompt: "legacy resume" });
-    await waitFor(() => store.getThread(thread.id).status === "done");
-
-    const argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
-    assert.ok(argv.includes("-c"), `expected -c in ${JSON.stringify(argv)}`);
-    assert.ok(!argv.includes("-S"));
-    assert.equal(
-      store.getThread(thread.id).sessionId,
-      "session_fake456",
-      "the turn's hint upgrades the sentinel to a real session id",
-    );
-  });
-
-  it("first planboard turn never -c even if sessionId is the cwd sentinel", async () => {
-    // Start task mints a fresh thread and immediately startRuns. If that
-    // row already carries "cwd" (legacy default / copied inherit), -c
-    // continues some other session in the cwd and kimi never sees the
-    // issue as its first turn (issue #220).
-    const thread = store.getThreads()[0];
-    store.updateThread(thread.id, { sessionId: "cwd" });
-    store.saveNow();
-    assert.equal(
-      store.getMessages(thread.id).filter((m) => m.role === "assistant")
-        .length,
-      0,
-      "precondition: brand-new thread, no prior reply",
-    );
-
-    const issuePrompt = [
-      "GitHub issue #220: Kimi threads started from the planboard do not know the task",
-      "https://github.com/currentbits/solenta/issues/220",
-      "",
-      "When a thread is started from the planboard the agent does not know the task.",
-    ].join("\n");
-
-    await runner.startRun({ threadId: thread.id, prompt: issuePrompt });
-    await waitFor(() => store.getThread(thread.id).status === "done");
+    fs.unlinkSync(argvFile);
+    await runner.startRun({ threadId: threadA.id, prompt: "A turn two" });
+    await waitFor(() => store.getThread(threadA.id).status === "done");
 
     const argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
-    assert.ok(!argv.includes("-c"), `first turn must not -c: ${JSON.stringify(argv)}`);
-    assert.ok(!argv.includes("-S"), `first turn must not -S: ${JSON.stringify(argv)}`);
-    const pIdx = argv.indexOf("-p");
-    assert.ok(pIdx >= 0, `expected -p in ${JSON.stringify(argv)}`);
-    const sent = argv[pIdx + 1];
-    assert.match(sent, /^GitHub issue #220:/);
-    assert.match(sent, /https:\/\/github.com\/currentbits\/solenta\/issues\/220/);
-    assert.match(
-      sent,
-      /When a thread is started from the planboard the agent does not know the task/,
+    assert.ok(
+      !argv.includes("-c"),
+      `A's second turn must not -c (that is B's last cwd session): ${JSON.stringify(argv)}`,
     );
+    assert.ok(!argv.includes("-S"), `A has no session of its own: ${JSON.stringify(argv)}`);
+    assert.ok(!argv.includes("session_fake123"));
+    assert.equal(argv[argv.indexOf("-p") + 1], "A turn two");
+    assert.equal(store.getThread(threadA.id).sessionId, "session_fake456");
   });
 
   it("never emits permission flags (they hard-error with -p) and propagates -m", async () => {

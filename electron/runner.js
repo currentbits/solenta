@@ -3060,10 +3060,10 @@ function createRunner(opts) {
 
   /**
    * Start a Kimi stream-json (with plain-text fallback) session turn.
-   * After the first successful turn, sessionId is the captured resume id,
-   * or the sentinel "cwd" when the CLI emitted no hint (legacy per-cwd
-   * sessions; see providers.js). A first turn never passes -c even if the
-   * thread already carries that sentinel (issue #220).
+   * After a successful turn, sessionId is the captured resume id, or the
+   * prior real id. A hint-less turn stores null (never the old "cwd"
+   * sentinel): -c is per-directory, so two no-worktree kimi threads in the
+   * same project would resume each other's session (issue #220).
    * @param {string} threadId
    * @param {string} prompt
    * @param {string} runId
@@ -3103,31 +3103,17 @@ function createRunner(opts) {
     /** Run-local usage for memory footers (not cumulative store totals). */
     const runUsage = { tokensIn: 0, tokensOut: 0, costUsd: 0 };
     /**
-     * Real session id from the stream's meta resume hint. Falls back to the
-     * legacy per-cwd sentinel when an older kimi emits no hint, keeping -c
-     * threads resumable.
+     * Real session id from the stream's meta resume hint. Null when the
+     * CLI emits none: we do not invent a per-cwd sentinel (issue #220).
      * @type {string | null}
      */
     let capturedKimiSessionId = null;
 
     const localCwd = thread.worktreePath || project.path;
     const binary = resolveBin(providerEntry);
-    // "cwd" is a resume sentinel, not a real session. A brand-new planboard
-    // thread (Start task) must not -c into another conversation in this
-    // directory: the issue prompt becomes a follow-up and kimi acts like it
-    // was given no task. Resume via -c only after this thread has an
-    // assistant reply. Real -S ids still resume on a first Solenta turn.
-    // ponytail: first-turn "cwd" only; drop the sentinel entirely if a
-    // hint-less kimi ever ships with no per-cwd continue.
-    const storedSessionId = thread.sessionId || null;
-    const hasPriorReply = store
-      .getMessages(threadId)
-      .some((m) => m && m.role === "assistant");
-    const sessionId =
-      storedSessionId === "cwd" && !hasPriorReply ? null : storedSessionId;
     const args = providerEntry.buildArgs({
       prompt,
-      sessionId,
+      sessionId: thread.sessionId || null,
       permissionMode: thread.permissionMode || "default",
       model: thread.model || null,
       reasoningEffort: thread.reasoningEffort || null,
@@ -3357,14 +3343,17 @@ function createRunner(opts) {
 
         if (code === 0) {
           // Prefer the real session id from the resume hint (-S on later
-          // turns); keep the prior id, then the legacy "cwd" sentinel (-c),
-          // so a hint-less turn never downgrades an existing session.
+          // turns); keep a prior REAL id. Never stamp "cwd": -c is per
+          // directory, not per thread (issue #220).
+          const prior =
+            thread.sessionId && thread.sessionId !== "cwd"
+              ? thread.sessionId
+              : null;
           store.updateThread(
             threadId,
             {
               status: "done",
-              sessionId:
-                capturedKimiSessionId || thread.sessionId || "cwd",
+              sessionId: capturedKimiSessionId || prior,
               runStartedAt: null,
             },
             { touch: true },

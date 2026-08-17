@@ -717,7 +717,10 @@ function migrateThread(t) {
     ...t,
     provider: t.provider != null ? t.provider : "claude",
     model: migrateKimiModel(t),
-    sessionId: t.sessionId !== undefined ? t.sessionId : null,
+    // "cwd" was a per-directory resume sentinel; it bleeds across threads
+    // that share a project folder (issue #220). Heal leftover rows to null.
+    sessionId:
+      t.sessionId && t.sessionId !== "cwd" ? t.sessionId : null,
     permissionMode: t.permissionMode != null ? t.permissionMode : "default",
     // Older stores lack reasoningEffort; null (not undefined) so the picker is stable.
     reasoningEffort:
