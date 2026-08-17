@@ -205,7 +205,7 @@ const IPC_HANDLERS = {
     return buildActivity(threads, ctx.store.data.workLogByThread, Date.now());
   },
   "usage:byDay": async (ctx) => {
-    return services.getUsageByDay(ctx.store);
+    return ctx.store.getUsageByDay();
   },
   "threads:search": async (ctx, input) => {
     return services.searchThreads(ctx.store, input || { query: "" });
