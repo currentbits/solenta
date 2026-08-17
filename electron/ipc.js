@@ -38,6 +38,7 @@ const { fetchIssue, listIssues, setPlanStatus } = require("./issues.js");
 const automations = require("./automations.js");
 const { buildActivity } = require("./activity.js");
 const { collectDigest } = require("./digest.js");
+const { distillThread } = require("./distill.js");
 const updater = require("./updater.js");
 
 /**
@@ -486,6 +487,14 @@ const IPC_HANDLERS = {
   },
   "workflows:save": async (ctx, template) => {
     return services.saveTemplate(ctx.store, template);
+  },
+  // #285: same body on both channels. CoderApi put distill on runs;
+  // the renderer / issue call it on threads.
+  "threads:distill": async (ctx, input) => {
+    return distillThread(ctx.store, input && input.threadId);
+  },
+  "runs:distill": async (ctx, input) => {
+    return distillThread(ctx.store, input && input.threadId);
   },
   "workflows:remove": async (ctx, input) => {
     return services.removeTemplate(ctx.store, input);
