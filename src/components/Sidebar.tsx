@@ -1,6 +1,11 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import autoAnimate from "@formkit/auto-animate";
-import type { ProjectInfo, ProviderInfo, ThreadInfo } from "../shared/ipc";
+import type {
+  ProjectInfo,
+  ProviderInfo,
+  ThreadInfo,
+  UpdateStatus,
+} from "../shared/ipc";
 import { isWebMode } from "../shared/wire";
 import {
   formatRelativeAge,
@@ -110,6 +115,8 @@ interface SidebarProps {
   appName: string;
   /** Update channel of the running build; "nightly" tags the wordmark. */
   channel?: "prod" | "nightly" | null;
+  /** Update check result; a dot on Settings when an update is waiting. */
+  updateState?: UpdateStatus["state"] | null;
   searchPlaceholder: string;
   projectsHeader: string;
   projects: ProjectInfo[];
@@ -1028,6 +1035,7 @@ export function SnoozedRow({
 export const Sidebar = memo(function Sidebar({
   appName,
   channel,
+  updateState,
   searchPlaceholder,
   projectsHeader,
   projects,
@@ -2724,6 +2732,20 @@ export const Sidebar = memo(function Sidebar({
           <button
             type="button"
             className={styles.settings}
+            title={
+              updateState === "available"
+                ? "Update available"
+                : updateState === "staged"
+                  ? "Update ready — restart to apply"
+                  : undefined
+            }
+            aria-label={
+              updateState === "available"
+                ? "Settings. Update available"
+                : updateState === "staged"
+                  ? "Settings. Update ready — restart to apply"
+                  : undefined
+            }
             onClick={() => onOpenSettings?.()}
           >
             <span className={styles.settingsIcon} aria-hidden>
@@ -2742,6 +2764,9 @@ export const Sidebar = memo(function Sidebar({
               </svg>
             </span>
             Settings
+            {(updateState === "available" || updateState === "staged") && (
+              <span className={styles.settingsDot} aria-hidden />
+            )}
           </button>
           {projects.length > 0 && (
             <button
