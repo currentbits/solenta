@@ -17,6 +17,7 @@ import { AutomationsView } from "./components/AutomationsView";
 import { ActivityView } from "./components/ActivityView";
 import { InsightsView } from "./components/InsightsView";
 import { UsageView } from "./components/UsageView";
+import { FleetView } from "./components/FleetView";
 import { DigestView } from "./components/DigestView";
 import { AgentsPanel } from "./components/AgentsPanel";
 import { SettingsModal } from "./components/SettingsModal";
@@ -48,6 +49,7 @@ export type AppView =
   | "automations"
   | "activity"
   | "usage"
+  | "fleet"
   | "insights"
   | "digest";
 
@@ -242,9 +244,15 @@ export default function App() {
   }, []);
   const openActivity = useCallback(() => setView("activity"), []);
   const openUsage = useCallback(() => setView("usage"), []);
+  const openFleet = useCallback(() => setView("fleet"), []);
   const openInsights = useCallback(() => setView("insights"), []);
   const loadFailureModes = useCallback(
     () => api.insights.failureModes(),
+    [api],
+  );
+  // ponytail: collect the widest range once; summarizeFleet slices client-side
+  const loadFleetEvidence = useCallback(
+    () => api.fleet.evidence({ days: 90 }),
     [api],
   );
   const openDigest = useCallback(() => setView("digest"), []);
@@ -738,6 +746,7 @@ export default function App() {
         onOpenAutomations={openAutomations}
         onOpenActivity={openActivity}
         onOpenUsage={openUsage}
+        onOpenFleet={openFleet}
         onOpenInsights={openInsights}
         onOpenDigest={openDigest}
         onCreateThread={handleCreateThread}
@@ -787,6 +796,8 @@ export default function App() {
             />
           ) : view === "usage" ? (
             <UsageView loadUsage={listUsageByDay} />
+          ) : view === "fleet" ? (
+            <FleetView loadEvidence={loadFleetEvidence} />
           ) : view === "insights" ? (
             <InsightsView
               loadFailureModes={loadFailureModes}
