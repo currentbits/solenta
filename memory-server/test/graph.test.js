@@ -3,8 +3,9 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { openDb, createSchema, normalizeEntities } from '../src/db.js'
+import { openDb, createSchema, normalizeEntities, backfillCoOccurrenceEdges, EDGES_BACKFILL_KEY } from '../src/db.js'
 import { Memory } from '../src/memory.js'
+import { runJanitor } from '../src/janitor.js'
 
 describe('normalizeEntities', () => {
   let dir
@@ -310,5 +311,207 @@ describe('graph retrieval and RRF', () => {
     // Case-insensitive still works with lower() IN batch
     const caseHits = memory.graphSearch('batchedentityalpha')
     assert.ok(caseHits.some((h) => h.id === a.id))
+  })
+
+  it('store writes unordered co_occurs edges (src < dst, no mirrors)', () => {
+    const { id } = memory.store({
+      type: 'knowledge',
+      title: 'Pair writer',
+      // Spaced wikilinks so extractEntities does not also emit PascalCase modules.
+      body: '[[pair alpha]] sits beside [[pair bravo]] and [[pair charlie]]',
+    })
+    const mentioned = memory.db
+      .prepare(`SELECT entity_id FROM mentions WHERE entry_id = ? ORDER BY entity_id`)
+      .all(id)
+      .map((r) => r.entity_id)
+    assert.equal(mentioned.length, 3)
+
+    const edges = memory.db
+      .prepare(`SELECT src, dst, relation, entry_id FROM edges WHERE entry_id = ?`)
+      .all(id)
+    assert.equal(edges.length, 3)
+    for (const edge of edges) {
+      assert.equal(edge.relation, 'co_occurs')
+      assert.equal(edge.entry_id, id)
+      assert.ok(edge.src < edge.dst, `src must be < dst: ${edge.src} / ${edge.dst}`)
+    }
+    const keys = new Set(edges.map((e) => `${e.src}\0${e.dst}`))
+    assert.equal(keys.size, 3)
+    assert.ok(keys.has(`${mentioned[0]}\0${mentioned[1]}`))
+    assert.ok(keys.has(`${mentioned[0]}\0${mentioned[2]}`))
+    assert.ok(keys.has(`${mentioned[1]}\0${mentioned[2]}`))
+    const mirrors = memory.db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM edges a
+         JOIN edges b ON a.src = b.dst AND a.dst = b.src AND a.entry_id = b.entry_id
+                      AND a.relation = b.relation
+         WHERE a.entry_id = ?`,
+      )
+      .get(id).n
+    assert.equal(mirrors, 0)
+  })
+
+  it('graphSearch reaches an entry two hops away via co_occurs', () => {
+    const a = memory.store({
+      type: 'knowledge',
+      title: 'Hop seed note',
+      body: '[[HopSeedX]] shares a page with [[HopBridgeY]]',
+      force: true,
+    })
+    const b = memory.store({
+      type: 'knowledge',
+      title: 'Hop leaf note',
+      body: '[[HopBridgeY]] continues on to [[HopLeafZ]]',
+      force: true,
+    })
+
+    const hits = memory.graphSearch('HopSeedX')
+    const seed = hits.find((h) => h.id === a.id)
+    const leaf = hits.find((h) => h.id === b.id)
+    assert.ok(seed, `seed entry missing: ${JSON.stringify(hits)}`)
+    assert.equal(seed.hop, 0)
+    // B mentions Y (hop 1) and Z (hop 2); ranking uses min hop.
+    assert.ok(leaf, `2-hop entry missing: ${JSON.stringify(hits.map((h) => ({ id: h.id, hop: h.hop })))}`)
+    assert.equal(leaf.hop, 1)
+  })
+
+  it('deleteEntry removes the entry co_occurs edges', () => {
+    const { id } = memory.store({
+      type: 'knowledge',
+      title: 'Soon gone',
+      body: '[[DeleteAlpha]] with [[DeleteBravo]]',
+    })
+    assert.ok(
+      memory.db.prepare(`SELECT COUNT(*) AS n FROM edges WHERE entry_id = ?`).get(id).n > 0,
+    )
+    assert.equal(memory.deleteEntry(id), true)
+    assert.equal(
+      memory.db.prepare(`SELECT COUNT(*) AS n FROM edges WHERE entry_id = ?`).get(id).n,
+      0,
+    )
+  })
+
+  it('janitor keeps live co_occurs edges and still sweeps orphans', () => {
+    const { id } = memory.store({
+      type: 'knowledge',
+      title: 'Live pair',
+      body: '[[JanitorAlpha]] with [[JanitorBravo]]',
+    })
+    const liveBefore = memory.db
+      .prepare(`SELECT COUNT(*) AS n FROM edges WHERE entry_id = ?`)
+      .get(id).n
+    assert.ok(liveBefore > 0)
+    memory.db
+      .prepare(
+        `INSERT INTO edges (src, dst, relation, entry_id, created_at)
+         VALUES ('ghost-src', 'ghost-dst', 'co_occurs', ?, '2026-01-01')`,
+      )
+      .run(id)
+
+    runJanitor(memory.db)
+
+    assert.equal(
+      memory.db.prepare(`SELECT COUNT(*) AS n FROM edges WHERE entry_id = ?`).get(id).n,
+      liveBefore,
+    )
+    assert.equal(
+      memory.db
+        .prepare(`SELECT COUNT(*) AS n FROM edges WHERE src = 'ghost-src' OR dst = 'ghost-dst'`)
+        .get().n,
+      0,
+    )
+  })
+})
+
+describe('edges backfill', () => {
+  let dir
+  let db
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'coder-mem-edge-bf-'))
+    db = openDb(path.join(dir, 'memory.db'))
+    createSchema(db)
+  })
+
+  afterEach(() => {
+    db.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('populates co_occurs from pre-existing mentions and does not double-run', () => {
+    db.prepare(
+      `INSERT INTO entries (id, type, title, body, created_at, updated_at)
+       VALUES ('e1', 'knowledge', 't', 'b', '2026-01-01', '2026-01-01'),
+              ('e2', 'knowledge', 't2', 'b2', '2026-01-01', '2026-01-01')`,
+    ).run()
+    db.prepare(
+      `INSERT INTO entities (id, name, kind) VALUES
+        ('ent-a', 'BackfillAlpha', 'concept'),
+        ('ent-b', 'BackfillBravo', 'concept'),
+        ('ent-c', 'BackfillCharlie', 'concept')`,
+    ).run()
+    db.prepare(
+      `INSERT INTO mentions (entry_id, entity_id) VALUES
+        ('e1', 'ent-a'),
+        ('e1', 'ent-b'),
+        ('e2', 'ent-b'),
+        ('e2', 'ent-c')`,
+    ).run()
+
+    // createSchema already ran the one-shot on an empty mentions table.
+    db.prepare(`DELETE FROM janitor_state WHERE key = ?`).run(EDGES_BACKFILL_KEY)
+    assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM edges`).get().n, 0)
+
+    const first = backfillCoOccurrenceEdges(db)
+    assert.equal(first, 2)
+    const edges = db
+      .prepare(`SELECT src, dst, relation, entry_id FROM edges ORDER BY entry_id, src`)
+      .all()
+      .map((e) => ({ src: e.src, dst: e.dst, relation: e.relation, entry_id: e.entry_id }))
+    assert.deepEqual(edges, [
+      { src: 'ent-a', dst: 'ent-b', relation: 'co_occurs', entry_id: 'e1' },
+      { src: 'ent-b', dst: 'ent-c', relation: 'co_occurs', entry_id: 'e2' },
+    ])
+
+    const second = backfillCoOccurrenceEdges(db)
+    assert.equal(second, 0)
+    assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM edges`).get().n, 2)
+
+    db.prepare(`INSERT INTO mentions (entry_id, entity_id) VALUES ('e1', 'ent-c')`).run()
+    assert.equal(backfillCoOccurrenceEdges(db), 0, 'guard must ignore later mentions')
+    assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM edges`).get().n, 2)
+
+    const guard = db.prepare(`SELECT value FROM janitor_state WHERE key = ?`).get(EDGES_BACKFILL_KEY)
+    assert.ok(guard?.value)
+  })
+
+  it('createSchema invokes the one-shot backfill', () => {
+    db.prepare(
+      `INSERT INTO entries (id, type, title, body, created_at, updated_at)
+       VALUES ('e1', 'knowledge', 't', 'b', '2026-01-01', '2026-01-01')`,
+    ).run()
+    db.prepare(
+      `INSERT INTO entities (id, name, kind) VALUES
+        ('ent-a', 'SchemaAlpha', 'concept'),
+        ('ent-z', 'SchemaZulu', 'concept')`,
+    ).run()
+    db.prepare(
+      `INSERT INTO mentions (entry_id, entity_id) VALUES
+        ('e1', 'ent-a'),
+        ('e1', 'ent-z')`,
+    ).run()
+    db.prepare(`DELETE FROM janitor_state WHERE key = ?`).run(EDGES_BACKFILL_KEY)
+
+    createSchema(db)
+
+    const edges = db.prepare(`SELECT src, dst, relation, entry_id FROM edges`).all()
+    assert.equal(edges.length, 1)
+    assert.equal(edges[0].src, 'ent-a')
+    assert.equal(edges[0].dst, 'ent-z')
+    assert.equal(edges[0].relation, 'co_occurs')
+    assert.ok(db.prepare(`SELECT value FROM janitor_state WHERE key = ?`).get(EDGES_BACKFILL_KEY))
+
+    createSchema(db)
+    assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM edges`).get().n, 1)
   })
 })

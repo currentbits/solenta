@@ -252,7 +252,7 @@ export class Memory {
   }
 
   /**
-   * Upsert extracted entities and write mentions for an entry.
+   * Upsert extracted entities and write mentions + co-occurrence edges for an entry.
    * @param {string} entryId
    * @param {string} title
    * @param {string} body
@@ -268,7 +268,13 @@ export class Memory {
     const insertMen = this.db.prepare(
       `INSERT OR IGNORE INTO mentions (entry_id, entity_id) VALUES (?, ?)`,
     )
+    const insertEdge = this.db.prepare(
+      `INSERT OR IGNORE INTO edges (src, dst, relation, entry_id, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+    )
 
+    /** @type {string[]} */
+    const entityIds = []
     for (const ent of extracted) {
       let row = find.get(ent.kind, ent.name)
       let entityId
@@ -292,6 +298,17 @@ export class Memory {
         }
       }
       insertMen.run(entryId, entityId)
+      entityIds.push(entityId)
+    }
+
+    const uniqueIds = [...new Set(entityIds)].sort()
+    const now = new Date().toISOString()
+    // ponytail: co-occurrence only (no typed relations); ≤C(15,2)=105 rows/entry.
+    // Typed/LLM-extracted relations are the upgrade if relation semantics are needed.
+    for (let i = 0; i < uniqueIds.length; i++) {
+      for (let j = i + 1; j < uniqueIds.length; j++) {
+        insertEdge.run(uniqueIds[i], uniqueIds[j], 'co_occurs', entryId, now)
+      }
     }
   }
 
