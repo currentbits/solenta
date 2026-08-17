@@ -1,18 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { formatRelativeAge } from "../format";
-import type { FailureKind, FailureMode } from "../shared/ipc";
+import type { FailureMode } from "../shared/ipc";
 import styles from "./InsightsView.module.css";
 
 export interface InsightsViewProps {
   loadFailureModes: () => Promise<FailureMode[]>;
   onSelectThread: (id: string) => void;
 }
-
-const KIND_LABEL: Record<FailureKind, string> = {
-  failed: "failed",
-  stalled: "stalled",
-  retried: "retried",
-};
 
 /** Sample is long machine text; keep the card scannable until asked. */
 const SAMPLE_LIMIT = 140;
@@ -166,7 +160,7 @@ export function InsightsView({
                             className={styles.kind}
                             data-kind={offender.kind}
                           >
-                            {KIND_LABEL[offender.kind] ?? offender.kind}
+                            {offender.kind}
                           </span>
                           <span className={styles.age}>
                             {formatRelativeAge(offender.at, now)}
