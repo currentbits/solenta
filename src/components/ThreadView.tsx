@@ -18,6 +18,7 @@ import type {
   PermissionDecision,
   PermissionMode,
   ProjectInfo,
+  AgentProfile,
   ProviderInfo,
   ReasoningEffort,
   RunStatInfo,
@@ -52,7 +53,7 @@ import {
   toggleRunCollapsed,
   type RunHeader,
 } from "../runHeader";
-import { buildBestOfNPlan } from "../bestOfN";
+import { buildBestOfNEntries } from "../bestOfN";
 import { createPrPrompt } from "../prUi";
 import { useEscapeClose } from "../useEscapeClose";
 import { Composer } from "./Composer";
@@ -156,6 +157,8 @@ interface ThreadViewProps {
   onRetryDetail?: () => void;
   project: ProjectInfo | null;
   providers: ProviderInfo[];
+  /** Saved agent profiles from settings; passed through to Composer. */
+  agentProfiles?: AgentProfile[];
   workflows: WorkflowTemplateInfo[];
   hasProjects: boolean;
   onAddProject: () => void;
@@ -176,7 +179,10 @@ interface ThreadViewProps {
   queuedPrompt?: string | null;
   /** Drop the queued follow-up. */
   onCancelQueued?: () => void;
-  onSetPermissionMode: (mode: PermissionMode) => void | Promise<void>;
+  onSetPermissionMode: (
+    mode: PermissionMode,
+    threadId?: string,
+  ) => void | Promise<void>;
   /** Answer the pending permission prompt (detail.pendingPermission). */
   onRespondPermission: (
     requestId: string,
@@ -187,7 +193,10 @@ interface ThreadViewProps {
     provider?: string;
     model?: string | null;
   }) => void | Promise<void>;
-  onSetReasoningEffort: (effort: ReasoningEffort | null) => void | Promise<void>;
+  onSetReasoningEffort: (
+    effort: ReasoningEffort | null,
+    threadId?: string,
+  ) => void | Promise<void>;
   /** Archive or unarchive the open thread. */
   onSetArchived: (archived: boolean) => void | Promise<void>;
   /** Rename the open thread (header overflow). */
@@ -247,7 +256,7 @@ interface ThreadViewProps {
    * pass provider for hand-off.
    */
   onFork?: (
-    opts?: { provider?: string },
+    opts?: { provider?: string; model?: string | null },
   ) => void | Promise<void | ThreadInfo | null>;
   /**
    * The thread this one was handed off from (handoffFrom), already resolved.
@@ -1516,6 +1525,7 @@ export const ThreadView = memo(function ThreadView({
   onRetryDetail,
   project,
   providers,
+  agentProfiles = [],
   workflows,
   hasProjects,
   onAddProject,
@@ -1713,9 +1723,11 @@ export const ThreadView = memo(function ThreadView({
   }, [retryUser, isWorking, onStartRun]);
 
   /**
-   * Fork one thread per selected provider, then start the same prompt on each
-   * new fork. Sequential: a run cannot start until its fork exists. Failures
-   * throw so Composer and the run-error banner both surface them.
+   * Fork one thread per selected provider or profile, then start the same
+   * prompt on each new fork. Sequential: a run cannot start until its fork
+   * exists. Failures throw so Composer and the run-error banner both surface
+   * them. Profile forks set effort then permission on the new thread before
+   * the run, same order as pickProfile.
    */
   const runBestOfN = useCallback(
     async (selectedIds: string[], prompt: string) => {
@@ -1726,24 +1738,39 @@ export const ThreadView = memo(function ThreadView({
       const availableIds = providers
         .filter((p) => p.available)
         .map((p) => p.id);
-      const plan = buildBestOfNPlan(
-        availableIds,
-        selectedIds,
-        current.provider,
-      );
+      const plan = buildBestOfNEntries(availableIds, selectedIds, agentProfiles);
       if (typeof plan === "string") throw new Error(plan);
       const created: string[] = [];
-      for (const providerId of plan) {
-        const forked = await onFork({ provider: providerId });
+      for (const entry of plan) {
+        const forked =
+          entry.kind === "profile"
+            ? await onFork({
+                provider: entry.provider,
+                model: entry.model,
+              })
+            : await onFork({ provider: entry.provider });
         if (!forked || typeof forked !== "object" || !forked.id) {
           throw new Error("Failed to fork thread");
         }
         created.push(forked.id);
+        if (entry.kind === "profile") {
+          await onSetReasoningEffort(entry.reasoningEffort, forked.id);
+          await onSetPermissionMode(entry.permissionMode, forked.id);
+        }
         await onStartRun(prompt, forked.id);
       }
       if (created[0]) onSelectThread?.(created[0]);
     },
-    [detail, onFork, onSelectThread, onStartRun, providers],
+    [
+      agentProfiles,
+      detail,
+      onFork,
+      onSelectThread,
+      onSetPermissionMode,
+      onSetReasoningEffort,
+      onStartRun,
+      providers,
+    ],
   );
 
   /**
@@ -2778,6 +2805,7 @@ export const ThreadView = memo(function ThreadView({
         model={thread.model}
         reasoningEffort={thread.reasoningEffort}
         providers={providers}
+        agentProfiles={agentProfiles}
         workflows={workflows}
         onSetProvider={onSetProvider}
         onSetReasoningEffort={onSetReasoningEffort}

@@ -215,7 +215,11 @@ export interface UseCoderResult {
   removeAutomation: (id: string) => Promise<void>;
   runAutomationNow: (id: string) => Promise<AutomationInfo>;
   stopRun: () => Promise<void>;
-  setPermissionMode: (mode: PermissionMode) => Promise<void>;
+  /** Sticky permission mode. Pass threadId to target a fork, not the open thread. */
+  setPermissionMode: (
+    mode: PermissionMode,
+    threadId?: string,
+  ) => Promise<void>;
   /** Answer the selected thread's pending permission prompt. */
   respondPermission: (
     requestId: string,
@@ -227,8 +231,14 @@ export interface UseCoderResult {
     provider?: string;
     model?: string | null;
   }) => Promise<void>;
-  /** Set reasoning effort on the selected thread (selectedRef-guarded). */
-  setReasoningEffort: (effort: ReasoningEffort | null) => Promise<void>;
+  /**
+   * Set reasoning effort. Defaults to the selected thread.
+   * Pass threadId when applying a profile to a fork that is not selected.
+   */
+  setReasoningEffort: (
+    effort: ReasoningEffort | null,
+    threadId?: string,
+  ) => Promise<void>;
   /**
    * Archive or unarchive a thread. Defaults to the selected thread.
    * Pass threadId when undoing archive after selection has already moved.
@@ -1172,23 +1182,24 @@ export function useCoder(): UseCoderResult {
   }, [api, selectedThreadId, applyThreads]);
 
   const setPermissionMode = useCallback(
-    async (mode: PermissionMode) => {
-      if (!selectedThreadId) return;
-      const threadId = selectedThreadId;
+    async (mode: PermissionMode, threadIdArg?: string) => {
+      const threadId = threadIdArg ?? selectedThreadId;
+      if (!threadId) return;
       try {
         const thread = await api.threads.setPermissionMode({
           threadId,
           mode,
         });
-        if (selectedRef.current !== threadId) return;
         applyThreads(
           threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
         );
-        setDetail((prev) =>
-          prev && prev.thread.id === thread.id
-            ? { ...prev, thread }
-            : prev,
-        );
+        if (selectedRef.current === threadId) {
+          setDetail((prev) =>
+            prev && prev.thread.id === thread.id
+              ? { ...prev, thread }
+              : prev,
+          );
+        }
         setError(null);
       } catch (err) {
         setError({ scope: "run", message: errorMessage(err) });
@@ -1252,23 +1263,24 @@ export function useCoder(): UseCoderResult {
   );
 
   const setReasoningEffort = useCallback(
-    async (effort: ReasoningEffort | null) => {
-      if (!selectedThreadId) return;
-      const threadId = selectedThreadId;
+    async (effort: ReasoningEffort | null, threadIdArg?: string) => {
+      const threadId = threadIdArg ?? selectedThreadId;
+      if (!threadId) return;
       try {
         const thread = await api.threads.setReasoningEffort({
           threadId,
           effort,
         });
-        if (selectedRef.current !== threadId) return;
         applyThreads(
           threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
         );
-        setDetail((prev) =>
-          prev && prev.thread.id === thread.id
-            ? { ...prev, thread }
-            : prev,
-        );
+        if (selectedRef.current === threadId) {
+          setDetail((prev) =>
+            prev && prev.thread.id === thread.id
+              ? { ...prev, thread }
+              : prev,
+          );
+        }
         setError(null);
       } catch (err) {
         setError({ scope: "run", message: errorMessage(err) });

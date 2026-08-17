@@ -9,6 +9,7 @@ import { mount } from "./support/dom.ts";
 import { Composer } from "../src/components/Composer";
 import { ThreadView } from "../src/components/ThreadView";
 import type {
+  AgentProfile,
   ProjectInfo,
   ProviderInfo,
   ThreadDetail,
@@ -132,8 +133,27 @@ function detail(over: Partial<ThreadDetail> = {}): ThreadDetail {
 const noopSave = async () =>
   ({ id: "wf", name: "standard", phases: [] }) as WorkflowTemplateInfo;
 
+const SCOUT: AgentProfile = {
+  id: "prof-scout",
+  name: "Cheap scout",
+  provider: "claude",
+  model: "haiku",
+  reasoningEffort: "low",
+  permissionMode: "plan",
+};
+
+const GROK_SCOUT: AgentProfile = {
+  id: "prof-gone",
+  name: "Grok scout",
+  provider: "grok",
+  model: "grok-4",
+  reasoningEffort: null,
+  permissionMode: "default",
+};
+
 function composer(over: {
   disabled?: boolean;
+  agentProfiles?: AgentProfile[];
   onBestOfN?: (ids: string[], prompt: string) => void | Promise<void>;
 } = {}) {
   return (
@@ -146,6 +166,7 @@ function composer(over: {
       model={null}
       reasoningEffort={null}
       providers={PROVIDERS}
+      agentProfiles={over.agentProfiles}
       workflows={WORKFLOWS}
       onSetProvider={() => {}}
       onSetReasoningEffort={() => {}}
@@ -235,6 +256,33 @@ describe("Best of N popover", () => {
       false,
       "two selections enable Run",
     );
+    assert.equal(
+      m.query("[data-best-of-n-profile]"),
+      null,
+      "no profiles saved → no profile rows",
+    );
+    assert.doesNotMatch(m.text(), /Profiles/);
+    m.unmount();
+  });
+
+  it("lists saved profiles above providers; uninstalled ones stay disabled", async () => {
+    const m = await mount(
+      composer({ agentProfiles: [SCOUT, GROK_SCOUT] }),
+    );
+    await openBestOfN(m);
+    assert.match(m.text(), /Profiles/);
+    assert.match(m.text(), /Cheap scout/);
+    const scout = m.query(
+      'input[data-best-of-n-profile="prof-scout"]',
+    ) as HTMLInputElement | null;
+    const gone = m.query(
+      'input[data-best-of-n-profile="prof-gone"]',
+    ) as HTMLInputElement | null;
+    assert.ok(scout, "installed profile is listed");
+    assert.equal(scout.disabled, false);
+    assert.ok(gone, "uninstalled profile is still listed");
+    assert.equal(gone.disabled, true);
+    assert.equal(gone.closest("label")?.getAttribute("title"), "not installed");
     m.unmount();
   });
 });
@@ -351,6 +399,72 @@ describe("Best of N submit sequence", () => {
       "keep this prompt",
       "failure must not clear the composer",
     );
+    m.unmount();
+  });
+
+  it("profile pick forks with model then sets effort and permission on the fork", async () => {
+    const calls: string[] = [];
+    const m = await mount(
+      <ThreadView
+        detail={detail()}
+        project={project}
+        providers={PROVIDERS}
+        agentProfiles={[SCOUT]}
+        workflows={WORKFLOWS}
+        hasProjects={true}
+        onAddProject={() => {}}
+        onStartRun={async (prompt, threadId) => {
+          calls.push(`run:${threadId}:${prompt}`);
+        }}
+        onStartWorkflow={() => {}}
+        onSaveWorkflow={noopSave}
+        onRemoveWorkflow={async () => {}}
+        onStopRun={() => {}}
+        onSetPermissionMode={(mode, threadId) => {
+          calls.push(`perm:${threadId ?? ""}:${mode}`);
+        }}
+        onSetProvider={() => {}}
+        onSetReasoningEffort={(effort, threadId) => {
+          calls.push(`effort:${threadId ?? ""}:${effort}`);
+        }}
+        onSetArchived={() => {}}
+        onDeleteThread={() => {}}
+        changesOpen={false}
+        changesNonce={0}
+        onCloseChanges={() => {}}
+        onFetchDiff={async () => ({ files: [], patch: "", truncated: false })}
+        onCommitChanges={async () => ({ subject: "x" })}
+        onRevertFile={async (path) => ({ path })}
+        onSuggestCommitMessage={async () => ({ message: "feat: x" })}
+        onPush={async () => ({ remote: "origin", branch: "main" })}
+        onFork={async (opts) => {
+          calls.push(
+            `fork:${opts?.provider ?? ""}:${opts?.model === undefined ? "-" : opts.model}`,
+          );
+          return {
+            id: `fork-${opts?.provider}`,
+          } as ThreadInfo;
+        }}
+        onSelectThread={(id) => {
+          calls.push(`select:${id}`);
+        }}
+      />,
+    );
+
+    await openBestOfN(m, "compare this");
+    await m.click(m.query('input[data-best-of-n-profile="prof-scout"]'));
+    await m.click(m.query('input[data-best-of-n-provider="kimi"]'));
+    await m.click(m.query("[data-best-of-n-run]"));
+
+    assert.deepEqual(calls, [
+      "fork:claude:haiku",
+      "effort:fork-claude:low",
+      "perm:fork-claude:plan",
+      "run:fork-claude:compare this",
+      "fork:kimi:-",
+      "run:fork-kimi:compare this",
+      "select:fork-claude",
+    ]);
     m.unmount();
   });
 });
