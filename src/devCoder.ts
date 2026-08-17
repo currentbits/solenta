@@ -31,6 +31,7 @@ import type {
   ListIssuesResult,
   LocalServerInfo,
   MemoryEntryInfo,
+  AgentProfile,
   McpServerInfo,
   PermissionMode,
   PlanIssue,
@@ -1302,6 +1303,8 @@ function buildDevCoder(): CoderApi {
   /** Update channel override; null follows the (absent) dev stamp. */
   let updateChannel: "prod" | "nightly" | null = null;
   let notifications = true;
+  /** Saved agent profiles (Settings tab), in-memory. */
+  let agentProfiles: AgentProfile[] = [];
   /** In-memory skills (Skills tab); dev twin of the on-disk SKILL.md scan. */
   let skillsList: SkillInfo[] = [
     {
@@ -1873,6 +1876,7 @@ function buildDevCoder(): CoderApi {
           defaultOrchestrate,
           updateChannel,
           notifications,
+          agentProfiles: agentProfiles.map((p) => ({ ...p })),
         };
       },
       async set(patch: Partial<AppSettings>): Promise<AppSettings> {
@@ -1910,6 +1914,12 @@ function buildDevCoder(): CoderApi {
           }
           notifications = patch.notifications;
         }
+        if (Object.prototype.hasOwnProperty.call(patch, "agentProfiles")) {
+          if (!Array.isArray(patch.agentProfiles)) {
+            throw new Error("agentProfiles must be an array");
+          }
+          agentProfiles = patch.agentProfiles.map((p) => ({ ...p }));
+        }
         return {
           dailyBudgetUsd,
           orchestrationBudgetUsd,
@@ -1919,6 +1929,7 @@ function buildDevCoder(): CoderApi {
           defaultOrchestrate,
           updateChannel,
           notifications,
+          agentProfiles: agentProfiles.map((p) => ({ ...p })),
         };
       },
     },
