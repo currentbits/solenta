@@ -212,6 +212,11 @@
   background: rgba(255, 255, 255, 0.06);
 }
 
+.bestOfNRow:has(input:disabled) {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .bestOfNRow input {
   margin-top: 2px;
   flex-shrink: 0;

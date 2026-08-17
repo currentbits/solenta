@@ -292,7 +292,7 @@ export default function App() {
   );
 
   const handleForkOpen = useCallback(
-    async (opts?: { provider?: string }) => {
+    async (opts?: { provider?: string; model?: string | null }) => {
       if (!selectedThreadId) return null;
       return forkThread(selectedThreadId, opts);
     },

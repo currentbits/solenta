@@ -51,7 +51,7 @@ import {
 import { useEscapeClose } from "../useEscapeClose";
 import { applyMention, getMentionQuery, type MentionQuery } from "../mention";
 import { parseDelegate } from "../delegate";
-import { buildBestOfNPlan, providerVendor } from "../bestOfN";
+import { buildBestOfNEntries, providerVendor } from "../bestOfN";
 import { WorkflowsModal } from "./WorkflowsModal";
 import styles from "./Composer.module.css";
 
@@ -99,10 +99,10 @@ interface ComposerProps {
   /** Multi-phase Build workflow (Build pill main segment). */
   onBuild: (prompt: string, templateId: string) => void | Promise<void>;
   /**
-   * Best of N: run this prompt on each selected provider as a forked thread.
-   * Absent hides the control (tests and shells without fork).
+   * Best of N: run this prompt on each selected provider or profile as a
+   * forked thread. Absent hides the control (tests and shells without fork).
    */
-  onBestOfN?: (providerIds: string[], prompt: string) => void | Promise<void>;
+  onBestOfN?: (selectedIds: string[], prompt: string) => void | Promise<void>;
   /**
    * Delegation command: a prompt whose first token is `@<installed provider>`
    * forks this thread onto that provider and runs the remainder there.
@@ -722,13 +722,21 @@ export function Composer({
   const submitBestOfN = () => {
     if (!canBestOfN || !onBestOfN) return;
     const availableIds = installedProviders.map((p) => p.id);
-    const plan = buildBestOfNPlan(availableIds, bestIds, provider);
+    const plan = buildBestOfNEntries(
+      availableIds,
+      bestIds,
+      provider,
+      agentProfiles,
+    );
     if (typeof plan === "string") {
       setLocalError(plan);
       return;
     }
     void runAction(async (prompt) => {
-      await onBestOfN(plan, prompt);
+      await onBestOfN(
+        plan.map((e) => e.id),
+        prompt,
+      );
       setBestOfNOpen(false);
     }, "Failed to start Best of N");
   };
@@ -1654,6 +1662,41 @@ export function Composer({
                       Each selection forks a new thread
                     </p>
                     <ul className={styles.bestOfNList}>
+                      {profileRows.map((row, index) => {
+                        const checked = bestIds.includes(row.id);
+                        return (
+                          <li key={`profile:${row.id}`}>
+                            {index === 0 ? (
+                              <div
+                                className={styles.modelGroupHeading}
+                                aria-hidden="true"
+                              >
+                                Profiles
+                              </div>
+                            ) : null}
+                            <label
+                              className={styles.bestOfNRow}
+                              title={row.disabledReason ?? undefined}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                disabled={row.disabled}
+                                data-best-of-n-profile={row.id}
+                                onChange={() => toggleBestId(row.id)}
+                              />
+                              <span className={styles.bestOfNRowText}>
+                                <span className={styles.modelRowLabel}>
+                                  {row.name}
+                                </span>
+                                <span className={styles.modelRowVendor}>
+                                  {row.summary}
+                                </span>
+                              </span>
+                            </label>
+                          </li>
+                        );
+                      })}
                       {installedProviders.map((p) => {
                         const vendor = providerVendor(p);
                         const checked = bestIds.includes(p.id);
