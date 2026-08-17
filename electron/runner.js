@@ -30,6 +30,7 @@ const {
 const opencodeParse = require("./opencode.js");
 const { runOpencode } = opencodeParse;
 const { recordRunOutcome } = require("./memory-record.js");
+const { createOtel } = require("./otel.js");
 const { extractImages, saveToolImages } = require("./tool-images.js");
 const {
   createSessionRecorder,
@@ -303,6 +304,42 @@ function createRunner(opts) {
    * @type {Map<string, object>}
    */
   const active = new Map();
+
+  // OTel GenAI spans (issue #280). Inert while settings.otel.endpoint is null,
+  // and every method swallows its own failures, so no call site below guards.
+  const otel = createOtel({
+    getSettings: () => store.getSettings().otel,
+    getThread: (id) => store.getThread(id),
+  });
+
+  /**
+   * Tool span start times, keyed `runId:toolId`. A tool_use and its result are
+   * two separate stream events, so the start is only knowable at the first —
+   * and only the adapters see it. Drained by noteToolSpan and clearRun.
+   * @type {Map<string, number>}
+   */
+  const toolStartedAt = new Map();
+
+  /**
+   * Close the span for one tool call. Fire-and-forget; a tool whose start was
+   * never seen gets a zero-duration span rather than an invented one.
+   */
+  function noteToolSpan(threadId, runId, toolId, name, isError) {
+    if (!toolId || !runId) return;
+    const key = `${runId}:${toolId}`;
+    const startedAt = toolStartedAt.get(key);
+    toolStartedAt.delete(key);
+    const at = Date.now();
+    otel.toolCall({
+      threadId,
+      runId,
+      toolId: String(toolId),
+      name: String(name || "tool"),
+      startedAt: startedAt == null ? at : startedAt,
+      endedAt: at,
+      isError: Boolean(isError),
+    });
+  }
 
   /**
    * Live interactive Claude CLI processes per thread, kept across turns so
@@ -815,6 +852,20 @@ function createRunner(opts) {
         }
       }
       recordSessionAtTerminal(threadId, resolvedRunId, thread);
+      // One span close for every provider that signals done through here.
+      if (resolvedRunId) {
+        otel.endRun({
+          threadId,
+          runId: resolvedRunId,
+          status: status === "done" || status === "failed" ? status : "stopped",
+          error: status === "failed" ? text || "" : undefined,
+          provider,
+          model: extras.model !== undefined ? extras.model : thread.model,
+          tokensIn: extras.tokensIn,
+          tokensOut: extras.tokensOut,
+          costUsd: extras.costUsd,
+        });
+      }
     } catch {
       // never affect the run path
     }
@@ -1157,6 +1208,16 @@ function createRunner(opts) {
     if (tool) msg.tool = tool;
     if (attachments && attachments.length) msg.attachments = attachments;
     store.appendMessage(threadId, msg);
+    // Every adapter mints its tool messages here, so this is the one place
+    // that sees a tool call begin. Kimi/opencode also emit already-complete
+    // tools in a single event — those span immediately (see noteToolSpan).
+    if (tool && tool.id && runId) {
+      if (tool.done) {
+        noteToolSpan(threadId, runId, tool.id, tool.name, tool.isError);
+      } else {
+        toolStartedAt.set(`${runId}:${tool.id}`, msg.createdAt);
+      }
+    }
     // Session mirror: user + event immediately; assistant/tool at terminal.
     recordSessionOnAppend(threadId, role, text);
     return msg.id;
@@ -1233,6 +1294,13 @@ function createRunner(opts) {
     }
     if (typeof entry.discardHeldPhantom === "function") {
       entry.discardHeldPhantom();
+    }
+    // A run killed mid-tool leaves start times nothing will ever close.
+    if (entry.runId) {
+      const prefix = `${entry.runId}:`;
+      for (const key of toolStartedAt.keys()) {
+        if (key.startsWith(prefix)) toolStartedAt.delete(key);
+      }
     }
     active.delete(threadId);
   }
@@ -1919,6 +1987,13 @@ function createRunner(opts) {
                 ...(images.length ? { images } : {}),
               },
             });
+            noteToolSpan(
+              threadId,
+              runId,
+              existing.tool.id,
+              existing.tool.name,
+              block.is_error,
+            );
           }
           store.save();
           pushDetail(threadId, claudeState);
@@ -2174,6 +2249,14 @@ function createRunner(opts) {
         });
     };
 
+    // Claude Code's own OTel metrics (issue #280): pointing it at the same
+    // collector our spans go to beats standing up a receiver. Env-only, so a
+    // warm CLI predates the setting — hence it joins the reuse key below.
+    // undefined rather than {} when export is off: claude.js only replaces the
+    // inherited env when this is set, and an empty replacement is not the same.
+    const claudeOtel = otel.claudeEnv();
+    const otelEnv = Object.keys(claudeOtel).length > 0 ? claudeOtel : undefined;
+
     // Reuse key: everything a spawn bakes into argv/env EXCEPT the session
     // id (--resume changes after turn one; the live process needs no resume).
     const sessionKey = JSON.stringify({
@@ -2184,6 +2267,7 @@ function createRunner(opts) {
       permissionMode: thread.permissionMode || "default",
       reasoningEffort: thread.reasoningEffort || null,
       mcp: interactive ? getClaudeMcpArgs() : [],
+      otelEnv: otelEnv || null,
     });
 
     const prevSess = claudeSessions.get(threadId);
@@ -2215,6 +2299,7 @@ function createRunner(opts) {
           model: thread.model || null,
           interactive,
           keepAlive: true,
+          envExtra: otelEnv,
           onEvent: (ev) => sess.dispatch.onEvent(ev),
           onExit: (info) => {
             // Process death always retires the session, whatever turn (if
@@ -2239,6 +2324,7 @@ function createRunner(opts) {
           sessionId: thread.sessionId || null,
           model: thread.model || null,
           interactive,
+          envExtra: otelEnv,
           onEvent,
           onExit,
           onError,
@@ -2538,6 +2624,13 @@ function createRunner(opts) {
                   done: true,
                 },
               });
+              noteToolSpan(
+                threadId,
+                runId,
+                existing.tool.id,
+                existing.tool.name,
+                isError,
+              );
             }
           }
           store.save();
@@ -2898,6 +2991,7 @@ function createRunner(opts) {
                   done: true,
                 },
               });
+              noteToolSpan(threadId, runId, tool.id, tool.name, tool.isError);
             }
           } else {
             // single fire-and-complete
@@ -3301,6 +3395,7 @@ function createRunner(opts) {
                   done: true,
                 },
               });
+              noteToolSpan(threadId, runId, tool.id, tool.name, tool.isError);
             }
           } else {
             const toolMeta = {
@@ -3548,12 +3643,24 @@ function createRunner(opts) {
       }
 
       const worker = services.forkWorkerThread(store, { threadId });
+      // The fork itself is a span (issue #280 asks for thread/fork/tool), and
+      // it parents the worker's run so the crew reads as one trace tree. It
+      // closes as soon as the worker is launched — the worker outliving its
+      // parent span is normal for an async hand-off.
+      const forkRunId = randomUUID();
+      otel.startRun({
+        threadId,
+        runId: forkRunId,
+        provider: resolveProvider(thread),
+        model: thread.model || null,
+      });
       let started;
       try {
         started = await startRun({
           threadId: worker.id,
           prompt,
           attachments,
+          parentRunId: forkRunId,
         });
       } catch (err) {
         // The worker could not start (missing CLI, budget gate, worktree
@@ -3565,10 +3672,16 @@ function createRunner(opts) {
           /* best effort */
         }
         pushThreadsChanged();
+        otel.endRun({
+          threadId,
+          runId: forkRunId,
+          status: "failed",
+          error: shortError(String((err && err.message) || err)),
+        });
         throw err;
       }
 
-      const forkRunId = randomUUID();
+      otel.endRun({ threadId, runId: forkRunId, status: "done" });
       appendMessage(threadId, "user", prompt, forkRunId, null, attachments);
       appendMessage(
         threadId,
@@ -3615,6 +3728,13 @@ function createRunner(opts) {
     });
 
     const runId = randomUUID();
+    otel.startRun({
+      threadId,
+      runId,
+      provider,
+      model: thread.model || null,
+      parentRunId: input.parentRunId || null,
+    });
     // Transcript stores the RAW user prompt. The hand-off context block (if
     // any) is CLI-only — applied once below when handoffFrom is set and no
     // sessionId exists yet.
@@ -3957,12 +4077,19 @@ function createRunner(opts) {
   }
 
   /**
-   * Await drain of the session transcript queue (tests / app-quit).
+   * Await drain of the fire-and-forget exporters (tests / app-quit): the
+   * session transcript queue and buffered OTel spans.
    * @returns {Promise<void>}
    */
   async function flushTranscripts() {
     try {
       await sessionRecorder.flush();
+    } catch {
+      // silent
+    }
+    try {
+      await otel.flush();
+      otel.stop();
     } catch {
       // silent
     }
