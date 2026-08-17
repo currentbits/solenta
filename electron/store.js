@@ -555,8 +555,11 @@ function recoverInterruptedRuns(data) {
 /**
  * JSON persistence for Solenta main-process state.
  * Constructor takes a file path; load on start; tolerate missing/corrupt.
- * Atomic-ish save: write tmp then rename. Debounced flushes (save()) write
- * off the event loop; saveNow() is the synchronous exit/shutdown/test path.
+ * An unreadable main file is renamed to *.corrupt-<ts> (never discarded)
+ * and a sibling *.bak (last good snapshot from a prior successful load)
+ * is tried before falling back to empty. Atomic save: write tmp, fsync,
+ * then rename. Debounced flushes (save()) write off the event loop;
+ * saveNow() is the synchronous exit/shutdown/test path.
  */
 class Store {
   /**
@@ -580,49 +583,88 @@ class Store {
     }
   }
 
+  /**
+   * Read, parse and normalize one store file. Throws on missing, unreadable
+   * or unparseable input so callers can quarantine or fall through to backup.
+   * @param {string} filePath
+   * @returns {object}
+   */
+  _readFile(filePath) {
+    const raw = fs.readFileSync(filePath, "utf8");
+    const parsed = JSON.parse(raw);
+    const threads = Array.isArray(parsed.threads)
+      ? parsed.threads.map(migrateThread)
+      : [];
+    const data = {
+      projects: Array.isArray(parsed.projects)
+        ? parsed.projects.map(migrateProject)
+        : [],
+      threads,
+      messagesByThread:
+        parsed.messagesByThread && typeof parsed.messagesByThread === "object"
+          ? parsed.messagesByThread
+          : {},
+      workLogByThread:
+        parsed.workLogByThread && typeof parsed.workLogByThread === "object"
+          ? parsed.workLogByThread
+          : {},
+      usageByThread:
+        parsed.usageByThread && typeof parsed.usageByThread === "object"
+          ? parsed.usageByThread
+          : {},
+      workflowTemplates: Array.isArray(parsed.workflowTemplates)
+        ? parsed.workflowTemplates.map(migrateTemplateKimiModels)
+        : [],
+      spendByDay: normalizeSpendByDay(parsed.spendByDay),
+      automations: Array.isArray(parsed.automations)
+        ? parsed.automations.map(migrateAutomation)
+        : [],
+      settings: normalizeSettings(parsed.settings),
+    };
+    ensureWorkflowTemplates(data);
+    this._recoveredOnLoad = recoverInterruptedRuns(data);
+    return data;
+  }
+
   _load() {
     this._recoveredOnLoad = false;
-    try {
-      if (!fs.existsSync(this.filePath)) {
-        return cloneEmpty();
+    const bakPath = `${this.filePath}.bak`;
+    const mainExists = fs.existsSync(this.filePath);
+    if (mainExists) {
+      try {
+        const data = this._readFile(this.filePath);
+        // Last-known-good snapshot from this successful start. Best-effort.
+        try {
+          fs.copyFileSync(this.filePath, bakPath);
+        } catch {
+          // Never fail a load over the rolling backup.
+        }
+        return data;
+      } catch {
+        const corruptPath = `${this.filePath}.corrupt-${Date.now()}`;
+        try {
+          fs.renameSync(this.filePath, corruptPath);
+          console.error(
+            `[store] quarantined unreadable store ${this.filePath} → ${corruptPath}`,
+          );
+        } catch {
+          // Keep going even if the rename fails (file may be locked).
+        }
       }
-      const raw = fs.readFileSync(this.filePath, "utf8");
-      const parsed = JSON.parse(raw);
-      const threads = Array.isArray(parsed.threads)
-        ? parsed.threads.map(migrateThread)
-        : [];
-      const data = {
-        projects: Array.isArray(parsed.projects)
-          ? parsed.projects.map(migrateProject)
-          : [],
-        threads,
-        messagesByThread:
-          parsed.messagesByThread && typeof parsed.messagesByThread === "object"
-            ? parsed.messagesByThread
-            : {},
-        workLogByThread:
-          parsed.workLogByThread && typeof parsed.workLogByThread === "object"
-            ? parsed.workLogByThread
-            : {},
-        usageByThread:
-          parsed.usageByThread && typeof parsed.usageByThread === "object"
-            ? parsed.usageByThread
-            : {},
-        workflowTemplates: Array.isArray(parsed.workflowTemplates)
-          ? parsed.workflowTemplates.map(migrateTemplateKimiModels)
-          : [],
-        spendByDay: normalizeSpendByDay(parsed.spendByDay),
-        automations: Array.isArray(parsed.automations)
-          ? parsed.automations.map(migrateAutomation)
-          : [],
-        settings: normalizeSettings(parsed.settings),
-      };
-      ensureWorkflowTemplates(data);
-      this._recoveredOnLoad = recoverInterruptedRuns(data);
-      return data;
-    } catch {
-      return cloneEmpty();
     }
+
+    // Main missing or unreadable: try the last-known-good backup.
+    if (fs.existsSync(bakPath)) {
+      try {
+        const data = this._readFile(bakPath);
+        console.error(`[store] recovered store from backup ${bakPath}`);
+        return data;
+      } catch {
+        // Both main and backup failed.
+      }
+    }
+
+    return cloneEmpty();
   }
 
   /**
@@ -676,7 +718,17 @@ class Store {
     this._flushPromise = (async () => {
       try {
         await fs.promises.mkdir(dir, { recursive: true });
-        await fs.promises.writeFile(tmp, payload, "utf8");
+        const handle = await fs.promises.open(tmp, "w");
+        try {
+          await handle.writeFile(payload, "utf8");
+          try {
+            await handle.sync();
+          } catch {
+            // fsync is best-effort; still rename so the write is not lost.
+          }
+        } finally {
+          await handle.close();
+        }
         if (this._writeGen === gen && !this._dirty) {
           await fs.promises.rename(tmp, this.filePath);
         }
@@ -725,6 +777,16 @@ class Store {
     const tmp = `${this.filePath}.${process.pid}.${Date.now()}.tmp`;
     const payload = JSON.stringify(this.data, null, 2);
     fs.writeFileSync(tmp, payload, "utf8");
+    try {
+      const fd = fs.openSync(tmp, "r+");
+      try {
+        fs.fsyncSync(fd);
+      } finally {
+        fs.closeSync(fd);
+      }
+    } catch {
+      // fsync is best-effort; still rename so the write is not lost.
+    }
     fs.renameSync(tmp, this.filePath);
   }
 

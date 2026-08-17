@@ -172,6 +172,78 @@ describe("Store", () => {
     assert.deepEqual(store.getThreads(), []);
   });
 
+  it("quarantines corrupt JSON instead of discarding it", () => {
+    const corrupt = "{not valid json!!!";
+    fs.writeFileSync(filePath, corrupt, "utf8");
+    const store = new Store(filePath);
+    assert.deepEqual(store.getProjects(), []);
+    assert.deepEqual(store.getThreads(), []);
+    const quarantined = fs
+      .readdirSync(tmpDir)
+      .filter((n) => n.startsWith("coder-store.json.corrupt-"));
+    assert.equal(quarantined.length, 1);
+    assert.equal(
+      fs.readFileSync(path.join(tmpDir, quarantined[0]), "utf8"),
+      corrupt,
+    );
+    assert.equal(fs.existsSync(filePath), false);
+  });
+
+  it("recovers from .bak when the main file is corrupt", () => {
+    const good = {
+      projects: [{ id: "p-bak", slug: "a/b", name: "b", path: "/x" }],
+      threads: [],
+      messagesByThread: {},
+      workLogByThread: {},
+      usageByThread: {},
+    };
+    fs.writeFileSync(`${filePath}.bak`, JSON.stringify(good), "utf8");
+    fs.writeFileSync(filePath, "{not valid json!!!", "utf8");
+    const store = new Store(filePath);
+    assert.equal(store.getProjects()[0].id, "p-bak");
+    const quarantined = fs
+      .readdirSync(tmpDir)
+      .filter((n) => n.startsWith("coder-store.json.corrupt-"));
+    assert.equal(quarantined.length, 1);
+  });
+
+  it("writes a .bak copy after a successful load", () => {
+    fs.writeFileSync(
+      filePath,
+      JSON.stringify({
+        projects: [{ id: "p1", slug: "a/b", name: "b", path: "/x" }],
+        threads: [],
+        messagesByThread: {},
+        workLogByThread: {},
+      }),
+      "utf8",
+    );
+    const store = new Store(filePath);
+    assert.equal(store.getProjects()[0].id, "p1");
+    assert.equal(fs.existsSync(`${filePath}.bak`), true);
+    const bak = JSON.parse(fs.readFileSync(`${filePath}.bak`, "utf8"));
+    assert.equal(bak.projects[0].id, "p1");
+  });
+
+  it("saveNow does not destroy a quarantined corrupt file", () => {
+    const corrupt = "{not valid json!!!";
+    fs.writeFileSync(filePath, corrupt, "utf8");
+    const store = new Store(filePath);
+    const quarantined = fs
+      .readdirSync(tmpDir)
+      .filter((n) => n.startsWith("coder-store.json.corrupt-"));
+    assert.equal(quarantined.length, 1);
+    const corruptPath = path.join(tmpDir, quarantined[0]);
+    store.setProjects([{ id: "p-new", slug: "a/b", name: "b", path: "/x" }]);
+    store.saveNow();
+    assert.equal(fs.existsSync(corruptPath), true);
+    assert.equal(fs.readFileSync(corruptPath, "utf8"), corrupt);
+    assert.equal(
+      JSON.parse(fs.readFileSync(filePath, "utf8")).projects[0].id,
+      "p-new",
+    );
+  });
+
   it("writes atomically via tmp then rename", () => {
     const store = new Store(filePath);
     store.setProjects([{ id: "p", slug: "a/b", name: "b", path: "/x" }]);
@@ -180,17 +252,22 @@ describe("Store", () => {
     // no leftover tmp in same dir
     const leftovers = fs
       .readdirSync(tmpDir)
-      .filter((n) => n !== "coder-store.json");
+      .filter((n) => n !== "coder-store.json" && n !== "coder-store.json.bak");
     assert.deepEqual(leftovers, []);
   });
 
   it("coalesces a burst of save() into one debounced write", async () => {
     const store = new Store(filePath);
     let writes = 0;
-    const realWrite = fs.promises.writeFile;
-    fs.promises.writeFile = (...args) => {
-      writes += 1;
-      return realWrite(...args);
+    const realOpen = fs.promises.open;
+    fs.promises.open = async (...args) => {
+      const handle = await realOpen(...args);
+      const realWrite = handle.writeFile.bind(handle);
+      handle.writeFile = (...wargs) => {
+        writes += 1;
+        return realWrite(...wargs);
+      };
+      return handle;
     };
     try {
       for (let i = 0; i < 20; i += 1) {
@@ -202,7 +279,7 @@ describe("Store", () => {
       await store.flushPending();
       assert.equal(writes, 1);
     } finally {
-      fs.promises.writeFile = realWrite;
+      fs.promises.open = realOpen;
     }
     assert.equal(new Store(filePath).getProjects()[0].id, "p19");
   });
@@ -217,8 +294,13 @@ describe("Store", () => {
     const gate = new Promise((r) => {
       release = r;
     });
-    const realWrite = fs.promises.writeFile;
-    fs.promises.writeFile = (...args) => gate.then(() => realWrite(...args));
+    const realOpen = fs.promises.open;
+    fs.promises.open = async (...args) => {
+      const handle = await realOpen(...args);
+      const realWrite = handle.writeFile.bind(handle);
+      handle.writeFile = (...wargs) => gate.then(() => realWrite(...wargs));
+      return handle;
+    };
     try {
       await new Promise((r) => setTimeout(r, 300)); // debounce fired, flush gated
       store.setProjects([{ id: "p2", slug: "a/b", name: "b", path: "/x" }]);
@@ -226,13 +308,13 @@ describe("Store", () => {
       release();
       await store.flushPending();
     } finally {
-      fs.promises.writeFile = realWrite;
+      fs.promises.open = realOpen;
     }
     assert.equal(new Store(filePath).getProjects()[0].id, "p2");
     // No leftover tmp files from the discarded flush.
     const leftovers = fs
       .readdirSync(tmpDir)
-      .filter((n) => n !== "coder-store.json");
+      .filter((n) => n !== "coder-store.json" && n !== "coder-store.json.bak");
     assert.deepEqual(leftovers, []);
   });
 
