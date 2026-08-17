@@ -179,6 +179,22 @@ async function suggestCommitMessage(opts) {
   if (!thread) {
     throw new Error(`Unknown thread: ${threadId}`);
   }
+  const d = await diff({ store, threadId });
+  if (d.files.length === 0 && !d.patch.trim()) {
+    throw new Error("No changes to describe");
+  }
+  const prompt = buildPrompt(d);
+
+  // Prefer free on-device fm (#340). Any failure is invisible; fall through.
+  // Tried BEFORE the provider is resolved: fm needs no CLI, no key and no
+  // account, so a thread whose provider is missing or has no print mode still
+  // gets a subject instead of an error.
+  const fmOut = await fmRun(prompt, { env });
+  if (fmOut) {
+    const message = cleanSubject(fmOut);
+    if (message) return { message };
+  }
+
   const entry = getProvider(thread.provider);
   if (!entry) {
     throw new Error(`Provider has no print mode: ${thread.provider}`);
@@ -194,21 +210,8 @@ async function suggestCommitMessage(opts) {
   if (!isBinAvailable(bin, undefined, env)) {
     throw new Error(`${entry.name} CLI is not installed`);
   }
-
-  const d = await diff({ store, threadId });
-  if (d.files.length === 0 && !d.patch.trim()) {
-    throw new Error("No changes to describe");
-  }
-  const prompt = buildPrompt(d);
   // The prompt is the trailing argv element for every provider above.
   args[args.length - 1] = prompt;
-
-  // Prefer free on-device fm (#340). Any failure is invisible; fall through.
-  const fmOut = await fmRun(prompt, { env });
-  if (fmOut) {
-    const message = cleanSubject(fmOut);
-    if (message) return { message };
-  }
 
   const stdout = await runPrint(bin, args, thread.worktreePath || undefined, env);
   const message = extractSubject(entry.id, stdout);

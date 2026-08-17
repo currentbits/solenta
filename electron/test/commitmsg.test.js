@@ -222,10 +222,39 @@ console.log("feat: generated subject");
       suggestCommitMessage({
         store,
         threadId: thread.id,
-        env: { ...process.env, CODER_CLAUDE_BIN: path.join(tmpDir, "missing") },
+        env: {
+          ...process.env,
+          CODER_CLAUDE_BIN: path.join(tmpDir, "missing"),
+          // Without this a real macOS 27 fm would answer and there would be
+          // nothing to reject.
+          CODER_FM_DISABLE: "1",
+        },
       }),
       /not installed/i,
     );
+  });
+
+  it("fm answers even when the provider CLI is missing entirely", async () => {
+    fs.writeFileSync(path.join(repo, "a.txt"), "one\n");
+    const fmBin = path.join(tmpDir, "fake-fm");
+    fs.writeFileSync(
+      fmBin,
+      `#!/usr/bin/env node
+console.log("chore: no billed CLI needed");
+`,
+    );
+    fs.chmodSync(fmBin, 0o755);
+
+    const result = await suggestCommitMessage({
+      store,
+      threadId: thread.id,
+      env: {
+        ...process.env,
+        CODER_CLAUDE_BIN: path.join(tmpDir, "missing"),
+        CODER_FM_BIN: fmBin,
+      },
+    });
+    assert.equal(result.message, "chore: no billed CLI needed");
   });
 
   it("uses fm when it returns a subject and never invokes the provider CLI", async () => {
