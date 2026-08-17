@@ -410,6 +410,36 @@ describe("syncSkills", () => {
     assert.deepEqual(list[0].missingFrom, []);
   });
 
+  it("counts a symlinked skill as installed and copies real content out", () => {
+    const env = { HOME: tmp };
+    activate(env, "claude", "agents", "opencode");
+    const agents = path.join(tmp, ".agents", "skills");
+    const claude = path.join(tmp, ".claude", "skills");
+    writeSkill(agents, "linked", "---\ndescription: Linked\n---\n\nBody.\n");
+    fs.mkdirSync(claude, { recursive: true });
+    // The pre-existing hand-rolled fan-out: a relative link into ~/.agents.
+    fs.symlinkSync(
+      path.join("..", "..", ".agents", "skills", "linked"),
+      path.join(claude, "linked"),
+    );
+
+    // Seen through the link, so claude is NOT drift.
+    const row = listSkills(null, env).find((s) => s.name === "linked");
+    assert.deepEqual(row.installedIn, ["claude", "agents"]);
+    assert.deepEqual(row.missingFrom, ["opencode"]);
+    assert.equal(row.description, "Linked");
+
+    assert.deepEqual(syncSkills(env), { copied: 1, skills: ["linked"] });
+    // opencode sits a level deeper, so a copied-verbatim link would dangle.
+    const dest = path.join(SKILL_DIRS(env).opencode, "linked");
+    assert.equal(fs.lstatSync(dest).isSymbolicLink(), false);
+    assert.equal(
+      fs.readFileSync(path.join(dest, "SKILL.md"), "utf8"),
+      "---\ndescription: Linked\n---\n\nBody.\n",
+    );
+    assert.deepEqual(syncSkills(env), { copied: 0, skills: [] });
+  });
+
   it("skips a name it could never write back instead of aborting the sync", () => {
     const env = { HOME: tmp };
     activate(env, "claude", "agents");

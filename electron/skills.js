@@ -140,6 +140,12 @@ function parseSkillMarkdown(content) {
  * List skills under one base dir: every subdirectory containing a SKILL.md.
  * Context cost is SKILL.md size only (references/ and examples/ are
  * on-demand and never enter context).
+ *
+ * Symlinked entries count. Hand-rolled fan-out by symlink is the common
+ * pre-existing setup (~/.claude/skills pointing into ~/.agents/skills), and
+ * treating those as absent would report the whole library as drift and copy
+ * real content over every link.
+ *
  * @param {string} baseDir
  * @returns {Array<{ name: string, description: string, bytes: number }>}
  */
@@ -153,7 +159,8 @@ function scanSkillDir(baseDir) {
     return out;
   }
   for (const d of dirents) {
-    if (!d.isDirectory()) continue;
+    if (!d.isDirectory() && !d.isSymbolicLink()) continue;
+    // statSync follows the link, so a dangling one just falls into the catch.
     const file = path.join(baseDir, d.name, "SKILL.md");
     let content;
     let bytes;
@@ -378,7 +385,10 @@ function syncSkills(env = process.env) {
       if (info.installedIn.has(target)) continue;
       const destDir = resolveSkillDir(target, name, env);
       fs.mkdirSync(path.dirname(destDir), { recursive: true });
-      fs.cpSync(srcDir, destDir, { recursive: true });
+      // dereference: the source may itself be a symlink, and copying the link
+      // verbatim would leave a relative target that does not resolve from a
+      // destination at a different depth (~/.config/opencode/skills).
+      fs.cpSync(srcDir, destDir, { recursive: true, dereference: true });
       copied += 1;
       didCopy = true;
     }
