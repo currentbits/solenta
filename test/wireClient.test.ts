@@ -239,6 +239,96 @@ describe("createWireCoder disconnect", () => {
   });
 });
 
+describe("createWireCoder offline queue", () => {
+  it("caps the offline queue and rejects the oldest instead of growing forever", async () => {
+    const api = createWireCoder({
+      url: "ws://127.0.0.1:8787",
+      token: "tok-secret",
+      WebSocket: FakeWebSocket as unknown as typeof WebSocket,
+      setTimeout: () => 0,
+    });
+    const ws = lastSocket();
+    ws.open();
+    authOk(ws);
+    ws.readyState = FakeWebSocket.CLOSING;
+    const oldest = api.threads.get("t0");
+    const rest: Array<Promise<unknown>> = [];
+    for (let i = 1; i <= 64; i++) rest.push(api.threads.get(`t${i}`));
+    for (const p of rest) p.catch(() => {});
+    await assert.rejects(oldest, (err: unknown) => {
+      assert.ok(err instanceof Error);
+      assert.match(err.message, /queue full/i);
+      return true;
+    });
+
+    // The survivors are still queued, and the cap holds at 64 on flush.
+    ws.readyState = FakeWebSocket.OPEN;
+    authOk(ws);
+    const got = ws.sent.filter(
+      (m) => m.kind === "invoke" && m.channel === "threads:get",
+    );
+    assert.equal(got.length, 64);
+  });
+
+  it("coalesces identical queued calls into one invoke on reconnect", async () => {
+    const api = createWireCoder({
+      url: "ws://127.0.0.1:8787",
+      token: "tok-secret",
+      WebSocket: FakeWebSocket as unknown as typeof WebSocket,
+      setTimeout: () => 0,
+    });
+    const ws = lastSocket();
+    ws.open();
+    authOk(ws);
+    ws.readyState = FakeWebSocket.CLOSING;
+    // Three ticks of the same poller plus one distinct call.
+    const polls = [api.threads.summaries(), api.threads.summaries(), api.threads.summaries()];
+    const other = api.activity.list();
+    ws.readyState = FakeWebSocket.OPEN;
+    authOk(ws);
+
+    const invokes = ws.sent.filter((m) => m.kind === "invoke");
+    assert.equal(
+      invokes.filter((m) => m.channel === "threads:summaries").length,
+      1,
+      "repeat pollers must share one invoke",
+    );
+    const poll = invokes.find((m) => m.channel === "threads:summaries");
+    assert.ok(poll && poll.kind === "invoke");
+    ws.deliver({ kind: "reply", id: poll.id, result: [{ id: "s1" }] });
+    for (const p of await Promise.all(polls)) {
+      assert.deepEqual(p, [{ id: "s1" }]);
+    }
+    const act = invokes.find((m) => m.channel === "activity:list");
+    assert.ok(act && act.kind === "invoke");
+    ws.deliver({ kind: "reply", id: act.id, result: [] });
+    assert.deepEqual(await other, []);
+  });
+
+  it("rejects an invoke whose reply never arrives", async () => {
+    const fire: Array<() => void> = [];
+    const { api, ws } = connect({
+      setTimeout: (fn, ms) => {
+        if (ms > 30_000) fire.push(fn);
+        return 0;
+      },
+    });
+    authOk(ws);
+    const pending = api.git.push({ threadId: "t1" } as never);
+    assert.equal(fire.length, 1, "invoke must arm a timeout");
+    fire[0]();
+    await assert.rejects(pending, (err: unknown) => {
+      assert.ok(err instanceof Error);
+      assert.match(err.message, /timed out.*git:push/i);
+      return true;
+    });
+    // A late reply for a timed-out id must not throw.
+    const invoke = ws.sent.find((m) => m.kind === "invoke");
+    assert.ok(invoke && invoke.kind === "invoke");
+    ws.deliver({ kind: "reply", id: invoke.id, result: {} });
+  });
+});
+
 describe("createWireCoder reconnect", () => {
   it("backs off, re-auths, re-invokes threads:list, and synthesizes threads:changed", async () => {
     const delays: number[] = [];
@@ -281,7 +371,9 @@ describe("createWireCoder reconnect", () => {
     // on the next auth-ok. Unconditional rejectQueued on close fails this.
     const timers: Array<() => void> = [];
     const { api, ws } = connect({
-      setTimeout: (fn) => {
+      setTimeout: (fn, ms) => {
+        // Only the reconnect timer; per-invoke timeouts are far longer.
+        if (ms > 30_000) return 0;
         timers.push(fn);
         return timers.length;
       },
