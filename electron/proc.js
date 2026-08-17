@@ -32,9 +32,13 @@ function signalGroup(child, sig) {
  */
 function killTree(child, sigkillAfterMs) {
   signalGroup(child, "SIGTERM");
-  return setTimeout(() => {
+  const timer = setTimeout(() => {
     signalGroup(child, "SIGKILL");
   }, sigkillAfterMs);
+  // Unref'd like devservers.js: the escalation still fires while the app runs,
+  // but app quit (which kills without clearing the timer) is not held open 3s.
+  if (typeof timer.unref === "function") timer.unref();
+  return timer;
 }
 
 module.exports = { killTree };
