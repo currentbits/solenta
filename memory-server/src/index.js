@@ -8,6 +8,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { z } from 'zod'
 import { Memory } from './memory.js'
+import { rejectInjectedMemory } from './guardrails-scan.js'
 import { SOURCES } from './trust.js'
 import { runJanitor, readJanitorSnapshot } from './janitor.js'
 import { createRealEmbedder, semanticEnabled } from './embedder.js'
@@ -161,7 +162,19 @@ export function buildServer(memory) {
         force: z.boolean().optional(),
       },
     },
-    async (args) => json(memory.store({ ...args, source: args.source ?? 'mcp' })),
+    async (args) => {
+      // memory_store is the agent write surface. Scan even if the caller
+      // labels source as something else (source: 'app' must not bypass).
+      try {
+        rejectInjectedMemory(args.title, args.body)
+      } catch (err) {
+        if (err instanceof Error && err.message.startsWith('Rejected by Solenta guardrails:')) {
+          throw err
+        }
+        console.error('memory_store guardrail scan failed (non-fatal):', err)
+      }
+      return json(memory.store({ ...args, source: args.source ?? 'mcp' }))
+    },
   )
 
   server.registerTool(

@@ -11,6 +11,7 @@ import {
 import { contentTokens, jaccard, queueReview, semanticNeighbors, SEMANTIC_DUP } from './review.js'
 import { canonicalProject } from './project-key.js'
 import { agentTrust, TRUST_SUSPECT } from './trust.js'
+import { rejectInjectedMemory } from './guardrails-scan.js'
 
 export { contentTokens, jaccard, queueReview }
 
@@ -343,6 +344,19 @@ export class Memory {
         : canonicalProject(cleanText('project', input.project))
     const agent = cleanOptional(input.agent)
     const source = cleanOptional(input.source)
+
+    // Agent-written entries (source 'mcp') are the injection-propagation
+    // channel. App / import / janitor / rest writes are human-initiated.
+    if (source === 'mcp') {
+      try {
+        rejectInjectedMemory(title, body)
+      } catch (err) {
+        if (err instanceof Error && err.message.startsWith('Rejected by Solenta guardrails:')) {
+          throw err
+        }
+        console.error('memory guardrail scan failed (non-fatal):', err)
+      }
+    }
 
     // Write-time dedup: Jaccard vs live same-project-or-global (cap 500 most recent).
     // Scope rule (consistent across dedup, contradiction scan, maintenance):
