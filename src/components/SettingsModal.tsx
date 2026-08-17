@@ -12,6 +12,7 @@ import type {
   AgentProfile,
   AppSettings,
   AppStatus,
+  OtelSettings,
   PermissionMode,
   ProviderInfo,
   ReasoningEffort,
@@ -49,6 +50,34 @@ function settleDaysToInput(value: number | null | undefined): string {
   // null = Never (empty). undefined while loading → treat as empty draft.
   if (value == null) return "";
   return String(value);
+}
+
+const EMPTY_OTEL: OtelSettings = {
+  endpoint: null,
+  headers: {},
+  claudeMetrics: false,
+};
+
+/** ponytail: one `key: value` per line; a row editor if this grows past a handful of headers. */
+export function formatOtelHeaders(headers: Record<string, string>): string {
+  return Object.entries(headers)
+    .filter(([k]) => k)
+    .map(([k, v]) => `${k}: ${v}`)
+    .join("\n");
+}
+
+export function parseOtelHeaders(text: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const idx = trimmed.indexOf(":");
+    if (idx <= 0) continue;
+    const key = trimmed.slice(0, idx).trim();
+    const value = trimmed.slice(idx + 1).trim();
+    if (key) out[key] = value;
+  }
+  return out;
 }
 
 interface ProfileDraft {
@@ -111,6 +140,9 @@ export function SettingsModal({
   const [budgetText, setBudgetText] = useState("");
   const [orchBudgetText, setOrchBudgetText] = useState("");
   const [settleDaysText, setSettleDaysText] = useState("");
+  const [otelEndpoint, setOtelEndpoint] = useState("");
+  const [otelHeadersText, setOtelHeadersText] = useState("");
+  const [otelClaudeMetrics, setOtelClaudeMetrics] = useState(false);
   const [draft, setDraft] = useState<ProfileDraft | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -132,11 +164,15 @@ export function SettingsModal({
       budgetToInput(settings?.orchestrationBudgetUsd ?? null),
     );
     setSettleDaysText(settleDaysToInput(settings?.autoSettleAfterDays ?? null));
+    const otel = settings?.otel ?? EMPTY_OTEL;
+    setOtelEndpoint(otel.endpoint ?? "");
+    setOtelHeadersText(formatOtelHeaders(otel.headers));
+    setOtelClaudeMetrics(otel.claudeMetrics);
     setDraft(null);
     setError(null);
     setSaving(false);
     savingRef.current = false;
-  }, [open, settings?.dailyBudgetUsd, settings?.orchestrationBudgetUsd, settings?.autoSettleAfterDays]);
+  }, [open, settings?.dailyBudgetUsd, settings?.orchestrationBudgetUsd, settings?.autoSettleAfterDays, settings?.otel]);
 
   const handleClose = useCallback(() => {
     onClose();
@@ -229,6 +265,51 @@ export function SettingsModal({
         settleDaysText.trim() !== "");
     if (same && error == null) return;
     void save();
+  };
+
+  const persistOtel = async (next: OtelSettings): Promise<boolean> => {
+    if (savingRef.current) return false;
+    savingRef.current = true;
+    setSaving(true);
+    setError(null);
+    try {
+      const saved = await onSaveSettings({ otel: next });
+      const otel = saved.otel ?? next;
+      setOtelEndpoint(otel.endpoint ?? "");
+      setOtelHeadersText(formatOtelHeaders(otel.headers));
+      setOtelClaudeMetrics(otel.claudeMetrics);
+      return true;
+    } catch (err) {
+      const msg =
+        err instanceof Error && err.message
+          ? err.message
+          : "Failed to save settings";
+      setError(msg);
+      return false;
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
+  };
+
+  const otelFromDrafts = (): OtelSettings => ({
+    endpoint: otelEndpoint.trim() === "" ? null : otelEndpoint.trim(),
+    headers: parseOtelHeaders(otelHeadersText),
+    claudeMetrics: otelClaudeMetrics,
+  });
+
+  const onBlurOtelEndpoint = () => {
+    const current = settings?.otel?.endpoint ?? null;
+    const next = otelEndpoint.trim() === "" ? null : otelEndpoint.trim();
+    if (next === current && error == null) return;
+    void persistOtel(otelFromDrafts());
+  };
+
+  const onBlurOtelHeaders = () => {
+    const current = formatOtelHeaders(settings?.otel?.headers ?? {});
+    const next = formatOtelHeaders(parseOtelHeaders(otelHeadersText));
+    if (next === current && error == null) return;
+    void persistOtel(otelFromDrafts());
   };
 
   const persistProfiles = async (next: AgentProfile[]): Promise<boolean> => {
@@ -539,6 +620,99 @@ export function SettingsModal({
               <p className={styles.note}>
                 Only fires while the window is in the background. Mute a
                 single noisy thread from its snooze menu in the sidebar.
+              </p>
+            </div>
+          </section>
+
+          <section className={styles.section} data-otel-settings="">
+            <h3 className={styles.sectionLabel}>OpenTelemetry</h3>
+            {error && (
+              <p className={styles.fieldError} role="alert">
+                {error}
+              </p>
+            )}
+            <div className={styles.field}>
+              <label className={styles.fieldLabel} htmlFor="otel-endpoint">
+                OTLP endpoint
+              </label>
+              <input
+                id="otel-endpoint"
+                className={styles.input}
+                type="url"
+                inputMode="url"
+                autoComplete="off"
+                spellCheck={false}
+                placeholder="http://127.0.0.1:4318"
+                value={otelEndpoint}
+                disabled={saving || settings == null}
+                data-otel-endpoint=""
+                onChange={(e) => {
+                  setOtelEndpoint(e.target.value);
+                  setError(null);
+                }}
+                onBlur={() => onBlurOtelEndpoint()}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    void persistOtel(otelFromDrafts());
+                  }
+                }}
+              />
+              <p className={styles.note}>
+                Empty turns export off entirely. Spans POST to
+                {" "}
+                <span className={styles.monoNote}>&lt;endpoint&gt;/v1/traces</span>
+                .
+              </p>
+            </div>
+            <div className={styles.field}>
+              <label className={styles.fieldLabel} htmlFor="otel-headers">
+                Export headers
+              </label>
+              <textarea
+                id="otel-headers"
+                className={styles.textarea}
+                rows={3}
+                spellCheck={false}
+                placeholder="Authorization: Bearer ..."
+                value={otelHeadersText}
+                disabled={saving || settings == null}
+                data-otel-headers=""
+                onChange={(e) => {
+                  setOtelHeadersText(e.target.value);
+                  setError(null);
+                }}
+                onBlur={() => onBlurOtelHeaders()}
+              />
+              <p className={styles.note}>
+                One <span className={styles.monoNote}>key: value</span> per
+                line. Used as extra headers on every OTLP POST (collector
+                auth).
+              </p>
+            </div>
+            <div className={styles.field}>
+              <label className={styles.fieldRow}>
+                <input
+                  type="checkbox"
+                  data-otel-claude-metrics=""
+                  checked={otelClaudeMetrics}
+                  disabled={saving || settings == null}
+                  onChange={(e) => {
+                    const claudeMetrics = e.target.checked;
+                    setOtelClaudeMetrics(claudeMetrics);
+                    setError(null);
+                    void persistOtel({
+                      ...otelFromDrafts(),
+                      claudeMetrics,
+                    });
+                  }}
+                />
+                <span>Also export Claude Code&apos;s native metrics</span>
+              </label>
+              <p className={styles.note}>
+                Does nothing unless an endpoint is set. Points Claude Code
+                at the same collector so its native metrics land beside our
+                spans.
               </p>
             </div>
           </section>
