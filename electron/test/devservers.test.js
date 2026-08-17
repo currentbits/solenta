@@ -9,6 +9,7 @@ const {
   captureServerUrl,
   detectScripts,
   scriptsFromPackageJson,
+  appendLog,
 } = require("../devservers.js");
 
 const temps = [];
@@ -107,5 +108,48 @@ describe("detectScripts", () => {
       scriptsFromPackageJson({ scripts: { dev: "   ", start: "node ." } }),
       ["start"],
     );
+  });
+});
+
+describe("appendLog", () => {
+  function fresh() {
+    return {
+      pid: 0,
+      script: "dev",
+      startedAt: 0,
+      url: null,
+      lines: [],
+      pending: "",
+      dead: false,
+      deadAt: null,
+    };
+  }
+
+  it("rewrites carriage-return progress without growing pending or flooding lines", () => {
+    const rec = fresh();
+    for (let i = 0; i < 200; i++) {
+      appendLog(rec, `building ${i}%\r`);
+    }
+    assert.ok(rec.pending.length < 100);
+    assert.equal(rec.lines.length, 0);
+  });
+
+  it("caps a giant newline-less chunk to PENDING_LIMIT", () => {
+    const rec = fresh();
+    appendLog(rec, "x".repeat(10_000));
+    assert.equal(rec.pending.length, 4096);
+  });
+
+  it("captures a Local URL and pushes that line", () => {
+    const rec = fresh();
+    appendLog(rec, "  Local: http://localhost:5173/\n");
+    assert.equal(rec.url, "http://localhost:5173/");
+    assert.deepEqual(rec.lines, ["  Local: http://localhost:5173/"]);
+  });
+
+  it("treats \\r\\n as a newline, not a blank rewrite", () => {
+    const rec = fresh();
+    appendLog(rec, "a\r\nb\n");
+    assert.deepEqual(rec.lines, ["a", "b"]);
   });
 });

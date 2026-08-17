@@ -6,6 +6,8 @@ const { spawn } = require("node:child_process");
 
 const PREFERRED_SCRIPTS = ["dev", "start", "serve"];
 const RING_LIMIT = 50;
+const PENDING_LIMIT = 4096;
+const DEAD_TTL_MS = 5 * 60_000;
 const KILL_FALLBACK_MS = 3_000;
 
 /** @type {RegExp} */
@@ -72,6 +74,7 @@ function detectScripts(root) {
  *   lines: string[],
  *   pending: string,
  *   dead: boolean,
+ *   deadAt: number | null,
  * }} DevServerRecord
  */
 
@@ -98,6 +101,14 @@ function isAlive(pid) {
 
 /**
  * @param {DevServerRecord} rec
+ */
+function markDead(rec) {
+  rec.dead = true;
+  if (!rec.deadAt) rec.deadAt = Date.now();
+}
+
+/**
+ * @param {DevServerRecord} rec
  * @param {string} chunk
  */
 function appendLog(rec, chunk) {
@@ -106,10 +117,19 @@ function appendLog(rec, chunk) {
     rec.url = captureServerUrl(rec.pending + text) || captureServerUrl(text);
   }
   rec.pending += text;
-  const parts = rec.pending.split(/\r?\n/);
+  const parts = rec.pending.split("\n");
   rec.pending = parts.pop() || "";
   for (const line of parts) {
-    rec.lines.push(line);
+    // \r rewrites the line, so keep only what a terminal would still show.
+    // Strip a trailing \r first (\r\n is just a newline, not a blank rewrite).
+    const shown = line.replace(/\r+$/, "");
+    rec.lines.push(shown.slice(shown.lastIndexOf("\r") + 1));
+  }
+  const cr = rec.pending.lastIndexOf("\r");
+  if (cr >= 0) rec.pending = rec.pending.slice(cr + 1);
+  if (rec.pending.length > PENDING_LIMIT) {
+    // ponytail: tail-truncate; a URL banner is far shorter than 4 KiB.
+    rec.pending = rec.pending.slice(-PENDING_LIMIT);
   }
   if (rec.lines.length > RING_LIMIT) {
     rec.lines.splice(0, rec.lines.length - RING_LIMIT);
@@ -134,7 +154,7 @@ function lastLinesOf(rec) {
  */
 function toState(rec) {
   const running = !rec.dead && isAlive(rec.pid);
-  if (!running) rec.dead = true;
+  if (!running) markDead(rec);
   /** @type {{ running: boolean, script?: string, url?: string, startedAt?: number, lastLines?: string[] }} */
   const state = { running, script: rec.script, startedAt: rec.startedAt };
   if (rec.url) state.url = rec.url;
@@ -207,6 +227,7 @@ function start(threadId, root, script) {
       lines: [message],
       pending: "",
       dead: true,
+      deadAt: Date.now(),
     };
     records.set(threadId, rec);
     return toState(rec);
@@ -222,6 +243,7 @@ function start(threadId, root, script) {
     lines: [],
     pending: "",
     dead: !pid,
+    deadAt: !pid ? Date.now() : null,
   };
   records.set(threadId, rec);
 
@@ -235,11 +257,11 @@ function start(threadId, root, script) {
   }
   child.on("error", (err) => {
     appendLog(rec, err && err.message ? err.message : String(err));
-    rec.dead = true;
+    markDead(rec);
   });
   child.on("exit", () => {
     const current = records.get(threadId);
-    if (current === rec) rec.dead = true;
+    if (current === rec) markDead(rec);
   });
   if (typeof child.unref === "function") child.unref();
 
@@ -267,7 +289,11 @@ function stop(threadId) {
 function status(threadId) {
   const rec = records.get(threadId);
   if (!rec) return { running: false };
-  return toState(rec);
+  const state = toState(rec);
+  if (rec.dead && rec.deadAt && Date.now() - rec.deadAt > DEAD_TTL_MS) {
+    records.delete(threadId);
+  }
+  return state;
 }
 
 /** Stop every tracked server. Wired into app quit. */
@@ -281,6 +307,7 @@ module.exports = {
   captureServerUrl,
   detectScripts,
   scriptsFromPackageJson,
+  appendLog,
   start,
   stop,
   status,
