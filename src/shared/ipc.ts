@@ -804,6 +804,34 @@ export interface AppSettings {
    * time. Has no effect in an unstamped dev tree (updates stay disabled).
    */
   updateChannel: "prod" | "nightly" | null;
+  /**
+   * Saved agent profiles, in user order. Applying one is exactly the three
+   * per-thread calls the composer already makes (setProvider, then
+   * setReasoningEffort, then setPermissionMode) — a profile stores the
+   * combination, it does not introduce a fourth kind of thread state.
+   */
+  agentProfiles: AgentProfile[];
+}
+
+/**
+ * A named (provider, model, effort, permission) combination — "cheap scout"
+ * vs "deep worker" — selectable from the composer's model picker.
+ *
+ * Order matters when applying: setProvider resets reasoningEffort to null on a
+ * provider switch, so effort must be set after it (see Composer.pickEffort).
+ */
+export interface AgentProfile {
+  /** Stable id; generated at create time, never reused. */
+  id: string;
+  /** Display name, 1-40 chars after trim. */
+  name: string;
+  /** ProviderInfo.id. Kept even when that CLI is not installed. */
+  provider: string;
+  /** Model override id; null = provider default. */
+  model: string | null;
+  /** null = provider default (no --effort flag). */
+  reasoningEffort: ReasoningEffort | null;
+  permissionMode: PermissionMode;
 }
 
 /** A user-registered MCP server entry (settings slice). */

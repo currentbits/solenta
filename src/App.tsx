@@ -710,6 +710,7 @@ export default function App() {
         onRetryDetail={retryDetail}
         project={project}
         providers={providers}
+        agentProfiles={settings?.agentProfiles ?? []}
         workflows={workflows}
         hasProjects={projects.length > 0}
         onAddProject={handleAddProject}
@@ -816,6 +817,7 @@ export default function App() {
           open={settingsOpen}
           onClose={closeSettings}
           settings={settings}
+          providers={providers}
           status={appStatus}
           update={updateStatus}
           onCheckUpdate={checkUpdate}

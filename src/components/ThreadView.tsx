@@ -18,6 +18,7 @@ import type {
   PermissionDecision,
   PermissionMode,
   ProjectInfo,
+  AgentProfile,
   ProviderInfo,
   ReasoningEffort,
   RunStatInfo,
@@ -156,6 +157,8 @@ interface ThreadViewProps {
   onRetryDetail?: () => void;
   project: ProjectInfo | null;
   providers: ProviderInfo[];
+  /** Saved agent profiles from settings; passed through to Composer. */
+  agentProfiles?: AgentProfile[];
   workflows: WorkflowTemplateInfo[];
   hasProjects: boolean;
   onAddProject: () => void;
@@ -1516,6 +1519,7 @@ export const ThreadView = memo(function ThreadView({
   onRetryDetail,
   project,
   providers,
+  agentProfiles = [],
   workflows,
   hasProjects,
   onAddProject,
@@ -2778,6 +2782,7 @@ export const ThreadView = memo(function ThreadView({
         model={thread.model}
         reasoningEffort={thread.reasoningEffort}
         providers={providers}
+        agentProfiles={agentProfiles}
         workflows={workflows}
         onSetProvider={onSetProvider}
         onSetReasoningEffort={onSetReasoningEffort}
