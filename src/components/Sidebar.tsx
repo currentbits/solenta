@@ -9,12 +9,15 @@ import {
 } from "react";
 import autoAnimate from "@formkit/auto-animate";
 import type {
+  ConflictForecast,
+  ConflictPairInfo,
   ProjectInfo,
   ProviderInfo,
   SpaceInfo,
   ThreadInfo,
   UpdateStatus,
 } from "../shared/ipc";
+import { pairsForThread } from "../conflictForecast";
 import { isWebMode } from "../shared/wire";
 import {
   formatRelativeAge,
@@ -249,6 +252,8 @@ interface SidebarProps {
   revealThreadId?: string | null;
   /** Clears revealThreadId once the reveal ran (or the thread is gone). */
   onRevealHandled?: () => void;
+  /** Overlapping-edit forecast for the selected project (issue #249). */
+  conflictForecast?: ConflictForecast | null;
 }
 
 export type SelectOpts = { meta?: boolean; shift?: boolean };
@@ -358,6 +363,55 @@ function StatusBadge({
   return null;
 }
 
+const FORECAST_FILE_CAP = 4;
+
+function forecastTooltip(
+  pairs: ConflictPairInfo[],
+  threadId: string,
+  titles?: ReadonlyMap<string, string>,
+): string {
+  return pairs
+    .map((pair) => {
+      const other = pair.threadA === threadId ? pair.threadB : pair.threadA;
+      const name = titles?.get(other) ?? other;
+      const files =
+        pair.conflicts.length > 0 ? pair.conflicts : pair.overlap;
+      const shown = files.slice(0, FORECAST_FILE_CAP);
+      const extra = files.length - shown.length;
+      const filePart =
+        shown.length === 0
+          ? ""
+          : `: ${shown.join(", ")}${extra > 0 ? ` +${extra} more` : ""}`;
+      return `${name}${filePart}`;
+    })
+    .join("\n");
+}
+
+function ConflictForecastBadge({
+  threadId,
+  forecast,
+  titles,
+}: {
+  threadId: string;
+  forecast?: ConflictForecast | null;
+  titles?: ReadonlyMap<string, string>;
+}) {
+  const pairs = pairsForThread(forecast, threadId);
+  if (pairs.length === 0) return null;
+  const loud = pairs.some((p) => p.conflicts.length > 0);
+  const kind = loud ? "conflict" : "overlap";
+  const label = pairs.length > 1 ? `${kind} · ${pairs.length}` : kind;
+  return (
+    <span
+      className={`${styles.badge} ${loud ? styles.badgeConflict : styles.badgeOverlap}`}
+      data-conflict-forecast={kind}
+      title={forecastTooltip(pairs, threadId, titles)}
+    >
+      {label}
+    </span>
+  );
+}
+
 /** Exported for render tests that need a card without the archived-collapse gate. */
 export function ThreadCard({
   thread,
@@ -384,6 +438,8 @@ export function ThreadCard({
   nested = false,
   wait = null,
   showSlug = true,
+  conflictForecast = null,
+  threadTitles,
 }: {
   thread: ThreadInfo;
   slug: string;
@@ -427,6 +483,10 @@ export function ThreadCard({
    * renders (tests).
    */
   showSlug?: boolean;
+  /** Project forecast; omitted in tests that do not care about #249. */
+  conflictForecast?: ConflictForecast | null;
+  /** Titles for the other side of each pair, used in the tooltip. */
+  threadTitles?: ReadonlyMap<string, string>;
 }) {
   const branch = thread.branch ?? "";
   const prBadge = sidebarPrBadge({
@@ -584,7 +644,14 @@ export function ThreadCard({
               <span className={styles.prLabel}>{prBadge.label}</span>
             ) : null}
           </div>
-          <StatusBadge thread={thread} now={now} wait={wait} />
+          <div className={styles.cardBadges}>
+            <ConflictForecastBadge
+              threadId={thread.id}
+              forecast={conflictForecast}
+              titles={threadTitles}
+            />
+            <StatusBadge thread={thread} now={now} wait={wait} />
+          </div>
         </div>
         {/* Own row, not a chip beside the status badge: on a narrow card the
             branch + PR chip squeeze a chip down to "Waiting on…", which loses
@@ -1190,6 +1257,7 @@ export const Sidebar = memo(function Sidebar({
   onOpenDigest,
   revealThreadId = null,
   onRevealHandled,
+  conflictForecast = null,
 }: SidebarProps) {
   const [query, setQuery] = useState("");
   const [now, setNow] = useState(() => Date.now());
@@ -1282,6 +1350,11 @@ export const Sidebar = memo(function Sidebar({
     }),
     [now, autoSettleAfterDays],
   );
+  const threadTitles = useMemo(() => {
+    const titles = new Map<string, string>();
+    for (const t of threads) titles.set(t.id, t.title);
+    return titles;
+  }, [threads]);
   /** Full-content search results; null means not in active search mode. */
   const [searchResults, setSearchResults] = useState<ThreadInfo[] | null>(null);
   const [searchLoading, setSearchLoading] = useState(false);
@@ -2824,6 +2897,8 @@ export const Sidebar = memo(function Sidebar({
                                 searching &&
                                 !thread.title.toLowerCase().includes(queryLower)
                               }
+                              conflictForecast={conflictForecast}
+                              threadTitles={threadTitles}
                             />
                           ))}
                           {showOverflowToggle && (
@@ -2867,6 +2942,8 @@ export const Sidebar = memo(function Sidebar({
                                   searching &&
                                   !thread.title.toLowerCase().includes(queryLower)
                                 }
+                                conflictForecast={conflictForecast}
+                                threadTitles={threadTitles}
                               />
                             ))}
                           {!searching && archivedThreads.length > 0 && (

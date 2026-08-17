@@ -11,6 +11,7 @@ import type {
   DigestResult,
   CreateProjectInput,
   RunStatInfo,
+  ConflictForecast,
   DevServerState,
   DiffResult,
   GitSyncInfo,
@@ -352,6 +353,8 @@ export interface UseCoderResult {
   restoreCheckpoint: (threadId: string, sha: string) => Promise<void>;
   /** Per-checkpoint-pair shortstat for a thread. Never rejects. */
   runStats: (threadId: string) => Promise<RunStatInfo[]>;
+  /** Predicted merge conflicts between active threads (#249). Never rejects. */
+  conflictForecast: (projectId: string) => Promise<ConflictForecast>;
   /** Local TCP listeners whose cwd is the thread worktree or project. */
   listLocalServers: (threadId: string) => Promise<LocalServerInfo[]>;
   /** Reveal the selected thread root in Finder. */
@@ -1869,6 +1872,17 @@ export function useCoder(): UseCoderResult {
     [api],
   );
 
+  const conflictForecast = useCallback(
+    async (projectId: string) => {
+      try {
+        return await api.git.conflictForecast({ projectId });
+      } catch {
+        return { pairs: [], computedAt: 0 };
+      }
+    },
+    [api],
+  );
+
   const listLocalServers = useCallback(
     async (threadId: string) => {
       try {
@@ -2200,6 +2214,7 @@ export function useCoder(): UseCoderResult {
     listCheckpoints,
     restoreCheckpoint,
     runStats,
+    conflictForecast,
     listLocalServers,
     revealInFinder,
     openInEditor,
