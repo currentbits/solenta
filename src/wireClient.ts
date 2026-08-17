@@ -29,6 +29,7 @@ import type {
   ThreadDetail,
   ThreadInfo,
   ThreadSummaryInfo,
+  UsageByDay,
   WorkflowTemplateInfo,
 } from "./shared/ipc";
 import {
@@ -361,6 +362,9 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
     },
     activity: {
       list: () => call<ActivityItem[]>("activity:list"),
+    },
+    usage: {
+      byDay: () => call<UsageByDay>("usage:byDay"),
     },
     runs: {
       start: (input) => call<{ runId: string }>("runs:start", input),

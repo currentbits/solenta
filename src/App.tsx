@@ -15,6 +15,7 @@ import { KanbanView } from "./components/KanbanView";
 import { PlanboardView, type ThreadStartMode } from "./components/PlanboardView";
 import { AutomationsView } from "./components/AutomationsView";
 import { ActivityView } from "./components/ActivityView";
+import { UsageView } from "./components/UsageView";
 import { AgentsPanel } from "./components/AgentsPanel";
 import { SettingsModal } from "./components/SettingsModal";
 import { ArchiveToast } from "./components/ArchiveToast";
@@ -31,7 +32,8 @@ export type AppView =
   | "planboard"
   | "prs"
   | "automations"
-  | "activity";
+  | "activity"
+  | "usage";
 
 type DrawerId = "sidebar" | "agents";
 
@@ -118,6 +120,7 @@ export default function App() {
     listIssues,
     setIssuePlanStatus,
     listActivity,
+    listUsageByDay,
     listThreadSummaries,
     listCheckpoints,
     restoreCheckpoint,
@@ -201,6 +204,7 @@ export default function App() {
   const openPrs = useCallback(() => setView("prs"), []);
   const openAutomations = useCallback(() => setView("automations"), []);
   const openActivity = useCallback(() => setView("activity"), []);
+  const openUsage = useCallback(() => setView("usage"), []);
   const openSettings = useCallback(() => setSettingsOpen(true), []);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
   const closeChanges = useCallback(() => setChangesOpen(false), []);
@@ -604,6 +608,7 @@ export default function App() {
         onOpenPrs={openPrs}
         onOpenAutomations={openAutomations}
         onOpenActivity={openActivity}
+        onOpenUsage={openUsage}
         onCreateThread={handleCreateThread}
         defaultWorktree={settings?.defaultWorktree ?? false}
         revealThreadId={revealThreadId}
@@ -648,6 +653,8 @@ export default function App() {
               listActivity={listActivity}
               onSelectThread={handleSelectThread}
             />
+          ) : view === "usage" ? (
+            <UsageView loadUsage={listUsageByDay} />
           ) : view === "prs" ? (
             <PrListView
               projects={projects}

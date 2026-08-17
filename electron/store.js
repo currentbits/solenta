@@ -46,6 +46,7 @@ const EMPTY = {
   usageByThread: {},
   workflowTemplates: [],
   spendByDay: {},
+  usageByDay: {},
   automations: [],
   // autoSettleAfterDays defaults to 3 (AUTO_SETTLE_AFTER_DAYS); null = disabled.
   settings: {
@@ -211,9 +212,10 @@ function localDayKey(now = new Date()) {
 }
 
 /**
- * Drop spendByDay keys older than retention days relative to `now`.
+ * Drop day-keyed map entries older than retention days relative to `now`.
+ * Shared by spendByDay and usageByDay so the cutoff maths lives in one place.
  * Mutates the map in place.
- * @param {Record<string, number>} spendByDay
+ * @param {Record<string, unknown>} spendByDay
  * @param {Date} [now]
  */
 function pruneSpendByDay(spendByDay, now = new Date()) {
@@ -343,6 +345,62 @@ function normalizeSpendByDay(raw, now = new Date()) {
         map[k] = v;
       }
     }
+  }
+  pruneSpendByDay(map, now);
+  return map;
+}
+
+/**
+ * @param {unknown} n
+ * @returns {number}
+ */
+function coerceFiniteNumber(n) {
+  const v = Number(n);
+  return Number.isFinite(v) ? v : 0;
+}
+
+/**
+ * Normalize usageByDay map and prune old buckets.
+ * day -> provider -> model -> { costUsd, inputTokens, outputTokens, turns }
+ * Malformed roots/entries are dropped; numbers are coerced.
+ * @param {unknown} raw
+ * @param {Date} [now]
+ * @returns {Record<string, Record<string, Record<string, { costUsd: number, inputTokens: number, outputTokens: number, turns: number }>>>}
+ */
+function normalizeUsageByDay(raw, now = new Date()) {
+  /** @type {Record<string, Record<string, Record<string, { costUsd: number, inputTokens: number, outputTokens: number, turns: number }>>>} */
+  const map = {};
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    pruneSpendByDay(map, now);
+    return map;
+  }
+  for (const [day, providers] of Object.entries(raw)) {
+    if (typeof day !== "string" || !providers || typeof providers !== "object" || Array.isArray(providers)) {
+      continue;
+    }
+    /** @type {Record<string, Record<string, { costUsd: number, inputTokens: number, outputTokens: number, turns: number }>>} */
+    const dayMap = {};
+    for (const [provider, models] of Object.entries(providers)) {
+      if (typeof provider !== "string" || !models || typeof models !== "object" || Array.isArray(models)) {
+        continue;
+      }
+      /** @type {Record<string, { costUsd: number, inputTokens: number, outputTokens: number, turns: number }>} */
+      const modelMap = {};
+      for (const [model, entry] of Object.entries(models)) {
+        if (typeof model !== "string" || !entry || typeof entry !== "object" || Array.isArray(entry)) {
+          continue;
+        }
+        const row = /** @type {{ costUsd?: unknown, inputTokens?: unknown, outputTokens?: unknown, turns?: unknown }} */ (entry);
+        modelMap[model] = {
+          costUsd: coerceFiniteNumber(row.costUsd),
+          inputTokens: coerceFiniteNumber(row.inputTokens),
+          outputTokens: coerceFiniteNumber(row.outputTokens),
+          turns: coerceFiniteNumber(row.turns),
+        };
+      }
+      if (Object.keys(modelMap).length > 0) dayMap[provider] = modelMap;
+    }
+    if (Object.keys(dayMap).length > 0) map[day] = dayMap;
   }
   pruneSpendByDay(map, now);
   return map;
@@ -651,6 +709,7 @@ class Store {
         ? parsed.workflowTemplates.map(migrateTemplateKimiModels)
         : [],
       spendByDay: normalizeSpendByDay(parsed.spendByDay),
+      usageByDay: normalizeUsageByDay(parsed.usageByDay),
       automations: Array.isArray(parsed.automations)
         ? parsed.automations.map(migrateAutomation)
         : [],
@@ -985,6 +1044,53 @@ class Store {
     const key = localDayKey(now);
     const v = this.data.spendByDay[key];
     return typeof v === "number" && Number.isFinite(v) ? v : 0;
+  }
+
+  /**
+   * Add a per-turn usage delta into today's local-day / provider / model bucket.
+   * Tokens are recorded even when costUsd is 0 (subscription providers).
+   * Ignored when provider is missing/empty, or when all three numeric deltas
+   * are 0 / non-finite.
+   * @param {{ provider?: unknown, model?: unknown, costUsd?: unknown, inputTokens?: unknown, outputTokens?: unknown }} input
+   * @param {Date} [now] - injectable clock for tests
+   */
+  recordUsage(input, now = new Date()) {
+    const provider =
+      input && typeof input.provider === "string" ? input.provider : "";
+    if (!provider) return;
+    const costUsd = coerceFiniteNumber(input && input.costUsd);
+    const inputTokens = coerceFiniteNumber(input && input.inputTokens);
+    const outputTokens = coerceFiniteNumber(input && input.outputTokens);
+    if (costUsd === 0 && inputTokens === 0 && outputTokens === 0) return;
+    if (!this.data.usageByDay || typeof this.data.usageByDay !== "object") {
+      this.data.usageByDay = {};
+    }
+    const day = localDayKey(now);
+    const dayMap = this.data.usageByDay[day] && typeof this.data.usageByDay[day] === "object"
+      ? this.data.usageByDay[day]
+      : (this.data.usageByDay[day] = {});
+    const providerMap = dayMap[provider] && typeof dayMap[provider] === "object"
+      ? dayMap[provider]
+      : (dayMap[provider] = {});
+    const model = (input && input.model) || "unknown";
+    const prev = providerMap[model] && typeof providerMap[model] === "object"
+      ? providerMap[model]
+      : { costUsd: 0, inputTokens: 0, outputTokens: 0, turns: 0 };
+    providerMap[model] = {
+      costUsd: coerceFiniteNumber(prev.costUsd) + costUsd,
+      inputTokens: coerceFiniteNumber(prev.inputTokens) + inputTokens,
+      outputTokens: coerceFiniteNumber(prev.outputTokens) + outputTokens,
+      turns: coerceFiniteNumber(prev.turns) + 1,
+    };
+  }
+
+  /**
+   * @returns {Record<string, Record<string, Record<string, { costUsd: number, inputTokens: number, outputTokens: number, turns: number }>>>}
+   */
+  getUsageByDay() {
+    const raw = this.data.usageByDay;
+    if (!raw || typeof raw !== "object") return {};
+    return { ...raw };
   }
 
   /**
@@ -1409,6 +1515,7 @@ function cloneEmpty() {
     usageByThread: {},
     workflowTemplates: [],
     spendByDay: {},
+    usageByDay: {},
     automations: [],
     // autoSettleAfterDays defaults to 3 (AUTO_SETTLE_AFTER_DAYS); null = disabled.
     settings: {
@@ -1439,6 +1546,7 @@ module.exports = {
   RESERVED_MCP_NAMES,
   DEFAULT_AUTO_SETTLE_AFTER_DAYS,
   normalizeSpendByDay,
+  normalizeUsageByDay,
   SPEND_RETENTION_DAYS,
   MAX_MESSAGES_PER_THREAD,
   MESSAGE_OVERFLOW_SLACK,

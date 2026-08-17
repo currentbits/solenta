@@ -132,6 +132,9 @@ const coder = {
   activity: {
     list: () => invoke("activity:list"),
   },
+  usage: {
+    byDay: () => invoke("usage:byDay"),
+  },
   runs: {
     start: (input) => invoke("runs:start", input),
     startWorkflow: (input) => invoke("runs:startWorkflow", input),

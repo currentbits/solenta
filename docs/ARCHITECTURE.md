@@ -97,6 +97,8 @@ Config file (env `CODER_MEMORY_CONFIG` or default under Application Support/code
 projects[], threads[],
 messagesByThread{}, workLogByThread{}, usageByThread{},
 workflowTemplates[], spendByDay{ "YYYY-MM-DD": number },
+usageByDay{ "YYYY-MM-DD": { provider: { model: { costUsd, inputTokens,
+            outputTokens, turns } } } },
 settings: { dailyBudgetUsd: number | null, orchestrationBudgetUsd: number | null,
             autoSettleAfterDays: number | null, mcpServers[],
             defaultWorktree: boolean, defaultOrchestrate: boolean,
