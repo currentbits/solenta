@@ -25,6 +25,7 @@ import type {
   CheckpointInfo,
   CoderApi,
   RunStatInfo,
+  ConflictForecast,
   VerifyResult,
   DiffResult,
   DevServerState,
@@ -3316,6 +3317,27 @@ function buildDevCoder(): CoderApi {
         } catch {
           return [];
         }
+      },
+      async conflictForecast(input: {
+        projectId: string;
+      }): Promise<ConflictForecast> {
+        // ponytail: fake one hotspot between the first two worktree threads of
+        // the project so the browser dev build has something to render.
+        const ids = threads
+          .filter((t) => t.projectId === input.projectId && t.worktreePath)
+          .map((t) => t.id);
+        const pairs =
+          ids.length >= 2
+            ? [
+                {
+                  threadA: ids[0]!,
+                  threadB: ids[1]!,
+                  overlap: ["src/useCoder.ts", "src/shared/ipc.ts"],
+                  conflicts: ["src/shared/ipc.ts"],
+                },
+              ]
+            : [];
+        return { pairs, computedAt: now() };
       },
       async gcScan() {
         const first = projects[0];

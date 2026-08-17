@@ -9,6 +9,7 @@ import type {
   CheckpointInfo,
   CoderApi,
   RunStatInfo,
+  ConflictForecast,
   VerifyResult,
   GcScanResult,
   GcCleanResult,
@@ -419,6 +420,8 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
       repoInfo: (input) => call<GitRepoInfo>("git:repoInfo", input),
       pull: (input) => call<GitPullResult>("git:pull", input),
       runStats: (input) => call<RunStatInfo[]>("git:runStats", input),
+      conflictForecast: (input) =>
+        call<ConflictForecast>("git:conflictForecast", input),
       gcScan: () => call<GcScanResult>("git:gcScan"),
       gcClean: (input) => call<GcCleanResult>("git:gcClean", input),
     },

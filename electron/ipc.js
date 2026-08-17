@@ -22,6 +22,7 @@ const {
   listCheckpoints,
   restoreCheckpoint,
   runStats,
+  conflictForecast,
   gcScan,
   gcClean,
 } = require("./worktrees.js");
@@ -765,6 +766,12 @@ const IPC_HANDLERS = {
     return runStats({
       store: ctx.store,
       threadId: input && input.threadId,
+    });
+  },
+  "git:conflictForecast": async (ctx, input) => {
+    return conflictForecast({
+      store: ctx.store,
+      projectId: input && input.projectId,
     });
   },
   "servers:list": async (ctx, input) => {

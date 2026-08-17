@@ -2525,6 +2525,22 @@ function parseShortstat(text) {
  * @param {string} opts.threadId
  * @returns {Promise<Array<{ sha: string, turn: number, files: number, additions: number, deletions: number }>>}
  */
+/**
+ * Conflict forecast for a project (#249): which pairs of active worktree
+ * threads have overlapping edits, and which of those would actually collide.
+ * Never throws — a project without a repo returns no pairs.
+ *
+ * @param {object} opts
+ * @param {import('./store').Store} opts.store
+ * @param {string} opts.projectId
+ * @returns {Promise<{ pairs: Array<{ threadA: string, threadB: string, overlap: string[], conflicts: string[] }>, computedAt: number }>}
+ */
+async function conflictForecast(opts) {
+  // TODO(#249): implemented by the backend worker.
+  void opts;
+  return { pairs: [], computedAt: Date.now() };
+}
+
 async function runStats(opts) {
   try {
     const { store, threadId } = opts;
@@ -3445,6 +3461,7 @@ module.exports = {
   listCheckpoints,
   restoreCheckpoint,
   runStats,
+  conflictForecast,
   parseShortstat,
   gitTryAsync,
   CHECKPOINT_SUBJECT_PREFIX,
