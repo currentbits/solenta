@@ -747,6 +747,8 @@ function migrateThread(t) {
     snoozedAt: t.snoozedAt !== undefined ? t.snoozedAt : null,
     // Round 49 fork/hand-off: null = not a fork (provenance only).
     handoffFrom: t.handoffFrom !== undefined ? t.handoffFrom : null,
+    // Issue #254 edit-and-resubmit: one-shot context replay after rewind.
+    replayContext: t.replayContext === true,
     // Per-thread desktop-notification mute (issue #87): absent → not muted.
     muted: t.muted === true,
     // Per-thread user scratch pad (issue #194): absent → empty.
@@ -1152,6 +1154,34 @@ class Store {
     const list = this.getWorkLog(threadId).slice();
     list.push(item);
     this.setWorkLog(threadId, list);
+  }
+
+  /**
+   * Drop messageId and every message after it, plus work-log items whose
+   * runId is among the dropped runs. Usage / spend is left alone.
+   * @param {string} threadId
+   * @param {string} messageId
+   * @returns {number} messages dropped (0 when messageId is not in the thread)
+   */
+  truncateFromMessage(threadId, messageId) {
+    const msgs = this.getMessages(threadId);
+    const idx = msgs.findIndex((m) => m && m.id === messageId);
+    if (idx < 0) return 0;
+    const dropped = msgs.slice(idx);
+    const droppedRunIds = new Set();
+    for (const m of dropped) {
+      if (m && m.runId) droppedRunIds.add(m.runId);
+    }
+    this.setMessages(threadId, msgs.slice(0, idx));
+    if (droppedRunIds.size) {
+      this.setWorkLog(
+        threadId,
+        this.getWorkLog(threadId).filter(
+          (w) => !w || !w.runId || !droppedRunIds.has(w.runId),
+        ),
+      );
+    }
+    return dropped.length;
   }
 
   /**

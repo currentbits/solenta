@@ -4046,6 +4046,15 @@ function createRunner(opts) {
       broadcast: pushFn,
     });
 
+    // Prefix is CLI-only and must see the retained tail BEFORE this turn's
+    // user message is appended (rewind replay would otherwise digest itself).
+    const prefix = services.buildHandoffPrefix(thread, (id) =>
+      store.getMessages(id),
+    );
+    if (thread.replayContext) {
+      store.updateThread(threadId, { replayContext: false });
+    }
+
     const runId = randomUUID();
     otel.startRun({
       threadId,
@@ -4054,9 +4063,9 @@ function createRunner(opts) {
       model: thread.model || null,
       parentRunId: input.parentRunId || null,
     });
-    // Transcript stores the RAW user prompt. The hand-off context block (if
-    // any) is CLI-only — applied once below when handoffFrom is set and no
-    // sessionId exists yet.
+    // Transcript stores the RAW user prompt. The hand-off / rewind context
+    // block (if any) is CLI-only — applied once below when no sessionId
+    // exists yet.
     appendMessage(threadId, "user", prompt, runId, null, attachments);
 
     if (droppedWorktree) {
@@ -4105,7 +4114,7 @@ function createRunner(opts) {
     // the self-id note quotes the cwd the CLI actually gets.
     const dispatchThread = store.getThread(threadId) || thread;
     const dispatchPrompt =
-      services.buildHandoffPrefix(thread, (id) => store.getMessages(id)) +
+      prefix +
       String(prompt ?? "") +
       attachmentPromptSection(attachments) +
       services.planboardNoteFor(projectForGate && projectForGate.path) +
