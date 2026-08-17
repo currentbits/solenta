@@ -146,6 +146,11 @@ async function runAutomation(ctx, auto, now, opts) {
       provider: auto.provider,
       model: auto.model,
     });
+    // Before startRun: the run can last minutes and the sidebar should show
+    // the thread as soon as it exists, not when it finishes.
+    if (typeof ctx.broadcast === "function") {
+      ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    }
     await ctx.runner.startRun({
       threadId: thread.id,
       prompt: auto.prompt,
@@ -166,6 +171,7 @@ async function runAutomation(ctx, auto, now, opts) {
   } catch {
     // ignore
   }
+  // Second broadcast: the prune deleted rows the sidebar is still showing.
   if (typeof ctx.broadcast === "function") {
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
   }
