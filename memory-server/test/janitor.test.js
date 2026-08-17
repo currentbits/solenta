@@ -4,8 +4,9 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { Memory } from '../src/memory.js'
-import { runJanitor, scanContradictions, CONTRA_TOP } from '../src/janitor.js'
-import { floatToBlob, l2normalize } from '../src/embedder.js'
+import { runJanitor, scanContradictions, CONTRA_TOP, MAX_PAIRS_PER_ENTRY } from '../src/janitor.js'
+import { floatToBlob, l2normalize, fakeEmbedder } from '../src/embedder.js'
+import { contentTokens, jaccard } from '../src/review.js'
 
 describe('janitor', () => {
   let dir
@@ -258,7 +259,7 @@ describe('contradiction scan embeddings', () => {
     const partnerOf = (row) => (row.entry_a === 'cand' ? row.entry_b : row.entry_a)
     assert.deepEqual(
       rows.map(partnerOf),
-      ['p0', 'p1', 'p2', 'p3', 'p4'],
+      cosines.slice(0, CONTRA_TOP).map((_, i) => `p${i}`),
       'highest cosine partners must be enqueued first',
     )
     for (const row of rows) {
@@ -309,5 +310,209 @@ describe('contradiction scan embeddings', () => {
     }
     const pairs = rows.map((r) => [r.entry_a, r.entry_b].sort().join('+')).sort()
     assert.deepEqual(pairs, ['strong-a+strong-b', 'weak-a+weak-b'])
+  })
+})
+
+describe('contradiction scan via semanticNeighbors (#310)', () => {
+  let dir
+  let memory
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'coder-mem-jan-sn-'))
+    memory = new Memory(path.join(dir, 'memory.db'), {
+      startJanitor: false,
+      embedder: fakeEmbedder(64),
+    })
+  })
+
+  afterEach(() => {
+    memory.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  function openContradictionPairs() {
+    return memory.db
+      .prepare(
+        `SELECT entry_a, entry_b, detail FROM review_queue
+         WHERE kind = 'contradiction' AND resolved_at IS NULL
+         ORDER BY id`,
+      )
+      .all()
+  }
+
+  it('enqueues a one-entity paraphrase Jaccard misses once vectors exist', async () => {
+    const a = memory.store({
+      type: 'knowledge',
+      title: 'production deploys travel through girder over ssh',
+      body: 'the release pipeline uses girder [[Girder]]',
+      project: 'p',
+    })
+    const b = memory.store({
+      type: 'knowledge',
+      title: 'girder carries every production deploy over ssh',
+      body: 'releases go out on girder [[Girder]]',
+      project: 'p',
+    })
+
+    const jac = jaccard(
+      contentTokens(
+        'production deploys travel through girder over ssh the release pipeline uses girder [[Girder]]',
+      ),
+      contentTokens(
+        'girder carries every production deploy over ssh releases go out on girder [[Girder]]',
+      ),
+    )
+    assert.ok(jac < 0.4, `expected Jaccard below 0.4, got ${jac}`)
+
+    await memory.embedEntry(a.id)
+    await memory.embedEntry(b.id)
+
+    const n = scanContradictions(memory.db)
+    assert.equal(n, 1)
+    const rows = openContradictionPairs()
+    assert.equal(rows.length, 1)
+    const ids = new Set([rows[0].entry_a, rows[0].entry_b])
+    assert.ok(ids.has(a.id))
+    assert.ok(ids.has(b.id))
+    assert.match(rows[0].detail ?? '', /shared entities:/)
+    assert.match(rows[0].detail ?? '', /cosine=/)
+  })
+
+  it('caps a hub at MAX_PAIRS_PER_ENTRY when vectors exist', async () => {
+    assert.ok(MAX_PAIRS_PER_ENTRY >= 1)
+    const partnerIds = []
+    for (let i = 0; i < 5; i++) {
+      const { id } = memory.store({
+        type: 'knowledge',
+        title: 'alpha beta gamma delta epsilon zeta eta',
+        body: `overlap body tokens remain here unique${i} [[Spoke${i}]]`,
+        project: 'p',
+        force: true,
+      })
+      partnerIds.push(id)
+      await memory.embedEntry(id)
+    }
+    // Partners share no entity with each other, so this only advances the watermark.
+    assert.equal(scanContradictions(memory.db), 0)
+
+    const spokeLinks = [0, 1, 2, 3, 4].map((i) => `[[Spoke${i}]]`).join(' ')
+    const { id: hubId } = memory.store({
+      type: 'knowledge',
+      title: 'alpha beta gamma delta epsilon zeta eta',
+      body: `overlap body tokens remain here ${spokeLinks}`,
+      project: 'p',
+      force: true,
+    })
+    await memory.embedEntry(hubId)
+
+    const n = scanContradictions(memory.db)
+    assert.ok(n <= MAX_PAIRS_PER_ENTRY, `enqueued ${n}, cap is ${MAX_PAIRS_PER_ENTRY}`)
+    const rows = openContradictionPairs()
+    assert.ok(rows.length <= MAX_PAIRS_PER_ENTRY)
+    for (const row of rows) {
+      assert.ok(row.entry_a === hubId || row.entry_b === hubId)
+      assert.match(row.detail ?? '', /cosine=/)
+    }
+  })
+
+  it('with no vectors, scan produces the same pairs as the lexical contract', () => {
+    // Recreate without an embedder so store() cannot race a vector in.
+    memory.close()
+    memory = new Memory(path.join(dir, 'memory-novec.db'), { startJanitor: false })
+
+    const strongA = memory.store({
+      type: 'knowledge',
+      title: 'Sessions live seven days',
+      body: 'login window via AuthModule and TokenStore',
+      project: 'p',
+      force: true,
+    })
+    const strongB = memory.store({
+      type: 'knowledge',
+      title: 'Logins expire hourly',
+      body: 'credential refresh with AuthModule and TokenStore',
+      project: 'p',
+      force: true,
+    })
+    for (const name of ['AuthModule', 'TokenStore']) {
+      let row = memory.db.prepare(`SELECT id FROM entities WHERE name = ?`).get(name)
+      if (!row) {
+        memory.db
+          .prepare(`INSERT INTO entities (id, name, kind) VALUES (?, ?, 'module')`)
+          .run(`ent-${name}`, name)
+        row = { id: `ent-${name}` }
+      }
+      memory.db
+        .prepare(`INSERT OR IGNORE INTO mentions (entry_id, entity_id) VALUES (?, ?)`)
+        .run(strongA.id, row.id)
+      memory.db
+        .prepare(`INSERT OR IGNORE INTO mentions (entry_id, entity_id) VALUES (?, ?)`)
+        .run(strongB.id, row.id)
+    }
+
+    const weakA = memory.store({
+      type: 'knowledge',
+      title: 'alpha beta gamma delta epsilon zeta eta',
+      body: 'overlap body tokens remain here',
+      project: 'p',
+      force: true,
+    })
+    const weakB = memory.store({
+      type: 'knowledge',
+      title: 'alpha beta gamma delta epsilon theta iota',
+      body: 'overlap body tokens remain here',
+      project: 'p',
+      force: true,
+    })
+    memory.db
+      .prepare(`INSERT INTO entities (id, name, kind) VALUES ('ent-weak', 'OverlapConcept', 'concept')`)
+      .run()
+    memory.db
+      .prepare(`INSERT OR IGNORE INTO mentions (entry_id, entity_id) VALUES (?, 'ent-weak')`)
+      .run(weakA.id)
+    memory.db
+      .prepare(`INSERT OR IGNORE INTO mentions (entry_id, entity_id) VALUES (?, 'ent-weak')`)
+      .run(weakB.id)
+
+    const missA = memory.store({
+      type: 'knowledge',
+      title: 'Alpha claim',
+      body: 'unique zebra phrase only',
+      project: 'p',
+      force: true,
+    })
+    const missB = memory.store({
+      type: 'knowledge',
+      title: 'Beta assertion',
+      body: 'distinct mango wording here',
+      project: 'p',
+      force: true,
+    })
+    memory.db
+      .prepare(`INSERT INTO entities (id, name, kind) VALUES ('ent-miss', 'LonelyHub', 'concept')`)
+      .run()
+    memory.db
+      .prepare(`INSERT OR IGNORE INTO mentions (entry_id, entity_id) VALUES (?, 'ent-miss')`)
+      .run(missA.id)
+    memory.db
+      .prepare(`INSERT OR IGNORE INTO mentions (entry_id, entity_id) VALUES (?, 'ent-miss')`)
+      .run(missB.id)
+
+    const n = scanContradictions(memory.db)
+    assert.equal(n, 2)
+    const rows = openContradictionPairs()
+    assert.equal(rows.length, 2)
+    for (const row of rows) {
+      assert.doesNotMatch(row.detail ?? '', /cosine=/)
+      assert.match(row.detail ?? '', /shared entities:/)
+    }
+    const pairs = rows.map((r) => [r.entry_a, r.entry_b].sort().join('+')).sort()
+    assert.deepEqual(
+      pairs,
+      [
+        [strongA.id, strongB.id].sort().join('+'),
+        [weakA.id, weakB.id].sort().join('+'),
+      ].sort(),
+    )
   })
 })
