@@ -5,6 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { Memory, contentTokens, jaccard, queueReview } from '../src/memory.js'
 import { runJanitor, scanContradictions } from '../src/janitor.js'
+import { l2normalize } from '../src/embedder.js'
 
 describe('token helpers', () => {
   it('normalizes to lowercase words of 3+ chars', () => {
@@ -211,5 +212,114 @@ describe('contradiction scan watermark', () => {
     const snap = runJanitor(memory.db)
     assert.ok(snap)
     assert.equal(typeof snap.queuedContradictions, 'number')
+  })
+})
+
+describe('semantic near-dup on write', () => {
+  let dir
+  let memory
+
+  const nearA = l2normalize(new Float32Array([1, 0, 0, 0]))
+  const nearB = l2normalize(new Float32Array([0.95, Math.sqrt(1 - 0.95 ** 2), 0, 0]))
+  const far = l2normalize(new Float32Array([0, 1, 0, 0]))
+
+  function stubEmbedder() {
+    return {
+      model: 'stub',
+      dim: 4,
+      embed(text) {
+        const s = String(text).toLowerCase()
+        if (s.includes('indigo')) return nearA
+        if (s.includes('maroon')) return nearB
+        return far
+      },
+    }
+  }
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'coder-mem-semdedup-'))
+    memory = new Memory(path.join(dir, 'memory.db'), {
+      startJanitor: false,
+      embedder: stubEmbedder(),
+    })
+  })
+
+  afterEach(() => {
+    memory.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  function openRows() {
+    return memory.db
+      .prepare(
+        `SELECT id, kind, entry_a, entry_b, detail FROM review_queue WHERE resolved_at IS NULL ORDER BY id`,
+      )
+      .all()
+  }
+
+  it('paraphrases below Jaccard warn enqueue near_dup with cosine= detail', async () => {
+    const aText = { title: 'Alpha widget protocol', body: 'uses indigo tokens exclusively' }
+    const bText = { title: 'Zeta gadget scheme', body: 'applies maroon chips instead' }
+    const overlap = jaccard(
+      contentTokens(`${aText.title} ${aText.body}`),
+      contentTokens(`${bText.title} ${bText.body}`),
+    )
+    assert.ok(overlap < 0.4, `jaccard ${overlap} must be below warn`)
+
+    const a = memory.store({ type: 'knowledge', ...aText, project: 'demo' })
+    const b = memory.store({ type: 'knowledge', ...bText, project: 'demo' })
+    await memory.embedEntry(a.id)
+    await memory.embedEntry(b.id)
+    await memory.checkSemanticDup(b.id)
+
+    const rows = openRows()
+    assert.equal(rows.length, 1)
+    assert.equal(rows[0].kind, 'near_dup')
+    assert.match(rows[0].detail ?? '', /cosine=/)
+    const pair = new Set([rows[0].entry_a, rows[0].entry_b])
+    assert.ok(pair.has(a.id))
+    assert.ok(pair.has(b.id))
+  })
+
+  it('dissimilar vectors produce no review row', async () => {
+    const a = memory.store({
+      type: 'knowledge',
+      title: 'Alpha widget protocol',
+      body: 'uses indigo tokens exclusively',
+      project: 'demo',
+    })
+    const b = memory.store({
+      type: 'knowledge',
+      title: 'Deployed the website',
+      body: 'pushed main to production hosting',
+      project: 'demo',
+    })
+    await memory.embedEntry(a.id)
+    await memory.embedEntry(b.id)
+    await memory.checkSemanticDup(b.id)
+    assert.equal(openRows().length, 0)
+  })
+
+  it('skips type task even when vectors match', async () => {
+    const a = memory.store({
+      type: 'knowledge',
+      title: 'Alpha widget protocol',
+      body: 'uses indigo tokens exclusively',
+      project: 'demo',
+    })
+    const b = memory.store({
+      type: 'task',
+      title: 'Rewrite the maroon chips path',
+      body: 'applies maroon chips instead',
+      status: 'active',
+      project: 'demo',
+    })
+    await memory.embedEntry(a.id)
+    await memory.embedEntry(b.id)
+    // The knowledge write's fire-and-forget check may have already matched the
+    // task as a candidate; clear so we only assert the incoming-task skip.
+    memory.db.prepare(`DELETE FROM review_queue`).run()
+    await memory.checkSemanticDup(b.id)
+    assert.equal(openRows().length, 0)
   })
 })

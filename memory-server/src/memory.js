@@ -41,6 +41,8 @@ const SESSION_RETENTION_DAYS = 30
 const DEDUP_BLOCK = 0.7
 const DEDUP_WARN = 0.4
 const DEDUP_SCAN_CAP = 500
+const SEMANTIC_DUP = 0.9
+
 const EMBED_BACKFILL_CAP = 64
 const AGING_RUN_DAYS = 7
 const FAT_CONVENTION_CHARS = 1500
@@ -384,7 +386,10 @@ export class Memory {
     // Fire-and-forget embed; null embedding just skips the row. Safe to
     // interleave with an open janitor transaction: a lost/rolled-back vector
     // is re-created by the janitor's embedMissing backfill on the next pass.
-    void this.embedEntry(id).catch(() => {})
+    // Semantic near-dup is review-only: the real MiniLM embedder is async and
+    // lazily loads a model, so store() stays sync and the hard block stays
+    // lexical. Cosine hits enqueue a pair; they do not refuse the write.
+    void this.embedEntry(id).then(() => this.checkSemanticDup(id)).catch(() => {})
 
     return { id }
   }
@@ -679,6 +684,8 @@ export class Memory {
     try {
       const q = await Promise.resolve(this.embedder.embed(String(query).slice(0, EMBED_MAX_CHARS)))
       if (!q) return []
+      // ponytail: brute-force cosine with a BLOB decode per row is fine at ~10^3
+      // entries; sqlite-vec ANN is the upgrade if the store grows.
       const rows = this.db
         .prepare(
           `SELECT v.entry_id AS id, v.vec AS vec, v.dim AS dim,
@@ -712,6 +719,54 @@ export class Memory {
     } catch (err) {
       console.error('vectorSearch failed (non-fatal):', err)
       return []
+    }
+  }
+
+  /**
+   * After embed, compare this entry's vector to live same-scope vectors.
+   * Best match at or above SEMANTIC_DUP enqueues a near_dup review.
+   * Hits never refuse the write. No-op without embedder. Fail-soft: never throws.
+   * @param {string} id
+   */
+  async checkSemanticDup(id) {
+    if (!this.embedder) return
+    try {
+      const mine = this.db
+        .prepare(
+          `SELECT e.type, e.project, v.vec, v.dim, v.model
+           FROM entry_vectors v
+           JOIN entries e ON e.id = v.entry_id
+           WHERE v.entry_id = ?`,
+        )
+        .get(id)
+      if (!mine || mine.type === 'task') return
+
+      const vec = blobToFloat(mine.vec)
+      const project = mine.project ?? null
+      const rows = this.db
+        .prepare(
+          `SELECT v.entry_id AS id, v.vec AS vec, v.dim AS dim
+           FROM entry_vectors v
+           JOIN entries e ON e.id = v.entry_id
+           WHERE v.model = ?
+             AND v.entry_id != ?
+             AND ${liveSql('e')}
+             AND ${projectScopeSql('e')}`,
+        )
+        .all(mine.model, id, project, project)
+
+      let best = null
+      for (const r of rows) {
+        if (r.dim !== mine.dim) continue
+        const score = cosine(vec, blobToFloat(r.vec))
+        if (!best || score > best.score) best = { id: r.id, score }
+      }
+      if (best && best.score >= SEMANTIC_DUP) {
+        const rounded = Math.round(best.score * 1000) / 1000
+        queueReview(this.db, 'near_dup', id, best.id, `cosine=${rounded}`)
+      }
+    } catch (err) {
+      console.error('checkSemanticDup failed (non-fatal):', err)
     }
   }
 
