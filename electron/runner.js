@@ -601,14 +601,56 @@ function createRunner(opts) {
   }
 
   /**
-   * Pending orchestrator wake-ups: orchestrator threadId -> notice lines.
-   * When an orchWorker's run lands, its parent (handoffFrom) gets a notice
-   * delivered as a new run — immediately when the parent is idle, otherwise
-   * at the parent's own run terminal. The orchestrator no longer needs the
-   * user to relay "the workers are done".
+   * Pending wake-ups: threadId -> notice lines. Worker-finished notices,
+   * peer messages, and task-unblock pokes share this one queue. Idle
+   * threads start a run immediately; a running thread flushes at its own
+   * terminal. The orchestrator no longer needs the user to relay.
    * @type {Map<string, string[]>}
    */
   const orchNotices = new Map();
+
+  /**
+   * Consecutive machine-delivered turns per thread (issue #277). A notice
+   * flush increments; a user-initiated startRun resets to 0. At
+   * CREW_AUTO_TURN_CAP the next flush is refused through the same
+   * undeliverable path as the orchestration-budget gate.
+   * @type {Map<string, number>}
+   */
+  const autoTurns = new Map();
+
+  /**
+   * Append a line to the notice queue. Caller already checked the thread
+   * exists. Does not flush.
+   * @param {string} threadId
+   * @param {string} line
+   */
+  function enqueueNotice(threadId, line) {
+    const notes = orchNotices.get(threadId) || [];
+    notes.push(line);
+    orchNotices.set(threadId, notes);
+  }
+
+  /**
+   * Queue a line for a thread and try to deliver it as a run. Same rules as
+   * worker-finished notices: idle threads start immediately, a running
+   * thread flushes at its own terminal. The caller owns the prefix (peer
+   * lines arrive as `[peer from …]`); do not add `[orchestration]`.
+   * Unknown threadId is a silent no-op. Never throws.
+   * @param {{ threadId?: unknown, line?: unknown }} [input]
+   */
+  function deliverNotice(input) {
+    try {
+      const threadId =
+        input && input.threadId != null ? String(input.threadId) : "";
+      if (!threadId || !store.getThread(threadId)) return;
+      const line = input && input.line != null ? String(input.line) : "";
+      if (!line) return;
+      enqueueNotice(threadId, line);
+      flushOrchNotices(threadId);
+    } catch {
+      // silent
+    }
+  }
 
   /**
    * Queue a worker-finished notice for the worker's orchestrator, then try
@@ -631,13 +673,25 @@ function createRunner(opts) {
       }
     }
     const title = thread.title ? ` ("${thread.title}")` : "";
-    const notes = orchNotices.get(parentId) || [];
-    notes.push(
+    enqueueNotice(
+      parentId,
       `Worker thread ${threadId}${title} finished with status ${status}.` +
         (line ? ` Last reply: ${line}` : ""),
     );
-    orchNotices.set(parentId, notes);
     flushOrchNotices(parentId);
+  }
+
+  /**
+   * Join queued lines into the run prompt. Lines that already start with
+   * `[` (peer / caller-prefixed) keep that prefix; worker-finished lines
+   * still get `[orchestration]`.
+   * @param {string[]} notes
+   * @returns {string}
+   */
+  function noticePrompt(notes) {
+    const body = notes.join("\n");
+    const headed = /^\s*\[/.test(body) ? body : "[orchestration] " + body;
+    return headed + "\nContinue orchestrating; thread_status has full details.";
   }
 
   /**
@@ -652,18 +706,22 @@ function createRunner(opts) {
     if (active.has(threadId)) return;
     orchNotices.delete(threadId);
     if (!store.getThread(threadId)) return;
-    const prompt =
-      "[orchestration] " +
-      notes.join("\n") +
-      "\nContinue orchestrating; thread_status has full details.";
-    // Per-orchestration ceiling (issue #67): refuse the wake-up when this
-    // crew's collective spend reached the cap. Checked here, not in startRun,
-    // so user-sent turns (and "Retry turn" after raising the cap) still run.
-    // The catch below surfaces the refusal exactly like the daily-budget gate.
+    const prompt = noticePrompt(notes);
+    // Per-orchestration ceiling (issue #67) and consecutive auto-turn cap
+    // (issue #277): refuse the wake-up here, not in startRun, so user-sent
+    // turns (and "Retry turn" after raising a cap) still run. The catch
+    // below surfaces the refusal exactly like the daily-budget gate.
     Promise.resolve()
       .then(() => {
         services.assertUnderOrchestrationBudget(store, threadId);
-        return startRun({ threadId, prompt });
+        const n = autoTurns.get(threadId) || 0;
+        if (n >= services.CREW_AUTO_TURN_CAP) {
+          throw new Error(
+            `Crew auto-turn cap reached (${services.CREW_AUTO_TURN_CAP} consecutive machine-delivered turns). A human turn resets it.`,
+          );
+        }
+        autoTurns.set(threadId, n + 1);
+        return startRun({ threadId, prompt, fromNotice: true });
       })
       .catch((err) => {
       // Undeliverable (budget gate, missing CLI): the orchestration stops
@@ -700,6 +758,14 @@ function createRunner(opts) {
    * @param {string} threadId
    */
   function afterFailedTurn(threadId) {
+    try {
+      const failed = store.getThread(threadId);
+      const outcome =
+        failed && failed.lastError ? String(failed.lastError) : "failed";
+      services.releaseCrewTasks(store, { threadId, outcome });
+    } catch {
+      // silent
+    }
     try {
       queueOrchNotice(threadId, "failed");
       flushOrchNotices(threadId);
@@ -3942,6 +4008,10 @@ function createRunner(opts) {
       throw new Error(`Unknown thread: ${threadId}`);
     }
 
+    // Machine-delivered turns increment autoTurns in flushOrchNotices.
+    // Anything else (user send, retry, verify fix) is a human in the loop.
+    if (!input.fromNotice) autoTurns.set(threadId, 0);
+
     // Orchestrator thread (issue #202): the first prompt is not run here. It
     // is forked to a worker that holds the worktree and does the work; from
     // the second prompt on the flag is gone and this thread runs its own LLM,
@@ -4131,7 +4201,8 @@ function createRunner(opts) {
         dispatchThread.worktreePath ||
           (projectForGate && projectForGate.path) ||
           null,
-      );
+      ) +
+      services.crewTaskNoteFor(store, dispatchThread);
 
     const name = workflowNameFromThreadId(threadId);
 
@@ -4218,7 +4289,9 @@ function createRunner(opts) {
     if (pending && pending.length > 0) {
       // Same trace as flushOrchNotices' undeliverable path: the orchestrator
       // still sees what its crew did, as an event that starts no run.
-      appendMessage(threadId, "event", "[orchestration] " + pending.join("\n"));
+      const body = pending.join("\n");
+      const headed = /^\s*\[/.test(body) ? body : "[orchestration] " + body;
+      appendMessage(threadId, "event", headed);
     }
     return { stopped, traced: !!(pending && pending.length > 0) };
   }
@@ -4469,6 +4542,7 @@ function createRunner(opts) {
     getPendingPermission,
     respondPermission,
     disposeClaudeSession,
+    deliverNotice,
   };
 }
 
