@@ -293,10 +293,10 @@ function createToolHandlers(deps) {
         break;
       }
     }
-    // Failed runs append a "Run error: ..." event (result subtype, exit code,
-    // stderr tail); surface it so orchestrators can see WHY, not just that.
-    let lastError = null;
-    if (thread.status === "failed") {
+    // Prefer the stored reason (issue #140). Fall back to a "Run error: ..."
+    // event for threads that failed before lastError was persisted.
+    let lastError = thread.lastError ? String(thread.lastError) : null;
+    if (!lastError && thread.status === "failed") {
       for (let i = msgs.length - 1; i >= 0; i--) {
         const m = msgs[i];
         if (m && m.role === "event" && /^Run error/.test(String(m.text || ""))) {
