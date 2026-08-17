@@ -541,7 +541,7 @@ export function providerDetail(
 export interface ProfileRow {
   id: string;
   name: string;
-  /** Compact "model · effort · permission" line, with Default for nulls. */
+  /** Compact "provider · model · effort · permission" line. */
   summary: string;
   provider: string;
   model: string | null;
@@ -551,14 +551,28 @@ export interface ProfileRow {
   disabledReason: string | null;
 }
 
-/** Compact summary for a profile row. Null model/effort render as Default. */
-export function profileSummary(profile: AgentProfile): string {
+/**
+ * Compact summary of what a profile resolves to. Null model/effort render as
+ * Default; the model shows its ModelInfo label when the registry knows the id,
+ * so a profile reads "Opus (1M context)" and not "claude-opus-5".
+ *
+ * Shared by the picker rows and the Settings list — the same profile must not
+ * describe itself two different ways in two places.
+ */
+export function profileSummary(
+  profile: AgentProfile,
+  providers: readonly ProviderInfo[],
+): string {
+  const info = providers.find((p) => p.id === profile.provider);
   const model =
-    profile.model == null || profile.model === "" ? "Default" : profile.model;
+    profile.model == null || profile.model === ""
+      ? "Default"
+      : (info?.modelInfo.find((m) => m.id === profile.model)?.label ??
+        profile.model);
   const effort = effortDisplayLabel(profile.reasoningEffort);
   const permission =
     PERMISSION_MODE_LABELS[profile.permissionMode] ?? profile.permissionMode;
-  return `${model} · ${effort} · ${permission}`;
+  return `${info?.name ?? profile.provider} · ${model} · ${effort} · ${permission}`;
 }
 
 /**
@@ -577,7 +591,7 @@ export function buildProfileRows(
     return {
       id: p.id,
       name: p.name,
-      summary: profileSummary(p),
+      summary: profileSummary(p, regs),
       provider: p.provider,
       model: p.model,
       reasoningEffort: p.reasoningEffort,

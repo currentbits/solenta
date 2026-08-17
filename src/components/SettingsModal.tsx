@@ -3,7 +3,11 @@ import {
   PERMISSION_MODE_LABELS,
   PERMISSION_MODES,
 } from "../format";
-import { CUSTOM_MODEL_ID, effortDisplayLabel } from "../modelPicker";
+import {
+  CUSTOM_MODEL_ID,
+  effortDisplayLabel,
+  profileSummary,
+} from "../modelPicker";
 import type {
   AgentProfile,
   AppSettings,
@@ -90,24 +94,6 @@ function draftFromProfile(
     permissionMode: profile.permissionMode,
     customModel: profile.model != null && !known,
   };
-}
-
-function profileSummary(
-  profile: AgentProfile,
-  providers: readonly ProviderInfo[],
-): string {
-  const provider = providers.find((p) => p.id === profile.provider);
-  const modelInfo = provider?.modelInfo.find((m) => m.id === profile.model);
-  const model =
-    profile.model == null || profile.model === ""
-      ? "Default"
-      : (modelInfo?.label ?? profile.model);
-  return [
-    provider?.name ?? profile.provider,
-    model,
-    effortDisplayLabel(profile.reasoningEffort),
-    PERMISSION_MODE_LABELS[profile.permissionMode] ?? profile.permissionMode,
-  ].join(" · ");
 }
 
 export function SettingsModal({

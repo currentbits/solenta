@@ -75,10 +75,27 @@ describe("buildProfileRows", () => {
 });
 
 describe("profileSummary", () => {
-  it("joins model, effort, and permission", () => {
+  it("joins provider, model, effort, and permission", () => {
     assert.equal(
-      profileSummary(profile()),
-      "haiku · Low · Plan mode",
+      profileSummary(profile(), LIST),
+      "Claude Code · haiku · Low · Plan mode",
+    );
+  });
+
+  it("prefers the ModelInfo label over the raw id", () => {
+    const known = p({
+      modelInfo: [
+        {
+          id: "haiku",
+          label: "Haiku 4.5",
+          description: "",
+          vendor: "Anthropic",
+        },
+      ],
+    });
+    assert.equal(
+      profileSummary(profile(), [known]),
+      "Claude Code · Haiku 4.5 · Low · Plan mode",
     );
   });
 
@@ -86,13 +103,24 @@ describe("profileSummary", () => {
     assert.equal(
       profileSummary(
         profile({ model: null, reasoningEffort: null, permissionMode: "default" }),
+        LIST,
       ),
-      "Default · Default · Ask first",
+      "Claude Code · Default · Default · Ask first",
     );
   });
 
   it("says Default for an empty model id", () => {
-    assert.match(profileSummary(profile({ model: "" })), /^Default · /);
+    assert.match(
+      profileSummary(profile({ model: "" }), LIST),
+      /^Claude Code · Default · /,
+    );
+  });
+
+  it("falls back to the raw provider id when the registry has none", () => {
+    assert.equal(
+      profileSummary(profile({ provider: "nope", model: null }), LIST),
+      "nope · Default · Low · Plan mode",
+    );
   });
 });
 
