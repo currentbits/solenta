@@ -58,6 +58,7 @@ export default function App() {
   const {
     api,
     projects,
+    spaces,
     threads,
     providers,
     workflows,
@@ -72,6 +73,10 @@ export default function App() {
     addProject,
     createProject,
     updateProject,
+    addSpace,
+    renameSpace,
+    removeSpace,
+    assignProjectToSpace,
     createThread,
     forkThread,
     startRun,
@@ -580,6 +585,7 @@ export default function App() {
         searchPlaceholder="Search threads…"
         projectsHeader="All projects"
         projects={projects}
+        spaces={spaces}
         threads={threads}
         providers={providers}
         activeThreadId={selectedThreadId}
@@ -598,6 +604,10 @@ export default function App() {
         onAddProject={handleAddProject}
         onRemoveProject={handleRemoveProject}
         onEditProject={setEditProjectId}
+        onAddSpace={addSpace}
+        onRenameSpace={renameSpace}
+        onRemoveSpace={removeSpace}
+        onAssignProjectToSpace={assignProjectToSpace}
         projectError={error?.scope === "project" ? error.message : null}
         onDismissProjectError={clearError}
         onOpenSettings={openSettings}
@@ -830,6 +840,7 @@ export default function App() {
         {editProject && (
           <EditProjectModal
             project={editProject}
+            spaces={spaces}
             onClose={() => setEditProjectId(null)}
             onSubmit={submitEditProject}
           />
