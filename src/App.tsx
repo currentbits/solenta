@@ -144,6 +144,7 @@ export default function App() {
     listDigest,
     markDigestSeen,
     listThreadSummaries,
+    listCrewTasks,
     listCheckpoints,
     restoreCheckpoint,
     runStats,
@@ -932,6 +933,7 @@ export default function App() {
         project={project}
         rosterKey={rosterKey}
         listThreadSummaries={listThreadSummaries}
+        listCrewTasks={listCrewTasks}
         onSelectThread={handleSelectThread}
         onSetupWorktree={setupWorktree}
         onMergeWorktree={mergeWorktree}

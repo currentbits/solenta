@@ -44,6 +44,7 @@ import type {
   ThreadPatch,
   ThreadInfo,
   ThreadSummaryInfo,
+  CrewTaskView,
   RewindResult,
   UsageByDay,
   WorkLogItem,
@@ -658,6 +659,15 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
                 : null,
             };
           }),
+        ),
+      crewTasks: (input: { threadId: string }) =>
+        rec(
+          "threads.crewTasks",
+          [input],
+          {
+            rootThreadId: input.threadId,
+            tasks: [] as CrewTaskView[],
+          },
         ),
       search: (input: unknown) => rec("threads.search", [input], [] as ThreadInfo[]),
       create: (input: unknown) => {

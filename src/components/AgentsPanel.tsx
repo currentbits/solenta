@@ -19,6 +19,7 @@ import type {
   SkillWrite,
   ThreadInfo,
   ThreadSummaryInfo,
+  CrewTaskView,
   VerifyResult,
   WorkflowView,
 } from "../shared/ipc";
@@ -75,6 +76,10 @@ interface AgentsPanelProps {
   rosterKey?: string;
   /** threads:summaries passthrough powering the team view. */
   listThreadSummaries?: () => Promise<ThreadSummaryInfo[]>;
+  /** Shared crew task list (issue #277). Read-only; absent = no fetch. */
+  listCrewTasks?: (
+    threadId: string,
+  ) => Promise<{ rootThreadId: string; tasks: CrewTaskView[] }>;
   /** Select a thread (team row click). */
   onSelectThread?: (id: string) => void;
   onSetupWorktree: () => Promise<unknown>;
@@ -1904,6 +1909,58 @@ function HypothesisLedgerCard({
   );
 }
 
+function crewTaskPill(task: CrewTaskView): string {
+  return task.blocked ? "blocked" : task.status;
+}
+
+function CrewTaskList({
+  tasks,
+  ownerTitle,
+}: {
+  tasks: CrewTaskView[];
+  ownerTitle: (threadId: string) => string;
+}) {
+  if (tasks.length === 0) return null;
+  return (
+    <section className={styles.teamSection} aria-label="Tasks" data-crew-tasks="">
+      <div className={styles.sessionLabel}>Tasks</div>
+      <ul className={styles.teamList}>
+        {tasks.map((task) => {
+          const pill = crewTaskPill(task);
+          const owner =
+            task.status === "claimed" && task.owner
+              ? ownerTitle(task.owner)
+              : null;
+          return (
+            <li
+              key={task.id}
+              className={styles.teamRow}
+              data-crew-task={task.id}
+            >
+              <span className={styles.taskId}>{task.id}</span>
+              <span className={styles.teamTitle}>{task.title}</span>
+              <span className={styles.teamStatus} data-status={pill}>
+                {pill}
+              </span>
+              {task.attempts.length > 1 && (
+                <span className={styles.taskAttempts}>
+                  {task.attempts.length} attempts
+                </span>
+              )}
+              {owner ? (
+                <span className={styles.teamActivity}>{owner}</span>
+              ) : null}
+              {task.status === "done" && task.note ? (
+                <span className={styles.teamActivity}>{task.note}</span>
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
 export function AgentsContent({
   workflow,
   thread,
@@ -1911,6 +1968,7 @@ export function AgentsContent({
   providers,
   rosterKey = "",
   listThreadSummaries,
+  listCrewTasks,
   onSelectThread,
 }: {
   workflow: WorkflowView | null;
@@ -1919,6 +1977,9 @@ export function AgentsContent({
   providers: ProviderInfo[];
   rosterKey?: string;
   listThreadSummaries?: () => Promise<ThreadSummaryInfo[]>;
+  listCrewTasks?: (
+    threadId: string,
+  ) => Promise<{ rootThreadId: string; tasks: CrewTaskView[] }>;
   onSelectThread?: (id: string) => void;
 }) {
   /**
@@ -1962,6 +2023,46 @@ export function AgentsContent({
       if (id !== null) window.clearInterval(id);
     };
   }, [listThreadSummaries, rosterKey]);
+
+  const [crewTasks, setCrewTasks] = useState<CrewTaskView[]>([]);
+  useEffect(() => {
+    if (!thread || !listCrewTasks) {
+      setCrewTasks([]);
+      return;
+    }
+    let cancelled = false;
+    const load = () => {
+      listCrewTasks(thread.id)
+        .then((res) => {
+          if (!cancelled) setCrewTasks(Array.isArray(res?.tasks) ? res.tasks : []);
+        })
+        .catch(() => {
+          if (!cancelled) setCrewTasks([]);
+        });
+    };
+    void load();
+    const api = (
+      window as unknown as {
+        coder?: { on?: (channel: "threads:changed", cb: () => void) => () => void };
+      }
+    ).coder;
+    const off = api?.on?.("threads:changed", () => {
+      void load();
+    });
+    return () => {
+      cancelled = true;
+      off?.();
+    };
+  }, [thread?.id, listCrewTasks]);
+
+  const crewOwnerTitle = useCallback(
+    (threadId: string) => {
+      if (thread?.id === threadId) return thread.title;
+      const row = summaries?.find((s) => s.id === threadId);
+      return row?.title ?? threadId;
+    },
+    [thread, summaries],
+  );
 
   // Roles derive from handoffFrom: a thread WITH one is a Worker; a thread
   // another summary points to is an Orchestrator. Neither = plain session.
@@ -2121,6 +2222,7 @@ export function AgentsContent({
               </button>
             )}
           </section>
+          <CrewTaskList tasks={crewTasks} ownerTitle={crewOwnerTitle} />
           {subagentSection}
           {hypothesisSection}
         </div>
@@ -2146,6 +2248,7 @@ export function AgentsContent({
               />
             </ul>
           </section>
+          <CrewTaskList tasks={crewTasks} ownerTitle={crewOwnerTitle} />
           {subagentSection}
           {hypothesisSection}
         </div>
@@ -2154,6 +2257,7 @@ export function AgentsContent({
     return (
       <div className={styles.scroll}>
         <SessionCard thread={thread} usage={usage} providers={providers} />
+        <CrewTaskList tasks={crewTasks} ownerTitle={crewOwnerTitle} />
         {subagentSection}
         {hypothesisSection}
       </div>
@@ -2280,6 +2384,7 @@ export function AgentsContent({
             );
           })}
         </div>
+        <CrewTaskList tasks={crewTasks} ownerTitle={crewOwnerTitle} />
         {hypothesisSection}
       </div>
 
@@ -2308,6 +2413,7 @@ export const AgentsPanel = memo(function AgentsPanel({
   project,
   rosterKey,
   listThreadSummaries,
+  listCrewTasks,
   onSelectThread,
   onSetupWorktree,
   onMergeWorktree,
@@ -2388,6 +2494,7 @@ export const AgentsPanel = memo(function AgentsPanel({
           providers={providers}
           rosterKey={rosterKey}
           listThreadSummaries={listThreadSummaries}
+          listCrewTasks={listCrewTasks}
           onSelectThread={onSelectThread}
         />
       ) : tab === "git" ? (

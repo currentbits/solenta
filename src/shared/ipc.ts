@@ -1425,6 +1425,16 @@ export interface CoderApi {
      */
     summaries(): Promise<ThreadSummaryInfo[]>;
     /**
+     * Shared crew task list for the selected thread (issue #277). Read-only
+     * from the renderer — agents claim and complete via MCP. Tasks belong
+     * to the crew root (orchestrator at the top of the handoffFrom chain);
+     * any thread in that crew resolves to the same list.
+     */
+    crewTasks(input: { threadId: string }): Promise<{
+      rootThreadId: string;
+      tasks: CrewTaskView[];
+    }>;
+    /**
      * Full-content search: matches thread titles, notes, AND message text
      * (case-insensitive substring), newest activity first, max 50. Includes
      * archived threads; the renderer styles them as usual.
