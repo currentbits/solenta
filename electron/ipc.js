@@ -38,6 +38,7 @@ const { fetchIssue, listIssues, setPlanStatus } = require("./issues.js");
 const automations = require("./automations.js");
 const { buildActivity } = require("./activity.js");
 const { collectDigest } = require("./digest.js");
+const { collectFleet } = require("./fleet.js");
 const { distillThread } = require("./distill.js");
 const updater = require("./updater.js");
 
@@ -220,6 +221,13 @@ const IPC_HANDLERS = {
     return clusterFailureModes({
       threads: ctx.store.getThreads(),
       messagesByThread: ctx.store.data.messagesByThread,
+    });
+  },
+  "fleet:evidence": async (ctx, input) => {
+    return collectFleet({
+      store: ctx.store,
+      nowMs: Date.now(),
+      days: input && input.days,
     });
   },
   "digest:list": async (ctx, input) => {
