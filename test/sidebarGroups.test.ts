@@ -7,13 +7,14 @@ import { describe, it } from "node:test";
 import {
   GROUP_ATTENTION_CAP,
   buildSidebarGroups,
+  buildSidebarSections,
   groupHeaderSummary,
   partitionSidebar,
   splitSettled,
   visibleAttentionCount,
 } from "../src/sidebarGroups.ts";
 import { AUTO_SETTLE_AFTER_DAYS } from "../src/threadSettle.ts";
-import type { ProjectInfo, ThreadInfo } from "../src/shared/ipc.ts";
+import type { ProjectInfo, SpaceInfo, ThreadInfo } from "../src/shared/ipc.ts";
 
 const NOW = 1_700_000_000_000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -164,6 +165,105 @@ describe("buildSidebarGroups", () => {
     const groups = buildSidebarGroups([pA], threads);
     assert.equal(groups[1]!.project, null);
     assert.equal(groups[1]!.threads[0]!.id, "orphan");
+  });
+});
+
+describe("buildSidebarSections", () => {
+  const pA = project({ id: "a", slug: "org/alpha" });
+  const pB = project({ id: "b", slug: "org/beta" });
+  const pEmpty = project({ id: "c", slug: "org/empty" });
+  const s1: SpaceInfo = { id: "s1", name: "Client work" };
+  const s2: SpaceInfo = { id: "s2", name: "Experiments" };
+
+  const shape = (sections: ReturnType<typeof buildSidebarSections>) =>
+    sections.map((s) => [
+      s.space?.id ?? null,
+      s.groups.map((g) => [g.project?.id ?? null, g.threads.map((t) => t.id)]),
+    ]);
+
+  it("zero spaces is identical to buildSidebarGroups", () => {
+    const threads = [
+      thread({ id: "t1", projectId: "a", updatedAt: 100 }),
+      thread({ id: "t2", projectId: "b", updatedAt: 300 }),
+      thread({ id: "orphan", projectId: "gone", updatedAt: 500 }),
+    ];
+    const projects = [pA, pB, pEmpty];
+    const sections = buildSidebarSections([], projects, threads);
+    assert.equal(sections.length, 1, "exactly one Unassigned section");
+    assert.equal(sections[0]!.space, null);
+    assert.deepEqual(
+      sections[0]!.groups,
+      buildSidebarGroups(projects, threads),
+      "groups equal today's flat list",
+    );
+  });
+
+  it("projects land under their space; empty spaces still emit a section", () => {
+    const client = { ...pA, spaceId: "s1" };
+    const experiment = { ...pB, spaceId: "s2" };
+    const threads = [
+      thread({ id: "t1", projectId: "a", createdAt: 100, updatedAt: 100 }),
+      thread({ id: "t2", projectId: "b", createdAt: 300, updatedAt: 300 }),
+    ];
+    const sections = buildSidebarSections(
+      [s1, s2, { id: "s3", name: "Empty" }],
+      [client, experiment],
+      threads,
+    );
+    assert.deepEqual(shape(sections), [
+      ["s1", [["a", ["t1"]]]],
+      ["s2", [["b", ["t2"]]]],
+      ["s3", []],
+      [null, []],
+    ]);
+  });
+
+  it("a dangling spaceId falls into Unassigned rather than disappearing", () => {
+    const dangling = { ...pA, spaceId: "missing" };
+    const assigned = { ...pB, spaceId: "s1" };
+    const threads = [
+      thread({ id: "t1", projectId: "a", updatedAt: 100 }),
+      thread({ id: "t2", projectId: "b", updatedAt: 200 }),
+    ];
+    const sections = buildSidebarSections(
+      [s1],
+      [dangling, assigned],
+      threads,
+    );
+    assert.deepEqual(shape(sections), [
+      ["s1", [["b", ["t2"]]]],
+      [null, [["a", ["t1"]]]],
+    ]);
+  });
+
+  it("ordering within a section matches buildSidebarGroups", () => {
+    const a = { ...pA, spaceId: "s1" };
+    const b = { ...pB, spaceId: "s1" };
+    const empty = { ...pEmpty, spaceId: "s1" };
+    const threads = [
+      thread({ id: "t1", projectId: "a", createdAt: 100, updatedAt: 900 }),
+      thread({ id: "t2", projectId: "b", createdAt: 300, updatedAt: 300 }),
+      thread({ id: "t3", projectId: "a", createdAt: 200, updatedAt: 200 }),
+    ];
+    const section = buildSidebarSections([s1], [a, b, empty], threads)[0]!;
+    assert.deepEqual(
+      section.groups,
+      buildSidebarGroups([a, b, empty], threads),
+      "section order is the existing group order, not a new sort",
+    );
+  });
+
+  it("orphans stay in Unassigned, not in a named space", () => {
+    const assigned = { ...pA, spaceId: "s1" };
+    const threads = [
+      thread({ id: "t1", projectId: "a", updatedAt: 100 }),
+      thread({ id: "orphan", projectId: "gone", updatedAt: 500 }),
+    ];
+    const sections = buildSidebarSections([s1], [assigned], threads);
+    assert.deepEqual(shape(sections), [
+      ["s1", [["a", ["t1"]]]],
+      [null, [[null, ["orphan"]]]],
+    ]);
   });
 });
 

@@ -176,12 +176,22 @@
   color: var(--blue);
 }
 
+.sectionHeaderRow {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  width: calc(100% - 16px);
+  margin: 0 8px 6px;
+  min-width: 0;
+}
+
 .sectionHeader {
   display: flex;
   align-items: center;
   gap: 8px;
-  width: calc(100% - 16px);
-  margin: 0 8px 6px;
+  flex: 1;
+  min-width: 0;
+  margin: 0;
   padding: 8px 10px;
   border-radius: var(--radius-sm);
   color: var(--text-muted);
@@ -202,6 +212,106 @@
 
 .sectionHeader:hover .chevron {
   color: var(--text);
+}
+
+.spaceAddBtn {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.spaceAddBtn:hover,
+.spaceAddBtn:focus-visible {
+  color: var(--text);
+  background: var(--card);
+}
+
+.spaceInput {
+  display: block;
+  width: calc(100% - 32px);
+  margin: 0 16px 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+
+.spaceInput:focus {
+  border-color: var(--blue-border);
+}
+
+.spaceHeaderRow .spaceInput {
+  flex: 1;
+  width: auto;
+  margin: 0 4px;
+}
+
+.spaceSection {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.spaceHeaderRow {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  width: calc(100% - 16px);
+  margin: 4px 8px 4px;
+  min-width: 0;
+  border-radius: var(--radius-sm);
+}
+
+.spaceDropOver {
+  background: var(--blue-soft);
+  box-shadow: inset 0 0 0 1px var(--blue-border);
+}
+
+.spaceHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  text-align: left;
+  cursor: pointer;
+}
+
+.spaceHeader:hover {
+  background: var(--card);
+  color: var(--text);
+}
+
+.spaceName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.spaceHeaderRow:hover .groupRemove,
+.spaceHeaderRow:focus-within .groupRemove {
+  opacity: 1;
 }
 
 /* Primary collapse affordance: larger than body text, rotates on open. */

@@ -25,6 +25,7 @@ import type {
   ProjectInfo,
   ProviderInfo,
   SkillInfo,
+  SpaceInfo,
   ThreadDetail,
   ThreadInfo,
   ThreadSummaryInfo,
@@ -327,6 +328,12 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
       addViaDialog: () => call<ProjectInfo | null>("projects:addViaDialog"),
       pickDirectory: () => call<string | null>("projects:pickDirectory"),
       remove: (input) => call<void>("projects:remove", input),
+    },
+    spaces: {
+      list: () => call<SpaceInfo[]>("spaces:list"),
+      add: (input) => call<SpaceInfo>("spaces:add", input),
+      update: (input) => call<SpaceInfo>("spaces:update", input),
+      remove: (input) => call<void>("spaces:remove", input),
     },
     threads: {
       list: () => call<ThreadInfo[]>("threads:list"),

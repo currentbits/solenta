@@ -1,4 +1,4 @@
-import type { ProjectInfo, ThreadInfo } from "./shared/ipc";
+import type { ProjectInfo, SpaceInfo, ThreadInfo } from "./shared/ipc";
 import {
   AUTO_SETTLE_AFTER_DAYS,
   compareSettledNewestFirst,
@@ -248,4 +248,68 @@ export function buildSidebarGroups(
   orphans.sort((a, b) => newest(b.threads) - newest(a.threads));
 
   return [...withThreads, ...empty, ...orphans];
+}
+
+export interface SidebarSpaceSection {
+  /** null = the trailing Unassigned section (and the only section when there are no spaces). */
+  space: SpaceInfo | null;
+  groups: SidebarGroup[];
+}
+
+/**
+ * Layer named spaces on top of buildSidebarGroups without changing it.
+ *
+ * Sections follow `spaces` array order, then one trailing Unassigned
+ * section (space: null). A dangling spaceId lands in Unassigned so the
+ * project never vanishes. Empty spaces still emit a section (that is
+ * how a user drops the first project in).
+ *
+ * Zero spaces is a no-op: one Unassigned section whose groups equal
+ * buildSidebarGroups(projects, threads). Activity never reorders within
+ * a section — that rule stays inside buildSidebarGroups.
+ */
+export function buildSidebarSections(
+  spaces: SpaceInfo[],
+  projects: ProjectInfo[],
+  threads: ThreadInfo[],
+): SidebarSpaceSection[] {
+  const known = new Set(spaces.map((s) => s.id));
+  const allProjectIds = new Set(projects.map((p) => p.id));
+  const bySpace = new Map<string, ProjectInfo[]>();
+  const unassigned: ProjectInfo[] = [];
+  for (const p of projects) {
+    if (p.spaceId && known.has(p.spaceId)) {
+      const list = bySpace.get(p.spaceId) ?? [];
+      list.push(p);
+      bySpace.set(p.spaceId, list);
+    } else {
+      unassigned.push(p);
+    }
+  }
+
+  const threadsFor = (ids: Set<string>, includeOrphans: boolean) =>
+    threads.filter(
+      (t) =>
+        ids.has(t.projectId) ||
+        (includeOrphans && !allProjectIds.has(t.projectId)),
+    );
+
+  const sections: SidebarSpaceSection[] = spaces.map((space) => {
+    const spaceProjects = bySpace.get(space.id) ?? [];
+    const ids = new Set(spaceProjects.map((p) => p.id));
+    return {
+      space,
+      groups: buildSidebarGroups(spaceProjects, threadsFor(ids, false)),
+    };
+  });
+
+  const unassignedIds = new Set(unassigned.map((p) => p.id));
+  sections.push({
+    space: null,
+    groups: buildSidebarGroups(
+      unassigned,
+      threadsFor(unassignedIds, true),
+    ),
+  });
+  return sections;
 }

@@ -5,6 +5,17 @@
 // "runs:start", "runs:stop", "git:status".
 // Push channels: "threads:changed", "thread:updated", "thread:select".
 
+/**
+ * A named sidebar group ("Space"). Store array order IS display order.
+ * ponytail: no icon field — a name holds an emoji fine. No manual ordering
+ * within a space either: project order stays activity-derived
+ * (buildSidebarGroups). Add both when someone actually asks.
+ */
+export interface SpaceInfo {
+  id: string;
+  name: string;
+}
+
 export interface ProjectInfo {
   id: string;
   /** e.g. "pingdotgg/t3code", derived from git remote or folder name */
@@ -15,6 +26,8 @@ export interface ProjectInfo {
   remoteHost?: string;
   /** Absolute path on the remote host. Required when remoteHost is set. */
   remotePath?: string;
+  /** Space membership. Absent = unassigned (renders in the trailing group). */
+  spaceId?: string;
 }
 
 /** Optional remotes for projects.add. Empty/absent = local project. */
@@ -43,6 +56,8 @@ export interface ProjectUpdateInput {
   name?: string;
   remoteHost?: string;
   remotePath?: string;
+  /** Space membership: an id assigns, empty string ("") unassigns. */
+  spaceId?: string;
 }
 
 export type ThreadStatus = "idle" | "working" | "done" | "failed";
@@ -941,6 +956,20 @@ export interface CoderApi {
      * prompt.
      */
     remove(input: { projectId: string }): Promise<void>;
+  };
+  /**
+   * Named sidebar groups. List order is display order (creation order).
+   * Removing a space unassigns its projects; it never touches projects
+   * themselves.
+   */
+  spaces: {
+    list(): Promise<SpaceInfo[]>;
+    /** Rejects an empty name. Duplicate names are allowed (ids are the key). */
+    add(input: { name: string }): Promise<SpaceInfo>;
+    /** Rename. Rejects an empty name or an unknown id. */
+    update(input: { id: string; name: string }): Promise<SpaceInfo>;
+    /** Drops the space and clears spaceId on every project that used it. */
+    remove(input: { id: string }): Promise<void>;
   };
   threads: {
     list(): Promise<ThreadInfo[]>;
