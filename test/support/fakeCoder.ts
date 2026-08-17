@@ -16,6 +16,7 @@
 import type {
   AppSettings,
   AppStatus,
+  AttachmentInfo,
   AutomationInfo,
   UpdateStatus,
   CheckpointInfo,
@@ -100,6 +101,7 @@ export function thread(over: Partial<ThreadInfo> = {}): ThreadInfo {
     // Round 49: null unless created by threads.fork.
     handoffFrom: null,
     muted: false,
+    queued: null,
     pinnedAt: null,
     snoozedUntil: null,
     snoozedAt: null,
@@ -651,6 +653,37 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         };
         threads = threads.map((t) => (t.id === i.threadId ? next : t));
         return rec("threads.setPinned", [input], next);
+      },
+      /**
+       * Honest type-ahead queue (issue #137). prompt === null clears; a
+       * non-null prompt appends. Never bumps updatedAt.
+       */
+      setQueued: (input: unknown) => {
+        const i = input as {
+          threadId: string;
+          prompt: string | null;
+          attachments?: AttachmentInfo[];
+        };
+        const existing = threads.find((t) => t.id === i.threadId);
+        if (!existing) {
+          calls.push({ channel: "threads.setQueued", args: [input] });
+          return Promise.reject(new Error(`Unknown thread: ${i.threadId}`));
+        }
+        let queued: ThreadInfo["queued"] = null;
+        if (i.prompt !== null) {
+          const prev = existing.queued;
+          const files = [
+            ...(prev?.attachments ?? []),
+            ...(i.attachments ?? []),
+          ];
+          queued = {
+            prompt: prev ? `${prev.prompt}\n\n${i.prompt}` : i.prompt,
+            attachments: files.length ? files : undefined,
+          };
+        }
+        const next: ThreadInfo = { ...existing, queued };
+        threads = threads.map((t) => (t.id === i.threadId ? next : t));
+        return rec("threads.setQueued", [input], next);
       },
       /**
        * Honest snooze. Rejects non-future until; stamps snoozedAt = now.
