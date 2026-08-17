@@ -2557,6 +2557,7 @@ async function listCheckpoints(opts) {
 /**
  * Hard-reset the thread WORKTREE to a prior checkpoint sha.
  * Guards (in order): unknown thread → run active → no worktree → sha not ours.
+ * A dirty worktree is checkpointed first so the reset never eats uncommitted work.
  *
  * @param {object} opts
  * @param {import('./store').Store} opts.store
@@ -2596,6 +2597,13 @@ async function restoreCheckpoint(opts) {
   if (!match) {
     throw new Error(`Unknown checkpoint: ${sha}`);
   }
+
+  // Uncommitted work here (manual edits, or a run whose post-turn checkpoint
+  // failed) would be destroyed by the reset. Commit it first — best-effort,
+  // same as the post-turn path. ponytail: the safety commit is off-HEAD after
+  // the reset so it drops out of listCheckpoints; recovery is `git reflog` in
+  // the worktree. Surface it in the UI if anyone actually needs it back.
+  await maybeCreateCheckpoint(store, threadId);
 
   const reset = await gitTryAsync(thread.worktreePath, [
     "reset",

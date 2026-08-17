@@ -440,6 +440,62 @@ describe("listCheckpoints / restoreCheckpoint", () => {
     );
     assert.equal(list[0].sha, c2b.sha);
   });
+
+  it("checkpoints uncommitted work before the reset (issue #132)", async () => {
+    fx = makeWorktreeFixture();
+    const wt = fx.worktreePath;
+    const file = path.join(wt, "tracked.txt");
+
+    fs.writeFileSync(file, "v1\n");
+    const c1 = await maybeCreateCheckpoint(fx.store, fx.thread.id);
+    fs.writeFileSync(file, "v2\n");
+    await maybeCreateCheckpoint(fx.store, fx.thread.id);
+
+    // Work that never got a post-turn checkpoint: an edit + an untracked file.
+    fs.writeFileSync(file, "unsaved\n");
+    fs.writeFileSync(path.join(wt, "scratch.txt"), "hand-written\n");
+
+    await restoreCheckpoint({
+      store: fx.store,
+      threadId: fx.thread.id,
+      sha: c1.sha,
+    });
+
+    // Reset happened...
+    assert.equal(fs.readFileSync(file, "utf8"), "v1\n");
+    assert.equal(fs.existsSync(path.join(wt, "scratch.txt")), false);
+
+    // ...but the work survives in a commit, not in the void.
+    const rescued = git(wt, ["log", "-g", "--format=%H %s"])
+      .split("\n")
+      .find((l) => l.includes("coder-checkpoint: turn 3"));
+    assert.ok(rescued, "safety checkpoint must exist in the reflog");
+    const sha = rescued.split(" ")[0];
+    assert.equal(git(wt, ["show", `${sha}:tracked.txt`]), "unsaved");
+    assert.equal(git(wt, ["show", `${sha}:scratch.txt`]), "hand-written");
+  });
+
+  it("clean worktree restore adds no safety checkpoint", async () => {
+    fx = makeWorktreeFixture();
+    const file = path.join(fx.worktreePath, "c.txt");
+
+    fs.writeFileSync(file, "v1\n");
+    const c1 = await maybeCreateCheckpoint(fx.store, fx.thread.id);
+    fs.writeFileSync(file, "v2\n");
+    await maybeCreateCheckpoint(fx.store, fx.thread.id);
+
+    const head = git(fx.worktreePath, ["rev-parse", "HEAD"]);
+    await restoreCheckpoint({
+      store: fx.store,
+      threadId: fx.thread.id,
+      sha: c1.sha,
+    });
+    assert.equal(
+      git(fx.worktreePath, ["log", "--format=%s", `${head}..`]),
+      "",
+      "nothing to save → no commit on top of turn 2",
+    );
+  });
 });
 
 describe("runner auto-checkpoint on successful turn", () => {
