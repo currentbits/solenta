@@ -1373,7 +1373,18 @@ function pushDiffText(cwd, branch) {
   const haveRemote = gitTry(cwd, ["rev-parse", "--verify", remoteRef], {
     timeout: OUTBOUND_SCAN_TIMEOUT_MS,
   });
-  const range = haveRemote.ok ? `${remoteRef}..HEAD` : "HEAD~1..HEAD";
+  // First push of a branch has no origin/<branch>: scanning HEAD~1..HEAD there
+  // would cover one commit out of however many the branch carries, which is
+  // worse than not scanning because it reads as covered. Diff from the fork
+  // point instead.
+  let range = `${remoteRef}..HEAD`;
+  if (!haveRemote.ok) {
+    const base = gitTry(cwd, ["merge-base", "HEAD", "origin/HEAD"], {
+      timeout: OUTBOUND_SCAN_TIMEOUT_MS,
+    });
+    const sha = base.ok ? String(base.stdout || "").trim() : "";
+    range = sha ? `${sha}..HEAD` : "HEAD~1..HEAD";
+  }
   let result = gitTry(cwd, ["diff", range], {
     timeout: OUTBOUND_SCAN_TIMEOUT_MS,
   });
@@ -1389,7 +1400,15 @@ function pushDiffText(cwd, branch) {
     return null;
   }
   const text = String(result.stdout || "");
-  return text.length > OUTBOUND_SCAN_CAP ? text.slice(0, OUTBOUND_SCAN_CAP) : text;
+  if (text.length > OUTBOUND_SCAN_CAP) {
+    // ponytail: a secret past 2 MB is not scanned. Say so rather than let the
+    // silence read as coverage; stream the diff if that ever matters.
+    console.warn(
+      `solenta: guardrails: push diff is ${text.length} bytes; only the first ${OUTBOUND_SCAN_CAP} were scanned`,
+    );
+    return text.slice(0, OUTBOUND_SCAN_CAP);
+  }
+  return text;
 }
 
 /**
@@ -3666,6 +3685,7 @@ function clearMissingWorktree(opts) {
 }
 
 module.exports = {
+  assertNoOutboundSecrets,
   setupWorktree,
   clearMissingWorktree,
   maybeRenameWorktreeBranch,

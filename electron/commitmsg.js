@@ -2,8 +2,7 @@
 
 const { spawn } = require("node:child_process");
 const { getProvider, resolveBin, isBinAvailable } = require("./providers.js");
-const { diff } = require("./worktrees.js");
-const { scanSecrets } = require("./guardrails.js");
+const { diff, assertNoOutboundSecrets } = require("./worktrees.js");
 const { fmRun } = require("./fm.js");
 
 const TIMEOUT_MS = 60000;
@@ -138,31 +137,6 @@ function extractSubject(providerId, stdout) {
 }
 
 /**
- * Scan a generated subject before it is returned to the commit UI.
- * Fail-open if the scanner throws. Hits throw so the message is never used.
- * @param {string} message
- */
-function assertCleanCommitMessage(message) {
-  let result;
-  try {
-    result = scanSecrets(message);
-  } catch (err) {
-    const msg = err && err.message ? String(err.message) : String(err);
-    console.warn(
-      `solenta: guardrails: scanSecrets failed (commit message); allowing: ${msg}`,
-    );
-    return;
-  }
-  if (!result || !Array.isArray(result.hits) || result.hits.length === 0) {
-    return;
-  }
-  const listed = result.hits.map((h) => `${h.rule}: ${h.match}`).join(", ");
-  throw new Error(
-    `Blocked by Solenta guardrails: ${result.hits.length} secret(s) detected in the commit message (${listed}). Remove them or set CODER_GUARDRAILS=off to override.`,
-  );
-}
-
-/**
  * @param {string} prompt
  * @param {{ files: Array<{path: string, status: string, additions: number, deletions: number}>, patch: string }} d
  * @returns {string}
@@ -219,7 +193,7 @@ async function suggestCommitMessage(opts) {
   if (fmOut) {
     const message = cleanSubject(fmOut);
     if (message) {
-      assertCleanCommitMessage(message);
+      assertNoOutboundSecrets(message, "commit message");
       return { message };
     }
   }
@@ -247,7 +221,7 @@ async function suggestCommitMessage(opts) {
   if (!message) {
     throw new Error(`${entry.name} returned an empty message`);
   }
-  assertCleanCommitMessage(message);
+  assertNoOutboundSecrets(message, "commit message");
   return { message };
 }
 
