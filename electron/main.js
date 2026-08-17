@@ -33,6 +33,7 @@ const {
 } = require("./webServer.js");
 const { migrateLegacyUserData } = require("./legacy-migration.js");
 const { installCrashGuard } = require("./crash-guard.js");
+const { installShutdown } = require("./shutdown.js");
 
 // Before anything else can throw: the app is full of fire-and-forget `void`
 // calls, and one unhandled rejection would otherwise kill the process with
@@ -419,66 +420,69 @@ app.whenReady().then(async () => {
   });
 });
 
-app.on("before-quit", () => {
-  if (webServer) {
+installShutdown({
+  app,
+  cleanup() {
+    if (webServer) {
+      try {
+        void webServer.close();
+      } catch {
+        // ignore
+      }
+      webServer = null;
+    }
+    // Stop active runs and drain session transcript queue before exit.
+    if (runner) {
+      try {
+        runner.stopAll();
+      } catch {
+        // ignore
+      }
+      try {
+        // Fire-and-forget flush; stopAll already kicked flush.
+        void runner.flushTranscripts();
+      } catch {
+        // ignore
+      }
+    }
+    if (prStateRefresher) {
+      try {
+        prStateRefresher.stop();
+      } catch {
+        // ignore
+      }
+      prStateRefresher = null;
+    }
+    if (automationScheduler) {
+      try {
+        automationScheduler.stop();
+      } catch {
+        // ignore
+      }
+      automationScheduler = null;
+    }
+    // Terminate only a memory-server child we spawned (adopted servers stay up).
+    if (memorySupervisor) {
+      try {
+        memorySupervisor.stop();
+      } catch {
+        // ignore
+      }
+    }
+    if (orchServer) {
+      try {
+        orchServer.stop();
+      } catch {
+        // ignore
+      }
+      orchServer = null;
+    }
     try {
-      void webServer.close();
+      killAllDevServers();
     } catch {
       // ignore
     }
-    webServer = null;
-  }
-  // Stop active runs and drain session transcript queue before exit.
-  if (runner) {
-    try {
-      runner.stopAll();
-    } catch {
-      // ignore
-    }
-    try {
-      // Fire-and-forget flush; stopAll already kicked flush.
-      void runner.flushTranscripts();
-    } catch {
-      // ignore
-    }
-  }
-  if (prStateRefresher) {
-    try {
-      prStateRefresher.stop();
-    } catch {
-      // ignore
-    }
-    prStateRefresher = null;
-  }
-  if (automationScheduler) {
-    try {
-      automationScheduler.stop();
-    } catch {
-      // ignore
-    }
-    automationScheduler = null;
-  }
-  // Terminate only a memory-server child we spawned (adopted servers stay up).
-  if (memorySupervisor) {
-    try {
-      memorySupervisor.stop();
-    } catch {
-      // ignore
-    }
-  }
-  if (orchServer) {
-    try {
-      orchServer.stop();
-    } catch {
-      // ignore
-    }
-    orchServer = null;
-  }
-  try {
-    killAllDevServers();
-  } catch {
-    // ignore
-  }
+  },
 });
 
 app.on("window-all-closed", () => {
