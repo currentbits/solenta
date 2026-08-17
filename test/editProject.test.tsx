@@ -63,6 +63,7 @@ describe("edit project", () => {
       remoteHost: "dev@box",
       remotePath: "/srv/app",
       worktreeRetention: 0,
+      autoDispatch: false,
     });
     assert.equal(
       m.query("[data-edit-project]"),
@@ -90,6 +91,42 @@ describe("edit project", () => {
     assert.ok(
       m.query("[data-edit-project]"),
       "modal stays open on validation error",
+    );
+    m.unmount();
+  });
+
+  it("prefills autoDispatch and submit sends the flag", async () => {
+    const p1 = project({
+      id: "p1",
+      name: "ledger",
+      path: "/tmp/ledger",
+      autoDispatch: true,
+    });
+    const t1 = thread({ id: "t1", projectId: "p1" });
+    const fake = createFakeCoder({
+      projects: [p1],
+      threads: [t1],
+      details: { t1: detail({ thread: t1 }) },
+    });
+    const m = await boot(fake);
+
+    await m.click(m.query('[data-project-edit="p1"]'));
+    const box = m.query(
+      "[data-edit-project-auto-dispatch]",
+    ) as HTMLInputElement | null;
+    assert.ok(box, "auto-dispatch checkbox must exist");
+    assert.equal(box.checked, true, "checkbox prefills from the project");
+    assert.equal(box.disabled, false);
+
+    await m.click(m.query("[data-edit-project-submit]"));
+    await m.flush();
+
+    const calls = fake.of("projects.update");
+    assert.equal(calls.length, 1, "submit records exactly one update");
+    assert.equal(
+      (calls[0]!.args[0] as { autoDispatch?: boolean }).autoDispatch,
+      true,
+      "submit sends autoDispatch",
     );
     m.unmount();
   });

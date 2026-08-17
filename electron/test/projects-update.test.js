@@ -86,6 +86,33 @@ describe("services.updateProject", () => {
     );
   });
 
+  it("persists autoDispatch when set true", () => {
+    const updated = services.updateProject(store, project.id, {
+      autoDispatch: true,
+    });
+    assert.equal(updated.autoDispatch, true);
+    assert.equal(store.getProjects()[0].autoDispatch, true);
+  });
+
+  it("removes the autoDispatch key when set false", () => {
+    services.updateProject(store, project.id, { autoDispatch: true });
+    const cleared = services.updateProject(store, project.id, {
+      autoDispatch: false,
+    });
+    assert.equal(cleared.autoDispatch, undefined);
+    assert.equal("autoDispatch" in store.getProjects()[0], false);
+  });
+
+  it("leaves an existing autoDispatch flag alone on a name-only patch", () => {
+    services.updateProject(store, project.id, { autoDispatch: true });
+    const updated = services.updateProject(store, project.id, {
+      name: "box app",
+    });
+    assert.equal(updated.name, "box app");
+    assert.equal(updated.autoDispatch, true);
+    assert.equal(store.getProjects()[0].autoDispatch, true);
+  });
+
   it("sets worktreeRetention and clears it with 0 (#316)", () => {
     const set = services.updateProject(store, project.id, {
       worktreeRetention: 2,

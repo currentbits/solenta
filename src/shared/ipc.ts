@@ -28,6 +28,8 @@ export interface ProjectInfo {
   remotePath?: string;
   /** Space membership. Absent = unassigned (renders in the trailing group). */
   spaceId?: string;
+  /** When true, a background poller starts a thread for every issue that enters plan:todo (issue #165). Absent = off. */
+  autoDispatch?: boolean;
   /**
    * Worktree retention (#316): how many SETTLED threads keep their worktree
    * on disk. Absent or 0 = keep everything (today's behaviour). Reclaiming
@@ -65,6 +67,8 @@ export interface ProjectUpdateInput {
   remotePath?: string;
   /** Space membership: an id assigns, empty string ("") unassigns. */
   spaceId?: string;
+  /** When true, a background poller starts a thread for every issue that enters plan:todo (issue #165). Absent = off. */
+  autoDispatch?: boolean;
   /** Worktree retention (#316): 0 clears the limit, N > 0 sets it. */
   worktreeRetention?: number;
 }
