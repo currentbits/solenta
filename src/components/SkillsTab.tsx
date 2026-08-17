@@ -3,7 +3,7 @@ import type {
   AppSettings,
   McpServerInfo,
   SkillInfo,
-  SkillSource,
+  SkillTarget,
   SkillWrite,
 } from "../shared/ipc";
 import styles from "./SkillsTab.module.css";
@@ -20,17 +20,26 @@ const RESERVED_MCP_NAMES: ReadonlySet<string> = new Set(
   BUILTIN_MCPS.map((s) => s.name),
 );
 
+const TARGET_LABEL: Record<SkillTarget, string> = {
+  claude: "Claude",
+  agents: "Agents",
+  codex: "Codex",
+  grok: "Grok",
+  opencode: "OpenCode",
+  kimi: "Kimi",
+};
+
 export interface SkillsTabProps {
   /** Selected project's checkout path; project skills are read-only. */
   projectPath: string | null;
   settings: AppSettings | null;
   saveSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>;
   listSkills: (input?: { projectPath?: string }) => Promise<SkillInfo[]>;
-  addSkill: (input: SkillWrite) => Promise<{ name: string }>;
-  removeSkill: (input: {
-    target: "claude" | "agents";
-    name: string;
-  }) => Promise<void>;
+  addSkill: (
+    input: SkillWrite,
+  ) => Promise<{ name: string; installedIn: SkillTarget[] }>;
+  removeSkill: (input: { name: string }) => Promise<void>;
+  syncSkills: () => Promise<{ copied: number; skills: string[] }>;
 }
 
 function errorMessage(err: unknown): string {
@@ -48,16 +57,37 @@ function isHttpUrl(value: string): boolean {
   }
 }
 
-function sourceBadgeClass(source: SkillSource): string {
-  if (source === "claude") return styles.badgeClaude;
-  if (source === "agents") return styles.badgeAgents;
-  return styles.badgeProject;
+/** SKILL.md bytes → a compact "~1.2k tokens" estimate (≈ 4 bytes/token). */
+export function formatSkillTokens(bytes: number): string {
+  const tokens = bytes / 4;
+  if (tokens >= 1000) {
+    const k = tokens / 1000;
+    const text = k >= 10 ? k.toFixed(0) : k.toFixed(1);
+    return `~${text}k tokens`;
+  }
+  const n = Math.round(tokens);
+  return `~${n} token${n === 1 ? "" : "s"}`;
 }
 
-function sourceLabel(source: SkillSource): string {
-  if (source === "claude") return "Claude";
-  if (source === "agents") return "Agents";
-  return "Project";
+function formatTargetList(targets: SkillTarget[]): string {
+  return targets.map((t) => TARGET_LABEL[t]).join(", ");
+}
+
+function coverageTitle(skill: SkillInfo): string {
+  const installed = formatTargetList(skill.installedIn) || "none";
+  if (skill.missingFrom.length === 0) {
+    return `Installed in ${installed}`;
+  }
+  return `Installed in ${installed}. Missing from ${formatTargetList(skill.missingFrom)}`;
+}
+
+function coverageLabel(skill: SkillInfo): string {
+  const total = skill.installedIn.length + skill.missingFrom.length;
+  return `${skill.installedIn.length}/${total}`;
+}
+
+function copiedMessage(copied: number): string {
+  return copied === 1 ? "Copied 1 skill" : `Copied ${copied} skills`;
 }
 
 export function SkillsTab({
@@ -67,6 +97,7 @@ export function SkillsTab({
   listSkills,
   addSkill,
   removeSkill,
+  syncSkills,
 }: SkillsTabProps) {
   const mcpServers = settings?.mcpServers ?? [];
 
@@ -82,11 +113,11 @@ export function SkillsTab({
 
   const [skillBusy, setSkillBusy] = useState(false);
   const [skillFormError, setSkillFormError] = useState<string | null>(null);
-  const [skillTarget, setSkillTarget] = useState<"claude" | "agents">("claude");
   const [skillName, setSkillName] = useState("");
   const [skillDescription, setSkillDescription] = useState("");
   const [skillBody, setSkillBody] = useState("");
-  /** Inline remove confirm: "source:name" of the row asking. */
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
+  /** Inline remove confirm: row key of the skill asking. */
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
 
   const mountedRef = useRef(true);
@@ -190,11 +221,12 @@ export function SkillsTab({
     }
     setSkillBusy(true);
     try {
-      await addSkill({ target: skillTarget, name, description, body });
+      await addSkill({ name, description, body });
       if (!mountedRef.current) return;
       setSkillName("");
       setSkillDescription("");
       setSkillBody("");
+      setSyncMessage(null);
       await reloadSkills();
     } catch (err) {
       if (mountedRef.current) setSkillFormError(errorMessage(err));
@@ -204,12 +236,13 @@ export function SkillsTab({
   };
 
   const handleRemoveSkill = async (skill: SkillInfo) => {
-    if (skill.source !== "claude" && skill.source !== "agents") return;
+    if (skill.source === "project") return;
     setSkillBusy(true);
     try {
-      await removeSkill({ target: skill.source, name: skill.name });
+      await removeSkill({ name: skill.name });
       if (!mountedRef.current) return;
       setConfirmRemove(null);
+      setSyncMessage(null);
       await reloadSkills();
     } catch (err) {
       if (mountedRef.current) setSkillsError(errorMessage(err));
@@ -217,6 +250,25 @@ export function SkillsTab({
       if (mountedRef.current) setSkillBusy(false);
     }
   };
+
+  const handleSync = async () => {
+    setSkillsError(null);
+    setSyncMessage(null);
+    setSkillBusy(true);
+    try {
+      const result = await syncSkills();
+      if (!mountedRef.current) return;
+      await reloadSkills();
+      if (!mountedRef.current) return;
+      setSyncMessage(copiedMessage(result.copied));
+    } catch (err) {
+      if (mountedRef.current) setSkillsError(errorMessage(err));
+    } finally {
+      if (mountedRef.current) setSkillBusy(false);
+    }
+  };
+
+  const hasDrift = skills.some((s) => s.missingFrom.length > 0);
 
   return (
     <div className={styles.root}>
@@ -319,7 +371,24 @@ export function SkillsTab({
         </section>
 
         <section className={styles.section} aria-label="Skills">
-          <div className={styles.sectionLabel}>Skills</div>
+          <div className={styles.sectionHead}>
+            <div className={styles.sectionLabel}>Skills</div>
+            <button
+              type="button"
+              className={styles.ghostBtn}
+              disabled={skillBusy || !hasDrift}
+              aria-label="Sync missing skills"
+              title={
+                hasDrift
+                  ? "Copy missing skills into every provider"
+                  : "Nothing to sync"
+              }
+              onClick={() => void handleSync()}
+            >
+              Sync
+            </button>
+          </div>
+          {syncMessage && <p className={styles.syncNote}>{syncMessage}</p>}
           {skillsError && (
             <p className={styles.formError} role="alert">
               {skillsError}
@@ -333,8 +402,8 @@ export function SkillsTab({
             <ul className={styles.list}>
               {skills.map((skill) => {
                 const key = `${skill.source}:${skill.name}`;
-                const removable =
-                  skill.source === "claude" || skill.source === "agents";
+                const removable = skill.source !== "project";
+                const drifted = skill.missingFrom.length > 0;
                 return (
                   <li key={key} className={styles.row} data-skill={key}>
                     <div className={styles.rowMain}>
@@ -345,14 +414,35 @@ export function SkillsTab({
                         </span>
                       )}
                     </div>
-                    <span
-                      className={`${styles.badge} ${sourceBadgeClass(skill.source)}`}
-                    >
-                      {sourceLabel(skill.source)}
+                    {removable ? (
+                      <span
+                        className={styles.coverage}
+                        title={coverageTitle(skill)}
+                        data-coverage
+                      >
+                        {coverageLabel(skill)}
+                      </span>
+                    ) : (
+                      <span
+                        className={`${styles.badge} ${styles.badgeProject}`}
+                      >
+                        Project
+                      </span>
+                    )}
+                    <span className={styles.tokens} data-tokens>
+                      {formatSkillTokens(skill.bytes)}
                     </span>
+                    {drifted && (
+                      <span className={styles.drift} data-drift>
+                        Drift
+                      </span>
+                    )}
                     {removable &&
                       (confirmRemove === key ? (
                         <>
+                          <span className={styles.confirmHint}>
+                            Removes from all providers
+                          </span>
                           <button
                             type="button"
                             className={styles.dangerBtn}
@@ -394,27 +484,14 @@ export function SkillsTab({
             }}
           >
             <div className={styles.formLabel}>Add skill</div>
-            <div className={styles.formRow}>
-              <select
-                className={styles.select}
-                value={skillTarget}
-                onChange={(e) =>
-                  setSkillTarget(e.target.value as "claude" | "agents")
-                }
-                aria-label="Skill target"
-              >
-                <option value="claude">Claude</option>
-                <option value="agents">Agents</option>
-              </select>
-              <input
-                type="text"
-                className={styles.input}
-                placeholder="Name"
-                value={skillName}
-                onChange={(e) => setSkillName(e.target.value)}
-                aria-label="Skill name"
-              />
-            </div>
+            <input
+              type="text"
+              className={styles.input}
+              placeholder="Name"
+              value={skillName}
+              onChange={(e) => setSkillName(e.target.value)}
+              aria-label="Skill name"
+            />
             <input
               type="text"
               className={styles.input}

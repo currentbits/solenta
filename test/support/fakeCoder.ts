@@ -37,6 +37,7 @@ import type {
   ProjectInfo,
   ProviderInfo,
   SkillInfo,
+  SkillTarget,
   SpaceInfo,
   ThreadDetail,
   ThreadPatch,
@@ -200,12 +201,45 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     updateChannel: null,
     ...(opts.settings ?? {}),
   };
-  /** In-memory skill rows for the Skills tab; add/remove mutate this. */
+  const ALL_SKILL_TARGETS: SkillTarget[] = [
+    "claude",
+    "agents",
+    "codex",
+    "grok",
+    "opencode",
+    "kimi",
+  ];
+
+  function skillMdBytes(name: string, description: string, body: string): number {
+    const md = `---\nname: ${name}\ndescription: ${description}\n---\n\n${body}\n`;
+    return new TextEncoder().encode(md).length;
+  }
+
+  /** In-memory skill rows for the Skills tab; add/remove/sync mutate this. */
   let skillsState: SkillInfo[] = [
     {
       name: "review-pr",
       description: "Review a pull request end to end",
       source: "claude",
+      installedIn: [...ALL_SKILL_TARGETS],
+      missingFrom: [],
+      bytes: 4800,
+    },
+    {
+      name: "write-tests",
+      description: "Add tests for the current change",
+      source: "agents",
+      installedIn: ["claude", "agents", "codex", "grok", "opencode"],
+      missingFrom: ["kimi"],
+      bytes: 800,
+    },
+    {
+      name: "local-rules",
+      description: "Project-local rules",
+      source: "project",
+      installedIn: [],
+      missingFrom: [],
+      bytes: 400,
     },
   ];
 
@@ -365,10 +399,17 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     },
     skills: {
       list: (input: unknown) =>
-        rec("skills.list", [input], skillsState.map((s) => ({ ...s }))),
+        rec(
+          "skills.list",
+          [input],
+          skillsState.map((s) => ({
+            ...s,
+            installedIn: [...s.installedIn],
+            missingFrom: [...s.missingFrom],
+          })),
+        ),
       add: (input: unknown) => {
         const w = input as {
-          target: "claude" | "agents";
           name: string;
           description: string;
           body: string;
@@ -379,20 +420,52 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
             new Error("Skill name must be lowercase letters, digits, dashes"),
           );
         }
+        const installedIn = [...ALL_SKILL_TARGETS];
         skillsState = [
           ...skillsState.filter(
-            (s) => !(s.name === w.name && s.source === w.target),
+            (s) => !(s.name === w.name && s.source !== "project"),
           ),
-          { name: w.name, description: w.description, source: w.target },
+          {
+            name: w.name,
+            description: w.description,
+            source: "claude",
+            installedIn,
+            missingFrom: [],
+            bytes: skillMdBytes(w.name, w.description, w.body),
+          },
         ];
-        return rec("skills.add", [input], { name: w.name });
+        return rec("skills.add", [input], {
+          name: w.name,
+          installedIn: [...installedIn],
+        });
       },
       remove: (input: unknown) => {
-        const r = input as { target: "claude" | "agents"; name: string };
+        const r = input as { name: string };
         skillsState = skillsState.filter(
-          (s) => !(s.name === r.name && s.source === r.target),
+          (s) => !(s.name === r.name && s.source !== "project"),
         );
         return rec("skills.remove", [input], undefined);
+      },
+      sync: () => {
+        const names: string[] = [];
+        let copied = 0;
+        skillsState = skillsState.map((s) => {
+          if (s.source === "project" || s.missingFrom.length === 0) {
+            return {
+              ...s,
+              installedIn: [...s.installedIn],
+              missingFrom: [...s.missingFrom],
+            };
+          }
+          copied += 1;
+          names.push(s.name);
+          return {
+            ...s,
+            installedIn: [...s.installedIn, ...s.missingFrom],
+            missingFrom: [],
+          };
+        });
+        return rec("skills.sync", [], { copied, skills: names });
       },
     },
     providers: { list: () => rec("providers.list", [], providers) },
