@@ -499,6 +499,8 @@ function migrateThread(t) {
       t.reasoningEffort !== undefined ? t.reasoningEffort : null,
     worktreePath: t.worktreePath !== undefined ? t.worktreePath : null,
     runStartedAt: t.runStartedAt !== undefined ? t.runStartedAt : null,
+    // Older stores have no lastError; null (not undefined) so the badge is stable.
+    lastError: t.lastError !== undefined ? t.lastError : null,
     archived: t.archived != null ? Boolean(t.archived) : false,
     // Older stores may lack PR fields; null (not undefined) so the badge is stable.
     prNumber: t.prNumber !== undefined ? t.prNumber : null,
@@ -538,6 +540,7 @@ function recoverInterruptedRuns(data) {
     if (t.status !== "working") continue;
     t.status = "failed";
     t.runStartedAt = null;
+    t.lastError = "Run error: app quit while the run was in flight";
     t.updatedAt = Date.now();
     const list = Array.isArray(data.messagesByThread[t.id])
       ? data.messagesByThread[t.id].slice()
@@ -1108,6 +1111,13 @@ class Store {
         !Object.prototype.hasOwnProperty.call(patch, "sessionId")
       ) {
         p = { ...patch, sessionId: null };
+      }
+      // A retry/new run is any non-failed status — drop a stale reason.
+      if (
+        Object.prototype.hasOwnProperty.call(p, "status") &&
+        p.status !== "failed"
+      ) {
+        p = { ...p, lastError: null };
       }
       if (touch) {
         return { ...t, ...p, updatedAt: Date.now() };

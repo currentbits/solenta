@@ -92,6 +92,7 @@ export function thread(over: Partial<ThreadInfo> = {}): ThreadInfo {
     prNumber: null,
     prUrl: null,
     status: "idle",
+    lastError: null,
     createdAt,
     updatedAt,
     runStartedAt: null,
