@@ -543,6 +543,8 @@ function migrateThread(t) {
     handoffFrom: t.handoffFrom !== undefined ? t.handoffFrom : null,
     // Per-thread desktop-notification mute (issue #87): absent → not muted.
     muted: t.muted === true,
+    // Per-thread user scratch pad (issue #194): absent → empty.
+    notes: typeof t.notes === "string" ? t.notes : "",
     // Type-ahead queue (issue #137): absent → nothing waiting.
     queued: t.queued !== undefined ? t.queued : null,
   };
@@ -1182,9 +1184,10 @@ class Store {
   }
 
   /**
-   * Full-content thread search: titles + message text, case-insensitive
-   * substring. Includes archived. Ordered by updatedAt DESC, max 50.
-   * Empty / 1-char queries return [] (renderer only calls with 2+ chars).
+   * Full-content thread search: titles + notes + message text,
+   * case-insensitive substring. Includes archived. Ordered by updatedAt
+   * DESC, max 50. Empty / 1-char queries return [] (renderer only calls
+   * with 2+ chars).
    * @param {unknown} query
    * @returns {object[]}
    */
@@ -1200,6 +1203,13 @@ class Store {
       if (
         thread.title != null &&
         String(thread.title).toLowerCase().includes(needle)
+      ) {
+        match = true;
+      }
+      if (
+        !match &&
+        thread.notes != null &&
+        String(thread.notes).toLowerCase().includes(needle)
       ) {
         match = true;
       }
