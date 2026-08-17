@@ -3,29 +3,29 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Solenta - every coding agent, one window</title>
-  <meta name="description" content="Solenta is a free, open-source desktop app that runs Claude Code, Codex, Kimi, Grok and OpenCode side by side, each thread in its own git worktree." />
+  <title>Solenta - every agent starts where the last one stopped</title>
+  <meta name="description" content="One shared memory across every agent, and a planboard that is your GitHub issues. Agent six begins knowing what agents one through five already ruled out." />
   <link rel="canonical" href="https://solenta.app/" />
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="Solenta" />
   <meta property="og:url" content="https://solenta.app/" />
-  <meta property="og:title" content="Solenta - every coding agent, one window" />
-  <meta property="og:description" content="A local-first control surface for coding agents. Free and open source." />
+  <meta property="og:title" content="Solenta - every agent starts where the last one stopped" />
+  <meta property="og:description" content="One shared memory across every agent, and a planboard that is your GitHub issues. Agent six begins knowing what agents one through five already ruled out." />
   <meta property="og:image" content="https://solenta.app/assets/og.png" />
   <meta property="og:image:type" content="image/png" />
   <meta property="og:image:width" content="1200" />
   <meta property="og:image:height" content="630" />
-  <meta property="og:image:alt" content="Solenta. Every coding agent. One window." />
+  <meta property="og:image:alt" content="Solenta. Every agent starts where the last one stopped." />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:site" content="@currentbitsNET" />
-  <meta name="twitter:title" content="Solenta - every coding agent, one window" />
-  <meta name="twitter:description" content="A local-first control surface for coding agents. Free and open source." />
+  <meta name="twitter:title" content="Solenta - every agent starts where the last one stopped" />
+  <meta name="twitter:description" content="One shared memory across every agent, and a planboard that is your GitHub issues. Agent six begins knowing what agents one through five already ruled out." />
   <meta name="twitter:image" content="https://solenta.app/assets/og.png" />
-  <meta name="twitter:image:alt" content="Solenta. Every coding agent. One window." />
+  <meta name="twitter:image:alt" content="Solenta. Every agent starts where the last one stopped." />
   <meta name="theme-color" content="#0b0e14" />
   <link rel="icon" href="assets/icon.svg" type="image/svg+xml" />
   <script>document.documentElement.classList.add("js");</script>
-  <link rel="stylesheet" href="style.css?v=2" />
+  <link rel="stylesheet" href="style.css?v=3" />
   <script src="https://unpkg.com/@phosphor-icons/web@2.1.1" defer></script>
 </head>
 <body>
@@ -49,23 +49,21 @@
 
 <header class="hero">
   <div class="wrap">
-    <div class="hero-grid">
-      <div>
-        <h1>Every coding agent.<br />One window.</h1>
-        <p class="sub">
-          Solenta runs Claude Code, Codex, Kimi, Grok and OpenCode side by
-          side, each thread in its own git worktree. Free and open source.
-        </p>
-        <div class="hero-ctas">
-          <a class="btn btn-primary" href="https://github.com/currentbits/solenta/releases/latest">
-            Download for macOS, Windows &amp; Linux
-          </a>
-          <a class="btn btn-ghost" href="https://github.com/currentbits/solenta">
-            <img src="https://cdn.simpleicons.org/github/e6e9f0" width="16" height="16" alt="" />
-            Star on GitHub
-          </a>
-        </div>
-      </div>
+    <h1>Every agent starts where<br />the last one stopped.</h1>
+    <p class="sub">
+      One shared memory across every agent, and a planboard that is your GitHub issues. Agent six begins knowing what agents one through five already ruled out. Claude Code, Codex, Kimi, Grok and OpenCode, each thread in its own git worktree. Free and open source.
+    </p>
+    <div class="hero-ctas">
+      <a class="btn btn-primary" href="https://github.com/currentbits/solenta/releases/latest">
+        Download for macOS, Windows &amp; Linux
+      </a>
+      <a class="btn btn-ghost" href="https://github.com/currentbits/solenta">
+        <img src="https://cdn.simpleicons.org/github/e6e9f0" width="16" height="16" alt="" />
+        Star on GitHub
+      </a>
+    </div>
+    <p class="hero-trust">Your code never leaves your machine. &middot; Bring your own subscription, we don't resell tokens.</p>
+    <div class="hero-shot">
       <div class="shot">
         <div class="shot-bar"><i></i><i></i><i></i></div>
         <img src="assets/screen-main.png" alt="Solenta running a thread: work log, agent messages, and the environment panel with PR checks" />
@@ -73,6 +71,95 @@
     </div>
   </div>
 </header>
+
+<section id="memory">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <h2>Your agents remember.</h2>
+      <p>
+        What one thread learns, the next one knows. Solenta injects a local
+        memory server into every agent session automatically, so decisions and
+        gotchas persist across Claude Code, Codex, Kimi, Grok and OpenCode.
+        It is SQLite on your machine, with full-text and vector search, and a
+        Memory tab so you can search, read and store entries yourself. The
+        tenth session on a project is better informed than the first.
+      </p>
+    </div>
+    <div class="memory-panel reveal">
+      <div class="memory-search">
+        <i class="ph ph-magnifying-glass"></i>
+        <span>Memory &middot; localhost &middot; SQLite</span>
+        <span class="memory-search-hint">Search, read, store</span>
+      </div>
+      <div class="memory-entry">
+        <p class="memory-meta">Claude Code &middot; thread 1</p>
+        <p>Ruled out a rewrite of auth. Cookie session stays; refresh lives in src/lib/auth.ts.</p>
+      </div>
+      <div class="memory-entry">
+        <p class="memory-meta">Codex &middot; thread 3</p>
+        <p>The 401 retry is in src/lib/api.ts. Moving it breaks the refresh path.</p>
+      </div>
+      <div class="memory-entry">
+        <p class="memory-meta">Grok &middot; thread 6</p>
+        <p>Starts knowing both. Adds the expiry skew and leaves the rest alone.</p>
+      </div>
+    </div>
+    <ul class="orch-points reveal">
+      <li><strong>Injected automatically.</strong> When the local server is healthy, every new session gets it. You do not wire it up per agent.</li>
+      <li><strong>Local, and yours to search.</strong> HTTP + MCP, localhost-only, bearer-token gated. The Memory tab reads the same SQLite file the agents write.</li>
+      <li><strong>It compounds.</strong> Session ten does not re-learn what session one already ruled out.</li>
+    </ul>
+  </div>
+</section>
+
+<section id="planboard">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <h2>Your planboard is your issue tracker.</h2>
+      <p>
+        The board is plain GitHub issues with labels, so nothing is trapped in
+        a local database. Agents update it with <code>gh</code>. Your teammates
+        see the same board without installing anything. Start task on a Todo
+        card opens a thread on that issue. Needs the GitHub CLI signed in, and
+        a project whose origin is on GitHub.
+      </p>
+      <p class="board-claim">No local-only planner can copy this.</p>
+    </div>
+    <div class="board reveal">
+      <div>
+        <h3>Todo</h3>
+        <article>
+          <p class="memory-meta">open</p>
+          <p>Document SSH remote setup</p>
+          <p class="board-action">Start task</p>
+        </article>
+        <article>
+          <p class="memory-meta">open</p>
+          <p>Show remaining spend cap in the composer</p>
+          <p class="board-action">Start task</p>
+        </article>
+      </div>
+      <div>
+        <h3>In progress</h3>
+        <article>
+          <p class="memory-meta">plan:doing</p>
+          <p>Lead the site with memory and the planboard</p>
+        </article>
+      </div>
+      <div>
+        <h3>Done</h3>
+        <article>
+          <p class="memory-meta">plan:done</p>
+          <p>Inject the memory server into every session</p>
+        </article>
+        <article>
+          <p class="memory-meta">closed</p>
+          <p>One git worktree per thread</p>
+        </article>
+      </div>
+    </div>
+  </div>
+</section>
 
 <section id="features">
   <div class="wrap">
@@ -89,21 +176,16 @@
         </div>
       </div>
       <div class="cell cell-b reveal">
-        <div class="cell-icon"><i class="ph ph-brain"></i></div>
-        <h3>Shared agent memory</h3>
-        <p>A local memory server is injected into every session. What one thread learns, the next one knows.</p>
-      </div>
-      <div class="cell cell-c reveal">
         <div class="cell-icon"><i class="ph ph-squares-four"></i></div>
         <h3>Five providers, one UI</h3>
         <p>Claude Code, Codex, Kimi, Grok and OpenCode with sticky permission modes, model overrides and session resume.</p>
       </div>
-      <div class="cell cell-c reveal">
+      <div class="cell cell-e reveal">
         <div class="cell-icon"><i class="ph ph-wallet"></i></div>
         <h3>Spend caps</h3>
         <p>Set a daily budget. A run that would cross it never starts. Token burn is visible per thread.</p>
       </div>
-      <div class="cell cell-c reveal">
+      <div class="cell cell-e reveal">
         <div class="cell-icon"><i class="ph ph-globe"></i></div>
         <h3>Web mode and SSH</h3>
         <p><code>--serve-web</code> puts the UI in a browser behind a token. Register projects on remote hosts and agents run there over SSH.</p>
@@ -150,6 +232,20 @@
           have Opus review each diff, keep the winner.&rdquo;
         </div>
       </div>
+    </div>
+  </div>
+</section>
+
+<section id="trust">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <h2>You own the tools.</h2>
+      <p>
+        Solenta is MIT licensed and runs on your machine. It drives the agent
+        CLIs you already installed. Plans live in GitHub issues. Memory lives
+        in a local SQLite file you can read and export. People who pick tools
+        in 2026 ask who owns them. The honest answer here is you do.
+      </p>
     </div>
   </div>
 </section>
