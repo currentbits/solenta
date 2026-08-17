@@ -46,6 +46,8 @@ function sendJson(ws, obj) {
  * @param {object} opts.ctx  ctx passed as first arg to IPC_HANDLERS[channel]
  * @param {typeof IPC_HANDLERS} [opts.handlers]  defaults to the exported map
  * @param {string} [opts.path]
+ * @param {number} [opts.pingIntervalMs]  heartbeat interval; default 30000
+ * @param {number} [opts.maxBufferedBytes]  terminate client past this; default 4MiB
  * @returns {{
  *   wss: import("ws").WebSocketServer,
  *   broadcast: (channel: string, payload: unknown) => void,
@@ -58,15 +60,38 @@ function attachWebBridge(httpServer, opts) {
   const ctx = opts.ctx;
   const handlers = opts.handlers || IPC_HANDLERS;
   const path = opts.path || WS_PATH;
+  const pingIntervalMs = opts.pingIntervalMs ?? 30000;
+  const maxBufferedBytes = opts.maxBufferedBytes ?? 4 * 1024 * 1024;
 
   /** @type {Set<import("ws").WebSocket>} */
   const authed = new Set();
 
   const wss = new WebSocketServer({ server: httpServer, path });
 
+  // ponytail: one shared ping interval for all sockets; terminate (reconnect + refetch) over per-client drop-and-resync
+  const interval = setInterval(() => {
+    for (const ws of wss.clients) {
+      if (ws.isAlive === false) {
+        ws.terminate();
+        continue;
+      }
+      ws.isAlive = false;
+      ws.ping();
+    }
+  }, pingIntervalMs);
+  interval.unref?.();
+
+  wss.on("close", () => {
+    clearInterval(interval);
+  });
+
   wss.on("connection", (ws) => {
     let sawFirst = false;
     let isAuthed = false;
+    ws.isAlive = true;
+    ws.on("pong", () => {
+      ws.isAlive = true;
+    });
 
     ws.on("message", async (raw) => {
       let msg;
@@ -136,13 +161,18 @@ function attachWebBridge(httpServer, opts) {
   function broadcast(channel, payload) {
     const frame = JSON.stringify({ kind: "push", channel, payload });
     for (const client of authed) {
-      if (client.readyState === WebSocket.OPEN) {
-        client.send(frame);
+      if (client.readyState !== WebSocket.OPEN) continue;
+      if (client.bufferedAmount > maxBufferedBytes) {
+        authed.delete(client);
+        client.terminate();
+        continue;
       }
+      client.send(frame);
     }
   }
 
   async function close() {
+    clearInterval(interval);
     for (const client of wss.clients) {
       try {
         client.terminate();
