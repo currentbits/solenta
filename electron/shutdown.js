@@ -9,18 +9,12 @@
  *
  * @param {{
  *   app: { on: (event: string, listener: () => void) => void },
- *   proc?: NodeJS.EventEmitter,
  *   exit?: (code: number) => void,
  *   cleanup: () => void,
  * }} opts
  * @returns {() => void} shutdown, for tests
  */
-function installShutdown({
-  app,
-  proc = process,
-  exit = (code) => process.exit(code),
-  cleanup,
-}) {
+function installShutdown({ app, exit = (code) => process.exit(code), cleanup }) {
   let shuttingDown = false;
   function shutdown() {
     if (shuttingDown) return;
@@ -40,8 +34,8 @@ function installShutdown({
     // (scripts/dev.js kills Electron then process.exit(0)s immediately).
     exit(0);
   }
-  proc.on("SIGINT", onSignal);
-  proc.on("SIGTERM", onSignal);
+  process.on("SIGINT", onSignal);
+  process.on("SIGTERM", onSignal);
   return shutdown;
 }
 
