@@ -26,6 +26,9 @@ export function EditProjectModal({
   const [remoteHost, setRemoteHost] = useState(project.remoteHost ?? "");
   const [remotePath, setRemotePath] = useState(project.remotePath ?? "");
   const [spaceId, setSpaceId] = useState(project.spaceId ?? "");
+  const [autoDispatch, setAutoDispatch] = useState(
+    project.autoDispatch ?? false,
+  );
   const [retentionText, setRetentionText] = useState(
     project.worktreeRetention && project.worktreeRetention > 0
       ? String(project.worktreeRetention)
@@ -74,6 +77,7 @@ export function EditProjectModal({
         remotePath: rpath,
         worktreeRetention,
         ...(spaces.length > 0 ? { spaceId } : {}),
+        autoDispatch,
       });
       if (!updated) {
         setError("Could not save the project.");
@@ -234,6 +238,22 @@ export function EditProjectModal({
               disabled={pending}
               onKeyDown={enterToSubmit}
             />
+          </div>
+          <div className={styles.field}>
+            <label className={styles.fieldRow} htmlFor="edit-project-auto-dispatch">
+              <input
+                id="edit-project-auto-dispatch"
+                type="checkbox"
+                data-edit-project-auto-dispatch=""
+                checked={autoDispatch}
+                disabled={pending}
+                onChange={(e) => setAutoDispatch(e.target.checked)}
+              />
+              <span>Auto-start threads from plan:todo</span>
+            </label>
+            <p className={styles.note}>
+              Starts a thread for each issue that enters plan:todo.
+            </p>
           </div>
           {error && (
             <p className={styles.fieldError} role="alert">

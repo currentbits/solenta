@@ -24,6 +24,7 @@ const { createOrchServer } = require("./orchServer.js");
 const { createPrStateRefresher } = require("./worktrees.js");
 const { killAll: killAllDevServers } = require("./devservers.js");
 const { startScheduler } = require("./automations.js");
+const { startAutoDispatch } = require("./autodispatch.js");
 const { enrichProcessPath } = require("./pathEnv.js");
 const {
   parseServeWebArgs,
@@ -78,6 +79,9 @@ let prStateRefresher = null;
 
 /** @type {ReturnType<typeof startScheduler> | null} */
 let automationScheduler = null;
+
+/** @type {ReturnType<typeof startAutoDispatch> | null} */
+let autoDispatch = null;
 
 /** @type {Awaited<ReturnType<typeof startWebServer>> | null} */
 let webServer = null;
@@ -392,6 +396,7 @@ app.whenReady().then(async () => {
   sweepTimer.unref();
 
   automationScheduler = startScheduler({ store, runner, broadcast });
+  autoDispatch = startAutoDispatch({ store, runner, broadcast });
 
   // In-main orchestrator MCP server (coder-threads): lets any agent drive
   // other threads. Needs store + runner, so it starts after both exist.
@@ -477,6 +482,14 @@ installShutdown({
         // ignore
       }
       automationScheduler = null;
+    }
+    if (autoDispatch) {
+      try {
+        autoDispatch.stop();
+      } catch {
+        // ignore
+      }
+      autoDispatch = null;
     }
     // Terminate only a memory-server child we spawned (adopted servers stay up).
     if (memorySupervisor) {
