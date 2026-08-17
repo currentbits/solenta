@@ -708,7 +708,7 @@ function createRunner(opts) {
         } catch {
           // silent
         }
-        if (!sha) sha = worktreeHeadSha(threadId);
+        if (!sha) sha = await worktreeHeadSha(threadId);
         await runVerifyGate(threadId, sha);
       })().catch((err) => {
         try {
@@ -740,18 +740,23 @@ function createRunner(opts) {
     return Boolean(normalizeCommand(thread.verifyCommand));
   }
 
-  /** HEAD of the thread worktree, or null. Used when the tree was already clean. */
-  function worktreeHeadSha(threadId) {
+  /**
+   * HEAD of the thread worktree, or null. Used when the tree was already
+   * clean so maybeCreateCheckpoint made no commit to pin to.
+   *
+   * Async on purpose: an execFileSync here blocks the main process for the
+   * length of a git call on every gated turn, which is the freeze the PR
+   * refresher was rewritten to avoid.
+   * @param {string} threadId
+   */
+  async function worktreeHeadSha(threadId) {
     try {
       const thread = store.getThread(threadId);
       if (!thread || !thread.worktreePath) return null;
-      const { execFileSync } = require("node:child_process");
-      const sha = execFileSync("git", ["rev-parse", "HEAD"], {
-        cwd: thread.worktreePath,
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "pipe"],
-      }).trim();
-      return sha || null;
+      const { gitTryAsync } = require("./worktrees.js");
+      const rev = await gitTryAsync(thread.worktreePath, ["rev-parse", "HEAD"]);
+      if (!rev.ok || !rev.stdout) return null;
+      return String(rev.stdout).trim() || null;
     } catch {
       return null;
     }
