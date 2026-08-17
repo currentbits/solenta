@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { execFile } = require("node:child_process");
 const { execCommand, wrapCommand, SYNC_TIMEOUT_MS } = require("./ssh.js");
+const { scanSecrets } = require("./guardrails.js");
 
 /** @type {typeof execFile} */
 let execFileImpl = execFile;
@@ -977,6 +978,7 @@ function commit(opts) {
   if (!message) {
     throw new Error("Commit message is empty");
   }
+  assertNoOutboundSecrets(message, "commit message");
   const { cwd } = threadGitCwd(store, threadId);
   if (!gitOut(cwd, ["status", "--porcelain", "-uall"])) {
     throw new Error("Nothing to commit");
@@ -1155,6 +1157,8 @@ function push(opts) {
     throw new Error("No git remote configured for this project.");
   }
 
+  scanOutgoingPush(cwd, branch);
+
   // Never prompt for credentials on the main process; cap wait so a hung
   // remote cannot freeze Electron.
   const result = gitTry(cwd, ["push", "-u", "origin", branch], {
@@ -1316,6 +1320,97 @@ function throwGhFailure(result, fallback) {
     throw new Error("gh timed out after 30s");
   }
   throw new Error(tailErr(result.stderr || result.combined, fallback));
+}
+
+/** Cap scanned outbound text so a huge diff cannot stall the main process. */
+const OUTBOUND_SCAN_CAP = 2 * 1024 * 1024;
+const OUTBOUND_SCAN_TIMEOUT_MS = 15_000;
+
+/**
+ * Hits already carry redacted excerpts (first 8 chars + length). Never add
+ * the raw match to this string.
+ * @param {Array<{ rule: string, match: string }>} hits
+ * @param {string} where
+ */
+function formatSecretBlock(hits, where) {
+  const listed = hits.map((h) => `${h.rule}: ${h.match}`).join(", ");
+  return `Blocked by Solenta guardrails: ${hits.length} secret(s) detected in the ${where} (${listed}). Remove them or set CODER_GUARDRAILS=off to override.`;
+}
+
+/**
+ * Scan text that is about to leave the machine. Throws on hits. Fail-open
+ * if the scanner itself throws: a guardrail bug must not brick push/PR/commit.
+ * @param {string} text
+ * @param {string} where
+ */
+function assertNoOutboundSecrets(text, where) {
+  let result;
+  try {
+    result = scanSecrets(text);
+  } catch (err) {
+    const msg = err && err.message ? String(err.message) : String(err);
+    console.warn(
+      `solenta: guardrails: scanSecrets failed (${where}); allowing: ${msg}`,
+    );
+    return;
+  }
+  if (!result || !Array.isArray(result.hits) || result.hits.length === 0) {
+    return;
+  }
+  throw new Error(formatSecretBlock(result.hits, where));
+}
+
+/**
+ * Diff of the commits about to be pushed. Prefer origin/<branch>..HEAD;
+ * if that ref is missing (first push), fall back to HEAD~1..HEAD, then
+ * `git show HEAD`. Returns null when the range cannot be determined.
+ * @param {string} cwd
+ * @param {string} branch
+ * @returns {string | null}
+ */
+function pushDiffText(cwd, branch) {
+  const remoteRef = `origin/${branch}`;
+  const haveRemote = gitTry(cwd, ["rev-parse", "--verify", remoteRef], {
+    timeout: OUTBOUND_SCAN_TIMEOUT_MS,
+  });
+  const range = haveRemote.ok ? `${remoteRef}..HEAD` : "HEAD~1..HEAD";
+  let result = gitTry(cwd, ["diff", range], {
+    timeout: OUTBOUND_SCAN_TIMEOUT_MS,
+  });
+  if (!result.ok && !haveRemote.ok) {
+    result = gitTry(cwd, ["show", "--format=%B", "HEAD"], {
+      timeout: OUTBOUND_SCAN_TIMEOUT_MS,
+    });
+  }
+  if (!result.ok) {
+    console.warn(
+      `solenta: guardrails: could not determine push diff range (${range}); skipping secret scan`,
+    );
+    return null;
+  }
+  const text = String(result.stdout || "");
+  return text.length > OUTBOUND_SCAN_CAP ? text.slice(0, OUTBOUND_SCAN_CAP) : text;
+}
+
+/**
+ * Secret-scan the outgoing push. Scanner / git errors log and let the push
+ * proceed; hits throw on the same Error channel as other push failures.
+ * @param {string} cwd
+ * @param {string} branch
+ */
+function scanOutgoingPush(cwd, branch) {
+  let text;
+  try {
+    text = pushDiffText(cwd, branch);
+  } catch (err) {
+    const msg = err && err.message ? String(err.message) : String(err);
+    console.warn(
+      `solenta: guardrails: push diff failed; allowing push: ${msg}`,
+    );
+    return;
+  }
+  if (text == null) return;
+  assertNoOutboundSecrets(text, "push");
 }
 
 /** Interactive `gh pr view` field set. Background refresh and create stay minimal. */
@@ -2326,6 +2421,10 @@ async function createPr(opts) {
     }
   }
 
+  const titleText = String(title ?? "");
+  const bodyText = body != null ? String(body) : "";
+  assertNoOutboundSecrets(`${titleText}\n${bodyText}`, "PR");
+
   /** @type {string[]} */
   const createArgs = [
     "pr",
@@ -2335,9 +2434,9 @@ async function createPr(opts) {
     "--head",
     branch,
     "--title",
-    String(title ?? ""),
+    titleText,
     "--body",
-    body != null ? String(body) : "",
+    bodyText,
   ];
   if (draft) {
     createArgs.push("--draft");
