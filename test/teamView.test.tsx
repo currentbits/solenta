@@ -357,4 +357,69 @@ describe("Agents team view", () => {
     assert.match(text, /already finished/, "done worker recoverable");
     m.unmount();
   });
+
+  it("plain thread: hides the hypothesis ledger when none were recorded", async () => {
+    const m = await mount(content(thread(), [ORCHESTRATOR]));
+    await m.flush();
+    assert.equal(m.query("[data-hypothesis-ledger]"), null);
+    assert.doesNotMatch(m.text(), /Hypotheses/);
+    m.unmount();
+  });
+
+  it("plain thread: lists recorded hypotheses newest-first by status", async () => {
+    const now = Date.now();
+    const m = await mount(
+      content(
+        thread({
+          hypotheses: [
+            {
+              id: "h-old",
+              claim: "Race is in the store flush",
+              status: "invalidated",
+              reason: "Flush is sync.",
+              at: now - 10 * 60_000,
+            },
+            {
+              id: "h-ok",
+              claim: "execFile never fires under load",
+              status: "validated",
+              reason: "",
+              at: now - 5 * 60_000,
+            },
+            {
+              id: "h-new",
+              claim: "A second watcher is doubling the work",
+              status: "invalidated",
+              reason: "",
+              at: now - 60_000,
+            },
+          ],
+        }),
+        [ORCHESTRATOR],
+      ),
+    );
+    await m.flush();
+
+    const card = m.query("[data-hypothesis-ledger]");
+    assert.ok(card, "ledger section renders");
+    assert.match(m.text(), /Hypotheses/);
+    assert.match(m.text(), /2 ruled out · 1 worked/);
+    assert.doesNotMatch(m.text(), /inconclusive/);
+
+    const rows = m.queryAll("[data-hypothesis-status]");
+    assert.equal(rows.length, 3);
+    assert.equal(rows[0]!.getAttribute("data-hypothesis-status"), "invalidated");
+    assert.match(rows[0]!.textContent ?? "", /second watcher/);
+    assert.doesNotMatch(
+      rows[0]!.textContent ?? "",
+      /Flush is sync/,
+      "empty reason renders nothing",
+    );
+    assert.equal(rows[1]!.getAttribute("data-hypothesis-status"), "invalidated");
+    assert.match(rows[1]!.textContent ?? "", /store flush/);
+    assert.match(rows[1]!.textContent ?? "", /Flush is sync/);
+    assert.equal(rows[2]!.getAttribute("data-hypothesis-status"), "validated");
+    assert.match(rows[2]!.textContent ?? "", /execFile/);
+    m.unmount();
+  });
 });

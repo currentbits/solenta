@@ -7,7 +7,7 @@ const path = require("node:path");
 const { createRequire } = require("node:module");
 
 const { registerMcpServer, unregisterMcpServer } = require("./memory-sup.js");
-const { forkWorkerThread } = require("./services.js");
+const { forkWorkerThread, recordHypothesis } = require("./services.js");
 
 const SERVER_NAME = "coder-threads";
 const CONFIG_NAME = "orch-server.json";
@@ -19,6 +19,8 @@ const INSTRUCTIONS =
   "The workspace holds SEVERAL projects and this server sees all of them, but you may " +
   "only drive threads in your own. Your thread id and project id are stated at the end " +
   "of your prompt; pass them, never guess an id from a title. " +
+  "Keep the hypothesis ledger current as you work: call hypothesis_record for each " +
+  "distinct approach as soon as you know how it turned out. " +
   "threads_list shows every thread with id, title, provider, status, handoffFrom, " +
   "projectId and projectName — filter it by your own projectId first. " +
   "thread_fork and thread_send reject a thread outside the projectId you pass. " +
@@ -327,7 +329,26 @@ function createToolHandlers(deps) {
     };
   }
 
-  return { threads_list, thread_fork, thread_send, thread_status };
+  async function hypothesis_record(args) {
+    const thread = store.getThread(args.threadId);
+    if (!thread) {
+      throw new Error(`Unknown thread: ${args.threadId}`);
+    }
+    assertSameProject(thread, args.projectId);
+    recordHypothesis(store, {
+      threadId: args.threadId,
+      claim: args.claim,
+      status: args.status,
+      reason: args.reason,
+    });
+    const after = store.getThread(args.threadId);
+    const total = Array.isArray(after && after.hypotheses)
+      ? after.hypotheses.length
+      : 0;
+    return { recorded: true, total };
+  }
+
+  return { threads_list, thread_fork, thread_send, thread_status, hypothesis_record };
 }
 
 /**
@@ -404,6 +425,27 @@ function buildMcpServer(sdk, handlers) {
       },
     },
     async (args) => json(await handlers.thread_status(args)),
+  );
+
+  server.registerTool(
+    "hypothesis_record",
+    {
+      description:
+        "Record one approach you tried on this thread, and how it turned out. " +
+        "Call as soon as you know the result of a distinct approach: " +
+        "invalidated for a dead end (this is the valuable one), validated for " +
+        "the approach that worked, inconclusive when you could not tell. " +
+        "reason is the evidence. projectId is YOUR OWN project id (stated at " +
+        "the end of your prompt); the thread must belong to it.",
+      inputSchema: {
+        threadId: z.string().min(1),
+        projectId: z.string().min(1),
+        claim: z.string().min(1),
+        status: z.enum(["validated", "invalidated", "inconclusive"]),
+        reason: z.string().optional(),
+      },
+    },
+    async (args) => json(await handlers.hypothesis_record(args)),
   );
 
   return server;

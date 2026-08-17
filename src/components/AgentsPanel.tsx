@@ -7,6 +7,7 @@ import type {
   GitRepoInfo,
   GitPullResult,
   DevServerState,
+  Hypothesis,
   LocalServerInfo,
   MemoryEntryInfo,
   PhaseView,
@@ -37,6 +38,11 @@ import {
   verifyLogStartsCollapsed,
   verifyNowDisabled,
 } from "../verifyCard";
+import {
+  formatHypothesisAge,
+  formatHypothesisSummary,
+  groupHypotheses,
+} from "../hypothesisLedger";
 import styles from "./AgentsPanel.module.css";
 
 type PanelTab = "agents" | "git" | "memory" | "skills";
@@ -1845,6 +1851,58 @@ function WaitLine({ wait }: { wait: WaitState }) {
   );
 }
 
+/** Ruled-out / worked / inconclusive ledger. Hidden when the thread has none. */
+function HypothesisLedgerCard({
+  hypotheses,
+  now,
+}: {
+  hypotheses: Hypothesis[] | undefined;
+  now: number;
+}) {
+  if (!hypotheses?.length) return null;
+  const groups = groupHypotheses(hypotheses);
+  return (
+    <section className={styles.gitCard} data-hypothesis-ledger="">
+      <div className={styles.gitCardLabel}>
+        <svg {...LABEL_ICON_PROPS} className={styles.labelIcon}>
+          <path d="M3.5 4.5 5 6l3-3.5" />
+          <path d="M10 5h3" />
+          <path d="M4 11.5h3.5M4 11.5 3 12.5M7.5 11.5 8.5 12.5" />
+          <path d="M10 12h3" />
+        </svg>
+        Hypotheses
+      </div>
+      <p className={styles.hypothesisSummary}>
+        {formatHypothesisSummary(hypotheses)}
+      </p>
+      {groups.map((g) => (
+        <div key={g.status} className={styles.hypothesisGroup}>
+          <div className={styles.hypothesisGroupLabel}>{g.label}</div>
+          <ul className={styles.hypothesisList}>
+            {g.entries.map((h) => (
+              <li
+                key={h.id}
+                className={styles.hypothesisRow}
+                data-hypothesis-status={h.status}
+              >
+                <div className={styles.hypothesisRowHead}>
+                  <span className={styles.hypothesisClaim}>{h.claim}</span>
+                  <span className={styles.hypothesisAge}>
+                    {formatHypothesisAge(h.at, now)}
+                  </span>
+                </div>
+                {h.reason ? (
+                  <p className={styles.hypothesisReason}>{h.reason}</p>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </section>
+  );
+}
+
 export function AgentsContent({
   workflow,
   thread,
@@ -1967,6 +2025,11 @@ export function AgentsContent({
       </section>
     ) : null;
 
+  // ponytail: Date.now() at render; 60s ticker if ages look frozen in long-open panes.
+  const hypothesisSection = (
+    <HypothesisLedgerCard hypotheses={thread?.hypotheses} now={Date.now()} />
+  );
+
   const groups = useMemo(() => {
     if (!workflow) return [];
     return workflow.phases
@@ -2058,6 +2121,7 @@ export function AgentsContent({
             )}
           </section>
           {subagentSection}
+          {hypothesisSection}
         </div>
       );
     }
@@ -2082,6 +2146,7 @@ export function AgentsContent({
             </ul>
           </section>
           {subagentSection}
+          {hypothesisSection}
         </div>
       );
     }
@@ -2089,6 +2154,7 @@ export function AgentsContent({
       <div className={styles.scroll}>
         <SessionCard thread={thread} usage={usage} providers={providers} />
         {subagentSection}
+        {hypothesisSection}
       </div>
     );
   }
@@ -2213,6 +2279,7 @@ export function AgentsContent({
             );
           })}
         </div>
+        {hypothesisSection}
       </div>
 
       <footer className={styles.footer}>
