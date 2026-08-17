@@ -107,6 +107,8 @@ function view(props: {
   devServerStatus?: (threadId: string) => Promise<DevServerState>;
   onPush?: () => Promise<{ remote: string; branch: string }>;
   onStartRun?: (prompt: string, threadId?: string) => void | Promise<void>;
+  onRepeatSchedule?: () => void;
+  onDistillWorkflow?: () => void;
 }) {
   return (
     <ThreadView
@@ -125,6 +127,8 @@ function view(props: {
       onSetProvider={() => {}}
       onSetReasoningEffort={() => {}}
       onSetArchived={() => {}}
+      onRepeatSchedule={props.onRepeatSchedule}
+      onDistillWorkflow={props.onDistillWorkflow}
       onDeleteThread={() => {}}
       changesOpen={false}
       changesNonce={0}
@@ -383,6 +387,39 @@ describe("dev dropdown", () => {
     await m.click(btn);
     await m.flush();
     assert.equal(m.query("[data-dev-popover]"), null, "no popover when disabled");
+    m.unmount();
+  });
+});
+
+describe("repeat-thread overflow items", () => {
+  it("shows Schedule and Distill when idle and the props are wired", async () => {
+    const m = await mount(
+      view({
+        onRepeatSchedule: () => {},
+        onDistillWorkflow: () => {},
+      }),
+    );
+    await m.flush();
+    const menuBtn = m.query("[aria-label='Thread actions']");
+    assert.ok(menuBtn);
+    await m.click(menuBtn);
+    assert.ok(m.query("[data-repeat-schedule]"));
+    assert.ok(m.query("[data-distill-workflow]"));
+    m.unmount();
+  });
+
+  it("hides Schedule and Distill while the thread is working", async () => {
+    const m = await mount(
+      view({
+        detail: detail({ thread: thread({ status: "working" }) }),
+        onRepeatSchedule: () => {},
+        onDistillWorkflow: () => {},
+      }),
+    );
+    await m.flush();
+    await m.click(m.query("[aria-label='Thread actions']"));
+    assert.equal(m.query("[data-repeat-schedule]"), null);
+    assert.equal(m.query("[data-distill-workflow]"), null);
     m.unmount();
   });
 });

@@ -23,10 +23,15 @@ import { SettingsModal } from "./components/SettingsModal";
 import { ArchiveToast } from "./components/ArchiveToast";
 import { AddProjectPathModal } from "./components/AddProjectPathModal";
 import { EditProjectModal } from "./components/EditProjectModal";
+import { WorkflowsModal } from "./components/WorkflowsModal";
 import { WebTokenGate } from "./components/WebTokenGate";
 import { isWebMode } from "./shared/wire";
 import { isBuildMismatch } from "./buildMismatch";
-import type { ProjectUpdateInput } from "./shared/ipc";
+import {
+  repeatDraftFromDetail,
+  type RepeatDraft,
+} from "./repeatThread";
+import type { DistilledWorkflow, ProjectUpdateInput } from "./shared/ipc";
 import styles from "./App.module.css";
 
 export type AppView =
@@ -188,6 +193,12 @@ export default function App() {
   const [addPathOpen, setAddPathOpen] = useState(false);
   const [editProjectId, setEditProjectId] = useState<string | null>(null);
   const [view, setView] = useState<AppView>("thread");
+  const [repeatDraft, setRepeatDraft] = useState<RepeatDraft | null>(null);
+  const [workflowDraft, setWorkflowDraft] = useState<DistilledWorkflow | null>(
+    null,
+  );
+  const [workflowsOpen, setWorkflowsOpen] = useState(false);
+  const [distillError, setDistillError] = useState<string | null>(null);
   /** Freshly created thread the Sidebar should reveal (expand/scroll/flash). */
   const [revealThreadId, setRevealThreadId] = useState<string | null>(null);
   const [drawer, setDrawer] = useState<DrawerId | null>(null);
@@ -215,7 +226,10 @@ export default function App() {
   const openKanban = useCallback(() => setView("kanban"), []);
   const openPlanboard = useCallback(() => setView("planboard"), []);
   const openPrs = useCallback(() => setView("prs"), []);
-  const openAutomations = useCallback(() => setView("automations"), []);
+  const openAutomations = useCallback(() => {
+    setRepeatDraft(null);
+    setView("automations");
+  }, []);
   const openActivity = useCallback(() => setView("activity"), []);
   const openUsage = useCallback(() => setView("usage"), []);
   const openInsights = useCallback(() => setView("insights"), []);
@@ -288,6 +302,42 @@ export default function App() {
     },
     [renameThread, selectedThreadId],
   );
+
+  const handleRepeatSchedule = useCallback(() => {
+    const source =
+      detail && detail.thread.id === selectedThreadId ? detail : null;
+    const draft = repeatDraftFromDetail(source);
+    if (!draft) return;
+    setRepeatDraft(draft);
+    setView("automations");
+  }, [detail, selectedThreadId]);
+
+  const handleDistillWorkflow = useCallback(() => {
+    if (!selectedThreadId) return;
+    void (async () => {
+      try {
+        const distilled = await api.runs.distill({
+          threadId: selectedThreadId,
+        });
+        setDistillError(null);
+        setWorkflowDraft(distilled);
+        setWorkflowsOpen(true);
+      } catch (err) {
+        setDistillError(
+          err instanceof Error && err.message ? err.message : String(err),
+        );
+      }
+    })();
+  }, [api, selectedThreadId]);
+
+  const closeWorkflows = useCallback(() => {
+    setWorkflowsOpen(false);
+    setWorkflowDraft(null);
+  }, []);
+
+  const dismissDistillError = useCallback(() => {
+    setDistillError(null);
+  }, []);
 
   const handleSetNotes = useCallback(
     (threadId: string, notes: string) => {
@@ -735,6 +785,7 @@ export default function App() {
               automations={automations}
               projects={projects}
               providers={providers}
+              draft={repeatDraft}
               onCreate={async (input) => {
                 await addAutomation(input);
               }}
@@ -797,6 +848,8 @@ export default function App() {
         onSetReasoningEffort={setReasoningEffort}
         onSetArchived={handleSetArchived}
         onRenameThread={handleRenameOpenThread}
+        onRepeatSchedule={handleRepeatSchedule}
+        onDistillWorkflow={handleDistillWorkflow}
         onSetNotes={handleSetNotes}
         onStartSpec={handleStartSpec}
         onReviewSpec={handleReviewSpec}
@@ -887,6 +940,15 @@ export default function App() {
           />
           </ErrorBoundary>
         </div>
+        <WorkflowsModal
+          open={workflowsOpen}
+          onClose={closeWorkflows}
+          workflows={workflows}
+          providers={providers}
+          initialDraft={workflowDraft}
+          onSave={saveWorkflow}
+          onRemove={removeWorkflow}
+        />
         <SettingsModal
           open={settingsOpen}
           onClose={closeSettings}
@@ -917,6 +979,14 @@ export default function App() {
             variant="error"
             title={`Failed to remove "${removeFailSlug}"`}
             onDismiss={dismissRemoveFail}
+          />
+        )}
+        {distillError && (
+          <ArchiveToast
+            key={`distill-fail-${distillError}`}
+            variant="error"
+            title={distillError}
+            onDismiss={dismissDistillError}
           />
         )}
         {addPathOpen && (

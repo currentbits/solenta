@@ -1,9 +1,10 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   createFormError,
   formatNextRun,
   scheduleLabel,
 } from "../automations";
+import type { RepeatDraft } from "../repeatThread";
 import type {
   AutomationInfo,
   AutomationPreset,
@@ -17,6 +18,8 @@ export interface AutomationsViewProps {
   automations: AutomationInfo[];
   projects: ProjectInfo[];
   providers: ProviderInfo[];
+  /** Prefill the create form (issue #285 "repeat this"). */
+  draft?: RepeatDraft | null;
   onCreate: (input: AutomationWrite) => Promise<void> | void;
   onUpdate: (
     input: Partial<AutomationWrite> & { id: string },
@@ -29,16 +32,21 @@ export function AutomationsView({
   automations,
   projects,
   providers,
+  draft,
   onCreate,
   onUpdate,
   onRemove,
   onRunNow,
 }: AutomationsViewProps) {
-  const [name, setName] = useState("");
-  const [projectId, setProjectId] = useState(projects[0]?.id ?? "");
-  const [prompt, setPrompt] = useState("");
-  const [provider, setProvider] = useState(providers[0]?.id ?? "claude");
-  const [model, setModel] = useState("");
+  const [name, setName] = useState(draft?.name ?? "");
+  const [projectId, setProjectId] = useState(
+    draft?.projectId ?? projects[0]?.id ?? "",
+  );
+  const [prompt, setPrompt] = useState(draft?.prompt ?? "");
+  const [provider, setProvider] = useState(
+    draft?.provider ?? providers[0]?.id ?? "claude",
+  );
+  const [model, setModel] = useState(draft?.model ?? "");
   const [preset, setPreset] = useState<AutomationPreset>("hourly");
   const [hour, setHour] = useState("9");
   const [formError, setFormError] = useState<string | null>(null);
@@ -48,6 +56,15 @@ export function AutomationsView({
     message: string;
   } | null>(null);
   const [now] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!draft) return;
+    setName(draft.name);
+    setProjectId(draft.projectId);
+    setPrompt(draft.prompt);
+    setProvider(draft.provider);
+    setModel(draft.model ?? "");
+  }, [draft]);
 
   /**
    * Row actions are fire-and-forget from an onClick, so a rejection has to

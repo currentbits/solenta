@@ -3010,6 +3010,20 @@ function buildDevCoder(): CoderApi {
         syncThreadRow(thread);
         emitDetail(detail);
       },
+      async distill() {
+        return {
+          name: "Distilled workflow",
+          phases: [
+            {
+              name: "replay",
+              agentCount: 1,
+              instruction: "Replay what worked",
+              provider: "claude",
+              model: null,
+            },
+          ],
+        };
+      },
     },
     activity: {
       async list(): Promise<ActivityItem[]> {

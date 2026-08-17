@@ -52,6 +52,40 @@ function auto(
 }
 
 describe("AutomationsView", () => {
+  it("prefills the create form from a RepeatDraft", async () => {
+    const m = await mount(
+      <AutomationsView
+        automations={[]}
+        projects={[p1]}
+        providers={providers}
+        draft={{
+          threadId: "t-done",
+          projectId: "p1",
+          name: "Nightly review",
+          prompt: "Review the ledger",
+          provider: "claude",
+          model: "opus",
+        }}
+        onCreate={() => {}}
+        onUpdate={() => {}}
+        onRemove={() => {}}
+        onRunNow={() => {}}
+      />,
+    );
+    const name = m.query(
+      '[data-automation-create] [name="name"]',
+    ) as HTMLInputElement | null;
+    const prompt = m.query(
+      '[data-automation-create] [name="prompt"]',
+    ) as HTMLTextAreaElement | null;
+    const model = m.query("[data-automation-model]") as HTMLInputElement | null;
+    assert.ok(name && prompt && model);
+    assert.equal(name.value, "Nightly review");
+    assert.equal(prompt.value, "Review the ledger");
+    assert.equal(model.value, "opus");
+    m.unmount();
+  });
+
   it("shows the empty state", async () => {
     const m = await mount(
       <AutomationsView

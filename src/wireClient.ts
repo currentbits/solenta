@@ -8,6 +8,7 @@ import type {
   UpdateStatus,
   CheckpointInfo,
   CoderApi,
+  DistilledWorkflow,
   RunStatInfo,
   ConflictForecast,
   VerifyResult,
@@ -396,6 +397,8 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
       start: (input) => call<{ runId: string }>("runs:start", input),
       startWorkflow: (input) =>
         call<{ runId: string }>("runs:startWorkflow", input),
+      distill: (input) =>
+        call<DistilledWorkflow>("runs:distill", input),
       stop: (input) => call<void>("runs:stop", input),
     },
     git: {

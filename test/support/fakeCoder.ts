@@ -21,6 +21,7 @@ import type {
   UpdateStatus,
   CheckpointInfo,
   CoderApi,
+  DistilledWorkflow,
   RunStatInfo,
   DevServerState,
   DiffResult,
@@ -163,6 +164,8 @@ export interface FakeOptions {
   issueFetch?: FetchIssueResult;
   /** Override attachments.saveImage result (default: { attachment: null }). */
   saveImage?: (input: unknown) => { attachment: AttachmentInfo | null };
+  /** Override runs.distill result. */
+  distill?: DistilledWorkflow;
 }
 
 export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
@@ -1034,6 +1037,23 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       start: (input: unknown) => rec("runs.start", [input], { runId: "r1" }),
       startWorkflow: (input: unknown) =>
         rec("runs.startWorkflow", [input], { runId: "r2" }),
+      distill: (input: unknown) =>
+        rec(
+          "runs.distill",
+          [input],
+          opts.distill ?? {
+            name: "Distilled workflow",
+            phases: [
+              {
+                name: "replay",
+                agentCount: 1,
+                instruction: "Replay what worked",
+                provider: "claude",
+                model: null,
+              },
+            ],
+          },
+        ),
       stop: (input: unknown) => rec("runs.stop", [input], undefined),
     },
     git: {

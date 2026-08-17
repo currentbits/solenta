@@ -203,6 +203,10 @@ interface ThreadViewProps {
   onSetArchived: (archived: boolean) => void | Promise<void>;
   /** Rename the open thread (header overflow). */
   onRenameThread?: (title: string) => void | Promise<void>;
+  /** Seed an automation from this thread's first prompt (#285). */
+  onRepeatSchedule?: () => void;
+  /** Distill this thread into a workflow draft for review (#285). */
+  onDistillWorkflow?: () => void;
   /** Save scratch notes for a thread (header notes editor, issue #194). */
   onSetNotes?: (threadId: string, notes: string) => void | Promise<void>;
   /** Turn spec mode on for a thread that has no spec yet (issue #269). */
@@ -1713,6 +1717,8 @@ export const ThreadView = memo(function ThreadView({
   onSetReasoningEffort,
   onSetArchived,
   onRenameThread,
+  onRepeatSchedule,
+  onDistillWorkflow,
   onSetNotes,
   onStartSpec,
   onReviewSpec,
@@ -2670,6 +2676,34 @@ export const ThreadView = memo(function ThreadView({
                         onClick={startRename}
                       >
                         Rename thread
+                      </button>
+                    )}
+                    {!isWorking && onRepeatSchedule && (
+                      <button
+                        type="button"
+                        className={styles.menuItem}
+                        role="menuitem"
+                        data-repeat-schedule=""
+                        onClick={() => {
+                          setMenuOpen(false);
+                          onRepeatSchedule();
+                        }}
+                      >
+                        Schedule this prompt…
+                      </button>
+                    )}
+                    {!isWorking && onDistillWorkflow && (
+                      <button
+                        type="button"
+                        className={styles.menuItem}
+                        role="menuitem"
+                        data-distill-workflow=""
+                        onClick={() => {
+                          setMenuOpen(false);
+                          onDistillWorkflow();
+                        }}
+                      >
+                        Distill into workflow…
                       </button>
                     )}
                     <button
