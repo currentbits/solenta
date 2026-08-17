@@ -44,6 +44,50 @@ import { mergeThreadPatch, patchThreadList } from "./threadPatch";
 
 const STATUS_POLL_MS = 60_000;
 
+function readFileAsDataUrl(file: File): Promise<string | null> {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () =>
+      resolve(typeof reader.result === "string" ? reader.result : null);
+    reader.onerror = () => resolve(null);
+    reader.readAsDataURL(file);
+  });
+}
+
+async function filesToAttachments(
+  files: File[],
+  save: (dataUrl: string) => Promise<AttachmentInfo | null>,
+): Promise<AttachmentInfo[]> {
+  const out: AttachmentInfo[] = [];
+  for (const file of files) {
+    const dataUrl = await readFileAsDataUrl(file);
+    if (!dataUrl) continue;
+    const attachment = await save(dataUrl);
+    if (attachment) out.push(attachment);
+  }
+  return out;
+}
+
+/** ponytail: web mode can only attach images, not folders. Native picker allows folders; `<input type=file>` cannot. */
+function pickWebImageFiles(): Promise<File[]> {
+  return new Promise((resolve) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.multiple = true;
+    input.accept = "image/*";
+    let settled = false;
+    const finish = (files: File[]) => {
+      if (settled) return;
+      settled = true;
+      input.remove();
+      resolve(files);
+    };
+    input.addEventListener("change", () => finish(Array.from(input.files ?? [])));
+    input.addEventListener("cancel", () => finish([]));
+    input.click();
+  });
+}
+
 export type WorkflowSaveInput = Omit<WorkflowTemplateInfo, "id" | "builtin"> & {
   id?: string;
 };
@@ -220,15 +264,15 @@ export interface UseCoderResult {
   listFiles: (query: string) => Promise<string[]>;
   /** Data URL for one image a tool returned; null when it is gone. */
   loadToolImage: (name: string) => Promise<string | null>;
-  /** Native image/folder picker for composer attachments. */
+  /** Native image/folder picker, or a web <input type=file> for images. */
   pickAttachments: () => Promise<AttachmentInfo[]>;
   /** Persist a pasted image for the selected thread; null when rejected. */
   saveAttachmentImage: (dataUrl: string) => Promise<AttachmentInfo | null>;
   /** Data URL for one attached image; null when it is gone. */
   loadAttachmentImage: (path: string) => Promise<string | null>;
   /**
-   * Classify drag-dropped files as attachments. Resolves absolute paths via
-   * the Electron preload; resolves [] where no such bridge exists (web).
+   * Classify drag-dropped files as attachments. Native resolves absolute
+   * paths via the Electron preload; web reads each File as a data URL.
    */
   dropAttachmentFiles: (files: File[]) => Promise<AttachmentInfo[]>;
   /** Push the selected thread's branch to origin. */
@@ -1458,11 +1502,6 @@ export function useCoder(): UseCoderResult {
     [api],
   );
 
-  const pickAttachments = useCallback(async () => {
-    const result = await api.attachments.pick();
-    return result.attachments;
-  }, [api]);
-
   const saveAttachmentImage = useCallback(
     async (dataUrl: string) => {
       if (!selectedThreadId) return null;
@@ -1476,6 +1515,15 @@ export function useCoder(): UseCoderResult {
     },
     [api, selectedThreadId],
   );
+
+  const pickAttachments = useCallback(async () => {
+    if (isWebMode()) {
+      if (!selectedThreadId) return [];
+      return filesToAttachments(await pickWebImageFiles(), saveAttachmentImage);
+    }
+    const result = await api.attachments.pick();
+    return result.attachments;
+  }, [api, saveAttachmentImage, selectedThreadId]);
 
   const loadAttachmentImage = useCallback(
     async (path: string) => {
@@ -1492,9 +1540,9 @@ export function useCoder(): UseCoderResult {
   const dropAttachmentFiles = useCallback(
     async (files: File[]) => {
       // Absolute paths of dropped Files exist only behind the Electron
-      // preload (webUtils); web/dev bridges leave drop unsupported.
+      // preload (webUtils). Web/dev bridges fall back to saveImage.
       const pathOf = api.attachments.droppedFilePath;
-      if (!pathOf) return [];
+      if (!pathOf) return filesToAttachments(files, saveAttachmentImage);
       const paths = files
         .map((file) => {
           try {
@@ -1508,7 +1556,7 @@ export function useCoder(): UseCoderResult {
       const result = await api.attachments.fromPaths({ paths });
       return result.attachments;
     },
-    [api],
+    [api, saveAttachmentImage],
   );
 
   const pushBranch = useCallback(async () => {
