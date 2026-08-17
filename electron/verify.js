@@ -1,0 +1,191 @@
+"use strict";
+
+/**
+ * Verification gate (issue #296): run a thread's verify command and turn a
+ * failure into a structured bundle the fixer can act on.
+ *
+ * The engine only. Persistence lives in store/services, the gate that calls
+ * it at a run terminal lives in runner.js.
+ */
+
+const { spawn } = require("node:child_process");
+const { killTree } = require("./proc.js");
+
+/** A command longer than this is a script, not a setting. */
+const VERIFY_COMMAND_MAX = 500;
+/** Tail kept from combined stdout+stderr. Enough for a failing suite's report. */
+const VERIFY_LOG_MAX = 8000;
+/** A verify command that runs longer than this is hung, not slow. */
+const VERIFY_TIMEOUT_MS = 10 * 60_000;
+/** SIGTERM → SIGKILL grace, same as devservers. */
+const KILL_FALLBACK_MS = 3_000;
+/**
+ * Fix hand-backs per turn before the thread lands "failed". Two attempts
+ * catch the "forgot to run the tests" case without burning a budget on an
+ * agent that cannot fix it.
+ */
+const MAX_FIX_ATTEMPTS = 2;
+
+/**
+ * Normalize a user-supplied verify command. Empty / whitespace / non-string
+ * disarms the gate (null); anything else is trimmed and capped.
+ *
+ * @param {unknown} raw
+ * @returns {string | null}
+ */
+function normalizeCommand(raw) {
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  return trimmed.slice(0, VERIFY_COMMAND_MAX);
+}
+
+/**
+ * Last `max` chars of `text`, marked when anything was dropped. Tail not
+ * head: a failing suite prints its summary last.
+ *
+ * @param {string} text
+ * @param {number} [max]
+ * @returns {string}
+ */
+function tailLog(text, max = VERIFY_LOG_MAX) {
+  const s = String(text || "");
+  if (s.length <= max) return s;
+  return `…[${s.length - max} chars trimmed]…\n${s.slice(-max)}`;
+}
+
+/**
+ * Run one verify command to completion.
+ *
+ * Never rejects: a spawn failure comes back as an ok:false result whose log
+ * is the error, because "could not run the tests" is a verification failure
+ * like any other, not a crash of the run lifecycle.
+ *
+ * @param {{ command: string, cwd: string, timeoutMs?: number, env?: NodeJS.ProcessEnv }} input
+ * @returns {Promise<{ ok: boolean, exitCode: number | null, timedOut: boolean, log: string, durationMs: number }>}
+ */
+function runVerifyCommand(input) {
+  const command = normalizeCommand(input && input.command);
+  const startedAt = Date.now();
+  if (!command) {
+    return Promise.resolve({
+      ok: false,
+      exitCode: null,
+      timedOut: false,
+      log: "No verify command set.",
+      durationMs: 0,
+    });
+  }
+  const timeoutMs =
+    input.timeoutMs == null ? VERIFY_TIMEOUT_MS : Number(input.timeoutMs);
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = spawn("/bin/sh", ["-c", command], {
+        cwd: input.cwd,
+        detached: true,
+        env: input.env || process.env,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (err) {
+      resolve({
+        ok: false,
+        exitCode: null,
+        timedOut: false,
+        log: `Could not start "${command}": ${err && err.message ? err.message : String(err)}`,
+        durationMs: Date.now() - startedAt,
+      });
+      return;
+    }
+
+    let out = "";
+    let timedOut = false;
+    let settled = false;
+    /** Cap in flight too — a chatty command can print gigabytes before exit. */
+    const keep = (chunk) => {
+      out += String(chunk);
+      if (out.length > VERIFY_LOG_MAX * 4) out = out.slice(-VERIFY_LOG_MAX * 2);
+    };
+    if (child.stdout) child.stdout.on("data", keep);
+    if (child.stderr) child.stderr.on("data", keep);
+
+    let killTimer = null;
+    const deadline = setTimeout(() => {
+      timedOut = true;
+      killTimer = killTree(child, KILL_FALLBACK_MS);
+    }, timeoutMs);
+    if (typeof deadline.unref === "function") deadline.unref();
+
+    const finish = (exitCode) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadline);
+      if (killTimer) clearTimeout(killTimer);
+      resolve({
+        ok: !timedOut && exitCode === 0,
+        exitCode,
+        timedOut,
+        log: tailLog(
+          timedOut
+            ? `${out}\n[verify] killed after ${Math.round(timeoutMs / 1000)}s`
+            : out,
+        ),
+        durationMs: Date.now() - startedAt,
+      });
+    };
+
+    child.on("error", (err) => {
+      out += `\n${err && err.message ? err.message : String(err)}`;
+      finish(null);
+    });
+    child.on("close", (code) => finish(code));
+  });
+}
+
+/**
+ * The bundle a failed verification hands the fixer: what was run, how it
+ * failed, the evidence, and the checkpoint it is pinned to. Deliberately a
+ * prompt and not a JSON blob — it is delivered as a normal turn.
+ *
+ * @param {import("../src/shared/ipc").VerifyResult} result
+ * @param {{ maxAttempts?: number }} [opts]
+ * @returns {string}
+ */
+function buildFixPrompt(result, opts) {
+  const maxAttempts =
+    opts && opts.maxAttempts != null ? opts.maxAttempts : MAX_FIX_ATTEMPTS;
+  const attempt = (result.attempt || 0) + 1;
+  const why = result.timedOut
+    ? `timed out after ${Math.round(result.durationMs / 1000)}s`
+    : `exited ${result.exitCode}`;
+  const lines = [
+    "[verification failed] This turn is NOT done.",
+    "",
+    `Command: ${result.command}`,
+    `Result: ${why}`,
+  ];
+  if (result.sha) lines.push(`Checkpoint: ${result.sha}`);
+  lines.push(
+    `Fix attempt ${attempt} of ${maxAttempts}.`,
+    "",
+    "Output:",
+    "```",
+    result.log || "(no output)",
+    "```",
+    "",
+    "State a root-cause hypothesis in one line, fix the cause, then re-run",
+    "the command yourself. Do not report success without its exit 0.",
+  );
+  return lines.join("\n");
+}
+
+module.exports = {
+  VERIFY_COMMAND_MAX,
+  VERIFY_LOG_MAX,
+  VERIFY_TIMEOUT_MS,
+  MAX_FIX_ATTEMPTS,
+  normalizeCommand,
+  tailLog,
+  runVerifyCommand,
+  buildFixPrompt,
+};
