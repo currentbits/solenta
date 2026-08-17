@@ -12,6 +12,7 @@ const {
   dueAutomations,
   startScheduler,
   runNow,
+  MAX_THREADS_PER_AUTOMATION,
 } = require("../automations.js");
 
 function at(y, m, d, h, min = 0, s = 0, ms = 0) {
@@ -214,6 +215,7 @@ describe("automation CRUD + scheduler", () => {
     assert.ok(thread);
     assert.equal(thread.title, "Hourly sweep");
     assert.equal(thread.provider, "claude");
+    assert.equal(thread.automationId, created.id);
     assert.equal(started[0].threadId, thread.id);
     const after = store.getAutomation(created.id);
     assert.ok(after.lastRunAt);
@@ -276,5 +278,127 @@ describe("automation CRUD + scheduler", () => {
     const after = store.getAutomation(created.id);
     assert.equal(after.lastError, "CLI missing");
     assert.ok(after.lastRunAt);
+  });
+
+  async function fireAuto(autoId) {
+    let threadId = null;
+    await runNow(
+      {
+        store,
+        runner: {
+          startRun: async (input) => {
+            threadId = input.threadId;
+            return { runId: "r" };
+          },
+        },
+      },
+      autoId,
+    );
+    return store.getThread(threadId);
+  }
+
+  it("retains only the newest MAX threads per automation and drops their messages", async () => {
+    const created = services.addAutomation(store, {
+      projectId: "p1",
+      name: "Sweep",
+      prompt: "go",
+      provider: "claude",
+      preset: "hourly",
+    });
+    const ids = [];
+    for (let i = 0; i < MAX_THREADS_PER_AUTOMATION + 5; i++) {
+      const thread = await fireAuto(created.id);
+      ids.push(thread.id);
+    }
+    const mine = store
+      .getThreads()
+      .filter((t) => t.automationId === created.id);
+    assert.equal(mine.length, MAX_THREADS_PER_AUTOMATION);
+    const surviving = new Set(mine.map((t) => t.id));
+    const expected = ids.slice(-MAX_THREADS_PER_AUTOMATION);
+    assert.deepEqual([...surviving].sort(), [...expected].sort());
+    for (const id of ids.slice(0, 5)) {
+      assert.equal(surviving.has(id), false);
+      assert.equal(
+        Object.prototype.hasOwnProperty.call(store.data.messagesByThread, id),
+        false,
+      );
+    }
+    for (const id of expected) {
+      assert.equal(
+        Object.prototype.hasOwnProperty.call(store.data.messagesByThread, id),
+        true,
+      );
+    }
+  });
+
+  it("does not purge working, worktree, or pinned automation threads", async () => {
+    const created = services.addAutomation(store, {
+      projectId: "p1",
+      name: "Sweep",
+      prompt: "go",
+      provider: "claude",
+      preset: "hourly",
+    });
+    const withWorktree = await fireAuto(created.id);
+    withWorktree.worktreePath = path.join(tmpDir, "wt");
+    const working = await fireAuto(created.id);
+    working.status = "working";
+    const pinned = await fireAuto(created.id);
+    pinned.pinnedAt = Date.now();
+
+    for (let i = 0; i < MAX_THREADS_PER_AUTOMATION + 2; i++) {
+      await fireAuto(created.id);
+    }
+
+    assert.ok(store.getThread(withWorktree.id));
+    assert.ok(store.getThread(working.id));
+    assert.ok(store.getThread(pinned.id));
+    const mine = store
+      .getThreads()
+      .filter((t) => t.automationId === created.id);
+    // Newest MAX kept, plus the 3 skipped live/pinned threads past the keep set.
+    assert.equal(mine.length, MAX_THREADS_PER_AUTOMATION + 3);
+  });
+
+  it("leaves other automations and hand-made threads untouched", async () => {
+    const created = services.addAutomation(store, {
+      projectId: "p1",
+      name: "Sweep",
+      prompt: "go",
+      provider: "claude",
+      preset: "hourly",
+    });
+    const other = services.addAutomation(store, {
+      projectId: "p1",
+      name: "Other",
+      prompt: "other",
+      provider: "claude",
+      preset: "hourly",
+    });
+    const handmade = services.createThread(store, {
+      projectId: "p1",
+      title: "Manual",
+    });
+    assert.equal(handmade.automationId, null);
+    const otherThread = await fireAuto(other.id);
+    assert.equal(otherThread.automationId, other.id);
+
+    for (let i = 0; i < MAX_THREADS_PER_AUTOMATION + 5; i++) {
+      await fireAuto(created.id);
+    }
+
+    assert.ok(store.getThread(handmade.id));
+    assert.equal(store.getThread(handmade.id).automationId, null);
+    assert.ok(store.getThread(otherThread.id));
+    assert.equal(store.getThread(otherThread.id).automationId, other.id);
+    assert.equal(
+      store.getThreads().filter((t) => t.automationId === created.id).length,
+      MAX_THREADS_PER_AUTOMATION,
+    );
+    assert.equal(
+      store.getThreads().filter((t) => t.automationId === other.id).length,
+      1,
+    );
   });
 });
