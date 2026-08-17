@@ -150,8 +150,8 @@ process.exit(2);
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
-  it("retries with the short field set when extras are unknown", () => {
-    const result = listPrs(repo);
+  it("retries with the short field set when extras are unknown", async () => {
+    const result = await listPrs(repo);
     assert.equal(result.ok, true);
     assert.equal(result.prs.length, 1);
     assert.equal(result.prs[0].number, 7);
@@ -159,9 +159,9 @@ process.exit(2);
     assert.equal(result.prs[0].isDraft, undefined);
   });
 
-  it("returns not a GitHub repo without throwing", () => {
+  it("returns not a GitHub repo without throwing", async () => {
     git(repo, ["remote", "set-url", "origin", "https://gitlab.com/acme/demo.git"]);
-    const result = listPrs(repo);
+    const result = await listPrs(repo);
     assert.deepEqual(result, { ok: false, reason: "not a GitHub repo" });
   });
 });

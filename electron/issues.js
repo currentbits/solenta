@@ -7,11 +7,15 @@
 
 const {
   gitTry,
-  ghTry,
+  ghTryAsync,
+  GH_TIMEOUT_MS,
   isGitHubRemote,
   isGhAuthFailure,
   tailErr,
 } = require("./worktrees.js");
+
+/** Interactive issue/PR gh: 30s cap, never the refresher's 8s default. */
+const GH_USER = { timeout: GH_TIMEOUT_MS };
 
 /**
  * Parse a pasted GitHub issue reference.
@@ -96,9 +100,9 @@ function isIssueNotFound(text) {
  *
  * @param {string} projectPath
  * @param {unknown} ref
- * @returns {{ ok: true, issue: { number: number, title: string, body: string, url: string } } | { ok: false, reason: string }}
+ * @returns {Promise<{ ok: true, issue: { number: number, title: string, body: string, url: string } } | { ok: false, reason: string }>}
  */
-function fetchIssue(projectPath, ref) {
+async function fetchIssue(projectPath, ref) {
   try {
     const parsed = parseIssueRef(ref);
     if (!parsed) {
@@ -134,7 +138,7 @@ function fetchIssue(projectPath, ref) {
       args.push("-R", `${owner}/${repo}`);
     }
 
-    const viewed = ghTry(cwd, args);
+    const viewed = await ghTryAsync(cwd, args, GH_USER);
     if (!viewed.ok) {
       if (viewed.enoent) {
         return { ok: false, reason: "gh missing" };
@@ -227,9 +231,9 @@ function parseIssueListJson(stdout) {
  * non-GitHub remote, or auth failure come back as `{ ok: false, reason }`.
  *
  * @param {string} projectPath
- * @returns {{ ok: true, issues: ReturnType<typeof parseIssueListJson> } | { ok: false, reason: string }}
+ * @returns {Promise<{ ok: true, issues: ReturnType<typeof parseIssueListJson> } | { ok: false, reason: string }>}
  */
-function listIssues(projectPath) {
+async function listIssues(projectPath) {
   const cwd = String(projectPath || "");
   if (!cwd) {
     return { ok: false, reason: "not a GitHub repo" };
@@ -244,16 +248,20 @@ function listIssues(projectPath) {
     return { ok: false, reason: "not a GitHub repo" };
   }
 
-  const listed = ghTry(cwd, [
-    "issue",
-    "list",
-    "--state",
-    "all",
-    "--json",
-    "number,title,labels,state,url,updatedAt",
-    "--limit",
-    "100",
-  ]);
+  const listed = await ghTryAsync(
+    cwd,
+    [
+      "issue",
+      "list",
+      "--state",
+      "all",
+      "--json",
+      "number,title,labels,state,url,updatedAt",
+      "--limit",
+      "100",
+    ],
+    GH_USER,
+  );
   if (!listed.ok) {
     if (listed.enoent) {
       return { ok: false, reason: "gh missing" };
@@ -296,9 +304,9 @@ const PLAN_LABELS = ["plan:todo", "plan:doing", "plan:done"];
  * @param {string} projectPath
  * @param {unknown} number
  * @param {unknown} status one of "todo" | "doing" | "done"
- * @returns {{ ok: true } | { ok: false, reason: string }}
+ * @returns {Promise<{ ok: true } | { ok: false, reason: string }>}
  */
-function setPlanStatus(projectPath, number, status) {
+async function setPlanStatus(projectPath, number, status) {
   const cwd = String(projectPath || "");
   const issueNumber = Number(number);
   const label = `plan:${String(status || "")}`;
@@ -316,14 +324,18 @@ function setPlanStatus(projectPath, number, status) {
   }
 
   const base = ["issue", "edit", String(issueNumber), "--add-label", label];
-  let edited = ghTry(cwd, [
-    ...base,
-    "--remove-label",
-    PLAN_LABELS.filter((l) => l !== label).join(","),
-  ]);
+  let edited = await ghTryAsync(
+    cwd,
+    [
+      ...base,
+      "--remove-label",
+      PLAN_LABELS.filter((l) => l !== label).join(","),
+    ],
+    GH_USER,
+  );
   let errText = edited.stderr || edited.combined || edited.stdout || "";
   if (!edited.ok && !edited.enoent && /not found/i.test(errText)) {
-    edited = ghTry(cwd, base);
+    edited = await ghTryAsync(cwd, base, GH_USER);
     errText = edited.stderr || edited.combined || edited.stdout || "";
   }
   if (edited.ok) return { ok: true };
