@@ -1,6 +1,7 @@
 "use strict";
 
 const { spawn } = require("node:child_process");
+const { killTree } = require("./proc.js");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -475,6 +476,7 @@ function runKimi(opts) {
     child = spawn(binary, args, {
       cwd,
       shell: false,
+      detached: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
   } catch (err) {
@@ -525,19 +527,7 @@ function runKimi(opts) {
     kill() {
       if (killed || finished) return;
       killed = true;
-      try {
-        child.kill("SIGTERM");
-      } catch {
-        // already dead
-      }
-      killTimer = setTimeout(() => {
-        killTimer = null;
-        try {
-          if (!finished) child.kill("SIGKILL");
-        } catch {
-          // ignore
-        }
-      }, SIGKILL_AFTER_MS);
+      killTimer = killTree(child, SIGKILL_AFTER_MS);
     },
   };
 }
