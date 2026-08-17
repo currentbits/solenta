@@ -386,6 +386,7 @@ function normalizeSettings(raw) {
     updateChannel: null,
     notifications: true,
     agentProfiles: [],
+    otel: { endpoint: null, headers: {}, claudeMetrics: false },
   };
   if (!raw || typeof raw !== "object") return settings;
   const obj = /** @type {{ dailyBudgetUsd?: unknown, orchestrationBudgetUsd?: unknown, autoSettleAfterDays?: unknown, mcpServers?: unknown }} */ (
@@ -438,7 +439,32 @@ function normalizeSettings(raw) {
   settings.updateChannel = ch === "prod" || ch === "nightly" ? ch : null;
   settings.notifications =
     /** @type {{ notifications?: unknown }} */ (obj).notifications !== false;
+  settings.otel = normalizeOtel(/** @type {{ otel?: unknown }} */ (obj).otel);
   return settings;
+}
+
+/**
+ * Heal the OTel slice. Absent/junk → export off. An endpoint must be an
+ * http(s) URL; anything else collapses to null so a corrupt store cannot
+ * make the exporter POST somewhere unexpected.
+ *
+ * @param {unknown} raw
+ * @returns {{ endpoint: string | null, headers: Record<string, string>, claudeMetrics: boolean }}
+ */
+function normalizeOtel(raw) {
+  const out = { endpoint: null, headers: {}, claudeMetrics: false };
+  if (!raw || typeof raw !== "object") return out;
+  const obj = /** @type {{ endpoint?: unknown, headers?: unknown, claudeMetrics?: unknown }} */ (raw);
+  if (typeof obj.endpoint === "string" && /^https?:\/\/\S+$/.test(obj.endpoint.trim())) {
+    out.endpoint = obj.endpoint.trim().replace(/\/+$/, "");
+  }
+  if (obj.headers && typeof obj.headers === "object" && !Array.isArray(obj.headers)) {
+    for (const [k, v] of Object.entries(obj.headers)) {
+      if (k && typeof v === "string") out.headers[k] = v;
+    }
+  }
+  out.claudeMetrics = obj.claudeMetrics === true;
+  return out;
 }
 
 /**
@@ -1230,6 +1256,7 @@ class Store {
       updateChannel: n.updateChannel,
       notifications: n.notifications,
       agentProfiles: n.agentProfiles,
+      otel: n.otel,
     };
   }
 
@@ -1322,6 +1349,19 @@ class Store {
         throw new Error('updateChannel must be "prod", "nightly", or null');
       }
       this.data.settings.updateChannel = v;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "otel")) {
+      const v = /** @type {{ endpoint?: unknown }} */ (patch.otel);
+      if (!v || typeof v !== "object") {
+        throw new Error("otel must be an object");
+      }
+      if (
+        v.endpoint != null &&
+        !(typeof v.endpoint === "string" && /^https?:\/\/\S+$/.test(v.endpoint.trim()))
+      ) {
+        throw new Error("OTLP endpoint must be an http(s) URL or null");
+      }
+      this.data.settings.otel = normalizeOtel(v);
     }
     if (Object.prototype.hasOwnProperty.call(patch, "notifications")) {
       const v = patch.notifications;

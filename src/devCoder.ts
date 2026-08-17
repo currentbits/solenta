@@ -27,12 +27,15 @@ import type {
   RunStatInfo,
   DiffResult,
   DevServerState,
+  FailureKind,
+  FailureMode,
   FetchIssueResult,
   ListIssuesResult,
   LocalServerInfo,
   MemoryEntryInfo,
   AgentProfile,
   McpServerInfo,
+  OtelSettings,
   PermissionMode,
   PlanIssue,
   PlanStatus,
@@ -1304,6 +1307,7 @@ function buildDevCoder(): CoderApi {
   /** Update channel override; null follows the (absent) dev stamp. */
   let updateChannel: "prod" | "nightly" | null = null;
   let notifications = true;
+  let otel: OtelSettings = { endpoint: null, headers: {}, claudeMetrics: false };
   /** Saved agent profiles (Settings tab), in-memory. */
   let agentProfiles: AgentProfile[] = [];
   /** In-memory skills (Skills tab); dev twin of the on-disk SKILL.md scan. */
@@ -1878,6 +1882,7 @@ function buildDevCoder(): CoderApi {
           updateChannel,
           notifications,
           agentProfiles: agentProfiles.map((p) => ({ ...p })),
+          otel: { ...otel, headers: { ...otel.headers } },
         };
       },
       async set(patch: Partial<AppSettings>): Promise<AppSettings> {
@@ -1921,6 +1926,23 @@ function buildDevCoder(): CoderApi {
           }
           agentProfiles = patch.agentProfiles.map((p) => ({ ...p }));
         }
+        if (Object.prototype.hasOwnProperty.call(patch, "otel")) {
+          const v = patch.otel;
+          if (!v || typeof v !== "object") {
+            throw new Error("otel must be an object");
+          }
+          if (
+            v.endpoint != null &&
+            !/^https?:\/\/\S+$/.test(String(v.endpoint).trim())
+          ) {
+            throw new Error("OTLP endpoint must be an http(s) URL or null");
+          }
+          otel = {
+            endpoint: v.endpoint ? String(v.endpoint).trim().replace(/\/+$/, "") : null,
+            headers: { ...(v.headers ?? {}) },
+            claudeMetrics: v.claudeMetrics === true,
+          };
+        }
         return {
           dailyBudgetUsd,
           orchestrationBudgetUsd,
@@ -1931,6 +1953,7 @@ function buildDevCoder(): CoderApi {
           updateChannel,
           notifications,
           agentProfiles: agentProfiles.map((p) => ({ ...p })),
+          otel: { ...otel, headers: { ...otel.headers } },
         };
       },
     },
@@ -2874,6 +2897,45 @@ function buildDevCoder(): CoderApi {
             },
           },
         };
+      },
+    },
+    insights: {
+      // Fixture only. The real clustering lives in electron/failuremodes.js.
+      async failureModes(): Promise<FailureMode[]> {
+        const rows = threads.slice(0, 3);
+        if (rows.length < 2) return [];
+        return [
+          {
+            id: "fixture-enoent",
+            signature: "Error: spawn <cmd> ENOENT",
+            sample: "Error: spawn claude ENOENT",
+            count: rows.length,
+            lastAt: now(),
+            offenders: rows.map((t, i) => ({
+              threadId: t.id,
+              threadTitle: t.title,
+              projectId: t.projectId,
+              provider: t.provider,
+              kind: (i === 0 ? "failed" : "retried") as FailureKind,
+              at: now() - i * 3_600_000,
+            })),
+          },
+          {
+            id: "fixture-budget",
+            signature: "Daily budget of $<n> reached",
+            sample: "Daily budget of $20 reached",
+            count: 2,
+            lastAt: now() - 7_200_000,
+            offenders: rows.slice(0, 2).map((t, i) => ({
+              threadId: t.id,
+              threadTitle: t.title,
+              projectId: t.projectId,
+              provider: t.provider,
+              kind: "failed" as FailureKind,
+              at: now() - 7_200_000 - i * 60_000,
+            })),
+          },
+        ];
       },
     },
     git: {
