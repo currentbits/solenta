@@ -7,10 +7,7 @@ import { blobToFloat, cosine } from './embedder.js'
  * twice. MiniLM puts unrelated project notes around 0.3-0.5, so this only fires
  * on genuine paraphrases.
  */
-export const SEMANTIC_DUP = 0.88
-
-/** Cosine floor for a pair to be worth a human's attention at all. */
-export const SEMANTIC_RELATED = 0.6
+export const SEMANTIC_DUP = 0.9
 
 /**
  * Cosine neighbours of `vec` among live entries that already have a vector,
@@ -31,7 +28,7 @@ export function semanticNeighbors(db, vec, opts) {
     project = null,
     exclude = null,
     types = null,
-    minScore = SEMANTIC_RELATED,
+    minScore = SEMANTIC_DUP,
     limit = 10,
   } = opts ?? {}
   if (!vec || !vec.length || !model) return []

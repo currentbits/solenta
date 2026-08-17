@@ -57,12 +57,12 @@ describe('semanticNeighbors', () => {
       model: 'fake',
       project: 'p',
       exclude: self,
-      minScore: 0.6,
+      minScore: 0.9,
     })
 
-    assert.equal(hits.length, 1, 'only the paraphrase clears the floor')
+    assert.equal(hits.length, 1, 'only the twin clears the floor')
     assert.equal(hits[0].id, twin)
-    assert.ok(hits[0].score >= 0.6)
+    assert.ok(hits[0].score >= 0.9)
   })
 
   it('stays inside the project scope and skips dead entries', async () => {
@@ -77,7 +77,7 @@ describe('semanticNeighbors', () => {
 
     const vec = memory.embedder.embed('shared fact\nsame words')
     assert.deepEqual(
-      semanticNeighbors(memory.db, vec, { model: 'fake', project: 'p', minScore: 0.6 }),
+      semanticNeighbors(memory.db, vec, { model: 'fake', project: 'p', minScore: 0.9 }),
       [],
     )
   })
