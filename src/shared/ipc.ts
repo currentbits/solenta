@@ -309,15 +309,13 @@ export type HypothesisStatus = "validated" | "invalidated" | "inconclusive";
 
 /** One entry of a thread's hypothesis ledger (issue #303). */
 export interface Hypothesis {
-  /** Stable id: `${runId ?? "manual"}:${index}` at write time. */
+  /** Stable id, unique within the thread (write timestamp + a counter). */
   id: string;
   /** The approach, one line, truncated to HYPOTHESIS_CLAIM_MAX. */
   claim: string;
   status: HypothesisStatus;
   /** The evidence behind the verdict, truncated to HYPOTHESIS_REASON_MAX. Empty when the agent gave none. */
   reason: string;
-  /** Run that recorded it, for grouping one ledger card per run; null outside a run. */
-  runId: string | null;
   at: number;
 }
 
