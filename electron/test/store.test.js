@@ -502,6 +502,29 @@ describe("Store", () => {
     assert.equal(t.snoozedAt, null);
   });
 
+  it("heals leftover kimi cwd session sentinel to null (issue #220)", () => {
+    const old = {
+      projects: [],
+      threads: [
+        {
+          id: "t-cwd",
+          projectId: "p1",
+          title: "Kimi leftover",
+          provider: "kimi",
+          sessionId: "cwd",
+          status: "done",
+          createdAt: 1,
+          updatedAt: 2,
+        },
+      ],
+      messagesByThread: {},
+      workLogByThread: {},
+    };
+    fs.writeFileSync(filePath, JSON.stringify(old), "utf8");
+    const store = new Store(filePath);
+    assert.equal(store.getThread("t-cwd").sessionId, null);
+  });
+
   it("migrates threads missing pin/snooze fields to null (not undefined)", () => {
     const old = {
       projects: [],

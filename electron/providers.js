@@ -461,9 +461,10 @@ const PROVIDERS = [
     /**
      * Kimi HAS per-session resume: the stream's meta resume hint carries a
      * session_id and -S <id> resumes it (verified live; recalled the prior
-     * turn). The old design assumed per-cwd sessions only; threads migrated
-     * from it hold the sentinel "cwd" and keep using -c until their next
-     * session id is captured.
+     * turn). Never emit -c: it continues the last session in the working
+     * directory, which is shared by every no-worktree thread in a project
+     * (issue #220). The leftover store sentinel "cwd" is treated as no
+     * session, not as -S cwd.
      *
      * Permission flags: -p CANNOT combine with -y or --auto ("error: Cannot
      * combine --prompt with --yolo/--auto", verified live). Prompt mode runs
@@ -477,9 +478,7 @@ const PROVIDERS = [
       if (model) {
         args.push("-m", String(model));
       }
-      if (sessionId === "cwd") {
-        args.push("-c");
-      } else if (sessionId) {
+      if (sessionId && sessionId !== "cwd") {
         args.push("-S", String(sessionId));
       }
       // Effort goes via config.toml (effortVia "config"), NEVER argv: kimi

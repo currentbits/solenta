@@ -535,8 +535,8 @@ function runKimi(opts) {
 /**
  * Real session id from the meta resume hint, or null.
  * {"role":"meta","type":"session.resume_hint","session_id":"session_..."}
- * Kimi DOES have per-session resume (-S <id>, verified live); the old
- * per-cwd "-c" design predates knowing that.
+ * Kimi DOES have per-session resume (-S <id>, verified live). Do not
+ * invent a per-cwd sentinel when this is null (issue #220).
  * @param {object} obj
  * @returns {string | null}
  */
