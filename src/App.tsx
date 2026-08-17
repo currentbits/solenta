@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { useCoder } from "./useCoder";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Sidebar } from "./components/Sidebar";
@@ -25,6 +32,27 @@ export type AppView =
   | "prs"
   | "automations"
   | "activity";
+
+type DrawerId = "sidebar" | "agents";
+
+const NARROW_QUERY = "(max-width: 900px)";
+
+function subscribeNarrow(onChange: () => void): () => void {
+  if (typeof window.matchMedia !== "function") return () => {};
+  const mq = window.matchMedia(NARROW_QUERY);
+  mq.addEventListener("change", onChange);
+  return () => mq.removeEventListener("change", onChange);
+}
+
+function getNarrow(): boolean {
+  return typeof window.matchMedia === "function"
+    ? window.matchMedia(NARROW_QUERY).matches
+    : false;
+}
+
+function useNarrow(): boolean {
+  return useSyncExternalStore(subscribeNarrow, getNarrow, () => false);
+}
 
 export default function App() {
   const {
@@ -139,10 +167,18 @@ export default function App() {
   const [view, setView] = useState<AppView>("thread");
   /** Freshly created thread the Sidebar should reveal (expand/scroll/flash). */
   const [revealThreadId, setRevealThreadId] = useState<string | null>(null);
+  const [drawer, setDrawer] = useState<DrawerId | null>(null);
+  const narrow = useNarrow();
+  const sidebarPaneRef = useRef<HTMLDivElement>(null);
+  const agentsPaneRef = useRef<HTMLDivElement>(null);
+  const threadsBtnRef = useRef<HTMLButtonElement>(null);
+  const agentsBtnRef = useRef<HTMLButtonElement>(null);
+  const lastDrawerRef = useRef<DrawerId | null>(null);
 
   const handleSelectThread = useCallback(
     (id: string) => {
       setView("thread");
+      setDrawer(null);
       selectThread(id);
     },
     [selectThread],
@@ -314,6 +350,32 @@ export default function App() {
     setChangesOpen(false);
   }, [selectedThreadId]);
 
+  useEffect(() => {
+    if (drawer === null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setDrawer(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [drawer]);
+
+  // ponytail: restore to the trigger, not a focus trap. Tab can leave the pane.
+  useEffect(() => {
+    if (drawer) {
+      lastDrawerRef.current = drawer;
+      const pane =
+        drawer === "sidebar" ? sidebarPaneRef.current : agentsPaneRef.current;
+      pane?.focus();
+    } else if (lastDrawerRef.current) {
+      const btn =
+        lastDrawerRef.current === "sidebar"
+          ? threadsBtnRef.current
+          : agentsBtnRef.current;
+      btn?.focus();
+      lastDrawerRef.current = null;
+    }
+  }, [drawer]);
+
   // Gate the open detail on the current selection: while threads.get for a
   // freshly clicked thread is in flight (visible over --serve-web latency),
   // `detail` still holds the PREVIOUS thread. Rendering it under the new
@@ -441,48 +503,59 @@ export default function App() {
   return (
     <div className={styles.shell}>
       {isWebMode() && <WebTokenGate />}
-      <div className={styles.app} data-layout="app">
-        <input
-          type="checkbox"
-          id="drawer-sidebar"
-          className={styles.drawerToggle}
-          data-drawer="sidebar"
-        />
-        <input
-          type="checkbox"
-          id="drawer-agents"
-          className={styles.drawerToggle}
-          data-drawer="agents"
-        />
+      <div
+        className={styles.app}
+        data-layout="app"
+        data-drawer={drawer ?? ""}
+      >
         <div className={styles.narrowBar} data-narrow-chrome="">
-          <label
-            htmlFor="drawer-sidebar"
+          <button
+            type="button"
+            ref={threadsBtnRef}
             className={styles.narrowBtn}
             data-drawer-open="sidebar"
+            aria-expanded={drawer === "sidebar"}
+            aria-controls="pane-sidebar"
+            onClick={() =>
+              setDrawer((d) => (d === "sidebar" ? null : "sidebar"))
+            }
           >
             Threads
-          </label>
-          <label
-            htmlFor="drawer-agents"
+          </button>
+          <button
+            type="button"
+            ref={agentsBtnRef}
             className={styles.narrowBtn}
             data-drawer-open="agents"
+            aria-expanded={drawer === "agents"}
+            aria-controls="pane-agents"
+            onClick={() =>
+              setDrawer((d) => (d === "agents" ? null : "agents"))
+            }
           >
             Agents
-          </label>
+          </button>
         </div>
-        <label
-          htmlFor="drawer-sidebar"
+        <div
           className={`${styles.scrim} ${styles.scrimSidebar}`}
           data-scrim="sidebar"
           aria-hidden
+          onClick={() => setDrawer(null)}
         />
-        <label
-          htmlFor="drawer-agents"
+        <div
           className={`${styles.scrim} ${styles.scrimAgents}`}
           data-scrim="agents"
           aria-hidden
+          onClick={() => setDrawer(null)}
         />
-        <div className={styles.sidebarSlot} data-pane="sidebar">
+        <div
+          id="pane-sidebar"
+          ref={sidebarPaneRef}
+          className={styles.sidebarSlot}
+          data-pane="sidebar"
+          tabIndex={-1}
+          inert={narrow && drawer !== "sidebar"}
+        >
           <ErrorBoundary pane="Sidebar">
             <Sidebar
         appName="Solenta"
@@ -528,7 +601,11 @@ export default function App() {
             />
           </ErrorBoundary>
         </div>
-        <div className={styles.threadSlot} data-pane="thread">
+        <div
+          className={styles.threadSlot}
+          data-pane="thread"
+          inert={narrow && drawer !== null}
+        >
           <ErrorBoundary pane="Thread view">
           {view === "activity" ? (
             <ActivityView
@@ -642,7 +719,14 @@ export default function App() {
           )}
           </ErrorBoundary>
         </div>
-        <div className={styles.agentsSlot} data-pane="agents">
+        <div
+          id="pane-agents"
+          ref={agentsPaneRef}
+          className={styles.agentsSlot}
+          data-pane="agents"
+          tabIndex={-1}
+          inert={narrow && drawer !== "agents"}
+        >
           <ErrorBoundary pane="Agents panel">
             <AgentsPanel
         workflow={visibleDetail?.workflow ?? null}

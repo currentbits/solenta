@@ -140,22 +140,13 @@ describe("narrow three-pane layout hooks", () => {
     assert.ok(m.query('[data-pane="sidebar"]'), "sidebar pane hook missing");
     assert.ok(m.query('[data-pane="thread"]'), "thread pane hook missing");
     assert.ok(m.query('[data-pane="agents"]'), "agents pane hook missing");
-    assert.ok(
-      m.query('[data-drawer="sidebar"]'),
-      "sidebar drawer toggle hook missing",
-    );
-    assert.ok(
-      m.query('[data-drawer="agents"]'),
-      "agents drawer toggle hook missing",
-    );
-    assert.ok(
-      m.query('[data-drawer-open="sidebar"]'),
-      "sidebar open control hook missing",
-    );
-    assert.ok(
-      m.query('[data-drawer-open="agents"]'),
-      "agents open control hook missing",
-    );
+    // data-drawer now lives on the app root (open state), not hidden checkboxes.
+    const threadsOpen = m.query('[data-drawer-open="sidebar"]');
+    const agentsOpen = m.query('[data-drawer-open="agents"]');
+    assert.ok(threadsOpen, "sidebar open control hook missing");
+    assert.ok(agentsOpen, "agents open control hook missing");
+    assert.equal(threadsOpen.tagName, "BUTTON");
+    assert.equal(agentsOpen.tagName, "BUTTON");
     assert.ok(m.query("[data-narrow-chrome]"), "narrow chrome bar hook missing");
 
     const card = m.query(
