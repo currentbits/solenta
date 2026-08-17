@@ -45,7 +45,7 @@ const {
   DEFAULT_PORT,
   HOST_FLAG_HELP,
 } = require("../webServer.js");
-const { WS_PATH } = require("../webBridge.js");
+const { WS_PATH, attachWebBridge } = require("../webBridge.js");
 
 function git(cwd, args) {
   return execFileSync("git", args, {
@@ -509,5 +509,93 @@ describe("one map, two transports + packaging", () => {
       fs.readFileSync(path.join(__dirname, "../../package.json"), "utf8"),
     );
     assert.equal(pkg.dependencies.ws, "8.21.3");
+  });
+});
+
+describe("heartbeat + backpressure (attachWebBridge)", () => {
+  async function listenBridge(opts) {
+    const httpServer = http.createServer();
+    await new Promise((resolve) => httpServer.listen(0, "127.0.0.1", resolve));
+    const bridge = attachWebBridge(httpServer, {
+      token: "secret-token",
+      ctx: {},
+      handlers: {},
+      ...opts,
+    });
+    const { port } = httpServer.address();
+    return {
+      httpServer,
+      bridge,
+      url: `ws://127.0.0.1:${port}${WS_PATH}`,
+    };
+  }
+
+  async function shutdown(httpServer, bridge) {
+    await bridge.close();
+    await new Promise((resolve) => httpServer.close(resolve));
+  }
+
+  it("heartbeat terminates a client that does not pong", async () => {
+    const { httpServer, bridge, url } = await listenBridge({
+      pingIntervalMs: 30,
+    });
+    try {
+      const ws = new WebSocket(url, { autoPong: false });
+      await new Promise((resolve, reject) => {
+        ws.once("open", resolve);
+        ws.once("error", reject);
+      });
+      ws.send(JSON.stringify({ kind: "auth", token: "secret-token" }));
+      assert.deepEqual(await onceMessage(ws), { kind: "auth-ok" });
+
+      const deadline = Date.now() + 3000;
+      while (ws.readyState !== WebSocket.CLOSED || bridge.wss.clients.size > 0) {
+        if (Date.now() > deadline) {
+          throw new Error(
+            `heartbeat did not terminate client (readyState=${ws.readyState}, clients=${bridge.wss.clients.size})`,
+          );
+        }
+        await new Promise((r) => setTimeout(r, 20));
+      }
+    } finally {
+      await shutdown(httpServer, bridge);
+    }
+  });
+
+  it("backpressure terminates a client past maxBufferedBytes", async () => {
+    const { httpServer, bridge, url } = await listenBridge({
+      maxBufferedBytes: 1,
+    });
+    try {
+      const ws = await connect(url);
+      ws.send(JSON.stringify({ kind: "auth", token: "secret-token" }));
+      assert.deepEqual(await onceMessage(ws), { kind: "auth-ok" });
+
+      // pause() only stops reads; cork() keeps the first send in
+      // _writableState so bufferedAmount stays above the 1-byte ceiling.
+      for (const client of bridge.wss.clients) {
+        client._socket.cork();
+      }
+
+      const closed = onceClose(ws);
+      bridge.broadcast("threads:changed", { n: 1 });
+      bridge.broadcast("threads:changed", { n: 2 });
+      await Promise.race([
+        closed,
+        new Promise((_, reject) =>
+          setTimeout(
+            () => reject(new Error("backpressure did not terminate client")),
+            2000,
+          ),
+        ),
+      ]);
+      assert.equal(bridge.wss.clients.size, 0);
+
+      bridge.broadcast("threads:changed", { n: 3 });
+      assert.equal(ws.readyState, WebSocket.CLOSED);
+      assert.equal(bridge.wss.clients.size, 0);
+    } finally {
+      await shutdown(httpServer, bridge);
+    }
   });
 });
