@@ -3060,8 +3060,10 @@ function createRunner(opts) {
 
   /**
    * Start a Kimi stream-json (with plain-text fallback) session turn.
-   * After the first successful turn, sessionId is the sentinel "cwd"
-   * (kimi sessions are per working directory; see providers.js).
+   * After a successful turn, sessionId is the captured resume id, or the
+   * prior real id. A hint-less turn stores null (never the old "cwd"
+   * sentinel): -c is per-directory, so two no-worktree kimi threads in the
+   * same project would resume each other's session (issue #220).
    * @param {string} threadId
    * @param {string} prompt
    * @param {string} runId
@@ -3101,9 +3103,8 @@ function createRunner(opts) {
     /** Run-local usage for memory footers (not cumulative store totals). */
     const runUsage = { tokensIn: 0, tokensOut: 0, costUsd: 0 };
     /**
-     * Real session id from the stream's meta resume hint. Falls back to the
-     * legacy per-cwd sentinel when an older kimi emits no hint, keeping -c
-     * threads resumable.
+     * Real session id from the stream's meta resume hint. Null when the
+     * CLI emits none: we do not invent a per-cwd sentinel (issue #220).
      * @type {string | null}
      */
     let capturedKimiSessionId = null;
@@ -3342,14 +3343,17 @@ function createRunner(opts) {
 
         if (code === 0) {
           // Prefer the real session id from the resume hint (-S on later
-          // turns); keep the prior id, then the legacy "cwd" sentinel (-c),
-          // so a hint-less turn never downgrades an existing session.
+          // turns); keep a prior REAL id. Never stamp "cwd": -c is per
+          // directory, not per thread (issue #220).
+          const prior =
+            thread.sessionId && thread.sessionId !== "cwd"
+              ? thread.sessionId
+              : null;
           store.updateThread(
             threadId,
             {
               status: "done",
-              sessionId:
-                capturedKimiSessionId || thread.sessionId || "cwd",
+              sessionId: capturedKimiSessionId || prior,
               runStartedAt: null,
             },
             { touch: true },
