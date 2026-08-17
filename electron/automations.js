@@ -2,6 +2,11 @@
 
 const PRESETS = new Set(["hourly", "daily", "weekly"]);
 
+// Issue #134: keep only the newest N threads per automation so hourly fires
+// cannot grow the store without bound. No settings knob; skipped live/pinned
+// threads still count toward the kept set.
+const MAX_THREADS_PER_AUTOMATION = 20;
+
 /**
  * Next fire time after `fromMs`.
  *
@@ -85,6 +90,31 @@ function patchAutomation(store, id, patch) {
 }
 
 /**
+ * Drop oldest threads for one automation past MAX_THREADS_PER_AUTOMATION.
+ * Never deletes a live run (status "working"), a worktree-backed thread, or
+ * a pinned thread. Those skipped threads still occupy a keep slot.
+ * Does not save; caller owns durability.
+ *
+ * @param {import("./store").Store} store
+ * @param {string} automationId
+ */
+function pruneAutomationThreads(store, automationId) {
+  const services = require("./services.js");
+  const indexed = store
+    .getThreads()
+    .map((t, i) => ({ t, i }))
+    .filter(({ t }) => t && t.automationId === automationId);
+  // Newest first. Equal createdAt (same-ms fires) break ties by insertion
+  // index so the later-minted thread is kept.
+  indexed.sort((a, b) => (b.t.createdAt - a.t.createdAt) || (b.i - a.i));
+  for (let i = MAX_THREADS_PER_AUTOMATION; i < indexed.length; i++) {
+    const t = indexed[i].t;
+    if (t.status === "working" || t.worktreePath || t.pinnedAt) continue;
+    services.purgeThread(store, t.id);
+  }
+}
+
+/**
  * Fire one automation: create a thread titled with its name, start a run
  * with its prompt/provider/model via the same createThread + startRun path
  * the IPC handlers use, then stamp lastRunAt / nextRunAt / lastError.
@@ -104,19 +134,18 @@ async function runAutomation(ctx, auto, now, opts) {
   });
   ctx.store.save();
 
+  let runErr = null;
   try {
     const thread = services.createThread(ctx.store, {
       projectId: auto.projectId,
       title: auto.name,
+      automationId: auto.id,
     });
     services.setProvider(ctx.store, {
       threadId: thread.id,
       provider: auto.provider,
       model: auto.model,
     });
-    if (typeof ctx.broadcast === "function") {
-      ctx.broadcast("threads:changed", services.listThreads(ctx.store));
-    }
     await ctx.runner.startRun({
       threadId: thread.id,
       prompt: auto.prompt,
@@ -124,10 +153,23 @@ async function runAutomation(ctx, auto, now, opts) {
     patchAutomation(ctx.store, auto.id, { lastError: null });
     ctx.store.save();
   } catch (err) {
+    runErr = err;
     patchAutomation(ctx.store, auto.id, { lastError: errorText(err) });
     ctx.store.save();
-    if (opts && opts.rethrow) throw err;
   }
+
+  // #134: prune after startRun so a thrown purge cannot undo a completed fire.
+  // Own try/catch: retention failure must not stamp lastError or fail the run.
+  try {
+    pruneAutomationThreads(ctx.store, auto.id);
+    ctx.store.save();
+  } catch {
+    // ignore
+  }
+  if (typeof ctx.broadcast === "function") {
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+  }
+  if (runErr && opts && opts.rethrow) throw runErr;
 }
 
 /**
@@ -186,6 +228,7 @@ function startScheduler(ctx) {
 
 module.exports = {
   PRESETS,
+  MAX_THREADS_PER_AUTOMATION,
   nextFire,
   dueAutomations,
   runAutomation,
