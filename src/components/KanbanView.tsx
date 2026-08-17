@@ -4,7 +4,12 @@ import {
   AUTO_SETTLE_AFTER_DAYS,
   type SettleOpts,
 } from "../threadSettle";
-import type { ProjectInfo, ProviderInfo, ThreadInfo } from "../shared/ipc";
+import type {
+  ConflictForecast,
+  ProjectInfo,
+  ProviderInfo,
+  ThreadInfo,
+} from "../shared/ipc";
 import { buildWaitStates } from "../waiting";
 import { ThreadCard } from "./Sidebar";
 import styles from "./KanbanView.module.css";
@@ -18,6 +23,7 @@ export interface KanbanViewProps {
   onSelectThread: (id: string) => void;
   onCreateThread?: () => void;
   autoSettleAfterDays?: number | null;
+  conflictForecast?: ConflictForecast | null;
 }
 
 export function KanbanView({
@@ -27,6 +33,7 @@ export function KanbanView({
   onSelectThread,
   onCreateThread,
   autoSettleAfterDays,
+  conflictForecast = null,
 }: KanbanViewProps) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -51,6 +58,11 @@ export function KanbanView({
   );
   const empty = isKanbanEmpty(columns);
   const waitStates = useMemo(() => buildWaitStates(threads), [threads]);
+  const threadTitles = useMemo(() => {
+    const titles = new Map<string, string>();
+    for (const t of threads) titles.set(t.id, t.title);
+    return titles;
+  }, [threads]);
 
   const slugFor = (thread: ThreadInfo): string =>
     projects.find((p) => p.id === thread.projectId)?.slug ?? "unknown";
@@ -100,6 +112,8 @@ export function KanbanView({
                     now={now}
                     onSelect={(id) => onSelectThread(id)}
                     wait={waitStates.get(thread.id) ?? null}
+                    conflictForecast={conflictForecast}
+                    threadTitles={threadTitles}
                   />
                 ))}
               </div>
