@@ -16,18 +16,6 @@
   position: relative;
 }
 
-.drawerToggle {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
-}
-
 .narrowBar,
 .scrim {
   display: none;
@@ -53,6 +41,12 @@
 .narrowBtn:hover {
   color: var(--text);
   background: var(--card-hover);
+}
+
+.narrowBtn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  color: var(--text);
 }
 
 .sidebarSlot,
@@ -89,8 +83,8 @@
     cursor: pointer;
   }
 
-  .app:has([data-drawer="sidebar"]:checked) .scrimSidebar,
-  .app:has([data-drawer="agents"]:checked) .scrimAgents {
+  .app[data-drawer="sidebar"] .scrimSidebar,
+  .app[data-drawer="agents"] .scrimAgents {
     display: block;
   }
 
@@ -119,11 +113,11 @@
     box-shadow: -8px 0 32px rgba(0, 0, 0, 0.35);
   }
 
-  .app:has([data-drawer="sidebar"]:checked) .sidebarSlot {
+  .app[data-drawer="sidebar"] .sidebarSlot {
     transform: none;
   }
 
-  .app:has([data-drawer="agents"]:checked) .agentsSlot {
+  .app[data-drawer="agents"] .agentsSlot {
     transform: none;
   }
 }
@@ -153,8 +147,8 @@
     cursor: pointer;
   }
 
-  .app:has([data-drawer="sidebar"]:checked) .scrimSidebar,
-  .app:has([data-drawer="agents"]:checked) .scrimAgents {
+  .app[data-drawer="sidebar"] .scrimSidebar,
+  .app[data-drawer="agents"] .scrimAgents {
     display: block;
   }
 
@@ -183,11 +177,11 @@
     box-shadow: -8px 0 32px rgba(0, 0, 0, 0.35);
   }
 
-  .app:has([data-drawer="sidebar"]:checked) .sidebarSlot {
+  .app[data-drawer="sidebar"] .sidebarSlot {
     transform: none;
   }
 
-  .app:has([data-drawer="agents"]:checked) .agentsSlot {
+  .app[data-drawer="agents"] .agentsSlot {
     transform: none;
   }
 }
