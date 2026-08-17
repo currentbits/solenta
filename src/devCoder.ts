@@ -47,6 +47,7 @@ import type {
   SpaceInfo,
   ThreadDetail,
   ThreadInfo,
+  UsageByDay,
   WorkLogItem,
   WorkflowPhaseSpec,
   WorkflowTemplateInfo,
@@ -2802,6 +2803,66 @@ function buildDevCoder(): CoderApi {
           workLogByThread[id] = d.workLog;
         }
         return buildActivity(threads, workLogByThread, now());
+      },
+    },
+    usage: {
+      async byDay(): Promise<UsageByDay> {
+        const day = (offset: number) => {
+          const d = new Date(now());
+          d.setDate(d.getDate() - offset);
+          const y = d.getFullYear();
+          const m = String(d.getMonth() + 1).padStart(2, "0");
+          const dd = String(d.getDate()).padStart(2, "0");
+          return `${y}-${m}-${dd}`;
+        };
+        return {
+          [day(0)]: {
+            claude: {
+              "claude-opus-4": {
+                costUsd: 1.24,
+                inputTokens: 42000,
+                outputTokens: 8100,
+                turns: 6,
+              },
+            },
+            grok: {
+              "grok-4": {
+                costUsd: 0,
+                inputTokens: 18000,
+                outputTokens: 3200,
+                turns: 4,
+              },
+            },
+          },
+          [day(1)]: {
+            claude: {
+              "claude-sonnet-4": {
+                costUsd: 0.41,
+                inputTokens: 15000,
+                outputTokens: 2400,
+                turns: 3,
+              },
+            },
+            kimi: {
+              "kimi-k2": {
+                costUsd: 0.08,
+                inputTokens: 9000,
+                outputTokens: 1100,
+                turns: 2,
+              },
+            },
+          },
+          [day(3)]: {
+            grok: {
+              "grok-4": {
+                costUsd: 0,
+                inputTokens: 22000,
+                outputTokens: 4100,
+                turns: 5,
+              },
+            },
+          },
+        };
       },
     },
     git: {

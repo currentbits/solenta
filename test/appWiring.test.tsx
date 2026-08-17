@@ -807,4 +807,30 @@ describe("App selection stamps lastVisitedAt (round 43 unread)", () => {
       m.unmount();
     }
   });
+  it("Usage nav opens the usage view on the usage.byDay channel", async () => {
+    // The view is only as good as its wire: a nav that renders the pane but
+    // reads the wrong channel shows an empty chart forever.
+    const fake = createFakeCoder();
+    const m = await boot(fake);
+    try {
+      const nav = m.query('[data-view-nav="usage"]');
+      assert.ok(nav, "sidebar must offer a Usage nav row");
+      await m.click(nav as HTMLElement);
+      await m.flush();
+      await inAct(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      await m.flush();
+
+      assert.equal(
+        fake.of("usage.byDay").length,
+        1,
+        "opening Usage must read the ledger exactly once",
+      );
+      assert.ok(m.query("[data-usage]"), "usage view must render");
+    } finally {
+      m.unmount();
+    }
+  });
 });

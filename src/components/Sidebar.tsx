@@ -220,7 +220,8 @@ interface SidebarProps {
     | "planboard"
     | "prs"
     | "automations"
-    | "activity";
+    | "activity"
+    | "usage";
   onOpenKanban?: () => void;
   onOpenPlanboard?: () => void;
   onOpenPrs?: () => void;
@@ -235,6 +236,7 @@ interface SidebarProps {
   }) => Promise<{ ok: true } | { ok: false; reason: string }>;
   onOpenAutomations?: () => void;
   onOpenActivity?: () => void;
+  onOpenUsage?: () => void;
   /**
    * Freshly created thread to reveal (t3: new work must be visible): the
    * sidebar expands its project group, scrolls the card into view and flashes
@@ -1179,6 +1181,7 @@ export const Sidebar = memo(function Sidebar({
   onCreateThreadFromIssue,
   onOpenAutomations,
   onOpenActivity,
+  onOpenUsage,
   revealThreadId = null,
   onRevealHandled,
 }: SidebarProps) {
@@ -2207,6 +2210,33 @@ export const Sidebar = memo(function Sidebar({
             </svg>
           </span>
           Automations
+        </button>
+        <button
+          type="button"
+          className={styles.viewNavRow}
+          data-view-nav="usage"
+          data-active={activeView === "usage" ? "true" : undefined}
+          title="Usage"
+          onClick={() => onOpenUsage?.()}
+        >
+          <span className={styles.viewNavIcon} aria-hidden>
+            <svg
+              width="15"
+              height="15"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M2.25 13.75v-4" />
+              <path d="M6.25 13.75v-7.5" />
+              <path d="M10.25 13.75v-11" />
+              <path d="M14 13.75h-12" />
+            </svg>
+          </span>
+          Usage
         </button>
       </nav>
 

@@ -42,6 +42,7 @@ import type {
   ThreadPatch,
   ThreadInfo,
   ThreadSummaryInfo,
+  UsageByDay,
   WorkLogItem,
   WorkflowTemplateInfo,
 } from "../../src/shared/ipc";
@@ -952,6 +953,9 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           buildActivity(threads, workLogByThread, Date.now()),
         );
       },
+    },
+    usage: {
+      byDay: () => rec("usage.byDay", [], {} as UsageByDay),
     },
     runs: {
       start: (input: unknown) => rec("runs.start", [input], { runId: "r1" }),
