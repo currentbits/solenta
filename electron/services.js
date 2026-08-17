@@ -509,6 +509,14 @@ function setReasoningEffort(store, input) {
 const THREAD_TITLE_MAX = 60;
 /** Per-thread scratch pad cap (issue #194). */
 const THREAD_NOTES_MAX = 2000;
+/** Per-thread hypothesis ledger caps (issue #303). Mirror src/shared/ipc.ts. */
+const HYPOTHESES_MAX = 50;
+const HYPOTHESIS_CLAIM_MAX = 200;
+const HYPOTHESIS_REASON_MAX = 500;
+const HYPOTHESIS_STATUSES = ["validated", "invalidated", "inconclusive"];
+/** Ruled-out note: walk this many handoffFrom hops, emit at most this many lines. */
+const HYPOTHESIS_NOTE_HOPS = 5;
+const HYPOTHESIS_NOTE_MAX = 10;
 
 /**
  * @param {string} title
@@ -642,6 +650,63 @@ function selfIdNoteFor(thread, project, cwd) {
     `(projectId ${thread.projectId})${where}. Pass these ids to the ` +
     `coder-threads tools; never guess another thread's id from its title. ` +
     `Threads in other projects are off limits.`
+  );
+}
+
+/**
+ * Standing note appended to every dispatched prompt (CLI-only, never stored
+ * in the transcript) listing approaches earlier agents on this thread already
+ * tried and rejected. The whole point of the ledger: it stops the next agent
+ * (and the next best-of-N fork) from re-treading a dead end.
+ *
+ * Only invalidated entries speak; validated / inconclusive stay in the store
+ * for the UI. Walks `handoffFrom` so a fork sees its ancestor's ruled-out
+ * list. Returns "" when there is nothing to say, same rule as
+ * planboardNoteFor / selfIdNoteFor.
+ *
+ * ponytail: 5 hops / 10 lines — enough to stop a sibling re-treading a
+ * parent's dead end; walk the whole crew if a long chain starts to matter.
+ *
+ * @param {{ hypotheses?: Array<{ claim?: string, status?: string, reason?: string }>, handoffFrom?: string | null, id?: string } | null | undefined} thread
+ * @param {(id: string) => { hypotheses?: unknown, handoffFrom?: string | null, id?: string } | null | undefined} [getThread]
+ * @returns {string}
+ */
+function hypothesisNoteFor(thread, getThread) {
+  if (!thread) return "";
+  const lines = [];
+  const seenClaims = new Set();
+  const seenIds = new Set();
+  let current = thread;
+  for (let hop = 0; current && hop <= HYPOTHESIS_NOTE_HOPS; hop++) {
+    if (current.id) {
+      if (seenIds.has(current.id)) break;
+      seenIds.add(current.id);
+    }
+    const hyps = Array.isArray(current.hypotheses) ? current.hypotheses : [];
+    for (let i = hyps.length - 1; i >= 0; i--) {
+      const h = hyps[i];
+      if (!h || h.status !== "invalidated") continue;
+      const claim = String(h.claim || "").trim();
+      if (!claim || seenClaims.has(claim)) continue;
+      seenClaims.add(claim);
+      const reason = String(h.reason || "").trim();
+      lines.push(reason ? `- ${claim} — ${reason}` : `- ${claim}`);
+      if (lines.length >= HYPOTHESIS_NOTE_MAX) break;
+    }
+    if (lines.length >= HYPOTHESIS_NOTE_MAX) break;
+    const parentId = current.handoffFrom;
+    if (!parentId || typeof getThread !== "function") break;
+    try {
+      current = getThread(String(parentId));
+    } catch {
+      break;
+    }
+  }
+  if (lines.length === 0) return "";
+  return (
+    "\n\n[Ruled out] Earlier agents on this thread already tried and rejected these. " +
+    "Do not re-tread them; if you must revisit one, record why with hypothesis_record.\n" +
+    lines.join("\n")
   );
 }
 
@@ -1168,6 +1233,58 @@ function setNotes(store, input) {
   const updated = store.updateThread(threadId, patch);
   store.save();
   return updated ? { ...updated } : { ...thread, ...patch };
+}
+
+/**
+ * Append one hypothesis to a thread's ledger (issue #303). Agent-written
+ * only — never inferred. Trims and caps claim/reason, rejects a blank claim
+ * and an unknown status. Newest-last, capped at HYPOTHESES_MAX (oldest
+ * dropped). Never bumps updatedAt: the ledger is not sidebar activity,
+ * same rule as setNotes.
+ *
+ * ponytail: same-ms uniqueness is Date.now() plus a scan of this thread's
+ * existing ids (max 50). A process-global counter if that ever collides.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, claim: unknown, status: unknown, reason?: unknown }} input
+ * @returns {{ id: string, claim: string, status: string, reason: string, at: number }}
+ */
+function recordHypothesis(store, input) {
+  const { threadId, status } = input;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  if (!HYPOTHESIS_STATUSES.includes(status)) {
+    throw new Error(
+      `Invalid hypothesis status: ${status}. Must be one of: ${HYPOTHESIS_STATUSES.join(", ")}`,
+    );
+  }
+  const claim = String(input.claim ?? "").trim().slice(0, HYPOTHESIS_CLAIM_MAX);
+  if (!claim) {
+    throw new Error("Hypothesis claim must not be empty");
+  }
+  const reason = String(input.reason ?? "").trim().slice(0, HYPOTHESIS_REASON_MAX);
+  const existing = Array.isArray(thread.hypotheses) ? thread.hypotheses : [];
+  const now = Date.now();
+  let seq = 0;
+  for (const h of existing) {
+    if (h && typeof h.id === "string" && h.id.startsWith(`${now}-`)) seq += 1;
+  }
+  const entry = {
+    id: `${now}-${seq}`,
+    claim,
+    status,
+    reason,
+    at: now,
+  };
+  const hypotheses = existing.concat(entry);
+  if (hypotheses.length > HYPOTHESES_MAX) {
+    hypotheses.splice(0, hypotheses.length - HYPOTHESES_MAX);
+  }
+  store.updateThread(threadId, { hypotheses });
+  store.save();
+  return entry;
 }
 
 /**
@@ -2208,6 +2325,11 @@ module.exports = {
   PLANBOARD_NOTE,
   planboardNoteFor,
   selfIdNoteFor,
+  hypothesisNoteFor,
+  HYPOTHESES_MAX,
+  HYPOTHESIS_CLAIM_MAX,
+  HYPOTHESIS_REASON_MAX,
+  recordHypothesis,
   planStepsFrom,
   setArchived,
   setSettled,
