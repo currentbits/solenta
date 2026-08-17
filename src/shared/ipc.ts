@@ -575,6 +575,83 @@ export type UsageByDay = Record<
 >;
 
 /**
+ * One pull request seen by the fleet collector (issue #375), agent-authored
+ * or not. `threadId` is the join to a Solenta thread by head branch: null
+ * means a human opened it, which is what makes the review-tax comparison
+ * possible.
+ */
+export interface FleetPr {
+  projectId: string;
+  number: number;
+  url: string;
+  title: string;
+  headRefName: string;
+  state: "OPEN" | "CLOSED" | "MERGED";
+  /** Epoch ms. */
+  createdAt: number;
+  mergedAt: number | null;
+  closedAt: number | null;
+  additions: number;
+  deletions: number;
+  /** Epoch ms of the earliest review submitted on this PR; null when none. */
+  firstReviewAt: number | null;
+  /** Owning thread, matched by head branch; null = human-authored. */
+  threadId: string | null;
+}
+
+/**
+ * One thread's ground truth for the fleet view. Line durability is measured
+ * with git blame against the default branch: `linesAdded` is what the
+ * thread's squash-merged commits added, `linesSurviving` is how much of that
+ * is still there today. Both are null when git could not answer (no merge
+ * commit found, remote project, blame budget exhausted).
+ */
+export interface FleetThread {
+  threadId: string;
+  projectId: string;
+  title: string;
+  provider: string;
+  model: string | null;
+  createdAt: number;
+  /** Last real activity (ThreadInfo.updatedAt). */
+  endedAt: number;
+  /** Summed per-run spans, NOT wall clock: the agent's actual working time. */
+  activeMs: number;
+  costUsd: number;
+  inputTokens: number;
+  outputTokens: number;
+  turns: number;
+  linesAdded: number | null;
+  linesSurviving: number | null;
+  /**
+   * True when this thread's merged work is older than the durability window,
+   * so surviving lines are a real durability signal rather than "nobody has
+   * had time to touch it yet".
+   */
+  durabilityMeasurable: boolean;
+}
+
+/**
+ * Raw fleet evidence (issue #375). Facts only — every rate, ratio and
+ * comparison is pure and lives in `src/fleet.ts`, so the view can be
+ * re-ranged without re-walking git or gh.
+ */
+export interface FleetEvidence {
+  /** Epoch ms of collection. */
+  collectedAt: number;
+  /** Days a merged line must survive to count as durable (14). */
+  durabilityWindowDays: number;
+  threads: FleetThread[];
+  prs: FleetPr[];
+  /**
+   * Per-project collection problems in plain words ("acme: gh missing",
+   * "acme: blame budget reached, 12 commits unmeasured"). Never fatal, and
+   * surfaced in the view so a partial number is never read as a full one.
+   */
+  notes: string[];
+}
+
+/**
  * Raw evidence for ONE thread that ran inside an unattended window (issue
  * #323). Main collects facts only — every judgement (merge-ready / needs-you
  * / discard, risk flags) is pure and lives in src/digest.ts, so the receipt
@@ -1656,6 +1733,16 @@ export interface CoderApi {
      * just re-reads it.
      */
     failureModes(): Promise<FailureMode[]>;
+  };
+  fleet: {
+    /**
+     * Ground truth for the agent-fleet analytics view (issue #375): every
+     * thread's cost / time / line durability plus every PR of every local
+     * project, agent-authored or human. Walks git and gh, so it is slower
+     * than the other read endpoints — the view loads it on demand and
+     * caches. Never rejects: per-project failures come back in `notes`.
+     */
+    evidence(input?: { days?: number }): Promise<FleetEvidence>;
   };
   digest: {
     /**

@@ -31,6 +31,7 @@ import type {
   DevServerState,
   FailureKind,
   FailureMode,
+  FleetEvidence,
   FetchIssueResult,
   ListIssuesResult,
   LocalServerInfo,
@@ -3183,6 +3184,19 @@ function buildDevCoder(): CoderApi {
               },
             },
           },
+        };
+      },
+    },
+    fleet: {
+      // Fixture only. The real collection lives in electron/fleet.js.
+      // TODO(#375 worker C): threads/PRs shaped like the seeded demo data.
+      async evidence(): Promise<FleetEvidence> {
+        return {
+          collectedAt: now(),
+          durabilityWindowDays: 14,
+          threads: [],
+          prs: [],
+          notes: [],
         };
       },
     },
