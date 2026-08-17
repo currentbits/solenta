@@ -2,7 +2,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
-const { execFileSync, execFile } = require("node:child_process");
+const { execFile } = require("node:child_process");
 const { execCommand, wrapCommand, SYNC_TIMEOUT_MS } = require("./ssh.js");
 
 /** @type {typeof execFile} */
@@ -1187,41 +1187,10 @@ function ghFailFromError(err) {
   };
 }
 
-/**
- * Run gh without throwing. Mirrors gitTry: timeout, no prompt, enoent flag.
- * SYNC — leftover for createPr / mergePr view+merge. listPrs, prStatus,
- * and prChecks go through ghTryAsync so a hanging GitHub call cannot
- * beachball the main process.
- * @param {string} cwd
- * @param {string[]} args
- * @param {{ env?: NodeJS.ProcessEnv, timeout?: number }} [opts]
- */
-function ghTry(cwd, args, opts) {
-  const timeout =
-    opts && opts.timeout != null ? opts.timeout : GH_TIMEOUT_MS;
-  try {
-    /** @type {import('node:child_process').ExecFileSyncOptionsWithStringEncoding} */
-    const execOpts = {
-      cwd,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-      maxBuffer: GIT_MAX_BUFFER,
-      timeout,
-      env: {
-        ...process.env,
-        ...(opts && opts.env ? opts.env : {}),
-        // Never prompt for auth/input on the main process.
-        GH_PROMPT_DISABLED: "1",
-        GIT_TERMINAL_PROMPT: "0",
-      },
-    };
-    const out = execFileSync(ghBin(), args, execOpts);
-    const stdout = out.trim();
-    return { ok: true, stdout, stderr: "", combined: stdout };
-  } catch (err) {
-    return ghFailFromError(err);
-  }
-}
+// A synchronous ghTry used to live here. It is deliberately gone (#124): gh is
+// a NETWORK call bounded at GH_TIMEOUT_MS (30s), so one hanging GitHub request
+// froze every window and every streaming thread for half a minute. Every gh
+// caller now goes through ghTryAsync. Do not reintroduce a sync variant.
 
 /**
  * Async gh. NEVER blocks the Electron main process. Uses execFile (not Sync)
@@ -1925,12 +1894,24 @@ async function mergePr(opts) {
     );
   }
 
-  let viewed = ghTry(cwd, ["pr", "view", branch, "--json", PR_JSON_ENRICHED]);
+  let viewed = await ghTryAsync(cwd, [
+    "pr",
+    "view",
+    branch,
+    "--json",
+    PR_JSON_ENRICHED,
+  ]);
   if (
     !viewed.ok &&
     isUnknownJsonField(viewed.stderr || viewed.combined || viewed.stdout)
   ) {
-    viewed = ghTry(cwd, ["pr", "view", branch, "--json", PR_JSON_MINIMAL]);
+    viewed = await ghTryAsync(cwd, [
+      "pr",
+      "view",
+      branch,
+      "--json",
+      PR_JSON_MINIMAL,
+    ]);
   }
   if (!viewed.ok) {
     if (viewed.enoent || viewed.timedOut) {
@@ -1943,7 +1924,7 @@ async function mergePr(opts) {
   }
 
   const info = parsePrJson(viewed.stdout, branch, false);
-  const merged = ghTry(cwd, [
+  const merged = await ghTryAsync(cwd, [
     "pr",
     "merge",
     String(info.number),
@@ -2204,9 +2185,9 @@ function createPrStateRefresher(opts) {
  * @param {string} [opts.body]
  * @param {boolean} [opts.draft]
  * @param {(channel: string, payload: unknown) => void} [opts.broadcast]
- * @returns {{ number: number, url: string, state: "OPEN" | "CLOSED" | "MERGED", branch: string, created: boolean }}
+ * @returns {Promise<{ number: number, url: string, state: "OPEN" | "CLOSED" | "MERGED", branch: string, created: boolean }>}
  */
-function createPr(opts) {
+async function createPr(opts) {
   const { store, threadId, title, body, draft, broadcast } = opts;
 
   const { project, cwd, branch, originUrl } = resolveThreadGit(
@@ -2237,7 +2218,7 @@ function createPr(opts) {
   push({ store, threadId });
 
   // Idempotency: return the existing PR rather than erroring.
-  const existing = ghTry(cwd, [
+  const existing = await ghTryAsync(cwd, [
     "pr",
     "view",
     branch,
@@ -2294,11 +2275,11 @@ function createPr(opts) {
     createArgs.push("--draft");
   }
 
-  const created = ghTry(cwd, createArgs);
+  const created = await ghTryAsync(cwd, createArgs);
   if (!created.ok) {
     // Race: PR appeared between view and create. Prefer idempotent return.
     if (!created.enoent && !created.timedOut) {
-      const raced = ghTry(cwd, [
+      const raced = await ghTryAsync(cwd, [
         "pr",
         "view",
         branch,
@@ -2330,7 +2311,7 @@ function createPr(opts) {
   }
 
   // create prints a URL; re-view for number/state so we match PrInfo exactly.
-  const viewed = ghTry(cwd, [
+  const viewed = await ghTryAsync(cwd, [
     "pr",
     "view",
     branch,
@@ -2964,7 +2945,6 @@ module.exports = {
   gitOutAsync,
   gitOutForDiffAsync,
   setExecFile,
-  ghTry,
   ghTryAsync,
   GH_TIMEOUT_MS,
   isGhAuthFailure,
