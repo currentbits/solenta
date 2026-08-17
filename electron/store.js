@@ -150,8 +150,11 @@ function validateMcpServers(raw) {
 
 const SPEND_RETENTION_DAYS = 90;
 
-// Longest a save() may sit in memory before it hits disk.
+// Longest a save() may sit in memory before it hits disk, when idle.
 const SAVE_DEBOUNCE_MS = 250;
+// Under sustained save() (N streaming threads), double the delay each
+// dirty flush up to this cap so we do not stringify the whole store at 4 Hz.
+const SAVE_DEBOUNCE_MAX_MS = 2000;
 
 /**
  * Per-thread transcript retention (issue #89). Threads never shrank, so a few
@@ -576,6 +579,7 @@ class Store {
     this._timer = null;
     this._flushing = false;
     this._flushPromise = null;
+    this._flushDelayMs = SAVE_DEBOUNCE_MS;
     // Bumped by saveNow() so an in-flight async flush knows its payload is stale.
     this._writeGen = 0;
     this._exitHookArmed = false;
@@ -698,7 +702,7 @@ class Store {
     this._timer = setTimeout(() => {
       this._timer = null;
       this._flushAsync();
-    }, SAVE_DEBOUNCE_MS);
+    }, this._flushDelayMs);
     // Never hold the event loop open; the exit hook is what guarantees the write.
     this._timer.unref?.();
   }
@@ -752,7 +756,18 @@ class Store {
         await fs.promises.unlink(tmp).catch(() => {});
         this._flushing = false;
         this._flushPromise = null;
-        if (this._dirty) this._scheduleFlush();
+        if (this._dirty) {
+          // ponytail: backoff under sustained save() so N streaming threads
+          // cannot force a whole-store stringify every 250ms. Cap 2s; reset
+          // on a quiet flush. Per-thread files if the store stays >50MB.
+          this._flushDelayMs = Math.min(
+            this._flushDelayMs * 2,
+            SAVE_DEBOUNCE_MAX_MS,
+          );
+          this._scheduleFlush();
+        } else {
+          this._flushDelayMs = SAVE_DEBOUNCE_MS;
+        }
       }
     })();
   }
@@ -771,10 +786,13 @@ class Store {
    * older than what this writes).
    */
   saveNow() {
+    // ponytail: stays sync because process.on('exit') cannot await. Do not
+    // "fix" this into async; the debounce path is the hot one.
     if (this._timer) {
       clearTimeout(this._timer);
       this._timer = null;
     }
+    this._flushDelayMs = SAVE_DEBOUNCE_MS;
     if (this._exitHookArmed) {
       this._exitHookArmed = false;
       process.off("exit", this._flushOnExit);
@@ -1385,4 +1403,6 @@ module.exports = {
   MESSAGE_OVERFLOW_SLACK,
   MAX_WORKLOG_ITEMS_PER_THREAD,
   WORKLOG_OVERFLOW_SLACK,
+  SAVE_DEBOUNCE_MS,
+  SAVE_DEBOUNCE_MAX_MS,
 };

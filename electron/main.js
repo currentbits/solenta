@@ -33,6 +33,7 @@ const {
 } = require("./webServer.js");
 const { migrateLegacyUserData } = require("./legacy-migration.js");
 const { installCrashGuard } = require("./crash-guard.js");
+const { start: startLoopLag } = require("./looplag.js");
 
 // Before anything else can throw: the app is full of fire-and-forget `void`
 // calls, and one unhandled rejection would otherwise kill the process with
@@ -50,6 +51,9 @@ installCrashGuard({
     n.show();
   },
 });
+
+// Off unless CODER_LOOP_LAG=1. Histogram is not created when unset.
+startLoopLag();
 
 const serveOpts = parseServeWebArgs(process.argv);
 
