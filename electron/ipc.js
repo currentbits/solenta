@@ -322,6 +322,11 @@ const IPC_HANDLERS = {
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     return updated;
   },
+  "threads:rename": async (ctx, input) => {
+    const updated = services.renameThread(ctx.store, input);
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    return updated;
+  },
   "threads:setProvider": async (ctx, input) => {
     const updated = services.setProvider(ctx.store, input);
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
