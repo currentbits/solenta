@@ -507,6 +507,11 @@ function seedThreads(projects: ProjectInfo[]): ThreadInfo[] {
       worktreePath: null,
       handoffFrom: null,
       muted: false,
+      // One seeded scratch pad so the browser demo shows #194 once the UI lands.
+      notes:
+        card.id === "thread-4"
+          ? "Merge after #42 lands - waiting on the API rename."
+          : "",
       queued: null,
       // One working thread carries a mirrored plan so the Planboard's
       // "Thread plans" section has something to show in dev mode.
@@ -1475,6 +1480,7 @@ function buildDevCoder(): CoderApi {
       worktreePath: null,
       handoffFrom: null,
       muted: false,
+      notes: "",
       queued: null,
       ...over,
       title: (over.title || "New Thread").slice(0, TITLE_MAX),
@@ -2320,8 +2326,9 @@ function buildDevCoder(): CoderApi {
         });
       },
       /**
-       * Full-content search: title + message text, case-insensitive substring,
-       * newest activity first, max 50. Includes archived. 0–1 char → [].
+       * Full-content search: title + notes + message text, case-insensitive
+       * substring, newest activity first, max 50. Includes archived. 0–1
+       * char → [].
        */
       async search(input: { query: string }): Promise<ThreadInfo[]> {
         const q = input.query.trim().toLowerCase();
@@ -2333,6 +2340,9 @@ function buildDevCoder(): CoderApi {
         for (const t of threads) {
           if (seen.has(t.id)) continue;
           let match = t.title.toLowerCase().includes(q);
+          if (!match) {
+            match = (t.notes || "").toLowerCase().includes(q);
+          }
           if (!match) {
             const detail = details.get(t.id);
             if (detail) {
@@ -2457,6 +2467,11 @@ function buildDevCoder(): CoderApi {
       },
       async setMuted(input: { threadId: string; muted: boolean }) {
         return patchThread(input.threadId, { muted: input.muted });
+      },
+      async setNotes(input: { threadId: string; notes: string }) {
+        return patchThread(input.threadId, {
+          notes: String(input.notes ?? "").trim().slice(0, 2000),
+        });
       },
       async rename(input: { threadId: string; title: string }) {
         const title = String(input.title ?? "").trim().slice(0, TITLE_MAX);

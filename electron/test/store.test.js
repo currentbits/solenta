@@ -139,6 +139,7 @@ describe("Store", () => {
       worktreePath: null,
       handoffFrom: null,
       muted: false,
+      notes: "",
       queued: null,
     };
     const msg = {

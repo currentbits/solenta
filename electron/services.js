@@ -401,6 +401,7 @@ function createThread(store, input) {
     pinnedAt: null,
     snoozedUntil: null,
     snoozedAt: null,
+    notes: "",
     provider: "claude",
     model: null,
     sessionId: null,
@@ -481,6 +482,8 @@ function setReasoningEffort(store, input) {
 
 /** Thread title cap — matches runner auto-rename from the first prompt line. */
 const THREAD_TITLE_MAX = 60;
+/** Per-thread scratch pad cap (issue #194). */
+const THREAD_NOTES_MAX = 2000;
 
 /**
  * @param {string} title
@@ -1116,6 +1119,27 @@ function setMuted(store, input) {
     throw new Error(`Unknown thread: ${threadId}`);
   }
   const patch = { muted: muted === true };
+  const updated = store.updateThread(threadId, patch);
+  store.save();
+  return updated ? { ...updated } : { ...thread, ...patch };
+}
+
+/**
+ * Set or clear the per-thread scratch pad (issue #194). User-facing only:
+ * the agent never reads it. Trims, caps at THREAD_NOTES_MAX, empty string
+ * clears. Never bumps updatedAt.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, notes: string }} input
+ */
+function setNotes(store, input) {
+  const { threadId } = input;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  const notes = String(input.notes ?? "").trim().slice(0, THREAD_NOTES_MAX);
+  const patch = { notes };
   const updated = store.updateThread(threadId, patch);
   store.save();
   return updated ? { ...updated } : { ...thread, ...patch };
@@ -2068,6 +2092,7 @@ module.exports = {
   // THREAD_TITLE_MAX / HANDOFF_MESSAGE_MAX / buildHandoffPrefix.
   buildHandoffPrefix,
   THREAD_TITLE_MAX,
+  THREAD_NOTES_MAX,
   HANDOFF_MESSAGE_MAX,
   HANDOFF_MESSAGE_COUNT,
   PLANBOARD_NOTE,
@@ -2080,6 +2105,7 @@ module.exports = {
   setQueued,
   setSnoozed,
   setMuted,
+  setNotes,
   renameThread,
   clearSettledOnActivity,
   deleteThread,

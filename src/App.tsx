@@ -97,6 +97,7 @@ export default function App() {
     setSnoozed,
     setMuted,
     renameThread,
+    setNotes,
     deleteThread,
     removeProject,
     setupWorktree,
@@ -263,6 +264,13 @@ export default function App() {
       void renameThread(selectedThreadId, title);
     },
     [renameThread, selectedThreadId],
+  );
+
+  const handleSetNotes = useCallback(
+    (threadId: string, notes: string) => {
+      void setNotes(threadId, notes);
+    },
+    [setNotes],
   );
 
   const handleRowArchived = useCallback(
@@ -713,6 +721,7 @@ export default function App() {
         onSetReasoningEffort={setReasoningEffort}
         onSetArchived={handleSetArchived}
         onRenameThread={handleRenameOpenThread}
+        onSetNotes={handleSetNotes}
         onDeleteThread={deleteThread}
         changesOpen={changesOpen}
         changesNonce={changesNonce}

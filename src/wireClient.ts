@@ -352,6 +352,7 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
       setQueued: (input) => call<ThreadInfo>("threads:setQueued", input),
       setSnoozed: (input) => call<ThreadInfo>("threads:setSnoozed", input),
       setMuted: (input) => call<ThreadInfo>("threads:setMuted", input),
+      setNotes: (input) => call<ThreadInfo>("threads:setNotes", input),
       rename: (input) => call<ThreadInfo>("threads:rename", input),
       setProvider: (input) => call<ThreadInfo>("threads:setProvider", input),
       setReasoningEffort: (input) =>

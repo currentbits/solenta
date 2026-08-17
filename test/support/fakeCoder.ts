@@ -107,6 +107,7 @@ export function thread(over: Partial<ThreadInfo> = {}): ThreadInfo {
     // Round 49: null unless created by threads.fork.
     handoffFrom: null,
     muted: false,
+    notes: "",
     queued: null,
     pinnedAt: null,
     snoozedUntil: null,
@@ -772,6 +773,21 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         threads = threads.some((t) => t.id === i.threadId)
           ? threads.map((t) => (t.id === i.threadId ? next : t))
           : [next, ...threads];
+        return Promise.resolve(next);
+      },
+      /** Honest notes: trims, caps at 2000, never bumps updatedAt. */
+      setNotes: (input: unknown) => {
+        const i = input as { threadId: string; notes: string };
+        calls.push({ channel: "threads.setNotes", args: [input] });
+        const existing = threads.find((t) => t.id === i.threadId);
+        if (!existing) {
+          return Promise.reject(new Error(`Unknown thread: ${i.threadId}`));
+        }
+        const next: ThreadInfo = {
+          ...existing,
+          notes: String(i.notes ?? "").trim().slice(0, 2000),
+        };
+        threads = threads.map((t) => (t.id === i.threadId ? next : t));
         return Promise.resolve(next);
       },
       rename: (input: unknown) => {
