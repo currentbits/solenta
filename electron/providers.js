@@ -524,6 +524,21 @@ function resolveBin(entry, env = process.env) {
 }
 
 /**
+ * Resolved `which` hits, keyed by bin + PATH (issue #124).
+ *
+ * ponytail: positive results only, and never invalidated. `which` is
+ * execFileSync on the main-process event loop, and runner.js calls it on every
+ * run start, so N concurrent runs paid N PATH walks. An installed CLI does not
+ * move mid-session, so caching a hit is safe; a MISS is deliberately not
+ * cached, because a user who installs a provider CLI while the app is open
+ * must be able to use it without a restart. Drop the cache (or add a TTL) if a
+ * moved-binary stale path ever bites.
+ *
+ * @type {Map<string, string>}
+ */
+const whichCache = new Map();
+
+/**
  * Default which: absolute/relative path via existsSync, else `which` on PATH.
  * @param {string} bin
  * @param {NodeJS.ProcessEnv} [env]
@@ -538,16 +553,25 @@ function defaultWhich(bin, env = process.env) {
       return null;
     }
   }
+  const key = `${bin} ${env.PATH || ""}`;
+  const hit = whichCache.get(key);
+  if (hit) return hit;
   try {
     const out = execFileSync("which", [bin], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
       env,
     }).trim();
+    if (out) whichCache.set(key, out);
     return out || null;
   } catch {
     return null;
   }
+}
+
+/** Test hook: forget cached `which` hits. */
+function clearWhichCache() {
+  whichCache.clear();
 }
 
 /**
@@ -644,5 +668,6 @@ module.exports = {
   resolveBin,
   isBinAvailable,
   defaultWhich,
+  clearWhichCache,
   listProviders,
 };
