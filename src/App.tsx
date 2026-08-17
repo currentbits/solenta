@@ -24,6 +24,7 @@ import { AddProjectPathModal } from "./components/AddProjectPathModal";
 import { EditProjectModal } from "./components/EditProjectModal";
 import { WebTokenGate } from "./components/WebTokenGate";
 import { isWebMode } from "./shared/wire";
+import { isBuildMismatch } from "./buildMismatch";
 import type { ProjectUpdateInput } from "./shared/ipc";
 import styles from "./App.module.css";
 
@@ -531,6 +532,11 @@ export default function App() {
   const editProject =
     projects.find((p) => p.id === editProjectId) ?? null;
 
+  // Vite replaces __BUILD_SHA__; node tests leave it undeclared.
+  const rendererSha =
+    typeof __BUILD_SHA__ === "string" ? __BUILD_SHA__ : null;
+  const buildMismatch = isBuildMismatch(appStatus?.build.sha, rendererSha);
+
   const submitEditProject = useCallback(
     async (input: ProjectUpdateInput) => {
       const updated = await updateProject(input);
@@ -543,6 +549,22 @@ export default function App() {
   return (
     <div className={styles.shell}>
       {isWebMode() && <WebTokenGate />}
+      {buildMismatch && (
+        <div
+          className={styles.mismatchBar}
+          role="alert"
+          data-build-mismatch=""
+        >
+          <span>This window is out of date. Restart to load the new build.</span>
+          <button
+            type="button"
+            className={styles.mismatchRestart}
+            onClick={() => void applyUpdate()}
+          >
+            Restart
+          </button>
+        </div>
+      )}
       <div
         className={styles.app}
         data-layout="app"
