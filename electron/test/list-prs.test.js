@@ -166,11 +166,18 @@ process.exit(2);
   });
 });
 
-describe("async conversion regression", () => {
-  it("listPrs, prStatus, and prChecks are async functions", () => {
+describe("async conversion regression (#228)", () => {
+  it("the PR read helpers are async, the worktree write helper stays sync", () => {
     const worktrees = require("../worktrees.js");
-    assert.equal(worktrees.listPrs.constructor.name, "AsyncFunction");
-    assert.equal(worktrees.prStatus.constructor.name, "AsyncFunction");
-    assert.equal(worktrees.prChecks.constructor.name, "AsyncFunction");
+    for (const name of [
+      "listPrs",
+      "prStatus",
+      "prChecks",
+      "defaultBranchAsync",
+    ]) {
+      assert.equal(worktrees[name].constructor.name, "AsyncFunction", name);
+    }
+    // The write flows still call this one synchronously on purpose.
+    assert.equal(worktrees.defaultBranch.constructor.name, "Function");
   });
 });

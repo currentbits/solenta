@@ -71,19 +71,19 @@ describe("gitSyncInfo", () => {
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
-  it("returns no-upstream for a missing path", () => {
-    assert.deepEqual(gitSyncInfo(path.join(tmp, "nope")), {
+  it("returns no-upstream for a missing path", async () => {
+    assert.deepEqual(await gitSyncInfo(path.join(tmp, "nope")), {
       hasUpstream: false,
     });
   });
 
-  it("returns no-upstream for a directory that is not a repo", () => {
+  it("returns no-upstream for a directory that is not a repo", async () => {
     const dir = path.join(tmp, "plain");
     fs.mkdirSync(dir);
-    assert.deepEqual(gitSyncInfo(dir), { hasUpstream: false });
+    assert.deepEqual(await gitSyncInfo(dir), { hasUpstream: false });
   });
 
-  it("returns no-upstream for a repo with no upstream", () => {
+  it("returns no-upstream for a repo with no upstream", async () => {
     const repo = path.join(tmp, "repo");
     fs.mkdirSync(repo);
     git(repo, ["init", "-q", "-b", "main"]);
@@ -92,10 +92,10 @@ describe("gitSyncInfo", () => {
     fs.writeFileSync(path.join(repo, "a.txt"), "1");
     git(repo, ["add", "."]);
     git(repo, ["commit", "-qm", "init"]);
-    assert.deepEqual(gitSyncInfo(repo), { hasUpstream: false });
+    assert.deepEqual(await gitSyncInfo(repo), { hasUpstream: false });
   });
 
-  it("reports ahead/behind against a configured upstream", () => {
+  it("reports ahead/behind against a configured upstream", async () => {
     const src = path.join(tmp, "src");
     fs.mkdirSync(src);
     git(src, ["init", "-q", "-b", "main"]);
@@ -110,7 +110,7 @@ describe("gitSyncInfo", () => {
     git(repo, ["config", "user.email", "t@example.com"]);
     git(repo, ["config", "user.name", "t"]);
 
-    assert.deepEqual(gitSyncInfo(repo), {
+    assert.deepEqual(await gitSyncInfo(repo), {
       hasUpstream: true,
       ahead: 0,
       behind: 0,
@@ -119,7 +119,7 @@ describe("gitSyncInfo", () => {
     fs.writeFileSync(path.join(repo, "b.txt"), "2");
     git(repo, ["add", "."]);
     git(repo, ["commit", "-qm", "ahead"]);
-    assert.deepEqual(gitSyncInfo(repo), {
+    assert.deepEqual(await gitSyncInfo(repo), {
       hasUpstream: true,
       ahead: 1,
       behind: 0,

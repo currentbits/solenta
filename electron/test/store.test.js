@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { Store, MAX_MESSAGES_PER_THREAD, MESSAGE_OVERFLOW_SLACK, MAX_WORKLOG_ITEMS_PER_THREAD, WORKLOG_OVERFLOW_SLACK } = require("../store.js");
+const { Store, MAX_MESSAGES_PER_THREAD, MESSAGE_OVERFLOW_SLACK, MAX_WORKLOG_ITEMS_PER_THREAD, WORKLOG_OVERFLOW_SLACK, SAVE_DEBOUNCE_MS, SAVE_DEBOUNCE_MAX_MS } = require("../store.js");
 
 describe("Store", () => {
   let tmpDir;
@@ -318,6 +318,34 @@ describe("Store", () => {
       .readdirSync(tmpDir)
       .filter((n) => n !== "coder-store.json" && n !== "coder-store.json.bak");
     assert.deepEqual(leftovers, []);
+  });
+
+  it("backs off flush delay when save() keeps landing, then resets", async () => {
+    const store = new Store(filePath);
+    const realOpen = fs.promises.open;
+    fs.promises.open = async (...args) => {
+      const handle = await realOpen(...args);
+      const realWrite = handle.writeFile.bind(handle);
+      handle.writeFile = (...wargs) => {
+        store.setProjects([{ id: "p-dirty", slug: "a/b", name: "b", path: "/x" }]);
+        store.save();
+        return realWrite(...wargs);
+      };
+      return handle;
+    };
+    try {
+      store.setProjects([{ id: "p1", slug: "a/b", name: "b", path: "/x" }]);
+      store.save();
+      await new Promise((r) => setTimeout(r, SAVE_DEBOUNCE_MS + 150));
+      await store.flushPending();
+      assert.equal(store._flushDelayMs, SAVE_DEBOUNCE_MS * 2);
+    } finally {
+      fs.promises.open = realOpen;
+    }
+    await new Promise((r) => setTimeout(r, SAVE_DEBOUNCE_MS + 150));
+    await store.flushPending();
+    assert.equal(store._flushDelayMs, SAVE_DEBOUNCE_MS);
+    assert.ok(SAVE_DEBOUNCE_MAX_MS >= SAVE_DEBOUNCE_MS * 2);
   });
 
   it("saveNow() flushes a pending debounced save immediately", () => {

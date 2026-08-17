@@ -63,7 +63,7 @@ function fakeAgentFailScript() {
 /**
  * Real project + worktree fixture (same shape as worktrees.test.js).
  */
-function makeWorktreeFixture() {
+async function makeWorktreeFixture() {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-ckpt-"));
   const store = new Store(path.join(tmpDir, "store.json"));
   const worktreeBase = path.join(tmpDir, "worktrees");
@@ -80,7 +80,7 @@ function makeWorktreeFixture() {
   } catch {
     // already on main
   }
-  const project = services.addProject(store, repo);
+  const project = await services.addProject(store, repo);
   const thread = services.createThread(store, {
     projectId: project.id,
     title: "Checkpoint thread",
@@ -116,7 +116,7 @@ describe("maybeCreateCheckpoint", () => {
   });
 
   it("auto-commits when worktree is dirty; N increments across turns", async () => {
-    fx = makeWorktreeFixture();
+    fx = await makeWorktreeFixture();
     const wt = fx.worktreePath;
 
     fs.writeFileSync(path.join(wt, "a.txt"), "one\n");
@@ -142,7 +142,7 @@ describe("maybeCreateCheckpoint", () => {
   });
 
   it("skips when thread has no worktree", async () => {
-    fx = makeWorktreeFixture();
+    fx = await makeWorktreeFixture();
     const bare = services.createThread(fx.store, {
       projectId: fx.project.id,
       title: "No wt",
@@ -153,7 +153,7 @@ describe("maybeCreateCheckpoint", () => {
   });
 
   it("checkpoint failure does not throw (best-effort)", async () => {
-    fx = makeWorktreeFixture();
+    fx = await makeWorktreeFixture();
     // Point worktreePath at a non-git directory so git fails.
     const junk = path.join(fx.tmpDir, "not-a-git");
     fs.mkdirSync(junk);
@@ -180,7 +180,7 @@ describe("listCheckpoints / restoreCheckpoint", () => {
   });
 
   it("list is newest-first with correct turn/at; empty without worktree", async () => {
-    fx = makeWorktreeFixture();
+    fx = await makeWorktreeFixture();
     assert.deepEqual(
       await listCheckpoints({ store: fx.store, threadId: fx.thread.id }),
       [],
@@ -214,7 +214,7 @@ describe("listCheckpoints / restoreCheckpoint", () => {
   });
 
   it("restore guard table in order + foreign-sha + file content proof", async () => {
-    fx = makeWorktreeFixture();
+    fx = await makeWorktreeFixture();
     const wt = fx.worktreePath;
     const file = path.join(wt, "tracked.txt");
 
@@ -339,7 +339,7 @@ describe("listCheckpoints / restoreCheckpoint", () => {
   it("A-B1: sibling-thread checkpoint sha is rejected (shared object DB)", async () => {
     // Two worktrees of one project share objects — git log -1 <t2sha> in t1
     // would resolve. Membership in THIS thread's listCheckpoints must refuse.
-    fx = makeWorktreeFixture();
+    fx = await makeWorktreeFixture();
     const t1 = fx.thread;
     const t2 = services.createThread(fx.store, {
       projectId: fx.project.id,
@@ -399,7 +399,7 @@ describe("listCheckpoints / restoreCheckpoint", () => {
   });
 
   it("A-n3: restore then new dirty turn renumbers from list length (turn 2, fresh sha)", async () => {
-    fx = makeWorktreeFixture();
+    fx = await makeWorktreeFixture();
     const wt = fx.worktreePath;
     const file = path.join(wt, "n.txt");
 
@@ -442,7 +442,7 @@ describe("listCheckpoints / restoreCheckpoint", () => {
   });
 
   it("checkpoints uncommitted work before the reset (issue #132)", async () => {
-    fx = makeWorktreeFixture();
+    fx = await makeWorktreeFixture();
     const wt = fx.worktreePath;
     const file = path.join(wt, "tracked.txt");
 
@@ -476,7 +476,7 @@ describe("listCheckpoints / restoreCheckpoint", () => {
   });
 
   it("clean worktree restore adds no safety checkpoint", async () => {
-    fx = makeWorktreeFixture();
+    fx = await makeWorktreeFixture();
     const file = path.join(fx.worktreePath, "c.txt");
 
     fs.writeFileSync(file, "v1\n");
@@ -508,7 +508,7 @@ describe("runner auto-checkpoint on successful turn", () => {
     prevSimulate = process.env.CODER_SIMULATE;
     prevAgentCmd = process.env.CODER_AGENT_CMD;
     delete process.env.CODER_SIMULATE;
-    fx = makeWorktreeFixture();
+    fx = await makeWorktreeFixture();
     const core = await loadCore();
     runner = createRunner({
       store: fx.store,

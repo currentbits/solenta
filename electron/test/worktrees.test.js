@@ -16,7 +16,10 @@ const {
   prStatus,
   parsePrJson,
   isGitHubRemote,
+  gitTry,
+  gitTryAsync,
 } = require("../worktrees.js");
+const ssh = require("../ssh.js");
 
 function git(cwd, args) {
   return execFileSync("git", args, {
@@ -211,7 +214,7 @@ describe("worktrees", () => {
   let worktreeBase;
   let broadcasts;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-wt-"));
     store = new Store(path.join(tmpDir, "store.json"));
     worktreeBase = path.join(tmpDir, "worktrees");
@@ -233,7 +236,7 @@ describe("worktrees", () => {
       // already on main/master
     }
 
-    project = services.addProject(store, repo);
+    project = await services.addProject(store, repo);
     thread = services.createThread(store, {
       projectId: project.id,
       title: "My Feature Work",
@@ -259,7 +262,7 @@ describe("worktrees", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("setupWorktree creates branch and worktree, is idempotent", () => {
+  it("setupWorktree creates branch and worktree, is idempotent", async () => {
     const updated = setupWorktree({
       store,
       threadId: thread.id,
@@ -290,7 +293,7 @@ describe("worktrees", () => {
     assert.equal(again.branch, updated.branch);
   });
 
-  it("diff reports modified and untracked files with patch", () => {
+  it("diff reports modified and untracked files with patch", async () => {
     const updated = setupWorktree({
       store,
       threadId: thread.id,
@@ -314,7 +317,7 @@ describe("worktrees", () => {
       "a\nb\n",
     );
 
-    const result = diff({ store, threadId: thread.id });
+    const result = await diff({ store, threadId: thread.id });
 
     assert.ok(Array.isArray(result.files));
     assert.equal(typeof result.patch, "string");
@@ -352,7 +355,50 @@ describe("worktrees", () => {
     );
   });
 
-  it("mergeWorktree commits worktree changes, squash-merges, cleans up", () => {
+  it("diff does not call execFileSync", async () => {
+    setupWorktree({
+      store,
+      threadId: thread.id,
+      worktreeBase,
+      broadcast: () => {},
+    });
+    fs.writeFileSync(path.join(store.getThread(thread.id).worktreePath, "x.txt"), "x\n");
+    ssh.setExecFileSync(() => {
+      throw new Error("execFileSync should not run on the diff path");
+    });
+    try {
+      const result = await diff({ store, threadId: thread.id });
+      assert.ok(Array.isArray(result.files));
+    } finally {
+      ssh.setExecFileSync(null);
+    }
+  });
+
+  it("gitTryAsync matches gitTry failure shape including error and timedOut", async () => {
+    const missing = path.join(tmpDir, "not-a-repo");
+    fs.mkdirSync(missing);
+    const sync = gitTry(missing, ["status"]);
+    const asyncResult = await gitTryAsync(missing, ["status"]);
+    assert.equal(sync.ok, false);
+    assert.equal(asyncResult.ok, false);
+    assert.equal(typeof asyncResult.stdout, "string");
+    assert.equal(typeof asyncResult.stderr, "string");
+    assert.equal(typeof asyncResult.combined, "string");
+    assert.ok(asyncResult.error, "failed gitTryAsync must carry the raw error");
+    assert.equal(asyncResult.timedOut, false);
+  });
+
+  it("gitTryAsync sets timedOut when the child is killed by timeout", async () => {
+    // cat-file --batch waits on stdin, so the timeout is what kills it.
+    const result = await gitTryAsync(repo, ["cat-file", "--batch"], {
+      timeout: 80,
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.timedOut, true);
+    assert.ok(result.error);
+  });
+
+  it("mergeWorktree commits worktree changes, squash-merges, cleans up", async () => {
     const setup = setupWorktree({
       store,
       threadId: thread.id,
@@ -395,7 +441,7 @@ describe("worktrees", () => {
     assert.ok(broadcasts.some((b) => b.ch === "threads:changed"));
   });
 
-  it("mergeWorktree ignores an unrelated untracked file in the project (#198)", () => {
+  it("mergeWorktree ignores an unrelated untracked file in the project (#198)", async () => {
     const setup = setupWorktree({
       store,
       threadId: thread.id,
@@ -417,7 +463,7 @@ describe("worktrees", () => {
     assert.ok(fs.existsSync(path.join(repo, "tweet-0.4.0.txt")), "left alone");
   });
 
-  it("mergeWorktree refuses when an untracked project file is in the way", () => {
+  it("mergeWorktree refuses when an untracked project file is in the way", async () => {
     const setup = setupWorktree({
       store,
       threadId: thread.id,
@@ -445,7 +491,7 @@ describe("worktrees", () => {
     );
   });
 
-  it("mergeWorktree stashes and restores tracked project changes", () => {
+  it("mergeWorktree stashes and restores tracked project changes", async () => {
     const setup = setupWorktree({
       store,
       threadId: thread.id,
@@ -473,7 +519,7 @@ describe("worktrees", () => {
     assert.equal(git(repo, ["stash", "list"]), "", "and are not left stashed");
   });
 
-  it("mergeWorktree restores the stash when the merge fails", () => {
+  it("mergeWorktree restores the stash when the merge fails", async () => {
     const setup = setupWorktree({
       store,
       threadId: thread.id,
@@ -500,7 +546,7 @@ describe("worktrees", () => {
     assert.equal(git(repo, ["stash", "list"]), "");
   });
 
-  it("mergeWorktree rejects on conflict and restores clean project checkout", () => {
+  it("mergeWorktree rejects on conflict and restores clean project checkout", async () => {
     const setup = setupWorktree({
       store,
       threadId: thread.id,
@@ -585,7 +631,7 @@ describe("worktrees", () => {
     assert.equal(fs.readFileSync(path.join(repo, "README.md"), "utf8"), "resolved\n");
   });
 
-  it("removeWorktree without force rejects dirty worktree with WORKTREE_DIRTY", () => {
+  it("removeWorktree without force rejects dirty worktree with WORKTREE_DIRTY", async () => {
     const setup = setupWorktree({
       store,
       threadId: thread.id,
@@ -623,7 +669,7 @@ describe("worktrees", () => {
     assert.equal(still.worktreePath, setup.worktreePath);
   });
 
-  it("removeWorktree without force rejects when project HEAD is detached", () => {
+  it("removeWorktree without force rejects when project HEAD is detached", async () => {
     const setup = setupWorktree({
       store,
       threadId: thread.id,
@@ -683,7 +729,7 @@ describe("worktrees", () => {
     assert.ok(!fs.existsSync(wtPath));
   });
 
-  it("removeWorktree with force succeeds on dirty worktree", () => {
+  it("removeWorktree with force succeeds on dirty worktree", async () => {
     const setup = setupWorktree({
       store,
       threadId: thread.id,
@@ -710,7 +756,7 @@ describe("worktrees", () => {
     assert.ok(broadcasts.some((b) => b.ch === "threads:changed"));
   });
 
-  it("removeWorktree on clean fully-merged worktree succeeds without force", () => {
+  it("removeWorktree on clean fully-merged worktree succeeds without force", async () => {
     const setup = setupWorktree({
       store,
       threadId: thread.id,
@@ -742,7 +788,7 @@ describe("worktrees", () => {
     assert.ok(!branches.includes(branch));
   });
 
-  it("push happy path: local bare remote receives the branch", () => {
+  it("push happy path: local bare remote receives the branch", async () => {
     const bare = path.join(tmpDir, "remote.git");
     git(tmpDir, ["init", "--bare", bare]);
     git(repo, ["remote", "add", "origin", bare]);
@@ -777,7 +823,7 @@ describe("worktrees", () => {
     );
   });
 
-  it("push rejects when no origin remote is configured", () => {
+  it("push rejects when no origin remote is configured", async () => {
     // Fresh repo from beforeEach has no origin
     assert.throws(
       () => push({ store, threadId: thread.id, broadcast: () => {} }),
@@ -785,7 +831,7 @@ describe("worktrees", () => {
     );
   });
 
-  it("push failure surfaces stderr tail", () => {
+  it("push failure surfaces stderr tail", async () => {
     // Point origin at a path that cannot accept pushes
     const badRemote = path.join(tmpDir, "does-not-exist-remote");
     git(repo, ["remote", "add", "origin", badRemote]);
@@ -818,7 +864,7 @@ describe("worktrees", () => {
       else process.env.CODER_FAKE_GH_STATE = prevGhState;
     });
 
-    it("isGitHubRemote accepts github hosts and rejects gitlab/local", () => {
+    it("isGitHubRemote accepts github hosts and rejects gitlab/local", async () => {
       assert.equal(isGitHubRemote("https://github.com/acme/demo.git"), true);
       assert.equal(isGitHubRemote("git@github.com:acme/demo.git"), true);
       assert.equal(
@@ -1003,7 +1049,7 @@ describe("worktrees", () => {
       );
     });
 
-    it("parsePrJson passes through optional title and diff stats", () => {
+    it("parsePrJson passes through optional title and diff stats", async () => {
       const info = parsePrJson(
         JSON.stringify({
           number: 574,
@@ -1026,7 +1072,7 @@ describe("worktrees", () => {
       assert.equal(info.created, false);
     });
 
-    it("parsePrJson omits extra fields when they are absent", () => {
+    it("parsePrJson omits extra fields when they are absent", async () => {
       const info = parsePrJson(
         JSON.stringify({
           number: 1,
@@ -1193,8 +1239,8 @@ describe("worktrees", () => {
       fs.writeFileSync(statePath, JSON.stringify(state), "utf8");
 
       await assert.rejects(
-        () =>
-          createPr({
+        async () =>
+          await createPr({
             store,
             threadId: thread.id,
             title: "Follow-up",
@@ -1232,8 +1278,8 @@ describe("worktrees", () => {
       process.env.CODER_GH_BIN = path.join(tmpDir, "definitely-missing-gh");
 
       await assert.rejects(
-        () =>
-          createPr({
+        async () =>
+          await createPr({
             store,
             threadId: thread.id,
             title: "X",
@@ -1261,8 +1307,8 @@ describe("worktrees", () => {
       );
 
       await assert.rejects(
-        () =>
-          createPr({
+        async () =>
+          await createPr({
             store,
             threadId: thread.id,
             title: "X",
@@ -1307,8 +1353,8 @@ describe("worktrees", () => {
       );
 
       await assert.rejects(
-        () =>
-          createPr({
+        async () =>
+          await createPr({
             store,
             threadId: thread.id,
             title: "X",
@@ -1346,8 +1392,8 @@ describe("worktrees", () => {
       process.env.CODER_FAKE_GH_STATE = statePath;
 
       await assert.rejects(
-        () =>
-          createPr({
+        async () =>
+          await createPr({
             store,
             threadId: thread.id,
             title: "X",
@@ -1392,8 +1438,8 @@ describe("worktrees", () => {
       process.env.CODER_FAKE_GH_STATE = statePath;
 
       await assert.rejects(
-        () =>
-          createPr({
+        async () =>
+          await createPr({
             store,
             threadId: thread.id,
             title: "X",
@@ -1425,8 +1471,8 @@ describe("worktrees", () => {
       );
 
       await assert.rejects(
-        () =>
-          createPr({
+        async () =>
+          await createPr({
             store,
             threadId: thread.id,
             title: "X",

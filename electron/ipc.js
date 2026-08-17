@@ -545,7 +545,7 @@ const IPC_HANDLERS = {
     });
   },
   "git:createPr": async (ctx, input) => {
-    return await createPr({
+    return createPr({
       store: ctx.store,
       threadId: input.threadId,
       title: input.title,
@@ -555,13 +555,13 @@ const IPC_HANDLERS = {
     });
   },
   "git:prStatus": async (ctx, input) => {
-    return await prStatus({
+    return prStatus({
       store: ctx.store,
       threadId: input.threadId,
     });
   },
   "git:prChecks": async (ctx, input) => {
-    return await prChecks({
+    return prChecks({
       store: ctx.store,
       threadId: input.threadId,
     });
@@ -582,7 +582,7 @@ const IPC_HANDLERS = {
     return info;
   },
   "git:listPrs": async (_ctx, projectPath) => {
-    return await listPrs(projectPath);
+    return listPrs(projectPath);
   },
   "issues:fetch": async (_ctx, input) => {
     const projectPath = input && input.projectPath;
@@ -623,7 +623,10 @@ const IPC_HANDLERS = {
       if (!project) return { hasUpstream: false };
       const root = thread.worktreePath || project.path;
       if (!root) return { hasUpstream: false };
-      return services.gitSyncInfo(root);
+      // await, not a bare return: gitSyncInfo is async, and a returned
+      // promise would settle outside this try — the catch below would never
+      // see a rejection.
+      return await services.gitSyncInfo(root);
     } catch {
       return { hasUpstream: false };
     }
@@ -632,7 +635,7 @@ const IPC_HANDLERS = {
     const threadId = input && input.threadId;
     if (!threadId) throw new Error("threadId is required");
     const { root } = resolveThreadRoot(ctx.store, threadId);
-    services.gitFetch(root);
+    await services.gitFetch(root);
   },
   "git:repoInfo": async (ctx, input) => {
     // Never throws: anything missing or unparseable is { ok: false }.
@@ -645,7 +648,7 @@ const IPC_HANDLERS = {
       if (!project || project.remoteHost) return { ok: false };
       const root = thread.worktreePath || project.path;
       if (!root) return { ok: false };
-      return services.gitRepoInfo(root);
+      return await services.gitRepoInfo(root);
     } catch {
       return { ok: false };
     }
@@ -662,7 +665,7 @@ const IPC_HANDLERS = {
         return { ok: false, reason: "Not available on remote projects" };
       }
       const root = thread.worktreePath || project.path;
-      return services.gitPull(root);
+      return await services.gitPull(root);
     } catch (err) {
       const msg = err && err.message ? String(err.message) : String(err);
       return { ok: false, reason: msg.split("\n")[0] || "Pull failed" };

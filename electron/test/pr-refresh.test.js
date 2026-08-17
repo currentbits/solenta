@@ -162,7 +162,7 @@ finish(2, "", "fake-gh-refresh: unhandled argv " + JSON.stringify(args) + "\\n")
  *   fakeGh: string,
  * }}
  */
-function makeFixture() {
+async function makeFixture() {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-pr-refresh-"));
   const store = new Store(path.join(tmpDir, "store.json"));
   const worktreeBase = path.join(tmpDir, "worktrees");
@@ -181,7 +181,7 @@ function makeFixture() {
     // already on main
   }
 
-  const project = services.addProject(store, repo);
+  const project = await services.addProject(store, repo);
   const thread = services.createThread(store, {
     projectId: project.id,
     title: "PR freshness thread",
@@ -356,7 +356,7 @@ describe("refreshPrStates (round 47)", () => {
   });
 
   it("zero qualifying threads → zero spawns", async () => {
-    fx = makeFixture();
+    fx = await makeFixture();
     // thread has no prNumber
     const broadcasts = [];
     const saveCount = wrapSaveCounter(fx.store);
@@ -372,7 +372,7 @@ describe("refreshPrStates (round 47)", () => {
   });
 
   it("terminal MERGED → zero spawns", async () => {
-    fx = makeFixture();
+    fx = await makeFixture();
     seedOpenPr(fx, fx.thread.id, 7, "MERGED");
     const result = await refreshPrStates(fx.store, { broadcast: () => {} });
     assert.equal(result.examined, 0);
@@ -381,7 +381,7 @@ describe("refreshPrStates (round 47)", () => {
   });
 
   it("archived thread is skipped even with OPEN pr", async () => {
-    fx = makeFixture();
+    fx = await makeFixture();
     seedOpenPr(fx, fx.thread.id, 8, "OPEN");
     fx.store.updateThread(fx.thread.id, { archived: true });
     fx.store.saveNow();
@@ -392,7 +392,7 @@ describe("refreshPrStates (round 47)", () => {
   });
 
   it("change → persist + save once + push once", async () => {
-    fx = makeFixture();
+    fx = await makeFixture();
     seedOpenPr(fx, fx.thread.id, 42, "OPEN");
     setGhState(fx, {
       prsByNumber: {
@@ -430,7 +430,7 @@ describe("refreshPrStates (round 47)", () => {
     // Spec headline: ONE store.save + ONE threads:changed per pass even when
     // multiple threads mutate. A single-thread change test cannot kill a
     // per-thread save/push mutant; this one can.
-    fx = makeFixture();
+    fx = await makeFixture();
     const t2 = addSecondThread(fx, "Second change");
     seedOpenPr(fx, fx.thread.id, 61, "OPEN");
     seedOpenPr(fx, t2.id, 62, "OPEN");
@@ -477,7 +477,7 @@ describe("refreshPrStates (round 47)", () => {
   });
 
   it("no-change → no save no push", async () => {
-    fx = makeFixture();
+    fx = await makeFixture();
     seedOpenPr(fx, fx.thread.id, 42, "OPEN");
     // gh returns the same OPEN state/url already on the thread
     const broadcasts = [];
@@ -495,7 +495,7 @@ describe("refreshPrStates (round 47)", () => {
   });
 
   it("strict serialization: no overlapping gh processes", async () => {
-    fx = makeFixture();
+    fx = await makeFixture();
     const t2 = addSecondThread(fx, "Second PR");
     seedOpenPr(fx, fx.thread.id, 10, "OPEN");
     seedOpenPr(fx, t2.id, 11, "OPEN");
@@ -534,7 +534,7 @@ describe("refreshPrStates (round 47)", () => {
   });
 
   it("failure isolation: thread 1 fails, thread 2 still refreshes", async () => {
-    fx = makeFixture();
+    fx = await makeFixture();
     const t2 = addSecondThread(fx, "Second PR");
     seedOpenPr(fx, fx.thread.id, 21, "OPEN");
     seedOpenPr(fx, t2.id, 22, "OPEN");
@@ -567,7 +567,7 @@ describe("refreshPrStates (round 47)", () => {
   });
 
   it("timeout kill: timed-out thread is skipped; loop continues to next", async () => {
-    fx = makeFixture();
+    fx = await makeFixture();
     const t2 = addSecondThread(fx, "After timeout");
     seedOpenPr(fx, fx.thread.id, 31, "OPEN");
     seedOpenPr(fx, t2.id, 32, "OPEN");
@@ -630,7 +630,7 @@ describe("refreshPrStates (round 47)", () => {
   });
 
   it("timeout kill (real child): hanging fake is killed under short timeout", async () => {
-    fx = makeFixture();
+    fx = await makeFixture();
     seedOpenPr(fx, fx.thread.id, 99, "OPEN");
     setGhState(fx, { scenario: "timeout", delayMs: 0 });
 
@@ -652,7 +652,7 @@ describe("refreshPrStates (round 47)", () => {
   });
 
   it("non-GitHub origin skips silently (no error surface, no persist)", async () => {
-    fx = makeFixture();
+    fx = await makeFixture();
     seedOpenPr(fx, fx.thread.id, 55, "OPEN");
     // Point origin at gitlab on the thread cwd (worktree) — refresh must skip
     // without throwing or saving change (ISSUES.md permanent-error regression).
@@ -678,7 +678,7 @@ describe("refreshPrStates (round 47)", () => {
   });
 
   it("overlap latch: second trigger during a pass is a no-op", async () => {
-    fx = makeFixture();
+    fx = await makeFixture();
     seedOpenPr(fx, fx.thread.id, 77, "OPEN");
 
     let release;
@@ -724,7 +724,7 @@ describe("refreshPrStates (round 47)", () => {
   it("B2: latch clears after a throwing pass (round-34 wedge guard)", async () => {
     // Success-only latch clear wedges shut forever after the first throw.
     // The pass itself must REJECT (not a per-thread soft failure).
-    fx = makeFixture();
+    fx = await makeFixture();
     let passes = 0;
     const refresher = createPrStateRefresher({
       store: fx.store,
@@ -765,7 +765,7 @@ describe("refreshPrStates (round 47)", () => {
 
   it("enoent-like gh failure skips silently (no persist, no throw)", async () => {
     // Exercises the fake's "enoent-like" scenario so it is not dead code.
-    fx = makeFixture();
+    fx = await makeFixture();
     seedOpenPr(fx, fx.thread.id, 88, "OPEN");
     setGhState(fx, { scenario: "enoent-like" });
 
@@ -784,7 +784,7 @@ describe("refreshPrStates (round 47)", () => {
   });
 
   it("createPrStateRefresher.start schedules startup + interval (injectable timers)", async () => {
-    fx = makeFixture();
+    fx = await makeFixture();
     const timeouts = [];
     const intervals = [];
     let triggers = 0;

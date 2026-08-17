@@ -22,7 +22,7 @@ describe("worktrees commit/revertFile", () => {
   let repo;
   let thread;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-commit-"));
     store = new Store(path.join(tmpDir, "store.json"));
 
@@ -40,7 +40,7 @@ describe("worktrees commit/revertFile", () => {
       // already on main/master
     }
 
-    const project = services.addProject(store, repo);
+    const project = await services.addProject(store, repo);
     thread = services.createThread(store, {
       projectId: project.id,
       title: "Commit flow",

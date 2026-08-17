@@ -47,7 +47,7 @@ describe("orchestrator threads", () => {
     git(repo, ["add", "README.md"]);
     git(repo, ["commit", "-m", "init"]);
 
-    const project = services.addProject(store, repo);
+    const project = await services.addProject(store, repo);
     thread = services.createThread(store, {
       projectId: project.id,
       title: "New Thread",

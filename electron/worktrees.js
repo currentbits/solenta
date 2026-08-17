@@ -2,8 +2,20 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
-const { execFileSync, execFile } = require("node:child_process");
-const { execCommand } = require("./ssh.js");
+const { execFile } = require("node:child_process");
+const { execCommand, wrapCommand, SYNC_TIMEOUT_MS } = require("./ssh.js");
+
+/** @type {typeof execFile} */
+let execFileImpl = execFile;
+
+/**
+ * Test hook: swap async execFile (hot git reads) for a fake spawn.
+ * Pass null/undefined to restore the real implementation.
+ * @param {typeof execFile | null | undefined} fn
+ */
+function setExecFile(fn) {
+  execFileImpl = typeof fn === "function" ? fn : execFile;
+}
 
 const PATCH_TRUNCATE = 100_000;
 
@@ -23,14 +35,11 @@ const TERMINAL_PR_STATES = new Set(["MERGED", "CLOSED"]);
  * @returns {string}
  */
 function gitOut(cwd, args, opts) {
-  // ponytail: remaining sync git is deliberate. Callers are the worktree
-  // write flows (setupWorktree, mergeWorktree/mergeInto, push, commit,
-  // revertFile, cleanupWorktree/removeWorktree, unmergedFiles,
-  // maybeRenameWorktreeBranch) plus the sync defaultBranch they share and
-  // createPr's ahead-of-base check — all one-per-deliberate-click, bounded at
-  // 15s. Ceiling: a slow local repo still stalls the UI for that click. Read
-  // paths must use gitTryAsync; convert these only if loop-lag data shows a
-  // click path landing in p99.
+  // ponytail: worktree write paths (setup/merge/push/commit/revert/cleanup)
+  // stay sync — they fire once per click and are already bounded at 15s by #88.
+  // Every read path, PR paths included, uses the Async pair (#228). Ceiling: a
+  // slow local repo still stalls the UI for one click; convert only if the
+  // CODER_LOOP_LAG probe puts a click path in p99.
   // execCommand, not execFileSync: it owns the default timeout that keeps a
   // hung git off the main-process event loop.
   const raw = execCommand(null, "git", args, {
@@ -110,6 +119,69 @@ function gitTry(cwd, args, opts) {
 }
 
 /**
+ * Async gitOut. Never blocks the Electron main process.
+ * @param {string} cwd
+ * @param {string[]} args
+ * @param {{ raw?: boolean, timeout?: number }} [opts]
+ * @returns {Promise<string>}
+ */
+function gitOutAsync(cwd, args, opts) {
+  return gitExecThrowAsync(null, cwd, args, opts);
+}
+
+/**
+ * Async gitOutForDiff: prefix git with ssh when the project is remote.
+ * @param {{ remoteHost?: string, remotePath?: string, path?: string } | null} project
+ * @param {string} cwd
+ * @param {string[]} args
+ * @param {{ raw?: boolean, timeout?: number }} [opts]
+ * @returns {Promise<string>}
+ */
+function gitOutForDiffAsync(project, cwd, args, opts) {
+  if (project && project.remoteHost) {
+    return gitExecThrowAsync(project, cwd, args, opts);
+  }
+  return gitOutAsync(cwd, args, opts);
+}
+
+/**
+ * execFile through wrapCommand. Drops cwd on remotes (same as execCommand).
+ * Throws on failure so callers match gitOut / gitOutForDiff.
+ * @param {{ remoteHost?: string, remotePath?: string, path?: string } | null} project
+ * @param {string} cwd
+ * @param {string[]} args
+ * @param {{ raw?: boolean, timeout?: number }} [opts]
+ * @returns {Promise<string>}
+ */
+function gitExecThrowAsync(project, cwd, args, opts) {
+  const cmd = wrapCommand(project, "git", args);
+  const timeout =
+    opts && opts.timeout != null ? opts.timeout : SYNC_TIMEOUT_MS;
+  /** @type {import("node:child_process").ExecFileOptionsWithStringEncoding} */
+  const execOpts = {
+    encoding: "utf8",
+    maxBuffer: GIT_MAX_BUFFER,
+    timeout,
+    stdio: ["ignore", "pipe", "pipe"],
+  };
+  if (!(project && project.remoteHost)) {
+    execOpts.cwd = cwd;
+  }
+  return new Promise((resolve, reject) => {
+    execFileImpl(cmd.bin, cmd.args, execOpts, (err, stdout, stderr) => {
+      if (err) {
+        if (err.stdout == null && stdout != null) err.stdout = stdout;
+        if (err.stderr == null && stderr != null) err.stderr = stderr;
+        reject(err);
+        return;
+      }
+      const out = stdout == null ? "" : String(stdout);
+      resolve(opts && opts.raw ? out : out.trim());
+    });
+  });
+}
+
+/**
  * Default branch currently checked out in the project path.
  * @param {string} projectPath
  * @returns {string}
@@ -125,21 +197,13 @@ function defaultBranch(projectPath) {
 }
 
 /**
- * Async counterpart of defaultBranch. Same contract; does not block the
- * main process. Used by PR read/create paths.
+ * Async defaultBranch, for the PR paths. The sync one stays: the worktree
+ * write flows (setupWorktree / mergeWorktree / sweep) still call it.
  * @param {string} projectPath
  * @returns {Promise<string>}
  */
 async function defaultBranchAsync(projectPath) {
-  const shown = await gitTryAsync(projectPath, ["branch", "--show-current"]);
-  // Sync defaultBranch lets git's own failure (missing path, not a repo) throw
-  // rather than mislabelling it as detached HEAD. Keep that split here.
-  if (!shown.ok) {
-    throw new Error(
-      `Could not read the project's current branch: ${tailErr(shown.combined, "git branch --show-current failed")}`,
-    );
-  }
-  const branch = shown.stdout;
+  const branch = await gitOutAsync(projectPath, ["branch", "--show-current"]);
   if (!branch) {
     throw new Error(
       "Project checkout is detached HEAD; check out a branch before merging",
@@ -698,9 +762,9 @@ function maybeRenameWorktreeBranch(opts) {
  * @param {object} opts
  * @param {import('./store').Store} opts.store
  * @param {string} opts.threadId
- * @returns {{ files: Array<{path: string, status: string, additions: number, deletions: number}>, patch: string, truncated: boolean }}
+ * @returns {Promise<{ files: Array<{path: string, status: string, additions: number, deletions: number}>, patch: string, truncated: boolean }>}
  */
-function diff(opts) {
+async function diff(opts) {
   const { store, threadId } = opts;
   const thread = store.getThread(threadId);
   if (!thread) {
@@ -721,7 +785,7 @@ function diff(opts) {
   // Porcelain status for all entries; -uall lists untracked files
   // individually instead of collapsing whole directories into "?? dir/".
   // raw: the 2-char XY column starts with a significant space.
-  const porcelain = gitOutForDiff(project, cwd, ["status", "--porcelain", "-uall"], {
+  const porcelain = await gitOutForDiffAsync(project, cwd, ["status", "--porcelain", "-uall"], {
     raw: true,
   });
 
@@ -751,7 +815,7 @@ function diff(opts) {
   // numstat for tracked diffs vs HEAD
   let numstat = "";
   try {
-    numstat = gitOutForDiff(project, cwd, ["diff", "HEAD", "--numstat"]);
+    numstat = await gitOutForDiffAsync(project, cwd, ["diff", "HEAD", "--numstat"]);
   } catch (err) {
     if (!isNoHeadError(err)) {
       throw new Error(`git diff --numstat failed: ${String(err.message || err).split("\n")[0]}`);
@@ -809,7 +873,7 @@ function diff(opts) {
 
   let patch = "";
   try {
-    patch = gitOutForDiff(project, cwd, ["diff", "HEAD"]);
+    patch = await gitOutForDiffAsync(project, cwd, ["diff", "HEAD"]);
   } catch (err) {
     if (!isNoHeadError(err)) {
       throw new Error(`git diff failed: ${String(err.message || err).split("\n")[0]}`);
@@ -933,8 +997,7 @@ const LS_FILES_TTL_MS = 5000;
 
 /**
  * Last `git ls-files` result, so a burst of @-mention keystrokes filters an
- * in-memory list instead of forking git (synchronously, on the main process)
- * for every one.
+ * in-memory list instead of forking git on every one.
  *
  * ponytail: single entry, not a per-cwd map — the popup only looks at one cwd
  * at a time. Key it by cwd if two threads start thrashing it.
@@ -948,21 +1011,21 @@ let lsFilesCache = null;
  * LS_FILES_TTL_MS.
  *
  * @param {string} cwd
- * @returns {string[]}
+ * @returns {Promise<string[]>}
  */
-function lsFiles(cwd) {
+async function lsFiles(cwd) {
   const now = Date.now();
   const hit =
     lsFilesCache &&
     lsFilesCache.cwd === cwd &&
     now - lsFilesCache.at < LS_FILES_TTL_MS;
   if (hit) return lsFilesCache.files;
-  const out = gitTry(cwd, [
+  const out = await gitTryAsync(cwd, [
     "ls-files",
     "--cached",
     "--others",
     "--exclude-standard",
-  ]);
+  ], { timeout: SYNC_TIMEOUT_MS });
   if (!out.ok) {
     throw new Error(tailErr(out.stderr || out.combined, "git ls-files failed"));
   }
@@ -980,13 +1043,13 @@ function lsFiles(cwd) {
  * @param {import('./store').Store} opts.store
  * @param {string} opts.threadId
  * @param {string} [opts.query]
- * @returns {{ files: string[] }}
+ * @returns {Promise<{ files: string[] }>}
  */
-function listFiles(opts) {
+async function listFiles(opts) {
   const { store, threadId } = opts;
   const query = String(opts.query || "").toLowerCase();
   const { cwd } = threadGitCwd(store, threadId);
-  const all = lsFiles(cwd);
+  const all = await lsFiles(cwd);
   // Copy when unfiltered: the sort below must not reorder the cached list.
   const matched = query
     ? all.filter((p) => p.toLowerCase().includes(query))
@@ -1143,41 +1206,10 @@ function ghFailFromError(err) {
   };
 }
 
-/**
- * Run gh without throwing. Mirrors gitTry: timeout, no prompt, enoent flag.
- * ponytail: remaining sync gh is deliberate, confined to PR write flows
- * (createPr/mergePr). Do not convert; those stay blocking on purpose.
- * Background refresh and PR read paths MUST use ghTryAsync.
- * @param {string} cwd
- * @param {string[]} args
- * @param {{ env?: NodeJS.ProcessEnv, timeout?: number }} [opts]
- */
-function ghTry(cwd, args, opts) {
-  const timeout =
-    opts && opts.timeout != null ? opts.timeout : GH_TIMEOUT_MS;
-  try {
-    /** @type {import('node:child_process').ExecFileSyncOptionsWithStringEncoding} */
-    const execOpts = {
-      cwd,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-      maxBuffer: GIT_MAX_BUFFER,
-      timeout,
-      env: {
-        ...process.env,
-        ...(opts && opts.env ? opts.env : {}),
-        // Never prompt for auth/input on the main process.
-        GH_PROMPT_DISABLED: "1",
-        GIT_TERMINAL_PROMPT: "0",
-      },
-    };
-    const out = execFileSync(ghBin(), args, execOpts);
-    const stdout = out.trim();
-    return { ok: true, stdout, stderr: "", combined: stdout };
-  } catch (err) {
-    return ghFailFromError(err);
-  }
-}
+// A synchronous ghTry used to live here. It is deliberately gone (#124): gh is
+// a NETWORK call bounded at GH_TIMEOUT_MS (30s), so one hanging GitHub request
+// froze every window and every streaming thread for half a minute. Every gh
+// caller now goes through ghTryAsync. Do not reintroduce a sync variant.
 
 /**
  * Async gh. NEVER blocks the Electron main process. Uses execFile (not Sync)
@@ -1424,34 +1456,26 @@ async function listPrs(projectPath) {
     return { ok: false, reason: "not a GitHub repo" };
   }
 
-  let listed = await ghTryAsync(
-    cwd,
-    [
-      "pr",
-      "list",
-      "--json",
-      PR_LIST_FIELDS,
-      "--limit",
-      "50",
-    ],
-    { timeout: GH_TIMEOUT_MS },
-  );
+  let listed = await ghTryAsync(cwd, [
+    "pr",
+    "list",
+    "--json",
+    PR_LIST_FIELDS,
+    "--limit",
+    "50",
+  ], { timeout: GH_TIMEOUT_MS });
   if (
     !listed.ok &&
     isUnknownJsonField(listed.stderr || listed.combined || listed.stdout)
   ) {
-    listed = await ghTryAsync(
-      cwd,
-      [
-        "pr",
-        "list",
-        "--json",
-        PR_LIST_FIELDS_FALLBACK,
-        "--limit",
-        "50",
-      ],
-      { timeout: GH_TIMEOUT_MS },
-    );
+    listed = await ghTryAsync(cwd, [
+      "pr",
+      "list",
+      "--json",
+      PR_LIST_FIELDS_FALLBACK,
+      "--limit",
+      "50",
+    ], { timeout: GH_TIMEOUT_MS });
   }
   if (!listed.ok) {
     if (listed.enoent) {
@@ -1510,14 +1534,15 @@ async function resolveThreadGit(store, threadId) {
 
   const cwd = thread.worktreePath || project.path;
 
-  const shown = await gitTryAsync(cwd, ["branch", "--show-current"]);
-  if (!shown.ok) {
-    const msg = String(shown.combined || shown.stderr || "");
+  let branch = "";
+  try {
+    branch = await gitOutAsync(cwd, ["branch", "--show-current"]);
+  } catch (err) {
+    const msg = err && err.message ? String(err.message) : String(err);
     throw new Error(
       `Could not determine current branch: ${msg.split("\n")[0]}`,
     );
   }
-  const branch = shown.stdout;
   if (!branch) {
     throw new Error(
       "Checkout is detached HEAD or has no branch name; check out a branch before opening a PR",
@@ -1552,20 +1577,16 @@ async function prStatus(opts) {
     );
   }
 
-  let viewed = await ghTryAsync(
-    cwd,
-    ["pr", "view", branch, "--json", PR_JSON_ENRICHED],
-    { timeout: GH_TIMEOUT_MS },
-  );
+  let viewed = await ghTryAsync(cwd, ["pr", "view", branch, "--json", PR_JSON_ENRICHED], {
+    timeout: GH_TIMEOUT_MS,
+  });
   if (
     !viewed.ok &&
     isUnknownJsonField(viewed.stderr || viewed.combined || viewed.stdout)
   ) {
-    viewed = await ghTryAsync(
-      cwd,
-      ["pr", "view", branch, "--json", PR_JSON_MINIMAL],
-      { timeout: GH_TIMEOUT_MS },
-    );
+    viewed = await ghTryAsync(cwd, ["pr", "view", branch, "--json", PR_JSON_MINIMAL], {
+      timeout: GH_TIMEOUT_MS,
+    });
   }
   if (!viewed.ok) {
     if (viewed.enoent || viewed.timedOut) {
@@ -1798,20 +1819,16 @@ async function prChecks(opts) {
     return { ok: false, reason: "not a GitHub repo" };
   }
 
-  let viewed = await ghTryAsync(
-    cwd,
-    ["pr", "view", branch, "--json", PR_JSON_ENRICHED],
-    { timeout: GH_TIMEOUT_MS },
-  );
+  let viewed = await ghTryAsync(cwd, ["pr", "view", branch, "--json", PR_JSON_ENRICHED], {
+    timeout: GH_TIMEOUT_MS,
+  });
   if (
     !viewed.ok &&
     isUnknownJsonField(viewed.stderr || viewed.combined || viewed.stdout)
   ) {
-    viewed = await ghTryAsync(
-      cwd,
-      ["pr", "view", branch, "--json", PR_JSON_MINIMAL],
-      { timeout: GH_TIMEOUT_MS },
-    );
+    viewed = await ghTryAsync(cwd, ["pr", "view", branch, "--json", PR_JSON_MINIMAL], {
+      timeout: GH_TIMEOUT_MS,
+    });
   }
   if (!viewed.ok) {
     if (viewed.enoent) return { ok: false, reason: "gh missing" };
@@ -1840,27 +1857,21 @@ async function prChecks(opts) {
     };
   }
 
-  let checked = await ghTryAsync(
-    cwd,
-    [
-      "pr",
-      "checks",
-      String(info.number),
-      "--json",
-      "name,state,bucket,link",
-    ],
-    { timeout: GH_TIMEOUT_MS },
-  );
+  let checked = await ghTryAsync(cwd, [
+    "pr",
+    "checks",
+    String(info.number),
+    "--json",
+    "name,state,bucket,link",
+  ], { timeout: GH_TIMEOUT_MS });
   let preferText = false;
   if (
     !checked.ok &&
     isChecksJsonRejected(checked.stderr || checked.combined || checked.stdout)
   ) {
-    checked = await ghTryAsync(
-      cwd,
-      ["pr", "checks", String(info.number)],
-      { timeout: GH_TIMEOUT_MS },
-    );
+    checked = await ghTryAsync(cwd, ["pr", "checks", String(info.number)], {
+      timeout: GH_TIMEOUT_MS,
+    });
     preferText = true;
   }
 
@@ -1902,12 +1913,24 @@ async function mergePr(opts) {
     );
   }
 
-  let viewed = ghTry(cwd, ["pr", "view", branch, "--json", PR_JSON_ENRICHED]);
+  let viewed = await ghTryAsync(cwd, [
+    "pr",
+    "view",
+    branch,
+    "--json",
+    PR_JSON_ENRICHED,
+  ]);
   if (
     !viewed.ok &&
     isUnknownJsonField(viewed.stderr || viewed.combined || viewed.stdout)
   ) {
-    viewed = ghTry(cwd, ["pr", "view", branch, "--json", PR_JSON_MINIMAL]);
+    viewed = await ghTryAsync(cwd, [
+      "pr",
+      "view",
+      branch,
+      "--json",
+      PR_JSON_MINIMAL,
+    ]);
   }
   if (!viewed.ok) {
     if (viewed.enoent || viewed.timedOut) {
@@ -1920,7 +1943,7 @@ async function mergePr(opts) {
   }
 
   const info = parsePrJson(viewed.stdout, branch, false);
-  const merged = ghTry(cwd, [
+  const merged = await ghTryAsync(cwd, [
     "pr",
     "merge",
     String(info.number),
@@ -2214,7 +2237,7 @@ async function createPr(opts) {
   push({ store, threadId });
 
   // Idempotency: return the existing PR rather than erroring.
-  const existing = ghTry(cwd, [
+  const existing = await ghTryAsync(cwd, [
     "pr",
     "view",
     branch,
@@ -2271,11 +2294,11 @@ async function createPr(opts) {
     createArgs.push("--draft");
   }
 
-  const created = ghTry(cwd, createArgs);
+  const created = await ghTryAsync(cwd, createArgs);
   if (!created.ok) {
     // Race: PR appeared between view and create. Prefer idempotent return.
     if (!created.enoent && !created.timedOut) {
-      const raced = ghTry(cwd, [
+      const raced = await ghTryAsync(cwd, [
         "pr",
         "view",
         branch,
@@ -2307,7 +2330,7 @@ async function createPr(opts) {
   }
 
   // create prints a URL; re-view for number/state so we match PrInfo exactly.
-  const viewed = ghTry(cwd, [
+  const viewed = await ghTryAsync(cwd, [
     "pr",
     "view",
     branch,
@@ -2372,7 +2395,7 @@ const CHECKPOINT_GIT_TIMEOUT_MS = 30_000;
  * @param {string} cwd
  * @param {string[]} args
  * @param {{ timeout?: number, env?: NodeJS.ProcessEnv, raw?: boolean }} [opts]
- * @returns {Promise<{ ok: boolean, stdout: string, stderr: string, combined: string, timedOut?: boolean }>}
+ * @returns {Promise<{ ok: boolean, stdout: string, stderr: string, combined: string, error?: any, timedOut?: boolean }>}
  */
 function gitTryAsync(cwd, args, opts) {
   const timeout =
@@ -2383,7 +2406,7 @@ function gitTryAsync(cwd, args, opts) {
     GIT_TERMINAL_PROMPT: "0",
   };
   return new Promise((resolve) => {
-    execFile(
+    execFileImpl(
       "git",
       args,
       {
@@ -2403,14 +2426,18 @@ function gitTryAsync(cwd, args, opts) {
         const errText =
           err && err.stderr != null ? String(err.stderr) : String(stderr || "");
         const msg = err && err.message ? String(err.message) : String(err);
+        // execFileSync sets code=ETIMEDOUT; async execFile kills with
+        // SIGTERM and leaves code=null. Both are a timeout.
         const timedOut =
           (err && err.code === "ETIMEDOUT") ||
-          (err && err.killed && /ETIMEDOUT|timed out/i.test(msg));
+          (err && err.killed && /ETIMEDOUT|timed out/i.test(msg)) ||
+          (err && err.killed && err.signal != null && err.code == null);
         resolve({
           ok: false,
           stdout: out,
           stderr: errText,
           combined: [out, errText, msg].filter(Boolean).join("\n"),
+          error: err,
           timedOut: Boolean(timedOut),
         });
       },
@@ -2934,8 +2961,13 @@ module.exports = {
   isPrRefreshCandidate,
   isGitHubRemote,
   gitTry,
-  ghTry,
+  defaultBranch,
   defaultBranchAsync,
+  gitOutAsync,
+  gitOutForDiffAsync,
+  setExecFile,
+  ghTryAsync,
+  GH_TIMEOUT_MS,
   isGhAuthFailure,
   tailErr,
   slugify,

@@ -147,7 +147,7 @@ describe("suggestCommitMessage", () => {
   let fakeBin;
   let logPath;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-msg-"));
     store = new Store(path.join(tmpDir, "store.json"));
 
@@ -160,7 +160,7 @@ describe("suggestCommitMessage", () => {
     git(repo, ["add", "README.md"]);
     git(repo, ["commit", "-m", "init"]);
 
-    const project = services.addProject(store, repo);
+    const project = await services.addProject(store, repo);
     thread = services.createThread(store, {
       projectId: project.id,
       title: "Message flow",

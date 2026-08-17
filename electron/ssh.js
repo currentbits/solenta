@@ -1,10 +1,12 @@
 "use strict";
 
 const path = require("node:path");
-const { execFileSync: defaultExecFileSync } = require("node:child_process");
+const { execFileSync: defaultExecFileSync, execFile: defaultExecFile } = require("node:child_process");
 
 /** @type {typeof defaultExecFileSync} */
 let execFileSyncImpl = defaultExecFileSync;
+/** @type {typeof defaultExecFile} */
+let execFileImpl = defaultExecFile;
 
 /**
  * Hard cap for synchronous git/ssh on the main process. execFileSync blocks
@@ -22,6 +24,15 @@ const SYNC_TIMEOUT_MS = 15_000;
  */
 function setExecFileSync(fn) {
   execFileSyncImpl = typeof fn === "function" ? fn : defaultExecFileSync;
+}
+
+/**
+ * Test hook: swap execFile (async git/ssh) for a fake spawn. Pass
+ * null/undefined to restore the real implementation.
+ * @param {typeof defaultExecFile | null | undefined} fn
+ */
+function setExecFile(fn) {
+  execFileImpl = typeof fn === "function" ? fn : defaultExecFile;
 }
 
 /**
@@ -97,6 +108,7 @@ function wrapCommand(project, bin, argv) {
  * @param {string[]} argv
  * @param {import("node:child_process").ExecFileSyncOptions} [execOpts]
  */
+// ponytail: keep the sync export. worktrees.js still calls this.
 function execCommand(project, bin, argv, execOpts) {
   const cmd = wrapCommand(project, bin, argv);
   const opts = { ...(execOpts || {}) };
@@ -107,11 +119,38 @@ function execCommand(project, bin, argv, execOpts) {
   return execFileSyncImpl(cmd.bin, cmd.args, opts);
 }
 
+/**
+ * Async counterpart of execCommand. Same wrap/cwd/timeout rules, but uses
+ * execFile so the main-process event loop stays free while git/ssh runs.
+ *
+ * @param {{ remoteHost?: string, remotePath?: string, path?: string } | null | undefined} project
+ * @param {string} bin
+ * @param {string[]} argv
+ * @param {import("node:child_process").ExecFileOptions} [execOpts]
+ * @returns {Promise<string | Buffer>}
+ */
+function execCommandAsync(project, bin, argv, execOpts) {
+  const cmd = wrapCommand(project, bin, argv);
+  const opts = { ...(execOpts || {}) };
+  if (opts.timeout == null) opts.timeout = SYNC_TIMEOUT_MS;
+  if (project && project.remoteHost) {
+    delete opts.cwd;
+  }
+  return new Promise((resolve, reject) => {
+    execFileImpl(cmd.bin, cmd.args, opts, (err, stdout) => {
+      if (err) reject(err);
+      else resolve(stdout);
+    });
+  });
+}
+
 module.exports = {
   posixQuote,
   buildSshCommand,
   wrapCommand,
   execCommand,
+  execCommandAsync,
   setExecFileSync,
+  setExecFile,
   SYNC_TIMEOUT_MS,
 };
