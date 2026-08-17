@@ -3129,6 +3129,12 @@ function buildDevCoder(): CoderApi {
           return [];
         }
       },
+      async gcScan() {
+        return { candidates: [], usage: [], totalBytes: 0 };
+      },
+      async gcClean() {
+        return { removed: [], failed: [], bytes: 0 };
+      },
       async setupWorktree(input) {
         const detail = details.get(input.threadId);
         if (!detail) throw new Error(`Thread not found: ${input.threadId}`);

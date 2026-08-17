@@ -16,6 +16,7 @@ import { PlanboardView, type ThreadStartMode } from "./components/PlanboardView"
 import { AutomationsView } from "./components/AutomationsView";
 import { ActivityView } from "./components/ActivityView";
 import { UsageView } from "./components/UsageView";
+import { DigestView } from "./components/DigestView";
 import { AgentsPanel } from "./components/AgentsPanel";
 import { SettingsModal } from "./components/SettingsModal";
 import { ArchiveToast } from "./components/ArchiveToast";
@@ -33,7 +34,8 @@ export type AppView =
   | "prs"
   | "automations"
   | "activity"
-  | "usage";
+  | "usage"
+  | "digest";
 
 type DrawerId = "sidebar" | "agents";
 
@@ -121,6 +123,8 @@ export default function App() {
     setIssuePlanStatus,
     listActivity,
     listUsageByDay,
+    listDigest,
+    markDigestSeen,
     listThreadSummaries,
     listCheckpoints,
     restoreCheckpoint,
@@ -205,6 +209,7 @@ export default function App() {
   const openAutomations = useCallback(() => setView("automations"), []);
   const openActivity = useCallback(() => setView("activity"), []);
   const openUsage = useCallback(() => setView("usage"), []);
+  const openDigest = useCallback(() => setView("digest"), []);
   const openSettings = useCallback(() => setSettingsOpen(true), []);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
   const closeChanges = useCallback(() => setChangesOpen(false), []);
@@ -609,6 +614,7 @@ export default function App() {
         onOpenAutomations={openAutomations}
         onOpenActivity={openActivity}
         onOpenUsage={openUsage}
+        onOpenDigest={openDigest}
         onCreateThread={handleCreateThread}
         defaultWorktree={settings?.defaultWorktree ?? false}
         revealThreadId={revealThreadId}
@@ -655,6 +661,13 @@ export default function App() {
             />
           ) : view === "usage" ? (
             <UsageView loadUsage={listUsageByDay} />
+          ) : view === "digest" ? (
+            <DigestView
+              projects={projects}
+              loadDigest={listDigest}
+              markSeen={markDigestSeen}
+              onSelectThread={handleSelectThread}
+            />
           ) : view === "prs" ? (
             <PrListView
               projects={projects}
