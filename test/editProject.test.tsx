@@ -62,6 +62,7 @@ describe("edit project", () => {
       name: "ledger",
       remoteHost: "dev@box",
       remotePath: "/srv/app",
+      worktreeRetention: 0,
     });
     assert.equal(
       m.query("[data-edit-project]"),

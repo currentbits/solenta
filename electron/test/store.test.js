@@ -422,6 +422,45 @@ describe("Store", () => {
     assert.equal(Object.prototype.hasOwnProperty.call(empty, "remotePath"), false);
   });
 
+  it("keeps a positive worktreeRetention and drops junk (#316)", () => {
+    const old = {
+      projects: [
+        {
+          id: "p-keep",
+          slug: "app",
+          name: "app",
+          path: "/tmp/app",
+          worktreeRetention: 3,
+        },
+        {
+          id: "p-zero",
+          slug: "z",
+          name: "z",
+          path: "/tmp/z",
+          worktreeRetention: 0,
+        },
+        {
+          id: "p-junk",
+          slug: "j",
+          name: "j",
+          path: "/tmp/j",
+          worktreeRetention: "3",
+        },
+      ],
+      threads: [],
+      messagesByThread: {},
+      workLogByThread: {},
+    };
+    fs.writeFileSync(filePath, JSON.stringify(old), "utf8");
+    const store = new Store(filePath);
+    const keep = store.getProjects().find((p) => p.id === "p-keep");
+    const zero = store.getProjects().find((p) => p.id === "p-zero");
+    const junk = store.getProjects().find((p) => p.id === "p-junk");
+    assert.equal(keep.worktreeRetention, 3);
+    assert.equal(Object.prototype.hasOwnProperty.call(zero, "worktreeRetention"), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(junk, "worktreeRetention"), false);
+  });
+
   it("migrates old-shape threads missing session fields on load", () => {
     const old = {
       projects: [],

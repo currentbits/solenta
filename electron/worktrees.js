@@ -662,6 +662,49 @@ function slugify(title) {
 }
 
 /**
+ * True when `name` already exists as a local or remote branch ref.
+ * Remote check covers every remote (`refs/remotes/<remote>/<name>`), not
+ * just origin — colliding with a fetched PR branch is what #316 is for.
+ * @param {string} repoPath
+ * @param {string} name
+ */
+function branchRefExists(repoPath, name) {
+  const local = gitTry(repoPath, [
+    "show-ref",
+    "--verify",
+    "--quiet",
+    `refs/heads/${name}`,
+  ]);
+  if (local.ok) return true;
+  const listed = gitTry(repoPath, ["show-ref"]);
+  if (!listed.ok || !listed.stdout) return false;
+  for (const line of listed.stdout.split("\n")) {
+    const ref = line.replace(/^[0-9a-f]+\s+/i, "").trim();
+    if (!ref.startsWith("refs/remotes/")) continue;
+    const after = ref.slice("refs/remotes/".length);
+    const slash = after.indexOf("/");
+    if (slash !== -1 && after.slice(slash + 1) === name) return true;
+  }
+  return false;
+}
+
+/**
+ * Pick a free `coder/...` name: `base`, then `base-2`, `base-3`, …
+ * Returns null when 2..99 are all taken so a best-effort rename can bail.
+ * @param {string} repoPath
+ * @param {string} base
+ * @returns {string | null}
+ */
+function uniqueCoderBranch(repoPath, base) {
+  if (!branchRefExists(repoPath, base)) return base;
+  for (let n = 2; n <= 99; n++) {
+    const candidate = `${base}-${n}`;
+    if (!branchRefExists(repoPath, candidate)) return candidate;
+  }
+  return null;
+}
+
+/**
  * Create a git worktree + branch for the thread.
  * Idempotent when worktreePath is already set.
  *
@@ -690,7 +733,8 @@ function setupWorktree(opts) {
   }
 
   const shortId = String(thread.id).slice(0, 6);
-  const branch = `coder/${slugify(thread.title)}-${shortId}`;
+  const wanted = `coder/${slugify(thread.title)}-${shortId}`;
+  const branch = uniqueCoderBranch(project.path, wanted) || wanted;
   const dir = path.join(worktreeBase, thread.id);
 
   fs.mkdirSync(worktreeBase, { recursive: true });
@@ -742,8 +786,13 @@ function maybeRenameWorktreeBranch(opts) {
   if (thread.branch !== placeholder) {
     return null;
   }
-  const next = `coder/${slugify(newTitle)}-${shortId}`;
-  if (next === thread.branch) {
+  const wanted = `coder/${slugify(newTitle)}-${shortId}`;
+  if (wanted === thread.branch) {
+    return null;
+  }
+  const next = uniqueCoderBranch(thread.worktreePath, wanted);
+  // Best-effort: if every suffix is taken, leave the placeholder alone.
+  if (!next || next === thread.branch) {
     return null;
   }
   try {
@@ -2867,9 +2916,114 @@ async function sweepOrphanWorktrees(opts) {
 }
 
 /**
- * Worktree GC scan (#316) — contract placeholder.
- * Real engine (sizes, retention candidates, blocked reasons) lands next;
- * an empty scan means "nothing reclaimable", which is safe for every caller.
+ * Disk size of a worktree dir via `du -sk`. Never walks the tree in JS.
+ * Failed du → 0 so a scan never rejects.
+ * @param {string} dir
+ * @returns {Promise<number>}
+ */
+function duBytes(dir) {
+  return new Promise((resolve) => {
+    execFileImpl(
+      "du",
+      ["-sk", dir],
+      { encoding: "utf8", timeout: 30_000, maxBuffer: GIT_MAX_BUFFER },
+      (err, stdout) => {
+        if (err) {
+          resolve(0);
+          return;
+        }
+        const kb = parseInt(String(stdout || "").trim().split(/\s+/)[0], 10);
+        resolve(Number.isFinite(kb) && kb >= 0 ? kb * 1024 : 0);
+      },
+    );
+  });
+}
+
+/**
+ * Rank clock for retention: newest of updatedAt / lastActivityAt.
+ * @param {object} thread
+ */
+function threadActivityAt(thread) {
+  const updated = Number(thread && thread.updatedAt);
+  const activity = Number(thread && thread.lastActivityAt);
+  const times = [updated, activity].filter((n) => Number.isFinite(n));
+  return times.length ? Math.max(...times) : 0;
+}
+
+/**
+ * Conservative settle check, mirrored from src/threadSettle.ts.
+ * working / pinned never settle. Explicit "active" override wins over PR.
+ * @param {object} thread
+ * @param {number} now
+ * @param {number | null | undefined} autoSettleAfterDays
+ */
+function isSettledForGc(thread, now, autoSettleAfterDays) {
+  if (!thread) return false;
+  if (thread.status === "working") return false;
+  if (thread.pinnedAt != null && Number.isFinite(thread.pinnedAt)) return false;
+  // Archived is a stronger signal than settled: the user pushed the thread
+  // out of sight entirely. The renderer filters archived threads BEFORE the
+  // settle split (sidebarGroups), so they never carry a settled override —
+  // and those are precisely the invisible worktrees #316 is about (108 of
+  // 127 worktree-holding threads on the reporter's own machine).
+  if (thread.archived === true) return true;
+  if (thread.settledOverride === "settled") return true;
+  if (thread.settledOverride === "active") return false;
+  const pr = String(thread.prState || "").toUpperCase();
+  if (pr === "MERGED" || pr === "CLOSED") return true;
+  if (pr === "OPEN") return false;
+  if (
+    autoSettleAfterDays == null ||
+    !Number.isFinite(autoSettleAfterDays) ||
+    autoSettleAfterDays < 0
+  ) {
+    return false;
+  }
+  const updatedAt = Number(thread.updatedAt);
+  if (!Number.isFinite(updatedAt) || !Number.isFinite(now)) return false;
+  return updatedAt < now - autoSettleAfterDays * 24 * 60 * 60 * 1000;
+}
+
+/**
+ * Realpath when the path exists so macOS /var vs /private/var matches.
+ * @param {string} p
+ */
+function realpathOrResolve(p) {
+  try {
+    return fs.realpathSync(p);
+  } catch {
+    return path.resolve(String(p));
+  }
+}
+
+/**
+ * @param {string} dir
+ * @returns {Promise<{ repoPath: string | null, readable: boolean, dirty: boolean, branch: string | null }>}
+ */
+async function inspectWorktreeDir(dir) {
+  const common = await gitTryAsync(dir, [
+    "rev-parse",
+    "--path-format=absolute",
+    "--git-common-dir",
+  ]);
+  let repoPath = null;
+  if (common.ok && common.stdout) {
+    repoPath = path.dirname(path.resolve(dir, common.stdout));
+  }
+  const status = await gitTryAsync(
+    dir,
+    ["status", "--porcelain", "-uall"],
+    { raw: true },
+  );
+  const readable = Boolean(status.ok);
+  const dirty = readable && Boolean(String(status.stdout || "").trim());
+  const br = await gitTryAsync(dir, ["branch", "--show-current"]);
+  const branch = br.ok && br.stdout.trim() ? br.stdout.trim() : null;
+  return { repoPath, readable, dirty, branch };
+}
+
+/**
+ * Worktree GC scan (#316). Read-only; never rejects.
  *
  * @param {object} opts
  * @param {import('./store').Store} opts.store
@@ -2877,12 +3031,204 @@ async function sweepOrphanWorktrees(opts) {
  * @returns {Promise<{ candidates: object[], usage: object[], totalBytes: number }>}
  */
 async function gcScan(opts) {
-  void opts;
-  return { candidates: [], usage: [], totalBytes: 0 };
+  try {
+    return await gcScanInner(opts);
+  } catch {
+    return { candidates: [], usage: [], totalBytes: 0 };
+  }
 }
 
 /**
- * Batch worktree cleanup (#316) — contract placeholder.
+ * @param {object} opts
+ * @param {import('./store').Store} opts.store
+ * @param {string} opts.worktreeBase
+ */
+async function gcScanInner(opts) {
+  const { store, worktreeBase } = opts || {};
+  const empty = { candidates: [], usage: [], totalBytes: 0 };
+  if (!worktreeBase) return empty;
+
+  /** @type {fs.Dirent[]} */
+  let entries = [];
+  try {
+    entries = fs.readdirSync(worktreeBase, { withFileTypes: true });
+  } catch {
+    return empty;
+  }
+
+  const dirs = [];
+  for (const entry of entries) {
+    if (entry.isDirectory()) dirs.push(path.join(worktreeBase, entry.name));
+  }
+  if (dirs.length === 0) return empty;
+
+  const threads = (store.getThreads() || []).filter(Boolean);
+  const projects = (store.getProjects() || []).filter(Boolean);
+  const settings = store.getSettings ? store.getSettings() : {};
+  const autoSettleAfterDays =
+    settings && Object.prototype.hasOwnProperty.call(settings, "autoSettleAfterDays")
+      ? settings.autoSettleAfterDays
+      : 3;
+  const now = Date.now();
+
+  /** @type {Map<string, object>} */
+  const threadByWt = new Map();
+  for (const t of threads) {
+    if (t.worktreePath) {
+      threadByWt.set(path.resolve(String(t.worktreePath)), t);
+    }
+  }
+  /** @type {Map<string, object>} */
+  const projectByPath = new Map();
+  for (const p of projects) {
+    if (p.path) projectByPath.set(realpathOrResolve(p.path), p);
+  }
+
+  const sizes = await Promise.all(dirs.map((d) => duBytes(d)));
+  const inspections = await Promise.all(dirs.map((d) => inspectWorktreeDir(d)));
+
+  /** @type {Map<string, Array<{ thread: object, dir: string }>>} */
+  const settledByProject = new Map();
+  for (let i = 0; i < dirs.length; i++) {
+    const thread = threadByWt.get(path.resolve(dirs[i]));
+    if (!thread || !isSettledForGc(thread, now, autoSettleAfterDays)) continue;
+    const list = settledByProject.get(thread.projectId) || [];
+    list.push({ thread, dir: dirs[i] });
+    settledByProject.set(thread.projectId, list);
+  }
+
+  /** @type {Set<string>} */
+  const retentionDrop = new Set();
+  for (const [projectId, list] of settledByProject) {
+    const project = store.getProject(projectId);
+    const n = Math.floor(Number(project && project.worktreeRetention));
+    if (!(n > 0)) continue;
+    list.sort((a, b) => threadActivityAt(b.thread) - threadActivityAt(a.thread));
+    for (const item of list.slice(n)) {
+      retentionDrop.add(path.resolve(item.dir));
+    }
+  }
+
+  /** @type {Map<string, { projectId: string, worktrees: number, bytes: number }>} */
+  const usageMap = new Map();
+  const candidates = [];
+  let totalBytes = 0;
+
+  for (let i = 0; i < dirs.length; i++) {
+    const dir = dirs[i];
+    const bytes = sizes[i];
+    const insp = inspections[i];
+    totalBytes += bytes;
+    const thread = threadByWt.get(path.resolve(dir));
+
+    let projectId = null;
+    if (thread) {
+      projectId = thread.projectId || null;
+    } else if (insp.repoPath) {
+      const p = projectByPath.get(realpathOrResolve(insp.repoPath));
+      projectId = p ? p.id : null;
+    }
+
+    if (projectId) {
+      const u = usageMap.get(projectId) || {
+        projectId,
+        worktrees: 0,
+        bytes: 0,
+      };
+      u.worktrees += 1;
+      u.bytes += bytes;
+      usageMap.set(projectId, u);
+    }
+
+    /** @type {"orphan" | "retention" | null} */
+    let reason = null;
+    if (!thread) reason = "orphan";
+    else if (retentionDrop.has(path.resolve(dir))) reason = "retention";
+    if (!reason) continue;
+
+    // working / pinned are never candidates (even as a safety net).
+    if (thread && thread.status === "working") continue;
+    if (
+      thread &&
+      thread.pinnedAt != null &&
+      Number.isFinite(thread.pinnedAt)
+    ) {
+      continue;
+    }
+
+    let blocked;
+    if (!insp.readable) blocked = "git could not read the directory";
+    else if (insp.dirty) blocked = "uncommitted changes";
+    else if (thread && thread.status === "working") {
+      blocked = "thread is currently working";
+    }
+
+    candidates.push({
+      path: dir,
+      bytes,
+      reason,
+      threadId: thread ? thread.id : null,
+      title: thread ? thread.title || null : null,
+      projectId,
+      branch: thread ? thread.branch || null : insp.branch,
+      ...(blocked ? { blocked } : {}),
+    });
+  }
+
+  return {
+    candidates,
+    usage: [...usageMap.values()],
+    totalBytes,
+  };
+}
+
+/**
+ * Remove one worktree directory. NEVER deletes a branch — GC reclaims
+ * disk only; every commit stays reachable via its branch ref
+ * (issue #316 / Conductor's cautionary tale).
+ *
+ * @param {import('./store').Store} store
+ * @param {{ path: string, threadId: string | null }} cand
+ * @returns {Promise<{ ok: boolean, error?: string }>}
+ */
+async function removeGcWorktree(store, cand) {
+  const dir = cand.path;
+  let repoPath = null;
+  if (cand.threadId) {
+    const thread = store.getThread(cand.threadId);
+    const project = thread && store.getProject(thread.projectId);
+    if (project && project.path) repoPath = project.path;
+  }
+  if (!repoPath && fs.existsSync(dir)) {
+    const common = await gitTryAsync(dir, [
+      "rev-parse",
+      "--path-format=absolute",
+      "--git-common-dir",
+    ]);
+    if (common.ok && common.stdout) {
+      repoPath = path.dirname(path.resolve(dir, common.stdout));
+    }
+  }
+  if (!fs.existsSync(dir)) {
+    if (repoPath) await gitTryAsync(repoPath, ["worktree", "prune"]);
+    return { ok: true };
+  }
+  if (!repoPath) return { ok: false, error: "could not find owning repo" };
+  const removed = await gitTryAsync(repoPath, ["worktree", "remove", dir]);
+  if (removed.ok) return { ok: true };
+  if (!fs.existsSync(dir)) {
+    await gitTryAsync(repoPath, ["worktree", "prune"]);
+    return { ok: true };
+  }
+  return {
+    ok: false,
+    error: tailErr(removed.stderr || removed.combined, "worktree remove failed"),
+  };
+}
+
+/**
+ * Batch worktree cleanup (#316). Re-scans and only removes paths the
+ * fresh scan still reports as unblocked candidates.
  *
  * @param {object} opts
  * @param {import('./store').Store} opts.store
@@ -2892,8 +3238,97 @@ async function gcScan(opts) {
  * @returns {Promise<{ removed: string[], failed: Array<{path: string, error: string}>, bytes: number }>}
  */
 async function gcClean(opts) {
-  void opts;
-  return { removed: [], failed: [], bytes: 0 };
+  const { store, worktreeBase, paths, broadcast } = opts || {};
+  const requested = Array.isArray(paths) ? paths : [];
+  const scan = await gcScan({ store, worktreeBase });
+  /** @type {Map<string, object>} */
+  const cleanable = new Map();
+  /** @type {Map<string, object>} */
+  const scanned = new Map();
+  for (const c of scan.candidates) {
+    const key = path.resolve(c.path);
+    scanned.set(key, c);
+    if (!c.blocked) cleanable.set(key, c);
+  }
+
+  const removed = [];
+  const failed = [];
+  let bytes = 0;
+  let touchedThread = false;
+
+  for (const raw of requested) {
+    const key = path.resolve(String(raw));
+    const cand = cleanable.get(key);
+    if (!cand) {
+      const known = scanned.get(key);
+      failed.push({
+        path: String(raw),
+        error: known && known.blocked
+          ? String(known.blocked)
+          : "not a reclaimable candidate",
+      });
+      continue;
+    }
+    try {
+      const result = await removeGcWorktree(store, cand);
+      if (!result.ok) {
+        failed.push({
+          path: cand.path,
+          error: result.error || "worktree remove failed",
+        });
+        continue;
+      }
+      if (cand.threadId) {
+        const thread = store.getThread(cand.threadId);
+        if (thread) {
+          store.updateThread(cand.threadId, {
+            worktreePath: null,
+            branch: null,
+          });
+          touchedThread = true;
+        }
+      }
+      removed.push(cand.path);
+      bytes += Number(cand.bytes) || 0;
+    } catch (err) {
+      failed.push({
+        path: cand.path,
+        error: err && err.message ? String(err.message) : String(err),
+      });
+    }
+  }
+
+  if (touchedThread) {
+    store.save();
+    if (typeof broadcast === "function") {
+      const { listThreads } = require("./services.js");
+      broadcast("threads:changed", listThreads(store));
+    }
+  }
+  return { removed, failed, bytes };
+}
+
+/**
+ * Enforce per-project retention limits (#316): reclaim the settled worktrees
+ * a project keeps past its `worktreeRetention`. Opt-in — a project without
+ * the setting has nothing to reclaim, so this is a no-op by default. Runs
+ * gcClean, so the same guards apply: dirty and unreadable trees are skipped,
+ * and branches are never deleted.
+ *
+ * @param {object} opts
+ * @param {import('./store').Store} opts.store
+ * @param {string} opts.worktreeBase
+ * @param {(channel: string, payload: unknown) => void} [opts.broadcast]
+ * @returns {Promise<{ removed: string[], failed: Array<{path: string, error: string}>, bytes: number }>}
+ */
+async function enforceRetention(opts) {
+  const { store, worktreeBase, broadcast } = opts || {};
+  const scan = await gcScan({ store, worktreeBase });
+  const paths = scan.candidates
+    .filter((c) => c.reason === "retention" && !c.blocked)
+    .map((c) => c.path);
+  if (paths.length === 0) return { removed: [], failed: [], bytes: 0 };
+  return gcClean({ store, worktreeBase, paths, broadcast });
 }
 
 /**
@@ -2989,6 +3424,7 @@ module.exports = {
   sweepOrphanWorktrees,
   gcScan,
   gcClean,
+  enforceRetention,
   ensureWorktree,
   isPrRefreshCandidate,
   isGitHubRemote,
