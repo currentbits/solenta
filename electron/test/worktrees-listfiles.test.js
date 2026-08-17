@@ -7,6 +7,7 @@ const { execFileSync } = require("node:child_process");
 const { Store } = require("../store.js");
 const services = require("../services.js");
 const { listFiles } = require("../worktrees.js");
+const ssh = require("../ssh.js");
 
 function git(cwd, args) {
   return execFileSync("git", args, {
@@ -54,22 +55,22 @@ describe("worktrees listFiles", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("lists tracked and untracked files, never gitignored ones", () => {
-    const { files } = listFiles({ store, threadId: thread.id });
+  it("lists tracked and untracked files, never gitignored ones", async () => {
+    const { files } = await listFiles({ store, threadId: thread.id });
     assert.ok(files.includes("src/App.tsx"));
     assert.ok(files.includes("scratch.ts"));
     assert.ok(!files.includes("ignored.txt"));
   });
 
-  it("filters case-insensitively by substring", () => {
-    const { files } = listFiles({ store, threadId: thread.id, query: "APP" });
+  it("filters case-insensitively by substring", async () => {
+    const { files } = await listFiles({ store, threadId: thread.id, query: "APP" });
     assert.deepEqual(files, ["src/App.tsx"]);
   });
 
-  it("prefix matches rank above mid-string matches", () => {
+  it("prefix matches rank above mid-string matches", async () => {
     // Contains "src" mid-string (not as a prefix).
     fs.writeFileSync(path.join(repo, "libsrc.txt"), "x\n");
-    const { files } = listFiles({ store, threadId: thread.id, query: "src" });
+    const { files } = await listFiles({ store, threadId: thread.id, query: "src" });
     const idxLib = files.indexOf("libsrc.txt");
     assert.ok(idxLib > 0, "mid-string match still listed, not first");
     assert.ok(
@@ -78,23 +79,38 @@ describe("worktrees listFiles", () => {
     );
   });
 
-  it("caps results at 20", () => {
+  it("caps results at 20", async () => {
     for (let i = 0; i < 30; i++) {
       fs.writeFileSync(path.join(repo, `f${String(i).padStart(2, "0")}.txt`), "x\n");
     }
-    const { files } = listFiles({ store, threadId: thread.id, query: "f" });
+    const { files } = await listFiles({ store, threadId: thread.id, query: "f" });
     assert.ok(files.length <= 20);
   });
 
-  it("reuses the cached file list across queries", () => {
-    listFiles({ store, threadId: thread.id, query: "src" });
+  it("reuses the cached file list across queries", async () => {
+    await listFiles({ store, threadId: thread.id, query: "src" });
     fs.writeFileSync(path.join(repo, "fresh.ts"), "x\n");
     // Within the TTL the new file is invisible: proof git was not re-run.
-    const { files } = listFiles({ store, threadId: thread.id, query: "fresh" });
+    const { files } = await listFiles({ store, threadId: thread.id, query: "fresh" });
     assert.deepEqual(files, []);
   });
 
-  it("rejects unknown threads", () => {
-    assert.throws(() => listFiles({ store, threadId: "nope" }), /unknown/i);
+  it("rejects unknown threads", async () => {
+    await assert.rejects(
+      () => listFiles({ store, threadId: "nope" }),
+      /unknown/i,
+    );
+  });
+
+  it("listFiles does not call execFileSync", async () => {
+    ssh.setExecFileSync(() => {
+      throw new Error("execFileSync should not run on the listFiles path");
+    });
+    try {
+      const { files } = await listFiles({ store, threadId: thread.id });
+      assert.ok(files.includes("src/App.tsx"));
+    } finally {
+      ssh.setExecFileSync(null);
+    }
   });
 });

@@ -16,7 +16,10 @@ const {
   prStatus,
   parsePrJson,
   isGitHubRemote,
+  gitTry,
+  gitTryAsync,
 } = require("../worktrees.js");
+const ssh = require("../ssh.js");
 
 function git(cwd, args) {
   return execFileSync("git", args, {
@@ -290,7 +293,7 @@ describe("worktrees", () => {
     assert.equal(again.branch, updated.branch);
   });
 
-  it("diff reports modified and untracked files with patch", () => {
+  it("diff reports modified and untracked files with patch", async () => {
     const updated = setupWorktree({
       store,
       threadId: thread.id,
@@ -314,7 +317,7 @@ describe("worktrees", () => {
       "a\nb\n",
     );
 
-    const result = diff({ store, threadId: thread.id });
+    const result = await diff({ store, threadId: thread.id });
 
     assert.ok(Array.isArray(result.files));
     assert.equal(typeof result.patch, "string");
@@ -350,6 +353,49 @@ describe("worktrees", () => {
       result.patch.includes("README.md") || result.patch.includes("hello"),
       `patch should mention README changes: ${result.patch.slice(0, 200)}`,
     );
+  });
+
+  it("diff does not call execFileSync", async () => {
+    setupWorktree({
+      store,
+      threadId: thread.id,
+      worktreeBase,
+      broadcast: () => {},
+    });
+    fs.writeFileSync(path.join(store.getThread(thread.id).worktreePath, "x.txt"), "x\n");
+    ssh.setExecFileSync(() => {
+      throw new Error("execFileSync should not run on the diff path");
+    });
+    try {
+      const result = await diff({ store, threadId: thread.id });
+      assert.ok(Array.isArray(result.files));
+    } finally {
+      ssh.setExecFileSync(null);
+    }
+  });
+
+  it("gitTryAsync matches gitTry failure shape including error and timedOut", async () => {
+    const missing = path.join(tmpDir, "not-a-repo");
+    fs.mkdirSync(missing);
+    const sync = gitTry(missing, ["status"]);
+    const asyncResult = await gitTryAsync(missing, ["status"]);
+    assert.equal(sync.ok, false);
+    assert.equal(asyncResult.ok, false);
+    assert.equal(typeof asyncResult.stdout, "string");
+    assert.equal(typeof asyncResult.stderr, "string");
+    assert.equal(typeof asyncResult.combined, "string");
+    assert.ok(asyncResult.error, "failed gitTryAsync must carry the raw error");
+    assert.equal(asyncResult.timedOut, false);
+  });
+
+  it("gitTryAsync sets timedOut when the child is killed by timeout", async () => {
+    // cat-file --batch waits on stdin, so the timeout is what kills it.
+    const result = await gitTryAsync(repo, ["cat-file", "--batch"], {
+      timeout: 80,
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.timedOut, true);
+    assert.ok(result.error);
   });
 
   it("mergeWorktree commits worktree changes, squash-merges, cleans up", () => {
