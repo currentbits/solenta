@@ -14,7 +14,11 @@ const {
   listSkills,
   addSkill,
   removeSkill,
+  syncSkills,
   skillBaseDir,
+  SKILL_DIRS,
+  SKILL_TARGETS,
+  activeSkillTargets,
 } = require("../skills.js");
 const {
   Store,
@@ -54,6 +58,18 @@ function writeSkill(base, name, content) {
   const dir = path.join(base, name);
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, "SKILL.md"), content, "utf8");
+}
+
+/** Create parent config dirs so those targets count as active (CLI is set up). */
+function activate(env, ...targets) {
+  const dirs = SKILL_DIRS(env);
+  for (const t of targets) {
+    fs.mkdirSync(path.dirname(dirs[t]), { recursive: true });
+  }
+}
+
+function skillBytes(base, name) {
+  return fs.statSync(path.join(base, name, "SKILL.md")).size;
 }
 
 describe("parseSkillMarkdown", () => {
@@ -100,32 +116,130 @@ describe("parseSkillMarkdown", () => {
   });
 });
 
-describe("listSkills", () => {
-  it("scans both user dirs and the project dir, tagged by source", () => {
+describe("SKILL_DIRS / activeSkillTargets", () => {
+  it("maps each target onto the verified user skills path", () => {
     const env = { HOME: tmp };
-    writeSkill(
-      path.join(tmp, ".claude", "skills"),
-      "review-pr",
-      "---\nname: review-pr\ndescription: Review a PR\n---\n\nBody\n",
+    const dirs = SKILL_DIRS(env);
+    assert.deepEqual(SKILL_TARGETS, [
+      "claude",
+      "agents",
+      "codex",
+      "grok",
+      "opencode",
+      "kimi",
+    ]);
+    assert.equal(dirs.claude, path.join(tmp, ".claude", "skills"));
+    assert.equal(dirs.agents, path.join(tmp, ".agents", "skills"));
+    assert.equal(dirs.codex, path.join(tmp, ".codex", "skills"));
+    assert.equal(dirs.grok, path.join(tmp, ".grok", "skills"));
+    assert.equal(
+      dirs.opencode,
+      path.join(tmp, ".config", "opencode", "skills"),
     );
+    assert.equal(dirs.kimi, path.join(tmp, ".kimi", "skills"));
+    assert.equal(skillBaseDir("claude", env), dirs.claude);
+    assert.equal(skillBaseDir("opencode", env), dirs.opencode);
+    assert.throws(() => skillBaseDir("project", env), /target/i);
+  });
+
+  it("treats a target as active only when its CLI dir exists", () => {
+    const env = { HOME: tmp };
+    assert.deepEqual(activeSkillTargets(env), []);
+    fs.mkdirSync(path.join(tmp, ".claude"), { recursive: true });
+    fs.mkdirSync(path.join(tmp, ".config", "opencode"), { recursive: true });
+    fs.mkdirSync(path.join(tmp, ".codex", "skills"), { recursive: true });
+    assert.deepEqual(activeSkillTargets(env), [
+      "claude",
+      "codex",
+      "opencode",
+    ]);
+  });
+});
+
+describe("listSkills", () => {
+  it("merges the same name into one row with installedIn/missingFrom/bytes", () => {
+    const env = { HOME: tmp };
+    activate(env, "claude", "agents", "codex");
+    const content =
+      "---\nname: review-pr\ndescription: Review a PR\n---\n\nBody\n";
+    writeSkill(path.join(tmp, ".claude", "skills"), "review-pr", content);
+    writeSkill(path.join(tmp, ".agents", "skills"), "review-pr", content);
     writeSkill(
       path.join(tmp, ".agents", "skills"),
       "write-tests",
       "---\ndescription: Add tests\n---\n",
     );
+
+    const list = listSkills(null, env);
+    const reviewBytes = skillBytes(path.join(tmp, ".claude", "skills"), "review-pr");
+    const writeBytes = skillBytes(path.join(tmp, ".agents", "skills"), "write-tests");
+    assert.deepEqual(list, [
+      {
+        name: "review-pr",
+        description: "Review a PR",
+        source: "claude",
+        installedIn: ["claude", "agents"],
+        missingFrom: ["codex"],
+        bytes: reviewBytes,
+      },
+      {
+        name: "write-tests",
+        description: "Add tests",
+        source: "agents",
+        installedIn: ["agents"],
+        missingFrom: ["claude", "codex"],
+        bytes: writeBytes,
+      },
+    ]);
+    // Context cost is SKILL.md only, not sibling files under the skill dir.
+    fs.writeFileSync(
+      path.join(tmp, ".claude", "skills", "review-pr", "notes.md"),
+      "x".repeat(4000),
+    );
+    assert.equal(listSkills(null, env)[0].bytes, reviewBytes);
+  });
+
+  it("keeps project rows separate and read-only, even when names collide", () => {
+    const env = { HOME: tmp };
+    activate(env, "claude");
+    const userContent = "---\ndescription: User copy\n---\n";
+    writeSkill(path.join(tmp, ".claude", "skills"), "shared", userContent);
     const project = path.join(tmp, "proj");
+    const projectContent = "---\ndescription: Project rules\n---\n";
     writeSkill(
       path.join(project, ".claude", "skills"),
-      "local-rules",
-      "---\ndescription: Project rules\n---\n",
+      "shared",
+      projectContent,
+    );
+    writeSkill(
+      path.join(project, ".claude", "skills"),
+      "local-only",
+      "---\ndescription: Local\n---\n",
     );
 
     const list = listSkills(project, env);
-    assert.deepEqual(list, [
-      { name: "review-pr", description: "Review a PR", source: "claude" },
-      { name: "write-tests", description: "Add tests", source: "agents" },
-      { name: "local-rules", description: "Project rules", source: "project" },
-    ]);
+    assert.equal(list.length, 3);
+    assert.deepEqual(
+      list.map((s) => ({ name: s.name, source: s.source })),
+      [
+        { name: "shared", source: "claude" },
+        { name: "local-only", source: "project" },
+        { name: "shared", source: "project" },
+      ],
+    );
+    const projectShared = list.find(
+      (s) => s.name === "shared" && s.source === "project",
+    );
+    assert.deepEqual(projectShared.installedIn, []);
+    assert.deepEqual(projectShared.missingFrom, []);
+    assert.equal(
+      projectShared.bytes,
+      skillBytes(path.join(project, ".claude", "skills"), "shared"),
+    );
+    assert.notEqual(
+      projectShared.bytes,
+      skillBytes(path.join(tmp, ".claude", "skills"), "shared"),
+    );
   });
 
   it("tolerates missing dirs and skips dirs without SKILL.md", () => {
@@ -136,7 +250,14 @@ describe("listSkills", () => {
     writeSkill(path.join(tmp, ".agents", "skills"), "one", "body only\n");
     const list = listSkills(null, env);
     assert.deepEqual(list, [
-      { name: "one", description: "body only", source: "agents" },
+      {
+        name: "one",
+        description: "body only",
+        source: "agents",
+        installedIn: ["agents"],
+        missingFrom: ["claude"],
+        bytes: skillBytes(path.join(tmp, ".agents", "skills"), "one"),
+      },
     ]);
   });
 
@@ -153,96 +274,190 @@ describe("listSkills", () => {
 });
 
 describe("addSkill / removeSkill", () => {
-  it("writes <base>/<name>/SKILL.md with frontmatter", () => {
+  it("fans out to every active target and skips inactive ones", () => {
     const env = { HOME: tmp };
+    activate(env, "claude", "agents", "codex");
     const out = addSkill(
       {
-        target: "agents",
         name: "my-skill",
         description: "Does a thing",
         body: "# Steps\n\n1. Do it.",
       },
       env,
     );
-    assert.deepEqual(out, { name: "my-skill" });
-    const file = path.join(
-      tmp,
-      ".agents",
-      "skills",
-      "my-skill",
-      "SKILL.md",
-    );
-    const content = fs.readFileSync(file, "utf8");
-    assert.ok(content.startsWith("---\nname: my-skill\ndescription: Does a thing\n---\n"));
-    assert.ok(content.includes("1. Do it."));
-    // And the lister sees it.
+    assert.deepEqual(out, {
+      name: "my-skill",
+      installedIn: ["claude", "agents", "codex"],
+    });
+    const dirs = SKILL_DIRS(env);
+    for (const target of ["claude", "agents", "codex"]) {
+      const file = path.join(dirs[target], "my-skill", "SKILL.md");
+      const content = fs.readFileSync(file, "utf8");
+      assert.ok(
+        content.startsWith(
+          "---\nname: my-skill\ndescription: Does a thing\n---\n",
+        ),
+      );
+      assert.ok(content.includes("1. Do it."));
+    }
+    for (const target of ["grok", "opencode", "kimi"]) {
+      assert.equal(fs.existsSync(dirs[target]), false);
+    }
     const list = listSkills(null, env);
     assert.deepEqual(list, [
-      { name: "my-skill", description: "Does a thing", source: "agents" },
+      {
+        name: "my-skill",
+        description: "Does a thing",
+        source: "claude",
+        installedIn: ["claude", "agents", "codex"],
+        missingFrom: [],
+        bytes: skillBytes(dirs.claude, "my-skill"),
+      },
     ]);
   });
 
   it("collapses multi-line descriptions into one frontmatter line", () => {
     const env = { HOME: tmp };
+    activate(env, "claude");
     addSkill(
-      { target: "claude", name: "s", description: "line one\nline two", body: "b" },
+      { name: "s", description: "line one\nline two", body: "b" },
       env,
     );
     const list = listSkills(null, env);
     assert.equal(list[0].description, "line one line two");
   });
 
-  it("rejects bad names, targets, and empty fields", () => {
+  it("rejects bad names and empty fields; traversal guard rejects ../evil", () => {
     const env = { HOME: tmp };
+    activate(env, "claude");
     assert.throws(
-      () => addSkill({ target: "claude", name: "Bad Name", description: "d", body: "b" }, env),
+      () => addSkill({ name: "Bad Name", description: "d", body: "b" }, env),
       /Skill name/,
     );
     assert.throws(
-      () => addSkill({ target: "claude", name: "../evil", description: "d", body: "b" }, env),
+      () => addSkill({ name: "../evil", description: "d", body: "b" }, env),
       /Skill name/,
     );
     assert.throws(
-      () => addSkill({ target: "project", name: "ok", description: "d", body: "b" }, env),
-      /target/i,
-    );
-    assert.throws(
-      () => addSkill({ target: "claude", name: "ok", description: "", body: "b" }, env),
+      () => addSkill({ name: "ok", description: "", body: "b" }, env),
       /description is required/i,
     );
     assert.throws(
-      () => addSkill({ target: "claude", name: "ok", description: "d", body: " " }, env),
+      () => addSkill({ name: "ok", description: "d", body: " " }, env),
       /body is required/i,
     );
     // Nothing was written on any rejection.
-    assert.equal(fs.existsSync(path.join(tmp, ".claude")), false);
+    assert.equal(fs.existsSync(path.join(tmp, ".claude", "skills")), false);
+    assert.equal(fs.existsSync(path.join(tmp, "evil")), false);
   });
 
-  it("removeSkill deletes the folder and refuses unknown skills", () => {
+  it("removeSkill clears every copy and refuses unknown skills", () => {
     const env = { HOME: tmp };
-    addSkill({ target: "claude", name: "gone", description: "d", body: "b" }, env);
-    assert.deepEqual(removeSkill({ target: "claude", name: "gone" }, env), {
-      name: "gone",
-    });
-    assert.equal(
-      fs.existsSync(path.join(tmp, ".claude", "skills", "gone")),
-      false,
-    );
+    activate(env, "claude", "agents");
+    addSkill({ name: "gone", description: "d", body: "b" }, env);
+    assert.deepEqual(removeSkill({ name: "gone" }, env), { name: "gone" });
+    const dirs = SKILL_DIRS(env);
+    assert.equal(fs.existsSync(path.join(dirs.claude, "gone")), false);
+    assert.equal(fs.existsSync(path.join(dirs.agents, "gone")), false);
+    assert.throws(() => removeSkill({ name: "gone" }, env), /Unknown skill/);
     assert.throws(
-      () => removeSkill({ target: "claude", name: "gone" }, env),
-      /Unknown skill/,
-    );
-    assert.throws(
-      () => removeSkill({ target: "agents", name: "..", description: "", body: "" }, env),
+      () => removeSkill({ name: ".." }, env),
       /Skill name/,
     );
   });
+});
 
-  it("confines writes to the two user skill dirs", () => {
+describe("syncSkills", () => {
+  it("fills drift, copies subdirectories, and is idempotent", () => {
     const env = { HOME: tmp };
-    assert.equal(skillBaseDir("claude", env), path.join(tmp, ".claude", "skills"));
-    assert.equal(skillBaseDir("agents", env), path.join(tmp, ".agents", "skills"));
-    assert.throws(() => skillBaseDir("project", env), /target/i);
+    activate(env, "claude", "agents", "codex");
+    const src = path.join(tmp, ".claude", "skills", "ship-it");
+    fs.mkdirSync(path.join(src, "references"), { recursive: true });
+    fs.mkdirSync(path.join(src, "examples"), { recursive: true });
+    fs.writeFileSync(
+      path.join(src, "SKILL.md"),
+      "---\ndescription: Ship it\n---\n\nGo.\n",
+    );
+    fs.writeFileSync(path.join(src, "references", "api.md"), "api notes\n");
+    fs.writeFileSync(path.join(src, "examples", "ok.md"), "example\n");
+
+    const first = syncSkills(env);
+    assert.deepEqual(first, { copied: 2, skills: ["ship-it"] });
+    const dirs = SKILL_DIRS(env);
+    for (const target of ["agents", "codex"]) {
+      assert.equal(
+        fs.readFileSync(
+          path.join(dirs[target], "ship-it", "references", "api.md"),
+          "utf8",
+        ),
+        "api notes\n",
+      );
+      assert.equal(
+        fs.readFileSync(
+          path.join(dirs[target], "ship-it", "examples", "ok.md"),
+          "utf8",
+        ),
+        "example\n",
+      );
+    }
+    assert.equal(fs.existsSync(path.join(dirs.grok, "ship-it")), false);
+
+    const second = syncSkills(env);
+    assert.deepEqual(second, { copied: 0, skills: [] });
+
+    const list = listSkills(null, env);
+    assert.deepEqual(list[0].installedIn, ["claude", "agents", "codex"]);
+    assert.deepEqual(list[0].missingFrom, []);
+  });
+
+  it("counts a symlinked skill as installed and copies real content out", () => {
+    const env = { HOME: tmp };
+    activate(env, "claude", "agents", "opencode");
+    const agents = path.join(tmp, ".agents", "skills");
+    const claude = path.join(tmp, ".claude", "skills");
+    writeSkill(agents, "linked", "---\ndescription: Linked\n---\n\nBody.\n");
+    fs.mkdirSync(claude, { recursive: true });
+    // The pre-existing hand-rolled fan-out: a relative link into ~/.agents.
+    fs.symlinkSync(
+      path.join("..", "..", ".agents", "skills", "linked"),
+      path.join(claude, "linked"),
+    );
+
+    // Seen through the link, so claude is NOT drift.
+    const row = listSkills(null, env).find((s) => s.name === "linked");
+    assert.deepEqual(row.installedIn, ["claude", "agents"]);
+    assert.deepEqual(row.missingFrom, ["opencode"]);
+    assert.equal(row.description, "Linked");
+
+    assert.deepEqual(syncSkills(env), { copied: 1, skills: ["linked"] });
+    // opencode sits a level deeper, so a copied-verbatim link would dangle.
+    const dest = path.join(SKILL_DIRS(env).opencode, "linked");
+    assert.equal(fs.lstatSync(dest).isSymbolicLink(), false);
+    assert.equal(
+      fs.readFileSync(path.join(dest, "SKILL.md"), "utf8"),
+      "---\ndescription: Linked\n---\n\nBody.\n",
+    );
+    assert.deepEqual(syncSkills(env), { copied: 0, skills: [] });
+  });
+
+  it("skips a name it could never write back instead of aborting the sync", () => {
+    const env = { HOME: tmp };
+    activate(env, "claude", "agents");
+    const claude = path.join(tmp, ".claude", "skills");
+    // A marketplace can install a dir our name rule rejects; it must not take
+    // the whole fan-out down with it.
+    writeSkill(claude, "Legacy.Skill", "---\ndescription: Old\n---\n\nx\n");
+    writeSkill(claude, "ship-it", "---\ndescription: Ship it\n---\n\nGo.\n");
+
+    assert.deepEqual(syncSkills(env), { copied: 1, skills: ["ship-it"] });
+    const dirs = SKILL_DIRS(env);
+    assert.equal(fs.existsSync(path.join(dirs.agents, "ship-it")), true);
+    assert.equal(fs.existsSync(path.join(dirs.agents, "Legacy.Skill")), false);
+
+    // Still listed, but never reported as drift we cannot actually clear.
+    const odd = listSkills(null, env).find((s) => s.name === "Legacy.Skill");
+    assert.deepEqual(odd.installedIn, ["claude"]);
+    assert.deepEqual(odd.missingFrom, []);
   });
 });
 

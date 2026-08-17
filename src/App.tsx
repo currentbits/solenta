@@ -166,6 +166,7 @@ export default function App() {
     listSkills,
     addSkill,
     removeSkill,
+    syncSkills,
     searchThreads,
     automations,
     addAutomation,
@@ -882,6 +883,7 @@ export default function App() {
         listSkills={listSkills}
         addSkill={addSkill}
         removeSkill={removeSkill}
+        syncSkills={syncSkills}
           />
           </ErrorBoundary>
         </div>

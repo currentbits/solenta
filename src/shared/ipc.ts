@@ -1117,19 +1117,39 @@ export interface McpServerInfo {
   enabled: boolean;
 }
 
-/** Where a skill was found on disk. */
-export type SkillSource = "claude" | "agents" | "project";
+/**
+ * A writable skills directory we fan a skill out to: one per provider that
+ * reads SKILL.md, plus the cross-agent ~/.agents/skills convention.
+ */
+export type SkillTarget =
+  | "claude"
+  | "agents"
+  | "codex"
+  | "grok"
+  | "opencode"
+  | "kimi";
+
+/** Where a skill was found on disk; "project" is the read-only project dir. */
+export type SkillSource = SkillTarget | "project";
 
 /** A discovered skill (SKILL.md) as surfaced to the Skills tab. */
 export interface SkillInfo {
   name: string;
   description: string;
   source: SkillSource;
+  /** Targets that currently hold this skill; empty for project skills. */
+  installedIn: SkillTarget[];
+  /**
+   * Active targets this skill is missing from — non-empty means drift, and
+   * skills.sync() clears it. Only targets whose CLI dir exists are counted.
+   */
+  missingFrom: SkillTarget[];
+  /** SKILL.md size in bytes: the context this skill costs once invoked. */
+  bytes: number;
 }
 
-/** Payload for skills:add; target picks the user skill dir to write into. */
+/** Payload for skills:add; the skill fans out to every active target. */
 export interface SkillWrite {
-  target: "claude" | "agents";
   name: string;
   description: string;
   body: string;
@@ -1229,14 +1249,18 @@ export interface CoderApi {
     set(patch: Partial<AppSettings>): Promise<AppSettings>;
   };
   /**
-   * Agent skills on disk (SKILL.md files). list reads the two user skill
-   * dirs plus the selected project's .claude/skills; add/remove only ever
-   * touch the user dirs (~/.claude/skills, ~/.agents/skills).
+   * Agent skills on disk (SKILL.md files). A skill is installed once and
+   * mirrored into every active provider skills dir; list merges those into
+   * one row per skill (plus read-only rows from <project>/.claude/skills).
+   * add/remove/sync only ever touch the user dirs, never the project.
    */
   skills: {
     list(input?: { projectPath?: string }): Promise<SkillInfo[]>;
-    add(input: SkillWrite): Promise<{ name: string }>;
-    remove(input: { target: "claude" | "agents"; name: string }): Promise<void>;
+    add(input: SkillWrite): Promise<{ name: string; installedIn: SkillTarget[] }>;
+    /** Removes the skill from every writable target it is installed in. */
+    remove(input: { name: string }): Promise<void>;
+    /** Copies every skill into the targets it is missing from. */
+    sync(): Promise<{ copied: number; skills: string[] }>;
   };
   providers: {
     list(): Promise<ProviderInfo[]>;

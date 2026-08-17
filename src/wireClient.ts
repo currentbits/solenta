@@ -30,6 +30,7 @@ import type {
   ProjectInfo,
   ProviderInfo,
   SkillInfo,
+  SkillTarget,
   SpaceInfo,
   ThreadDetail,
   ThreadInfo,
@@ -307,8 +308,10 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
     },
     skills: {
       list: (input) => call<SkillInfo[]>("skills:list", input),
-      add: (input) => call<{ name: string }>("skills:add", input),
+      add: (input) =>
+        call<{ name: string; installedIn: SkillTarget[] }>("skills:add", input),
       remove: (input) => call<void>("skills:remove", input),
+      sync: () => call<{ copied: number; skills: string[] }>("skills:sync"),
     },
     providers: {
       list: () => call<ProviderInfo[]>("providers:list"),

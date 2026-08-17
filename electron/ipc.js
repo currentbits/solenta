@@ -475,6 +475,9 @@ const IPC_HANDLERS = {
   "skills:remove": async (ctx, input) => {
     return skills.removeSkill(input || {});
   },
+  "skills:sync": async (ctx) => {
+    return skills.syncSkills();
+  },
   "providers:list": async (ctx) => {
     return services.listProvidersForApi(ctx.store);
   },

@@ -49,6 +49,7 @@ import type {
   ReasoningEffort,
   SessionUsage,
   SkillInfo,
+  SkillTarget,
   SkillWrite,
   SpaceInfo,
   SpecArtifact,
@@ -1369,17 +1370,38 @@ function buildDevCoder(): CoderApi {
   let otel: OtelSettings = { endpoint: null, headers: {}, claudeMetrics: false };
   /** Saved agent profiles (Settings tab), in-memory. */
   let agentProfiles: AgentProfile[] = [];
+  /** Writable targets a skill fans out to (mirrors CoderApi SkillTarget). */
+  const ALL_SKILL_TARGETS: SkillTarget[] = [
+    "claude",
+    "agents",
+    "codex",
+    "grok",
+    "opencode",
+    "kimi",
+  ];
+
+  function skillMdBytes(name: string, description: string, body: string): number {
+    const md = `---\nname: ${name}\ndescription: ${description}\n---\n\n${body}\n`;
+    return new TextEncoder().encode(md).length;
+  }
+
   /** In-memory skills (Skills tab); dev twin of the on-disk SKILL.md scan. */
   let skillsList: SkillInfo[] = [
     {
       name: "review-pr",
       description: "Review a pull request end to end",
       source: "claude",
+      installedIn: [...ALL_SKILL_TARGETS],
+      missingFrom: [],
+      bytes: 4800,
     },
     {
       name: "write-tests",
       description: "Add tests for the current change",
       source: "agents",
+      installedIn: ["claude", "agents", "codex", "grok", "opencode"],
+      missingFrom: ["kimi"],
+      bytes: 800,
     },
   ];
   /** Shared-memory stub (always running in dev). */
@@ -2020,39 +2042,70 @@ function buildDevCoder(): CoderApi {
     },
     skills: {
       async list(input?: { projectPath?: string }): Promise<SkillInfo[]> {
-        const out = skillsList.map((s) => ({ ...s }));
+        const out = skillsList.map((s) => ({
+          ...s,
+          installedIn: [...s.installedIn],
+          missingFrom: [...s.missingFrom],
+        }));
         if (input?.projectPath) {
           out.push({
             name: "project-conventions",
             description: "Project-local review rules",
             source: "project",
+            installedIn: [],
+            missingFrom: [],
+            bytes: 400,
           });
         }
         return out;
       },
-      async add(input: SkillWrite): Promise<{ name: string }> {
+      async add(
+        input: SkillWrite,
+      ): Promise<{ name: string; installedIn: SkillTarget[] }> {
         if (!/^[a-z0-9-]+$/.test(input.name)) {
           throw new Error("Skill name must be lowercase letters, digits, dashes");
         }
+        const installedIn = [...ALL_SKILL_TARGETS];
         skillsList = [
           ...skillsList.filter(
-            (s) => !(s.name === input.name && s.source === input.target),
+            (s) => !(s.name === input.name && s.source !== "project"),
           ),
           {
             name: input.name,
             description: input.description,
-            source: input.target,
+            source: "claude",
+            installedIn,
+            missingFrom: [],
+            bytes: skillMdBytes(input.name, input.description, input.body),
           },
         ];
-        return { name: input.name };
+        return { name: input.name, installedIn: [...installedIn] };
       },
-      async remove(input: {
-        target: "claude" | "agents";
-        name: string;
-      }): Promise<void> {
+      async remove(input: { name: string }): Promise<void> {
         skillsList = skillsList.filter(
-          (s) => !(s.name === input.name && s.source === input.target),
+          (s) => !(s.name === input.name && s.source !== "project"),
         );
+      },
+      async sync(): Promise<{ copied: number; skills: string[] }> {
+        const skills: string[] = [];
+        let copied = 0;
+        skillsList = skillsList.map((s) => {
+          if (s.source === "project" || s.missingFrom.length === 0) {
+            return {
+              ...s,
+              installedIn: [...s.installedIn],
+              missingFrom: [...s.missingFrom],
+            };
+          }
+          copied += 1;
+          skills.push(s.name);
+          return {
+            ...s,
+            installedIn: [...s.installedIn, ...s.missingFrom],
+            missingFrom: [],
+          };
+        });
+        return { copied, skills };
       },
     },
     providers: {
