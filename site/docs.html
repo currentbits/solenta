@@ -3,25 +3,25 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Solenta Docs</title>
-  <meta name="description" content="How Solenta works: threads, providers, worktrees, Kanban and Planboard, Build workflows, orchestration, shared memory, skills, automations, spend caps, web mode and SSH remotes." />
+  <title>Solenta Docs: shared memory and a GitHub-native planboard</title>
+  <meta name="description" content="How Solenta works: shared memory across agents, a GitHub-native planboard, threads and worktrees, Build workflows, orchestration, skills, automations, spend caps, web mode and SSH remotes." />
   <link rel="canonical" href="https://solenta.app/docs.html" />
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="Solenta" />
   <meta property="og:url" content="https://solenta.app/docs.html" />
-  <meta property="og:title" content="Solenta Docs" />
-  <meta property="og:description" content="How Solenta works: threads, providers, worktrees, Kanban and Planboard, Build workflows, orchestration, shared memory, skills, automations, spend caps, web mode and SSH remotes." />
+  <meta property="og:title" content="Solenta Docs: shared memory and a GitHub-native planboard" />
+  <meta property="og:description" content="How Solenta works: shared memory across agents, a GitHub-native planboard, threads and worktrees, Build workflows, orchestration, skills, automations, spend caps, web mode and SSH remotes." />
   <meta property="og:image" content="https://solenta.app/assets/og.png" />
   <meta property="og:image:type" content="image/png" />
   <meta property="og:image:width" content="1200" />
   <meta property="og:image:height" content="630" />
-  <meta property="og:image:alt" content="Solenta. Every coding agent. One window." />
+  <meta property="og:image:alt" content="Solenta. Your agents remember." />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:site" content="@currentbitsNET" />
-  <meta name="twitter:title" content="Solenta Docs" />
-  <meta name="twitter:description" content="How Solenta works: threads, providers, worktrees, Kanban and Planboard, Build workflows, orchestration, shared memory, skills, automations, spend caps, web mode and SSH remotes." />
+  <meta name="twitter:title" content="Solenta Docs: shared memory and a GitHub-native planboard" />
+  <meta name="twitter:description" content="How Solenta works: shared memory across agents, a GitHub-native planboard, threads and worktrees, Build workflows, orchestration, skills, automations, spend caps, web mode and SSH remotes." />
   <meta name="twitter:image" content="https://solenta.app/assets/og.png" />
-  <meta name="twitter:image:alt" content="Solenta. Every coding agent. One window." />
+  <meta name="twitter:image:alt" content="Solenta. Your agents remember." />
   <meta name="theme-color" content="#0b0e14" />
   <link rel="icon" href="assets/icon.svg" type="image/svg+xml" />
   <script>document.documentElement.classList.add("js");</script>
@@ -50,12 +50,12 @@
   <div class="docs-layout">
     <nav class="docs-nav" id="docs-nav">
       <a href="#getting-started">Getting started</a>
+      <a href="#memory">Shared memory</a>
+      <a href="#views">Kanban, Planboard, PRs, Activity</a>
       <a href="#threads">Threads and providers</a>
       <a href="#worktrees">Worktrees and PRs</a>
-      <a href="#views">Kanban, Planboard, PRs, Activity</a>
       <a href="#workflows">Build workflows</a>
       <a href="#orchestration">Orchestration</a>
-      <a href="#memory">Shared memory</a>
       <a href="#skills">Skills</a>
       <a href="#automations">Automations</a>
       <a href="#dev-servers">Dev servers</a>
@@ -69,8 +69,11 @@
     <main class="docs-content">
       <h1>How Solenta works</h1>
       <p class="lede">
-        Solenta is a local-first desktop app that drives the coding agents you
-        already have installed. Everything below is in the current release.
+        Solenta is a local-first desktop app: agents share a persistent local
+        memory, so a later thread can pick up what an earlier one stored, and
+        the Planboard is the project's GitHub issues. Each thread can run
+        Claude Code, Codex, Kimi, Grok or OpenCode in its own git worktree.
+        Everything below is in the current release.
       </p>
 
       <h2 id="getting-started">Getting started</h2>
@@ -96,6 +99,38 @@
         project is any local git repository (or a remote one, see
         <a href="#ssh">SSH remote projects</a>). Create a thread, type a prompt,
         and the run streams in live.
+      </p>
+
+      <h2 id="memory">Shared memory</h2>
+      <p>
+        Solenta supervises a small local <strong>memory server</strong> (HTTP +
+        MCP, SQLite with full-text and vector search). When it is healthy, it
+        is injected into agent sessions automatically, so decisions and gotchas
+        one thread stores are visible to the next. The Memory tab in the right
+        panel lets you search, read and store entries yourself. The server is
+        localhost-only and bearer-token gated.
+      </p>
+
+      <h2 id="views">Kanban, Planboard, PRs, Activity</h2>
+      <p>
+        Next to the thread view, the sidebar has four views over everything
+        that is running:
+      </p>
+      <ul>
+        <li><strong>Kanban</strong> groups every thread by status — working, waiting on you, done, failed — so a pile of parallel runs stays readable.</li>
+        <li><strong>Planboard</strong> shows one project's plan as its GitHub issues in Todo / In progress / Done. Cards open the issue on GitHub, and <strong>Start task</strong> on a Todo card opens a thread on it — in worktree, orchestrator or plain mode.</li>
+        <li><strong>Pull requests</strong> lists the open PRs per project with their checks, and jumps to the thread that opened one.</li>
+        <li><strong>Activity</strong> is a chronological feed, grouped by day, of everything your agents did.</li>
+      </ul>
+      <p>
+        Planboard reads the board from labels, so agents can write to it with
+        nothing but <code>gh</code>: an issue labelled <code>plan:doing</code>
+        lands in In progress, <code>plan:done</code> or a closed issue in Done,
+        and any other open issue in Todo. Other labels show as badges on the
+        card. Agent sessions are told this convention, so &ldquo;keep the plan
+        on the board&rdquo; is enough to have multi-step work tracked as
+        issues. The view needs the GitHub CLI installed and authenticated, and
+        a project whose <code>origin</code> is on GitHub.
       </p>
 
       <h2 id="threads">Threads and providers</h2>
@@ -144,28 +179,6 @@
       <p>
         Work can also start from an issue: paste a GitHub issue reference and
         Solenta pulls the title and body in as the thread's first prompt.
-      </p>
-
-      <h2 id="views">Kanban, Planboard, PRs, Activity</h2>
-      <p>
-        Next to the thread view, the sidebar has four views over everything
-        that is running:
-      </p>
-      <ul>
-        <li><strong>Kanban</strong> groups every thread by status — working, waiting on you, done, failed — so a pile of parallel runs stays readable.</li>
-        <li><strong>Planboard</strong> shows one project's plan as its GitHub issues in Todo / In progress / Done. Cards open the issue on GitHub, and <strong>Start task</strong> on a Todo card opens a thread on it — in worktree, orchestrator or plain mode.</li>
-        <li><strong>Pull requests</strong> lists the open PRs per project with their checks, and jumps to the thread that opened one.</li>
-        <li><strong>Activity</strong> is a chronological feed, grouped by day, of everything your agents did.</li>
-      </ul>
-      <p>
-        Planboard reads the board from labels, so agents can write to it with
-        nothing but <code>gh</code>: an issue labelled <code>plan:doing</code>
-        lands in In progress, <code>plan:done</code> or a closed issue in Done,
-        and any other open issue in Todo. Other labels show as badges on the
-        card. Agent sessions are told this convention, so &ldquo;keep the plan
-        on the board&rdquo; is enough to have multi-step work tracked as
-        issues. The view needs the GitHub CLI installed and authenticated, and
-        a project whose <code>origin</code> is on GitHub.
       </p>
 
       <h2 id="workflows">Build workflows</h2>
@@ -218,16 +231,6 @@
         until each thread settles. Use Build workflows when the pipeline shape
         is known and repeatable, and plain-language orchestration when it is
         not.
-      </p>
-
-      <h2 id="memory">Shared memory</h2>
-      <p>
-        Solenta supervises a small local <strong>memory server</strong> (HTTP +
-        MCP, SQLite with full-text and vector search). When it is healthy, it
-        is injected into agent sessions automatically, so decisions and gotchas
-        one thread stores are visible to the next. The Memory tab in the right
-        panel lets you search, read and store entries yourself. The server is
-        localhost-only and bearer-token gated.
       </p>
 
       <h2 id="skills">Skills</h2>
