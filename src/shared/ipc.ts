@@ -28,6 +28,13 @@ export interface ProjectInfo {
   remotePath?: string;
   /** Space membership. Absent = unassigned (renders in the trailing group). */
   spaceId?: string;
+  /**
+   * Worktree retention (#316): how many SETTLED threads keep their worktree
+   * on disk. Absent or 0 = keep everything (today's behaviour). Reclaiming
+   * only ever removes the worktree directory — the branch always survives,
+   * so no commit is ever lost to GC.
+   */
+  worktreeRetention?: number;
 }
 
 /** Optional remotes for projects.add. Empty/absent = local project. */
@@ -58,6 +65,54 @@ export interface ProjectUpdateInput {
   remotePath?: string;
   /** Space membership: an id assigns, empty string ("") unassigns. */
   spaceId?: string;
+  /** Worktree retention (#316): 0 clears the limit, N > 0 sets it. */
+  worktreeRetention?: number;
+}
+
+/**
+ * One reclaimable worktree directory in a GC scan (#316).
+ *
+ * `orphan`    - no thread references the directory (crashed/reset store).
+ * `retention` - a settled thread's worktree past its project's limit.
+ * `blocked` names why a candidate is NOT safe to reclaim (uncommitted
+ * changes, git refused). Blocked rows are shown but never pre-selected,
+ * and gcClean skips them.
+ */
+export interface GcCandidate {
+  path: string;
+  bytes: number;
+  reason: "orphan" | "retention";
+  threadId: string | null;
+  title: string | null;
+  projectId: string | null;
+  branch: string | null;
+  blocked?: string;
+}
+
+/** Worktree disk usage rolled up per project (#316). */
+export interface ProjectDiskUsage {
+  projectId: string;
+  worktrees: number;
+  bytes: number;
+}
+
+export interface GcScanResult {
+  candidates: GcCandidate[];
+  usage: ProjectDiskUsage[];
+  /** Total bytes of every worktree under the worktree base. */
+  totalBytes: number;
+}
+
+/** Batch cleanup: one dialog, one confirm, N directories (#316). */
+export interface GcCleanInput {
+  paths: string[];
+}
+
+export interface GcCleanResult {
+  removed: string[];
+  failed: Array<{ path: string; error: string }>;
+  /** Bytes reclaimed, summed from the scan sizes of removed directories. */
+  bytes: number;
 }
 
 export type ThreadStatus = "idle" | "working" | "done" | "failed";
@@ -169,6 +224,16 @@ export interface ThreadInfo {
    * thread; OPEN blocks inactivity auto-settle entirely.
    */
   prState: "OPEN" | "CLOSED" | "MERGED" | null;
+  /**
+   * Verification gate (issue #296): a shell command the thread must pass
+   * before a run may land "done". Null/empty = unarmed, runs settle on the
+   * agent's word alone. Run in the thread's worktree (project root when the
+   * thread has none) at every successful run terminal, so "done" means
+   * proven, not claimed.
+   */
+  verifyCommand: string | null;
+  /** Evidence from the latest verification attempt; null before the first. */
+  verify: VerifyResult | null;
   /** Agent harness backing this thread: a ProviderInfo.id ("claude", "codex", "grok", "opencode", "simulate"). */
   provider: string;
   /** Model override passed to the provider CLI when set (e.g. claude --model). */
@@ -378,6 +443,54 @@ export type UsageByDay = Record<
   Record<string, Record<string, UsageEntry>>
 >;
 
+/**
+ * Raw evidence for ONE thread that ran inside an unattended window (issue
+ * #323). Main collects facts only — every judgement (merge-ready / needs-you
+ * / discard, risk flags) is pure and lives in src/digest.ts, so the receipt
+ * can be re-ranked without re-walking git.
+ */
+export interface DigestRun {
+  threadId: string;
+  projectId: string;
+  /** Project slug, so a row reads without a projects lookup. */
+  projectSlug: string;
+  title: string;
+  provider: string;
+  status: ThreadStatus;
+  /** The run stalled on a permission prompt / question nobody answered. */
+  awaitingInput: boolean;
+  lastError: string | null;
+  /** Epoch ms of the thread's last real activity (ThreadInfo.updatedAt). */
+  endedAt: number;
+  /** Cumulative session cost and turns; 0 when the provider never billed. */
+  costUsd: number;
+  turns: number;
+  /** Uncommitted working-tree changes in the thread's cwd. */
+  filesChanged: number;
+  additions: number;
+  deletions: number;
+  /** Commits on the thread's branch ahead of the project's default branch. */
+  commits: number;
+  prNumber: number | null;
+  prState: "OPEN" | "CLOSED" | "MERGED" | null;
+  /**
+   * Execution evidence scraped from the run's tool calls: did a test/build
+   * command actually run in the window, did the last one fail, and its label
+   * ("npm test"). This stands in for the verification stage of #296 until
+   * that lands — a claim in prose is not evidence, a command that ran is.
+   */
+  checks: { ran: boolean; failed: boolean; label: string | null };
+}
+
+/** One unattended window's receipt: what ran since `sinceMs`. */
+export interface DigestResult {
+  /** Start of the window (the last time the digest was marked seen). */
+  sinceMs: number;
+  /** Epoch ms this receipt was collected. */
+  generatedAt: number;
+  runs: DigestRun[];
+}
+
 export type AgentStatus = "pending" | "running" | "settled" | "failed";
 
 export interface AgentView {
@@ -520,6 +633,30 @@ export interface RunStatInfo {
   files: number;
   additions: number;
   deletions: number;
+}
+
+/**
+ * Evidence from one run of a thread's verification command (issue #296).
+ * `ok` is the only thing that lets a run go green; everything else is what
+ * the fixer gets handed when it doesn't.
+ */
+export interface VerifyResult {
+  /** Run whose terminal triggered this check; "manual" for threads.runVerify. */
+  runId: string;
+  command: string;
+  ok: boolean;
+  /** Process exit code; null when it was killed (timeout). */
+  exitCode: number | null;
+  /** True when the command was killed at VERIFY_TIMEOUT_MS. */
+  timedOut: boolean;
+  /** Tail of combined stdout+stderr, capped at VERIFY_LOG_MAX chars. */
+  log: string;
+  /** Checkpoint sha the evidence is pinned to; null outside a worktree. */
+  sha: string | null;
+  durationMs: number;
+  at: number;
+  /** 0 on the first check of a turn, +1 for each fix handed back. */
+  attempt: number;
 }
 
 /** A TCP listener whose process cwd is the thread worktree or project. */
@@ -1214,6 +1351,22 @@ export interface CoderApi {
       effort: ReasoningEffort | null;
     }): Promise<ThreadInfo>;
     /**
+     * Sets the thread's verification command (issue #296). A non-empty
+     * command arms the gate: from the next turn on, a run that would land
+     * "done" instead runs this command and only goes green when it exits 0.
+     * Empty / null disarms it. Trimmed, capped at 500 chars.
+     */
+    setVerifyCommand(input: {
+      threadId: string;
+      command: string | null;
+    }): Promise<ThreadInfo>;
+    /**
+     * Runs the thread's verification command now and stores the result as
+     * the thread's latest evidence. Rejects when no command is set or a run
+     * is active. Manual counterpart to the automatic gate.
+     */
+    runVerify(input: { threadId: string }): Promise<VerifyResult>;
+    /**
      * Permanently deletes the thread with its messages and work log. Rejects
      * while a run is active, and rejects when the thread still has a worktree
      * (merge or delete the worktree in the Git tab first) so no work is lost.
@@ -1237,6 +1390,17 @@ export interface CoderApi {
      * just re-reads it.
      */
     failureModes(): Promise<FailureMode[]>;
+  };
+  digest: {
+    /**
+     * Receipt for the unattended window (issue #323): every non-archived
+     * thread whose last activity falls after `sinceMs`, with cost, change
+     * stats and check evidence. `sinceMs` defaults to the last markSeen
+     * (12 hours ago when the digest has never been read).
+     */
+    list(input?: { sinceMs?: number }): Promise<DigestResult>;
+    /** Closes the window: the next digest starts at `atMs` (default now). */
+    markSeen(input?: { atMs?: number }): Promise<{ seenAt: number }>;
   };
   runs: {
     /**
@@ -1382,6 +1546,18 @@ export interface CoderApi {
      * has no worktree or checkpoints. Never rejects.
      */
     runStats(input: { threadId: string }): Promise<RunStatInfo[]>;
+    /**
+     * Worktree GC scan (#316): every reclaimable worktree with its size, plus
+     * per-project disk usage. Read-only and never rejects — a directory git
+     * cannot read comes back `blocked`.
+     */
+    gcScan(): Promise<GcScanResult>;
+    /**
+     * Batch cleanup: remove the given worktree directories in one shot (one
+     * dialog, one confirm). Only ever removes directories a fresh scan still
+     * reports as unblocked candidates; branches are never deleted.
+     */
+    gcClean(input: GcCleanInput): Promise<GcCleanResult>;
   };
   issues: {
     /**

@@ -85,4 +85,36 @@ describe("services.updateProject", () => {
       /name cannot be empty/i,
     );
   });
+
+  it("sets worktreeRetention and clears it with 0 (#316)", () => {
+    const set = services.updateProject(store, project.id, {
+      worktreeRetention: 2,
+    });
+    assert.equal(set.worktreeRetention, 2);
+    assert.equal(store.getProjects()[0].worktreeRetention, 2);
+
+    const cleared = services.updateProject(store, project.id, {
+      worktreeRetention: 0,
+    });
+    assert.equal(Object.hasOwn(cleared, "worktreeRetention"), false);
+    assert.equal(
+      Object.hasOwn(store.getProjects()[0], "worktreeRetention"),
+      false,
+    );
+  });
+
+  it("rejects a junk worktreeRetention", () => {
+    assert.throws(
+      () =>
+        services.updateProject(store, project.id, { worktreeRetention: -1 }),
+      /worktreeRetention/i,
+    );
+    assert.throws(
+      () =>
+        services.updateProject(store, project.id, {
+          worktreeRetention: "3",
+        }),
+      /worktreeRetention/i,
+    );
+  });
 });

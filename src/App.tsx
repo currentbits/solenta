@@ -17,6 +17,7 @@ import { AutomationsView } from "./components/AutomationsView";
 import { ActivityView } from "./components/ActivityView";
 import { InsightsView } from "./components/InsightsView";
 import { UsageView } from "./components/UsageView";
+import { DigestView } from "./components/DigestView";
 import { AgentsPanel } from "./components/AgentsPanel";
 import { SettingsModal } from "./components/SettingsModal";
 import { ArchiveToast } from "./components/ArchiveToast";
@@ -24,6 +25,7 @@ import { AddProjectPathModal } from "./components/AddProjectPathModal";
 import { EditProjectModal } from "./components/EditProjectModal";
 import { WebTokenGate } from "./components/WebTokenGate";
 import { isWebMode } from "./shared/wire";
+import { isBuildMismatch } from "./buildMismatch";
 import type { ProjectUpdateInput } from "./shared/ipc";
 import styles from "./App.module.css";
 
@@ -35,7 +37,8 @@ export type AppView =
   | "automations"
   | "activity"
   | "usage"
-  | "insights";
+  | "insights"
+  | "digest";
 
 type DrawerId = "sidebar" | "agents";
 
@@ -123,6 +126,8 @@ export default function App() {
     setIssuePlanStatus,
     listActivity,
     listUsageByDay,
+    listDigest,
+    markDigestSeen,
     listThreadSummaries,
     listCheckpoints,
     restoreCheckpoint,
@@ -138,6 +143,8 @@ export default function App() {
     startDevServer,
     stopDevServer,
     devServerStatus,
+    setVerifyCommand,
+    runVerify,
     appStatus,
     updateStatus,
     checkUpdate,
@@ -212,6 +219,7 @@ export default function App() {
     () => api.insights.failureModes(),
     [api],
   );
+  const openDigest = useCallback(() => setView("digest"), []);
   const openSettings = useCallback(() => setSettingsOpen(true), []);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
   const closeChanges = useCallback(() => setChangesOpen(false), []);
@@ -531,6 +539,11 @@ export default function App() {
   const editProject =
     projects.find((p) => p.id === editProjectId) ?? null;
 
+  // Vite replaces __BUILD_SHA__; node tests leave it undeclared.
+  const rendererSha =
+    typeof __BUILD_SHA__ === "string" ? __BUILD_SHA__ : null;
+  const buildMismatch = isBuildMismatch(appStatus?.build.sha, rendererSha);
+
   const submitEditProject = useCallback(
     async (input: ProjectUpdateInput) => {
       const updated = await updateProject(input);
@@ -543,6 +556,22 @@ export default function App() {
   return (
     <div className={styles.shell}>
       {isWebMode() && <WebTokenGate />}
+      {buildMismatch && (
+        <div
+          className={styles.mismatchBar}
+          role="alert"
+          data-build-mismatch=""
+        >
+          <span>This window is out of date. Restart to load the new build.</span>
+          <button
+            type="button"
+            className={styles.mismatchRestart}
+            onClick={() => void applyUpdate()}
+          >
+            Restart
+          </button>
+        </div>
+      )}
       <div
         className={styles.app}
         data-layout="app"
@@ -617,6 +646,7 @@ export default function App() {
         onOpenActivity={openActivity}
         onOpenUsage={openUsage}
         onOpenInsights={openInsights}
+        onOpenDigest={openDigest}
         onCreateThread={handleCreateThread}
         defaultWorktree={settings?.defaultWorktree ?? false}
         revealThreadId={revealThreadId}
@@ -666,6 +696,13 @@ export default function App() {
           ) : view === "insights" ? (
             <InsightsView
               loadFailureModes={loadFailureModes}
+              onSelectThread={handleSelectThread}
+            />
+          ) : view === "digest" ? (
+            <DigestView
+              projects={projects}
+              loadDigest={listDigest}
+              markSeen={markDigestSeen}
               onSelectThread={handleSelectThread}
             />
           ) : view === "prs" ? (
@@ -812,6 +849,8 @@ export default function App() {
         startDevServer={startDevServer}
         stopDevServer={stopDevServer}
         devServerStatus={devServerStatus}
+        setVerifyCommand={setVerifyCommand}
+        runVerify={runVerify}
         searchMemory={searchMemory}
         recentMemory={recentMemory}
         getMemory={getMemory}

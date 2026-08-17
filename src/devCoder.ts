@@ -25,6 +25,7 @@ import type {
   CheckpointInfo,
   CoderApi,
   RunStatInfo,
+  VerifyResult,
   DiffResult,
   DevServerState,
   FailureKind,
@@ -51,6 +52,7 @@ import type {
   SpaceInfo,
   ThreadDetail,
   ThreadInfo,
+  DigestResult,
   UsageByDay,
   WorkLogItem,
   WorkflowPhaseSpec,
@@ -517,6 +519,9 @@ function seedThreads(projects: ProjectInfo[]): ThreadInfo[] {
         card.id === "thread-4"
           ? "Merge after #42 lands - waiting on the API rename."
           : "",
+      // One seeded verify command so the browser demo shows the #296 gate.
+      verifyCommand: card.id === "thread-1" ? "npm test" : null,
+      verify: null,
       queued: null,
       // One working thread carries a mirrored plan so the Planboard's
       // "Thread plans" section has something to show in dev mode.
@@ -1287,6 +1292,8 @@ function buildDevCoder(): CoderApi {
   const runStates = new Map<string, RunState>();
   /** Threads whose worktree was merged/removed; fakeDiff stays empty until re-setup. */
   const clearedDiff = new Set<string>();
+  /** Directories already reclaimed by the #316 GC demo stubs. */
+  const gcRemoved = new Set<string>();
   /** User-defined + builtin workflow templates (in-memory). */
   let templates: WorkflowTemplateInfo[] = [cloneTemplate(STANDARD_TEMPLATE)];
   /** Scheduled agent runs. */
@@ -1490,6 +1497,8 @@ function buildDevCoder(): CoderApi {
       muted: false,
       notes: "",
       queued: null,
+      verifyCommand: null,
+      verify: null,
       ...over,
       title: (over.title || "New Thread").slice(0, TITLE_MAX),
     };
@@ -2522,6 +2531,40 @@ function buildDevCoder(): CoderApi {
       }) {
         return patchThread(input.threadId, { reasoningEffort: input.effort });
       },
+      async setVerifyCommand(input: {
+        threadId: string;
+        command: string | null;
+      }) {
+        const command = String(input.command ?? "").trim().slice(0, 500);
+        return patchThread(input.threadId, {
+          verifyCommand: command || null,
+        });
+      },
+      async runVerify(input: { threadId: string }) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
+        const command = detail.thread.verifyCommand;
+        if (!command) throw new Error("No verify command set for this thread");
+        // Fixture: alternate pass/fail so both evidence states are reachable
+        // in the browser demo. The real spawn lives in electron/verify.js.
+        const ok = (detail.thread.verify?.attempt ?? 0) % 2 === 0;
+        const result: VerifyResult = {
+          runId: "manual",
+          command,
+          ok,
+          exitCode: ok ? 0 : 1,
+          timedOut: false,
+          log: ok
+            ? "Test files 12 passed (12)\nTests 148 passed (148)"
+            : "FAIL src/threadSettle.test.ts > settles a merged PR\nExpected true, got false\n\n1 failed | 147 passed",
+          sha: "a1b2c3d",
+          durationMs: 4200,
+          at: now(),
+          attempt: (detail.thread.verify?.attempt ?? 0) + 1,
+        };
+        patchThread(input.threadId, { verify: result });
+        return result;
+      },
       async setProvider(input) {
         const detail = details.get(input.threadId);
         if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
@@ -2938,6 +2981,76 @@ function buildDevCoder(): CoderApi {
         ];
       },
     },
+    digest: {
+      // ponytail: fixed fixture, one row per bucket — dev mode never runs
+      // unattended, so there is nothing real to collect here.
+      async list(input): Promise<DigestResult> {
+        const generatedAt = now();
+        const sinceMs = input?.sinceMs ?? generatedAt - 12 * 60 * 60 * 1000;
+        const base = {
+          projectId: projects[0]?.id ?? "p1",
+          projectSlug: projects[0]?.slug ?? "coder",
+          provider: "claude",
+          turns: 6,
+          prNumber: null,
+          prState: null,
+        };
+        return {
+          sinceMs,
+          generatedAt,
+          runs: [
+            {
+              ...base,
+              threadId: "dev-digest-1",
+              title: "Add usage rollup endpoint",
+              status: "done",
+              awaitingInput: false,
+              lastError: null,
+              endedAt: generatedAt - 3 * 60 * 60 * 1000,
+              costUsd: 2.14,
+              filesChanged: 4,
+              additions: 180,
+              deletions: 22,
+              commits: 2,
+              checks: { ran: true, failed: false, label: "npm test" },
+            },
+            {
+              ...base,
+              threadId: "dev-digest-2",
+              title: "Migrate store to v3 schema",
+              status: "failed",
+              awaitingInput: false,
+              lastError: "Run error: provider exited 1",
+              endedAt: generatedAt - 5 * 60 * 60 * 1000,
+              costUsd: 1.02,
+              filesChanged: 26,
+              additions: 900,
+              deletions: 310,
+              commits: 0,
+              checks: { ran: true, failed: true, label: "npm test" },
+            },
+            {
+              ...base,
+              threadId: "dev-digest-3",
+              title: "Investigate flaky reconnect test",
+              status: "done",
+              awaitingInput: false,
+              lastError: null,
+              endedAt: generatedAt - 7 * 60 * 60 * 1000,
+              costUsd: 0.87,
+              filesChanged: 0,
+              additions: 0,
+              deletions: 0,
+              commits: 0,
+              checks: { ran: false, failed: false, label: null },
+            },
+          ],
+        };
+      },
+      async markSeen(input): Promise<{ seenAt: number }> {
+        return { seenAt: input?.atMs ?? now() };
+      },
+    },
     git: {
       async status(_projectId) {
         return {
@@ -3119,6 +3232,81 @@ function buildDevCoder(): CoderApi {
         } catch {
           return [];
         }
+      },
+      async gcScan() {
+        const first = projects[0];
+        const second = projects[1] ?? first;
+        if (!first) return { candidates: [], usage: [], totalBytes: 0 };
+        const all = [
+          {
+            path: "/tmp/solenta-worktrees/orphan-abc",
+            bytes: 48 * 1024 * 1024,
+            reason: "orphan" as const,
+            threadId: null,
+            title: null,
+            projectId: first.id,
+            branch: "solenta/orphan-abc",
+          },
+          {
+            path: "/tmp/solenta-worktrees/old-thread",
+            bytes: 12 * 1024 * 1024,
+            reason: "retention" as const,
+            threadId: threads[0]?.id ?? null,
+            title: "old settled thread",
+            projectId: first.id,
+            branch: "solenta/old-thread",
+          },
+          {
+            path: "/tmp/solenta-worktrees/dirty",
+            bytes: 8 * 1024 * 1024,
+            reason: "orphan" as const,
+            threadId: null,
+            title: null,
+            projectId: second.id,
+            branch: "solenta/dirty",
+            blocked: "uncommitted changes",
+          },
+        ].filter((c) => !gcRemoved.has(c.path));
+        const byProject = new Map<string, { worktrees: number; bytes: number }>();
+        for (const c of all) {
+          if (!c.projectId) continue;
+          const row = byProject.get(c.projectId) ?? { worktrees: 0, bytes: 0 };
+          row.worktrees += 1;
+          row.bytes += c.bytes;
+          byProject.set(c.projectId, row);
+        }
+        const usage = [...byProject.entries()].map(([projectId, row]) => ({
+          projectId,
+          worktrees: row.worktrees,
+          bytes: row.bytes,
+        }));
+        return {
+          candidates: all,
+          usage,
+          totalBytes: all.reduce((sum, c) => sum + c.bytes, 0),
+        };
+      },
+      async gcClean(input) {
+        const paths = Array.isArray(input?.paths) ? input.paths : [];
+        const scan = await api.git.gcScan();
+        const byPath = new Map(scan.candidates.map((c) => [c.path, c]));
+        const removed: string[] = [];
+        const failed: Array<{ path: string; error: string }> = [];
+        let bytes = 0;
+        for (const path of paths) {
+          const row = byPath.get(path);
+          if (!row || row.blocked) {
+            failed.push({
+              path,
+              error: row?.blocked ?? "not a reclaimable worktree",
+            });
+            continue;
+          }
+          gcRemoved.add(path);
+          removed.push(path);
+          bytes += row.bytes;
+        }
+        return { removed, failed, bytes };
       },
       async setupWorktree(input) {
         const detail = details.get(input.threadId);

@@ -222,7 +222,8 @@ interface SidebarProps {
     | "automations"
     | "activity"
     | "usage"
-    | "insights";
+    | "insights"
+    | "digest";
   onOpenKanban?: () => void;
   onOpenPlanboard?: () => void;
   onOpenPrs?: () => void;
@@ -239,6 +240,7 @@ interface SidebarProps {
   onOpenActivity?: () => void;
   onOpenUsage?: () => void;
   onOpenInsights?: () => void;
+  onOpenDigest?: () => void;
   /**
    * Freshly created thread to reveal (t3: new work must be visible): the
    * sidebar expands its project group, scrolls the card into view and flashes
@@ -1185,6 +1187,7 @@ export const Sidebar = memo(function Sidebar({
   onOpenActivity,
   onOpenUsage,
   onOpenInsights,
+  onOpenDigest,
   revealThreadId = null,
   onRevealHandled,
 }: SidebarProps) {
@@ -2269,6 +2272,33 @@ export const Sidebar = memo(function Sidebar({
             </svg>
           </span>
           Insights
+        </button>
+        <button
+          type="button"
+          className={styles.viewNavRow}
+          data-view-nav="digest"
+          data-active={activeView === "digest" ? "true" : undefined}
+          title="Digest"
+          onClick={() => onOpenDigest?.()}
+        >
+          <span className={styles.viewNavIcon} aria-hidden>
+            <svg
+              width="15"
+              height="15"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <rect x="3.5" y="2.25" width="9" height="11.5" rx="1.25" />
+              <path d="M6 5.5h4" />
+              <path d="M6 8h4" />
+              <path d="M6 10.5h2.5" />
+            </svg>
+          </span>
+          Digest
         </button>
       </nav>
 

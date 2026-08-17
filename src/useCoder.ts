@@ -8,6 +8,7 @@ import type {
   AutomationWrite,
   CheckpointInfo,
   CoderApi,
+  DigestResult,
   CreateProjectInput,
   RunStatInfo,
   DevServerState,
@@ -27,6 +28,7 @@ import type {
   PrChecksResult,
   PrInfo,
   ProjectInfo,
+  ProjectUpdateInput,
   ProviderInfo,
   SpaceInfo,
   ReasoningEffort,
@@ -37,6 +39,7 @@ import type {
   ThreadSummaryInfo,
   UpdateStatus,
   UsageByDay,
+  VerifyResult,
   WorkflowTemplateInfo,
 } from "./shared/ipc";
 import { resolveCoderApi } from "./coderApi";
@@ -146,14 +149,8 @@ export interface UseCoderResult {
   ) => Promise<ProjectInfo | null>;
   /** Create a new folder + git repo (projects.create) and add it. */
   createProject: (input: CreateProjectInput) => Promise<ProjectInfo | null>;
-  /** Patch name and/or SSH remote fields of an existing project. */
-  updateProject: (input: {
-    projectId: string;
-    name?: string;
-    remoteHost?: string;
-    remotePath?: string;
-    spaceId?: string;
-  }) => Promise<ProjectInfo | null>;
+  /** Patch name, SSH remotes, space, or worktree retention of a project. */
+  updateProject: (input: ProjectUpdateInput) => Promise<ProjectInfo | null>;
   addSpace: (name: string) => Promise<SpaceInfo | null>;
   renameSpace: (id: string, name: string) => Promise<SpaceInfo | null>;
   /** Drops the space and re-lists projects (their spaceId was cleared). */
@@ -328,6 +325,10 @@ export interface UseCoderResult {
   listActivity: () => Promise<ActivityItem[]>;
   /** Per-day / provider / model usage ledger. */
   listUsageByDay: () => Promise<UsageByDay>;
+  /** Receipt for the last unattended window (issue #323). */
+  listDigest: (input?: { sinceMs?: number }) => Promise<DigestResult>;
+  /** Close the digest window so the next one starts now. */
+  markDigestSeen: () => Promise<{ seenAt: number }>;
   /** Per-thread summaries for the Agents tab team view. */
   listThreadSummaries: () => Promise<ThreadSummaryInfo[]>;
   /** Worktree checkpoints for a thread (newest-first). */
@@ -358,6 +359,10 @@ export interface UseCoderResult {
   stopDevServer: (threadId: string) => Promise<DevServerState>;
   /** Live status for the thread's spawned dev server. */
   devServerStatus: (threadId: string) => Promise<DevServerState>;
+  /** Arm or clear the thread's verification command (issue #296). */
+  setVerifyCommand: (threadId: string, command: string | null) => Promise<void>;
+  /** Run the thread's verification command now. Rejects on an active run. */
+  runVerify: (threadId: string) => Promise<VerifyResult>;
   /** Live spend + memory server status. */
   appStatus: AppStatus | null;
   /** Persisted app settings (daily budget). */
@@ -851,13 +856,7 @@ export function useCoder(): UseCoderResult {
     }
   }, [api]);
 
-  const updateProject = useCallback(async (input: {
-    projectId: string;
-    name?: string;
-    remoteHost?: string;
-    remotePath?: string;
-    spaceId?: string;
-  }) => {
+  const updateProject = useCallback(async (input: ProjectUpdateInput) => {
     try {
       const updated = await api.projects.update(input);
       setProjects((prev) =>
@@ -1760,6 +1759,14 @@ export function useCoder(): UseCoderResult {
     return api.usage.byDay();
   }, [api]);
 
+  const listDigest = useCallback(async (input?: { sinceMs?: number }) => {
+    return api.digest.list(input);
+  }, [api]);
+
+  const markDigestSeen = useCallback(async () => {
+    return api.digest.markSeen();
+  }, [api]);
+
   const listThreadSummaries = useCallback(async () => {
     return api.threads.summaries();
   }, [api]);
@@ -1904,6 +1911,37 @@ export function useCoder(): UseCoderResult {
       return api.devserver.status({ threadId });
     },
     [api],
+  );
+
+  const setVerifyCommand = useCallback(
+    async (threadId: string, command: string | null) => {
+      const thread = await api.threads.setVerifyCommand({ threadId, command });
+      applyThreads(
+        threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
+      );
+      setDetail((prev) =>
+        prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
+      );
+    },
+    [api, applyThreads],
+  );
+
+  const runVerify = useCallback(
+    async (threadId: string) => {
+      const result = await api.threads.runVerify({ threadId });
+      applyThreads(
+        threadsRef.current.map((t) =>
+          t.id === threadId ? { ...t, verify: result } : t,
+        ),
+      );
+      setDetail((prev) =>
+        prev && prev.thread.id === threadId
+          ? { ...prev, thread: { ...prev.thread, verify: result } }
+          : prev,
+      );
+      return result;
+    },
+    [api, applyThreads],
   );
 
   const saveSettings = useCallback(
@@ -2084,6 +2122,8 @@ export function useCoder(): UseCoderResult {
     fetchIssue,
     listActivity,
     listUsageByDay,
+    listDigest,
+    markDigestSeen,
     listThreadSummaries,
     listCheckpoints,
     restoreCheckpoint,
@@ -2099,6 +2139,8 @@ export function useCoder(): UseCoderResult {
     startDevServer,
     stopDevServer,
     devServerStatus,
+    setVerifyCommand,
+    runVerify,
     appStatus,
     settings,
     saveSettings,
