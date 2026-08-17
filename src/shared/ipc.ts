@@ -361,6 +361,20 @@ export interface ActivityItem {
   threadTitle: string;
 }
 
+/** One provider/model cell in the usage-by-day rollup. */
+export interface UsageEntry {
+  costUsd: number;
+  inputTokens: number;
+  outputTokens: number;
+  turns: number;
+}
+
+/**
+ * Local calendar day "YYYY-MM-DD" -> provider -> model -> entry.
+ * Days with no activity are simply absent. The store retains at most 90 days.
+ */
+export type UsageByDay = Record<string, Record<string, Record<string, UsageEntry>>>;
+
 export type AgentStatus = "pending" | "running" | "settled" | "failed";
 
 export interface AgentView {
