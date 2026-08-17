@@ -151,7 +151,7 @@ process.exit(0);
   return fake;
 }
 
-function writeStreamingClaude(dir) {
+async function writeStreamingClaude(dir) {
   // Many assistant text chunks before result — must not record each growth.
   const body = `#!/usr/bin/env node
 "use strict";
@@ -392,7 +392,7 @@ describe("auto session-record on real runs", () => {
     const repo = path.join(tmpDir, "app");
     fs.mkdirSync(repo);
     git(repo, ["init"]);
-    services.addProject(store, repo);
+    await services.addProject(store, repo);
   });
 
   afterEach(async () => {
@@ -459,7 +459,7 @@ describe("auto session-record on real runs", () => {
 
   it("records assistant once at terminal, not per streaming push", async () => {
     fake = await startCaptureServer(port, TOKEN);
-    const bin = writeStreamingClaude(tmpDir);
+    const bin = await writeStreamingClaude(tmpDir);
     process.env.CODER_CLAUDE_BIN = bin;
     const project = store.getProjects()[0];
     const thread = services.createThread(store, {

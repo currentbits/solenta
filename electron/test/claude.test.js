@@ -66,7 +66,7 @@ function waitFor(predicate, { timeoutMs = 15000, intervalMs = 20 } = {}) {
  * @param {string} dir
  * @returns {string} path to the fake binary script
  */
-function writeFakeClaude(dir) {
+async function writeFakeClaude(dir) {
   const scriptPath = path.join(dir, "fake-claude.js");
   const body = `#!/usr/bin/env node
 "use strict";
@@ -1023,7 +1023,7 @@ describe("runner claude provider", () => {
     process.env.CODER_GROK_BIN = "no-grok-not-a-real-binary";
 
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-claude-"));
-    fakeClaude = writeFakeClaude(tmpDir);
+    fakeClaude = await writeFakeClaude(tmpDir);
     argvFile = path.join(tmpDir, "argv.json");
     process.env.CODER_CLAUDE_BIN = fakeClaude;
     process.env.CODER_FAKE_CLAUDE_ARGV_FILE = argvFile;
@@ -1044,7 +1044,7 @@ describe("runner claude provider", () => {
     const repo = path.join(tmpDir, "app");
     fs.mkdirSync(repo);
     git(repo, ["init"]);
-    const project = services.addProject(store, repo);
+    const project = await services.addProject(store, repo);
     services.createThread(store, {
       projectId: project.id,
       title: "Claude Thread",

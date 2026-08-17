@@ -53,13 +53,13 @@ describe("forkThread + handoff (services)", () => {
   let project;
   let source;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-fork-"));
     store = new Store(path.join(tmpDir, "store.json"));
     const repo = path.join(tmpDir, "app");
     fs.mkdirSync(repo);
     git(repo, ["init"]);
-    project = services.addProject(store, repo);
+    project = await services.addProject(store, repo);
     source = services.createThread(store, {
       projectId: project.id,
       title: "Source work",
@@ -347,7 +347,7 @@ process.stdin.on("data", (c) => {
     const repo = path.join(tmpDir, "app");
     fs.mkdirSync(repo);
     git(repo, ["init"]);
-    project = services.addProject(store, repo);
+    project = await services.addProject(store, repo);
   });
 
   afterEach(() => {

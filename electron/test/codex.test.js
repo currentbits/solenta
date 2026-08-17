@@ -47,7 +47,7 @@ function waitFor(predicate, { timeoutMs = 15000, intervalMs = 20 } = {}) {
  * Fake codex CLI emitting representative JSONL.
  * @param {string} dir
  */
-function writeFakeCodex(dir) {
+async function writeFakeCodex(dir) {
   const body = `#!/usr/bin/env node
 "use strict";
 const fs = require("fs");
@@ -228,7 +228,7 @@ describe("runner codex provider", () => {
     process.env.CODER_GROK_BIN = "no-grok-not-a-real-binary";
 
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-codex-"));
-    fakeCodex = writeFakeCodex(tmpDir);
+    fakeCodex = await writeFakeCodex(tmpDir);
     argvFile = path.join(tmpDir, "argv.json");
     process.env.CODER_CODEX_BIN = fakeCodex;
     process.env.CODER_FAKE_CODEX_ARGV_FILE = argvFile;
@@ -248,7 +248,7 @@ describe("runner codex provider", () => {
     const repo = path.join(tmpDir, "app");
     fs.mkdirSync(repo);
     git(repo, ["init"]);
-    const project = services.addProject(store, repo);
+    const project = await services.addProject(store, repo);
     const thread = services.createThread(store, {
       projectId: project.id,
       title: "Codex Thread",
