@@ -1,4 +1,5 @@
 import { contentTokens, jaccard, queueReview } from './review.js'
+import { cosine, blobToFloat } from './embedder.js'
 
 /** Default retention for raw session transcripts (days). */
 export const SESSION_RETENTION_DAYS = 30
@@ -9,12 +10,21 @@ export const QUEUE_SCAN_CAP = 500
 /** Jaccard threshold for the weak contradiction signal (shared entity + text overlap). */
 export const DEDUP_WARN = 0.4
 
+/** Cosine threshold for the paraphrase contradiction signal (shared entity + similar vectors). */
+export const CONTRA_SIM = 0.75
+
+/** Max review pairs enqueued per candidate. A hub entity must not flood the queue. */
+export const CONTRA_TOP = 5
+
 /**
  * Incremental contradiction-candidate scan. Watermarked on entries.rowid so each
  * live knowledge/convention entry is examined once. A pair is flagged when two live
  * same-project knowledge/convention entries share >=2 mentioned entities,
- * or >=1 shared entity with title+body Jaccard >= 0.4. Best-effort: any error logs
- * and returns 0 without aborting the rest of the janitor.
+ * or >=1 shared entity with title+body Jaccard >= DEDUP_WARN,
+ * or >=1 shared entity with stored-vector cosine >= CONTRA_SIM.
+ * Qualifying partners are ranked by cosine (unscored last) and capped at
+ * CONTRA_TOP per candidate. Best-effort: any error logs and returns 0 without
+ * aborting the rest of the janitor.
  * @param {import('node:sqlite').DatabaseSync} db
  * @returns {number} rows newly enqueued
  */
@@ -57,21 +67,84 @@ export function scanContradictions(db) {
        GROUP BY p.id`,
     )
 
+    // Decode each vector at most once per pass. The table can be missing on
+    // old DBs mid-migration; a miss degrades to "no score", not a throw.
+    const vecCache = new Map()
+    let vecStmt = null
+    try {
+      vecStmt = db.prepare(`SELECT dim, vec, model FROM entry_vectors WHERE entry_id = ?`)
+    } catch {
+      vecStmt = null
+    }
+
+    const vectorOf = (id) => {
+      if (vecCache.has(id)) return vecCache.get(id)
+      let rec = null
+      try {
+        const row = vecStmt?.get(id)
+        if (row) rec = { dim: row.dim, model: row.model, vec: blobToFloat(row.vec) }
+      } catch {
+        rec = null
+      }
+      vecCache.set(id, rec)
+      return rec
+    }
+
+    const pairScore = (a, b) => {
+      if (!a || !b) return null
+      if (a.model !== b.model || a.dim !== b.dim) return null
+      return cosine(a.vec, b.vec)
+    }
+
     let queued = 0
     let maxRowid = watermark
+    // A partner already examined this pass already picked its CONTRA_TOP.
+    // Skipping it here stops the other side from re-adding a pair the first
+    // side dropped under the cap (otherwise a hub still floods the queue).
+    const scannedThisPass = new Set()
     for (const cand of candidates) {
       maxRowid = Math.max(maxRowid, cand.rowid)
       const myTokens = contentTokens(`${cand.title} ${cand.body}`)
+      const myVec = vectorOf(cand.id)
       const partners = partnersFor.all(cand.id, cand.id, cand.project)
+
+      const qualified = []
       for (const p of partners) {
+        if (scannedThisPass.has(p.id)) continue
+        const score = pairScore(myVec, vectorOf(p.id))
         const strong = p.shared >= 2
         const weak =
           p.shared >= 1 && jaccard(myTokens, contentTokens(`${p.title} ${p.body}`)) >= DEDUP_WARN
-        if (!strong && !weak) continue
-        if (queueReview(db, 'contradiction', cand.id, p.id, `shared entities: ${p.names ?? ''}`)) {
-          queued += 1
-        }
+        const similar = p.shared >= 1 && score != null && score >= CONTRA_SIM
+        if (!strong && !weak && !similar) continue
+        qualified.push({ p, score })
       }
+
+      // Unscored pairs sort last so today's lexical/strong hits stay the tail.
+      qualified.sort((a, b) => {
+        if (a.score == null && b.score == null) return 0
+        if (a.score == null) return 1
+        if (b.score == null) return -1
+        return b.score - a.score
+      })
+
+      // CONTRA_TOP cap: a hub entity mentioned by many entries would otherwise
+      // enqueue every partner. Truncation is logged so a silent cut is not
+      // mistaken for full coverage.
+      if (qualified.length > CONTRA_TOP) {
+        console.error(
+          `scanContradictions: ${cand.id} has ${qualified.length} partners; enqueueing top ${CONTRA_TOP} by cosine (CONTRA_TOP cap)`,
+        )
+      }
+
+      for (const { p, score } of qualified.slice(0, CONTRA_TOP)) {
+        const detail =
+          score == null
+            ? `shared entities: ${p.names ?? ''}`
+            : `shared entities: ${p.names ?? ''} (cosine=${score.toFixed(2)})`
+        if (queueReview(db, 'contradiction', cand.id, p.id, detail)) queued += 1
+      }
+      scannedThisPass.add(cand.id)
     }
 
     db.prepare(

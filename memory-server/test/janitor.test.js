@@ -4,7 +4,8 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { Memory } from '../src/memory.js'
-import { runJanitor } from '../src/janitor.js'
+import { runJanitor, scanContradictions, CONTRA_TOP } from '../src/janitor.js'
+import { floatToBlob, l2normalize } from '../src/embedder.js'
 
 describe('janitor', () => {
   let dir
@@ -137,5 +138,176 @@ describe('janitor', () => {
     assert.equal(stored.entityCount, snap.entityCount)
     assert.equal(stored.edgeCount, snap.edgeCount)
     assert.ok(stored.lastRun)
+  })
+})
+
+describe('contradiction scan embeddings', () => {
+  let dir
+  let memory
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'coder-mem-jan-vec-'))
+    memory = new Memory(path.join(dir, 'memory.db'), { startJanitor: false })
+  })
+
+  afterEach(() => {
+    memory.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  const now = () => new Date().toISOString()
+
+  function insertEntry(id, title, body, project = 'p') {
+    const t = now()
+    memory.db
+      .prepare(
+        `INSERT INTO entries (id, type, title, body, project, created_at, updated_at)
+         VALUES (?, 'knowledge', ?, ?, ?, ?, ?)`,
+      )
+      .run(id, title, body, project, t, t)
+  }
+
+  function insertEntity(id, name) {
+    memory.db.prepare(`INSERT INTO entities (id, name, kind) VALUES (?, ?, 'concept')`).run(id, name)
+  }
+
+  function mention(entryId, entityId) {
+    memory.db.prepare(`INSERT INTO mentions (entry_id, entity_id) VALUES (?, ?)`).run(entryId, entityId)
+  }
+
+  function insertVec(entryId, components, model = 'test-model') {
+    const vec = l2normalize(Float32Array.from(components))
+    memory.db
+      .prepare(
+        `INSERT INTO entry_vectors (entry_id, dim, vec, model, created_at) VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run(entryId, vec.length, floatToBlob(vec), model, now())
+  }
+
+  /** Unit 2-vector whose cosine with [1, 0] equals `c`. */
+  function toward(c) {
+    return [c, Math.sqrt(Math.max(0, 1 - c * c))]
+  }
+
+  function openContradictions() {
+    return memory.db
+      .prepare(
+        `SELECT id, entry_a, entry_b, detail FROM review_queue
+         WHERE kind = 'contradiction' AND resolved_at IS NULL
+         ORDER BY id`,
+      )
+      .all()
+  }
+
+  it('enqueues a one-entity paraphrase when vectors are near-identical', () => {
+    insertEntry('cand', 'Alpha claim', 'unique zebra phrase only')
+    insertEntry('near', 'Beta assertion', 'distinct mango wording here')
+    insertEntity('ent-hub', 'HubThing')
+    mention('cand', 'ent-hub')
+    mention('near', 'ent-hub')
+    insertVec('cand', [1, 0, 0, 0])
+    insertVec('near', [1, 0, 0, 0])
+
+    const n = scanContradictions(memory.db)
+    assert.equal(n, 1)
+    const rows = openContradictions()
+    assert.equal(rows.length, 1)
+    assert.ok(new Set([rows[0].entry_a, rows[0].entry_b]).has('cand'))
+    assert.ok(new Set([rows[0].entry_a, rows[0].entry_b]).has('near'))
+    assert.match(rows[0].detail ?? '', /shared entities: HubThing/)
+    assert.match(rows[0].detail ?? '', /cosine=/)
+  })
+
+  it('skips a one-entity pair with dissimilar vectors and low Jaccard', () => {
+    insertEntry('cand', 'Alpha claim', 'unique zebra phrase only')
+    insertEntry('far', 'Beta assertion', 'distinct mango wording here')
+    insertEntity('ent-hub', 'HubThing')
+    mention('cand', 'ent-hub')
+    mention('far', 'ent-hub')
+    insertVec('cand', [1, 0, 0, 0])
+    insertVec('far', [0, 1, 0, 0])
+
+    const n = scanContradictions(memory.db)
+    assert.equal(n, 0)
+    assert.equal(openContradictions().length, 0)
+  })
+
+  it('caps a hub candidate at CONTRA_TOP, highest cosine first', () => {
+    insertEntry('cand', 'Hub claim', 'unique zebra phrase only')
+    insertEntity('ent-hub', 'HubThing')
+    mention('cand', 'ent-hub')
+    insertVec('cand', [1, 0])
+
+    // Distinct entities so partners do not pair with each other — only with cand.
+    // Cosines vs cand: 0.99 … down through values still >= CONTRA_SIM.
+    const cosines = [0.99, 0.95, 0.9, 0.85, 0.8, 0.76, 0.75]
+    assert.ok(cosines.length > CONTRA_TOP)
+    for (let i = 0; i < cosines.length; i++) {
+      const id = `p${i}`
+      insertEntry(id, `Partner ${i} title`, `distinct mango wording ${i} quartz`)
+      insertEntity(`ent-${i}`, `Spoke${i}`)
+      mention('cand', `ent-${i}`)
+      mention(id, `ent-${i}`)
+      insertVec(id, toward(cosines[i]))
+    }
+
+    const n = scanContradictions(memory.db)
+    assert.equal(n, CONTRA_TOP)
+    const rows = openContradictions()
+    assert.equal(rows.length, CONTRA_TOP)
+    const partnerOf = (row) => (row.entry_a === 'cand' ? row.entry_b : row.entry_a)
+    assert.deepEqual(
+      rows.map(partnerOf),
+      ['p0', 'p1', 'p2', 'p3', 'p4'],
+      'highest cosine partners must be enqueued first',
+    )
+    for (const row of rows) {
+      assert.match(row.detail ?? '', /cosine=/)
+    }
+  })
+
+  it('entries with no vectors still follow the strong and weak rules', () => {
+    // Strong: two shared entities, disjoint wording, no vectors.
+    insertEntry('strong-a', 'Sessions live seven days', 'login window via AuthModule and TokenStore')
+    insertEntry('strong-b', 'Logins expire hourly', 'credential refresh with AuthModule and TokenStore')
+    insertEntity('ent-auth', 'AuthModule')
+    insertEntity('ent-token', 'TokenStore')
+    mention('strong-a', 'ent-auth')
+    mention('strong-a', 'ent-token')
+    mention('strong-b', 'ent-auth')
+    mention('strong-b', 'ent-token')
+
+    // Weak: one shared entity, high token overlap, no vectors.
+    insertEntry(
+      'weak-a',
+      'alpha beta gamma delta epsilon zeta eta',
+      'overlap body tokens remain here',
+    )
+    insertEntry(
+      'weak-b',
+      'alpha beta gamma delta epsilon theta iota',
+      'overlap body tokens remain here',
+    )
+    insertEntity('ent-weak', 'OverlapConcept')
+    mention('weak-a', 'ent-weak')
+    mention('weak-b', 'ent-weak')
+
+    // Negative: one shared entity, low Jaccard, no vectors — must stay out.
+    insertEntry('miss-a', 'Alpha claim', 'unique zebra phrase only')
+    insertEntry('miss-b', 'Beta assertion', 'distinct mango wording here')
+    insertEntity('ent-miss', 'LonelyHub')
+    mention('miss-a', 'ent-miss')
+    mention('miss-b', 'ent-miss')
+
+    const n = scanContradictions(memory.db)
+    assert.equal(n, 2)
+    const rows = openContradictions()
+    assert.equal(rows.length, 2)
+    for (const row of rows) {
+      assert.doesNotMatch(row.detail ?? '', /cosine=/)
+      assert.match(row.detail ?? '', /shared entities:/)
+    }
+    const pairs = rows.map((r) => [r.entry_a, r.entry_b].sort().join('+')).sort()
+    assert.deepEqual(pairs, ['strong-a+strong-b', 'weak-a+weak-b'])
   })
 })
