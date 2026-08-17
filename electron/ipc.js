@@ -567,7 +567,7 @@ const IPC_HANDLERS = {
     });
   },
   "git:prMerge": async (ctx, input) => {
-    const info = mergePr({
+    const info = await mergePr({
       store: ctx.store,
       threadId: input.threadId,
       broadcast: ctx.broadcast,

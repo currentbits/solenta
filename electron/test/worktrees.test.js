@@ -967,7 +967,7 @@ describe("worktrees", () => {
       assert.equal(state.createCount, 1);
     });
 
-    it("prStatus returns live PR or null when none", () => {
+    it("prStatus returns live PR or null when none", async () => {
       const { setup, statePath } = preparePrFixture({
         store,
         thread,
@@ -976,7 +976,7 @@ describe("worktrees", () => {
         tmpDir,
       });
 
-      assert.equal(prStatus({ store, threadId: thread.id }), null);
+      assert.equal(await prStatus({ store, threadId: thread.id }), null);
 
       createPr({
         store,
@@ -985,7 +985,7 @@ describe("worktrees", () => {
         broadcast: () => {},
       });
 
-      const live = prStatus({ store, threadId: thread.id });
+      const live = await prStatus({ store, threadId: thread.id });
       assert.ok(live);
       assert.equal(live.number, 42);
       assert.equal(live.branch, setup.branch);
@@ -1003,7 +1003,7 @@ describe("worktrees", () => {
       const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
       state.prs[setup.branch].state = "MERGED";
       fs.writeFileSync(statePath, JSON.stringify(state), "utf8");
-      const merged = prStatus({ store, threadId: thread.id });
+      const merged = await prStatus({ store, threadId: thread.id });
       assert.equal(merged.state, "MERGED");
       assert.equal(
         store.getThread(thread.id).prState,
@@ -1012,7 +1012,7 @@ describe("worktrees", () => {
       );
     });
 
-    it("prStatus with a pre-existing PR persists prState without createPr", () => {
+    it("prStatus with a pre-existing PR persists prState without createPr", async () => {
       // Seed a PR in the fake gh state, then only call prStatus.
       const { setup } = preparePrFixture({
         store,
@@ -1037,7 +1037,7 @@ describe("worktrees", () => {
       store.saveNow();
       assert.equal(store.getThread(thread.id).prState, null);
 
-      const live = prStatus({ store, threadId: thread.id });
+      const live = await prStatus({ store, threadId: thread.id });
       assert.ok(live);
       assert.equal(live.number, 42);
       assert.equal(live.branch, setup.branch);
@@ -1090,7 +1090,7 @@ describe("worktrees", () => {
       assert.equal(info.created, true);
     });
 
-    it("prStatus returns enriched title and diff stats when gh provides them", () => {
+    it("prStatus returns enriched title and diff stats when gh provides them", async () => {
       const { setup, statePath } = preparePrFixture({
         store,
         thread,
@@ -1111,7 +1111,7 @@ describe("worktrees", () => {
       state.prs[setup.branch].changedFiles = 17;
       fs.writeFileSync(statePath, JSON.stringify(state), "utf8");
 
-      const live = prStatus({ store, threadId: thread.id });
+      const live = await prStatus({ store, threadId: thread.id });
       assert.equal(live.title, "Cache provider usage");
       assert.equal(live.additions, 464);
       assert.equal(live.deletions, 63);
@@ -1130,7 +1130,7 @@ describe("worktrees", () => {
       );
     });
 
-    it("prStatus falls back to number,url,state when gh rejects unknown JSON fields", () => {
+    it("prStatus falls back to number,url,state when gh rejects unknown JSON fields", async () => {
       const { setup, statePath } = preparePrFixture({
         store,
         thread,
@@ -1150,7 +1150,7 @@ describe("worktrees", () => {
       state.prs[setup.branch].additions = 10;
       fs.writeFileSync(statePath, JSON.stringify(state), "utf8");
 
-      const live = prStatus({ store, threadId: thread.id });
+      const live = await prStatus({ store, threadId: thread.id });
       assert.ok(live);
       assert.equal(live.number, 42);
       assert.equal(live.branch, setup.branch);
@@ -1251,7 +1251,7 @@ describe("worktrees", () => {
       );
     });
 
-    it("an HTTP 404 from gh is a failure, not 'no PR exists'", () => {
+    it("an HTTP 404 from gh is a failure, not 'no PR exists'", async () => {
       // A bare /not found/ match also catches "HTTP 404: Not Found", which is a
       // deleted or renamed repo or a token without scope. Reading that as "no
       // PR yet" hides the real error behind a spurious create attempt.
@@ -1266,7 +1266,7 @@ describe("worktrees", () => {
       state.scenario = "http-404";
       fs.writeFileSync(statePath, JSON.stringify(state), "utf8");
 
-      assert.throws(
+      await assert.rejects(
         () => prStatus({ store, threadId: thread.id }),
         /404|not found/i,
         "prStatus must surface the 404 rather than returning null",

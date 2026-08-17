@@ -37,6 +37,7 @@ const {
 } = require("./session-record.js");
 const workflowEngine = require("./workflow.js");
 const { wrapCommand } = require("./ssh.js");
+const { killTree } = require("./proc.js");
 
 const KIMI_PUSH_THROTTLE_MS = 250;
 
@@ -83,7 +84,7 @@ function isPhantomClaudeResult(ev, sawTurnContent) {
 
 /**
  * Claude children that outlive their active Map slot (result event clears the
- * run before process exit). stopAll reaps anything still here with SIGTERM.
+ * run before process exit). stopAll reaps the process group with SIGTERM.
  * @type {Set<import('node:child_process').ChildProcess>}
  */
 const liveClaudeChildren = new Set();
@@ -3941,11 +3942,7 @@ function createRunner(opts) {
     // Reap claude children that emitted result (clearRun) then hung: no longer
     // reachable via active Map handles.
     for (const child of [...liveClaudeChildren]) {
-      try {
-        child.kill("SIGTERM");
-      } catch {
-        // ignore
-      }
+      killTree(child, 3000);
     }
     // Drain any pending session transcript posts before process exit.
     void sessionRecorder.flush();
