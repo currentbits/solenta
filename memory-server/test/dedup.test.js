@@ -270,7 +270,6 @@ describe('semantic near-dup on write', () => {
     const b = memory.store({ type: 'knowledge', ...bText, project: 'demo' })
     await memory.embedEntry(a.id)
     await memory.embedEntry(b.id)
-    await memory.checkSemanticDup(b.id)
 
     const rows = openRows()
     assert.equal(rows.length, 1)
@@ -296,7 +295,6 @@ describe('semantic near-dup on write', () => {
     })
     await memory.embedEntry(a.id)
     await memory.embedEntry(b.id)
-    await memory.checkSemanticDup(b.id)
     assert.equal(openRows().length, 0)
   })
 
@@ -307,6 +305,7 @@ describe('semantic near-dup on write', () => {
       body: 'uses indigo tokens exclusively',
       project: 'demo',
     })
+    await memory.embedEntry(a.id)
     const b = memory.store({
       type: 'task',
       title: 'Rewrite the maroon chips path',
@@ -314,12 +313,7 @@ describe('semantic near-dup on write', () => {
       status: 'active',
       project: 'demo',
     })
-    await memory.embedEntry(a.id)
     await memory.embedEntry(b.id)
-    // The knowledge write's fire-and-forget check may have already matched the
-    // task as a candidate; clear so we only assert the incoming-task skip.
-    memory.db.prepare(`DELETE FROM review_queue`).run()
-    await memory.checkSemanticDup(b.id)
     assert.equal(openRows().length, 0)
   })
 })
