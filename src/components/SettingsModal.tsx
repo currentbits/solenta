@@ -12,13 +12,18 @@ import type {
   AgentProfile,
   AppSettings,
   AppStatus,
+  GcCleanInput,
+  GcCleanResult,
+  GcScanResult,
   PermissionMode,
+  ProjectInfo,
   ProviderInfo,
   ReasoningEffort,
   UpdateStatus,
 } from "../shared/ipc";
 import { useEscapeClose } from "../useEscapeClose";
 import styles from "./SettingsModal.module.css";
+import { WorktreeGcSection } from "./WorktreeGcSection";
 
 interface SettingsModalProps {
   open: boolean;
@@ -38,6 +43,10 @@ interface SettingsModalProps {
   /** Relaunch into a staged update. */
   onApplyUpdate?: () => Promise<void>;
   onSaveSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>;
+  /** Optional GC seam. When omitted the section reads window.coder. */
+  projects?: ProjectInfo[];
+  onGcScan?: () => Promise<GcScanResult>;
+  onGcClean?: (input: GcCleanInput) => Promise<GcCleanResult>;
 }
 
 function budgetToInput(value: number | null | undefined): string {
@@ -107,6 +116,9 @@ export function SettingsModal({
   onDownloadUpdate,
   onApplyUpdate,
   onSaveSettings,
+  projects,
+  onGcScan,
+  onGcClean,
 }: SettingsModalProps) {
   const [budgetText, setBudgetText] = useState("");
   const [orchBudgetText, setOrchBudgetText] = useState("");
@@ -650,6 +662,13 @@ export function SettingsModal({
               </div>
             )}
           </section>
+
+          <WorktreeGcSection
+            active={open}
+            projects={projects}
+            onGcScan={onGcScan}
+            onGcClean={onGcClean}
+          />
 
           <section className={styles.section}>
             <h3 className={styles.sectionLabel}>Memory</h3>
