@@ -722,12 +722,7 @@ export function Composer({
   const submitBestOfN = () => {
     if (!canBestOfN || !onBestOfN) return;
     const availableIds = installedProviders.map((p) => p.id);
-    const plan = buildBestOfNEntries(
-      availableIds,
-      bestIds,
-      provider,
-      agentProfiles,
-    );
+    const plan = buildBestOfNEntries(availableIds, bestIds, agentProfiles);
     if (typeof plan === "string") {
       setLocalError(plan);
       return;

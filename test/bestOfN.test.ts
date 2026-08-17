@@ -5,70 +5,75 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { AgentProfile, ProviderInfo } from "../src/shared/ipc";
-import {
-  buildBestOfNEntries,
-  buildBestOfNPlan,
-  providerVendor,
-} from "../src/bestOfN";
+import { buildBestOfNEntries, providerVendor } from "../src/bestOfN";
 
 const AVAILABLE = ["claude", "codex", "kimi"];
 
-describe("buildBestOfNPlan", () => {
+/** Entry ids, for the provider-only cases where the kind is not the point. */
+function ids(plan: ReturnType<typeof buildBestOfNEntries>): string[] {
+  assert.ok(Array.isArray(plan), `expected a plan, got ${String(plan)}`);
+  return plan.map((e) => e.id);
+}
+
+describe("buildBestOfNEntries, providers only", () => {
   it("returns selected installed ids in first-seen order", () => {
-    const plan = buildBestOfNPlan(
-      AVAILABLE,
-      ["kimi", "claude", "codex"],
-      "claude",
-    );
-    assert.deepEqual(plan, ["kimi", "claude", "codex"]);
+    const plan = buildBestOfNEntries(AVAILABLE, ["kimi", "claude", "codex"]);
+    assert.deepEqual(ids(plan), ["kimi", "claude", "codex"]);
+  });
+
+  it("marks every provider-only entry as a bare provider override", () => {
+    // Regression guard: a provider row must keep inheriting model and
+    // permission from the source thread, so it carries no profile fields.
+    const plan = buildBestOfNEntries(AVAILABLE, ["kimi", "claude"]);
+    assert.deepEqual(plan, [
+      { kind: "provider", id: "kimi", provider: "kimi" },
+      { kind: "provider", id: "claude", provider: "claude" },
+    ]);
   });
 
   it("dedupes while keeping the first occurrence", () => {
-    const plan = buildBestOfNPlan(
-      AVAILABLE,
-      ["codex", "claude", "codex", "claude"],
-      "kimi",
-    );
-    assert.deepEqual(plan, ["codex", "claude"]);
+    const plan = buildBestOfNEntries(AVAILABLE, [
+      "codex",
+      "claude",
+      "codex",
+      "claude",
+    ]);
+    assert.deepEqual(ids(plan), ["codex", "claude"]);
   });
 
   it("drops ids that are not installed", () => {
-    const plan = buildBestOfNPlan(
-      AVAILABLE,
-      ["claude", "grok", "codex", "opencode"],
+    const plan = buildBestOfNEntries(AVAILABLE, [
       "claude",
-    );
-    assert.deepEqual(plan, ["claude", "codex"]);
+      "grok",
+      "codex",
+      "opencode",
+    ]);
+    assert.deepEqual(ids(plan), ["claude", "codex"]);
   });
 
-  it("allows the current provider when it is installed and selected", () => {
-    const plan = buildBestOfNPlan(AVAILABLE, ["claude", "kimi"], "claude");
-    assert.deepEqual(plan, ["claude", "kimi"]);
-  });
-
-  it("does not auto-insert the current provider when it was not selected", () => {
-    const plan = buildBestOfNPlan(AVAILABLE, ["codex", "kimi"], "claude");
-    assert.deepEqual(plan, ["codex", "kimi"]);
+  it("plans only what was selected, never auto-inserting a provider", () => {
+    const plan = buildBestOfNEntries(AVAILABLE, ["codex", "kimi"]);
+    assert.deepEqual(ids(plan), ["codex", "kimi"]);
   });
 
   it("rejects fewer than two installed selections", () => {
     assert.equal(
-      buildBestOfNPlan(AVAILABLE, ["claude"], "claude"),
+      buildBestOfNEntries(AVAILABLE, ["claude"]),
       "Select at least two installed providers",
     );
     assert.equal(
-      buildBestOfNPlan(AVAILABLE, ["claude", "claude", "grok"], "claude"),
+      buildBestOfNEntries(AVAILABLE, ["claude", "claude", "grok"]),
       "Select at least two installed providers",
     );
     assert.equal(
-      buildBestOfNPlan(AVAILABLE, [], "claude"),
+      buildBestOfNEntries(AVAILABLE, []),
       "Select at least two installed providers",
     );
   });
 
   it("skips empty selected ids", () => {
-    const plan = buildBestOfNPlan(AVAILABLE, ["", "claude", "codex"], "claude");
-    assert.deepEqual(plan, ["claude", "codex"]);
+    const plan = buildBestOfNEntries(AVAILABLE, ["", "claude", "codex"]);
+    assert.deepEqual(ids(plan), ["claude", "codex"]);
   });
 });
 
@@ -103,23 +108,10 @@ describe("buildBestOfNEntries", () => {
     permissionMode: "default",
   });
 
-  it("keeps a provider-only pick identical to buildBestOfNPlan", () => {
-    const selected = ["kimi", "claude", "codex"];
-    const ids = buildBestOfNPlan(AVAILABLE, selected, "claude");
-    const entries = buildBestOfNEntries(AVAILABLE, selected, "claude");
-    assert.ok(Array.isArray(ids));
-    assert.ok(Array.isArray(entries));
-    assert.deepEqual(
-      entries,
-      ids.map((id) => ({ kind: "provider", id, provider: id })),
-    );
-  });
-
   it("mixes a profile and a provider in first-seen order", () => {
     const plan = buildBestOfNEntries(
       AVAILABLE,
       [scout.id, "kimi"],
-      "claude",
       [scout, deep],
     );
     assert.deepEqual(plan, [
@@ -139,7 +131,6 @@ describe("buildBestOfNEntries", () => {
     const plan = buildBestOfNEntries(
       AVAILABLE,
       [scout.id, "kimi", scout.id, "kimi"],
-      "claude",
       [scout],
     );
     assert.deepEqual(plan, [
@@ -159,7 +150,6 @@ describe("buildBestOfNEntries", () => {
     const plan = buildBestOfNEntries(
       AVAILABLE,
       [missing.id, scout.id, "kimi"],
-      "claude",
       [missing, scout],
     );
     assert.deepEqual(plan, [
@@ -177,20 +167,19 @@ describe("buildBestOfNEntries", () => {
 
   it("rejects fewer than two surviving entries", () => {
     assert.equal(
-      buildBestOfNEntries(AVAILABLE, [scout.id], "claude", [scout]),
+      buildBestOfNEntries(AVAILABLE, [scout.id], [scout]),
       "Select at least two installed providers",
     );
     assert.equal(
       buildBestOfNEntries(
         AVAILABLE,
         [missing.id, scout.id],
-        "claude",
         [missing, scout],
       ),
       "Select at least two installed providers",
     );
     assert.equal(
-      buildBestOfNEntries(AVAILABLE, [scout.id, scout.id], "claude", [scout]),
+      buildBestOfNEntries(AVAILABLE, [scout.id, scout.id], [scout]),
       "Select at least two installed providers",
     );
   });

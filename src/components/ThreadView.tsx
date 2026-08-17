@@ -1738,12 +1738,7 @@ export const ThreadView = memo(function ThreadView({
       const availableIds = providers
         .filter((p) => p.available)
         .map((p) => p.id);
-      const plan = buildBestOfNEntries(
-        availableIds,
-        selectedIds,
-        current.provider,
-        agentProfiles,
-      );
+      const plan = buildBestOfNEntries(availableIds, selectedIds, agentProfiles);
       if (typeof plan === "string") throw new Error(plan);
       const created: string[] = [];
       for (const entry of plan) {

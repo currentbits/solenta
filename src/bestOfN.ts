@@ -25,12 +25,12 @@ export type BestOfNEntry =
  * Returns de-duplicated entries in first-seen selected order, or an error
  * string. A selected id that matches a saved profile wins over a provider
  * with the same id. Uninstalled providers (and profiles on them) are dropped.
- * The live thread's provider is allowed.
+ * Unlike hand-off, the live thread's own provider is allowed — there is no
+ * "skip the current provider" filter, which is why no current id is passed.
  */
 export function buildBestOfNEntries(
   availableProviderIds: readonly string[],
   selectedIds: readonly string[],
-  currentProviderId: string,
   profiles: readonly AgentProfile[] = [],
 ): BestOfNEntry[] | string {
   const installed = new Set(availableProviderIds);
@@ -57,33 +57,10 @@ export function buildBestOfNEntries(
       continue;
     }
     if (!installed.has(id)) continue;
-    // Current is allowed when installed; there is no "skip live provider" filter.
-    if (id === currentProviderId || installed.has(id)) {
-      plan.push({ kind: "provider", id, provider: id });
-    }
+    plan.push({ kind: "provider", id, provider: id });
   }
   if (plan.length < 2) return BEST_OF_N_TOO_FEW;
   return plan;
-}
-
-/**
- * Validate a Best of N provider pick.
- *
- * Returns the de-duplicated installed ids in first-seen selected order, or an
- * error string. Unlike hand-off, the live thread's provider is allowed.
- */
-export function buildBestOfNPlan(
-  availableProviderIds: readonly string[],
-  selectedIds: readonly string[],
-  currentProviderId: string,
-): string[] | string {
-  const plan = buildBestOfNEntries(
-    availableProviderIds,
-    selectedIds,
-    currentProviderId,
-  );
-  if (typeof plan === "string") return plan;
-  return plan.map((e) => e.id);
 }
 
 /** First advertised vendor line, or empty when the registry has none. */
