@@ -49,6 +49,13 @@ const PLAN_TRUNCATE = 20000;
  */
 const PLAN_STORE = 4000;
 
+/** Badge tooltip: first ~2 lines, ~300 chars. */
+function shortError(text) {
+  const s = String(text ?? "").trim();
+  const two = s.split(/\r?\n/, 2).join("\n").trim();
+  return two.length > 300 ? two.slice(0, 300) : two;
+}
+
 /**
  * A kept-alive/resumed Claude CLI can emit a result that is not the answer to
  * the turn we just sent: settling a leftover background-task notification or
@@ -619,7 +626,14 @@ function createRunner(opts) {
         // A run that raced in after the active guard above owns the status;
         // only an idle orchestrator is really stalled.
         if (!active.has(threadId)) {
-          store.updateThread(threadId, { status: "failed" }, { touch: true });
+          store.updateThread(
+            threadId,
+            {
+              status: "failed",
+              lastError: shortError(`Not delivered: ${reason}`),
+            },
+            { touch: true },
+          );
         }
         store.save();
         pushDetail(threadId, lastWorkflowByThread.get(threadId) || null);
@@ -1265,14 +1279,18 @@ function createRunner(opts) {
 
         if (core.isFailed(current) || core.isStuck(current)) {
           clearRun(threadId);
-          store.updateThread(
-            threadId,
-            { status: "failed", runStartedAt: null },
-            { touch: true },
-          );
           const errLabel = core.isFailed(current)
             ? "Run failed"
             : "Run stuck and cannot progress";
+          store.updateThread(
+            threadId,
+            {
+              status: "failed",
+              runStartedAt: null,
+              lastError: shortError(errLabel),
+            },
+            { touch: true },
+          );
           appendMessage(threadId, "event", errLabel, runId);
           appendDoneWorkLog(threadId, runId, "Run error");
           store.save();
@@ -1282,17 +1300,17 @@ function createRunner(opts) {
         }
       } catch (err) {
         clearRun(threadId);
+        const errText = `Run error: ${err && err.message ? err.message : String(err)}`;
         store.updateThread(
           threadId,
-          { status: "failed", runStartedAt: null },
+          {
+            status: "failed",
+            runStartedAt: null,
+            lastError: shortError(errText),
+          },
           { touch: true },
         );
-        appendMessage(
-          threadId,
-          "event",
-          `Run error: ${err && err.message ? err.message : String(err)}`,
-          runId,
-        );
+        appendMessage(threadId, "event", errText, runId);
         appendDoneWorkLog(threadId, runId, "Run error");
         store.save();
         pushDetail(threadId, current);
@@ -1450,7 +1468,11 @@ function createRunner(opts) {
         appendDoneWorkLog(threadId, runId, "Run error");
         store.updateThread(
           threadId,
-          { status: "failed", runStartedAt: null },
+          {
+            status: "failed",
+            runStartedAt: null,
+            lastError: shortError(errText),
+          },
           { touch: true },
         );
         store.save();
@@ -1473,7 +1495,11 @@ function createRunner(opts) {
         appendDoneWorkLog(threadId, runId, "Run error");
         store.updateThread(
           threadId,
-          { status: "failed", runStartedAt: null },
+          {
+            status: "failed",
+            runStartedAt: null,
+            lastError: shortError(errText),
+          },
           { touch: true },
         );
         store.save();
@@ -1617,6 +1643,7 @@ function createRunner(opts) {
           status: "failed",
           sessionId: capturedSessionId,
           runStartedAt: null,
+          lastError: shortError(failText),
         },
         { touch: true },
       );
@@ -1990,16 +2017,6 @@ function createRunner(opts) {
           const sessionLost = errors.some((e) =>
             /No conversation found/i.test(e),
           );
-          store.updateThread(
-            threadId,
-            {
-              status: ok ? "done" : "failed",
-              sessionId: sessionLost ? null : capturedSessionId,
-              runStartedAt: null,
-            },
-            { touch: true },
-          );
-
           let failText = "";
           if (!ok) {
             failText = `Run error: result subtype ${ev.subtype || "unknown"}`;
@@ -2009,6 +2026,19 @@ function createRunner(opts) {
             if (sessionLost) {
               failText += "\nSession reset; the next message starts fresh.";
             }
+          }
+          store.updateThread(
+            threadId,
+            {
+              status: ok ? "done" : "failed",
+              sessionId: sessionLost ? null : capturedSessionId,
+              runStartedAt: null,
+              lastError: ok ? null : shortError(failText),
+            },
+            { touch: true },
+          );
+
+          if (!ok) {
             appendMessage(threadId, "event", failText, runId);
             appendDoneWorkLog(threadId, runId, "Run error");
           }
@@ -2093,7 +2123,11 @@ function createRunner(opts) {
         appendDoneWorkLog(threadId, runId, "Run error");
         store.updateThread(
           threadId,
-          { status: "failed", runStartedAt: null },
+          {
+            status: "failed",
+            runStartedAt: null,
+            lastError: shortError(errText),
+          },
           { touch: true },
         );
         store.save();
@@ -2121,7 +2155,11 @@ function createRunner(opts) {
         appendDoneWorkLog(threadId, runId, "Run error");
         store.updateThread(
           threadId,
-          { status: "failed", runStartedAt: null },
+          {
+            status: "failed",
+            runStartedAt: null,
+            lastError: shortError(errText),
+          },
           { touch: true },
         );
         store.save();
@@ -2568,7 +2606,11 @@ function createRunner(opts) {
         appendDoneWorkLog(threadId, runId, "Run error");
         store.updateThread(
           threadId,
-          { status: "failed", runStartedAt: null },
+          {
+            status: "failed",
+            runStartedAt: null,
+            lastError: shortError(errText),
+          },
           { touch: true },
         );
         store.save();
@@ -2595,7 +2637,11 @@ function createRunner(opts) {
         appendDoneWorkLog(threadId, runId, "Run error");
         store.updateThread(
           threadId,
-          { status: "failed", runStartedAt: null },
+          {
+            status: "failed",
+            runStartedAt: null,
+            lastError: shortError(errText),
+          },
           { touch: true },
         );
         store.save();
@@ -2938,7 +2984,11 @@ function createRunner(opts) {
         appendDoneWorkLog(threadId, runId, "Run error");
         store.updateThread(
           threadId,
-          { status: "failed", runStartedAt: null },
+          {
+            status: "failed",
+            runStartedAt: null,
+            lastError: shortError(errText),
+          },
           { touch: true },
         );
         store.save();
@@ -2968,7 +3018,11 @@ function createRunner(opts) {
         appendDoneWorkLog(threadId, runId, "Run error");
         store.updateThread(
           threadId,
-          { status: "failed", runStartedAt: null },
+          {
+            status: "failed",
+            runStartedAt: null,
+            lastError: shortError(errText),
+          },
           { touch: true },
         );
         store.save();
@@ -3331,7 +3385,11 @@ function createRunner(opts) {
         appendDoneWorkLog(threadId, runId, "Run error");
         store.updateThread(
           threadId,
-          { status: "failed", runStartedAt: null },
+          {
+            status: "failed",
+            runStartedAt: null,
+            lastError: shortError(errText),
+          },
           { touch: true },
         );
         store.save();
@@ -3361,7 +3419,11 @@ function createRunner(opts) {
         appendDoneWorkLog(threadId, runId, "Run error");
         store.updateThread(
           threadId,
-          { status: "failed", runStartedAt: null },
+          {
+            status: "failed",
+            runStartedAt: null,
+            lastError: shortError(errText),
+          },
           { touch: true },
         );
         store.save();
