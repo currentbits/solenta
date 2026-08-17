@@ -301,6 +301,33 @@ describe("Agents crew task list", () => {
     m.unmount();
   });
 
+  it("still lists tasks when the thread has a workflow view", async () => {
+    const m = await mount(
+      <AgentsContent
+        workflow={{
+          id: "w1",
+          name: "Standard",
+          phases: [],
+          settled: 0,
+          total: 0,
+          tokensTotal: 0,
+          complete: false,
+        }}
+        thread={thread()}
+        usage={null}
+        providers={PROVIDERS}
+        listCrewTasks={async () => ({
+          rootThreadId: "t-orch",
+          tasks: [task({ id: "t1", title: "Write the contract" })],
+        })}
+      />,
+    );
+    await m.flush();
+    assert.ok(m.query("[data-crew-tasks]"));
+    assert.match(m.text(), /Write the contract/);
+    m.unmount();
+  });
+
   it("refetches on threads:changed", async () => {
     const push = installThreadsChanged();
     let calls = 0;

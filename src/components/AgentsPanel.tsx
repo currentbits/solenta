@@ -2384,6 +2384,7 @@ export function AgentsContent({
             );
           })}
         </div>
+        <CrewTaskList tasks={crewTasks} ownerTitle={crewOwnerTitle} />
         {hypothesisSection}
       </div>
 
