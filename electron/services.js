@@ -280,9 +280,11 @@ function updateProject(store, projectId, patch) {
 
 /**
  * @param {import('./store').Store} store
- * @param {{ projectId: string, title: string, worktree?: boolean }} input
+ * @param {{ projectId: string, title: string, worktree?: boolean, automationId?: string | null }} input
  * `worktree` is only consumed by the IPC layer (threads:create), which calls
  * setupWorktree after this returns; the service itself stays fs-free.
+ * `automationId` tags threads minted by an automation so runAutomation can
+ * retain only the last N (issue #134). Absent / falsy on hand-made threads.
  */
 function createThread(store, input) {
   const project = store.getProject(input.projectId);
@@ -319,6 +321,7 @@ function createThread(store, input) {
     reasoningEffort: null,
     worktreePath: null,
     handoffFrom: null,
+    automationId: input.automationId || null,
   };
 
   const threads = store.getThreads().slice();
