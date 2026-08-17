@@ -41,7 +41,7 @@ function waitFor(predicate, { timeoutMs = 20000, intervalMs = 20 } = {}) {
 /**
  * Fake claude that branches on phase instruction / agent angle lines.
  */
-function writeWorkflowFakeClaude(dir) {
+async function writeWorkflowFakeClaude(dir) {
   const scriptPath = path.join(dir, "workflow-fake-claude");
   const body = `#!/usr/bin/env node
 "use strict";
@@ -252,7 +252,7 @@ async function failExit(msg) {
 /**
  * Fake codex JSONL one-shot for mixed-provider tests.
  */
-function writeWorkflowFakeCodex(dir) {
+async function writeWorkflowFakeCodex(dir) {
   const scriptPath = path.join(dir, "workflow-fake-codex");
   const body = `#!/usr/bin/env node
 "use strict";
@@ -298,7 +298,7 @@ if (markerDir) {
  * Fake grok binary (claude-stream / streaming-messages-json NDJSON).
  * Also usable as a plain-text fallback for providers that ignore stream shape.
  */
-function writeWorkflowFakeText(dir, name = "workflow-fake-text") {
+async function writeWorkflowFakeText(dir, name = "workflow-fake-text") {
   const scriptPath = path.join(dir, name);
   const body = `#!/usr/bin/env node
 "use strict";
@@ -409,9 +409,9 @@ describe("workflow orchestration", () => {
     delete process.env.CODER_WF_TRAP_SIGTERM;
 
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-wf-"));
-    fakeClaude = writeWorkflowFakeClaude(tmpDir);
-    fakeCodex = writeWorkflowFakeCodex(tmpDir);
-    fakeText = writeWorkflowFakeText(tmpDir);
+    fakeClaude = await writeWorkflowFakeClaude(tmpDir);
+    fakeCodex = await writeWorkflowFakeCodex(tmpDir);
+    fakeText = await writeWorkflowFakeText(tmpDir);
     modeFile = path.join(tmpDir, "mode.txt");
     markerDir = path.join(tmpDir, "markers");
     captureFile = path.join(tmpDir, "capture.json");
@@ -441,7 +441,7 @@ describe("workflow orchestration", () => {
     const repo = path.join(tmpDir, "app");
     fs.mkdirSync(repo);
     git(repo, ["init"]);
-    const project = services.addProject(store, repo);
+    const project = await services.addProject(store, repo);
     services.createThread(store, {
       projectId: project.id,
       title: "New Thread",

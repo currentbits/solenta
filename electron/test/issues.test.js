@@ -113,8 +113,8 @@ process.exit(2);
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
-  it("returns the issue and passes -R owner/repo from origin", () => {
-    const result = fetchIssue(repo, "12");
+  it("returns the issue and passes -R owner/repo from origin", async () => {
+    const result = await fetchIssue(repo, "12");
     assert.deepEqual(result, {
       ok: true,
       issue: {
@@ -136,52 +136,52 @@ process.exit(2);
     ]);
   });
 
-  it("uses owner/repo from the pasted ref for -R", () => {
-    const result = fetchIssue(repo, "other/app#8");
+  it("uses owner/repo from the pasted ref for -R", async () => {
+    const result = await fetchIssue(repo, "other/app#8");
     assert.equal(result.ok, true);
     const args = JSON.parse(fs.readFileSync(argsPath, "utf8"));
     assert.equal(args[args.indexOf("-R") + 1], "other/app");
   });
 
-  it("returns invalid issue reference without spawning gh", () => {
-    const result = fetchIssue(repo, "not-an-issue");
+  it("returns invalid issue reference without spawning gh", async () => {
+    const result = await fetchIssue(repo, "not-an-issue");
     assert.deepEqual(result, { ok: false, reason: "invalid issue reference" });
     assert.equal(fs.existsSync(argsPath), false);
   });
 
-  it("returns not a GitHub repo for a non-github origin", () => {
+  it("returns not a GitHub repo for a non-github origin", async () => {
     git(repo, ["remote", "set-url", "origin", "https://gitlab.com/acme/demo.git"]);
-    const result = fetchIssue(repo, "1");
+    const result = await fetchIssue(repo, "1");
     assert.deepEqual(result, { ok: false, reason: "not a GitHub repo" });
     assert.equal(fs.existsSync(argsPath), false);
   });
 
-  it("returns gh missing when the binary is gone", () => {
+  it("returns gh missing when the binary is gone", async () => {
     process.env.CODER_GH_BIN = path.join(tmp, "definitely-missing-gh");
-    const result = fetchIssue(repo, "1");
+    const result = await fetchIssue(repo, "1");
     assert.deepEqual(result, { ok: false, reason: "gh missing" });
   });
 
-  it("returns auth on gh auth failure", () => {
+  it("returns auth on gh auth failure", async () => {
     writeFakeGh(`#!/usr/bin/env node
 process.stderr.write("To get started with GitHub CLI, please run: gh auth login\\n");
 process.exit(1);
 `);
-    const result = fetchIssue(repo, "1");
+    const result = await fetchIssue(repo, "1");
     assert.deepEqual(result, { ok: false, reason: "auth" });
   });
 
-  it("returns issue not found when gh cannot resolve the number", () => {
+  it("returns issue not found when gh cannot resolve the number", async () => {
     writeFakeGh(`#!/usr/bin/env node
 process.stderr.write("GraphQL: Could not resolve to an Issue with the number of 99.\\n");
 process.exit(1);
 `);
-    const result = fetchIssue(repo, "99");
+    const result = await fetchIssue(repo, "99");
     assert.deepEqual(result, { ok: false, reason: "issue not found" });
   });
 
-  it("never throws on empty path or garbage gh JSON", () => {
-    assert.deepEqual(fetchIssue("", "1"), {
+  it("never throws on empty path or garbage gh JSON", async () => {
+    assert.deepEqual(await fetchIssue("", "1"), {
       ok: false,
       reason: "not a GitHub repo",
     });
@@ -189,7 +189,7 @@ process.exit(1);
 process.stdout.write("not-json\\n");
 process.exit(0);
 `);
-    const result = fetchIssue(repo, "1");
+    const result = await fetchIssue(repo, "1");
     assert.equal(result.ok, false);
     assert.match(result.reason, /unparseable issue JSON/);
   });
@@ -244,8 +244,8 @@ ${body}
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
-  it("adds the new plan label and removes the other two", () => {
-    assert.deepEqual(setPlanStatus(repo, 5, "doing"), { ok: true });
+  it("adds the new plan label and removes the other two", async () => {
+    assert.deepEqual(await setPlanStatus(repo, 5, "doing"), { ok: true });
     assert.deepEqual(calls(), [
       [
         "issue",
@@ -259,7 +259,7 @@ ${body}
     ]);
   });
 
-  it("retries add-only when a removed label is not in the repo", () => {
+  it("retries add-only when a removed label is not in the repo", async () => {
     writeFakeGh(`
 if (args.includes("--remove-label")) {
   process.stderr.write("failed to update ...: 'plan:done' not found\\n");
@@ -267,26 +267,26 @@ if (args.includes("--remove-label")) {
 }
 process.exit(0);
 `);
-    assert.deepEqual(setPlanStatus(repo, 5, "doing"), { ok: true });
+    assert.deepEqual(await setPlanStatus(repo, 5, "doing"), { ok: true });
     const seen = calls();
     assert.equal(seen.length, 2);
     assert.deepEqual(seen[1], ["issue", "edit", "5", "--add-label", "plan:doing"]);
   });
 
-  it("reports auth failure and never throws", () => {
+  it("reports auth failure and never throws", async () => {
     writeFakeGh(`
 process.stderr.write("To get started with GitHub CLI, please run: gh auth login\\n");
 process.exit(1);
 `);
-    assert.deepEqual(setPlanStatus(repo, 5, "doing"), { ok: false, reason: "auth" });
+    assert.deepEqual(await setPlanStatus(repo, 5, "doing"), { ok: false, reason: "auth" });
   });
 
-  it("rejects a bad status or number without spawning gh", () => {
-    assert.deepEqual(setPlanStatus(repo, 5, "nope"), {
+  it("rejects a bad status or number without spawning gh", async () => {
+    assert.deepEqual(await setPlanStatus(repo, 5, "nope"), {
       ok: false,
       reason: "unknown plan status: nope",
     });
-    assert.deepEqual(setPlanStatus(repo, 0, "doing"), {
+    assert.deepEqual(await setPlanStatus(repo, 0, "doing"), {
       ok: false,
       reason: "invalid issue reference",
     });

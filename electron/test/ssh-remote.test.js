@@ -6,7 +6,7 @@ const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 const { Store } = require("../store.js");
 const services = require("../services.js");
-const { diff } = require("../worktrees.js");
+const { diff, setExecFile } = require("../worktrees.js");
 const { createRunner, resolveSpawn } = require("../runner.js");
 const ssh = require("../ssh.js");
 
@@ -43,22 +43,24 @@ describe("worktrees.diff remoteHost", () => {
   });
 
   afterEach(() => {
+    setExecFile(null);
     ssh.setExecFileSync(null);
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("prefixes git with ssh when the project has remoteHost", () => {
+  it("prefixes git with ssh when the project has remoteHost", async () => {
     const calls = [];
-    ssh.setExecFileSync((bin, args) => {
+    setExecFile((bin, args, _opts, cb) => {
       calls.push({ bin, args: args.slice() });
       const remote = String(args[args.length - 1] || "");
-      if (remote.includes("status")) return " M src/a.ts\n";
-      if (remote.includes("numstat")) return "1\t2\tsrc/a.ts\n";
-      if (remote.includes("diff")) return "diff --git a/src/a.ts b/src/a.ts\n";
-      return "";
+      let out = "";
+      if (remote.includes("status")) out = " M src/a.ts\n";
+      else if (remote.includes("numstat")) out = "1\t2\tsrc/a.ts\n";
+      else if (remote.includes("diff")) out = "diff --git a/src/a.ts b/src/a.ts\n";
+      cb(null, out, "");
     });
 
-    const project = services.addProject(store, "", {
+    const project = await services.addProject(store, "", {
       remoteHost: "dev@box",
       remotePath: "/srv/app",
     });
@@ -67,7 +69,7 @@ describe("worktrees.diff remoteHost", () => {
       title: "Remote changes",
     });
 
-    const result = diff({ store, threadId: thread.id });
+    const result = await diff({ store, threadId: thread.id });
     assert.ok(calls.length >= 1);
     assert.ok(calls.every((c) => c.bin === "ssh"));
     assert.ok(calls[0].args.includes("dev@box"));
@@ -138,7 +140,7 @@ describe("runner startRun remoteHost fake spawn", () => {
       tickMs: 15,
     });
 
-    const project = services.addProject(store, "", {
+    const project = await services.addProject(store, "", {
       remoteHost: "dev@box",
       remotePath: "/srv/app",
     });

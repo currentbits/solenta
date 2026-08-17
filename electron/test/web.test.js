@@ -242,7 +242,7 @@ describe("auth table + invoke + push (real socket)", () => {
       git(repo, ["add", "README.md"]);
       git(repo, ["commit", "-m", "init"]);
       store = new Store(path.join(tmp, "store.json"));
-      const project = services.addProject(store, repo);
+      const project = await services.addProject(store, repo);
       services.createThread(store, { projectId: project.id, title: "alpha" });
       ctx = ipc.makeCtx({
         dialog: {},
@@ -491,7 +491,7 @@ describe("one map, two transports + packaging", () => {
     assert.match(main, /process\.stdout\.write\(`solenta-web: token/);
   });
 
-  it("main.js survives a web-server bind failure and still opens a window", () => {
+  it("main.js survives a web-server bind failure and still opens a window", async () => {
     const main = fs.readFileSync(path.join(__dirname, "../main.js"), "utf8");
     // EADDRINUSE on the fixed port must not reject out of whenReady, or
     // createWindow() never runs: app up, no window, no error anywhere.

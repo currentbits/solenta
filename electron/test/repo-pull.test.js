@@ -98,25 +98,25 @@ describe("gitRepoInfo", () => {
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
-  it("returns ok:false for a missing path", () => {
-    assert.deepEqual(gitRepoInfo(path.join(tmp, "nope")), { ok: false });
+  it("returns ok:false for a missing path", async () => {
+    assert.deepEqual(await gitRepoInfo(path.join(tmp, "nope")), { ok: false });
   });
 
-  it("returns ok:false for a directory that is not a repo", () => {
+  it("returns ok:false for a directory that is not a repo", async () => {
     const dir = path.join(tmp, "plain");
     fs.mkdirSync(dir);
-    assert.deepEqual(gitRepoInfo(dir), { ok: false });
+    assert.deepEqual(await gitRepoInfo(dir), { ok: false });
   });
 
-  it("returns ok:false for a repo with no origin", () => {
+  it("returns ok:false for a repo with no origin", async () => {
     const repo = initRepo(path.join(tmp, "repo"));
-    assert.deepEqual(gitRepoInfo(repo), { ok: false });
+    assert.deepEqual(await gitRepoInfo(repo), { ok: false });
   });
 
-  it("returns owner/repo and webUrl for a repo with an origin", () => {
+  it("returns owner/repo and webUrl for a repo with an origin", async () => {
     const repo = initRepo(path.join(tmp, "repo"));
     git(repo, ["remote", "add", "origin", "git@github.com:acme/widgets.git"]);
-    assert.deepEqual(gitRepoInfo(repo), {
+    assert.deepEqual(await gitRepoInfo(repo), {
       ok: true,
       owner: "acme",
       repo: "widgets",
@@ -205,37 +205,37 @@ describe("gitPull", () => {
     return { src, repo };
   }
 
-  it("returns not-a-repo for a plain directory", () => {
+  it("returns not-a-repo for a plain directory", async () => {
     const dir = path.join(tmp, "plain");
     fs.mkdirSync(dir);
-    assert.deepEqual(gitPull(dir), { ok: false, reason: "Not a git repository" });
+    assert.deepEqual(await gitPull(dir), { ok: false, reason: "Not a git repository" });
   });
 
-  it("reports Already up to date when nothing changed upstream", () => {
+  it("reports Already up to date when nothing changed upstream", async () => {
     const { repo } = clonePair();
-    assert.deepEqual(gitPull(repo), { ok: true, summary: "Already up to date" });
+    assert.deepEqual(await gitPull(repo), { ok: true, summary: "Already up to date" });
   });
 
-  it("reports Fast-forwarded when upstream advanced", () => {
+  it("reports Fast-forwarded when upstream advanced", async () => {
     const { src, repo } = clonePair();
     fs.writeFileSync(path.join(src, "b.txt"), "2");
     git(src, ["add", "."]);
     git(src, ["commit", "-qm", "upstream work"]);
-    assert.deepEqual(gitPull(repo), { ok: true, summary: "Fast-forwarded" });
+    assert.deepEqual(await gitPull(repo), { ok: true, summary: "Fast-forwarded" });
   });
 
-  it("maps a dirty tree conflict to an in-band reason", () => {
+  it("maps a dirty tree conflict to an in-band reason", async () => {
     const { src, repo } = clonePair();
     fs.writeFileSync(path.join(src, "a.txt"), "upstream");
     git(src, ["add", "."]);
     git(src, ["commit", "-qm", "upstream edit"]);
     fs.writeFileSync(path.join(repo, "a.txt"), "local edit");
-    const res = gitPull(repo);
+    const res = await gitPull(repo);
     assert.equal(res.ok, false);
     assert.equal(res.reason, "Working tree has uncommitted changes");
   });
 
-  it("maps a diverged branch to an in-band reason", () => {
+  it("maps a diverged branch to an in-band reason", async () => {
     const { src, repo } = clonePair();
     fs.writeFileSync(path.join(src, "b.txt"), "upstream");
     git(src, ["add", "."]);
@@ -243,14 +243,14 @@ describe("gitPull", () => {
     fs.writeFileSync(path.join(repo, "c.txt"), "local");
     git(repo, ["add", "."]);
     git(repo, ["commit", "-qm", "local work"]);
-    const res = gitPull(repo);
+    const res = await gitPull(repo);
     assert.equal(res.ok, false);
     assert.equal(res.reason, "Branch has diverged from upstream");
   });
 
-  it("maps a branch without upstream to an in-band reason", () => {
+  it("maps a branch without upstream to an in-band reason", async () => {
     const repo = initRepo(path.join(tmp, "solo"));
-    const res = gitPull(repo);
+    const res = await gitPull(repo);
     assert.equal(res.ok, false);
     assert.equal(res.reason, "No upstream configured for this branch");
   });

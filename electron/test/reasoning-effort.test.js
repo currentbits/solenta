@@ -478,13 +478,13 @@ describe("reasoning effort: setReasoningEffort service", () => {
   let store;
   let project;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-effort-svc-"));
     store = new Store(path.join(tmpDir, "store.json"));
     const repo = path.join(tmpDir, "repo");
     fs.mkdirSync(repo);
     git(repo, ["init"]);
-    project = services.addProject(store, repo);
+    project = await services.addProject(store, repo);
   });
 
   afterEach(() => {
@@ -776,7 +776,7 @@ emit({
       const repo = path.join(tmpDir, "app");
       fs.mkdirSync(repo);
       git(repo, ["init"]);
-      const project = services.addProject(store, repo);
+      const project = await services.addProject(store, repo);
       const thread = services.createThread(store, {
         projectId: project.id,
         title: "Effort Run Claude",
@@ -870,7 +870,7 @@ emit({
       const repo = path.join(tmpDir, "app");
       fs.mkdirSync(repo);
       git(repo, ["init"]);
-      const project = services.addProject(store, repo);
+      const project = await services.addProject(store, repo);
       const thread = services.createThread(store, {
         projectId: project.id,
         title: "Effort Run",

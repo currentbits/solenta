@@ -23,32 +23,33 @@ describe("services", () => {
 
   afterEach(() => {
     ssh.setExecFileSync(null);
+    ssh.setExecFile(null);
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("addProject rejects a path that is not a directory", () => {
+  it("addProject rejects a path that is not a directory", async () => {
     const missing = path.join(tmpDir, "nope");
-    assert.throws(
+    await assert.rejects(
       () => services.addProject(store, missing),
       /not a directory|does not exist|directory/i,
     );
   });
 
-  it("addProject rejects a directory that is not a git repo", () => {
+  it("addProject rejects a directory that is not a git repo", async () => {
     const dir = path.join(tmpDir, "plain");
     fs.mkdirSync(dir);
-    assert.throws(
+    await assert.rejects(
       () => services.addProject(store, dir),
       /git|repo|work.tree|not a git/i,
     );
   });
 
-  it("addProject accepts a git repo and uses folder name when no remote", () => {
+  it("addProject accepts a git repo and uses folder name when no remote", async () => {
     const repo = path.join(tmpDir, "my-app");
     fs.mkdirSync(repo);
     git(repo, ["init"]);
     // git may need identity for later ops; status/remote should work without commits
-    const project = services.addProject(store, repo);
+    const project = await services.addProject(store, repo);
     assert.equal(project.slug, "my-app");
     assert.equal(project.name, "my-app");
     assert.equal(project.path, path.resolve(repo));
@@ -56,7 +57,7 @@ describe("services", () => {
     assert.equal(store.getProjects().length, 1);
   });
 
-  it("addProject derives slug from origin remote as owner/repo", () => {
+  it("addProject derives slug from origin remote as owner/repo", async () => {
     const repo = path.join(tmpDir, "fixture-repo");
     fs.mkdirSync(repo);
     git(repo, ["init"]);
@@ -66,13 +67,13 @@ describe("services", () => {
       "origin",
       "https://github.com/pingdotgg/t3code.git",
     ]);
-    const project = services.addProject(store, repo);
+    const project = await services.addProject(store, repo);
     assert.equal(project.slug, "pingdotgg/t3code");
     assert.equal(project.name, "t3code");
   });
 
-  it("addProject stores remotes without a local checkout", () => {
-    const project = services.addProject(store, "", {
+  it("addProject stores remotes without a local checkout", async () => {
+    const project = await services.addProject(store, "", {
       remoteHost: "dev@box",
       remotePath: "/srv/my app",
     });
@@ -84,15 +85,15 @@ describe("services", () => {
     assert.equal(store.getProjects().length, 1);
   });
 
-  it("addProject rejects remotes without an absolute remotePath", () => {
-    assert.throws(
+  it("addProject rejects remotes without an absolute remotePath", async () => {
+    await assert.rejects(
       () =>
         services.addProject(store, "", {
           remoteHost: "dev@box",
         }),
       /remote path is required/i,
     );
-    assert.throws(
+    await assert.rejects(
       () =>
         services.addProject(store, "", {
           remoteHost: "dev@box",
@@ -102,27 +103,27 @@ describe("services", () => {
     );
   });
 
-  it("addProject without remotes still requires a local git repo", () => {
+  it("addProject without remotes still requires a local git repo", async () => {
     const dir = path.join(tmpDir, "still-local");
     fs.mkdirSync(dir);
-    assert.throws(
+    await assert.rejects(
       () => services.addProject(store, dir),
       /git|repo|work.tree|not a git/i,
     );
   });
 
-  it("addProject derives slug from ssh origin", () => {
+  it("addProject derives slug from ssh origin", async () => {
     const repo = path.join(tmpDir, "ssh-repo");
     fs.mkdirSync(repo);
     git(repo, ["init"]);
     git(repo, ["remote", "add", "origin", "git@github.com:acme/widgets.git"]);
-    const project = services.addProject(store, repo);
+    const project = await services.addProject(store, repo);
     assert.equal(project.slug, "acme/widgets");
     assert.equal(project.name, "widgets");
   });
 
-  it("createThread and listThreads", () => {
-    const project = services.addProject(
+  it("createThread and listThreads", async () => {
+    const project = await services.addProject(
       store,
       (() => {
         const repo = path.join(tmpDir, "t-repo");
@@ -159,11 +160,11 @@ describe("services", () => {
     assert.equal(listed[0].id, thread.id);
   });
 
-  it("setPermissionMode validates and updates", () => {
+  it("setPermissionMode validates and updates", async () => {
     const repo = path.join(tmpDir, "pm-repo");
     fs.mkdirSync(repo);
     git(repo, ["init"]);
-    const project = services.addProject(store, repo);
+    const project = await services.addProject(store, repo);
     const thread = services.createThread(store, {
       projectId: project.id,
       title: "T",
@@ -183,11 +184,11 @@ describe("services", () => {
     );
   });
 
-  it("setPermissionMode leaves updatedAt unchanged", () => {
+  it("setPermissionMode leaves updatedAt unchanged", async () => {
     const repo = path.join(tmpDir, "pm-at-repo");
     fs.mkdirSync(repo);
     git(repo, ["init"]);
-    const project = services.addProject(store, repo);
+    const project = await services.addProject(store, repo);
     const thread = services.createThread(store, {
       projectId: project.id,
       title: "T",
@@ -207,11 +208,11 @@ describe("services", () => {
     assert.equal(store.getThread(thread.id).updatedAt, 1_700_000_000_000);
   });
 
-  it("createThread includes archived false", () => {
+  it("createThread includes archived false", async () => {
     const repo = path.join(tmpDir, "arch-create-repo");
     fs.mkdirSync(repo);
     git(repo, ["init"]);
-    const project = services.addProject(store, repo);
+    const project = await services.addProject(store, repo);
     const thread = services.createThread(store, {
       projectId: project.id,
       title: "T",
@@ -220,11 +221,11 @@ describe("services", () => {
     assert.equal(store.getThread(thread.id).archived, false);
   });
 
-  it("setArchived flips without changing updatedAt", () => {
+  it("setArchived flips without changing updatedAt", async () => {
     const repo = path.join(tmpDir, "arch-repo");
     fs.mkdirSync(repo);
     git(repo, ["init"]);
-    const project = services.addProject(store, repo);
+    const project = await services.addProject(store, repo);
     const thread = services.createThread(store, {
       projectId: project.id,
       title: "T",
@@ -260,19 +261,19 @@ describe("services", () => {
     );
   });
 
-  function makeThread(title = "T") {
+  async function makeThread(title = "T") {
     const repo = path.join(tmpDir, `settle-${title}-${Math.random().toString(16).slice(2)}`);
     fs.mkdirSync(repo);
     git(repo, ["init"]);
-    const project = services.addProject(store, repo);
+    const project = await services.addProject(store, repo);
     return services.createThread(store, {
       projectId: project.id,
       title,
     });
   }
 
-  it("setSettled accepts settled, active, and null; stamps settledAt only when non-null", () => {
-    const thread = makeThread("settle-accept");
+  it("setSettled accepts settled, active, and null; stamps settledAt only when non-null", async () => {
+    const thread = await makeThread("settle-accept");
     store.updateThread(thread.id, { updatedAt: 1_700_000_000_000 });
     const before = Date.now();
 
@@ -307,8 +308,8 @@ describe("services", () => {
     assert.equal(store.getThread(thread.id).settledAt, null);
   });
 
-  it("setSettled('settled') clears pin; setPinned(true) clears settled (mutual exclusion)", () => {
-    const thread = makeThread("settle-pin-mutex");
+  it("setSettled('settled') clears pin; setPinned(true) clears settled (mutual exclusion)", async () => {
+    const thread = await makeThread("settle-pin-mutex");
     store.updateThread(thread.id, { updatedAt: 1_700_000_000_000 });
 
     // Pin first, then settle — settle must clear pin.
@@ -358,8 +359,8 @@ describe("services", () => {
     );
   });
 
-  it("setQueued appends on a second call, clears on prompt null, does not bump updatedAt", () => {
-    const thread = makeThread("queued-append");
+  it("setQueued appends on a second call, clears on prompt null, does not bump updatedAt", async () => {
+    const thread = await makeThread("queued-append");
     store.updateThread(thread.id, { updatedAt: 1_700_000_000_000 });
 
     const first = services.setQueued(store, {
@@ -405,8 +406,8 @@ describe("services", () => {
     );
   });
 
-  it("setSnoozed validation table: past, now-exact, future, null clears both", () => {
-    const thread = makeThread("snooze-table");
+  it("setSnoozed validation table: past, now-exact, future, null clears both", async () => {
+    const thread = await makeThread("snooze-table");
     store.updateThread(thread.id, { updatedAt: 1_700_000_000_000 });
     const fixedUpdated = 1_700_000_000_000;
 
@@ -475,8 +476,8 @@ describe("services", () => {
     );
   });
 
-  it("pin and snooze persist across save/reload", () => {
-    const thread = makeThread("pin-snooze-disk");
+  it("pin and snooze persist across save/reload", async () => {
+    const thread = await makeThread("pin-snooze-disk");
     const until = Date.now() + 86_400_000;
     services.setPinned(store, { threadId: thread.id, pinned: true });
     services.setSnoozed(store, { threadId: thread.id, until });
@@ -493,8 +494,8 @@ describe("services", () => {
     assert.equal(t.snoozedAt, snoozedAt);
   });
 
-  it("setSettled rejects settling a working thread", () => {
-    const thread = makeThread("settle-working");
+  it("setSettled rejects settling a working thread", async () => {
+    const thread = await makeThread("settle-working");
     store.updateThread(thread.id, { status: "working" });
     assert.throws(
       () =>
@@ -523,8 +524,8 @@ describe("services", () => {
     assert.equal(cleared.settledOverride, null);
   });
 
-  it("setSettled rejects unknown override values, naming the value", () => {
-    const thread = makeThread("settle-bad");
+  it("setSettled rejects unknown override values, naming the value", async () => {
+    const thread = await makeThread("settle-bad");
     assert.throws(
       () =>
         services.setSettled(store, {
@@ -586,11 +587,11 @@ describe("services", () => {
     );
   });
 
-  it("deleteThread removes thread, messages, and work log", () => {
+  it("deleteThread removes thread, messages, and work log", async () => {
     const repo = path.join(tmpDir, "del-repo");
     fs.mkdirSync(repo);
     git(repo, ["init"]);
-    const project = services.addProject(store, repo);
+    const project = await services.addProject(store, repo);
     const thread = services.createThread(store, {
       projectId: project.id,
       title: "T",
@@ -617,11 +618,11 @@ describe("services", () => {
     assert.equal(store.getThreads().length, 0);
   });
 
-  it("deleteThread rejects while a run is active", () => {
+  it("deleteThread rejects while a run is active", async () => {
     const repo = path.join(tmpDir, "del-run-repo");
     fs.mkdirSync(repo);
     git(repo, ["init"]);
-    const project = services.addProject(store, repo);
+    const project = await services.addProject(store, repo);
     const thread = services.createThread(store, {
       projectId: project.id,
       title: "T",
@@ -639,11 +640,11 @@ describe("services", () => {
     assert.ok(store.getThread(thread.id), "thread must remain");
   });
 
-  it("deleteThread rejects when worktreePath is set", () => {
+  it("deleteThread rejects when worktreePath is set", async () => {
     const repo = path.join(tmpDir, "del-wt-repo");
     fs.mkdirSync(repo);
     git(repo, ["init"]);
-    const project = services.addProject(store, repo);
+    const project = await services.addProject(store, repo);
     const thread = services.createThread(store, {
       projectId: project.id,
       title: "T",
@@ -659,11 +660,11 @@ describe("services", () => {
     assert.ok(store.getThread(thread.id), "thread must remain");
   });
 
-  it("createThread includes runStartedAt null", () => {
+  it("createThread includes runStartedAt null", async () => {
     const repo = path.join(tmpDir, "rs-repo");
     fs.mkdirSync(repo);
     git(repo, ["init"]);
-    const project = services.addProject(store, repo);
+    const project = await services.addProject(store, repo);
     const thread = services.createThread(store, {
       projectId: project.id,
       title: "T",
@@ -671,11 +672,11 @@ describe("services", () => {
     assert.equal(thread.runStartedAt, null);
   });
 
-  it("getThreadDetail returns empty messages, work log, usage null", () => {
+  it("getThreadDetail returns empty messages, work log, usage null", async () => {
     const repo = path.join(tmpDir, "d-repo");
     fs.mkdirSync(repo);
     git(repo, ["init"]);
-    const project = services.addProject(store, repo);
+    const project = await services.addProject(store, repo);
     const thread = services.createThread(store, {
       projectId: project.id,
       title: "T",
@@ -688,33 +689,38 @@ describe("services", () => {
     assert.equal(detail.usage, null);
   });
 
-  it("gitStatus reports branch and dirty flag", () => {
+  it("gitStatus reports branch and dirty flag", async () => {
     const repo = path.join(tmpDir, "g-repo");
     fs.mkdirSync(repo);
     git(repo, ["init"]);
     git(repo, ["checkout", "-b", "feature-x"]);
     // empty tree is clean
-    let status = services.gitStatus(repo);
+    let status = await services.gitStatus(repo);
     assert.equal(status.isRepo, true);
     assert.equal(status.branch, "feature-x");
     assert.equal(status.dirty, false);
 
     fs.writeFileSync(path.join(repo, "dirty.txt"), "x");
-    status = services.gitStatus(repo);
+    status = await services.gitStatus(repo);
     assert.equal(status.dirty, true);
   });
 
-  it("gitStatus uses ssh when project.remoteHost is set", () => {
+  it("gitStatus uses ssh when project.remoteHost is set", async () => {
     const calls = [];
-    ssh.setExecFileSync((bin, args) => {
-      calls.push({ bin, args: args.slice() });
-      const remote = String(args[args.length - 1] || "");
-      if (remote.includes("rev-parse")) return "true\n";
-      if (remote.includes("branch")) return "main\n";
-      if (remote.includes("status")) return " M src/a.ts\n";
+    let syncCalls = 0;
+    ssh.setExecFileSync(() => {
+      syncCalls += 1;
       return "";
     });
-    const status = services.gitStatus({
+    ssh.setExecFile((bin, args, _opts, cb) => {
+      calls.push({ bin, args: args.slice() });
+      const remote = String(args[args.length - 1] || "");
+      if (remote.includes("rev-parse")) return cb(null, "true\n");
+      if (remote.includes("branch")) return cb(null, "main\n");
+      if (remote.includes("status")) return cb(null, " M src/a.ts\n");
+      return cb(null, "");
+    });
+    const status = await services.gitStatus({
       path: "/unused-local",
       remoteHost: "dev@box",
       remotePath: "/srv/app",
@@ -722,6 +728,7 @@ describe("services", () => {
     assert.equal(status.isRepo, true);
     assert.equal(status.branch, "main");
     assert.equal(status.dirty, true);
+    assert.equal(syncCalls, 0, "gitStatus must not call execFileSync");
     assert.ok(calls.length >= 1, "ssh must be spawned");
     assert.ok(calls.every((c) => c.bin === "ssh"));
     assert.ok(calls[0].args.includes("dev@box"));
@@ -731,6 +738,64 @@ describe("services", () => {
       calls.some((c) => /cd '\/srv\/app' && 'git'/.test(c.args[c.args.length - 1])),
       "remote command must cd then run git",
     );
+  });
+
+  it("gitFetch uses the network timeout and does not call execFileSync", async () => {
+    const calls = [];
+    let syncCalls = 0;
+    ssh.setExecFileSync(() => {
+      syncCalls += 1;
+      return "";
+    });
+    ssh.setExecFile((bin, args, opts, cb) => {
+      calls.push({ bin, args: args.slice(), opts });
+      cb(null, "");
+    });
+    await services.gitFetch("/tmp/some-repo");
+    assert.equal(syncCalls, 0);
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0].args, ["fetch"]);
+    assert.equal(calls[0].opts.timeout, 60_000);
+  });
+
+  it("gitFetch preserves the short error shape", async () => {
+    ssh.setExecFile((_bin, _args, _opts, cb) => {
+      cb(new Error("Command failed: git fetch\nfatal: unable to access"));
+    });
+    await assert.rejects(
+      () => services.gitFetch("/tmp/some-repo"),
+      (err) => {
+        assert.match(err.message, /^git fetch failed: Command failed: git fetch$/);
+        return true;
+      },
+    );
+  });
+
+  it("gitPull maps a failed pull without calling execFileSync", async () => {
+    let syncCalls = 0;
+    ssh.setExecFileSync(() => {
+      syncCalls += 1;
+      return "";
+    });
+    ssh.setExecFile((_bin, args, opts, cb) => {
+      if (args.includes("rev-parse")) return cb(null, "true\n");
+      if (args.includes("pull")) {
+        assert.equal(opts.timeout, 60_000);
+        return cb(
+          new Error(
+            "Command failed: git pull --ff-only\n" +
+              "fatal: Not possible to fast-forward, aborting.",
+          ),
+        );
+      }
+      return cb(null, "");
+    });
+    const res = await services.gitPull("/tmp/some-repo");
+    assert.equal(syncCalls, 0);
+    assert.deepEqual(res, {
+      ok: false,
+      reason: "Branch has diverged from upstream",
+    });
   });
 
   describe("workflow templates", () => {
@@ -948,7 +1013,7 @@ describe("forkWorkerThread", () => {
   let repo;
   let project;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-forkworker-"));
     store = new Store(path.join(tmpDir, "store.json"));
     repo = path.join(tmpDir, "repo");
@@ -956,7 +1021,7 @@ describe("forkWorkerThread", () => {
     // addProject requires a real work tree (`git rev-parse`), not just a
     // `.git` directory. canHostWorktree still keys off `.git` existing.
     git(repo, ["init"]);
-    project = services.addProject(store, repo);
+    project = await services.addProject(store, repo);
   });
 
   afterEach(() => {
