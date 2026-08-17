@@ -18,6 +18,7 @@ const {
   maybeRenameWorktreeBranch,
   gcScan,
   gcClean,
+  enforceRetention,
 } = require("../worktrees.js");
 
 function git(cwd, args) {
@@ -182,6 +183,50 @@ describe("gcScan / gcClean", () => {
     assert.ok(!retention.some((c) => c.path === newest.worktreePath));
     assert.ok(retention.every((c) => !c.blocked));
     assert.equal(scan.usage[0].worktrees, 3);
+  });
+
+  it("enforceRetention reclaims past-limit worktrees and leaves orphans alone", async () => {
+    const orphanThread = services.createThread(fx.store, {
+      projectId: fx.project.id,
+      title: "Orphan",
+    });
+    const orphan = setupWorktree({
+      store: fx.store,
+      threadId: orphanThread.id,
+      worktreeBase: fx.worktreeBase,
+    });
+    fx.store.removeThread(orphanThread.id);
+    const keep = addWorktree(fx, "Keep");
+    const drop = addWorktree(fx, "Drop");
+    fx.store.updateThread(keep.id, {
+      settledOverride: "settled",
+      updatedAt: 2_000,
+    });
+    fx.store.updateThread(drop.id, {
+      settledOverride: "settled",
+      updatedAt: 1_000,
+    });
+    fx.store.saveNow();
+
+    // No limit set: retention is opt-in, so nothing is reclaimed.
+    const noop = await enforceRetention({
+      store: fx.store,
+      worktreeBase: fx.worktreeBase,
+    });
+    assert.deepEqual(noop.removed, []);
+    assert.ok(fs.existsSync(drop.worktreePath));
+
+    services.updateProject(fx.store, fx.project.id, { worktreeRetention: 1 });
+    const result = await enforceRetention({
+      store: fx.store,
+      worktreeBase: fx.worktreeBase,
+    });
+    assert.deepEqual(result.removed, [drop.worktreePath]);
+    assert.ok(!fs.existsSync(drop.worktreePath));
+    assert.ok(fs.existsSync(keep.worktreePath));
+    // Orphans are the batch dialog's job, not the boot sweep's.
+    assert.ok(fs.existsSync(orphan.worktreePath));
+    assert.equal(branchExists(fx.repo, drop.branch), true);
   });
 
   it("gcClean never deletes the branch", async () => {

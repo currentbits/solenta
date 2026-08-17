@@ -3303,6 +3303,29 @@ async function gcClean(opts) {
 }
 
 /**
+ * Enforce per-project retention limits (#316): reclaim the settled worktrees
+ * a project keeps past its `worktreeRetention`. Opt-in — a project without
+ * the setting has nothing to reclaim, so this is a no-op by default. Runs
+ * gcClean, so the same guards apply: dirty and unreadable trees are skipped,
+ * and branches are never deleted.
+ *
+ * @param {object} opts
+ * @param {import('./store').Store} opts.store
+ * @param {string} opts.worktreeBase
+ * @param {(channel: string, payload: unknown) => void} [opts.broadcast]
+ * @returns {Promise<{ removed: string[], failed: Array<{path: string, error: string}>, bytes: number }>}
+ */
+async function enforceRetention(opts) {
+  const { store, worktreeBase, broadcast } = opts || {};
+  const scan = await gcScan({ store, worktreeBase });
+  const paths = scan.candidates
+    .filter((c) => c.reason === "retention" && !c.blocked)
+    .map((c) => c.path);
+  if (paths.length === 0) return { removed: [], failed: [], bytes: 0 };
+  return gcClean({ store, worktreeBase, paths, broadcast });
+}
+
+/**
  * Materialize the worktree for a pendingWorktree thread (lazy, t3-style:
  * a thread that never runs leaves nothing on disk). No-op for plain threads
  * and threads that already have one; a stale flag is cleared either way.
@@ -3395,6 +3418,7 @@ module.exports = {
   sweepOrphanWorktrees,
   gcScan,
   gcClean,
+  enforceRetention,
   ensureWorktree,
   isPrRefreshCandidate,
   isGitHubRemote,
