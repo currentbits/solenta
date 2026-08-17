@@ -152,6 +152,8 @@ export interface FakeOptions {
   fail?: Record<string, Error>;
   /** Override issues.fetch result (default: a successful fixture). */
   issueFetch?: FetchIssueResult;
+  /** Override attachments.saveImage result (default: { attachment: null }). */
+  saveImage?: (input: unknown) => { attachment: AttachmentInfo | null };
 }
 
 export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
@@ -1099,7 +1101,11 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       fromPaths: (input: unknown) =>
         rec("attachments.fromPaths", [input], { attachments: [] }),
       saveImage: (input: unknown) =>
-        rec("attachments.saveImage", [input], { attachment: null }),
+        rec(
+          "attachments.saveImage",
+          [input],
+          opts.saveImage?.(input) ?? { attachment: null },
+        ),
       readImage: (input: unknown) =>
         rec("attachments.readImage", [input], { dataUrl: null }),
     },

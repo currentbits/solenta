@@ -116,8 +116,8 @@ interface ComposerProps {
    */
   onListFiles?: (query: string) => Promise<string[]>;
   /**
-   * Native image/folder picker for attachments. Absent hides the attach
-   * button (web mode has no native dialog).
+   * Image/folder picker for attachments. Absent hides the attach button
+   * (tests / shells that do not wire one).
    */
   onPickAttachments?: () => Promise<AttachmentInfo[]>;
   /** Persist a pasted image; returns its attachment or null when rejected. */
@@ -125,8 +125,7 @@ interface ComposerProps {
   /** Thumbnail data URL for an attached image; null when unavailable. */
   onLoadAttachmentImage?: (path: string) => Promise<string | null>;
   /**
-   * Classify drag-dropped files into attachments (Electron resolves their
-   * absolute paths). Absent disables drop (web mode).
+   * Classify drag-dropped files into attachments. Absent disables drop.
    */
   onDropAttachmentFiles?: (files: File[]) => Promise<AttachmentInfo[]>;
 }
