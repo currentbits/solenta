@@ -63,6 +63,7 @@ export default function App() {
     setPinned,
     setSnoozed,
     setMuted,
+    renameThread,
     deleteThread,
     removeProject,
     setupWorktree,
@@ -206,6 +207,21 @@ export default function App() {
       void setMuted(threadId, muted);
     },
     [setMuted],
+  );
+
+  const handleRenameThread = useCallback(
+    (threadId: string, title: string) => {
+      void renameThread(threadId, title);
+    },
+    [renameThread],
+  );
+
+  const handleRenameOpenThread = useCallback(
+    (title: string) => {
+      if (!selectedThreadId) return;
+      void renameThread(selectedThreadId, title);
+    },
+    [renameThread, selectedThreadId],
   );
 
   const handleRowArchived = useCallback(
@@ -522,6 +538,7 @@ export default function App() {
         onSetPinned={handleSetPinned}
         onSetSnoozed={handleSetSnoozed}
         onSetMuted={handleSetMuted}
+        onRenameThread={handleRenameThread}
         onSetArchived={handleRowArchived}
         onClearSettled={handleClearSettled}
         onFork={handleRowFork}
@@ -608,6 +625,7 @@ export default function App() {
         onSetProvider={setProvider}
         onSetReasoningEffort={setReasoningEffort}
         onSetArchived={handleSetArchived}
+        onRenameThread={handleRenameOpenThread}
         onDeleteThread={deleteThread}
         changesOpen={changesOpen}
         changesNonce={changesNonce}

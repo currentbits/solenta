@@ -728,6 +728,21 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           : [next, ...threads];
         return Promise.resolve(next);
       },
+      rename: (input: unknown) => {
+        const i = input as { threadId: string; title: string };
+        calls.push({ channel: "threads.rename", args: [input] });
+        const existing = threads.find((t) => t.id === i.threadId);
+        if (!existing) {
+          return Promise.reject(new Error(`Unknown thread: ${i.threadId}`));
+        }
+        const title = String(i.title ?? "").trim().slice(0, 60);
+        if (!title) {
+          return Promise.reject(new Error("Thread title cannot be empty"));
+        }
+        const next: ThreadInfo = { ...existing, title };
+        threads = threads.map((t) => (t.id === i.threadId ? next : t));
+        return Promise.resolve(next);
+      },
       setProvider: (input: unknown) => rec("threads.setProvider", [input], thread()),
       setReasoningEffort: (input: unknown) =>
         rec("threads.setReasoningEffort", [input], thread()),

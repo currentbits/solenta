@@ -194,6 +194,8 @@ export interface UseCoderResult {
    */
   setSnoozed: (threadId: string, until: number | null) => Promise<void>;
   setMuted: (threadId: string, muted: boolean) => Promise<void>;
+  /** Rename a thread. Does not require selection. */
+  renameThread: (threadId: string, title: string) => Promise<void>;
   /** Permanently delete the selected thread (after caller confirms). */
   deleteThread: () => Promise<void>;
   /**
@@ -1273,6 +1275,24 @@ export function useCoder(): UseCoderResult {
     [api, applyThreads],
   );
 
+  const renameThread = useCallback(
+    async (threadId: string, title: string) => {
+      try {
+        const thread = await api.threads.rename({ threadId, title });
+        applyThreads(
+          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
+        );
+        setDetail((prev) =>
+          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
+        );
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+      }
+    },
+    [api, applyThreads],
+  );
+
   const deleteThread = useCallback(async () => {
     if (!selectedThreadId) return;
     const threadId = selectedThreadId;
@@ -1877,6 +1897,7 @@ export function useCoder(): UseCoderResult {
     setPinned,
     setSnoozed,
     setMuted,
+    renameThread,
     deleteThread,
     removeProject,
     setupWorktree,
