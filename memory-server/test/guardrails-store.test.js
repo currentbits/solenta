@@ -95,4 +95,19 @@ describe('memory store injection scan (#409)', () => {
     assert.ok(imported.id)
     assert.ok(janitor.id)
   })
+
+  it('rejects a poisoned supersede: rewriting an entry poisons the same channel', () => {
+    const { id } = memory.store({
+      type: 'knowledge',
+      title: 'Retry loop',
+      body: CLEAN,
+      source: 'mcp',
+    })
+    assert.throws(
+      () => memory.supersede(id, { body: POISON, source: 'mcp' }),
+      /injection\.override/,
+    )
+    assert.equal(memory.get(id).body, CLEAN)
+    assert.equal(memory.get(id).superseded_by ?? null, null)
+  })
 })

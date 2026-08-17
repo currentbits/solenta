@@ -347,16 +347,9 @@ export class Memory {
 
     // Agent-written entries (source 'mcp') are the injection-propagation
     // channel. App / import / janitor / rest writes are human-initiated.
-    if (source === 'mcp') {
-      try {
-        rejectInjectedMemory(title, body)
-      } catch (err) {
-        if (err instanceof Error && err.message.startsWith('Rejected by Solenta guardrails:')) {
-          throw err
-        }
-        console.error('memory guardrail scan failed (non-fatal):', err)
-      }
-    }
+    // rejectInjectedMemory already fails open on a scanner fault, so the only
+    // error that reaches here is a real rejection.
+    if (source === 'mcp') rejectInjectedMemory(title, body)
 
     // Write-time dedup: Jaccard vs live same-project-or-global (cap 500 most recent).
     // Scope rule (consistent across dedup, contradiction scan, maintenance):
@@ -1009,6 +1002,10 @@ export class Memory {
         : old.project
     const agent = fields.agent !== undefined ? cleanOptional(fields.agent) : old.agent
     const source = fields.source !== undefined ? cleanOptional(fields.source) : old.source
+
+    // Rewriting a live entry poisons the same channel as writing a new one.
+    if (source === 'mcp') rejectInjectedMemory(title, body)
+
     let status = fields.status !== undefined ? fields.status : old.status
     if (status && old.type !== 'task') {
       throw new Error(`status is only valid for type 'task'`)
