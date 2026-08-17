@@ -148,4 +148,13 @@ describe("codeIndexNoteFor", () => {
     assert.doesNotMatch(note, /NINTH_SHOULD_NOT_APPEAR/);
     assert.doesNotMatch(note, /TWELFTH_SHOULD_NOT_APPEAR/);
   });
+
+  it("skips files with no extracted symbols", () => {
+    const files = rankedFiles(MIN_FILES_FOR_NOTE, {
+      first: { path: "electron/test/store.test.js", symbols: [], rank: 999 },
+    });
+    const note = codeIndexNoteFor(makeIndex({ files }));
+    assert.doesNotMatch(note, /store\.test\.js/);
+    assert.match(note, /src\/mod1\.js/);
+  });
 });

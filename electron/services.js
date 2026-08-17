@@ -1511,6 +1511,9 @@ function codeIndexNoteFor(index) {
   const files = Array.isArray(index.files) ? index.files : [];
   for (const file of files) {
     if (!file || !file.path) continue;
+    // A path with no extracted symbols says nothing the agent can act on, and
+    // the note's char budget is the scarce thing here.
+    if (!Array.isArray(file.symbols) || file.symbols.length === 0) continue;
     const line = formatIndexFileLine(file);
     const candidate = parts.concat(line, steering).join("\n");
     if (candidate.length > CODEINDEX_NOTE_MAX) break;

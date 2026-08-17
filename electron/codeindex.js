@@ -356,24 +356,19 @@ function symbolOnLine(line, ext) {
  * @returns {Promise<Map<string, number>>}
  */
 async function touchCounts(repoRoot) {
+  // Empty --format so every non-blank line is a path: with %h the commit
+  // header and the blank line after it have to be counted out, and getting
+  // that wrong silently drops the first file of every commit.
   const log = await gitTryAsync(
     repoRoot,
-    ["log", "--format=%h", "--name-only", "-n", "300"],
+    ["log", "--format=", "--name-only", "-n", "300"],
     { raw: true },
   );
   /** @type {Map<string, number>} */
   const counts = new Map();
   if (!log.ok) return counts;
-  let expectHash = true;
   for (const line of String(log.stdout || "").split("\n")) {
-    if (!line) {
-      expectHash = true;
-      continue;
-    }
-    if (expectHash) {
-      expectHash = false;
-      continue;
-    }
+    if (!line) continue;
     const rel = line.replace(/\\/g, "/");
     counts.set(rel, (counts.get(rel) || 0) + 1);
   }

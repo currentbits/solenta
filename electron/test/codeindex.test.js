@@ -209,6 +209,26 @@ describe("codeindex", () => {
     }
   });
 
+  it("ranks by commit touches, including the first file of a commit", async () => {
+    const repo = path.join(tmp, "rank");
+    const userDataPath = path.join(tmp, "ud-rank");
+    initRepo(repo);
+    // "a.js" sorts first in every commit's --name-only list, which is exactly
+    // the position a mis-parsed git log silently drops.
+    write(repo, "a.js", "export function a1() {}\n");
+    write(repo, "b.js", "export function b1() {}\n");
+    git(repo, ["add", "."]);
+    git(repo, ["commit", "-qm", "one"]);
+    write(repo, "a.js", "export function a1() {}\nexport function a2() {}\n");
+    git(repo, ["add", "."]);
+    git(repo, ["commit", "-qm", "two"]);
+
+    const index = await refreshIndex({ userDataPath, repoRoot: repo });
+    assert.equal(row(index, "a.js").rank, 2);
+    assert.equal(row(index, "b.js").rank, 1);
+    assert.equal(index.files[0].path, "a.js");
+  });
+
   it("refreshIndex returns null for a non-git directory and does not throw", async () => {
     const dir = path.join(tmp, "not-git");
     fs.mkdirSync(dir);
