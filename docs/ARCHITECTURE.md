@@ -156,6 +156,45 @@ surfacing path, while user-sent turns (Retry after raising the cap) still run.
 Nested crews are not rolled up; each worker that fans out is its own
 orchestrator.
 
+## Fleet analytics
+
+Issue #375. Solenta launches every session and sees every commit, so the
+"which agent is actually better for MY codebase" question is answerable from
+ground truth rather than inference.
+
+| Piece | Path |
+|-------|------|
+| Collector | `electron/fleet.js` → `fleet:evidence` (facts only) |
+| Rollup | `src/fleet.ts` `summarizeFleet` (pure: evidence + range + now) |
+| View | `src/components/FleetView.tsx` (`FleetReport` is a pure presenter) |
+| Seam test | `electron/test/fleet-seam.test.js` — real collector into real rollup |
+
+Evidence: `gh pr list --state all` (with `reviews`, via `listPrsRaw` so the
+unknown-field fallback is not re-implemented), joined to threads by head
+branch. **A PR with no matching branch is a HUMAN PR and is kept** — it is
+the baseline the review tax divides by. Line durability uses the squash-merge
+shape: the merge commit is found by `(#N)` in the subject on the default
+branch, `git show --numstat` gives lines added and `git blame HEAD` counts
+how many are still there. Blame is capped (`BLAME_COMMIT_CAP`) and the
+shortfall is reported in `notes`, which the view renders — silent truncation
+would read as full coverage.
+
+Definitions that are deliberate, not incidental:
+
+- **Merge rate** = merged / (merged + closed-unmerged). Open PRs are out of
+  the denominator: an open PR is not a decision, and counting it as a failure
+  would make a fleet look worse the faster it ships.
+- **Close-without-merge** is reported *beside* merge rate, not as its shame.
+  A superseded or duplicate fix closing unmerged is the system working.
+- **Cost per MERGED PR**, not per token — `null` when nothing merged.
+- **Durability** only counts threads past the 14-day window. Nothing
+  measurable yet renders "not enough history", never "0% durable".
+- **Review tax** = median agent open→first-review over median human. Median,
+  because one PR reviewed three weeks later would swallow a mean.
+
+`null` and `0` mean different things everywhere in this feature, and the view
+renders them differently.
+
 ## Observability
 
 Solenta drives claude/codex/kimi/grok from the outside, so it is the only place
