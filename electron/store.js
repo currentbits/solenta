@@ -54,6 +54,7 @@ const EMPTY = {
     orchestrationBudgetUsd: null,
     autoSettleAfterDays: 3,
     mcpServers: [],
+    agentProfiles: [],
   },
 };
 
@@ -146,6 +147,109 @@ function validateMcpServers(raw) {
       }
       if (item.token) entry.token = item.token;
     }
+    return entry;
+  });
+}
+
+/** ReasoningEffort in src/shared/ipc.ts. Keep in lockstep. */
+const REASONING_EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
+
+/** PermissionMode in src/shared/ipc.ts. Keep in lockstep. */
+const PERMISSION_MODES = new Set([
+  "default",
+  "acceptEdits",
+  "plan",
+  "bypassPermissions",
+]);
+
+/**
+ * Parse one AgentProfile. Lenient path returns null; strict throws.
+ * @param {unknown} item
+ * @param {boolean} strict
+ * @returns {{ id: string, name: string, provider: string, model: string | null, reasoningEffort: string | null, permissionMode: string } | null}
+ */
+function parseAgentProfile(item, strict) {
+  const fail = (msg) => {
+    if (strict) throw new Error(msg);
+    return null;
+  };
+  if (!item || typeof item !== "object" || Array.isArray(item)) {
+    return fail("agentProfiles entry must be a plain object");
+  }
+  const rec = /** @type {Record<string, unknown>} */ (item);
+  const id = typeof rec.id === "string" ? rec.id.trim() : "";
+  if (!id) return fail("agentProfiles entry id must be a non-empty string");
+  const name = typeof rec.name === "string" ? rec.name.trim() : "";
+  if (!name) return fail("agentProfiles entry name must be a non-empty string");
+  if (name.length > 40) {
+    return fail("agentProfiles entry name must be at most 40 characters");
+  }
+  const provider = typeof rec.provider === "string" ? rec.provider.trim() : "";
+  if (!provider) {
+    return fail("agentProfiles entry provider must be a non-empty string");
+  }
+  const model = rec.model;
+  if (model !== null && typeof model !== "string") {
+    return fail("agentProfiles entry model must be a string or null");
+  }
+  const effort = rec.reasoningEffort;
+  if (effort !== null && !REASONING_EFFORTS.has(effort)) {
+    return fail(
+      "agentProfiles entry reasoningEffort must be one of low, medium, high, xhigh, max, or null",
+    );
+  }
+  const permissionMode = rec.permissionMode;
+  if (!PERMISSION_MODES.has(permissionMode)) {
+    return fail(
+      "agentProfiles entry permissionMode must be one of default, acceptEdits, plan, bypassPermissions",
+    );
+  }
+  return {
+    id,
+    name,
+    provider,
+    model,
+    reasoningEffort: /** @type {string | null} */ (effort),
+    permissionMode: /** @type {string} */ (permissionMode),
+  };
+}
+
+/**
+ * Lenient normalization for values read from disk: drops invalid entries,
+ * dedupes by id. Never throws.
+ * @param {unknown} raw
+ * @returns {Array<{ id: string, name: string, provider: string, model: string | null, reasoningEffort: string | null, permissionMode: string }>}
+ */
+function normalizeAgentProfiles(raw) {
+  if (!Array.isArray(raw)) return [];
+  /** @type {Array<{ id: string, name: string, provider: string, model: string | null, reasoningEffort: string | null, permissionMode: string }>} */
+  const out = [];
+  const seen = new Set();
+  for (const item of raw) {
+    const entry = parseAgentProfile(item, false);
+    if (!entry || seen.has(entry.id)) continue;
+    seen.add(entry.id);
+    out.push(entry);
+  }
+  return out;
+}
+
+/**
+ * Strict validation for settings:set patches: throws on the first problem.
+ * @param {unknown} raw
+ * @returns {Array<{ id: string, name: string, provider: string, model: string | null, reasoningEffort: string | null, permissionMode: string }>}
+ */
+function validateAgentProfiles(raw) {
+  if (!Array.isArray(raw)) {
+    throw new Error("agentProfiles must be an array");
+  }
+  const seen = new Set();
+  return raw.map((item) => {
+    const entry = parseAgentProfile(item, true);
+    if (seen.has(entry.id)) {
+      throw new Error(`Duplicate agentProfiles id: ${entry.id}`);
+    }
+    seen.add(entry.id);
     return entry;
   });
 }
@@ -253,6 +357,9 @@ const DEFAULT_AUTO_SETTLE_AFTER_DAYS = 3;
  * mcpServers: absent/junk → []; entries are healed entry-by-entry
  * (normalizeMcpServers), never throwing on a corrupt store.
  *
+ * agentProfiles: absent/junk/non-array → []; entries are healed
+ * entry-by-entry (normalizeAgentProfiles), never throwing on a corrupt store.
+ *
  * defaultWorktree: absent/junk → false (new threads run in the checkout
  * unless the user opts in).
  *
@@ -266,7 +373,7 @@ const DEFAULT_AUTO_SETTLE_AFTER_DAYS = 3;
  * absent/junk keeps the pre-setting behaviour (notify).
  *
  * @param {unknown} raw
- * @returns {{ dailyBudgetUsd: number | null, orchestrationBudgetUsd: number | null, autoSettleAfterDays: number | null, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }>, defaultWorktree: boolean, defaultOrchestrate: boolean, updateChannel: "prod" | "nightly" | null, notifications: boolean }}
+ * @returns {{ dailyBudgetUsd: number | null, orchestrationBudgetUsd: number | null, autoSettleAfterDays: number | null, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }>, defaultWorktree: boolean, defaultOrchestrate: boolean, updateChannel: "prod" | "nightly" | null, notifications: boolean, agentProfiles: Array<{ id: string, name: string, provider: string, model: string | null, reasoningEffort: string | null, permissionMode: string }> }}
  */
 function normalizeSettings(raw) {
   const settings = {
@@ -278,6 +385,7 @@ function normalizeSettings(raw) {
     defaultOrchestrate: false,
     updateChannel: null,
     notifications: true,
+    agentProfiles: [],
   };
   if (!raw || typeof raw !== "object") return settings;
   const obj = /** @type {{ dailyBudgetUsd?: unknown, orchestrationBudgetUsd?: unknown, autoSettleAfterDays?: unknown, mcpServers?: unknown }} */ (
@@ -318,6 +426,9 @@ function normalizeSettings(raw) {
   // key absent → leave default 3
 
   settings.mcpServers = normalizeMcpServers(obj.mcpServers);
+  settings.agentProfiles = normalizeAgentProfiles(
+    /** @type {{ agentProfiles?: unknown }} */ (obj).agentProfiles,
+  );
   settings.defaultWorktree =
     /** @type {{ defaultWorktree?: unknown }} */ (obj).defaultWorktree === true;
   settings.defaultOrchestrate =
@@ -1103,6 +1214,7 @@ class Store {
         orchestrationBudgetUsd: null,
         autoSettleAfterDays: DEFAULT_AUTO_SETTLE_AFTER_DAYS,
         mcpServers: [],
+        agentProfiles: [],
       };
     }
     // Re-normalize so a partial in-memory shape still exposes every key.
@@ -1117,6 +1229,7 @@ class Store {
       defaultOrchestrate: n.defaultOrchestrate,
       updateChannel: n.updateChannel,
       notifications: n.notifications,
+      agentProfiles: n.agentProfiles,
     };
   }
 
@@ -1136,6 +1249,7 @@ class Store {
         orchestrationBudgetUsd: null,
         autoSettleAfterDays: DEFAULT_AUTO_SETTLE_AFTER_DAYS,
         mcpServers: [],
+        agentProfiles: [],
       };
     }
     // Ensure both keys exist before partial patch.
@@ -1182,6 +1296,11 @@ class Store {
     }
     if (Object.prototype.hasOwnProperty.call(patch, "mcpServers")) {
       this.data.settings.mcpServers = validateMcpServers(patch.mcpServers);
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "agentProfiles")) {
+      this.data.settings.agentProfiles = validateAgentProfiles(
+        patch.agentProfiles,
+      );
     }
     if (Object.prototype.hasOwnProperty.call(patch, "defaultWorktree")) {
       const v = patch.defaultWorktree;
@@ -1523,6 +1642,7 @@ function cloneEmpty() {
       orchestrationBudgetUsd: null,
       autoSettleAfterDays: 3,
       mcpServers: [],
+      agentProfiles: [],
     },
   };
   ensureWorkflowTemplates(data);

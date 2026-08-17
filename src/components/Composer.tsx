@@ -10,6 +10,7 @@ import {
   type KeyboardEvent,
 } from "react";
 import type {
+  AgentProfile,
   AttachmentInfo,
   PermissionMode,
   ProviderInfo,
@@ -29,6 +30,7 @@ import {
   clampHighlightIndex,
   detailModelRow,
   CUSTOM_MODEL_ID,
+  buildProfileRows,
   buildProviderRows,
   effortDisplayLabel,
   providerDetail,
@@ -44,11 +46,12 @@ import {
   showReasoningControl,
   stepHighlightIndex,
   type ModelRow,
+  type ProfileRow,
 } from "../modelPicker";
 import { useEscapeClose } from "../useEscapeClose";
 import { applyMention, getMentionQuery, type MentionQuery } from "../mention";
 import { parseDelegate } from "../delegate";
-import { buildBestOfNPlan, providerVendor } from "../bestOfN";
+import { buildBestOfNEntries, providerVendor } from "../bestOfN";
 import { WorkflowsModal } from "./WorkflowsModal";
 import styles from "./Composer.module.css";
 
@@ -68,6 +71,8 @@ interface ComposerProps {
   reasoningEffort: ReasoningEffort | null;
   /** Registry from providers.list(). */
   providers: ProviderInfo[];
+  /** Saved named profiles from settings. Empty hides the Profiles section. */
+  agentProfiles?: AgentProfile[];
   /** Workflow templates from workflows.list(). */
   workflows: WorkflowTemplateInfo[];
   onSetProvider: (input: {
@@ -94,10 +99,10 @@ interface ComposerProps {
   /** Multi-phase Build workflow (Build pill main segment). */
   onBuild: (prompt: string, templateId: string) => void | Promise<void>;
   /**
-   * Best of N: run this prompt on each selected provider as a forked thread.
-   * Absent hides the control (tests and shells without fork).
+   * Best of N: run this prompt on each selected provider or profile as a
+   * forked thread. Absent hides the control (tests and shells without fork).
    */
-  onBestOfN?: (providerIds: string[], prompt: string) => void | Promise<void>;
+  onBestOfN?: (selectedIds: string[], prompt: string) => void | Promise<void>;
   /**
    * Delegation command: a prompt whose first token is `@<installed provider>`
    * forks this thread onto that provider and runs the remainder there.
@@ -222,6 +227,7 @@ export function Composer({
   model,
   reasoningEffort,
   providers,
+  agentProfiles = [],
   workflows,
   onSetProvider,
   onSetReasoningEffort,
@@ -462,6 +468,8 @@ export function Composer({
     sessionLocked,
     providerName,
   );
+  const profileRows = buildProfileRows(agentProfiles, providers);
+  const firstLevel = [...profileRows, ...providerRows];
   const drillInfo = drillProvider
     ? providers.find((p) => p.id === drillProvider)
     : undefined;
@@ -477,9 +485,25 @@ export function Composer({
   // It used to index the flat model list with the model-level highlight, so a
   // Grok thread showed "Fable, Anthropic": a confident description of something
   // the user was not pointing at.
+  const highlightedProfile =
+    !drillProvider && providerIndex < profileRows.length
+      ? profileRows[providerIndex]
+      : null;
   const providerPane = drillProvider
     ? null
-    : providerDetail(providerRows, providerIndex, providers);
+    : highlightedProfile
+      ? {
+          providerId: highlightedProfile.provider,
+          label: highlightedProfile.name,
+          vendor: highlightedProfile.disabled ? "not installed" : "profile",
+          description: highlightedProfile.summary,
+          efforts: [] as ReasoningEffort[],
+        }
+      : providerDetail(
+          providerRows,
+          Math.max(0, providerIndex - profileRows.length),
+          providers,
+        );
   const detail = providerPane ?? {
     providerId: detailRow.providerId,
     label: detailRow.label,
@@ -535,7 +559,9 @@ export function Composer({
     // Same reason as customFor: reset on OPEN so every close path is covered,
     // including ones added later.
     setDrillProvider(null);
-    setProviderIndex(initialProviderIndex(providerRows, provider));
+    setProviderIndex(
+      profileRows.length + initialProviderIndex(providerRows, provider),
+    );
     setHighlightIndex(initialHighlightIndex(modelRows, provider, model));
     // Focus the listbox so arrow keys work immediately.
     // modelRows is rebuilt each render; the reset only needs the open edge.
@@ -588,13 +614,18 @@ export function Composer({
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
       setProviderIndex((i) =>
-        stepProviderIndex(providerRows, i, e.key === "ArrowDown" ? 1 : -1),
+        stepProviderIndex(firstLevel, i, e.key === "ArrowDown" ? 1 : -1),
       );
       return;
     }
     if (e.key === "Enter" || e.key === "ArrowRight") {
       e.preventDefault();
-      const row = providerRows[providerIndex];
+      const profile = profileRows[providerIndex];
+      if (profile) {
+        if (!profile.disabled) void pickProfile(profile);
+        return;
+      }
+      const row = providerRows[providerIndex - profileRows.length];
       if (row && !row.disabled) enterProvider(row.id);
       return;
     }
@@ -691,13 +722,16 @@ export function Composer({
   const submitBestOfN = () => {
     if (!canBestOfN || !onBestOfN) return;
     const availableIds = installedProviders.map((p) => p.id);
-    const plan = buildBestOfNPlan(availableIds, bestIds, provider);
+    const plan = buildBestOfNEntries(availableIds, bestIds, agentProfiles);
     if (typeof plan === "string") {
       setLocalError(plan);
       return;
     }
     void runAction(async (prompt) => {
-      await onBestOfN(plan, prompt);
+      await onBestOfN(
+        plan.map((e) => e.id),
+        prompt,
+      );
       setBestOfNOpen(false);
     }, "Failed to start Best of N");
   };
@@ -807,6 +841,23 @@ export function Composer({
     }
   };
 
+  const pickProfile = async (row: ProfileRow) => {
+    if (row.disabled) return;
+    closeModelPicker(true);
+    try {
+      // setProvider clears effort on a harness switch; effort then permission.
+      await onSetProvider({ provider: row.provider, model: row.model });
+      await onSetReasoningEffort(row.reasoningEffort);
+      await onPermissionModeChange(row.permissionMode);
+    } catch (err) {
+      const msg =
+        err instanceof Error && err.message
+          ? err.message
+          : "Failed to apply profile";
+      setLocalError(msg);
+    }
+  };
+
   const pickRow = async (row: ModelRow) => {
     if (row.disabled) return;
     if (row.id === CUSTOM_MODEL_ID) {
@@ -883,7 +934,9 @@ export function Composer({
 
   /** Leave a provider's models and return to the provider list. */
   const leaveProvider = () => {
-    const at = initialProviderIndex(providerRows, drillProvider ?? provider);
+    const at =
+      profileRows.length +
+      initialProviderIndex(providerRows, drillProvider ?? provider);
     setDrillProvider(null);
     setProviderIndex(at);
     setCustomFor(null);
@@ -1130,6 +1183,44 @@ export function Composer({
                             }}
                           />
                         )}
+                        {profileRows.map((row, index) => (
+                          <li
+                            key={`profile:${row.id}`}
+                            role="option"
+                            aria-selected={false}
+                          >
+                            {index === 0 ? (
+                              <div
+                                className={styles.modelGroupHeading}
+                                aria-hidden="true"
+                              >
+                                Profiles
+                              </div>
+                            ) : null}
+                            <button
+                              type="button"
+                              className={styles.providerRow}
+                              data-highlighted={
+                                index === providerIndex ? "true" : undefined
+                              }
+                              data-disabled={row.disabled ? "true" : undefined}
+                              disabled={row.disabled}
+                              title={row.disabledReason ?? undefined}
+                              aria-label={`Profile ${row.name}`}
+                              onMouseEnter={() => setProviderIndex(index)}
+                              onClick={() => void pickProfile(row)}
+                            >
+                              <span className={styles.providerRowText}>
+                                <span className={styles.modelRowLabel}>
+                                  {row.name}
+                                </span>
+                                <span className={styles.modelRowVendor}>
+                                  {row.summary}
+                                </span>
+                              </span>
+                            </button>
+                          </li>
+                        ))}
                         {providerRows.map((row, index) => (
                           <li key={row.id} role="option" aria-selected={row.current}>
                             <button
@@ -1137,13 +1228,17 @@ export function Composer({
                               className={styles.providerRow}
                               data-selected={row.current ? "true" : undefined}
                               data-highlighted={
-                                index === providerIndex ? "true" : undefined
+                                index + profileRows.length === providerIndex
+                                  ? "true"
+                                  : undefined
                               }
                               data-disabled={row.disabled ? "true" : undefined}
                               disabled={row.disabled}
                               title={row.disabledReason ?? undefined}
                               aria-label={`Provider ${row.name}`}
-                              onMouseEnter={() => setProviderIndex(index)}
+                              onMouseEnter={() =>
+                                setProviderIndex(index + profileRows.length)
+                              }
                               onClick={() => enterProvider(row.id)}
                             >
                               <span className={styles.providerRowText}>
@@ -1562,6 +1657,41 @@ export function Composer({
                       Each selection forks a new thread
                     </p>
                     <ul className={styles.bestOfNList}>
+                      {profileRows.map((row, index) => {
+                        const checked = bestIds.includes(row.id);
+                        return (
+                          <li key={`profile:${row.id}`}>
+                            {index === 0 ? (
+                              <div
+                                className={styles.modelGroupHeading}
+                                aria-hidden="true"
+                              >
+                                Profiles
+                              </div>
+                            ) : null}
+                            <label
+                              className={styles.bestOfNRow}
+                              title={row.disabledReason ?? undefined}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                disabled={row.disabled}
+                                data-best-of-n-profile={row.id}
+                                onChange={() => toggleBestId(row.id)}
+                              />
+                              <span className={styles.bestOfNRowText}>
+                                <span className={styles.modelRowLabel}>
+                                  {row.name}
+                                </span>
+                                <span className={styles.modelRowVendor}>
+                                  {row.summary}
+                                </span>
+                              </span>
+                            </label>
+                          </li>
+                        );
+                      })}
                       {installedProviders.map((p) => {
                         const vendor = providerVendor(p);
                         const checked = bestIds.includes(p.id);

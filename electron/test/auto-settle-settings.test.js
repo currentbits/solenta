@@ -21,14 +21,14 @@ describe("normalizeSettings autoSettleAfterDays", () => {
       orchestrationBudgetUsd: null,
       autoSettleAfterDays: DEFAULT_AUTO_SETTLE_AFTER_DAYS,
       mcpServers: [],
-      defaultWorktree: false, defaultOrchestrate: false, updateChannel: null, notifications: true,
+      defaultWorktree: false, defaultOrchestrate: false, updateChannel: null, notifications: true, agentProfiles: [],
     });
     assert.deepEqual(normalizeSettings(null), {
       dailyBudgetUsd: null,
       orchestrationBudgetUsd: null,
       autoSettleAfterDays: 3,
       mcpServers: [],
-      defaultWorktree: false, defaultOrchestrate: false, updateChannel: null, notifications: true,
+      defaultWorktree: false, defaultOrchestrate: false, updateChannel: null, notifications: true, agentProfiles: [],
     });
     assert.equal(DEFAULT_AUTO_SETTLE_AFTER_DAYS, 3);
   });
@@ -90,13 +90,13 @@ describe("setSettings autoSettleAfterDays validation", () => {
 
     assert.deepEqual(
       services.setSettings(store, { autoSettleAfterDays: 7 }),
-      { dailyBudgetUsd: null, orchestrationBudgetUsd: null, autoSettleAfterDays: 7, mcpServers: [], defaultWorktree: false, defaultOrchestrate: false, updateChannel: null, notifications: true },
+      { dailyBudgetUsd: null, orchestrationBudgetUsd: null, autoSettleAfterDays: 7, mcpServers: [], defaultWorktree: false, defaultOrchestrate: false, updateChannel: null, notifications: true, agentProfiles: [] },
     );
     assert.equal(store.getSettings().autoSettleAfterDays, 7);
 
     assert.deepEqual(
       services.setSettings(store, { autoSettleAfterDays: null }),
-      { dailyBudgetUsd: null, orchestrationBudgetUsd: null, autoSettleAfterDays: null, mcpServers: [], defaultWorktree: false, defaultOrchestrate: false, updateChannel: null, notifications: true },
+      { dailyBudgetUsd: null, orchestrationBudgetUsd: null, autoSettleAfterDays: null, mcpServers: [], defaultWorktree: false, defaultOrchestrate: false, updateChannel: null, notifications: true, agentProfiles: [] },
     );
 
     assert.throws(
@@ -137,7 +137,7 @@ describe("setSettings autoSettleAfterDays validation", () => {
       orchestrationBudgetUsd: null,
       autoSettleAfterDays: 3,
       mcpServers: [],
-      defaultWorktree: false, defaultOrchestrate: false, updateChannel: null, notifications: true,
+      defaultWorktree: false, defaultOrchestrate: false, updateChannel: null, notifications: true, agentProfiles: [],
     });
   });
 
