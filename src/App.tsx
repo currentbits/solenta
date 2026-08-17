@@ -809,6 +809,7 @@ export default function App() {
           open={settingsOpen}
           onClose={closeSettings}
           settings={settings}
+          providers={providers}
           status={appStatus}
           update={updateStatus}
           onCheckUpdate={checkUpdate}
