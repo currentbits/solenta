@@ -50,6 +50,7 @@ import type {
   SkillInfo,
   SkillWrite,
   SpaceInfo,
+  SpecArtifact,
   ThreadDetail,
   ThreadInfo,
   DigestResult,
@@ -59,8 +60,24 @@ import type {
   WorkflowTemplateInfo,
   WorkflowView,
 } from "./shared/ipc";
+import { SPEC_ARTIFACTS, SPEC_DIR } from "./shared/ipc";
 import { buildActivity } from "./activity.ts";
 import { mockData } from "./mockData.ts";
+
+/** Stand-in artifact bodies for the browser twin (issue #269). */
+const DEV_SPEC_ARTIFACTS: Record<SpecArtifact, string> = {
+  requirements:
+    "1. WHEN spec mode is on THE SYSTEM SHALL gate each stage on a human approval.\n" +
+    "2. WHEN an artifact is submitted THE SYSTEM SHALL stop the thread until it is reviewed.\n\n" +
+    "Out of scope: parsing tasks.md into a dispatch DAG.",
+  design:
+    "Thread carries `spec { slug, stage, awaitingApproval }`; artifacts live in\n" +
+    "`.solenta/specs/<slug>/` so they diff like code.",
+  tasks:
+    "- [ ] services: stage machine + standing note\n" +
+    "- [ ] runner: append the note to every dispatched prompt\n" +
+    "- [ ] UI: spec card with Approve / Request changes",
+};
 
 const MEMORY_EXCERPT_LEN = 160;
 const MEMORY_NOT_FOUND = "Memory entry not found";
@@ -2550,6 +2567,39 @@ function buildDevCoder(): CoderApi {
         return patchThread(input.threadId, {
           notes: String(input.notes ?? "").trim().slice(0, 2000),
         });
+      },
+      // Spec mode (issue #269). The demo has no agent to write artifacts, so
+      // a fixture stage lands already submitted — that is the state worth
+      // seeing in the browser twin.
+      async startSpec(input: { threadId: string }) {
+        const existing = threads.find((t) => t.id === input.threadId);
+        if (existing?.spec) return { ...existing };
+        return patchThread(input.threadId, {
+          spec: { slug: "spec", stage: "requirements", awaitingApproval: true },
+        });
+      },
+      async reviewSpec(input: {
+        threadId: string;
+        decision: "approve" | "revise";
+        feedback?: string;
+      }) {
+        const spec = threads.find((t) => t.id === input.threadId)?.spec;
+        if (!spec) throw new Error("Thread is not in spec mode");
+        const order = SPEC_ARTIFACTS;
+        const next = order[order.indexOf(spec.stage as SpecArtifact) + 1];
+        const stage =
+          input.decision === "approve" ? (next ?? "build") : spec.stage;
+        return patchThread(input.threadId, {
+          spec: { ...spec, stage, awaitingApproval: stage !== "build" },
+        });
+      },
+      async specArtifact(input: { threadId: string; stage: SpecArtifact }) {
+        const slug =
+          threads.find((t) => t.id === input.threadId)?.spec?.slug ?? "spec";
+        return {
+          path: `${SPEC_DIR}/${slug}/${input.stage}.md`,
+          text: DEV_SPEC_ARTIFACTS[input.stage],
+        };
       },
       async rename(input: { threadId: string; title: string }) {
         const title = String(input.title ?? "").trim().slice(0, TITLE_MAX);

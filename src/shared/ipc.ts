@@ -290,6 +290,30 @@ export interface ThreadInfo {
    * capped to HYPOTHESES_MAX. Absent until an agent records one.
    */
   hypotheses?: Hypothesis[];
+  /**
+   * Spec mode (issue #269): the thread writes three gated artifacts before it
+   * writes code. Absent = normal thread. Set by threads.startSpec, advanced
+   * one stage per approval in threads.reviewSpec.
+   */
+  spec?: ThreadSpec;
+}
+
+/** The three gated spec artifacts, in the order they are approved (issue #269). */
+export const SPEC_ARTIFACTS = ["requirements", "design", "tasks"] as const;
+export type SpecArtifact = (typeof SPEC_ARTIFACTS)[number];
+/** "build" is the post-gate stage: all three approved, code may finally be written. */
+export type SpecStage = SpecArtifact | "build";
+
+/** Spec folder relative to the thread's worktree: artifacts diff like code. */
+export const SPEC_DIR = ".solenta/specs";
+
+/** A thread's spec-mode state (issue #269). The artifacts live on disk. */
+export interface ThreadSpec {
+  /** Folder name under SPEC_DIR holding this thread's artifacts. */
+  slug: string;
+  stage: SpecStage;
+  /** The current stage's artifact is submitted and waiting on the user. */
+  awaitingApproval: boolean;
 }
 
 /** Cap for ThreadInfo.notes / threads.setNotes (issue #194). */
@@ -1344,6 +1368,31 @@ export interface CoderApi {
      * THREAD_NOTES_MAX, empty string clears. Never bumps updatedAt.
      */
     setNotes(input: { threadId: string; notes: string }): Promise<ThreadInfo>;
+    /**
+     * Turn spec mode on (issue #269): the thread starts at the requirements
+     * stage and the runner tells the agent to write the artifact and stop.
+     * Idempotent — calling it on a spec thread returns it unchanged.
+     */
+    startSpec(input: { threadId: string }): Promise<ThreadInfo>;
+    /**
+     * Answer the stage gate. "approve" advances to the next stage
+     * (requirements → design → tasks → build); "revise" keeps the stage and
+     * passes `feedback` back to the agent. Either way a run starts with the
+     * stage's prompt. Rejects a thread that is not awaiting approval.
+     */
+    reviewSpec(input: {
+      threadId: string;
+      decision: "approve" | "revise";
+      feedback?: string;
+    }): Promise<ThreadInfo>;
+    /**
+     * Read one artifact off disk. `text` is null when the agent has not
+     * written the file yet; `path` is absolute and always returned.
+     */
+    specArtifact(input: {
+      threadId: string;
+      stage: SpecArtifact;
+    }): Promise<{ path: string; text: string | null }>;
     /**
      * Rename a thread. Trims, truncates to THREAD_TITLE_MAX, rejects an
      * empty title. Never bumps updatedAt.
