@@ -1,5 +1,5 @@
 /**
- * Narrow-window drawer a11y (issue #141): real buttons, aria-expanded,
+ * Narrow-window drawer a11y (issue #219): real buttons, aria-expanded,
  * inert panes, Escape to close. The old checkbox/label hack is gone.
  *
  * Run: node --import=./test/support/render.mjs --test test/drawerA11y.test.tsx
