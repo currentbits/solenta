@@ -26,12 +26,26 @@ const crypto = require("node:crypto");
 const { version: SERVICE_VERSION } = require("../package.json");
 const CAP = 500;
 
+/** Derived span/trace id. All-zero is invalid in OTLP, so nudge it. */
 function hexId(input, n) {
   const h = crypto.createHash("sha256").update(String(input)).digest("hex").slice(0, n);
   return /^0+$/.test(h) ? `1${"0".repeat(n - 1)}` : h;
 }
-function kv(k, f, v) { return v == null || v === "" ? null : { key: k, value: { [f]: v } }; }
-function i(n) { return typeof n === "number" && Number.isFinite(n) ? String(Math.trunc(n)) : null; }
+
+/** One OTLP attribute, or null when there is no value worth sending. */
+function attr(key, field, value) {
+  return value == null || value === "" ? null : { key, value: { [field]: value } };
+}
+
+/** OTLP/JSON carries intValue as a decimal STRING, not a number. */
+function intValue(n) {
+  return typeof n === "number" && Number.isFinite(n) ? String(Math.trunc(n)) : null;
+}
+
+/** Epoch ms -> the nanosecond string OTLP wants; null when not a real time. */
+function unixNano(ms) {
+  return typeof ms === "number" && Number.isFinite(ms) ? `${Math.trunc(ms)}000000` : null;
+}
 
 /**
  * @typedef {object} OtelDeps
@@ -59,10 +73,11 @@ function createOtel(deps) {
   let sending = null;
 
   function cfg() { try { return deps.getSettings() || {}; } catch { return {}; } }
+
+  /** Collector base URL, or null when export is off. Pure. */
   function dest() {
     const e = cfg().endpoint;
-    if (!e) { buffer = []; clearTimer(); return null; }
-    return String(e).replace(/\/+$/, "");
+    return e ? String(e).replace(/\/+$/, "") : null;
   }
   function thread(id) { try { return (id && deps.getThread(id)) || null; } catch { return null; } }
   function rootId(id) {
@@ -130,21 +145,21 @@ function createOtel(deps) {
       const span = {
         traceId: hexId(rootId(threadId), 32), spanId: hexId(input.runId, 16),
         name: `invoke_agent ${provider}`.trim(), kind: 3,
-        startTimeUnixNano: `${rec.startedAt}000000`, endTimeUnixNano: `${now()}000000`,
+        startTimeUnixNano: unixNano(rec.startedAt), endTimeUnixNano: unixNano(now()),
         attributes: [
-          kv("gen_ai.operation.name", "stringValue", "invoke_agent"),
-          kv("gen_ai.provider.name", "stringValue", provider),
-          kv("gen_ai.agent.id", "stringValue", provider && model ? `${provider}:${model}` : provider),
-          kv("gen_ai.request.model", "stringValue", model),
-          kv("gen_ai.usage.input_tokens", "intValue", i(input.tokensIn)),
-          kv("gen_ai.usage.output_tokens", "intValue", i(input.tokensOut)),
-          kv("session.id", "stringValue", threadId),
-          kv("solenta.thread.id", "stringValue", threadId),
-          kv("solenta.run.id", "stringValue", input.runId),
-          kv("solenta.run.status", "stringValue", input.status),
-          kv("solenta.project.id", "stringValue", t && t.projectId),
-          kv("solenta.cost.usd", "doubleValue", Number.isFinite(input.costUsd) ? input.costUsd : null),
-          kv("solenta.orch.worker", "boolValue", t && t.orchWorker ? true : null),
+          attr("gen_ai.operation.name", "stringValue", "invoke_agent"),
+          attr("gen_ai.provider.name", "stringValue", provider),
+          attr("gen_ai.agent.id", "stringValue", provider && model ? `${provider}:${model}` : provider),
+          attr("gen_ai.request.model", "stringValue", model),
+          attr("gen_ai.usage.input_tokens", "intValue", intValue(input.tokensIn)),
+          attr("gen_ai.usage.output_tokens", "intValue", intValue(input.tokensOut)),
+          attr("session.id", "stringValue", threadId),
+          attr("solenta.thread.id", "stringValue", threadId),
+          attr("solenta.run.id", "stringValue", input.runId),
+          attr("solenta.run.status", "stringValue", input.status),
+          attr("solenta.project.id", "stringValue", t && t.projectId),
+          attr("solenta.cost.usd", "doubleValue", Number.isFinite(input.costUsd) ? input.costUsd : null),
+          attr("solenta.orch.worker", "boolValue", t && t.orchWorker ? true : null),
         ].filter(Boolean),
         status: input.status === "failed"
           ? { code: 2, ...(input.error ? { message: String(input.error).slice(0, 256) } : {}) }
@@ -171,19 +186,24 @@ function createOtel(deps) {
   function toolCall(input) {
     try {
       if (!dest() || !input || !input.toolId) return;
+      // A span without both real times is invalid at the collector and would
+      // reject the whole batch, so it is worth nothing rather than guessing.
+      const startedAt = unixNano(input.startedAt);
+      const endedAt = unixNano(input.endedAt);
+      if (!startedAt || !endedAt) return;
       enqueue({
         traceId: hexId(rootId(input.threadId), 32),
         spanId: hexId(`${input.runId}:${input.toolId}`, 16),
         parentSpanId: hexId(input.runId, 16),
         name: `execute_tool ${input.name || ""}`.trim(), kind: 3,
-        startTimeUnixNano: `${input.startedAt}000000`, endTimeUnixNano: `${input.endedAt}000000`,
+        startTimeUnixNano: startedAt, endTimeUnixNano: endedAt,
         attributes: [
-          kv("gen_ai.operation.name", "stringValue", "execute_tool"),
-          kv("gen_ai.tool.name", "stringValue", input.name),
-          kv("solenta.tool.id", "stringValue", input.toolId),
-          kv("session.id", "stringValue", input.threadId),
-          kv("solenta.thread.id", "stringValue", input.threadId),
-          kv("solenta.run.id", "stringValue", input.runId),
+          attr("gen_ai.operation.name", "stringValue", "execute_tool"),
+          attr("gen_ai.tool.name", "stringValue", input.name),
+          attr("solenta.tool.id", "stringValue", input.toolId),
+          attr("session.id", "stringValue", input.threadId),
+          attr("solenta.thread.id", "stringValue", input.threadId),
+          attr("solenta.run.id", "stringValue", input.runId),
         ].filter(Boolean),
         status: input.isError ? { code: 2 } : { code: 1 },
       });
@@ -191,7 +211,13 @@ function createOtel(deps) {
   }
 
   function enqueue(span) {
-    if (!dest()) return;
+    if (!dest()) {
+      // Export switched off mid-session: drop what is held rather than deliver
+      // it later to a collector the user has since disowned.
+      buffer = [];
+      clearTimer();
+      return;
+    }
     // ponytail: fixed 500-span cap, add disk spill if a dead collector proves lossy
     if (buffer.length >= CAP) buffer.shift();
     buffer.push(span);
