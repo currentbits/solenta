@@ -135,6 +135,10 @@ const coder = {
   usage: {
     byDay: () => invoke("usage:byDay"),
   },
+  digest: {
+    list: (input) => invoke("digest:list", input),
+    markSeen: (input) => invoke("digest:markSeen", input),
+  },
   runs: {
     start: (input) => invoke("runs:start", input),
     startWorkflow: (input) => invoke("runs:startWorkflow", input),

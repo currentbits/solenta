@@ -34,6 +34,7 @@ const skills = require("./skills.js");
 const { fetchIssue, listIssues, setPlanStatus } = require("./issues.js");
 const automations = require("./automations.js");
 const { buildActivity } = require("./activity.js");
+const { collectDigest } = require("./digest.js");
 const updater = require("./updater.js");
 
 /**
@@ -206,6 +207,20 @@ const IPC_HANDLERS = {
   },
   "usage:byDay": async (ctx) => {
     return ctx.store.getUsageByDay();
+  },
+  "digest:list": async (ctx, input) => {
+    return collectDigest({
+      store: ctx.store,
+      sinceMs: input && input.sinceMs,
+      nowMs: Date.now(),
+    });
+  },
+  "digest:markSeen": async (ctx, input) => {
+    const at =
+      input && Number.isFinite(input.atMs) ? input.atMs : Date.now();
+    ctx.store.setDigestSeenAt(at);
+    ctx.store.save();
+    return { seenAt: at };
   },
   "threads:search": async (ctx, input) => {
     return services.searchThreads(ctx.store, input || { query: "" });
