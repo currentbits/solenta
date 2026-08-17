@@ -7,7 +7,7 @@ const path = require("node:path");
 const { createRequire } = require("node:module");
 
 const { registerMcpServer, unregisterMcpServer } = require("./memory-sup.js");
-const { forkWorkerThread, recordHypothesis } = require("./services.js");
+const { forkWorkerThread, recordHypothesis, submitSpec } = require("./services.js");
 
 const SERVER_NAME = "coder-threads";
 const CONFIG_NAME = "orch-server.json";
@@ -21,6 +21,8 @@ const INSTRUCTIONS =
   "of your prompt; pass them, never guess an id from a title. " +
   "Keep the hypothesis ledger current as you work: call hypothesis_record for each " +
   "distinct approach as soon as you know how it turned out. " +
+  "When a thread is in spec mode the prompt carries a [Spec mode] note; write only " +
+  "that stage's artifact and call spec_submit. " +
   "threads_list shows every thread with id, title, provider, status, handoffFrom, " +
   "projectId and projectName — filter it by your own projectId first. " +
   "thread_fork and thread_send reject a thread outside the projectId you pass. " +
@@ -348,7 +350,23 @@ function createToolHandlers(deps) {
     return { recorded: true, total };
   }
 
-  return { threads_list, thread_fork, thread_send, thread_status, hypothesis_record };
+  async function spec_submit(args) {
+    const thread = store.getThread(args.threadId);
+    if (!thread) {
+      throw new Error(`Unknown thread: ${args.threadId}`);
+    }
+    assertSameProject(thread, args.projectId);
+    return submitSpec(store, { threadId: args.threadId });
+  }
+
+  return {
+    threads_list,
+    thread_fork,
+    thread_send,
+    thread_status,
+    hypothesis_record,
+    spec_submit,
+  };
 }
 
 /**
@@ -446,6 +464,23 @@ function buildMcpServer(sdk, handlers) {
       },
     },
     async (args) => json(await handlers.hypothesis_record(args)),
+  );
+
+  server.registerTool(
+    "spec_submit",
+    {
+      description:
+        "Submit the current spec-stage artifact for human approval. " +
+        "Write the artifact file FIRST, then call this, then STOP and say " +
+        "what you wrote — the human approves before the next stage opens. " +
+        "projectId is YOUR OWN project id (stated at the end of your prompt); " +
+        "the thread must belong to it.",
+      inputSchema: {
+        threadId: z.string().min(1),
+        projectId: z.string().min(1),
+      },
+    },
+    async (args) => json(await handlers.spec_submit(args)),
   );
 
   return server;

@@ -181,6 +181,17 @@ transcript. Entries live on the thread (`ThreadInfo.hypotheses`, newest-last,
 capped) and `hypothesisNoteFor` injects the invalidated ones into the next
 dispatch so a later agent, or a best-of-N fork, does not re-tread a dead end.
 
+## Spec mode
+
+Optional per-thread gate (issue #269): the agent writes `requirements.md`,
+`design.md`, then `tasks.md` into `<worktree>/.solenta/specs/<slug>/`, and a
+human approves each before the next opens. State is
+`ThreadInfo.spec { slug, stage, awaitingApproval }`; the stage machine lives in
+`electron/services.js` (`startSpec` / `submitSpec` / `reviewSpec`),
+`specNoteFor` rides every dispatch until stage `build`, the agent submits with
+the `spec_submit` MCP tool, and approving in the SpecCard advances the stage
+and starts the next run. The gate is procedural, not sandboxed.
+
 ## Renderer notes
 
 - Composer model pill: always shown. Empty `models` → Default + Custom… (inline

@@ -34,6 +34,7 @@ import type {
   ReasoningEffort,
   SkillInfo,
   SkillWrite,
+  SpecArtifact,
   ThreadDetail,
   ThreadInfo,
   ThreadSummaryInfo,
@@ -262,6 +263,19 @@ export interface UseCoderResult {
   renameThread: (threadId: string, title: string) => Promise<void>;
   /** Save scratch notes on a thread (header editor, issue #194). */
   setNotes: (threadId: string, notes: string) => Promise<void>;
+  /** Turn spec mode on (issue #269). Updates thread from the returned ThreadInfo. */
+  startSpec: (threadId: string) => Promise<void>;
+  /** Answer the spec stage gate. Updates thread from the returned ThreadInfo. */
+  reviewSpec: (
+    threadId: string,
+    decision: "approve" | "revise",
+    feedback?: string,
+  ) => Promise<void>;
+  /** Read one spec artifact off disk. */
+  specArtifact: (
+    threadId: string,
+    stage: SpecArtifact,
+  ) => Promise<{ path: string; text: string | null }>;
   /** Permanently delete the selected thread (after caller confirms). */
   deleteThread: () => Promise<void>;
   /**
@@ -1438,6 +1452,56 @@ export function useCoder(): UseCoderResult {
     [api, applyThreads],
   );
 
+  const startSpec = useCallback(
+    async (threadId: string) => {
+      try {
+        const thread = await api.threads.startSpec({ threadId });
+        applyThreads(
+          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
+        );
+        setDetail((prev) =>
+          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
+        );
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+      }
+    },
+    [api, applyThreads],
+  );
+
+  const reviewSpec = useCallback(
+    async (
+      threadId: string,
+      decision: "approve" | "revise",
+      feedback?: string,
+    ) => {
+      try {
+        const thread = await api.threads.reviewSpec({
+          threadId,
+          decision,
+          feedback,
+        });
+        applyThreads(
+          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
+        );
+        setDetail((prev) =>
+          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
+        );
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+      }
+    },
+    [api, applyThreads],
+  );
+
+  const specArtifact = useCallback(
+    (threadId: string, stage: SpecArtifact) =>
+      api.threads.specArtifact({ threadId, stage }),
+    [api],
+  );
+
   const deleteThread = useCallback(async () => {
     if (!selectedThreadId) return;
     const threadId = selectedThreadId;
@@ -2096,6 +2160,9 @@ export function useCoder(): UseCoderResult {
     setMuted,
     renameThread,
     setNotes,
+    startSpec,
+    reviewSpec,
+    specArtifact,
     deleteThread,
     removeProject,
     setupWorktree,

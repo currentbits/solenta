@@ -1287,6 +1287,213 @@ function recordHypothesis(store, input) {
   return entry;
 }
 
+/* --------------------------------------------------------------- spec mode */
+
+/** The three gated artifacts, in approval order (issue #269). */
+const SPEC_ARTIFACTS = ["requirements", "design", "tasks"];
+/** Spec folder inside the worktree, so artifacts review and diff like code. */
+const SPEC_DIR = ".solenta/specs";
+
+/** What the agent must produce at each stage. */
+const SPEC_GOAL = {
+  requirements:
+    "requirements.md — numbered acceptance criteria, each one testable " +
+    '("WHEN <trigger> THE SYSTEM SHALL <behavior>"), plus what is out of scope',
+  design:
+    "design.md — the technical approach: files touched, data shapes, and " +
+    "the alternatives you rejected and why",
+  tasks:
+    "tasks.md — an ordered checklist of implementation tasks, each naming " +
+    "the files it touches and the requirement numbers it satisfies",
+};
+
+/** The stage after `stage`, or null when `stage` is unknown / already build. */
+function nextSpecStage(stage) {
+  const i = SPEC_ARTIFACTS.indexOf(stage);
+  if (i < 0) return null;
+  return SPEC_ARTIFACTS[i + 1] || "build";
+}
+
+/**
+ * Absolute path of one artifact. `cwd` is the thread's worktree (or the
+ * project path when it has none) — the same folder the CLI runs in.
+ * @param {{ spec?: { slug?: string } } | null | undefined} thread
+ * @param {string} cwd
+ * @param {string} stage
+ */
+function specArtifactPath(thread, cwd, stage) {
+  const slug = (thread && thread.spec && thread.spec.slug) || "spec";
+  return path.join(String(cwd || ""), SPEC_DIR, slug, `${stage}.md`);
+}
+
+/**
+ * Turn spec mode on: the thread starts at requirements with nothing submitted.
+ * Idempotent — a thread already in spec mode is returned untouched, so a
+ * second click cannot rewind an approved stage. Never bumps updatedAt.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string }} input
+ */
+function startSpec(store, input) {
+  const { threadId } = input || {};
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  if (thread.spec) return { ...thread };
+  const { slugify } = require("./worktrees.js");
+  const spec = {
+    slug: slugify(thread.title),
+    stage: "requirements",
+    awaitingApproval: false,
+  };
+  const updated = store.updateThread(threadId, { spec });
+  store.save();
+  return updated ? { ...updated } : { ...thread, spec };
+}
+
+/**
+ * The agent has written the current stage's artifact and wants a human.
+ * Flips the gate; the run itself stops on the agent's side. Called by the
+ * coder-threads MCP tool `spec_submit`, never inferred from the transcript.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string }} input
+ * @returns {{ stage: string, awaitingApproval: true }}
+ */
+function submitSpec(store, input) {
+  const { threadId } = input || {};
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  if (!thread.spec) {
+    throw new Error("Thread is not in spec mode");
+  }
+  if (thread.spec.stage === "build") {
+    throw new Error("Spec is already approved; nothing left to submit");
+  }
+  const spec = { ...thread.spec, awaitingApproval: true };
+  store.updateThread(threadId, { spec });
+  store.save();
+  return { stage: spec.stage, awaitingApproval: true };
+}
+
+/** The prompt that opens a stage (or re-opens it after a revise). */
+function specStagePrompt(stage, feedback) {
+  const note = String(feedback || "").trim();
+  if (stage === "build") {
+    return (
+      "tasks.md is approved. Implement it now, task by task, and keep the " +
+      "checklist in tasks.md ticked off as you go."
+    );
+  }
+  const goal = SPEC_GOAL[stage] || stage;
+  if (note) {
+    return (
+      `Not approved yet. The human's feedback on ${stage}.md:\n\n${note}\n\n` +
+      "Update the artifact accordingly, then call spec_submit and stop."
+    );
+  }
+  return (
+    `Write ${goal}. Then call spec_submit and stop — a human approves this ` +
+    "stage before the next one opens."
+  );
+}
+
+/**
+ * Answer the stage gate (issue #269). Approve advances one stage; revise
+ * keeps it and hands the feedback back. Returns the updated thread plus the
+ * prompt the caller must dispatch — services never start runs itself.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, decision: "approve" | "revise", feedback?: string }} input
+ * @returns {{ thread: object, prompt: string }}
+ */
+function reviewSpec(store, input) {
+  const { threadId, decision, feedback } = input || {};
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  if (!thread.spec) {
+    throw new Error("Thread is not in spec mode");
+  }
+  if (!thread.spec.awaitingApproval) {
+    throw new Error("No spec artifact is awaiting approval");
+  }
+  if (decision !== "approve" && decision !== "revise") {
+    throw new Error(`Invalid spec decision: ${decision}`);
+  }
+  const stage =
+    decision === "approve"
+      ? nextSpecStage(thread.spec.stage) || "build"
+      : thread.spec.stage;
+  const spec = { ...thread.spec, stage, awaitingApproval: false };
+  const updated = store.updateThread(threadId, { spec });
+  store.save();
+  return {
+    thread: updated ? { ...updated } : { ...thread, spec },
+    prompt: specStagePrompt(stage, decision === "revise" ? feedback : ""),
+  };
+}
+
+/**
+ * Standing note appended to every dispatched prompt while a spec thread is
+ * still behind the gate. Same rule as planboardNoteFor / hypothesisNoteFor:
+ * returns "" when there is nothing to say (no spec, or stage build).
+ *
+ * ponytail: the gate is procedural — the note plus the human's Approve click.
+ * Nothing stops a determined agent editing source early; add a can_use_tool
+ * deny in runner.js if that turns out to happen in practice.
+ *
+ * @param {{ spec?: { slug?: string, stage?: string, awaitingApproval?: boolean } } | null | undefined} thread
+ * @param {string} cwd Worktree (or project) folder the CLI runs in.
+ * @returns {string}
+ */
+function specNoteFor(thread, cwd) {
+  const spec = thread && thread.spec;
+  if (!spec || !spec.stage || spec.stage === "build") return "";
+  const file = specArtifactPath(thread, cwd, spec.stage);
+  return (
+    `\n\n[Spec mode] This thread is spec-driven: ${SPEC_ARTIFACTS.join(" → ")} ` +
+    "are written and approved one at a time before any code changes. " +
+    `Current stage: ${spec.stage}. Write ${file} and change NO other file. ` +
+    "When it is ready call the coder-threads tool spec_submit and stop — " +
+    "a human approves each stage."
+  );
+}
+
+/**
+ * Read one artifact off disk for the UI. `text` is null when the agent has
+ * not written it yet; the path is returned either way so the card can say
+ * where it will land.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, stage: string }} input
+ * @returns {{ path: string, text: string | null }}
+ */
+function readSpecArtifact(store, input) {
+  const { threadId, stage } = input || {};
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  if (!SPEC_ARTIFACTS.includes(stage)) {
+    throw new Error(`Invalid spec stage: ${stage}`);
+  }
+  const project = store.getProject(thread.projectId);
+  const cwd = thread.worktreePath || (project && project.path) || "";
+  const file = specArtifactPath(thread, cwd, stage);
+  let text = null;
+  try {
+    text = fs.readFileSync(file, "utf8");
+  } catch {
+    text = null;
+  }
+  return { path: file, text };
+}
+
 /**
  * Set or clear the thread's verification command (issue #296). A non-empty
  * command arms the gate; empty / null / whitespace disarms it. Trimmed and
@@ -2330,6 +2537,16 @@ module.exports = {
   HYPOTHESIS_CLAIM_MAX,
   HYPOTHESIS_REASON_MAX,
   recordHypothesis,
+  SPEC_ARTIFACTS,
+  SPEC_DIR,
+  nextSpecStage,
+  specArtifactPath,
+  specNoteFor,
+  specStagePrompt,
+  startSpec,
+  submitSpec,
+  reviewSpec,
+  readSpecArtifact,
   planStepsFrom,
   setArchived,
   setSettled,
