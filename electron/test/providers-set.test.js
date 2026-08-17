@@ -41,13 +41,13 @@ describe("setProvider lock semantics", () => {
   let tmpDir;
   let store;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-setprov-"));
     store = new Store(path.join(tmpDir, "store.json"));
     const repo = path.join(tmpDir, "app");
     fs.mkdirSync(repo);
     git(repo, ["init"]);
-    const project = services.addProject(store, repo);
+    const project = await services.addProject(store, repo);
     services.createThread(store, {
       projectId: project.id,
       title: "T",
@@ -352,7 +352,7 @@ describe("unavailable provider rejection", () => {
     const repo = path.join(tmpDir, "app");
     fs.mkdirSync(repo);
     git(repo, ["init"]);
-    const project = services.addProject(store, repo);
+    const project = await services.addProject(store, repo);
     services.createThread(store, {
       projectId: project.id,
       title: "T",
@@ -442,7 +442,7 @@ process.exit(0);
     const repo = path.join(tmpDir, "app");
     fs.mkdirSync(repo);
     git(repo, ["init"]);
-    const project = services.addProject(store, repo);
+    const project = await services.addProject(store, repo);
     const thread = services.createThread(store, {
       projectId: project.id,
       title: "M",
@@ -527,7 +527,7 @@ process.exit(0);
     const repo = path.join(tmpDir, "app");
     fs.mkdirSync(repo);
     git(repo, ["init"]);
-    const project = services.addProject(store, repo);
+    const project = await services.addProject(store, repo);
     const thread = services.createThread(store, {
       projectId: project.id,
       title: "G",

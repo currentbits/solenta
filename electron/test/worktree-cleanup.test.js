@@ -41,7 +41,7 @@ function git(cwd, args) {
  * Repo + project + one worktree thread with a committed feature file.
  * Origin: github fetch URL (so PR paths engage) with a local bare push URL.
  */
-function makeFixture() {
+async function makeFixture() {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-wtclean-"));
   const store = new Store(path.join(tmpDir, "store.json"));
   const worktreeBase = path.join(tmpDir, "worktrees");
@@ -65,7 +65,7 @@ function makeFixture() {
   git(repo, ["remote", "add", "origin", "https://github.com/acme/demo.git"]);
   git(repo, ["remote", "set-url", "--push", "origin", bare]);
 
-  const project = services.addProject(store, repo);
+  const project = await services.addProject(store, repo);
   const thread = services.createThread(store, {
     projectId: project.id,
     title: "Merged PR thread",
@@ -108,8 +108,8 @@ function seedPr(fx, state) {
 describe("maybeCleanupMergedWorktree", () => {
   let fx;
 
-  beforeEach(() => {
-    fx = makeFixture();
+  beforeEach(async () => {
+    fx = await makeFixture();
   });
 
   afterEach(() => {
@@ -169,8 +169,8 @@ describe("maybeCleanupMergedWorktree", () => {
 describe("refreshPrStates merged-PR cleanup", () => {
   let fx;
 
-  beforeEach(() => {
-    fx = makeFixture();
+  beforeEach(async () => {
+    fx = await makeFixture();
   });
 
   afterEach(() => {
@@ -228,8 +228,8 @@ describe("refreshPrStates merged-PR cleanup", () => {
 describe("sweepOrphanWorktrees", () => {
   let fx;
 
-  beforeEach(() => {
-    fx = makeFixture();
+  beforeEach(async () => {
+    fx = await makeFixture();
   });
 
   afterEach(() => {
@@ -309,7 +309,7 @@ describe("clearMissingWorktree (worktree deleted behind our back)", () => {
   let repo;
   let project;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-wtgone-"));
     store = new Store(path.join(tmpDir, "store.json"));
     worktreeBase = path.join(tmpDir, "worktrees");
@@ -323,7 +323,7 @@ describe("clearMissingWorktree (worktree deleted behind our back)", () => {
     git(repo, ["add", "README.md"]);
     git(repo, ["commit", "-m", "init"]);
 
-    project = services.addProject(store, repo);
+    project = await services.addProject(store, repo);
   });
 
   afterEach(() => {
@@ -407,7 +407,7 @@ describe("ensureWorktree (lazy creation)", () => {
   let repo;
   let project;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-wtlazy-"));
     store = new Store(path.join(tmpDir, "store.json"));
     worktreeBase = path.join(tmpDir, "worktrees");
@@ -421,7 +421,7 @@ describe("ensureWorktree (lazy creation)", () => {
     git(repo, ["add", "README.md"]);
     git(repo, ["commit", "-m", "init"]);
 
-    project = services.addProject(store, repo);
+    project = await services.addProject(store, repo);
   });
 
   afterEach(() => {

@@ -35,13 +35,13 @@ describe("removeProject", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("removes project, its threads, messages, work log, usage; leaves other project intact", () => {
+  it("removes project, its threads, messages, work log, usage; leaves other project intact", async () => {
     const repoA = path.join(tmpDir, "repo-a");
     const repoB = path.join(tmpDir, "repo-b");
     initRepo(repoA);
     initRepo(repoB);
-    const projectA = services.addProject(store, repoA);
-    const projectB = services.addProject(store, repoB);
+    const projectA = await services.addProject(store, repoA);
+    const projectB = await services.addProject(store, repoB);
 
     const t1 = services.createThread(store, {
       projectId: projectA.id,
@@ -128,14 +128,14 @@ describe("removeProject", () => {
     );
   });
 
-  it("rejects while any thread is working (before any deletion)", () => {
+  it("rejects while any thread is working (before any deletion)", async () => {
     const repoA = path.join(tmpDir, "work-a");
     const repoB = path.join(tmpDir, "work-b");
     initRepo(repoA);
     initRepo(repoB);
-    const projectA = services.addProject(store, repoA);
+    const projectA = await services.addProject(store, repoA);
     // Fixture discipline: second project must exist and survive.
-    const projectB = services.addProject(store, repoB);
+    const projectB = await services.addProject(store, repoB);
     const tFirst = services.createThread(store, {
       projectId: projectA.id,
       title: "idle-first",
@@ -175,10 +175,10 @@ describe("removeProject", () => {
     assert.ok(store.getProject(projectB.id), "other project must remain");
   });
 
-  it("rejects when any thread has a worktree (shared string with deleteThread)", () => {
+  it("rejects when any thread has a worktree (shared string with deleteThread)", async () => {
     const repo = path.join(tmpDir, "wt-repo");
     initRepo(repo);
-    const project = services.addProject(store, repo);
+    const project = await services.addProject(store, repo);
     const t1 = services.createThread(store, {
       projectId: project.id,
       title: "clean",
@@ -209,10 +209,10 @@ describe("removeProject", () => {
     assert.ok(store.getProject(project.id));
   });
 
-  it("isRunning opt rejects even when status is not working", () => {
+  it("isRunning opt rejects even when status is not working", async () => {
     const repo = path.join(tmpDir, "run-opt");
     initRepo(repo);
-    const project = services.addProject(store, repo);
+    const project = await services.addProject(store, repo);
     const thread = services.createThread(store, {
       projectId: project.id,
       title: "T",
@@ -231,13 +231,13 @@ describe("removeProject", () => {
     assert.ok(store.getThread(thread.id));
   });
 
-  it("persists removal: reload from disk keeps project and threads gone", () => {
+  it("persists removal: reload from disk keeps project and threads gone", async () => {
     const repoA = path.join(tmpDir, "dur-a");
     const repoB = path.join(tmpDir, "dur-b");
     initRepo(repoA);
     initRepo(repoB);
-    const projectA = services.addProject(store, repoA);
-    const projectB = services.addProject(store, repoB);
+    const projectA = await services.addProject(store, repoA);
+    const projectB = await services.addProject(store, repoB);
     const t1 = services.createThread(store, {
       projectId: projectA.id,
       title: "gone",
@@ -274,12 +274,12 @@ describe("removeProject", () => {
     assert.equal(reloaded.getThreads().length, 1);
   });
 
-  it("never touches the repository on disk", () => {
+  it("never touches the repository on disk", async () => {
     const repo = path.join(tmpDir, "disk-repo");
     initRepo(repo);
     const marker = path.join(repo, "keep-me.txt");
     fs.writeFileSync(marker, "precious");
-    const project = services.addProject(store, repo);
+    const project = await services.addProject(store, repo);
     services.createThread(store, { projectId: project.id, title: "T" });
 
     services.removeProject(store, { projectId: project.id });
@@ -290,14 +290,14 @@ describe("removeProject", () => {
     assert.ok(fs.existsSync(path.join(repo, ".git")));
   });
 
-  it("deleteThread and removeProject share the worktree guard string", () => {
+  it("deleteThread and removeProject share the worktree guard string", async () => {
     assert.equal(
       services.THREAD_STILL_HAS_WORKTREE,
       "Thread still has a worktree. Merge or delete it in the Git tab first.",
     );
     const repo = path.join(tmpDir, "share-str");
     initRepo(repo);
-    const project = services.addProject(store, repo);
+    const project = await services.addProject(store, repo);
     const thread = services.createThread(store, {
       projectId: project.id,
       title: "T",

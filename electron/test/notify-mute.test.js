@@ -26,13 +26,13 @@ describe("mute", () => {
   let store;
   let threadId;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-mute-"));
     store = new Store(path.join(tmpDir, "store.json"));
     const repo = path.join(tmpDir, "repo");
     fs.mkdirSync(repo);
     execFileSync("git", ["init"], { cwd: repo, stdio: "ignore" });
-    const project = services.addProject(store, repo);
+    const project = await services.addProject(store, repo);
     threadId = services.createThread(store, {
       projectId: project.id,
       title: "Worker",

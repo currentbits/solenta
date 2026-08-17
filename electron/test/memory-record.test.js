@@ -319,7 +319,7 @@ describe("auto-record on real run terminals", () => {
     fs.mkdirSync(repo);
     git(repo, ["init"]);
     // Remote-ish slug via folder name
-    const project = services.addProject(store, repo);
+    const project = await services.addProject(store, repo);
     // Force a stable slug for assertions if needed
     void project;
   });
@@ -647,7 +647,7 @@ process.exit(0);
     const repo = path.join(tmpDir, "app");
     fs.mkdirSync(repo);
     git(repo, ["init"]);
-    const project = services.addProject(store, repo);
+    const project = await services.addProject(store, repo);
     const thread = services.createThread(store, {
       projectId: project.id,
       title: "Codex M",

@@ -19,7 +19,7 @@ const cp = require("node:child_process");
  * Calls must not overlap: the patch is a single module-level swap, so a second
  * concurrent call would restore the real loader out from under the first.
  */
-function withStubbedElectron(fn) {
+async function withStubbedElectron(fn) {
   const handlers = new Map();
   const bridge = {};
   const stub = {
@@ -146,8 +146,8 @@ exit 1`,
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
-  it("registers a handler for every channel preload exposes", () => {
-    withStubbedElectron(({ handlers, bridge }) => {
+  it("registers a handler for every channel preload exposes", async () => {
+    await withStubbedElectron(({ handlers, bridge }) => {
       delete require.cache[require.resolve("../ipc.js")];
       delete require.cache[require.resolve("../preload.js")];
       const { registerIpc } = require("../ipc.js");
@@ -262,7 +262,7 @@ exit 1`,
       const worktrees = require("../worktrees.js");
 
       store = new Store(path.join(tmp, "store.json"));
-      const project = services.addProject(store, repo);
+      const project = await services.addProject(store, repo);
       thread = services.createThread(store, {
         projectId: project.id,
         title: "seam thread",

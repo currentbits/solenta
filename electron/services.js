@@ -9,7 +9,7 @@ const {
   listProviders,
 } = require("./providers.js");
 const { getMemoryStatus } = require("./memory-sup.js");
-const { execCommand } = require("./ssh.js");
+const { execCommandAsync } = require("./ssh.js");
 
 const PERMISSION_MODES = new Set([
   "default",
@@ -26,11 +26,11 @@ const GIT_NETWORK_TIMEOUT_MS = 60_000;
  * @param {string[]} args
  * @param {{ remoteHost?: string, remotePath?: string, path?: string } | null} [project]
  * @param {{ timeout?: number }} [opts]
- * @returns {string}
+ * @returns {Promise<string>}
  */
-function gitOut(cwd, args, project, opts) {
+async function gitOutAsync(cwd, args, project, opts) {
   return String(
-    execCommand(project && project.remoteHost ? project : null, "git", args, {
+    await execCommandAsync(project && project.remoteHost ? project : null, "git", args, {
       cwd,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
@@ -81,7 +81,7 @@ function slugFromRemoteUrl(url) {
  * @param {string} projectPath
  * @param {{ remoteHost?: string, remotePath?: string } | null} [opts]
  */
-function addProject(store, projectPath, opts) {
+async function addProject(store, projectPath, opts) {
   const remoteHost =
     opts && typeof opts.remoteHost === "string" ? opts.remoteHost.trim() : "";
   const remotePath =
@@ -127,7 +127,7 @@ function addProject(store, projectPath, opts) {
   }
 
   try {
-    const inside = gitOut(resolved, ["rev-parse", "--is-inside-work-tree"]);
+    const inside = await gitOutAsync(resolved, ["rev-parse", "--is-inside-work-tree"]);
     if (inside !== "true") {
       throw new Error("not a git repository");
     }
@@ -148,7 +148,7 @@ function addProject(store, projectPath, opts) {
   let name = folderName;
 
   try {
-    const remote = gitOut(resolved, ["remote", "get-url", "origin"]);
+    const remote = await gitOutAsync(resolved, ["remote", "get-url", "origin"]);
     const derived = slugFromRemoteUrl(remote);
     if (derived) {
       slug = derived;
@@ -179,7 +179,7 @@ function addProject(store, projectPath, opts) {
  * @param {import('./store').Store} store
  * @param {{ name?: string, parentDir?: string }} input
  */
-function createProject(store, input) {
+async function createProject(store, input) {
   const name =
     input && typeof input.name === "string" ? input.name.trim() : "";
   const parentDir =
@@ -213,7 +213,7 @@ function createProject(store, input) {
 
   fs.mkdirSync(target);
   try {
-    gitOut(target, ["init", "-q"]);
+    await gitOutAsync(target, ["init", "-q"]);
   } catch (err) {
     fs.rmSync(target, { recursive: true, force: true });
     const msg = err && err.message ? String(err.message) : String(err);
@@ -1234,7 +1234,7 @@ function getThreadDetail(store, threadId, workflow = null, opts) {
  * @param {string | { path?: string, remoteHost?: string, remotePath?: string }} projectOrPath
  * @returns {{ isRepo: boolean, branch: string, dirty: boolean }}
  */
-function gitStatus(projectOrPath) {
+async function gitStatus(projectOrPath) {
   const project =
     projectOrPath && typeof projectOrPath === "object"
       ? projectOrPath
@@ -1243,7 +1243,7 @@ function gitStatus(projectOrPath) {
     ? project.remotePath || project.path || ""
     : path.resolve(project.path || "");
   try {
-    const inside = gitOut(
+    const inside = await gitOutAsync(
       resolved,
       ["rev-parse", "--is-inside-work-tree"],
       project,
@@ -1257,14 +1257,14 @@ function gitStatus(projectOrPath) {
 
   let branch = "";
   try {
-    branch = gitOut(resolved, ["branch", "--show-current"], project);
+    branch = await gitOutAsync(resolved, ["branch", "--show-current"], project);
   } catch {
     branch = "";
   }
 
   let dirty = false;
   try {
-    const porcelain = gitOut(resolved, ["status", "--porcelain"], project);
+    const porcelain = await gitOutAsync(resolved, ["status", "--porcelain"], project);
     dirty = porcelain.length > 0;
   } catch {
     dirty = false;
@@ -1297,17 +1297,17 @@ function parseRevListCount(text) {
  * @param {string} cwd
  * @returns {{ hasUpstream: false } | { hasUpstream: true, ahead: number, behind: number }}
  */
-function gitSyncInfo(cwd) {
+async function gitSyncInfo(cwd) {
   if (!cwd) return { hasUpstream: false };
   const resolved = path.resolve(cwd);
   try {
-    const inside = gitOut(resolved, ["rev-parse", "--is-inside-work-tree"]);
+    const inside = await gitOutAsync(resolved, ["rev-parse", "--is-inside-work-tree"]);
     if (inside !== "true") return { hasUpstream: false };
   } catch {
     return { hasUpstream: false };
   }
   try {
-    const out = gitOut(resolved, [
+    const out = await gitOutAsync(resolved, [
       "rev-list",
       "--left-right",
       "--count",
@@ -1324,10 +1324,10 @@ function gitSyncInfo(cwd) {
  *
  * @param {string} cwd
  */
-function gitFetch(cwd) {
+async function gitFetch(cwd) {
   const resolved = path.resolve(cwd);
   try {
-    gitOut(resolved, ["fetch"], null, { timeout: GIT_NETWORK_TIMEOUT_MS });
+    await gitOutAsync(resolved, ["fetch"], null, { timeout: GIT_NETWORK_TIMEOUT_MS });
   } catch (err) {
     const msg = err && err.message ? String(err.message) : String(err);
     throw new Error(`git fetch failed: ${msg.split("\n")[0]}`);
@@ -1381,18 +1381,18 @@ function repoInfoFromRemote(url) {
  * @param {string} cwd
  * @returns {{ ok: true, owner: string, repo: string, webUrl: string } | { ok: false }}
  */
-function gitRepoInfo(cwd) {
+async function gitRepoInfo(cwd) {
   if (!cwd) return { ok: false };
   const resolved = path.resolve(cwd);
   try {
-    const inside = gitOut(resolved, ["rev-parse", "--is-inside-work-tree"]);
+    const inside = await gitOutAsync(resolved, ["rev-parse", "--is-inside-work-tree"]);
     if (inside !== "true") return { ok: false };
   } catch {
     return { ok: false };
   }
   let remote = "";
   try {
-    remote = gitOut(resolved, ["remote", "get-url", "origin"]);
+    remote = await gitOutAsync(resolved, ["remote", "get-url", "origin"]);
   } catch {
     return { ok: false };
   }
@@ -1450,18 +1450,18 @@ function pullFailureReason(message) {
  * @param {string} cwd
  * @returns {{ ok: true, summary: string } | { ok: false, reason: string }}
  */
-function gitPull(cwd) {
+async function gitPull(cwd) {
   if (!cwd) return { ok: false, reason: "Not a git repository" };
   const resolved = path.resolve(cwd);
   try {
-    const inside = gitOut(resolved, ["rev-parse", "--is-inside-work-tree"]);
+    const inside = await gitOutAsync(resolved, ["rev-parse", "--is-inside-work-tree"]);
     if (inside !== "true") return { ok: false, reason: "Not a git repository" };
   } catch {
     return { ok: false, reason: "Not a git repository" };
   }
   let out;
   try {
-    out = gitOut(resolved, ["pull", "--ff-only"], null, {
+    out = await gitOutAsync(resolved, ["pull", "--ff-only"], null, {
       timeout: GIT_NETWORK_TIMEOUT_MS,
     });
   } catch (err) {

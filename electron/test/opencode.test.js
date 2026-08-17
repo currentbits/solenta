@@ -46,7 +46,7 @@ function waitFor(predicate, { timeoutMs = 15000, intervalMs = 20 } = {}) {
  * Fake opencode CLI emitting NDJSON --format json events.
  * @param {string} dir
  */
-function writeFakeOpencode(dir) {
+async function writeFakeOpencode(dir) {
   const scriptPath = path.join(dir, "fake-opencode.js");
   const body = `#!/usr/bin/env node
 "use strict";
@@ -256,7 +256,7 @@ describe("opencode runner integration", () => {
     git(projectDir, ["add", "."]);
     git(projectDir, ["commit", "-m", "init"]);
 
-    fakeBin = writeFakeOpencode(tmpDir);
+    fakeBin = await writeFakeOpencode(tmpDir);
     argvFile = path.join(tmpDir, "argv.json");
 
     prevBin = process.env.CODER_OPENCODE_BIN;
@@ -272,7 +272,7 @@ describe("opencode runner integration", () => {
 
     const storePath = path.join(tmpDir, "store.json");
     store = new Store(storePath);
-    const project = services.addProject(store, projectDir);
+    const project = await services.addProject(store, projectDir);
     const thread = services.createThread(store, {
       projectId: project.id,
       title: "OpenCode Thread",

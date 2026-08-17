@@ -378,7 +378,7 @@ emit({ type: "usage", input_tokens: 1, output_tokens: 1 });
       const store = new Store(path.join(tmpDir, "store.json"));
       const core = await loadCore();
       runner = createRunner({ store, core, pushFn() {}, tickMs: 15 });
-      const project = services.addProject(store, projectDir);
+      const project = await services.addProject(store, projectDir);
       const thread = services.createThread(store, {
         projectId: project.id,
         title: "Kimi Effort",

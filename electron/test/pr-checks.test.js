@@ -272,7 +272,7 @@ describe("prChecks / mergePr", () => {
   let prevState;
   let statePath;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), "coder-prchecks-"));
     store = new Store(path.join(tmp, "store.json"));
     repo = path.join(tmp, "repo");
@@ -285,7 +285,7 @@ describe("prChecks / mergePr", () => {
     git(repo, ["commit", "-qm", "init"]);
     git(repo, ["remote", "add", "origin", "https://github.com/acme/demo.git"]);
 
-    const project = services.addProject(store, repo);
+    const project = await services.addProject(store, repo);
     thread = services.createThread(store, {
       projectId: project.id,
       title: "Checks feature",
@@ -348,35 +348,35 @@ describe("prChecks / mergePr", () => {
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
-  it("returns failing checks as ok:true even when gh exits 1", () => {
-    const result = prChecks({ store, threadId: thread.id });
+  it("returns failing checks as ok:true even when gh exits 1", async () => {
+    const result = await prChecks({ store, threadId: thread.id });
     assert.equal(result.ok, true);
     assert.equal(result.checks.length, 2);
     assert.equal(result.checks[0].bucket, "pass");
     assert.equal(result.checks[1].bucket, "fail");
   });
 
-  it("falls back to the text table when --json is rejected", () => {
+  it("falls back to the text table when --json is rejected", async () => {
     const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
     state.scenario = "checks-no-json";
     fs.writeFileSync(statePath, JSON.stringify(state));
-    const result = prChecks({ store, threadId: thread.id });
+    const result = await prChecks({ store, threadId: thread.id });
     assert.equal(result.ok, true);
     assert.equal(result.checks.length, 2);
     assert.equal(result.checks[0].name, "test");
     assert.equal(result.checks[1].bucket, "fail");
   });
 
-  it("returns auth without throwing", () => {
+  it("returns auth without throwing", async () => {
     const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
     state.scenario = "auth-fail";
     fs.writeFileSync(statePath, JSON.stringify(state));
-    const result = prChecks({ store, threadId: thread.id });
+    const result = await prChecks({ store, threadId: thread.id });
     assert.deepEqual(result, { ok: false, reason: "auth" });
   });
 
-  it("squash-merges an OPEN PR and returns MERGED via prStatus", () => {
-    const info = mergePr({ store, threadId: thread.id });
+  it("squash-merges an OPEN PR and returns MERGED via prStatus", async () => {
+    const info = await mergePr({ store, threadId: thread.id });
     assert.equal(info.state, "MERGED");
     assert.equal(info.number, 12);
     const stored = store.getThread(thread.id);
@@ -389,12 +389,12 @@ describe("prChecks / mergePr", () => {
     assert.ok(mergeCall.includes("--squash"));
   });
 
-  it("surfaces gh's own error for a CLOSED PR", () => {
+  it("surfaces gh's own error for a CLOSED PR", async () => {
     const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
     const branch = Object.keys(state.prs)[0];
     state.prs[branch].state = "CLOSED";
     fs.writeFileSync(statePath, JSON.stringify(state));
-    assert.throws(
+    await assert.rejects(
       () => mergePr({ store, threadId: thread.id }),
       /not open|not mergeable/i,
     );

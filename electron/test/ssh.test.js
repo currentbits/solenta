@@ -6,6 +6,7 @@ const {
   posixQuote,
   wrapCommand,
   execCommand,
+  execCommandAsync,
   SYNC_TIMEOUT_MS,
 } = ssh;
 const { gitTry } = require("../worktrees.js");
@@ -132,7 +133,10 @@ describe("execCommand timeout", () => {
     return { calls };
   }
 
-  afterEach(() => ssh.setExecFileSync(null));
+  afterEach(() => {
+    ssh.setExecFileSync(null);
+    ssh.setExecFile(null);
+  });
 
   it("defaults a hard timeout so sync git cannot hang the main process", () => {
     const { calls } = capture();
@@ -160,5 +164,68 @@ describe("execCommand timeout", () => {
     assert.equal(calls[0].opts.timeout, SYNC_TIMEOUT_MS);
     gitTry("/repo", ["push"], { timeout: 30_000 });
     assert.equal(calls[1].opts.timeout, 30_000);
+  });
+});
+
+describe("execCommandAsync", () => {
+  /** @returns {{ calls: any[] }} */
+  function captureAsync() {
+    const calls = [];
+    ssh.setExecFile((bin, args, opts, cb) => {
+      calls.push({ bin, args, opts });
+      cb(null, "");
+    });
+    return { calls };
+  }
+
+  afterEach(() => {
+    ssh.setExecFileSync(null);
+    ssh.setExecFile(null);
+  });
+
+  it("defaults the same hard timeout as execCommand", async () => {
+    const { calls } = captureAsync();
+    await execCommandAsync(null, "git", ["status"], { cwd: "/repo", encoding: "utf8" });
+    assert.equal(calls[0].opts.timeout, SYNC_TIMEOUT_MS);
+  });
+
+  it("wraps remotes through ssh and drops cwd", async () => {
+    const { calls } = captureAsync();
+    await execCommandAsync(
+      { remoteHost: "dev@box", remotePath: "/srv/app" },
+      "git",
+      ["diff"],
+      { cwd: "/local/does-not-exist" },
+    );
+    assert.equal(calls[0].bin, "ssh");
+    assert.equal(calls[0].opts.timeout, SYNC_TIMEOUT_MS);
+    assert.equal(calls[0].opts.cwd, undefined);
+  });
+
+  it("lets the caller override the timeout", async () => {
+    const { calls } = captureAsync();
+    await execCommandAsync(null, "git", ["fetch"], { timeout: 60_000 });
+    assert.equal(calls[0].opts.timeout, 60_000);
+  });
+
+  it("rejects with the child error", async () => {
+    ssh.setExecFile((_bin, _args, _opts, cb) => {
+      cb(new Error("Command failed: git fetch\nfatal: boom"));
+    });
+    await assert.rejects(
+      () => execCommandAsync(null, "git", ["fetch"], {}),
+      /Command failed: git fetch/,
+    );
+  });
+
+  it("does not call the sync execFileSync hook", async () => {
+    let syncCalls = 0;
+    ssh.setExecFileSync(() => {
+      syncCalls += 1;
+      return "";
+    });
+    captureAsync();
+    await execCommandAsync(null, "git", ["status"], {});
+    assert.equal(syncCalls, 0);
   });
 });

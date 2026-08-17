@@ -108,7 +108,7 @@ function startCaptureServer(port, token) {
  * @param {string} dir
  * @returns {string} path to the fake binary
  */
-function writeFakeGrok(dir) {
+async function writeFakeGrok(dir) {
   const body = `#!/usr/bin/env node
 "use strict";
 const fs = require("fs");
@@ -320,7 +320,7 @@ describe("runner grok provider (claude-stream path)", () => {
     process.env.CODER_GROK_MCP_DISABLE = "1";
 
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-grok-"));
-    fakeGrok = writeFakeGrok(tmpDir);
+    fakeGrok = await writeFakeGrok(tmpDir);
     argvFile = path.join(tmpDir, "argv.json");
     process.env.CODER_GROK_BIN = fakeGrok;
     process.env.CODER_FAKE_GROK_ARGV_FILE = argvFile;
@@ -337,7 +337,7 @@ describe("runner grok provider (claude-stream path)", () => {
     const repo = path.join(tmpDir, "app");
     fs.mkdirSync(repo);
     git(repo, ["init"]);
-    const project = services.addProject(store, repo);
+    const project = await services.addProject(store, repo);
     const thread = services.createThread(store, {
       projectId: project.id,
       title: "Grok Thread",

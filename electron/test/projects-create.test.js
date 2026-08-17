@@ -20,8 +20,8 @@ describe("services.createProject", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("creates a folder, git-inits it, and adds it as a project", () => {
-    const project = services.createProject(store, {
+  it("creates a folder, git-inits it, and adds it as a project", async () => {
+    const project = await services.createProject(store, {
       name: "fresh-app",
       parentDir: tmpDir,
     });
@@ -40,16 +40,16 @@ describe("services.createProject", () => {
     assert.equal(store.getProjects()[0].id, project.id);
   });
 
-  it("rejects an empty name", () => {
-    assert.throws(
+  it("rejects an empty name", async () => {
+    await assert.rejects(
       () => services.createProject(store, { name: "   ", parentDir: tmpDir }),
       /name is required/i,
     );
   });
 
-  it("rejects names with path separators or dot segments", () => {
+  it("rejects names with path separators or dot segments", async () => {
     for (const name of ["a/b", "a\\b", ".", ".."]) {
-      assert.throws(
+      await assert.rejects(
         () => services.createProject(store, { name, parentDir: tmpDir }),
         /plain folder name/i,
         `name ${JSON.stringify(name)} must be rejected`,
@@ -57,8 +57,8 @@ describe("services.createProject", () => {
     }
   });
 
-  it("rejects a missing parent directory", () => {
-    assert.throws(
+  it("rejects a missing parent directory", async () => {
+    await assert.rejects(
       () =>
         services.createProject(store, {
           name: "fresh-app",
@@ -68,18 +68,18 @@ describe("services.createProject", () => {
     );
   });
 
-  it("rejects when the target already exists", () => {
+  it("rejects when the target already exists", async () => {
     fs.mkdirSync(path.join(tmpDir, "fresh-app"));
-    assert.throws(
+    await assert.rejects(
       () => services.createProject(store, { name: "fresh-app", parentDir: tmpDir }),
       /already exists/i,
     );
   });
 
-  it("rejects a parentDir that is a file", () => {
+  it("rejects a parentDir that is a file", async () => {
     const file = path.join(tmpDir, "file.txt");
     fs.writeFileSync(file, "x");
-    assert.throws(
+    await assert.rejects(
       () => services.createProject(store, { name: "fresh-app", parentDir: file }),
       /not a directory/i,
     );
