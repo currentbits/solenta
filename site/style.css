@@ -112,12 +112,6 @@ code, pre, .mono {
 .hero {
   padding: 88px 0 0;
 }
-.hero-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
-  gap: 56px;
-  align-items: center;
-}
 .hero h1 {
   font-size: clamp(34px, 4.6vw, 54px);
   line-height: 1.06;
@@ -519,7 +513,7 @@ html.js .reveal.in { opacity: 1; transform: none; }
 /* ---------------- mobile ---------------- */
 @media (max-width: 900px) {
   .hero { padding-top: 56px; }
-  .hero-grid, .orch, .board { grid-template-columns: 1fr; gap: 36px; }
+  .orch, .board { grid-template-columns: 1fr; gap: 36px; }
   .board { gap: 0; }
   .board > div + div { border-left: none; border-top: 1px solid var(--border); }
   .bento { grid-template-columns: 1fr; }
