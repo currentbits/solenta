@@ -139,6 +139,12 @@ export interface ThreadInfo {
    */
   muted: boolean;
   /**
+   * Free-text user scratch pad (issue #194). Empty string when unset.
+   * Never bumps updatedAt. Purely user-facing: the agent never reads it
+   * (this is NOT agent memory).
+   */
+  notes: string;
+  /**
    * Follow-up typed while a run was active (issue #92/#137); flushed at the
    * next settle. Persisted on the thread so a reload cannot drop it and the
    * sidebar can show a queue pending on an unselected thread.
@@ -209,6 +215,9 @@ export interface ThreadInfo {
    */
   plan?: string;
 }
+
+/** Cap for ThreadInfo.notes / threads.setNotes (issue #194). */
+export const THREAD_NOTES_MAX = 2000;
 
 /** One step of an agent's working plan, in the agent's own order. */
 export interface PlanStep {
@@ -980,7 +989,7 @@ export interface CoderApi {
      */
     summaries(): Promise<ThreadSummaryInfo[]>;
     /**
-     * Full-content search: matches thread titles AND message text
+     * Full-content search: matches thread titles, notes, AND message text
      * (case-insensitive substring), newest activity first, max 50. Includes
      * archived threads; the renderer styles them as usual.
      */
@@ -1057,6 +1066,11 @@ export interface CoderApi {
     setSnoozed(input: { threadId: string; until: number | null }): Promise<ThreadInfo>;
     /** Mute/unmute desktop notifications for one thread. Never bumps updatedAt. */
     setMuted(input: { threadId: string; muted: boolean }): Promise<ThreadInfo>;
+    /**
+     * Set or clear the per-thread scratch pad. Trims, caps at
+     * THREAD_NOTES_MAX, empty string clears. Never bumps updatedAt.
+     */
+    setNotes(input: { threadId: string; notes: string }): Promise<ThreadInfo>;
     /**
      * Rename a thread. Trims, truncates to THREAD_TITLE_MAX, rejects an
      * empty title. Never bumps updatedAt.

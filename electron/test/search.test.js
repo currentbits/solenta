@@ -56,6 +56,29 @@ describe("threads search", () => {
     assert.equal(hits[0].id, "a");
   });
 
+  it("matches notes (case-insensitive substring) when title and messages do not", () => {
+    store.setThreads([
+      makeThread({
+        id: "a",
+        title: "Unrelated work",
+        notes: "Merge after #42 lands",
+        updatedAt: 10,
+      }),
+      makeThread({
+        id: "b",
+        title: "Also unrelated",
+        notes: "",
+        updatedAt: 20,
+      }),
+    ]);
+    store.setMessages("a", [
+      { id: "m1", role: "user", text: "please refactor the parser", createdAt: 1 },
+    ]);
+    const hits = store.searchThreads("merge after #42");
+    assert.equal(hits.length, 1);
+    assert.equal(hits[0].id, "a");
+  });
+
   it("matches message content (case-insensitive substring)", () => {
     store.setThreads([
       makeThread({ id: "a", title: "Thread A", updatedAt: 10 }),
