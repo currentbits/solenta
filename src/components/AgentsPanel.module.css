@@ -1000,6 +1000,79 @@
   white-space: nowrap;
 }
 
+.verifyInput {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-size: 12px;
+  font-family: var(--mono);
+}
+
+.verifyInput:focus-visible {
+  outline: none;
+  border-color: var(--blue-border);
+}
+
+.verifyInput::placeholder {
+  color: var(--text-dim);
+}
+
+.verifyEvidence {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.verifySummary {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.verifySummary[data-ok="true"] {
+  color: var(--text-muted);
+}
+
+.verifySummary[data-ok="false"] {
+  color: #fca5a5;
+}
+
+.verifyLogWrap summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--text-muted);
+}
+
+.verifyLogWrap summary:hover {
+  color: var(--text);
+}
+
+.verifyLog {
+  margin: 6px 0 0;
+  max-height: 180px;
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px;
+}
+
 .gitStatus {
   flex-shrink: 0;
   padding: 10px 16px;
