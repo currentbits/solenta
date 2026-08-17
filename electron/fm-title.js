@@ -102,25 +102,23 @@ async function maybeApplyFmTitle(store, threadId, opts = {}) {
     const raw = await fmRun(buildTitlePrompt(userText, assistantText), {
       env: opts.env,
     });
-    const now = Date.now();
-    if (!raw) {
-      store.updateThread(threadId, { fmTitleAt: now });
-      store.save();
-      return null;
-    }
+    // No marker on failure: fm being absent (every pre-macOS-27 machine, every
+    // non-Mac) must not permanently opt the thread out of ever being titled.
+    // The cost of retrying is one cached-miss `which` per successful turn.
+    if (!raw) return null;
 
     const title = sanitizeTitle(raw);
-    if (!title) {
-      store.updateThread(threadId, { fmTitleAt: now });
-      store.save();
-      return null;
-    }
+    if (!title) return null;
 
     const latest = store.getThread(threadId);
     if (!latest || latest.fmTitleAt) return null;
     if (!isPlaceholderTitle(latest, userText)) return null;
 
-    store.updateThread(threadId, { title, fmTitleAt: now }, { touch: true });
+    store.updateThread(
+      threadId,
+      { title, fmTitleAt: Date.now() },
+      { touch: true },
+    );
     store.save();
     return title;
   } catch {

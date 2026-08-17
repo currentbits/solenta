@@ -96,6 +96,31 @@ describe("maybeApplyFmTitle", () => {
     assert.equal(store.getThread(thread.id).title, "New Thread");
   });
 
+  it("a run without fm does not opt the thread out of a later one", async () => {
+    seedFirstTurn(store, thread.id, "Do a thing", "Done.");
+    await maybeApplyFmTitle(store, thread.id, {
+      env: { ...process.env, CODER_FM_BIN: "/nope/fm" },
+    });
+    assert.equal(store.getThread(thread.id).fmTitleAt, undefined);
+
+    // Same thread, later turn, macOS 27 now present.
+    const bin = writeFakeFm(tmpDir, `console.log("Do the thing");`);
+    const saved = await maybeApplyFmTitle(store, thread.id, {
+      env: { ...process.env, CODER_FM_BIN: bin },
+    });
+    assert.equal(saved, "Do the thing");
+  });
+
+  it("titles once, then leaves the thread alone on later turns", async () => {
+    seedFirstTurn(store, thread.id, "Do a thing", "Done.");
+    const bin = writeFakeFm(tmpDir, `console.log("First title");`);
+    const env = { ...process.env, CODER_FM_BIN: bin };
+
+    assert.equal(await maybeApplyFmTitle(store, thread.id, { env }), "First title");
+    assert.equal(await maybeApplyFmTitle(store, thread.id, { env }), null);
+    assert.equal(store.getThread(thread.id).title, "First title");
+  });
+
   it("never overwrites a user-set title", async () => {
     const titled = services.renameThread(store, {
       threadId: thread.id,
