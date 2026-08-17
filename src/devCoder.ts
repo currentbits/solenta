@@ -2541,6 +2541,39 @@ function buildDevCoder(): CoderApi {
         });
         return registerThread(created);
       },
+      /**
+       * Edit-and-resubmit rewind (issue #254). Fixture twin of
+       * services.rewindThread: truncate at the target user message, clear the
+       * session, arm the one-shot context replay. Dev threads have no
+       * worktree, so restoreFiles never resolves a checkpoint here.
+       */
+      async rewind(input) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Unknown thread: ${input.threadId}`);
+        if (detail.thread.status === "working") {
+          throw new Error("Cannot rewind while a run is active");
+        }
+        if (!String(input.prompt ?? "").trim()) {
+          throw new Error("Prompt cannot be empty");
+        }
+        const at = detail.messages.findIndex((m) => m.id === input.messageId);
+        if (at < 0 || detail.messages[at]!.role !== "user") {
+          throw new Error(`Not a user message: ${input.messageId}`);
+        }
+        const dropped = detail.messages.slice(at);
+        const droppedRuns = new Set(
+          dropped.map((m) => m.runId).filter((r): r is string => !!r),
+        );
+        detail.messages = detail.messages.slice(0, at);
+        detail.workLog = detail.workLog.filter(
+          (w) => !w.runId || !droppedRuns.has(w.runId),
+        );
+        const thread = patchThread(input.threadId, {
+          sessionId: null,
+          replayContext: true,
+        });
+        return { thread, droppedMessages: dropped.length, restoredSha: null };
+      },
       async get(threadId) {
         const d = details.get(threadId);
         if (!d) throw new Error(`Thread not found: ${threadId}`);
