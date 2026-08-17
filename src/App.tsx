@@ -98,6 +98,7 @@ export default function App() {
     createThread,
     forkThread,
     startRun,
+    rewindAndResubmit,
     queued,
     cancelQueued,
     fetchIssue,
@@ -859,6 +860,7 @@ export default function App() {
         hasProjects={projects.length > 0}
         onAddProject={handleAddProject}
         onStartRun={startRun}
+        onRewindAndResubmit={rewindAndResubmit}
         onStartWorkflow={startWorkflowRun}
         onSaveWorkflow={saveWorkflow}
         onRemoveWorkflow={removeWorkflow}

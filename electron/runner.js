@@ -290,6 +290,21 @@ function resolveSpawn(project, binary, args, localCwd) {
 }
 
 /**
+ * Best-effort read of the shared per-repo index. A missing, corrupt, or
+ * not-yet-implemented index must never break a dispatch.
+ * @param {string} userDataPath
+ * @param {string} repoRoot
+ * @returns {import('./codeindex.js').CodeIndex | null}
+ */
+function tryReadCodeIndex(userDataPath, repoRoot) {
+  try {
+    return require("./codeindex.js").readIndex(userDataPath, repoRoot);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * @param {object} opts
  * @param {import('./store').Store} opts.store
  * @param {object} opts.core - @coder/core API
@@ -4046,6 +4061,15 @@ function createRunner(opts) {
       broadcast: pushFn,
     });
 
+    // Prefix is CLI-only and must see the retained tail BEFORE this turn's
+    // user message is appended (rewind replay would otherwise digest itself).
+    const prefix = services.buildHandoffPrefix(thread, (id) =>
+      store.getMessages(id),
+    );
+    if (thread.replayContext) {
+      store.updateThread(threadId, { replayContext: false });
+    }
+
     const runId = randomUUID();
     otel.startRun({
       threadId,
@@ -4054,9 +4078,9 @@ function createRunner(opts) {
       model: thread.model || null,
       parentRunId: input.parentRunId || null,
     });
-    // Transcript stores the RAW user prompt. The hand-off context block (if
-    // any) is CLI-only — applied once below when handoffFrom is set and no
-    // sessionId exists yet.
+    // Transcript stores the RAW user prompt. The hand-off / rewind context
+    // block (if any) is CLI-only — applied once below when no sessionId
+    // exists yet.
     appendMessage(threadId, "user", prompt, runId, null, attachments);
 
     if (droppedWorktree) {
@@ -4104,8 +4128,17 @@ function createRunner(opts) {
     // Re-read: materializePendingWorktree may have just set worktreePath, and
     // the self-id note quotes the cwd the CLI actually gets.
     const dispatchThread = store.getThread(threadId) || thread;
+    // Index lives on the project's MAIN checkout, not this thread's worktree.
+    const repoRoot = (projectForGate && projectForGate.path) || "";
+    if (userDataPath && repoRoot) {
+      try {
+        require("./codeindex.js").maybeRefreshIndex({ userDataPath, repoRoot });
+      } catch {
+        /* never block dispatch */
+      }
+    }
     const dispatchPrompt =
-      services.buildHandoffPrefix(thread, (id) => store.getMessages(id)) +
+      prefix +
       String(prompt ?? "") +
       attachmentPromptSection(attachments) +
       services.planboardNoteFor(projectForGate && projectForGate.path) +
@@ -4122,6 +4155,11 @@ function createRunner(opts) {
         dispatchThread.worktreePath ||
           (projectForGate && projectForGate.path) ||
           null,
+      ) +
+      services.codeIndexNoteFor(
+        userDataPath && repoRoot
+          ? tryReadCodeIndex(userDataPath, repoRoot)
+          : null,
       );
 
     const name = workflowNameFromThreadId(threadId);

@@ -63,6 +63,24 @@ mutate a newer run. Work log steps and messages carry `runId` so the renderer
 `worktreePath` / `branch` are updated through services. Thread delete refuses
 while a worktree still exists.
 
+Turn checkpoints (`coder-checkpoint: turn N`) are listed `--first-parent`: a
+merged worker branch carries its own checkpoints, and restoring one would
+hard-reset this thread onto the fork's tree. Numbering counts checkpoint
+*commits*, not turns — a turn that changes nothing skips a number — so anything
+mapping messages to files must select by commit time, never by turn N.
+
+## Rewind (edit and resubmit)
+
+`threads.rewind` (issue #254) truncates the transcript at a past user message,
+clears `sessionId` and sets `replayContext`: a CLI session cannot be rewound, so
+the next turn starts fresh and `buildHandoffPrefix` seeds it with a digest of
+the thread's own retained tail (same builder as fork hand-off, source = self —
+never via `handoffFrom`, which drives crew sweeps and the OTel ancestor walk).
+Rewind starts no run; the renderer follows with the ordinary `runs.start`, which
+appends the edited text. Usage / spend is never rewritten. `restoreFiles`
+additionally hard-resets the worktree to the newest checkpoint at or before the
+edited message.
+
 ## Memory
 
 | Piece | Path |

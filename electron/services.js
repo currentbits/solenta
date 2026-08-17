@@ -747,9 +747,12 @@ function planStepsFrom(todos) {
 }
 
 /**
- * One-time hand-off context prefix for the CLI (NOT stored in the transcript):
- * a digest of the tail of the source thread, newest-last, each message capped.
- * Returns "" when no prefix applies: no handoffFrom, session already exists,
+ * One-time context prefix for the CLI (NOT stored in the transcript): a
+ * digest of a transcript tail, newest-last, each message capped.
+ * Source is the handoffFrom thread, or this thread itself when
+ * replayContext is set (issue #254 rewind — do NOT set handoffFrom to
+ * self; that field drives crew sweeps and the OTel ancestor walk).
+ * Returns "" when no prefix applies: no source, session already exists,
  * source missing/deleted, or source has no assistant message.
  *
  * ponytail: tail digest, not a summary — a fork still needs a self-contained
@@ -759,20 +762,25 @@ function planStepsFrom(todos) {
  * Strings are mirrored in src/devCoder.ts (services-level helper + dev twin —
  * the established pattern for shared electron/dev logic).
  *
- * @param {{ handoffFrom?: string | null, sessionId?: string | null } | null} thread
+ * @param {{ id?: string, handoffFrom?: string | null, sessionId?: string | null, replayContext?: boolean } | null} thread
  * @param {(sourceId: string) => Array<{ role?: string, text?: string }> | null | undefined} getMessages
  * @returns {string}
  */
 function buildHandoffPrefix(thread, getMessages) {
-  if (!thread || thread.handoffFrom == null || thread.handoffFrom === "") {
+  if (!thread) return "";
+  if (thread.sessionId != null && thread.sessionId !== "") {
     return "";
   }
-  if (thread.sessionId != null && thread.sessionId !== "") {
+  // replayContext wins: a rewound fork must digest ITS OWN retained tail,
+  // not walk handoffFrom again (and never a self-handoffFrom).
+  const sourceId =
+    thread.replayContext === true ? thread.id : thread.handoffFrom;
+  if (sourceId == null || sourceId === "") {
     return "";
   }
   let msgs;
   try {
-    msgs = getMessages(String(thread.handoffFrom));
+    msgs = getMessages(String(sourceId));
   } catch {
     return "";
   }
@@ -1464,6 +1472,82 @@ function specNoteFor(thread, cwd) {
   );
 }
 
+/** Whole-note cap so a 400K-LOC repo yields the same size prompt as a small one. */
+const CODEINDEX_NOTE_MAX = 3500;
+
+/** Symbols listed per file before "+N more". */
+const CODEINDEX_SYMBOLS_PER_FILE = 8;
+
+/**
+ * Standing note appended to every dispatched prompt (CLI-only, never stored
+ * in the transcript) with the shared per-repo symbol map. Agents reach for
+ * grep first (CodeScaleBench: 7,993 keyword vs 57 deep-search), so the
+ * value is injecting the map plus when-to-use-which-tool, not adding a tool.
+ *
+ * Returns "" when there is nothing to say: no index, a tiny repo, or
+ * CODER_CODEINDEX_DISABLE=1. Same rule as planboardNoteFor / selfIdNoteFor.
+ *
+ * @param {import('./codeindex.js').CodeIndex | null | undefined} index
+ * @returns {string}
+ */
+function codeIndexNoteFor(index) {
+  if (!index) return "";
+  if (process.env.CODER_CODEINDEX_DISABLE === "1") return "";
+  const { MIN_FILES_FOR_NOTE } = require("./codeindex.js");
+  if (index.fileCount < MIN_FILES_FOR_NOTE) return "";
+
+  const age = ageOf(index.updatedAt);
+  const header =
+    `\n\n[Code map] Shared symbol index of this repo: ${index.fileCount} files, ` +
+    `${index.symbolCount} symbols, built ${age}. It maps the project's MAIN ` +
+    `checkout and is shared by every thread and worktree, so files created ` +
+    `on a branch may be missing.`;
+  const steering =
+    "Use the map to jump straight to the file that owns a symbol instead of " +
+    "grepping to orient yourself. Grep is still right for literal strings, " +
+    "call sites, and anything not listed. Read the file before editing it.";
+
+  const parts = [header];
+  const files = Array.isArray(index.files) ? index.files : [];
+  for (const file of files) {
+    if (!file || !file.path) continue;
+    const line = formatIndexFileLine(file);
+    const candidate = parts.concat(line, steering).join("\n");
+    if (candidate.length > CODEINDEX_NOTE_MAX) break;
+    parts.push(line);
+  }
+  parts.push(steering);
+  return parts.join("\n");
+}
+
+/**
+ * @param {unknown} updatedAt
+ * @returns {string}
+ */
+function ageOf(updatedAt) {
+  const ms = Date.now() - Number(updatedAt);
+  if (!Number.isFinite(ms) || ms < 45_000) return "just now";
+  const min = Math.round(ms / 60_000);
+  if (min < 60) return min === 1 ? "1 minute ago" : `${min} minutes ago`;
+  const hr = Math.round(min / 60);
+  if (hr < 48) return hr === 1 ? "1 hour ago" : `${hr} hours ago`;
+  const day = Math.round(hr / 24);
+  return day === 1 ? "1 day ago" : `${day} days ago`;
+}
+
+/**
+ * @param {{ path?: string, symbols?: string[] }} file
+ * @returns {string}
+ */
+function formatIndexFileLine(file) {
+  const symbols = Array.isArray(file.symbols) ? file.symbols : [];
+  const shown = symbols.slice(0, CODEINDEX_SYMBOLS_PER_FILE);
+  const extra = symbols.length - shown.length;
+  let names = shown.join(", ");
+  if (extra > 0) names = names ? `${names}, +${extra} more` : `+${extra} more`;
+  return names ? `${file.path} - ${names}` : String(file.path);
+}
+
 /**
  * Read one artifact off disk for the UI. `text` is null when the agent has
  * not written it yet; the path is returned either way so the card can say
@@ -1600,6 +1684,83 @@ function renameThread(store, input) {
   const updated = store.updateThread(threadId, { title });
   store.save();
   return updated ? { ...updated } : { ...thread, title };
+}
+
+/**
+ * Edit-and-resubmit (issue #254): truncate the thread to just before a past
+ * USER message so the renderer can re-send an edited prompt via runs.start.
+ * Starts no run. Usage / spend is never rewritten.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, messageId: string, prompt: string, restoreFiles?: boolean }} input
+ * @param {{ isRunning?: (threadId: string) => boolean }} [opts]
+ * @returns {Promise<{ thread: object, droppedMessages: number, restoredSha: string | null }>}
+ */
+async function rewindThread(store, input, opts) {
+  const threadId = input && input.threadId;
+  const messageId = input && input.messageId;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  if (
+    (opts && typeof opts.isRunning === "function" && opts.isRunning(threadId)) ||
+    thread.status === "working"
+  ) {
+    throw new Error("Cannot rewind while a run is active");
+  }
+  if (!String((input && input.prompt) ?? "").trim()) {
+    throw new Error("Prompt cannot be empty");
+  }
+
+  const msgs = store.getMessages(threadId);
+  const at = msgs.findIndex((m) => m && m.id === messageId);
+  if (at < 0) {
+    throw new Error(`Unknown message: ${messageId}`);
+  }
+  if (msgs[at].role !== "user") {
+    throw new Error(`Not a user message: ${messageId}`);
+  }
+
+  // Capture before truncate: restoreFiles picks the newest checkpoint at or
+  // before this message, not "turn N" (clean turns skip a number).
+  const targetAt = Number(msgs[at].createdAt);
+
+  const droppedMessages = store.truncateFromMessage(threadId, messageId);
+  const updated = store.updateThread(threadId, {
+    sessionId: null,
+    replayContext: true,
+  });
+
+  let restoredSha = null;
+  if (input.restoreFiles && thread.worktreePath) {
+    const { listCheckpoints, restoreCheckpoint } = require("./worktrees.js");
+    const list = await listCheckpoints({ store, threadId });
+    // Newest-first. Newest checkpoint whose commit time is at or before the
+    // edited message is the files just before the user sent it.
+    // ponytail: git %ct is 1s granularity, so a checkpoint written in the
+    // same second the message was sent could sort on the wrong side of the
+    // boundary. A real turn takes seconds; worst case is restoring one turn
+    // later than intended.
+    const match = Number.isFinite(targetAt)
+      ? list.find((c) => c.at <= targetAt)
+      : null;
+    if (match) {
+      await restoreCheckpoint({
+        store,
+        threadId,
+        sha: match.sha,
+        isRunning: opts && opts.isRunning,
+      });
+      restoredSha = match.sha;
+    }
+  }
+
+  // Worktree reset is already on disk. Debounced save() would leave a crash
+  // in the 250ms window with files rewound and the old transcript resurrected.
+  store.saveNow();
+  const next = updated || store.getThread(threadId) || thread;
+  return { thread: { ...next }, droppedMessages, restoredSha };
 }
 
 /**
@@ -2542,6 +2703,7 @@ module.exports = {
   nextSpecStage,
   specArtifactPath,
   specNoteFor,
+  codeIndexNoteFor,
   specStagePrompt,
   startSpec,
   submitSpec,
@@ -2558,6 +2720,7 @@ module.exports = {
   setVerifyCommand,
   runVerifyNow,
   renameThread,
+  rewindThread,
   clearSettledOnActivity,
   deleteThread,
   purgeThread,
