@@ -2961,6 +2961,12 @@ function isSettledForGc(thread, now, autoSettleAfterDays) {
   if (!thread) return false;
   if (thread.status === "working") return false;
   if (thread.pinnedAt != null && Number.isFinite(thread.pinnedAt)) return false;
+  // Archived is a stronger signal than settled: the user pushed the thread
+  // out of sight entirely. The renderer filters archived threads BEFORE the
+  // settle split (sidebarGroups), so they never carry a settled override —
+  // and those are precisely the invisible worktrees #316 is about (108 of
+  // 127 worktree-holding threads on the reporter's own machine).
+  if (thread.archived === true) return true;
   if (thread.settledOverride === "settled") return true;
   if (thread.settledOverride === "active") return false;
   const pr = String(thread.prState || "").toUpperCase();
