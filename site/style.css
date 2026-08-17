@@ -320,6 +320,9 @@ footer {
   gap: 64px;
   padding: 56px 0 96px;
 }
+/* ponytail: pages without a sidebar (changelog) get the single column */
+.docs-layout:not(:has(.docs-nav)) { grid-template-columns: minmax(0, 1fr); }
+.docs-layout:not(:has(.docs-nav)) .docs-content { margin: 0 auto; }
 .docs-nav {
   position: sticky;
   top: 96px;
