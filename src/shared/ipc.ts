@@ -58,6 +58,8 @@ export interface ThreadInfo {
   /** Set alongside prNumber so the badge can link out without calling gh. */
   prUrl: string | null;
   status: ThreadStatus;
+  /** Short reason a run failed ("Run error: ..."), null otherwise. Set when status becomes "failed", cleared when a run starts. */
+  lastError: string | null;
   createdAt: number;
   /**
    * Last REAL activity: a message appended, a run status change, or a title

@@ -1069,6 +1069,9 @@ function RecapCard({
     );
   }
   facts.push(thread.status);
+  if (thread.status === "failed" && thread.lastError) {
+    facts.push(thread.lastError.replace(/\s+/g, " ").trim());
+  }
 
   return (
     <section className={styles.gitCard} data-recap-card="">
@@ -1082,7 +1085,15 @@ function RecapCard({
       <p className={styles.recapActivity} data-recap-activity="">
         {activity?.text ?? "No activity yet"}
       </p>
-      <div className={styles.recapFacts} data-recap-facts="">
+      <div
+        className={styles.recapFacts}
+        data-recap-facts=""
+        title={
+          thread.status === "failed" && thread.lastError
+            ? thread.lastError
+            : undefined
+        }
+      >
         {facts.join(" · ")}
       </div>
     </section>

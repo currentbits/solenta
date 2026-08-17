@@ -119,6 +119,7 @@ describe("Store", () => {
       prNumber: null,
       prUrl: null,
       status: "idle",
+      lastError: null,
       createdAt: 1,
       updatedAt: 2,
       runStartedAt: null,

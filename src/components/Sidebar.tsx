@@ -317,7 +317,10 @@ function StatusBadge({
 
   if (thread.status === "failed") {
     return (
-      <span className={`${styles.badge} ${styles.badgeFailed}`}>
+      <span
+        className={`${styles.badge} ${styles.badgeFailed}`}
+        title={thread.lastError ?? undefined}
+      >
         Failed
       </span>
     );
