@@ -43,6 +43,10 @@ function appMenuTemplate(opts = {}) {
         { role: "selectAll" },
       ],
     },
+    // Installing our own menu replaces Electron's default one, which had
+    // reload / devtools / zoom / fullscreen under View. Take the built-in
+    // submenu role back rather than re-listing those items.
+    { role: "viewMenu" },
     {
       label: "Window",
       submenu: [

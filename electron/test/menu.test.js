@@ -24,6 +24,14 @@ describe("app menu template (issue #353)", () => {
     assert.equal(linux[0].label, "Edit");
   });
 
+  it("keeps the View menu Electron's default provided", () => {
+    const t = appMenuTemplate({ platform: "darwin" });
+    assert.ok(
+      t.some((m) => m.role === "viewMenu"),
+      "dropping View loses reload, devtools, zoom and fullscreen",
+    );
+  });
+
   it("always has a Window menu", () => {
     for (const platform of ["darwin", "linux", "win32"]) {
       const t = appMenuTemplate({ platform });
