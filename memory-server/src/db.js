@@ -221,6 +221,11 @@ export function createSchema(db) {
       PRIMARY KEY (src, dst, relation, entry_id)
     );
 
+    -- The PK indexes src as its leading column; dst alone would full-scan, and
+    -- graphSearch's BFS probes dst once per dequeued node.
+    -- ponytail: no index on entry_id — that path is deleteEntry only, not a loop.
+    CREATE INDEX IF NOT EXISTS idx_edges_dst ON edges(dst);
+
     CREATE TABLE IF NOT EXISTS mentions (
       entry_id  TEXT NOT NULL,
       entity_id TEXT NOT NULL,
