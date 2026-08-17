@@ -26,6 +26,11 @@ export function EditProjectModal({
   const [remoteHost, setRemoteHost] = useState(project.remoteHost ?? "");
   const [remotePath, setRemotePath] = useState(project.remotePath ?? "");
   const [spaceId, setSpaceId] = useState(project.spaceId ?? "");
+  const [retentionText, setRetentionText] = useState(
+    project.worktreeRetention && project.worktreeRetention > 0
+      ? String(project.worktreeRetention)
+      : "",
+  );
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -46,6 +51,19 @@ export function EditProjectModal({
       setError("Remote path must be an absolute path (start with /).");
       return;
     }
+    const retentionRaw = retentionText.trim();
+    let worktreeRetention = 0;
+    if (retentionRaw !== "") {
+      const n = Number(retentionRaw);
+      if (!Number.isInteger(n) || n < 0) {
+        setError(
+          "Keep worktrees must be a non-negative integer, or empty for unlimited.",
+        );
+        return;
+      }
+      worktreeRetention = n;
+    }
+
     setPending(true);
     setError(null);
     try {
@@ -54,6 +72,7 @@ export function EditProjectModal({
         name: name.trim(),
         remoteHost: host,
         remotePath: rpath,
+        worktreeRetention,
         ...(spaces.length > 0 ? { spaceId } : {}),
       });
       if (!updated) {
@@ -156,6 +175,32 @@ export function EditProjectModal({
               </select>
             </div>
           )}
+          <div className={styles.field}>
+            <label
+              className={styles.fieldLabel}
+              htmlFor="edit-project-retention"
+            >
+              Keep worktrees for the newest N settled threads
+            </label>
+            <input
+              id="edit-project-retention"
+              className={styles.input}
+              data-edit-project-retention=""
+              type="number"
+              inputMode="numeric"
+              min="0"
+              step="1"
+              placeholder="Unlimited"
+              value={retentionText}
+              onChange={(e) => setRetentionText(e.target.value)}
+              disabled={pending}
+              onKeyDown={enterToSubmit}
+            />
+            <p className={styles.note}>
+              Empty or 0 keeps every worktree. Cleanup removes directories
+              only. Branches stay.
+            </p>
+          </div>
           <div className={styles.field}>
             <label className={styles.fieldLabel} htmlFor="edit-project-remote-host">
               Remote host (user@host)

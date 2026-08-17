@@ -95,3 +95,18 @@ export function providerDisplayName(
 ): string {
   return providers.find((p) => p.id === providerId)?.name ?? providerId;
 }
+
+/** Human file size: "512 B", "1.5 KB", "12 MB". */
+export function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"] as const;
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  if (unit === 0) return `${Math.round(value)} B`;
+  const text = value >= 10 ? String(Math.round(value)) : value.toFixed(1);
+  return `${text} ${units[unit]}`;
+}
