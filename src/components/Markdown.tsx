@@ -1,4 +1,11 @@
-import { isValidElement, memo, useState, type ReactNode } from "react";
+import {
+  isValidElement,
+  memo,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import styles from "./Markdown.module.css";
@@ -64,6 +71,38 @@ function CodeBlock({ children }: { children?: ReactNode }) {
 }
 
 /**
+ * Hold `text` steady between parses.
+ *
+ * A streaming message pushes new text several times a second and ReactMarkdown
+ * re-parses ALL of it every time, so a run costs O(n^2) parse work on the
+ * renderer's main thread: 50KB of markdown is ~35ms per parse, which is what
+ * users feel as typing lag while an agent writes. Waiting `lastCost * 6` in
+ * between caps that at roughly a sixth of the main thread whatever the message
+ * length, and the trailing timer means the final text always lands.
+ *
+ * The first change after mount is not delayed, so a reply still starts drawing
+ * the moment its first chunk arrives.
+ *
+ * ponytail: the streaming tail lags by up to one interval. Parse only the
+ * settled prefix incrementally if that ever reads as stutter.
+ */
+function useThrottledText(text: string, lastCost: { current: number }): string {
+  const [shown, setShown] = useState(text);
+  const shownAt = useRef(0);
+  useEffect(() => {
+    if (text === shown) return;
+    const gap = Math.min(1000, Math.max(60, lastCost.current * 6));
+    const wait = Math.max(0, gap - (performance.now() - shownAt.current));
+    const timer = setTimeout(() => {
+      shownAt.current = performance.now();
+      setShown(text);
+    }, wait);
+    return () => clearTimeout(timer);
+  }, [text, shown, lastCost]);
+  return shown;
+}
+
+/**
  * Assistant-message markdown. react-markdown renders to React elements (no
  * dangerouslySetInnerHTML), so raw HTML in agent output is dropped, not
  * executed.
@@ -72,6 +111,15 @@ function CodeBlock({ children }: { children?: ReactNode }) {
  * message being written has new text.
  */
 export const Markdown = memo(function Markdown({ text }: { text: string }) {
+  // Measured across this subtree's render + commit, i.e. the parse we are
+  // pacing. Declared before the throttle so its effect runs first.
+  const lastCost = useRef(0);
+  const started = performance.now();
+  useEffect(() => {
+    lastCost.current = performance.now() - started;
+  });
+  const shown = useThrottledText(text, lastCost);
+
   return (
     <div className={styles.md}>
       <ReactMarkdown
@@ -88,7 +136,7 @@ export const Markdown = memo(function Markdown({ text }: { text: string }) {
           ),
         }}
       >
-        {text}
+        {shown}
       </ReactMarkdown>
     </div>
   );
