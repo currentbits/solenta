@@ -324,6 +324,12 @@ export function createSchema(db) {
   } catch (err) {
     console.error('normalizeProjectKeys failed (non-fatal):', err)
   }
+
+  try {
+    backfillCoOccurrenceEdges(db)
+  } catch (err) {
+    console.error('backfillCoOccurrenceEdges failed (non-fatal):', err)
+  }
 }
 
 /**
@@ -363,6 +369,38 @@ export function normalizeProjectKeys(db) {
     }
   }
   return changed
+}
+
+/** janitor_state key: co-occurrence edges derived once from pre-writer mentions. */
+export const EDGES_BACKFILL_KEY = 'edges_backfill_v1'
+
+/**
+ * One-shot: derive unordered co_occurs edges from existing mentions.
+ * Guarded by janitor_state so it runs at most once per database.
+ * @param {import('node:sqlite').DatabaseSync} db
+ * @returns {number} rows inserted
+ */
+export function backfillCoOccurrenceEdges(db) {
+  const done = db.prepare(`SELECT value FROM janitor_state WHERE key = ?`).get(EDGES_BACKFILL_KEY)
+  if (done) return 0
+
+  const now = new Date().toISOString()
+  const result = db
+    .prepare(
+      `INSERT OR IGNORE INTO edges (src, dst, relation, entry_id, created_at)
+       SELECT a.entity_id, b.entity_id, 'co_occurs', a.entry_id, ?
+       FROM mentions a
+       JOIN mentions b
+         ON a.entry_id = b.entry_id AND a.entity_id < b.entity_id`,
+    )
+    .run(now)
+
+  db.prepare(
+    `INSERT INTO janitor_state (key, value) VALUES (?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+  ).run(EDGES_BACKFILL_KEY, now)
+
+  return result.changes ?? 0
 }
 
 /**
