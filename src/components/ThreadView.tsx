@@ -22,12 +22,14 @@ import type {
   ProviderInfo,
   ReasoningEffort,
   RunStatInfo,
+  SpecArtifact,
+  SpecStage,
   ThreadDetail,
   ThreadInfo,
   WorkLogItem,
   WorkflowTemplateInfo,
 } from "../shared/ipc";
-import { THREAD_NOTES_MAX } from "../shared/ipc";
+import { SPEC_ARTIFACTS, THREAD_NOTES_MAX } from "../shared/ipc";
 import type { WorkflowSaveInput } from "../useCoder";
 import { diffLineKind, isEmptyDiff } from "../diffView";
 import { contextRing, contextWindowFor, type ContextRingView } from "../contextRing";
@@ -59,6 +61,7 @@ import { useEscapeClose } from "../useEscapeClose";
 import { Composer } from "./Composer";
 import { Markdown } from "./Markdown";
 import styles from "./ThreadView.module.css";
+import appStyles from "../App.module.css";
 
 const PUSH_FLASH_MS = 3000;
 const COPY_FLASH_MS = 1500;
@@ -203,6 +206,19 @@ interface ThreadViewProps {
   onRenameThread?: (title: string) => void | Promise<void>;
   /** Save scratch notes for a thread (header notes editor, issue #194). */
   onSetNotes?: (threadId: string, notes: string) => void | Promise<void>;
+  /** Turn spec mode on for a thread that has no spec yet (issue #269). */
+  onStartSpec?: (threadId: string) => void | Promise<void>;
+  /** Answer the spec stage gate. */
+  onReviewSpec?: (
+    threadId: string,
+    decision: "approve" | "revise",
+    feedback?: string,
+  ) => void | Promise<void>;
+  /** Read the current spec artifact off disk. */
+  onSpecArtifact?: (
+    threadId: string,
+    stage: SpecArtifact,
+  ) => Promise<{ path: string; text: string | null }>;
   /** Permanently delete the open thread (caller already confirmed in UI). */
   onDeleteThread: () => void | Promise<void>;
   /** Center Changes panel open (lifted so the Git tab can open it). */
@@ -1273,6 +1289,162 @@ function PlanCard({ thread }: { thread: ThreadInfo }) {
   );
 }
 
+const SPEC_STAGES: SpecStage[] = [...SPEC_ARTIFACTS, "build"];
+
+function specStepStatus(
+  stage: SpecStage,
+  current: SpecStage,
+): "done" | "doing" | "todo" {
+  const i = SPEC_STAGES.indexOf(stage);
+  const j = SPEC_STAGES.indexOf(current);
+  if (i < j) return "done";
+  if (i === j) return "doing";
+  return "todo";
+}
+
+/**
+ * Spec mode card (issue #269): the gated requirements → design → tasks →
+ * build strip, the current artifact, and the approve / request-changes gate.
+ */
+function SpecCard({
+  thread,
+  onReviewSpec,
+  onSpecArtifact,
+}: {
+  thread: ThreadInfo;
+  onReviewSpec?: (
+    threadId: string,
+    decision: "approve" | "revise",
+    feedback?: string,
+  ) => void | Promise<void>;
+  onSpecArtifact?: (
+    threadId: string,
+    stage: SpecArtifact,
+  ) => Promise<{ path: string; text: string | null }>;
+}) {
+  const spec = thread.spec;
+  const [artifact, setArtifact] = useState<{
+    path: string;
+    text: string | null;
+  } | null>(null);
+  const [revising, setRevising] = useState(false);
+  const [feedback, setFeedback] = useState("");
+
+  const stage = spec?.stage;
+  const awaitingApproval = spec?.awaitingApproval ?? false;
+
+  useEffect(() => {
+    setRevising(false);
+    setFeedback("");
+    if (!onSpecArtifact || stage == null || stage === "build") {
+      setArtifact(null);
+      return;
+    }
+    let live = true;
+    setArtifact(null);
+    void onSpecArtifact(thread.id, stage)
+      .then((result) => {
+        if (live) setArtifact(result);
+      })
+      .catch(() => {
+        if (live) setArtifact(null);
+      });
+    return () => {
+      live = false;
+    };
+  }, [thread.id, stage, awaitingApproval, onSpecArtifact]);
+
+  if (!spec) return null;
+
+  const artifactBody =
+    artifact &&
+    (artifact.text != null ? (
+      <div className={styles.planBody}>
+        <Markdown text={artifact.text} />
+      </div>
+    ) : (
+      <p className={appStyles.specStatus}>
+        {artifact.path} not written yet
+      </p>
+    ));
+
+  return (
+    <div className={appStyles.specCard} data-spec-card="">
+      <div className={appStyles.specCardHead}>
+        <span className={appStyles.specCardTitle}>Spec</span>
+        <span className={appStyles.specStatus}>{spec.stage}</span>
+      </div>
+      <ol className={appStyles.specStageList}>
+        {SPEC_STAGES.map((step) => (
+          <li
+            key={step}
+            className={appStyles.specStage}
+            data-spec-stage={step}
+            data-plan-step={specStepStatus(step, spec.stage)}
+          >
+            {step}
+          </li>
+        ))}
+      </ol>
+      {spec.stage === "build" ? (
+        <p className={appStyles.specStatus}>The spec is approved.</p>
+      ) : spec.awaitingApproval ? (
+        <>
+          {artifactBody}
+          {onReviewSpec && (
+            <>
+              {revising && (
+                <textarea
+                  className={styles.notesInput}
+                  data-spec-feedback=""
+                  aria-label="Revision feedback"
+                  value={feedback}
+                  onChange={(e) => setFeedback(e.target.value)}
+                  placeholder="What should change?"
+                />
+              )}
+              <div className={styles.permissionActions}>
+                <button
+                  type="button"
+                  className={styles.permissionAllow}
+                  onClick={() => void onReviewSpec(thread.id, "approve")}
+                >
+                  Approve
+                </button>
+                <button
+                  type="button"
+                  className={styles.permissionDeny}
+                  onClick={() => {
+                    if (!revising) {
+                      setRevising(true);
+                      return;
+                    }
+                    const text = feedback.trim();
+                    void onReviewSpec(
+                      thread.id,
+                      "revise",
+                      text === "" ? undefined : text,
+                    );
+                  }}
+                >
+                  Request changes
+                </button>
+              </div>
+            </>
+          )}
+        </>
+      ) : (
+        <>
+          {artifactBody}
+          <p className={appStyles.specStatus}>
+            The agent is working on this stage.
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
 function DiffLine({ line }: { line: string }) {
   const kind = diffLineKind(line);
   return (
@@ -1543,6 +1715,9 @@ export const ThreadView = memo(function ThreadView({
   onSetArchived,
   onRenameThread,
   onSetNotes,
+  onStartSpec,
+  onReviewSpec,
+  onSpecArtifact,
   onDeleteThread,
   changesOpen,
   changesNonce,
@@ -2217,6 +2392,16 @@ export const ThreadView = memo(function ThreadView({
         </div>
         <div className={styles.actions}>
           {ring && <ContextRingBadge ring={ring} />}
+          {onStartSpec && !thread.spec && (
+            <button
+              type="button"
+              className={styles.btn}
+              data-spec-mode-btn=""
+              onClick={() => void onStartSpec(thread.id)}
+            >
+              Spec mode
+            </button>
+          )}
           {onSetNotes && (
             <button
               type="button"
@@ -2690,6 +2875,14 @@ export const ThreadView = memo(function ThreadView({
             />
           );
         })}
+
+        {thread.spec ? (
+          <SpecCard
+            thread={thread}
+            onReviewSpec={onReviewSpec}
+            onSpecArtifact={onSpecArtifact}
+          />
+        ) : null}
 
         {/* A pending plan prompt already shows the plan — don't show it twice. */}
         {(thread.planSteps?.length || thread.plan) &&
