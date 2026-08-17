@@ -132,7 +132,14 @@ function defaultBranch(projectPath) {
  */
 async function defaultBranchAsync(projectPath) {
   const shown = await gitTryAsync(projectPath, ["branch", "--show-current"]);
-  const branch = shown.ok ? shown.stdout : "";
+  // Sync defaultBranch lets git's own failure (missing path, not a repo) throw
+  // rather than mislabelling it as detached HEAD. Keep that split here.
+  if (!shown.ok) {
+    throw new Error(
+      `Could not read the project's current branch: ${tailErr(shown.combined, "git branch --show-current failed")}`,
+    );
+  }
+  const branch = shown.stdout;
   if (!branch) {
     throw new Error(
       "Project checkout is detached HEAD; check out a branch before merging",
