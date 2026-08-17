@@ -1277,6 +1277,13 @@
   font-weight: 500;
 }
 
+/* Guardrail warning on an ask-tier prompt (#409): louder than the card it
+   sits in, because the card is already amber. */
+.permissionGuardrail {
+  color: #fca5a5;
+  font-weight: 500;
+}
+
 .permissionInput {
   margin: 0;
   padding: 8px;

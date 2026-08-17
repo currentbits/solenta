@@ -3161,6 +3161,12 @@ export const ThreadView = memo(function ThreadView({
             <div className={styles.permissionHead}>
               Agent wants to use <strong>{detail.pendingPermission.toolName}</strong>
             </div>
+            {detail.pendingPermission.guardrail ? (
+              <div className={styles.permissionGuardrail}>
+                ⚠ {detail.pendingPermission.guardrail.reason} (
+                {detail.pendingPermission.guardrail.rule})
+              </div>
+            ) : null}
             <pre className={styles.permissionInput}>{detail.pendingPermission.input}</pre>
             <div className={styles.permissionActions}>
               <button
