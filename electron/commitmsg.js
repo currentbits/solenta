@@ -3,6 +3,7 @@
 const { spawn } = require("node:child_process");
 const { getProvider, resolveBin, isBinAvailable } = require("./providers.js");
 const { diff } = require("./worktrees.js");
+const { fmRun } = require("./fm.js");
 
 const TIMEOUT_MS = 60000;
 /** Diff body is truncated well under the IPC 100k cap; models need the shape, not every hunk. */
@@ -201,6 +202,13 @@ async function suggestCommitMessage(opts) {
   const prompt = buildPrompt(d);
   // The prompt is the trailing argv element for every provider above.
   args[args.length - 1] = prompt;
+
+  // Prefer free on-device fm (#340). Any failure is invisible; fall through.
+  const fmOut = await fmRun(prompt, { env });
+  if (fmOut) {
+    const message = cleanSubject(fmOut);
+    if (message) return { message };
+  }
 
   const stdout = await runPrint(bin, args, thread.worktreePath || undefined, env);
   const message = extractSubject(entry.id, stdout);
