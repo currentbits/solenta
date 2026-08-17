@@ -52,8 +52,19 @@ type Pending = {
 };
 
 const TRANSPORT_ERROR = "WebSocket disconnected";
+const QUEUE_FULL_ERROR = "Offline queue full, request dropped";
 const MAX_BACKOFF_MS = 30_000;
 const MIN_BACKOFF_MS = 1_000;
+const MAX_QUEUED = 64;
+// ponytail: one timeout for every channel. Raise it if a legitimately slow
+// handler (gh network calls) starts tripping instead of per-channel budgets.
+const INVOKE_TIMEOUT_MS = 120_000;
+
+function unref(timer: unknown): void {
+  if (typeof timer === "object" && timer && "unref" in timer) {
+    (timer as { unref: () => void }).unref();
+  }
+}
 
 export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
   const WS = opts.WebSocket ?? WebSocket;
@@ -83,7 +94,27 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
 
   function flushQueue(): void {
     const batch = queued.splice(0);
-    for (const p of batch) sendPending(p);
+    const bySig = new Map<string, Pending>();
+    for (const p of batch) {
+      const sig = JSON.stringify([p.channel, p.args]);
+      const first = bySig.get(sig);
+      if (!first) {
+        bySig.set(sig, p);
+        sendPending(p);
+        continue;
+      }
+      // Interval pollers queue the same call over and over during an outage.
+      // Send one and share its reply instead of stampeding main on reconnect.
+      const { resolve, reject } = first;
+      first.resolve = (v) => {
+        resolve(v);
+        p.resolve(v);
+      };
+      first.reject = (e) => {
+        reject(e);
+        p.reject(e);
+      };
+    }
   }
 
   function rejectInflight(message: string): void {
@@ -99,16 +130,35 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
 
   function invoke(channel: string, ...args: unknown[]): Promise<unknown> {
     return new Promise((resolve, reject) => {
+      const id = nextId++;
+      // Covers both a handler that hangs in main and a queued call that never
+      // gets a reconnect: either way the caller's button stops spinning.
+      const timer = schedule(() => {
+        inflight.delete(id);
+        const i = queued.findIndex((q) => q.id === id);
+        if (i >= 0) queued.splice(i, 1);
+        reject(new Error(`Timed out after ${INVOKE_TIMEOUT_MS}ms: ${channel}`));
+      }, INVOKE_TIMEOUT_MS);
+      unref(timer);
       const p: Pending = {
-        id: nextId++,
+        id,
         channel,
         args,
-        resolve,
-        reject,
+        resolve: (v) => {
+          clearTimeout(timer as ReturnType<typeof setTimeout>);
+          resolve(v);
+        },
+        reject: (e) => {
+          clearTimeout(timer as ReturnType<typeof setTimeout>);
+          reject(e);
+        },
       };
       if (ready && socket && socket.readyState === WS.OPEN) {
         sendPending(p);
       } else {
+        while (queued.length >= MAX_QUEUED) {
+          queued.shift()!.reject(new Error(QUEUE_FULL_ERROR));
+        }
         queued.push(p);
       }
     });
@@ -176,9 +226,7 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
       openSocket();
     }, delay);
     reconnectTimer = timer as ReturnType<typeof setTimeout>;
-    if (typeof timer === "object" && timer && "unref" in timer) {
-      (timer as { unref: () => void }).unref();
-    }
+    unref(timer);
   }
 
   function attach(ws: InstanceType<typeof WS>): void {
