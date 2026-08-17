@@ -1035,6 +1035,29 @@ function setMuted(store, input) {
 }
 
 /**
+ * Rename a thread. Metadata only: never bumps updatedAt (issue #139), so
+ * the sidebar sort is unchanged.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, title: string }} input
+ */
+function renameThread(store, input) {
+  const { threadId, title: raw } = input;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  const trimmed = String(raw ?? "").trim();
+  if (!trimmed) {
+    throw new Error("Thread title cannot be empty");
+  }
+  const title = truncateThreadTitle(trimmed);
+  const updated = store.updateThread(threadId, { title });
+  store.save();
+  return updated ? { ...updated } : { ...thread, title };
+}
+
+/**
  * Shared with deleteThread and removeProject — one string so the two cannot
  * drift. Renderer and Git tab copy depend on this exact wording.
  */
@@ -1970,6 +1993,7 @@ module.exports = {
   setQueued,
   setSnoozed,
   setMuted,
+  renameThread,
   clearSettledOnActivity,
   deleteThread,
   purgeThread,
