@@ -1102,20 +1102,7 @@ function listThreads(store) {
  */
 function threadSummaries(store) {
   return store.getThreads().map((t) => {
-    const msgs = store.getMessages(t.id);
-    let last = null;
-    for (let i = msgs.length - 1; i >= 0; i--) {
-      const m = msgs[i];
-      if (
-        m &&
-        m.role === "assistant" &&
-        typeof m.text === "string" &&
-        m.text.trim() !== ""
-      ) {
-        last = m;
-        break;
-      }
-    }
+    const last = store.getLastAssistantMessage(t.id);
     return {
       id: t.id,
       title: t.title,
