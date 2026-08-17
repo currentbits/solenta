@@ -38,6 +38,12 @@ const {
 const workflowEngine = require("./workflow.js");
 const { wrapCommand } = require("./ssh.js");
 const { killTree } = require("./proc.js");
+const {
+  runVerifyCommand,
+  buildFixPrompt,
+  normalizeCommand,
+  MAX_FIX_ATTEMPTS,
+} = require("./verify.js");
 
 const KIMI_PUSH_THROTTLE_MS = 250;
 
@@ -664,15 +670,116 @@ function createRunner(opts) {
    * After a successful turn lands status "done": best-effort worktree
    * checkpoint commit and orchestrator wake-up. Shared across every
    * provider path (and sim). Never throws into the run lifecycle.
+   *
+   * When the thread has a verifyCommand the gate runs here, after the
+   * checkpoint so the evidence can pin to a sha that already exists.
+   * Status flips back to "working" first: the thread must not sit green
+   * while the command is in flight. Orch wake-up waits for the proof.
    * @param {string} threadId
    */
   function afterSuccessfulTurn(threadId) {
+    let gated = false;
+    try {
+      gated = shouldVerify(threadId);
+    } catch {
+      gated = false;
+    }
+    if (gated) {
+      try {
+        store.updateThread(threadId, { status: "working" }, { touch: true });
+        store.save();
+        pushThreadsChanged();
+      } catch {
+        // still try to run the command
+      }
+      void (async () => {
+        let sha = null;
+        try {
+          const { maybeCreateCheckpoint } = require("./worktrees.js");
+          const ckpt = await maybeCreateCheckpoint(store, threadId);
+          if (ckpt && ckpt.sha) sha = ckpt.sha;
+        } catch {
+          // silent
+        }
+        if (!sha) sha = worktreeHeadSha(threadId);
+        await runVerifyGate(threadId, sha);
+      })().catch((err) => {
+        try {
+          settleVerifyCrash(threadId, err);
+        } catch {
+          // silent
+        }
+      });
+      return;
+    }
     try {
       const { maybeCreateCheckpoint } = require("./worktrees.js");
       void maybeCreateCheckpoint(store, threadId);
     } catch {
       // silent
     }
+    finishSuccessfulTurn(threadId);
+  }
+
+  /**
+   * Armed when the thread has a non-empty verifyCommand and this was not
+   * a simulate run. Simulate settles on the agent's word alone.
+   * @param {string} threadId
+   */
+  function shouldVerify(threadId) {
+    const thread = store.getThread(threadId);
+    if (!thread) return false;
+    if (resolveProvider(thread) === "simulate") return false;
+    return Boolean(normalizeCommand(thread.verifyCommand));
+  }
+
+  /** HEAD of the thread worktree, or null. Used when the tree was already clean. */
+  function worktreeHeadSha(threadId) {
+    try {
+      const thread = store.getThread(threadId);
+      if (!thread || !thread.worktreePath) return null;
+      const { execFileSync } = require("node:child_process");
+      const sha = execFileSync("git", ["rev-parse", "HEAD"], {
+        cwd: thread.worktreePath,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      }).trim();
+      return sha || null;
+    } catch {
+      return null;
+    }
+  }
+
+  function lastRunIdFor(threadId) {
+    const msgs = store.getMessages(threadId) || [];
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i].runId) return String(msgs[i].runId);
+    }
+    return "unknown";
+  }
+
+  /**
+   * Attempt 0 on a fresh user turn. Increment only when the stored verify
+   * is a failure from this same turn (the last user message is the fix
+   * prompt we handed back). A new user prompt resets the counter so a
+   * thread's whole life does not accumulate toward the cap.
+   * @param {object} thread
+   */
+  function nextVerifyAttempt(thread) {
+    const prev = thread.verify;
+    if (!prev || prev.ok) return 0;
+    const msgs = store.getMessages(thread.id) || [];
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i].role !== "user") continue;
+      if (String(msgs[i].text || "").startsWith("[verification failed]")) {
+        return (Number(prev.attempt) || 0) + 1;
+      }
+      return 0;
+    }
+    return 0;
+  }
+
+  function finishSuccessfulTurn(threadId) {
     try {
       queueOrchNotice(threadId, "done");
       flushOrchNotices(threadId);
@@ -680,6 +787,152 @@ function createRunner(opts) {
       // silent
     }
     sweepDoneWorkers(threadId);
+  }
+
+  function settleVerifyCrash(threadId, err) {
+    const reason = err && err.message ? String(err.message) : String(err);
+    appendMessage(threadId, "event", `Verification error: ${reason}`);
+    store.updateThread(
+      threadId,
+      {
+        status: "failed",
+        lastError: shortError(`Verification error: ${reason}`),
+      },
+      { touch: true },
+    );
+    store.save();
+    pushThreadsChanged();
+    afterFailedTurn(threadId);
+  }
+
+  /**
+   * Run the thread's verify command and settle or hand a fix turn back.
+   * Never rejects to the caller: spawn failures become an ok:false result.
+   * @param {string} threadId
+   * @param {string | null} sha
+   */
+  async function runVerifyGate(threadId, sha) {
+    const thread = store.getThread(threadId);
+    if (!thread) return;
+    const command = normalizeCommand(thread.verifyCommand);
+    // Cleared mid-flight: settle as if the gate was never armed.
+    if (!command) {
+      store.updateThread(threadId, { status: "done" }, { touch: true });
+      store.save();
+      finishSuccessfulTurn(threadId);
+      return;
+    }
+    const project = store.getProject(thread.projectId);
+    const cwd =
+      thread.worktreePath || (project && project.path) || process.cwd();
+    const attempt = nextVerifyAttempt(thread);
+    const runId = lastRunIdFor(threadId);
+    let raw;
+    try {
+      raw = await runVerifyCommand({ command, cwd });
+    } catch (err) {
+      raw = {
+        ok: false,
+        exitCode: null,
+        timedOut: false,
+        log: err && err.message ? String(err.message) : String(err),
+        durationMs: 0,
+      };
+    }
+    const latest = store.getThread(threadId);
+    if (!latest || !normalizeCommand(latest.verifyCommand)) {
+      if (latest) {
+        store.updateThread(threadId, { status: "done" }, { touch: true });
+        store.save();
+        finishSuccessfulTurn(threadId);
+      }
+      return;
+    }
+    /** @type {import('../src/shared/ipc').VerifyResult} */
+    const result = {
+      runId,
+      command,
+      ok: Boolean(raw.ok),
+      exitCode: raw.exitCode,
+      timedOut: Boolean(raw.timedOut),
+      log: raw.log || "",
+      sha,
+      durationMs: Number(raw.durationMs) || 0,
+      at: Date.now(),
+      attempt,
+    };
+
+    if (result.ok) {
+      const secs = Math.round(result.durationMs / 1000);
+      appendMessage(
+        threadId,
+        "event",
+        `Verified: ${command} passed in ${secs}s`,
+      );
+      store.updateThread(
+        threadId,
+        { verify: result, status: "done" },
+        { touch: true },
+      );
+      store.save();
+      pushDetail(threadId);
+      pushThreadsChanged();
+      finishSuccessfulTurn(threadId);
+      return;
+    }
+
+    if (attempt + 1 < MAX_FIX_ATTEMPTS) {
+      appendMessage(threadId, "event", `Verification failed: ${command}`);
+      store.updateThread(threadId, { verify: result }, { touch: true });
+      store.save();
+      pushDetail(threadId);
+      pushThreadsChanged();
+      const prompt = buildFixPrompt(result);
+      Promise.resolve()
+        .then(() => startRun({ threadId, prompt }))
+        .catch((err) => {
+          try {
+            const reason =
+              err && err.message ? String(err.message) : String(err);
+            appendMessage(
+              threadId,
+              "event",
+              `${prompt}\n\nNot delivered: ${reason}`,
+            );
+            if (!active.has(threadId)) {
+              store.updateThread(
+                threadId,
+                {
+                  status: "failed",
+                  lastError: shortError(`Not delivered: ${reason}`),
+                },
+                { touch: true },
+              );
+            }
+            store.save();
+            pushDetail(threadId, lastWorkflowByThread.get(threadId) || null);
+            pushThreadsChanged();
+          } catch {
+            // silent
+          }
+        });
+      return;
+    }
+
+    appendMessage(threadId, "event", `Verification failed: ${command}`);
+    store.updateThread(
+      threadId,
+      {
+        verify: result,
+        status: "failed",
+        lastError: shortError(`Verification failed: ${command}`),
+      },
+      { touch: true },
+    );
+    store.save();
+    pushDetail(threadId);
+    pushThreadsChanged();
+    afterFailedTurn(threadId);
   }
 
   /**
