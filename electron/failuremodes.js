@@ -59,7 +59,10 @@ function normalizeSignature(raw) {
   s = s.replace(/(?:file:\/\/)?(?:[A-Za-z]:)?(?:\/|\\)[^\s:'"]+/g, "<path>");
   s = s.replace(/\b(?:\.\.\/|\.\/)[^\s:'"]+/g, "<path>");
   s = s.replace(/\b[\w.-]+(?:\/[\w.-]+)+/g, "<path>");
-  // Keep HTTP 1xx-5xx: 404 vs 500 is two modes. Exit codes collapse (1/2/130).
+  // Exit codes collapse before the HTTP carve-out below, which cannot tell a
+  // 404 from a SIGINT's exit 130 by shape alone.
+  s = s.replace(/\bexit\s+\d+\b/gi, "exit <n>");
+  // Keep HTTP 1xx-5xx: 404 vs 500 is two modes.
   s = s.replace(/\b\d+(?:\.\d+)?\b/g, (token) => {
     const n = Number(token);
     return /^\d{3}$/.test(token) && n >= 100 && n <= 599 ? token : "<n>";
