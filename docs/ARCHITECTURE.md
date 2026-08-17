@@ -199,6 +199,55 @@ transcript. Entries live on the thread (`ThreadInfo.hypotheses`, newest-last,
 capped) and `hypothesisNoteFor` injects the invalidated ones into the next
 dispatch so a later agent, or a best-of-N fork, does not re-tread a dead end.
 
+## Agent teams: shared task list and peer messaging
+
+Issue #277. A **crew** is the thread at the top of the `handoffFrom` chain plus
+every `orchWorker` under it (`services.crewRootOf`, cycle- and depth-guarded).
+That root id keys one shared task list in `store.tasksByCrew`, so every worker
+of one orchestration self-claims from the same list instead of waiting for the
+lead to hand out work.
+
+| Piece | Path |
+|-------|------|
+| Data layer | `electron/services.js`: `addCrewTasks` / `listCrewTasks` / `claimCrewTask` / `completeCrewTask` / `releaseCrewTasks` |
+| Agent surface | `electron/orchServer.js`: `task_add`, `task_list`, `task_claim`, `task_complete`, `task_release`, `peer_send` |
+| Delivery | `electron/runner.js`: `deliverNotice({ threadId, line })` |
+| UI | `threads:crewTasks` → `src/components/AgentsPanel.tsx` |
+
+**Dependency auto-unblocking is derived, never stored.** `blocked` is computed
+from `needs` on every read, so completing a task opens its dependents with no
+second write that could go stale; `completeCrewTask` returns exactly the tasks
+that just became claimable and that list wakes the crew root. An unknown id in
+`needs` is rejected at `task_add` — a typo must not block a task forever.
+
+**Peer messaging reuses the orchestrator wake-up queue.** `deliverNotice` is
+`flushOrchNotices` generalized: one queue, one delivery rule (idle thread runs
+immediately, a busy one flushes at its own terminal). Worker-finished lines
+still get the `[orchestration]` prefix; a caller-prefixed line (`[peer from …]`,
+`[crew] finished t2 …`) keeps its own. So a backend worker sends the frontend
+worker an API contract directly, without a round trip through the lead.
+
+**Hand-offs are artifacts, not chat history.** Worktrees of one repo share a git
+object store, so the durable hand-off is: commit `contract.md` on your branch,
+put a `branch:path` ref in the task note or peer message, and the peer reads it
+with `git show <branch>:<path>`. That convention lives in the coder-threads
+MCP instructions — there is deliberately no artifact registry.
+
+**Loop guardrails.** Three, all refusals rather than advice:
+
+- `CREW_TASK_ATTEMPT_CAP` (3) — a fourth claim of the same task is refused and
+  the crew has to escalate. `attempts[]` records who tried and the outcome each
+  gave back.
+- `services.crewTaskNoteFor` rides every dispatch of a thread holding a task and,
+  when that task was attempted before or the thread's last run failed, forces a
+  "what failed / am I repeating myself" answer *before* the retry.
+- `CREW_AUTO_TURN_CAP` (25) — consecutive machine-delivered turns on one thread.
+  Refused through the same undeliverable path as the orchestration budget gate
+  (event + `failed` + `lastError`), and any user-sent turn resets the counter.
+
+A failed run releases the thread's claims (`afterFailedTurn`) with the error as
+the outcome, so a crashed worker never leaves a task stranded.
+
 ## Spec mode
 
 Optional per-thread gate (issue #269): the agent writes `requirements.md`,

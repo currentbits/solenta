@@ -37,6 +37,7 @@ import type {
   ThreadDetail,
   ThreadInfo,
   ThreadSummaryInfo,
+  CrewTaskView,
   DigestResult,
   UsageByDay,
   WorkflowTemplateInfo,
@@ -350,6 +351,11 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
     threads: {
       list: () => call<ThreadInfo[]>("threads:list"),
       summaries: () => call<ThreadSummaryInfo[]>("threads:summaries"),
+      crewTasks: (input) =>
+        call<{ rootThreadId: string; tasks: CrewTaskView[] }>(
+          "threads:crewTasks",
+          input,
+        ),
       search: (input) => call<ThreadInfo[]>("threads:search", input),
       create: (input) => call<ThreadInfo>("threads:create", input),
       fork: (input) => call<ThreadInfo>("threads:fork", input),

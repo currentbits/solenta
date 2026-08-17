@@ -352,6 +352,69 @@ export interface Hypothesis {
   at: number;
 }
 
+/* ------------------------------------------------------- crew task list */
+
+/** Caps for the shared task list (issue #277). */
+export const CREW_TASK_TITLE_MAX = 200;
+export const CREW_TASK_NOTE_MAX = 2000;
+export const CREW_TASKS_MAX = 100;
+/**
+ * Loop guardrail: a task may be claimed this many times before the crew has
+ * to stop and escalate. Prevents a worker (or two workers in turn) grinding
+ * the same failing task forever.
+ */
+export const CREW_TASK_ATTEMPT_CAP = 3;
+/**
+ * Loop guardrail: consecutive machine-delivered turns (worker notices, peer
+ * messages, unblock wake-ups) on one thread with no human in between.
+ * Reset by any user-sent prompt.
+ */
+export const CREW_AUTO_TURN_CAP = 25;
+
+/**
+ * "open" is claimable once every task in `needs` is done — blocked-ness is
+ * derived from the graph, never stored, so completing a task unblocks its
+ * dependents with no second write to go stale.
+ */
+export type CrewTaskStatus = "open" | "claimed" | "done";
+
+/** One attempt at a task: who claimed it and when it was given back. */
+export interface CrewTaskAttempt {
+  /** Thread that claimed it. */
+  threadId: string;
+  at: number;
+  /** Why the attempt ended, when it ended without completing. */
+  outcome?: string;
+}
+
+/**
+ * One entry of a crew's shared task list (issue #277). Tasks belong to the
+ * crew ROOT thread (the orchestrator at the top of the handoffFrom chain);
+ * every worker in that crew sees the same list and self-claims from it.
+ */
+export interface CrewTask {
+  /** Short id, unique within the crew ("t1", "t2") — agents quote it. */
+  id: string;
+  title: string;
+  /** Task ids that must be done before this one may be claimed. */
+  needs: string[];
+  status: CrewTaskStatus;
+  /** Thread that holds the claim, null when open or done. */
+  owner: string | null;
+  /** Result of a done task: a summary, or a `branch:path` artifact ref. */
+  note: string;
+  /** Claim history, oldest first — drives the CREW_TASK_ATTEMPT_CAP guardrail. */
+  attempts: CrewTaskAttempt[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** A crew task plus the derived fields no store write can get stale. */
+export interface CrewTaskView extends CrewTask {
+  /** Some task in `needs` is not done yet. */
+  blocked: boolean;
+}
+
 /** One step of an agent's working plan, in the agent's own order. */
 export interface PlanStep {
   step: string;
@@ -1361,6 +1424,16 @@ export interface CoderApi {
      * Cheap: no git or provider calls.
      */
     summaries(): Promise<ThreadSummaryInfo[]>;
+    /**
+     * Shared crew task list for the selected thread (issue #277). Read-only
+     * from the renderer — agents claim and complete via MCP. Tasks belong
+     * to the crew root (orchestrator at the top of the handoffFrom chain);
+     * any thread in that crew resolves to the same list.
+     */
+    crewTasks(input: { threadId: string }): Promise<{
+      rootThreadId: string;
+      tasks: CrewTaskView[];
+    }>;
     /**
      * Full-content search: matches thread titles, notes, AND message text
      * (case-insensitive substring), newest activity first, max 50. Includes

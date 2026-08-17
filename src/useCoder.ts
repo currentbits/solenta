@@ -40,6 +40,7 @@ import type {
   ThreadDetail,
   ThreadInfo,
   ThreadSummaryInfo,
+  CrewTaskView,
   UpdateStatus,
   UsageByDay,
   VerifyResult,
@@ -358,6 +359,10 @@ export interface UseCoderResult {
   markDigestSeen: () => Promise<{ seenAt: number }>;
   /** Per-thread summaries for the Agents tab team view. */
   listThreadSummaries: () => Promise<ThreadSummaryInfo[]>;
+  /** Shared crew task list for the selected thread (issue #277). Read-only. */
+  listCrewTasks: (
+    threadId: string,
+  ) => Promise<{ rootThreadId: string; tasks: CrewTaskView[] }>;
   /** Worktree checkpoints for a thread (newest-first). */
   listCheckpoints: (threadId: string) => Promise<CheckpointInfo[]>;
   /** Hard-reset the thread worktree to a checkpoint sha. */
@@ -1880,6 +1885,13 @@ export function useCoder(): UseCoderResult {
     return api.threads.summaries();
   }, [api]);
 
+  const listCrewTasks = useCallback(
+    async (threadId: string) => {
+      return api.threads.crewTasks({ threadId });
+    },
+    [api],
+  );
+
   const refreshProviders = useCallback(async () => {
     try {
       setProviders(await api.providers.list());
@@ -2253,6 +2265,7 @@ export function useCoder(): UseCoderResult {
     listDigest,
     markDigestSeen,
     listThreadSummaries,
+    listCrewTasks,
     listCheckpoints,
     restoreCheckpoint,
     runStats,

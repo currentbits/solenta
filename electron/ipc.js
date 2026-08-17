@@ -205,6 +205,9 @@ const IPC_HANDLERS = {
   "threads:summaries": async (ctx) => {
     return services.threadSummaries(ctx.store);
   },
+  "threads:crewTasks": async (ctx, input) => {
+    return services.listCrewTasks(ctx.store, input || {});
+  },
   "activity:list": async (ctx) => {
     const threads = ctx.store.getThreads();
     return buildActivity(threads, ctx.store.data.workLogByThread, Date.now());

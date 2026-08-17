@@ -147,6 +147,9 @@ describe("orch-server tool handlers", () => {
     assert.match(INSTRUCTIONS, /woken on a new turn/);
     assert.match(INSTRUCTIONS, /do not sit idle waiting for the user/);
     assert.match(INSTRUCTIONS, /hypothesis_record/);
+    assert.match(INSTRUCTIONS, /task_claim/);
+    assert.match(INSTRUCTIONS, /peer_send/);
+    assert.match(INSTRUCTIONS, /git show/);
     assert.doesNotMatch(INSTRUCTIONS, /poll thread_status until/);
   });
 
@@ -583,7 +586,13 @@ describe("orch-server HTTP", () => {
     const names = list.body.result.tools.map((t) => t.name).sort();
     assert.deepEqual(names, [
       "hypothesis_record",
+      "peer_send",
       "spec_submit",
+      "task_add",
+      "task_claim",
+      "task_complete",
+      "task_list",
+      "task_release",
       "thread_fork",
       "thread_send",
       "thread_status",
