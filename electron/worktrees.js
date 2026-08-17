@@ -23,6 +23,8 @@ const TERMINAL_PR_STATES = new Set(["MERGED", "CLOSED"]);
  * @returns {string}
  */
 function gitOut(cwd, args, opts) {
+  // ponytail: remaining sync git is deliberate, confined to worktree write
+  // flows (setup/merge/sweep). Do not convert; those stay blocking on purpose.
   // execCommand, not execFileSync: it owns the default timeout that keeps a
   // hung git off the main-process event loop.
   const raw = execCommand(null, "git", args, {
@@ -108,6 +110,23 @@ function gitTry(cwd, args, opts) {
  */
 function defaultBranch(projectPath) {
   const branch = gitOut(projectPath, ["branch", "--show-current"]);
+  if (!branch) {
+    throw new Error(
+      "Project checkout is detached HEAD; check out a branch before merging",
+    );
+  }
+  return branch;
+}
+
+/**
+ * Async counterpart of defaultBranch. Same contract; does not block the
+ * main process. Used by PR read/create paths.
+ * @param {string} projectPath
+ * @returns {Promise<string>}
+ */
+async function defaultBranchAsync(projectPath) {
+  const shown = await gitTryAsync(projectPath, ["branch", "--show-current"]);
+  const branch = shown.ok ? shown.stdout : "";
   if (!branch) {
     throw new Error(
       "Project checkout is detached HEAD; check out a branch before merging",
@@ -1113,8 +1132,9 @@ function ghFailFromError(err) {
 
 /**
  * Run gh without throwing. Mirrors gitTry: timeout, no prompt, enoent flag.
- * SYNC — only for interactive createPr/prStatus paths that already run off
- * the UI thread via ipcMain.handle. Background refresh MUST use ghTryAsync.
+ * ponytail: remaining sync gh is deliberate, confined to PR write flows
+ * (createPr/mergePr). Do not convert; those stay blocking on purpose.
+ * Background refresh and PR read paths MUST use ghTryAsync.
  * @param {string} cwd
  * @param {string[]} args
  * @param {{ env?: NodeJS.ProcessEnv, timeout?: number }} [opts]
@@ -1374,15 +1394,15 @@ function parsePrListJson(stdout) {
  * can render a per-project error row.
  *
  * @param {string} projectPath
- * @returns {{ ok: true, prs: ReturnType<typeof parsePrListItem>[] } | { ok: false, reason: string }}
+ * @returns {Promise<{ ok: true, prs: ReturnType<typeof parsePrListItem>[] } | { ok: false, reason: string }>}
  */
-function listPrs(projectPath) {
+async function listPrs(projectPath) {
   const cwd = String(projectPath || "");
   if (!cwd) {
     return { ok: false, reason: "not a GitHub repo" };
   }
 
-  const remote = gitTry(cwd, ["remote", "get-url", "origin"]);
+  const remote = await gitTryAsync(cwd, ["remote", "get-url", "origin"]);
   if (!remote.ok) {
     return { ok: false, reason: "not a GitHub repo" };
   }
@@ -1391,26 +1411,34 @@ function listPrs(projectPath) {
     return { ok: false, reason: "not a GitHub repo" };
   }
 
-  let listed = ghTry(cwd, [
-    "pr",
-    "list",
-    "--json",
-    PR_LIST_FIELDS,
-    "--limit",
-    "50",
-  ]);
+  let listed = await ghTryAsync(
+    cwd,
+    [
+      "pr",
+      "list",
+      "--json",
+      PR_LIST_FIELDS,
+      "--limit",
+      "50",
+    ],
+    { timeout: GH_TIMEOUT_MS },
+  );
   if (
     !listed.ok &&
     isUnknownJsonField(listed.stderr || listed.combined || listed.stdout)
   ) {
-    listed = ghTry(cwd, [
-      "pr",
-      "list",
-      "--json",
-      PR_LIST_FIELDS_FALLBACK,
-      "--limit",
-      "50",
-    ]);
+    listed = await ghTryAsync(
+      cwd,
+      [
+        "pr",
+        "list",
+        "--json",
+        PR_LIST_FIELDS_FALLBACK,
+        "--limit",
+        "50",
+      ],
+      { timeout: GH_TIMEOUT_MS },
+    );
   }
   if (!listed.ok) {
     if (listed.enoent) {
@@ -1455,9 +1483,9 @@ function isNoPrMessage(text) {
  * Resolve thread cwd + current branch name (same rules as push).
  * @param {import('./store').Store} store
  * @param {string} threadId
- * @returns {{ thread: object, project: object, cwd: string, branch: string, originUrl: string }}
+ * @returns {Promise<{ thread: object, project: object, cwd: string, branch: string, originUrl: string }>}
  */
-function resolveThreadGit(store, threadId) {
+async function resolveThreadGit(store, threadId) {
   const thread = store.getThread(threadId);
   if (!thread) {
     throw new Error(`Unknown thread: ${threadId}`);
@@ -1469,22 +1497,21 @@ function resolveThreadGit(store, threadId) {
 
   const cwd = thread.worktreePath || project.path;
 
-  let branch = "";
-  try {
-    branch = gitOut(cwd, ["branch", "--show-current"]);
-  } catch (err) {
-    const msg = err && err.message ? String(err.message) : String(err);
+  const shown = await gitTryAsync(cwd, ["branch", "--show-current"]);
+  if (!shown.ok) {
+    const msg = String(shown.combined || shown.stderr || "");
     throw new Error(
       `Could not determine current branch: ${msg.split("\n")[0]}`,
     );
   }
+  const branch = shown.stdout;
   if (!branch) {
     throw new Error(
       "Checkout is detached HEAD or has no branch name; check out a branch before opening a PR",
     );
   }
 
-  const remote = gitTry(cwd, ["remote", "get-url", "origin"]);
+  const remote = await gitTryAsync(cwd, ["remote", "get-url", "origin"]);
   if (!remote.ok) {
     throw new Error("No git remote configured for this project.");
   }
@@ -1500,11 +1527,11 @@ function resolveThreadGit(store, threadId) {
  * @param {object} opts
  * @param {import('./store').Store} opts.store
  * @param {string} opts.threadId
- * @returns {{ number: number, url: string, state: "OPEN" | "CLOSED" | "MERGED", branch: string, created: boolean } | null}
+ * @returns {Promise<{ number: number, url: string, state: "OPEN" | "CLOSED" | "MERGED", branch: string, created: boolean } | null>}
  */
-function prStatus(opts) {
+async function prStatus(opts) {
   const { store, threadId } = opts;
-  const { cwd, branch, originUrl } = resolveThreadGit(store, threadId);
+  const { cwd, branch, originUrl } = await resolveThreadGit(store, threadId);
 
   if (!isGitHubRemote(originUrl)) {
     throw new Error(
@@ -1512,12 +1539,20 @@ function prStatus(opts) {
     );
   }
 
-  let viewed = ghTry(cwd, ["pr", "view", branch, "--json", PR_JSON_ENRICHED]);
+  let viewed = await ghTryAsync(
+    cwd,
+    ["pr", "view", branch, "--json", PR_JSON_ENRICHED],
+    { timeout: GH_TIMEOUT_MS },
+  );
   if (
     !viewed.ok &&
     isUnknownJsonField(viewed.stderr || viewed.combined || viewed.stdout)
   ) {
-    viewed = ghTry(cwd, ["pr", "view", branch, "--json", PR_JSON_MINIMAL]);
+    viewed = await ghTryAsync(
+      cwd,
+      ["pr", "view", branch, "--json", PR_JSON_MINIMAL],
+      { timeout: GH_TIMEOUT_MS },
+    );
   }
   if (!viewed.ok) {
     if (viewed.enoent || viewed.timedOut) {
@@ -1727,15 +1762,15 @@ function extractPrChecks(result, preferText) {
  * @param {object} opts
  * @param {import('./store').Store} opts.store
  * @param {string} opts.threadId
- * @returns {{ ok: true, checks: ReturnType<typeof parsePrCheckItem>[] } | { ok: false, reason: string }}
+ * @returns {Promise<{ ok: true, checks: ReturnType<typeof parsePrCheckItem>[] } | { ok: false, reason: string }>}
  */
-function prChecks(opts) {
+async function prChecks(opts) {
   const { store, threadId } = opts;
   let cwd;
   let branch;
   let originUrl;
   try {
-    const resolved = resolveThreadGit(store, threadId);
+    const resolved = await resolveThreadGit(store, threadId);
     cwd = resolved.cwd;
     branch = resolved.branch;
     originUrl = resolved.originUrl;
@@ -1750,12 +1785,20 @@ function prChecks(opts) {
     return { ok: false, reason: "not a GitHub repo" };
   }
 
-  let viewed = ghTry(cwd, ["pr", "view", branch, "--json", PR_JSON_ENRICHED]);
+  let viewed = await ghTryAsync(
+    cwd,
+    ["pr", "view", branch, "--json", PR_JSON_ENRICHED],
+    { timeout: GH_TIMEOUT_MS },
+  );
   if (
     !viewed.ok &&
     isUnknownJsonField(viewed.stderr || viewed.combined || viewed.stdout)
   ) {
-    viewed = ghTry(cwd, ["pr", "view", branch, "--json", PR_JSON_MINIMAL]);
+    viewed = await ghTryAsync(
+      cwd,
+      ["pr", "view", branch, "--json", PR_JSON_MINIMAL],
+      { timeout: GH_TIMEOUT_MS },
+    );
   }
   if (!viewed.ok) {
     if (viewed.enoent) return { ok: false, reason: "gh missing" };
@@ -1784,19 +1827,27 @@ function prChecks(opts) {
     };
   }
 
-  let checked = ghTry(cwd, [
-    "pr",
-    "checks",
-    String(info.number),
-    "--json",
-    "name,state,bucket,link",
-  ]);
+  let checked = await ghTryAsync(
+    cwd,
+    [
+      "pr",
+      "checks",
+      String(info.number),
+      "--json",
+      "name,state,bucket,link",
+    ],
+    { timeout: GH_TIMEOUT_MS },
+  );
   let preferText = false;
   if (
     !checked.ok &&
     isChecksJsonRejected(checked.stderr || checked.combined || checked.stdout)
   ) {
-    checked = ghTry(cwd, ["pr", "checks", String(info.number)]);
+    checked = await ghTryAsync(
+      cwd,
+      ["pr", "checks", String(info.number)],
+      { timeout: GH_TIMEOUT_MS },
+    );
     preferText = true;
   }
 
@@ -1826,11 +1877,11 @@ function prChecks(opts) {
  * @param {import('./store').Store} opts.store
  * @param {string} opts.threadId
  * @param {(channel: string, payload: unknown) => void} [opts.broadcast]
- * @returns {ReturnType<typeof prStatus>}
+ * @returns {Promise<Awaited<ReturnType<typeof prStatus>>>}
  */
-function mergePr(opts) {
+async function mergePr(opts) {
   const { store, threadId, broadcast } = opts;
-  const { cwd, branch, originUrl } = resolveThreadGit(store, threadId);
+  const { cwd, branch, originUrl } = await resolveThreadGit(store, threadId);
 
   if (!isGitHubRemote(originUrl)) {
     throw new Error(
@@ -1866,7 +1917,7 @@ function mergePr(opts) {
     throwGhFailure(merged, "gh pr merge failed");
   }
 
-  const live = prStatus({ store, threadId });
+  const live = await prStatus({ store, threadId });
   if (typeof broadcast === "function") {
     const { listThreads } = require("./services.js");
     broadcast("threads:changed", listThreads(store));
@@ -1937,7 +1988,7 @@ async function refreshPrStates(store, opts) {
       let cwd;
       let originUrl;
       try {
-        const resolved = resolveThreadGit(store, threadId);
+        const resolved = await resolveThreadGit(store, threadId);
         cwd = resolved.cwd;
         originUrl = resolved.originUrl;
       } catch {
@@ -2117,12 +2168,12 @@ function createPrStateRefresher(opts) {
  * @param {string} [opts.body]
  * @param {boolean} [opts.draft]
  * @param {(channel: string, payload: unknown) => void} [opts.broadcast]
- * @returns {{ number: number, url: string, state: "OPEN" | "CLOSED" | "MERGED", branch: string, created: boolean }}
+ * @returns {Promise<{ number: number, url: string, state: "OPEN" | "CLOSED" | "MERGED", branch: string, created: boolean }>}
  */
-function createPr(opts) {
+async function createPr(opts) {
   const { store, threadId, title, body, draft, broadcast } = opts;
 
-  const { project, cwd, branch, originUrl } = resolveThreadGit(
+  const { project, cwd, branch, originUrl } = await resolveThreadGit(
     store,
     threadId,
   );
@@ -2133,7 +2184,7 @@ function createPr(opts) {
     );
   }
 
-  const baseBranch = defaultBranch(project.path);
+  const baseBranch = await defaultBranchAsync(project.path);
   const ahead = gitTry(cwd, ["log", `${baseBranch}..${branch}`, "--oneline"]);
   if (!ahead.ok) {
     throw new Error(
@@ -2871,6 +2922,7 @@ module.exports = {
   isGitHubRemote,
   gitTry,
   ghTry,
+  defaultBranchAsync,
   isGhAuthFailure,
   tailErr,
   slugify,
