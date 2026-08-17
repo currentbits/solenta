@@ -11,11 +11,11 @@ describe("services.updateProject", () => {
   let store;
   let project;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "solenta-proj-upd-"));
     store = new Store(path.join(tmpDir, "store.json"));
     // Remote form needs no local checkout on disk.
-    project = services.addProject(store, "", {
+    project = await services.addProject(store, "", {
       remoteHost: "dev@box",
       remotePath: "/srv/app",
     });

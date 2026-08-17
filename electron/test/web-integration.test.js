@@ -107,7 +107,7 @@ describe("wireClient × webBridge over a real socket", () => {
     fs.writeFileSync(path.join(repo, "README.md"), "hi\n");
     git(repo, ["add", "README.md"]);
     git(repo, ["commit", "-m", "init"]);
-    const project = services.addProject(store, repo);
+    const project = await services.addProject(store, repo);
     services.createThread(store, { projectId: project.id, title: "alpha" });
 
     hub = {

@@ -632,7 +632,7 @@ const IPC_HANDLERS = {
     const threadId = input && input.threadId;
     if (!threadId) throw new Error("threadId is required");
     const { root } = resolveThreadRoot(ctx.store, threadId);
-    services.gitFetch(root);
+    await services.gitFetch(root);
   },
   "git:repoInfo": async (ctx, input) => {
     // Never throws: anything missing or unparseable is { ok: false }.

@@ -166,7 +166,7 @@ describe("runner attachments", () => {
     const repo = path.join(tmpDir, "app");
     fs.mkdirSync(repo);
     git(repo, ["init"]);
-    const project = services.addProject(store, repo);
+    const project = await services.addProject(store, repo);
     services.createThread(store, { projectId: project.id, title: "New Thread" });
   });
 

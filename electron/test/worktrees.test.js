@@ -211,7 +211,7 @@ describe("worktrees", () => {
   let worktreeBase;
   let broadcasts;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-wt-"));
     store = new Store(path.join(tmpDir, "store.json"));
     worktreeBase = path.join(tmpDir, "worktrees");
@@ -233,7 +233,7 @@ describe("worktrees", () => {
       // already on main/master
     }
 
-    project = services.addProject(store, repo);
+    project = await services.addProject(store, repo);
     thread = services.createThread(store, {
       projectId: project.id,
       title: "My Feature Work",

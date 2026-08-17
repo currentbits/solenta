@@ -272,7 +272,7 @@ describe("prChecks / mergePr", () => {
   let prevState;
   let statePath;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), "coder-prchecks-"));
     store = new Store(path.join(tmp, "store.json"));
     repo = path.join(tmp, "repo");
@@ -285,7 +285,7 @@ describe("prChecks / mergePr", () => {
     git(repo, ["commit", "-qm", "init"]);
     git(repo, ["remote", "add", "origin", "https://github.com/acme/demo.git"]);
 
-    const project = services.addProject(store, repo);
+    const project = await services.addProject(store, repo);
     thread = services.createThread(store, {
       projectId: project.id,
       title: "Checks feature",

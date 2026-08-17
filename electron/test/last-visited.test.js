@@ -48,13 +48,13 @@ describe("lastVisitedAt (round 43)", () => {
   let store;
   let project;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-visit-"));
     store = new Store(path.join(tmpDir, "store.json"));
     const repo = path.join(tmpDir, "app");
     fs.mkdirSync(repo);
     git(repo, ["init"]);
-    project = services.addProject(store, repo);
+    project = await services.addProject(store, repo);
   });
 
   afterEach(() => {

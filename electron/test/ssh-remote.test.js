@@ -47,7 +47,7 @@ describe("worktrees.diff remoteHost", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("prefixes git with ssh when the project has remoteHost", () => {
+  it("prefixes git with ssh when the project has remoteHost", async () => {
     const calls = [];
     ssh.setExecFileSync((bin, args) => {
       calls.push({ bin, args: args.slice() });
@@ -58,7 +58,7 @@ describe("worktrees.diff remoteHost", () => {
       return "";
     });
 
-    const project = services.addProject(store, "", {
+    const project = await services.addProject(store, "", {
       remoteHost: "dev@box",
       remotePath: "/srv/app",
     });
@@ -138,7 +138,7 @@ describe("runner startRun remoteHost fake spawn", () => {
       tickMs: 15,
     });
 
-    const project = services.addProject(store, "", {
+    const project = await services.addProject(store, "", {
       remoteHost: "dev@box",
       remotePath: "/srv/app",
     });

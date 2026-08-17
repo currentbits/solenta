@@ -22,7 +22,7 @@ describe("worktrees listFiles", () => {
   let repo;
   let thread;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-ls-"));
     store = new Store(path.join(tmpDir, "store.json"));
 
@@ -43,7 +43,7 @@ describe("worktrees listFiles", () => {
     // Ignored: never listed.
     fs.writeFileSync(path.join(repo, "ignored.txt"), "x\n");
 
-    const project = services.addProject(store, repo);
+    const project = await services.addProject(store, repo);
     thread = services.createThread(store, {
       projectId: project.id,
       title: "List files",

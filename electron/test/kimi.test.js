@@ -49,7 +49,7 @@ function waitFor(predicate, { timeoutMs = 15000, intervalMs = 20 } = {}) {
  * @param {string} dir
  * @returns {string} script path
  */
-function writeFakeKimi(dir) {
+async function writeFakeKimi(dir) {
   const scriptPath = path.join(dir, "fake-kimi.js");
   const body = `#!/usr/bin/env node
 "use strict";
@@ -447,7 +447,7 @@ describe("kimi runner integration", () => {
     git(projectDir, ["add", "."]);
     git(projectDir, ["commit", "-m", "init"]);
 
-    fakeBin = writeFakeKimi(tmpDir);
+    fakeBin = await writeFakeKimi(tmpDir);
     argvFile = path.join(tmpDir, "argv.json");
 
     prevKimiBin = process.env.CODER_KIMI_BIN;
@@ -463,7 +463,7 @@ describe("kimi runner integration", () => {
 
     const storePath = path.join(tmpDir, "store.json");
     store = new Store(storePath);
-    const project = services.addProject(store, projectDir);
+    const project = await services.addProject(store, projectDir);
     const thread = services.createThread(store, {
       projectId: project.id,
       title: "Kimi Thread",

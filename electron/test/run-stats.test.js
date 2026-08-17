@@ -27,7 +27,7 @@ function git(cwd, args) {
   }).trim();
 }
 
-function makeWorktreeFixture() {
+async function makeWorktreeFixture() {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-runstats-"));
   const store = new Store(path.join(tmpDir, "store.json"));
   const worktreeBase = path.join(tmpDir, "worktrees");
@@ -44,7 +44,7 @@ function makeWorktreeFixture() {
   } catch {
     // already on main
   }
-  const project = services.addProject(store, repo);
+  const project = await services.addProject(store, repo);
   const thread = services.createThread(store, {
     projectId: project.id,
     title: "Run stats thread",
@@ -108,7 +108,7 @@ describe("runStats", () => {
   });
 
   it("returns per-checkpoint-pair shortstat; first diffs against parent", async () => {
-    fx = makeWorktreeFixture();
+    fx = await makeWorktreeFixture();
     const wt = fx.worktreePath;
 
     fs.writeFileSync(path.join(wt, "a.txt"), "one\ntwo\nthree\n");
@@ -152,7 +152,7 @@ describe("runStats", () => {
   });
 
   it("returns [] without worktree, checkpoints, or a known thread", async () => {
-    fx = makeWorktreeFixture();
+    fx = await makeWorktreeFixture();
     const bare = services.createThread(fx.store, {
       projectId: fx.project.id,
       title: "No wt",
@@ -172,7 +172,7 @@ describe("runStats", () => {
   });
 
   it("skips the first checkpoint when parent diff fails", async () => {
-    fx = makeWorktreeFixture();
+    fx = await makeWorktreeFixture();
     const orphan = path.join(fx.tmpDir, "orphan");
     fs.mkdirSync(orphan);
     git(orphan, ["init"]);

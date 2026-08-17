@@ -381,7 +381,7 @@ describe("budget gate and spend on real runs", () => {
     const repo = path.join(tmpDir, "app");
     fs.mkdirSync(repo);
     git(repo, ["init"]);
-    const project = services.addProject(store, repo);
+    const project = await services.addProject(store, repo);
     services.createThread(store, {
       projectId: project.id,
       title: "Budget Thread",

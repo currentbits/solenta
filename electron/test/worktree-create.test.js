@@ -26,7 +26,7 @@ describe("threads:create with worktree", () => {
   let broadcasts;
   let ctx;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-wtcreate-"));
     store = new Store(path.join(tmpDir, "store.json"));
     worktreeBase = path.join(tmpDir, "worktrees");
@@ -41,7 +41,7 @@ describe("threads:create with worktree", () => {
     git(repo, ["add", "README.md"]);
     git(repo, ["commit", "-m", "init"]);
 
-    project = services.addProject(store, repo);
+    project = await services.addProject(store, repo);
     // The handler only touches store/worktreeBase/broadcast, so a plain
     // object is enough (no makeCtx side effects).
     ctx = {
@@ -147,7 +147,7 @@ describe("threads:create with worktree", () => {
   });
 
   it("orchestrate is rejected for remote projects, atomically", async () => {
-    const remote = services.addProject(store, repo);
+    const remote = await services.addProject(store, repo);
     services.updateProject(store, remote.id, {
       remoteHost: "box",
       remotePath: "/srv/app",
@@ -174,7 +174,7 @@ describe("maybeRenameWorktreeBranch", () => {
   let repo;
   let project;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-wtrename-"));
     store = new Store(path.join(tmpDir, "store.json"));
     worktreeBase = path.join(tmpDir, "worktrees");
@@ -188,7 +188,7 @@ describe("maybeRenameWorktreeBranch", () => {
     git(repo, ["add", "README.md"]);
     git(repo, ["commit", "-m", "init"]);
 
-    project = services.addProject(store, repo);
+    project = await services.addProject(store, repo);
   });
 
   afterEach(() => {
