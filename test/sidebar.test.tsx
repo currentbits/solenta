@@ -15,7 +15,12 @@ import {
   SETTLED_TAIL_INITIAL_COUNT,
   SETTLED_TAIL_PAGE_COUNT,
 } from "../src/threadSettle";
-import type { ProjectInfo, ProviderInfo, ThreadInfo } from "../src/shared/ipc";
+import type {
+  ProjectInfo,
+  ProviderInfo,
+  ThreadInfo,
+  UpdateStatus,
+} from "../src/shared/ipc";
 
 const p1: ProjectInfo = {
   id: "p1",
@@ -88,6 +93,7 @@ function sidebar(
     projectError?: string | null;
     revealThreadId?: string | null;
     onRevealHandled?: () => void;
+    updateState?: UpdateStatus["state"] | null;
   } = {},
 ) {
   const projects = over.projects ?? [p1];
@@ -108,6 +114,7 @@ function sidebar(
       onSetSettled={over.onSetSettled}
       revealThreadId={over.revealThreadId ?? null}
       onRevealHandled={over.onRevealHandled}
+      updateState={over.updateState}
       searchThreads={async ({ query }) =>
         threads.filter((t) => t.title.includes(query))
       }
@@ -1743,5 +1750,46 @@ describe("Sidebar group overflow cap + card density (issue #70)", () => {
       "orphan group has no header slug, so the card keeps it",
     );
     m.unmount();
+  });
+});
+
+function settingsButton(
+  m: Awaited<ReturnType<typeof mount>>,
+): HTMLButtonElement {
+  const el = m
+    .queryAll("button")
+    .find((b) => (b.textContent || "").includes("Settings"));
+  assert.ok(el, "Settings footer button must render");
+  return el as HTMLButtonElement;
+}
+
+describe("Sidebar update indicator (issue #138)", () => {
+  it("dots Settings when an update is waiting, not otherwise", async () => {
+    const available = await mount(
+      sidebar(THREADS, { updateState: "available" }),
+    );
+    const availableBtn = settingsButton(available);
+    assert.ok(
+      availableBtn.querySelector(".settingsDot"),
+      "dot present when updateState=available",
+    );
+    assert.equal(availableBtn.title, "Update available");
+    available.unmount();
+
+    const none = await mount(sidebar(THREADS, { updateState: "none" }));
+    assert.equal(
+      settingsButton(none).querySelector(".settingsDot"),
+      null,
+      "dot absent when updateState=none",
+    );
+    none.unmount();
+
+    const unset = await mount(sidebar(THREADS));
+    assert.equal(
+      settingsButton(unset).querySelector(".settingsDot"),
+      null,
+      "dot absent when updateState is unset",
+    );
+    unset.unmount();
   });
 });
