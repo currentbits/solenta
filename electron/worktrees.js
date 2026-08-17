@@ -2831,8 +2831,13 @@ async function listCheckpoints(opts) {
   if (!fs.existsSync(cwd)) return [];
 
   // %H sha, %ct committer unix, %s subject — newest first (git log default).
+  // --first-parent: a merge of a worker branch makes that worker's
+  // coder-checkpoint commits reachable. Walking them would let restore
+  // (and rewind) hard-reset onto the fork's tree and drop this thread's
+  // work. First parent is this thread's own line.
   const log = await gitTryAsync(cwd, [
     "log",
+    "--first-parent",
     "--grep=coder-checkpoint:",
     "--format=%H\t%ct\t%s",
   ]);

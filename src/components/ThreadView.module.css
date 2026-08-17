@@ -1075,6 +1075,19 @@
   padding: 2px 0;
 }
 
+.userBubbleWrap {
+  display: flex;
+  justify-content: flex-end;
+  max-width: 100%;
+}
+
+.userBubbleCluster {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  max-width: 100%;
+}
+
 .userBubble {
   max-width: min(72ch, 85%);
   padding: 10px 14px;
@@ -1086,6 +1099,66 @@
   font-size: 13.5px;
   white-space: pre-wrap;
   user-select: text;
+}
+
+.userEditBtn {
+  position: absolute;
+  top: 6px;
+  right: 100%;
+  margin-right: 8px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.1s ease;
+}
+
+.userBubbleCluster:hover .userEditBtn,
+.userBubbleCluster:focus-within .userEditBtn {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.userEdit {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  max-width: min(72ch, 85%);
+  width: 100%;
+}
+
+.userEditTextarea {
+  width: 100%;
+  min-height: 72px;
+  padding: 10px 14px;
+  border-radius: 14px 14px 4px 14px;
+  background: var(--blue-soft);
+  border: 1px solid var(--blue-border);
+  color: #e0ecff;
+  line-height: 1.55;
+  font-size: 13.5px;
+  font-family: inherit;
+  resize: vertical;
+}
+
+.userEditTextarea:focus {
+  outline: none;
+  border-color: var(--blue);
+}
+
+.userEditActions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.confirmCheck {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-muted);
 }
 
 /* Attachments listed under the message text they were sent with. */

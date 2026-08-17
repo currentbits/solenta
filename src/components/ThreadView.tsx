@@ -45,6 +45,11 @@ import {
   retryButtonTitle,
 } from "../retryTurn";
 import {
+  isEditableUserMessage,
+  rewindConfirmText,
+  rewindDroppedCount,
+} from "../editResubmit";
+import {
   formatReviewBarText,
   mapReviewBars,
   type ReviewBar,
@@ -167,6 +172,16 @@ interface ThreadViewProps {
   onStartRun: (
     prompt: string,
     threadId?: string,
+    attachments?: AttachmentInfo[],
+  ) => void | Promise<void>;
+  /**
+   * Edit-and-resubmit (#254): rewind to just before messageId, then start
+   * a run with the edited prompt. Same start-run path as Composer.
+   */
+  onRewindAndResubmit?: (
+    messageId: string,
+    prompt: string,
+    restoreFiles?: boolean,
     attachments?: AttachmentInfo[],
   ) => void | Promise<void>;
   /** Multi-phase Build workflow (Build pill) with selected template id. */
@@ -479,12 +494,146 @@ function TranscriptAttachmentChip({
  * timeline while only the message being written actually changed — so the
  * props are flat scalars, keeping the default shallow compare honest.
  */
+/**
+ * User bubble. Edit state lives here so a streamed timeline tick does not
+ * blow away the draft. Confirm (destructive rewind) stays on ThreadView.
+ */
+const UserMessageBlock = memo(function UserMessageBlock({
+  message,
+  canEdit,
+  confirming,
+  onRequestResubmit,
+  onCancelConfirm,
+  onLoadAttachmentImage,
+}: {
+  message: ChatMessage;
+  canEdit: boolean;
+  confirming: boolean;
+  onRequestResubmit?: (messageId: string, prompt: string) => void;
+  onCancelConfirm?: () => void;
+  onLoadAttachmentImage?: (path: string) => Promise<string | null>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(message.text);
+  const taRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (editing) taRef.current?.focus();
+  }, [editing]);
+
+  useEffect(() => {
+    if (!canEdit && editing) {
+      setEditing(false);
+      setDraft(message.text);
+    }
+  }, [canEdit, editing, message.text]);
+
+  const cancelEdit = () => {
+    if (confirming) onCancelConfirm?.();
+    setEditing(false);
+    setDraft(message.text);
+  };
+
+  const submitEdit = () => {
+    const prompt = draft.trim();
+    if (!prompt || !onRequestResubmit) return;
+    onRequestResubmit(message.id, prompt);
+  };
+
+  if (editing && canEdit) {
+    return (
+      <article className={`${styles.message} ${styles.messageUser}`}>
+        <div className={styles.userEdit}>
+          <textarea
+            ref={taRef}
+            className={styles.userEditTextarea}
+            aria-label="Edit message"
+            data-edit-textarea={message.id}
+            value={draft}
+            rows={Math.min(12, Math.max(3, draft.split("\n").length + 1))}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                e.preventDefault();
+                e.stopPropagation();
+                if (confirming) onCancelConfirm?.();
+                else cancelEdit();
+                return;
+              }
+              if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                e.preventDefault();
+                submitEdit();
+              }
+            }}
+          />
+          <div className={styles.userEditActions}>
+            <button
+              type="button"
+              className={styles.retryBtn}
+              data-edit-resubmit={message.id}
+              disabled={!draft.trim()}
+              onClick={submitEdit}
+            >
+              Resubmit
+            </button>
+            <button
+              type="button"
+              className={styles.retryBtn}
+              data-edit-cancel={message.id}
+              onClick={cancelEdit}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      </article>
+    );
+  }
+
+  return (
+    <article className={`${styles.message} ${styles.messageUser}`}>
+      <div className={styles.userBubbleWrap}>
+        <div className={styles.userBubbleCluster}>
+          {canEdit && onRequestResubmit && (
+            <button
+              type="button"
+              className={`${styles.retryBtn} ${styles.userEditBtn}`}
+              aria-label="Edit and resubmit"
+              title="Edit and resubmit"
+              data-edit-message={message.id}
+              onClick={() => {
+                setDraft(message.text);
+                setEditing(true);
+              }}
+            >
+              Edit
+            </button>
+          )}
+          <div className={styles.userBubble}>
+            {message.text}
+            {message.attachments && message.attachments.length > 0 && (
+              <TranscriptAttachments
+                attachments={message.attachments}
+                onLoadImage={onLoadAttachmentImage}
+              />
+            )}
+          </div>
+        </div>
+      </div>
+    </article>
+  );
+});
+
 const MessageBlock = memo(function MessageBlock({
   message,
   autoExpandTool,
   showRetry,
   retryTitle,
   onRetry,
+  canEdit,
+  confirming,
+  onRequestResubmit,
+  onCancelConfirm,
   metaModel = null,
   metaEffort = null,
   metaDuration = null,
@@ -498,6 +647,10 @@ const MessageBlock = memo(function MessageBlock({
   showRetry?: boolean;
   retryTitle?: string;
   onRetry?: () => void;
+  canEdit?: boolean;
+  confirming?: boolean;
+  onRequestResubmit?: (messageId: string, prompt: string) => void;
+  onCancelConfirm?: () => void;
   /** Assistant footer segments; null fields are omitted inside. */
   metaModel?: string | null;
   metaEffort?: string | null;
@@ -515,17 +668,14 @@ const MessageBlock = memo(function MessageBlock({
 
   if (message.role === "user") {
     return (
-      <article className={`${styles.message} ${styles.messageUser}`}>
-        <div className={styles.userBubble}>
-          {message.text}
-          {message.attachments && message.attachments.length > 0 && (
-            <TranscriptAttachments
-              attachments={message.attachments}
-              onLoadImage={onLoadAttachmentImage}
-            />
-          )}
-        </div>
-      </article>
+      <UserMessageBlock
+        message={message}
+        canEdit={Boolean(canEdit)}
+        confirming={Boolean(confirming)}
+        onRequestResubmit={onRequestResubmit}
+        onCancelConfirm={onCancelConfirm}
+        onLoadAttachmentImage={onLoadAttachmentImage}
+      />
     );
   }
 
@@ -1705,6 +1855,7 @@ export const ThreadView = memo(function ThreadView({
   hasProjects,
   onAddProject,
   onStartRun,
+  onRewindAndResubmit,
   onStartWorkflow,
   onSaveWorkflow,
   onRemoveWorkflow,
@@ -1784,6 +1935,12 @@ export const ThreadView = memo(function ThreadView({
   const [restoreConfirm, setRestoreConfirm] = useState<ReviewBar | null>(null);
   const [restorePending, setRestorePending] = useState(false);
   const [restoreError, setRestoreError] = useState<string | null>(null);
+  const [rewindConfirm, setRewindConfirm] = useState<{
+    messageId: string;
+    prompt: string;
+  } | null>(null);
+  const [rewindRestoreFiles, setRewindRestoreFiles] = useState(false);
+  const [rewindPending, setRewindPending] = useState(false);
   /** Runs collapsed by the user; everything else stays open. */
   const [collapsedRuns, setCollapsedRuns] = useState<ReadonlySet<string>>(
     () => new Set<string>(),
@@ -1902,6 +2059,53 @@ export const ThreadView = memo(function ThreadView({
     void onStartRun(retryUser.text, undefined, retryUser.attachments);
   }, [retryUser, isWorking, onStartRun]);
 
+  const handleRequestResubmit = useCallback(
+    (messageId: string, prompt: string) => {
+      if (!onRewindAndResubmit || isWorking || rewindPending) return;
+      setRewindRestoreFiles(false);
+      setRewindConfirm({ messageId, prompt });
+    },
+    [onRewindAndResubmit, isWorking, rewindPending],
+  );
+
+  const handleRewindConfirm = useCallback(async () => {
+    const pending = rewindConfirm;
+    if (!pending || !onRewindAndResubmit || rewindPending || isWorking) return;
+    setRewindPending(true);
+    try {
+      // Carry the original attachments, like Retry turn does: editing the
+      // words of a message must not silently drop the images it came with.
+      const source = detail?.messages.find((m) => m.id === pending.messageId);
+      await onRewindAndResubmit(
+        pending.messageId,
+        pending.prompt,
+        rewindRestoreFiles || undefined,
+        source?.attachments,
+      );
+      setRewindConfirm(null);
+    } catch {
+      // Parent surfaces rejections via the runError banner.
+      setRewindConfirm(null);
+    } finally {
+      setRewindPending(false);
+    }
+  }, [
+    rewindConfirm,
+    onRewindAndResubmit,
+    rewindPending,
+    isWorking,
+    rewindRestoreFiles,
+    detail,
+  ]);
+
+  const handleRewindCancel = useCallback(() => {
+    if (rewindPending) return;
+    setRewindConfirm(null);
+    setRewindRestoreFiles(false);
+  }, [rewindPending]);
+
+  useEscapeClose(Boolean(rewindConfirm) && !rewindPending, handleRewindCancel);
+
   /**
    * Fork one thread per selected provider or profile, then start the same
    * prompt on each new fork. Sequential: a run cannot start until its fork
@@ -2003,6 +2207,9 @@ export const ThreadView = memo(function ThreadView({
       setRestoreConfirm(null);
       setRestorePending(false);
       setRestoreError(null);
+      setRewindConfirm(null);
+      setRewindRestoreFiles(false);
+      setRewindPending(false);
       setRunStatList([]);
       setCollapsedRuns(new Set<string>());
       setSyncRefreshNonce(0);
@@ -2872,6 +3079,20 @@ export const ThreadView = memo(function ThreadView({
                       showRetry={isRetrySurface}
                       retryTitle={isRetrySurface ? retryTitle : undefined}
                       onRetry={isRetrySurface ? handleRetry : undefined}
+                      canEdit={
+                        Boolean(onRewindAndResubmit) &&
+                        isEditableUserMessage(
+                          entry.message,
+                          detail.thread.status,
+                        )
+                      }
+                      confirming={rewindConfirm?.messageId === entry.message.id}
+                      onRequestResubmit={
+                        onRewindAndResubmit
+                          ? handleRequestResubmit
+                          : undefined
+                      }
+                      onCancelConfirm={handleRewindCancel}
                       metaModel={
                         detail?.usage?.model ?? detail?.thread.model ?? null
                       }
@@ -3076,6 +3297,67 @@ export const ThreadView = memo(function ThreadView({
         <p className={styles.reviewError} role="alert" data-review-undo-error="">
           {restoreError}
         </p>
+      )}
+
+      {rewindConfirm && (
+        <div
+          className={styles.confirmOverlay}
+          role="presentation"
+          onClick={() => {
+            if (rewindPending) return;
+            handleRewindCancel();
+          }}
+        >
+          <div
+            className={styles.confirmDialog}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="rewind-title"
+            data-rewind-confirm={rewindConfirm.messageId}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 id="rewind-title" className={styles.confirmTitle}>
+              Resubmit from this message?
+            </h2>
+            <p className={styles.confirmBody}>
+              {rewindConfirmText(
+                rewindDroppedCount(detail.messages, rewindConfirm.messageId),
+              )}
+            </p>
+            {hasWorktree && (
+              <label className={styles.confirmCheck}>
+                <input
+                  type="checkbox"
+                  checked={rewindRestoreFiles}
+                  data-rewind-restore-files=""
+                  onChange={(e) => setRewindRestoreFiles(e.target.checked)}
+                />
+                Also restore files to that point
+              </label>
+            )}
+            <div className={styles.confirmActions}>
+              <button
+                type="button"
+                className={styles.confirmDanger}
+                data-rewind-confirm-submit=""
+                disabled={rewindPending || isWorking}
+                aria-busy={rewindPending || undefined}
+                onClick={() => void handleRewindConfirm()}
+              >
+                {rewindPending ? "Resubmitting…" : "Resubmit"}
+              </button>
+              <button
+                type="button"
+                className={styles.confirmCancel}
+                data-rewind-confirm-cancel=""
+                disabled={rewindPending}
+                onClick={handleRewindCancel}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {restoreConfirm && restoreConfirm.undoSha && (
