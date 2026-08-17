@@ -15,6 +15,7 @@ import type {
   ProviderInfo,
   SessionUsage,
   SkillInfo,
+  SkillTarget,
   SkillWrite,
   ThreadInfo,
   ThreadSummaryInfo,
@@ -124,11 +125,11 @@ interface AgentsPanelProps {
   settings: AppSettings | null;
   saveSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>;
   listSkills: (input?: { projectPath?: string }) => Promise<SkillInfo[]>;
-  addSkill: (input: SkillWrite) => Promise<{ name: string }>;
-  removeSkill: (input: {
-    target: "claude" | "agents";
-    name: string;
-  }) => Promise<void>;
+  addSkill: (
+    input: SkillWrite,
+  ) => Promise<{ name: string; installedIn: SkillTarget[] }>;
+  removeSkill: (input: { name: string }) => Promise<void>;
+  syncSkills: () => Promise<{ copied: number; skills: string[] }>;
 }
 
 type PhaseChipStatus = "done" | "active" | "pending" | "failed";
@@ -2338,6 +2339,7 @@ export const AgentsPanel = memo(function AgentsPanel({
   listSkills,
   addSkill,
   removeSkill,
+  syncSkills,
 }: AgentsPanelProps) {
   const [tab, setTab] = useState<PanelTab>("git");
 
@@ -2431,6 +2433,7 @@ export const AgentsPanel = memo(function AgentsPanel({
           listSkills={listSkills}
           addSkill={addSkill}
           removeSkill={removeSkill}
+          syncSkills={syncSkills}
         />
       )}
     </aside>

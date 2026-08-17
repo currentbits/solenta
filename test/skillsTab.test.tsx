@@ -1,33 +1,56 @@
 /**
  * SkillsTab, mounted for real: list render, MCP add-form validation, the
- * enable/disable toggle, and skill add/remove with its inline confirm.
+ * enable/disable toggle, and skill add/remove/sync with inline confirm.
  *
  * Run: node --import=./test/support/render.mjs --test test/skillsTab.test.tsx
  */
 import assert from "node:assert/strict";
 import { describe, it, afterEach } from "node:test";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { mount, unmountAll } from "./support/dom.ts";
 import { SkillsTab } from "../src/components/SkillsTab";
-import type { AppSettings, SkillInfo, SkillWrite } from "../src/shared/ipc";
+import type {
+  AppSettings,
+  SkillInfo,
+  SkillTarget,
+  SkillWrite,
+} from "../src/shared/ipc";
 
 afterEach(unmountAll);
+
+const ALL_TARGETS: SkillTarget[] = [
+  "claude",
+  "agents",
+  "codex",
+  "grok",
+  "opencode",
+  "kimi",
+];
 
 const SKILLS: SkillInfo[] = [
   {
     name: "review-pr",
     description: "Review a pull request end to end",
     source: "claude",
+    installedIn: [...ALL_TARGETS],
+    missingFrom: [],
+    bytes: 4800,
   },
   {
     name: "write-tests",
     description: "Add tests for the current change",
     source: "agents",
+    installedIn: ["claude", "agents", "codex", "grok", "opencode"],
+    missingFrom: ["kimi"],
+    bytes: 800,
   },
   {
     name: "local-rules",
     description: "Project-local rules",
     source: "project",
+    installedIn: [],
+    missingFrom: [],
+    bytes: 400,
   },
 ];
 
@@ -42,17 +65,26 @@ interface HarnessOptions {
   skills?: SkillInfo[];
   onSaveSettings?: (patch: Partial<AppSettings>) => void;
   onAddSkill?: (input: SkillWrite) => void;
-  onRemoveSkill?: (input: { target: "claude" | "agents"; name: string }) => void;
+  onRemoveSkill?: (input: { name: string }) => void;
+  onSyncSkills?: () => { copied: number; skills: string[] } | void;
   onListSkills?: (input?: { projectPath?: string }) => void;
 }
 
 /**
  * Stateful wrapper: the tab reads mcpServers from the settings PROP, so the
- * harness applies each saved patch the way useCoder does.
+ * harness applies each saved patch the way useCoder does. Skills are held
+ * in a ref so sync/add/remove mutations are visible to the next listSkills.
  */
 function Harness(opts: HarnessOptions) {
   const [settings, setSettings] = useState<AppSettings>(
     opts.settings ?? settingsWith(),
+  );
+  const skillsRef = useRef<SkillInfo[]>(
+    (opts.skills ?? SKILLS).map((s) => ({
+      ...s,
+      installedIn: [...s.installedIn],
+      missingFrom: [...s.missingFrom],
+    })),
   );
   return (
     <SkillsTab
@@ -66,14 +98,56 @@ function Harness(opts: HarnessOptions) {
       }}
       listSkills={async (input) => {
         opts.onListSkills?.(input);
-        return opts.skills ?? SKILLS;
+        return skillsRef.current.map((s) => ({
+          ...s,
+          installedIn: [...s.installedIn],
+          missingFrom: [...s.missingFrom],
+        }));
       }}
       addSkill={async (input) => {
         opts.onAddSkill?.(input);
-        return { name: input.name };
+        const installedIn = [...ALL_TARGETS];
+        skillsRef.current = [
+          ...skillsRef.current.filter(
+            (s) => !(s.name === input.name && s.source !== "project"),
+          ),
+          {
+            name: input.name,
+            description: input.description,
+            source: "claude",
+            installedIn,
+            missingFrom: [],
+            bytes: 100,
+          },
+        ];
+        return { name: input.name, installedIn };
       }}
       removeSkill={async (input) => {
         opts.onRemoveSkill?.(input);
+        skillsRef.current = skillsRef.current.filter(
+          (s) => !(s.name === input.name && s.source !== "project"),
+        );
+      }}
+      syncSkills={async () => {
+        const override = opts.onSyncSkills?.();
+        const drifted = skillsRef.current.filter(
+          (s) => s.missingFrom.length > 0,
+        );
+        skillsRef.current = skillsRef.current.map((s) =>
+          s.missingFrom.length === 0
+            ? s
+            : {
+                ...s,
+                installedIn: [...s.installedIn, ...s.missingFrom],
+                missingFrom: [],
+              },
+        );
+        return (
+          override ?? {
+            copied: drifted.length,
+            skills: drifted.map((s) => s.name),
+          }
+        );
       }}
     />
   );
@@ -106,9 +180,17 @@ describe("SkillsTab lists", () => {
       "skill description must render",
     );
     const badges = m.queryAll('[class*="badge"]').map((b) => b.textContent);
-    assert.ok(badges.includes("Claude"), "Claude badge must render");
-    assert.ok(badges.includes("Agents"), "Agents badge must render");
     assert.ok(badges.includes("Project"), "Project badge must render");
+    assert.equal(
+      badges.includes("Claude"),
+      false,
+      "user skills no longer carry a per-provider source badge",
+    );
+    assert.equal(
+      badges.includes("Agents"),
+      false,
+      "user skills no longer carry a per-provider source badge",
+    );
     m.unmount();
   });
 
@@ -137,6 +219,63 @@ describe("SkillsTab lists", () => {
     );
     const claudeRow = m.query('[data-skill="claude:review-pr"]');
     assert.ok(claudeRow?.textContent?.includes("Remove"));
+    m.unmount();
+  });
+
+  it("renders coverage and token cost per row", async () => {
+    const m = await mount(<Harness />);
+    const synced = m.query('[data-skill="claude:review-pr"]');
+    assert.ok(synced, "synced skill row must render");
+    const syncedCoverage = synced.querySelector("[data-coverage]");
+    assert.equal(syncedCoverage?.textContent, "6/6");
+    assert.ok(
+      syncedCoverage?.getAttribute("title")?.includes("Claude"),
+      "coverage title lists installed targets",
+    );
+    assert.equal(
+      synced.querySelector("[data-tokens]")?.textContent,
+      "~1.2k tokens",
+    );
+
+    const drifted = m.query('[data-skill="agents:write-tests"]');
+    assert.ok(drifted, "drifted skill row must render");
+    assert.equal(drifted.querySelector("[data-coverage]")?.textContent, "5/6");
+    assert.equal(
+      drifted.querySelector("[data-tokens]")?.textContent,
+      "~200 tokens",
+    );
+
+    const project = m.query('[data-skill="project:local-rules"]');
+    assert.ok(project, "project skill row must render");
+    assert.equal(
+      project.querySelector("[data-coverage]"),
+      null,
+      "project rows show a Project badge instead of coverage",
+    );
+    assert.ok(project.textContent?.includes("Project"));
+    assert.equal(
+      project.querySelector("[data-tokens]")?.textContent,
+      "~100 tokens",
+    );
+    m.unmount();
+  });
+
+  it("shows a drift marker only for skills with missingFrom", async () => {
+    const m = await mount(<Harness />);
+    assert.ok(
+      m.query('[data-skill="agents:write-tests"]')?.querySelector("[data-drift]"),
+      "drifted skill must show the Drift marker",
+    );
+    assert.equal(
+      m.query('[data-skill="claude:review-pr"]')?.querySelector("[data-drift]"),
+      null,
+      "fully-synced skill must not show Drift",
+    );
+    assert.equal(
+      m.query('[data-skill="project:local-rules"]')?.querySelector("[data-drift]"),
+      null,
+      "project skill must not show Drift",
+    );
     m.unmount();
   });
 });
@@ -280,9 +419,14 @@ describe("SkillsTab MCP servers", () => {
 });
 
 describe("SkillsTab skills", () => {
-  it("adds a skill with name, description, body, and target", async () => {
+  it("adds a skill with name, description, and body, and no target field", async () => {
     const added: SkillWrite[] = [];
     const m = await mount(<Harness onAddSkill={(i) => added.push(i)} />);
+    assert.equal(
+      m.query('select[aria-label="Skill target"]'),
+      null,
+      "the target dropdown is gone",
+    );
     await m.type(m.query('input[aria-label="Skill name"]'), "ship-it");
     await m.type(
       m.query('input[aria-label="Skill description"]'),
@@ -293,11 +437,15 @@ describe("SkillsTab skills", () => {
 
     assert.equal(added.length, 1, "addSkill must fire once");
     assert.deepEqual(added[0], {
-      target: "claude",
       name: "ship-it",
       description: "Ship the change",
       body: "Do the thing.",
     });
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(added[0], "target"),
+      false,
+      "add must not post a target field",
+    );
     m.unmount();
   });
 
@@ -322,8 +470,8 @@ describe("SkillsTab skills", () => {
     m.unmount();
   });
 
-  it("remove asks inline, then deletes", async () => {
-    const removed: Array<{ target: string; name: string }> = [];
+  it("remove asks inline, then deletes by name from all providers", async () => {
+    const removed: Array<{ name: string }> = [];
     const m = await mount(<Harness onRemoveSkill={(i) => removed.push(i)} />);
     const row = m.query('[data-skill="claude:review-pr"]');
     assert.ok(row, "skill row must render");
@@ -332,13 +480,73 @@ describe("SkillsTab skills", () => {
     );
     await m.click(removeBtn ?? null);
     assert.equal(removed.length, 0, "first click must only arm the confirm");
+    const confirmRow = m.query('[data-skill="claude:review-pr"]');
+    assert.ok(
+      confirmRow?.textContent?.includes("all providers"),
+      "confirm copy must say the skill is removed from all providers",
+    );
     const confirmBtn = Array.from(
-      m.query('[data-skill="claude:review-pr"]')?.querySelectorAll("button") ??
-        [],
+      confirmRow?.querySelectorAll("button") ?? [],
     ).find((b) => b.textContent?.includes("Confirm"));
     assert.ok(confirmBtn, "Confirm must appear inline");
     await m.click(confirmBtn);
-    assert.deepEqual(removed, [{ target: "claude", name: "review-pr" }]);
+    assert.deepEqual(removed, [{ name: "review-pr" }]);
+    m.unmount();
+  });
+
+  it("Sync calls skills.sync, reloads, and reports what it copied", async () => {
+    const listed: Array<{ projectPath?: string } | undefined> = [];
+    let syncs = 0;
+    const m = await mount(
+      <Harness
+        onListSkills={(input) => listed.push(input)}
+        onSyncSkills={() => {
+          syncs += 1;
+        }}
+      />,
+    );
+    assert.equal(listed.length, 1, "listSkills once on mount");
+    const syncBtn = m.query(
+      'button[aria-label="Sync missing skills"]',
+    ) as HTMLButtonElement | null;
+    assert.ok(syncBtn, "Sync button must render");
+    assert.equal(syncBtn.disabled, false, "Sync is enabled when there is drift");
+    await m.click(syncBtn);
+    assert.equal(syncs, 1, "syncSkills must fire once");
+    assert.equal(listed.length, 2, "listSkills must reload after sync");
+    assert.ok(m.text().includes("Copied 1 skill"), "sync reports what it did");
+    assert.equal(
+      m.query('[data-skill="agents:write-tests"]')?.querySelector("[data-drift]"),
+      null,
+      "drift marker clears after sync reloads",
+    );
+    const after = m.query(
+      'button[aria-label="Sync missing skills"]',
+    ) as HTMLButtonElement;
+    assert.equal(after.disabled, true, "Sync disables once nothing has drift");
+    m.unmount();
+  });
+
+  it("disables Sync when no skill has drift", async () => {
+    const m = await mount(
+      <Harness
+        skills={[
+          {
+            name: "review-pr",
+            description: "Review a pull request end to end",
+            source: "claude",
+            installedIn: [...ALL_TARGETS],
+            missingFrom: [],
+            bytes: 4800,
+          },
+        ]}
+      />,
+    );
+    const syncBtn = m.query(
+      'button[aria-label="Sync missing skills"]',
+    ) as HTMLButtonElement | null;
+    assert.ok(syncBtn, "Sync button must render");
+    assert.equal(syncBtn.disabled, true);
     m.unmount();
   });
 });

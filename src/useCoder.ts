@@ -33,6 +33,7 @@ import type {
   SpaceInfo,
   ReasoningEffort,
   SkillInfo,
+  SkillTarget,
   SkillWrite,
   SpecArtifact,
   ThreadDetail,
@@ -423,11 +424,11 @@ export interface UseCoderResult {
   }) => Promise<{ id: string }>;
   /** Thin skills passthroughs; SkillsTab holds list state locally. */
   listSkills: (input?: { projectPath?: string }) => Promise<SkillInfo[]>;
-  addSkill: (input: SkillWrite) => Promise<{ name: string }>;
-  removeSkill: (input: {
-    target: "claude" | "agents";
-    name: string;
-  }) => Promise<void>;
+  addSkill: (
+    input: SkillWrite,
+  ) => Promise<{ name: string; installedIn: SkillTarget[] }>;
+  removeSkill: (input: { name: string }) => Promise<void>;
+  syncSkills: () => Promise<{ copied: number; skills: string[] }>;
   /** Full-content thread search (titles + message text); Sidebar owns debounce/state. */
   searchThreads: (input: { query: string }) => Promise<ThreadInfo[]>;
 }
@@ -2097,11 +2098,15 @@ export function useCoder(): UseCoderResult {
   );
 
   const removeSkill = useCallback(
-    async (input: { target: "claude" | "agents"; name: string }) => {
+    async (input: { name: string }) => {
       return api.skills.remove(input);
     },
     [api],
   );
+
+  const syncSkills = useCallback(async () => {
+    return api.skills.sync();
+  }, [api]);
 
   const searchThreads = useCallback(
     async (input: { query: string }) => {
@@ -2227,6 +2232,7 @@ export function useCoder(): UseCoderResult {
     listSkills,
     addSkill,
     removeSkill,
+    syncSkills,
     searchThreads,
   };
 }
