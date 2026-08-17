@@ -48,6 +48,7 @@ const EMPTY = {
   spendByDay: {},
   usageByDay: {},
   automations: [],
+  tasksByCrew: {},
   digestSeenAt: null,
   // autoSettleAfterDays defaults to 3 (AUTO_SETTLE_AFTER_DAYS); null = disabled.
   settings: {
@@ -1281,6 +1282,36 @@ class Store {
   }
 
   /**
+   * The shared task list of one crew, keyed by the crew ROOT thread id
+   * (issue #277). Returns a copy; callers mutate through setCrewTasks.
+   * @param {string} rootThreadId
+   * @returns {Array<object>}
+   */
+  getCrewTasks(rootThreadId) {
+    if (!this.data.tasksByCrew || typeof this.data.tasksByCrew !== "object") {
+      this.data.tasksByCrew = {};
+    }
+    const list = this.data.tasksByCrew[rootThreadId];
+    return Array.isArray(list) ? list.map((t) => ({ ...t })) : [];
+  }
+
+  /**
+   * Replace a crew's task list. Does not save; caller must save.
+   * @param {string} rootThreadId
+   * @param {Array<object>} tasks
+   */
+  setCrewTasks(rootThreadId, tasks) {
+    if (!this.data.tasksByCrew || typeof this.data.tasksByCrew !== "object") {
+      this.data.tasksByCrew = {};
+    }
+    if (!Array.isArray(tasks) || tasks.length === 0) {
+      delete this.data.tasksByCrew[rootThreadId];
+      return;
+    }
+    this.data.tasksByCrew[rootThreadId] = tasks.map((t) => ({ ...t }));
+  }
+
+  /**
    * Last time the morning digest was marked seen (epoch ms), or null.
    * @returns {number | null}
    */
@@ -1588,6 +1619,10 @@ class Store {
         delete map[threadId];
       }
     }
+    // tasksByCrew is keyed by the crew ROOT thread, not by every thread.
+    if (this.data.tasksByCrew && typeof this.data.tasksByCrew === "object") {
+      delete this.data.tasksByCrew[threadId];
+    }
     return this.data.threads.length < before;
   }
 
@@ -1743,6 +1778,7 @@ function cloneEmpty() {
     spendByDay: {},
     usageByDay: {},
     automations: [],
+    tasksByCrew: {},
     digestSeenAt: null,
     // autoSettleAfterDays defaults to 3 (AUTO_SETTLE_AFTER_DAYS); null = disabled.
     settings: {
