@@ -192,8 +192,8 @@ interface ThreadViewProps {
   onSetArchived: (archived: boolean) => void | Promise<void>;
   /** Rename the open thread (header overflow). */
   onRenameThread?: (title: string) => void | Promise<void>;
-  /** Save the open thread's scratch notes (header notes editor, issue #194). */
-  onSetNotes?: (notes: string) => void | Promise<void>;
+  /** Save scratch notes for a thread (header notes editor, issue #194). */
+  onSetNotes?: (threadId: string, notes: string) => void | Promise<void>;
   /** Permanently delete the open thread (caller already confirmed in UI). */
   onDeleteThread: () => void | Promise<void>;
   /** Center Changes panel open (lifted so the Git tab can open it). */
@@ -1578,6 +1578,8 @@ export const ThreadView = memo(function ThreadView({
   const [notesOpen, setNotesOpen] = useState(false);
   const [notesDraft, setNotesDraft] = useState("");
   const notesOpenRef = useRef(false);
+  /** Thread the open panel belongs to, plus the value it was seeded with. */
+  const notesSourceRef = useRef<{ id: string; saved: string } | null>(null);
   const [pushPending, setPushPending] = useState(false);
   /** Shown briefly after a successful push; null when idle. */
   const [pushFlashBranch, setPushFlashBranch] = useState<string | null>(null);
@@ -1773,9 +1775,18 @@ export const ThreadView = memo(function ThreadView({
       setDeleteConfirm(false);
       setRenaming(false);
       renamingRef.current = false;
-      // Close + reseed before any unmount blur can write thread A's draft
-      // onto thread B (issue #194).
+      // Flush the outgoing thread's dirty draft (⌘J/K and any other
+      // programmatic select skip the textarea blur). Write to the thread
+      // we were editing, not the newly selected one.
+      const source = notesSourceRef.current;
+      if (notesOpenRef.current && source) {
+        const trimmed = notesDraft.trim();
+        if (trimmed !== source.saved) {
+          void onSetNotes?.(source.id, trimmed);
+        }
+      }
       notesOpenRef.current = false;
+      notesSourceRef.current = null;
       setNotesOpen(false);
       setNotesDraft(detail?.thread.notes ?? "");
       setPushPending(false);
@@ -2071,6 +2082,7 @@ export const ThreadView = memo(function ThreadView({
   const closeNotes = (save: boolean) => {
     if (!notesOpenRef.current) return;
     notesOpenRef.current = false;
+    notesSourceRef.current = null;
     const next = notesDraft.trim();
     setNotesOpen(false);
     if (!save) {
@@ -2078,7 +2090,7 @@ export const ThreadView = memo(function ThreadView({
       return;
     }
     if (next === thread.notes) return;
-    void onSetNotes?.(next);
+    void onSetNotes?.(thread.id, next);
   };
 
   const toggleNotes = () => {
@@ -2088,6 +2100,7 @@ export const ThreadView = memo(function ThreadView({
     }
     setNotesDraft(thread.notes);
     notesOpenRef.current = true;
+    notesSourceRef.current = { id: thread.id, saved: thread.notes };
     setNotesOpen(true);
   };
 

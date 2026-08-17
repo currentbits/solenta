@@ -186,6 +186,91 @@ describe("thread notes (issue #194)", () => {
     }
   });
 
+  it("switching threads flushes the outgoing draft onto the old thread id", async () => {
+    const tA = thread({
+      id: "t-a",
+      projectId: "p1",
+      title: "thread A",
+      notes: "A saved",
+      updatedAt: FRESH + 100,
+    });
+    const tB = thread({
+      id: "t-b",
+      projectId: "p1",
+      title: "thread B",
+      notes: "B saved",
+      updatedAt: FRESH,
+    });
+    const fake = createFakeCoder({
+      projects: [project({ id: "p1" })],
+      threads: [tA, tB],
+      details: {
+        "t-a": detail({ thread: tA }),
+        "t-b": detail({ thread: tB }),
+      },
+    });
+    const m = await boot(fake);
+    try {
+      await m.flush();
+
+      const active = m.query("[data-thread-card][data-active=true]");
+      if (active?.getAttribute("data-thread-card") !== "t-a") {
+        const selectA = m
+          .query('[data-thread-card="t-a"]')
+          ?.querySelector("button");
+        assert.ok(selectA, "thread A card select");
+        await m.click(selectA);
+        await settle(m);
+      }
+
+      await m.click(m.query("[data-thread-notes-btn]"));
+      const ta = m.query(
+        "[data-thread-notes-input]",
+      ) as HTMLTextAreaElement | null;
+      assert.ok(ta, "notes textarea on A");
+      assert.equal(ta!.value, "A saved");
+      await m.type(ta, "typed on A, never blurred");
+
+      // jsdom click does not blur the textarea, so this is the same path
+      // as a programmatic select (⌘J/K) that never fires onBlur.
+      const selectB = m
+        .query('[data-thread-card="t-b"]')
+        ?.querySelector("button");
+      assert.ok(selectB, "thread B card select");
+      await m.click(selectB);
+      await settle(m);
+
+      const calls = fake.of("threads.setNotes");
+      assert.equal(calls.length, 1, "setNotes must fire once for the flush");
+      assert.deepEqual(calls[0]!.args[0], {
+        threadId: "t-a",
+        notes: "typed on A, never blurred",
+      });
+
+      assert.equal(
+        m.query("[data-thread-card][data-active=true]")?.getAttribute(
+          "data-thread-card",
+        ),
+        "t-b",
+        "B is now selected",
+      );
+      assert.equal(
+        m.query("[data-thread-notes-input]"),
+        null,
+        "panel closed on switch",
+      );
+
+      await m.click(m.query("[data-thread-notes-btn]"));
+      const onB = m.query(
+        "[data-thread-notes-input]",
+      ) as HTMLTextAreaElement | null;
+      assert.ok(onB, "notes textarea on B");
+      assert.equal(onB!.value, "B saved", "B shows B's notes, not A's draft");
+    } finally {
+      m.unmount();
+    }
+  });
+
   it("sidebar card shows a notes preview only when the thread has notes", async () => {
     const withNotes = thread({
       id: "t-notes",

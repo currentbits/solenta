@@ -266,12 +266,11 @@ export default function App() {
     [renameThread, selectedThreadId],
   );
 
-  const handleSetNotesOpenThread = useCallback(
-    (notes: string) => {
-      if (!selectedThreadId) return;
-      void setNotes(selectedThreadId, notes);
+  const handleSetNotes = useCallback(
+    (threadId: string, notes: string) => {
+      void setNotes(threadId, notes);
     },
-    [setNotes, selectedThreadId],
+    [setNotes],
   );
 
   const handleRowArchived = useCallback(
@@ -722,7 +721,7 @@ export default function App() {
         onSetReasoningEffort={setReasoningEffort}
         onSetArchived={handleSetArchived}
         onRenameThread={handleRenameOpenThread}
-        onSetNotes={handleSetNotesOpenThread}
+        onSetNotes={handleSetNotes}
         onDeleteThread={deleteThread}
         changesOpen={changesOpen}
         changesNonce={changesNonce}
