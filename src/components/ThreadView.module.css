@@ -103,6 +103,16 @@
   white-space: nowrap;
 }
 
+.titleInput {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0 6px;
+  min-width: 12ch;
+  max-width: 36ch;
+  outline: none;
+}
+
 .actions {
   display: flex;
   gap: 8px;

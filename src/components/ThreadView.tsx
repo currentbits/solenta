@@ -189,6 +189,8 @@ interface ThreadViewProps {
   onSetReasoningEffort: (effort: ReasoningEffort | null) => void | Promise<void>;
   /** Archive or unarchive the open thread. */
   onSetArchived: (archived: boolean) => void | Promise<void>;
+  /** Rename the open thread (header overflow). */
+  onRenameThread?: (title: string) => void | Promise<void>;
   /** Permanently delete the open thread (caller already confirmed in UI). */
   onDeleteThread: () => void | Promise<void>;
   /** Center Changes panel open (lifted so the Git tab can open it). */
@@ -1526,6 +1528,7 @@ export const ThreadView = memo(function ThreadView({
   onSetProvider,
   onSetReasoningEffort,
   onSetArchived,
+  onRenameThread,
   onDeleteThread,
   changesOpen,
   changesNonce,
@@ -1565,6 +1568,9 @@ export const ThreadView = memo(function ThreadView({
   const pushFlashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [renameDraft, setRenameDraft] = useState("");
+  const renamingRef = useRef(false);
   const [pushPending, setPushPending] = useState(false);
   /** Shown briefly after a successful push; null when idle. */
   const [pushFlashBranch, setPushFlashBranch] = useState<string | null>(null);
@@ -1758,6 +1764,8 @@ export const ThreadView = memo(function ThreadView({
       stickToBottom.current = true;
       setMenuOpen(false);
       setDeleteConfirm(false);
+      setRenaming(false);
+      renamingRef.current = false;
       setPushPending(false);
       setPushFlashBranch(null);
       setHandoffMenuOpen(false);
@@ -2031,6 +2039,23 @@ export const ThreadView = memo(function ThreadView({
 
   const { thread } = detail;
 
+  const startRename = () => {
+    setMenuOpen(false);
+    setDeleteConfirm(false);
+    setRenameDraft(thread.title);
+    renamingRef.current = true;
+    setRenaming(true);
+  };
+
+  const finishRename = (cancel: boolean) => {
+    if (!renamingRef.current) return;
+    renamingRef.current = false;
+    const next = renameDraft.trim();
+    setRenaming(false);
+    if (cancel || !next || next === thread.title) return;
+    void onRenameThread?.(next);
+  };
+
   const handoffSourceId = thread.handoffFrom;
   const showHandoffBanner =
     handoffSourceId != null && !handoffBannerDismissed;
@@ -2090,7 +2115,30 @@ export const ThreadView = memo(function ThreadView({
             {project?.slug ?? "project"}
           </span>
           <span className={styles.sep}>/</span>
-          <span className={styles.threadTitle}>{thread.title}</span>
+          {renaming ? (
+            <input
+              className={`${styles.threadTitle} ${styles.titleInput}`}
+              data-thread-title-input=""
+              value={renameDraft}
+              maxLength={60}
+              aria-label="Thread title"
+              autoFocus
+              onFocus={(e) => e.currentTarget.select()}
+              onChange={(e) => setRenameDraft(e.target.value)}
+              onBlur={() => finishRename(false)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  e.currentTarget.blur();
+                } else if (e.key === "Escape") {
+                  e.preventDefault();
+                  finishRename(true);
+                }
+              }}
+            />
+          ) : (
+            <span className={styles.threadTitle}>{thread.title}</span>
+          )}
         </div>
         <div className={styles.actions}>
           {ring && <ContextRingBadge ring={ring} />}
@@ -2317,6 +2365,17 @@ export const ThreadView = memo(function ThreadView({
                     >
                       {copiedThreadId ? "Copied" : "Copy thread ID"}
                     </button>
+                    {onRenameThread && (
+                      <button
+                        type="button"
+                        className={styles.menuItem}
+                        role="menuitem"
+                        data-rename-thread=""
+                        onClick={startRename}
+                      >
+                        Rename thread
+                      </button>
+                    )}
                     <button
                       type="button"
                       className={styles.menuItem}

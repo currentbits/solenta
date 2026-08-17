@@ -768,6 +768,25 @@
   flex: 1;
 }
 
+.titleInput {
+  pointer-events: auto;
+  position: relative;
+  z-index: 2;
+  width: 100%;
+  min-width: 0;
+  flex: 1;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 560;
+  line-height: 1.35;
+  color: var(--text);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0 4px;
+  outline: none;
+}
+
 /*
  * Unread indicator (round 43). Sits on the title row / settled body — clear of
  * the status badge (cardMeta right) and PR chip (branchRow). Color only is
