@@ -14,6 +14,7 @@ import { useState } from "react";
 import { mount, unmountAll } from "./support/dom.ts";
 import { Composer } from "../src/components/Composer";
 import type {
+  AgentProfile,
   PermissionMode,
   ProviderInfo,
   ReasoningEffort,
@@ -139,7 +140,7 @@ interface Harness {
    * "switch first, then effort" was asserted by a test that passed with the
    * awaits swapped (round 38 review, M1).
    */
-  callOrder: ("setProvider" | "setReasoningEffort")[];
+  callOrder: ("setProvider" | "setReasoningEffort" | "setPermissionMode")[];
   effectiveEffort: ReasoningEffort | null;
   harnessProvider: string;
 }
@@ -171,6 +172,7 @@ function composer(
     disabled?: boolean;
     busy?: boolean;
     providers?: ProviderInfo[];
+    agentProfiles?: AgentProfile[];
   } = {},
 ) {
   // Seed the emulation from the thread this element renders with, so the
@@ -185,6 +187,7 @@ function composer(
       permissionMode={over.permissionMode ?? "default"}
       onPermissionModeChange={(mode) => {
         harness.modes.push(mode);
+        harness.callOrder.push("setPermissionMode");
       }}
       provider={over.provider ?? "claude"}
       model={over.model === undefined ? null : over.model}
@@ -192,6 +195,7 @@ function composer(
         over.reasoningEffort === undefined ? null : over.reasoningEffort
       }
       providers={over.providers ?? PROVIDERS}
+      agentProfiles={over.agentProfiles}
       workflows={WORKFLOWS}
       onSetProvider={(input) => {
         harness.providerSets.push(input);
@@ -1814,6 +1818,84 @@ describe("Composer custom model", () => {
       seen.length > 0,
       "the highlighted row must be scrolled into view as it moves",
     );
+    m.unmount();
+  });
+});
+
+describe("Composer agent profiles", () => {
+  const scout: AgentProfile = {
+    id: "p1",
+    name: "Cheap scout",
+    provider: "claude",
+    model: "claude-sonnet-4",
+    reasoningEffort: "low",
+    permissionMode: "plan",
+  };
+  const missing: AgentProfile = {
+    id: "p2",
+    name: "Grok worker",
+    provider: "grok",
+    model: "grok-4",
+    reasoningEffort: "high",
+    permissionMode: "acceptEdits",
+  };
+
+  it("hides the Profiles section when none are saved", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h));
+    await m.click(m.query('button[aria-label^="Model:"]'));
+    assert.equal(m.query('button[aria-label^="Profile "]'), null);
+    m.unmount();
+  });
+
+  it("applies provider, then effort, then permission", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h, { agentProfiles: [scout] }));
+    await m.click(m.query('button[aria-label^="Model:"]'));
+    const btn = m.query('button[aria-label="Profile Cheap scout"]');
+    assert.ok(btn, "the saved profile must be in the picker");
+    await m.click(btn);
+    assert.deepEqual(h.providerSets, [
+      { provider: "claude", model: "claude-sonnet-4" },
+    ]);
+    assert.deepEqual(h.efforts, ["low"]);
+    assert.deepEqual(h.modes, ["plan"]);
+    assert.deepEqual(h.callOrder, [
+      "setProvider",
+      "setReasoningEffort",
+      "setPermissionMode",
+    ]);
+    m.unmount();
+  });
+
+  it("activates a highlighted profile with Enter", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h, { agentProfiles: [scout] }));
+    await m.click(m.query('button[aria-label^="Model:"]'));
+    const list = m.query('[role="listbox"][aria-label="Provider"]');
+    assert.ok(list);
+    // Opens on the current provider (after the profile row). Arrow up reaches it.
+    await m.press(list, "ArrowUp");
+    await m.press(list, "Enter");
+    assert.deepEqual(h.callOrder, [
+      "setProvider",
+      "setReasoningEffort",
+      "setPermissionMode",
+    ]);
+    m.unmount();
+  });
+
+  it("disables a profile whose provider is not installed", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h, { agentProfiles: [missing] }));
+    await m.click(m.query('button[aria-label^="Model:"]'));
+    const btn = m.query(
+      'button[aria-label="Profile Grok worker"]',
+    ) as HTMLButtonElement | null;
+    assert.ok(btn);
+    assert.equal(btn.disabled, true);
+    assert.match(btn.title, /not installed/);
+    assert.deepEqual(h.providerSets, []);
     m.unmount();
   });
 });
