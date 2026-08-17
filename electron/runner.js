@@ -50,6 +50,11 @@ const PLAN_TRUNCATE = 20000;
  */
 const PLAN_STORE = 4000;
 
+// Issue #213: keep only the newest N worker threads per orchestrator so
+// fan-out cannot grow the store without bound. No settings knob; skipped
+// threads still occupy a keep slot.
+const MAX_WORKERS_PER_ORCHESTRATOR = 20;
+
 /** Badge tooltip: first ~2 lines, ~300 chars. */
 function shortError(text) {
   const s = String(text ?? "").trim();
@@ -704,6 +709,23 @@ function createRunner(opts) {
         store.updateThread(t.id, { archived: true });
         changed = true;
       }
+    }
+    // Newest first. Equal createdAt (same-ms forks) break ties by insertion
+    // index so the later-minted worker is kept.
+    const indexed = crew.map((t, i) => ({ t, i }));
+    indexed.sort((a, b) => (b.t.createdAt - a.t.createdAt) || (b.i - a.i));
+    for (let i = MAX_WORKERS_PER_ORCHESTRATOR; i < indexed.length; i++) {
+      const t = indexed[i].t;
+      if (
+        t.status !== "done" &&
+        t.status !== "failed" &&
+        t.status !== "stopped"
+      ) {
+        continue;
+      }
+      if (active.has(t.id) || t.worktreePath || t.pinnedAt) continue;
+      services.purgeThread(store, t.id);
+      changed = true;
     }
     if (changed) {
       store.save();
