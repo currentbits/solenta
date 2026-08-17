@@ -127,7 +127,6 @@ const coder = {
     startSpec: (input) => invoke("threads:startSpec", input),
     reviewSpec: (input) => invoke("threads:reviewSpec", input),
     specArtifact: (input) => invoke("threads:specArtifact", input),
-    distill: (input) => invoke("threads:distill", input),
     rename: (input) => invoke("threads:rename", input),
     setProvider: (input) => invoke("threads:setProvider", input),
     setReasoningEffort: (input) =>

@@ -254,7 +254,7 @@ describe("save-ready shape", () => {
   });
 });
 
-describe("threads:distill IPC", () => {
+describe("runs:distill IPC", () => {
   it("returns a draft and does not persist a template", async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-distill-ipc-"));
     const prevDisable = process.env.CODER_FM_DISABLE;
@@ -277,7 +277,7 @@ describe("threads:distill IPC", () => {
         createdAt: Date.now(),
       });
       const before = store.listTemplates().length;
-      const draft = await IPC_HANDLERS["threads:distill"](
+      const draft = await IPC_HANDLERS["runs:distill"](
         { store },
         { threadId: created.id },
       );
@@ -286,7 +286,6 @@ describe("threads:distill IPC", () => {
         model: created.model,
       });
       assert.equal(store.listTemplates().length, before);
-      assert.equal(typeof IPC_HANDLERS["runs:distill"], "function");
     } finally {
       if (prevDisable === undefined) delete process.env.CODER_FM_DISABLE;
       else process.env.CODER_FM_DISABLE = prevDisable;

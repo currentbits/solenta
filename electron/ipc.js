@@ -488,11 +488,6 @@ const IPC_HANDLERS = {
   "workflows:save": async (ctx, template) => {
     return services.saveTemplate(ctx.store, template);
   },
-  // #285: same body on both channels. CoderApi put distill on runs;
-  // the renderer / issue call it on threads.
-  "threads:distill": async (ctx, input) => {
-    return distillThread(ctx.store, input && input.threadId);
-  },
   "runs:distill": async (ctx, input) => {
     return distillThread(ctx.store, input && input.threadId);
   },
