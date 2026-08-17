@@ -45,6 +45,7 @@ const {
   normalizeCommand,
   MAX_FIX_ATTEMPTS,
 } = require("./verify.js");
+const { maybeApplyFmTitle } = require("./fm-title.js");
 
 const KIMI_PUSH_THROTTLE_MS = 250;
 
@@ -720,6 +721,20 @@ function createRunner(opts) {
    * @param {string} threadId
    */
   function afterSuccessfulTurn(threadId) {
+    // First completed assistant reply: best-effort fm title. Never blocks
+    // checkpoint / verify; push if a title actually landed.
+    void maybeApplyFmTitle(store, threadId)
+      .then((title) => {
+        if (!title) return;
+        try {
+          pushDetail(threadId);
+          pushThreadsChanged();
+        } catch {
+          // silent
+        }
+      })
+      .catch(() => {});
+
     let gated = false;
     try {
       gated = shouldVerify(threadId);
