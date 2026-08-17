@@ -471,6 +471,13 @@ export function ThreadCard({
             />
           )}
           {showUnread && <span className={styles.srOnly}>unread</span>}
+          {thread.queued && (
+            <span
+              className={styles.queuedDot}
+              data-queued-dot={thread.id}
+              title={thread.queued.prompt}
+            />
+          )}
           <div className={styles.cardTitle}>{thread.title}</div>
         </div>
         <div className={styles.cardMeta}>

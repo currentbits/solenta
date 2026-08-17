@@ -358,6 +358,53 @@ describe("services", () => {
     );
   });
 
+  it("setQueued appends on a second call, clears on prompt null, does not bump updatedAt", () => {
+    const thread = makeThread("queued-append");
+    store.updateThread(thread.id, { updatedAt: 1_700_000_000_000 });
+
+    const first = services.setQueued(store, {
+      threadId: thread.id,
+      prompt: "first thought",
+      attachments: [{ kind: "folder", path: "/tmp/a", name: "a" }],
+    });
+    assert.deepEqual(first.queued, {
+      prompt: "first thought",
+      attachments: [{ kind: "folder", path: "/tmp/a", name: "a" }],
+    });
+    assert.equal(first.updatedAt, 1_700_000_000_000);
+    assert.equal(store.getThread(thread.id).updatedAt, 1_700_000_000_000);
+
+    const second = services.setQueued(store, {
+      threadId: thread.id,
+      prompt: "second thought",
+      attachments: [{ kind: "image", path: "/tmp/b.png", name: "b.png" }],
+    });
+    assert.deepEqual(second.queued, {
+      prompt: "first thought\n\nsecond thought",
+      attachments: [
+        { kind: "folder", path: "/tmp/a", name: "a" },
+        { kind: "image", path: "/tmp/b.png", name: "b.png" },
+      ],
+    });
+    assert.equal(second.updatedAt, 1_700_000_000_000);
+
+    const cleared = services.setQueued(store, {
+      threadId: thread.id,
+      prompt: null,
+    });
+    assert.equal(cleared.queued, null);
+    assert.equal(cleared.updatedAt, 1_700_000_000_000);
+    assert.equal(store.getThread(thread.id).queued, null);
+  });
+
+  it("setQueued rejects unknown thread naming it", () => {
+    assert.throws(
+      () =>
+        services.setQueued(store, { threadId: "missing", prompt: "hello" }),
+      /Unknown thread: missing/,
+    );
+  });
+
   it("setSnoozed validation table: past, now-exact, future, null clears both", () => {
     const thread = makeThread("snooze-table");
     store.updateThread(thread.id, { updatedAt: 1_700_000_000_000 });
