@@ -716,10 +716,10 @@ export default function App() {
         onSuggestCommitMessage={suggestCommitMessage}
         onListFiles={listFiles}
         onLoadImage={loadToolImage}
-        onPickAttachments={isWebMode() ? undefined : pickAttachments}
+        onPickAttachments={pickAttachments}
         onSaveAttachmentImage={saveAttachmentImage}
         onLoadAttachmentImage={loadAttachmentImage}
-        onDropAttachmentFiles={isWebMode() ? undefined : dropAttachmentFiles}
+        onDropAttachmentFiles={dropAttachmentFiles}
         onPush={pushBranch}
         gitSyncInfo={gitSyncInfo}
         gitFetch={gitFetch}
