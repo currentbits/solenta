@@ -10,6 +10,7 @@ import {
 } from './embedder.js'
 import { contentTokens, jaccard, queueReview } from './review.js'
 import { canonicalProject } from './project-key.js'
+import { agentTrust, TRUST_SUSPECT } from './trust.js'
 
 export { contentTokens, jaccard, queueReview }
 
@@ -44,6 +45,10 @@ const EMBED_BACKFILL_CAP = 64
 const AGING_RUN_DAYS = 7
 const FAT_CONVENTION_CHARS = 1500
 const MAINTENANCE_LIST_LIMIT = 20
+// Trust map is cheap to rebuild (one GROUP BY) and must not be per-row.
+// Feedback is the evidence that moves the number, so it drops the cache;
+// a short TTL covers invalidate / raw SQL without touching those writers.
+const TRUST_CACHE_TTL_MS = 5_000
 
 const SECTION_BUDGETS = {
   conventions: 800,
@@ -74,9 +79,11 @@ function liveSql(alias = '') {
 
 // Base composite without bm25 (graph / final re-score path).
 // usage_boost(access, helpful, harmful) includes the feedback term.
+// agent_trust is 1.0 for NULL/unknown writers so existing rows keep today's score.
 const BASE_SCORE_SQL = `(e.importance / 3.0)
    * rank_decay(COALESCE(e.last_accessed_at, e.created_at))
-   * usage_boost(e.access_count, COALESCE(e.helpful_count, 0), COALESCE(e.harmful_count, 0))`
+   * usage_boost(e.access_count, COALESCE(e.helpful_count, 0), COALESCE(e.harmful_count, 0))
+   * agent_trust(e.agent)`
 
 const COMPOSITE_SCORE_SQL = `(-bm25(entries_fts)) * ${BASE_SCORE_SQL}`
 
@@ -167,6 +174,12 @@ export class Memory {
       const n = Number(count) || 0
       const base = Math.min(1 + USAGE_K * Math.log(1 + n), USAGE_CAP)
       return base * feedbackFactor(helpful, harmful)
+    })
+    this._agentTrustByName = null
+    this._agentTrustAt = 0
+    this.db.function('agent_trust', (agent) => {
+      if (agent == null || agent === '') return 1
+      return this._cachedAgentTrust().get(String(agent)) ?? 1
     })
 
     this.embedder = opts.embedder ?? null
@@ -1183,6 +1196,8 @@ export class Memory {
       }
       throw err
     }
+    this._agentTrustByName = null
+    this._agentTrustAt = 0
     return { ok: true, id, verdict }
   }
 
@@ -1497,6 +1512,9 @@ export class Memory {
           'memory_supersede with a tighter body that keeps every rule; never drop rules to save space.',
       }))
 
+    const agents = agentTrust(this.db)
+    const suspect = agents.filter((a) => a.trust < TRUST_SUSPECT)
+
     return {
       queue: {
         open,
@@ -1507,6 +1525,29 @@ export class Memory {
       nearDupes,
       agingRuns,
       fatConventions,
+      trust: {
+        agents,
+        suspect,
+        instruction:
+          'Per-agent trust is derived from helpful/harmful/invalidated evidence. Suspect agents (trust < 0.8) write lower-trust memories; review their live entries before acting on them.',
+      },
     }
+  }
+
+  _cachedAgentTrust() {
+    const now = Date.now()
+    if (this._agentTrustByName && now - this._agentTrustAt < TRUST_CACHE_TTL_MS) {
+      return this._agentTrustByName
+    }
+    const map = new Map()
+    try {
+      for (const row of agentTrust(this.db)) map.set(row.agent, row.trust)
+    } catch (err) {
+      console.error('agentTrust cache refresh failed (non-fatal):', err)
+      return this._agentTrustByName ?? map
+    }
+    this._agentTrustByName = map
+    this._agentTrustAt = now
+    return map
   }
 }
