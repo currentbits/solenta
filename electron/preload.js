@@ -162,6 +162,8 @@ const coder = {
     repoInfo: (input) => invoke("git:repoInfo", input),
     pull: (input) => invoke("git:pull", input),
     runStats: (input) => invoke("git:runStats", input),
+    gcScan: () => invoke("git:gcScan"),
+    gcClean: (input) => invoke("git:gcClean", input),
   },
   issues: {
     fetch: (input) => invoke("issues:fetch", input),
