@@ -23,8 +23,14 @@ const TERMINAL_PR_STATES = new Set(["MERGED", "CLOSED"]);
  * @returns {string}
  */
 function gitOut(cwd, args, opts) {
-  // ponytail: remaining sync git is deliberate, confined to worktree write
-  // flows (setup/merge/sweep). Do not convert; those stay blocking on purpose.
+  // ponytail: remaining sync git is deliberate. Callers are the worktree
+  // write flows (setupWorktree, mergeWorktree/mergeInto, push, commit,
+  // revertFile, cleanupWorktree/removeWorktree, unmergedFiles,
+  // maybeRenameWorktreeBranch) plus the sync defaultBranch they share and
+  // createPr's ahead-of-base check — all one-per-deliberate-click, bounded at
+  // 15s. Ceiling: a slow local repo still stalls the UI for that click. Read
+  // paths must use gitTryAsync; convert these only if loop-lag data shows a
+  // click path landing in p99.
   // execCommand, not execFileSync: it owns the default timeout that keeps a
   // hung git off the main-process event loop.
   const raw = execCommand(null, "git", args, {
