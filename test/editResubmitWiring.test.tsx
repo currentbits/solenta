@@ -194,6 +194,39 @@ describe("App edit-and-resubmit wiring (issue #254)", () => {
     m.unmount();
   });
 
+  it("resubmit carries the original message's attachments", async () => {
+    const { row, d } = target();
+    d.messages[0]!.attachments = [
+      { kind: "image", path: "/tmp/shot.png", name: "shot.png" },
+    ];
+    const fake = makeFake(row, d);
+    const m = await boot(fake);
+    await selectThread(m, "edit resubmit target");
+
+    await m.click(m.query('[data-edit-message="m-u1"]') as HTMLElement);
+    await m.flush();
+    await m.type(
+      m.query('[data-edit-textarea="m-u1"]') as HTMLTextAreaElement,
+      "same image, better words",
+    );
+    await m.click(m.query('[data-edit-resubmit="m-u1"]') as HTMLElement);
+    await m.flush();
+    await m.click(m.query("[data-rewind-confirm-submit]") as HTMLElement);
+    await m.flush();
+
+    const startArg = fake.of("runs.start")[0]!.args[0] as {
+      prompt: string;
+      attachments?: { path: string }[];
+    };
+    assert.equal(startArg.prompt, "same image, better words");
+    assert.deepEqual(
+      (startArg.attachments ?? []).map((a) => a.path),
+      ["/tmp/shot.png"],
+      "editing the words must not drop the image",
+    );
+    m.unmount();
+  });
+
   it("cancelled confirmation calls neither rewind nor start", async () => {
     const { row, d } = target();
     const fake = makeFake(row, d);

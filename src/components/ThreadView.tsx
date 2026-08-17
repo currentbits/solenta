@@ -182,6 +182,7 @@ interface ThreadViewProps {
     messageId: string,
     prompt: string,
     restoreFiles?: boolean,
+    attachments?: AttachmentInfo[],
   ) => void | Promise<void>;
   /** Multi-phase Build workflow (Build pill) with selected template id. */
   onStartWorkflow: (
@@ -2066,10 +2067,14 @@ export const ThreadView = memo(function ThreadView({
     if (!pending || !onRewindAndResubmit || rewindPending || isWorking) return;
     setRewindPending(true);
     try {
+      // Carry the original attachments, like Retry turn does: editing the
+      // words of a message must not silently drop the images it came with.
+      const source = detail?.messages.find((m) => m.id === pending.messageId);
       await onRewindAndResubmit(
         pending.messageId,
         pending.prompt,
         rewindRestoreFiles || undefined,
+        source?.attachments,
       );
       setRewindConfirm(null);
     } catch {
@@ -2084,6 +2089,7 @@ export const ThreadView = memo(function ThreadView({
     rewindPending,
     isWorking,
     rewindRestoreFiles,
+    detail,
   ]);
 
   const handleRewindCancel = useCallback(() => {

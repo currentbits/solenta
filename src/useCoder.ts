@@ -196,6 +196,7 @@ export interface UseCoderResult {
     messageId: string,
     prompt: string,
     restoreFiles?: boolean,
+    attachments?: AttachmentInfo[],
   ) => Promise<void>;
   /** Follow-ups waiting for a run to land, keyed by thread id. */
   queued: Record<string, QueuedMessage>;
@@ -1097,7 +1098,12 @@ export function useCoder(): UseCoderResult {
   );
 
   const rewindAndResubmit = useCallback(
-    async (messageId: string, prompt: string, restoreFiles?: boolean) => {
+    async (
+      messageId: string,
+      prompt: string,
+      restoreFiles?: boolean,
+      attachments?: AttachmentInfo[],
+    ) => {
       const threadId = selectedThreadId;
       if (!threadId) return;
       try {
@@ -1116,7 +1122,7 @@ export function useCoder(): UseCoderResult {
       // would repair it, but only if the run starts — so refetch here, or a
       // failed start leaves dropped messages on screen as if nothing happened.
       reloadDetail(threadId);
-      await startRun(prompt, threadId);
+      await startRun(prompt, threadId, attachments);
     },
     [api, selectedThreadId, startRun, reloadDetail],
   );
