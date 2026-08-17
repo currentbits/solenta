@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type {
+  DistilledWorkflow,
   ProviderInfo,
   WorkflowPhaseSpec,
   WorkflowTemplateInfo,
@@ -15,6 +16,8 @@ interface WorkflowsModalProps {
   providers: ProviderInfo[];
   /** Prefer selecting this template id when opening. */
   initialSelectedId?: string | null;
+  /** Open as a new unsaved template with this name+phases (#285). */
+  initialDraft?: DistilledWorkflow | null;
   onSave: (template: WorkflowSaveInput) => Promise<WorkflowTemplateInfo>;
   onRemove: (id: string) => Promise<void>;
 }
@@ -65,6 +68,7 @@ export function WorkflowsModal({
   workflows,
   providers,
   initialSelectedId = null,
+  initialDraft = null,
   onSave,
   onRemove,
 }: WorkflowsModalProps) {
@@ -88,6 +92,17 @@ export function WorkflowsModal({
     setConfirmDelete(false);
     setSaving(false);
     setIsNew(false);
+    if (initialDraft) {
+      setSelectedId(null);
+      setDraft({
+        sourceId: null,
+        name: initialDraft.name,
+        phases: initialDraft.phases.map((p) => ({ ...p })),
+        builtin: false,
+      });
+      setIsNew(true);
+      return;
+    }
     const preferred =
       (initialSelectedId &&
         workflows.find((w) => w.id === initialSelectedId)) ||
@@ -101,7 +116,7 @@ export function WorkflowsModal({
       setDraft(emptyDraft(providers));
       setIsNew(true);
     }
-  }, [open, initialSelectedId, workflows, providers]);
+  }, [open, initialSelectedId, initialDraft, workflows, providers]);
 
   // Shared Escape handler (same semantics as inline: close when open).
   // Composer disables its own Escape while this modal is open via manageOpen.
