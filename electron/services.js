@@ -747,9 +747,12 @@ function planStepsFrom(todos) {
 }
 
 /**
- * One-time hand-off context prefix for the CLI (NOT stored in the transcript):
- * a digest of the tail of the source thread, newest-last, each message capped.
- * Returns "" when no prefix applies: no handoffFrom, session already exists,
+ * One-time context prefix for the CLI (NOT stored in the transcript): a
+ * digest of a transcript tail, newest-last, each message capped.
+ * Source is the handoffFrom thread, or this thread itself when
+ * replayContext is set (issue #254 rewind — do NOT set handoffFrom to
+ * self; that field drives crew sweeps and the OTel ancestor walk).
+ * Returns "" when no prefix applies: no source, session already exists,
  * source missing/deleted, or source has no assistant message.
  *
  * ponytail: tail digest, not a summary — a fork still needs a self-contained
@@ -759,20 +762,25 @@ function planStepsFrom(todos) {
  * Strings are mirrored in src/devCoder.ts (services-level helper + dev twin —
  * the established pattern for shared electron/dev logic).
  *
- * @param {{ handoffFrom?: string | null, sessionId?: string | null } | null} thread
+ * @param {{ id?: string, handoffFrom?: string | null, sessionId?: string | null, replayContext?: boolean } | null} thread
  * @param {(sourceId: string) => Array<{ role?: string, text?: string }> | null | undefined} getMessages
  * @returns {string}
  */
 function buildHandoffPrefix(thread, getMessages) {
-  if (!thread || thread.handoffFrom == null || thread.handoffFrom === "") {
+  if (!thread) return "";
+  if (thread.sessionId != null && thread.sessionId !== "") {
     return "";
   }
-  if (thread.sessionId != null && thread.sessionId !== "") {
+  // replayContext wins: a rewound fork must digest ITS OWN retained tail,
+  // not walk handoffFrom again (and never a self-handoffFrom).
+  const sourceId =
+    thread.replayContext === true ? thread.id : thread.handoffFrom;
+  if (sourceId == null || sourceId === "") {
     return "";
   }
   let msgs;
   try {
-    msgs = getMessages(String(thread.handoffFrom));
+    msgs = getMessages(String(sourceId));
   } catch {
     return "";
   }
@@ -1600,6 +1608,83 @@ function renameThread(store, input) {
   const updated = store.updateThread(threadId, { title });
   store.save();
   return updated ? { ...updated } : { ...thread, title };
+}
+
+/**
+ * Edit-and-resubmit (issue #254): truncate the thread to just before a past
+ * USER message so the renderer can re-send an edited prompt via runs.start.
+ * Starts no run. Usage / spend is never rewritten.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, messageId: string, prompt: string, restoreFiles?: boolean }} input
+ * @param {{ isRunning?: (threadId: string) => boolean }} [opts]
+ * @returns {Promise<{ thread: object, droppedMessages: number, restoredSha: string | null }>}
+ */
+async function rewindThread(store, input, opts) {
+  const threadId = input && input.threadId;
+  const messageId = input && input.messageId;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  if (
+    (opts && typeof opts.isRunning === "function" && opts.isRunning(threadId)) ||
+    thread.status === "working"
+  ) {
+    throw new Error("Cannot rewind while a run is active");
+  }
+  if (!String((input && input.prompt) ?? "").trim()) {
+    throw new Error("Prompt cannot be empty");
+  }
+
+  const msgs = store.getMessages(threadId);
+  const at = msgs.findIndex((m) => m && m.id === messageId);
+  if (at < 0) {
+    throw new Error(`Unknown message: ${messageId}`);
+  }
+  if (msgs[at].role !== "user") {
+    throw new Error(`Not a user message: ${messageId}`);
+  }
+
+  // Capture before truncate: restoreFiles picks the newest checkpoint at or
+  // before this message, not "turn N" (clean turns skip a number).
+  const targetAt = Number(msgs[at].createdAt);
+
+  const droppedMessages = store.truncateFromMessage(threadId, messageId);
+  const updated = store.updateThread(threadId, {
+    sessionId: null,
+    replayContext: true,
+  });
+
+  let restoredSha = null;
+  if (input.restoreFiles && thread.worktreePath) {
+    const { listCheckpoints, restoreCheckpoint } = require("./worktrees.js");
+    const list = await listCheckpoints({ store, threadId });
+    // Newest-first. Newest checkpoint whose commit time is at or before the
+    // edited message is the files just before the user sent it.
+    // ponytail: git %ct is 1s granularity, so a checkpoint written in the
+    // same second the message was sent could sort on the wrong side of the
+    // boundary. A real turn takes seconds; worst case is restoring one turn
+    // later than intended.
+    const match = Number.isFinite(targetAt)
+      ? list.find((c) => c.at <= targetAt)
+      : null;
+    if (match) {
+      await restoreCheckpoint({
+        store,
+        threadId,
+        sha: match.sha,
+        isRunning: opts && opts.isRunning,
+      });
+      restoredSha = match.sha;
+    }
+  }
+
+  // Worktree reset is already on disk. Debounced save() would leave a crash
+  // in the 250ms window with files rewound and the old transcript resurrected.
+  store.saveNow();
+  const next = updated || store.getThread(threadId) || thread;
+  return { thread: { ...next }, droppedMessages, restoredSha };
 }
 
 /**
@@ -2558,6 +2643,7 @@ module.exports = {
   setVerifyCommand,
   runVerifyNow,
   renameThread,
+  rewindThread,
   clearSettledOnActivity,
   deleteThread,
   purgeThread,

@@ -300,6 +300,13 @@ const IPC_HANDLERS = {
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     return thread;
   },
+  "threads:rewind": async (ctx, input) => {
+    const result = await services.rewindThread(ctx.store, input, {
+      isRunning: (id) => ctx.runner.isRunning(id),
+    });
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    return result;
+  },
   "threads:get": async (ctx, id) => {
     const workflow = ctx.runner.getActiveWorkflow(id);
     let view = null;

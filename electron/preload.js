@@ -112,6 +112,7 @@ const coder = {
     search: (input) => invoke("threads:search", input),
     create: (input) => invoke("threads:create", input),
     fork: (input) => invoke("threads:fork", input),
+    rewind: (input) => invoke("threads:rewind", input),
     get: (id) => invoke("threads:get", id),
     setPermissionMode: (input) =>
       invoke("threads:setPermissionMode", input),
