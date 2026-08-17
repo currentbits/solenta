@@ -533,6 +533,40 @@ function seedThreads(projects: ProjectInfo[]): ThreadInfo[] {
               { step: "Backfill the migration test", status: "todo" },
             ]
           : undefined,
+      // One seeded ledger so the browser demo shows the #303 card.
+      hypotheses:
+        card.id === "thread-1"
+          ? [
+              {
+                id: "h-store-flush",
+                claim: "Race is in the store flush",
+                status: "invalidated" as const,
+                reason: "Flush is sync; the hang is in execFile.",
+                at: t0 - 25 * 60 * 1000,
+              },
+              {
+                id: "h-fs-walk",
+                claim: "Main process is blocked on a sync fs walk",
+                status: "invalidated" as const,
+                reason: "Profile shows the walk is under 20ms.",
+                at: t0 - 18 * 60 * 1000,
+              },
+              {
+                id: "h-execfile",
+                claim: "execFile callback never fires under load",
+                status: "validated" as const,
+                reason: "Reproduced at 40 concurrent git calls.",
+                at: t0 - 12 * 60 * 1000,
+              },
+              {
+                id: "h-watcher",
+                claim: "A second watcher is doubling the work",
+                status: "inconclusive" as const,
+                reason: "",
+                at: t0 - 4 * 60 * 1000,
+              },
+            ]
+          : undefined,
     };
   });
 }
