@@ -1560,6 +1560,15 @@
   opacity: 0.85;
 }
 
+.settingsDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--blue);
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
 .footerAdd {
   width: 32px;
   height: 32px;

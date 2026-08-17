@@ -487,6 +487,7 @@ export default function App() {
             <Sidebar
         appName="Solenta"
         channel={appStatus?.build.channel ?? null}
+        updateState={updateStatus?.state ?? null}
         searchPlaceholder="Search threads…"
         projectsHeader="All projects"
         projects={projects}
