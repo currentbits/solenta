@@ -191,3 +191,18 @@
   line-height: 1.4;
   color: var(--text-dim);
 }
+
+.profileMeta {
+  flex: 1;
+  min-width: 140px;
+}
+
+.profileRow {
+  flex-wrap: wrap;
+}
+
+.profileName {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
