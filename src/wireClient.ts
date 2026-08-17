@@ -8,6 +8,7 @@ import type {
   CheckpointInfo,
   CoderApi,
   RunStatInfo,
+  VerifyResult,
   DiffResult,
   GitStatus,
   GitSyncInfo,
@@ -358,6 +359,9 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
       setProvider: (input) => call<ThreadInfo>("threads:setProvider", input),
       setReasoningEffort: (input) =>
         call<ThreadInfo>("threads:setReasoningEffort", input),
+      setVerifyCommand: (input) =>
+        call<ThreadInfo>("threads:setVerifyCommand", input),
+      runVerify: (input) => call<VerifyResult>("threads:runVerify", input),
       delete: (input) => call<void>("threads:delete", input),
     },
     activity: {
