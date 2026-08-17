@@ -7,7 +7,16 @@ const path = require("node:path");
 const { createRequire } = require("node:module");
 
 const { registerMcpServer, unregisterMcpServer } = require("./memory-sup.js");
-const { forkWorkerThread, recordHypothesis, submitSpec } = require("./services.js");
+const {
+  forkWorkerThread,
+  recordHypothesis,
+  submitSpec,
+  addCrewTasks,
+  listCrewTasks,
+  claimCrewTask,
+  completeCrewTask,
+  releaseCrewTasks,
+} = require("./services.js");
 
 const SERVER_NAME = "coder-threads";
 const CONFIG_NAME = "orch-server.json";
@@ -40,7 +49,15 @@ const INSTRUCTIONS =
   "thread_status still has full details if you need them before the wake-up. " +
   "A worker can also stall on a permission prompt only the user can answer: that " +
   "sends no notice and stays \"working\", so if one goes quiet check thread_status " +
-  "for awaitingInput and tell the user what it is waiting on.";
+  "for awaitingInput and tell the user what it is waiting on. " +
+  "The shared task list is per-crew and self-claimed: task_list then task_claim " +
+  "with no taskId takes the next unblocked task. Finish with task_complete and a " +
+  "note; hand a task back with task_release rather than looping. Talk to a peer " +
+  "directly with peer_send instead of routing artifacts through the lead. " +
+  "Worktrees of one repo share a git object store, so the durable way to hand " +
+  "over a document (plan.md, contract.md) is to COMMIT it on your branch and " +
+  "send the peer a `branch:path` ref in the task note or peer message. The peer " +
+  "reads it with `git show <branch>:<path>`. Chat history is not a hand-off.";
 
 function timingSafeEqualString(a, b) {
   const bufferA = Buffer.from(a);
@@ -359,6 +376,100 @@ function createToolHandlers(deps) {
     return submitSpec(store, { threadId: args.threadId });
   }
 
+  async function task_add(args) {
+    const thread = store.getThread(args.threadId);
+    if (!thread) {
+      throw new Error(`Unknown thread: ${args.threadId}`);
+    }
+    assertSameProject(thread, args.projectId);
+    return addCrewTasks(store, {
+      threadId: args.threadId,
+      tasks: args.tasks,
+    });
+  }
+
+  async function task_list(args) {
+    const thread = store.getThread(args.threadId);
+    if (!thread) {
+      throw new Error(`Unknown thread: ${args.threadId}`);
+    }
+    assertSameProject(thread, args.projectId);
+    return listCrewTasks(store, { threadId: args.threadId });
+  }
+
+  async function task_claim(args) {
+    const thread = store.getThread(args.threadId);
+    if (!thread) {
+      throw new Error(`Unknown thread: ${args.threadId}`);
+    }
+    assertSameProject(thread, args.projectId);
+    return claimCrewTask(store, {
+      threadId: args.threadId,
+      taskId: args.taskId,
+    });
+  }
+
+  async function task_complete(args) {
+    const thread = store.getThread(args.threadId);
+    if (!thread) {
+      throw new Error(`Unknown thread: ${args.threadId}`);
+    }
+    assertSameProject(thread, args.projectId);
+    const result = completeCrewTask(store, {
+      threadId: args.threadId,
+      taskId: args.taskId,
+      note: args.note,
+    });
+    const shouldWake =
+      (result.unblocked && result.unblocked.length > 0) ||
+      String(args.threadId) !== result.rootThreadId;
+    if (shouldWake && typeof runner.deliverNotice === "function") {
+      const note = result.task.note ? `: ${result.task.note}` : "";
+      const ids = (result.unblocked || []).map((t) => t.id);
+      const tail = ids.length ? `. Unblocked: ${ids.join(", ")}` : "";
+      const line = `[crew] finished ${result.task.id} ("${result.task.title}")${note}${tail}`;
+      try {
+        runner.deliverNotice({ threadId: result.rootThreadId, line });
+      } catch {
+        // A missed wake must not fail the complete.
+      }
+    }
+    return result;
+  }
+
+  async function task_release(args) {
+    const thread = store.getThread(args.threadId);
+    if (!thread) {
+      throw new Error(`Unknown thread: ${args.threadId}`);
+    }
+    assertSameProject(thread, args.projectId);
+    return releaseCrewTasks(store, {
+      threadId: args.threadId,
+      taskId: args.taskId,
+      outcome: args.outcome,
+    });
+  }
+
+  async function peer_send(args) {
+    const from = store.getThread(args.threadId);
+    if (!from) {
+      throw new Error(`Unknown thread: ${args.threadId}`);
+    }
+    assertSameProject(from, args.projectId);
+    const to = store.getThread(args.toThreadId);
+    if (!to) {
+      throw new Error(`Unknown thread: ${args.toThreadId}`);
+    }
+    assertSameProject(to, args.projectId);
+    if (String(from.id) === String(to.id)) {
+      throw new Error("Cannot peer_send to yourself.");
+    }
+    const title = from.title == null ? "" : String(from.title);
+    const line = `[peer from ${from.id} ("${title}")] ${args.message}`;
+    runner.deliverNotice({ threadId: to.id, line });
+    return { delivered: true, toThreadId: to.id };
+  }
+
   return {
     threads_list,
     thread_fork,
@@ -366,6 +477,12 @@ function createToolHandlers(deps) {
     thread_status,
     hypothesis_record,
     spec_submit,
+    task_add,
+    task_list,
+    task_claim,
+    task_complete,
+    task_release,
+    peer_send,
   };
 }
 
@@ -481,6 +598,120 @@ function buildMcpServer(sdk, handlers) {
       },
     },
     async (args) => json(await handlers.spec_submit(args)),
+  );
+
+  server.registerTool(
+    "task_add",
+    {
+      description:
+        "Append tasks to this crew's shared list (every worker of one " +
+        "orchestrator shares one list). title is required; needs is optional " +
+        "ids of tasks that must finish first (including ones added in the " +
+        "same call). Returns the list plus the ids assigned. projectId is " +
+        "YOUR OWN project id (stated at the end of your prompt); the thread " +
+        "must belong to it.",
+      inputSchema: {
+        threadId: z.string().min(1),
+        projectId: z.string().min(1),
+        tasks: z
+          .array(
+            z.object({
+              title: z.string().min(1),
+              needs: z.array(z.string().min(1)).optional(),
+            }),
+          )
+          .min(1),
+      },
+    },
+    async (args) => json(await handlers.task_add(args)),
+  );
+
+  server.registerTool(
+    "task_list",
+    {
+      description:
+        "The crew's shared task list (ids, titles, status, owner, blocked, " +
+        "needs, note, attempts). Self-claim the next unblocked task with " +
+        "task_claim and no taskId. projectId is YOUR OWN project id (stated " +
+        "at the end of your prompt); the thread must belong to it.",
+      inputSchema: {
+        threadId: z.string().min(1),
+        projectId: z.string().min(1),
+      },
+    },
+    async (args) => json(await handlers.task_list(args)),
+  );
+
+  server.registerTool(
+    "task_claim",
+    {
+      description:
+        "Claim a task from the crew's shared list. Omit taskId to take the " +
+        "next unblocked open task. When the result's task is null, read " +
+        "reason and stop — do not retry. projectId is YOUR OWN project id " +
+        "(stated at the end of your prompt); the thread must belong to it.",
+      inputSchema: {
+        threadId: z.string().min(1),
+        projectId: z.string().min(1),
+        taskId: z.string().min(1).optional(),
+      },
+    },
+    async (args) => json(await handlers.task_claim(args)),
+  );
+
+  server.registerTool(
+    "task_complete",
+    {
+      description:
+        "Mark a claimed task done. note is the hand-off: a summary, or a " +
+        "`branch:path` another worker reads with git show. Completing a " +
+        "task unblocks dependents. projectId is YOUR OWN project id " +
+        "(stated at the end of your prompt); the thread must belong to it.",
+      inputSchema: {
+        threadId: z.string().min(1),
+        projectId: z.string().min(1),
+        taskId: z.string().min(1),
+        note: z.string(),
+      },
+    },
+    async (args) => json(await handlers.task_complete(args)),
+  );
+
+  server.registerTool(
+    "task_release",
+    {
+      description:
+        "Hand a claimed task back instead of looping. outcome is what " +
+        "failed, so the next claimer can read it. Omit taskId to release " +
+        "every task you hold. projectId is YOUR OWN project id (stated at " +
+        "the end of your prompt); the thread must belong to it.",
+      inputSchema: {
+        threadId: z.string().min(1),
+        projectId: z.string().min(1),
+        taskId: z.string().min(1).optional(),
+        outcome: z.string().optional(),
+      },
+    },
+    async (args) => json(await handlers.task_release(args)),
+  );
+
+  server.registerTool(
+    "peer_send",
+    {
+      description:
+        "Send a message to another thread in the same project. Does NOT " +
+        "route through the orchestrator. Prefer this for artifacts: commit " +
+        "the file and put a `branch:path` ref in the message. projectId is " +
+        "YOUR OWN project id (stated at the end of your prompt); both " +
+        "threads must belong to it. Cannot send to yourself.",
+      inputSchema: {
+        threadId: z.string().min(1),
+        projectId: z.string().min(1),
+        toThreadId: z.string().min(1),
+        message: z.string().min(1),
+      },
+    },
+    async (args) => json(await handlers.peer_send(args)),
   );
 
   return server;
