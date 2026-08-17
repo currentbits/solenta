@@ -127,6 +127,7 @@ const coder = {
     startSpec: (input) => invoke("threads:startSpec", input),
     reviewSpec: (input) => invoke("threads:reviewSpec", input),
     specArtifact: (input) => invoke("threads:specArtifact", input),
+    distill: (input) => invoke("threads:distill", input),
     rename: (input) => invoke("threads:rename", input),
     setProvider: (input) => invoke("threads:setProvider", input),
     setReasoningEffort: (input) =>
@@ -149,6 +150,7 @@ const coder = {
   runs: {
     start: (input) => invoke("runs:start", input),
     startWorkflow: (input) => invoke("runs:startWorkflow", input),
+    distill: (input) => invoke("runs:distill", input),
     stop: (input) => invoke("runs:stop", input),
   },
   git: {
