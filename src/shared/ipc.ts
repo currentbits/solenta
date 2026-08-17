@@ -695,6 +695,26 @@ export interface RunStatInfo {
 }
 
 /**
+ * One pair of active threads whose work overlaps (issue #249). `overlap` is
+ * every file both threads changed vs the base branch; `conflicts` is the
+ * subset `git merge-tree` says would actually collide when they merge, so
+ * `conflicts` non-empty means "these two will conflict", while overlap-only
+ * means "same files, still auto-mergeable".
+ */
+export interface ConflictPairInfo {
+  threadA: string;
+  threadB: string;
+  overlap: string[];
+  conflicts: string[];
+}
+
+/** Conflict forecast for one project. `pairs` is empty when nothing overlaps. */
+export interface ConflictForecast {
+  pairs: ConflictPairInfo[];
+  computedAt: number;
+}
+
+/**
  * Evidence from one run of a thread's verification command (issue #296).
  * `ok` is the only thing that lets a run go green; everything else is what
  * the fixer gets handed when it doesn't.
@@ -1654,6 +1674,14 @@ export interface CoderApi {
      * has no worktree or checkpoints. Never rejects.
      */
     runStats(input: { threadId: string }): Promise<RunStatInfo[]>;
+    /**
+     * Predicted merge conflicts between the project's active worktree threads
+     * (#249), computed with `git merge-tree` before anyone merges. Read-only
+     * and never rejects: a project without a repo returns no pairs.
+     */
+    conflictForecast(input: {
+      projectId: string;
+    }): Promise<ConflictForecast>;
     /**
      * Worktree GC scan (#316): every reclaimable worktree with its size, plus
      * per-project disk usage. Read-only and never rejects — a directory git
