@@ -545,7 +545,7 @@ const IPC_HANDLERS = {
     });
   },
   "git:createPr": async (ctx, input) => {
-    return createPr({
+    return await createPr({
       store: ctx.store,
       threadId: input.threadId,
       title: input.title,
@@ -555,19 +555,19 @@ const IPC_HANDLERS = {
     });
   },
   "git:prStatus": async (ctx, input) => {
-    return prStatus({
+    return await prStatus({
       store: ctx.store,
       threadId: input.threadId,
     });
   },
   "git:prChecks": async (ctx, input) => {
-    return prChecks({
+    return await prChecks({
       store: ctx.store,
       threadId: input.threadId,
     });
   },
   "git:prMerge": async (ctx, input) => {
-    const info = mergePr({
+    const info = await mergePr({
       store: ctx.store,
       threadId: input.threadId,
       broadcast: ctx.broadcast,
@@ -582,7 +582,7 @@ const IPC_HANDLERS = {
     return info;
   },
   "git:listPrs": async (_ctx, projectPath) => {
-    return listPrs(projectPath);
+    return await listPrs(projectPath);
   },
   "issues:fetch": async (_ctx, input) => {
     const projectPath = input && input.projectPath;
