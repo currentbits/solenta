@@ -48,6 +48,7 @@ const EMPTY = {
   spendByDay: {},
   usageByDay: {},
   automations: [],
+  digestSeenAt: null,
   // autoSettleAfterDays defaults to 3 (AUTO_SETTLE_AFTER_DAYS); null = disabled.
   settings: {
     dailyBudgetUsd: null,
@@ -386,6 +387,7 @@ function normalizeSettings(raw) {
     updateChannel: null,
     notifications: true,
     agentProfiles: [],
+    otel: { endpoint: null, headers: {}, claudeMetrics: false },
   };
   if (!raw || typeof raw !== "object") return settings;
   const obj = /** @type {{ dailyBudgetUsd?: unknown, orchestrationBudgetUsd?: unknown, autoSettleAfterDays?: unknown, mcpServers?: unknown }} */ (
@@ -438,7 +440,32 @@ function normalizeSettings(raw) {
   settings.updateChannel = ch === "prod" || ch === "nightly" ? ch : null;
   settings.notifications =
     /** @type {{ notifications?: unknown }} */ (obj).notifications !== false;
+  settings.otel = normalizeOtel(/** @type {{ otel?: unknown }} */ (obj).otel);
   return settings;
+}
+
+/**
+ * Heal the OTel slice. Absent/junk → export off. An endpoint must be an
+ * http(s) URL; anything else collapses to null so a corrupt store cannot
+ * make the exporter POST somewhere unexpected.
+ *
+ * @param {unknown} raw
+ * @returns {{ endpoint: string | null, headers: Record<string, string>, claudeMetrics: boolean }}
+ */
+function normalizeOtel(raw) {
+  const out = { endpoint: null, headers: {}, claudeMetrics: false };
+  if (!raw || typeof raw !== "object") return out;
+  const obj = /** @type {{ endpoint?: unknown, headers?: unknown, claudeMetrics?: unknown }} */ (raw);
+  if (typeof obj.endpoint === "string" && /^https?:\/\/\S+$/.test(obj.endpoint.trim())) {
+    out.endpoint = obj.endpoint.trim().replace(/\/+$/, "");
+  }
+  if (obj.headers && typeof obj.headers === "object" && !Array.isArray(obj.headers)) {
+    for (const [k, v] of Object.entries(obj.headers)) {
+      if (k && typeof v === "string") out.headers[k] = v;
+    }
+  }
+  out.claudeMetrics = obj.claudeMetrics === true;
+  return out;
 }
 
 /**
@@ -645,6 +672,7 @@ function migrateAutomation(a) {
  * Projects: remoteHost/remotePath stay absent on old rows. Empty strings
  * (or other junk) are dropped so the keys remain optional, not null.
  * Spaces (#159): spaceId is the same optional-key shape.
+ * Worktree retention (#316): keep a finite number > 0; drop otherwise.
  * @param {object} p
  */
 function migrateProject(p) {
@@ -661,6 +689,12 @@ function migrateProject(p) {
   const spaceId = typeof next.spaceId === "string" ? next.spaceId.trim() : "";
   if (spaceId) next.spaceId = spaceId;
   else delete next.spaceId;
+  const retention = next.worktreeRetention;
+  if (typeof retention === "number" && Number.isFinite(retention) && retention > 0) {
+    next.worktreeRetention = retention;
+  } else {
+    delete next.worktreeRetention;
+  }
   return next;
 }
 
@@ -716,6 +750,10 @@ function migrateThread(t) {
     notes: typeof t.notes === "string" ? t.notes : "",
     // Type-ahead queue (issue #137): absent → nothing waiting.
     queued: t.queued !== undefined ? t.queued : null,
+    // Verification gate (issue #296): absent / non-string → unarmed.
+    verifyCommand: typeof t.verifyCommand === "string" ? t.verifyCommand : null,
+    // Latest verify evidence (issue #296): absent → none yet.
+    verify: t.verify !== undefined ? t.verify : null,
   };
 }
 
@@ -824,6 +862,11 @@ class Store {
       automations: Array.isArray(parsed.automations)
         ? parsed.automations.map(migrateAutomation)
         : [],
+      digestSeenAt:
+        typeof parsed.digestSeenAt === "number" &&
+        Number.isFinite(parsed.digestSeenAt)
+          ? parsed.digestSeenAt
+          : null,
       settings: normalizeSettings(parsed.settings),
     };
     ensureWorkflowTemplates(data);
@@ -1205,6 +1248,23 @@ class Store {
   }
 
   /**
+   * Last time the morning digest was marked seen (epoch ms), or null.
+   * @returns {number | null}
+   */
+  getDigestSeenAt() {
+    const v = this.data.digestSeenAt;
+    return typeof v === "number" && Number.isFinite(v) ? v : null;
+  }
+
+  /**
+   * @param {number | null} ms
+   */
+  setDigestSeenAt(ms) {
+    this.data.digestSeenAt =
+      typeof ms === "number" && Number.isFinite(ms) ? ms : null;
+  }
+
+  /**
    * @returns {{ dailyBudgetUsd: number | null, orchestrationBudgetUsd: number | null, autoSettleAfterDays: number | null, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }>, defaultWorktree: boolean, defaultOrchestrate: boolean }}
    */
   getSettings() {
@@ -1230,6 +1290,7 @@ class Store {
       updateChannel: n.updateChannel,
       notifications: n.notifications,
       agentProfiles: n.agentProfiles,
+      otel: n.otel,
     };
   }
 
@@ -1322,6 +1383,19 @@ class Store {
         throw new Error('updateChannel must be "prod", "nightly", or null');
       }
       this.data.settings.updateChannel = v;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "otel")) {
+      const v = /** @type {{ endpoint?: unknown }} */ (patch.otel);
+      if (!v || typeof v !== "object") {
+        throw new Error("otel must be an object");
+      }
+      if (
+        v.endpoint != null &&
+        !(typeof v.endpoint === "string" && /^https?:\/\/\S+$/.test(v.endpoint.trim()))
+      ) {
+        throw new Error("OTLP endpoint must be an http(s) URL or null");
+      }
+      this.data.settings.otel = normalizeOtel(v);
     }
     if (Object.prototype.hasOwnProperty.call(patch, "notifications")) {
       const v = patch.notifications;
@@ -1636,6 +1710,7 @@ function cloneEmpty() {
     spendByDay: {},
     usageByDay: {},
     automations: [],
+    digestSeenAt: null,
     // autoSettleAfterDays defaults to 3 (AUTO_SETTLE_AFTER_DAYS); null = disabled.
     settings: {
       dailyBudgetUsd: null,

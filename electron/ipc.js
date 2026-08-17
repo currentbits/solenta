@@ -22,6 +22,8 @@ const {
   listCheckpoints,
   restoreCheckpoint,
   runStats,
+  gcScan,
+  gcClean,
 } = require("./worktrees.js");
 const { suggestCommitMessage } = require("./commitmsg.js");
 const { listLocalServers } = require("./servers.js");
@@ -34,6 +36,7 @@ const skills = require("./skills.js");
 const { fetchIssue, listIssues, setPlanStatus } = require("./issues.js");
 const automations = require("./automations.js");
 const { buildActivity } = require("./activity.js");
+const { collectDigest } = require("./digest.js");
 const updater = require("./updater.js");
 
 /**
@@ -207,6 +210,27 @@ const IPC_HANDLERS = {
   "usage:byDay": async (ctx) => {
     return ctx.store.getUsageByDay();
   },
+  "insights:failureModes": async (ctx) => {
+    const { clusterFailureModes } = require("./failuremodes.js");
+    return clusterFailureModes({
+      threads: ctx.store.getThreads(),
+      messagesByThread: ctx.store.data.messagesByThread,
+    });
+  },
+  "digest:list": async (ctx, input) => {
+    return collectDigest({
+      store: ctx.store,
+      sinceMs: input && input.sinceMs,
+      nowMs: Date.now(),
+    });
+  },
+  "digest:markSeen": async (ctx, input) => {
+    const at =
+      input && Number.isFinite(input.atMs) ? input.atMs : Date.now();
+    ctx.store.setDigestSeenAt(at);
+    ctx.store.save();
+    return { seenAt: at };
+  },
   "threads:search": async (ctx, input) => {
     return services.searchThreads(ctx.store, input || { query: "" });
   },
@@ -356,6 +380,18 @@ const IPC_HANDLERS = {
     const updated = services.setReasoningEffort(ctx.store, input);
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     return updated;
+  },
+  "threads:setVerifyCommand": async (ctx, input) => {
+    const updated = services.setVerifyCommand(ctx.store, input);
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    return updated;
+  },
+  "threads:runVerify": async (ctx, input) => {
+    const result = await services.runVerifyNow(ctx.store, input, {
+      runner: ctx.runner,
+    });
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    return result;
   },
   "app:status": async (ctx) => {
     return services.appStatus(ctx.store);
@@ -699,6 +735,17 @@ const IPC_HANDLERS = {
     const target = resolveAllowedShellPath(ctx.store, input);
     const err = await shell.openPath(target);
     if (err) throw new Error(err);
+  },
+  "git:gcScan": async (ctx) => {
+    return gcScan({ store: ctx.store, worktreeBase: ctx.worktreeBase });
+  },
+  "git:gcClean": async (ctx, input) => {
+    return gcClean({
+      store: ctx.store,
+      worktreeBase: ctx.worktreeBase,
+      paths: (input && input.paths) || [],
+      broadcast: ctx.broadcast,
+    });
   },
   "git:runStats": async (ctx, input) => {
     return runStats({

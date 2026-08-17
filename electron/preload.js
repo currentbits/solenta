@@ -135,6 +135,13 @@ const coder = {
   usage: {
     byDay: () => invoke("usage:byDay"),
   },
+  insights: {
+    failureModes: () => invoke("insights:failureModes"),
+  },
+  digest: {
+    list: (input) => invoke("digest:list", input),
+    markSeen: (input) => invoke("digest:markSeen", input),
+  },
   runs: {
     start: (input) => invoke("runs:start", input),
     startWorkflow: (input) => invoke("runs:startWorkflow", input),
@@ -162,6 +169,8 @@ const coder = {
     repoInfo: (input) => invoke("git:repoInfo", input),
     pull: (input) => invoke("git:pull", input),
     runStats: (input) => invoke("git:runStats", input),
+    gcScan: () => invoke("git:gcScan"),
+    gcClean: (input) => invoke("git:gcClean", input),
   },
   issues: {
     fetch: (input) => invoke("issues:fetch", input),

@@ -87,6 +87,56 @@ describe('REST convenience + new MCP tools', () => {
     const full = await entry.json()
     assert.equal(full.body, 'the restwalrus operator for rest tests')
     assert.equal(full.id, stored.id)
+    assert.equal(full.source, 'rest')
+    assert.equal(recentHit.source, 'rest')
+    assert.equal(searchHit.source, 'rest')
+  })
+
+  it('POST /api/store accepts agent+source and GET /api/search filters by agent', async () => {
+    const storeRes = await fetch(`${baseURL}/api/store`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify({
+        type: 'knowledge',
+        title: 'REST provenance',
+        body: 'restprovenanceword from grok via app',
+        project: 'coder',
+        agent: 'grok',
+        source: 'app',
+      }),
+    })
+    assert.equal(storeRes.status, 200)
+    const stored = await storeRes.json()
+
+    const other = await fetch(`${baseURL}/api/store`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify({
+        type: 'knowledge',
+        title: 'REST other writer',
+        body: 'restprovenanceword from claude',
+        project: 'coder',
+        agent: 'claude',
+        source: 'mcp',
+      }),
+    })
+    assert.equal(other.status, 200)
+    const otherStored = await other.json()
+
+    const entry = await fetch(`${baseURL}/api/entry/${stored.id}`, { headers: authHeaders() })
+    const full = await entry.json()
+    assert.equal(full.agent, 'grok')
+    assert.equal(full.source, 'app')
+
+    const filtered = await fetch(
+      `${baseURL}/api/search?query=${encodeURIComponent('restprovenanceword')}&project=coder&agent=grok`,
+      { headers: authHeaders() },
+    )
+    assert.equal(filtered.status, 200)
+    const hits = await filtered.json()
+    assert.ok(hits.some((h) => h.id === stored.id))
+    assert.ok(hits.every((h) => h.agent === 'grok'))
+    assert.ok(!hits.some((h) => h.id === otherStored.id))
   })
 
   it('GET /health includes janitor snapshot', async () => {

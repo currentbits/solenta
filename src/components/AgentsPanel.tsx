@@ -17,6 +17,7 @@ import type {
   SkillWrite,
   ThreadInfo,
   ThreadSummaryInfo,
+  VerifyResult,
   WorkflowView,
 } from "../shared/ipc";
 import {
@@ -31,6 +32,11 @@ import { contextRing, contextWindowFor } from "../contextRing";
 import { buildWaitStates, waitLabel, type WaitState } from "../waiting";
 import { MemoryTab } from "./MemoryTab";
 import { SkillsTab } from "./SkillsTab";
+import {
+  formatVerifySummary,
+  verifyLogStartsCollapsed,
+  verifyNowDisabled,
+} from "../verifyCard";
 import styles from "./AgentsPanel.module.css";
 
 type PanelTab = "agents" | "git" | "memory" | "skills";
@@ -85,6 +91,8 @@ interface AgentsPanelProps {
   startDevServer: (threadId: string, script: string) => Promise<DevServerState>;
   stopDevServer: (threadId: string) => Promise<DevServerState>;
   devServerStatus: (threadId: string) => Promise<DevServerState>;
+  setVerifyCommand: (threadId: string, command: string | null) => Promise<void>;
+  runVerify: (threadId: string) => Promise<VerifyResult>;
   searchMemory: (input: {
     query: string;
     project?: string;
@@ -787,6 +795,172 @@ export function DevServerCard({
   );
 }
 
+export function VerifyCard({
+  thread,
+  setVerifyCommand,
+  runVerify,
+}: {
+  thread: ThreadInfo | null;
+  setVerifyCommand: (threadId: string, command: string | null) => Promise<void>;
+  runVerify: (threadId: string) => Promise<VerifyResult>;
+}) {
+  const saved = thread?.verifyCommand ?? "";
+  const [draft, setDraft] = useState(saved);
+  const [verifying, setVerifying] = useState(false);
+  const [errorLine, setErrorLine] = useState<string | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  const [logOpen, setLogOpen] = useState(false);
+
+  useEffect(() => {
+    setDraft(thread?.verifyCommand ?? "");
+    setErrorLine(null);
+    setVerifying(false);
+    const next = thread?.verify ?? null;
+    setLogOpen(next ? !verifyLogStartsCollapsed(next) : false);
+  }, [thread?.id]);
+
+  useEffect(() => {
+    setDraft(thread?.verifyCommand ?? "");
+  }, [thread?.verifyCommand]);
+
+  const evidence = thread?.verify ?? null;
+  const evidenceKey = evidence ? `${evidence.at}-${evidence.attempt}` : "";
+  useEffect(() => {
+    if (!evidence) return;
+    setLogOpen(!verifyLogStartsCollapsed(evidence));
+  }, [evidenceKey]);
+
+  useEffect(() => {
+    if (!evidence) return;
+    const id = window.setInterval(() => setNow(Date.now()), 60_000);
+    return () => window.clearInterval(id);
+  }, [evidenceKey]);
+
+  const runActive = thread?.status === "working";
+  const disabled = verifyNowDisabled({
+    command: draft,
+    runActive,
+    verifying,
+  });
+
+  async function save(next: string) {
+    if (!thread) return;
+    const trimmed = next.trim();
+    const current = thread.verifyCommand ?? "";
+    if (trimmed === current) return;
+    try {
+      await setVerifyCommand(thread.id, trimmed || null);
+      setErrorLine(null);
+    } catch (err) {
+      setErrorLine(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function onVerify() {
+    if (!thread || disabled) return;
+    setVerifying(true);
+    setErrorLine(null);
+    try {
+      const trimmed = draft.trim();
+      if (trimmed !== (thread.verifyCommand ?? "")) {
+        await setVerifyCommand(thread.id, trimmed || null);
+      }
+      await runVerify(thread.id);
+    } catch (err) {
+      setErrorLine(err instanceof Error ? err.message : String(err));
+    } finally {
+      setVerifying(false);
+    }
+  }
+
+  return (
+    <section className={styles.gitCard} data-verify-card="">
+      <div className={styles.gitCardLabel}>
+        <svg {...LABEL_ICON_PROPS} className={styles.labelIcon}>
+          <path d="M4.5 8.5 7 11l4.5-5.5" />
+          <circle cx="8" cy="8" r="6" />
+        </svg>
+        Verification
+      </div>
+      {!thread ? (
+        <p className={styles.gitHint}>Select a thread to set a verify command.</p>
+      ) : (
+        <>
+          <div className={styles.gitActions}>
+            <input
+              className={styles.verifyInput}
+              type="text"
+              value={draft}
+              placeholder="npm test"
+              spellCheck={false}
+              autoComplete="off"
+              aria-label="Verify command"
+              data-verify-command=""
+              onChange={(e) => setDraft(e.target.value)}
+              onBlur={() => void save(draft)}
+              onKeyDown={(e) => {
+                if (e.key !== "Enter") return;
+                e.preventDefault();
+                void save(draft);
+                (e.target as HTMLInputElement).blur();
+              }}
+            />
+            <button
+              type="button"
+              className={`${styles.gitBtn} ${styles.gitBtnPrimary}`}
+              data-verify-now=""
+              disabled={disabled}
+              onClick={() => void onVerify()}
+            >
+              {verifying ? (
+                <>
+                  <span className={styles.btnSpinner} aria-hidden />
+                  Verifying…
+                </>
+              ) : (
+                "Verify now"
+              )}
+            </button>
+          </div>
+          {!saved && (
+            <p className={styles.gitHint} data-verify-unarmed="">
+              Runs settle on the agent&apos;s word alone.
+            </p>
+          )}
+          {evidence && (
+            <div className={styles.verifyEvidence} data-verify-evidence="">
+              <p
+                className={styles.verifySummary}
+                data-ok={evidence.ok ? "true" : "false"}
+              >
+                {formatVerifySummary(evidence, now)}
+              </p>
+              {evidence.log ? (
+                <details
+                  className={styles.verifyLogWrap}
+                  data-verify-log=""
+                  open={logOpen}
+                  onToggle={(e) =>
+                    setLogOpen((e.target as HTMLDetailsElement).open)
+                  }
+                >
+                  <summary>Log</summary>
+                  <pre className={styles.verifyLog}>{evidence.log}</pre>
+                </details>
+              ) : null}
+            </div>
+          )}
+        </>
+      )}
+      {errorLine && (
+        <p className={styles.devServerError} data-verify-error="" role="alert">
+          {errorLine}
+        </p>
+      )}
+    </section>
+  );
+}
+
 export function LocalServersCard({
   threadId,
   listLocalServers,
@@ -1228,6 +1402,8 @@ export function GitTab({
   startDevServer,
   stopDevServer,
   devServerStatus,
+  setVerifyCommand,
+  runVerify,
 }: {
   thread: ThreadInfo | null;
   project: ProjectInfo | null;
@@ -1250,6 +1426,11 @@ export function GitTab({
   startDevServer: (threadId: string, script: string) => Promise<DevServerState>;
   stopDevServer: (threadId: string) => Promise<DevServerState>;
   devServerStatus: (threadId: string) => Promise<DevServerState>;
+  setVerifyCommand?: (
+    threadId: string,
+    command: string | null,
+  ) => Promise<void>;
+  runVerify?: (threadId: string) => Promise<VerifyResult>;
 }) {
   const [gitAction, setGitAction] = useState<GitAction>(null);
   const [dirtyMessage, setDirtyMessage] = useState<string | null>(null);
@@ -1475,6 +1656,13 @@ export function GitTab({
           stopDevServer={stopDevServer}
           devServerStatus={devServerStatus}
         />
+        {setVerifyCommand && runVerify && (
+          <VerifyCard
+            thread={thread}
+            setVerifyCommand={setVerifyCommand}
+            runVerify={runVerify}
+          />
+        )}
         <LocalServersCard
           threadId={thread?.id ?? null}
           listLocalServers={listLocalServers}
@@ -2070,6 +2258,8 @@ export const AgentsPanel = memo(function AgentsPanel({
   startDevServer,
   stopDevServer,
   devServerStatus,
+  setVerifyCommand,
+  runVerify,
   searchMemory,
   recentMemory,
   getMemory,
@@ -2153,6 +2343,8 @@ export const AgentsPanel = memo(function AgentsPanel({
           startDevServer={startDevServer}
           stopDevServer={stopDevServer}
           devServerStatus={devServerStatus}
+          setVerifyCommand={setVerifyCommand}
+          runVerify={runVerify}
         />
       ) : tab === "memory" ? (
         <MemoryTab

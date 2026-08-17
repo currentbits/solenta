@@ -116,6 +116,40 @@
   opacity: 0.6;
 }
 
+.textarea {
+  flex: 1;
+  min-width: 0;
+  min-height: 72px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--text);
+  font-size: 12.5px;
+  line-height: 1.4;
+  resize: vertical;
+  font-family: var(--mono);
+}
+
+.textarea:focus {
+  outline: none;
+  border-color: var(--blue-border);
+  box-shadow: 0 0 0 2px var(--blue-soft);
+}
+
+.textarea:disabled {
+  opacity: 0.6;
+}
+
+.textarea::placeholder {
+  color: var(--text-dim);
+  font-family: var(--font);
+}
+
+.monoNote {
+  font-family: var(--mono);
+}
+
 .btn {
   display: inline-flex;
   align-items: center;
@@ -205,4 +239,42 @@
   font-size: 13px;
   font-weight: 500;
   color: var(--text);
+}
+
+.gcList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.gcCandidate {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.18);
+  font-size: 12.5px;
+  color: var(--text);
+}
+
+.gcCandidate[data-blocked="true"] {
+  opacity: 0.65;
+}
+
+.gcMeta {
+  flex: 1;
+  min-width: 0;
+}
+
+.gcTitle {
+  display: block;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.gcFailed {
+  margin: 0;
+  padding-left: 18px;
 }
