@@ -17,6 +17,7 @@ const services = require("../services.js");
 const {
   setupWorktree,
   maybeCreateCheckpoint,
+  listCheckpoints,
   CHECKPOINT_SUBJECT_PREFIX,
 } = require("../worktrees.js");
 const { createRunner } = require("../runner.js");
@@ -427,6 +428,104 @@ describe("restoreFiles resets to the last retained turn", () => {
       store.getMessages(thread.id).map((m) => m.id),
       ["u1", "a1", "u2", "a2"],
     );
+  });
+
+  it("does not restore a checkpoint that arrived via merge", async () => {
+    fx = await makeRewindWorktree();
+    const { store, thread, worktreePath: wt } = fx;
+    const ownFile = path.join(wt, "own.txt");
+    const mergedFile = path.join(wt, "from-worker.txt");
+    const branch = git(wt, ["rev-parse", "--abbrev-ref", "HEAD"]);
+    const t0 = Date.now();
+    // Foreign committer time sits between this thread's own checkpoint and
+    // the edited message, so a newest-at-or-before walk of ALL reachable
+    // history would pick the worker's tree.
+    const foreignAt = t0 + 60_000;
+    const editAt = t0 + 120_000;
+
+    git(wt, ["checkout", "-b", "foreign-worker"]);
+    fs.writeFileSync(ownFile, "FORK-OVERWRITE\n");
+    fs.writeFileSync(mergedFile, "worker-only\n");
+    git(wt, ["add", "-A"]);
+    const foreignDate = new Date(foreignAt).toISOString();
+    execFileSync(
+      "git",
+      [
+        "-c",
+        "user.email=solenta@local",
+        "-c",
+        "user.name=Solenta",
+        "commit",
+        "-m",
+        `${CHECKPOINT_SUBJECT_PREFIX}1`,
+      ],
+      {
+        cwd: wt,
+        env: {
+          ...process.env,
+          GIT_AUTHOR_DATE: foreignDate,
+          GIT_COMMITTER_DATE: foreignDate,
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    const foreignSha = git(wt, ["rev-parse", "HEAD"]);
+    git(wt, ["checkout", branch]);
+    execFileSync(
+      "git",
+      [
+        "-c",
+        "user.email=test@example.com",
+        "-c",
+        "user.name=Test",
+        "merge",
+        "--no-ff",
+        "-m",
+        "merge worker",
+        "foreign-worker",
+      ],
+      { cwd: wt, stdio: ["ignore", "pipe", "pipe"] },
+    );
+
+    fs.writeFileSync(ownFile, "thread-after-merge\n");
+    const own = await maybeCreateCheckpoint(store, thread.id);
+    assert.ok(own);
+    assert.notEqual(own.sha, foreignSha);
+    const ownAt =
+      Number(git(wt, ["log", "-1", "--format=%ct", own.sha])) * 1000;
+    assert.ok(
+      ownAt < foreignAt,
+      `own checkpoint (${ownAt}) must be older than the faked foreign at (${foreignAt})`,
+    );
+    assert.equal(fs.readFileSync(ownFile, "utf8"), "thread-after-merge\n");
+    assert.equal(fs.readFileSync(mergedFile, "utf8"), "worker-only\n");
+
+    appendTurn(store, thread.id, 1, editAt);
+    appendTurn(store, thread.id, 2, editAt + 1);
+    store.saveNow();
+
+    const listed = await listCheckpoints({ store, threadId: thread.id });
+    assert.ok(
+      listed.every((c) => c.sha !== foreignSha),
+      "merged-in worker checkpoint must not appear in listCheckpoints",
+    );
+
+    const result = await services.rewindThread(store, {
+      threadId: thread.id,
+      messageId: "u1",
+      prompt: "one, edited",
+      restoreFiles: true,
+    });
+
+    assert.equal(result.restoredSha, own.sha);
+    assert.notEqual(result.restoredSha, foreignSha);
+    assert.equal(fs.readFileSync(ownFile, "utf8"), "thread-after-merge\n");
+    assert.equal(
+      fs.readFileSync(mergedFile, "utf8"),
+      "worker-only\n",
+      "merged worker file must survive; reset landed on this thread, not the fork",
+    );
+    assert.notEqual(fs.readFileSync(ownFile, "utf8"), "FORK-OVERWRITE\n");
   });
 });
 
