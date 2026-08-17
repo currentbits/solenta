@@ -224,14 +224,14 @@ async function createProject(store, input) {
 }
 
 /**
- * Patch an existing project. Today: display name, SSH remote fields, and
- * space membership (issue #159). Remote validation mirrors addProject: a
- * non-empty host requires an absolute remotePath; an empty host clears both
- * keys, turning the project local again. The local checkout path is never
- * edited here.
+ * Patch an existing project. Today: display name, SSH remote fields,
+ * space membership (issue #159), and worktree retention (#316). Remote
+ * validation mirrors addProject: a non-empty host requires an absolute
+ * remotePath; an empty host clears both keys, turning the project local
+ * again. The local checkout path is never edited here.
  * @param {import('./store').Store} store
  * @param {string} projectId
- * @param {{ name?: string, remoteHost?: string, remotePath?: string, spaceId?: string }} patch
+ * @param {{ name?: string, remoteHost?: string, remotePath?: string, spaceId?: string, worktreeRetention?: number }} patch
  */
 function updateProject(store, projectId, patch) {
   const projects = store.getProjects().slice();
@@ -283,6 +283,19 @@ function updateProject(store, projectId, patch) {
       next.spaceId = spaceId;
     } else {
       delete next.spaceId;
+    }
+  }
+
+  if (Object.prototype.hasOwnProperty.call(input, "worktreeRetention")) {
+    const v = input.worktreeRetention;
+    if (v === 0) {
+      delete next.worktreeRetention;
+    } else if (typeof v === "number" && Number.isFinite(v) && v > 0) {
+      next.worktreeRetention = v;
+    } else {
+      throw new Error(
+        "worktreeRetention must be a number greater than 0, or 0 to clear",
+      );
     }
   }
 
