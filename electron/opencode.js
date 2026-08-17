@@ -1,6 +1,7 @@
 "use strict";
 
 const { spawn } = require("node:child_process");
+const { killTree } = require("./proc.js");
 
 const SIGKILL_AFTER_MS = 3000;
 const INPUT_TRUNCATE = 2000;
@@ -245,6 +246,7 @@ function runOpencode(opts) {
     child = spawn(binary, args, {
       cwd,
       shell: false,
+      detached: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
   } catch (err) {
@@ -293,19 +295,7 @@ function runOpencode(opts) {
     kill() {
       if (killed || finished) return;
       killed = true;
-      try {
-        child.kill("SIGTERM");
-      } catch {
-        // already dead
-      }
-      killTimer = setTimeout(() => {
-        killTimer = null;
-        try {
-          if (!finished) child.kill("SIGKILL");
-        } catch {
-          // ignore
-        }
-      }, SIGKILL_AFTER_MS);
+      killTimer = killTree(child, SIGKILL_AFTER_MS);
     },
   };
 }

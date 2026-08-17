@@ -1,6 +1,7 @@
 "use strict";
 
 const { spawn } = require("node:child_process");
+const { killTree } = require("./proc.js");
 
 const CHUNK_THROTTLE_MS = 250;
 const SIGKILL_AFTER_MS = 3000;
@@ -13,7 +14,7 @@ const SIGKILL_AFTER_MS = 3000;
  * text providers). stdout is utf8 and delivered via onChunk as
  * accumulated text, at most every 250ms. onDone(exitCode, fullText,
  * stderrText) fires when the process exits. kill() sends SIGTERM, then
- * SIGKILL after 3s if still alive.
+ * SIGKILL after 3s if the group is still alive.
  *
  * @param {object} opts
  * @param {string} opts.command
@@ -100,6 +101,7 @@ function runAgent(opts) {
     child = spawn(command, spawnArgs, {
       cwd,
       shell: false,
+      detached: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
   } catch (err) {
@@ -139,19 +141,7 @@ function runAgent(opts) {
     kill() {
       if (killed || finished) return;
       killed = true;
-      try {
-        child.kill("SIGTERM");
-      } catch {
-        // already dead
-      }
-      killTimer = setTimeout(() => {
-        killTimer = null;
-        try {
-          if (!finished) child.kill("SIGKILL");
-        } catch {
-          // ignore
-        }
-      }, SIGKILL_AFTER_MS);
+      killTimer = killTree(child, SIGKILL_AFTER_MS);
     },
   };
 }
