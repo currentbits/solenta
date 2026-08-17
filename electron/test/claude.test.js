@@ -441,6 +441,36 @@ async function main() {
     return;
   }
 
+  if (scenario === "deaf-reuse") {
+    // A complete turn, then the process stays alive forever without ever
+    // reading stdin (and without exiting). The reuse write succeeds into the
+    // pipe buffer; only the ACK timer converting that into an exit can
+    // recover the turn.
+    emit({
+      type: "system",
+      subtype: "init",
+      session_id: "sess-abc-001",
+      model: "claude-opus-test",
+    });
+    await delay(20);
+    emit({
+      type: "assistant",
+      message: { content: [{ type: "text", text: "First turn reply" }] },
+    });
+    await delay(20);
+    emit({
+      type: "result",
+      subtype: "success",
+      result: "First done.",
+      usage: { input_tokens: 100, output_tokens: 50 },
+      total_cost_usd: 0.01,
+      num_turns: 1,
+      session_id: "sess-abc-001",
+    });
+    setInterval(() => {}, 1 << 30);
+    return;
+  }
+
   if (scenario === "resume-turn") {
     // Second turn: expect --resume in argv (asserted by test via argv file).
     emit({
@@ -970,6 +1000,7 @@ describe("runner claude provider", () => {
   let prevGrokBin;
   let prevMarkerDir;
   let prevPhantomGrace;
+  let prevAckMs;
 
   beforeEach(async () => {
     prevSimulate = process.env.CODER_SIMULATE;
@@ -981,6 +1012,7 @@ describe("runner claude provider", () => {
     prevGrokBin = process.env.CODER_GROK_BIN;
     prevMarkerDir = process.env.CODER_FAKE_CLAUDE_MARKER_DIR;
     prevPhantomGrace = process.env.CODER_PHANTOM_RESULT_GRACE_MS;
+    prevAckMs = process.env.CODER_CLAUDE_ACK_MS;
 
     delete process.env.CODER_SIMULATE;
     delete process.env.CODER_AGENT_CMD;
@@ -1040,6 +1072,8 @@ describe("runner claude provider", () => {
     else process.env.CODER_GROK_BIN = prevGrokBin;
     if (prevPhantomGrace === undefined) delete process.env.CODER_PHANTOM_RESULT_GRACE_MS;
     else process.env.CODER_PHANTOM_RESULT_GRACE_MS = prevPhantomGrace;
+    if (prevAckMs === undefined) delete process.env.CODER_CLAUDE_ACK_MS;
+    else process.env.CODER_CLAUDE_ACK_MS = prevAckMs;
   });
 
   it("captures session id on init, streams text, pairs tools, final answer lands after tools", async () => {
@@ -1494,6 +1528,40 @@ describe("runner claude provider", () => {
     assert.deepEqual(errs, [], `unexpected run errors: ${JSON.stringify(errs)}`);
 
     // The respawn is a real new process, resuming the same session.
+    const argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
+    const resumeIdx = argv.indexOf("--resume");
+    assert.ok(resumeIdx >= 0, `expected --resume in ${JSON.stringify(argv)}`);
+    assert.equal(argv[resumeIdx + 1], "sess-abc-001");
+  });
+
+  it("respawns when the reused CLI stops reading stdin without exiting", async () => {
+    process.env.CODER_FAKE_CLAUDE_SCENARIO = "deaf-reuse";
+
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "turn one" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    // Turn two is written to a live child that never reads stdin and never
+    // exits. The ACK timer must convert that into an exit so the existing
+    // respawn path can --resume the session.
+    process.env.CODER_FAKE_CLAUDE_SCENARIO = "resume-turn";
+    process.env.CODER_CLAUDE_ACK_MS = "200";
+    fs.unlinkSync(argvFile);
+
+    await runner.startRun({ threadId: thread.id, prompt: "turn two" });
+
+    await waitFor(() =>
+      store
+        .getMessages(thread.id)
+        .some((m) => m.role === "assistant" && m.text === "Second turn reply"),
+    );
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    const errs = store
+      .getMessages(thread.id)
+      .filter((m) => m.role === "event" && /Run error/i.test(m.text));
+    assert.deepEqual(errs, [], `unexpected run errors: ${JSON.stringify(errs)}`);
+
     const argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
     const resumeIdx = argv.indexOf("--resume");
     assert.ok(resumeIdx >= 0, `expected --resume in ${JSON.stringify(argv)}`);
