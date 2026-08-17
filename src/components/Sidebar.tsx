@@ -176,6 +176,8 @@ interface SidebarProps {
   onSetSnoozed?: (threadId: string, until: number | null) => void | Promise<void>;
   /** Mute/unmute desktop notifications for one thread. */
   onSetMuted?: (threadId: string, muted: boolean) => void | Promise<void>;
+  /** Rename a thread from the row menu. */
+  onRenameThread?: (threadId: string, title: string) => void | Promise<void>;
   /** Archive a thread (batch toolbar). */
   onSetArchived?: (threadId: string, archived: boolean) => void | Promise<void>;
   /** Clear the settled tail: archive all settled threads (Synara-style, undo via toast). */
@@ -340,6 +342,7 @@ export function ThreadCard({
   onSetPinned,
   onSetSnoozed,
   onSetMuted,
+  onRenameThread,
   onFork,
   snoozeMenuOpen = false,
   onToggleSnoozeMenu,
@@ -369,6 +372,8 @@ export function ThreadCard({
   onSetSnoozed?: (threadId: string, until: number | null) => void | Promise<void>;
   /** Mute/unmute desktop notifications for this thread (snooze menu item). */
   onSetMuted?: (threadId: string, muted: boolean) => void | Promise<void>;
+  /** Rename this thread (snooze menu item). */
+  onRenameThread?: (threadId: string, title: string) => void | Promise<void>;
   onFork?: (
     threadId: string,
     opts?: { provider?: string },
@@ -406,6 +411,25 @@ export function ThreadCard({
   const selectLabel = showUnread
     ? `Select thread: ${thread.title}, unread`
     : `Select thread: ${thread.title}`;
+  const [renaming, setRenaming] = useState(false);
+  const [renameDraft, setRenameDraft] = useState("");
+  const renamingRef = useRef(false);
+
+  const startRename = () => {
+    setRenameDraft(thread.title);
+    renamingRef.current = true;
+    setRenaming(true);
+    onToggleSnoozeMenu?.(null);
+  };
+
+  const finishRename = (cancel: boolean) => {
+    if (!renamingRef.current) return;
+    renamingRef.current = false;
+    const next = renameDraft.trim();
+    setRenaming(false);
+    if (cancel || !next || next === thread.title) return;
+    void onRenameThread?.(thread.id, next);
+  };
 
   // Card is a non-interactive shell. Stretch select + optional settle action
   // are separate focusables. Content sits in a sibling with pointer-events:none
@@ -478,7 +502,32 @@ export function ThreadCard({
               title={thread.queued.prompt}
             />
           )}
-          <div className={styles.cardTitle}>{thread.title}</div>
+          {renaming ? (
+            <input
+              className={styles.titleInput}
+              data-thread-title-input={thread.id}
+              value={renameDraft}
+              maxLength={60}
+              aria-label="Thread title"
+              autoFocus
+              onFocus={(e) => e.currentTarget.select()}
+              onChange={(e) => setRenameDraft(e.target.value)}
+              onClick={(e) => e.stopPropagation()}
+              onMouseDown={(e) => e.stopPropagation()}
+              onBlur={() => finishRename(false)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  e.currentTarget.blur();
+                } else if (e.key === "Escape") {
+                  e.preventDefault();
+                  finishRename(true);
+                }
+              }}
+            />
+          ) : (
+            <div className={styles.cardTitle}>{thread.title}</div>
+          )}
         </div>
         <div className={styles.cardMeta}>
           <div className={styles.branchRow}>
@@ -635,6 +684,20 @@ export function ThreadCard({
                       }}
                     >
                       Clear snooze
+                    </button>
+                  )}
+                  {onRenameThread && (
+                    <button
+                      type="button"
+                      className={styles.snoozeMenuItem}
+                      role="menuitem"
+                      data-rename-thread={thread.id}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        startRename();
+                      }}
+                    >
+                      Rename
                     </button>
                   )}
                   {onSetMuted && (
@@ -1065,6 +1128,7 @@ export const Sidebar = memo(function Sidebar({
   onSetPinned,
   onSetSnoozed,
   onSetMuted,
+  onRenameThread,
   onSetArchived,
   onClearSettled,
   onFork,
@@ -2315,6 +2379,7 @@ export const Sidebar = memo(function Sidebar({
                         onSetPinned={onSetPinned}
                         onSetSnoozed={onSetSnoozed}
                         onSetMuted={onSetMuted}
+                        onRenameThread={onRenameThread}
                         onFork={onFork}
                         snoozeMenuOpen={snoozeMenuFor === thread.id}
                         onToggleSnoozeMenu={setSnoozeMenuFor}
