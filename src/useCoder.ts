@@ -1112,9 +1112,13 @@ export function useCoder(): UseCoderResult {
         setError({ scope: "run", message: errorMessage(err) });
         throw err;
       }
+      // The transcript we hold is now longer than the stored one. A run push
+      // would repair it, but only if the run starts — so refetch here, or a
+      // failed start leaves dropped messages on screen as if nothing happened.
+      reloadDetail(threadId);
       await startRun(prompt, threadId);
     },
-    [api, selectedThreadId, startRun],
+    [api, selectedThreadId, startRun, reloadDetail],
   );
 
   const refreshWorkflows = useCallback(async () => {
