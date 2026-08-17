@@ -34,6 +34,10 @@ async function loadCore() {
   return import(pathToFileURL(corePath).href);
 }
 
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
 function waitFor(predicate, { timeoutMs = 15000, intervalMs = 20 } = {}) {
   return new Promise((resolve, reject) => {
     const start = Date.now();
@@ -140,7 +144,7 @@ describe("rewindThread (services)", () => {
       messageId: "u2",
       prompt: "edited",
     });
-    store.saveNow();
+    // rewindThread saveNow()s; do not flush again so a debounce would fail this.
     const reloaded = new Store(path.join(tmpDir, "store.json"));
     const t = reloaded.getThread(thread.id);
     assert.equal(t.sessionId, null);
@@ -274,6 +278,57 @@ describe("buildHandoffPrefix replayContext", () => {
   });
 });
 
+async function makeRewindWorktree() {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-rewind-ckpt-"));
+  const store = new Store(path.join(tmpDir, "store.json"));
+  const worktreeBase = path.join(tmpDir, "worktrees");
+  const repo = path.join(tmpDir, "repo");
+  fs.mkdirSync(repo);
+  git(repo, ["init"]);
+  git(repo, ["config", "user.email", "test@example.com"]);
+  git(repo, ["config", "user.name", "Test"]);
+  fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
+  git(repo, ["add", "README.md"]);
+  git(repo, ["commit", "-m", "init"]);
+  try {
+    git(repo, ["checkout", "-b", "main"]);
+  } catch {
+    // already on main
+  }
+  const project = await services.addProject(store, repo);
+  const thread = services.createThread(store, {
+    projectId: project.id,
+    title: "Ckpt rewind",
+  });
+  const setup = setupWorktree({
+    store,
+    threadId: thread.id,
+    worktreeBase,
+    broadcast: () => {},
+  });
+  return {
+    tmpDir,
+    store,
+    thread,
+    worktreePath: setup.worktreePath,
+    file: path.join(setup.worktreePath, "tracked.txt"),
+  };
+}
+
+function appendTurn(store, threadId, n, createdAt) {
+  store.setMessages(threadId, [
+    ...store.getMessages(threadId),
+    { id: `u${n}`, role: "user", text: `turn ${n}`, runId: `r${n}`, createdAt },
+    {
+      id: `a${n}`,
+      role: "assistant",
+      text: `ok${n}`,
+      runId: `r${n}`,
+      createdAt: createdAt + 1,
+    },
+  ]);
+}
+
 describe("restoreFiles resets to the last retained turn", () => {
   let fx;
 
@@ -288,63 +343,28 @@ describe("restoreFiles resets to the last retained turn", () => {
     }
   });
 
-  it("hard-resets the worktree to checkpoint turn N", async () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-rewind-ckpt-"));
-    const store = new Store(path.join(tmpDir, "store.json"));
-    const worktreeBase = path.join(tmpDir, "worktrees");
-    const repo = path.join(tmpDir, "repo");
-    fs.mkdirSync(repo);
-    git(repo, ["init"]);
-    git(repo, ["config", "user.email", "test@example.com"]);
-    git(repo, ["config", "user.name", "Test"]);
-    fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
-    git(repo, ["add", "README.md"]);
-    git(repo, ["commit", "-m", "init"]);
-    try {
-      git(repo, ["checkout", "-b", "main"]);
-    } catch {
-      // already on main
-    }
-    const project = await services.addProject(store, repo);
-    const thread = services.createThread(store, {
-      projectId: project.id,
-      title: "Ckpt rewind",
-    });
-    const setup = setupWorktree({
-      store,
-      threadId: thread.id,
-      worktreeBase,
-      broadcast: () => {},
-    });
-    fx = { tmpDir };
-    const wt = setup.worktreePath;
-    const file = path.join(wt, "tracked.txt");
+  it("hard-resets the worktree to the checkpoint before the edited message", async () => {
+    fx = await makeRewindWorktree();
+    const { store, thread, file } = fx;
 
-    store.setMessages(thread.id, [
-      { id: "u1", role: "user", text: "one", runId: "r1", createdAt: 1 },
-      { id: "a1", role: "assistant", text: "ok1", runId: "r1", createdAt: 2 },
-    ]);
+    appendTurn(store, thread.id, 1, Date.now());
     fs.writeFileSync(file, "v1\n");
     const c1 = await maybeCreateCheckpoint(store, thread.id);
     assert.ok(c1);
     assert.equal(c1.turn, 1);
     assert.equal(c1.message, `${CHECKPOINT_SUBJECT_PREFIX}1`);
 
-    store.setMessages(thread.id, [
-      ...store.getMessages(thread.id),
-      { id: "u2", role: "user", text: "two", runId: "r2", createdAt: 3 },
-      { id: "a2", role: "assistant", text: "ok2", runId: "r2", createdAt: 4 },
-    ]);
+    // Beat git %ct 1s granularity so u2.createdAt > c1.at and < c2.at.
+    await sleep(1100);
+    appendTurn(store, thread.id, 2, Date.now());
+    await sleep(1100);
     fs.writeFileSync(file, "v2\n");
     const c2 = await maybeCreateCheckpoint(store, thread.id);
     assert.ok(c2);
     assert.equal(c2.turn, 2);
 
-    store.setMessages(thread.id, [
-      ...store.getMessages(thread.id),
-      { id: "u3", role: "user", text: "three", runId: "r3", createdAt: 5 },
-      { id: "a3", role: "assistant", text: "ok3", runId: "r3", createdAt: 6 },
-    ]);
+    await sleep(1100);
+    appendTurn(store, thread.id, 3, Date.now());
     fs.writeFileSync(file, "v3\n");
     await maybeCreateCheckpoint(store, thread.id);
     assert.equal(fs.readFileSync(file, "utf8"), "v3\n");
@@ -363,6 +383,49 @@ describe("restoreFiles resets to the last retained turn", () => {
     assert.deepEqual(
       store.getMessages(thread.id).map((m) => m.id),
       ["u1", "a1"],
+    );
+  });
+
+  it("skips a clean middle turn and restores the files from the turn that precedes the edit", async () => {
+    fx = await makeRewindWorktree();
+    const { store, thread, file } = fx;
+
+    appendTurn(store, thread.id, 1, Date.now());
+    fs.writeFileSync(file, "v1\n");
+    const c1 = await maybeCreateCheckpoint(store, thread.id);
+    assert.ok(c1);
+    assert.equal(c1.turn, 1);
+
+    await sleep(1100);
+    appendTurn(store, thread.id, 2, Date.now());
+    const skipped = await maybeCreateCheckpoint(store, thread.id);
+    assert.equal(skipped, null, "clean worktree must not consume a turn number");
+
+    await sleep(1100);
+    const u3At = Date.now();
+    appendTurn(store, thread.id, 3, u3At);
+    await sleep(1100);
+    fs.writeFileSync(file, "v3\n");
+    const c3 = await maybeCreateCheckpoint(store, thread.id);
+    assert.ok(c3);
+    assert.equal(c3.turn, 2, "second commit is numbered 2, not 3");
+    assert.equal(fs.readFileSync(file, "utf8"), "v3\n");
+    store.saveNow();
+
+    const result = await services.rewindThread(store, {
+      threadId: thread.id,
+      messageId: "u3",
+      prompt: "three, edited",
+      restoreFiles: true,
+    });
+
+    assert.equal(result.droppedMessages, 2);
+    assert.equal(result.restoredSha, c1.sha);
+    assert.notEqual(result.restoredSha, c3.sha);
+    assert.equal(fs.readFileSync(file, "utf8"), "v1\n");
+    assert.deepEqual(
+      store.getMessages(thread.id).map((m) => m.id),
+      ["u1", "a1", "u2", "a2"],
     );
   });
 });

@@ -1646,6 +1646,10 @@ async function rewindThread(store, input, opts) {
     throw new Error(`Not a user message: ${messageId}`);
   }
 
+  // Capture before truncate: restoreFiles picks the newest checkpoint at or
+  // before this message, not "turn N" (clean turns skip a number).
+  const targetAt = Number(msgs[at].createdAt);
+
   const droppedMessages = store.truncateFromMessage(threadId, messageId);
   const updated = store.updateThread(threadId, {
     sessionId: null,
@@ -1653,29 +1657,32 @@ async function rewindThread(store, input, opts) {
   });
 
   let restoredSha = null;
-  if (input.restoreFiles) {
-    const retained = store.getMessages(threadId);
-    let turn = 0;
-    for (const m of retained) {
-      if (m && m.role === "user") turn += 1;
-    }
-    if (turn > 0 && thread.worktreePath) {
-      const { listCheckpoints, restoreCheckpoint } = require("./worktrees.js");
-      const list = await listCheckpoints({ store, threadId });
-      const match = list.find((c) => c.turn === turn);
-      if (match) {
-        await restoreCheckpoint({
-          store,
-          threadId,
-          sha: match.sha,
-          isRunning: opts && opts.isRunning,
-        });
-        restoredSha = match.sha;
-      }
+  if (input.restoreFiles && thread.worktreePath) {
+    const { listCheckpoints, restoreCheckpoint } = require("./worktrees.js");
+    const list = await listCheckpoints({ store, threadId });
+    // Newest-first. Newest checkpoint whose commit time is at or before the
+    // edited message is the files just before the user sent it.
+    // ponytail: git %ct is 1s granularity, so a checkpoint written in the
+    // same second the message was sent could sort on the wrong side of the
+    // boundary. A real turn takes seconds; worst case is restoring one turn
+    // later than intended.
+    const match = Number.isFinite(targetAt)
+      ? list.find((c) => c.at <= targetAt)
+      : null;
+    if (match) {
+      await restoreCheckpoint({
+        store,
+        threadId,
+        sha: match.sha,
+        isRunning: opts && opts.isRunning,
+      });
+      restoredSha = match.sha;
     }
   }
 
-  store.save();
+  // Worktree reset is already on disk. Debounced save() would leave a crash
+  // in the 250ms window with files rewound and the old transcript resurrected.
+  store.saveNow();
   const next = updated || store.getThread(threadId) || thread;
   return { thread: { ...next }, droppedMessages, restoredSha };
 }
