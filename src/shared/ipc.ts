@@ -244,6 +244,15 @@ export interface ThreadInfo {
   model: string | null;
   /** Provider session id, persisted after the first turn so follow-ups resume context. */
   sessionId: string | null;
+  /**
+   * One-shot context replay (issue #254). Set by `threads.rewind`, which
+   * clears sessionId because a CLI session cannot be rewound: the next turn
+   * therefore starts a FRESH session and the runner prefixes its prompt with
+   * a digest of this thread's own RETAINED transcript tail (same builder as
+   * the hand-off prefix, source = this thread). Cleared when that turn starts,
+   * so it never leaks into turn two.
+   */
+  replayContext?: boolean;
   /** Passed to the provider CLI (claude --permission-mode). Sticky per thread. */
   permissionMode: PermissionMode;
   /**
@@ -683,6 +692,19 @@ export interface CheckpointInfo {
   message: string;
   /** Epoch ms of the commit. */
   at: number;
+}
+
+/**
+ * Outcome of `threads.rewind` (issue #254). `droppedMessages` is how much
+ * transcript the rewind removed (the edited message and everything after it);
+ * `restoredSha` is the checkpoint the WORKTREE was hard-reset to, or null when
+ * files were left alone (not requested, no worktree, or no matching checkpoint
+ * — none of which is an error).
+ */
+export interface RewindResult {
+  thread: ThreadInfo;
+  droppedMessages: number;
+  restoredSha: string | null;
 }
 
 /** Per-checkpoint-pair `git diff --shortstat` for a completed turn. */
@@ -1457,6 +1479,39 @@ export interface CoderApi {
       provider?: string;
       model?: string | null;
     }): Promise<ThreadInfo>;
+    /**
+     * Edit-and-resubmit (issue #254): rewind the thread to just before one of
+     * its own past USER messages so an edited version can be re-sent from
+     * there — a cheaper course correction than checkpoint archaeology.
+     *
+     * Rewind only truncates; it starts nothing. The renderer follows with the
+     * usual `runs.start({ prompt })`, which appends the edited text as a new
+     * user message (rewind must NOT append it, or it lands twice).
+     *
+     * What it does:
+     *  - drops `messageId` and every message after it from the transcript,
+     *    plus work-log items belonging to the dropped runs;
+     *  - clears `sessionId` and sets `replayContext` (see that field): CLI
+     *    sessions cannot be rewound, so the next turn is a fresh session
+     *    seeded with a digest of the retained tail;
+     *  - with `restoreFiles`, hard-resets the WORKTREE to the checkpoint of
+     *    the last RETAINED turn (turn N = the Nth user message that survives),
+     *    via the same guarded path as `git.restoreCheckpoint`.
+     *
+     * Usage history (`usageByThread`, spend) is NEVER rewritten: that money
+     * was really spent.
+     *
+     * Rejects while a run is active, on an unknown thread, on a messageId
+     * that is not a role "user" message of this thread, and on an empty
+     * prompt. Missing worktree / missing checkpoint is NOT an error: the
+     * transcript still rewinds and `restoredSha` comes back null.
+     */
+    rewind(input: {
+      threadId: string;
+      messageId: string;
+      prompt: string;
+      restoreFiles?: boolean;
+    }): Promise<RewindResult>;
     /**
      * Sets the thread's provider and/or model. A provider change on a
      * session-bearing thread is allowed and clears sessionId (CLI sessions
