@@ -283,7 +283,7 @@ export class Memory {
   }
 
   /**
-   * @param {{ type: string, title: string, body: string, project?: string, agent?: string, importance?: number, status?: string, force?: boolean }} input
+   * @param {{ type: string, title: string, body: string, project?: string, agent?: string, source?: string, importance?: number, status?: string, force?: boolean }} input
    * @returns {{ id: string }}
    */
   store(input) {
@@ -311,6 +311,7 @@ export class Memory {
         ? null
         : canonicalProject(cleanText('project', input.project))
     const agent = cleanOptional(input.agent)
+    const source = cleanOptional(input.source)
 
     // Write-time dedup: Jaccard vs live same-project-or-global (cap 500 most recent).
     // Scope rule (consistent across dedup, contradiction scan, maintenance):
@@ -335,10 +336,10 @@ export class Memory {
 
     this.db
       .prepare(
-        `INSERT INTO entries (id, type, title, body, project, agent, status, importance, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO entries (id, type, title, body, project, agent, source, status, importance, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(id, input.type, title, body, project, agent, input.status ?? null, importance, now, now)
+      .run(id, input.type, title, body, project, agent, source, input.status ?? null, importance, now, now)
 
     try {
       this.linkEntities(id, title, body)
@@ -457,7 +458,7 @@ export class Memory {
   get(id) {
     const row = this.db
       .prepare(
-        `SELECT id, type, title, body, project, agent, status, created_at, updated_at,
+        `SELECT id, type, title, body, project, agent, source, status, created_at, updated_at,
                 importance, access_count, last_accessed_at, superseded_by,
                 helpful_count, harmful_count,
                 invalid_at, invalidated_by, invalidation_reason
@@ -490,11 +491,13 @@ export class Memory {
    * On any failure returns [].
    * @param {string} query
    * @param {string|null} project
-   * @returns {{ id: string, hop: number, score: number, title: string, type: string, project: string|null, agent: string|null, created_at: string, importance: number, excerpt: string }[]}
+   * @param {string|null} [agent]
+   * @returns {{ id: string, hop: number, score: number, title: string, type: string, project: string|null, agent: string|null, source: string|null, created_at: string, importance: number, excerpt: string }[]}
    */
-  graphSearch(query, project) {
-    // node:sqlite rejects undefined binds; null is the "no project filter" sentinel.
+  graphSearch(query, project, agent) {
+    // node:sqlite rejects undefined binds; null is the "no project/agent filter" sentinel.
     project = project == null ? null : project
+    agent = agent == null ? null : agent
     try {
       const extracted = extractEntities(query)
       // Also look up any extracted names case-insensitively, plus bare tokens as entity names.
@@ -594,15 +597,16 @@ export class Memory {
       const ePlace = entryIds.map(() => '?').join(',')
       const rows = this.db
         .prepare(
-          `SELECT e.id, e.type, e.title, e.body, e.project, e.agent, e.created_at, e.importance,
+          `SELECT e.id, e.type, e.title, e.body, e.project, e.agent, e.source, e.created_at, e.importance,
                   e.access_count, e.helpful_count, e.harmful_count,
                   ${BASE_SCORE_SQL} AS score
            FROM entries e
            WHERE e.id IN (${ePlace})
              AND ${liveSql('e')}
-             AND ${projectScopeSql('e')}`,
+             AND ${projectScopeSql('e')}
+             AND (? IS NULL OR e.agent = ?)`,
         )
-        .all(...entryIds, project, project)
+        .all(...entryIds, project, project, agent, agent)
 
       rows.sort((a, b) => {
         const ha = entryHops.get(a.id) ?? 99
@@ -619,6 +623,7 @@ export class Memory {
         type: r.type,
         project: r.project,
         agent: r.agent,
+        source: r.source,
         created_at: r.created_at,
         importance: r.importance,
         excerpt: excerptFromBody(r.body),
@@ -634,25 +639,28 @@ export class Memory {
    * (live, project-or-global), top VECTOR_TOP by score DESC. Fail-soft → [].
    * @param {string} query
    * @param {string|null} project
-   * @returns {Promise<{ id: string, score: number, title: string, type: string, project: string|null, agent: string|null, created_at: string, importance: number, excerpt: string }[]>}
+   * @param {string|null} [agent]
+   * @returns {Promise<{ id: string, score: number, title: string, type: string, project: string|null, agent: string|null, source: string|null, created_at: string, importance: number, excerpt: string }[]>}
    */
-  async vectorSearch(query, project) {
+  async vectorSearch(query, project, agent) {
     if (!this.embedder) return []
     project = project == null ? null : project
+    agent = agent == null ? null : agent
     try {
       const q = await Promise.resolve(this.embedder.embed(String(query).slice(0, EMBED_MAX_CHARS)))
       if (!q) return []
       const rows = this.db
         .prepare(
           `SELECT v.entry_id AS id, v.vec AS vec, v.dim AS dim,
-                  e.type, e.title, e.body, e.project, e.agent, e.created_at, e.importance
+                  e.type, e.title, e.body, e.project, e.agent, e.source, e.created_at, e.importance
            FROM entry_vectors v
            JOIN entries e ON e.id = v.entry_id
            WHERE v.model = ?
              AND ${liveSql('e')}
-             AND ${projectScopeSql('e')}`,
+             AND ${projectScopeSql('e')}
+             AND (? IS NULL OR e.agent = ?)`,
         )
-        .all(this.embedder.model, project, project)
+        .all(this.embedder.model, project, project, agent, agent)
 
       const scored = rows
         .filter((r) => r.dim === q.length)
@@ -663,6 +671,7 @@ export class Memory {
           type: r.type,
           project: r.project,
           agent: r.agent,
+          source: r.source,
           created_at: r.created_at,
           importance: r.importance,
           excerpt: excerptFromBody(r.body),
@@ -751,23 +760,24 @@ export class Memory {
   }
 
   /**
-   * @param {{ query: string, project?: string, limit?: number }} opts
+   * @param {{ query: string, project?: string, agent?: string, limit?: number }} opts
    */
   async search(opts) {
     const query = cleanText('query', opts.query)
     const match = ftsQuery(query)
     const project = canonicalProject(cleanOptional(opts.project))
+    const agent = cleanOptional(opts.agent)
     const wantLimit = clampLimit(opts.limit, DEFAULT_SEARCH_LIMIT)
     const excerptTokens = Math.min(64, SEARCH_EXCERPT_TOKENS)
     const fetchLimit = Math.max(wantLimit * 4, 40)
 
-    /** @type {{ id: string, type: string, title: string, project: string|null, agent: string|null, created_at: string, importance: number, score: number, excerpt: string }[]} */
+    /** @type {{ id: string, type: string, title: string, project: string|null, agent: string|null, source: string|null, created_at: string, importance: number, score: number, excerpt: string }[]} */
     let ftsRows = []
     if (match) {
       try {
         ftsRows = this.db
           .prepare(
-            `SELECT e.id, e.type, e.title, e.project, e.agent, e.created_at, e.updated_at, e.importance,
+            `SELECT e.id, e.type, e.title, e.project, e.agent, e.source, e.created_at, e.updated_at, e.importance,
                     e.access_count,
                     snippet(entries_fts, 1, '[', ']', '...', ?) AS excerpt,
                     ${COMPOSITE_SCORE_SQL} AS score
@@ -776,18 +786,19 @@ export class Memory {
              WHERE entries_fts MATCH ?
                AND ${liveSql('e')}
                AND ${projectScopeSql('e')}
+               AND (? IS NULL OR e.agent = ?)
              ORDER BY score DESC
              LIMIT ?`,
           )
-          .all(excerptTokens, match, project, project, fetchLimit)
+          .all(excerptTokens, match, project, project, agent, agent, fetchLimit)
       } catch (err) {
         console.error('FTS search failed (non-fatal):', err)
         ftsRows = []
       }
     }
 
-    const graphRows = this.graphSearch(query, project)
-    const vectorRows = await this.vectorSearch(query, project)
+    const graphRows = this.graphSearch(query, project, agent)
+    const vectorRows = await this.vectorSearch(query, project, agent)
 
     // If no retriever found anything, empty.
     if (ftsRows.length === 0 && graphRows.length === 0 && vectorRows.length === 0) return []
@@ -807,6 +818,7 @@ export class Memory {
         title: r.title,
         project: r.project,
         agent: r.agent,
+        source: r.source,
         created_at: r.created_at,
         updated_at: r.updated_at,
         importance: r.importance,
@@ -839,7 +851,7 @@ export class Memory {
     const place = fusedIds.map(() => '?').join(',')
     const scoredRows = this.db
       .prepare(
-        `SELECT e.id, e.type, e.title, e.body, e.project, e.agent, e.created_at, e.updated_at, e.importance,
+        `SELECT e.id, e.type, e.title, e.body, e.project, e.agent, e.source, e.created_at, e.updated_at, e.importance,
                 ${BASE_SCORE_SQL} AS score
          FROM entries e
          WHERE e.id IN (${place}) AND ${liveSql('e')}`,
@@ -856,6 +868,7 @@ export class Memory {
         title: row.title,
         project: row.project,
         agent: row.agent,
+        source: row.source,
         created_at: row.created_at,
         updated_at: row.updated_at,
         importance: row.importance,
@@ -894,6 +907,7 @@ export class Memory {
       title: r.title,
       project: r.project,
       agent: r.agent,
+      source: r.source,
       created_at: r.created_at,
       updated_at: r.updated_at,
       importance: r.importance,
@@ -905,13 +919,13 @@ export class Memory {
 
   /**
    * @param {string} id
-   * @param {{ title?: string, body?: string, status?: string, importance?: number, agent?: string, project?: string }} fields
+   * @param {{ title?: string, body?: string, status?: string, importance?: number, agent?: string, source?: string, project?: string }} fields
    */
   supersede(id, fields = {}) {
     const cleanId = cleanText('id', id)
     const old = this.db
       .prepare(
-        `SELECT id, type, title, body, project, agent, status, importance, superseded_by
+        `SELECT id, type, title, body, project, agent, source, status, importance, superseded_by
          FROM entries WHERE id = ?`,
       )
       .get(cleanId)
@@ -931,6 +945,7 @@ export class Memory {
           : canonicalProject(cleanText('project', fields.project))
         : old.project
     const agent = fields.agent !== undefined ? cleanOptional(fields.agent) : old.agent
+    const source = fields.source !== undefined ? cleanOptional(fields.source) : old.source
     let status = fields.status !== undefined ? fields.status : old.status
     if (status && old.type !== 'task') {
       throw new Error(`status is only valid for type 'task'`)
@@ -948,8 +963,8 @@ export class Memory {
     try {
       this.db
         .prepare(
-          `INSERT INTO entries (id, type, title, body, project, agent, status, importance, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO entries (id, type, title, body, project, agent, source, status, importance, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           newId,
@@ -958,6 +973,7 @@ export class Memory {
           body,
           project,
           agent,
+          source,
           status ?? null,
           importance,
           now,
@@ -1015,7 +1031,7 @@ export class Memory {
 
     const tasksRaw = this.db
       .prepare(
-        `SELECT id, title, body, status, agent, project, created_at, updated_at FROM entries
+        `SELECT id, title, body, status, agent, source, project, created_at, updated_at FROM entries
          WHERE type = 'task' AND ${liveSql()}
            AND COALESCE(status, 'active') = 'active'
            AND (? IS NULL OR project = ?)
@@ -1063,6 +1079,7 @@ export class Memory {
         body: r.body,
         status: r.status,
         agent: r.agent,
+        source: r.source,
         project: r.project,
         updated_at: r.updated_at,
       }),
@@ -1072,6 +1089,7 @@ export class Memory {
       body: r.body,
       status: r.status,
       agent: r.agent,
+      source: r.source,
       project: r.project,
       updated_at: r.updated_at,
     }))
@@ -1104,7 +1122,7 @@ export class Memory {
 
     const rows = this.db
       .prepare(
-        `SELECT id, type, title, body, project, agent, status, created_at, updated_at, importance
+        `SELECT id, type, title, body, project, agent, source, status, created_at, updated_at, importance
          FROM entries
          WHERE ${liveSql()}
            AND ${projectScopeSql()}
@@ -1120,6 +1138,7 @@ export class Memory {
       title: r.title,
       project: r.project,
       agent: r.agent,
+      source: r.source,
       status: r.status,
       created_at: r.created_at,
       updated_at: r.updated_at,
