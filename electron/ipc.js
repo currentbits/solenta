@@ -22,6 +22,8 @@ const {
   listCheckpoints,
   restoreCheckpoint,
   runStats,
+  gcScan,
+  gcClean,
 } = require("./worktrees.js");
 const { suggestCommitMessage } = require("./commitmsg.js");
 const { listLocalServers } = require("./servers.js");
@@ -699,6 +701,17 @@ const IPC_HANDLERS = {
     const target = resolveAllowedShellPath(ctx.store, input);
     const err = await shell.openPath(target);
     if (err) throw new Error(err);
+  },
+  "git:gcScan": async (ctx) => {
+    return gcScan({ store: ctx.store, worktreeBase: ctx.worktreeBase });
+  },
+  "git:gcClean": async (ctx, input) => {
+    return gcClean({
+      store: ctx.store,
+      worktreeBase: ctx.worktreeBase,
+      paths: (input && input.paths) || [],
+      broadcast: ctx.broadcast,
+    });
   },
   "git:runStats": async (ctx, input) => {
     return runStats({
