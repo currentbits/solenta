@@ -27,6 +27,7 @@ import type {
   PrChecksResult,
   PrInfo,
   ProjectInfo,
+  ProjectUpdateInput,
   ProviderInfo,
   SpaceInfo,
   ReasoningEffort,
@@ -146,14 +147,8 @@ export interface UseCoderResult {
   ) => Promise<ProjectInfo | null>;
   /** Create a new folder + git repo (projects.create) and add it. */
   createProject: (input: CreateProjectInput) => Promise<ProjectInfo | null>;
-  /** Patch name and/or SSH remote fields of an existing project. */
-  updateProject: (input: {
-    projectId: string;
-    name?: string;
-    remoteHost?: string;
-    remotePath?: string;
-    spaceId?: string;
-  }) => Promise<ProjectInfo | null>;
+  /** Patch name, SSH remotes, space, or worktree retention of a project. */
+  updateProject: (input: ProjectUpdateInput) => Promise<ProjectInfo | null>;
   addSpace: (name: string) => Promise<SpaceInfo | null>;
   renameSpace: (id: string, name: string) => Promise<SpaceInfo | null>;
   /** Drops the space and re-lists projects (their spaceId was cleared). */
@@ -851,13 +846,7 @@ export function useCoder(): UseCoderResult {
     }
   }, [api]);
 
-  const updateProject = useCallback(async (input: {
-    projectId: string;
-    name?: string;
-    remoteHost?: string;
-    remotePath?: string;
-    spaceId?: string;
-  }) => {
+  const updateProject = useCallback(async (input: ProjectUpdateInput) => {
     try {
       const updated = await api.projects.update(input);
       setProjects((prev) =>

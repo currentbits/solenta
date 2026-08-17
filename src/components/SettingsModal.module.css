@@ -206,3 +206,41 @@
   font-weight: 500;
   color: var(--text);
 }
+
+.gcList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.gcCandidate {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.18);
+  font-size: 12.5px;
+  color: var(--text);
+}
+
+.gcCandidate[data-blocked="true"] {
+  opacity: 0.65;
+}
+
+.gcMeta {
+  flex: 1;
+  min-width: 0;
+}
+
+.gcTitle {
+  display: block;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.gcFailed {
+  margin: 0;
+  padding-left: 18px;
+}
