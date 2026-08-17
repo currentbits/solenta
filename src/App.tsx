@@ -26,8 +26,10 @@ import { EditProjectModal } from "./components/EditProjectModal";
 import { WebTokenGate } from "./components/WebTokenGate";
 import { isWebMode } from "./shared/wire";
 import { isBuildMismatch } from "./buildMismatch";
-import type { ProjectUpdateInput } from "./shared/ipc";
+import type { ConflictForecast, ProjectUpdateInput } from "./shared/ipc";
 import styles from "./App.module.css";
+
+const EMPTY_FORECAST: ConflictForecast = { pairs: [], computedAt: 0 };
 
 export type AppView =
   | "thread"
@@ -135,6 +137,7 @@ export default function App() {
     listCheckpoints,
     restoreCheckpoint,
     runStats,
+    conflictForecast,
     listLocalServers,
     revealInFinder,
     openInEditor,
@@ -191,6 +194,7 @@ export default function App() {
   /** Freshly created thread the Sidebar should reveal (expand/scroll/flash). */
   const [revealThreadId, setRevealThreadId] = useState<string | null>(null);
   const [drawer, setDrawer] = useState<DrawerId | null>(null);
+  const [forecast, setForecast] = useState<ConflictForecast>(EMPTY_FORECAST);
   const narrow = useNarrow();
   const sidebarPaneRef = useRef<HTMLDivElement>(null);
   const agentsPaneRef = useRef<HTMLDivElement>(null);
@@ -415,6 +419,21 @@ export default function App() {
   useEffect(() => {
     setChangesOpen(false);
   }, [selectedThreadId]);
+
+  // Issue #249: refetch the cached forecast when the thread list moves.
+  useEffect(() => {
+    if (!selectedProjectId) {
+      setForecast(EMPTY_FORECAST);
+      return;
+    }
+    let cancelled = false;
+    void conflictForecast(selectedProjectId).then((next) => {
+      if (!cancelled) setForecast(next);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedProjectId, threads, conflictForecast]);
 
   useEffect(() => {
     if (drawer === null) return;
@@ -694,6 +713,7 @@ export default function App() {
         onSetArchived={handleRowArchived}
         onClearSettled={handleClearSettled}
         onFork={handleRowFork}
+        conflictForecast={forecast}
             />
           </ErrorBoundary>
         </div>
@@ -770,6 +790,7 @@ export default function App() {
               autoSettleAfterDays={
                 settings == null ? undefined : settings.autoSettleAfterDays
               }
+              conflictForecast={forecast}
             />
           ) : (
             <ThreadView
