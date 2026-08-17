@@ -47,6 +47,7 @@ import type {
   CrewTaskView,
   RewindResult,
   UsageByDay,
+  FleetEvidence,
   WorkLogItem,
   WorkflowTemplateInfo,
 } from "../../src/shared/ipc";
@@ -1094,6 +1095,16 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     },
     usage: {
       byDay: () => rec("usage.byDay", [], {} as UsageByDay),
+    },
+    fleet: {
+      evidence: (input?: unknown) =>
+        rec("fleet.evidence", [input], {
+          collectedAt: Date.now(),
+          durabilityWindowDays: 14,
+          threads: [],
+          prs: [],
+          notes: [],
+        } as FleetEvidence),
     },
     runs: {
       start: (input: unknown) => rec("runs.start", [input], { runId: "r1" }),

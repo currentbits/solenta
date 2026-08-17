@@ -225,6 +225,7 @@ interface SidebarProps {
     | "automations"
     | "activity"
     | "usage"
+    | "fleet"
     | "insights"
     | "digest";
   onOpenKanban?: () => void;
@@ -242,6 +243,7 @@ interface SidebarProps {
   onOpenAutomations?: () => void;
   onOpenActivity?: () => void;
   onOpenUsage?: () => void;
+  onOpenFleet?: () => void;
   onOpenInsights?: () => void;
   onOpenDigest?: () => void;
   /**
@@ -1253,6 +1255,7 @@ export const Sidebar = memo(function Sidebar({
   onOpenAutomations,
   onOpenActivity,
   onOpenUsage,
+  onOpenFleet,
   onOpenInsights,
   onOpenDigest,
   revealThreadId = null,
@@ -2316,6 +2319,32 @@ export const Sidebar = memo(function Sidebar({
             </svg>
           </span>
           Usage
+        </button>
+        <button
+          type="button"
+          className={styles.viewNavRow}
+          data-view-nav="fleet"
+          data-active={activeView === "fleet" ? "true" : undefined}
+          title="Fleet"
+          onClick={() => onOpenFleet?.()}
+        >
+          <span className={styles.viewNavIcon} aria-hidden>
+            <svg
+              width="15"
+              height="15"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M8 2.5v11" />
+              <rect x="2.25" y="6" width="4" height="6.5" rx="0.75" />
+              <rect x="9.75" y="4" width="4" height="8.5" rx="0.75" />
+            </svg>
+          </span>
+          Fleet
         </button>
         <button
           type="button"

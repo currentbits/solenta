@@ -1,6 +1,7 @@
 import type {
   ActivityItem,
   FailureMode,
+  FleetEvidence,
   AppSettings,
   AppStatus,
   AttachmentInfo,
@@ -396,6 +397,9 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
     },
     insights: {
       failureModes: () => call<FailureMode[]>("insights:failureModes"),
+    },
+    fleet: {
+      evidence: (input) => call<FleetEvidence>("fleet:evidence", input),
     },
     digest: {
       list: (input) => call<DigestResult>("digest:list", input),
