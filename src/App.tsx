@@ -703,6 +703,7 @@ export default function App() {
         onRetryDetail={retryDetail}
         project={project}
         providers={providers}
+        agentProfiles={settings?.agentProfiles ?? []}
         workflows={workflows}
         hasProjects={projects.length > 0}
         onAddProject={handleAddProject}

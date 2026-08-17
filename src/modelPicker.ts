@@ -11,10 +11,13 @@
  * 7. With a sessionId, other providers' rows are locked; current provider stays open.
  */
 import type {
+  AgentProfile,
   ModelInfo,
+  PermissionMode,
   ProviderInfo,
   ReasoningEffort,
 } from "./shared/ipc";
+import { PERMISSION_MODE_LABELS } from "./format";
 
 /** One row in the left pane (null id = that provider's default). */
 export interface ModelRow {
@@ -453,9 +456,9 @@ export function firstSelectableProvider(rows: readonly ProviderRow[]): number {
   return rows.findIndex((r) => !r.disabled);
 }
 
-/** Move within the provider list, skipping rows that cannot be entered. */
+/** Move within a first-level list, skipping rows that cannot be entered. */
 export function stepProviderIndex(
-  rows: readonly ProviderRow[],
+  rows: readonly { disabled: boolean }[],
   from: number,
   delta: number,
 ): number {
@@ -532,4 +535,55 @@ export function providerDetail(
     description: `${models}${state}`,
     efforts: Array.isArray(info?.efforts) ? info.efforts : [],
   };
+}
+
+/** One saved profile in the picker's first-level list. */
+export interface ProfileRow {
+  id: string;
+  name: string;
+  /** Compact "model · effort · permission" line, with Default for nulls. */
+  summary: string;
+  provider: string;
+  model: string | null;
+  reasoningEffort: ReasoningEffort | null;
+  permissionMode: PermissionMode;
+  disabled: boolean;
+  disabledReason: string | null;
+}
+
+/** Compact summary for a profile row. Null model/effort render as Default. */
+export function profileSummary(profile: AgentProfile): string {
+  const model =
+    profile.model == null || profile.model === "" ? "Default" : profile.model;
+  const effort = effortDisplayLabel(profile.reasoningEffort);
+  const permission =
+    PERMISSION_MODE_LABELS[profile.permissionMode] ?? profile.permissionMode;
+  return `${model} · ${effort} · ${permission}`;
+}
+
+/**
+ * Profile rows for the picker. A profile whose provider is missing or
+ * unavailable is listed but not selectable — same rule as buildProviderRows.
+ */
+export function buildProfileRows(
+  profiles: readonly AgentProfile[],
+  providers: readonly ProviderInfo[],
+): ProfileRow[] {
+  const list = Array.isArray(profiles) ? profiles : [];
+  const regs = Array.isArray(providers) ? providers : [];
+  return list.map((p) => {
+    const info = regs.find((x) => x.id === p.provider);
+    const unavailable = !info || info.available === false;
+    return {
+      id: p.id,
+      name: p.name,
+      summary: profileSummary(p),
+      provider: p.provider,
+      model: p.model,
+      reasoningEffort: p.reasoningEffort,
+      permissionMode: p.permissionMode,
+      disabled: unavailable,
+      disabledReason: unavailable ? "not installed" : null,
+    };
+  });
 }
