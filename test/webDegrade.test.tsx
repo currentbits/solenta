@@ -10,7 +10,7 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { mount } from "./support/dom.ts";
+import { inAct, mount } from "./support/dom.ts";
 import {
   createFakeCoder,
   installFakeCoder,
@@ -19,6 +19,7 @@ import {
 } from "./support/fakeCoder.ts";
 import App from "../src/App";
 import { isWebMode } from "../src/shared/wire";
+import type { AttachmentInfo } from "../src/shared/ipc";
 
 async function boot(fake: FakeCoder) {
   const shell = await mount(<div />);
@@ -159,6 +160,67 @@ describe("narrow three-pane layout hooks", () => {
       threadPane?.querySelector("textarea"),
       "composer must stay inside the thread pane so it stays reachable when side panes collapse",
     );
+    m.unmount();
+  });
+});
+
+// Node's global has File but not FileReader; useCoder reads drops via FileReader.
+if (typeof FileReader === "undefined") {
+  (globalThis as unknown as { FileReader: typeof FileReader }).FileReader = class {
+    result: string | null = null;
+    onload: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    readAsDataURL(blob: Blob) {
+      this.result = `data:${blob.type || "application/octet-stream"};base64,`;
+      this.onload?.();
+    }
+  } as unknown as typeof FileReader;
+}
+
+describe("web mode attachments", () => {
+  it("drop on composer saves the image over the bridge and shows a chip", async () => {
+    const saved: AttachmentInfo = {
+      kind: "image",
+      path: "/tmp/attachments/t-web-drop/shot.png",
+      name: "shot.png",
+    };
+    const fake = createFakeCoder({
+      threads: [thread({ id: "t-web-drop", title: "web drop thread" })],
+      saveImage: () => ({ attachment: saved }),
+    });
+    const m = await boot(fake);
+    dropCoder();
+    assert.equal(isWebMode(), true, "deleting window.coder must flip isWebMode()");
+
+    const textarea = m.query("textarea");
+    assert.ok(textarea, "selected thread must expose the composer");
+
+    const file = new File([Uint8Array.from([137, 80, 78, 71])], "shot.png", {
+      type: "image/png",
+    });
+    await inAct(() => {
+      const ev = new Event("drop", { bubbles: true, cancelable: true });
+      Object.defineProperty(ev, "dataTransfer", { value: { files: [file] } });
+      textarea.dispatchEvent(ev);
+    });
+    await m.flush();
+
+    const calls = fake.of("attachments.saveImage");
+    assert.ok(calls.length > 0, "drop must call attachments.saveImage");
+    const input = calls[calls.length - 1].args[0] as {
+      threadId: string;
+      dataUrl: string;
+    };
+    assert.equal(input.threadId, "t-web-drop");
+    assert.ok(
+      input.dataUrl.startsWith("data:"),
+      "saveImage must receive a data: URL",
+    );
+    assert.ok(
+      m.query('[data-attachment-kind="image"]'),
+      "returned attachment must surface as a composer chip",
+    );
+    assert.ok(m.text().includes("shot.png"));
     m.unmount();
   });
 });
