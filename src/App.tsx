@@ -105,6 +105,9 @@ export default function App() {
     setMuted,
     renameThread,
     setNotes,
+    startSpec,
+    reviewSpec,
+    specArtifact,
     deleteThread,
     removeProject,
     setupWorktree,
@@ -290,6 +293,20 @@ export default function App() {
       void setNotes(threadId, notes);
     },
     [setNotes],
+  );
+
+  const handleStartSpec = useCallback(
+    (threadId: string) => {
+      void startSpec(threadId);
+    },
+    [startSpec],
+  );
+
+  const handleReviewSpec = useCallback(
+    (threadId: string, decision: "approve" | "revise", feedback?: string) => {
+      void reviewSpec(threadId, decision, feedback);
+    },
+    [reviewSpec],
   );
 
   const handleRowArchived = useCallback(
@@ -780,6 +797,9 @@ export default function App() {
         onSetArchived={handleSetArchived}
         onRenameThread={handleRenameOpenThread}
         onSetNotes={handleSetNotes}
+        onStartSpec={handleStartSpec}
+        onReviewSpec={handleReviewSpec}
+        onSpecArtifact={specArtifact}
         onDeleteThread={deleteThread}
         changesOpen={changesOpen}
         changesNonce={changesNonce}

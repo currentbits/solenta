@@ -366,6 +366,20 @@ const IPC_HANDLERS = {
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     return updated;
   },
+  "threads:startSpec": async (ctx, input) => {
+    const updated = services.startSpec(ctx.store, input);
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    return updated;
+  },
+  "threads:reviewSpec": async (ctx, input) => {
+    const { thread, prompt } = services.reviewSpec(ctx.store, input);
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    await ctx.runner.startRun({ threadId: input.threadId, prompt });
+    return thread;
+  },
+  "threads:specArtifact": async (ctx, input) => {
+    return services.readSpecArtifact(ctx.store, input);
+  },
   "threads:rename": async (ctx, input) => {
     const updated = services.renameThread(ctx.store, input);
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
