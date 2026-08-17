@@ -1472,6 +1472,85 @@ function specNoteFor(thread, cwd) {
   );
 }
 
+/** Whole-note cap so a 400K-LOC repo yields the same size prompt as a small one. */
+const CODEINDEX_NOTE_MAX = 3500;
+
+/** Symbols listed per file before "+N more". */
+const CODEINDEX_SYMBOLS_PER_FILE = 8;
+
+/**
+ * Standing note appended to every dispatched prompt (CLI-only, never stored
+ * in the transcript) with the shared per-repo symbol map. Agents reach for
+ * grep first (CodeScaleBench: 7,993 keyword vs 57 deep-search), so the
+ * value is injecting the map plus when-to-use-which-tool, not adding a tool.
+ *
+ * Returns "" when there is nothing to say: no index, a tiny repo, or
+ * CODER_CODEINDEX_DISABLE=1. Same rule as planboardNoteFor / selfIdNoteFor.
+ *
+ * @param {import('./codeindex.js').CodeIndex | null | undefined} index
+ * @returns {string}
+ */
+function codeIndexNoteFor(index) {
+  if (!index) return "";
+  if (process.env.CODER_CODEINDEX_DISABLE === "1") return "";
+  const { MIN_FILES_FOR_NOTE } = require("./codeindex.js");
+  if (index.fileCount < MIN_FILES_FOR_NOTE) return "";
+
+  const age = ageOf(index.updatedAt);
+  const header =
+    `\n\n[Code map] Shared symbol index of this repo: ${index.fileCount} files, ` +
+    `${index.symbolCount} symbols, built ${age}. It maps the project's MAIN ` +
+    `checkout and is shared by every thread and worktree, so files created ` +
+    `on a branch may be missing.`;
+  const steering =
+    "Use the map to jump straight to the file that owns a symbol instead of " +
+    "grepping to orient yourself. Grep is still right for literal strings, " +
+    "call sites, and anything not listed. Read the file before editing it.";
+
+  const parts = [header];
+  const files = Array.isArray(index.files) ? index.files : [];
+  for (const file of files) {
+    if (!file || !file.path) continue;
+    // A path with no extracted symbols says nothing the agent can act on, and
+    // the note's char budget is the scarce thing here.
+    if (!Array.isArray(file.symbols) || file.symbols.length === 0) continue;
+    const line = formatIndexFileLine(file);
+    const candidate = parts.concat(line, steering).join("\n");
+    if (candidate.length > CODEINDEX_NOTE_MAX) break;
+    parts.push(line);
+  }
+  parts.push(steering);
+  return parts.join("\n");
+}
+
+/**
+ * @param {unknown} updatedAt
+ * @returns {string}
+ */
+function ageOf(updatedAt) {
+  const ms = Date.now() - Number(updatedAt);
+  if (!Number.isFinite(ms) || ms < 45_000) return "just now";
+  const min = Math.round(ms / 60_000);
+  if (min < 60) return min === 1 ? "1 minute ago" : `${min} minutes ago`;
+  const hr = Math.round(min / 60);
+  if (hr < 48) return hr === 1 ? "1 hour ago" : `${hr} hours ago`;
+  const day = Math.round(hr / 24);
+  return day === 1 ? "1 day ago" : `${day} days ago`;
+}
+
+/**
+ * @param {{ path?: string, symbols?: string[] }} file
+ * @returns {string}
+ */
+function formatIndexFileLine(file) {
+  const symbols = Array.isArray(file.symbols) ? file.symbols : [];
+  const shown = symbols.slice(0, CODEINDEX_SYMBOLS_PER_FILE);
+  const extra = symbols.length - shown.length;
+  let names = shown.join(", ");
+  if (extra > 0) names = names ? `${names}, +${extra} more` : `+${extra} more`;
+  return names ? `${file.path} - ${names}` : String(file.path);
+}
+
 /**
  * Read one artifact off disk for the UI. `text` is null when the agent has
  * not written it yet; the path is returned either way so the card can say
@@ -2627,6 +2706,7 @@ module.exports = {
   nextSpecStage,
   specArtifactPath,
   specNoteFor,
+  codeIndexNoteFor,
   specStagePrompt,
   startSpec,
   submitSpec,
