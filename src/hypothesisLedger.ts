@@ -40,7 +40,9 @@ export function groupHypotheses(list: Hypothesis[]): HypothesisGroup[] {
     validated: [],
     inconclusive: [],
   };
-  for (const h of list) buckets[h.status].push(h);
+  // A status outside the three is dropped, not thrown on: main validates on
+  // write, but a hand-edited store must not take the whole panel down.
+  for (const h of list) buckets[h.status]?.push(h);
   // ponytail: n≤HYPOTHESES_MAX (50); sort per bucket, not a fancy partition.
   return HYPOTHESIS_STATUS_ORDER.flatMap((status) => {
     const entries = buckets[status];
