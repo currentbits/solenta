@@ -26,6 +26,7 @@ import type {
   WorkLogItem,
   WorkflowTemplateInfo,
 } from "../shared/ipc";
+import { THREAD_NOTES_MAX } from "../shared/ipc";
 import type { WorkflowSaveInput } from "../useCoder";
 import { diffLineKind, isEmptyDiff } from "../diffView";
 import { contextRing, contextWindowFor, type ContextRingView } from "../contextRing";
@@ -191,6 +192,8 @@ interface ThreadViewProps {
   onSetArchived: (archived: boolean) => void | Promise<void>;
   /** Rename the open thread (header overflow). */
   onRenameThread?: (title: string) => void | Promise<void>;
+  /** Save the open thread's scratch notes (header notes editor, issue #194). */
+  onSetNotes?: (notes: string) => void | Promise<void>;
   /** Permanently delete the open thread (caller already confirmed in UI). */
   onDeleteThread: () => void | Promise<void>;
   /** Center Changes panel open (lifted so the Git tab can open it). */
@@ -1529,6 +1532,7 @@ export const ThreadView = memo(function ThreadView({
   onSetReasoningEffort,
   onSetArchived,
   onRenameThread,
+  onSetNotes,
   onDeleteThread,
   changesOpen,
   changesNonce,
@@ -1571,6 +1575,9 @@ export const ThreadView = memo(function ThreadView({
   const [renaming, setRenaming] = useState(false);
   const [renameDraft, setRenameDraft] = useState("");
   const renamingRef = useRef(false);
+  const [notesOpen, setNotesOpen] = useState(false);
+  const [notesDraft, setNotesDraft] = useState("");
+  const notesOpenRef = useRef(false);
   const [pushPending, setPushPending] = useState(false);
   /** Shown briefly after a successful push; null when idle. */
   const [pushFlashBranch, setPushFlashBranch] = useState<string | null>(null);
@@ -1766,6 +1773,11 @@ export const ThreadView = memo(function ThreadView({
       setDeleteConfirm(false);
       setRenaming(false);
       renamingRef.current = false;
+      // Close + reseed before any unmount blur can write thread A's draft
+      // onto thread B (issue #194).
+      notesOpenRef.current = false;
+      setNotesOpen(false);
+      setNotesDraft(detail?.thread.notes ?? "");
       setPushPending(false);
       setPushFlashBranch(null);
       setHandoffMenuOpen(false);
@@ -2056,6 +2068,29 @@ export const ThreadView = memo(function ThreadView({
     void onRenameThread?.(next);
   };
 
+  const closeNotes = (save: boolean) => {
+    if (!notesOpenRef.current) return;
+    notesOpenRef.current = false;
+    const next = notesDraft.trim();
+    setNotesOpen(false);
+    if (!save) {
+      setNotesDraft(thread.notes);
+      return;
+    }
+    if (next === thread.notes) return;
+    void onSetNotes?.(next);
+  };
+
+  const toggleNotes = () => {
+    if (notesOpenRef.current) {
+      closeNotes(true);
+      return;
+    }
+    setNotesDraft(thread.notes);
+    notesOpenRef.current = true;
+    setNotesOpen(true);
+  };
+
   const handoffSourceId = thread.handoffFrom;
   const showHandoffBanner =
     handoffSourceId != null && !handoffBannerDismissed;
@@ -2142,6 +2177,43 @@ export const ThreadView = memo(function ThreadView({
         </div>
         <div className={styles.actions}>
           {ring && <ContextRingBadge ring={ring} />}
+          {onSetNotes && (
+            <button
+              type="button"
+              className={styles.btn}
+              data-thread-notes-btn=""
+              data-has-notes={thread.notes ? "true" : undefined}
+              data-active={notesOpen ? "true" : undefined}
+              aria-expanded={notesOpen}
+              aria-label="Thread notes"
+              title="Thread notes"
+              onMouseDown={(e) => {
+                // Keep the textarea from blurring before this click, so
+                // toggle-close does not immediately re-open.
+                if (notesOpenRef.current) e.preventDefault();
+              }}
+              onClick={toggleNotes}
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M4 2.5h8A1.5 1.5 0 0 1 13.5 4v9A1.5 1.5 0 0 1 12 14.5H4A1.5 1.5 0 0 1 2.5 13V4A1.5 1.5 0 0 1 4 2.5Z" />
+                <path d="M5.5 6h5M5.5 8.5h5M5.5 11h3" />
+              </svg>
+              Notes
+              {thread.notes ? (
+                <span className={styles.notesDot} data-notes-dot="" aria-hidden />
+              ) : null}
+            </button>
+          )}
           {listDevScripts &&
             startDevServer &&
             stopDevServer &&
@@ -2402,6 +2474,28 @@ export const ThreadView = memo(function ThreadView({
           </div>
         </div>
       </header>
+
+      {notesOpen && onSetNotes && (
+        <div className={styles.notesPanel} data-thread-notes-panel="">
+          <textarea
+            className={styles.notesInput}
+            data-thread-notes-input=""
+            maxLength={THREAD_NOTES_MAX}
+            aria-label="Thread notes"
+            autoFocus
+            placeholder="Scratch notes - why this is snoozed, what to do next…"
+            value={notesDraft}
+            onChange={(e) => setNotesDraft(e.target.value)}
+            onBlur={() => closeNotes(true)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                e.preventDefault();
+                closeNotes(false);
+              }
+            }}
+          />
+        </div>
+      )}
 
       <ChangesPanel
         open={changesOpen}

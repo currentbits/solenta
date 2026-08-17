@@ -594,6 +594,15 @@ export function ThreadCard({
             {waitLabel(wait, now)}
           </div>
         )}
+        {thread.notes ? (
+          <div
+            className={styles.notesPreview}
+            data-notes-preview={thread.id}
+            title={thread.notes}
+          >
+            {thread.notes.split("\n")[0]}
+          </div>
+        ) : null}
       </div>
       {(onSetSettled || onSetPinned || onSetSnoozed || onFork) && (
         <div className={styles.cardActions} data-card-actions="">

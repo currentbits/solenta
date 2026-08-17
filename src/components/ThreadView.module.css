@@ -274,6 +274,50 @@
   background: var(--blue-soft);
 }
 
+.btn[data-has-notes="true"] {
+  color: var(--text);
+}
+
+.notesDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+
+.notesPanel {
+  flex-shrink: 0;
+  padding: 8px 20px 10px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--card);
+}
+
+.notesInput {
+  display: block;
+  width: 100%;
+  min-height: 72px;
+  max-height: 160px;
+  resize: vertical;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.45;
+  outline: none;
+}
+
+.notesInput::placeholder {
+  color: var(--text-dim);
+}
+
+.notesInput:focus {
+  border-color: var(--focus-ring, rgba(59, 130, 246, 0.55));
+}
+
 .btnPrimary {
   background: var(--btn-primary-bg, #3b82f6);
   border-color: transparent;
