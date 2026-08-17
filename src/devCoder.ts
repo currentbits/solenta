@@ -48,6 +48,7 @@ import type {
   SpaceInfo,
   ThreadDetail,
   ThreadInfo,
+  DigestResult,
   UsageByDay,
   WorkLogItem,
   WorkflowPhaseSpec,
@@ -2876,6 +2877,76 @@ function buildDevCoder(): CoderApi {
         };
       },
     },
+    digest: {
+      // ponytail: fixed fixture, one row per bucket — dev mode never runs
+      // unattended, so there is nothing real to collect here.
+      async list(input): Promise<DigestResult> {
+        const generatedAt = now();
+        const sinceMs = input?.sinceMs ?? generatedAt - 12 * 60 * 60 * 1000;
+        const base = {
+          projectId: projects[0]?.id ?? "p1",
+          projectSlug: projects[0]?.slug ?? "coder",
+          provider: "claude",
+          turns: 6,
+          prNumber: null,
+          prState: null,
+        };
+        return {
+          sinceMs,
+          generatedAt,
+          runs: [
+            {
+              ...base,
+              threadId: "dev-digest-1",
+              title: "Add usage rollup endpoint",
+              status: "done",
+              awaitingInput: false,
+              lastError: null,
+              endedAt: generatedAt - 3 * 60 * 60 * 1000,
+              costUsd: 2.14,
+              filesChanged: 4,
+              additions: 180,
+              deletions: 22,
+              commits: 2,
+              checks: { ran: true, failed: false, label: "npm test" },
+            },
+            {
+              ...base,
+              threadId: "dev-digest-2",
+              title: "Migrate store to v3 schema",
+              status: "failed",
+              awaitingInput: false,
+              lastError: "Run error: provider exited 1",
+              endedAt: generatedAt - 5 * 60 * 60 * 1000,
+              costUsd: 1.02,
+              filesChanged: 26,
+              additions: 900,
+              deletions: 310,
+              commits: 0,
+              checks: { ran: true, failed: true, label: "npm test" },
+            },
+            {
+              ...base,
+              threadId: "dev-digest-3",
+              title: "Investigate flaky reconnect test",
+              status: "done",
+              awaitingInput: false,
+              lastError: null,
+              endedAt: generatedAt - 7 * 60 * 60 * 1000,
+              costUsd: 0.87,
+              filesChanged: 0,
+              additions: 0,
+              deletions: 0,
+              commits: 0,
+              checks: { ran: false, failed: false, label: null },
+            },
+          ],
+        };
+      },
+      async markSeen(input): Promise<{ seenAt: number }> {
+        return { seenAt: input?.atMs ?? now() };
+      },
+    },
     git: {
       async status(_projectId) {
         return {
@@ -3057,6 +3128,12 @@ function buildDevCoder(): CoderApi {
         } catch {
           return [];
         }
+      },
+      async gcScan() {
+        return { candidates: [], usage: [], totalBytes: 0 };
+      },
+      async gcClean() {
+        return { removed: [], failed: [], bytes: 0 };
       },
       async setupWorktree(input) {
         const detail = details.get(input.threadId);

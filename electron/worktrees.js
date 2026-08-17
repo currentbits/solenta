@@ -2867,6 +2867,36 @@ async function sweepOrphanWorktrees(opts) {
 }
 
 /**
+ * Worktree GC scan (#316) — contract placeholder.
+ * Real engine (sizes, retention candidates, blocked reasons) lands next;
+ * an empty scan means "nothing reclaimable", which is safe for every caller.
+ *
+ * @param {object} opts
+ * @param {import('./store').Store} opts.store
+ * @param {string} opts.worktreeBase
+ * @returns {Promise<{ candidates: object[], usage: object[], totalBytes: number }>}
+ */
+async function gcScan(opts) {
+  void opts;
+  return { candidates: [], usage: [], totalBytes: 0 };
+}
+
+/**
+ * Batch worktree cleanup (#316) — contract placeholder.
+ *
+ * @param {object} opts
+ * @param {import('./store').Store} opts.store
+ * @param {string} opts.worktreeBase
+ * @param {string[]} opts.paths
+ * @param {(channel: string, payload: unknown) => void} [opts.broadcast]
+ * @returns {Promise<{ removed: string[], failed: Array<{path: string, error: string}>, bytes: number }>}
+ */
+async function gcClean(opts) {
+  void opts;
+  return { removed: [], failed: [], bytes: 0 };
+}
+
+/**
  * Materialize the worktree for a pendingWorktree thread (lazy, t3-style:
  * a thread that never runs leaves nothing on disk). No-op for plain threads
  * and threads that already have one; a stale flag is cleared either way.
@@ -2957,6 +2987,8 @@ module.exports = {
   createPrStateRefresher,
   maybeCleanupMergedWorktree,
   sweepOrphanWorktrees,
+  gcScan,
+  gcClean,
   ensureWorktree,
   isPrRefreshCandidate,
   isGitHubRemote,
