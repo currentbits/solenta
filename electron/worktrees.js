@@ -35,8 +35,11 @@ const TERMINAL_PR_STATES = new Set(["MERGED", "CLOSED"]);
  * @returns {string}
  */
 function gitOut(cwd, args, opts) {
-  // ponytail: write paths (merge/push/PR/setup) stay sync — they fire once per
-  // click and are already bounded at 15s by #88. Hot reads use the Async pair.
+  // ponytail: worktree write paths (setup/merge/push/commit/revert/cleanup)
+  // stay sync — they fire once per click and are already bounded at 15s by #88.
+  // Every read path, PR paths included, uses the Async pair (#228). Ceiling: a
+  // slow local repo still stalls the UI for one click; convert only if the
+  // CODER_LOOP_LAG probe puts a click path in p99.
   // execCommand, not execFileSync: it owns the default timeout that keeps a
   // hung git off the main-process event loop.
   const raw = execCommand(null, "git", args, {
@@ -185,6 +188,22 @@ function gitExecThrowAsync(project, cwd, args, opts) {
  */
 function defaultBranch(projectPath) {
   const branch = gitOut(projectPath, ["branch", "--show-current"]);
+  if (!branch) {
+    throw new Error(
+      "Project checkout is detached HEAD; check out a branch before merging",
+    );
+  }
+  return branch;
+}
+
+/**
+ * Async defaultBranch, for the PR paths. The sync one stays: the worktree
+ * write flows (setupWorktree / mergeWorktree / sweep) still call it.
+ * @param {string} projectPath
+ * @returns {Promise<string>}
+ */
+async function defaultBranchAsync(projectPath) {
+  const branch = await gitOutAsync(projectPath, ["branch", "--show-current"]);
   if (!branch) {
     throw new Error(
       "Project checkout is detached HEAD; check out a branch before merging",
@@ -1428,7 +1447,7 @@ async function listPrs(projectPath) {
     return { ok: false, reason: "not a GitHub repo" };
   }
 
-  const remote = gitTry(cwd, ["remote", "get-url", "origin"]);
+  const remote = await gitTryAsync(cwd, ["remote", "get-url", "origin"]);
   if (!remote.ok) {
     return { ok: false, reason: "not a GitHub repo" };
   }
@@ -1501,9 +1520,9 @@ function isNoPrMessage(text) {
  * Resolve thread cwd + current branch name (same rules as push).
  * @param {import('./store').Store} store
  * @param {string} threadId
- * @returns {{ thread: object, project: object, cwd: string, branch: string, originUrl: string }}
+ * @returns {Promise<{ thread: object, project: object, cwd: string, branch: string, originUrl: string }>}
  */
-function resolveThreadGit(store, threadId) {
+async function resolveThreadGit(store, threadId) {
   const thread = store.getThread(threadId);
   if (!thread) {
     throw new Error(`Unknown thread: ${threadId}`);
@@ -1517,7 +1536,7 @@ function resolveThreadGit(store, threadId) {
 
   let branch = "";
   try {
-    branch = gitOut(cwd, ["branch", "--show-current"]);
+    branch = await gitOutAsync(cwd, ["branch", "--show-current"]);
   } catch (err) {
     const msg = err && err.message ? String(err.message) : String(err);
     throw new Error(
@@ -1530,7 +1549,7 @@ function resolveThreadGit(store, threadId) {
     );
   }
 
-  const remote = gitTry(cwd, ["remote", "get-url", "origin"]);
+  const remote = await gitTryAsync(cwd, ["remote", "get-url", "origin"]);
   if (!remote.ok) {
     throw new Error("No git remote configured for this project.");
   }
@@ -1550,7 +1569,7 @@ function resolveThreadGit(store, threadId) {
  */
 async function prStatus(opts) {
   const { store, threadId } = opts;
-  const { cwd, branch, originUrl } = resolveThreadGit(store, threadId);
+  const { cwd, branch, originUrl } = await resolveThreadGit(store, threadId);
 
   if (!isGitHubRemote(originUrl)) {
     throw new Error(
@@ -1785,7 +1804,7 @@ async function prChecks(opts) {
   let branch;
   let originUrl;
   try {
-    const resolved = resolveThreadGit(store, threadId);
+    const resolved = await resolveThreadGit(store, threadId);
     cwd = resolved.cwd;
     branch = resolved.branch;
     originUrl = resolved.originUrl;
@@ -1886,7 +1905,7 @@ async function prChecks(opts) {
  */
 async function mergePr(opts) {
   const { store, threadId, broadcast } = opts;
-  const { cwd, branch, originUrl } = resolveThreadGit(store, threadId);
+  const { cwd, branch, originUrl } = await resolveThreadGit(store, threadId);
 
   if (!isGitHubRemote(originUrl)) {
     throw new Error(
@@ -2005,7 +2024,7 @@ async function refreshPrStates(store, opts) {
       let cwd;
       let originUrl;
       try {
-        const resolved = resolveThreadGit(store, threadId);
+        const resolved = await resolveThreadGit(store, threadId);
         cwd = resolved.cwd;
         originUrl = resolved.originUrl;
       } catch {
@@ -2190,7 +2209,7 @@ function createPrStateRefresher(opts) {
 async function createPr(opts) {
   const { store, threadId, title, body, draft, broadcast } = opts;
 
-  const { project, cwd, branch, originUrl } = resolveThreadGit(
+  const { project, cwd, branch, originUrl } = await resolveThreadGit(
     store,
     threadId,
   );
@@ -2201,7 +2220,7 @@ async function createPr(opts) {
     );
   }
 
-  const baseBranch = defaultBranch(project.path);
+  const baseBranch = await defaultBranchAsync(project.path);
   const ahead = gitTry(cwd, ["log", `${baseBranch}..${branch}`, "--oneline"]);
   if (!ahead.ok) {
     throw new Error(
@@ -2942,6 +2961,8 @@ module.exports = {
   isPrRefreshCandidate,
   isGitHubRemote,
   gitTry,
+  defaultBranch,
+  defaultBranchAsync,
   gitOutAsync,
   gitOutForDiffAsync,
   setExecFile,
