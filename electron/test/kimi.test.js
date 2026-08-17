@@ -643,6 +643,12 @@ describe("kimi runner integration", () => {
   it("a legacy cwd thread keeps resuming with -c until a hint upgrades it", async () => {
     const thread = store.getThreads()[0];
     store.updateThread(thread.id, { sessionId: "cwd" });
+    // -c is only for a thread that already talked to kimi. A prior
+    // assistant reply is what distinguishes that from a brand-new
+    // planboard thread that inherited the sentinel (issue #220).
+    store.setMessages(thread.id, [
+      { id: "prior", role: "assistant", text: "earlier turn", createdAt: 1 },
+    ]);
     store.saveNow();
     process.env.CODER_FAKE_KIMI_SCENARIO = "continue-turn";
 
@@ -656,6 +662,45 @@ describe("kimi runner integration", () => {
       store.getThread(thread.id).sessionId,
       "session_fake456",
       "the turn's hint upgrades the sentinel to a real session id",
+    );
+  });
+
+  it("first planboard turn never -c even if sessionId is the cwd sentinel", async () => {
+    // Start task mints a fresh thread and immediately startRuns. If that
+    // row already carries "cwd" (legacy default / copied inherit), -c
+    // continues some other session in the cwd and kimi never sees the
+    // issue as its first turn (issue #220).
+    const thread = store.getThreads()[0];
+    store.updateThread(thread.id, { sessionId: "cwd" });
+    store.saveNow();
+    assert.equal(
+      store.getMessages(thread.id).filter((m) => m.role === "assistant")
+        .length,
+      0,
+      "precondition: brand-new thread, no prior reply",
+    );
+
+    const issuePrompt = [
+      "GitHub issue #220: Kimi threads started from the planboard do not know the task",
+      "https://github.com/currentbits/solenta/issues/220",
+      "",
+      "When a thread is started from the planboard the agent does not know the task.",
+    ].join("\n");
+
+    await runner.startRun({ threadId: thread.id, prompt: issuePrompt });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    const argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
+    assert.ok(!argv.includes("-c"), `first turn must not -c: ${JSON.stringify(argv)}`);
+    assert.ok(!argv.includes("-S"), `first turn must not -S: ${JSON.stringify(argv)}`);
+    const pIdx = argv.indexOf("-p");
+    assert.ok(pIdx >= 0, `expected -p in ${JSON.stringify(argv)}`);
+    const sent = argv[pIdx + 1];
+    assert.match(sent, /^GitHub issue #220:/);
+    assert.match(sent, /https:\/\/github.com\/currentbits\/solenta\/issues\/220/);
+    assert.match(
+      sent,
+      /When a thread is started from the planboard the agent does not know the task/,
     );
   });
 

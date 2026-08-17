@@ -3060,8 +3060,10 @@ function createRunner(opts) {
 
   /**
    * Start a Kimi stream-json (with plain-text fallback) session turn.
-   * After the first successful turn, sessionId is the sentinel "cwd"
-   * (kimi sessions are per working directory; see providers.js).
+   * After the first successful turn, sessionId is the captured resume id,
+   * or the sentinel "cwd" when the CLI emitted no hint (legacy per-cwd
+   * sessions; see providers.js). A first turn never passes -c even if the
+   * thread already carries that sentinel (issue #220).
    * @param {string} threadId
    * @param {string} prompt
    * @param {string} runId
@@ -3110,9 +3112,22 @@ function createRunner(opts) {
 
     const localCwd = thread.worktreePath || project.path;
     const binary = resolveBin(providerEntry);
+    // "cwd" is a resume sentinel, not a real session. A brand-new planboard
+    // thread (Start task) must not -c into another conversation in this
+    // directory: the issue prompt becomes a follow-up and kimi acts like it
+    // was given no task. Resume via -c only after this thread has an
+    // assistant reply. Real -S ids still resume on a first Solenta turn.
+    // ponytail: first-turn "cwd" only; drop the sentinel entirely if a
+    // hint-less kimi ever ships with no per-cwd continue.
+    const storedSessionId = thread.sessionId || null;
+    const hasPriorReply = store
+      .getMessages(threadId)
+      .some((m) => m && m.role === "assistant");
+    const sessionId =
+      storedSessionId === "cwd" && !hasPriorReply ? null : storedSessionId;
     const args = providerEntry.buildArgs({
       prompt,
-      sessionId: thread.sessionId || null,
+      sessionId,
       permissionMode: thread.permissionMode || "default",
       model: thread.model || null,
       reasoningEffort: thread.reasoningEffort || null,
