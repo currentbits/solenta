@@ -82,7 +82,9 @@ GitHub release check for updates.
   provider per phase, fan-out, and a judge step. Each phase settles visibly in
   the Agents panel.
 - **Planboard** — a project's plan as its GitHub issues, written by agents with
-  nothing but `gh`, with **Start task** to open a thread on a card.
+  nothing but `gh`, with **Start task** to open a thread on a card. Opt a project
+  in to **auto-dispatch** and every issue that enters `plan:todo` starts its own
+  worktree thread and moves to `plan:doing`, up to three running at once.
 - **Shared agent memory** — a supervised local memory server (MCP + HTTP) is
   auto-injected into sessions, so what one thread learns, the next one knows.
 - **Automations** — recurring prompts (hourly / daily / weekly) against any
