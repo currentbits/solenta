@@ -140,6 +140,8 @@ export default function App() {
     startDevServer,
     stopDevServer,
     devServerStatus,
+    setVerifyCommand,
+    runVerify,
     appStatus,
     updateStatus,
     checkUpdate,
@@ -812,6 +814,8 @@ export default function App() {
         startDevServer={startDevServer}
         stopDevServer={stopDevServer}
         devServerStatus={devServerStatus}
+        setVerifyCommand={setVerifyCommand}
+        runVerify={runVerify}
         searchMemory={searchMemory}
         recentMemory={recentMemory}
         getMemory={getMemory}

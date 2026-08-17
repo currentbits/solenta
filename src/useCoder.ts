@@ -39,6 +39,7 @@ import type {
   ThreadSummaryInfo,
   UpdateStatus,
   UsageByDay,
+  VerifyResult,
   WorkflowTemplateInfo,
 } from "./shared/ipc";
 import { resolveCoderApi } from "./coderApi";
@@ -358,6 +359,10 @@ export interface UseCoderResult {
   stopDevServer: (threadId: string) => Promise<DevServerState>;
   /** Live status for the thread's spawned dev server. */
   devServerStatus: (threadId: string) => Promise<DevServerState>;
+  /** Arm or clear the thread's verification command (issue #296). */
+  setVerifyCommand: (threadId: string, command: string | null) => Promise<void>;
+  /** Run the thread's verification command now. Rejects on an active run. */
+  runVerify: (threadId: string) => Promise<VerifyResult>;
   /** Live spend + memory server status. */
   appStatus: AppStatus | null;
   /** Persisted app settings (daily budget). */
@@ -1908,6 +1913,37 @@ export function useCoder(): UseCoderResult {
     [api],
   );
 
+  const setVerifyCommand = useCallback(
+    async (threadId: string, command: string | null) => {
+      const thread = await api.threads.setVerifyCommand({ threadId, command });
+      applyThreads(
+        threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
+      );
+      setDetail((prev) =>
+        prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
+      );
+    },
+    [api, applyThreads],
+  );
+
+  const runVerify = useCallback(
+    async (threadId: string) => {
+      const result = await api.threads.runVerify({ threadId });
+      applyThreads(
+        threadsRef.current.map((t) =>
+          t.id === threadId ? { ...t, verify: result } : t,
+        ),
+      );
+      setDetail((prev) =>
+        prev && prev.thread.id === threadId
+          ? { ...prev, thread: { ...prev.thread, verify: result } }
+          : prev,
+      );
+      return result;
+    },
+    [api, applyThreads],
+  );
+
   const saveSettings = useCallback(
     async (patch: Partial<AppSettings>) => {
       const next = await api.settings.set(patch);
@@ -2103,6 +2139,8 @@ export function useCoder(): UseCoderResult {
     startDevServer,
     stopDevServer,
     devServerStatus,
+    setVerifyCommand,
+    runVerify,
     appStatus,
     settings,
     saveSettings,
