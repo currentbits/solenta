@@ -36,6 +36,7 @@ const { migrateLegacyUserData } = require("./legacy-migration.js");
 const { installCrashGuard } = require("./crash-guard.js");
 const { start: startLoopLag } = require("./looplag.js");
 const { installShutdown } = require("./shutdown.js");
+const { installAppMenu } = require("./menu.js");
 
 // Before anything else can throw: the app is full of fire-and-forget `void`
 // calls, and one unhandled rejection would otherwise kill the process with
@@ -208,6 +209,10 @@ function notifyThreadComplete(thread) {
 }
 
 app.whenReady().then(async () => {
+  // Before any window: without an installed menu a packaged build has no
+  // Edit menu and Cmd+C/X/V/A silently die in inputs (issue #353).
+  installAppMenu();
+
   // Which build is this? A stale packaged bundle missing recent fixes looks
   // exactly like a broken feature, so say it out loud once at boot.
   try {
