@@ -44,6 +44,7 @@ import type {
   SessionUsage,
   SkillInfo,
   SkillWrite,
+  SpaceInfo,
   ThreadDetail,
   ThreadInfo,
   WorkLogItem,
@@ -1269,6 +1270,7 @@ export function createDevCoder(): CoderApi {
 function buildDevCoder(): CoderApi {
   // let: projects.remove must rebind the array (const would not compile).
   let projects = seedProjects();
+  let spaces: SpaceInfo[] = [];
   let threads = seedThreads(projects);
   const details = new Map<string, ThreadDetail>();
   const runTimers = new Map<string, ReturnType<typeof setInterval>>();
@@ -2194,6 +2196,7 @@ function buildDevCoder(): CoderApi {
         name?: string;
         remoteHost?: string;
         remotePath?: string;
+        spaceId?: string;
       }) {
         const project = projects.find((p) => p.id === input.projectId);
         if (!project) {
@@ -2203,6 +2206,14 @@ function buildDevCoder(): CoderApi {
           const name = input.name.trim();
           if (!name) throw new Error("Name cannot be empty");
           project.name = name;
+        }
+        if (typeof input.spaceId === "string") {
+          const spaceId = input.spaceId.trim();
+          if (spaceId && !spaces.some((s) => s.id === spaceId)) {
+            throw new Error(`Unknown space: ${spaceId}`);
+          }
+          if (spaceId) project.spaceId = spaceId;
+          else delete project.spaceId;
         }
         if (
           typeof input.remoteHost === "string" ||
@@ -2243,6 +2254,36 @@ function buildDevCoder(): CoderApi {
         threads = threads.filter((t) => t.projectId !== projectId);
         projects = projects.filter((p) => p.id !== projectId);
         emitThreads();
+      },
+    },
+    spaces: {
+      async list() {
+        return spaces.map((s) => ({ ...s }));
+      },
+      async add(input: { name: string }) {
+        const name = String(input?.name ?? "").trim();
+        if (!name) throw new Error("Name cannot be empty");
+        const created = { id: id("space"), name };
+        spaces.push(created);
+        return { ...created };
+      },
+      async update(input: { id: string; name: string }) {
+        const found = spaces.find((s) => s.id === input.id);
+        if (!found) throw new Error(`Unknown space: ${input.id}`);
+        const name = String(input?.name ?? "").trim();
+        if (!name) throw new Error("Name cannot be empty");
+        found.name = name;
+        return { ...found };
+      },
+      async remove(input: { id: string }) {
+        const spaceId = String(input?.id ?? "");
+        if (!spaces.some((s) => s.id === spaceId)) {
+          throw new Error(`Unknown space: ${spaceId}`);
+        }
+        spaces = spaces.filter((s) => s.id !== spaceId);
+        for (const p of projects) {
+          if (p.spaceId === spaceId) delete p.spaceId;
+        }
       },
     },
     threads: {
