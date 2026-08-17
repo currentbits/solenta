@@ -55,6 +55,7 @@ import type {
   SpecArtifact,
   ThreadDetail,
   ThreadInfo,
+  CrewTaskView,
   DigestResult,
   UsageByDay,
   WorkLogItem,
@@ -323,6 +324,50 @@ type ListenerMap = {
   "threads:changed": Set<(threads: ThreadInfo[]) => void>;
   "thread:updated": Set<(detail: ThreadDetail) => void>;
 };
+
+/** Browser-dev fixture for the Agents-tab crew list (issue #277). */
+const SEED_CREW_NOW = Date.now();
+const SEED_CREW_TASKS: CrewTaskView[] = [
+  {
+    id: "t1",
+    title: "Write the API contract",
+    needs: [],
+    status: "done",
+    owner: null,
+    note: "main:docs/contract.md",
+    attempts: [{ threadId: "thread-1", at: SEED_CREW_NOW - 90_000 }],
+    createdAt: SEED_CREW_NOW - 180_000,
+    updatedAt: SEED_CREW_NOW - 90_000,
+    blocked: false,
+  },
+  {
+    id: "t2",
+    title: "Build the settings form",
+    needs: ["t1"],
+    status: "claimed",
+    owner: "thread-1",
+    note: "",
+    attempts: [
+      { threadId: "thread-2", at: SEED_CREW_NOW - 80_000, outcome: "types drifted" },
+      { threadId: "thread-1", at: SEED_CREW_NOW - 20_000 },
+    ],
+    createdAt: SEED_CREW_NOW - 170_000,
+    updatedAt: SEED_CREW_NOW - 20_000,
+    blocked: false,
+  },
+  {
+    id: "t3",
+    title: "Wire the renderer",
+    needs: ["t2"],
+    status: "open",
+    owner: null,
+    note: "",
+    attempts: [],
+    createdAt: SEED_CREW_NOW - 160_000,
+    updatedAt: SEED_CREW_NOW - 160_000,
+    blocked: true,
+  },
+];
 
 /** Per-thread run simulation bookkeeping. */
 type RunState = {
@@ -2473,6 +2518,20 @@ function buildDevCoder(): CoderApi {
               : null,
           };
         });
+      },
+      /**
+       * Seeded crew so `npm run dev:browser` has a task list to render
+       * (issue #277). Read-only here — the real store owns mutations.
+       */
+      async crewTasks(input: { threadId: string }): Promise<{
+        rootThreadId: string;
+        tasks: CrewTaskView[];
+      }> {
+        const known = threads.some((t) => t.id === input.threadId);
+        return {
+          rootThreadId: mockData.activeThreadId,
+          tasks: known ? SEED_CREW_TASKS.map((t) => ({ ...t })) : [],
+        };
       },
       /**
        * Full-content search: title + notes + message text, case-insensitive

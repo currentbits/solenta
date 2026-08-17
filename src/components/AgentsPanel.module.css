@@ -246,6 +246,30 @@
   white-space: nowrap;
 }
 
+.taskId {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.taskAttempts {
+  font-size: 10.5px;
+  font-weight: 550;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.teamStatus[data-status="claimed"] {
+  color: var(--blue);
+  border-color: rgba(59, 130, 246, 0.4);
+}
+
+.teamStatus[data-status="blocked"] {
+  color: #fbbf24;
+  border-color: rgba(251, 191, 36, 0.45);
+}
+
 .sessionMeta,
 .usageList {
   margin: 0;
