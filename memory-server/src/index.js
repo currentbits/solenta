@@ -8,7 +8,6 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { z } from 'zod'
 import { Memory } from './memory.js'
-import { SOURCES } from './trust.js'
 import { runJanitor, readJanitorSnapshot } from './janitor.js'
 import { createRealEmbedder, semanticEnabled } from './embedder.js'
 import { exitWhenOrphaned } from './orphan.js'
@@ -152,16 +151,15 @@ export function buildServer(memory) {
         body: z.string().min(1),
         project: z.string().optional(),
         agent: z.string().optional(),
-        source: z
-          .string()
-          .optional()
-          .describe(`Write surface (${SOURCES.join(', ')}); free text still allowed`),
         status: taskStatus.optional(),
         importance: z.number().int().min(1).max(5).optional(),
         force: z.boolean().optional(),
       },
     },
-    async (args) => json(memory.store({ ...args, source: args.source ?? 'mcp' })),
+    // #409: source is set here, not by the caller. An agent that could label
+    // its own write 'app' would walk straight past the injection scan in
+    // Memory.store, which is keyed on source === 'mcp'.
+    async (args) => json(memory.store({ ...args, source: 'mcp' })),
   )
 
   server.registerTool(
@@ -218,16 +216,12 @@ export function buildServer(memory) {
         status: taskStatus.optional(),
         importance: z.number().int().min(1).max(5).optional(),
         agent: z.string().optional(),
-        source: z
-          .string()
-          .optional()
-          .describe(`Write surface (${SOURCES.join(', ')}); free text still allowed`),
         project: z.string().optional(),
       },
     },
     async (args) => {
       const { id, ...fields } = args
-      return json(memory.supersede(id, { ...fields, source: fields.source ?? 'mcp' }))
+      return json(memory.supersede(id, { ...fields, source: 'mcp' }))
     },
   )
 

@@ -2,7 +2,7 @@
 
 const { spawn } = require("node:child_process");
 const { getProvider, resolveBin, isBinAvailable } = require("./providers.js");
-const { diff } = require("./worktrees.js");
+const { diff, assertNoOutboundSecrets } = require("./worktrees.js");
 const { fmRun } = require("./fm.js");
 
 const TIMEOUT_MS = 60000;
@@ -192,7 +192,10 @@ async function suggestCommitMessage(opts) {
   const fmOut = await fmRun(prompt, { env });
   if (fmOut) {
     const message = cleanSubject(fmOut);
-    if (message) return { message };
+    if (message) {
+      assertNoOutboundSecrets(message, "commit message");
+      return { message };
+    }
   }
 
   const entry = getProvider(thread.provider);
@@ -218,6 +221,7 @@ async function suggestCommitMessage(opts) {
   if (!message) {
     throw new Error(`${entry.name} returned an empty message`);
   }
+  assertNoOutboundSecrets(message, "commit message");
   return { message };
 }
 

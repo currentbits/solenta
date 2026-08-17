@@ -672,6 +672,12 @@ export interface PendingPermissionInfo {
    * plan markdown, rendered in the prompt panel instead of the raw JSON.
    */
   plan?: string | null;
+  /**
+   * Present when the guardrail policy (#409) rated this call risky but not
+   * deniable — show the reason so the user isn't approving blind. Denied
+   * calls never reach here; they are answered without asking.
+   */
+  guardrail?: { rule: string | null; reason: string } | null;
 }
 
 /** One question of an AskUserQuestion prompt. */

@@ -46,6 +46,7 @@ const {
   MAX_FIX_ATTEMPTS,
 } = require("./verify.js");
 const { maybeApplyFmTitle } = require("./fm-title.js");
+const { classifyTool } = require("./guardrails.js");
 
 const KIMI_PUSH_THROTTLE_MS = 250;
 
@@ -1364,6 +1365,15 @@ function createRunner(opts) {
    * Oldest unanswered permission prompt of the thread's active run, shaped
    * for the renderer (no rawInput), or null.
    * @param {string} threadId
+   * @returns {{
+   *   requestId: string,
+   *   toolName: string,
+   *   summary: string,
+   *   input: string,
+   *   questions: ReturnType<typeof questionInfo>,
+   *   plan: ReturnType<typeof planText>,
+   *   guardrail: { rule: string | null, reason: string } | null,
+   * } | null}
    */
   function getPendingPermission(threadId) {
     const e = active.get(threadId);
@@ -1379,6 +1389,7 @@ function createRunner(opts) {
       input: p.input,
       questions: questionInfo(p.toolName, p.rawInput),
       plan: planText(p.toolName, p.rawInput),
+      guardrail: p.guardrail || null,
     };
   }
 
@@ -2069,7 +2080,8 @@ function createRunner(opts) {
       discardHeldPhantom,
       /**
        * Permission prompts awaiting a user decision, oldest first. Each is
-       * { id, toolName, summary, input (pretty), rawInput (original object) }.
+       * { id, toolName, summary, input (pretty), rawInput (original object),
+       *   guardrail?: { rule, reason } }.
        * Ephemeral: dies with the run entry; a killed CLI cannot be answered.
        */
       pendingPermissions: [],
@@ -2209,13 +2221,58 @@ function createRunner(opts) {
             const e = guard();
             if (!e) return;
             markTurnContent();
-            e.pendingPermissions.push({
+
+            // #409: deny is answered here so an injected agent cannot
+            // social-engineer a yes. classifyTool fails open; wrap anyway.
+            /** @type {{ decision: string, rule: string | null, reason: string } | null} */
+            let verdict = null;
+            try {
+              const live = store.getThread(threadId);
+              const worktreePath =
+                (live && live.worktreePath) ||
+                (thread && thread.worktreePath) ||
+                null;
+              verdict = classifyTool({
+                toolName,
+                input: rawInput,
+                worktreePath,
+              });
+            } catch {
+              verdict = null;
+            }
+
+            if (verdict && verdict.decision === "deny") {
+              const rule = verdict.rule || "policy";
+              const reason = verdict.reason || "blocked";
+              handle.respond(requestId, {
+                behavior: "deny",
+                message: `Blocked by Solenta guardrails (${rule}): ${reason}`,
+              });
+              appendMessage(
+                threadId,
+                "event",
+                `Guardrail blocked ${toolName}: ${rule}: ${reason}`,
+                e.runId,
+              );
+              store.save();
+              pushDetail(threadId, claudeState);
+              return;
+            }
+
+            const pending = {
               id: requestId,
               toolName,
               summary: toolSummary(toolName, rawInput),
               input: inputStr,
               rawInput,
-            });
+            };
+            if (verdict && verdict.decision === "ask") {
+              pending.guardrail = {
+                rule: verdict.rule,
+                reason: verdict.reason,
+              };
+            }
+            e.pendingPermissions.push(pending);
             if (e.pendingPermissions.length === 1) {
               // Run is now blocked on the user: flip the sidebar badge to
               // Waiting. touch: a prompt is real activity (drives unread).
