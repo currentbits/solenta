@@ -229,6 +229,27 @@ describe("gcScan / gcClean", () => {
     assert.equal(branchExists(fx.repo, drop.branch), true);
   });
 
+  it("counts archived threads as settled for retention", async () => {
+    services.updateProject(fx.store, fx.project.id, { worktreeRetention: 1 });
+    const keep = addWorktree(fx, "Newest archived");
+    const drop = addWorktree(fx, "Older archived");
+    // Archived threads never carry a settled override (the renderer filters
+    // them before the settle split), so this is the #316 case.
+    fx.store.updateThread(keep.id, { archived: true, updatedAt: 2_000 });
+    fx.store.updateThread(drop.id, { archived: true, updatedAt: 1_000 });
+    fx.store.saveNow();
+
+    const scan = await gcScan({
+      store: fx.store,
+      worktreeBase: fx.worktreeBase,
+    });
+    const retention = scan.candidates.filter((c) => c.reason === "retention");
+    assert.deepEqual(
+      retention.map((c) => c.path),
+      [drop.worktreePath],
+    );
+  });
+
   it("gcClean never deletes the branch", async () => {
     const orphanThread = services.createThread(fx.store, {
       projectId: fx.project.id,
