@@ -283,10 +283,43 @@ export interface ThreadInfo {
    * rejected plan never lands here and the newest approved plan replaces it.
    */
   plan?: string;
+  /**
+   * Hypothesis ledger (issue #303): approaches the agents on this thread tried
+   * and how each turned out. Written only by the coder-threads MCP tool
+   * `hypothesis_record` — never inferred from the transcript. Newest-last,
+   * capped to HYPOTHESES_MAX. Absent until an agent records one.
+   */
+  hypotheses?: Hypothesis[];
 }
 
 /** Cap for ThreadInfo.notes / threads.setNotes (issue #194). */
 export const THREAD_NOTES_MAX = 2000;
+
+/** Per-thread ledger caps: rows kept, chars per claim, chars per reason. */
+export const HYPOTHESES_MAX = 50;
+export const HYPOTHESIS_CLAIM_MAX = 200;
+export const HYPOTHESIS_REASON_MAX = 500;
+
+/**
+ * What an agent tried, and how it turned out. "invalidated" is the point of
+ * the feature: a ruled-out approach is what stops the next agent (or the next
+ * best-of-N fork) from re-treading a dead end.
+ */
+export type HypothesisStatus = "validated" | "invalidated" | "inconclusive";
+
+/** One entry of a thread's hypothesis ledger (issue #303). */
+export interface Hypothesis {
+  /** Stable id: `${runId ?? "manual"}:${index}` at write time. */
+  id: string;
+  /** The approach, one line, truncated to HYPOTHESIS_CLAIM_MAX. */
+  claim: string;
+  status: HypothesisStatus;
+  /** The evidence behind the verdict, truncated to HYPOTHESIS_REASON_MAX. Empty when the agent gave none. */
+  reason: string;
+  /** Run that recorded it, for grouping one ledger card per run; null outside a run. */
+  runId: string | null;
+  at: number;
+}
 
 /** One step of an agent's working plan, in the agent's own order. */
 export interface PlanStep {
