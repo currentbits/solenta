@@ -141,6 +141,8 @@ describe("Store", () => {
       muted: false,
       notes: "",
       queued: null,
+      verifyCommand: null,
+      verify: null,
     };
     const msg = {
       id: "m1",

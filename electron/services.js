@@ -10,6 +10,7 @@ const {
 } = require("./providers.js");
 const { getMemoryStatus } = require("./memory-sup.js");
 const { execCommandAsync } = require("./ssh.js");
+const { normalizeCommand, runVerifyCommand } = require("./verify.js");
 
 const PERMISSION_MODES = new Set([
   "default",
@@ -402,6 +403,8 @@ function createThread(store, input) {
     snoozedUntil: null,
     snoozedAt: null,
     notes: "",
+    verifyCommand: null,
+    verify: null,
     provider: "claude",
     model: null,
     sessionId: null,
@@ -1143,6 +1146,91 @@ function setNotes(store, input) {
   const updated = store.updateThread(threadId, patch);
   store.save();
   return updated ? { ...updated } : { ...thread, ...patch };
+}
+
+/**
+ * Set or clear the thread's verification command (issue #296). A non-empty
+ * command arms the gate; empty / null / whitespace disarms it. Trimmed and
+ * capped by normalizeCommand. Never bumps updatedAt: a setting is not
+ * activity, same rule as setNotes / setPinned.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, command: unknown }} input
+ */
+function setVerifyCommand(store, input) {
+  const { threadId } = input;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  const verifyCommand = normalizeCommand(input.command);
+  const updated = store.updateThread(threadId, { verifyCommand });
+  store.save();
+  return updated ? { ...updated } : { ...thread, verifyCommand };
+}
+
+/**
+ * Run the thread's verify command now and persist the evidence (issue #296).
+ * Manual counterpart to the runner's automatic gate. Rejects when no
+ * command is set or a run is already active.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string }} input
+ * @param {{ runner: { isRunning: (id: string) => boolean } }} deps
+ * @returns {Promise<import('../src/shared/ipc').VerifyResult>}
+ */
+async function runVerifyNow(store, input, deps) {
+  const { threadId } = input;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  if (thread.verifyCommand == null) {
+    throw new Error("No verify command set for this thread");
+  }
+  if (deps.runner.isRunning(threadId)) {
+    throw new Error("A run is already active on this thread");
+  }
+
+  const project = store.getProject(thread.projectId);
+  const cwd = thread.worktreePath || (project && project.path) || process.cwd();
+  const ran = await runVerifyCommand({
+    command: thread.verifyCommand,
+    cwd,
+  });
+
+  // Worktree HEAD only; a project checkout is not a checkpoint. Best-effort:
+  // a git failure yields null and never throws.
+  let sha = null;
+  if (thread.worktreePath) {
+    try {
+      const { gitTryAsync } = require("./worktrees.js");
+      const rev = await gitTryAsync(thread.worktreePath, ["rev-parse", "HEAD"]);
+      if (rev.ok && rev.stdout) {
+        const trimmed = String(rev.stdout).trim();
+        sha = trimmed || null;
+      }
+    } catch {
+      sha = null;
+    }
+  }
+
+  /** @type {import('../src/shared/ipc').VerifyResult} */
+  const result = {
+    runId: "manual",
+    command: thread.verifyCommand,
+    ok: ran.ok,
+    exitCode: ran.exitCode,
+    timedOut: ran.timedOut,
+    log: ran.log,
+    sha,
+    durationMs: ran.durationMs,
+    at: Date.now(),
+    attempt: (thread.verify?.attempt ?? 0) + 1,
+  };
+  store.updateThread(threadId, { verify: result });
+  store.save();
+  return result;
 }
 
 /**
@@ -2106,6 +2194,8 @@ module.exports = {
   setSnoozed,
   setMuted,
   setNotes,
+  setVerifyCommand,
+  runVerifyNow,
   renameThread,
   clearSettledOnActivity,
   deleteThread,

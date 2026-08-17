@@ -716,6 +716,10 @@ function migrateThread(t) {
     notes: typeof t.notes === "string" ? t.notes : "",
     // Type-ahead queue (issue #137): absent → nothing waiting.
     queued: t.queued !== undefined ? t.queued : null,
+    // Verification gate (issue #296): absent / non-string → unarmed.
+    verifyCommand: typeof t.verifyCommand === "string" ? t.verifyCommand : null,
+    // Latest verify evidence (issue #296): absent → none yet.
+    verify: t.verify !== undefined ? t.verify : null,
   };
 }
 
