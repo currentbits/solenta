@@ -8,7 +8,7 @@ import {
   blobToFloat,
   EMBED_MAX_CHARS,
 } from './embedder.js'
-import { contentTokens, jaccard, queueReview } from './review.js'
+import { contentTokens, jaccard, queueReview, semanticNeighbors, SEMANTIC_DUP } from './review.js'
 import { canonicalProject } from './project-key.js'
 import { agentTrust, TRUST_SUSPECT } from './trust.js'
 
@@ -41,7 +41,6 @@ const SESSION_RETENTION_DAYS = 30
 const DEDUP_BLOCK = 0.7
 const DEDUP_WARN = 0.4
 const DEDUP_SCAN_CAP = 500
-const SEMANTIC_DUP = 0.9
 
 const EMBED_BACKFILL_CAP = 64
 const AGING_RUN_DAYS = 7
@@ -386,10 +385,8 @@ export class Memory {
     // Fire-and-forget embed; null embedding just skips the row. Safe to
     // interleave with an open janitor transaction: a lost/rolled-back vector
     // is re-created by the janitor's embedMissing backfill on the next pass.
-    // Semantic near-dup is review-only: the real MiniLM embedder is async and
-    // lazily loads a model, so store() stays sync and the hard block stays
-    // lexical. Cosine hits enqueue a pair; they do not refuse the write.
-    void this.embedEntry(id).then(() => this.checkSemanticDup(id)).catch(() => {})
+    // embedEntry also runs the semantic near-dup check once the vector lands.
+    void this.embedEntry(id).catch(() => {})
 
     return { id }
   }
@@ -723,56 +720,11 @@ export class Memory {
   }
 
   /**
-   * After embed, compare this entry's vector to live same-scope vectors.
-   * Best match at or above SEMANTIC_DUP enqueues a near_dup review.
-   * Hits never refuse the write. No-op without embedder. Fail-soft: never throws.
-   * @param {string} id
-   */
-  async checkSemanticDup(id) {
-    if (!this.embedder) return
-    try {
-      const mine = this.db
-        .prepare(
-          `SELECT e.type, e.project, v.vec, v.dim, v.model
-           FROM entry_vectors v
-           JOIN entries e ON e.id = v.entry_id
-           WHERE v.entry_id = ?`,
-        )
-        .get(id)
-      if (!mine || mine.type === 'task') return
-
-      const vec = blobToFloat(mine.vec)
-      const project = mine.project ?? null
-      const rows = this.db
-        .prepare(
-          `SELECT v.entry_id AS id, v.vec AS vec, v.dim AS dim
-           FROM entry_vectors v
-           JOIN entries e ON e.id = v.entry_id
-           WHERE v.model = ?
-             AND v.entry_id != ?
-             AND ${liveSql('e')}
-             AND ${projectScopeSql('e')}`,
-        )
-        .all(mine.model, id, project, project)
-
-      let best = null
-      for (const r of rows) {
-        if (r.dim !== mine.dim) continue
-        const score = cosine(vec, blobToFloat(r.vec))
-        if (!best || score > best.score) best = { id: r.id, score }
-      }
-      if (best && best.score >= SEMANTIC_DUP) {
-        const rounded = Math.round(best.score * 1000) / 1000
-        queueReview(this.db, 'near_dup', id, best.id, `cosine=${rounded}`)
-      }
-    } catch (err) {
-      console.error('checkSemanticDup failed (non-fatal):', err)
-    }
-  }
-
-  /**
    * Embed one live entry and UPSERT its vector. Best-effort; never throws to callers
    * that await it carefully — failures log and return. No-op without embedder.
+   * After the UPSERT, non-task entries are checked for a semantic near-dup and
+   * a review pair is enqueued when cosine >= SEMANTIC_DUP. Hits never refuse
+   * the write. store() stays sync; this runs on the fire-and-forget embed.
    * @param {string} id
    */
   async embedEntry(id) {
@@ -780,7 +732,7 @@ export class Memory {
     try {
       const row = this.db
         .prepare(
-          `SELECT id, title, body FROM entries WHERE id = ? AND ${liveSql()}`,
+          `SELECT id, title, body, type, project FROM entries WHERE id = ? AND ${liveSql()}`,
         )
         .get(id)
       if (!row) return
@@ -795,6 +747,18 @@ export class Memory {
              dim = excluded.dim, vec = excluded.vec, model = excluded.model, created_at = excluded.created_at`,
         )
         .run(id, vec.length, floatToBlob(vec), this.embedder.model, new Date().toISOString())
+      // ponytail: write path only, backfill is the janitor's job
+      if (row.type === 'task') return
+      const hits = semanticNeighbors(this.db, vec, {
+        model: this.embedder.model,
+        project: row.project,
+        exclude: id,
+        types: null,
+        minScore: SEMANTIC_DUP,
+        limit: 1,
+      })
+      const hit = hits[0]
+      if (hit) queueReview(this.db, 'near_dup', id, hit.id, `cosine=${hit.score}`)
     } catch (err) {
       console.error('embedEntry failed (non-fatal):', err)
     }
