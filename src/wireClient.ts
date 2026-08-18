@@ -394,6 +394,14 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
           "threads:specArtifact",
           input,
         ),
+      dispatchSpec: (input) =>
+        call<{
+          thread: ThreadInfo;
+          dispatched: Array<{ threadId: string; taskId: string; title: string }>;
+          reason?: string;
+        }>("threads:dispatchSpec", input),
+      convergeSpec: (input) =>
+        call<ThreadInfo>("threads:convergeSpec", input),
       startTeach: (input) => call<ThreadInfo>("threads:startTeach", input),
       stopTeach: (input) => call<ThreadInfo>("threads:stopTeach", input),
       startAsk: (input) => call<ThreadInfo>("threads:startAsk", input),

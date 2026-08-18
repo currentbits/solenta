@@ -1983,6 +1983,21 @@ export interface CoderApi {
       stage: SpecArtifact;
     }): Promise<{ path: string; text: string | null }>;
     /**
+     * Parse tasks.md, load it into the crew-task list, and fork one worker
+     * per current-wave task (issue #537). Available at the build stage.
+     * An empty wave is not an error — `reason` explains why nothing forked.
+     */
+    dispatchSpec(input: { threadId: string }): Promise<{
+      thread: ThreadInfo;
+      dispatched: Array<{ threadId: string; taskId: string; title: string }>;
+      reason?: string;
+    }>;
+    /**
+     * Start a converge run on the spec thread: compare the repo to the
+     * approved artifacts and append missing checkboxes to tasks.md.
+     */
+    convergeSpec(input: { threadId: string }): Promise<ThreadInfo>;
+    /**
      * Turn Teach mode on (issue #373): the runner prefixes every provider
      * turn with the hints-not-solutions persona and caps permission mode
      * to the current autonomy rung. Idempotent. Never bumps updatedAt.

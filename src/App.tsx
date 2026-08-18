@@ -135,6 +135,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     stopSpec,
     reviewSpec,
     specArtifact,
+    dispatchSpec,
+    convergeSpec,
     startTeach,
     stopTeach,
     startAsk,
@@ -437,6 +439,20 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       void reviewSpec(threadId, decision, feedback);
     },
     [reviewSpec],
+  );
+
+  const handleDispatchSpec = useCallback(
+    (threadId: string) => {
+      void dispatchSpec(threadId);
+    },
+    [dispatchSpec],
+  );
+
+  const handleConvergeSpec = useCallback(
+    (threadId: string) => {
+      void convergeSpec(threadId);
+    },
+    [convergeSpec],
   );
 
   const handleStartTeach = useCallback(
@@ -1033,6 +1049,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onStartSpec={handleStartSpec}
         onStopSpec={handleStopSpec}
         onReviewSpec={handleReviewSpec}
+        onDispatchSpec={handleDispatchSpec}
+        onConvergeSpec={handleConvergeSpec}
         onSpecArtifact={specArtifact}
         onStartTeach={handleStartTeach}
         onStopTeach={handleStopTeach}

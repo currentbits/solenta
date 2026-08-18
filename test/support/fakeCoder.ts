@@ -1226,6 +1226,27 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         };
         return Promise.resolve(result);
       },
+      dispatchSpec: (input: unknown) =>
+        rec("threads.dispatchSpec", [input], {
+          thread: thread({
+            id: (input as { threadId: string }).threadId,
+            spec: { slug: "spec", stage: "build", awaitingApproval: false },
+          }),
+          dispatched: [] as Array<{
+            threadId: string;
+            taskId: string;
+            title: string;
+          }>,
+        }),
+      convergeSpec: (input: unknown) =>
+        rec(
+          "threads.convergeSpec",
+          [input],
+          thread({
+            id: (input as { threadId: string }).threadId,
+            spec: { slug: "spec", stage: "build", awaitingApproval: false },
+          }),
+        ),
       delete: (input: unknown) => rec("threads.delete", [input], undefined),
     },
     activity: {

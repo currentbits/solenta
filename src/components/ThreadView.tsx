@@ -377,6 +377,10 @@ interface ThreadViewProps {
     decision: "approve" | "revise",
     feedback?: string,
   ) => void | Promise<void>;
+  /** Dispatch the current tasks.md wave as parallel workers (issue #537). */
+  onDispatchSpec?: (threadId: string) => void | Promise<void>;
+  /** Start a converge run that appends missing tasks.md checkboxes. */
+  onConvergeSpec?: (threadId: string) => void | Promise<void>;
   /** Read the current spec artifact off disk. */
   onSpecArtifact?: (
     threadId: string,
@@ -1727,6 +1731,8 @@ function specStepStatus(
 function SpecCard({
   thread,
   onReviewSpec,
+  onDispatchSpec,
+  onConvergeSpec,
   onStopSpec,
   onSpecArtifact,
 }: {
@@ -1736,6 +1742,8 @@ function SpecCard({
     decision: "approve" | "revise",
     feedback?: string,
   ) => void | Promise<void>;
+  onDispatchSpec?: (threadId: string) => void | Promise<void>;
+  onConvergeSpec?: (threadId: string) => void | Promise<void>;
   onStopSpec?: (threadId: string) => void | Promise<void>;
   onSpecArtifact?: (
     threadId: string,
@@ -1817,7 +1825,33 @@ function SpecCard({
         ))}
       </ol>
       {spec.stage === "build" ? (
-        <p className={styles.specStatus}>The spec is approved.</p>
+        <>
+          <p className={styles.specStatus}>The spec is approved.</p>
+          {(onDispatchSpec || onConvergeSpec) && (
+            <div className={styles.permissionActions}>
+              {onDispatchSpec && (
+                <button
+                  type="button"
+                  className={styles.permissionAllow}
+                  data-spec-dispatch-btn=""
+                  onClick={() => void onDispatchSpec(thread.id)}
+                >
+                  Dispatch
+                </button>
+              )}
+              {onConvergeSpec && (
+                <button
+                  type="button"
+                  className={styles.btn}
+                  data-spec-converge-btn=""
+                  onClick={() => void onConvergeSpec(thread.id)}
+                >
+                  Converge
+                </button>
+              )}
+            </div>
+          )}
+        </>
       ) : spec.awaitingApproval ? (
         <>
           {artifactBody}
@@ -2633,6 +2667,8 @@ export const ThreadView = memo(function ThreadView({
   onStartSpec,
   onStopSpec,
   onReviewSpec,
+  onDispatchSpec,
+  onConvergeSpec,
   onSpecArtifact,
   onStartTeach,
   onStopTeach,
@@ -3942,6 +3978,8 @@ export const ThreadView = memo(function ThreadView({
           <SpecCard
             thread={thread}
             onReviewSpec={onReviewSpec}
+            onDispatchSpec={onDispatchSpec}
+            onConvergeSpec={onConvergeSpec}
             onStopSpec={onStopSpec}
             onSpecArtifact={onSpecArtifact}
           />
