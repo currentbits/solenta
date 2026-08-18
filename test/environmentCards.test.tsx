@@ -11,6 +11,7 @@ import type {
   GitPullResult,
   GitRepoInfo,
   ProjectInfo,
+  ProviderInfo,
   ThreadInfo,
   ThreadSummaryInfo,
 } from "../src/shared/ipc";
@@ -73,6 +74,8 @@ function tab(opts: {
   onSummaries?: () => Promise<ThreadSummaryInfo[]>;
   onOpenPrs?: () => void;
   prsActive?: boolean;
+  providers?: ProviderInfo[];
+  onFork?: (opts?: { provider?: string; model?: string | null }) => void;
 }) {
   const repoInfo = opts.repoInfo ?? { ok: false as const };
   return (
@@ -93,6 +96,8 @@ function tab(opts: {
       }
       onOpenPrs={opts.onOpenPrs}
       prsActive={opts.prsActive}
+      providers={opts.providers}
+      onFork={opts.onFork}
     />
   );
 }
@@ -362,6 +367,82 @@ describe("pull requests card", () => {
     assert.equal(
       m.query("[data-open-prs]")?.getAttribute("data-active"),
       "true",
+    );
+    m.unmount();
+  });
+});
+
+describe("fork card", () => {
+  const providers: ProviderInfo[] = [
+    {
+      id: "claude",
+      name: "Claude Code",
+      available: true,
+      supportsResume: true,
+      models: [],
+      modelInfo: [],
+      efforts: [],
+    },
+    {
+      id: "grok",
+      name: "Grok",
+      available: true,
+      supportsResume: true,
+      models: [],
+      modelInfo: [],
+      efforts: [],
+    },
+  ];
+
+  it("is hidden when onFork is not wired", async () => {
+    const m = await mount(tab({}));
+    await m.flush();
+    assert.equal(m.query("[data-thread-fork-card]"), null);
+    m.unmount();
+  });
+
+  it("forks the open thread and lists other providers for hand-off", async () => {
+    const forks: Array<{ provider?: string } | undefined> = [];
+    const m = await mount(
+      tab({
+        providers,
+        onFork: (opts) => {
+          forks.push(opts);
+        },
+      }),
+    );
+    await m.flush();
+    assert.ok(m.query("[data-thread-fork-card]"), "Fork card present");
+    await m.click(m.query("[data-thread-fork]"));
+    assert.deepEqual(forks, [undefined]);
+
+    await m.click(m.query("[data-thread-handoff]"));
+    await m.flush();
+    const entries = m
+      .queryAll("[data-thread-handoff-menu] [data-handoff-provider]")
+      .map((el) => el.getAttribute("data-handoff-provider"));
+    assert.deepEqual(entries, ["grok"]);
+    await m.click(m.query('[data-handoff-provider="grok"]'));
+    assert.deepEqual(forks, [undefined, { provider: "grok" }]);
+    m.unmount();
+  });
+
+  it("disables Fork while the thread is working", async () => {
+    const m = await mount(
+      tab({
+        thread: thread({ status: "working" }),
+        providers,
+        onFork: () => {},
+      }),
+    );
+    await m.flush();
+    assert.equal(
+      (m.query("[data-thread-fork]") as HTMLButtonElement).disabled,
+      true,
+    );
+    assert.equal(
+      (m.query("[data-thread-handoff]") as HTMLButtonElement).disabled,
+      true,
     );
     m.unmount();
   });

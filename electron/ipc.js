@@ -315,8 +315,14 @@ const IPC_HANDLERS = {
         ctx.broadcast("threads:changed", services.listThreads(ctx.store));
         throw err;
       }
+      if (input.teach === true) {
+        services.startTeach(ctx.store, { threadId: thread.id });
+      }
       ctx.broadcast("threads:changed", services.listThreads(ctx.store));
       return ctx.store.getThread(thread.id);
+    }
+    if (input && input.teach === true) {
+      services.startTeach(ctx.store, { threadId: thread.id });
     }
     if (input && input.worktree === true) {
       try {
@@ -447,6 +453,22 @@ const IPC_HANDLERS = {
   },
   "threads:specArtifact": async (ctx, input) => {
     return services.readSpecArtifact(ctx.store, input);
+  },
+  "threads:startTeach": async (ctx, input) => {
+    const updated = services.startTeach(ctx.store, input);
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    return updated;
+  },
+  "threads:stopTeach": async (ctx, input) => {
+    const updated = services.stopTeach(ctx.store, input);
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    return updated;
+  },
+  "threads:requestTeachReview": async (ctx, input) => {
+    const { thread, prompt } = services.requestTeachReview(ctx.store, input);
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    await ctx.runner.startRun({ threadId: input.threadId, prompt });
+    return thread;
   },
   "threads:rename": async (ctx, input) => {
     const updated = services.renameThread(ctx.store, input);

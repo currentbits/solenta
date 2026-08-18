@@ -2643,6 +2643,9 @@ function buildDevCoder(): CoderApi {
           pendingWorktree: input.orchestrate !== true && input.worktree === true,
           pendingFork: input.orchestrate === true,
           issueNumber: input.issueNumber ?? null,
+          ...(input.teach === true
+            ? { teach: { autonomy: "hint" as const, reviewsPassed: 0 } }
+            : {}),
         });
         return registerThread(t);
       },
@@ -2663,6 +2666,7 @@ function buildDevCoder(): CoderApi {
               ? null
               : source.model,
           permissionMode: source.permissionMode,
+          teach: source.teach ?? null,
           handoffFrom: source.id,
         });
         return registerThread(created);
@@ -2828,6 +2832,26 @@ function buildDevCoder(): CoderApi {
           path: `${SPEC_DIR}/${slug}/${input.stage}.md`,
           text: DEV_SPEC_ARTIFACTS[input.stage],
         };
+      },
+      async startTeach(input: { threadId: string }) {
+        const existing = threads.find((t) => t.id === input.threadId);
+        if (existing?.teach) return { ...existing };
+        return patchThread(input.threadId, {
+          teach: { autonomy: "hint", reviewsPassed: 0 },
+          ...(existing &&
+          existing.permissionMode !== "default" &&
+          existing.permissionMode !== "plan"
+            ? { permissionMode: "default" as const }
+            : {}),
+        });
+      },
+      async stopTeach(input: { threadId: string }) {
+        return patchThread(input.threadId, { teach: null });
+      },
+      async requestTeachReview(input: { threadId: string }) {
+        const existing = threads.find((t) => t.id === input.threadId);
+        if (!existing?.teach) throw new Error("Thread is not in teach mode");
+        return { ...existing };
       },
       async rename(input: { threadId: string; title: string }) {
         const title = String(input.title ?? "").trim().slice(0, TITLE_MAX);

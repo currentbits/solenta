@@ -82,7 +82,7 @@ const baseProps = {
 };
 
 describe("Sidebar thread-mode menu", () => {
-  it("offers all three modes and passes the chosen one through", async () => {
+  it("offers all four modes and passes the chosen one through", async () => {
     const calls: Array<[string, unknown]> = [];
     const m = await mount(
       <Sidebar
@@ -97,12 +97,26 @@ describe("Sidebar thread-mode menu", () => {
       "data-create-worktree-thread",
       "data-create-orchestrator-thread",
       "data-create-plain-thread",
+      "data-create-teach-thread",
     ]) {
       assert.ok(m.query(`[${attr}="p1"]`), `menu is missing ${attr}`);
     }
 
     await m.click(m.query('[data-create-orchestrator-thread="p1"]'));
     assert.deepEqual(calls, [["p1", { orchestrate: true }]]);
+  });
+
+  it("New teach thread passes worktree + teach", async () => {
+    const calls: Array<[string, unknown]> = [];
+    const m = await mount(
+      <Sidebar
+        {...baseProps}
+        onCreateThread={(projectId, opts) => calls.push([projectId!, opts])}
+      />,
+    );
+    await m.click(m.query('[data-create-menu-btn="p1"]'));
+    await m.click(m.query('[data-create-teach-thread="p1"]'));
+    assert.deepEqual(calls, [["p1", { worktree: true, teach: true }]]);
   });
 
   it("hides the menu for remote projects", async () => {

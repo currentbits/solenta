@@ -10,7 +10,6 @@ import {
 import type {
   AttachmentInfo,
   ChatMessage,
-  DevServerState,
   DiffResult,
   FileChange,
   GitSyncInfo,
@@ -32,6 +31,8 @@ import type {
   WorkflowTemplateInfo,
 } from "../shared/ipc";
 import { SPEC_ARTIFACTS, THREAD_NOTES_MAX } from "../shared/ipc";
+import { TEACH_AUTONOMY_LABELS } from "../teach";
+import type { TeachAutonomy } from "../shared/ipc";
 import type { WorkflowSaveInput } from "../useCoder";
 import { diffLineKind, isEmptyDiff } from "../diffView";
 import {
@@ -334,7 +335,7 @@ interface ThreadViewProps {
    */
   onCreateThread?: (
     projectId?: string,
-    opts?: { worktree?: boolean; orchestrate?: boolean },
+    opts?: { worktree?: boolean; orchestrate?: boolean; teach?: boolean; issueNumber?: number | null },
   ) => void;
   /** Seed an automation from this thread's first prompt (#285). */
   onRepeatSchedule?: () => void;
@@ -357,6 +358,12 @@ interface ThreadViewProps {
     threadId: string,
     stage: SpecArtifact,
   ) => Promise<{ path: string; text: string | null }>;
+  /** Turn Teach mode on (issue #373). */
+  onStartTeach?: (threadId: string) => void | Promise<void>;
+  /** Turn Teach mode off. */
+  onStopTeach?: (threadId: string) => void | Promise<void>;
+  /** Ask the agent to review the human's TODO(human) fills. */
+  onRequestTeachReview?: (threadId: string) => void | Promise<void>;
   /** Permanently delete the open thread (caller already confirmed in UI). */
   onDeleteThread: () => void | Promise<void>;
   /** Center Changes panel open (lifted so the Git tab can open it). */
@@ -417,14 +424,6 @@ interface ThreadViewProps {
   gitSyncInfo?: (threadId: string) => Promise<GitSyncInfo>;
   /** Fetch remotes before the sync pill re-reads state. */
   gitFetch?: (threadId: string) => Promise<void>;
-  /** Runnable package.json scripts for the header dev dropdown. */
-  listDevScripts?: (threadId: string) => Promise<string[]>;
-  /** Start `npm run <script>` at the thread root. */
-  startDevServer?: (threadId: string, script: string) => Promise<DevServerState>;
-  /** Stop the thread's spawned dev server. */
-  stopDevServer?: (threadId: string) => Promise<DevServerState>;
-  /** Live status for the thread's spawned dev server. */
-  devServerStatus?: (threadId: string) => Promise<DevServerState>;
   runError?: string | null;
   onDismissRunError?: () => void;
   /**
@@ -1308,234 +1307,6 @@ function NextGitActionButton({
   );
 }
 
-const DEV_MENU_POLL_MS = 3000;
-
-/**
- * "Play dev" dropdown: lists the thread root's runnable scripts, starts one
- * per row, stops the running server, and links the captured URL. Polls while
- * the popover is open or a server is running.
- */
-function DevMenu({
-  threadId,
-  listDevScripts,
-  startDevServer,
-  stopDevServer,
-  devServerStatus,
-}: {
-  threadId: string;
-  listDevScripts: (threadId: string) => Promise<string[]>;
-  startDevServer: (threadId: string, script: string) => Promise<DevServerState>;
-  stopDevServer: (threadId: string) => Promise<DevServerState>;
-  devServerStatus: (threadId: string) => Promise<DevServerState>;
-}) {
-  const wrapRef = useRef<HTMLDivElement>(null);
-  const [open, setOpen] = useState(false);
-  const [scripts, setScripts] = useState<string[]>([]);
-  const [loaded, setLoaded] = useState(false);
-  const [state, setState] = useState<DevServerState>({ running: false });
-  const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    setOpen(false);
-    setBusy(false);
-    setLoaded(false);
-    setScripts([]);
-    setState({ running: false });
-    async function load() {
-      try {
-        const [list, status] = await Promise.all([
-          listDevScripts(threadId),
-          devServerStatus(threadId),
-        ]);
-        if (cancelled) return;
-        setScripts(Array.isArray(list) ? list : []);
-        setState(
-          status && typeof status === "object" ? status : { running: false },
-        );
-      } catch {
-        if (cancelled) return;
-        setScripts([]);
-        setState({ running: false });
-      } finally {
-        if (!cancelled) setLoaded(true);
-      }
-    }
-    void load();
-    return () => {
-      cancelled = true;
-    };
-  }, [threadId, listDevScripts, devServerStatus]);
-
-  const live = open || state.running;
-  useEffect(() => {
-    if (!live) return;
-    let cancelled = false;
-    const tick = async () => {
-      try {
-        const status = await devServerStatus(threadId);
-        if (cancelled) return;
-        setState(
-          status && typeof status === "object" ? status : { running: false },
-        );
-      } catch {
-        // Keep last known state; the next tick retries.
-      }
-    };
-    const id = window.setInterval(() => void tick(), DEV_MENU_POLL_MS);
-    return () => {
-      cancelled = true;
-      window.clearInterval(id);
-    };
-  }, [live, threadId, devServerStatus]);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e: MouseEvent) => {
-      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", onDoc);
-    return () => {
-      document.removeEventListener("mousedown", onDoc);
-    };
-  }, [open]);
-  useEscapeClose(open, useCallback(() => setOpen(false), []));
-
-  const start = async (script: string) => {
-    if (busy || state.running) return;
-    setBusy(true);
-    try {
-      const next = await startDevServer(threadId, script);
-      setState(next && typeof next === "object" ? next : { running: false });
-    } catch {
-      // Parent surfaces failures; the next poll refreshes state.
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const stop = async () => {
-    if (busy || !state.running) return;
-    setBusy(true);
-    try {
-      const next = await stopDevServer(threadId);
-      setState(next && typeof next === "object" ? next : { running: false });
-    } catch {
-      // Next poll refreshes state.
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const noScripts = loaded && scripts.length === 0;
-  const label = state.running && state.script ? state.script : "dev";
-
-  return (
-    <div className={styles.menuWrap} ref={wrapRef}>
-      <button
-        type="button"
-        className={styles.btn}
-        data-dev-menu=""
-        disabled={noScripts}
-        aria-disabled={noScripts ? "true" : undefined}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        title={
-          noScripts
-            ? "No runnable scripts in package.json"
-            : state.running
-              ? `Dev server running: ${label}`
-              : "Run a dev server"
-        }
-        onClick={() => {
-          if (noScripts) return;
-          setOpen((v) => !v);
-        }}
-      >
-        <svg
-          width="14"
-          height="14"
-          viewBox="0 0 16 16"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-        >
-          <path d="M5 3.2v9.6L12.8 8 5 3.2Z" />
-        </svg>
-        <span>{label}</span>
-        <span className={styles.chevron} data-open={open}>
-          <svg
-            width="9"
-            height="9"
-            viewBox="0 0 10 10"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.6"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-          >
-            <path d="M3.5 2 6.5 5 3.5 8" />
-          </svg>
-        </span>
-      </button>
-      {open && (
-        <div className={styles.menu} role="menu" data-dev-popover="">
-          {scripts.map((script) => {
-            const isRunningThis = state.running && state.script === script;
-            return (
-              <button
-                key={script}
-                type="button"
-                className={styles.menuItem}
-                role="menuitem"
-                data-dev-script={script}
-                disabled={busy || state.running}
-                title={
-                  state.running
-                    ? "Stop the running server first"
-                    : `Run npm run ${script}`
-                }
-                onClick={() => void start(script)}
-              >
-                {isRunningThis ? `${script} (running)` : script}
-              </button>
-            );
-          })}
-          {state.running && (
-            <button
-              type="button"
-              className={styles.menuItem}
-              role="menuitem"
-              data-dev-stop=""
-              disabled={busy}
-              title="Stop the dev server"
-              onClick={() => void stop()}
-            >
-              Stop
-            </button>
-          )}
-          {state.url && (
-            <a
-              className={styles.menuItem}
-              role="menuitem"
-              data-dev-url=""
-              href={state.url}
-              target="_blank"
-              rel="noreferrer"
-            >
-              {state.url}
-            </a>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
 function WorkLogCard({
   group,
   defaultOpen,
@@ -2049,6 +1820,83 @@ function SpecCard({
   );
 }
 
+const TEACH_STAGES: TeachAutonomy[] = ["hint", "review", "pair"];
+
+function teachStepStatus(
+  step: TeachAutonomy,
+  current: TeachAutonomy,
+): "todo" | "doing" | "done" {
+  const i = TEACH_STAGES.indexOf(step);
+  const j = TEACH_STAGES.indexOf(current);
+  if (i < j) return "done";
+  if (i === j) return "doing";
+  return "todo";
+}
+
+/**
+ * Teach mode card (issue #373): autonomy ladder, review-my-code, turn off.
+ */
+function TeachCard({
+  thread,
+  onStopTeach,
+  onRequestTeachReview,
+}: {
+  thread: ThreadInfo;
+  onStopTeach?: (threadId: string) => void | Promise<void>;
+  onRequestTeachReview?: (threadId: string) => void | Promise<void>;
+}) {
+  const teach = thread.teach;
+  if (!teach) return null;
+  const n = teach.reviewsPassed;
+  const reviewLabel = n === 1 ? "1 review passed" : `${n} reviews passed`;
+  return (
+    <div className={styles.specCard} data-teach-card="">
+      <div className={styles.specCardHead}>
+        <span className={styles.specCardTitle}>Teach</span>
+        <span className={styles.specStatus}>{reviewLabel}</span>
+      </div>
+      <ol className={styles.specStageList}>
+        {TEACH_STAGES.map((step) => (
+          <li
+            key={step}
+            className={styles.specStage}
+            data-teach-autonomy={step}
+            data-plan-step={teachStepStatus(step, teach.autonomy)}
+          >
+            {TEACH_AUTONOMY_LABELS[step]}
+          </li>
+        ))}
+      </ol>
+      <p className={styles.specStatus}>
+        Hints, not solutions. The agent leaves TODO(human) markers for you
+        to fill, then reviews your code.
+      </p>
+      <div className={styles.permissionActions}>
+        {onRequestTeachReview && (
+          <button
+            type="button"
+            className={styles.permissionAllow}
+            data-teach-review-btn=""
+            onClick={() => void onRequestTeachReview(thread.id)}
+          >
+            Review my code
+          </button>
+        )}
+        {onStopTeach && (
+          <button
+            type="button"
+            className={styles.permissionDeny}
+            data-teach-stop-btn=""
+            onClick={() => void onStopTeach(thread.id)}
+          >
+            Turn off
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function DiffLine({ line }: { line: string }) {
   const kind = diffLineKind(line);
   return (
@@ -2329,6 +2177,9 @@ export const ThreadView = memo(function ThreadView({
   onStopSpec,
   onReviewSpec,
   onSpecArtifact,
+  onStartTeach,
+  onStopTeach,
+  onRequestTeachReview,
   onDeleteThread,
   changesOpen,
   changesNonce,
@@ -2354,10 +2205,6 @@ export const ThreadView = memo(function ThreadView({
   onPrMerge,
   gitSyncInfo,
   gitFetch,
-  listDevScripts,
-  startDevServer,
-  stopDevServer,
-  devServerStatus,
   runError = null,
   onDismissRunError,
   onNewThread,
@@ -2373,7 +2220,6 @@ export const ThreadView = memo(function ThreadView({
   const stickToBottom = useRef(true);
   const prevThreadId = useRef<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
-  const handoffMenuRef = useRef<HTMLDivElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [renaming, setRenaming] = useState(false);
@@ -2384,8 +2230,6 @@ export const ThreadView = memo(function ThreadView({
   const notesOpenRef = useRef(false);
   /** Thread the open panel belongs to, plus the value it was seeded with. */
   const notesSourceRef = useRef<{ id: string; saved: string } | null>(null);
-  /** Header hand-off submenu open. */
-  const [handoffMenuOpen, setHandoffMenuOpen] = useState(false);
   /**
    * Provenance chip dismissed for this open (not persisted). Reset when the
    * open thread changes.
@@ -2769,7 +2613,6 @@ export const ThreadView = memo(function ThreadView({
       notesSourceRef.current = null;
       setNotesOpen(false);
       setNotesDraft(detail?.thread.notes ?? "");
-      setHandoffMenuOpen(false);
       setHandoffBannerDismissed(false);
       setRestoreConfirm(null);
       setRestorePending(false);
@@ -2894,25 +2737,11 @@ export const ThreadView = memo(function ThreadView({
     };
   }, [menuOpen]);
 
-  useEffect(() => {
-    if (!handoffMenuOpen) return;
-    const onDoc = (e: MouseEvent) => {
-      if (!handoffMenuRef.current?.contains(e.target as Node)) {
-        setHandoffMenuOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", onDoc);
-    return () => {
-      document.removeEventListener("mousedown", onDoc);
-    };
-  }, [handoffMenuOpen]);
-
   const closeMenu = useCallback(() => {
     setMenuOpen(false);
     setDeleteConfirm(false);
   }, []);
   useEscapeClose(menuOpen, closeMenu);
-  useEscapeClose(handoffMenuOpen, () => setHandoffMenuOpen(false));
   useEscapeClose(restoreConfirm != null && !restorePending, () => {
     setRestoreConfirm(null);
   });
@@ -3083,7 +2912,6 @@ export const ThreadView = memo(function ThreadView({
   const handoffSourceId = thread.handoffFrom;
   const showHandoffBanner =
     handoffSourceId != null && !handoffBannerDismissed;
-  const otherProviders = providers.filter((p) => p.id !== thread.provider);
 
   const handleCopyThreadId = async () => {
     try {
@@ -3190,6 +3018,16 @@ export const ThreadView = memo(function ThreadView({
               Exit spec mode
             </button>
           )}
+          {onStartTeach && !thread.teach && (
+            <button
+              type="button"
+              className={styles.btn}
+              data-teach-mode-btn=""
+              onClick={() => void onStartTeach(thread.id)}
+            >
+              Teach mode
+            </button>
+          )}
           {onSetNotes && (
             <button
               type="button"
@@ -3226,122 +3064,6 @@ export const ThreadView = memo(function ThreadView({
                 <span className={styles.notesDot} data-notes-dot="" aria-hidden />
               ) : null}
             </button>
-          )}
-          {listDevScripts &&
-            startDevServer &&
-            stopDevServer &&
-            devServerStatus && (
-              <DevMenu
-                threadId={thread.id}
-                listDevScripts={listDevScripts}
-                startDevServer={startDevServer}
-                stopDevServer={stopDevServer}
-                devServerStatus={devServerStatus}
-              />
-            )}
-          {onFork && (
-            <>
-              <button
-                type="button"
-                className={styles.btn}
-                data-thread-fork=""
-                disabled={isWorking}
-                aria-disabled={isWorking ? "true" : undefined}
-                title="Fork thread (same harness)"
-                onClick={() => {
-                  if (isWorking) return;
-                  void onFork();
-                }}
-              >
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <circle cx="4.5" cy="3.5" r="1.5" />
-                  <circle cx="4.5" cy="12.5" r="1.5" />
-                  <circle cx="11.5" cy="5.5" r="1.5" />
-                  <path d="M4.5 5v6M11.5 7c0 2.2-2.8 2.3-4.6 3.4" />
-                </svg>
-                Fork
-              </button>
-              <div className={styles.menuWrap} ref={handoffMenuRef}>
-                <button
-                  type="button"
-                  className={styles.btn}
-                  data-thread-handoff=""
-                  disabled={isWorking || otherProviders.length === 0}
-                  aria-disabled={
-                    isWorking || otherProviders.length === 0
-                      ? "true"
-                      : undefined
-                  }
-                  aria-haspopup="menu"
-                  aria-expanded={handoffMenuOpen}
-                  title="Hand off to another provider"
-                  onClick={() => {
-                    if (isWorking || otherProviders.length === 0) return;
-                    setHandoffMenuOpen((v) => !v);
-                    setMenuOpen(false);
-                  }}
-                >
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 16 16"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
-                  >
-                    <path d="M9.5 2.5H13a.5.5 0 0 1 .5.5v3.5M13.2 2.8 8.5 7.5M6 3.5H4A1.5 1.5 0 0 0 2.5 5v7A1.5 1.5 0 0 0 4 13.5h8a1.5 1.5 0 0 0 1.5-1.5v-2" />
-                  </svg>
-                  Hand off to…
-                </button>
-                {handoffMenuOpen && (
-                  <div
-                    className={styles.menu}
-                    role="menu"
-                    data-thread-handoff-menu=""
-                  >
-                    {otherProviders.map((p) => {
-                      const disabled = !p.available;
-                      return (
-                        <button
-                          key={p.id}
-                          type="button"
-                          className={styles.menuItem}
-                          role="menuitem"
-                          data-handoff-provider={p.id}
-                          disabled={disabled}
-                          aria-disabled={disabled ? "true" : undefined}
-                          title={
-                            disabled
-                              ? `${p.name} is not installed`
-                              : `Hand off to ${p.name}`
-                          }
-                          onClick={() => {
-                            if (disabled) return;
-                            setHandoffMenuOpen(false);
-                            void onFork({ provider: p.id });
-                          }}
-                        >
-                          {p.name}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            </>
           )}
           <NextGitActionButton
             thread={thread}
@@ -3706,6 +3428,14 @@ export const ThreadView = memo(function ThreadView({
           />
         ) : null}
 
+        {thread.teach ? (
+          <TeachCard
+            thread={thread}
+            onStopTeach={onStopTeach}
+            onRequestTeachReview={onRequestTeachReview}
+          />
+        ) : null}
+
         {/* A pending plan prompt already shows the plan — don't show it twice. */}
         {(thread.planSteps?.length || thread.plan) &&
         !detail.pendingPermission?.plan ? (
@@ -3850,6 +3580,7 @@ export const ThreadView = memo(function ThreadView({
         threadId={thread.id}
         branch={thread.branch}
         permissionMode={thread.permissionMode}
+        teach={thread.teach ?? null}
         onPermissionModeChange={onSetPermissionMode}
         provider={thread.provider}
         model={thread.model}
