@@ -12,6 +12,12 @@ import { contentTokens, jaccard, queueReview, semanticNeighbors, SEMANTIC_DUP } 
 import { canonicalProject } from './project-key.js'
 import { agentTrust, TRUST_SUSPECT } from './trust.js'
 import { rejectInjectedMemory } from './guardrails-scan.js'
+import {
+  parseCitations,
+  serializeCitations,
+  resolveVerifyRoot,
+  verifyFileCitations,
+} from './citations.js'
 
 export { contentTokens, jaccard, queueReview }
 
@@ -96,7 +102,8 @@ const HINT = 'call memory_get with this id for the full body'
 
 const PROTOCOL = [
   'MEMORY PREFLIGHT: call memory_bootstrap with project set to your working directory and treat its conventions as standing instructions.',
-  'While working, store durable non-obvious findings (decisions, gotchas, conventions) with memory_store.',
+  'While working, store durable non-obvious findings (decisions, gotchas, conventions) with memory_store, citing evidence: file (path, line, excerpt), thread id, or commit sha.',
+  'When project is your working directory, bootstrap/search/get verify file citations against that tree and invalidate contradictions instead of injecting them.',
   'Strategies are distilled "when doing X, do/don\'t Y" rules from past runs: follow them, and report a bad one with memory_feedback.',
   'Before finishing, record what a future agent must know.',
   'Search returns excerpts; use memory_get for the full body.',
@@ -319,7 +326,81 @@ export class Memory {
   }
 
   /**
-   * @param {{ type: string, title: string, body: string, project?: string, agent?: string, source?: string, importance?: number, status?: string, force?: boolean }} input
+   * Persist a (possibly healed) citation list. JSON TEXT; null when empty.
+   * @param {string} id
+   * @param {unknown} citations
+   */
+  writeCitations(id, citations) {
+    const json = serializeCitations(citations)
+    this.db
+      .prepare(`UPDATE entries SET citations = ?, updated_at = ? WHERE id = ?`)
+      .run(json, new Date().toISOString(), id)
+  }
+
+  /**
+   * Just-in-time verify file citations against a live worktree.
+   * Heals drifted line numbers; invalidates on contradiction.
+   * Fail-open: a verify fault never hides a live entry.
+   * @param {{ id: string, citations?: unknown }} row
+   * @param {string|null} root
+   * @returns {{ action: 'inject'|'drop', citations: object[], verified: boolean, reason?: string }}
+   */
+  verifyAndHeal(row, root) {
+    const citations = parseCitations(row?.citations)
+    const checkable = citations.some((c) => c.kind === 'file' && c.excerpt)
+    if (!root || !checkable) {
+      return { action: 'inject', citations, verified: false }
+    }
+    try {
+      const result = verifyFileCitations(root, citations)
+      if (!result.ok) {
+        try {
+          this.invalidateEntry(row.id, {
+            by: 'citation-verify',
+            reason: result.reason ?? 'citation contradicted by worktree',
+          })
+        } catch (err) {
+          console.error('citation invalidate failed (non-fatal):', err)
+        }
+        return { action: 'drop', citations, verified: false, reason: result.reason }
+      }
+      if (result.healed) {
+        try {
+          this.writeCitations(row.id, result.citations)
+        } catch (err) {
+          console.error('citation heal failed (non-fatal):', err)
+        }
+      }
+      return { action: 'inject', citations: result.citations, verified: true }
+    } catch (err) {
+      console.error('verifyAndHeal failed (non-fatal):', err)
+      return { action: 'inject', citations, verified: false }
+    }
+  }
+
+  /**
+   * Parse citations onto rows; when `root` is a live worktree, verify first
+   * and drop contradicted entries.
+   * @template {Record<string, unknown>} T
+   * @param {T[]} rows
+   * @param {string|null} root
+   * @returns {(T & { citations: object[], verified?: boolean })[]}
+   */
+  decorateEntries(rows, root) {
+    if (!Array.isArray(rows) || rows.length === 0) return []
+    const out = []
+    for (const row of rows) {
+      const verdict = this.verifyAndHeal(row, root)
+      if (verdict.action === 'drop') continue
+      const next = { ...row, citations: verdict.citations }
+      if (verdict.verified) next.verified = true
+      out.push(next)
+    }
+    return out
+  }
+
+  /**
+   * @param {{ type: string, title: string, body: string, project?: string, agent?: string, source?: string, importance?: number, status?: string, force?: boolean, citations?: unknown }} input
    * @returns {{ id: string }}
    */
   store(input) {
@@ -348,6 +429,7 @@ export class Memory {
         : canonicalProject(cleanText('project', input.project))
     const agent = cleanOptional(input.agent)
     const source = cleanOptional(input.source)
+    const citations = serializeCitations(input.citations)
 
     // Agent-written entries (source 'mcp') are the injection-propagation
     // channel. App / import / janitor / rest writes are human-initiated.
@@ -378,10 +460,23 @@ export class Memory {
 
     this.db
       .prepare(
-        `INSERT INTO entries (id, type, title, body, project, agent, source, status, importance, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO entries (id, type, title, body, project, agent, source, status, importance, citations, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(id, input.type, title, body, project, agent, source, input.status ?? null, importance, now, now)
+      .run(
+        id,
+        input.type,
+        title,
+        body,
+        project,
+        agent,
+        source,
+        input.status ?? null,
+        importance,
+        citations,
+        now,
+        now,
+      )
 
     try {
       this.linkEntities(id, title, body)
@@ -498,12 +593,12 @@ export class Memory {
   /**
    * @param {string} id
    */
-  get(id) {
+  get(id, opts = {}) {
     const row = this.db
       .prepare(
         `SELECT id, type, title, body, project, agent, source, status, created_at, updated_at,
                 importance, access_count, last_accessed_at, superseded_by,
-                helpful_count, harmful_count,
+                helpful_count, harmful_count, citations,
                 invalid_at, invalidated_by, invalidation_reason
          FROM entries WHERE id = ?`,
       )
@@ -524,8 +619,32 @@ export class Memory {
         hint: 'this entry was superseded; fetch the successor id',
       }
     }
+    const root = resolveVerifyRoot(opts.root ?? opts.project)
+    if (root) {
+      const verdict = this.verifyAndHeal(row, root)
+      if (verdict.action === 'drop') {
+        const fresh = this.db
+          .prepare(
+            `SELECT invalid_at, invalidated_by, invalidation_reason FROM entries WHERE id = ?`,
+          )
+          .get(id)
+        return {
+          invalidated: true,
+          invalid_at: fresh?.invalid_at ?? new Date().toISOString(),
+          invalidated_by: fresh?.invalidated_by ?? 'citation-verify',
+          invalidation_reason: fresh?.invalidation_reason ?? verdict.reason,
+          hint: 'this entry was invalidated; treat as no longer true',
+        }
+      }
+      this.markAccessed([id])
+      return {
+        ...row,
+        citations: verdict.citations,
+        ...(verdict.verified ? { verified: true } : {}),
+      }
+    }
     this.markAccessed([id])
-    return row
+    return { ...row, citations: parseCitations(row.citations) }
   }
 
   /**
@@ -641,7 +760,7 @@ export class Memory {
       const rows = this.db
         .prepare(
           `SELECT e.id, e.type, e.title, e.body, e.project, e.agent, e.source, e.created_at, e.importance,
-                  e.access_count, e.helpful_count, e.harmful_count,
+                  e.access_count, e.helpful_count, e.harmful_count, e.citations,
                   ${BASE_SCORE_SQL} AS score
            FROM entries e
            WHERE e.id IN (${ePlace})
@@ -697,7 +816,7 @@ export class Memory {
       const rows = this.db
         .prepare(
           `SELECT v.entry_id AS id, v.vec AS vec, v.dim AS dim,
-                  e.type, e.title, e.body, e.project, e.agent, e.source, e.created_at, e.importance
+                  e.type, e.title, e.body, e.project, e.agent, e.source, e.created_at, e.importance, e.citations
            FROM entry_vectors v
            JOIN entries e ON e.id = v.entry_id
            WHERE v.model = ?
@@ -825,7 +944,9 @@ export class Memory {
   async search(opts) {
     const query = cleanText('query', opts.query)
     const match = ftsQuery(query)
-    const project = canonicalProject(cleanOptional(opts.project))
+    const rawProject = cleanOptional(opts.project)
+    const project = canonicalProject(rawProject)
+    const root = resolveVerifyRoot(rawProject)
     const agent = cleanOptional(opts.agent)
     const wantLimit = clampLimit(opts.limit, DEFAULT_SEARCH_LIMIT)
     const excerptTokens = Math.min(64, SEARCH_EXCERPT_TOKENS)
@@ -838,7 +959,7 @@ export class Memory {
         ftsRows = this.db
           .prepare(
             `SELECT e.id, e.type, e.title, e.project, e.agent, e.source, e.created_at, e.updated_at, e.importance,
-                    e.access_count,
+                    e.access_count, e.citations,
                     snippet(entries_fts, 1, '[', ']', '...', ?) AS excerpt,
                     ${COMPOSITE_SCORE_SQL} AS score
              FROM entries_fts
@@ -871,21 +992,7 @@ export class Memory {
           ? ftsRows
           : ftsRows.filter((r) => r.score / topScore >= MIN_COMPOSITE_RATIO - 1e-9)
       const final = gated.slice(0, wantLimit)
-      this.markAccessed(final.map((r) => r.id))
-      return final.map((r) => ({
-        id: r.id,
-        type: r.type,
-        title: r.title,
-        project: r.project,
-        agent: r.agent,
-        source: r.source,
-        created_at: r.created_at,
-        updated_at: r.updated_at,
-        importance: r.importance,
-        score: r.score,
-        excerpt: r.excerpt,
-        hint: HINT,
-      }))
+      return this.finishSearchHits(final, root)
     }
 
     // RRF fusion: score 1/(60 + rank), sum across retrievers (FTS, graph, vector).
@@ -912,6 +1019,7 @@ export class Memory {
     const scoredRows = this.db
       .prepare(
         `SELECT e.id, e.type, e.title, e.body, e.project, e.agent, e.source, e.created_at, e.updated_at, e.importance,
+                e.citations,
                 ${BASE_SCORE_SQL} AS score
          FROM entries e
          WHERE e.id IN (${place}) AND ${liveSql('e')}`,
@@ -934,6 +1042,7 @@ export class Memory {
         importance: row.importance,
         score: row.score,
         excerpt: fts?.excerpt ?? g?.excerpt ?? v?.excerpt ?? excerptFromBody(row.body),
+        citations: row.citations,
         rrf: rrf.get(row.id) ?? 0,
       }
     })
@@ -958,10 +1067,18 @@ export class Memory {
         ? fused
         : fused.filter((r) => r.score / topScore >= MIN_COMPOSITE_RATIO - 1e-9)
     const final = gated.slice(0, wantLimit)
+    return this.finishSearchHits(final, root)
+  }
 
-    this.markAccessed(final.map((r) => r.id))
-
-    return final.map((r) => ({
+  /**
+   * Verify-then-shape search hits. Access is recorded only for survivors.
+   * @param {object[]} rows
+   * @param {string|null} root
+   */
+  finishSearchHits(rows, root) {
+    const decorated = this.decorateEntries(rows, root)
+    this.markAccessed(decorated.map((r) => r.id))
+    return decorated.map((r) => ({
       id: r.id,
       type: r.type,
       title: r.title,
@@ -973,19 +1090,20 @@ export class Memory {
       importance: r.importance,
       score: r.score,
       excerpt: r.excerpt,
+      citations: r.citations,
       hint: HINT,
     }))
   }
 
   /**
    * @param {string} id
-   * @param {{ title?: string, body?: string, status?: string, importance?: number, agent?: string, source?: string, project?: string }} fields
+   * @param {{ title?: string, body?: string, status?: string, importance?: number, agent?: string, source?: string, project?: string, citations?: unknown }} fields
    */
   supersede(id, fields = {}) {
     const cleanId = cleanText('id', id)
     const old = this.db
       .prepare(
-        `SELECT id, type, title, body, project, agent, source, status, importance, superseded_by
+        `SELECT id, type, title, body, project, agent, source, status, importance, citations, superseded_by
          FROM entries WHERE id = ?`,
       )
       .get(cleanId)
@@ -1006,6 +1124,8 @@ export class Memory {
         : old.project
     const agent = fields.agent !== undefined ? cleanOptional(fields.agent) : old.agent
     const source = fields.source !== undefined ? cleanOptional(fields.source) : old.source
+    const citations =
+      fields.citations !== undefined ? serializeCitations(fields.citations) : old.citations ?? null
 
     // Rewriting a live entry poisons the same channel as writing a new one.
     if (source === 'mcp') rejectInjectedMemory(title, body)
@@ -1027,8 +1147,8 @@ export class Memory {
     try {
       this.db
         .prepare(
-          `INSERT INTO entries (id, type, title, body, project, agent, source, status, importance, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO entries (id, type, title, body, project, agent, source, status, importance, citations, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           newId,
@@ -1040,6 +1160,7 @@ export class Memory {
           source,
           status ?? null,
           importance,
+          citations,
           now,
           now,
         )
@@ -1071,11 +1192,13 @@ export class Memory {
    * @param {{ project?: string }} opts
    */
   bootstrap(opts = {}) {
-    const project = canonicalProject(cleanOptional(opts.project))
+    const rawProject = cleanOptional(opts.project)
+    const project = canonicalProject(rawProject)
+    const root = resolveVerifyRoot(rawProject)
 
     const conventionsRaw = this.db
       .prepare(
-        `SELECT id, title, body, importance, created_at FROM entries
+        `SELECT id, title, body, importance, created_at, citations FROM entries
          WHERE type = 'convention' AND ${liveSql()}
            AND (? IS NULL OR project = ?)
          ORDER BY importance DESC, created_at DESC
@@ -1087,7 +1210,7 @@ export class Memory {
     // than absent. They are short by construction and the budget caps the count.
     const strategiesRaw = this.db
       .prepare(
-        `SELECT id, title, body, importance, created_at FROM entries
+        `SELECT id, title, body, importance, created_at, citations FROM entries
          WHERE type = 'strategy' AND ${liveSql()}
            AND (? IS NULL OR project = ?)
          ORDER BY importance DESC, created_at DESC
@@ -1097,7 +1220,7 @@ export class Memory {
 
     const knowledgeRaw = this.db
       .prepare(
-        `SELECT id, title, body, importance, created_at FROM entries
+        `SELECT id, title, body, importance, created_at, citations FROM entries
          WHERE type = 'knowledge' AND ${liveSql()}
            AND (? IS NULL OR project = ?)
          ORDER BY importance DESC, created_at DESC
@@ -1107,7 +1230,7 @@ export class Memory {
 
     const tasksRaw = this.db
       .prepare(
-        `SELECT id, title, body, status, agent, source, project, created_at, updated_at FROM entries
+        `SELECT id, title, body, status, agent, source, project, created_at, updated_at, citations FROM entries
          WHERE type = 'task' AND ${liveSql()}
            AND COALESCE(status, 'active') = 'active'
            AND (? IS NULL OR project = ?)
@@ -1116,61 +1239,79 @@ export class Memory {
       )
       .all(project, project)
 
-    const conventions = applyTokenBudget(
-      conventionsRaw,
-      SECTION_BUDGETS.conventions,
-      (r) => ({ id: r.id, title: r.title, body: r.body, importance: r.importance, created_at: r.created_at }),
+    const conventions = this.decorateEntries(
+      applyTokenBudget(
+        conventionsRaw,
+        SECTION_BUDGETS.conventions,
+        (r) => ({ id: r.id, title: r.title, body: r.body, importance: r.importance, created_at: r.created_at }),
+      ),
+      root,
     ).map((r) => ({
       id: r.id,
       title: r.title,
       body: r.body,
       importance: r.importance,
       created_at: r.created_at,
+      citations: r.citations,
+      ...(r.verified ? { verified: true } : {}),
     }))
 
-    const strategies = applyTokenBudget(
-      strategiesRaw,
-      SECTION_BUDGETS.strategies,
-      (r) => ({ id: r.id, title: r.title, body: r.body, importance: r.importance, created_at: r.created_at }),
+    const strategies = this.decorateEntries(
+      applyTokenBudget(
+        strategiesRaw,
+        SECTION_BUDGETS.strategies,
+        (r) => ({ id: r.id, title: r.title, body: r.body, importance: r.importance, created_at: r.created_at }),
+      ),
+      root,
     ).map((r) => ({
       id: r.id,
       title: r.title,
       body: r.body,
       importance: r.importance,
       created_at: r.created_at,
+      citations: r.citations,
+      ...(r.verified ? { verified: true } : {}),
     }))
 
-    const knowledge = applyTokenBudget(
-      knowledgeRaw,
-      SECTION_BUDGETS.knowledge,
-      (r) => ({
-        id: r.id,
-        title: r.title,
-        excerpt: r.body.slice(0, 200),
-        importance: r.importance,
-        created_at: r.created_at,
-      }),
+    const knowledge = this.decorateEntries(
+      applyTokenBudget(
+        knowledgeRaw,
+        SECTION_BUDGETS.knowledge,
+        (r) => ({
+          id: r.id,
+          title: r.title,
+          excerpt: r.body.slice(0, 200),
+          importance: r.importance,
+          created_at: r.created_at,
+        }),
+      ),
+      root,
     ).map((r) => ({
       id: r.id,
       title: r.title,
       excerpt: r.body.slice(0, 200),
       importance: r.importance,
       created_at: r.created_at,
+      citations: r.citations,
+      ...(r.verified ? { verified: true } : {}),
     }))
 
-    const tasks = applyTokenBudget(
-      tasksRaw,
-      SECTION_BUDGETS.tasks,
-      (r) => ({
-        id: r.id,
-        title: r.title,
-        body: r.body,
-        status: r.status,
-        agent: r.agent,
-        source: r.source,
-        project: r.project,
-        updated_at: r.updated_at,
-      }),
+    const tasks = this.decorateEntries(
+      applyTokenBudget(
+        tasksRaw,
+        SECTION_BUDGETS.tasks,
+        (r) => ({
+          id: r.id,
+          title: r.title,
+          body: r.body,
+          status: r.status,
+          agent: r.agent,
+          source: r.source,
+          project: r.project,
+          updated_at: r.updated_at,
+        }),
+      ),
+      root,
     ).map((r) => ({
       id: r.id,
       title: r.title,
@@ -1180,6 +1321,7 @@ export class Memory {
       source: r.source,
       project: r.project,
       updated_at: r.updated_at,
+      citations: r.citations,
     }))
 
     this.markAccessed([
@@ -1204,7 +1346,9 @@ export class Memory {
    */
   recent(opts = {}) {
     const limit = clampLimit(opts.limit, 20, RECENT_MAX)
-    const project = canonicalProject(cleanOptional(opts.project))
+    const rawProject = cleanOptional(opts.project)
+    const project = canonicalProject(rawProject)
+    const root = resolveVerifyRoot(rawProject)
     const type = opts.type ? cleanText('type', opts.type) : null
     if (type && !ENTRY_TYPES.has(type)) {
       throw new Error(`invalid type '${type}'`)
@@ -1212,7 +1356,7 @@ export class Memory {
 
     const rows = this.db
       .prepare(
-        `SELECT id, type, title, body, project, agent, source, status, created_at, updated_at, importance
+        `SELECT id, type, title, body, project, agent, source, status, created_at, updated_at, importance, citations
          FROM entries
          WHERE ${liveSql()}
            AND ${projectScopeSql()}
@@ -1222,7 +1366,7 @@ export class Memory {
       )
       .all(project, project, type, type, limit)
 
-    return rows.map((r) => ({
+    return this.decorateEntries(rows, root).map((r) => ({
       id: r.id,
       type: r.type,
       title: r.title,
@@ -1234,6 +1378,7 @@ export class Memory {
       updated_at: r.updated_at,
       importance: r.importance,
       excerpt: excerptFromBody(r.body),
+      citations: r.citations,
       hint: HINT,
     }))
   }

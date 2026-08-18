@@ -302,6 +302,43 @@ describe("memory-proxy", () => {
     });
   });
 
+  it("normalizes citations from the server onto MemoryEntryInfo", async () => {
+    fake = await startFakeServer({
+      port,
+      token: TOKEN,
+      handler(req) {
+        const url = new URL(req.url || "/", `http://127.0.0.1:${port}`);
+        if (req.method === "GET" && url.pathname === "/api/recent") {
+          return {
+            status: 200,
+            json: [
+              {
+                id: "e-cite",
+                type: "knowledge",
+                title: "Cited fact",
+                body: "excerpt",
+                project: "p",
+                importance: 3,
+                created_at: "2026-08-01T00:00:00.000Z",
+                updated_at: "2026-08-02T00:00:00.000Z",
+                citations: [
+                  { kind: "file", path: "src/a.ts", line: 4, excerpt: "fn" },
+                  { kind: "thread", id: "tid-1" },
+                ],
+              },
+            ],
+          };
+        }
+        return null;
+      },
+    });
+    const entries = await proxy().recent();
+    assert.deepEqual(entries[0].citations, [
+      { kind: "file", path: "src/a.ts", line: 4, excerpt: "fn" },
+      { kind: "thread", id: "tid-1" },
+    ]);
+  });
+
   it("store: posts JSON and returns { id }", async () => {
     let capturedBody = null;
     fake = await startFakeServer({
@@ -329,6 +366,29 @@ describe("memory-proxy", () => {
       body: "durable detail",
       project: "my-proj",
     });
+  });
+
+  it("store: forwards citations when the caller supplies them", async () => {
+    let capturedBody = null;
+    fake = await startFakeServer({
+      port,
+      token: TOKEN,
+      handler(req, body) {
+        if (req.method === "POST" && (req.url || "").startsWith("/api/store")) {
+          capturedBody = JSON.parse(body);
+          return { status: 200, json: { id: "cited-id" } };
+        }
+        return null;
+      },
+    });
+    const citations = [{ kind: "thread", id: "t-9" }];
+    await proxy().store({
+      type: "run",
+      title: "cited run",
+      body: "footer",
+      citations,
+    });
+    assert.deepEqual(capturedBody.citations, citations);
   });
 
   it("sends Authorization: Bearer <token> on every request", async () => {

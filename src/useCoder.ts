@@ -19,6 +19,7 @@ import type {
   GitPullResult,
   FetchIssueResult,
   LocalServerInfo,
+  MemoryCitation,
   MemoryEntryInfo,
   PermissionDecision,
   PermissionMode,
@@ -444,6 +445,7 @@ export interface UseCoderResult {
     title: string;
     body: string;
     project?: string;
+    citations?: MemoryCitation[];
   }) => Promise<{ id: string }>;
   /** Thin skills passthroughs; SkillsTab holds list state locally. */
   listSkills: (input?: { projectPath?: string }) => Promise<SkillInfo[]>;
@@ -2158,6 +2160,7 @@ export function useCoder(): UseCoderResult {
       title: string;
       body: string;
       project?: string;
+      citations?: MemoryCitation[];
     }) => {
       return api.memory.store(input);
     },
