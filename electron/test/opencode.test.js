@@ -14,6 +14,7 @@ const {
   extractToolEvent,
 } = require("../opencode.js");
 const { getProvider, listProviders } = require("../providers.js");
+const { writeFakeBin } = require("./support/fakeBin.js");
 
 function git(cwd, args) {
   execFileSync("git", args, { cwd, stdio: "ignore" });
@@ -163,8 +164,7 @@ main().catch((e) => {
   process.exit(1);
 });
 `;
-  fs.writeFileSync(scriptPath, body, { mode: 0o755 });
-  return scriptPath;
+  return writeFakeBin(scriptPath, body);
 }
 
 describe("opencode extract helpers", () => {

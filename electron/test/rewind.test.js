@@ -21,6 +21,7 @@ const {
   CHECKPOINT_SUBJECT_PREFIX,
 } = require("../worktrees.js");
 const { createRunner } = require("../runner.js");
+const { writeFakeBin } = require("./support/fakeBin.js");
 
 function git(cwd, args) {
   return execFileSync("git", args, {
@@ -548,7 +549,6 @@ describe("runner replayContext prefix on first turn only", () => {
 
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-rewind-run-"));
     argvFile = path.join(tmpDir, "argv.json");
-    const fake = path.join(tmpDir, "fake-claude");
     const body = `#!/usr/bin/env node
 "use strict";
 const fs = require("fs");
@@ -569,7 +569,7 @@ process.stdin.on("data", (c) => {
   process.exit(0);
 });
 `;
-    fs.writeFileSync(fake, body, { mode: 0o755 });
+    const fake = writeFakeBin(path.join(tmpDir, "fake-claude"), body);
     process.env.CODER_CLAUDE_BIN = fake;
     process.env.CODER_FAKE_CLAUDE_ARGV_FILE = argvFile;
 

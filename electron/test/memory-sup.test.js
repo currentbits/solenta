@@ -19,6 +19,7 @@ const {
   resetMemorySupForTests,
   resolveNodeBinary,
 } = require("../memory-sup.js");
+const { writeFakeBin } = require("./support/fakeBin.js");
 
 function waitFor(predicate, { timeoutMs = 10000, intervalMs = 30 } = {}) {
   return new Promise((resolve, reject) => {
@@ -112,7 +113,8 @@ server.listen(port, "127.0.0.1", () => {
   // ready
 });
 `;
-  fs.writeFileSync(scriptPath, body, { mode: 0o755 });
+  writeFakeBin(scriptPath, body);
+  // Spawned as `node [entry]`, so callers need the JS path, not the .cmd.
   return scriptPath;
 }
 
@@ -848,8 +850,7 @@ if (process.env.CODER_FAKE_GROK_MCP_ARGV_FILE) {
 }
 process.exit(0);
 `;
-    fakeGrok = path.join(tmpDir, "fake-grok-mcp");
-    fs.writeFileSync(fakeGrok, body, { mode: 0o755 });
+    fakeGrok = writeFakeBin(path.join(tmpDir, "fake-grok-mcp"), body);
     process.env.CODER_GROK_BIN = fakeGrok;
     process.env.CODER_FAKE_GROK_MCP_ARGV_FILE = mcpArgvFile;
     resetMemorySupForTests();
@@ -1060,8 +1061,7 @@ prev.push(process.argv.slice(2));
 fs.writeFileSync(file, JSON.stringify(prev), "utf8");
 process.exit(0);
 `;
-    const bin = path.join(tmpDir, "fake-grok");
-    fs.writeFileSync(bin, body, { mode: 0o755 });
+    const bin = writeFakeBin(path.join(tmpDir, "fake-grok"), body);
     process.env.CODER_GROK_BIN = bin;
     process.env.CODER_FAKE_GROK_MCP_ARGV_FILE = mcpArgvFile;
     const env = { ...process.env };

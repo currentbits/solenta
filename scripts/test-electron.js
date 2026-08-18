@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 // The electron suite on POSIX is `node --test electron/test/*.test.js`.
-// On win32 most of those files spawn a shebang script as CODER_*_BIN
-// (see electron/test/claude.test.js: "On macOS we can use a node shebang
-// script directly as the binary"). CreateProcess will not execute those.
-// Until fakes grow a .cmd wrapper, win32 only runs the WSL contract —
-// the win32 path this matrix exists to keep honest. #437
+// On win32, CreateProcess cannot run a shebang. Agent-CLI fakes now go
+// through writeFakeBin (electron/test/support/fakeBin.js) which emits a
+// .cmd wrapper; cross-spawn (after #442) can launch those. gh/fm still
+// use child_process.execFile, which cannot run .cmd — those files stay
+// off this list. #450
 "use strict";
 
 const { spawnSync } = require("node:child_process");
@@ -14,15 +14,31 @@ const args = [
   "--experimental-strip-types",
   "--test",
 ];
-// The win32 list is exactly the files that model win32 behaviour without
-// spawning anything real: pure resolvers, or fakes injected through
-// ssh.setExecFile. Anything added here must hold to that — the moment a
-// file needs a real git or a shebang fake, the Windows leg goes red.
+// Win32: files whose only spawn is writeFakeBin + cross-spawn, or that
+// inject the platform / never spawn. git.exe is on windows-latest.
+// Not here: execFile of a fake (gh, fm), signals, /bin/sh, hardcoded /tmp.
 const WIN32_FILES = [
   "electron/test/wsl.test.js", // the boundary contract itself
   "electron/test/worktree-wsl.test.js", // worktree placement across it
   "electron/test/doctor.test.js", // the win32 doctor probes
   "electron/test/sandbox.test.js", // sandbox resolution (platform injected)
+  "electron/test/which-platform.test.js", // defaultWhich + cross-spawn source
+  "electron/test/fake-bin.test.js", // the .cmd wrapper contract
+  "electron/test/budget-spend.test.js",
+  "electron/test/codex.test.js",
+  "electron/test/context-usage.test.js",
+  "electron/test/fork-handoff.test.js",
+  "electron/test/grok.test.js",
+  "electron/test/guardrails-runner.test.js",
+  "electron/test/kimi.test.js",
+  "electron/test/kimi-effort.test.js",
+  "electron/test/memory-record.test.js",
+  "electron/test/opencode.test.js",
+  "electron/test/otel-runner.test.js",
+  "electron/test/providers-set.test.js",
+  "electron/test/reasoning-effort.test.js",
+  "electron/test/rewind.test.js",
+  "electron/test/session-record.test.js",
 ];
 if (process.platform === "win32") {
   args.push(...WIN32_FILES);

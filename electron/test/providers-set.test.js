@@ -9,6 +9,7 @@ const { Store } = require("../store.js");
 const services = require("../services.js");
 const { createRunner } = require("../runner.js");
 const { getProvider } = require("../providers.js");
+const { writeFakeBin } = require("./support/fakeBin.js");
 
 function git(cwd, args) {
   execFileSync("git", args, { cwd, stdio: "ignore" });
@@ -425,8 +426,7 @@ emit({type:"system",subtype:"init",session_id:"s1",model:"m"});
 emit({type:"result",subtype:"success",result:"ok",usage:{input_tokens:1,output_tokens:1},total_cost_usd:0,session_id:"s1"});
 process.exit(0);
 `;
-    const fake = path.join(tmpDir, "fake-claude");
-    fs.writeFileSync(fake, body, { mode: 0o755 });
+    const fake = writeFakeBin(path.join(tmpDir, "fake-claude"), body);
     argvFile = path.join(tmpDir, "argv.json");
     process.env.CODER_CLAUDE_BIN = fake;
     process.env.CODER_FAKE_CLAUDE_ARGV_FILE = argvFile;
@@ -511,8 +511,7 @@ emit({type:"assistant",message:{content:[{type:"text",text:"grok-ok"}]}});
 emit({type:"result",subtype:"success",is_error:false,result:"grok-ok",usage:{input_tokens:1,output_tokens:2},total_cost_usd:0,num_turns:1,session_id:"g-set-1"});
 process.exit(0);
 `;
-    const fake = path.join(tmpDir, "fake-grok");
-    fs.writeFileSync(fake, body, { mode: 0o755 });
+    const fake = writeFakeBin(path.join(tmpDir, "fake-grok"), body);
     process.env.CODER_GROK_BIN = fake;
     process.env.CODER_FAKE_GROK_ARGV_FILE = argvFile;
 

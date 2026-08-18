@@ -20,6 +20,7 @@ const {
 const { Store } = require("../store.js");
 const services = require("../services.js");
 const { createRunner } = require("../runner.js");
+const { writeFakeBin } = require("./support/fakeBin.js");
 
 function git(cwd, args) {
   execFileSync("git", args, { cwd, stdio: "ignore" });
@@ -729,9 +730,8 @@ describe("reasoning effort: IPC seam + runner wiring", () => {
     // path where losing the argument is invisible, and it had no coverage.
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-effort-claude-"));
     const argvFile = path.join(tmpDir, "argv.json");
-    const fakeClaude = path.join(tmpDir, "fake-claude");
-    fs.writeFileSync(
-      fakeClaude,
+    const fakeClaude = writeFakeBin(
+      path.join(tmpDir, "fake-claude"),
       `#!/usr/bin/env node
 "use strict";
 const fs = require("fs");
@@ -754,7 +754,6 @@ emit({
   usage: { input_tokens: 1, output_tokens: 1 },
 });
 `,
-      { mode: 0o755 },
     );
 
     const prev = {
@@ -817,9 +816,8 @@ emit({
   it("runner passes thread.reasoningEffort into codex buildArgs (argv evidence)", async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-effort-run-"));
     const argvFile = path.join(tmpDir, "argv.json");
-    const fakeCodex = path.join(tmpDir, "fake-codex");
-    fs.writeFileSync(
-      fakeCodex,
+    const fakeCodex = writeFakeBin(
+      path.join(tmpDir, "fake-codex"),
       `#!/usr/bin/env node
 "use strict";
 const fs = require("fs");
@@ -841,7 +839,6 @@ emit({
   usage: { input_tokens: 1, output_tokens: 1 },
 });
 `,
-      { mode: 0o755 },
     );
 
     const prev = {

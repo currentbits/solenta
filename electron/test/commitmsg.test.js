@@ -15,6 +15,7 @@ const {
   PROMPT_PATCH_LIMIT,
 } = require("../commitmsg.js");
 const { buildPrompt } = require("../commitmsg.js");
+const { writeFakeBin } = require("./support/fakeBin.js");
 
 function git(cwd, args) {
   return execFileSync("git", args, {
@@ -168,16 +169,14 @@ describe("suggestCommitMessage", () => {
 
     // Fake claude CLI: logs argv, prints a commit message on stdout.
     logPath = path.join(tmpDir, "fake-log.json");
-    fakeBin = path.join(tmpDir, "fake-claude");
-    fs.writeFileSync(
-      fakeBin,
+    fakeBin = writeFakeBin(
+      path.join(tmpDir, "fake-claude"),
       `#!/usr/bin/env node
 const fs = require("fs");
 fs.writeFileSync(process.env.FAKE_CLAUDE_LOG, JSON.stringify(process.argv.slice(2)));
 console.log("feat: generated subject");
 `,
     );
-    fs.chmodSync(fakeBin, 0o755);
   });
 
   afterEach(() => {
@@ -236,14 +235,12 @@ console.log("feat: generated subject");
 
   it("fm answers even when the provider CLI is missing entirely", async () => {
     fs.writeFileSync(path.join(repo, "a.txt"), "one\n");
-    const fmBin = path.join(tmpDir, "fake-fm");
-    fs.writeFileSync(
-      fmBin,
+    const fmBin = writeFakeBin(
+      path.join(tmpDir, "fake-fm"),
       `#!/usr/bin/env node
 console.log("chore: no billed CLI needed");
 `,
     );
-    fs.chmodSync(fmBin, 0o755);
 
     const result = await suggestCommitMessage({
       store,
@@ -259,14 +256,12 @@ console.log("chore: no billed CLI needed");
 
   it("uses fm when it returns a subject and never invokes the provider CLI", async () => {
     fs.writeFileSync(path.join(repo, "a.txt"), "one\n");
-    const fmBin = path.join(tmpDir, "fake-fm");
-    fs.writeFileSync(
-      fmBin,
+    const fmBin = writeFakeBin(
+      path.join(tmpDir, "fake-fm"),
       `#!/usr/bin/env node
 console.log("feat: from on-device fm");
 `,
     );
-    fs.chmodSync(fmBin, 0o755);
 
     const result = await suggestCommitMessage({
       store,
@@ -284,15 +279,13 @@ console.log("feat: from on-device fm");
 
   it("falls back to the provider when fm exits non-zero", async () => {
     fs.writeFileSync(path.join(repo, "a.txt"), "one\n");
-    const fmBin = path.join(tmpDir, "fake-fm");
-    fs.writeFileSync(
-      fmBin,
+    const fmBin = writeFakeBin(
+      path.join(tmpDir, "fake-fm"),
       `#!/usr/bin/env node
 console.error("fm boom");
 process.exit(3);
 `,
     );
-    fs.chmodSync(fmBin, 0o755);
 
     const result = await suggestCommitMessage({
       store,

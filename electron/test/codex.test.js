@@ -15,6 +15,7 @@ const {
   extractCommandItem,
   extractUsage,
 } = require("../codex.js");
+const { writeFakeBin } = require("./support/fakeBin.js");
 
 function git(cwd, args) {
   execFileSync("git", args, { cwd, stdio: "ignore" });
@@ -134,9 +135,7 @@ main().catch((e) => {
   process.exit(1);
 });
 `;
-  const launcher = path.join(dir, "fake-codex");
-  fs.writeFileSync(launcher, body, { mode: 0o755 });
-  return launcher;
+  return writeFakeBin(path.join(dir, "fake-codex"), body);
 }
 
 describe("codex event parse helpers", () => {

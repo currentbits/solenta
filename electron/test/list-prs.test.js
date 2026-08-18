@@ -14,6 +14,7 @@ const {
   isUnknownJsonField,
   listPrs,
 } = require("../worktrees.js");
+const { writeFakeBin } = require("./support/fakeBin.js");
 
 function git(cwd, args) {
   return execFileSync("git", args, {
@@ -119,9 +120,8 @@ describe("listPrs fallback", () => {
     git(repo, ["commit", "-qm", "init"]);
     git(repo, ["remote", "add", "origin", "https://github.com/acme/demo.git"]);
 
-    const bin = path.join(tmp, "fake-gh");
-    fs.writeFileSync(
-      bin,
+    const bin = writeFakeBin(
+      path.join(tmp, "fake-gh"),
       `#!/usr/bin/env node
 "use strict";
 const args = process.argv.slice(2);
@@ -138,7 +138,6 @@ if (args[0] === "pr" && args[1] === "list") {
 process.stderr.write("unhandled " + JSON.stringify(args) + "\\n");
 process.exit(2);
 `,
-      { mode: 0o755 },
     );
     prevGh = process.env.CODER_GH_BIN;
     process.env.CODER_GH_BIN = bin;

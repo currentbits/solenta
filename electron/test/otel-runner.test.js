@@ -8,6 +8,7 @@ const { execFileSync } = require("node:child_process");
 const { Store } = require("../store.js");
 const services = require("../services.js");
 const { createRunner } = require("../runner.js");
+const { writeFakeBin } = require("./support/fakeBin.js");
 
 // otel.js is unit-tested against injected deps; this covers the other half —
 // that a real run through the runner actually reaches a collector, with the
@@ -86,8 +87,7 @@ emit({
 });
 process.exit(0);
 `;
-  fs.writeFileSync(scriptPath, body, { mode: 0o755 });
-  return scriptPath;
+  return writeFakeBin(scriptPath, body);
 }
 
 /** Every span POSTed across all batches, flattened. */
@@ -234,11 +234,9 @@ describe("OTel spans from a real run", () => {
       otel: { endpoint: "http://127.0.0.1:4318", headers: {}, claudeMetrics: false },
     });
     // A binary that exits non-zero without ever emitting a result event.
-    const failing = path.join(tmpDir, "fake-claude-fail.js");
-    fs.writeFileSync(
-      failing,
+    const failing = writeFakeBin(
+      path.join(tmpDir, "fake-claude-fail.js"),
       '#!/usr/bin/env node\nprocess.stderr.write("boom: no such model\\n");\nprocess.exit(3);\n',
-      { mode: 0o755 },
     );
     process.env.CODER_CLAUDE_BIN = failing;
 

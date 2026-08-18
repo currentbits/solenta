@@ -28,6 +28,7 @@ const ipc = require("../ipc.js");
 const { Store } = require("../store.js");
 const services = require("../services.js");
 const { createRunner, liveClaudeChildren } = require("../runner.js");
+const { writeFakeBin } = require("./support/fakeBin.js");
 
 /** 1x1 transparent PNG, the "tool-image" scenario's payload. */
 const PNG_B64 =
@@ -67,7 +68,6 @@ function waitFor(predicate, { timeoutMs = 15000, intervalMs = 20 } = {}) {
  * @returns {string} path to the fake binary script
  */
 async function writeFakeClaude(dir) {
-  const scriptPath = path.join(dir, "fake-claude.js");
   const body = `#!/usr/bin/env node
 "use strict";
 const fs = require("fs");
@@ -970,16 +970,7 @@ main().catch((e) => {
   process.exit(1);
 });
 `;
-  fs.writeFileSync(scriptPath, body, "utf8");
-  fs.chmodSync(scriptPath, 0o755);
-  // Wrapper shell-free: use node as CODER_CLAUDE_BIN pointing at this script
-  // via: node fake-claude.js ... but contract wants binary. Use node + script
-  // by setting CODER_CLAUDE_BIN to a small launcher.
-  const launcher = path.join(dir, "fake-claude");
-  // On macOS we can use a node shebang script directly as the binary.
-  fs.writeFileSync(launcher, body, "utf8");
-  fs.chmodSync(launcher, 0o755);
-  return launcher;
+  return writeFakeBin(path.join(dir, "fake-claude"), body);
 }
 
 describe("runner claude provider", () => {

@@ -9,6 +9,7 @@ const { Store } = require("../store.js");
 const services = require("../services.js");
 const { createRunner } = require("../runner.js");
 const { extractUsage } = require("../codex.js");
+const { writeFakeBin } = require("./support/fakeBin.js");
 
 function git(cwd, args) {
   execFileSync("git", args, { cwd, stdio: "ignore" });
@@ -38,9 +39,7 @@ function waitFor(predicate, { timeoutMs = 15000, intervalMs = 20 } = {}) {
 }
 
 function writeScript(dir, name, body) {
-  const scriptPath = path.join(dir, name);
-  fs.writeFileSync(scriptPath, body, { mode: 0o755 });
-  return scriptPath;
+  return writeFakeBin(path.join(dir, name), body);
 }
 
 describe("codex extractUsage token_count", () => {
