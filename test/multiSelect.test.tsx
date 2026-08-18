@@ -80,12 +80,21 @@ function fullFixture(): ThreadInfo[] {
 function Host({
   initial = fullFixture(),
   onRemoveProject,
+  onCreateThread,
+  projects = [p1, p2],
+  initialActive = "noise",
 }: {
   initial?: ThreadInfo[];
   onRemoveProject?: (projectId: string) => void | Promise<void>;
+  onCreateThread?: (
+    projectId?: string,
+    opts?: { worktree?: boolean; orchestrate?: boolean },
+  ) => void;
+  projects?: ProjectInfo[];
+  initialActive?: string;
 }) {
   const [threads, setThreads] = useState(initial);
-  const [active, setActive] = useState("noise");
+  const [active, setActive] = useState(initialActive);
   const patch = (id: string, fn: (t: ThreadInfo) => ThreadInfo) =>
     setThreads((prev) => prev.map((t) => (t.id === id ? fn(t) : t)));
 
@@ -97,12 +106,12 @@ function Host({
         appName="Solenta"
         searchPlaceholder="Search"
         projectsHeader="All projects"
-        projects={[p1, p2]}
+        projects={projects}
         threads={threads}
         providers={providers}
         activeThreadId={active}
         onSelectThread={setActive}
-        onCreateThread={() => {}}
+        onCreateThread={onCreateThread ?? (() => {})}
         onAddProject={() => {}}
         onRemoveProject={onRemoveProject}
         onSetSettled={(id, override) => {
@@ -570,7 +579,7 @@ describe("Keyboard sheet (round 46)", () => {
       "real remove-project confirm, not a stub",
     );
 
-    // Active stays noise; none of the jump / sheet shortcuts may act.
+    // Active stays noise; none of the jump / sheet / create shortcuts may act.
     await inAct(async () => {
       dispatchKey("keydown", "3", { metaKey: true });
     });
@@ -581,6 +590,10 @@ describe("Keyboard sheet (round 46)", () => {
     await m.flush();
     await inAct(async () => {
       dispatchKey("keydown", "?");
+    });
+    await m.flush();
+    await inAct(async () => {
+      dispatchKey("keydown", "n", { metaKey: true });
     });
     await m.flush();
 
@@ -596,6 +609,128 @@ describe("Keyboard sheet (round 46)", () => {
       false,
       "? must not open keyboard sheet while modal open",
     );
+    m.unmount();
+  });
+});
+
+describe("Sidebar new-thread shortcuts (#444)", () => {
+  it("⌘N with one project creates immediately in that project", async () => {
+    const created: Array<string | undefined> = [];
+    const m = await mount(
+      <Host
+        projects={[p1]}
+        initial={[th("only", { projectId: "p1" })]}
+        initialActive="only"
+        onCreateThread={(id) => created.push(id)}
+      />,
+    );
+    await inAct(async () => {
+      dispatchKey("keydown", "n", { metaKey: true });
+    });
+    await m.flush();
+    assert.deepEqual(created, ["p1"]);
+    m.unmount();
+  });
+
+  it("⌘N with several projects creates in createTargetProject (open thread)", async () => {
+    const created: Array<string | undefined> = [];
+    const m = await mount(
+      <Host
+        initialActive="pin-mid"
+        onCreateThread={(id) => created.push(id)}
+      />,
+    );
+    await inAct(async () => {
+      dispatchKey("keydown", "n", { metaKey: true });
+    });
+    await m.flush();
+    assert.deepEqual(
+      created,
+      ["p2"],
+      "until #443 picker: ⌘N uses the open thread's project",
+    );
+    m.unmount();
+  });
+
+  it("⌘⇧N always creates in createTargetProject (open thread, else first)", async () => {
+    const created: Array<string | undefined> = [];
+    const m = await mount(
+      <Host
+        initialActive="pin-mid"
+        onCreateThread={(id) => created.push(id)}
+      />,
+    );
+    await inAct(async () => {
+      dispatchKey("keydown", "n", { metaKey: true, shiftKey: true });
+    });
+    await m.flush();
+    assert.deepEqual(created, ["p2"], "⌘⇧N uses the open thread's project");
+
+    const fallback: Array<string | undefined> = [];
+    const m2 = await mount(
+      <Host
+        initialActive=""
+        onCreateThread={(id) => fallback.push(id)}
+      />,
+    );
+    await inAct(async () => {
+      dispatchKey("keydown", "N", { ctrlKey: true, shiftKey: true });
+    });
+    await m2.flush();
+    assert.deepEqual(fallback, ["p1"], "no open thread falls back to first project");
+    m.unmount();
+    m2.unmount();
+  });
+
+  it("⌘N / ⌘⇧N are ignored in a textarea and with no projects", async () => {
+    const created: Array<string | undefined> = [];
+    const m = await mount(
+      <Host onCreateThread={(id) => created.push(id)} />,
+    );
+    const ta = document.createElement("textarea");
+    document.body.appendChild(ta);
+    ta.focus();
+    await inAct(async () => {
+      dispatchKey("keydown", "n", { metaKey: true }, ta);
+    });
+    await inAct(async () => {
+      dispatchKey("keydown", "n", { metaKey: true, shiftKey: true }, ta);
+    });
+    await m.flush();
+    assert.deepEqual(created, [], "composer/textarea focus blocks create");
+    ta.remove();
+    m.unmount();
+
+    const empty: Array<string | undefined> = [];
+    const m2 = await mount(
+      <Host
+        projects={[]}
+        initial={[]}
+        initialActive=""
+        onCreateThread={(id) => empty.push(id)}
+      />,
+    );
+    await inAct(async () => {
+      dispatchKey("keydown", "n", { metaKey: true });
+    });
+    await m2.flush();
+    assert.deepEqual(empty, [], "no project → no create");
+    m2.unmount();
+  });
+
+  it("keyboard sheet lists both new-thread chords", async () => {
+    const m = await mount(<Host />);
+    await inAct(async () => {
+      dispatchKey("keydown", "?");
+    });
+    await m.flush();
+    const sheet = m.query("[data-keyboard-sheet]");
+    assert.ok(sheet, "? opens sheet");
+    const text = sheet!.textContent || "";
+    assert.match(text, /⌘ \+ N/);
+    assert.match(text, /⌘ \+ ⇧ \+ N/);
+    assert.match(text, /New thread/);
+    assert.match(text, /current project/);
     m.unmount();
   });
 });
