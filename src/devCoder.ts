@@ -2627,6 +2627,7 @@ function buildDevCoder(): CoderApi {
           // worker does.
           pendingWorktree: input.orchestrate !== true && input.worktree === true,
           pendingFork: input.orchestrate === true,
+          issueNumber: input.issueNumber ?? null,
         });
         return registerThread(t);
       },

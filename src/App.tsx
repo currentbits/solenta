@@ -594,7 +594,10 @@ export default function App() {
               : input.mode === "plain"
                 ? { worktree: false, orchestrate: false }
                 : undefined;
-        thread = await createThread(issue.title, input.projectId, opts);
+        thread = await createThread(issue.title, input.projectId, {
+          ...opts,
+          issueNumber: issue.number,
+        });
       } catch (err) {
         return {
           ok: false as const,

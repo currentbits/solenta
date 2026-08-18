@@ -170,7 +170,7 @@ export interface UseCoderResult {
   createThread: (
     title?: string,
     projectId?: string,
-    opts?: { worktree?: boolean; orchestrate?: boolean },
+    opts?: { worktree?: boolean; orchestrate?: boolean; issueNumber?: number | null },
   ) => Promise<ThreadInfo | null>;
   /**
    * Fork / hand off a thread (threads.fork). Selects the new thread the same
@@ -970,7 +970,7 @@ export function useCoder(): UseCoderResult {
     async (
       title = "New Thread",
       projectId?: string,
-      opts?: { worktree?: boolean; orchestrate?: boolean },
+      opts?: { worktree?: boolean; orchestrate?: boolean; issueNumber?: number | null },
     ) => {
       const pid = projectId ?? selectedProjectId;
       if (!pid) return null;
@@ -996,6 +996,7 @@ export function useCoder(): UseCoderResult {
           title,
           ...(worktree ? { worktree: true } : {}),
           ...(orchestrate ? { orchestrate: true } : {}),
+          ...(opts?.issueNumber != null ? { issueNumber: opts.issueNumber } : {}),
         });
       } catch (err) {
         setError({ scope: "run", message: errorMessage(err) });

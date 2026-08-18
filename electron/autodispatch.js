@@ -21,6 +21,7 @@ async function dispatchIssue(ctx, project, issue) {
   const thread = services.createThread(ctx.store, {
     projectId: project.id,
     title: fetched.issue.title,
+    issueNumber: fetched.issue.number,
   });
   // Concurrent auto-dispatched agents each need their own worktree; it is
   // materialized lazily at run start, same as threads:create worktree:true.
