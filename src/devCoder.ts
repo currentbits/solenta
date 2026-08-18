@@ -64,6 +64,8 @@ import type {
   WorkflowPhaseSpec,
   WorkflowTemplateInfo,
   WorkflowView,
+  VibeKanbanPreview,
+  VibeKanbanImportResult,
 } from "./shared/ipc";
 import { SPEC_ARTIFACTS, SPEC_DIR } from "./shared/ipc";
 import { buildActivity } from "./activity.ts";
@@ -3947,6 +3949,37 @@ function buildDevCoder(): CoderApi {
         syncThreadRow(thread);
         emitDetail(detail);
         return { ...thread };
+      },
+    },
+    vibeKanban: {
+      async preview(): Promise<VibeKanbanPreview> {
+        return {
+          found: false,
+          dataDir: null,
+          dbPath: null,
+          projects: [],
+          taskCount: 0,
+          worktreeCount: 0,
+          alreadyImported: 0,
+        };
+      },
+      async import(): Promise<VibeKanbanImportResult> {
+        return {
+          dataDir: null,
+          dbPath: null,
+          projectsAdded: 0,
+          projectsReused: 0,
+          threadsCreated: 0,
+          threadsSkipped: 0,
+          worktreesMapped: 0,
+          skipped: [],
+        };
+      },
+      async pickDataDir() {
+        return null;
+      },
+      async export() {
+        return null;
       },
     },
     issues: {

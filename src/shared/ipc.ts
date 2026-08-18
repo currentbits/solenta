@@ -138,6 +138,37 @@ export interface GcCleanResult {
   bytes: number;
 }
 
+/** One Vibe Kanban project as the importer sees it (#399). */
+export interface VibeKanbanPreviewProject {
+  name: string;
+  path: string | null;
+  exists: boolean;
+  taskCount: number;
+  worktreeCount: number;
+}
+
+/** Detect / dry-run of a Vibe Kanban data dir. */
+export interface VibeKanbanPreview {
+  found: boolean;
+  dataDir: string | null;
+  dbPath: string | null;
+  projects: VibeKanbanPreviewProject[];
+  taskCount: number;
+  worktreeCount: number;
+  alreadyImported: number;
+}
+
+export interface VibeKanbanImportResult {
+  dataDir: string | null;
+  dbPath: string | null;
+  projectsAdded: number;
+  projectsReused: number;
+  threadsCreated: number;
+  threadsSkipped: number;
+  worktreesMapped: number;
+  skipped: Array<{ title: string; reason: string }>;
+}
+
 export type ThreadStatus = "idle" | "working" | "done" | "failed" | "quota-wait";
 
 export type PermissionMode = "default" | "acceptEdits" | "plan" | "bypassPermissions";
@@ -212,6 +243,8 @@ export interface ThreadInfo {
   stalledAt?: number | null;
   /** Archived threads keep their history but are hidden from the default sidebar list. */
   archived: boolean;
+  /** Set when this thread was imported from a Vibe Kanban card (#399). */
+  vibeKanbanTaskId?: string | null;
   /**
    * Explicit settle lifecycle override (t3-style). "settled" pins the thread
    * into the settled fold; "active" pins it OUT (suppresses auto-settle);
@@ -2294,6 +2327,17 @@ export interface CoderApi {
     stop(input: { threadId: string }): Promise<DevServerState>;
     /** Live status, including a captured URL and recent log tail. */
     status(input: { threadId: string }): Promise<DevServerState>;
+  };
+  /**
+   * Vibe Kanban import (#399). Preview/import read the local VK SQLite;
+   * export writes a versioned JSON dump of projects, threads, and messages
+   * (settings and tokens stay out). pickDataDir / export cancel as null.
+   */
+  vibeKanban: {
+    preview(input?: { dataDir?: string }): Promise<VibeKanbanPreview>;
+    import(input?: { dataDir?: string }): Promise<VibeKanbanImportResult>;
+    pickDataDir(): Promise<string | null>;
+    export(): Promise<string | null>;
   };
   /** Returns an unsubscribe function. */
   on(channel: "threads:changed", cb: (threads: ThreadInfo[]) => void): () => void;

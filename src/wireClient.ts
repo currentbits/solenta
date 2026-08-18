@@ -15,6 +15,8 @@ import type {
   VerifyResult,
   GcScanResult,
   GcCleanResult,
+  VibeKanbanPreview,
+  VibeKanbanImportResult,
   DiffResult,
   GitStatus,
   GitSyncInfo,
@@ -451,6 +453,14 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
         call<ConflictForecast>("git:conflictForecast", input),
       gcScan: () => call<GcScanResult>("git:gcScan"),
       gcClean: (input) => call<GcCleanResult>("git:gcClean", input),
+    },
+    vibeKanban: {
+      preview: (input) =>
+        call<VibeKanbanPreview>("vibeKanban:preview", input),
+      import: (input) =>
+        call<VibeKanbanImportResult>("vibeKanban:import", input),
+      pickDataDir: () => call<string | null>("vibeKanban:pickDataDir"),
+      export: () => call<string | null>("vibeKanban:export"),
     },
     issues: {
       fetch: (input) => call<FetchIssueResult>("issues:fetch", input),

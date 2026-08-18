@@ -191,6 +191,12 @@ const coder = {
     gcScan: () => invoke("git:gcScan"),
     gcClean: (input) => invoke("git:gcClean", input),
   },
+  vibeKanban: {
+    preview: (input) => invoke("vibeKanban:preview", input),
+    import: (input) => invoke("vibeKanban:import", input),
+    pickDataDir: () => invoke("vibeKanban:pickDataDir"),
+    export: () => invoke("vibeKanban:export"),
+  },
   issues: {
     fetch: (input) => invoke("issues:fetch", input),
     list: (projectPath) => invoke("issues:list", projectPath),
