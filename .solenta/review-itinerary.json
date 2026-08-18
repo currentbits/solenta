@@ -4,36 +4,30 @@
   "chunks": [
     {
       "area": "critical",
-      "rationale": "Identity-semantics changes that everything else keys on: threadPatch.ts returns prev when a 700ms tick moved nothing (sameTail guards), Sidebar ThreadCard is memo'd (handleSelect via refs, threadTitles reuses its Map), services.listThreads caches the decorated list on threads/projects array identity (replace-only invariant, verified). A wrong bail = stale UI; a missed bail = O(n) per tick.",
+      "rationale": "App.tsx now early-returns BuildMismatchScreen when isBuildMismatch(app.status().build.sha, __BUILD_SHA__) is true. The three-pane shell (data-layout=app) is not mounted, so a stale renderer cannot be clicked, typed into, or dismissed past. SHA equality and vite.config.ts stamping are unchanged — no protocolVersion.",
       "risks": [
-        "listThreads caching rests on a convention: any future in-place mutation of a thread/project row or array silently serves a stale sidebar. The invariant is commented at the cache.",
-        "mergeThreadPatch returning prev drops patch.seq — safe only because seq lives on ThreadPatch, not ThreadDetail, and gap detection runs in the caller.",
-        "Sidebar handleSelect reads visibleIds/selectAnchor via refs synced in a passive effect — correct for user events, not for synthetic same-tick calls."
+        "appStatus is null until app.status() resolves, so a mismatched window still paints the live app for one IPC round-trip, then swaps to the hard stop. Same timing as the old banner.",
+        "useCoder still runs (hooks cannot be skipped), so background IPC/subscriptions continue under the block. User-facing chrome is gone; the stale renderer can still receive pushes.",
+        "rendererSha is an optional App prop used as a test seam. Production BootApp does not pass it."
       ]
     },
     {
       "area": "impl",
-      "rationale": "Battery/memory trims: store flush compact JSON, lsof TTL 30s + renderer polls 15s/hidden-skip, codeindex parse cache on mtime, stderr tail-capped at 64KB in all five spawners, forecast effect keyed on derived branch/worktree key + refocus refresh, memory-server: mentions(entity_id) index, O(n) applyTokenBudget, statement cache, citation file cache, trust TTL 60s.",
+      "rationale": "BuildMismatchScreen is a full-window alertdialog (title Reload required, existing copy, Restart -> applyUpdate). Banner CSS (mismatchBar) deleted from App.module.css so the old overlay cannot come back by accident.",
       "risks": [
-        "A new dev server can take up to ~30s to appear in the Local Servers card (15s poll + 30s main TTL). Deliberate.",
-        "codeindex/listThreads/citation caches share parsed objects across callers — all verified read-only today.",
-        "Merge resolution: quota-wait props/handlers dropped (removed upstream), ChangesPanel hunk UI taken from upstream; my patchLines memo is gone, memo'd DiffLine kept.",
-        "Merge resolution: itinerary rewritten to the fixed-area schema (area must equal ci-config/tests/critical/impl/docs for annotationForArea to attach; rationale truncates at 400 chars)."
+        "alertdialog has one control so there is no focus trap. autoFocus on Restart is enough today; a second button would need a trap.",
+        "WebTokenGate is also not rendered on mismatch. Intentional: two blocking layers would be worse."
       ]
     },
     {
       "area": "tests",
-      "rationale": "Verified pre-merge: typecheck clean, renderer 1075/1075, memory 201/201, electron 1390/1396 — the 6 failures (checkpoints worktreeBase config, Store quota-wait round-trip keys, verify-gate) reproduce with the diff stashed. Re-run after this merge: quota-wait removal upstream touched App/ThreadView/ipc.",
+      "rationale": "test/buildMismatchUi.test.tsx mounts the real App against fakeCoder with a stamped main SHA and the rendererSha seam. It asserts data-layout=app is absent, Restart calls app.applyUpdate, matching/missing SHAs still show the app. Pure isBuildMismatch tests are unchanged.",
       "risks": [
-        "Post-merge suites must confirm the auto-merged quota-wait removal didn't leave dangling references on this branch (tsc is the check).",
-        "No test pins mergeThreadPatch's return-prev identity or the ThreadCard memo — a 'no-op tick returns identical detail' test would harden the riskiest change."
+        "Node ESM cannot see globalThis.__BUILD_SHA__, so the seam is required. A reviewer deleting the prop without another way to stamp the renderer SHA will make the blocking-state tests unwriteable."
       ]
     }
   ],
   "risks": [
-    "BUG FIXED IN FLIGHT: round-1 SQL comment in db.js createSchema contained backticks inside a JS template literal — broke every memory-server module load and shipped in auto-checkpoint ef40717 before round 2 caught it. Fixed (db.js:310-314).",
-    "Environment repaired during this branch: main checkout's core/dist self-symlink/deletion dangled every worktree's core build (rebuilt); memory-server node_modules installed here. 10 of 16 baseline electron failures were this rot, now green.",
-    "Deferred by design: runAgent intra-message deltas (needs ThreadPatch protocol change), 30-min CLAUDE_IDLE_REAP (product call), PR-refresher gh batching, fleet blame cache. Details on #526/#533.",
-    "Merge conflict with main resolved 2026-08-18: 3 files (App.tsx quota-wait props, ThreadView hunk UI, this itinerary). Incoming itinerary chunk was another thread's stale merge notes — dropped."
+    "Issue #184 asked for a protocolVersion handshake. That was deliberately replaced with SHA equality and is NOT reintroduced here — only the hard-stop UX gap is closed."
   ]
 }
