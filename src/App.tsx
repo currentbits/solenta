@@ -129,6 +129,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     setPinned,
     setSnoozed,
     setMuted,
+    setQuotaWaitAutoResume,
+    resumeQuotaWait,
     renameThread,
     setNotes,
     startSpec,
@@ -1029,6 +1031,17 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onSaveWorkflow={saveWorkflow}
         onRemoveWorkflow={removeWorkflow}
         onStopRun={stopRun}
+        onResumeQuotaWait={
+          selectedThreadId
+            ? () => resumeQuotaWait(selectedThreadId)
+            : undefined
+        }
+        onSetQuotaWaitAutoResume={
+          selectedThreadId
+            ? (enabled: boolean | null) =>
+                setQuotaWaitAutoResume(selectedThreadId, enabled)
+            : undefined
+        }
         queuedPrompt={
           selectedThreadId ? (queued[selectedThreadId]?.prompt ?? null) : null
         }

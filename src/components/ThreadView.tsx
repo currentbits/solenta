@@ -75,6 +75,7 @@ import type { SlashAction } from "../slashCommands";
 import { buildBestOfNEntries } from "../bestOfN";
 import { createPrPrompt } from "../prUi";
 import { suggestNextGitAction } from "../nextGitAction";
+import { formatQuotaWaitLabel } from "../quotaWait";
 import {
   buildReviewItinerary,
   orderedPatches,
@@ -323,6 +324,12 @@ interface ThreadViewProps {
   onSaveWorkflow: (template: WorkflowSaveInput) => Promise<WorkflowTemplateInfo>;
   onRemoveWorkflow: (id: string) => Promise<void>;
   onStopRun: () => void | Promise<void>;
+  /** Resume a parked quota-wait now (#462). */
+  onResumeQuotaWait?: () => void | Promise<void>;
+  /** Per-thread auto-resume override. null inherits the global setting. */
+  onSetQuotaWaitAutoResume?: (
+    enabled: boolean | null,
+  ) => void | Promise<void>;
   /** Follow-up typed during the run, waiting for it to land (issue #92). */
   queuedPrompt?: string | null;
   /** Last delivery failure; the prompt is still queued (issue #314). */
@@ -2650,6 +2657,8 @@ export const ThreadView = memo(function ThreadView({
   onSaveWorkflow,
   onRemoveWorkflow,
   onStopRun,
+  onResumeQuotaWait,
+  onSetQuotaWaitAutoResume,
   queuedPrompt = null,
   queuedError = null,
   onCancelQueued,
@@ -4070,6 +4079,50 @@ export const ThreadView = memo(function ThreadView({
               >
                 Deny
               </button>
+            </div>
+          </div>
+        )}
+
+        {detail && detail.thread.status === "quota-wait" && (
+          <div
+            className={`${styles.statusStrip} ${styles.statusStripQuotaWait}`}
+            data-quota-wait-strip=""
+          >
+            <div className={styles.statusLeft}>
+              <span className={styles.statusDot} aria-hidden />
+              <span>
+                Usage limit reached. Resuming at{" "}
+                {detail.thread.quotaWaitUntil != null
+                  ? formatQuotaWaitLabel(
+                      detail.thread.quotaWaitUntil,
+                      Date.now(),
+                    )
+                  : "the reset"}
+                .
+              </span>
+            </div>
+            <div className={styles.statusLeft}>
+              {onResumeQuotaWait ? (
+                <button
+                  type="button"
+                  className={styles.retryBtn}
+                  onClick={() => void onResumeQuotaWait()}
+                  data-resume-quota-wait=""
+                >
+                  Resume now
+                </button>
+              ) : null}
+              {onSetQuotaWaitAutoResume &&
+              detail.thread.quotaWaitAutoResume !== false ? (
+                <button
+                  type="button"
+                  className={styles.stopBtn}
+                  onClick={() => void onSetQuotaWaitAutoResume(false)}
+                  data-quota-wait-opt-out=""
+                >
+                  Don&apos;t auto-resume
+                </button>
+              ) : null}
             </div>
           </div>
         )}

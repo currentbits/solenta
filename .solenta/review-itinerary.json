@@ -4,6 +4,32 @@
   "chunks": [
     {
       "area": "tests",
+      "rationale": "Contract first: electron/test/quota-wait.test.js is the parser (Claude/Codex/Kimi clocks, ISO/duration/Retry-After, #286 exclusion, wake-once, opt-out). electron/test/quota-wait-runner.test.js is the live runner (park, no-clock fail, budget fail, global opt-out, wake-once without a second user message, resumeQuotaWait). Renderer: test/quotaWait.test.ts, sidebarFailedBadge, settingsModal, kanban, threadSettle. Ask-mode suites must still pass — startAskRun shares fromQuotaWait and markRunFailed.",
+      "risks": [
+        "Runner tests force generic via CODER_AGENT_CMD; they do not exercise Claude/Codex JSON result paths that also call markRunFailed.",
+        "Wake-once test waits up to 20s for a 1s reset + 2s slack; a slow CI host can flake.",
+        "store.test.js round-trip must list every migrateThread key (quotaWait* plus reviewAcceptedHunks) or deepEqual fails."
+      ]
+    },
+    {
+      "area": "critical",
+      "rationale": "electron/quotaWait.js decides park vs fail. runner.markRunFailed writes quota-wait atomically so the first threads:changed never flashes Failed. fireQuotaWake / resumeQuotaWait resend the last user prompt with fromQuotaWait:true (no second transcript line). startRun cancels the timer, skips autoTurns reset, and startAskRun (#392) takes the same fromQuotaWait flag so Ask threads can park and resume without touching a worktree.",
+      "risks": [
+        "notifyRunTerminal is still called with status 'failed' after a park; it must see thread.status === 'quota-wait' and skip afterFailedTurn / drainQueued or a parked thread will look failed and start the queued prompt.",
+        "quotaWaitResumed is set on the resume start, not on park. A human send while parked starts a new turn and can park again — intended. A second quota hit on the same resume fails.",
+        "Ask-mode errors go through markRunFailed; only quota-shaped text parks. Retrieval/fm failures stay Failed."
+      ]
+    },
+    {
+      "area": "impl",
+      "rationale": "Persistence and UI: store.quotaWaitAutoResume (default on), thread.quotaWaitUntil/Resumed/AutoResume, lastError kept on quota-wait, IPC setQuotaWaitAutoResume + resumeQuotaWait, Settings toggle, Sidebar 'Quota wait · clock' badge, ThreadView Resume now / Don't auto-resume, kanban column, settle/GC treat quota-wait as live work.",
+      "risks": [
+        "Per-thread opt-out cancels the timer but leaves status quota-wait so Resume now still works; turning the global setting off mid-wait also cancels via refreshAllQuotaWaits.",
+        "formatQuotaWaitLabel is host-local; a named timezone in the provider error is parsed in quotaWait.js for the wake instant, then displayed in the user's zone."
+      ]
+    },
+    {
+      "area": "tests",
       "rationale": "Start with electron/test/spec-tasks.test.js (the checkbox DAG contract: ids, needs:, cycles, waves), then spec-mode.test.js dispatch/converge (crew sync, wave-1 fork, wave-2 after complete), then spec-ipc.test.js (N worker runs vs one converge run), then test/specCard.test.tsx (Dispatch/Converge only at build).",
       "risks": [
         "Wave-2 is asserted inside the wave-1 test after completeCrewTask — easy to miss if a later edit splits the case.",
@@ -79,6 +105,8 @@
     }
   ],
   "risks": [
+    "This is a resurrection of 688e5a9 after 8bf223b deleted the feature in Ask-mode conflict resolution. Both features must stay. Do not drop fromQuotaWait on startAskRun.",
+    "Distinct from #286 (Solenta budget) and #294 (model failover). Exhausted balance with no reset clock fails once.",
     "No MCP spec_dispatch/spec_converge tools — agents on the spec thread cannot trigger these without the card. Deliberate: issue asked for IPC + spec card, same seam as startSpec/reviewSpec.",
     "No runner hook to dispatch the next wave when the last worker of the current wave completes.",
     "The state-change pin effect is unchanged. This only covers post-paint growth (images, highlight, webfonts). A reviewer who deletes the new effect and keeps the old one would still have a green suite except the two #408 tests.",
