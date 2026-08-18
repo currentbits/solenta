@@ -1,5 +1,14 @@
 "use strict";
 
+// Electron stays alive after a load-time throw ("App threw an error during
+// load"). Without this, a missing dep or a require() failure hangs the
+// process and CI only dies on timeout-minutes.
+process.on("uncaughtException", (err) => {
+  const message = err && err.message ? err.message : String(err);
+  console.error(JSON.stringify({ step: "uncaught", ok: false, error: message }));
+  process.exit(1);
+});
+
 /**
  * Scripted end-to-end smoke of the real preload bridge (window.coder).
  * Run with the real Electron binary (not node):
@@ -14,31 +23,35 @@
  *
  * Uses a temp userData path so it never touches real app state.
  * Expects dist/index.html (run `npx vite build` first) and core/dist.
+ *
+ * Win32: shebang fakes are not executable (CreateProcess). Each fake gets a
+ * sibling .cmd that runs `node <script> %*` and that path is what CODER_*_BIN
+ * points at. macOS still gets the shebang path, unchanged.
  */
 
 const { app, BrowserWindow, ipcMain, dialog } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
 const os = require("node:os");
-const { execFileSync } = require("node:child_process");
 const { pathToFileURL } = require("node:url");
 const { Store } = require("./store.js");
 const { createRunner } = require("./runner.js");
 const { registerIpc } = require("./ipc.js");
+const { defaultWhich } = require("./providers.js");
 
 /**
  * Resolve a Node binary whose path has no whitespace.
  * CODER_AGENT_CMD is split on spaces, so process.execPath under Electron
  * (…/Application Support/…) cannot be used as the command token.
+ *
+ * PATH lookup goes through defaultWhich so win32 uses `where`, not `which`
+ * (same helper as providers.js / #442). `where` prints every match; we
+ * still reject paths with whitespace.
  */
 function resolveNodeBinary() {
   const candidates = [];
-  try {
-    const which = execFileSync("which", ["node"], { encoding: "utf8" }).trim();
-    if (which) candidates.push(which);
-  } catch {
-    // ignore
-  }
+  const fromPath = defaultWhich("node");
+  if (fromPath) candidates.push(fromPath);
   candidates.push(
     "/opt/homebrew/bin/node",
     "/usr/local/bin/node",
@@ -53,12 +66,43 @@ function resolveNodeBinary() {
 }
 
 /**
+ * Node for the win32 .cmd wrapper. Spaces are fine here (the path is quoted),
+ * and we must not fall back to process.execPath — that is electron.exe and
+ * would boot another Electron per fake invocation.
+ */
+function resolveNodeForCmd() {
+  const fromPath = defaultWhich("node");
+  if (fromPath && fs.existsSync(fromPath)) return fromPath;
+  throw new Error("No node binary found for smoke fake .cmd wrappers");
+}
+
+/**
+ * Write a shebang node fake. On win32 also write a .cmd wrapper and return
+ * that path so CODER_*_BIN stays one executable token.
+ * @param {string} dir
+ * @param {string} name
+ * @param {string} body
+ * @returns {string}
+ */
+function writeFakeBin(dir, name, body) {
+  const scriptPath = path.join(dir, name);
+  fs.writeFileSync(scriptPath, body, { mode: 0o755 });
+  if (process.platform !== "win32") return scriptPath;
+  const cmdPath = `${scriptPath}.cmd`;
+  const nodeBin = resolveNodeForCmd();
+  fs.writeFileSync(
+    cmdPath,
+    `@echo off\r\n"${nodeBin}" "${scriptPath}" %*\r\n`,
+  );
+  return cmdPath;
+}
+
+/**
  * Write a fake claude CLI that emits stream-json for smoke pass C.
  * @param {string} dir
  * @returns {string} absolute path to executable script
  */
 function writeSmokeFakeClaude(dir) {
-  const scriptPath = path.join(dir, "smoke-fake-claude");
   const body = `#!/usr/bin/env node
 "use strict";
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -99,8 +143,7 @@ function emit(obj) { process.stdout.write(JSON.stringify(obj) + "\\n"); }
   process.exit(0);
 })().catch((e) => { process.stderr.write(String(e)); process.exit(1); });
 `;
-  fs.writeFileSync(scriptPath, body, { mode: 0o755 });
-  return scriptPath;
+  return writeFakeBin(dir, "smoke-fake-claude", body);
 }
 
 /**
@@ -109,7 +152,6 @@ function emit(obj) { process.stdout.write(JSON.stringify(obj) + "\\n"); }
  * @returns {string} absolute path to executable script
  */
 function writeSmokeWorkflowFakeClaude(dir) {
-  const scriptPath = path.join(dir, "smoke-wf-fake-claude");
   const body = `#!/usr/bin/env node
 "use strict";
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -131,8 +173,7 @@ const text = "SMOKE_SEED_PLAN: step one";
   process.exit(0);
 })().catch((e) => { process.stderr.write(String(e)); process.exit(1); });
 `;
-  fs.writeFileSync(scriptPath, body, { mode: 0o755 });
-  return scriptPath;
+  return writeFakeBin(dir, "smoke-wf-fake-claude", body);
 }
 
 /**
@@ -142,7 +183,6 @@ const text = "SMOKE_SEED_PLAN: step one";
  * @returns {string}
  */
 function writeSmokeWorkflowFakeText(dir) {
-  const scriptPath = path.join(dir, "smoke-wf-fake-text");
   const body = `#!/usr/bin/env node
 "use strict";
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -166,8 +206,7 @@ const text = "SMOKE_TEXT_FINAL";
   process.exit(0);
 })().catch((e) => { process.stderr.write(String(e)); process.exit(1); });
 `;
-  fs.writeFileSync(scriptPath, body, { mode: 0o755 });
-  return scriptPath;
+  return writeFakeBin(dir, "smoke-wf-fake-text", body);
 }
 
 /**
@@ -176,7 +215,6 @@ const text = "SMOKE_TEXT_FINAL";
  * @returns {string} absolute path to executable script
  */
 function writeSmokeFakeCodex(dir) {
-  const scriptPath = path.join(dir, "smoke-fake-codex");
   const body = `#!/usr/bin/env node
 "use strict";
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -212,8 +250,7 @@ function emit(obj) { process.stdout.write(JSON.stringify(obj) + "\\n"); }
   process.exit(0);
 })().catch((e) => { process.stderr.write(String(e)); process.exit(1); });
 `;
-  fs.writeFileSync(scriptPath, body, { mode: 0o755 });
-  return scriptPath;
+  return writeFakeBin(dir, "smoke-fake-codex", body);
 }
 
 const userData = fs.mkdtempSync(path.join(os.tmpdir(), "coder-smoke-"));
