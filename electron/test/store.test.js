@@ -144,6 +144,8 @@ describe("Store", () => {
       queued: null,
       verifyCommand: null,
       verify: null,
+      issueNumber: null,
+      postMergeVerify: null,
     };
     const msg = {
       id: "m1",

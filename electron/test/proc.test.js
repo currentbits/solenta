@@ -2,6 +2,7 @@
 
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
 const { spawn } = require("node:child_process");
 const { killTree } = require("../proc.js");
 
@@ -28,10 +29,21 @@ function waitFor(predicate, { timeoutMs = 3000, intervalMs = 20 } = {}) {
 function alive(pid) {
   try {
     process.kill(pid, 0);
-    return true;
   } catch {
     return false;
   }
+  // kill(pid, 0) is true for zombies. systemd/launchd reap them quickly;
+  // a container without an init (and some Linux boxes between waitpid)
+  // leaves the slot, and the test would fail closed after a successful
+  // group kill. /proc is Linux-only; macOS never hits this path.
+  try {
+    const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
+    const state = stat.slice(stat.lastIndexOf(")") + 2).charAt(0);
+    if (state === "Z") return false;
+  } catch {
+    // no /proc, or the pid vanished between kill(0) and the read
+  }
+  return true;
 }
 
 describe("killTree", { skip: !posix }, () => {
