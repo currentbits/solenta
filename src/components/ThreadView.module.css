@@ -793,10 +793,15 @@
   white-space: nowrap;
 }
 
-.retryBtn:hover {
+.retryBtn:hover:not(:disabled) {
   color: var(--text);
   background: var(--card-hover);
   border-color: var(--blue-border);
+}
+
+.retryBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .table {
@@ -1534,6 +1539,18 @@
   color: #bfdbfe;
   font-size: 12.5px;
   font-weight: 500;
+}
+
+.statusStripStalled {
+  background: rgba(251, 191, 36, 0.08);
+  border-color: rgba(251, 191, 36, 0.35);
+  color: #fde68a;
+}
+
+.statusStripStalled .statusDot {
+  background: #fbbf24;
+  box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.2);
+  animation: none;
 }
 
 /* Queued follow-up: the status strip, muted — it is waiting, not running. */

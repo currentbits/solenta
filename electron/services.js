@@ -1167,11 +1167,34 @@ function setQueued(store, input) {
     queued = {
       prompt: prev ? `${prev.prompt}\n\n${prompt}` : prompt,
       attachments: files.length ? files : undefined,
+      // A new/appended prompt drops any previous delivery error (#314).
     };
   }
   const updated = store.updateThread(threadId, { queued });
   store.save();
   return updated ? { ...updated } : { ...thread, queued };
+}
+
+/**
+ * Atomically read-and-clear the type-ahead queue (issue #314). Returns the
+ * queued payload or null when empty. Never bumps updatedAt: taking is
+ * delivery, not activity.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string }} input
+ * @returns {{ prompt: string, attachments?: object[], error?: string | null } | null}
+ */
+function takeQueued(store, input) {
+  const { threadId } = input;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  const queued = thread.queued || null;
+  if (!queued) return null;
+  store.updateThread(threadId, { queued: null });
+  store.save();
+  return queued;
 }
 
 /**
@@ -2278,6 +2301,7 @@ function threadSummaries(store) {
       handoffFrom: t.handoffFrom ?? null,
       runStartedAt: t.runStartedAt ?? null,
       awaitingInput: t.awaitingInput === true,
+      stalledAt: t.stalledAt ?? null,
       lastActivity: last
         ? {
             text: String(last.text).split(/\r?\n/, 1)[0].trim(),
@@ -3130,6 +3154,7 @@ module.exports = {
   setSettled,
   setPinned,
   setQueued,
+  takeQueued,
   setSnoozed,
   setMuted,
   setNotes,
