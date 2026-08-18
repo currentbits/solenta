@@ -78,10 +78,23 @@ import { suggestNextGitAction } from "../nextGitAction";
 import { formatElapsed } from "../format";
 import { formatQuotaWaitLabel } from "../quotaWait";
 import { useEscapeClose } from "../useEscapeClose";
+import {
+  comparePeerLabel,
+  compareSteps,
+  extractSteps,
+  formatDivergenceHeadline,
+  isThreadDone,
+  sameThreadRuns,
+  truncateStepValue,
+  type ComparePeer,
+  type DivergenceField,
+} from "../divergence";
 import { Composer } from "./Composer";
 import { Markdown } from "./Markdown";
 import { PathLinkProvider, PathText } from "./PathLinks";
 import styles from "./ThreadView.module.css";
+
+const EMPTY_COMPARE_PEERS: ComparePeer[] = [];
 
 const PUSH_FLASH_MS = 3000;
 const COPY_FLASH_MS = 1500;
@@ -448,6 +461,13 @@ interface ThreadViewProps {
   handoffSource?: ThreadInfo | null;
   /** Select another thread (provenance chip → source). */
   onSelectThread?: (id: string) => void;
+  /**
+   * Same-task siblings (best-of-N / forks) for the divergence compare
+   * (issue #393). Resolved in App so this pane is not passed the full list.
+   */
+  comparePeers?: ComparePeer[];
+  /** Load a sibling transcript without marking it visited. */
+  onPeekThread?: (id: string) => Promise<ThreadDetail>;
   /** Fired when the composer model picker opens (provider list refresh). */
   onModelPickerOpen?: () => void;
   /** Create a new thread in the current project (`/new`, `/clear`). */
@@ -2145,6 +2165,218 @@ function ChangesPanel({
   );
 }
 
+function fieldValue(
+  step: { type: string; name: string; input: string; output: string; decision: string } | null,
+  field: DivergenceField,
+): string {
+  if (!step) return "—";
+  if (field === "type") return step.type;
+  if (field === "name") return step.name;
+  if (field === "input") return truncateStepValue(step.input);
+  if (field === "output") return truncateStepValue(step.output);
+  return step.decision;
+}
+
+/**
+ * First-divergence report for two runs of the same task (issue #393).
+ * Hidden until there is a sibling fork or a second completed run.
+ */
+function DivergenceCard({
+  detail,
+  peers,
+  providers,
+  onPeekThread,
+}: {
+  detail: ThreadDetail;
+  peers: ComparePeer[];
+  providers: ProviderInfo[];
+  onPeekThread?: (id: string) => Promise<ThreadDetail>;
+}) {
+  const runs = useMemo(
+    () => sameThreadRuns(detail.messages, detail.thread.status),
+    [detail.messages, detail.thread.status],
+  );
+  const earlierRuns = runs.length >= 2 ? runs.slice(0, -1) : [];
+  const latestRun = runs.length >= 2 ? runs[runs.length - 1]! : null;
+  const targets = useMemo(() => {
+    const list: { key: string; label: string }[] = [];
+    if (onPeekThread) {
+      for (const p of peers) list.push({ key: `peer:${p.id}`, label: p.label });
+    }
+    for (const r of earlierRuns) {
+      list.push({ key: `run:${r.runId}`, label: r.label });
+    }
+    return list;
+  }, [onPeekThread, peers, earlierRuns]);
+
+  const [selected, setSelected] = useState("");
+  const [peeked, setPeeked] = useState<ThreadDetail | null>(null);
+  const [peekError, setPeekError] = useState<string | null>(null);
+  const [peeking, setPeeking] = useState(false);
+  const [open, setOpen] = useState(true);
+
+  useEffect(() => {
+    if (targets.length === 0) {
+      setSelected("");
+      return;
+    }
+    if (!targets.some((t) => t.key === selected)) {
+      setSelected(targets[0]!.key);
+    }
+  }, [targets, selected]);
+
+  const peerId = selected.startsWith("peer:") ? selected.slice(5) : null;
+  const runId = selected.startsWith("run:") ? selected.slice(4) : null;
+
+  useEffect(() => {
+    if (!peerId || !onPeekThread) {
+      setPeeked(null);
+      setPeekError(null);
+      setPeeking(false);
+      return;
+    }
+    let live = true;
+    setPeeking(true);
+    setPeekError(null);
+    void onPeekThread(peerId)
+      .then((d) => {
+        if (!live) return;
+        setPeeked(d);
+        setPeeking(false);
+      })
+      .catch((err: unknown) => {
+        if (!live) return;
+        setPeeked(null);
+        setPeeking(false);
+        setPeekError(err instanceof Error ? err.message : String(err));
+      });
+    return () => {
+      live = false;
+    };
+  }, [peerId, onPeekThread]);
+
+  if (targets.length === 0) return null;
+
+  const leftLabel = peerId
+    ? comparePeerLabel(detail.thread, peers, providers)
+    : (latestRun?.label ?? "This run");
+  const rightMeta = targets.find((t) => t.key === selected);
+  const rightLabel = rightMeta?.label ?? "other run";
+
+  let report = null;
+  if (peerId) {
+    if (peeked) {
+      report = compareSteps(
+        extractSteps(detail.messages),
+        extractSteps(peeked.messages),
+        {
+          leftDone: isThreadDone(detail.thread.status),
+          rightDone: isThreadDone(peeked.thread.status),
+        },
+      );
+    }
+  } else if (runId && latestRun) {
+    report = compareSteps(
+      extractSteps(detail.messages, latestRun.runId),
+      extractSteps(detail.messages, runId),
+    );
+  }
+
+  const headline = peekError
+    ? peekError
+    : peeking
+      ? "Comparing…"
+      : report
+        ? formatDivergenceHeadline(report, leftLabel, rightLabel)
+        : "Comparing…";
+  const hit = report?.first ?? null;
+  const showFields = open && hit != null;
+
+  return (
+    <section className={styles.divergenceCard} data-divergence-card="">
+      <div className={styles.divergenceHead}>
+        <span className={styles.divergenceTitle}>Divergence</span>
+        <label className={styles.divergencePick}>
+          <span className={styles.divergencePickLabel}>Compare with</span>
+          <select
+            className={styles.divergenceSelect}
+            data-divergence-peer=""
+            aria-label="Compare with"
+            value={selected}
+            onChange={(e) => setSelected(e.target.value)}
+          >
+            {targets.map((t) => (
+              <option key={t.key} value={t.key}>
+                {t.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <p
+        className={styles.divergenceHeadline}
+        data-divergence-headline=""
+        data-divergence-pending={report?.pending ? "1" : undefined}
+        role={peekError ? "alert" : undefined}
+      >
+        {headline}
+      </p>
+      {hit && (
+        <button
+          type="button"
+          className={styles.divergenceToggle}
+          data-divergence-toggle=""
+          aria-expanded={open}
+          onClick={() => setOpen((v) => !v)}
+        >
+          {open ? "Hide fields" : "Show fields"}
+        </button>
+      )}
+      {showFields && (
+        <div className={styles.divergenceFields} data-divergence-fields="">
+          <span className={styles.divergenceColHead} />
+          <span className={styles.divergenceColHead}>{leftLabel}</span>
+          <span className={styles.divergenceColHead}>{rightLabel}</span>
+          {(
+            [
+              "type",
+              "name",
+              "input",
+              "output",
+              "decision",
+            ] as DivergenceField[]
+          ).map((field) => {
+            const differs = hit.fields.includes(field);
+            return (
+              <Fragment key={field}>
+                <span
+                  className={styles.divergenceFieldName}
+                  data-divergence-field={field}
+                  data-differs={differs ? "1" : undefined}
+                >
+                  {field}
+                </span>
+                <span
+                  className={styles.divergenceValue}
+                  data-divergence-left={field}
+                >
+                  {fieldValue(hit.left, field)}
+                </span>
+                <span
+                  className={styles.divergenceValue}
+                  data-divergence-right={field}
+                >
+                  {fieldValue(hit.right, field)}
+                </span>
+              </Fragment>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
 /**
  * memo'd: only the OPEN thread's stream should re-render this pane. Four other
  * threads streaming in the sidebar used to re-render it every 700ms each
@@ -2221,6 +2453,8 @@ export const ThreadView = memo(function ThreadView({
   onFork,
   handoffSource = null,
   onSelectThread,
+  comparePeers = EMPTY_COMPARE_PEERS,
+  onPeekThread,
   onModelPickerOpen,
 }: ThreadViewProps) {
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -3302,6 +3536,16 @@ export const ThreadView = memo(function ThreadView({
             ×
           </button>
         </div>
+      )}
+
+      {detail && (
+        <DivergenceCard
+          key={detail.thread.id}
+          detail={detail}
+          peers={comparePeers}
+          providers={providers}
+          onPeekThread={onPeekThread}
+        />
       )}
 
       <div

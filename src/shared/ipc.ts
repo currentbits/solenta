@@ -1749,6 +1749,12 @@ export interface CoderApi {
       issueNumber?: number | null;
     }): Promise<ThreadInfo>;
     get(id: string): Promise<ThreadDetail>;
+    /**
+     * Same payload as get, but never stamps lastVisitedAt (issue #393).
+     * Used to load a sibling run for the divergence compare so opening
+     * the picker does not mark that thread read.
+     */
+    peek(id: string): Promise<ThreadDetail>;
     /** Sticky permission mode for future turns of this thread. */
     setPermissionMode(input: { threadId: string; mode: PermissionMode }): Promise<ThreadInfo>;
     /**

@@ -1,27 +1,40 @@
 {
   "version": 1,
-  "readOrder": ["tests", "impl"],
+  "readOrder": ["tests", "critical", "impl", "ci-config"],
   "chunks": [
     {
       "area": "tests",
-      "rationale": "Start with test/conflictForecastBadge.test.tsx 'conflict tip readability'. Those three CSS-source assertions are the contract: opaque --card fill, card :has() z-index rise on hover/focus, no muted overlap copy. They failed on the #516 tip (background --bg-elevated, no sibling escape, --text-muted) and pass after the CSS change.",
+      "rationale": "The pairing rules live in src/divergence.ts and are proven by test/divergence.test.ts: first mismatched step (not a later one), live length-gaps stay pending, finished length-gaps are a verdict, siblings-not-grandchildren. test/divergenceCard.test.tsx is the wiring proof that Claude-vs-Codex peeks the sibling and never threads.get it.",
       "risks": [
-        "Tests read the CSS file, not computed paint. They cannot prove Chromium stacking against a real next card.",
-        "The overlap-contrast test is a no-op if the muted rule is simply deleted; that is intentional but a weaker lock than a positive color assertion."
+        "App auto-selects the first sidebar thread on boot; a test that puts the source first will peek its children before the user clicks. The wiring test uses a decoy first for that reason."
+      ]
+    },
+    {
+      "area": "critical",
+      "rationale": "threads.peek is get without lastVisitedAt. threadDetailFor in electron/ipc.js is the single payload path. Selecting a compare target must not mark the other run read.",
+      "risks": [
+        "A future caller that points the compare picker at threads.get will silently clear unread on every sibling.",
+        "React Strict Mode double-invokes peek; that is harmless (no visit stamp) but will show up as two threads.peek calls in traces."
       ]
     },
     {
       "area": "impl",
-      "rationale": "Then src/components/Sidebar.module.css around .card:has(.conflictWrap:hover) and .conflictTip. The unreadable overlay in the screenshot is this tip hanging onto the next transparent thread card; raising the open card and using --card is the actual fix. No TS/JS change.",
+      "rationale": "DivergenceCard in ThreadView pairs tool steps only (assistant prose always differs across models). sameTaskPeers prefers sibling forks over the source so the default pick is Codex, not the parent prompt. Same-thread Run N compare needs no peek.",
       "risks": [
-        "CSS modules must hash both .card and .conflictWrap inside :has(). If only .card is localized the rise never applies.",
-        "Kanban columns use overflow:hidden (KanbanView.module.css), so a tall tip can still clip there — pre-existing #516 geometry, not fixed here.",
-        "This worktree cherry-picked 6e10ae9 (#516) onto a diverged base; a PR against origin/main should contain only the readability CSS + tests, not a second copy of #516."
+        "Permission allow/deny is not persisted on ToolCallInfo, so decision is only ok/error/pending. Two runs that chose opposite approvals with the same tool input will not split on decision.",
+        "comparePeers is memo'd on rosterKey (id:status). A sibling title rename will not refresh the picker label until some status moves."
+      ]
+    },
+    {
+      "area": "ci-config",
+      "rationale": "CoderApi.threads.peek is added across preload, ipc, wireClient, fakeCoder, and devCoder. ipc-seam names the channel so a rename cannot slip through.",
+      "risks": [
+        "Any new CoderApi implementor that misses peek will fail typecheck; a JS-only caller that still uses get for compare will compile if it never touches the type."
       ]
     }
   ],
   "risks": [
-    "No live Electron hover was driven; verification is the 17-test renderer run plus tsc --noEmit.",
-    "A parent overflow (sidebar list is overflow-y auto, fine; kanban column is hidden) can still clip the tip even after the z-index rise."
+    "First divergence is the first paired tool step whose type/name/input/output/decision differs. Two models that take the same tools with different prose will report no divergence, which is the intended product.",
+    "A still-running shorter side does not count extra steps on the other side as a split."
   ]
 }

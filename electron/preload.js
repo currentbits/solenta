@@ -115,6 +115,7 @@ const coder = {
     fork: (input) => invoke("threads:fork", input),
     rewind: (input) => invoke("threads:rewind", input),
     get: (id) => invoke("threads:get", id),
+    peek: (id) => invoke("threads:peek", id),
     setPermissionMode: (input) =>
       invoke("threads:setPermissionMode", input),
     respondPermission: (input) =>

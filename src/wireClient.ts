@@ -362,6 +362,7 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
       fork: (input) => call<ThreadInfo>("threads:fork", input),
       rewind: (input) => call<RewindResult>("threads:rewind", input),
       get: (id) => call<ThreadDetail>("threads:get", id),
+      peek: (id) => call<ThreadDetail>("threads:peek", id),
       setPermissionMode: (input) =>
         call<ThreadInfo>("threads:setPermissionMode", input),
       respondPermission: (input) =>

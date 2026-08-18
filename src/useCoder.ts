@@ -483,6 +483,8 @@ export interface UseCoderResult {
   syncSkills: () => Promise<{ copied: number; skills: string[] }>;
   /** Full-content thread search (titles + message text); Sidebar owns debounce/state. */
   searchThreads: (input: { query: string }) => Promise<ThreadInfo[]>;
+  /** Load another thread's transcript without marking it visited (#393). */
+  peekThread: (id: string) => Promise<ThreadDetail>;
 }
 
 export function useCoder(): UseCoderResult {
@@ -2387,6 +2389,12 @@ export function useCoder(): UseCoderResult {
     [api],
   );
 
+  /** Load another thread's transcript without marking it visited (#393). */
+  const peekThread = useCallback(
+    (id: string) => api.threads.peek(id),
+    [api],
+  );
+
   return {
     api,
     projects,
@@ -2518,5 +2526,6 @@ export function useCoder(): UseCoderResult {
     removeSkill,
     syncSkills,
     searchThreads,
+    peekThread,
   };
 }

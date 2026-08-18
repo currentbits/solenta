@@ -178,6 +178,33 @@ function tryResolveWorkspaceFile(store, threadId, rawPath) {
 }
 
 /**
+ * Shared get/peek payload. Selecting a thread (get) stamps lastVisitedAt;
+ * peeking a sibling for the divergence compare must not (issue #393).
+ */
+function threadDetailFor(ctx, id, markVisited) {
+  const workflow =
+    typeof ctx.runner.getActiveWorkflow === "function"
+      ? ctx.runner.getActiveWorkflow(id)
+      : null;
+  let view = null;
+  if (workflow && ctx.runner.toWorkflowView) {
+    // Surface workflow for simulate (core) and orchestrated multi-phase runs.
+    if (
+      workflow.__orchestrated ||
+      (!workflow.__real && !workflow.__claude && !workflow.__codex)
+    ) {
+      view = ctx.runner.toWorkflowView(workflow);
+    }
+  }
+  return services.getThreadDetail(ctx.store, id, view, {
+    markVisited,
+    pendingPermission: ctx.runner.getPendingPermission
+      ? ctx.runner.getPendingPermission(id)
+      : null,
+  });
+}
+
+/**
  * ONE channel → handler map. Both transports consume this object:
  *   ipcMain.handle(channel, (_, ...a) => IPC_HANDLERS[channel](ctx, ...a))
  *   webBridge dispatch: IPC_HANDLERS[channel](ctx, ...args)
@@ -368,25 +395,9 @@ const IPC_HANDLERS = {
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     return result;
   },
-  "threads:get": async (ctx, id) => {
-    const workflow = ctx.runner.getActiveWorkflow(id);
-    let view = null;
-    if (workflow && ctx.runner.toWorkflowView) {
-      // Surface workflow for simulate (core) and orchestrated multi-phase runs.
-      if (
-        workflow.__orchestrated ||
-        (!workflow.__real && !workflow.__claude && !workflow.__codex)
-      ) {
-        view = ctx.runner.toWorkflowView(workflow);
-      }
-    }
-    return services.getThreadDetail(ctx.store, id, view, {
-      markVisited: true,
-      pendingPermission: ctx.runner.getPendingPermission
-        ? ctx.runner.getPendingPermission(id)
-        : null,
-    });
-  },
+  "threads:get": async (ctx, id) => threadDetailFor(ctx, id, true),
+  // Compare/sibling load (issue #393). Same payload as get, no visit stamp.
+  "threads:peek": async (ctx, id) => threadDetailFor(ctx, id, false),
   "threads:respondPermission": async (ctx, input) => {
     // runner.respondPermission pushes the updated detail itself.
     ctx.runner.respondPermission(input);

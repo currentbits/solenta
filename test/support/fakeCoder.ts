@@ -756,6 +756,22 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         };
         return rec("threads.get", [id], stampedFallback);
       },
+      /**
+       * Sibling load for the divergence compare (issue #393). Same payload
+       * as get, but visiting is not implied — lastVisitedAt stays put.
+       */
+      peek: (id: string) => {
+        const existing = threads.find((t) => t.id === id);
+        const base =
+          details[id] ??
+          detail({ thread: existing ?? thread({ id }) });
+        const row = existing
+          ? { ...base.thread, ...existing }
+          : { ...base.thread };
+        const peeked: ThreadDetail = { ...base, thread: row };
+        details[id] = peeked;
+        return rec("threads.peek", [id], peeked);
+      },
       setPermissionMode: (input: unknown) =>
         rec("threads.setPermissionMode", [input], thread()),
       setArchived: (input: unknown) => {
