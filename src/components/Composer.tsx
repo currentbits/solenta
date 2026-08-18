@@ -79,8 +79,12 @@ interface ComposerProps {
     provider?: string;
     model?: string | null;
   }) => void | Promise<void>;
-  onSetReasoningEffort: (effort: ReasoningEffort | null) => void | Promise<void>;
-  onSaveWorkflow: (template: WorkflowSaveInput) => Promise<WorkflowTemplateInfo>;
+  onSetReasoningEffort: (
+    effort: ReasoningEffort | null,
+  ) => void | Promise<void>;
+  onSaveWorkflow: (
+    template: WorkflowSaveInput,
+  ) => Promise<WorkflowTemplateInfo>;
   onRemoveWorkflow: (id: string) => Promise<void>;
   /** Provider session id (short form shown in meta). */
   sessionId: string | null;
@@ -95,7 +99,10 @@ interface ComposerProps {
    */
   busy?: boolean;
   /** Single session turn (send arrow + ⌘Enter). */
-  onSend: (prompt: string, attachments?: AttachmentInfo[]) => void | Promise<void>;
+  onSend: (
+    prompt: string,
+    attachments?: AttachmentInfo[],
+  ) => void | Promise<void>;
   /** Multi-phase Build workflow (Build pill main segment). */
   onBuild: (prompt: string, templateId: string) => void | Promise<void>;
   /**
@@ -140,6 +147,37 @@ const STATIC = {
 };
 
 const DEFAULT_TEMPLATE_ID = "standard";
+
+/** Composer `/` commands (issue #338). Discoverability only — the runner
+ *  intercepts the prompt; this list exists so the popup can paint. */
+const ORCH_COMMANDS = [
+  {
+    name: "/handoff",
+    hint: "Plan here, implement on a fresh model",
+  },
+  {
+    name: "/advisor",
+    hint: "One second opinion on a contrasting model",
+  },
+  {
+    name: "/committee",
+    hint: "Two contrasting models converge on a root cause",
+  },
+] as const;
+
+/**
+ * Active `/` token at the start of the composer. Null unless the text
+ * starts with `/` and the caret is still inside that first token (no
+ * whitespace typed yet).
+ */
+function getCommandQuery(text: string, caret: number): string | null {
+  if (!text.startsWith("/")) return null;
+  // A trailing space means the token is complete — the runner, not the
+  // menu, owns what follows. Same as "caret left the token".
+  if (/\s/.test(text)) return null;
+  if (caret < 1 || caret > text.length) return null;
+  return text;
+}
 
 /** Capped cascade index: row 30 shouldn't wait half a second to appear. */
 const rowEnterStyle = (index: number): CSSProperties =>
@@ -347,6 +385,61 @@ export function Composer({
   /** Caret to restore after a mention insert re-renders the textarea. */
   const pendingCaret = useRef<number | null>(null);
   const mentionOpen = mention != null && mentionFiles.length > 0;
+
+  /** `/` command popup; `commandQuery` null means closed. */
+  const [commandQuery, setCommandQuery] = useState<string | null>(null);
+  const [commandIndex, setCommandIndex] = useState(0);
+  const commandMatches = commandQuery
+    ? ORCH_COMMANDS.filter((c) => c.name.startsWith(commandQuery))
+    : [];
+  const commandOpen = commandMatches.length > 0;
+
+  const closeCommand = useCallback(() => {
+    setCommandQuery(null);
+    setCommandIndex(0);
+  }, []);
+
+  /**
+   * After accept or Escape, onSelect (caret restore, jsdom select on
+   * value write) would refresh and reopen the popup. Mention avoids
+   * this because its lookup is async; commands are sync so we freeze
+   * until the next keystroke.
+   */
+  const commandFrozen = useRef(false);
+
+  const refreshCommand = useCallback(() => {
+    if (commandFrozen.current) return;
+    const el = textareaRef.current;
+    if (!el || disabled) {
+      closeCommand();
+      return;
+    }
+    const q = getCommandQuery(el.value, el.selectionStart ?? el.value.length);
+    if (!q) {
+      closeCommand();
+      return;
+    }
+    setCommandQuery(q);
+    setCommandIndex(0);
+  }, [disabled, closeCommand]);
+
+  const acceptCommand = useCallback(
+    (name: string) => {
+      const inserted = `${name} `;
+      commandFrozen.current = true;
+      const el = textareaRef.current;
+      if (el) el.value = inserted;
+      pendingCaret.current = inserted.length;
+      setValue(inserted);
+      closeCommand();
+    },
+    [setValue, closeCommand],
+  );
+
+  // A thread switch is a new draft: let the next select/change reopen if needed.
+  useEffect(() => {
+    commandFrozen.current = false;
+  }, [threadId]);
 
   const closeMention = useCallback(() => {
     setMention(null);
@@ -673,9 +766,9 @@ export function Composer({
       setValue("");
       clearAttachments();
       closeMention();
+      closeCommand();
     } catch (err) {
-      const msg =
-        err instanceof Error && err.message ? err.message : failLabel;
+      const msg = err instanceof Error && err.message ? err.message : failLabel;
       setLocalError(msg);
     } finally {
       setSending(false);
@@ -765,6 +858,32 @@ export function Composer({
         // popup closes.
         e.stopPropagation();
         closeMention();
+        return;
+      }
+    }
+    if (commandOpen) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setCommandIndex((i) => Math.min(i + 1, commandMatches.length - 1));
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setCommandIndex((i) => Math.max(i - 1, 0));
+        return;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        const cmd = commandMatches[commandIndex];
+        if (cmd) acceptCommand(cmd.name);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        // Same as mention: only this popup closes, not the model picker.
+        e.stopPropagation();
+        commandFrozen.current = true;
+        closeCommand();
         return;
       }
     }
@@ -867,8 +986,7 @@ export function Composer({
       return;
     }
     closeModelPicker(true);
-    const same =
-      row.providerId === provider && row.id === model;
+    const same = row.providerId === provider && row.id === model;
     if (same) return;
     try {
       // Always send both so a cross-provider pick switches harness and model
@@ -914,7 +1032,10 @@ export function Composer({
           providerPane || detailRow.id === CUSTOM_MODEL_ID
             ? null
             : detailRow.id;
-        await onSetProvider({ provider: detail.providerId, model: targetModel });
+        await onSetProvider({
+          provider: detail.providerId,
+          model: targetModel,
+        });
         await onSetReasoningEffort(level);
         return;
       }
@@ -1022,6 +1143,34 @@ export function Composer({
             ))}
           </ul>
         )}
+        {commandOpen && (
+          <ul
+            className={styles.mentionList}
+            role="listbox"
+            aria-label="Commands"
+          >
+            {commandMatches.map((cmd, i) => (
+              <li
+                key={cmd.name}
+                role="option"
+                aria-selected={i === commandIndex}
+              >
+                <button
+                  type="button"
+                  className={styles.mentionRow}
+                  data-highlighted={i === commandIndex ? "true" : undefined}
+                  onMouseEnter={() => setCommandIndex(i)}
+                  onClick={() => acceptCommand(cmd.name)}
+                >
+                  <span className={styles.providerRowText}>
+                    <span className={styles.modelRowLabel}>{cmd.name}</span>
+                    <span className={styles.modelRowVendor}>{cmd.hint}</span>
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
         {attachments.length > 0 && (
           <div className={styles.attachmentRow} aria-label="Attachments">
             {attachments.map((a) => (
@@ -1041,10 +1190,15 @@ export function Composer({
           rows={3}
           value={value}
           onChange={(e) => {
+            commandFrozen.current = false;
             setValue(e.target.value);
             refreshMention();
+            refreshCommand();
           }}
-          onSelect={refreshMention}
+          onSelect={() => {
+            refreshMention();
+            refreshCommand();
+          }}
           onKeyDown={onKeyDown}
           onPaste={onPaste}
           disabled={disabled || sending}
@@ -1222,7 +1376,11 @@ export function Composer({
                           </li>
                         ))}
                         {providerRows.map((row, index) => (
-                          <li key={row.id} role="option" aria-selected={row.current}>
+                          <li
+                            key={row.id}
+                            role="option"
+                            aria-selected={row.current}
+                          >
                             <button
                               type="button"
                               className={styles.providerRow}
@@ -1321,81 +1479,81 @@ export function Composer({
                       </div>
                     ) : null}
                     {drillProvider ? (
-                    <ul
-                      ref={modelListRef}
-                      className={`${styles.modelList} ${styles.levelEnterRight}`}
-                      role="listbox"
-                      aria-label="Model"
-                      tabIndex={0}
-                      onKeyDown={onModelListKeyDown}
-                    >
-                      {glider && (
-                        <div
-                          className={styles.highlightGlider}
-                          aria-hidden="true"
-                          style={{
-                            height: glider.height,
-                            transform: `translateY(${glider.top}px)`,
-                          }}
-                        />
-                      )}
-                      {modelRows.map((row, index) => {
-                        const selected = isRowSelected(row, provider, model);
-                        const highlighted = index === hi;
-                        return (
-                          <li
-                            key={rowKey(row)}
-                            role="option"
-                            aria-selected={selected}
-                            aria-disabled={row.disabled ? true : undefined}
-                            className={styles.rowEnter}
-                            style={rowEnterStyle(index)}
-                          >
-                            {row.groupHeading && !drillProvider ? (
-                              <div
-                                className={styles.modelGroupHeading}
-                                aria-hidden="true"
-                              >
-                                {row.groupHeading}
-                              </div>
-                            ) : null}
-                            <button
-                              type="button"
-                              className={styles.modelRow}
-                              // The list scrolls (26 rows in a 240px box) and
-                              // opens focused, so arrow keys are the first
-                              // affordance. Without this the highlight walks
-                              // off-screen past the sixth row and the list
-                              // looks frozen while the detail pane changes.
-                              ref={(el) => {
-                                if (highlighted && el) {
-                                  el.scrollIntoView({ block: "nearest" });
-                                }
-                              }}
-                              data-selected={selected ? "true" : undefined}
-                              data-highlighted={
-                                highlighted ? "true" : undefined
-                              }
-                              data-disabled={
-                                row.disabled ? "true" : undefined
-                              }
-                              disabled={row.disabled}
-                              title={row.disabledReason ?? undefined}
-                              onMouseEnter={() => setHighlightIndex(index)}
-                              onClick={() => void pickRow(row)}
+                      <ul
+                        ref={modelListRef}
+                        className={`${styles.modelList} ${styles.levelEnterRight}`}
+                        role="listbox"
+                        aria-label="Model"
+                        tabIndex={0}
+                        onKeyDown={onModelListKeyDown}
+                      >
+                        {glider && (
+                          <div
+                            className={styles.highlightGlider}
+                            aria-hidden="true"
+                            style={{
+                              height: glider.height,
+                              transform: `translateY(${glider.top}px)`,
+                            }}
+                          />
+                        )}
+                        {modelRows.map((row, index) => {
+                          const selected = isRowSelected(row, provider, model);
+                          const highlighted = index === hi;
+                          return (
+                            <li
+                              key={rowKey(row)}
+                              role="option"
+                              aria-selected={selected}
+                              aria-disabled={row.disabled ? true : undefined}
+                              className={styles.rowEnter}
+                              style={rowEnterStyle(index)}
                             >
-                              <span className={styles.modelRowLabel}>
-                                {row.label}
-                              </span>
-                              <span className={styles.modelRowVendor}>
-                                {row.vendor}
-                                {row.unavailable ? " · not installed" : ""}
-                              </span>
-                            </button>
-                          </li>
-                        );
-                      })}
-                    </ul>
+                              {row.groupHeading && !drillProvider ? (
+                                <div
+                                  className={styles.modelGroupHeading}
+                                  aria-hidden="true"
+                                >
+                                  {row.groupHeading}
+                                </div>
+                              ) : null}
+                              <button
+                                type="button"
+                                className={styles.modelRow}
+                                // The list scrolls (26 rows in a 240px box) and
+                                // opens focused, so arrow keys are the first
+                                // affordance. Without this the highlight walks
+                                // off-screen past the sixth row and the list
+                                // looks frozen while the detail pane changes.
+                                ref={(el) => {
+                                  if (highlighted && el) {
+                                    el.scrollIntoView({ block: "nearest" });
+                                  }
+                                }}
+                                data-selected={selected ? "true" : undefined}
+                                data-highlighted={
+                                  highlighted ? "true" : undefined
+                                }
+                                data-disabled={
+                                  row.disabled ? "true" : undefined
+                                }
+                                disabled={row.disabled}
+                                title={row.disabledReason ?? undefined}
+                                onMouseEnter={() => setHighlightIndex(index)}
+                                onClick={() => void pickRow(row)}
+                              >
+                                <span className={styles.modelRowLabel}>
+                                  {row.label}
+                                </span>
+                                <span className={styles.modelRowVendor}>
+                                  {row.vendor}
+                                  {row.unavailable ? " · not installed" : ""}
+                                </span>
+                              </button>
+                            </li>
+                          );
+                        })}
+                      </ul>
                     ) : null}
                   </div>
                   <div className={styles.modelPopoverRight}>
@@ -1743,9 +1901,7 @@ export function Composer({
             disabled={!canSend}
             data-queues={busy ? "" : undefined}
             title={
-              busy
-                ? "Queue for when this run lands (⌘Enter)"
-                : "Send (⌘Enter)"
+              busy ? "Queue for when this run lands (⌘Enter)" : "Send (⌘Enter)"
             }
             onClick={() => submitSend()}
           >
