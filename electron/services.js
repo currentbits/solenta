@@ -433,6 +433,7 @@ function createThread(store, input) {
     settledOverride: null,
     settledAt: null,
     prState: null,
+    prMergeable: null,
     // Just-created is not unread: visit time matches creation.
     lastVisitedAt: now,
     pinnedAt: null,

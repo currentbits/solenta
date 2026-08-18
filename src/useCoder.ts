@@ -107,8 +107,12 @@ function resolveApi(): CoderApi {
 }
 
 function errorMessage(err: unknown): string {
-  if (err instanceof Error && err.message) return err.message;
-  return String(err);
+  const raw = err instanceof Error && err.message ? err.message : String(err);
+  for (const marker of ["MERGE_CONFLICT:", "WORKTREE_DIRTY:"]) {
+    const at = raw.indexOf(marker);
+    if (at !== -1) return raw.slice(at + marker.length).trim();
+  }
+  return raw;
 }
 
 /** A follow-up typed during a run, waiting for that run to land. */

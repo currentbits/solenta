@@ -1173,6 +1173,7 @@ function NextGitActionButton({
     prNumber: thread.prNumber,
     prUrl: thread.prUrl,
     prState: thread.prState,
+    mergeable: thread.prMergeable,
     checks,
   });
   const action =
@@ -1260,7 +1261,9 @@ function NextGitActionButton({
       : action.kind === "create-pr"
         ? "Creating PR…"
         : action.kind === "merge"
-          ? "Merging…"
+          ? action.label === "Update from main"
+            ? "Updating…"
+            : "Merging…"
           : action.label
     : (flash ?? action.label);
   const className = [

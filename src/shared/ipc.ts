@@ -300,6 +300,12 @@ export interface ThreadInfo {
    */
   prState: "OPEN" | "CLOSED" | "MERGED" | null;
   /**
+   * Last known GitHub mergeability (issue #524). Set by prStatus when gh
+   * returns `mergeable`. CONFLICTING flips the header next-action to
+   * Update from main. Null when unknown or the PR is gone.
+   */
+  prMergeable?: "MERGEABLE" | "CONFLICTING" | "UNKNOWN" | null;
+  /**
    * Verification gate (issue #296): a shell command the thread must pass
    * before a run may land "done". Null/empty = unarmed, runs settle on the
    * agent's word alone. Run in the thread's worktree (project root when the
@@ -1090,6 +1096,10 @@ export interface PrInfo {
   deletions?: number;
   /** Changed file count from gh, when present. */
   changedFiles?: number;
+  /** GitHub mergeability from `gh pr view --json mergeable`. */
+  mergeable?: "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
+  /** PR base branch from `gh pr view --json baseRefName`. */
+  baseRefName?: string;
 }
 
 /** One CI check from `gh pr checks`. */
@@ -2120,8 +2130,10 @@ export interface CoderApi {
      */
     prChecks(input: { threadId: string }): Promise<PrChecksResult>;
     /**
-     * Squash-merge the thread's current OPEN PR (`gh pr merge --squash`)
-     * and return the refreshed PrInfo. Rejects with gh's own message.
+     * Update the PR branch from its base (fetch + merge), push if HEAD
+     * moved, then squash-merge via `gh pr merge --squash`. Conflicts
+     * throw MERGE_CONFLICT: and leave the worktree conflicted. An empty
+     * unique tree vs base tells the caller to close the PR.
      */
     prMerge(input: { threadId: string }): Promise<PrInfo>;
     /**
