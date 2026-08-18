@@ -3,7 +3,10 @@
  * Run: npm run test:renderer -- test/conflictForecastBadge.test.tsx
  */
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import { describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
 import * as React from "react";
 import { mount } from "./support/dom.ts";
 import { ThreadCard } from "../src/components/Sidebar";
@@ -14,6 +17,26 @@ import type {
   ProjectInfo,
   ProviderInfo,
 } from "../src/shared/ipc";
+
+const sidebarCss = fs.readFileSync(
+  path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "../src/components/Sidebar.module.css",
+  ),
+  "utf8",
+);
+
+/** Body of `.className {` after comments are stripped. */
+function cssRuleBody(css: string, className: string): string {
+  const clean = css.replace(/\/\*[\s\S]*?\*\//g, "");
+  const re = new RegExp(`\\.${className}(?![\\w-])\\s*\\{`);
+  const m = re.exec(clean);
+  if (!m) return "";
+  const brace = m.index + m[0].length - 1;
+  const end = clean.indexOf("}", brace);
+  if (end < 0) return "";
+  return clean.slice(brace + 1, end);
+}
 
 const providers: ProviderInfo[] = [
   {
@@ -110,8 +133,11 @@ describe("ThreadCard conflict forecast badge", () => {
     assert.ok(badge, "conflict badge must render");
     assert.equal(badge.getAttribute("data-conflict-forecast"), "conflict");
     assert.equal((badge.textContent || "").trim(), "conflict");
-    assert.match(badge.getAttribute("title") || "", /beta work/);
-    assert.match(badge.getAttribute("title") || "", /src\/a\.ts/);
+    const tip = m.query("[data-conflict-tip]");
+    assert.ok(tip, "hover tip must be in the DOM");
+    assert.match(tip.textContent || "", /beta work/);
+    assert.match(tip.textContent || "", /src\/a\.ts/);
+    assert.doesNotMatch(tip.textContent || "", /overlaps/);
     m.unmount();
   });
 
@@ -121,8 +147,10 @@ describe("ThreadCard conflict forecast badge", () => {
     assert.ok(badge, "overlap badge must render");
     assert.equal(badge.getAttribute("data-conflict-forecast"), "overlap");
     assert.equal((badge.textContent || "").trim(), "overlap");
-    assert.match(badge.getAttribute("title") || "", /beta work/);
-    assert.match(badge.getAttribute("title") || "", /src\/a\.ts/);
+    const tip = m.query("[data-conflict-tip]");
+    assert.ok(tip, "hover tip must be in the DOM");
+    assert.match(tip.textContent || "", /overlaps beta work/);
+    assert.match(tip.textContent || "", /src\/a\.ts/);
     m.unmount();
   });
 
@@ -138,10 +166,78 @@ describe("ThreadCard conflict forecast badge", () => {
     assert.ok(badge);
     assert.equal(badge.getAttribute("data-conflict-forecast"), "conflict");
     assert.equal((badge.textContent || "").trim(), "conflict · 2");
-    const title = badge.getAttribute("title") || "";
-    assert.match(title, /beta work/);
-    assert.match(title, /gamma work/);
+    const tip = m.query("[data-conflict-tip]");
+    assert.ok(tip);
+    const lines = [...tip.querySelectorAll("[data-conflict-kind]")].map(
+      (el) => el.getAttribute("data-conflict-kind"),
+    );
+    assert.deepEqual(lines, ["conflict", "overlap"]);
+    assert.match(tip.textContent || "", /beta work/);
+    assert.match(tip.textContent || "", /overlaps gamma work/);
     m.unmount();
+  });
+
+  it("is keyboard-focusable so the tip is not hover-only", async () => {
+    const m = await card(loudForecast());
+    const badge = m.query("[data-conflict-forecast]");
+    assert.ok(badge);
+    assert.equal(badge.getAttribute("tabindex"), "0");
+    assert.match(badge.getAttribute("aria-label") || "", /beta work/);
+    m.unmount();
+  });
+});
+
+describe("conflict tip readability", () => {
+  it("paints the tip on an opaque card surface, not the sidebar fill", () => {
+    const body = cssRuleBody(sidebarCss, "conflictTip");
+    assert.match(
+      body,
+      /background\s*:\s*var\(--card\)/,
+      "tip must use --card so it does not dissolve into --bg-elevated / transparent cards",
+    );
+    assert.doesNotMatch(
+      body,
+      /--bg-elevated|transparent|color-mix/,
+      "a see-through tip is how the overlay became unreadable over the next card",
+    );
+  });
+
+  it("raises the open card above siblings so the tip is not buried", () => {
+    const clean = sidebarCss.replace(/\/\*[\s\S]*?\*\//g, "");
+    assert.match(
+      clean,
+      /\.card:has\(\.conflictWrap:hover\)/,
+      "card must rise on tip hover; z-index 8 inside cardBody cannot escape the next card",
+    );
+    assert.match(
+      clean,
+      /\.card:has\(\.conflictWrap:focus-within\)/,
+      "keyboard focus on the pill must raise the card the same way",
+    );
+    const hoverRule =
+      /\.card:has\(\.conflictWrap:hover\)[^{]*\{([^}]*)\}/.exec(clean);
+    assert.ok(hoverRule, "hover :has() rule must have a body");
+    const z = /z-index\s*:\s*(\d+)/.exec(hoverRule[1] || "");
+    assert.ok(z, "raised card must set z-index");
+    assert.ok(
+      Number(z[1]) > 2,
+      `raised card z-index must beat cardActions (2); got ${z[1]}`,
+    );
+  });
+
+  it("keeps overlap lines at full text contrast", () => {
+    const clean = sidebarCss.replace(/\/\*[\s\S]*?\*\//g, "");
+    const mutedOverlap =
+      /\.conflictTipLine\[data-conflict-kind="overlap"\]\s*\{([^}]*)\}/.exec(
+        clean,
+      );
+    if (mutedOverlap) {
+      assert.doesNotMatch(
+        mutedOverlap[1] || "",
+        /--text-muted|--text-dim/,
+        "muted overlap copy disappears on the next card",
+      );
+    }
   });
 });
 

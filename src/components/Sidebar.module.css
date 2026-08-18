@@ -1206,6 +1206,61 @@
   border: 1px solid rgba(251, 191, 36, 0.35);
 }
 
+/*
+ * #516: cardBody is pointer-events:none so a native title never fires.
+ * Re-enable hover/focus on the wrap and paint a real tip (not title=).
+ *
+ * The tip hangs below the pill onto the next card. Cards are position:relative
+ * with a transparent fill, and cardBody is its own stacking context (z-index 1),
+ * so a z-index on the tip cannot escape the next sibling. Raise the open card.
+ */
+.card:has(.conflictWrap:hover),
+.card:has(.conflictWrap:focus-within) {
+  z-index: 6;
+}
+
+.conflictWrap {
+  position: relative;
+  flex-shrink: 0;
+  pointer-events: auto;
+}
+
+.conflictWrap .badge:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 1px;
+}
+
+.conflictTip {
+  display: none;
+  position: absolute;
+  right: 0;
+  top: calc(100% + 5px);
+  z-index: 8;
+  min-width: 160px;
+  max-width: 260px;
+  padding: 7px 9px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--card);
+  box-shadow: var(--shadow-pop);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 550;
+  line-height: 1.4;
+  white-space: normal;
+}
+
+.conflictWrap:hover .conflictTip,
+.conflictWrap:focus-within .conflictTip {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.conflictTipLine {
+  display: block;
+}
+
 /* "Waiting on 2 workers · 3m" (issue #42): its own line under the meta row,
    so the count survives on a narrow card. Amber when a child is blocked on
    the user — that wait needs an answer, not patience. */

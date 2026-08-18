@@ -10,14 +10,17 @@ import {
 import autoAnimate from "@formkit/auto-animate";
 import type {
   ConflictForecast,
-  ConflictPairInfo,
   ProjectInfo,
   ProviderInfo,
   SpaceInfo,
   ThreadInfo,
   UpdateStatus,
 } from "../shared/ipc";
-import { pairsForThread } from "../conflictForecast";
+import {
+  forecastHoverLines,
+  formatForecastHoverLine,
+  pairsForThread,
+} from "../conflictForecast";
 import { isWebMode } from "../shared/wire";
 import {
   formatElapsed,
@@ -393,30 +396,6 @@ function StatusBadge({
   return null;
 }
 
-const FORECAST_FILE_CAP = 4;
-
-function forecastTooltip(
-  pairs: ConflictPairInfo[],
-  threadId: string,
-  titles?: ReadonlyMap<string, string>,
-): string {
-  return pairs
-    .map((pair) => {
-      const other = pair.threadA === threadId ? pair.threadB : pair.threadA;
-      const name = titles?.get(other) ?? other;
-      const files =
-        pair.conflicts.length > 0 ? pair.conflicts : pair.overlap;
-      const shown = files.slice(0, FORECAST_FILE_CAP);
-      const extra = files.length - shown.length;
-      const filePart =
-        shown.length === 0
-          ? ""
-          : `: ${shown.join(", ")}${extra > 0 ? ` +${extra} more` : ""}`;
-      return `${name}${filePart}`;
-    })
-    .join("\n");
-}
-
 function ConflictForecastBadge({
   threadId,
   forecast,
@@ -428,16 +407,39 @@ function ConflictForecastBadge({
 }) {
   const pairs = pairsForThread(forecast, threadId);
   if (pairs.length === 0) return null;
-  const loud = pairs.some((p) => p.conflicts.length > 0);
+  const lines = forecastHoverLines(pairs, threadId, titles);
+  const loud = lines.some((l) => l.kind === "conflict");
   const kind = loud ? "conflict" : "overlap";
   const label = pairs.length > 1 ? `${kind} · ${pairs.length}` : kind;
+  const spoken = lines.map(formatForecastHoverLine).join(". ");
+  const tipId = `conflict-tip-${threadId}`;
   return (
-    <span
-      className={`${styles.badge} ${loud ? styles.badgeConflict : styles.badgeOverlap}`}
-      data-conflict-forecast={kind}
-      title={forecastTooltip(pairs, threadId, titles)}
-    >
-      {label}
+    <span className={styles.conflictWrap}>
+      <span
+        className={`${styles.badge} ${loud ? styles.badgeConflict : styles.badgeOverlap}`}
+        data-conflict-forecast={kind}
+        tabIndex={0}
+        aria-describedby={tipId}
+        aria-label={`${label}. ${spoken}`}
+      >
+        {label}
+      </span>
+      <span
+        id={tipId}
+        role="tooltip"
+        className={styles.conflictTip}
+        data-conflict-tip=""
+      >
+        {lines.map((line) => (
+          <span
+            key={line.otherId}
+            className={styles.conflictTipLine}
+            data-conflict-kind={line.kind}
+          >
+            {formatForecastHoverLine(line)}
+          </span>
+        ))}
+      </span>
     </span>
   );
 }
