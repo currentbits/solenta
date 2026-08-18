@@ -20,7 +20,9 @@ const {
   getProvider,
   resolveBin,
   isBinAvailable,
+  listProviders,
 } = require("./providers.js");
+const orchcommands = require("./orchcommands.js");
 const {
   getClaudeMcpArgs,
   getCodexMcpArgs,
@@ -4199,6 +4201,124 @@ function createRunner(opts) {
     );
   }
 
+  /**
+   * Dispatch one orchestration command (issue #338): fork a worker per
+   * provider, start each with its role prompt, and let the ordinary
+   * worker-finished notices wake this thread with the results.
+   *
+   * Only `/handoff` gets a worktree. `/advisor` and `/committee` are
+   * read-only by contract and a worker worktree branches from the default
+   * branch — a second opinion on the default branch is not a second opinion
+   * on the work in progress — so they run in the project checkout instead
+   * and are pointed at the caller's checkout in the prompt.
+   *
+   * @param {string} threadId - the lead thread
+   * @param {any} thread
+   * @param {import('./orchcommands.js').OrchCommand} cmd
+   * @param {string} prompt - the raw prompt, kept verbatim in the transcript
+   * @param {{ kind: string, path: string, name: string }[]} attachments
+   */
+  async function dispatchOrchCommand(
+    threadId,
+    thread,
+    cmd,
+    prompt,
+    attachments,
+  ) {
+    // Fork every worker BEFORE starting any: committee members argue with
+    // each other directly, so each one's prompt needs its peers' ids.
+    const workers = cmd.providers.map((provider) =>
+      services.forkWorkerThread(store, {
+        threadId,
+        provider,
+        worktree: cmd.kind === "handoff",
+      }),
+    );
+    const ids = workers.map((w) => w.id);
+    const where =
+      cmd.kind !== "handoff" && thread.worktreePath
+        ? `\n\nThe thread that asked works in ${thread.worktreePath}. Inspect that checkout — do not edit it.`
+        : "";
+
+    // The fan-out is a span of the lead thread and parents every worker run,
+    // so the crew reads as one trace tree (same shape as the pendingFork hop).
+    const forkRunId = randomUUID();
+    otel.startRun({
+      threadId,
+      runId: forkRunId,
+      provider: resolveProvider(thread),
+      model: thread.model || null,
+    });
+
+    let started = null;
+    /** @type {string[]} */
+    const failures = [];
+    for (let i = 0; i < workers.length; i++) {
+      const workerPrompt =
+        orchcommands.workerPrompt(cmd.kind, cmd.task, {
+          index: i,
+          total: workers.length,
+          peerIds: ids.filter((_, j) => j !== i),
+        }) + where;
+      try {
+        const run = await startRun({
+          threadId: workers[i].id,
+          prompt: workerPrompt,
+          attachments,
+          parentRunId: forkRunId,
+        });
+        started = started || run;
+      } catch (err) {
+        // A worker that never started is an orphan: drop it, same contract
+        // as the pendingFork path. Peers that DID start keep running — they
+        // are real work, and killing them to report a clean failure would
+        // throw away more than it explains.
+        failures.push(
+          `${workers[i].provider}: ${shortError(String((err && err.message) || err))}`,
+        );
+        try {
+          services.deleteThread(store, { threadId: workers[i].id });
+        } catch {
+          /* best effort */
+        }
+      }
+    }
+
+    if (!started) {
+      otel.endRun({
+        threadId,
+        runId: forkRunId,
+        status: "failed",
+        error: shortError(failures.join("; ")),
+      });
+      pushThreadsChanged();
+      throw new Error(
+        `/${cmd.kind} dispatched no workers — ${failures.join("; ")}`,
+      );
+    }
+
+    otel.endRun({ threadId, runId: forkRunId, status: "done" });
+    appendMessage(threadId, "user", prompt, forkRunId, null, attachments);
+    const live = workers.filter((w) => store.getThread(w.id));
+    appendMessage(
+      threadId,
+      "event",
+      orchcommands.dispatchNote(
+        cmd.kind,
+        live.map((w) => ({ id: w.id, provider: w.provider })),
+      ) + (failures.length ? `\nNot dispatched — ${failures.join("; ")}` : ""),
+      forkRunId,
+    );
+    store.updateThread(
+      threadId,
+      { ...services.clearSettledOnActivity(thread) },
+      { touch: true },
+    );
+    pushDetail(threadId);
+    pushThreadsChanged();
+    return started;
+  }
+
   async function startRun(input) {
     const { threadId, prompt } = input;
     const attachments = sanitizeAttachments(input.attachments);
@@ -4214,6 +4334,30 @@ function createRunner(opts) {
     // Machine-delivered turns increment autoTurns in flushOrchNotices.
     // Anything else (user send, retry, verify fix) is a human in the loop.
     if (!input.fromNotice) autoTurns.set(threadId, 0);
+
+    // Orchestration commands (issue #338): `/handoff`, `/advisor` and
+    // `/committee` are named compositions of the fork-and-notice machinery
+    // below, so they are intercepted here instead of reaching a CLI. Never
+    // on a machine-delivered turn — a worker quoting the command back would
+    // otherwise fan out again — and the cheap `/` test keeps the provider
+    // probe (`which`) off the ordinary send path.
+    if (!input.fromNotice && String(prompt).trimStart().startsWith("/")) {
+      const cmd = orchcommands.parseOrchCommand(prompt, {
+        installed: listProviders()
+          .filter((p) => p.available)
+          .map((p) => p.id),
+        current: resolveProvider(thread),
+      });
+      if (cmd) {
+        return await dispatchOrchCommand(
+          threadId,
+          thread,
+          cmd,
+          prompt,
+          attachments,
+        );
+      }
+    }
 
     // Orchestrator thread (issue #202): the first prompt is not run here. It
     // is forked to a worker that holds the worktree and does the work; from
