@@ -250,6 +250,7 @@ describe("recordRunOutcome unit", () => {
       body.body,
       /provider=claude model=claude-sonnet-5 status=done tokens_in=10 tokens_out=20 cost_usd=0\.03/,
     );
+    assert.deepEqual(body.citations, [{ kind: "thread", id: "t1" }]);
   });
 
   it("silent no-op when memory server is not running (never throws)", async () => {

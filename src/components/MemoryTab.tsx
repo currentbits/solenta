@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { MemoryEntryInfo } from "../shared/ipc";
+import type { MemoryCitation, MemoryEntryInfo } from "../shared/ipc";
 import { formatRelativeAge } from "../format";
 import styles from "./MemoryTab.module.css";
 import {
@@ -60,6 +60,13 @@ export interface MemoryTabProps {
 function isNotRunningError(err: unknown): boolean {
   if (err instanceof Error && err.message === MEMORY_NOT_RUNNING) return true;
   return String(err).includes(MEMORY_NOT_RUNNING);
+}
+
+function citationLabel(c: MemoryCitation): string {
+  if (c.kind === "file") return c.line ? `${c.path}:${c.line}` : c.path;
+  if (c.kind === "thread") return `thread ${c.id.slice(0, 8)}`;
+  if (c.kind === "commit") return c.sha.slice(0, 7);
+  return "";
 }
 
 function typeBadgeClass(type: MemoryEntryInfo["type"]): string {
@@ -466,6 +473,19 @@ export function MemoryTab({
                     </span>
                   </div>
                   <div className={styles.cardTitle}>{entry.title}</div>
+                  {entry.citations && entry.citations.length > 0 ? (
+                    <div className={styles.citations} data-citations="">
+                      {entry.citations.map((c, i) => (
+                        <span
+                          key={`${c.kind}-${i}`}
+                          className={styles.citation}
+                          title={c.kind === "file" ? c.excerpt : undefined}
+                        >
+                          {citationLabel(c)}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
                   {!open && <div className={styles.excerpt}>{entry.body}</div>}
                 </button>
                 {open ? (
