@@ -69,6 +69,11 @@ function resolveNodeBinary() {
  * Node for the win32 .cmd wrapper. Spaces are fine here (the path is quoted),
  * and we must not fall back to process.execPath — that is electron.exe and
  * would boot another Electron per fake invocation.
+ *
+ * electron/test/support/fakeBin.js has a same-named writeFakeBin that DOES
+ * use process.execPath. That is correct there and wrong here: the test suite
+ * runs under plain node, this file runs under Electron. Same name, opposite
+ * rule — check which process you are in before copying either one.
  */
 function resolveNodeForCmd() {
   const fromPath = defaultWhich("node");

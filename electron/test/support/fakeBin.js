@@ -28,6 +28,13 @@ function writeFakeBin(filePath, body) {
     return filePath;
   }
 
+  // process.execPath is correct HERE and wrong in electron/smoke.js's
+  // same-named writeFakeBin: this runs under plain node (scripts/
+  // test-electron.js), so execPath IS node. smoke.js runs under Electron,
+  // where execPath is electron.exe and each fake would boot a second
+  // Electron — it resolves node off PATH instead. Do not copy one into
+  // the other without changing this line.
+  //
   // ponytail: quote both paths, no further cmd escaping. Test tmpdirs
   // and process.execPath do not contain `"`. %* forwards argv as-is.
   const cmdPath = filePath.endsWith(".cmd") ? filePath : `${filePath}.cmd`;
