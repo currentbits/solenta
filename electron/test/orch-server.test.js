@@ -151,6 +151,8 @@ describe("orch-server tool handlers", () => {
     assert.match(INSTRUCTIONS, /woken on a new turn/);
     assert.match(INSTRUCTIONS, /do not sit idle waiting for the user/);
     assert.match(INSTRUCTIONS, /hypothesis_record/);
+    assert.match(INSTRUCTIONS, /teach_review/);
+    assert.match(INSTRUCTIONS, /TODO\(human\)/);
     assert.match(INSTRUCTIONS, /task_claim/);
     assert.match(INSTRUCTIONS, /peer_send/);
     assert.match(INSTRUCTIONS, /git show/);
@@ -649,6 +651,7 @@ describe("orch-server HTTP", () => {
       "task_complete",
       "task_list",
       "task_release",
+      "teach_review",
       "thread_fork",
       "thread_send",
       "thread_status",

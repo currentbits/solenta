@@ -171,7 +171,12 @@ export interface UseCoderResult {
   createThread: (
     title?: string,
     projectId?: string,
-    opts?: { worktree?: boolean; orchestrate?: boolean; issueNumber?: number | null },
+    opts?: {
+      worktree?: boolean;
+      orchestrate?: boolean;
+      teach?: boolean;
+      issueNumber?: number | null;
+    },
   ) => Promise<ThreadInfo | null>;
   /**
    * Fork / hand off a thread (threads.fork). Selects the new thread the same
@@ -295,6 +300,12 @@ export interface UseCoderResult {
     threadId: string,
     stage: SpecArtifact,
   ) => Promise<{ path: string; text: string | null }>;
+  /** Turn Teach mode on (issue #373). Updates thread from the returned ThreadInfo. */
+  startTeach: (threadId: string) => Promise<void>;
+  /** Turn Teach mode off. */
+  stopTeach: (threadId: string) => Promise<void>;
+  /** Ask the agent to review the human's TODO(human) fills. Starts a run. */
+  requestTeachReview: (threadId: string) => Promise<void>;
   /** Permanently delete the selected thread (after caller confirms). */
   deleteThread: () => Promise<void>;
   /**
@@ -972,7 +983,12 @@ export function useCoder(): UseCoderResult {
     async (
       title = "New Thread",
       projectId?: string,
-      opts?: { worktree?: boolean; orchestrate?: boolean; issueNumber?: number | null },
+      opts?: {
+        worktree?: boolean;
+        orchestrate?: boolean;
+        teach?: boolean;
+        issueNumber?: number | null;
+      },
     ) => {
       const pid = projectId ?? selectedProjectId;
       if (!pid) return null;
@@ -998,6 +1014,7 @@ export function useCoder(): UseCoderResult {
           title,
           ...(worktree ? { worktree: true } : {}),
           ...(orchestrate ? { orchestrate: true } : {}),
+          ...(opts?.teach ? { teach: true } : {}),
           ...(opts?.issueNumber != null ? { issueNumber: opts.issueNumber } : {}),
         });
       } catch (err) {
@@ -1565,6 +1582,60 @@ export function useCoder(): UseCoderResult {
     (threadId: string, stage: SpecArtifact) =>
       api.threads.specArtifact({ threadId, stage }),
     [api],
+  );
+
+  const startTeach = useCallback(
+    async (threadId: string) => {
+      try {
+        const thread = await api.threads.startTeach({ threadId });
+        applyThreads(
+          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
+        );
+        setDetail((prev) =>
+          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
+        );
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+      }
+    },
+    [api, applyThreads],
+  );
+
+  const stopTeach = useCallback(
+    async (threadId: string) => {
+      try {
+        const thread = await api.threads.stopTeach({ threadId });
+        applyThreads(
+          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
+        );
+        setDetail((prev) =>
+          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
+        );
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+      }
+    },
+    [api, applyThreads],
+  );
+
+  const requestTeachReview = useCallback(
+    async (threadId: string) => {
+      try {
+        const thread = await api.threads.requestTeachReview({ threadId });
+        applyThreads(
+          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
+        );
+        setDetail((prev) =>
+          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
+        );
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+      }
+    },
+    [api, applyThreads],
   );
 
   const deleteThread = useCallback(async () => {
@@ -2254,6 +2325,9 @@ export function useCoder(): UseCoderResult {
     startSpec,
     reviewSpec,
     specArtifact,
+    startTeach,
+    stopTeach,
+    requestTeachReview,
     deleteThread,
     removeProject,
     setupWorktree,

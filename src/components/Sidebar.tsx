@@ -147,12 +147,12 @@ interface SidebarProps {
   /** Global + uses selected project; per-group New thread passes that projectId. */
   onCreateThread: (
     projectId?: string,
-    opts?: { worktree?: boolean; orchestrate?: boolean },
+    opts?: { worktree?: boolean; orchestrate?: boolean; teach?: boolean; issueNumber?: number | null },
   ) => void;
   /**
-   * Mirrors SettingsInfo.defaultWorktree. The caret always lists all three
-   * modes; this only documents the setting the plain "New thread" button
-   * follows (issue #72). Unused in the menu itself.
+   * Mirrors SettingsInfo.defaultWorktree. The caret lists worktree,
+   * orchestrator, plain, and teach; this only documents the setting the
+   * plain "New thread" button follows (issue #72). Unused in the menu itself.
    */
   defaultWorktree?: boolean;
   onAddProject: () => void;
@@ -2002,6 +2002,19 @@ export const Sidebar = memo(function Sidebar({
                 }}
               >
                 New plain thread
+              </button>
+              <button
+                type="button"
+                className={styles.snoozeMenuItem}
+                role="menuitem"
+                data-create-teach-thread={project.id}
+                title="New thread that teaches: hints, TODO(human) markers, reviews your code"
+                onClick={() => {
+                  setCreateMenuFor(null);
+                  onCreateThread(project.id, { worktree: true, teach: true });
+                }}
+              >
+                New teach thread
               </button>
             </div>
           )}

@@ -60,6 +60,8 @@ import {
 } from "../slashCommands";
 import { WorkflowsModal } from "./WorkflowsModal";
 import { DROP_REJECT_MESSAGE } from "../dropFiles";
+import { teachPermissionAllowed } from "../teach";
+import type { ThreadTeach } from "../shared/ipc";
 import { useFileDrop } from "../useFileDrop";
 import styles from "./Composer.module.css";
 
@@ -70,6 +72,8 @@ interface ComposerProps {
   branch: string | null;
   /** Sticky permission mode for this thread. */
   permissionMode: PermissionMode;
+  /** Teach-mode autonomy cap on the permission picker (issue #373). */
+  teach?: ThreadTeach | null;
   onPermissionModeChange: (mode: PermissionMode) => void | Promise<void>;
   /** Current thread provider id. */
   provider: string;
@@ -243,6 +247,7 @@ export function Composer({
   threadId,
   branch,
   permissionMode,
+  teach = null,
   onPermissionModeChange,
   provider,
   model,
@@ -1677,22 +1682,32 @@ export function Composer({
                   role="listbox"
                   aria-label="Permission mode"
                 >
-                  {PERMISSION_MODES.map((mode) => (
-                    <li
-                      key={mode}
-                      role="option"
-                      aria-selected={mode === permissionMode}
-                    >
-                      <button
-                        type="button"
-                        className={styles.modeOption}
-                        data-active={mode === permissionMode}
-                        onClick={() => void pickMode(mode)}
+                  {PERMISSION_MODES.map((mode) => {
+                    const gated = !teachPermissionAllowed(mode, teach);
+                    return (
+                      <li
+                        key={mode}
+                        role="option"
+                        aria-selected={mode === permissionMode}
                       >
-                        {PERMISSION_MODE_LABELS[mode]}
-                      </button>
-                    </li>
-                  ))}
+                        <button
+                          type="button"
+                          className={styles.modeOption}
+                          data-active={mode === permissionMode}
+                          data-teach-gated={gated ? "true" : undefined}
+                          disabled={gated}
+                          title={
+                            gated
+                              ? `Teach mode (${teach?.autonomy ?? "hint"}) does not allow this yet`
+                              : undefined
+                          }
+                          onClick={() => void pickMode(mode)}
+                        >
+                          {PERMISSION_MODE_LABELS[mode]}
+                        </button>
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
             </div>
