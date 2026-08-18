@@ -1793,3 +1793,85 @@ describe("Sidebar update indicator (issue #138)", () => {
     unset.unmount();
   });
 });
+
+describe("Sidebar subagent rows (issue #542)", () => {
+  it("nests running subagents under their thread card; click selects the parent", async () => {
+    const t = thread({
+      id: "orch",
+      title: "orchestrating",
+      status: "working",
+      runStartedAt: FRESH,
+      updatedAt: FRESH + 60,
+      projectId: "p1",
+      subagents: [
+        {
+          id: "sa1",
+          description: "Explore the codebase",
+          agentType: "Explore",
+          status: "running",
+        },
+        {
+          id: "sa2",
+          description: "Write the tests",
+          agentType: null,
+          status: "done",
+        },
+      ],
+    });
+    const selects: string[] = [];
+    const m = await mount(
+      sidebar([t], {
+        onSelectThread: (id) => {
+          selects.push(id);
+        },
+      }),
+    );
+    assert.ok(
+      m.query('[data-subagent-list="orch"]'),
+      "subagent list renders under the thread card",
+    );
+    const rows = m.queryAll("[data-subagent-row]");
+    assert.equal(
+      rows.length,
+      1,
+      "running subagents only; done rows stay on the Agents panel roster",
+    );
+    assert.ok(
+      (rows[0].textContent || "").includes("Explore the codebase"),
+      "row shows the subagent description",
+    );
+    await m.click(rows[0] as HTMLElement);
+    assert.deepEqual(selects, ["orch"], "row click selects the parent thread");
+    m.unmount();
+  });
+
+  it("renders no subagent list when nothing is running", async () => {
+    const t = thread({
+      id: "plain",
+      title: "plain work",
+      status: "idle",
+      projectId: "p1",
+      subagents: [
+        {
+          id: "sa1",
+          description: "old finished one",
+          agentType: null,
+          status: "done",
+        },
+        {
+          id: "sa2",
+          description: "old failed one",
+          agentType: null,
+          status: "failed",
+        },
+      ],
+    });
+    const m = await mount(sidebar([t]));
+    assert.equal(
+      m.query('[data-subagent-list="plain"]'),
+      null,
+      "done/failed subagents leave no sidebar rows",
+    );
+    m.unmount();
+  });
+});

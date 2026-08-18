@@ -4,6 +4,27 @@
   "chunks": [
     {
       "area": "tests",
+      "rationale": "test/sidebar.test.tsx new describe block pins the intended behavior first: running subagents nest under the parent card, done/failed render nothing, row click selects the parent thread. Read this to see the contract before the implementation.",
+      "risks": ["Tests only cover the attention list, not the archived-expanded list which got the same Fragment wrap."]
+    },
+    {
+      "area": "impl",
+      "rationale": "src/components/Sidebar.tsx: new SubagentRows component (after SelectOpts) filters thread.subagents to status==='running' and renders compact rows that call onSelect(parentId). Both ThreadCard map sites (attention ~2926, archived ~2985) are wrapped in a Fragment keyed `${id}:card` to preserve the t3 unmount/remount key rule documented above the attention map.",
+      "risks": [
+        "SubagentRows is not memoized; it re-renders with each sidebar tick. It is tiny (filter + map over <=20 rows) and only mounts rows while subagents run, so cost is negligible.",
+        "Shift-click on a subagent row forwards shift to onSelect, which may range-select threads; same semantics as clicking the parent card, judged harmless."
+      ]
+    },
+    {
+      "area": "critical",
+      "rationale": "src/components/Sidebar.module.css: .subagentList/.subagentRow reuse the nested-card geometry (width calc(100% - 14px), margin-left 14px, ::before elbow at left -9px) so subagent rows align exactly with nested worker cards; the pulsing dot reuses the existing .waitingDot class/animation from the wait line.",
+      "risks": [
+        "Elbow is per-row (top -4px to 50%), so multiple rows draw a chain of elbows rather than one continuous spine; matches how consecutive nested worker cards already look.",
+        "Running-only is a deliberate scope cut (issue #542): finished subagents remain visible in the Agents panel Subagents section, not the sidebar. If the user expected done rows too, this is the line to revisit."
+      ]
+    },
+    {
+      "area": "tests",
       "rationale": "Contract first: electron/test/quota-wait.test.js is the parser (Claude/Codex/Kimi clocks, ISO/duration/Retry-After, #286 exclusion, wake-once, opt-out). electron/test/quota-wait-runner.test.js is the live runner (park, no-clock fail, budget fail, global opt-out, wake-once without a second user message, resumeQuotaWait). Renderer: test/quotaWait.test.ts, sidebarFailedBadge, settingsModal, kanban, threadSettle. Ask-mode suites must still pass — startAskRun shares fromQuotaWait and markRunFailed.",
       "risks": [
         "Runner tests force generic via CODER_AGENT_CMD; they do not exercise Claude/Codex JSON result paths that also call markRunFailed.",
@@ -105,6 +126,8 @@
     }
   ],
   "risks": [
+    "Agents panel needed no change: the Subagents section (AgentsPanel.tsx ~2373) already renders subagents with TeamRow visuals in all non-workflow branches.",
+    "No electron/runner changes: subagent detection (runner.js addSubagentRow) and ThreadInfo.subagents transport already existed and feed the sidebar threads list.",
     "This is a resurrection of 688e5a9 after 8bf223b deleted the feature in Ask-mode conflict resolution. Both features must stay. Do not drop fromQuotaWait on startAskRun.",
     "Distinct from #286 (Solenta budget) and #294 (model failover). Exhausted balance with no reset clock fails once.",
     "No MCP spec_dispatch/spec_converge tools — agents on the spec thread cannot trigger these without the card. Deliberate: issue asked for IPC + spec card, same seam as startSpec/reviewSpec.",
