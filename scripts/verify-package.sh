@@ -27,7 +27,9 @@ if [[ ! -x "$BIN" ]]; then
 fi
 
 # Solenta Web (round 51): webBridge.js require("ws") must resolve in the
-# packaged tree. Root node_modules is not shipped except this explicit copy.
+# packaged tree. Root node_modules is not shipped except explicit copies.
+# cross-spawn is required at module load by agent.js / claude.js / etc.;
+# missing it hangs boot (Electron dialog) and the /health probe times out.
 APP_RES="$APP/Contents/Resources/app"
 if [[ ! -f "$APP_RES/electron/webBridge.js" || ! -f "$APP_RES/electron/webServer.js" ]]; then
   echo "ERROR: packaged app missing electron/webBridge.js or webServer.js" >&2
@@ -35,6 +37,10 @@ if [[ ! -f "$APP_RES/electron/webBridge.js" || ! -f "$APP_RES/electron/webServer
 fi
 if [[ ! -d "$APP_RES/node_modules/ws" || ! -f "$APP_RES/node_modules/ws/package.json" ]]; then
   echo "ERROR: packaged app missing node_modules/ws (webBridge.js needs it)" >&2
+  exit 1
+fi
+if [[ ! -d "$APP_RES/node_modules/cross-spawn" || ! -f "$APP_RES/node_modules/cross-spawn/package.json" ]]; then
+  echo "ERROR: packaged app missing node_modules/cross-spawn (agent spawn needs it)" >&2
   exit 1
 fi
 
