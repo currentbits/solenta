@@ -407,6 +407,56 @@
   pointer-events: none;
 }
 
+/* Live subagent rows attach under the thread that spawned them (issue #542),
+   mirroring the fork/worker nested-card indent + elbow above. */
+.subagentList {
+  list-style: none;
+  margin: 0 0 4px;
+  padding: 0;
+}
+
+.subagentRow {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: calc(100% - 14px);
+  margin-left: 14px;
+  padding: 2px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  font: inherit;
+  font-size: 11px;
+  color: var(--text-dim);
+  text-align: left;
+  cursor: pointer;
+}
+
+.subagentRow::before {
+  content: "";
+  position: absolute;
+  left: -9px;
+  top: -4px;
+  bottom: 50%;
+  width: 8px;
+  border-left: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  border-bottom-left-radius: 6px;
+  pointer-events: none;
+}
+
+.subagentRow:hover {
+  background: var(--card);
+  color: var(--text);
+}
+
+.subagentTitle {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 /* Multi-select highlight (distinct from active). */
 .card[data-multi="true"],
 .settledRow[data-multi="true"] {
