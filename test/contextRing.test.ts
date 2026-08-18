@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  CONTEXT_WARN_FRACTION,
   contextRing,
   contextWindowFor,
   formatWindowSize,
+  threadContextWindow,
 } from "../src/contextRing.ts";
 import type { ProviderInfo } from "../src/shared/ipc";
 
@@ -14,6 +16,22 @@ describe("contextRing", () => {
     assert.equal(ring.fraction, 0.472);
     assert.equal(ring.percentLabel, "47%");
     assert.equal(ring.windowLabel, "1M");
+    assert.equal(ring.warn, false);
+  });
+
+  it("flags a near-limit fill so the ring can warn before compaction", () => {
+    const under = contextRing({
+      used: CONTEXT_WARN_FRACTION * 1_000_000 - 1,
+      window: 1_000_000,
+    });
+    const at = contextRing({
+      used: CONTEXT_WARN_FRACTION * 1_000_000,
+      window: 1_000_000,
+    });
+    assert.ok(under);
+    assert.ok(at);
+    assert.equal(under.warn, false);
+    assert.equal(at.warn, true);
   });
 
   it("clamps at 100% when the turn overflows the window", () => {
@@ -93,5 +111,46 @@ describe("contextWindowFor", () => {
   it("is null when nothing documents a window", () => {
     assert.equal(contextWindowFor(providers, "claude", "claude-opus-5"), null);
     assert.equal(contextWindowFor(providers, "nope", null), null);
+  });
+});
+
+describe("threadContextWindow", () => {
+  const providers: ProviderInfo[] = [
+    {
+      id: "kimi",
+      name: "Kimi Code",
+      available: true,
+      supportsResume: true,
+      models: ["kimi-code/k3"],
+      modelInfo: [
+        {
+          id: "kimi-code/k3",
+          label: "K3",
+          description: "",
+          vendor: "Moonshot",
+          recommended: true,
+          contextTokens: 1_000_000,
+        },
+      ],
+      efforts: [],
+    },
+  ];
+
+  it("prefers the CLI-reported window over the static catalog", () => {
+    assert.equal(
+      threadContextWindow(200_000, providers, "kimi", "kimi-code/k3"),
+      200_000,
+    );
+  });
+
+  it("falls back to the catalog when the CLI did not report one", () => {
+    assert.equal(
+      threadContextWindow(undefined, providers, "kimi", "kimi-code/k3"),
+      1_000_000,
+    );
+    assert.equal(
+      threadContextWindow(null, providers, "kimi", "kimi-code/k3"),
+      1_000_000,
+    );
   });
 });
