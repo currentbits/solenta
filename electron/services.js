@@ -434,6 +434,7 @@ function createThread(store, input) {
     settledOverride: null,
     settledAt: null,
     prState: null,
+    prMergeable: null,
     // Just-created is not unread: visit time matches creation.
     lastVisitedAt: now,
     pinnedAt: null,
@@ -453,6 +454,7 @@ function createThread(store, input) {
     handoffFrom: null,
     automationId: input.automationId || null,
     queued: null,
+    ask: input.ask === true,
   };
 
   const threads = store.getThreads().slice();
@@ -937,6 +939,11 @@ function forkThread(store, input) {
       forkPatch.permissionMode = "default";
     }
   }
+  // Ask mode is the same: a fork of a read-only Q&A thread stays read-only
+  // and must not grow a worktree (issue #392).
+  if (source.ask === true) {
+    forkPatch.ask = true;
+  }
   const updated = store.updateThread(created.id, forkPatch);
   store.save();
   return updated ? { ...updated } : { ...created, ...forkPatch };
@@ -993,7 +1000,10 @@ function forkWorkerThread(store, input, forkImpl = forkThread) {
     typeof store.getProject === "function" && projectId != null
       ? store.getProject(projectId)
       : null;
-  if (input.worktree !== false && canHostWorktree(project)) {
+  // Ask workers stay in the checkout — a worktree would burn the isolation
+  // Ask exists to avoid (issue #392).
+  const sourceAsk = Boolean(source && source.ask) || Boolean(fork.ask);
+  if (input.worktree !== false && !sourceAsk && canHostWorktree(project)) {
     patch.pendingWorktree = true;
   }
   store.updateThread(fork.id, patch);
@@ -1158,10 +1168,7 @@ function setSettled(store, input) {
       `Invalid settle override: ${JSON.stringify(override)}. Expected "settled", "active", or null`,
     );
   }
-  if (
-    override === "settled" &&
-    (thread.status === "working" || thread.status === "quota-wait")
-  ) {
+  if (override === "settled" && thread.status === "working") {
     throw new Error("Cannot settle a thread while a run is active");
   }
   const patch = {
@@ -1311,28 +1318,6 @@ function setMuted(store, input) {
   const updated = store.updateThread(threadId, patch);
   store.save();
   return updated ? { ...updated } : { ...thread, ...patch };
-}
-
-/**
- * Per-thread quota-wait auto-resume override (#462). true/false pins the
- * thread; null inherits the global setting. Never bumps updatedAt.
- *
- * @param {import('./store').Store} store
- * @param {{ threadId: string, enabled: boolean | null }} input
- */
-function setQuotaWaitAutoResume(store, input) {
-  const { threadId, enabled } = input;
-  const thread = store.getThread(threadId);
-  if (!thread) {
-    throw new Error(`Unknown thread: ${threadId}`);
-  }
-  if (enabled !== true && enabled !== false && enabled !== null) {
-    throw new Error("quotaWaitAutoResume must be true, false, or null");
-  }
-  const patch = { quotaWaitAutoResume: enabled };
-  const updated = store.updateThread(threadId, patch);
-  store.save();
-  return decorateThread(store, updated || { ...thread, ...patch });
 }
 
 /**
@@ -1869,7 +1854,10 @@ function startSpec(store, input) {
     stage: "requirements",
     awaitingApproval: false,
   };
-  const updated = store.updateThread(threadId, { spec });
+  /** @type {{ spec: object, ask?: boolean }} */
+  const specPatch = { spec };
+  if (thread.ask === true) specPatch.ask = false;
+  const updated = store.updateThread(threadId, specPatch);
   store.save();
   return updated ? { ...updated } : { ...thread, spec };
 }
@@ -2105,8 +2093,9 @@ function startTeach(store, input) {
   }
   if (thread.teach && thread.teach.autonomy) return { ...thread };
   const teach = { autonomy: "hint", reviewsPassed: 0 };
-  /** @type {{ teach: { autonomy: string, reviewsPassed: number }, permissionMode?: string }} */
+  /** @type {{ teach: { autonomy: string, reviewsPassed: number }, permissionMode?: string, ask?: boolean }} */
   const patch = { teach };
+  if (thread.ask === true) patch.ask = false;
   if (!teachPermissionAllowed(thread.permissionMode, teach)) {
     patch.permissionMode = "default";
   }
@@ -2131,6 +2120,76 @@ function stopTeach(store, input) {
   const updated = store.updateThread(threadId, { teach: null });
   store.save();
   return updated ? { ...updated } : { ...thread, teach: null };
+}
+
+/**
+ * Standing note while Ask mode is on. Delegates to electron/ask.js so the
+ * wording lives next to the completion prompt (issue #392).
+ *
+ * @param {{ ask?: boolean } | null | undefined} thread
+ * @returns {string}
+ */
+function askNoteFor(thread) {
+  return require("./ask.js").askNoteFor(thread);
+}
+
+/**
+ * Turn Ask mode on (issue #392). Idempotent. Clears teach (the personas
+ * conflict), drops pendingWorktree so the first send cannot materialize
+ * one, and leaves an already-created worktree on disk unused. Never bumps
+ * updatedAt.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string }} input
+ */
+function startAsk(store, input) {
+  const { threadId } = input || {};
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  if (thread.ask === true && !thread.pendingWorktree && !thread.teach) {
+    return { ...thread };
+  }
+  /** @type {{ ask: boolean, pendingWorktree?: boolean, teach?: null }} */
+  const patch = { ask: true };
+  if (thread.pendingWorktree) patch.pendingWorktree = false;
+  if (thread.teach) patch.teach = null;
+  const updated = store.updateThread(threadId, patch);
+  store.save();
+  return updated ? { ...updated } : { ...thread, ...patch };
+}
+
+/**
+ * Turn Ask mode off. With `worktree: true` (Start work + defaultWorktree)
+ * the thread becomes a regular isolated thread: pendingWorktree is armed
+ * only when the project can host one and none exists yet. Idempotent.
+ * Never bumps updatedAt.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, worktree?: boolean }} input
+ */
+function stopAsk(store, input) {
+  const { threadId } = input || {};
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  if (thread.ask !== true && !input?.worktree) return { ...thread };
+  /** @type {{ ask: boolean, pendingWorktree?: boolean }} */
+  const patch = { ask: false };
+  if (
+    input &&
+    input.worktree === true &&
+    !thread.worktreePath &&
+    !thread.pendingWorktree
+  ) {
+    const project = store.getProject(thread.projectId);
+    if (canHostWorktree(project)) patch.pendingWorktree = true;
+  }
+  const updated = store.updateThread(threadId, patch);
+  store.save();
+  return updated ? { ...updated } : { ...thread, ...patch };
 }
 
 /**
@@ -3583,7 +3642,12 @@ module.exports = {
   nextSpecStage,
   specArtifactPath,
   specNoteFor,
+  reviewItineraryNoteFor: require("./reviewItinerary").reviewItineraryNoteFor,
+  REVIEW_ITINERARY_NOTE: require("./reviewItinerary").REVIEW_ITINERARY_NOTE,
   teachNoteFor,
+  askNoteFor,
+  startAsk,
+  stopAsk,
   teachAutonomyFor,
   teachAllowedModes,
   teachPermissionAllowed,
@@ -3608,7 +3672,6 @@ module.exports = {
   takeQueued,
   setSnoozed,
   setMuted,
-  setQuotaWaitAutoResume,
   setNotes,
   setVerifyCommand,
   runVerifyNow,

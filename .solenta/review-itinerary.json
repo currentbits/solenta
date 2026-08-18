@@ -4,33 +4,31 @@
   "chunks": [
     {
       "area": "tests",
-      "rationale": "Start with electron/test/config-doctor.test.js — it pins the six-axis rubric, memory coverage, generate-from-memory selection (convention/strategy/verified knowledge; no tasks/runs), write-path confinement, and the services layer (unknown project, missing checkout, memory-down lint vs generate). Then test/memoryTab.test.tsx for the confirm-before-write UI.",
+      "rationale": "PR #529 conflicted with origin/main after #530/#531/#532. Only content conflict was this itinerary. Re-run electron/test/config-doctor.test.js and tsc to prove the auto-merged IPC fan-out still typechecks against main's ThreadStatus (quota-wait removed) plus Vibe Kanban / Ask mode / peek additions.",
       "risks": [
-        "Scoring tests pin specific axis numbers; a rubric tweak will fail them on purpose.",
-        "Renderer tests do not mount the full AgentsPanel wiring — that lives in the impl chunk."
+        "Auto-merge of ipc.ts/useCoder/fakeCoder/devCoder can silently drop one side of a method. tsc is the check.",
+        "Renderer MemoryTab tests do not remount App after the merge."
       ]
     },
     {
       "area": "critical",
-      "rationale": "electron/configDoctor.js is the whole feature: discover files, score, generate, write. Read score* then selectSourceEntries/renderGeneratedMarkdown then assertWriteableRel/writeAgentConfigFiles. electron/services.js requireLocalProject + loadConfigSourceEntries is the fail-closed checkout/memory seam.",
+      "rationale": "electron/configDoctor.js and the lint/preview/write services did not conflict. Confirm AgentConfig* types still sit above AddProjectOptions in src/shared/ipc.ts and CoderApi.projects still has lintAgentConfig/previewAgentConfig/writeAgentConfig after main's vibeKanban/ask/peek landings.",
       "risks": [
-        "Heuristic scores can mis-grade unusual but good files (a one-line 'never do X' convention file will look sparse).",
-        "Write overwrites AGENTS.md/CLAUDE.md in the project checkout with no backup; the UI confirms, but there is no .bak.",
-        "Remote SSH projects with no local directory throw 'needs a local checkout' — intended, but the Memory tab will just show that error.",
-        "Generation is a template, not an LLM rewrite. It will not invent Commands/Architecture sections the memory never stored."
+        "A leftover quota-wait mention on our side would fail tsc against main's narrowed ThreadStatus.",
+        "Write still overwrites AGENTS.md/CLAUDE.md with no backup."
       ]
     },
     {
       "area": "impl",
-      "rationale": "IPC/preload/wire/fakeCoder/devCoder/useCoder/App/AgentsPanel are the usual fan-out. MemoryTab ConfigDoctorCard is the only new UI. memory-proxy now forwards recent({type}) so generate can pull conventions without a mixed recent() page.",
+      "rationale": "preload, ipc.js, wireClient, useCoder, App, AgentsPanel, fakeCoder, devCoder auto-merged. This itinerary is the only file we resolved by hand — keep our #412 doctor notes, drop the incoming Vibe Kanban merge notes.",
       "risks": [
-        "devCoder write throws (browser-dev only); lint/preview are stubs and will not match electron.",
-        "Doctor card is hidden when the memory server is down (MemoryTab early-return). Lint could still run without memory, but generate cannot."
+        "devCoder write still throws (browser-dev only).",
+        "Doctor card still hidden when the memory server is down."
       ]
     }
   ],
   "risks": [
-    "Session-end auto-learning from Anthropic's plugin is explicitly not here — that is #247.",
-    "Fleet-wide rollup of every project's grade is not here; this is per-repo, on the Memory tab."
+    "Session-end auto-learning stays on #247. No fleet-wide grade rollup.",
+    "This is a merge-to-main restack of #529, not a feature change."
   ]
 }

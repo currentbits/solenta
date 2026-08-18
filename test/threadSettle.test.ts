@@ -72,22 +72,6 @@ describe("changeRequestAutoSettles", () => {
   });
 });
 
-describe("quota-wait never auto-settles", () => {
-  it("stays visible even when quiet longer than the window", () => {
-    assert.equal(
-      effectiveSettled(
-        thread({
-          status: "quota-wait",
-          quotaWaitUntil: NOW + 3600_000,
-          updatedAt: NOW - 10 * DAY_MS,
-        }),
-        opts(),
-      ),
-      false,
-    );
-  });
-});
-
 describe("AUTO_SETTLE_AFTER_DAYS", () => {
   it("is the single default knob (3 days)", () => {
     assert.equal(AUTO_SETTLE_AFTER_DAYS, 3);

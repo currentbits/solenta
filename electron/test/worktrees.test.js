@@ -1072,6 +1072,22 @@ describe("worktrees", () => {
       assert.equal(info.created, false);
     });
 
+    it("parsePrJson passes through mergeable and baseRefName", async () => {
+      const info = parsePrJson(
+        JSON.stringify({
+          number: 49,
+          url: "https://github.com/acme/demo/pull/49",
+          state: "OPEN",
+          mergeable: "CONFLICTING",
+          baseRefName: "main",
+        }),
+        "feat/huskyscout",
+        false,
+      );
+      assert.equal(info.mergeable, "CONFLICTING");
+      assert.equal(info.baseRefName, "main");
+    });
+
     it("parsePrJson omits extra fields when they are absent", async () => {
       const info = parsePrJson(
         JSON.stringify({
@@ -1087,6 +1103,8 @@ describe("worktrees", () => {
       assert.equal(info.additions, undefined);
       assert.equal(info.deletions, undefined);
       assert.equal(info.changedFiles, undefined);
+      assert.equal(info.mergeable, undefined);
+      assert.equal(info.baseRefName, undefined);
       assert.equal(info.created, true);
     });
 
@@ -1124,7 +1142,7 @@ describe("worktrees", () => {
       assert.ok(statusView, "prStatus must call gh pr view");
       assert.ok(
         statusView.includes(
-          "number,url,state,title,additions,deletions,changedFiles",
+          "number,url,state,title,additions,deletions,changedFiles,mergeable,baseRefName",
         ),
         `interactive prStatus must request enriched fields, got: ${JSON.stringify(statusView)}`,
       );
@@ -1166,7 +1184,9 @@ describe("worktrees", () => {
       const lastTwo = statusViews.slice(-2);
       assert.ok(
         lastTwo.some((c) =>
-          c.includes("number,url,state,title,additions,deletions,changedFiles"),
+          c.includes(
+            "number,url,state,title,additions,deletions,changedFiles,mergeable,baseRefName",
+          ),
         ),
         "first retry attempt must request enriched fields",
       );

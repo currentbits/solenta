@@ -27,6 +27,7 @@ import type {
 import { useEscapeClose } from "../useEscapeClose";
 import styles from "./SettingsModal.module.css";
 import { WorktreeGcSection } from "./WorktreeGcSection";
+import { VibeKanbanSection } from "./VibeKanbanSection";
 
 interface SettingsModalProps {
   open: boolean;
@@ -781,34 +782,6 @@ export function SettingsModal({
                 single noisy thread from its snooze menu in the sidebar.
               </p>
             </div>
-            <div className={styles.field}>
-              <label className={styles.fieldRow}>
-                <input
-                  type="checkbox"
-                  data-quota-wait-auto-resume=""
-                  checked={settings?.quotaWaitAutoResume !== false}
-                  disabled={saving || settings == null}
-                  onChange={(e) => {
-                    setError(null);
-                    void onSaveSettings({
-                      quotaWaitAutoResume: e.target.checked,
-                    }).catch((err) => {
-                      setError(
-                        err instanceof Error && err.message
-                          ? err.message
-                          : "Failed to save settings",
-                      );
-                    });
-                  }}
-                />
-                <span>Continue automatically when usage limit resets</span>
-              </label>
-              <p className={styles.note}>
-                Parks a thread until the provider&apos;s reset time, then
-                sends the same prompt once. Off = fail the turn. Distinct
-                from the daily budget cap above.
-              </p>
-            </div>
           </section>
 
           <section className={styles.section} data-otel-settings="">
@@ -1181,6 +1154,8 @@ export function SettingsModal({
             onGcScan={onGcScan}
             onGcClean={onGcClean}
           />
+
+          <VibeKanbanSection active={open} />
 
           <section className={styles.section}>
             <h3 className={styles.sectionLabel}>Memory</h3>

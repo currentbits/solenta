@@ -15,7 +15,10 @@ import type {
   VerifyResult,
   GcScanResult,
   GcCleanResult,
+  VibeKanbanPreview,
+  VibeKanbanImportResult,
   DiffResult,
+  ReviewContext,
   GitStatus,
   GitSyncInfo,
   GitRepoInfo,
@@ -371,6 +374,7 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
       fork: (input) => call<ThreadInfo>("threads:fork", input),
       rewind: (input) => call<RewindResult>("threads:rewind", input),
       get: (id) => call<ThreadDetail>("threads:get", id),
+      peek: (id) => call<ThreadDetail>("threads:peek", id),
       setPermissionMode: (input) =>
         call<ThreadInfo>("threads:setPermissionMode", input),
       respondPermission: (input) =>
@@ -381,8 +385,6 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
       setQueued: (input) => call<ThreadInfo>("threads:setQueued", input),
       setSnoozed: (input) => call<ThreadInfo>("threads:setSnoozed", input),
       setMuted: (input) => call<ThreadInfo>("threads:setMuted", input),
-      setQuotaWaitAutoResume: (input) =>
-        call<ThreadInfo>("threads:setQuotaWaitAutoResume", input),
       setNotes: (input) => call<ThreadInfo>("threads:setNotes", input),
       startSpec: (input) => call<ThreadInfo>("threads:startSpec", input),
       stopSpec: (input) => call<ThreadInfo>("threads:stopSpec", input),
@@ -394,6 +396,8 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
         ),
       startTeach: (input) => call<ThreadInfo>("threads:startTeach", input),
       stopTeach: (input) => call<ThreadInfo>("threads:stopTeach", input),
+      startAsk: (input) => call<ThreadInfo>("threads:startAsk", input),
+      stopAsk: (input) => call<ThreadInfo>("threads:stopAsk", input),
       requestTeachReview: (input) =>
         call<ThreadInfo>("threads:requestTeachReview", input),
       rename: (input) => call<ThreadInfo>("threads:rename", input),
@@ -428,13 +432,15 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
       distill: (input) =>
         call<DistilledWorkflow>("runs:distill", input),
       stop: (input) => call<void>("runs:stop", input),
-      resumeQuotaWait: (input) =>
-        call<{ runId: string }>("runs:resumeQuotaWait", input),
     },
     git: {
       status: (projectId) => call<GitStatus>("git:status", projectId),
       setupWorktree: (input) => call<ThreadInfo>("git:setupWorktree", input),
       diff: (input) => call<DiffResult>("git:diff", input),
+      reviewContext: (input) =>
+        call<ReviewContext>("git:reviewContext", input),
+      setReviewAccepted: (input) =>
+        call<ThreadInfo>("git:setReviewAccepted", input),
       commit: (input) => call<{ subject: string }>("git:commit", input),
       revertFile: (input) => call<{ path: string }>("git:revertFile", input),
       suggestCommitMessage: (input) =>
@@ -460,6 +466,14 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
         call<ConflictForecast>("git:conflictForecast", input),
       gcScan: () => call<GcScanResult>("git:gcScan"),
       gcClean: (input) => call<GcCleanResult>("git:gcClean", input),
+    },
+    vibeKanban: {
+      preview: (input) =>
+        call<VibeKanbanPreview>("vibeKanban:preview", input),
+      import: (input) =>
+        call<VibeKanbanImportResult>("vibeKanban:import", input),
+      pickDataDir: () => call<string | null>("vibeKanban:pickDataDir"),
+      export: () => call<string | null>("vibeKanban:export"),
     },
     issues: {
       fetch: (input) => call<FetchIssueResult>("issues:fetch", input),
