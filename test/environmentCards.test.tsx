@@ -71,6 +71,8 @@ function tab(opts: {
   onPull?: (id: string) => Promise<GitPullResult>;
   summaries?: ThreadSummaryInfo[];
   onSummaries?: () => Promise<ThreadSummaryInfo[]>;
+  onOpenPrs?: () => void;
+  prsActive?: boolean;
 }) {
   const repoInfo = opts.repoInfo ?? { ok: false as const };
   return (
@@ -89,6 +91,8 @@ function tab(opts: {
       listThreadSummaries={
         opts.onSummaries ?? (async () => opts.summaries ?? [summary()])
       }
+      onOpenPrs={opts.onOpenPrs}
+      prsActive={opts.prsActive}
     />
   );
 }
@@ -322,6 +326,43 @@ describe("recap card", () => {
     const m = await mount(tab({ thread: null }));
     await m.flush();
     assert.equal(m.query("[data-recap-card]"), null);
+    m.unmount();
+  });
+});
+
+describe("pull requests card", () => {
+  it("is hidden when no opener is passed", async () => {
+    const m = await mount(tab({}));
+    await m.flush();
+    assert.equal(m.query("[data-prs-card]"), null);
+    m.unmount();
+  });
+
+  it("opens the PR list even with no thread selected", async () => {
+    let opened = 0;
+    const m = await mount(
+      tab({
+        thread: null,
+        onOpenPrs: () => {
+          opened += 1;
+        },
+      }),
+    );
+    await m.flush();
+    const btn = m.query("[data-open-prs]");
+    assert.ok(btn, "PR opener");
+    await m.click(btn);
+    assert.equal(opened, 1);
+    m.unmount();
+  });
+
+  it("marks the opener active when the PR view is showing", async () => {
+    const m = await mount(tab({ onOpenPrs: () => {}, prsActive: true }));
+    await m.flush();
+    assert.equal(
+      m.query("[data-open-prs]")?.getAttribute("data-active"),
+      "true",
+    );
     m.unmount();
   });
 });

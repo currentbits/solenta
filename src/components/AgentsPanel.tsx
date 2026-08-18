@@ -1,4 +1,11 @@
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import type {
   AgentStatus,
   AppSettings,
@@ -47,7 +54,21 @@ import {
 } from "../hypothesisLedger";
 import styles from "./AgentsPanel.module.css";
 
-type PanelTab = "agents" | "git" | "memory" | "skills";
+type PanelTab = "agents" | "git" | "memory" | "skills" | "pulse";
+
+type PulseView = "automations" | "usage" | "fleet" | "insights" | "digest";
+
+const PULSE_VIEWS: readonly PulseView[] = [
+  "automations",
+  "usage",
+  "fleet",
+  "insights",
+  "digest",
+];
+
+function isPulseView(view: string | undefined): view is PulseView {
+  return (PULSE_VIEWS as readonly string[]).includes(view ?? "");
+}
 
 /** Shared props for the 14px line icons in Environment card labels. */
 const LABEL_ICON_PROPS = {
@@ -135,6 +156,14 @@ interface AgentsPanelProps {
   ) => Promise<{ name: string; installedIn: SkillTarget[] }>;
   removeSkill: (input: { name: string }) => Promise<void>;
   syncSkills: () => Promise<{ copied: number; skills: string[] }>;
+  /** Center-pane view, so Pulse/Environment can mark the active destination. */
+  activeView?: string;
+  onOpenPrs?: () => void;
+  onOpenAutomations?: () => void;
+  onOpenUsage?: () => void;
+  onOpenFleet?: () => void;
+  onOpenInsights?: () => void;
+  onOpenDigest?: () => void;
 }
 
 type PhaseChipStatus = "done" | "active" | "pending" | "failed";
@@ -472,6 +501,40 @@ function WorktreeCard({
           </button>
         </div>
       )}
+    </section>
+  );
+}
+
+function PullRequestsCard({
+  active,
+  onOpen,
+}: {
+  active: boolean;
+  onOpen: () => void;
+}) {
+  return (
+    <section className={styles.gitCard} data-prs-card="">
+      <div className={styles.gitCardLabel}>
+        <svg {...LABEL_ICON_PROPS} className={styles.labelIcon}>
+          <circle cx="4" cy="3.5" r="1.75" />
+          <circle cx="4" cy="12.5" r="1.75" />
+          <circle cx="12" cy="5.5" r="1.75" />
+          <path d="M4 5.25v5.5" />
+          <path d="M12 7.25c0 2.5-2.75 3-4.5 3" />
+        </svg>
+        Pull requests
+      </div>
+      <div className={styles.gitActions}>
+        <button
+          type="button"
+          className={styles.gitBtn}
+          data-open-prs=""
+          data-active={active ? "true" : undefined}
+          onClick={onOpen}
+        >
+          View pull requests
+        </button>
+      </div>
     </section>
   );
 }
@@ -1416,6 +1479,8 @@ export function GitTab({
   devServerStatus,
   setVerifyCommand,
   runVerify,
+  onOpenPrs,
+  prsActive,
 }: {
   thread: ThreadInfo | null;
   project: ProjectInfo | null;
@@ -1443,6 +1508,8 @@ export function GitTab({
     command: string | null,
   ) => Promise<void>;
   runVerify?: (threadId: string) => Promise<VerifyResult>;
+  onOpenPrs?: () => void;
+  prsActive?: boolean;
 }) {
   const [gitAction, setGitAction] = useState<GitAction>(null);
   const [dirtyMessage, setDirtyMessage] = useState<string | null>(null);
@@ -1619,6 +1686,9 @@ export function GitTab({
     <>
       <div className={styles.scroll}>
         <RepositoryCard threadId={thread?.id ?? null} gitRepoInfo={gitRepoInfo} />
+        {onOpenPrs && (
+          <PullRequestsCard active={Boolean(prsActive)} onOpen={onOpenPrs} />
+        )}
         <RecapCard thread={thread} listThreadSummaries={listThreadSummaries} />
         <ChangesCard
           hasThread={Boolean(thread)}
@@ -2400,6 +2470,136 @@ export function AgentsContent({
   );
 }
 
+const PULSE_ITEMS: {
+  id: PulseView;
+  label: string;
+  hint: string;
+  icon: ReactNode;
+}[] = [
+  {
+    id: "automations",
+    label: "Automations",
+    hint: "Recurring prompts",
+    icon: (
+      <>
+        <path d="M13.5 8a5.5 5.5 0 1 1-1.61-3.89" />
+        <path d="M13.75 1.75v2.75h-2.75" />
+      </>
+    ),
+  },
+  {
+    id: "usage",
+    label: "Usage",
+    hint: "Spend by provider and model",
+    icon: (
+      <>
+        <path d="M2.25 13.75v-4" />
+        <path d="M6.25 13.75v-7.5" />
+        <path d="M10.25 13.75v-11" />
+        <path d="M14 13.75h-12" />
+      </>
+    ),
+  },
+  {
+    id: "fleet",
+    label: "Fleet",
+    hint: "Merge rate and cost",
+    icon: (
+      <>
+        <path d="M8 2.5v11" />
+        <rect x="2.25" y="6" width="4" height="6.5" rx="0.75" />
+        <rect x="9.75" y="4" width="4" height="8.5" rx="0.75" />
+      </>
+    ),
+  },
+  {
+    id: "insights",
+    label: "Insights",
+    hint: "Recurring failure modes",
+    icon: (
+      <>
+        <circle cx="4" cy="4" r="1.75" />
+        <circle cx="12" cy="4" r="1.75" />
+        <circle cx="8" cy="12" r="1.75" />
+        <path d="M5.5 5.1h5" />
+        <path d="M5.1 5.5 7.2 10.4" />
+        <path d="M10.9 5.5 8.8 10.4" />
+      </>
+    ),
+  },
+  {
+    id: "digest",
+    label: "Digest",
+    hint: "Unattended runs since last seen",
+    icon: (
+      <>
+        <rect x="3.5" y="2.25" width="9" height="11.5" rx="1.25" />
+        <path d="M6 5.5h4" />
+        <path d="M6 8h4" />
+        <path d="M6 10.5h2.5" />
+      </>
+    ),
+  },
+];
+
+function PulseTab({
+  activeView,
+  onOpenAutomations,
+  onOpenUsage,
+  onOpenFleet,
+  onOpenInsights,
+  onOpenDigest,
+}: {
+  activeView?: string;
+  onOpenAutomations?: () => void;
+  onOpenUsage?: () => void;
+  onOpenFleet?: () => void;
+  onOpenInsights?: () => void;
+  onOpenDigest?: () => void;
+}) {
+  const openers: Record<PulseView, (() => void) | undefined> = {
+    automations: onOpenAutomations,
+    usage: onOpenUsage,
+    fleet: onOpenFleet,
+    insights: onOpenInsights,
+    digest: onOpenDigest,
+  };
+
+  return (
+    <nav className={styles.pulseList} aria-label="Pulse">
+      {PULSE_ITEMS.map((item) => (
+        <button
+          key={item.id}
+          type="button"
+          className={styles.pulseRow}
+          data-view-nav={item.id}
+          data-active={activeView === item.id ? "true" : undefined}
+          onClick={() => openers[item.id]?.()}
+        >
+          <span className={styles.pulseIcon} aria-hidden>
+            <svg
+              width="15"
+              height="15"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              {item.icon}
+            </svg>
+          </span>
+          <span className={styles.pulseCopy}>
+            <span className={styles.pulseLabel}>{item.label}</span>
+            <span className={styles.pulseHint}>{item.hint}</span>
+          </span>
+        </button>
+      ))}
+    </nav>
+  );
+}
+
 /**
  * memo'd: another thread's 700ms stream tick must not re-render this pane
  * (issue #91). It takes `rosterKey` instead of the thread list for the same
@@ -2446,8 +2646,22 @@ export const AgentsPanel = memo(function AgentsPanel({
   addSkill,
   removeSkill,
   syncSkills,
+  activeView,
+  onOpenPrs,
+  onOpenAutomations,
+  onOpenUsage,
+  onOpenFleet,
+  onOpenInsights,
+  onOpenDigest,
 }: AgentsPanelProps) {
-  const [tab, setTab] = useState<PanelTab>("git");
+  const [tab, setTab] = useState<PanelTab>(() =>
+    isPulseView(activeView) ? "pulse" : "git",
+  );
+
+  useEffect(() => {
+    if (isPulseView(activeView)) setTab("pulse");
+    else if (activeView === "prs") setTab("git");
+  }, [activeView]);
 
   return (
     <aside className={styles.panel}>
@@ -2483,6 +2697,15 @@ export const AgentsPanel = memo(function AgentsPanel({
           onClick={() => setTab("skills")}
         >
           Skills
+        </button>
+        <button
+          type="button"
+          className={styles.tab}
+          data-panel-tab="pulse"
+          data-active={tab === "pulse"}
+          onClick={() => setTab("pulse")}
+        >
+          Pulse
         </button>
       </header>
 
@@ -2521,6 +2744,8 @@ export const AgentsPanel = memo(function AgentsPanel({
           devServerStatus={devServerStatus}
           setVerifyCommand={setVerifyCommand}
           runVerify={runVerify}
+          onOpenPrs={onOpenPrs}
+          prsActive={activeView === "prs"}
         />
       ) : tab === "memory" ? (
         <MemoryTab
@@ -2532,7 +2757,7 @@ export const AgentsPanel = memo(function AgentsPanel({
           removeMemory={removeMemory}
           storeMemory={storeMemory}
         />
-      ) : (
+      ) : tab === "skills" ? (
         <SkillsTab
           projectPath={project?.path ?? null}
           settings={settings}
@@ -2541,6 +2766,15 @@ export const AgentsPanel = memo(function AgentsPanel({
           addSkill={addSkill}
           removeSkill={removeSkill}
           syncSkills={syncSkills}
+        />
+      ) : (
+        <PulseTab
+          activeView={activeView}
+          onOpenAutomations={onOpenAutomations}
+          onOpenUsage={onOpenUsage}
+          onOpenFleet={onOpenFleet}
+          onOpenInsights={onOpenInsights}
+          onOpenDigest={onOpenDigest}
         />
       )}
     </aside>

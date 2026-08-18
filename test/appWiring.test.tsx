@@ -807,14 +807,22 @@ describe("App selection stamps lastVisitedAt (round 43 unread)", () => {
       m.unmount();
     }
   });
+  async function openPulse(m: Awaited<ReturnType<typeof boot>>) {
+    const pulse = m.query('[data-panel-tab="pulse"]');
+    assert.ok(pulse, "right sidebar must offer a Pulse tab");
+    await m.click(pulse as HTMLElement);
+    await m.flush();
+  }
+
   it("Usage nav opens the usage view on the usage.byDay channel", async () => {
     // The view is only as good as its wire: a nav that renders the pane but
     // reads the wrong channel shows an empty chart forever.
     const fake = createFakeCoder();
     const m = await boot(fake);
     try {
+      await openPulse(m);
       const nav = m.query('[data-view-nav="usage"]');
-      assert.ok(nav, "sidebar must offer a Usage nav row");
+      assert.ok(nav, "Pulse tab must offer a Usage row");
       await m.click(nav as HTMLElement);
       await m.flush();
       await inAct(async () => {
@@ -838,8 +846,9 @@ describe("App selection stamps lastVisitedAt (round 43 unread)", () => {
     const fake = createFakeCoder();
     const m = await boot(fake);
     try {
+      await openPulse(m);
       const nav = m.query('[data-view-nav="fleet"]');
-      assert.ok(nav, "sidebar must offer a Fleet nav row");
+      assert.ok(nav, "Pulse tab must offer a Fleet row");
       await m.click(nav as HTMLElement);
       await m.flush();
       await inAct(async () => {
@@ -854,6 +863,30 @@ describe("App selection stamps lastVisitedAt (round 43 unread)", () => {
         "opening Fleet must read evidence exactly once",
       );
       assert.ok(m.query("[data-fleet]"), "fleet view must render");
+    } finally {
+      m.unmount();
+    }
+  });
+
+  it("Environment PR card opens the pull-requests view", async () => {
+    const fake = createFakeCoder();
+    const m = await boot(fake);
+    try {
+      assert.equal(
+        m.query('[data-view-nav="prs"]'),
+        null,
+        "left bar must not keep a Pull requests row",
+      );
+      const btn = m.query("[data-open-prs]");
+      assert.ok(btn, "Environment must offer a pull-requests card");
+      await m.click(btn as HTMLElement);
+      await m.flush();
+      await inAct(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      await m.flush();
+      assert.ok(m.query("[data-pr-list]"), "PR list must render");
     } finally {
       m.unmount();
     }
