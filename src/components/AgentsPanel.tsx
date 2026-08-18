@@ -3,6 +3,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -53,6 +54,7 @@ import {
   formatHypothesisSummary,
   groupHypotheses,
 } from "../hypothesisLedger";
+import { useEscapeClose } from "../useEscapeClose";
 import styles from "./AgentsPanel.module.css";
 
 type PanelTab = "agents" | "git" | "memory" | "skills" | "pulse";
@@ -165,6 +167,13 @@ interface AgentsPanelProps {
   onOpenFleet?: () => void;
   onOpenInsights?: () => void;
   onOpenDigest?: () => void;
+  /**
+   * Fork / hand off the open thread. Plain call = same harness; pass
+   * provider for hand-off. Absent hides the Environment Fork card.
+   */
+  onFork?: (
+    opts?: { provider?: string; model?: string | null },
+  ) => void | Promise<void | ThreadInfo | null>;
 }
 
 type PhaseChipStatus = "done" | "active" | "pending" | "failed";
@@ -567,6 +576,127 @@ function ChangesCard({
           View changes
         </button>
       </div>
+    </section>
+  );
+}
+
+export function ForkCard({
+  thread,
+  providers,
+  onFork,
+}: {
+  thread: ThreadInfo | null;
+  providers: ProviderInfo[];
+  onFork: (
+    opts?: { provider?: string; model?: string | null },
+  ) => void | Promise<void | ThreadInfo | null>;
+}) {
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [handoffMenuOpen, setHandoffMenuOpen] = useState(false);
+  const isWorking = thread?.status === "working";
+  const otherProviders = thread
+    ? providers.filter((p) => p.id !== thread.provider)
+    : [];
+
+  useEffect(() => {
+    if (!handoffMenuOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      if (!menuRef.current?.contains(e.target as Node)) {
+        setHandoffMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+    };
+  }, [handoffMenuOpen]);
+  useEscapeClose(handoffMenuOpen, () => setHandoffMenuOpen(false));
+
+  return (
+    <section className={styles.gitCard} data-thread-fork-card="">
+      <div className={styles.gitCardLabel}>
+        <svg {...LABEL_ICON_PROPS} className={styles.labelIcon}>
+          <circle cx="4.5" cy="3.5" r="1.5" />
+          <circle cx="4.5" cy="12.5" r="1.5" />
+          <circle cx="11.5" cy="5.5" r="1.5" />
+          <path d="M4.5 5v6M11.5 7c0 2.2-2.8 2.3-4.6 3.4" />
+        </svg>
+        Fork
+      </div>
+      {!thread ? (
+        <p className={styles.gitHint}>Select a thread to fork it.</p>
+      ) : (
+        <div className={styles.gitActions}>
+          <button
+            type="button"
+            className={styles.gitBtn}
+            data-thread-fork=""
+            disabled={isWorking}
+            aria-disabled={isWorking ? "true" : undefined}
+            title="Fork thread (same harness)"
+            onClick={() => {
+              if (isWorking) return;
+              void onFork();
+            }}
+          >
+            Fork
+          </button>
+          <div className={styles.menuWrap} ref={menuRef}>
+            <button
+              type="button"
+              className={styles.gitBtn}
+              data-thread-handoff=""
+              disabled={isWorking || otherProviders.length === 0}
+              aria-disabled={
+                isWorking || otherProviders.length === 0 ? "true" : undefined
+              }
+              aria-haspopup="menu"
+              aria-expanded={handoffMenuOpen}
+              title="Hand off to another provider"
+              onClick={() => {
+                if (isWorking || otherProviders.length === 0) return;
+                setHandoffMenuOpen((v) => !v);
+              }}
+            >
+              Hand off to…
+            </button>
+            {handoffMenuOpen && (
+              <div
+                className={styles.menu}
+                role="menu"
+                data-thread-handoff-menu=""
+              >
+                {otherProviders.map((p) => {
+                  const disabled = !p.available;
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      className={styles.menuItem}
+                      role="menuitem"
+                      data-handoff-provider={p.id}
+                      disabled={disabled}
+                      aria-disabled={disabled ? "true" : undefined}
+                      title={
+                        disabled
+                          ? `${p.name} is not installed`
+                          : `Hand off to ${p.name}`
+                      }
+                      onClick={() => {
+                        if (disabled) return;
+                        setHandoffMenuOpen(false);
+                        void onFork({ provider: p.id });
+                      }}
+                    >
+                      {p.name}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </section>
   );
 }
@@ -1500,6 +1630,8 @@ export function GitTab({
   runVerify,
   onOpenPrs,
   prsActive,
+  providers = [],
+  onFork,
 }: {
   thread: ThreadInfo | null;
   project: ProjectInfo | null;
@@ -1529,6 +1661,10 @@ export function GitTab({
   runVerify?: (threadId: string) => Promise<VerifyResult>;
   onOpenPrs?: () => void;
   prsActive?: boolean;
+  providers?: ProviderInfo[];
+  onFork?: (
+    opts?: { provider?: string; model?: string | null },
+  ) => void | Promise<void | ThreadInfo | null>;
 }) {
   const [gitAction, setGitAction] = useState<GitAction>(null);
   const [dirtyMessage, setDirtyMessage] = useState<string | null>(null);
@@ -1709,6 +1845,9 @@ export function GitTab({
           <PullRequestsCard active={Boolean(prsActive)} onOpen={onOpenPrs} />
         )}
         <RecapCard thread={thread} listThreadSummaries={listThreadSummaries} />
+        {onFork && (
+          <ForkCard thread={thread} providers={providers} onFork={onFork} />
+        )}
         <ChangesCard
           hasThread={Boolean(thread)}
           onViewChanges={onViewChanges}
@@ -2676,6 +2815,7 @@ export const AgentsPanel = memo(function AgentsPanel({
   onOpenFleet,
   onOpenInsights,
   onOpenDigest,
+  onFork,
 }: AgentsPanelProps) {
   const [tab, setTab] = useState<PanelTab>(() =>
     isPulseView(activeView) ? "pulse" : "git",
@@ -2769,6 +2909,8 @@ export const AgentsPanel = memo(function AgentsPanel({
           runVerify={runVerify}
           onOpenPrs={onOpenPrs}
           prsActive={activeView === "prs"}
+          providers={providers}
+          onFork={onFork}
         />
       ) : tab === "memory" ? (
         <MemoryTab
