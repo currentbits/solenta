@@ -18,7 +18,10 @@ cd memory-server && npm install && node src/index.js
 
 ## Tools
 
-- `memory_bootstrap` — conventions, knowledge, active tasks, protocol
+- `memory_bootstrap` — conventions, strategies, knowledge, active tasks, protocol
+
+Entry types: `convention` (standing rule, importance 5), `strategy` (distilled "when doing X, do/don't Y" procedural rule, 4), `knowledge` (fact, 3), `task` (3), `run` (episodic note, 1). Strategies are injected whole at bootstrap — a rule truncated mid-clause is worse than an absent one.
+
 - `memory_store` / `memory_get` / `memory_search` / `memory_supersede`
 - `memory_recent` — newest live entries (excerpts, limit ≤ 50)
 - `memory_feedback` — `{ id, verdict: helpful|harmful, note? }` evidence counters
