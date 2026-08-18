@@ -224,3 +224,66 @@ describe("web mode attachments", () => {
     m.unmount();
   });
 });
+
+describe("native drop path resolution (issue #469)", () => {
+  it("resolves a dropped folder via droppedFilePath and fromPaths", async () => {
+    const folder: AttachmentInfo = {
+      kind: "folder",
+      path: "/tmp/repo/fixtures",
+      name: "fixtures",
+    };
+    const fake = createFakeCoder({
+      threads: [thread({ id: "t-native-drop", title: "native drop" })],
+      droppedFilePath: (file) => `/tmp/repo/${file.name}`,
+      fromPaths: (input) => {
+        const paths = (input as { paths?: string[] }).paths ?? [];
+        return {
+          attachments: paths.map((p) => ({
+            kind: "folder" as const,
+            path: p,
+            name: p.split("/").pop() ?? p,
+          })),
+        };
+      },
+    });
+    const m = await boot(fake);
+    const host = m.query("[data-thread-drop]");
+    assert.ok(host, "open thread must be the drop target");
+
+    const dir = new File([], "fixtures", { type: "" });
+    await inAct(() => {
+      const ev = new Event("drop", { bubbles: true, cancelable: true });
+      Object.defineProperty(ev, "dataTransfer", {
+        value: {
+          files: [],
+          items: [
+            {
+              kind: "file",
+              type: "",
+              getAsFile: () => dir,
+              webkitGetAsEntry: () => ({
+                isDirectory: true,
+                isFile: false,
+                name: "fixtures",
+              }),
+            },
+          ],
+          types: ["Files"],
+        },
+      });
+      host.dispatchEvent(ev);
+    });
+    await m.flush();
+
+    const calls = fake.of("attachments.fromPaths");
+    assert.ok(calls.length > 0, "native drop must call attachments.fromPaths");
+    const input = calls[calls.length - 1].args[0] as { paths: string[] };
+    assert.deepEqual(input.paths, ["/tmp/repo/fixtures"]);
+    assert.ok(
+      m.query('[data-attachment-kind="folder"]'),
+      "classified folder must surface as a chip",
+    );
+    assert.ok(m.text().includes(folder.name));
+    m.unmount();
+  });
+});

@@ -1,6 +1,22 @@
 .composer {
+  position: relative;
   flex-shrink: 0;
   padding: 0 20px 16px;
+}
+
+.dropOverlay {
+  position: absolute;
+  inset: 0 20px 16px;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  border-radius: 14px;
+  border: 1.5px dashed var(--blue-border);
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
 }
 
 .errorBanner {
