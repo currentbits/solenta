@@ -2887,6 +2887,22 @@ function buildDevCoder(): CoderApi {
           notes: String(input.notes ?? "").trim().slice(0, 2000),
         });
       },
+      async setFeltEstimate(input: {
+        threadId: string;
+        savedMs: number | null;
+      }) {
+        const at = Date.now();
+        return patchThread(input.threadId, {
+          feltEstimate:
+            input.savedMs == null
+              ? { kind: "declined" as const, at }
+              : {
+                  kind: "saved" as const,
+                  savedMs: Math.max(0, Number(input.savedMs)),
+                  at,
+                },
+        });
+      },
       // Spec mode (issue #269). The demo has no agent to write artifacts, so
       // a fixture stage lands already submitted — that is the state worth
       // seeing in the browser twin.
@@ -3463,6 +3479,7 @@ function buildDevCoder(): CoderApi {
               inputTokens: 120000,
               outputTokens: 18000,
               turns: 12,
+              feltSavedMs: 4 * hour,
               linesAdded: 420,
               linesSurviving: 310,
               durabilityMeasurable: true,
@@ -3480,6 +3497,7 @@ function buildDevCoder(): CoderApi {
               inputTokens: 40000,
               outputTokens: 8000,
               turns: 6,
+              feltSavedMs: 2 * hour,
               linesAdded: 80,
               linesSurviving: 80,
               durabilityMeasurable: false,
@@ -3497,6 +3515,7 @@ function buildDevCoder(): CoderApi {
               inputTokens: 60000,
               outputTokens: 9000,
               turns: 8,
+              feltSavedMs: null,
               linesAdded: null,
               linesSurviving: null,
               durabilityMeasurable: false,

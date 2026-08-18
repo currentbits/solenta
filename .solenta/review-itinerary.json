@@ -20,10 +20,75 @@
         "Truncated tool input falls back to a regex that stops at the first quote — an escaped quote in a path would misparse (cosmetic only, chip label).",
         "Issue refs are collected from gh commands and #-refs without checking the issue exists; chips are labels, not verified links (no click-through in v1)."
       ]
+    },
+    {
+      "area": "tests",
+      "rationale": "test/sidebar.test.tsx new describe block pins the intended behavior first: running subagents nest under the parent card, done/failed render nothing, row click selects the parent thread. Read this to see the contract before the implementation.",
+      "risks": ["Tests only cover the attention list, not the archived-expanded list which got the same Fragment wrap."]
+    },
+    {
+      "area": "impl",
+      "rationale": "src/components/Sidebar.tsx: new SubagentRows component (after SelectOpts) filters thread.subagents to status==='running' and renders compact rows that call onSelect(parentId). Both ThreadCard map sites (attention ~2926, archived ~2985) are wrapped in a Fragment keyed `${id}:card` to preserve the t3 unmount/remount key rule documented above the attention map.",
+      "risks": [
+        "SubagentRows is not memoized; it re-renders with each sidebar tick. It is tiny (filter + map over <=20 rows) and only mounts rows while subagents run, so cost is negligible.",
+        "Shift-click on a subagent row forwards shift to onSelect, which may range-select threads; same semantics as clicking the parent card, judged harmless."
+      ]
+    },
+    {
+      "area": "critical",
+      "rationale": "src/components/Sidebar.module.css: .subagentList/.subagentRow reuse the nested-card geometry (width calc(100% - 14px), margin-left 14px, ::before elbow at left -9px) so subagent rows align exactly with nested worker cards; the pulsing dot reuses the existing .waitingDot class/animation from the wait line.",
+      "risks": [
+        "Elbow is per-row (top -4px to 50%), so multiple rows draw a chain of elbows rather than one continuous spine; matches how consecutive nested worker cards already look.",
+        "Running-only is a deliberate scope cut (issue #542): finished subagents remain visible in the Agents panel Subagents section, not the sidebar. If the user expected done rows too, this is the line to revisit."
+      ]
+    },
+    {
+      "area": "tests",
+      "rationale": "Contract first: electron/test/quota-wait.test.js is the parser (Claude/Codex/Kimi clocks, ISO/duration/Retry-After, #286 exclusion, wake-once, opt-out). electron/test/quota-wait-runner.test.js is the live runner (park, no-clock fail, budget fail, global opt-out, wake-once without a second user message, resumeQuotaWait). Renderer: test/quotaWait.test.ts, sidebarFailedBadge, settingsModal, kanban, threadSettle. Ask-mode suites must still pass — startAskRun shares fromQuotaWait and markRunFailed.",
+      "risks": []
+    },
+    {
+      "area": "tests",
+      "rationale": "Issue #401 felt-vs-actual: the new tests state the contract before the code does — test/fleet.test.ts (perception rollup), electron/test/felt-estimate.test.js (service + migration), electron/test/fleet.test.js (collector carries feltSavedMs), test/feltCard.test.tsx (one-tap card), test/fleetView.test.tsx (felt vs actual section).",
+      "risks": [
+        "fleetView threadRow/summary factories gained required fields; any other hand-built FleetSummary/FleetThreadRow literal in the suite would fail at runtime, not compile time (strip-types)."
+      ]
+    },
+    {
+      "area": "critical",
+      "rationale": "src/shared/ipc.ts is the contract everything else mirrors: FeltEstimate type, FELT_ESTIMATE_BUCKETS_MS/MAX, ThreadInfo.feltEstimate (optional so legacy fixtures still typecheck), FleetThread.feltSavedMs (required — evidence is always rebuilt), threads.setFeltEstimate in CoderApi. Then electron/services.js setFeltEstimate (validation, clamp, decline, no updatedAt bump) and electron/store.js normalizeFeltEstimate/migrateThread.",
+      "risks": [
+        "FELT_ESTIMATE_MAX_MS is mirrored by hand between ipc.ts and services.js (CJS cannot import the TS constant) — they must stay in sync.",
+        "updateThread is called without touch, matching setNotes; adding touch later would corrupt the sidebar age label and fleet endedAt."
+      ]
+    },
+    {
+      "area": "impl",
+      "rationale": "Read in data-flow order: electron/fleet.js feltSavedMsOf + row field → src/fleet.ts readThread/FleetPerception/perception sums → src/components/ThreadView.tsx FeltEstimateCard (render gate: status done, no estimate, not ask/teach) → src/components/FleetView.tsx perception section + per-thread Felt column → wiring (useCoder.setFeltEstimate, App handler, preload, wireClient, fakeCoder, devCoder fixtures).",
+      "risks": [
+        "The card appears on every done thread lacking an estimate, including very old ones after upgrade — first open of an ancient thread will show the card once; Skip dismisses permanently. Deliberate, but noticeable.",
+        "FeltEstimateCard reads FELT_ESTIMATE_BUCKETS_MS by index into FELT_BUCKET_LABELS; adding a bucket without a label would render undefined.",
+        "Perception ratios divide felt by wall/active of ONLY the estimated threads, not all threads — mixing denominators would bias the gap."
+      ]
+    },
+    {
+      "area": "docs",
+      "rationale": "docs/ARCHITECTURE.md fleet section gained a 'Felt vs actual' subsection so the two-halves-meet-in-the-rollup design is discoverable.",
+      "risks": []
     }
   ],
   "risks": [
     "Feature is display-only: chips have titles but no click-through to file/memory/issue, although the issue calls those tiers 'addressable'. Addressability is a follow-up.",
-    "PRIOR_MIN_CHARS=240 is a judgement call; recaps just under the threshold escape the prior tag."
+    "PRIOR_MIN_CHARS=240 is a judgement call; recaps just under the threshold escape the prior tag.",
+    "No dedicated ThreadInfo.endedAt exists; fleet wall clock uses updatedAt, so a felt estimate recorded long after activity still compares against last-activity time — honest but worth knowing when reading the ratio.",
+    "Electron suite had 7 pre-existing failures on main (tracked #536); verify this branch's failures do not exceed that baseline.",
+    "Agents panel needed no change: the Subagents section (AgentsPanel.tsx ~2373) already renders subagents with TeamRow visuals in all non-workflow branches.",
+    "No electron/runner changes: subagent detection (runner.js addSubagentRow) and ThreadInfo.subagents transport already existed and feed the sidebar threads list.",
+    "This is a resurrection of 688e5a9 after 8bf223b deleted the feature in Ask-mode conflict resolution. Both features must stay. Do not drop fromQuotaWait on startAskRun.",
+    "Distinct from #286 (Solenta budget) and #294 (model failover). Exhausted balance with no reset clock fails once.",
+    "No MCP spec_dispatch/spec_converge tools — agents on the spec thread cannot trigger these without the card. Deliberate: issue asked for IPC + spec card, same seam as startSpec/reviewSpec.",
+    "No runner hook to dispatch the next wave when the last worker of the current wave completes.",
+    "The state-change pin effect is unchanged. This only covers post-paint growth (images, highlight, webfonts). A reviewer who deletes the new effect and keeps the old one would still have a green suite except the two #408 tests.",
+    "Issue #184 asked for a protocolVersion handshake. That was deliberately replaced with SHA equality and is NOT reintroduced here — only the hard-stop UX gap is closed."
   ]
 }

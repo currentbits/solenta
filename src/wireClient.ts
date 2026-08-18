@@ -388,6 +388,8 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
       setQuotaWaitAutoResume: (input) =>
         call<ThreadInfo>("threads:setQuotaWaitAutoResume", input),
       setNotes: (input) => call<ThreadInfo>("threads:setNotes", input),
+      setFeltEstimate: (input) =>
+        call<ThreadInfo>("threads:setFeltEstimate", input),
       startSpec: (input) => call<ThreadInfo>("threads:startSpec", input),
       stopSpec: (input) => call<ThreadInfo>("threads:stopSpec", input),
       reviewSpec: (input) => call<ThreadInfo>("threads:reviewSpec", input),

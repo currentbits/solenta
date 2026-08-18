@@ -4,6 +4,7 @@ import {
   FLEET_RANGES,
   summarizeFleet,
   type FleetOutcome,
+  type FleetPerception,
   type FleetProviderRow,
   type FleetSummary,
   type FleetThreadRow,
@@ -57,6 +58,25 @@ export function reviewTaxCopy(tax: number | null): string {
     return `agent PRs are reviewed ${(1 / tax).toFixed(1)}× faster than human PRs`;
   }
   return "agent PRs are reviewed as quickly as human PRs";
+}
+
+const NO_ESTIMATES =
+  "no estimates yet — answer the one-tap card when a thread finishes";
+
+/**
+ * Felt-vs-actual copy (issue #401). Neutral on purpose: the counterfactual
+ * ("how long would this have taken me") is unknowable, so the surface shows
+ * the felt sum against the measured clock and lets the ratio speak.
+ */
+export function perceptionHeadline(p: FleetPerception): string {
+  if (p.estimates <= 0) return NO_ESTIMATES;
+  const threads = p.estimates === 1 ? "1 thread" : `${p.estimates} threads`;
+  return `you felt ~${formatSpan(p.feltSavedMs)} saved across ${threads}; they took ${formatSpan(p.wallClockMs)} wall-clock`;
+}
+
+export function perceptionRatioCopy(ratio: number | null): string {
+  if (ratio == null || !Number.isFinite(ratio)) return MISSING;
+  return `felt ÷ wall-clock ${ratio.toFixed(1)}×`;
 }
 
 function FleetNotes({ notes }: { notes: string[] }) {
@@ -139,6 +159,9 @@ function ThreadRow({ row }: { row: FleetThreadRow }) {
       <td className={styles.num}>
         {formatSpan(row.activeMs)} / {formatSpan(row.wallClockMs)}
       </td>
+      <td className={styles.num} data-felt-saved="">
+        {row.feltSavedMs == null ? MISSING : `~${formatSpan(row.feltSavedMs)}`}
+      </td>
       <td className={styles.num}>{formatLines(row.linesAdded)}</td>
       <td className={styles.num} data-durable="">
         {formatShareOrHistory(row.durableShare)}
@@ -172,6 +195,24 @@ export function FleetReport({ summary }: { summary: FleetSummary }) {
       </section>
 
       <FleetNotes notes={summary.notes} />
+
+      <section className={styles.tax} data-fleet-perception="">
+        <h2 className={styles.sectionTitle}>Felt vs actual</h2>
+        <p className={styles.taxHeadline} data-felt-headline="">
+          {perceptionHeadline(summary.perception)}
+        </p>
+        {summary.perception.estimates > 0 ? (
+          <p className={styles.taxMeta}>
+            <span data-felt-vs-wall="">
+              {perceptionRatioCopy(summary.perception.feltVsWall)}
+            </span>
+            {" · "}
+            <span data-felt-active="">
+              agent-active {formatSpan(summary.perception.activeMs)}
+            </span>
+          </p>
+        ) : null}
+      </section>
 
       <section className={styles.section} aria-label="Providers">
         <h2 className={styles.sectionTitle}>Providers</h2>
@@ -210,6 +251,7 @@ export function FleetReport({ summary }: { summary: FleetSummary }) {
                 <th scope="col">Provider</th>
                 <th scope="col">Cost</th>
                 <th scope="col">Active / wall</th>
+                <th scope="col">Felt</th>
                 <th scope="col">Lines added</th>
                 <th scope="col">Durable</th>
                 <th scope="col">Outcome</th>
