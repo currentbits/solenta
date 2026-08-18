@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "@formkit/auto-animate": "^0.10.0",
+    "cross-spawn": "^7.0.6",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-markdown": "^10.1.0",
