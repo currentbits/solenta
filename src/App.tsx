@@ -945,6 +945,12 @@ export default function App() {
         handoffSource={handoffSource}
         onSelectThread={handleSelectThread}
         onModelPickerOpen={handleModelPickerOpen}
+        onNewThread={handleCreateThreadPlain}
+        onSettleThread={
+          selectedThreadId
+            ? () => setSettled(selectedThreadId, "settled")
+            : undefined
+        }
             />
           )}
           </ErrorBoundary>

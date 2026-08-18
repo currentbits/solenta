@@ -1,6 +1,7 @@
 /**
- * Composer `/` command popup: typing `/` at the start of the prompt lists
- * /handoff, /advisor, /committee; Enter inserts the selected command.
+ * Composer `/` command popup (issue #472): a lone `/` lists CLI verbs and
+ * the orchestration trio. Insert verbs stay in the draft; run verbs fire
+ * and clear the token.
  *
  * Run: node --import=./test/support/render.mjs --test test/composerCommands.test.tsx
  */
@@ -9,6 +10,7 @@ import { describe, it } from "node:test";
 import { inAct, mount, type Mounted } from "./support/dom.ts";
 import { Composer } from "../src/components/Composer";
 import type { ProviderInfo } from "../src/shared/ipc";
+import type { SlashAction } from "../src/slashCommands";
 
 const PROVIDERS: ProviderInfo[] = [
   {
@@ -22,7 +24,13 @@ const PROVIDERS: ProviderInfo[] = [
   },
 ];
 
-function mountComposer(onSend: (prompt: string) => void = () => {}) {
+function mountComposer(
+  onSend: (prompt: string) => void = () => {},
+  over: {
+    onSlashAction?: (action: SlashAction) => void;
+    busy?: boolean;
+  } = {},
+) {
   return mount(
     <Composer
       threadId="t1"
@@ -45,8 +53,10 @@ function mountComposer(onSend: (prompt: string) => void = () => {}) {
       onRemoveWorkflow={async () => {}}
       sessionId={null}
       hasWorktree={true}
+      busy={over.busy}
       onSend={onSend}
       onBuild={() => {}}
+      onSlashAction={over.onSlashAction}
     />,
   );
 }
@@ -72,16 +82,33 @@ function commandList(m: Mounted): Element | null {
 }
 
 describe("Composer / command popup", () => {
-  it("opens on / with all three commands", async () => {
+  it("opens on / with CLI verbs and the orchestration trio", async () => {
     const m = await mountComposer();
     const el = textarea(m);
     await m.type(el, "/");
     await caretToEnd(m);
 
     assert.ok(commandList(m), "popup open after /");
-    assert.ok(m.byText("/handoff"), "/handoff listed");
-    assert.ok(m.byText("/advisor"), "/advisor listed");
-    assert.ok(m.byText("/committee"), "/committee listed");
+    for (const name of [
+      "/compact",
+      "/rewind",
+      "/undo",
+      "/usage",
+      "/context",
+      "/model",
+      "/effort",
+      "/permissions",
+      "/goal",
+      "/fork",
+      "/new",
+      "/handoff",
+      "/advisor",
+      "/committee",
+      "/btw",
+      "/clear",
+    ]) {
+      assert.ok(m.byText(name), `${name} listed`);
+    }
     assert.ok(
       m.byText("Plan here, implement on a fresh model"),
       "handoff hint shown",
@@ -96,25 +123,28 @@ describe("Composer / command popup", () => {
     );
   });
 
-  it("filters to /committee when the prefix is /co", async () => {
+  it("filters /co to compact, context, and committee", async () => {
     const m = await mountComposer();
     const el = textarea(m);
     await m.type(el, "/co");
     await caretToEnd(m);
 
     assert.ok(commandList(m), "popup open after /co");
+    assert.ok(m.byText("/compact"), "compact matches /co");
+    assert.ok(m.byText("/context"), "context matches /co");
     assert.ok(m.byText("/committee"), "committee matches /co");
     assert.equal(m.byText("/handoff"), null, "handoff filtered out");
     assert.equal(m.byText("/advisor"), null, "advisor filtered out");
+    assert.equal(m.byText("/clear"), null, "clear does not match /co");
   });
 
-  it("Enter inserts the selected command and does not send", async () => {
+  it("Enter inserts an orchestration command and does not send", async () => {
     const sends: string[] = [];
     const m = await mountComposer((prompt) => {
       sends.push(prompt);
     });
     const el = textarea(m);
-    await m.type(el, "/co");
+    await m.type(el, "/comm");
     await caretToEnd(m);
     assert.ok(commandList(m), "popup open before Enter");
 
@@ -122,6 +152,60 @@ describe("Composer / command popup", () => {
     assert.equal(textarea(m).value, "/committee ");
     assert.ok(!commandList(m), "popup closed after accept");
     assert.deepEqual(sends, [], "Enter did not send while the popup was open");
+  });
+
+  it("Enter on a run verb fires the action and clears the token", async () => {
+    const actions: SlashAction[] = [];
+    const sends: string[] = [];
+    const m = await mountComposer((prompt) => sends.push(prompt), {
+      onSlashAction: (action) => actions.push(action),
+    });
+    const el = textarea(m);
+    await m.type(el, "/rewind");
+    await caretToEnd(m);
+    assert.ok(commandList(m), "popup open before Enter");
+
+    await m.press(el, "Enter");
+    assert.equal(textarea(m).value, "", "run verb does not stay in the draft");
+    assert.ok(!commandList(m), "popup closed after accept");
+    assert.deepEqual(actions, ["rewind"]);
+    assert.deepEqual(sends, [], "Enter did not send the run verb");
+  });
+
+  it("Enter on /model opens the model picker and does not send", async () => {
+    const sends: string[] = [];
+    const m = await mountComposer((prompt) => sends.push(prompt));
+    const el = textarea(m);
+    await m.type(el, "/model");
+    await caretToEnd(m);
+    await m.press(el, "Enter");
+    assert.equal(textarea(m).value, "");
+    assert.ok(m.query('[aria-label="Model picker"]'), "model picker opened");
+    assert.deepEqual(sends, []);
+  });
+
+  it("Enter on /permissions opens the permission menu", async () => {
+    const m = await mountComposer();
+    const el = textarea(m);
+    await m.type(el, "/permissions");
+    await caretToEnd(m);
+    await m.press(el, "Enter");
+    assert.equal(textarea(m).value, "");
+    assert.ok(
+      m.query('[aria-label="Permission mode"]'),
+      "permission menu opened",
+    );
+  });
+
+  it("unknown /foo never opens the popup so a send still goes to the model", async () => {
+    const sends: string[] = [];
+    const m = await mountComposer((prompt) => sends.push(prompt));
+    const el = textarea(m);
+    await m.type(el, "/foo");
+    await caretToEnd(m);
+    assert.equal(commandList(m), null);
+    await m.press(el, "Enter", { metaKey: true });
+    assert.deepEqual(sends, ["/foo"]);
   });
 
   it("Escape closes the popup and keeps the text", async () => {
