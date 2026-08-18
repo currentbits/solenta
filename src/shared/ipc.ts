@@ -138,7 +138,7 @@ export interface GcCleanResult {
   bytes: number;
 }
 
-export type ThreadStatus = "idle" | "working" | "done" | "failed" | "quota-wait";
+export type ThreadStatus = "idle" | "working" | "done" | "failed";
 
 export type PermissionMode = "default" | "acceptEdits" | "plan" | "bypassPermissions";
 
@@ -161,24 +161,8 @@ export interface ThreadInfo {
   /** Set alongside prNumber so the badge can link out without calling gh. */
   prUrl: string | null;
   status: ThreadStatus;
-  /** Short reason a run failed ("Run error: ..."), null otherwise. Set when status becomes "failed" or "quota-wait", cleared when a run starts. */
+  /** Short reason a run failed ("Run error: ..."), null otherwise. Set when status becomes "failed", cleared when a run starts. */
   lastError: string | null;
-  /**
-   * Provider quota-wait (#462): epoch ms when the thread will auto-resume.
-   * Only meaningful while status is "quota-wait". Distinct from snooze
-   * (visibility only) and from Solenta's own budget cap (#286).
-   */
-  quotaWaitUntil?: number | null;
-  /**
-   * One-shot: this thread already woke from a quota-wait. The next quota
-   * error fails the turn instead of parking again. Cleared on a human turn.
-   */
-  quotaWaitResumed?: boolean;
-  /**
-   * Per-thread auto-resume override. null/absent inherits the global
-   * settings.quotaWaitAutoResume (default on). false is the opt-out.
-   */
-  quotaWaitAutoResume?: boolean | null;
   createdAt: number;
   /**
    * Last REAL activity: a message appended, a run status change, or a title
@@ -300,6 +284,12 @@ export interface ThreadInfo {
    */
   prState: "OPEN" | "CLOSED" | "MERGED" | null;
   /**
+   * Last known GitHub mergeability (issue #524). Set by prStatus when gh
+   * returns `mergeable`. CONFLICTING flips the header next-action to
+   * Update from main. Null when unknown or the PR is gone.
+   */
+  prMergeable?: "MERGEABLE" | "CONFLICTING" | "UNKNOWN" | null;
+  /**
    * Verification gate (issue #296): a shell command the thread must pass
    * before a run may land "done". Null/empty = unarmed, runs settle on the
    * agent's word alone. Run in the thread's worktree (project root when the
@@ -393,6 +383,11 @@ export interface ThreadInfo {
    */
   spec?: ThreadSpec;
   /**
+   * Hunk hashes the user marked reviewed (issue #421). The itinerary skips
+   * these until the hunk body changes. Absent → none accepted yet.
+   */
+  reviewAcceptedHunks?: string[];
+  /**
    * Teach mode (issue #373): hints-not-solutions persona, TODO(human)
    * markers, and skill-gated autonomy. Absent/null = off. Set by
    * threads.startTeach or threads.create({ teach: true }); cleared by
@@ -400,6 +395,27 @@ export interface ThreadInfo {
    * in teach mode across providers.
    */
   teach?: ThreadTeach | null;
+  /**
+   * Ask mode (issue #392): read-only repo Q&A from the code index and
+   * memory. Never a worktree, never tools, never the daily budget.
+   * Absent/false = off. Set by threads.startAsk or threads.create({ ask: true });
+   * cleared by threads.stopAsk. Copied onto forks; a worker of an Ask
+   * thread does not get a worktree.
+   */
+  ask?: boolean;
+}
+
+/** One code-index symbol for the review itinerary reuse scan. */
+export interface ReviewSymbol {
+  name: string;
+  path: string;
+}
+
+/** Extras the Changes panel needs to build a review itinerary. */
+export interface ReviewContext {
+  annotation: unknown;
+  symbols: ReviewSymbol[];
+  acceptedHunks: string[];
 }
 
 /** Autonomy ladder while Teach mode is on (issue #373). */
@@ -1090,6 +1106,10 @@ export interface PrInfo {
   deletions?: number;
   /** Changed file count from gh, when present. */
   changedFiles?: number;
+  /** GitHub mergeability from `gh pr view --json mergeable`. */
+  mergeable?: "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
+  /** PR base branch from `gh pr view --json baseRefName`. */
+  baseRefName?: string;
 }
 
 /** One CI check from `gh pr checks`. */
@@ -1370,12 +1390,6 @@ export interface AppSettings {
   subagentPool: SubagentPool;
   /** OpenTelemetry export (issue #280). */
   otel: OtelSettings;
-  /**
-   * Continue automatically when a provider usage limit resets (#462).
-   * Default on; only an explicit false opts out (Claude's /config row).
-   * Per-thread quotaWaitAutoResume overrides this.
-   */
-  quotaWaitAutoResume: boolean;
 }
 
 /**
@@ -1745,6 +1759,11 @@ export interface CoderApi {
       orchestrate?: boolean;
       /** Turn Teach mode on at create (issue #373). */
       teach?: boolean;
+      /**
+       * Ask mode (issue #392): read-only Q&A, no worktree. Wins over
+       * `worktree` and `orchestrate`.
+       */
+      ask?: boolean;
       /** Planboard issue this thread was started from (issue #420). */
       issueNumber?: number | null;
     }): Promise<ThreadInfo>;
@@ -1807,16 +1826,6 @@ export interface CoderApi {
     /** Mute/unmute desktop notifications for one thread. Never bumps updatedAt. */
     setMuted(input: { threadId: string; muted: boolean }): Promise<ThreadInfo>;
     /**
-     * Per-thread quota-wait auto-resume override (#462). true/false pins
-     * the thread; null inherits the global settings.quotaWaitAutoResume.
-     * Turning it off while parked cancels the wake timer but leaves the
-     * card parked so Resume now still works.
-     */
-    setQuotaWaitAutoResume(input: {
-      threadId: string;
-      enabled: boolean | null;
-    }): Promise<ThreadInfo>;
-    /**
      * Set or clear the per-thread scratch pad. Trims, caps at
      * THREAD_NOTES_MAX, empty string clears. Never bumps updatedAt.
      */
@@ -1868,6 +1877,17 @@ export interface CoderApi {
      * with the review prompt. Rejects a thread that is not in teach mode.
      */
     requestTeachReview(input: { threadId: string }): Promise<ThreadInfo>;
+    /**
+     * Turn Ask mode on (issue #392): read-only Q&A from the index and
+     * memory. Drops a pending worktree. Idempotent. Never bumps updatedAt.
+     */
+    startAsk(input: { threadId: string }): Promise<ThreadInfo>;
+    /**
+     * Turn Ask mode off. With `worktree: true` (Start work) the thread
+     * becomes a regular isolated thread when the project can host one.
+     * Idempotent. Never bumps updatedAt.
+     */
+    stopAsk(input: { threadId: string; worktree?: boolean }): Promise<ThreadInfo>;
     /**
      * Rename a thread. Trims, truncates to THREAD_TITLE_MAX, rejects an
      * empty title. Never bumps updatedAt.
@@ -2039,12 +2059,6 @@ export interface CoderApi {
      */
     distill(input: { threadId: string }): Promise<DistilledWorkflow>;
     stop(input: { threadId: string }): Promise<void>;
-    /**
-     * Resume a parked quota-wait thread now (#462). Resends the last user
-     * prompt without appending it again. Rejects if the thread is not
-     * parked. Counts as the one-shot wake.
-     */
-    resumeQuotaWait(input: { threadId: string }): Promise<{ runId: string }>;
   };
   git: {
     status(projectId: string): Promise<GitStatus>;
@@ -2053,6 +2067,16 @@ export interface CoderApi {
     setupWorktree(input: { threadId: string }): Promise<ThreadInfo>;
     /** Working-tree changes in the thread's cwd (worktree if set, else project). */
     diff(input: { threadId: string }): Promise<DiffResult>;
+    /**
+     * Review itinerary extras (issue #421): author annotation file, code-index
+     * symbols for the reuse scan, and hunk hashes already marked reviewed.
+     */
+    reviewContext(input: { threadId: string }): Promise<ReviewContext>;
+    /** Persist hunk hashes the user marked reviewed on this thread. */
+    setReviewAccepted(input: {
+      threadId: string;
+      hashes: string[];
+    }): Promise<ThreadInfo>;
     /**
      * Commits every change in the thread's cwd (git add -A + commit -m).
      * Rejects on an empty message or when there is nothing to commit.
@@ -2120,8 +2144,10 @@ export interface CoderApi {
      */
     prChecks(input: { threadId: string }): Promise<PrChecksResult>;
     /**
-     * Squash-merge the thread's current OPEN PR (`gh pr merge --squash`)
-     * and return the refreshed PrInfo. Rejects with gh's own message.
+     * Update the PR branch from its base (fetch + merge), push if HEAD
+     * moved, then squash-merge via `gh pr merge --squash`. Conflicts
+     * throw MERGE_CONFLICT: and leave the worktree conflicted. An empty
+     * unique tree vs base tells the caller to close the PR.
      */
     prMerge(input: { threadId: string }): Promise<PrInfo>;
     /**

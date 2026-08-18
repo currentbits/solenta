@@ -16,7 +16,8 @@ export type SlashAction =
   | "permissions"
   | "fork"
   | "new"
-  | "clear";
+  | "clear"
+  | "review";
 
 export interface SlashCommand {
   name: string;
@@ -45,6 +46,12 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
     hint: "Rewind the last turn",
     kind: "run",
     action: "rewind",
+  },
+  {
+    name: "/review",
+    hint: "Open the review itinerary for this diff",
+    kind: "run",
+    action: "review",
   },
   {
     name: "/undo",

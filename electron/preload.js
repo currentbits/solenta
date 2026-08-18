@@ -125,8 +125,6 @@ const coder = {
     setQueued: (input) => invoke("threads:setQueued", input),
     setSnoozed: (input) => invoke("threads:setSnoozed", input),
     setMuted: (input) => invoke("threads:setMuted", input),
-    setQuotaWaitAutoResume: (input) =>
-      invoke("threads:setQuotaWaitAutoResume", input),
     setNotes: (input) => invoke("threads:setNotes", input),
     startSpec: (input) => invoke("threads:startSpec", input),
     stopSpec: (input) => invoke("threads:stopSpec", input),
@@ -134,6 +132,8 @@ const coder = {
     specArtifact: (input) => invoke("threads:specArtifact", input),
     startTeach: (input) => invoke("threads:startTeach", input),
     stopTeach: (input) => invoke("threads:stopTeach", input),
+    startAsk: (input) => invoke("threads:startAsk", input),
+    stopAsk: (input) => invoke("threads:stopAsk", input),
     requestTeachReview: (input) =>
       invoke("threads:requestTeachReview", input),
     rename: (input) => invoke("threads:rename", input),
@@ -163,12 +163,13 @@ const coder = {
     startWorkflow: (input) => invoke("runs:startWorkflow", input),
     distill: (input) => invoke("runs:distill", input),
     stop: (input) => invoke("runs:stop", input),
-    resumeQuotaWait: (input) => invoke("runs:resumeQuotaWait", input),
   },
   git: {
     status: (projectId) => invoke("git:status", projectId),
     setupWorktree: (input) => invoke("git:setupWorktree", input),
     diff: (input) => invoke("git:diff", input),
+    reviewContext: (input) => invoke("git:reviewContext", input),
+    setReviewAccepted: (input) => invoke("git:setReviewAccepted", input),
     commit: (input) => invoke("git:commit", input),
     revertFile: (input) => invoke("git:revertFile", input),
     suggestCommitMessage: (input) => invoke("git:suggestCommitMessage", input),

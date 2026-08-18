@@ -1437,7 +1437,6 @@ function buildDevCoder(): CoderApi {
   /** Update channel override; null follows the (absent) dev stamp. */
   let updateChannel: "prod" | "nightly" | null = null;
   let notifications = true;
-  let quotaWaitAutoResume = true;
   let otel: OtelSettings = { endpoint: null, headers: {}, claudeMetrics: false };
   /** Saved agent profiles (Settings tab), in-memory. */
   let agentProfiles: AgentProfile[] = [];
@@ -2046,7 +2045,6 @@ function buildDevCoder(): CoderApi {
           defaultOrchestrate,
           updateChannel,
           notifications,
-          quotaWaitAutoResume,
           agentProfiles: agentProfiles.map((p) => ({ ...p })),
           subagentPool: {
             ...subagentPool,
@@ -2096,12 +2094,6 @@ function buildDevCoder(): CoderApi {
           }
           notifications = patch.notifications;
         }
-        if (Object.prototype.hasOwnProperty.call(patch, "quotaWaitAutoResume")) {
-          if (typeof patch.quotaWaitAutoResume !== "boolean") {
-            throw new Error("quotaWaitAutoResume must be a boolean");
-          }
-          quotaWaitAutoResume = patch.quotaWaitAutoResume;
-        }
         if (Object.prototype.hasOwnProperty.call(patch, "agentProfiles")) {
           if (!Array.isArray(patch.agentProfiles)) {
             throw new Error("agentProfiles must be an array");
@@ -2149,7 +2141,6 @@ function buildDevCoder(): CoderApi {
           defaultOrchestrate,
           updateChannel,
           notifications,
-          quotaWaitAutoResume,
           agentProfiles: agentProfiles.map((p) => ({ ...p })),
           subagentPool: {
             ...subagentPool,
@@ -2649,8 +2640,12 @@ function buildDevCoder(): CoderApi {
           // Lazy worktree: only the intent is recorded, the fake worktree
           // materializes at first run. An orchestrator holds neither — its
           // worker does.
-          pendingWorktree: input.orchestrate !== true && input.worktree === true,
-          pendingFork: input.orchestrate === true,
+          pendingWorktree:
+            input.ask !== true &&
+            input.orchestrate !== true &&
+            input.worktree === true,
+          pendingFork: input.ask !== true && input.orchestrate === true,
+          ask: input.ask === true,
           issueNumber: input.issueNumber ?? null,
           ...(input.teach === true
             ? { teach: { autonomy: "hint" as const, reviewsPassed: 0 } }
@@ -2676,6 +2671,7 @@ function buildDevCoder(): CoderApi {
               : source.model,
           permissionMode: source.permissionMode,
           teach: source.teach ?? null,
+          ask: source.ask === true,
           handoffFrom: source.id,
         });
         return registerThread(created);
@@ -2792,14 +2788,6 @@ function buildDevCoder(): CoderApi {
       async setMuted(input: { threadId: string; muted: boolean }) {
         return patchThread(input.threadId, { muted: input.muted });
       },
-      async setQuotaWaitAutoResume(input: {
-        threadId: string;
-        enabled: boolean | null;
-      }) {
-        return patchThread(input.threadId, {
-          quotaWaitAutoResume: input.enabled,
-        });
-      },
       async setNotes(input: { threadId: string; notes: string }) {
         return patchThread(input.threadId, {
           notes: String(input.notes ?? "").trim().slice(0, 2000),
@@ -2864,6 +2852,21 @@ function buildDevCoder(): CoderApi {
       },
       async stopTeach(input: { threadId: string }) {
         return patchThread(input.threadId, { teach: null });
+      },
+      async startAsk(input: { threadId: string }) {
+        const existing = threads.find((t) => t.id === input.threadId);
+        if (existing?.ask) return { ...existing };
+        return patchThread(input.threadId, {
+          ask: true,
+          pendingWorktree: false,
+          teach: null,
+        });
+      },
+      async stopAsk(input: { threadId: string; worktree?: boolean }) {
+        return patchThread(input.threadId, {
+          ask: false,
+          ...(input.worktree ? { pendingWorktree: true } : {}),
+        });
       },
       async requestTeachReview(input: { threadId: string }) {
         const existing = threads.find((t) => t.id === input.threadId);
@@ -3175,14 +3178,6 @@ function buildDevCoder(): CoderApi {
         emitDetail(detail);
         startRunTimer(input.threadId);
         return { runId };
-      },
-      async resumeQuotaWait(input: { threadId: string }) {
-        const detail = details.get(input.threadId);
-        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
-        if (detail.thread.status !== "quota-wait") {
-          throw new Error("Thread is not waiting on a provider quota reset");
-        }
-        return this.start({ threadId: input.threadId, prompt: "continue" });
       },
       async stop(input) {
         const detail = details.get(input.threadId);
@@ -3851,6 +3846,16 @@ function buildDevCoder(): CoderApi {
         return patchThread(input.threadId, {
           ...fakeWorktree(detail.thread),
           updatedAt: now(),
+        });
+      },
+      async reviewContext(_input) {
+        return { annotation: null, symbols: [], acceptedHunks: [] };
+      },
+      async setReviewAccepted(input) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
+        return patchThread(input.threadId, {
+          reviewAcceptedHunks: input.hashes,
         });
       },
       async diff(input) {

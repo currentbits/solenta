@@ -14,6 +14,8 @@ import type {
   ConflictForecast,
   DevServerState,
   DiffResult,
+  ReviewContext,
+  ReviewSymbol,
   GitSyncInfo,
   GitRepoInfo,
   GitPullResult,
@@ -107,8 +109,12 @@ function resolveApi(): CoderApi {
 }
 
 function errorMessage(err: unknown): string {
-  if (err instanceof Error && err.message) return err.message;
-  return String(err);
+  const raw = err instanceof Error && err.message ? err.message : String(err);
+  for (const marker of ["MERGE_CONFLICT:", "WORKTREE_DIRTY:"]) {
+    const at = raw.indexOf(marker);
+    if (at !== -1) return raw.slice(at + marker.length).trim();
+  }
+  return raw;
 }
 
 /** A follow-up typed during a run, waiting for that run to land. */
@@ -175,6 +181,7 @@ export interface UseCoderResult {
       worktree?: boolean;
       orchestrate?: boolean;
       teach?: boolean;
+      ask?: boolean;
       issueNumber?: number | null;
     },
   ) => Promise<ThreadInfo | null>;
@@ -283,11 +290,6 @@ export interface UseCoderResult {
    */
   setSnoozed: (threadId: string, until: number | null) => Promise<void>;
   setMuted: (threadId: string, muted: boolean) => Promise<void>;
-  setQuotaWaitAutoResume: (
-    threadId: string,
-    enabled: boolean | null,
-  ) => Promise<void>;
-  resumeQuotaWait: (threadId: string) => Promise<void>;
   /** Rename a thread. Does not require selection. */
   renameThread: (threadId: string, title: string) => Promise<void>;
   /** Save scratch notes on a thread (header editor, issue #194). */
@@ -311,6 +313,10 @@ export interface UseCoderResult {
   startTeach: (threadId: string) => Promise<void>;
   /** Turn Teach mode off. */
   stopTeach: (threadId: string) => Promise<void>;
+  /** Turn Ask mode on (issue #392). */
+  startAsk: (threadId: string) => Promise<void>;
+  /** Turn Ask mode off. worktree: true is Start work. */
+  stopAsk: (threadId: string, opts?: { worktree?: boolean }) => Promise<void>;
   /** Ask the agent to review the human's TODO(human) fills. Starts a run. */
   requestTeachReview: (threadId: string) => Promise<void>;
   /** Permanently delete the selected thread (after caller confirms). */
@@ -327,6 +333,8 @@ export interface UseCoderResult {
   mergeWorktree: () => Promise<ThreadInfo | null>;
   removeWorktree: (force?: boolean) => Promise<ThreadInfo | null>;
   fetchDiff: () => Promise<DiffResult>;
+  fetchReviewContext: () => Promise<ReviewContext>;
+  setReviewAccepted: (hashes: string[]) => Promise<void>;
   /** Commit all changes in the selected thread's cwd. */
   commitChanges: (message: string) => Promise<{ subject: string }>;
   /** Discard one changed file in the selected thread's cwd. */
@@ -1003,6 +1011,7 @@ export function useCoder(): UseCoderResult {
         worktree?: boolean;
         orchestrate?: boolean;
         teach?: boolean;
+        ask?: boolean;
         issueNumber?: number | null;
       },
     ) => {
@@ -1012,11 +1021,16 @@ export function useCoder(): UseCoderResult {
       // orchestrator; explicit opts win. Both are local-only, so remote
       // projects always get plain threads. An orchestrator never holds a
       // worktree itself — its worker does — so it wins over `worktree`.
+      // Ask (issue #392) wins over both: a Q&A thread must never grow a
+      // worktree or fork a worker, even when those defaults are on.
       const project = projects.find((p) => p.id === pid);
       const local = !project?.remoteHost;
+      const ask = opts?.ask === true;
       const orchestrate =
-        opts?.orchestrate ?? (settings?.defaultOrchestrate === true && local);
+        !ask &&
+        (opts?.orchestrate ?? (settings?.defaultOrchestrate === true && local));
       const worktree =
+        !ask &&
         !orchestrate &&
         (opts?.worktree ?? (settings?.defaultWorktree === true && local));
       // Inherit provider+model from the currently selected thread when present.
@@ -1031,6 +1045,7 @@ export function useCoder(): UseCoderResult {
           ...(worktree ? { worktree: true } : {}),
           ...(orchestrate ? { orchestrate: true } : {}),
           ...(opts?.teach ? { teach: true } : {}),
+          ...(ask ? { ask: true } : {}),
           ...(opts?.issueNumber != null ? { issueNumber: opts.issueNumber } : {}),
         });
       } catch (err) {
@@ -1514,47 +1529,6 @@ export function useCoder(): UseCoderResult {
     [api, applyThreads],
   );
 
-  const setQuotaWaitAutoResume = useCallback(
-    async (threadId: string, enabled: boolean | null) => {
-      try {
-        const thread = await api.threads.setQuotaWaitAutoResume({
-          threadId,
-          enabled,
-        });
-        applyThreads(
-          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
-        );
-        setDetail((prev) =>
-          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
-        );
-        setError(null);
-      } catch (err) {
-        setError({ scope: "run", message: errorMessage(err) });
-      }
-    },
-    [api, applyThreads],
-  );
-
-  const resumeQuotaWait = useCallback(
-    async (threadId: string) => {
-      try {
-        await api.runs.resumeQuotaWait({ threadId });
-        const d = await api.threads.get(threadId);
-        if (selectedRef.current !== threadId) return;
-        setDetail(d);
-        applyThreads(
-          threadsRef.current.map((t) =>
-            t.id === d.thread.id ? d.thread : t,
-          ),
-        );
-        setError(null);
-      } catch (err) {
-        setError({ scope: "run", message: errorMessage(err) });
-      }
-    },
-    [api, applyThreads],
-  );
-
   const renameThread = useCallback(
     async (threadId: string, title: string) => {
       try {
@@ -1681,6 +1655,45 @@ export function useCoder(): UseCoderResult {
     async (threadId: string) => {
       try {
         const thread = await api.threads.stopTeach({ threadId });
+        applyThreads(
+          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
+        );
+        setDetail((prev) =>
+          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
+        );
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+      }
+    },
+    [api, applyThreads],
+  );
+
+  const startAsk = useCallback(
+    async (threadId: string) => {
+      try {
+        const thread = await api.threads.startAsk({ threadId });
+        applyThreads(
+          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
+        );
+        setDetail((prev) =>
+          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
+        );
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+      }
+    },
+    [api, applyThreads],
+  );
+
+  const stopAsk = useCallback(
+    async (threadId: string, opts?: { worktree?: boolean }) => {
+      try {
+        const thread = await api.threads.stopAsk({
+          threadId,
+          ...(opts?.worktree ? { worktree: true } : {}),
+        });
         applyThreads(
           threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
         );
@@ -1825,6 +1838,25 @@ export function useCoder(): UseCoderResult {
     const threadId = selectedThreadId;
     return api.git.diff({ threadId });
   }, [api, selectedThreadId]);
+
+  const fetchReviewContext = useCallback(async () => {
+    if (!selectedThreadId) {
+      return { annotation: null, symbols: [] as ReviewSymbol[], acceptedHunks: [] };
+    }
+    const threadId = selectedThreadId;
+    return api.git.reviewContext({ threadId });
+  }, [api, selectedThreadId]);
+
+  const setReviewAccepted = useCallback(
+    async (hashes: string[]) => {
+      if (!selectedThreadId) return;
+      const threadId = selectedThreadId;
+      const thread = await api.git.setReviewAccepted({ threadId, hashes });
+      if (selectedRef.current !== threadId) return;
+      applyThreadUpdate(thread);
+    },
+    [api, selectedThreadId, applyThreadUpdate],
+  );
 
   const commitChanges = useCallback(
     async (message: string) => {
@@ -2437,8 +2469,6 @@ export function useCoder(): UseCoderResult {
     setPinned,
     setSnoozed,
     setMuted,
-    setQuotaWaitAutoResume,
-    resumeQuotaWait,
     renameThread,
     setNotes,
     startSpec,
@@ -2447,6 +2477,8 @@ export function useCoder(): UseCoderResult {
     specArtifact,
     startTeach,
     stopTeach,
+    startAsk,
+    stopAsk,
     requestTeachReview,
     deleteThread,
     removeProject,
@@ -2454,6 +2486,8 @@ export function useCoder(): UseCoderResult {
     mergeWorktree,
     removeWorktree,
     fetchDiff,
+    fetchReviewContext,
+    setReviewAccepted,
     commitChanges,
     revertFile,
     suggestCommitMessage,

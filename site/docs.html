@@ -53,13 +53,15 @@
     <nav class="docs-nav" id="docs-nav">
       <a href="#getting-started">Getting started</a>
       <a href="#memory">Shared memory</a>
-      <a href="#views">Kanban, Planboard, PRs, Activity</a>
+      <a href="#views">Kanban, Planboard, Pulse</a>
       <a href="#threads">Threads and providers</a>
       <a href="#worktrees">Worktrees and PRs</a>
       <a href="#workflows">Build workflows</a>
       <a href="#orchestration">Orchestration</a>
       <a href="#guardrails">Guardrails and verification</a>
       <a href="#spec">Spec mode</a>
+      <a href="#teach">Teach mode</a>
+      <a href="#review">Review itinerary</a>
       <a href="#skills">Skills</a>
       <a href="#automations">Automations</a>
       <a href="#dev-servers">Dev servers</a>
@@ -68,6 +70,7 @@
       <a href="#updates">Notifications and updates</a>
       <a href="#web-mode">Web mode</a>
       <a href="#ssh">SSH remote projects</a>
+      <a href="#windows">Windows</a>
       <a href="#architecture">Architecture</a>
     </nav>
 
@@ -118,10 +121,20 @@
       <p>
         Entries carry <strong>provenance</strong> — which agent wrote them —
         and each agent builds a trust score from how its entries hold up, which
-        ranks what comes back on a search. The stored embeddings are reused to
-        fold near-duplicates together and to surface entries that contradict
-        each other, and the memory graph records co-occurrence edges so related
-        entries can be walked, not just matched on text.
+        ranks what comes back on a search. Facts can carry
+        <strong>file:line, thread or commit citations</strong>; before a fact
+        is injected, those file citations are checked against the current
+        worktree and contradicted entries are invalidated. The stored
+        embeddings are reused to fold near-duplicates together and to surface
+        entries that contradict each other, and the memory graph records
+        co-occurrence edges so related entries can be walked, not just matched
+        on text.
+      </p>
+      <p>
+        Above facts sit <strong>strategy</strong> entries: distilled
+        <em>how we work here</em> notes that survive a single thread.
+        <code>memory_distill</code> is how a finished run gets folded into
+        that layer instead of leaving a pile of one-off observations.
       </p>
       <p>
         Alongside it, a <strong>hypothesis ledger</strong> records what an agent
@@ -132,16 +145,17 @@
         where things live.
       </p>
 
-      <h2 id="views">Kanban, Planboard, PRs, Activity</h2>
+      <h2 id="views">Kanban, Planboard, Pulse</h2>
       <p>
-        Next to the thread view, the sidebar has four views over everything
-        that is running:
+        Next to the thread view, the sidebar keeps the live work, and the
+        right panel's <strong>Pulse</strong> tab holds the rest:
       </p>
       <ul>
         <li><strong>Kanban</strong> groups every thread by status — working, waiting on you, done, failed — so a pile of parallel runs stays readable.</li>
         <li><strong>Planboard</strong> shows one project's plan as its GitHub issues in Todo / In progress / Done. Cards open the issue on GitHub, and <strong>Start task</strong> on a Todo card opens a thread on it — in worktree, orchestrator or plain mode.</li>
         <li><strong>Pull requests</strong> lists the open PRs per project with their checks, and jumps to the thread that opened one.</li>
         <li><strong>Activity</strong> is a chronological feed, grouped by day, of everything your agents did.</li>
+        <li><strong>Pulse</strong> is Automations, Usage, Fleet, Insights and the morning digest — the overflow that used to compete with threads on the left.</li>
       </ul>
       <p>
         Planboard reads the board from labels, so agents can write to it with
@@ -181,7 +195,16 @@
         <li><strong>Edit and resubmit</strong> rewinds to any past message of yours, lets you change it, and runs again from that point.</li>
         <li><strong>Scratch notes</strong> are a free-text field per thread, edited from the header and previewed in the sidebar, for the context that is not worth a memory entry.</li>
         <li><strong>Rename</strong> a thread from its header or the sidebar menu when the auto-generated title stops describing the work.</li>
+        <li><strong>Snooze</strong> hides a thread until a preset (an hour, this evening, tomorrow, next week) without stopping the agent. A thread that blocks on you, or fails after you hid it, wakes early and shows a <em>Woke</em> pill. <em>Settle on merge</em> archives the thread when its PR lands.</li>
+        <li><strong>Drop</strong> images and folders anywhere on the transcript, not only on the composer strip.</li>
       </ul>
+      <p>
+        <kbd>⌘N</kbd> starts a new thread, <kbd>⌘⇧N</kbd> starts one in a
+        chosen project. Esc or Ctrl+C stops the live turn. Click the project
+        slug in the header to start another thread there. The composer's
+        <code>/</code> palette lists both orchestration commands and the CLI
+        verbs.
+      </p>
       <p>
         A thread that fails keeps its <strong>failure reason</strong> and shows
         it on the sidebar card and in the Agents panel, so a red thread says
@@ -205,9 +228,18 @@
       <h2 id="worktrees">Worktrees and pull requests</h2>
       <p>
         Each thread can get its own <strong>git worktree</strong>, so agents
-        work on an isolated branch and never touch your checkout. The
-        Environment panel shows the diff, runs <code>git pull</code>, and opens
-        a pull request straight from the thread.
+        work on an isolated branch and never touch your checkout. Setup is
+        fail-closed: if the worktree cannot be created, the thread errors
+        instead of silently running in your working copy. The Environment
+        panel shows the diff, runs <code>git pull</code>, starts the project
+        dev server, and holds Fork and Handoff.
+      </p>
+      <p>
+        The header carries one <strong>next-action</strong> button that names
+        the next git step — commit, push, open a PR, watch checks, or merge —
+        instead of a row of always-visible controls. Create PR works on an
+        unpublished worktree without a prior Push. File paths in the
+        transcript open the file in that worktree.
       </p>
       <p>
         PR state is live: checks show as badges on the thread card, and merging
@@ -224,7 +256,8 @@
         When several worktrees run in parallel, <strong>conflict forecast</strong>
         compares what they are touching and warns that two branches are heading
         for the same lines while both are still cheap to redirect — rather than
-        at the merge, when one of them has to be redone.
+        at the merge, when one of them has to be redone. Hover the pill to see
+        the other thread and the colliding files.
       </p>
       <p>
         Finished worktrees are cleaned up rather than accumulating:
@@ -266,7 +299,16 @@
         claimed and finished, and they can <strong>message each other
         directly</strong> instead of routing every fact back through the
         orchestrator. Loop guardrails cut the case where two workers keep
-        handing the same question back and forth.
+        handing the same question back and forth. A <strong>subagent model
+        pool</strong> in Settings lists described candidates; the lead picks
+        per spawn instead of every worker inheriting the same default.
+      </p>
+      <p>
+        Three composer commands cover the common shapes without a workflow
+        template: <code>/handoff</code> plans here and implements on a fresh
+        model, <code>/advisor</code> asks one contrasting model for a second
+        opinion, and <code>/committee</code> has two contrasting models
+        converge on a root cause.
       </p>
       <p>
         For ad-hoc fan-out you do not configure anything: you ask. Every agent
@@ -309,7 +351,10 @@
         Separately, a thread can carry a <strong>verify command</strong>. The
         thread only settles green once that command exits 0; if it fails, the
         thread stays open with the output attached. It is the difference between
-        an agent saying it is done and the build agreeing.
+        an agent saying it is done and the build agreeing. After a PR merges,
+        the same command can run again on a delay
+        (<strong>post-merge verification</strong>) and reopen the thread if the
+        build regressed.
       </p>
 
       <h2 id="spec">Spec mode</h2>
@@ -320,7 +365,31 @@
         <strong>tasks</strong> as separate artifacts, and each one is gated —
         the next stage does not unlock until you approve the previous one. The
         artifacts live with the thread, so the tasks that come out the end are
-        traceable back to the requirement that asked for them.
+        traceable back to the requirement that asked for them. You can leave
+        spec mode without approving the remaining stages if the work has
+        moved on.
+      </p>
+
+      <h2 id="teach">Teach mode</h2>
+      <p>
+        A thread can run as a tutor instead of an implementer.
+        <strong>Teach mode</strong> puts a hints-not-solutions persona on every
+        provider, and gates how much of the machine the student can give away.
+        Autonomy starts at <em>Hints</em> (ask / plan only), steps up to
+        <em>Review</em> after enough passed reviews, then <em>Pair</em>, which
+        unlocks full access. The point is a session you can learn from, not a
+        silent patch.
+      </p>
+
+      <h2 id="review">Review itinerary</h2>
+      <p>
+        Opening an agent's diff should not mean reading files top to bottom.
+        The <strong>review itinerary</strong> builds an ordered, risk-ranked
+        plan from the working-tree diff: CI and config first (a hard stop if
+        those moved), then a scan for duplicated utilities, the critical path,
+        tests, and the rest — chunked by functional area, never alphabetically.
+        Tests can be pulled to the front when that is the review you are
+        actually doing.
       </p>
 
       <h2 id="skills">Skills</h2>
@@ -455,6 +524,16 @@ solenta --serve-web --serve-host 0.0.0.0   # LAN, your call</code></pre>
         <li>The agent CLIs must be installed on the remote; local installs are not needed.</li>
         <li>Worktree setup and pull are local-only in v1.</li>
       </ul>
+
+      <h2 id="windows">Windows</h2>
+      <p>
+        The Windows build is a first-class agent host, not a zip of the macOS
+        tree. Adding a project on Windows runs a <strong>doctor</strong>: long
+        paths, Git Bash, Node 22, and whether the repo sits across a WSL
+        boundary. Failed checks are advisory — they do not block add — but they
+        name the fix. Agent CLIs stay attached to the app so Stop stops them,
+        and a sandbox badge shows how the run is isolated.
+      </p>
 
       <h2 id="architecture">Architecture</h2>
       <p>
