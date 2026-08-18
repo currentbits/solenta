@@ -346,10 +346,12 @@ Optional per-thread gate (issue #269): the agent writes `requirements.md`,
 `design.md`, then `tasks.md` into `<worktree>/.solenta/specs/<slug>/`, and a
 human approves each before the next opens. State is
 `ThreadInfo.spec { slug, stage, awaitingApproval }`; the stage machine lives in
-`electron/services.js` (`startSpec` / `submitSpec` / `reviewSpec`),
-`specNoteFor` rides every dispatch until stage `build`, the agent submits with
-the `spec_submit` MCP tool, and approving in the SpecCard advances the stage
-and starts the next run. The gate is procedural, not sandboxed.
+`electron/services.js` (`startSpec` / `stopSpec` / `submitSpec` / `reviewSpec`),
+`specNoteFor` rides every dispatch until stage `build` or `stopSpec` clears
+`thread.spec`, the agent submits with the `spec_submit` MCP tool, and
+approving in the SpecCard advances the stage and starts the next run. Exit
+spec mode (header or SpecCard) drops `thread.spec` without approving remaining
+stages (issue #500). The gate is procedural, not sandboxed.
 
 ## Renderer notes
 

@@ -345,6 +345,8 @@ interface ThreadViewProps {
   onSetNotes?: (threadId: string, notes: string) => void | Promise<void>;
   /** Turn spec mode on for a thread that has no spec yet (issue #269). */
   onStartSpec?: (threadId: string) => void | Promise<void>;
+  /** Leave spec mode without approving remaining stages (issue #500). */
+  onStopSpec?: (threadId: string) => void | Promise<void>;
   /** Answer the spec stage gate. */
   onReviewSpec?: (
     threadId: string,
@@ -1884,6 +1886,7 @@ function specStepStatus(
 function SpecCard({
   thread,
   onReviewSpec,
+  onStopSpec,
   onSpecArtifact,
 }: {
   thread: ThreadInfo;
@@ -1892,6 +1895,7 @@ function SpecCard({
     decision: "approve" | "revise",
     feedback?: string,
   ) => void | Promise<void>;
+  onStopSpec?: (threadId: string) => void | Promise<void>;
   onSpecArtifact?: (
     threadId: string,
     stage: SpecArtifact,
@@ -1948,6 +1952,16 @@ function SpecCard({
       <div className={styles.specCardHead}>
         <span className={styles.specCardTitle}>Spec</span>
         <span className={styles.specStatus}>{spec.stage}</span>
+        {onStopSpec && (
+          <button
+            type="button"
+            className={styles.btn}
+            data-spec-exit-btn=""
+            onClick={() => void onStopSpec(thread.id)}
+          >
+            Exit spec mode
+          </button>
+        )}
       </div>
       <ol className={styles.specStageList}>
         {SPEC_STAGES.map((step) => (
@@ -2374,6 +2388,7 @@ export const ThreadView = memo(function ThreadView({
   onDistillWorkflow,
   onSetNotes,
   onStartSpec,
+  onStopSpec,
   onReviewSpec,
   onSpecArtifact,
   onStartTeach,
@@ -3205,6 +3220,16 @@ export const ThreadView = memo(function ThreadView({
               Spec mode
             </button>
           )}
+          {onStopSpec && thread.spec && (
+            <button
+              type="button"
+              className={styles.btn}
+              data-spec-exit-btn=""
+              onClick={() => void onStopSpec(thread.id)}
+            >
+              Exit spec mode
+            </button>
+          )}
           {onStartTeach && !thread.teach && (
             <button
               type="button"
@@ -3726,6 +3751,7 @@ export const ThreadView = memo(function ThreadView({
           <SpecCard
             thread={thread}
             onReviewSpec={onReviewSpec}
+            onStopSpec={onStopSpec}
             onSpecArtifact={onSpecArtifact}
           />
         ) : null}

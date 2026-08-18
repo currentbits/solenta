@@ -1,5 +1,5 @@
 /**
- * Issue #269: spec-mode IPC seam — startSpec / reviewSpec / specArtifact.
+ * Issue #269 / #500: spec-mode IPC seam — startSpec / stopSpec / reviewSpec / specArtifact.
  * Run: npm run test:electron
  */
 const { describe, it, beforeEach, afterEach } = require("node:test");
@@ -87,6 +87,18 @@ describe("spec-mode IPC", () => {
         }),
       /awaiting approval/,
     );
+    assert.equal(startRunCalls.length, 0);
+  });
+
+  it("threads:stopSpec clears spec, broadcasts, and does not start a run", async () => {
+    await IPC_HANDLERS["threads:startSpec"](ctx, { threadId });
+    assert.ok(store.getThread(threadId).spec);
+    broadcasts.length = 0;
+
+    const thread = await IPC_HANDLERS["threads:stopSpec"](ctx, { threadId });
+    assert.equal(thread.spec, undefined);
+    assert.equal(store.getThread(threadId).spec, undefined);
+    assert.ok(broadcasts.some((b) => b.channel === "threads:changed"));
     assert.equal(startRunCalls.length, 0);
   });
 

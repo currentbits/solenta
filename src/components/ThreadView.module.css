@@ -1839,6 +1839,10 @@ a.menuItem {
   gap: 8px;
 }
 
+.specCardHead .btn {
+  margin-left: auto;
+}
+
 .specCardTitle {
   font-weight: 500;
   color: var(--text);

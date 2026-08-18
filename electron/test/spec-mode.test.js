@@ -9,6 +9,7 @@ const {
   nextSpecStage,
   specNoteFor,
   startSpec,
+  stopSpec,
   submitSpec,
   reviewSpec,
   readSpecArtifact,
@@ -101,6 +102,50 @@ describe("spec mode gate", () => {
     store.thread.spec.stage = "build";
     assert.equal(specNoteFor(store.thread, "/work/tree"), "");
     assert.equal(specNoteFor({}, "/work/tree"), "");
+  });
+
+  it("stopSpec drops thread.spec so specNoteFor goes quiet", () => {
+    const store = makeStore();
+    startSpec(store, { threadId: "t1" });
+    assert.match(specNoteFor(store.thread, "/work/tree"), /Spec mode/);
+    const after = stopSpec(store, { threadId: "t1" });
+    assert.equal(after.spec, undefined);
+    assert.equal(store.thread.spec, undefined);
+    assert.equal("spec" in store.thread, false);
+    assert.equal(specNoteFor(store.thread, "/work/tree"), "");
+  });
+
+  it("stopSpec is idempotent on a thread that is not in spec mode", () => {
+    const store = makeStore();
+    const after = stopSpec(store, { threadId: "t1" });
+    assert.equal(after.spec, undefined);
+    assert.equal(store.thread.spec, undefined);
+  });
+
+  it("stopSpec works mid-gate and at build, then startSpec can start over", () => {
+    const store = makeStore();
+    startSpec(store, { threadId: "t1" });
+    submitSpec(store, { threadId: "t1" });
+    assert.equal(store.thread.spec.awaitingApproval, true);
+    stopSpec(store, { threadId: "t1" });
+    assert.equal(store.thread.spec, undefined);
+
+    startSpec(store, { threadId: "t1" });
+    store.thread.spec.stage = "build";
+    stopSpec(store, { threadId: "t1" });
+    assert.equal(store.thread.spec, undefined);
+
+    startSpec(store, { threadId: "t1" });
+    assert.equal(store.thread.spec.stage, "requirements");
+    assert.equal(store.thread.spec.awaitingApproval, false);
+  });
+
+  it("stopSpec rejects an unknown thread", () => {
+    const store = makeStore();
+    assert.throws(
+      () => stopSpec(store, { threadId: "nope" }),
+      /Unknown thread/,
+    );
   });
 
   it("reads the artifact off disk, null until it is written", () => {

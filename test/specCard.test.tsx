@@ -84,6 +84,7 @@ async function mountView(
   d: ThreadDetail,
   extras: {
     onStartSpec?: (threadId: string) => void;
+    onStopSpec?: (threadId: string) => void;
     onReviewSpec?: (
       threadId: string,
       decision: "approve" | "revise",
@@ -115,6 +116,7 @@ async function mountView(
       onSetArchived={() => {}}
       onDeleteThread={() => {}}
       onStartSpec={extras.onStartSpec}
+      onStopSpec={extras.onStopSpec}
       onReviewSpec={extras.onReviewSpec}
       onSpecArtifact={extras.onSpecArtifact}
     />,
@@ -245,6 +247,53 @@ describe("SpecCard", () => {
     assert.ok(btn);
     await view.click(btn);
     assert.deepEqual(started, ["t1"]);
+    assert.equal(view.query("[data-spec-exit-btn]"), null);
+  });
+
+  it("Exit spec mode on the card and header calls stopSpec", async () => {
+    const stopped: string[] = [];
+    const view = await mountView(
+      detail({
+        spec: { slug: "foo", stage: "requirements", awaitingApproval: false },
+      }),
+      {
+        onStopSpec: (id) => {
+          stopped.push(id);
+        },
+        onSpecArtifact: async () => ({
+          path: ".solenta/specs/foo/requirements.md",
+          text: "draft",
+        }),
+      },
+    );
+    assert.equal(view.query("[data-spec-mode-btn]"), null);
+    const exits = view.queryAll("[data-spec-exit-btn]");
+    assert.ok(exits.length >= 2, "header and SpecCard both offer exit");
+    await view.click(exits[0]);
+    assert.deepEqual(stopped, ["t1"]);
+  });
+
+  it("Exit spec mode is available while awaiting approval and at build", async () => {
+    for (const extra of [
+      { spec: { slug: "foo", stage: "design", awaitingApproval: true } },
+      { spec: { slug: "foo", stage: "build", awaitingApproval: false } },
+    ] as const) {
+      const stopped: string[] = [];
+      const view = await mountView(detail(extra), {
+        onStopSpec: (id) => {
+          stopped.push(id);
+        },
+        onReviewSpec: () => {},
+        onSpecArtifact: async () => ({
+          path: ".solenta/specs/foo/design.md",
+          text: "draft",
+        }),
+      });
+      const exit = view.query("[data-spec-card] [data-spec-exit-btn]");
+      assert.ok(exit, `exit missing at ${extra.spec.stage}`);
+      await view.click(exit);
+      assert.deepEqual(stopped, ["t1"]);
+    }
   });
 
   it("shows the path when the artifact is not written yet", async () => {

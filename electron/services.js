@@ -1849,6 +1849,30 @@ function startSpec(store, input) {
 }
 
 /**
+ * Turn spec mode off (issue #500): drop thread.spec so the thread is a
+ * normal thread again. Artifacts on disk are left alone. Idempotent —
+ * a thread that is not in spec mode is returned untouched. Never bumps
+ * updatedAt. Does not start or stop a run.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string }} input
+ */
+function stopSpec(store, input) {
+  const { threadId } = input || {};
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  if (!thread.spec) return { ...thread };
+  const updated = store.updateThread(threadId, { spec: undefined });
+  if (updated) delete updated.spec;
+  store.save();
+  const next = { ...(updated || thread) };
+  delete next.spec;
+  return next;
+}
+
+/**
  * The agent has written the current stage's artifact and wants a human.
  * Flips the gate; the run itself stops on the agent's side. Called by the
  * coder-threads MCP tool `spec_submit`, never inferred from the transcript.
@@ -3413,6 +3437,7 @@ module.exports = {
   codeIndexNoteFor,
   specStagePrompt,
   startSpec,
+  stopSpec,
   submitSpec,
   reviewSpec,
   readSpecArtifact,
