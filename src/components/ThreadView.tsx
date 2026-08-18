@@ -2761,6 +2761,24 @@ export const ThreadView = memo(function ThreadView({
     el.scrollTop = el.scrollHeight;
   }, [timeline, isWorking, detail?.messages, detail?.workLog]);
 
+  // Content can grow without any state change: images finish loading, code
+  // blocks highlight, fonts swap in. No scroll event fires for that, so the
+  // view used to strand above the bottom even while "stuck" (issue #306).
+  // Pin via ResizeObserver on the container (window resize) and every direct
+  // child (content growth); re-observes on timeline change so new blocks are
+  // covered.
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const pin = () => {
+      if (stickToBottom.current) el.scrollTop = el.scrollHeight;
+    };
+    const ro = new ResizeObserver(pin);
+    ro.observe(el);
+    for (const child of el.children) ro.observe(child);
+    return () => ro.disconnect();
+  }, [timeline]);
+
   /**
    * Delegated: any image in the timeline (tool output, attachment thumb,
    * markdown) opens the lightbox, so new image sources need no extra wiring.
