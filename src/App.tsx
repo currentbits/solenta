@@ -142,6 +142,9 @@ export default function App() {
     loadAttachmentImage,
     dropAttachmentFiles,
     pushBranch,
+    createPr,
+    prChecks,
+    prMerge,
     listPrs,
     listIssues,
     setIssuePlanStatus,
@@ -963,6 +966,9 @@ export default function App() {
         onLoadAttachmentImage={loadAttachmentImage}
         onDropAttachmentFiles={dropAttachmentFiles}
         onPush={pushBranch}
+        onCreatePr={createPr}
+        onPrChecks={prChecks}
+        onPrMerge={prMerge}
         gitSyncInfo={gitSyncInfo}
         gitFetch={gitFetch}
         listDevScripts={listDevScripts}
