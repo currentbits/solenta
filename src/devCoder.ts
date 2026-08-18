@@ -97,6 +97,7 @@ interface MemoryRow {
   importance: number;
   createdAt: string;
   updatedAt: string;
+  citations?: MemoryEntryInfo["citations"];
 }
 
 function toIso(ms: number): string {
@@ -118,6 +119,7 @@ function toListEntry(row: MemoryRow): MemoryEntryInfo {
     importance: row.importance,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+    citations: row.citations,
   };
 }
 
@@ -131,6 +133,7 @@ function toFullEntry(row: MemoryRow): MemoryEntryInfo {
     importance: row.importance,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+    citations: row.citations,
   };
 }
 
@@ -1962,6 +1965,7 @@ function buildDevCoder(): CoderApi {
         title: string;
         body: string;
         project?: string;
+        citations?: MemoryEntryInfo["citations"];
       }): Promise<{ id: string }> {
         const title = input.title.trim();
         const body = input.body.trim();
@@ -1987,6 +1991,7 @@ function buildDevCoder(): CoderApi {
                   : 3,
           createdAt: ts,
           updatedAt: ts,
+          citations: input.citations,
         };
         memoryEntries = [entry, ...memoryEntries];
         return { id: entry.id };

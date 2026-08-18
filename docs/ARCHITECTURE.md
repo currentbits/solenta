@@ -89,6 +89,7 @@ edited message.
 | Supervisor | `electron/memory-sup.js`: adopt existing `/health` or spawn; never kill an adopted process |
 | Proxy | `electron/memory-proxy.js`: renderer `memory:*` IPC → HTTP with config from userData |
 | MCP inject | When healthy, Claude argv gains `--mcp-config` pointing at `mcp-coder-memory.json` |
+| Citations | Entries store `file`/`thread`/`commit` evidence. When `project` is a live worktree, bootstrap/search/get verify file excerpts and invalidate contradictions (#395) |
 
 Config file (env `CODER_MEMORY_CONFIG` or default under Application Support/coder):
 `{ port, token, dbPath }`. MCP handshake document shape:

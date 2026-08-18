@@ -139,6 +139,33 @@ describe('REST convenience + new MCP tools', () => {
     assert.ok(!hits.some((h) => h.id === otherStored.id))
   })
 
+  it('POST /api/store persists citations and GET surfaces them', async () => {
+    const citations = [
+      { kind: 'file', path: 'src/auth.ts', line: 4, excerpt: 'export function checkToken' },
+      { kind: 'thread', id: 'thread-rest' },
+    ]
+    const storeRes = await fetch(`${baseURL}/api/store`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify({
+        type: 'knowledge',
+        title: 'REST cited fact',
+        body: 'restcitedword lives at src/auth.ts',
+        project: 'coder',
+        citations,
+      }),
+    })
+    assert.equal(storeRes.status, 200)
+    const stored = await storeRes.json()
+    const entry = await fetch(`${baseURL}/api/entry/${stored.id}`, { headers: authHeaders() })
+    const full = await entry.json()
+    assert.deepEqual(full.citations, citations)
+    const recent = await fetch(`${baseURL}/api/recent?limit=20`, { headers: authHeaders() })
+    const recentHit = (await recent.json()).find((r) => r.id === stored.id)
+    assert.ok(recentHit)
+    assert.deepEqual(recentHit.citations, citations)
+  })
+
   it('GET /health includes janitor snapshot', async () => {
     const res = await fetch(`${baseURL}/health`)
     assert.equal(res.status, 200)

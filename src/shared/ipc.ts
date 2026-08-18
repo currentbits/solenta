@@ -1480,6 +1480,12 @@ export interface UpdateStatus {
   error: string | null;
 }
 
+/** Evidence a memory entry is pinned to (#395). */
+export type MemoryCitation =
+  | { kind: "file"; path: string; line?: number; endLine?: number; excerpt?: string }
+  | { kind: "thread"; id: string }
+  | { kind: "commit"; sha: string };
+
 /** A shared-memory entry as surfaced to the UI (excerpt form unless fetched). */
 export interface MemoryEntryInfo {
   id: string;
@@ -1491,6 +1497,8 @@ export interface MemoryEntryInfo {
   importance: number;
   createdAt: string;
   updatedAt: string;
+  /** file:line / thread / commit evidence. Empty when the writer cited none. */
+  citations?: MemoryCitation[];
 }
 
 export interface CoderApi {
@@ -1517,6 +1525,7 @@ export interface CoderApi {
       title: string;
       body: string;
       project?: string;
+      citations?: MemoryCitation[];
     }): Promise<{ id: string }>;
     /**
      * Corrects an entry by superseding it: the old row is retained and marked,
