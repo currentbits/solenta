@@ -507,10 +507,19 @@ export interface SessionUsage {
   costUsd: number;
   turns: number;
   /**
-   * Last turn's input+output tokens; the numerator for the context ring.
-   * Absent on usage recorded before this field existed.
+   * Last turn's FULL prompt size: input + cache-read + cache-creation + output.
+   * The numerator for the context ring. Under prompt caching plain input_tokens
+   * is near zero, so anything that omits the cache fields reads as ~0% and then
+   * jumps (issue #317). Absent when the provider reports too little to measure
+   * it — the ring hides rather than guess.
    */
   contextTokens?: number;
+  /**
+   * Context window the CLI itself reported for the running model (codex
+   * token_count carries model_context_window). Beats the static provider
+   * catalog, which goes stale on model change. Absent when unreported.
+   */
+  contextWindow?: number;
 }
 
 export interface FileChange {
