@@ -287,6 +287,52 @@ MCP instructions — there is deliberately no artifact registry.
 A failed run releases the thread's claims (`afterFailedTurn`) with the error as
 the outcome, so a crashed worker never leaves a task stranded.
 
+## Orchestration commands
+
+Issue #338. Three named compositions of machinery that already exists, behind
+a one-word entry point, so multi-provider work is invoked instead of
+choreographed by hand.
+
+| Command | Workers | Shape |
+|---------|---------|-------|
+| `/handoff [@provider] <task>` | 1 | plan here, implement on a fresh model |
+| `/advisor [@provider] <question>` | 1 | one read-only second opinion, reported back |
+| `/committee [@a] [@b] <problem>` | 2 | contrasting models converge adversarially |
+
+| Piece | Path |
+|-------|------|
+| Rules + prompts (pure) | `electron/orchcommands.js` |
+| Dispatch | `electron/runner.js` `dispatchOrchCommand`, intercepted in `startRun` |
+| Menu | `src/components/Composer.tsx` (discoverability only — it sends the text) |
+
+**Intercepted in the runner, not the renderer.** The composer menu inserts
+text and nothing else, so the commands also work from an agent, a notice or
+the CLI path. The cheap `/`-prefix test keeps the provider probe off the
+ordinary send path, and `fromNotice` turns are never parsed — a worker
+quoting the command back would otherwise fan out again.
+
+**Defaults contrast on purpose.** Without `@provider` arguments the workers
+are picked from the installed set *excluding the caller's own provider*.
+Same-model agents are low-variance and make the same bad call systemically;
+the multi-provider roster is the antidote, so the default must not collapse
+to one model.
+
+**Only `/handoff` gets a worktree.** A worker worktree branches from the
+default branch, and a second opinion on the default branch is not a second
+opinion on the work in progress — so `/advisor` and `/committee` run in the
+project checkout and are pointed at the caller's checkout in their prompt.
+They are read-only by contract, not by sandbox.
+
+**Committee convergence runs between the members, not through the lead.**
+Each member gets its peers' thread ids and argues via `peer_send` (the crew
+messaging above), capped at three rounds and by `CREW_AUTO_TURN_CAP`. The
+lead is woken by the ordinary worker-finished notices with what they agreed
+on — there is no new state on the lead thread and nothing to clear.
+
+A worker that fails to start is dropped as an orphan; peers that already
+started keep running, and the lead's event message says which never went out.
+Only an empty fan-out throws.
+
 ## Spec mode
 
 Optional per-thread gate (issue #269): the agent writes `requirements.md`,

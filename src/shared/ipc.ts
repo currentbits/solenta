@@ -1776,6 +1776,11 @@ export interface CoderApi {
      * sessionId when present). Streams tool/text events via thread:updated.
      * If the thread title is still the default "New Thread", main renames it
      * from the first line of the prompt.
+     *
+     * A prompt whose first token is an orchestration command (`/handoff`,
+     * `/advisor`, `/committee` — issue #338) never reaches a provider: main
+     * forks a worker per command instead and this thread is woken by their
+     * results. The renderer sends the text unchanged either way.
      */
     start(input: {
       threadId: string;
