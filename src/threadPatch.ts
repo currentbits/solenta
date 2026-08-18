@@ -34,6 +34,19 @@ export function patchThreadList(
 }
 
 /**
+ * True when applying `tail` at `from` would reproduce the array we already
+ * hold — i.e. the pushed tail is identical to the existing suffix. Compared
+ * per element so an empty or unchanged tail costs almost nothing.
+ */
+function sameTail(prevArr: unknown[], from: number, tail: unknown[]): boolean {
+  if (prevArr.length - from !== tail.length) return false;
+  for (let i = 0; i < tail.length; i++) {
+    if (!sameJson(prevArr[from + i], tail[i])) return false;
+  }
+  return true;
+}
+
+/**
  * Apply a streamed tail (see ThreadPatch) to the open detail.
  *
  * The patch replaces everything from its index onward, so a shrinking
@@ -42,6 +55,10 @@ export function patchThreadList(
  * Returns null when the tail starts past the end of what we hold — a push was
  * missed (web reconnect), and merging would leave a hole. The caller must
  * refetch the full detail instead.
+ *
+ * Returns `prev` itself when nothing moved: ThreadView keys its timeline
+ * derivation on the detail identity, so a tick that only re-sent identical
+ * data must not produce a fresh object.
  */
 export function mergeThreadPatch(
   prev: ThreadDetail,
@@ -51,20 +68,39 @@ export function mergeThreadPatch(
   if (messagesFrom > prev.messages.length || workLogFrom > prev.workLog.length) {
     return null;
   }
-  return {
-    ...rest,
-    // Keep the identities the panes are memoized on: an unchanged summary or
-    // usage must not invalidate AgentsPanel (or effects keyed on `thread`)
-    // just because the tick rebuilt the object.
-    thread: sameJson(prev.thread, rest.thread) ? prev.thread : rest.thread,
-    usage: sameJson(prev.usage, rest.usage) ? prev.usage : rest.usage,
-    messages:
-      messagesFrom === 0
-        ? patch.messages
-        : [...prev.messages.slice(0, messagesFrom), ...patch.messages],
-    workLog:
-      workLogFrom === 0
-        ? patch.workLog
-        : [...prev.workLog.slice(0, workLogFrom), ...patch.workLog],
-  };
+  // Keep the identities the panes are memoized on: an unchanged summary or
+  // usage must not invalidate AgentsPanel (or effects keyed on `thread`)
+  // just because the tick rebuilt the object.
+  const thread = sameJson(prev.thread, rest.thread) ? prev.thread : rest.thread;
+  const usage = sameJson(prev.usage, rest.usage) ? prev.usage : rest.usage;
+  const workflow = sameJson(prev.workflow, rest.workflow)
+    ? prev.workflow
+    : rest.workflow;
+  const pendingPermission = sameJson(
+    prev.pendingPermission,
+    rest.pendingPermission,
+  )
+    ? prev.pendingPermission
+    : rest.pendingPermission;
+  const messages = sameTail(prev.messages, messagesFrom, patch.messages)
+    ? prev.messages
+    : messagesFrom === 0
+      ? patch.messages
+      : [...prev.messages.slice(0, messagesFrom), ...patch.messages];
+  const workLog = sameTail(prev.workLog, workLogFrom, patch.workLog)
+    ? prev.workLog
+    : workLogFrom === 0
+      ? patch.workLog
+      : [...prev.workLog.slice(0, workLogFrom), ...patch.workLog];
+  if (
+    thread === prev.thread &&
+    usage === prev.usage &&
+    workflow === prev.workflow &&
+    pendingPermission === prev.pendingPermission &&
+    messages === prev.messages &&
+    workLog === prev.workLog
+  ) {
+    return prev;
+  }
+  return { ...rest, thread, usage, workflow, pendingPermission, messages, workLog };
 }

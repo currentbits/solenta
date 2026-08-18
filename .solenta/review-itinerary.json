@@ -1,34 +1,39 @@
 {
   "version": 1,
-  "readOrder": ["tests", "critical", "impl"],
+  "readOrder": ["critical", "impl", "tests"],
   "chunks": [
     {
-      "area": "tests",
-      "rationale": "PR #529 conflicted with origin/main after #530/#531/#532. Only content conflict was this itinerary. Re-run electron/test/config-doctor.test.js and tsc to prove the auto-merged IPC fan-out still typechecks against main's ThreadStatus (quota-wait removed) plus Vibe Kanban / Ask mode / peek additions.",
-      "risks": [
-        "Auto-merge of ipc.ts/useCoder/fakeCoder/devCoder can silently drop one side of a method. tsc is the check.",
-        "Renderer MemoryTab tests do not remount App after the merge."
-      ]
-    },
-    {
       "area": "critical",
-      "rationale": "electron/configDoctor.js and the lint/preview/write services did not conflict. Confirm AgentConfig* types still sit above AddProjectOptions in src/shared/ipc.ts and CoderApi.projects still has lintAgentConfig/previewAgentConfig/writeAgentConfig after main's vibeKanban/ask/peek landings.",
+      "rationale": "Identity-semantics changes that everything else keys on: threadPatch.ts returns prev when a 700ms tick moved nothing (sameTail guards), Sidebar ThreadCard is memo'd (handleSelect via refs, threadTitles reuses its Map), services.listThreads caches the decorated list on threads/projects array identity (replace-only invariant, verified). A wrong bail = stale UI; a missed bail = O(n) per tick.",
       "risks": [
-        "A leftover quota-wait mention on our side would fail tsc against main's narrowed ThreadStatus.",
-        "Write still overwrites AGENTS.md/CLAUDE.md with no backup."
+        "listThreads caching rests on a convention: any future in-place mutation of a thread/project row or array silently serves a stale sidebar. The invariant is commented at the cache.",
+        "mergeThreadPatch returning prev drops patch.seq — safe only because seq lives on ThreadPatch, not ThreadDetail, and gap detection runs in the caller.",
+        "Sidebar handleSelect reads visibleIds/selectAnchor via refs synced in a passive effect — correct for user events, not for synthetic same-tick calls."
       ]
     },
     {
       "area": "impl",
-      "rationale": "preload, ipc.js, wireClient, useCoder, App, AgentsPanel, fakeCoder, devCoder auto-merged. This itinerary is the only file we resolved by hand — keep our #412 doctor notes, drop the incoming Vibe Kanban merge notes.",
+      "rationale": "Battery/memory trims: store flush compact JSON, lsof TTL 30s + renderer polls 15s/hidden-skip, codeindex parse cache on mtime, stderr tail-capped at 64KB in all five spawners, forecast effect keyed on derived branch/worktree key + refocus refresh, memory-server: mentions(entity_id) index, O(n) applyTokenBudget, statement cache, citation file cache, trust TTL 60s.",
       "risks": [
-        "devCoder write still throws (browser-dev only).",
-        "Doctor card still hidden when the memory server is down."
+        "A new dev server can take up to ~30s to appear in the Local Servers card (15s poll + 30s main TTL). Deliberate.",
+        "codeindex/listThreads/citation caches share parsed objects across callers — all verified read-only today.",
+        "Merge resolution: quota-wait props/handlers dropped (removed upstream), ChangesPanel hunk UI taken from upstream; my patchLines memo is gone, memo'd DiffLine kept.",
+        "Merge resolution: itinerary rewritten to the fixed-area schema (area must equal ci-config/tests/critical/impl/docs for annotationForArea to attach; rationale truncates at 400 chars)."
+      ]
+    },
+    {
+      "area": "tests",
+      "rationale": "Verified pre-merge: typecheck clean, renderer 1075/1075, memory 201/201, electron 1390/1396 — the 6 failures (checkpoints worktreeBase config, Store quota-wait round-trip keys, verify-gate) reproduce with the diff stashed. Re-run after this merge: quota-wait removal upstream touched App/ThreadView/ipc.",
+      "risks": [
+        "Post-merge suites must confirm the auto-merged quota-wait removal didn't leave dangling references on this branch (tsc is the check).",
+        "No test pins mergeThreadPatch's return-prev identity or the ThreadCard memo — a 'no-op tick returns identical detail' test would harden the riskiest change."
       ]
     }
   ],
   "risks": [
-    "Session-end auto-learning stays on #247. No fleet-wide grade rollup.",
-    "This is a merge-to-main restack of #529, not a feature change."
+    "BUG FIXED IN FLIGHT: round-1 SQL comment in db.js createSchema contained backticks inside a JS template literal — broke every memory-server module load and shipped in auto-checkpoint ef40717 before round 2 caught it. Fixed (db.js:310-314).",
+    "Environment repaired during this branch: main checkout's core/dist self-symlink/deletion dangled every worktree's core build (rebuilt); memory-server node_modules installed here. 10 of 16 baseline electron failures were this rot, now green.",
+    "Deferred by design: runAgent intra-message deltas (needs ThreadPatch protocol change), 30-min CLAUDE_IDLE_REAP (product call), PR-refresher gh batching, fleet blame cache. Details on #526/#533.",
+    "Merge conflict with main resolved 2026-08-18: 3 files (App.tsx quota-wait props, ThreadView hunk UI, this itinerary). Incoming itinerary chunk was another thread's stale merge notes — dropped."
   ]
 }

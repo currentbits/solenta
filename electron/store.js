@@ -1006,7 +1006,10 @@ class Store {
     const gen = this._writeGen;
     const dir = path.dirname(this.filePath);
     const tmp = `${this.filePath}.${process.pid}.${Date.now()}.tmp`;
-    const payload = JSON.stringify(this.data, null, 2);
+    // Compact JSON: the file is machine-read, and pretty-printing roughly
+    // doubles both the stringify CPU and the bytes written on every flush
+    // (which fires up to every 2s under sustained streaming).
+    const payload = JSON.stringify(this.data);
     this._flushPromise = (async () => {
       try {
         await fs.promises.mkdir(dir, { recursive: true });
@@ -1081,7 +1084,7 @@ class Store {
     const dir = path.dirname(this.filePath);
     fs.mkdirSync(dir, { recursive: true });
     const tmp = `${this.filePath}.${process.pid}.${Date.now()}.tmp`;
-    const payload = JSON.stringify(this.data, null, 2);
+    const payload = JSON.stringify(this.data);
     fs.writeFileSync(tmp, payload, "utf8");
     try {
       const fd = fs.openSync(tmp, "r+");

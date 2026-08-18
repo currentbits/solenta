@@ -1224,7 +1224,11 @@ function NextGitActionButton({
 
   useEffect(() => {
     if (action.kind !== "watch-checks") return;
-    const id = window.setInterval(() => void loadChecks(), CHECKS_POLL_MS);
+    // gh checks poll: skip while the window is hidden — the badge can't be
+    // seen, and each tick spawns a gh process per open watching thread.
+    const id = window.setInterval(() => {
+      if (!document.hidden) void loadChecks();
+    }, CHECKS_POLL_MS);
     return () => window.clearInterval(id);
   }, [action.kind, loadChecks]);
 
@@ -2002,14 +2006,14 @@ function TeachCard({
   );
 }
 
-function DiffLine({ line }: { line: string }) {
+const DiffLine = memo(function DiffLine({ line }: { line: string }) {
   const kind = diffLineKind(line);
   return (
     <div className={styles.diffLine} data-kind={kind}>
       {line || " "}
     </div>
   );
-}
+});
 
 function planTextOf(detail: ThreadDetail | null | undefined): string {
   if (!detail) return "";

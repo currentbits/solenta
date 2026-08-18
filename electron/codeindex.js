@@ -112,8 +112,17 @@ function indexPathFor(userDataPath, repoRoot) {
 }
 
 /**
+ * Parsed-index cache keyed by index file path. The dispatch path calls
+ * readIndex for every spawned thread, and the index can be multi-MB, so we
+ * re-parse only when the file's mtimeMs/size actually change.
+ * @type {Map<string, { mtimeMs: number, size: number, data: CodeIndex | null }>}
+ */
+const parseCache = new Map();
+
+/**
  * Read the index off disk. Synchronous and cheap: it runs on the dispatch
- * path, so it must never scan the repo. null when the file is missing,
+ * path, so it must never scan the repo. Cached on file mtimeMs+size so
+ * repeat reads don't re-parse the whole JSON. null when the file is missing,
  * unreadable, malformed, or written by an older INDEX_VERSION.
  *
  * @param {string} userDataPath
@@ -122,12 +131,23 @@ function indexPathFor(userDataPath, repoRoot) {
  */
 function readIndex(userDataPath, repoRoot) {
   try {
-    const raw = fs.readFileSync(indexPathFor(userDataPath, repoRoot), "utf8");
+    const file = indexPathFor(userDataPath, repoRoot);
+    const st = fs.statSync(file);
+    const hit = parseCache.get(file);
+    if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) {
+      return hit.data;
+    }
+    const raw = fs.readFileSync(file, "utf8");
     const data = JSON.parse(raw);
-    if (!data || typeof data !== "object") return null;
-    if (data.version !== INDEX_VERSION) return null;
-    if (!Array.isArray(data.files)) return null;
-    return data;
+    const valid =
+      data &&
+      typeof data === "object" &&
+      data.version === INDEX_VERSION &&
+      Array.isArray(data.files)
+        ? data
+        : null;
+    parseCache.set(file, { mtimeMs: st.mtimeMs, size: st.size, data: valid });
+    return valid;
   } catch {
     return null;
   }

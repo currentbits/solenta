@@ -4,7 +4,10 @@ const path = require("node:path");
 const http = require("node:http");
 const { execFile } = require("node:child_process");
 
-const CACHE_TTL_MS = 5_000;
+// The renderer polls every 15s (AgentsPanel SERVER_POLL_MS), so a TTL at or
+// above that absorbs repeat polls instead of running a full-system lsof +
+// HTTP probes on every single one.
+const CACHE_TTL_MS = 30_000;
 const LSOF_TIMEOUT_MS = 8_000;
 const LSOF_MAX_BUFFER = 8 * 1024 * 1024;
 /** IANA/macOS dynamic port range. Dev servers pick a memorable port; MCP
