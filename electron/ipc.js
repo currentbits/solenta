@@ -613,6 +613,18 @@ const IPC_HANDLERS = {
   "git:diff": async (ctx, input) => {
     return diff({ store: ctx.store, threadId: input.threadId });
   },
+  "git:reviewContext": async (ctx, input) => {
+    const { loadReviewContext } = require("./reviewItinerary.js");
+    return loadReviewContext({
+      store: ctx.store,
+      threadId: input.threadId,
+      userDataPath: ctx.userDataPath,
+    });
+  },
+  "git:setReviewAccepted": async (ctx, input) => {
+    const { setReviewAccepted } = require("./reviewItinerary.js");
+    return setReviewAccepted(ctx.store, input.threadId, input.hashes);
+  },
   "git:commit": async (ctx, input) => {
     return commit({
       store: ctx.store,

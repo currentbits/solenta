@@ -14,6 +14,8 @@ import type {
   ConflictForecast,
   DevServerState,
   DiffResult,
+  ReviewContext,
+  ReviewSymbol,
   GitSyncInfo,
   GitRepoInfo,
   GitPullResult,
@@ -311,6 +313,8 @@ export interface UseCoderResult {
   mergeWorktree: () => Promise<ThreadInfo | null>;
   removeWorktree: (force?: boolean) => Promise<ThreadInfo | null>;
   fetchDiff: () => Promise<DiffResult>;
+  fetchReviewContext: () => Promise<ReviewContext>;
+  setReviewAccepted: (hashes: string[]) => Promise<void>;
   /** Commit all changes in the selected thread's cwd. */
   commitChanges: (message: string) => Promise<{ subject: string }>;
   /** Discard one changed file in the selected thread's cwd. */
@@ -1709,6 +1713,25 @@ export function useCoder(): UseCoderResult {
     return api.git.diff({ threadId });
   }, [api, selectedThreadId]);
 
+  const fetchReviewContext = useCallback(async () => {
+    if (!selectedThreadId) {
+      return { annotation: null, symbols: [] as ReviewSymbol[], acceptedHunks: [] };
+    }
+    const threadId = selectedThreadId;
+    return api.git.reviewContext({ threadId });
+  }, [api, selectedThreadId]);
+
+  const setReviewAccepted = useCallback(
+    async (hashes: string[]) => {
+      if (!selectedThreadId) return;
+      const threadId = selectedThreadId;
+      const thread = await api.git.setReviewAccepted({ threadId, hashes });
+      if (selectedRef.current !== threadId) return;
+      applyThreadUpdate(thread);
+    },
+    [api, selectedThreadId, applyThreadUpdate],
+  );
+
   const commitChanges = useCallback(
     async (message: string) => {
       if (!selectedThreadId) {
@@ -2332,6 +2355,8 @@ export function useCoder(): UseCoderResult {
     mergeWorktree,
     removeWorktree,
     fetchDiff,
+    fetchReviewContext,
+    setReviewAccepted,
     commitChanges,
     revertFile,
     suggestCommitMessage,

@@ -16,6 +16,7 @@ import type {
   GcScanResult,
   GcCleanResult,
   DiffResult,
+  ReviewContext,
   GitStatus,
   GitSyncInfo,
   GitRepoInfo,
@@ -418,6 +419,10 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
       status: (projectId) => call<GitStatus>("git:status", projectId),
       setupWorktree: (input) => call<ThreadInfo>("git:setupWorktree", input),
       diff: (input) => call<DiffResult>("git:diff", input),
+      reviewContext: (input) =>
+        call<ReviewContext>("git:reviewContext", input),
+      setReviewAccepted: (input) =>
+        call<ThreadInfo>("git:setReviewAccepted", input),
       commit: (input) => call<{ subject: string }>("git:commit", input),
       revertFile: (input) => call<{ path: string }>("git:revertFile", input),
       suggestCommitMessage: (input) =>

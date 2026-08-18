@@ -1160,6 +1160,14 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           patch: "",
           truncated: false,
         } as DiffResult),
+      reviewContext: (input: unknown) =>
+        rec("git.reviewContext", [input], {
+          annotation: null,
+          symbols: [],
+          acceptedHunks: [],
+        }),
+      setReviewAccepted: (input: unknown) =>
+        rec("git.setReviewAccepted", [input], thread()),
       commit: (input: unknown) =>
         rec("git.commit", [input], { subject: "test commit" }),
       revertFile: (input: unknown) =>

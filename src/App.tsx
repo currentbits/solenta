@@ -130,6 +130,8 @@ export default function App() {
     mergeWorktree,
     removeWorktree,
     fetchDiff,
+    fetchReviewContext,
+    setReviewAccepted,
     commitChanges,
     revertFile,
     suggestCommitMessage,
@@ -946,6 +948,8 @@ export default function App() {
         runStats={runStats}
         restoreCheckpoint={restoreCheckpoint}
         onFetchDiff={fetchDiff}
+        onFetchReviewContext={fetchReviewContext}
+        onSetReviewAccepted={setReviewAccepted}
         onCommitChanges={commitChanges}
         onRevertFile={revertFile}
         onSuggestCommitMessage={suggestCommitMessage}

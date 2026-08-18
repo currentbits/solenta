@@ -4580,6 +4580,7 @@ function createRunner(opts) {
           (projectForGate && projectForGate.path) ||
           null,
       ) +
+      services.reviewItineraryNoteFor(dispatchThread) +
       services.crewTaskNoteFor(store, dispatchThread) +
       services.codeIndexNoteFor(
         userDataPath && repoRoot
