@@ -2798,6 +2798,18 @@ function buildDevCoder(): CoderApi {
           spec: { slug: "spec", stage: "requirements", awaitingApproval: true },
         });
       },
+      async stopSpec(input: { threadId: string }) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
+        if (!detail.thread.spec) return { ...detail.thread };
+        const thread = { ...detail.thread };
+        delete thread.spec;
+        detail.thread = thread;
+        details.set(input.threadId, detail);
+        syncThreadRow(thread);
+        emitDetail(detail);
+        return { ...thread };
+      },
       async reviewSpec(input: {
         threadId: string;
         decision: "approve" | "revise";

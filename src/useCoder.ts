@@ -289,6 +289,8 @@ export interface UseCoderResult {
   setNotes: (threadId: string, notes: string) => Promise<void>;
   /** Turn spec mode on (issue #269). Updates thread from the returned ThreadInfo. */
   startSpec: (threadId: string) => Promise<void>;
+  /** Turn spec mode off (issue #500). Updates thread from the returned ThreadInfo. */
+  stopSpec: (threadId: string) => Promise<void>;
   /** Answer the spec stage gate. Updates thread from the returned ThreadInfo. */
   reviewSpec: (
     threadId: string,
@@ -1552,6 +1554,24 @@ export function useCoder(): UseCoderResult {
     [api, applyThreads],
   );
 
+  const stopSpec = useCallback(
+    async (threadId: string) => {
+      try {
+        const thread = await api.threads.stopSpec({ threadId });
+        applyThreads(
+          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
+        );
+        setDetail((prev) =>
+          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
+        );
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+      }
+    },
+    [api, applyThreads],
+  );
+
   const reviewSpec = useCallback(
     async (
       threadId: string,
@@ -2335,6 +2355,7 @@ export function useCoder(): UseCoderResult {
     renameThread,
     setNotes,
     startSpec,
+    stopSpec,
     reviewSpec,
     specArtifact,
     startTeach,

@@ -397,6 +397,11 @@ const IPC_HANDLERS = {
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     return updated;
   },
+  "threads:stopSpec": async (ctx, input) => {
+    const updated = services.stopSpec(ctx.store, input);
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    return updated;
+  },
   "threads:reviewSpec": async (ctx, input) => {
     const { thread, prompt } = services.reviewSpec(ctx.store, input);
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
