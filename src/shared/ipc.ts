@@ -37,6 +37,25 @@ export interface ProjectInfo {
    * so no commit is ever lost to GC.
    */
   worktreeRetention?: number;
+  /**
+   * Windows doctor (#435). Only on the add/create return value when the
+   * host is win32. Never persisted. Failed checks do not reject the add.
+   */
+  windowsDoctor?: WindowsDoctorReport;
+}
+
+/** One Windows doctor probe (#435). Advisory — never blocks add. */
+export interface WindowsDoctorCheck {
+  id: "longpaths" | "gitBash" | "node22" | "wslBoundary";
+  ok: boolean;
+  message: string;
+  /** What to do. Only when !ok. */
+  fix?: string;
+}
+
+/** Result of the win32 project-add doctor. Absent off win32 and on list(). */
+export interface WindowsDoctorReport {
+  checks: WindowsDoctorCheck[];
 }
 
 /** Optional remotes for projects.add. Empty/absent = local project. */

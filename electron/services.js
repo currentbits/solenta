@@ -10,6 +10,7 @@ const {
 } = require("./providers.js");
 const { getMemoryStatus } = require("./memory-sup.js");
 const { execCommandAsync } = require("./ssh.js");
+const { runWindowsDoctor } = require("./doctor.js");
 const { normalizeCommand, runVerifyCommand } = require("./verify.js");
 
 const PERMISSION_MODES = new Set([
@@ -112,7 +113,7 @@ async function addProject(store, projectPath, opts) {
     projects.push(project);
     store.setProjects(projects);
     store.save();
-    return project;
+    return attachWindowsDoctor(project);
   }
 
   const resolved = path.resolve(projectPath);
@@ -170,7 +171,18 @@ async function addProject(store, projectPath, opts) {
   projects.push(project);
   store.setProjects(projects);
   store.save();
-  return project;
+  return attachWindowsDoctor(project);
+}
+
+/**
+ * Attach the win32 doctor to the add return value only. The stored
+ * object is left untouched so a later save cannot persist the report.
+ * Off win32 this is a no-op (same object, no extra field).
+ * @param {object} project
+ */
+async function attachWindowsDoctor(project) {
+  const report = await runWindowsDoctor(project);
+  return report ? { ...project, windowsDoctor: report } : project;
 }
 
 /**

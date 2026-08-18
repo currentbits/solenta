@@ -632,18 +632,16 @@ export default function App() {
       path: string,
       remotes?: { remoteHost?: string; remotePath?: string },
     ) => {
-      const added = await addProject(path, remotes);
-      if (added) setAddPathOpen(false);
-      return added;
+      // Modal closes itself on success, or stays open to show the
+      // Windows doctor list (#435) when checks failed.
+      return addProject(path, remotes);
     },
     [addProject],
   );
 
   const submitCreateProject = useCallback(
     async (name: string, parentDir: string) => {
-      const created = await createProject({ name, parentDir });
-      if (created) setAddPathOpen(false);
-      return created;
+      return createProject({ name, parentDir });
     },
     [createProject],
   );
