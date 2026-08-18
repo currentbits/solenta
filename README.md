@@ -154,7 +154,8 @@ Grab an archive from the [latest release](https://github.com/currentbits/solenta
   `Solenta.app` to `/Applications`. Not notarized, so right-click → **Open** the
   first time (or `xattr -dr com.apple.quarantine /Applications/Solenta.app`).
 - **Windows (x64)** — `Solenta-<v>-win32-x64.zip`. Unzip anywhere, run
-  `solenta.exe`. Unsigned, so SmartScreen asks once.
+  `solenta.exe`. Unsigned, so SmartScreen asks once. There is no installer
+  and no winget package; see the note in `scripts/package-cross.sh`.
 - **Linux (x64)** — `Solenta-<v>-linux-x64.tar.gz`. Extract, run `./solenta`.
 
 ### Updates
