@@ -27,4 +27,34 @@ function shouldNotify(prevStatus, nextStatus, windowFocused) {
   );
 }
 
-module.exports = { shouldNotify };
+/**
+ * Twin of src/threadSnooze.ts effectiveSnoozed. Electron stays CJS and
+ * does not import the renderer module; keep the two in lockstep.
+ * A live snooze silences desktop notifications until the timer elapses
+ * or the thread raises its hand (fresh done/failed, or awaitingInput).
+ *
+ * @param {{ snoozedUntil?: number | null, snoozedAt?: number | null, status?: string, updatedAt?: number, awaitingInput?: boolean } | null | undefined} thread
+ * @param {number} now
+ * @returns {boolean}
+ */
+function isEffectivelySnoozed(thread, now) {
+  if (!thread) return false;
+  const until = thread.snoozedUntil;
+  if (until == null || !Number.isFinite(until) || !Number.isFinite(now)) {
+    return false;
+  }
+  if (until <= now) return false;
+  if (thread.awaitingInput) return false;
+  const at = thread.snoozedAt;
+  if (at != null && Number.isFinite(at) && Number.isFinite(thread.updatedAt)) {
+    if (
+      (thread.status === "failed" || thread.status === "done") &&
+      thread.updatedAt > at
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+module.exports = { shouldNotify, isEffectivelySnoozed };

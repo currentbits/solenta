@@ -225,10 +225,12 @@ export interface ThreadInfo {
   /**
    * Snooze: hidden from the attention list until this epoch ms passes.
    * Snooze is VISIBILITY ONLY — it never touches the agent, suspends a pin
-   * without clearing it, and beats settle classification. A snoozed thread
-   * wakes early ("raises its hand") when something outranks the snooze:
-   * a FRESH failure or a run completion newer than snoozedAt. Timer wakes
-   * are derived client-side — no event fires when snoozedUntil passes.
+   * without clearing it, and beats settle classification. A live snooze
+   * also silences desktop notifications. A snoozed thread wakes early
+   * ("raises its hand") when something outranks the snooze: a FRESH
+   * failure, a run completion newer than snoozedAt, or awaitingInput.
+   * Timer wakes are derived client-side — no event fires when
+   * snoozedUntil passes. After wake, a Woke pill stays until visit.
    */
   snoozedUntil: number | null;
   /** Epoch ms when the snooze was set; the raised-hand comparisons anchor here. */
@@ -1238,6 +1240,12 @@ export interface AppSettings {
    */
   autoSettleAfterDays: number | null;
   /**
+   * When true (the default), a MERGED PR auto-settles the thread. CLOSED
+   * still always settles. Only an explicit false on disk turns it off, so
+   * upgrades keep the previous "merge = done" behaviour.
+   */
+  autoSettleOnMerge: boolean;
+  /**
    * User-registered MCP servers (Skills tab). Built-ins coder-memory and
    * coder-threads are app-owned and never appear here. Enabled entries are
    * folded into every provider's MCP injection on the next turn.
@@ -1667,8 +1675,10 @@ export interface CoderApi {
      * Set or clear the settle override. Rejects override "settled" while a
      * run is active: settling live work would hide it (t3's rule — anything
      * the resolution refuses to classify as settled is refused as a settle
-     * target). Does not bump updatedAt: settling is bookkeeping, and bumping
-     * would push the thread to the top of a list it is leaving.
+     * target). An explicit "settled" also clears a live snooze so the row
+     * leaves the snoozed shelf immediately. Does not bump updatedAt:
+     * settling is bookkeeping, and bumping would push the thread to the top
+     * of a list it is leaving.
      */
     setSettled(input: {
       threadId: string;

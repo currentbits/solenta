@@ -1,6 +1,6 @@
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
-const { shouldNotify } = require("../notify.js");
+const { shouldNotify, isEffectivelySnoozed } = require("../notify.js");
 
 describe("shouldNotify", () => {
   it("notifies working -> done when the window is not focused", () => {
@@ -47,5 +47,59 @@ describe("shouldNotify", () => {
     assert.equal(shouldNotify("failed", "done", false), false);
     assert.equal(shouldNotify(undefined, "done", false), false);
     assert.equal(shouldNotify(null, "failed", false), false);
+  });
+});
+
+describe("isEffectivelySnoozed", () => {
+  const NOW = 1_700_000_000_000;
+
+  it("future until is snoozed; past until is not", () => {
+    assert.equal(
+      isEffectivelySnoozed(
+        { snoozedUntil: NOW + 1000, snoozedAt: NOW - 100, status: "idle", updatedAt: NOW - 200 },
+        NOW,
+      ),
+      true,
+    );
+    assert.equal(
+      isEffectivelySnoozed(
+        { snoozedUntil: NOW - 1, snoozedAt: NOW - 1000, status: "idle", updatedAt: NOW - 200 },
+        NOW,
+      ),
+      false,
+    );
+  });
+
+  it("raised-hand completion or awaitingInput is not snoozed", () => {
+    assert.equal(
+      isEffectivelySnoozed(
+        {
+          snoozedUntil: NOW + 10_000,
+          snoozedAt: NOW - 5000,
+          status: "done",
+          updatedAt: NOW - 100,
+        },
+        NOW,
+      ),
+      false,
+    );
+    assert.equal(
+      isEffectivelySnoozed(
+        {
+          snoozedUntil: NOW + 10_000,
+          snoozedAt: NOW - 100,
+          status: "working",
+          updatedAt: NOW - 200,
+          awaitingInput: true,
+        },
+        NOW,
+      ),
+      false,
+    );
+  });
+
+  it("null / missing thread is never snoozed", () => {
+    assert.equal(isEffectivelySnoozed(null, NOW), false);
+    assert.equal(isEffectivelySnoozed({}, NOW), false);
   });
 });

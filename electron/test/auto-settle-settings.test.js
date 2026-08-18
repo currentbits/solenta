@@ -20,6 +20,7 @@ describe("normalizeSettings autoSettleAfterDays", () => {
       dailyBudgetUsd: null,
       orchestrationBudgetUsd: null,
       autoSettleAfterDays: DEFAULT_AUTO_SETTLE_AFTER_DAYS,
+      autoSettleOnMerge: true,
       mcpServers: [],
       defaultWorktree: false, defaultOrchestrate: false, updateChannel: null, notifications: true, agentProfiles: [], subagentPool: { defaultAlias: null, force: false, entries: [] }, otel: { endpoint: null, headers: {}, claudeMetrics: false },
     });
@@ -27,6 +28,7 @@ describe("normalizeSettings autoSettleAfterDays", () => {
       dailyBudgetUsd: null,
       orchestrationBudgetUsd: null,
       autoSettleAfterDays: 3,
+      autoSettleOnMerge: true,
       mcpServers: [],
       defaultWorktree: false, defaultOrchestrate: false, updateChannel: null, notifications: true, agentProfiles: [], subagentPool: { defaultAlias: null, force: false, entries: [] }, otel: { endpoint: null, headers: {}, claudeMetrics: false },
     });
@@ -90,13 +92,13 @@ describe("setSettings autoSettleAfterDays validation", () => {
 
     assert.deepEqual(
       services.setSettings(store, { autoSettleAfterDays: 7 }),
-      { dailyBudgetUsd: null, orchestrationBudgetUsd: null, autoSettleAfterDays: 7, mcpServers: [], defaultWorktree: false, defaultOrchestrate: false, updateChannel: null, notifications: true, agentProfiles: [], subagentPool: { defaultAlias: null, force: false, entries: [] }, otel: { endpoint: null, headers: {}, claudeMetrics: false } },
+      { dailyBudgetUsd: null, orchestrationBudgetUsd: null, autoSettleAfterDays: 7, autoSettleOnMerge: true, mcpServers: [], defaultWorktree: false, defaultOrchestrate: false, updateChannel: null, notifications: true, agentProfiles: [], subagentPool: { defaultAlias: null, force: false, entries: [] }, otel: { endpoint: null, headers: {}, claudeMetrics: false } },
     );
     assert.equal(store.getSettings().autoSettleAfterDays, 7);
 
     assert.deepEqual(
       services.setSettings(store, { autoSettleAfterDays: null }),
-      { dailyBudgetUsd: null, orchestrationBudgetUsd: null, autoSettleAfterDays: null, mcpServers: [], defaultWorktree: false, defaultOrchestrate: false, updateChannel: null, notifications: true, agentProfiles: [], subagentPool: { defaultAlias: null, force: false, entries: [] }, otel: { endpoint: null, headers: {}, claudeMetrics: false } },
+      { dailyBudgetUsd: null, orchestrationBudgetUsd: null, autoSettleAfterDays: null, autoSettleOnMerge: true, mcpServers: [], defaultWorktree: false, defaultOrchestrate: false, updateChannel: null, notifications: true, agentProfiles: [], subagentPool: { defaultAlias: null, force: false, entries: [] }, otel: { endpoint: null, headers: {}, claudeMetrics: false } },
     );
 
     assert.throws(
@@ -136,6 +138,7 @@ describe("setSettings autoSettleAfterDays validation", () => {
       dailyBudgetUsd: null,
       orchestrationBudgetUsd: null,
       autoSettleAfterDays: 3,
+      autoSettleOnMerge: true,
       mcpServers: [],
       defaultWorktree: false, defaultOrchestrate: false, updateChannel: null, notifications: true, agentProfiles: [], subagentPool: { defaultAlias: null, force: false, entries: [] }, otel: { endpoint: null, headers: {}, claudeMetrics: false },
     });
@@ -227,5 +230,26 @@ describe("setSettings autoSettleAfterDays validation", () => {
       services.setSettings(reloaded, { updateChannel: null }).updateChannel,
       null,
     );
+  });
+
+  it("autoSettleOnMerge: absent/junk → true, explicit false kept, persists", () => {
+    assert.equal(normalizeSettings({}).autoSettleOnMerge, true);
+    assert.equal(normalizeSettings({ autoSettleOnMerge: "no" }).autoSettleOnMerge, true);
+    assert.equal(normalizeSettings({ autoSettleOnMerge: 0 }).autoSettleOnMerge, true);
+    assert.equal(normalizeSettings({ autoSettleOnMerge: false }).autoSettleOnMerge, false);
+
+    const store = new Store(filePath);
+    assert.equal(store.getSettings().autoSettleOnMerge, true);
+    assert.equal(
+      services.setSettings(store, { autoSettleOnMerge: false }).autoSettleOnMerge,
+      false,
+    );
+    assert.throws(
+      () => services.setSettings(store, { autoSettleOnMerge: "no" }),
+      /autoSettleOnMerge must be a boolean/,
+    );
+    store.saveNow();
+    const reloaded = new Store(filePath);
+    assert.equal(reloaded.getSettings().autoSettleOnMerge, false);
   });
 });

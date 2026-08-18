@@ -13,7 +13,7 @@ const { pathToFileURL } = require("node:url");
 const { Store } = require("./store.js");
 const { createRunner } = require("./runner.js");
 const { registerIpc } = require("./ipc.js");
-const { shouldNotify } = require("./notify.js");
+const { shouldNotify, isEffectivelySnoozed } = require("./notify.js");
 const { windowOpenAction, navigateAction } = require("./links.js");
 const {
   createMemorySupervisor,
@@ -305,6 +305,7 @@ app.whenReady().then(async () => {
         if (
           shouldNotify(prev, next, isAnyWindowFocused()) &&
           !payload.thread.muted &&
+          !isEffectivelySnoozed(payload.thread, Date.now()) &&
           store.getSettings().notifications
         ) {
           notifyThreadComplete(payload.thread);

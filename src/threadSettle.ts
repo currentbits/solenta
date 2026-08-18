@@ -21,6 +21,21 @@ export interface SettleOpts {
    * entirely (no quiet thread ever auto-settles).
    */
   autoSettleAfterDays: number | null;
+  /**
+   * When true (the default), a MERGED PR auto-settles. CLOSED always
+   * settles. Matches t3's sidebarAutoSettleOnMerge.
+   */
+  autoSettleOnMerge?: boolean;
+}
+
+export type ChangeRequestState = ThreadInfo["prState"];
+
+/** CLOSED always settles; MERGED settles only when the toggle is on. */
+export function changeRequestAutoSettles(
+  state: ChangeRequestState,
+  autoSettleOnMerge = true,
+): boolean {
+  return state === "CLOSED" || (state === "MERGED" && autoSettleOnMerge);
 }
 
 /**
@@ -52,9 +67,14 @@ export function effectiveSettled(
   // the user can keep a closed-PR thread visible for follow-up.
   if (thread.settledOverride === "active") return false;
 
-  // Terminal PR states: the branch's job is finished. MERGED and CLOSED both
-  // mean "no more work on this PR", so fold them.
-  if (thread.prState === "MERGED" || thread.prState === "CLOSED") return true;
+  // Terminal PR states: CLOSED always folds. MERGED folds when the
+  // settle-on-merge toggle is on (default). An explicit "active" override
+  // already returned above, so this is the no-override path.
+  if (
+    changeRequestAutoSettles(thread.prState, opts.autoSettleOnMerge !== false)
+  ) {
+    return true;
+  }
 
   // Open PR is unfinished business. Also blocks the inactivity path below —
   // a quiet open PR is still open work, not settled.
