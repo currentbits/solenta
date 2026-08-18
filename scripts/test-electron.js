@@ -14,8 +14,18 @@ const args = [
   "--experimental-strip-types",
   "--test",
 ];
+// The win32 list is exactly the files that model win32 behaviour without
+// spawning anything real: pure resolvers, or fakes injected through
+// ssh.setExecFile. Anything added here must hold to that — the moment a
+// file needs a real git or a shebang fake, the Windows leg goes red.
+const WIN32_FILES = [
+  "electron/test/wsl.test.js", // the boundary contract itself
+  "electron/test/worktree-wsl.test.js", // worktree placement across it
+  "electron/test/doctor.test.js", // the win32 doctor probes
+  "electron/test/sandbox.test.js", // sandbox resolution (platform injected)
+];
 if (process.platform === "win32") {
-  args.push("electron/test/wsl.test.js");
+  args.push(...WIN32_FILES);
 } else {
   args.push("electron/test/*.test.js");
 }
