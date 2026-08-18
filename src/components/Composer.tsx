@@ -1166,6 +1166,14 @@ export function Composer({
                 <button
                   type="button"
                   className={styles.mentionRow}
+                  // Same overflow box as the slash palette (16+ rows in 240px).
+                  // Without this the highlight walks off-screen and the list
+                  // looks frozen. Matches the model picker.
+                  ref={(el) => {
+                    if (i === mentionIndex && el) {
+                      el.scrollIntoView({ block: "nearest" });
+                    }
+                  }}
                   data-highlighted={i === mentionIndex ? "true" : undefined}
                   onMouseEnter={() => setMentionIndex(i)}
                   onClick={() => acceptMention(f)}
@@ -1187,6 +1195,14 @@ export function Composer({
                 <button
                   type="button"
                   className={styles.mentionRow}
+                  // 16 slash rows in a 240px box. Arrow keys only bump
+                  // commandIndex; without this the highlight walks off-screen
+                  // and the palette looks frozen. Matches the model picker.
+                  ref={(el) => {
+                    if (i === commandIndex && el) {
+                      el.scrollIntoView({ block: "nearest" });
+                    }
+                  }}
                   data-highlighted={i === commandIndex ? "true" : undefined}
                   onMouseEnter={() => setCommandIndex(i)}
                   onClick={() => acceptCommand(cmd)}
