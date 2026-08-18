@@ -149,7 +149,11 @@ export function groupHeaderSummary(
 
 /** Default opts when a caller has no clock of its own (tests, pure helpers). */
 export function defaultSettleOpts(now = Date.now()): SettleOpts {
-  return { now, autoSettleAfterDays: AUTO_SETTLE_AFTER_DAYS };
+  return {
+    now,
+    autoSettleAfterDays: AUTO_SETTLE_AFTER_DAYS,
+    autoSettleOnMerge: true,
+  };
 }
 
 /**

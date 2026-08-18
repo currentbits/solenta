@@ -386,14 +386,18 @@ const DEFAULT_AUTO_SETTLE_AFTER_DAYS = 3;
  * notifications: only an explicit false turns desktop notifications off, so
  * absent/junk keeps the pre-setting behaviour (notify).
  *
+ * autoSettleOnMerge: only an explicit false turns merge-settle off, so
+ * absent/junk keeps the previous "MERGED = settled" behaviour.
+ *
  * @param {unknown} raw
- * @returns {{ dailyBudgetUsd: number | null, orchestrationBudgetUsd: number | null, autoSettleAfterDays: number | null, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }>, defaultWorktree: boolean, defaultOrchestrate: boolean, updateChannel: "prod" | "nightly" | null, notifications: boolean, agentProfiles: Array<{ id: string, name: string, provider: string, model: string | null, reasoningEffort: string | null, permissionMode: string }> }}
+ * @returns {{ dailyBudgetUsd: number | null, orchestrationBudgetUsd: number | null, autoSettleAfterDays: number | null, autoSettleOnMerge: boolean, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }>, defaultWorktree: boolean, defaultOrchestrate: boolean, updateChannel: "prod" | "nightly" | null, notifications: boolean, agentProfiles: Array<{ id: string, name: string, provider: string, model: string | null, reasoningEffort: string | null, permissionMode: string }> }}
  */
 function normalizeSettings(raw) {
   const settings = {
     dailyBudgetUsd: null,
     orchestrationBudgetUsd: null,
     autoSettleAfterDays: DEFAULT_AUTO_SETTLE_AFTER_DAYS,
+    autoSettleOnMerge: true,
     mcpServers: [],
     defaultWorktree: false,
     defaultOrchestrate: false,
@@ -457,6 +461,9 @@ function normalizeSettings(raw) {
   settings.updateChannel = ch === "prod" || ch === "nightly" ? ch : null;
   settings.notifications =
     /** @type {{ notifications?: unknown }} */ (obj).notifications !== false;
+  settings.autoSettleOnMerge =
+    /** @type {{ autoSettleOnMerge?: unknown }} */ (obj).autoSettleOnMerge !==
+    false;
   settings.otel = normalizeOtel(/** @type {{ otel?: unknown }} */ (obj).otel);
   return settings;
 }
@@ -1368,6 +1375,7 @@ class Store {
       dailyBudgetUsd: n.dailyBudgetUsd,
       orchestrationBudgetUsd: n.orchestrationBudgetUsd,
       autoSettleAfterDays: n.autoSettleAfterDays,
+      autoSettleOnMerge: n.autoSettleOnMerge,
       mcpServers: n.mcpServers,
       defaultWorktree: n.defaultWorktree,
       defaultOrchestrate: n.defaultOrchestrate,
@@ -1439,6 +1447,13 @@ class Store {
         }
       }
       this.data.settings.autoSettleAfterDays = v === null ? null : v;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "autoSettleOnMerge")) {
+      const v = patch.autoSettleOnMerge;
+      if (typeof v !== "boolean") {
+        throw new Error("autoSettleOnMerge must be a boolean");
+      }
+      this.data.settings.autoSettleOnMerge = v;
     }
     if (Object.prototype.hasOwnProperty.call(patch, "mcpServers")) {
       this.data.settings.mcpServers = validateMcpServers(patch.mcpServers);

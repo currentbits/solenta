@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   AUTO_SETTLE_AFTER_DAYS,
+  changeRequestAutoSettles,
   compareSettledNewestFirst,
   effectiveSettled,
   resolveSettledTimestamp,
@@ -45,12 +46,30 @@ function thread(over: Partial<ThreadInfo> = {}): ThreadInfo {
   };
 }
 
-const opts = (over: { now?: number; autoSettleAfterDays?: number | null } = {}) => ({
+const opts = (
+  over: {
+    now?: number;
+    autoSettleAfterDays?: number | null;
+    autoSettleOnMerge?: boolean;
+  } = {},
+) => ({
   now: over.now ?? NOW,
   autoSettleAfterDays:
     over.autoSettleAfterDays === undefined
       ? AUTO_SETTLE_AFTER_DAYS
       : over.autoSettleAfterDays,
+  autoSettleOnMerge: over.autoSettleOnMerge,
+});
+
+describe("changeRequestAutoSettles", () => {
+  it("CLOSED always; MERGED follows the toggle; others never", () => {
+    assert.equal(changeRequestAutoSettles("CLOSED", false), true);
+    assert.equal(changeRequestAutoSettles("CLOSED", true), true);
+    assert.equal(changeRequestAutoSettles("MERGED", true), true);
+    assert.equal(changeRequestAutoSettles("MERGED", false), false);
+    assert.equal(changeRequestAutoSettles("OPEN", true), false);
+    assert.equal(changeRequestAutoSettles(null, true), false);
+  });
 });
 
 describe("AUTO_SETTLE_AFTER_DAYS", () => {
@@ -113,6 +132,28 @@ describe("effectiveSettled", () => {
       ),
       true,
       "merged PR means the branch job is finished",
+    );
+  });
+
+  it("prState MERGED stays active when settle-on-merge is off", () => {
+    assert.equal(
+      effectiveSettled(
+        thread({ id: "merged-keep", status: "done", prState: "MERGED" }),
+        opts({ autoSettleOnMerge: false }),
+      ),
+      false,
+      "toggle off: a merged PR is not settled until the user says so",
+    );
+  });
+
+  it("prState CLOSED settles even when settle-on-merge is off", () => {
+    assert.equal(
+      effectiveSettled(
+        thread({ id: "closed-keep", status: "failed", prState: "CLOSED" }),
+        opts({ autoSettleOnMerge: false }),
+      ),
+      true,
+      "CLOSED always settles; the toggle only gates MERGED",
     );
   });
 

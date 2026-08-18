@@ -516,6 +516,37 @@ describe("SettingsModal auto-settle window", () => {
     m.unmount();
   });
 
+  it("toggles settle-on-merge immediately", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const m = await mount(
+      modal({
+        settings: {
+          dailyBudgetUsd: null,
+          autoSettleAfterDays: 3,
+          autoSettleOnMerge: true,
+        },
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return {
+            dailyBudgetUsd: null,
+            autoSettleAfterDays: 3,
+            autoSettleOnMerge: patch.autoSettleOnMerge ?? true,
+          };
+        },
+      }),
+    );
+    const box = m.query("[data-auto-settle-on-merge]") as HTMLInputElement;
+    assert.ok(box, "settle-on-merge checkbox");
+    assert.equal(box.checked, true);
+    assert.ok(
+      m.text().includes("Settle a thread when its pull request merges"),
+    );
+    await m.click(box);
+    assert.equal(patches.length, 1);
+    assert.equal(patches[0].autoSettleOnMerge, false);
+    m.unmount();
+  });
+
   it("rejects invalid settle days with role=alert (mirrors budget)", async () => {
     const m = await mount(
       modal({

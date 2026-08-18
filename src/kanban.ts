@@ -8,6 +8,7 @@ import {
   effectiveSettled,
   type SettleOpts,
 } from "./threadSettle";
+import { effectiveSnoozed } from "./threadSnooze";
 import { buildWaitStates, isDelegating } from "./waiting";
 
 export type KanbanColumnId = ThreadStatus;
@@ -29,20 +30,24 @@ function defaultSettleOpts(): SettleOpts {
   return {
     now: Date.now(),
     autoSettleAfterDays: AUTO_SETTLE_AFTER_DAYS,
+    autoSettleOnMerge: true,
   };
 }
 
 /**
- * Working / Idle / Done / Failed. Archived threads and threads the sidebar
- * already shelves as settled (effectiveSettled) are excluded. Each column
- * is newest-updated first.
+ * Working / Idle / Done / Failed. Archived threads, snoozed threads, and
+ * threads the sidebar already shelves as settled (effectiveSettled) are
+ * excluded. Each column is newest-updated first.
  */
 export function kanbanColumns(
   threads: readonly ThreadInfo[],
   settleOpts: SettleOpts = defaultSettleOpts(),
 ): KanbanColumn[] {
   const visible = threads.filter(
-    (t) => !t.archived && !effectiveSettled(t, settleOpts),
+    (t) =>
+      !t.archived &&
+      !effectiveSnoozed(t, settleOpts.now) &&
+      !effectiveSettled(t, settleOpts),
   );
   const buckets: Record<KanbanColumnId, ThreadInfo[]> = {
     working: [],

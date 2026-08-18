@@ -1146,8 +1146,12 @@ function setSettled(store, input) {
     settledAt: override != null ? Date.now() : null,
   };
   // Mutual exclusion: settle clears pin (mirror of setPinned clearing settle).
+  // Explicit settle also unsnoozes immediately (t3: companion unsnooze) so
+  // the row leaves the snoozed shelf instead of staying hidden until wake.
   if (override === "settled") {
     patch.pinnedAt = null;
+    patch.snoozedUntil = null;
+    patch.snoozedAt = null;
   }
   const updated = store.updateThread(threadId, patch);
   store.save();

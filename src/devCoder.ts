@@ -1426,6 +1426,8 @@ function buildDevCoder(): CoderApi {
   let orchestrationBudgetUsd: number | null = null;
   /** Default 3 = AUTO_SETTLE_AFTER_DAYS; null disables. */
   let autoSettleAfterDays: number | null = 3;
+  /** Default true = MERGED PRs auto-settle. */
+  let autoSettleOnMerge = true;
   /** User MCP servers (Skills tab), in-memory. */
   let mcpServers: McpServerInfo[] = [];
   /** Default new threads into a fake worktree (Settings toggle). */
@@ -2037,6 +2039,7 @@ function buildDevCoder(): CoderApi {
           dailyBudgetUsd,
           orchestrationBudgetUsd,
           autoSettleAfterDays,
+          autoSettleOnMerge,
           mcpServers: mcpServers.map((s) => ({ ...s })),
           defaultWorktree,
           defaultOrchestrate,
@@ -2054,6 +2057,12 @@ function buildDevCoder(): CoderApi {
         dailyBudgetUsd = parseBudgetPatch(patch);
         orchestrationBudgetUsd = parseOrchBudgetPatch(patch);
         autoSettleAfterDays = parseSettleDaysPatch(patch);
+        if (Object.prototype.hasOwnProperty.call(patch, "autoSettleOnMerge")) {
+          if (typeof patch.autoSettleOnMerge !== "boolean") {
+            throw new Error("autoSettleOnMerge must be a boolean");
+          }
+          autoSettleOnMerge = patch.autoSettleOnMerge;
+        }
         if (Object.prototype.hasOwnProperty.call(patch, "mcpServers")) {
           if (!Array.isArray(patch.mcpServers)) {
             throw new Error("mcpServers must be an array");
@@ -2126,6 +2135,7 @@ function buildDevCoder(): CoderApi {
           dailyBudgetUsd,
           orchestrationBudgetUsd,
           autoSettleAfterDays,
+          autoSettleOnMerge,
           mcpServers: mcpServers.map((s) => ({ ...s })),
           defaultWorktree,
           defaultOrchestrate,
@@ -2729,6 +2739,9 @@ function buildDevCoder(): CoderApi {
         return patchThread(input.threadId, {
           settledOverride: input.override,
           settledAt: input.override != null ? now() : null,
+          ...(input.override === "settled"
+            ? { snoozedUntil: null, snoozedAt: null, pinnedAt: null }
+            : {}),
         });
       },
       async setPinned(input: { threadId: string; pinned: boolean }) {
