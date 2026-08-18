@@ -1069,6 +1069,25 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         threads = threads.map((t) => (t.id === i.threadId ? next : t));
         return Promise.resolve(next);
       },
+      /** Honest felt estimate: saved shape or decline, never bumps updatedAt. */
+      setFeltEstimate: (input: unknown) => {
+        const i = input as { threadId: string; savedMs: number | null };
+        calls.push({ channel: "threads.setFeltEstimate", args: [input] });
+        const existing = threads.find((t) => t.id === i.threadId);
+        if (!existing) {
+          return Promise.reject(new Error(`Unknown thread: ${i.threadId}`));
+        }
+        const at = Date.now();
+        const next: ThreadInfo = {
+          ...existing,
+          feltEstimate:
+            i.savedMs == null
+              ? { kind: "declined", at }
+              : { kind: "saved", savedMs: Math.max(0, Number(i.savedMs)), at },
+        };
+        threads = threads.map((t) => (t.id === i.threadId ? next : t));
+        return Promise.resolve(next);
+      },
       rename: (input: unknown) => {
         const i = input as { threadId: string; title: string };
         calls.push({ channel: "threads.rename", args: [input] });

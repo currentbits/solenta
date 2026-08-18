@@ -1,4 +1,5 @@
 import {
+  Fragment,
   memo,
   useCallback,
   useEffect,
@@ -253,6 +254,50 @@ interface SidebarProps {
 }
 
 export type SelectOpts = { meta?: boolean; shift?: boolean };
+
+/**
+ * Live subagents (Agent tool, issue #21) nested under their thread card with
+ * the same indent + elbow as fork/worker cards (issue #542). Running rows
+ * only: the sidebar is the live overview (mirrors buildWaitStates), finished
+ * rows stay on the Agents panel roster. Subagents are not threads, so a row
+ * click just selects the parent thread.
+ */
+function SubagentRows({
+  thread,
+  onSelect,
+}: {
+  thread: ThreadInfo;
+  onSelect: (id: string, opts?: SelectOpts) => void;
+}) {
+  const running = (thread.subagents ?? []).filter(
+    (s) => s.status === "running",
+  );
+  if (running.length === 0) return null;
+  return (
+    <ul className={styles.subagentList} data-subagent-list={thread.id}>
+      {running.map((s) => (
+        <li key={s.id}>
+          <button
+            type="button"
+            className={styles.subagentRow}
+            data-subagent-row=""
+            title={s.description}
+            aria-label={`Subagent: ${s.description}`}
+            onClick={(e) =>
+              onSelect(thread.id, {
+                meta: e.metaKey || e.ctrlKey,
+                shift: e.shiftKey,
+              })
+            }
+          >
+            <span className={styles.waitingDot} aria-hidden />
+            <span className={styles.subagentTitle}>{s.description}</span>
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
 
 function formatUsd(n: number): string {
   return n.toFixed(2);
@@ -2898,45 +2943,50 @@ export const Sidebar = memo(function Sidebar({
                             one element across lists.
                           */}
                           {visibleAttention.map((thread) => (
-                            <ThreadCard
-                              key={`${thread.id}:card`}
-                              thread={thread}
-                              slug={slug}
-                              showSlug={project == null}
-                              remote={Boolean(project?.remoteHost)}
-                              providers={providers}
-                              active={thread.id === activeThreadId}
-                              multiSelected={multiSelected.has(thread.id)}
-                              indexHint={indexHintFor(thread.id)}
-                              now={now}
-                              onSelect={handleSelect}
-                              isSettled={
-                                searching
-                                  ? effectiveSettled(thread, settleOpts)
-                                  : false
-                              }
-                              onSetSettled={onSetSettled}
-                              onSetPinned={onSetPinned}
-                              onSetSnoozed={onSetSnoozed}
-                              onSetMuted={onSetMuted}
-                              onRenameThread={onRenameThread}
-                              onFork={onFork}
-                              snoozeMenuOpen={snoozeMenuFor === thread.id}
-                              onToggleSnoozeMenu={setSnoozeMenuFor}
-                              forkMenuOpen={forkMenuFor === thread.id}
-                              onToggleForkMenu={setForkMenuFor}
-                              nested={
-                                thread.handoffFrom != null &&
-                                attentionIdSet.has(thread.handoffFrom)
-                              }
-                              wait={waitStates.get(thread.id) ?? null}
-                              contentMatch={
-                                searching &&
-                                !thread.title.toLowerCase().includes(queryLower)
-                              }
-                              conflictForecast={conflictForecast}
-                              threadTitles={threadTitles}
-                            />
+                            <Fragment key={`${thread.id}:card`}>
+                              <ThreadCard
+                                thread={thread}
+                                slug={slug}
+                                showSlug={project == null}
+                                remote={Boolean(project?.remoteHost)}
+                                providers={providers}
+                                active={thread.id === activeThreadId}
+                                multiSelected={multiSelected.has(thread.id)}
+                                indexHint={indexHintFor(thread.id)}
+                                now={now}
+                                onSelect={handleSelect}
+                                isSettled={
+                                  searching
+                                    ? effectiveSettled(thread, settleOpts)
+                                    : false
+                                }
+                                onSetSettled={onSetSettled}
+                                onSetPinned={onSetPinned}
+                                onSetSnoozed={onSetSnoozed}
+                                onSetMuted={onSetMuted}
+                                onRenameThread={onRenameThread}
+                                onFork={onFork}
+                                snoozeMenuOpen={snoozeMenuFor === thread.id}
+                                onToggleSnoozeMenu={setSnoozeMenuFor}
+                                forkMenuOpen={forkMenuFor === thread.id}
+                                onToggleForkMenu={setForkMenuFor}
+                                nested={
+                                  thread.handoffFrom != null &&
+                                  attentionIdSet.has(thread.handoffFrom)
+                                }
+                                wait={waitStates.get(thread.id) ?? null}
+                                contentMatch={
+                                  searching &&
+                                  !thread.title.toLowerCase().includes(queryLower)
+                                }
+                                conflictForecast={conflictForecast}
+                                threadTitles={threadTitles}
+                              />
+                              <SubagentRows
+                                thread={thread}
+                                onSelect={handleSelect}
+                              />
+                            </Fragment>
                           ))}
                           {showOverflowToggle && (
                             <button
@@ -2953,35 +3003,40 @@ export const Sidebar = memo(function Sidebar({
                           )}
                           {archivedExpanded &&
                             archivedThreads.map((thread) => (
-                              <ThreadCard
-                                key={`${thread.id}:card`}
-                                thread={thread}
-                                slug={slug}
-                                showSlug={project == null}
-                                remote={Boolean(project?.remoteHost)}
-                                providers={providers}
-                                active={thread.id === activeThreadId}
-                                multiSelected={multiSelected.has(thread.id)}
-                                indexHint={indexHintFor(thread.id)}
-                                now={now}
-                                onSelect={handleSelect}
-                                isSettled={effectiveSettled(thread, settleOpts)}
-                                onSetSettled={onSetSettled}
-                                onFork={onFork}
-                                forkMenuOpen={forkMenuFor === thread.id}
-                                onToggleForkMenu={setForkMenuFor}
-                                nested={
-                                  thread.handoffFrom != null &&
-                                  archivedIdSet.has(thread.handoffFrom)
-                                }
-                                wait={waitStates.get(thread.id) ?? null}
-                                contentMatch={
-                                  searching &&
-                                  !thread.title.toLowerCase().includes(queryLower)
-                                }
-                                conflictForecast={conflictForecast}
-                                threadTitles={threadTitles}
-                              />
+                              <Fragment key={`${thread.id}:card`}>
+                                <ThreadCard
+                                  thread={thread}
+                                  slug={slug}
+                                  showSlug={project == null}
+                                  remote={Boolean(project?.remoteHost)}
+                                  providers={providers}
+                                  active={thread.id === activeThreadId}
+                                  multiSelected={multiSelected.has(thread.id)}
+                                  indexHint={indexHintFor(thread.id)}
+                                  now={now}
+                                  onSelect={handleSelect}
+                                  isSettled={effectiveSettled(thread, settleOpts)}
+                                  onSetSettled={onSetSettled}
+                                  onFork={onFork}
+                                  forkMenuOpen={forkMenuFor === thread.id}
+                                  onToggleForkMenu={setForkMenuFor}
+                                  nested={
+                                    thread.handoffFrom != null &&
+                                    archivedIdSet.has(thread.handoffFrom)
+                                  }
+                                  wait={waitStates.get(thread.id) ?? null}
+                                  contentMatch={
+                                    searching &&
+                                    !thread.title.toLowerCase().includes(queryLower)
+                                  }
+                                  conflictForecast={conflictForecast}
+                                  threadTitles={threadTitles}
+                                />
+                                <SubagentRows
+                                  thread={thread}
+                                  onSelect={handleSelect}
+                                />
+                              </Fragment>
                             ))}
                           {!searching && archivedThreads.length > 0 && (
                             <button

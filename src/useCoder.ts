@@ -302,6 +302,11 @@ export interface UseCoderResult {
   renameThread: (threadId: string, title: string) => Promise<void>;
   /** Save scratch notes on a thread (header editor, issue #194). */
   setNotes: (threadId: string, notes: string) => Promise<void>;
+  /** Record the one-tap felt estimate (issue #401); savedMs null = declined. */
+  setFeltEstimate: (
+    threadId: string,
+    savedMs: number | null,
+  ) => Promise<void>;
   /** Turn spec mode on (issue #269). Updates thread from the returned ThreadInfo. */
   startSpec: (threadId: string) => Promise<void>;
   /** Turn spec mode off (issue #500). Updates thread from the returned ThreadInfo. */
@@ -1640,6 +1645,24 @@ export function useCoder(): UseCoderResult {
     [api, applyThreads],
   );
 
+  const setFeltEstimate = useCallback(
+    async (threadId: string, savedMs: number | null) => {
+      try {
+        const thread = await api.threads.setFeltEstimate({ threadId, savedMs });
+        applyThreads(
+          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
+        );
+        setDetail((prev) =>
+          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
+        );
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+      }
+    },
+    [api, applyThreads],
+  );
+
   const startSpec = useCallback(
     async (threadId: string) => {
       try {
@@ -2618,6 +2641,7 @@ export function useCoder(): UseCoderResult {
     resumeQuotaWait,
     renameThread,
     setNotes,
+    setFeltEstimate,
     startSpec,
     stopSpec,
     reviewSpec,

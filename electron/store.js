@@ -773,6 +773,23 @@ function migrateSpace(s) {
   return { id, name: s.name };
 }
 
+/**
+ * Heal a persisted felt estimate (issue #401). Only the two contract shapes
+ * survive; anything else becomes null (never asked).
+ */
+function normalizeFeltEstimate(value) {
+  if (!value || typeof value !== "object") return null;
+  const at =
+    typeof value.at === "number" && Number.isFinite(value.at) ? value.at : 0;
+  if (value.kind === "declined") return { kind: "declined", at };
+  if (value.kind === "saved") {
+    const savedMs = Number(value.savedMs);
+    if (!Number.isFinite(savedMs) || savedMs < 0) return null;
+    return { kind: "saved", savedMs, at };
+  }
+  return null;
+}
+
 function migrateThread(t) {
   if (!t || typeof t !== "object") return t;
   return {
@@ -821,6 +838,8 @@ function migrateThread(t) {
     muted: t.muted === true,
     // Per-thread user scratch pad (issue #194): absent → empty.
     notes: typeof t.notes === "string" ? t.notes : "",
+    // One-tap felt estimate (issue #401): absent/invalid → never answered.
+    feltEstimate: normalizeFeltEstimate(t.feltEstimate),
     // Type-ahead queue (issue #137): absent → nothing waiting.
     queued: t.queued !== undefined ? t.queued : null,
     // Verification gate (issue #296): absent / non-string → unarmed.

@@ -60,11 +60,34 @@ export interface FleetThreadRow {
   costUsd: number;
   activeMs: number;
   wallClockMs: number;
+  feltSavedMs: number | null;
   linesAdded: number | null;
   durableShare: number | null;
   outcome: FleetOutcome;
   prNumber: number | null;
   prUrl: string | null;
+}
+
+/**
+ * The perception gap (issue #401): what the user FELT they saved vs what the
+ * clock actually measured, over the in-range threads that have an estimate.
+ * Sums, not medians — "you felt ~9h saved; those threads took 6h wall-clock"
+ * reads honestly, and the ratio is the METR headline in miniature
+ * (>1 = felt faster than it was, <1 = the agents quietly outdid the feeling).
+ */
+export interface FleetPerception {
+  /** In-range threads with a felt estimate. 0 = nothing to compare yet. */
+  estimates: number;
+  /** Sum of the felt estimates. */
+  feltSavedMs: number;
+  /** Sum of those same threads' wall clock. */
+  wallClockMs: number;
+  /** Sum of those same threads' agent-active time. */
+  activeMs: number;
+  /** feltSavedMs / wallClockMs; null when there is no wall clock. */
+  feltVsWall: number | null;
+  /** feltSavedMs / activeMs; null when there is no active time. */
+  feltVsActive: number | null;
 }
 
 export interface FleetSummary {
@@ -74,6 +97,8 @@ export interface FleetSummary {
   totals: FleetProviderRow;
   /** Per thread, newest first. */
   threads: FleetThreadRow[];
+  /** Felt vs actual over estimated threads (issue #401). */
+  perception: FleetPerception;
   /** Median open -> first review for HUMAN PRs; the review-tax baseline. */
   humanReviewLatencyMs: number | null;
   /**
@@ -157,6 +182,7 @@ function readThread(raw: unknown): FleetThread | null {
     turns: nonNeg(rec.turns),
     linesAdded: nullableNonNeg(rec.linesAdded),
     linesSurviving: nullableNonNeg(rec.linesSurviving),
+    feltSavedMs: nullableNonNeg(rec.feltSavedMs),
     durabilityMeasurable: rec.durabilityMeasurable === true,
   };
 }
@@ -270,6 +296,17 @@ function notesOf(raw: Record<string, unknown> | null): string[] {
   return raw.notes.filter((n): n is string => typeof n === "string");
 }
 
+export function emptyPerception(): FleetPerception {
+  return {
+    estimates: 0,
+    feltSavedMs: 0,
+    wallClockMs: 0,
+    activeMs: 0,
+    feltVsWall: null,
+    feltVsActive: null,
+  };
+}
+
 /**
  * Roll `evidence` up over the last `range` days ending at `now` (epoch ms).
  * Threads are in range by createdAt, PRs by createdAt.
@@ -287,6 +324,7 @@ export function summarizeFleet(
     providers: [],
     totals: emptyProviderRow("all"),
     threads: [],
+    perception: emptyPerception(),
     humanReviewLatencyMs: null,
     reviewTax: null,
     durabilityWindowDays,
@@ -378,6 +416,7 @@ export function summarizeFleet(
       costUsd: thread.costUsd,
       activeMs: thread.activeMs,
       wallClockMs: wallClockMs(thread),
+      feltSavedMs: thread.feltSavedMs,
       linesAdded: thread.linesAdded,
       durableShare: durableShareOf(
         thread.durabilityMeasurable,
@@ -421,10 +460,30 @@ export function summarizeFleet(
       : agentMedian / humanReviewLatencyMs;
   const reviewTax = tax != null && Number.isFinite(tax) ? tax : null;
 
+  const perception = emptyPerception();
+  for (const thread of inRangeThreads) {
+    if (thread.feltSavedMs == null) continue;
+    perception.estimates += 1;
+    perception.feltSavedMs += thread.feltSavedMs;
+    perception.wallClockMs += wallClockMs(thread);
+    perception.activeMs += thread.activeMs;
+  }
+  // null, never Infinity, when the clock side is 0: a ratio against nothing
+  // would read as a verdict the data cannot support.
+  perception.feltVsWall =
+    perception.wallClockMs > 0
+      ? perception.feltSavedMs / perception.wallClockMs
+      : null;
+  perception.feltVsActive =
+    perception.activeMs > 0
+      ? perception.feltSavedMs / perception.activeMs
+      : null;
+
   return {
     providers: providerRows,
     totals,
     threads,
+    perception,
     humanReviewLatencyMs,
     reviewTax,
     durabilityWindowDays,

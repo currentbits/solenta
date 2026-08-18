@@ -25,6 +25,7 @@ function thread(over: Partial<FleetThread> & Pick<FleetThread, "threadId">): Fle
     turns: 2,
     linesAdded: null,
     linesSurviving: null,
+    feltSavedMs: null,
     durabilityMeasurable: false,
     ...over,
   };
@@ -477,5 +478,118 @@ describe("summarizeFleet", () => {
       NOW,
     );
     assert.equal(idle.providers[0].activeShare, 0);
+  });
+});
+
+describe("perception (felt vs actual, issue #401)", () => {
+  it("sums felt estimates against the same threads' clocks", () => {
+    const summary = summarizeFleet(
+      evidence({
+        threads: [
+          thread({
+            threadId: "a",
+            createdAt: NOW - 2 * DAY,
+            endedAt: NOW - DAY,
+            activeMs: 2 * 3_600_000,
+            feltSavedMs: 4 * 3_600_000,
+          }),
+          thread({
+            threadId: "b",
+            createdAt: NOW - 2 * DAY,
+            endedAt: NOW - DAY,
+            activeMs: 3_600_000,
+            feltSavedMs: 2 * 3_600_000,
+          }),
+          // No estimate: counted nowhere in the perception bucket.
+          thread({ threadId: "c", createdAt: NOW - 2 * DAY, endedAt: NOW }),
+        ],
+      }),
+      7,
+      NOW,
+    );
+    const p = summary.perception;
+    assert.equal(p.estimates, 2);
+    assert.equal(p.feltSavedMs, 6 * 3_600_000);
+    assert.equal(p.wallClockMs, 2 * DAY);
+    assert.equal(p.activeMs, 3 * 3_600_000);
+    assert.equal(p.feltVsWall, (6 * 3_600_000) / (2 * DAY));
+    assert.equal(p.feltVsActive, 2);
+    const a = summary.threads.find((t) => t.threadId === "a")!;
+    assert.equal(a.feltSavedMs, 4 * 3_600_000);
+    const c = summary.threads.find((t) => t.threadId === "c")!;
+    assert.equal(c.feltSavedMs, null);
+  });
+
+  it("excludes estimates from threads outside the range", () => {
+    const summary = summarizeFleet(
+      evidence({
+        threads: [
+          thread({
+            threadId: "old",
+            createdAt: NOW - 40 * DAY,
+            endedAt: NOW - 39 * DAY,
+            feltSavedMs: 3_600_000,
+          }),
+        ],
+      }),
+      7,
+      NOW,
+    );
+    assert.equal(summary.perception.estimates, 0);
+    assert.equal(summary.perception.feltVsWall, null);
+  });
+
+  it("null ratio, never Infinity, when the clock side is 0", () => {
+    const summary = summarizeFleet(
+      evidence({
+        threads: [
+          thread({
+            threadId: "instant",
+            createdAt: NOW - 1000,
+            endedAt: NOW - 1000,
+            activeMs: 0,
+            feltSavedMs: 3_600_000,
+          }),
+        ],
+      }),
+      7,
+      NOW,
+    );
+    assert.equal(summary.perception.estimates, 1);
+    assert.equal(summary.perception.feltVsWall, null);
+    assert.equal(summary.perception.feltVsActive, null);
+  });
+
+  it("heals garbage feltSavedMs to null instead of skewing the sum", () => {
+    const summary = summarizeFleet(
+      evidence({
+        threads: [
+          thread({
+            threadId: "junk",
+            feltSavedMs: -5 as unknown as number,
+          }),
+          thread({
+            threadId: "junk2",
+            feltSavedMs: "2h" as unknown as number,
+          }),
+        ],
+      }),
+      7,
+      NOW,
+    );
+    assert.equal(summary.perception.estimates, 0);
+    assert.equal(summary.perception.feltSavedMs, 0);
+  });
+
+  it("empty evidence yields an empty perception bucket", () => {
+    const summary = summarizeFleet(evidence(), 7, NOW);
+    assert.deepEqual(summary.perception, {
+      estimates: 0,
+      feltSavedMs: 0,
+      wallClockMs: 0,
+      activeMs: 0,
+      feltVsWall: null,
+      feltVsActive: null,
+    });
   });
 });

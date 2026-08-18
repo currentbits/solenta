@@ -42,6 +42,20 @@ function parseIsoMs(value) {
 }
 
 /**
+ * The "felt" half of felt-vs-actual (issue #401): savedMs when the user
+ * answered the one-tap estimate, null for declined / never asked / junk.
+ *
+ * @param {unknown} estimate
+ * @returns {number | null}
+ */
+function feltSavedMsOf(estimate) {
+  if (!estimate || typeof estimate !== "object") return null;
+  if (estimate.kind !== "saved") return null;
+  const ms = Number(estimate.savedMs);
+  return Number.isFinite(ms) && ms >= 0 ? ms : null;
+}
+
+/**
  * Summed per-run spans, not wall clock. A single-item run contributes 0.
  *
  * @param {Array<{ runId?: string, timestamp?: number }> | null | undefined} items
@@ -411,6 +425,7 @@ async function collectFleetInner(opts) {
       inputTokens: usage ? num(usage.inputTokens) : 0,
       outputTokens: usage ? num(usage.outputTokens) : 0,
       turns: usage ? num(usage.turns) : 0,
+      feltSavedMs: feltSavedMsOf(thread.feltEstimate),
       linesAdded: null,
       linesSurviving: null,
       durabilityMeasurable: false,

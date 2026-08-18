@@ -193,6 +193,22 @@ Definitions that are deliberate, not incidental:
 - **Review tax** = median agent open→first-review over median human. Median,
   because one PR reviewed three weeks later would swallow a mean.
 
+### Felt vs actual (issue #401)
+
+The perception gap has two halves that meet only in the rollup. The **felt**
+half is a one-tap estimate asked once when a run completes
+(`FeltEstimateCard` in `ThreadView.tsx`, buckets from
+`FELT_ESTIMATE_BUCKETS_MS`), persisted as `ThreadInfo.feltEstimate`
+(`{kind:"saved",savedMs,at}` or `{kind:"declined",at}`) via
+`threads:setFeltEstimate` — never bumps `updatedAt`, clamped to
+`FELT_ESTIMATE_MAX_MS`, decline recorded so the card never nags twice. The
+**actual** half is the fleet evidence the collector already had (wall clock,
+agent-active); the collector copies the estimate out as
+`FleetThread.feltSavedMs` and `summarizeFleet` sums both sides over the
+estimated threads into `FleetSummary.perception`. Ratios are `null`, never
+`Infinity`, when the clock side is 0 — a ratio against nothing would read as
+a verdict the data cannot support.
+
 `null` and `0` mean different things everywhere in this feature, and the view
 renders them differently.
 
