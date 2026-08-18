@@ -90,6 +90,8 @@ async function mountView(
       decision: "approve" | "revise",
       feedback?: string,
     ) => void;
+    onDispatchSpec?: (threadId: string) => void;
+    onConvergeSpec?: (threadId: string) => void;
     onSpecArtifact?: (
       threadId: string,
       stage: SpecArtifact,
@@ -118,6 +120,8 @@ async function mountView(
       onStartSpec={extras.onStartSpec}
       onStopSpec={extras.onStopSpec}
       onReviewSpec={extras.onReviewSpec}
+      onDispatchSpec={extras.onDispatchSpec}
+      onConvergeSpec={extras.onConvergeSpec}
       onSpecArtifact={extras.onSpecArtifact}
     />,
   );
@@ -334,5 +338,33 @@ describe("SpecCard", () => {
       view.query('[data-spec-stage="build"]')?.getAttribute("data-plan-step"),
       "doing",
     );
+    assert.equal(view.query("[data-spec-dispatch-btn]"), null);
+    assert.equal(view.query("[data-spec-converge-btn]"), null);
+  });
+
+  it("at build, Dispatch and Converge call the api", async () => {
+    const dispatched: string[] = [];
+    const converged: string[] = [];
+    const view = await mountView(
+      detail({
+        spec: { slug: "foo", stage: "build", awaitingApproval: false },
+      }),
+      {
+        onDispatchSpec: (id) => {
+          dispatched.push(id);
+        },
+        onConvergeSpec: (id) => {
+          converged.push(id);
+        },
+      },
+    );
+    const dispatchBtn = view.query("[data-spec-dispatch-btn]");
+    const convergeBtn = view.query("[data-spec-converge-btn]");
+    assert.ok(dispatchBtn);
+    assert.ok(convergeBtn);
+    await view.click(dispatchBtn);
+    await view.click(convergeBtn);
+    assert.deepEqual(dispatched, ["t1"]);
+    assert.deepEqual(converged, ["t1"]);
   });
 });

@@ -79,7 +79,7 @@ const DEV_SPEC_ARTIFACTS: Record<SpecArtifact, string> = {
   requirements:
     "1. WHEN spec mode is on THE SYSTEM SHALL gate each stage on a human approval.\n" +
     "2. WHEN an artifact is submitted THE SYSTEM SHALL stop the thread until it is reviewed.\n\n" +
-    "Out of scope: parsing tasks.md into a dispatch DAG.",
+    "Out of scope: none — tasks.md is a checkbox DAG (needs: <id>) dispatched in waves.",
   design:
     "Thread carries `spec { slug, stage, awaitingApproval }`; artifacts live in\n" +
     "`.solenta/specs/<slug>/` so they diff like code.",
@@ -2914,6 +2914,24 @@ function buildDevCoder(): CoderApi {
           path: `${SPEC_DIR}/${slug}/${input.stage}.md`,
           text: DEV_SPEC_ARTIFACTS[input.stage],
         };
+      },
+      async dispatchSpec(input: { threadId: string }) {
+        const existing = threads.find((t) => t.id === input.threadId);
+        if (!existing) throw new Error(`Thread not found: ${input.threadId}`);
+        if (!existing.spec) throw new Error("Thread is not in spec mode");
+        if (existing.spec.stage !== "build") {
+          throw new Error("Dispatch is available after tasks.md is approved");
+        }
+        return { thread: { ...existing }, dispatched: [] };
+      },
+      async convergeSpec(input: { threadId: string }) {
+        const existing = threads.find((t) => t.id === input.threadId);
+        if (!existing) throw new Error(`Thread not found: ${input.threadId}`);
+        if (!existing.spec) throw new Error("Thread is not in spec mode");
+        if (existing.spec.stage !== "build") {
+          throw new Error("Converge is available after tasks.md is approved");
+        }
+        return { ...existing };
       },
       async startTeach(input: { threadId: string }) {
         const existing = threads.find((t) => t.id === input.threadId);

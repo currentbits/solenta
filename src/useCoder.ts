@@ -312,6 +312,10 @@ export interface UseCoderResult {
     threadId: string,
     stage: SpecArtifact,
   ) => Promise<{ path: string; text: string | null }>;
+  /** Dispatch the current tasks.md wave as parallel workers (issue #537). */
+  dispatchSpec: (threadId: string) => Promise<void>;
+  /** Start a converge run that appends missing tasks.md checkboxes. */
+  convergeSpec: (threadId: string) => Promise<void>;
   /** Turn Teach mode on (issue #373). Updates thread from the returned ThreadInfo. */
   startTeach: (threadId: string) => Promise<void>;
   /** Turn Teach mode off. */
@@ -1656,6 +1660,43 @@ export function useCoder(): UseCoderResult {
     [api],
   );
 
+  const dispatchSpec = useCallback(
+    async (threadId: string) => {
+      try {
+        const result = await api.threads.dispatchSpec({ threadId });
+        const thread = result.thread;
+        applyThreads(
+          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
+        );
+        setDetail((prev) =>
+          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
+        );
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+      }
+    },
+    [api, applyThreads],
+  );
+
+  const convergeSpec = useCallback(
+    async (threadId: string) => {
+      try {
+        const thread = await api.threads.convergeSpec({ threadId });
+        applyThreads(
+          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
+        );
+        setDetail((prev) =>
+          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
+        );
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+      }
+    },
+    [api, applyThreads],
+  );
+
   const startTeach = useCallback(
     async (threadId: string) => {
       try {
@@ -2525,6 +2566,8 @@ export function useCoder(): UseCoderResult {
     stopSpec,
     reviewSpec,
     specArtifact,
+    dispatchSpec,
+    convergeSpec,
     startTeach,
     stopTeach,
     startAsk,

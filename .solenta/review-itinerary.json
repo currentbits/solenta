@@ -1,39 +1,44 @@
 {
   "version": 1,
-  "readOrder": ["critical", "impl", "tests"],
+  "readOrder": ["tests", "critical", "impl", "docs"],
   "chunks": [
     {
-      "area": "critical",
-      "rationale": "Identity-semantics changes that everything else keys on: threadPatch.ts returns prev when a 700ms tick moved nothing (sameTail guards), Sidebar ThreadCard is memo'd (handleSelect via refs, threadTitles reuses its Map), services.listThreads caches the decorated list on threads/projects array identity (replace-only invariant, verified). A wrong bail = stale UI; a missed bail = O(n) per tick.",
+      "area": "tests",
+      "rationale": "Start with electron/test/spec-tasks.test.js (the checkbox DAG contract: ids, needs:, cycles, waves), then spec-mode.test.js dispatch/converge (crew sync, wave-1 fork, wave-2 after complete), then spec-ipc.test.js (N worker runs vs one converge run), then test/specCard.test.tsx (Dispatch/Converge only at build).",
       "risks": [
-        "listThreads caching rests on a convention: any future in-place mutation of a thread/project row or array silently serves a stale sidebar. The invariant is commented at the cache.",
-        "mergeThreadPatch returning prev drops patch.seq — safe only because seq lives on ThreadPatch, not ThreadDetail, and gap detection runs in the caller.",
-        "Sidebar handleSelect reads visibleIds/selectAnchor via refs synced in a passive effect — correct for user events, not for synthetic same-tick calls."
+        "Wave-2 is asserted inside the wave-1 test after completeCrewTask — easy to miss if a later edit splits the case.",
+        "IPC dispatch test writes tasks.md into the project checkout (no worktree on the spec thread fixture)."
+      ]
+    },
+    {
+      "area": "critical",
+      "rationale": "electron/specTasks.js is the format. electron/services.js dispatchSpec/syncSpecCrewFromParsed/forkSpecWave is the live path: parse → addCrewTasks (needs remapped to tN) → claim one orchWorker per open unblocked task. ipc.js threads:dispatchSpec starts those runs; threads:convergeSpec starts one run on the spec thread.",
+      "risks": [
+        "Crew sync matches by collapsed title. Two checkboxes with the same title collide; the second is treated as already added.",
+        "sourceToCrew precomputes tN the same way addCrewTasks does. If addCrewTasks ever changes id assignment, remapped needs silently point at the wrong task.",
+        "Dispatch is fail-closed on parse errors (cycle, unknown needs) — a typo in tasks.md blocks the whole wave, not just the bad line.",
+        "Next wave is not auto-started when workers finish. The human (or a later Dispatch click) has to come back. Crew claim still holds the DAG.",
+        "Workers land in their own worktrees (forkWorkerThread default). Ticking tasks.md there does not update the spec thread's copy; the crew list is the source of truth."
       ]
     },
     {
       "area": "impl",
-      "rationale": "Battery/memory trims: store flush compact JSON, lsof TTL 30s + renderer polls 15s/hidden-skip, codeindex parse cache on mtime, stderr tail-capped at 64KB in all five spawners, forecast effect keyed on derived branch/worktree key + refocus refresh, memory-server: mentions(entity_id) index, O(n) applyTokenBudget, statement cache, citation file cache, trust TTL 60s.",
+      "rationale": "UI is SpecCard at stage===build: Dispatch (permissionAllow) and Converge (btn). Wired through ipc.ts, preload, wireClient, useCoder, App, fakeCoder, devCoder. Approving tasks.md still starts a run, but the build prompt now tells the parent to orchestrate instead of implementing the checklist itself.",
       "risks": [
-        "A new dev server can take up to ~30s to appear in the Local Servers card (15s poll + 30s main TTL). Deliberate.",
-        "codeindex/listThreads/citation caches share parsed objects across callers — all verified read-only today.",
-        "Merge resolution: quota-wait props/handlers dropped (removed upstream), ChangesPanel hunk UI taken from upstream; my patchLines memo is gone, memo'd DiffLine kept.",
-        "Merge resolution: itinerary rewritten to the fixed-area schema (area must equal ci-config/tests/critical/impl/docs for annotationForArea to attach; rationale truncates at 400 chars)."
+        "Changing the build-stage prompt is a behavior change for anyone who approved tasks.md expecting the old 'implement it yourself' turn.",
+        "useCoder.dispatchSpec only patches the source thread; new workers appear via the threads:changed broadcast that IPC already sends."
       ]
     },
     {
-      "area": "tests",
-      "rationale": "Verified pre-merge: typecheck clean, renderer 1075/1075, memory 201/201, electron 1390/1396 — the 6 failures (checkpoints worktreeBase config, Store quota-wait round-trip keys, verify-gate) reproduce with the diff stashed. Re-run after this merge: quota-wait removal upstream touched App/ThreadView/ipc.",
+      "area": "docs",
+      "rationale": "SPEC_GOAL.tasks now documents the checkbox + needs: <id> format so newly written tasks.md is dispatchable. src/devCoder.ts dropped the 'out of scope' line.",
       "risks": [
-        "Post-merge suites must confirm the auto-merged quota-wait removal didn't leave dangling references on this branch (tsc is the check).",
-        "No test pins mergeThreadPatch's return-prev identity or the ThreadCard memo — a 'no-op tick returns identical detail' test would harden the riskiest change."
+        "Existing tasks.md files written before this change have no needs: annotations — they still parse (document-order ids, one big wave)."
       ]
     }
   ],
   "risks": [
-    "BUG FIXED IN FLIGHT: round-1 SQL comment in db.js createSchema contained backticks inside a JS template literal — broke every memory-server module load and shipped in auto-checkpoint ef40717 before round 2 caught it. Fixed (db.js:310-314).",
-    "Environment repaired during this branch: main checkout's core/dist self-symlink/deletion dangled every worktree's core build (rebuilt); memory-server node_modules installed here. 10 of 16 baseline electron failures were this rot, now green.",
-    "Deferred by design: runAgent intra-message deltas (needs ThreadPatch protocol change), 30-min CLAUDE_IDLE_REAP (product call), PR-refresher gh batching, fleet blame cache. Details on #526/#533.",
-    "Merge conflict with main resolved 2026-08-18: 3 files (App.tsx quota-wait props, ThreadView hunk UI, this itinerary). Incoming itinerary chunk was another thread's stale merge notes — dropped."
+    "No MCP spec_dispatch/spec_converge tools — agents on the spec thread cannot trigger these without the card. Deliberate: issue asked for IPC + spec card, same seam as startSpec/reviewSpec.",
+    "No runner hook to dispatch the next wave when the last worker of the current wave completes."
   ]
 }
