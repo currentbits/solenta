@@ -3222,6 +3222,30 @@ export const ThreadView = memo(function ThreadView({
   }, [timeline, isWorking, detail?.messages, detail?.workLog]);
 
   /**
+   * Content can grow after paint with no React state change (images, syntax
+   * highlight, webfonts). Observe the scroll body and its children so a
+   * pinned view stays pinned. Re-attach when the timeline replaces children.
+   */
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+
+    const pinIfStuck = () => {
+      if (!stickToBottom.current) return;
+      const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+      if (distance <= 0) return;
+      el.scrollTop = el.scrollHeight;
+    };
+
+    const ro = new ResizeObserver(pinIfStuck);
+    ro.observe(el);
+    for (const child of el.children) {
+      ro.observe(child);
+    }
+    return () => ro.disconnect();
+  }, [timeline]);
+
+  /**
    * Delegated: any image in the timeline (tool output, attachment thumb,
    * markdown) opens the lightbox, so new image sources need no extra wiring.
    */

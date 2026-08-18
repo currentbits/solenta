@@ -1,39 +1,27 @@
 {
   "version": 1,
-  "readOrder": ["critical", "impl", "tests"],
+  "readOrder": ["tests", "impl"],
   "chunks": [
     {
-      "area": "critical",
-      "rationale": "Identity-semantics changes that everything else keys on: threadPatch.ts returns prev when a 700ms tick moved nothing (sameTail guards), Sidebar ThreadCard is memo'd (handleSelect via refs, threadTitles reuses its Map), services.listThreads caches the decorated list on threads/projects array identity (replace-only invariant, verified). A wrong bail = stale UI; a missed bail = O(n) per tick.",
+      "area": "tests",
+      "rationale": "Issue #408 contract in threadView.test.tsx: jsdom has no ResizeObserver and no layout, so the suite installs a fake observer and overrides scrollHeight/clientHeight/scrollTop. Pinned + growth must set scrollTop to the new scrollHeight; scrolled-up (onScroll, distance > 80px) must leave scrollTop alone. Watch the tests fail first if the observer is missing.",
       "risks": [
-        "listThreads caching rests on a convention: any future in-place mutation of a thread/project row or array silently serves a stale sidebar. The invariant is commented at the cache.",
-        "mergeThreadPatch returning prev drops patch.seq — safe only because seq lives on ThreadPatch, not ThreadDetail, and gap detection runs in the caller.",
-        "Sidebar handleSelect reads visibleIds/selectAnchor via refs synced in a passive effect — correct for user events, not for synthetic same-tick calls."
+        "The fake observer fires every watched target at once; it does not prove that a nested <img> load grows a direct child box in a real layout engine.",
+        "scrollTop is a writable backing field. A future pin that writes a clamped value (scrollHeight - clientHeight) would fail the first assertion (expects 1400, not 1000)."
       ]
     },
     {
       "area": "impl",
-      "rationale": "Battery/memory trims: store flush compact JSON, lsof TTL 30s + renderer polls 15s/hidden-skip, codeindex parse cache on mtime, stderr tail-capped at 64KB in all five spawners, forecast effect keyed on derived branch/worktree key + refocus refresh, memory-server: mentions(entity_id) index, O(n) applyTokenBudget, statement cache, citation file cache, trust TTL 60s.",
+      "rationale": "ThreadView adds a ResizeObserver after the existing state-driven pin effect. It observes the scroll body and each direct child, reconnects when `timeline` changes, and only writes scrollTop when stickToBottom.current is set and the view is actually detached (distance > 0). No-ops when ResizeObserver is missing (jsdom).",
       "risks": [
-        "A new dev server can take up to ~30s to appear in the Local Servers card (15s poll + 30s main TTL). Deliberate.",
-        "codeindex/listThreads/citation caches share parsed objects across callers — all verified read-only today.",
-        "Merge resolution: quota-wait props/handlers dropped (removed upstream), ChangesPanel hunk UI taken from upstream; my patchLines memo is gone, memo'd DiffLine kept.",
-        "Merge resolution: itinerary rewritten to the fixed-area schema (area must equal ci-config/tests/critical/impl/docs for annotationForArea to attach; rationale truncates at 400 chars)."
-      ]
-    },
-    {
-      "area": "tests",
-      "rationale": "Verified pre-merge: typecheck clean, renderer 1075/1075, memory 201/201, electron 1390/1396 — the 6 failures (checkpoints worktreeBase config, Store quota-wait round-trip keys, verify-gate) reproduce with the diff stashed. Re-run after this merge: quota-wait removal upstream touched App/ThreadView/ipc.",
-      "risks": [
-        "Post-merge suites must confirm the auto-merged quota-wait removal didn't leave dangling references on this branch (tsc is the check).",
-        "No test pins mergeThreadPatch's return-prev identity or the ThreadCard memo — a 'no-op tick returns identical detail' test would harden the riskiest change."
+        "ResizeObserver on an overflow container reports the viewport box, not scrollHeight. Content growth is detected via the children. A descendant that grows inside a fixed-height / overflow:hidden child would not fire.",
+        "A pin that reveals a scrollbar can shrink child width and re-fire the observer. The distance <= 0 guard is what stops a loop.",
+        "timeline is memoized on the whole `detail` object, so a new detail identity rebinds observers even when messages are unchanged. Same churn as the existing pin effect."
       ]
     }
   ],
   "risks": [
-    "BUG FIXED IN FLIGHT: round-1 SQL comment in db.js createSchema contained backticks inside a JS template literal — broke every memory-server module load and shipped in auto-checkpoint ef40717 before round 2 caught it. Fixed (db.js:310-314).",
-    "Environment repaired during this branch: main checkout's core/dist self-symlink/deletion dangled every worktree's core build (rebuilt); memory-server node_modules installed here. 10 of 16 baseline electron failures were this rot, now green.",
-    "Deferred by design: runAgent intra-message deltas (needs ThreadPatch protocol change), 30-min CLAUDE_IDLE_REAP (product call), PR-refresher gh batching, fleet blame cache. Details on #526/#533.",
-    "Merge conflict with main resolved 2026-08-18: 3 files (App.tsx quota-wait props, ThreadView hunk UI, this itinerary). Incoming itinerary chunk was another thread's stale merge notes — dropped."
+    "The state-change pin effect is unchanged. This only covers post-paint growth (images, highlight, webfonts). A reviewer who deletes the new effect and keeps the old one would still have a green suite except the two #408 tests.",
+    "Issue #408 stays open for review; do not close it from this branch."
   ]
 }
