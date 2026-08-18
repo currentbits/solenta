@@ -217,20 +217,9 @@ interface SidebarProps {
     opts?: { provider?: string },
   ) => void | Promise<void>;
   /** Which main view is showing. Defaults to thread so existing callers stay idle. */
-  activeView?:
-    | "thread"
-    | "kanban"
-    | "planboard"
-    | "prs"
-    | "automations"
-    | "activity"
-    | "usage"
-    | "fleet"
-    | "insights"
-    | "digest";
+  activeView?: "thread" | "kanban" | "planboard" | "activity";
   onOpenKanban?: () => void;
   onOpenPlanboard?: () => void;
-  onOpenPrs?: () => void;
   /**
    * Paste a GitHub issue into this project. Omitted by existing tests so
    * the icon button stays hidden.
@@ -240,12 +229,7 @@ interface SidebarProps {
     projectPath: string;
     ref: string;
   }) => Promise<{ ok: true } | { ok: false; reason: string }>;
-  onOpenAutomations?: () => void;
   onOpenActivity?: () => void;
-  onOpenUsage?: () => void;
-  onOpenFleet?: () => void;
-  onOpenInsights?: () => void;
-  onOpenDigest?: () => void;
   /**
    * Freshly created thread to reveal (t3: new work must be visible): the
    * sidebar expands its project group, scrolls the card into view and flashes
@@ -1250,14 +1234,8 @@ export const Sidebar = memo(function Sidebar({
   activeView = "thread",
   onOpenKanban,
   onOpenPlanboard,
-  onOpenPrs,
   onCreateThreadFromIssue,
-  onOpenAutomations,
   onOpenActivity,
-  onOpenUsage,
-  onOpenFleet,
-  onOpenInsights,
-  onOpenDigest,
   revealThreadId = null,
   onRevealHandled,
   conflictForecast = null,
@@ -2239,168 +2217,6 @@ export const Sidebar = memo(function Sidebar({
             </svg>
           </span>
           Planboard
-        </button>
-        <button
-          type="button"
-          className={styles.viewNavRow}
-          data-view-nav="prs"
-          data-active={activeView === "prs" ? "true" : undefined}
-          title="Pull requests"
-          onClick={() => onOpenPrs?.()}
-        >
-          <span className={styles.viewNavIcon} aria-hidden>
-            <svg
-              width="15"
-              height="15"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <circle cx="4" cy="3.5" r="1.75" />
-              <circle cx="4" cy="12.5" r="1.75" />
-              <circle cx="12" cy="5.5" r="1.75" />
-              <path d="M4 5.25v5.5" />
-              <path d="M12 7.25c0 2.5-2.75 3-4.5 3" />
-            </svg>
-          </span>
-          Pull requests
-        </button>
-        <button
-          type="button"
-          className={styles.viewNavRow}
-          data-view-nav="automations"
-          data-active={activeView === "automations" ? "true" : undefined}
-          title="Automations"
-          onClick={() => onOpenAutomations?.()}
-        >
-          <span className={styles.viewNavIcon} aria-hidden>
-            <svg
-              width="15"
-              height="15"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M13.5 8a5.5 5.5 0 1 1-1.61-3.89" />
-              <path d="M13.75 1.75v2.75h-2.75" />
-            </svg>
-          </span>
-          Automations
-        </button>
-        <button
-          type="button"
-          className={styles.viewNavRow}
-          data-view-nav="usage"
-          data-active={activeView === "usage" ? "true" : undefined}
-          title="Usage"
-          onClick={() => onOpenUsage?.()}
-        >
-          <span className={styles.viewNavIcon} aria-hidden>
-            <svg
-              width="15"
-              height="15"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M2.25 13.75v-4" />
-              <path d="M6.25 13.75v-7.5" />
-              <path d="M10.25 13.75v-11" />
-              <path d="M14 13.75h-12" />
-            </svg>
-          </span>
-          Usage
-        </button>
-        <button
-          type="button"
-          className={styles.viewNavRow}
-          data-view-nav="fleet"
-          data-active={activeView === "fleet" ? "true" : undefined}
-          title="Fleet"
-          onClick={() => onOpenFleet?.()}
-        >
-          <span className={styles.viewNavIcon} aria-hidden>
-            <svg
-              width="15"
-              height="15"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M8 2.5v11" />
-              <rect x="2.25" y="6" width="4" height="6.5" rx="0.75" />
-              <rect x="9.75" y="4" width="4" height="8.5" rx="0.75" />
-            </svg>
-          </span>
-          Fleet
-        </button>
-        <button
-          type="button"
-          className={styles.viewNavRow}
-          data-view-nav="insights"
-          data-active={activeView === "insights" ? "true" : undefined}
-          title="Insights"
-          onClick={() => onOpenInsights?.()}
-        >
-          <span className={styles.viewNavIcon} aria-hidden>
-            <svg
-              width="15"
-              height="15"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <circle cx="4" cy="4" r="1.75" />
-              <circle cx="12" cy="4" r="1.75" />
-              <circle cx="8" cy="12" r="1.75" />
-              <path d="M5.5 5.1h5" />
-              <path d="M5.1 5.5 7.2 10.4" />
-              <path d="M10.9 5.5 8.8 10.4" />
-            </svg>
-          </span>
-          Insights
-        </button>
-        <button
-          type="button"
-          className={styles.viewNavRow}
-          data-view-nav="digest"
-          data-active={activeView === "digest" ? "true" : undefined}
-          title="Digest"
-          onClick={() => onOpenDigest?.()}
-        >
-          <span className={styles.viewNavIcon} aria-hidden>
-            <svg
-              width="15"
-              height="15"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <rect x="3.5" y="2.25" width="9" height="11.5" rx="1.25" />
-              <path d="M6 5.5h4" />
-              <path d="M6 8h4" />
-              <path d="M6 10.5h2.5" />
-            </svg>
-          </span>
-          Digest
         </button>
       </nav>
 

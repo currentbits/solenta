@@ -237,15 +237,28 @@ export default function App() {
   // that moves when the thing the pane cares about moves.
   const openKanban = useCallback(() => setView("kanban"), []);
   const openPlanboard = useCallback(() => setView("planboard"), []);
-  const openPrs = useCallback(() => setView("prs"), []);
+  const openPrs = useCallback(() => {
+    setView("prs");
+    setDrawer(null);
+  }, []);
   const openAutomations = useCallback(() => {
     setRepeatDraft(null);
     setView("automations");
+    setDrawer(null);
   }, []);
   const openActivity = useCallback(() => setView("activity"), []);
-  const openUsage = useCallback(() => setView("usage"), []);
-  const openFleet = useCallback(() => setView("fleet"), []);
-  const openInsights = useCallback(() => setView("insights"), []);
+  const openUsage = useCallback(() => {
+    setView("usage");
+    setDrawer(null);
+  }, []);
+  const openFleet = useCallback(() => {
+    setView("fleet");
+    setDrawer(null);
+  }, []);
+  const openInsights = useCallback(() => {
+    setView("insights");
+    setDrawer(null);
+  }, []);
   const loadFailureModes = useCallback(
     () => api.insights.failureModes(),
     [api],
@@ -255,7 +268,10 @@ export default function App() {
     () => api.fleet.evidence({ days: 90 }),
     [api],
   );
-  const openDigest = useCallback(() => setView("digest"), []);
+  const openDigest = useCallback(() => {
+    setView("digest");
+    setDrawer(null);
+  }, []);
   const openSettings = useCallback(() => setSettingsOpen(true), []);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
   const closeChanges = useCallback(() => setChangesOpen(false), []);
@@ -739,16 +755,14 @@ export default function App() {
         providers={providers}
         activeThreadId={selectedThreadId}
         onSelectThread={handleSelectThread}
-        activeView={view}
+        activeView={
+          view === "kanban" || view === "planboard" || view === "activity"
+            ? view
+            : "thread"
+        }
         onOpenKanban={openKanban}
         onOpenPlanboard={openPlanboard}
-        onOpenPrs={openPrs}
-        onOpenAutomations={openAutomations}
         onOpenActivity={openActivity}
-        onOpenUsage={openUsage}
-        onOpenFleet={openFleet}
-        onOpenInsights={openInsights}
-        onOpenDigest={openDigest}
         onCreateThread={handleCreateThread}
         defaultWorktree={settings?.defaultWorktree ?? false}
         revealThreadId={revealThreadId}
@@ -977,6 +991,13 @@ export default function App() {
         addSkill={addSkill}
         removeSkill={removeSkill}
         syncSkills={syncSkills}
+        activeView={view}
+        onOpenPrs={openPrs}
+        onOpenAutomations={openAutomations}
+        onOpenUsage={openUsage}
+        onOpenFleet={openFleet}
+        onOpenInsights={openInsights}
+        onOpenDigest={openDigest}
           />
           </ErrorBoundary>
         </div>
