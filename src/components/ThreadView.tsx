@@ -1904,14 +1904,14 @@ function TeachCard({
   );
 }
 
-function DiffLine({ line }: { line: string }) {
+const DiffLine = memo(function DiffLine({ line }: { line: string }) {
   const kind = diffLineKind(line);
   return (
     <div className={styles.diffLine} data-kind={kind}>
       {line || " "}
     </div>
   );
-}
+});
 
 function ChangesPanel({
   open,
@@ -1943,6 +1943,13 @@ function ChangesPanel({
   const [confirmRevert, setConfirmRevert] = useState<string | null>(null);
   const threadIdRef = useRef(threadId);
   threadIdRef.current = threadId;
+
+  // Split once per diff, not per render: the patch can be thousands of lines
+  // and this panel re-renders on every commit-box keystroke.
+  const patchLines = useMemo(
+    () => (diff ? diff.patch.split("\n") : []),
+    [diff],
+  );
 
   const load = async () => {
     const forThread = threadId;
@@ -2102,7 +2109,7 @@ function ChangesPanel({
           )}
           {diff.patch.trim() !== "" && (
             <div className={styles.patchScroll}>
-              {diff.patch.split("\n").map((line, i) => (
+              {patchLines.map((line, i) => (
                 <DiffLine key={i} line={line} />
               ))}
             </div>

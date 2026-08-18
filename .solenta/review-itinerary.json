@@ -1,27 +1,61 @@
 {
   "version": 1,
-  "readOrder": ["tests", "impl"],
+  "readOrder": ["critical", "impl", "tests", "docs"],
   "chunks": [
     {
-      "area": "tests",
-      "rationale": "Start with test/conflictForecastBadge.test.tsx 'conflict tip readability'. Those three CSS-source assertions are the contract: opaque --card fill, card :has() z-index rise on hover/focus, no muted overlap copy. They failed on the #516 tip (background --bg-elevated, no sibling escape, --text-muted) and pass after the CSS change.",
+      "area": "critical: src/threadPatch.ts",
+      "rationale": "Read first. mergeThreadPatch now returns `prev` itself when a 700ms tick changed nothing, and reuses prev.messages/prev.workLog when the pushed tail is identical. Every downstream memo (ThreadView timeline derivation, AgentsPanel) depends on these identity semantics being exact — a wrong bail shows stale transcript data, a missed bail re-derivates O(n) per tick. Check sameTail's length guard and the six-field identity conjunction in the final return.",
       "risks": [
-        "Tests read the CSS file, not computed paint. They cannot prove Chromium stacking against a real next card.",
-        "The overlap-contrast test is a no-op if the muted rule is simply deleted; that is intentional but a weaker lock than a positive color assertion."
+        "sameTail compares element-wise via JSON.stringify; for a large replaced tail this costs more than the old blind concat on ticks where the tail DID change (streaming message). Net win is assumed because no-op ticks dominate, but a pathological provider that re-sends a huge changed tail every tick pays stringify on top of the rebuild.",
+        "patch.seq is dropped when returning prev — safe only because seq lives on ThreadPatch, not ThreadDetail, and gap detection happens in the caller before merge."
       ]
     },
     {
-      "area": "impl",
-      "rationale": "Then src/components/Sidebar.module.css around .card:has(.conflictWrap:hover) and .conflictTip. The unreadable overlay in the screenshot is this tip hanging onto the next transparent thread card; raising the open card and using --card is the actual fix. No TS/JS change.",
+      "area": "critical: src/components/Sidebar.tsx (ThreadCard memo)",
+      "rationale": "Second. ThreadCard is now memo'd, which only pays off because handleSelect was made ref-stable (visibleIdsRef/selectAnchorRef) and threadTitles reuses its Map when the id->title mapping is unchanged. Verify the ref pattern: refs are synced in a passive effect, so a shift-click always reads post-commit values. Also verify no ThreadCard caller passes freshly-built objects per render (waitStates.get is rebuilt per tick but only affects threads with live workers).",
       "risks": [
-        "CSS modules must hash both .card and .conflictWrap inside :has(). If only .card is localized the rise never applies.",
-        "Kanban columns use overflow:hidden (KanbanView.module.css), so a tall tip can still clip there — pre-existing #516 geometry, not fixed here.",
-        "This worktree cherry-picked 6e10ae9 (#516) onto a diverged base; a PR against origin/main should contain only the readability CSS + tests, not a second copy of #516."
+        "threadTitles ref-cache compares prev.size === threads.length plus per-id title equality; correct for id-unique lists, but it is an impure useMemo (writes threadTitlesRef) — fine in practice, worth a second look if concurrent rendering is ever enabled.",
+        "handleSelect no longer closes over visibleIds/selectAnchor; keyboard shift-range selection correctness now depends on the effect having run — guaranteed for user events, not for synthetic same-tick calls."
+      ]
+    },
+    {
+      "area": "impl: src/App.tsx",
+      "rationale": "Third. Three inline ThreadView props are now useCallback'd (preserving the undefined-when-no-thread semantics at the JSX site, because ThreadView.tsx:3538 gates rendering on prop presence). The conflict-forecast effect is keyed on a derived id:branch:worktreePath key instead of the churning threads array, with a visibilitychange refresh as the staleness safety net.",
+      "risks": [
+        "Forecast now refreshes far less often; git-state changes that keep branch+worktreePath (merges, pulls) are only caught on window refocus, not within a focused session.",
+        "handleResumeQuotaWait/handleSetQuotaWaitAutoResume/handleSettleOpenThread change identity when selectedThreadId changes — intended, but any future consumer must not assume cross-thread identity."
+      ]
+    },
+    {
+      "area": "impl: src/components/AgentsPanel.tsx + ThreadView.tsx",
+      "rationale": "Poll cadence changes: SERVER_POLL_MS 5s->15s (matches the new 30s main-side lsof cache), SUMMARY_POLL_MS 2s->5s, both polls skip while document.hidden, and LocalServersCard bails out of setServers when the list is unchanged. ChangesPanel memoizes the diff patch split and DiffLine is memo'd.",
+      "risks": [
+        "A newly started dev server can take up to ~30s to appear in the Local Servers card (15s poll + 30s main-side cache TTL). Chosen deliberately; lower the main TTL if this feels sluggish.",
+        "setServers unchanged-bail compares pid/port/url/command positionally; relies on lsof output ordering being stable per scan — it is, since both lists come from the same sorted-by-pid parse."
+      ]
+    },
+    {
+      "area": "impl: electron main (store.js, servers.js, codeindex.js, agent/claude/codex/kimi/opencode)",
+      "rationale": "Battery/memory batch. store.js flushes compact JSON instead of pretty-printed (both async and saveNow paths). servers.js lsof cache TTL 5s->30s. codeindex.js caches the parsed index on file mtimeMs+size instead of re-parsing multi-MB JSON per dispatch. All five provider spawners tail-keep stderr at 64KB instead of growing unbounded for the process lifetime.",
+      "risks": [
+        "codeindex cache shares the parsed object across callers — verified consumers are read-only (runner's codeIndexNoteFor, refreshIndex's prev-row scan); a future mutating caller would poison the cache.",
+        "codeindex cache could serve stale data in the astronomically unlikely same-mtimeMs+same-size rewrite; accepted.",
+        "store file is no longer human-friendly; nothing in-repo parses it except JSON.parse.",
+        "stderr diagnostics lose everything before the last 64KB on very noisy CLIs."
+      ]
+    },
+    {
+      "area": "impl: memory-server (db.js, memory.js)",
+      "rationale": "New index idx_mentions_entity ON mentions(entity_id) fixes graphSearch/janitor full scans (IF NOT EXISTS, so existing DBs pick it up on open). applyTokenBudget precomputes per-row stringified costs instead of re-stringifying the remainder per pop (O(n^2) -> O(n)); the char accounting (brackets + items + commas) reproduces estimateTokens(JSON.stringify(...)) exactly, verified against estimateTokens = ceil(len/4).",
+      "risks": [
+        "applyTokenBudget's manual char accounting would silently drift if estimateTokens' divisor ever changes from 4 — the two functions are now coupled; a comment notes the relationship.",
+        "The MCP-server hoist suggested in the audit was REJECTED: SDK 1.12's Protocol.connect asserts single-transport, so a shared McpServer cannot serve concurrent stateless requests; per-request buildServer is the documented pattern and its cost is tool-registration only."
       ]
     }
   ],
   "risks": [
-    "No live Electron hover was driven; verification is the 17-test renderer run plus tsc --noEmit.",
-    "A parent overflow (sidebar list is overflow-y auto, fine; kanban column is hidden) can still clip the tip even after the z-index rise."
+    "No automated test pins the new identity semantics of mergeThreadPatch (returning prev) or the ThreadCard memo — verified by typecheck plus the existing suite (renderer 1075/1075, core 38/38, memory green). The 16 electron-suite failures (checkpoints, orch-server, Store round-trip quota-wait keys, verify-gate, wireClient×webBridge) reproduce identically with the diff stashed: pre-existing environment breakage, not regressions. A regression test for 'no-op tick returns identical detail' would harden the highest-risk change.",
+    "core/dist in this worktree was a symlink to the main checkout whose own dist symlinks to itself (ELOOP, pre-existing breakage); replaced with a real local build in the worktree. The main checkout's core/dist symlink is still broken and untouched.",
+    "Larger audit findings deliberately NOT done here: runAgent O(n^2) full-text stdout redelivery (needs runner-protocol change), pushThreadsChanged full-list broadcast per tick (needs store-level invalidation), CLAUDE_IDLE_REAP_MS 30min held sessions (product trade-off), memory-server findNearDup re-tokenization and citation file-read cache. Tracked as follow-ups in issue #526/#528 comments."
   ]
 }

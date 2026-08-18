@@ -758,10 +758,12 @@ function syncLabel(info: GitSyncInfo): string | null {
   return parts.join(" · ") || "Synced";
 }
 
-const SERVER_POLL_MS = 5_000;
+// Main-side listLocalServers runs a full-system lsof + HTTP probes; the
+// main-process cache TTL is 30s, so polling faster than this only hits cache.
+const SERVER_POLL_MS = 15_000;
 const DEV_SERVER_POLL_MS = 3_000;
 /** Team-view lastActivity refresh while any thread is working. */
-const SUMMARY_POLL_MS = 2_000;
+const SUMMARY_POLL_MS = 5_000;
 
 function formatDevRuntime(startedAt: number, now: number): string {
   const sec = Math.max(0, Math.floor((now - startedAt) / 1000));
@@ -1197,15 +1199,33 @@ export function LocalServersCard({
   useEffect(() => {
     let cancelled = false;
     async function tick() {
+      // A hidden window can't show the card; skip the lsof scan in main.
+      if (document.hidden) return;
       if (!threadId) {
-        if (!cancelled) setServers([]);
+        if (!cancelled) setServers((prev) => (prev.length === 0 ? prev : []));
         return;
       }
       try {
         const list = await listLocalServers(threadId);
-        if (!cancelled) setServers(Array.isArray(list) ? list : []);
+        const next = Array.isArray(list) ? list : [];
+        if (!cancelled) {
+          // Bail on identical lists: a fresh array identity every poll would
+          // re-render the card even when nothing changed.
+          setServers((prev) =>
+            prev.length === next.length &&
+            prev.every(
+              (s, i) =>
+                s.pid === next[i].pid &&
+                s.port === next[i].port &&
+                s.url === next[i].url &&
+                s.command === next[i].command,
+            )
+              ? prev
+              : next,
+          );
+        }
       } catch {
-        if (!cancelled) setServers([]);
+        if (!cancelled) setServers((prev) => (prev.length === 0 ? prev : []));
       }
     }
     void tick();
@@ -2237,7 +2257,10 @@ export function AgentsContent({
       return;
     }
     let cancelled = false;
-    const fetch = () =>
+    const fetch = () => {
+      // Summaries walk every thread's messages in main; a hidden window
+      // can't show the team view, so don't pay for it.
+      if (document.hidden) return;
       listThreadSummaries()
         .then((list) => {
           if (!cancelled) setSummaries(list);
@@ -2245,6 +2268,7 @@ export function AgentsContent({
         .catch(() => {
           if (!cancelled) setSummaries(null);
         });
+    };
     void fetch();
     const working = rosterKey.includes(":working");
     const id = working

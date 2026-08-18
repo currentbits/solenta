@@ -292,6 +292,11 @@ export function createSchema(db) {
       PRIMARY KEY (entry_id, entity_id)
     );
 
+    -- The PK leads with entry_id, so lookups by entity_id (graphSearch's
+    -- `WHERE m.entity_id IN (...)`, the janitor's partnersFor join) would
+    -- full-scan the table per request without this.
+    CREATE INDEX IF NOT EXISTS idx_mentions_entity ON mentions(entity_id);
+
     CREATE INDEX IF NOT EXISTS idx_entities_kind_name ON entities(kind, name COLLATE NOCASE);
 
     CREATE TABLE IF NOT EXISTS janitor_state (

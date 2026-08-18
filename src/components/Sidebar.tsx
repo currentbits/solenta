@@ -444,8 +444,14 @@ function ConflictForecastBadge({
   );
 }
 
-/** Exported for render tests that need a card without the archived-collapse gate. */
-export function ThreadCard({
+/**
+ * Memo'd: during a run main pushes thread updates every 700ms and the parent
+ * list re-renders each tick — without memo every visible card re-renders too.
+ * Unchanged threads keep row identity (patchThreadList), so a shallow compare
+ * skips them. Exported for render tests that need a card without the
+ * archived-collapse gate.
+ */
+export const ThreadCard = memo(function ThreadCard({
   thread,
   slug,
   providers,
@@ -1025,7 +1031,7 @@ export function ThreadCard({
       )}
     </div>
   );
-}
+});
 
 /**
  * Slim settled tail row (t3-style): title + project slug + wrap-up age.
@@ -1431,9 +1437,25 @@ export const Sidebar = memo(function Sidebar({
     }),
     [now, autoSettleAfterDays, autoSettleOnMerge],
   );
+  // Reuse the previous Map when the id→title mapping is unchanged: `threads`
+  // gets a new identity every 700ms stream tick, and a fresh Map here would
+  // bust ThreadCard's memo for every card on every tick.
+  const threadTitlesRef = useRef<Map<string, string>>(new Map());
   const threadTitles = useMemo(() => {
+    const prev = threadTitlesRef.current;
+    let same = prev.size === threads.length;
+    if (same) {
+      for (const t of threads) {
+        if (prev.get(t.id) !== t.title) {
+          same = false;
+          break;
+        }
+      }
+    }
+    if (same) return prev;
     const titles = new Map<string, string>();
     for (const t of threads) titles.set(t.id, t.title);
+    threadTitlesRef.current = titles;
     return titles;
   }, [threads]);
   /** Full-content search results; null means not in active search mode. */
@@ -1805,10 +1827,20 @@ export const Sidebar = memo(function Sidebar({
     return m;
   }, [visibleIds]);
 
+  // Refs so handleSelect stays identity-stable across stream ticks: visibleIds
+  // is rebuilt whenever `threads` changes (every 700ms during a run), and a
+  // fresh handleSelect would bust ThreadCard's memo for every card.
+  const visibleIdsRef = useRef(visibleIds);
+  const selectAnchorRef = useRef(selectAnchor);
+  useEffect(() => {
+    visibleIdsRef.current = visibleIds;
+    selectAnchorRef.current = selectAnchor;
+  });
+
   const handleSelect = useCallback(
     (id: string, opts?: SelectOpts) => {
       if (opts?.shift) {
-        const range = rangeSelectIds(visibleIds, selectAnchor, id);
+        const range = rangeSelectIds(visibleIdsRef.current, selectAnchorRef.current, id);
         setMultiSelected(new Set(range));
         setBatchFeedback(null);
         return;
@@ -1824,7 +1856,7 @@ export const Sidebar = memo(function Sidebar({
       setBatchFeedback(null);
       onSelectThread(id);
     },
-    [visibleIds, selectAnchor, onSelectThread],
+    [onSelectThread],
   );
 
   const clearMulti = useCallback(() => {
