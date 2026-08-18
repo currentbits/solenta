@@ -118,8 +118,6 @@ export default function App() {
     setPinned,
     setSnoozed,
     setMuted,
-    setQuotaWaitAutoResume,
-    resumeQuotaWait,
     renameThread,
     setNotes,
     startSpec,
@@ -135,6 +133,8 @@ export default function App() {
     mergeWorktree,
     removeWorktree,
     fetchDiff,
+    fetchReviewContext,
+    setReviewAccepted,
     commitChanges,
     revertFile,
     suggestCommitMessage,
@@ -943,17 +943,6 @@ export default function App() {
         onSaveWorkflow={saveWorkflow}
         onRemoveWorkflow={removeWorkflow}
         onStopRun={stopRun}
-        onResumeQuotaWait={
-          selectedThreadId
-            ? () => resumeQuotaWait(selectedThreadId)
-            : undefined
-        }
-        onSetQuotaWaitAutoResume={
-          selectedThreadId
-            ? (enabled: boolean | null) =>
-                setQuotaWaitAutoResume(selectedThreadId, enabled)
-            : undefined
-        }
         queuedPrompt={
           selectedThreadId ? (queued[selectedThreadId]?.prompt ?? null) : null
         }
@@ -986,6 +975,8 @@ export default function App() {
         runStats={runStats}
         restoreCheckpoint={restoreCheckpoint}
         onFetchDiff={fetchDiff}
+        onFetchReviewContext={fetchReviewContext}
+        onSetReviewAccepted={setReviewAccepted}
         onCommitChanges={commitChanges}
         onRevertFile={revertFile}
         onSuggestCommitMessage={suggestCommitMessage}

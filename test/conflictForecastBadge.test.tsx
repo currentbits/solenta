@@ -110,8 +110,11 @@ describe("ThreadCard conflict forecast badge", () => {
     assert.ok(badge, "conflict badge must render");
     assert.equal(badge.getAttribute("data-conflict-forecast"), "conflict");
     assert.equal((badge.textContent || "").trim(), "conflict");
-    assert.match(badge.getAttribute("title") || "", /beta work/);
-    assert.match(badge.getAttribute("title") || "", /src\/a\.ts/);
+    const tip = m.query("[data-conflict-tip]");
+    assert.ok(tip, "hover tip must be in the DOM");
+    assert.match(tip.textContent || "", /beta work/);
+    assert.match(tip.textContent || "", /src\/a\.ts/);
+    assert.doesNotMatch(tip.textContent || "", /overlaps/);
     m.unmount();
   });
 
@@ -121,8 +124,10 @@ describe("ThreadCard conflict forecast badge", () => {
     assert.ok(badge, "overlap badge must render");
     assert.equal(badge.getAttribute("data-conflict-forecast"), "overlap");
     assert.equal((badge.textContent || "").trim(), "overlap");
-    assert.match(badge.getAttribute("title") || "", /beta work/);
-    assert.match(badge.getAttribute("title") || "", /src\/a\.ts/);
+    const tip = m.query("[data-conflict-tip]");
+    assert.ok(tip, "hover tip must be in the DOM");
+    assert.match(tip.textContent || "", /overlaps beta work/);
+    assert.match(tip.textContent || "", /src\/a\.ts/);
     m.unmount();
   });
 
@@ -138,9 +143,23 @@ describe("ThreadCard conflict forecast badge", () => {
     assert.ok(badge);
     assert.equal(badge.getAttribute("data-conflict-forecast"), "conflict");
     assert.equal((badge.textContent || "").trim(), "conflict · 2");
-    const title = badge.getAttribute("title") || "";
-    assert.match(title, /beta work/);
-    assert.match(title, /gamma work/);
+    const tip = m.query("[data-conflict-tip]");
+    assert.ok(tip);
+    const lines = [...tip.querySelectorAll("[data-conflict-kind]")].map(
+      (el) => el.getAttribute("data-conflict-kind"),
+    );
+    assert.deepEqual(lines, ["conflict", "overlap"]);
+    assert.match(tip.textContent || "", /beta work/);
+    assert.match(tip.textContent || "", /overlaps gamma work/);
+    m.unmount();
+  });
+
+  it("is keyboard-focusable so the tip is not hover-only", async () => {
+    const m = await card(loudForecast());
+    const badge = m.query("[data-conflict-forecast]");
+    assert.ok(badge);
+    assert.equal(badge.getAttribute("tabindex"), "0");
+    assert.match(badge.getAttribute("aria-label") || "", /beta work/);
     m.unmount();
   });
 });

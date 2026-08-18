@@ -4,7 +4,11 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { pairsForThread } from "../src/conflictForecast.ts";
+import {
+  forecastHoverLines,
+  formatForecastHoverLine,
+  pairsForThread,
+} from "../src/conflictForecast.ts";
 import type { ConflictForecast, ConflictPairInfo } from "../src/shared/ipc.ts";
 
 function pair(
@@ -39,5 +43,61 @@ describe("pairsForThread", () => {
   it("returns [] when the thread is in no pair", () => {
     const only = pair({ threadA: "t2", threadB: "t3" });
     assert.deepEqual(pairsForThread(forecast([only]), "t1"), []);
+  });
+});
+
+describe("forecastHoverLines", () => {
+  const titles = new Map([
+    ["t2", "beta work"],
+    ["t3", "gamma work"],
+  ]);
+
+  it("names the other thread and lists colliding files", () => {
+    const lines = forecastHoverLines(
+      [
+        pair({
+          threadA: "t1",
+          threadB: "t2",
+          overlap: ["src/a.ts", "src/b.ts"],
+          conflicts: ["src/a.ts"],
+        }),
+      ],
+      "t1",
+      titles,
+    );
+    assert.equal(lines.length, 1);
+    assert.equal(formatForecastHoverLine(lines[0]!), "beta work — src/a.ts");
+  });
+
+  it("marks auto-mergeable overlap as quieter copy", () => {
+    const lines = forecastHoverLines(
+      [
+        pair({
+          threadA: "t1",
+          threadB: "t3",
+          overlap: ["src/c.ts"],
+          conflicts: [],
+        }),
+      ],
+      "t1",
+      titles,
+    );
+    assert.equal(lines[0]!.kind, "overlap");
+    assert.equal(
+      formatForecastHoverLine(lines[0]!),
+      "overlaps gamma work — src/c.ts",
+    );
+  });
+
+  it("caps long file lists", () => {
+    const files = ["a", "b", "c", "d", "e"];
+    const lines = forecastHoverLines(
+      [pair({ threadA: "t1", threadB: "t2", overlap: files, conflicts: files })],
+      "t1",
+      titles,
+    );
+    assert.deepEqual(lines[0]!.files, ["a", "b", "c", "d"]);
+    assert.equal(lines[0]!.extra, 1);
+    assert.match(formatForecastHoverLine(lines[0]!), /\+1 more/);
   });
 });

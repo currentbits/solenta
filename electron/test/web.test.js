@@ -469,6 +469,7 @@ describe("one map, two transports + packaging", () => {
     );
     assert.match(sh, /electron\/\*\.js/);
     assert.match(sh, /node_modules\/ws/);
+    assert.match(sh, /cross-spawn/);
     assert.ok(fs.existsSync(path.join(__dirname, "../webBridge.js")));
     assert.ok(fs.existsSync(path.join(__dirname, "../webServer.js")));
     const verify = fs.readFileSync(
@@ -476,6 +477,7 @@ describe("one map, two transports + packaging", () => {
       "utf8",
     );
     assert.match(verify, /node_modules\/ws/);
+    assert.match(verify, /cross-spawn/);
     assert.match(verify, /webBridge\.js/);
   });
 

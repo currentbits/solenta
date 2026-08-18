@@ -210,7 +210,6 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     mcpServers: [],
     defaultWorktree: false,
     updateChannel: null,
-    quotaWaitAutoResume: true,
     ...(opts.settings ?? {}),
   };
   const ALL_SKILL_TARGETS: SkillTarget[] = [
@@ -404,16 +403,6 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
             );
           }
           next.updateChannel = v ?? null;
-        }
-        if (Object.prototype.hasOwnProperty.call(p, "quotaWaitAutoResume")) {
-          const v = p.quotaWaitAutoResume;
-          if (typeof v !== "boolean") {
-            calls.push({ channel: "settings.set", args: [patch] });
-            return Promise.reject(
-              new Error("quotaWaitAutoResume must be a boolean"),
-            );
-          }
-          next.quotaWaitAutoResume = v;
         }
         settingsState = next;
         return rec("settings.set", [patch], { ...settingsState });
@@ -887,25 +876,6 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         }
         return Promise.resolve(next);
       },
-      setQuotaWaitAutoResume: (input: unknown) => {
-        const i = input as { threadId: string; enabled: boolean | null };
-        calls.push({ channel: "threads.setQuotaWaitAutoResume", args: [input] });
-        const existing = threads.find((t) => t.id === i.threadId);
-        if (!existing) {
-          return Promise.reject(new Error(`Unknown thread: ${i.threadId}`));
-        }
-        if (i.enabled !== true && i.enabled !== false && i.enabled !== null) {
-          return Promise.reject(
-            new Error("quotaWaitAutoResume must be true, false, or null"),
-          );
-        }
-        const next: ThreadInfo = {
-          ...existing,
-          quotaWaitAutoResume: i.enabled,
-        };
-        threads = threads.map((t) => (t.id === i.threadId ? next : t));
-        return Promise.resolve(next);
-      },
       /** Honest mute: flips the flag in place, never bumps updatedAt. */
       setMuted: (input: unknown) => {
         const i = input as { threadId: string; muted: boolean };
@@ -1226,8 +1196,6 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           },
         ),
       stop: (input: unknown) => rec("runs.stop", [input], undefined),
-      resumeQuotaWait: (input: unknown) =>
-        rec("runs.resumeQuotaWait", [input], { runId: "r-quota" }),
     },
     git: {
       status: (projectId: string) =>
@@ -1243,6 +1211,14 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           patch: "",
           truncated: false,
         } as DiffResult),
+      reviewContext: (input: unknown) =>
+        rec("git.reviewContext", [input], {
+          annotation: null,
+          symbols: [],
+          acceptedHunks: [],
+        }),
+      setReviewAccepted: (input: unknown) =>
+        rec("git.setReviewAccepted", [input], thread()),
       commit: (input: unknown) =>
         rec("git.commit", [input], { subject: "test commit" }),
       revertFile: (input: unknown) =>

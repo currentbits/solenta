@@ -1,0 +1,175 @@
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 0 2px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.title {
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.toggle {
+  font-size: 11px;
+  font-weight: 550;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.toggle[aria-pressed="true"] {
+  border-color: var(--blue-border);
+  background: var(--blue-soft);
+  color: var(--text);
+}
+
+.hardStop {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  background: rgba(251, 191, 36, 0.1);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.hardStop strong {
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--amber);
+}
+
+.paths {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.mismatch {
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--blue-border);
+  background: var(--blue-soft);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.reuse,
+.annotation {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--card);
+  border: 1px solid var(--border-soft);
+  font-size: 12px;
+  color: var(--text);
+}
+
+.reuse strong,
+.annotation strong {
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.reuse ul,
+.annotation ul,
+.risks {
+  margin: 0;
+  padding-left: 16px;
+}
+
+.reuse code {
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.more,
+.readOrder,
+.hunkMeta {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+
+.steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.steps li {
+  display: grid;
+  grid-template-columns: 16px minmax(0, auto) minmax(0, 1fr);
+  gap: 8px;
+  align-items: baseline;
+  font-size: 12px;
+}
+
+.stepN {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+}
+
+.stepTitle {
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.stepDetail {
+  color: var(--text-muted);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chunkHead {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px 0 2px;
+}
+
+.chunkTitle {
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.chunkWhy,
+.chunkRisk {
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+
+.chunkRisk {
+  color: var(--amber);
+}
