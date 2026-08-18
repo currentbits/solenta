@@ -33,7 +33,9 @@ async function boot(fake: FakeCoder) {
 
 /** Click the sidebar's plain "New thread" button (no explicit mode). */
 async function clickNewThread(m: Awaited<ReturnType<typeof boot>>) {
-  const btn = m.query('button[aria-label^="New thread in"]');
+  const btn = m.query(
+    'button[aria-label^="New thread in"]:not([data-new-thread-in])',
+  );
   assert.ok(btn, "sidebar has a plain New thread button");
   await inAct(() => btn.click());
 }
@@ -111,6 +113,34 @@ describe("plain New thread mode resolution", () => {
     >;
     assert.equal(input.orchestrate, undefined);
     assert.equal(input.worktree, undefined);
+    m.unmount();
+  });
+
+  it("breadcrumb slug uses the same default-mode create path (issue #445)", async () => {
+    const fake = createFakeCoder({
+      settings: {
+        dailyBudgetUsd: null,
+        orchestrationBudgetUsd: null,
+        autoSettleAfterDays: 3,
+        mcpServers: [],
+        defaultWorktree: true,
+        defaultOrchestrate: false,
+        updateChannel: null,
+      },
+    });
+    const m = await boot(fake);
+    await m.flush();
+    const slug = m.query("[data-new-thread-in]");
+    assert.ok(slug, "open thread breadcrumb is New thread in {slug}");
+    await inAct(() => (slug as HTMLButtonElement).click());
+
+    const input = fake.of("threads.create")[0].args[0] as Record<
+      string,
+      unknown
+    >;
+    assert.equal(input.projectId, "p1");
+    assert.equal(input.worktree, true);
+    assert.equal(input.orchestrate, undefined);
     m.unmount();
   });
 });
