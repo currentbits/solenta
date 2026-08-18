@@ -5,7 +5,7 @@
 // them through cmd.exe with correct escaping, which matters because the
 // prompt travels in argv (#442).
 const spawn = require("cross-spawn");
-const { killTree } = require("./proc.js");
+const { killTree, agentSpawnOptions } = require("./proc.js");
 
 const SIGKILL_AFTER_MS = 3000;
 
@@ -77,13 +77,15 @@ function runCodex(opts) {
 
   let child;
   try {
-    child = spawn(binary, args, {
-      cwd,
-      shell: false,
-      detached: true,
-      stdio: ["ignore", "pipe", "pipe"],
-      ...(envExtra ? { env: { ...process.env, ...envExtra } } : {}),
-    });
+    child = spawn(
+      binary,
+      args,
+      agentSpawnOptions({
+        cwd,
+        stdio: ["ignore", "pipe", "pipe"],
+        env: envExtra ? { ...process.env, ...envExtra } : undefined,
+      }),
+    );
   } catch (err) {
     const error = err instanceof Error ? err : new Error(String(err));
     if (typeof onError === "function") onError(error);

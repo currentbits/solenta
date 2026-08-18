@@ -24,6 +24,8 @@ const WIN32_FILES = [
   "electron/test/sandbox.test.js", // sandbox resolution (platform injected)
   "electron/test/which-platform.test.js", // defaultWhich + cross-spawn source
   "electron/test/fake-bin.test.js", // the .cmd wrapper contract
+  "electron/test/proc.test.js", // agentSpawnOptions win32 attach (#480)
+  "electron/test/claude-spawn.test.js", // .cmd + runClaude/runCodex parse (#480)
   "electron/test/budget-spend.test.js",
   "electron/test/codex.test.js",
   "electron/test/context-usage.test.js",
