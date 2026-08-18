@@ -362,11 +362,12 @@ describe("clearMissingWorktree (worktree deleted behind our back)", () => {
     const thread = store.getThread(threadId);
     assert.equal(thread.worktreePath, null);
     assert.equal(thread.branch, null);
+    assert.equal(thread.pendingWorktree, true);
   });
 
-  // The bug: spawn() into a missing cwd fails as "spawn kimi ENOENT", so
-  // every turn on such a thread died looking like a missing CLI (#74).
-  it("startRun falls back to the project folder and says so", async () => {
+  // #74 was spawn-into-missing-cwd looking like a missing CLI. #511 forbids
+  // fixing that by running in the project folder. Rematerialize instead.
+  it("startRun rematerializes a missing worktree instead of using the project folder", async () => {
     const prevSimulate = process.env.CODER_SIMULATE;
     process.env.CODER_SIMULATE = "1";
     let runner = null;
@@ -384,13 +385,23 @@ describe("clearMissingWorktree (worktree deleted behind our back)", () => {
       const { threadId, worktreePath } = threadWithRemovedWorktree("Merged");
       await runner.startRun({ threadId, prompt: "Keep going" });
 
-      assert.equal(store.getThread(threadId).worktreePath, null);
+      const after = store.getThread(threadId);
+      assert.ok(after.worktreePath, "must rematerialize a worktree");
+      assert.ok(fs.existsSync(after.worktreePath));
+      assert.notEqual(after.worktreePath, repo);
       const events = store
         .getMessages(threadId)
         .filter((m) => m.role === "event");
       assert.ok(
-        events.some((m) => String(m.text).includes(worktreePath)),
-        `expected an event naming ${worktreePath}, got ${JSON.stringify(events.map((m) => m.text))}`,
+        !events.some((m) =>
+          String(m.text).includes("running in the project folder"),
+        ),
+        `must not fall back to the checkout; events=${JSON.stringify(events.map((m) => m.text))}`,
+      );
+      assert.ok(
+        after.worktreePath === worktreePath ||
+          fs.existsSync(after.worktreePath),
+        "new or reused worktree path must exist",
       );
     } finally {
       if (runner) runner.stopAll();

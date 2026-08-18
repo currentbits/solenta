@@ -861,15 +861,21 @@ async function startWorkflowRun(deps) {
   assertTemplateProvidersAvailable(template);
 
   const runId = randomUUID();
-  // Same stale-worktree guard as startRun: a folder removed outside the app
-  // would make every phase fail with "spawn <cli> ENOENT".
+  // Same stale-worktree guard as startRun: a folder removed outside the
+  // app would make every phase fail with "spawn <cli> ENOENT". Never fall
+  // back to the project checkout — isolation loss is worse than ENOENT (#511).
   const { clearMissingWorktree } = require("./worktrees.js");
   const droppedWorktree = clearMissingWorktree({
     store,
     threadId,
     broadcast: pushFn,
   });
-  const cwd = (droppedWorktree ? null : thread.worktreePath) || project.path;
+  if (droppedWorktree) {
+    throw new Error(
+      `Worktree folder is gone (${droppedWorktree}); refusing to run in the project checkout.`,
+    );
+  }
+  const cwd = thread.worktreePath || project.path;
   const permissionMode = thread.permissionMode || "default";
   const seed = hashSeed(threadId, runId);
   const name =
@@ -878,14 +884,6 @@ async function startWorkflowRun(deps) {
       : `WF-${seed}`;
 
   appendMessage(threadId, "user", prompt, runId);
-  if (droppedWorktree) {
-    appendMessage(
-      threadId,
-      "event",
-      `Worktree folder is gone (${droppedWorktree}); running in the project folder instead.`,
-      runId,
-    );
-  }
 
   let title = thread.title;
   if (title === "New Thread") {
