@@ -45,8 +45,10 @@ const DEDUP_SCAN_CAP = 500
 
 const EMBED_BACKFILL_CAP = 64
 const AGING_RUN_DAYS = 7
+const DISTILL_RUN_DAYS = 14
 const FAT_CONVENTION_CHARS = 1500
 const MAINTENANCE_LIST_LIMIT = 20
+const DISTILL_NOTES_LIMIT = 5
 // Trust map is cheap to rebuild (one GROUP BY) and must not be per-row.
 // Feedback is the evidence that moves the number, so it drops the cache;
 // a short TTL covers invalidate / raw SQL without touching those writers.
@@ -1606,6 +1608,186 @@ export class Memory {
         instruction:
           'Per-agent trust is derived from helpful/harmful/invalidated evidence. Suspect agents (trust < 0.8) write lower-trust memories; review their live entries before acting on them.',
       },
+    }
+  }
+
+  /**
+   * Read-only evidence pack for memory_distill. The server has no LLM: it
+   * does not write strategies. The caller writes type:'strategy' via store.
+   * Stateless — no watermark, no markAccessed, no janitor_state.
+   * @param {{ project?: string, now?: number }} [opts]
+   */
+  distill(opts = {}) {
+    const project = canonicalProject(cleanOptional(opts.project))
+    const now = opts.now ?? Date.now()
+    const runCutoff = new Date(now - DISTILL_RUN_DAYS * 86_400_000).toISOString()
+
+    const failureTotal = this.db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM entries
+         WHERE ${liveSql()} AND ${projectScopeSql()}
+           AND (harmful_count > 0 OR (type = 'task' AND status = 'abandoned'))`,
+      )
+      .get(project, project).n
+
+    const harmful = this.db
+      .prepare(
+        `SELECT id, type, title, body, project, harmful_count
+         FROM entries
+         WHERE ${liveSql()} AND ${projectScopeSql()} AND harmful_count > 0
+         ORDER BY harmful_count DESC, updated_at DESC
+         LIMIT ?`,
+      )
+      .all(project, project, MAINTENANCE_LIST_LIMIT)
+
+    const abandoned = this.db
+      .prepare(
+        `SELECT id, type, title, body, project, status
+         FROM entries
+         WHERE ${liveSql()} AND ${projectScopeSql()}
+           AND type = 'task' AND status = 'abandoned'
+         ORDER BY updated_at DESC
+         LIMIT ?`,
+      )
+      .all(project, project, MAINTENANCE_LIST_LIMIT)
+
+    const failureItems = []
+    const seenFail = new Set()
+    for (const r of harmful) {
+      seenFail.add(r.id)
+      failureItems.push({
+        id: r.id,
+        type: r.type,
+        title: r.title,
+        excerpt: excerptFromBody(r.body),
+        project: r.project,
+        kind: 'harmful',
+        harmful_count: r.harmful_count,
+        notes: [],
+      })
+    }
+    for (const r of abandoned) {
+      if (seenFail.has(r.id)) continue
+      if (failureItems.length >= MAINTENANCE_LIST_LIMIT) break
+      seenFail.add(r.id)
+      failureItems.push({
+        id: r.id,
+        type: r.type,
+        title: r.title,
+        excerpt: excerptFromBody(r.body),
+        project: r.project,
+        kind: 'abandoned',
+        status: r.status,
+      })
+    }
+
+    const noteIds = failureItems.filter((i) => i.kind === 'harmful').map((i) => i.id)
+    if (noteIds.length) {
+      const place = noteIds.map(() => '?').join(',')
+      const notes = this.db
+        .prepare(
+          `SELECT entry_id, verdict, note, created_at FROM feedback_log
+           WHERE entry_id IN (${place})
+           ORDER BY created_at DESC`,
+        )
+        .all(...noteIds)
+      const byEntry = new Map()
+      for (const n of notes) {
+        const list = byEntry.get(n.entry_id) ?? []
+        if (list.length >= DISTILL_NOTES_LIMIT) continue
+        list.push({ verdict: n.verdict, note: n.note, created_at: n.created_at })
+        byEntry.set(n.entry_id, list)
+      }
+      for (const item of failureItems) {
+        if (item.kind === 'harmful') item.notes = byEntry.get(item.id) ?? []
+      }
+    }
+
+    const successTotal = this.db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM entries
+         WHERE ${liveSql()} AND ${projectScopeSql()}
+           AND (helpful_count > 0 OR (type = 'run' AND created_at >= ?))`,
+      )
+      .get(project, project, runCutoff).n
+
+    const helpful = this.db
+      .prepare(
+        `SELECT id, type, title, body, project, helpful_count, created_at
+         FROM entries
+         WHERE ${liveSql()} AND ${projectScopeSql()} AND helpful_count > 0
+         ORDER BY helpful_count DESC, created_at DESC
+         LIMIT ?`,
+      )
+      .all(project, project, MAINTENANCE_LIST_LIMIT)
+
+    const recentRuns = this.db
+      .prepare(
+        `SELECT id, type, title, body, project, created_at
+         FROM entries
+         WHERE ${liveSql()} AND ${projectScopeSql()}
+           AND type = 'run' AND created_at >= ?
+         ORDER BY created_at DESC
+         LIMIT ?`,
+      )
+      .all(project, project, runCutoff, MAINTENANCE_LIST_LIMIT)
+
+    const successItems = []
+    const seenOk = new Set()
+    for (const r of helpful) {
+      seenOk.add(r.id)
+      successItems.push({
+        id: r.id,
+        type: r.type,
+        title: r.title,
+        excerpt: excerptFromBody(r.body),
+        project: r.project,
+        kind: 'helpful',
+        helpful_count: r.helpful_count,
+        created_at: r.created_at,
+      })
+    }
+    for (const r of recentRuns) {
+      if (seenOk.has(r.id)) continue
+      if (successItems.length >= MAINTENANCE_LIST_LIMIT) break
+      seenOk.add(r.id)
+      successItems.push({
+        id: r.id,
+        type: r.type,
+        title: r.title,
+        excerpt: excerptFromBody(r.body),
+        project: r.project,
+        kind: 'run',
+        created_at: r.created_at,
+      })
+    }
+
+    const existingTotal = this.db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM entries
+         WHERE ${liveSql()} AND ${projectScopeSql()} AND type = 'strategy'`,
+      )
+      .get(project, project).n
+
+    const existingItems = this.db
+      .prepare(
+        `SELECT id, title FROM entries
+         WHERE ${liveSql()} AND ${projectScopeSql()} AND type = 'strategy'
+         ORDER BY importance DESC, created_at DESC
+         LIMIT ?`,
+      )
+      .all(project, project, MAINTENANCE_LIST_LIMIT)
+      .map((r) => ({ id: r.id, title: r.title }))
+
+    return {
+      failures: { total: failureTotal, items: failureItems },
+      successes: { total: successTotal, items: successItems },
+      existing: { total: existingTotal, items: existingItems },
+      instructions: [
+        'Write each strategy as a short "when doing X, do/don\'t Y" rule with memory_store({ type: \'strategy\' }).',
+        'Prefer rules learned from the failures — they carry most of the gain.',
+        'Near-duplicates are refused by the existing dedup so restating a known strategy is a no-op.',
+      ],
     }
   }
 
