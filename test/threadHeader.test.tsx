@@ -313,6 +313,13 @@ describe("sync pill", () => {
     let syncReads = 0;
     const m = await mount(
       view({
+        detail: detail({
+          thread: thread({
+            prNumber: 4,
+            prUrl: "https://github.com/acme/repo/pull/4",
+            prState: "OPEN",
+          }),
+        }),
         gitFetch: async () => {},
         gitSyncInfo: async () => {
           syncReads += 1;

@@ -66,7 +66,7 @@ describe("suggestNextGitAction", () => {
     assert.equal(action.label, "Commit");
   });
 
-  it("pushes unpushed commits before offering Create PR or merge", () => {
+  it("pushes unpushed commits on an open PR before merge", () => {
     const action = suggestNextGitAction(
       input({
         sync: ahead1,
@@ -80,12 +80,34 @@ describe("suggestNextGitAction", () => {
     assert.equal(action.title, "Push 1 commit to origin");
   });
 
-  it("pushes a worktree that has never been published", () => {
+  it("pushes an unpublished worktree that already has an open PR", () => {
     const action = suggestNextGitAction(
-      input({ sync: noUpstream, hasWorktree: true }),
+      input({
+        sync: noUpstream,
+        hasWorktree: true,
+        prNumber: 4,
+        prState: "OPEN",
+        checks: { ok: true, checks: [] },
+      }),
     );
     assert.equal(action.kind, "push");
     assert.equal(action.title, "Push this branch to origin");
+  });
+
+  it("offers Create PR on an unpublished worktree with no PR", () => {
+    const action = suggestNextGitAction(
+      input({ sync: noUpstream, hasWorktree: true }),
+    );
+    assert.equal(action.kind, "create-pr");
+    assert.equal(action.label, "Create PR");
+    assert.equal(action.title, "Push this branch and open a pull request");
+    assert.equal(action.primary, true);
+  });
+
+  it("offers Create PR when the branch is ahead but has no PR", () => {
+    const action = suggestNextGitAction(input({ sync: ahead1, prNumber: null }));
+    assert.equal(action.kind, "create-pr");
+    assert.equal(action.title, "Push this branch and open a pull request");
   });
 
   it("does not invent a first push on a main checkout with no upstream", () => {
@@ -99,11 +121,21 @@ describe("suggestNextGitAction", () => {
     const action = suggestNextGitAction(input({ sync: synced, prNumber: null }));
     assert.equal(action.kind, "create-pr");
     assert.equal(action.label, "Create PR");
+    assert.equal(action.title, "Open a pull request for this branch");
     assert.equal(action.primary, true);
   });
 
-  it("waits for sync before offering Create PR", () => {
-    const action = suggestNextGitAction(input({ sync: null }));
+  it("offers Create PR on a worktree even before sync loads", () => {
+    const action = suggestNextGitAction(input({ sync: null, hasWorktree: true }));
+    assert.equal(action.kind, "create-pr");
+    assert.equal(action.label, "Create PR");
+    assert.equal(action.title, "Push this branch and open a pull request");
+  });
+
+  it("does not invent Create PR on a main checkout while sync is unknown", () => {
+    const action = suggestNextGitAction(
+      input({ sync: null, hasWorktree: false }),
+    );
     assert.equal(action.kind, "idle");
   });
 

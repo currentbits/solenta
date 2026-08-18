@@ -142,8 +142,21 @@ function view(props: {
 afterEach(unmountAll);
 
 describe("next-git-action button", () => {
-  it("hides when there is no next step (clean, no sync, no PR)", async () => {
+  it("offers Create PR on a worktree when sync has not loaded", async () => {
     const m = await mount(view({}));
+    await m.flush();
+    const btn = m.query('[data-next-git-action="create-pr"]');
+    assert.ok(btn, "create-pr action");
+    assert.equal((btn!.textContent || "").trim(), "Create PR");
+    m.unmount();
+  });
+
+  it("hides on a main checkout with no sync and no PR", async () => {
+    const m = await mount(
+      view({
+        detail: detail({ thread: thread({ worktreePath: null }) }),
+      }),
+    );
     await m.flush();
     assert.equal(m.query("[data-next-git-action]"), null);
     m.unmount();
@@ -183,10 +196,17 @@ describe("next-git-action button", () => {
     m.unmount();
   });
 
-  it("pushes unpushed commits", async () => {
+  it("pushes unpushed commits on an open PR", async () => {
     const pushes: string[] = [];
     const m = await mount(
       view({
+        detail: detail({
+          thread: thread({
+            prNumber: 4,
+            prUrl: "https://github.com/acme/repo/pull/4",
+            prState: "OPEN",
+          }),
+        }),
         gitSyncInfo: async () => ({ hasUpstream: true, ahead: 2, behind: 0 }),
         onPush: async () => {
           pushes.push("origin");
@@ -201,6 +221,40 @@ describe("next-git-action button", () => {
     await m.click(btn);
     await m.flush();
     assert.deepEqual(pushes, ["origin"]);
+    m.unmount();
+  });
+
+  it("creates a PR on an unpublished worktree without a prior Push", async () => {
+    const created: Array<{ title: string }> = [];
+    const pushes: string[] = [];
+    const m = await mount(
+      view({
+        gitSyncInfo: async () => ({ hasUpstream: false }),
+        onPush: async () => {
+          pushes.push("origin");
+          return { remote: "origin", branch: "coder/next-action-abc123" };
+        },
+        onCreatePr: async (input) => {
+          created.push({ title: input.title });
+          return {
+            number: 42,
+            url: "https://github.com/acme/repo/pull/42",
+            state: "OPEN",
+            branch: "coder/next-action-abc123",
+            created: true,
+          };
+        },
+      }),
+    );
+    await m.flush();
+    const btn = m.query('[data-next-git-action="create-pr"]');
+    assert.ok(btn, "create-pr action");
+    assert.ok(btn!.hasAttribute("data-create-pr"));
+    assert.equal((btn!.textContent || "").trim(), "Create PR");
+    await m.click(btn);
+    await m.flush();
+    assert.deepEqual(created, [{ title: "next action" }]);
+    assert.deepEqual(pushes, [], "header does not push first; createPr does");
     m.unmount();
   });
 
