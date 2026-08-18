@@ -151,6 +151,20 @@ export interface ThreadInfo {
    * it stale, but the working guard keeps a stale flag invisible).
    */
   awaitingInput?: boolean;
+  /**
+   * Epoch ms of the last stream event the provider CLI produced on the active
+   * run (issue #314). Absent/null until the run emits anything. Feeds the turn
+   * watchdog; a run whose CLI hangs keeps runStartedAt but stops moving this.
+   */
+  lastEventAt?: number | null;
+  /**
+   * Epoch ms when the turn watchdog flagged the active run as quiet — no
+   * stream event for the stall window, and not awaitingInput (issue #314).
+   * Null/absent = healthy. ADVISORY ONLY: the run is not killed, so a
+   * slow-but-alive CLI clears this by emitting anything. Only meaningful
+   * while status is "working".
+   */
+  stalledAt?: number | null;
   /** Archived threads keep their history but are hidden from the default sidebar list. */
   archived: boolean;
   /**
@@ -208,7 +222,17 @@ export interface ThreadInfo {
    * next settle. Persisted on the thread so a reload cannot drop it and the
    * sidebar can show a queue pending on an unselected thread.
    */
-  queued: { prompt: string; attachments?: AttachmentInfo[] } | null;
+  queued: {
+    prompt: string;
+    attachments?: AttachmentInfo[];
+    /**
+     * Why the last delivery attempt failed (issue #314). Set by the main
+     * process when draining the queue at a run terminal throws; the prompt
+     * STAYS queued so nothing is lost and the composer can offer a retry.
+     * Cleared on the next attempt.
+     */
+    error?: string | null;
+  } | null;
   /**
    * Epoch ms of the last time the user LOOKED at this thread. Stamped by the
    * main process inside threads.get — selecting a thread IS visiting it; no
@@ -447,6 +471,8 @@ export interface ThreadSummaryInfo {
   runStartedAt: number | null;
   /** Mirrors ThreadInfo: a worker stalled on a permission prompt. */
   awaitingInput?: boolean;
+  /** Mirrors ThreadInfo: the turn watchdog flagged this run as quiet (issue #314). */
+  stalledAt?: number | null;
   /**
    * First line of the thread's last assistant message and its timestamp;
    * null when the thread has no assistant message yet.
