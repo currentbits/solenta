@@ -373,7 +373,7 @@ export interface ThreadInfo {
   /**
    * Spec mode (issue #269): the thread writes three gated artifacts before it
    * writes code. Absent = normal thread. Set by threads.startSpec, advanced
-   * one stage per approval in threads.reviewSpec.
+   * one stage per approval in threads.reviewSpec, cleared by threads.stopSpec.
    */
   spec?: ThreadSpec;
 }
@@ -1768,6 +1768,12 @@ export interface CoderApi {
      * Idempotent — calling it on a spec thread returns it unchanged.
      */
     startSpec(input: { threadId: string }): Promise<ThreadInfo>;
+    /**
+     * Turn spec mode off (issue #500): drops thread.spec. Idempotent —
+     * a non-spec thread is returned unchanged. Does not start a run and
+     * does not delete artifacts on disk.
+     */
+    stopSpec(input: { threadId: string }): Promise<ThreadInfo>;
     /**
      * Answer the stage gate. "approve" advances to the next stage
      * (requirements → design → tasks → build); "revise" keeps the stage and

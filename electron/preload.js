@@ -127,6 +127,7 @@ const coder = {
     setMuted: (input) => invoke("threads:setMuted", input),
     setNotes: (input) => invoke("threads:setNotes", input),
     startSpec: (input) => invoke("threads:startSpec", input),
+    stopSpec: (input) => invoke("threads:stopSpec", input),
     reviewSpec: (input) => invoke("threads:reviewSpec", input),
     specArtifact: (input) => invoke("threads:specArtifact", input),
     rename: (input) => invoke("threads:rename", input),

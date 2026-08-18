@@ -374,6 +374,7 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
       setMuted: (input) => call<ThreadInfo>("threads:setMuted", input),
       setNotes: (input) => call<ThreadInfo>("threads:setNotes", input),
       startSpec: (input) => call<ThreadInfo>("threads:startSpec", input),
+      stopSpec: (input) => call<ThreadInfo>("threads:stopSpec", input),
       reviewSpec: (input) => call<ThreadInfo>("threads:reviewSpec", input),
       specArtifact: (input) =>
         call<{ path: string; text: string | null }>(

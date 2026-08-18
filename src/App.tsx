@@ -121,6 +121,7 @@ export default function App() {
     renameThread,
     setNotes,
     startSpec,
+    stopSpec,
     reviewSpec,
     specArtifact,
     deleteThread,
@@ -389,6 +390,13 @@ export default function App() {
       void startSpec(threadId);
     },
     [startSpec],
+  );
+
+  const handleStopSpec = useCallback(
+    (threadId: string) => {
+      void stopSpec(threadId);
+    },
+    [stopSpec],
   );
 
   const handleReviewSpec = useCallback(
@@ -925,6 +933,7 @@ export default function App() {
         onDistillWorkflow={handleDistillWorkflow}
         onSetNotes={handleSetNotes}
         onStartSpec={handleStartSpec}
+        onStopSpec={handleStopSpec}
         onReviewSpec={handleReviewSpec}
         onSpecArtifact={specArtifact}
         onDeleteThread={deleteThread}
