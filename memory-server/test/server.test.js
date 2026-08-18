@@ -137,6 +137,7 @@ describe('HTTP auth and health', () => {
     assert.deepEqual(names, [
       'memory_bootstrap',
       'memory_delete',
+      'memory_distill',
       'memory_feedback',
       'memory_get',
       'memory_maintenance',

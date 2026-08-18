@@ -196,6 +196,16 @@ function seedMemoryEntries(t0: number): MemoryRow[] {
       createdAt: hours(20),
       updatedAt: hours(2),
     },
+    {
+      id: "mem-seed-7",
+      type: "strategy",
+      title: "When a worktree merge is dirty, stash by path then retry",
+      body: "When merging a worktree into a dirty main checkout, do not commit the WIP. Stash by path, merge, then stash pop. Untracked files also trip the dirty guard.",
+      project: "coder",
+      importance: 4,
+      createdAt: hours(8),
+      updatedAt: hours(3),
+    },
   ];
 }
 
@@ -1955,9 +1965,11 @@ function buildDevCoder(): CoderApi {
           importance:
             input.type === "convention"
               ? 5
-              : input.type === "run"
-                ? 1
-                : 3,
+              : input.type === "strategy"
+                ? 4
+                : input.type === "run"
+                  ? 1
+                  : 3,
           createdAt: ts,
           updatedAt: ts,
         };

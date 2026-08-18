@@ -167,6 +167,40 @@ describe('REST convenience + new MCP tools', () => {
     assert.match(String(body.error), /too large/i)
   })
 
+  // The app stores through REST and agents read through MCP: a strategy written
+  // from the Memory tab has to come back out of bootstrap and memory_distill.
+  it('a strategy stored over REST reaches bootstrap and memory_distill', async () => {
+    const stored = await fetch(`${baseURL}/api/store`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify({
+        type: 'strategy',
+        title: 'Clone node_modules into a fresh worktree',
+        body: "When tests fail on missing modules in a worktree, don't npm install: cp -Rc from the main checkout.",
+        project: 'coder',
+      }),
+    })
+    assert.equal(stored.status, 200)
+    const { id } = await stored.json()
+    assert.ok(id)
+
+    const transport = new StreamableHTTPClientTransport(new URL(`${baseURL}/mcp`), {
+      requestInit: { headers: { Authorization: `Bearer ${TOKEN}` } },
+    })
+    const mcp = new Client({ name: 'test', version: '0.0.0' })
+    await mcp.connect(transport)
+
+    const boot = await mcp.callTool({ name: 'memory_bootstrap', arguments: { project: 'coder' } })
+    const strategies = JSON.parse(boot.content[0].text).strategies
+    assert.ok(strategies.some((s) => s.id === id))
+
+    const distilled = await mcp.callTool({ name: 'memory_distill', arguments: { project: 'coder' } })
+    const existing = JSON.parse(distilled.content[0].text).existing
+    assert.ok(existing.items.some((s) => s.id === id))
+
+    await mcp.close()
+  })
+
   it('MCP exposes memory_recent and memory_feedback', async () => {
     const transport = new StreamableHTTPClientTransport(new URL(`${baseURL}/mcp`), {
       requestInit: { headers: { Authorization: `Bearer ${TOKEN}` } },
