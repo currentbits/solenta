@@ -2075,7 +2075,8 @@ export interface CoderApi {
     readImage(input: { path: string }): Promise<{ dataUrl: string | null }>;
     /**
      * Electron-only (preload, webUtils.getPathForFile): absolute path of a
-     * drag-dropped File. Absent on web/dev bridges, where drop is disabled.
+     * drag-dropped File, including Finder directories. Absent on web/dev
+     * bridges, which fall back to saveImage (images only).
      */
     droppedFilePath?(file: File): string;
   };
