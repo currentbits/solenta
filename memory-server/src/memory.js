@@ -58,7 +58,10 @@ const DISTILL_NOTES_LIMIT = 5
 // Trust map is cheap to rebuild (one GROUP BY) and must not be per-row.
 // Feedback is the evidence that moves the number, so it drops the cache;
 // a short TTL covers invalidate / raw SQL without touching those writers.
-const TRUST_CACHE_TTL_MS = 5_000
+// Trust is ranking metadata, not live data; a short TTL made any search
+// arriving >5s after the last pay a full GROUP BY over the entries table
+// (evaluated per result row, inside the query).
+const TRUST_CACHE_TTL_MS = 60_000
 
 const SECTION_BUDGETS = {
   conventions: 800,
@@ -155,12 +158,19 @@ export function feedbackFactor(helpful, harmful) {
 /** Drop whole entries from the end until the section fits the token budget. */
 export function applyTokenBudget(rows, budget, cost) {
   const out = [...rows]
-  while (out.length > 0 && estimateTokens(JSON.stringify(out.map(cost))) > budget) {
+  // Precompute each row's stringified cost once. Re-stringifying the whole
+  // remainder on every pop made this O(n^2), and bootstrap() runs it per
+  // section per request.
+  const itemLens = out.map((row) => JSON.stringify(cost(row)).length)
+  // Character count of JSON.stringify(out.map(cost)): brackets + items + commas.
+  let chars = 2 + itemLens.reduce((sum, n) => sum + n, 0) + Math.max(0, out.length - 1)
+  while (out.length > 0 && Math.ceil(chars / 4) > budget) {
     // If a single remaining entry still exceeds, drop it (hard budget).
     if (out.length === 1) {
       out.pop()
       break
     }
+    chars -= itemLens.pop() + 1 // the item plus one comma
     out.pop()
   }
   return out

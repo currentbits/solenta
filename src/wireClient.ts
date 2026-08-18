@@ -15,6 +15,8 @@ import type {
   VerifyResult,
   GcScanResult,
   GcCleanResult,
+  VibeKanbanPreview,
+  VibeKanbanImportResult,
   DiffResult,
   ReviewContext,
   GitStatus,
@@ -28,6 +30,9 @@ import type {
   DevServerState,
   LocalServerInfo,
   MemoryEntryInfo,
+  AgentConfigDoctorReport,
+  AgentConfigPreview,
+  AgentConfigWriteResult,
   PrChecksResult,
   PrInfo,
   ProjectInfo,
@@ -343,6 +348,12 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
       addViaDialog: () => call<ProjectInfo | null>("projects:addViaDialog"),
       pickDirectory: () => call<string | null>("projects:pickDirectory"),
       remove: (input) => call<void>("projects:remove", input),
+      lintAgentConfig: (input) =>
+        call<AgentConfigDoctorReport>("projects:lintAgentConfig", input),
+      previewAgentConfig: (input) =>
+        call<AgentConfigPreview>("projects:previewAgentConfig", input),
+      writeAgentConfig: (input) =>
+        call<AgentConfigWriteResult>("projects:writeAgentConfig", input),
     },
     spaces: {
       list: () => call<SpaceInfo[]>("spaces:list"),
@@ -363,6 +374,7 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
       fork: (input) => call<ThreadInfo>("threads:fork", input),
       rewind: (input) => call<RewindResult>("threads:rewind", input),
       get: (id) => call<ThreadDetail>("threads:get", id),
+      peek: (id) => call<ThreadDetail>("threads:peek", id),
       setPermissionMode: (input) =>
         call<ThreadInfo>("threads:setPermissionMode", input),
       respondPermission: (input) =>
@@ -454,6 +466,14 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
         call<ConflictForecast>("git:conflictForecast", input),
       gcScan: () => call<GcScanResult>("git:gcScan"),
       gcClean: (input) => call<GcCleanResult>("git:gcClean", input),
+    },
+    vibeKanban: {
+      preview: (input) =>
+        call<VibeKanbanPreview>("vibeKanban:preview", input),
+      import: (input) =>
+        call<VibeKanbanImportResult>("vibeKanban:import", input),
+      pickDataDir: () => call<string | null>("vibeKanban:pickDataDir"),
+      export: () => call<string | null>("vibeKanban:export"),
     },
     issues: {
       fetch: (input) => call<FetchIssueResult>("issues:fetch", input),

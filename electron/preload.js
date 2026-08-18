@@ -99,6 +99,9 @@ const coder = {
     update: (input) => invoke("projects:update", input),
     addViaDialog: () => invoke("projects:addViaDialog"),
     remove: (input) => invoke("projects:remove", input),
+    lintAgentConfig: (input) => invoke("projects:lintAgentConfig", input),
+    previewAgentConfig: (input) => invoke("projects:previewAgentConfig", input),
+    writeAgentConfig: (input) => invoke("projects:writeAgentConfig", input),
   },
   spaces: {
     list: () => invoke("spaces:list"),
@@ -115,6 +118,7 @@ const coder = {
     fork: (input) => invoke("threads:fork", input),
     rewind: (input) => invoke("threads:rewind", input),
     get: (id) => invoke("threads:get", id),
+    peek: (id) => invoke("threads:peek", id),
     setPermissionMode: (input) =>
       invoke("threads:setPermissionMode", input),
     respondPermission: (input) =>
@@ -191,6 +195,12 @@ const coder = {
     conflictForecast: (input) => invoke("git:conflictForecast", input),
     gcScan: () => invoke("git:gcScan"),
     gcClean: (input) => invoke("git:gcClean", input),
+  },
+  vibeKanban: {
+    preview: (input) => invoke("vibeKanban:preview", input),
+    import: (input) => invoke("vibeKanban:import", input),
+    pickDataDir: () => invoke("vibeKanban:pickDataDir"),
+    export: () => invoke("vibeKanban:export"),
   },
   issues: {
     fetch: (input) => invoke("issues:fetch", input),

@@ -604,6 +604,32 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           return v;
         });
       },
+      lintAgentConfig: (input: { projectId: string }) =>
+        rec("projects.lintAgentConfig", [input], {
+          projectId: input.projectId,
+          files: [],
+          score: 0,
+          grade: "F",
+          memory: { considered: 0, covered: 0, missing: [] },
+          issues: [],
+          recommendations: [],
+        }),
+      previewAgentConfig: (input: { projectId: string; targets?: string[] }) =>
+        rec("projects.previewAgentConfig", [input], {
+          projectId: input.projectId,
+          files: [
+            {
+              path: "AGENTS.md",
+              content: "# preview\n",
+              exists: false,
+            },
+          ],
+        }),
+      writeAgentConfig: (input: { projectId: string; targets?: string[] }) =>
+        rec("projects.writeAgentConfig", [input], {
+          projectId: input.projectId,
+          written: ["AGENTS.md"],
+        }),
     },
     spaces: {
       list: () => rec("spaces.list", [], spaces.map((s) => ({ ...s }))),
@@ -749,6 +775,22 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           thread: { ...fallback.thread, lastVisitedAt: stamp },
         };
         return rec("threads.get", [id], stampedFallback);
+      },
+      /**
+       * Sibling load for the divergence compare (issue #393). Same payload
+       * as get, but visiting is not implied — lastVisitedAt stays put.
+       */
+      peek: (id: string) => {
+        const existing = threads.find((t) => t.id === id);
+        const base =
+          details[id] ??
+          detail({ thread: existing ?? thread({ id }) });
+        const row = existing
+          ? { ...base.thread, ...existing }
+          : { ...base.thread };
+        const peeked: ThreadDetail = { ...base, thread: row };
+        details[id] = peeked;
+        return rec("threads.peek", [id], peeked);
       },
       setPermissionMode: (input: unknown) =>
         rec("threads.setPermissionMode", [input], thread()),
@@ -1388,6 +1430,31 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         }));
         return rec("git.runStats", [input], derived);
       },
+    },
+    vibeKanban: {
+      preview: (input?: unknown) =>
+        rec("vibeKanban.preview", [input], {
+          found: false,
+          dataDir: null,
+          dbPath: null,
+          projects: [],
+          taskCount: 0,
+          worktreeCount: 0,
+          alreadyImported: 0,
+        }),
+      import: (input?: unknown) =>
+        rec("vibeKanban.import", [input], {
+          dataDir: null,
+          dbPath: null,
+          projectsAdded: 0,
+          projectsReused: 0,
+          threadsCreated: 0,
+          threadsSkipped: 0,
+          worktreesMapped: 0,
+          skipped: [],
+        }),
+      pickDataDir: () => rec("vibeKanban.pickDataDir", [], null),
+      export: () => rec("vibeKanban.export", [], null),
     },
     issues: {
       fetch: (input: unknown) =>

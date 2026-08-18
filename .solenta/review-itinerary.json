@@ -1,35 +1,39 @@
 {
   "version": 1,
-  "readOrder": ["tests", "critical", "impl"],
+  "readOrder": ["critical", "impl", "tests"],
   "chunks": [
     {
-      "area": "tests",
-      "rationale": "test/conflictForecastBadge.test.tsx was an add/add-style content conflict: main added m.unmount() on the multi-pair case and a keyboard-focusable test; our branch already had that same keyboard test plus the later readability suite. Keep one keyboard test, add the missing unmount, do not drop the readability assertions that lock --card and the raised-card :has() rule.",
-      "risks": [
-        "If a future merge reintroduces .conflictTipLine[data-conflict-kind=overlap] { color: var(--text-muted) }, the readability test still fails closed — that is intended.",
-        "Did not re-run the full electron suite after the merge, only Ask + conflict-forecast + header/create-thread renderer tests."
-      ]
-    },
-    {
       "area": "critical",
-      "rationale": "src/components/Sidebar.module.css kept our readable conflict tip: raise the open card with :has(.conflictWrap:hover/:focus-within), paint the tip on --card, and drop main's muted overlap line. That is the newer #516 overlay fix; main only had the first hover-tip landing.",
+      "rationale": "Identity-semantics changes that everything else keys on: threadPatch.ts returns prev when a 700ms tick moved nothing (sameTail guards), Sidebar ThreadCard is memo'd (handleSelect via refs, threadTitles reuses its Map), services.listThreads caches the decorated list on threads/projects array identity (replace-only invariant, verified). A wrong bail = stale UI; a missed bail = O(n) per tick.",
       "risks": [
-        "Main's muted overlap color is gone on purpose. If someone wanted quieter overlap copy, they will see full-contrast lines.",
-        "Ask mode code in Sidebar.tsx/ThreadView/runner auto-merged; I verified the ask tag, caret item, startAskRun intercept, and IPC create path survived, but I did not re-audit every auto-merged hunk in runner.js."
+        "listThreads caching rests on a convention: any future in-place mutation of a thread/project row or array silently serves a stale sidebar. The invariant is commented at the cache.",
+        "mergeThreadPatch returning prev drops patch.seq — safe only because seq lives on ThreadPatch, not ThreadDetail, and gap detection runs in the caller.",
+        "Sidebar handleSelect reads visibleIds/selectAnchor via refs synced in a passive effect — correct for user events, not for synthetic same-tick calls."
       ]
     },
     {
       "area": "impl",
-      "rationale": ".solenta/review-itinerary.json is per-PR author notes. Keep the Ask-mode itinerary (this PR), not main's merge-PR itinerary about updatePrBranchFromBase. Incoming main also deleted quota-wait; leftover fromQuotaWait fields in startAskRun are inert.",
+      "rationale": "Battery/memory trims: store flush compact JSON, lsof TTL 30s + renderer polls 15s/hidden-skip, codeindex parse cache on mtime, stderr tail-capped at 64KB in all five spawners, forecast effect keyed on derived branch/worktree key + refocus refresh, memory-server: mentions(entity_id) index, O(n) applyTokenBudget, statement cache, citation file cache, trust TTL 60s.",
       "risks": [
-        "Main deleted electron/quotaWait.js. Auto-merge left a few fromQuotaWait / quotaWaitUntil mentions in runner.js. They do not require the deleted module, but they are dead.",
-        "A later cleanup should drop those leftovers rather than revive quota-wait on this branch."
+        "A new dev server can take up to ~30s to appear in the Local Servers card (15s poll + 30s main TTL). Deliberate.",
+        "codeindex/listThreads/citation caches share parsed objects across callers — all verified read-only today.",
+        "Merge resolution: quota-wait props/handlers dropped (removed upstream), ChangesPanel hunk UI taken from upstream; my patchLines memo is gone, memo'd DiffLine kept.",
+        "Merge resolution: itinerary rewritten to the fixed-area schema (area must equal ci-config/tests/critical/impl/docs for annotationForArea to attach; rationale truncates at 400 chars)."
+      ]
+    },
+    {
+      "area": "tests",
+      "rationale": "Verified pre-merge: typecheck clean, renderer 1075/1075, memory 201/201, electron 1390/1396 — the 6 failures (checkpoints worktreeBase config, Store quota-wait round-trip keys, verify-gate) reproduce with the diff stashed. Re-run after this merge: quota-wait removal upstream touched App/ThreadView/ipc.",
+      "risks": [
+        "Post-merge suites must confirm the auto-merged quota-wait removal didn't leave dangling references on this branch (tsc is the check).",
+        "No test pins mergeThreadPatch's return-prev identity or the ThreadCard memo — a 'no-op tick returns identical detail' test would harden the riskiest change."
       ]
     }
   ],
   "risks": [
-    "PR #532 conflicted with origin/main after 122 commits, including #525 merge recovery, #516 conflict-pill hover, #511 worktree fail-closed, and the quota-wait deletion.",
-    "No live Electron click-through after the merge. Verification: tsc --noEmit, Ask electron+renderer tests, conflictForecastBadge, sidebar/header/threadView, fork-handoff, teach/orch.",
-    "Print-mode fallback still uses the provider CLI. That is cheap and no-tools, not zero subscription usage. fm is the free path."
+    "BUG FIXED IN FLIGHT: round-1 SQL comment in db.js createSchema contained backticks inside a JS template literal — broke every memory-server module load and shipped in auto-checkpoint ef40717 before round 2 caught it. Fixed (db.js:310-314).",
+    "Environment repaired during this branch: main checkout's core/dist self-symlink/deletion dangled every worktree's core build (rebuilt); memory-server node_modules installed here. 10 of 16 baseline electron failures were this rot, now green.",
+    "Deferred by design: runAgent intra-message deltas (needs ThreadPatch protocol change), 30-min CLAUDE_IDLE_REAP (product call), PR-refresher gh batching, fleet blame cache. Details on #526/#533.",
+    "Merge conflict with main resolved 2026-08-18: 3 files (App.tsx quota-wait props, ThreadView hunk UI, this itinerary). Incoming itinerary chunk was another thread's stale merge notes — dropped."
   ]
 }

@@ -32,6 +32,7 @@ import {
   repeatDraftFromDetail,
   type RepeatDraft,
 } from "./repeatThread";
+import { sameTaskPeers, toComparePeer } from "./divergence";
 import type {
   ConflictForecast,
   DistilledWorkflow,
@@ -193,11 +194,15 @@ export default function App() {
     updateMemory,
     removeMemory,
     storeMemory,
+    lintAgentConfig,
+    previewAgentConfig,
+    writeAgentConfig,
     listSkills,
     addSkill,
     removeSkill,
     syncSkills,
     searchThreads,
+    peekThread,
     automations,
     addAutomation,
     updateAutomation,
@@ -349,6 +354,15 @@ export default function App() {
       void renameThread(selectedThreadId, title);
     },
     [renameThread, selectedThreadId],
+  );
+
+  // An inline arrow here would bust ThreadView's memo on every 700ms stream
+  // tick (issue #91); keep it identity-stable per selected thread.
+  const handleSettleOpenThread = useCallback(
+    () => {
+      if (selectedThreadId) void setSettled(selectedThreadId, "settled");
+    },
+    [selectedThreadId, setSettled],
   );
 
   const handleRepeatSchedule = useCallback(() => {
@@ -561,19 +575,39 @@ export default function App() {
   }, [selectedThreadId]);
 
   // Issue #249: refetch the cached forecast when the thread list moves.
+  // Keyed on a cheap derived value, not the live `threads` array: the array
+  // identity changes on every 700ms stream tick, which used to fire this IPC
+  // call ~1.4x/sec for the duration of any run.
+  const forecastKey = useMemo(
+    () =>
+      threads
+        .map((t) => `${t.id}:${t.branch ?? ""}:${t.worktreePath ?? ""}`)
+        .join("|"),
+    [threads],
+  );
   useEffect(() => {
     if (!selectedProjectId) {
       setForecast(EMPTY_FORECAST);
       return;
     }
     let cancelled = false;
-    void conflictForecast(selectedProjectId).then((next) => {
-      if (!cancelled) setForecast(next);
-    });
+    const refresh = () => {
+      void conflictForecast(selectedProjectId).then((next) => {
+        if (!cancelled) setForecast(next);
+      });
+    };
+    refresh();
+    // Git state can move without branch/worktree changing (merges, pulls), so
+    // also refresh when the window regains focus — no steady-state timer.
+    const onVisible = () => {
+      if (!document.hidden) refresh();
+    };
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       cancelled = true;
+      document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [selectedProjectId, threads, conflictForecast]);
+  }, [selectedProjectId, forecastKey, conflictForecast]);
 
   useEffect(() => {
     if (drawer === null) return;
@@ -626,6 +660,22 @@ export default function App() {
     () => threads.map((t) => `${t.id}:${t.status}`).join(","),
     [threads],
   );
+
+  /**
+   * Same-task siblings for the divergence card. Keyed on roster + the open
+   * thread so a 700ms stream tick on an unrelated row does not rebuild this.
+   */
+  const comparePeers = useMemo(() => {
+    if (!visibleDetail) return [];
+    const peers = sameTaskPeers(visibleDetail.thread, threads);
+    return peers.map((t) => toComparePeer(t, peers, providers));
+  }, [
+    visibleDetail?.thread.id,
+    visibleDetail?.thread.handoffFrom,
+    visibleDetail?.thread.projectId,
+    rosterKey,
+    providers,
+  ]);
 
   const handleCreateThreadFromIssue = useCallback(
     async (input: {
@@ -1017,14 +1067,12 @@ export default function App() {
         onDismissRunError={clearError}
         onFork={handleForkOpen}
         handoffSource={handoffSource}
+        comparePeers={comparePeers}
+        onPeekThread={peekThread}
         onSelectThread={handleSelectThread}
         onModelPickerOpen={handleModelPickerOpen}
         onNewThread={handleCreateThreadPlain}
-        onSettleThread={
-          selectedThreadId
-            ? () => setSettled(selectedThreadId, "settled")
-            : undefined
-        }
+        onSettleThread={selectedThreadId ? handleSettleOpenThread : undefined}
             />
           )}
           </ErrorBoundary>
@@ -1073,6 +1121,9 @@ export default function App() {
         updateMemory={updateMemory}
         removeMemory={removeMemory}
         storeMemory={storeMemory}
+        lintAgentConfig={lintAgentConfig}
+        previewAgentConfig={previewAgentConfig}
+        writeAgentConfig={writeAgentConfig}
         settings={settings}
         saveSettings={saveSettings}
         listSkills={listSkills}

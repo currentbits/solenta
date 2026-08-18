@@ -23,6 +23,9 @@ import type {
   LocalServerInfo,
   MemoryCitation,
   MemoryEntryInfo,
+  AgentConfigDoctorReport,
+  AgentConfigPreview,
+  AgentConfigWriteResult,
   PermissionDecision,
   PermissionMode,
   PlanStatus,
@@ -482,6 +485,17 @@ export interface UseCoderResult {
     project?: string;
     citations?: MemoryCitation[];
   }) => Promise<{ id: string }>;
+  lintAgentConfig: (input: {
+    projectId: string;
+  }) => Promise<AgentConfigDoctorReport>;
+  previewAgentConfig: (input: {
+    projectId: string;
+    targets?: string[];
+  }) => Promise<AgentConfigPreview>;
+  writeAgentConfig: (input: {
+    projectId: string;
+    targets?: string[];
+  }) => Promise<AgentConfigWriteResult>;
   /** Thin skills passthroughs; SkillsTab holds list state locally. */
   listSkills: (input?: { projectPath?: string }) => Promise<SkillInfo[]>;
   addSkill: (
@@ -491,6 +505,8 @@ export interface UseCoderResult {
   syncSkills: () => Promise<{ copied: number; skills: string[] }>;
   /** Full-content thread search (titles + message text); Sidebar owns debounce/state. */
   searchThreads: (input: { query: string }) => Promise<ThreadInfo[]>;
+  /** Load another thread's transcript without marking it visited (#393). */
+  peekThread: (id: string) => Promise<ThreadDetail>;
 }
 
 export function useCoder(): UseCoderResult {
@@ -722,6 +738,13 @@ export function useCoder(): UseCoderResult {
     unsubChanged = api.on("threads:changed", (next) => {
       threadsListGen.current += 1;
       applyThreads(next);
+      // Import (and any other main-process mint) can add projects without
+      // going through projects.add. Refresh so the sidebar sees them.
+      if (typeof api.projects?.list === "function") {
+        void api.projects.list().then((p) => {
+          if (!cancelled) setProjects(p);
+        }).catch(() => {});
+      }
     });
 
     unsubSelect = api.on("thread:select", (id) => {
@@ -2387,6 +2410,27 @@ export function useCoder(): UseCoderResult {
     [api],
   );
 
+  const lintAgentConfig = useCallback(
+    async (input: { projectId: string }) => {
+      return api.projects.lintAgentConfig(input);
+    },
+    [api],
+  );
+
+  const previewAgentConfig = useCallback(
+    async (input: { projectId: string; targets?: string[] }) => {
+      return api.projects.previewAgentConfig(input);
+    },
+    [api],
+  );
+
+  const writeAgentConfig = useCallback(
+    async (input: { projectId: string; targets?: string[] }) => {
+      return api.projects.writeAgentConfig(input);
+    },
+    [api],
+  );
+
   const listSkills = useCallback(
     async (input?: { projectPath?: string }) => {
       return api.skills.list(input);
@@ -2416,6 +2460,12 @@ export function useCoder(): UseCoderResult {
     async (input: { query: string }) => {
       return api.threads.search(input);
     },
+    [api],
+  );
+
+  /** Load another thread's transcript without marking it visited (#393). */
+  const peekThread = useCallback(
+    (id: string) => api.threads.peek(id),
     [api],
   );
 
@@ -2547,10 +2597,14 @@ export function useCoder(): UseCoderResult {
     updateMemory,
     removeMemory,
     storeMemory,
+    lintAgentConfig,
+    previewAgentConfig,
+    writeAgentConfig,
     listSkills,
     addSkill,
     removeSkill,
     syncSkills,
     searchThreads,
+    peekThread,
   };
 }

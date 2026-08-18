@@ -58,6 +58,76 @@ export interface WindowsDoctorReport {
   checks: WindowsDoctorCheck[];
 }
 
+/** Anthropic six-axis bands (#412). */
+export type AgentConfigGrade = "A" | "B" | "C" | "D" | "F";
+
+export type AgentConfigAxisId =
+  | "commands"
+  | "architecture"
+  | "patterns"
+  | "conciseness"
+  | "currency"
+  | "actionability";
+
+export interface AgentConfigAxisScore {
+  id: AgentConfigAxisId;
+  score: number;
+  max: number;
+  notes: string;
+}
+
+export interface AgentConfigIssue {
+  severity: "error" | "warn" | "info";
+  message: string;
+}
+
+export interface AgentConfigFileReport {
+  path: string;
+  bytes: number;
+  score: number;
+  grade: AgentConfigGrade;
+  axes: AgentConfigAxisScore[];
+  issues: AgentConfigIssue[];
+  recommendations: string[];
+}
+
+export interface AgentConfigMemoryGap {
+  id: string;
+  type: MemoryEntryInfo["type"];
+  title: string;
+}
+
+/** Lint of a repo's AGENTS.md / CLAUDE.md against the six-axis rubric + memory. */
+export interface AgentConfigDoctorReport {
+  projectId: string;
+  files: AgentConfigFileReport[];
+  score: number;
+  grade: AgentConfigGrade;
+  memory: {
+    considered: number;
+    covered: number;
+    missing: AgentConfigMemoryGap[];
+  };
+  issues: AgentConfigIssue[];
+  recommendations: string[];
+}
+
+export interface AgentConfigPreviewFile {
+  path: string;
+  content: string;
+  exists: boolean;
+}
+
+export interface AgentConfigPreview {
+  projectId: string;
+  files: AgentConfigPreviewFile[];
+}
+
+export interface AgentConfigWriteResult {
+  projectId: string;
+  written: string[];
+}
+
 /** Optional remotes for projects.add. Empty/absent = local project. */
 export interface AddProjectOptions {
   remoteHost?: string;
@@ -138,6 +208,37 @@ export interface GcCleanResult {
   bytes: number;
 }
 
+/** One Vibe Kanban project as the importer sees it (#399). */
+export interface VibeKanbanPreviewProject {
+  name: string;
+  path: string | null;
+  exists: boolean;
+  taskCount: number;
+  worktreeCount: number;
+}
+
+/** Detect / dry-run of a Vibe Kanban data dir. */
+export interface VibeKanbanPreview {
+  found: boolean;
+  dataDir: string | null;
+  dbPath: string | null;
+  projects: VibeKanbanPreviewProject[];
+  taskCount: number;
+  worktreeCount: number;
+  alreadyImported: number;
+}
+
+export interface VibeKanbanImportResult {
+  dataDir: string | null;
+  dbPath: string | null;
+  projectsAdded: number;
+  projectsReused: number;
+  threadsCreated: number;
+  threadsSkipped: number;
+  worktreesMapped: number;
+  skipped: Array<{ title: string; reason: string }>;
+}
+
 export type ThreadStatus = "idle" | "working" | "done" | "failed";
 
 export type PermissionMode = "default" | "acceptEdits" | "plan" | "bypassPermissions";
@@ -196,6 +297,8 @@ export interface ThreadInfo {
   stalledAt?: number | null;
   /** Archived threads keep their history but are hidden from the default sidebar list. */
   archived: boolean;
+  /** Set when this thread was imported from a Vibe Kanban card (#399). */
+  vibeKanbanTaskId?: string | null;
   /**
    * Explicit settle lifecycle override (t3-style). "settled" pins the thread
    * into the settled fold; "active" pins it OUT (suppresses auto-settle);
@@ -1703,6 +1806,18 @@ export interface CoderApi {
      * prompt.
      */
     remove(input: { projectId: string }): Promise<void>;
+    /** Six-axis lint of AGENTS.md / CLAUDE.md vs shared memory (#412). */
+    lintAgentConfig(input: { projectId: string }): Promise<AgentConfigDoctorReport>;
+    /** Preview generated agent-instruction files (does not write). */
+    previewAgentConfig(input: {
+      projectId: string;
+      targets?: string[];
+    }): Promise<AgentConfigPreview>;
+    /** Write the previewed files into the project checkout. */
+    writeAgentConfig(input: {
+      projectId: string;
+      targets?: string[];
+    }): Promise<AgentConfigWriteResult>;
   };
   /**
    * Named sidebar groups. List order is display order (creation order).
@@ -1768,6 +1883,12 @@ export interface CoderApi {
       issueNumber?: number | null;
     }): Promise<ThreadInfo>;
     get(id: string): Promise<ThreadDetail>;
+    /**
+     * Same payload as get, but never stamps lastVisitedAt (issue #393).
+     * Used to load a sibling run for the divergence compare so opening
+     * the picker does not mark that thread read.
+     */
+    peek(id: string): Promise<ThreadDetail>;
     /** Sticky permission mode for future turns of this thread. */
     setPermissionMode(input: { threadId: string; mode: PermissionMode }): Promise<ThreadInfo>;
     /**
@@ -2320,6 +2441,17 @@ export interface CoderApi {
     stop(input: { threadId: string }): Promise<DevServerState>;
     /** Live status, including a captured URL and recent log tail. */
     status(input: { threadId: string }): Promise<DevServerState>;
+  };
+  /**
+   * Vibe Kanban import (#399). Preview/import read the local VK SQLite;
+   * export writes a versioned JSON dump of projects, threads, and messages
+   * (settings and tokens stay out). pickDataDir / export cancel as null.
+   */
+  vibeKanban: {
+    preview(input?: { dataDir?: string }): Promise<VibeKanbanPreview>;
+    import(input?: { dataDir?: string }): Promise<VibeKanbanImportResult>;
+    pickDataDir(): Promise<string | null>;
+    export(): Promise<string | null>;
   };
   /** Returns an unsubscribe function. */
   on(channel: "threads:changed", cb: (threads: ThreadInfo[]) => void): () => void;

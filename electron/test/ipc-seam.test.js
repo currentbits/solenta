@@ -240,13 +240,17 @@ exit 1`,
       }
 
       // Round 44 pin + snooze (mirror setSettled seam).
-      for (const name of ["setPinned", "setSnoozed", "setQueued", "setNotes"]) {
+      for (const name of ["setPinned", "setSnoozed", "setQueued", "setNotes", "peek"]) {
         assert.equal(
           typeof api.threads[name],
           "function",
           `preload must expose threads.${name}`,
         );
       }
+      assert.ok(
+        handlers.has("threads:peek"),
+        "main must handle threads:peek",
+      );
       assert.ok(
         handlers.has("threads:setPinned"),
         "main must handle threads:setPinned",

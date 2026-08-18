@@ -28,6 +28,21 @@ export function openDb(dbPath) {
     fs.mkdirSync(path.dirname(dbPath), { recursive: true })
   }
   const db = new DatabaseSync(dbPath)
+  // node:sqlite has no statement cache: every .prepare() recompiles the SQL,
+  // and the request paths re-prepare the same literals per call. Cache one
+  // statement per SQL string per connection. A few queries build dynamic IN
+  // clauses (variable SQL), so cap the map and start over when exceeded.
+  const prepareUncached = db.prepare.bind(db)
+  const statements = new Map()
+  db.prepare = (sql) => {
+    let stmt = statements.get(sql)
+    if (!stmt) {
+      if (statements.size >= 500) statements.clear()
+      stmt = prepareUncached(sql)
+      statements.set(sql, stmt)
+    }
+    return stmt
+  }
   db.exec('PRAGMA foreign_keys = ON')
   if (dbPath !== ':memory:') {
     try {
@@ -291,6 +306,12 @@ export function createSchema(db) {
       entity_id TEXT NOT NULL,
       PRIMARY KEY (entry_id, entity_id)
     );
+
+    -- The PK leads with entry_id, so lookups by entity_id (graphSearch's
+    -- WHERE m.entity_id IN (...), the janitor's partnersFor join) would
+    -- full-scan the table per request without this. NOTE: no backticks in
+    -- comments here — this whole block is a JS template literal.
+    CREATE INDEX IF NOT EXISTS idx_mentions_entity ON mentions(entity_id);
 
     CREATE INDEX IF NOT EXISTS idx_entities_kind_name ON entities(kind, name COLLATE NOCASE);
 

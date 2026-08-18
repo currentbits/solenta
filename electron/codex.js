@@ -8,6 +8,8 @@ const spawn = require("cross-spawn");
 const { killTree, agentSpawnOptions } = require("./proc.js");
 
 const SIGKILL_AFTER_MS = 3000;
+// Max stderr retained per child process (tail), for error reporting.
+const STDERR_TAIL_CHARS = 64 * 1024;
 
 /**
  * Spawn the Codex CLI with JSONL output.
@@ -109,7 +111,9 @@ function runCodex(opts) {
   });
 
   child.stderr.on("data", (chunk) => {
-    stderrText += chunk;
+    // Tail-keep: stderr feeds error reporting, and a noisy CLI would
+    // otherwise grow this buffer for the life of a long-lived process.
+    stderrText = (stderrText + chunk).slice(-STDERR_TAIL_CHARS);
   });
 
   child.on("error", (err) => {

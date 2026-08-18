@@ -90,6 +90,9 @@ GitHub release check for updates.
 - **Conflict forecast** — parallel worktrees heading for the same lines are
   flagged while both are still cheap to redirect, not at the merge.
 - **Worktree GC** — per-project retention, batch cleanup, and visible disk usage.
+- **Vibe Kanban import** — read the local VK data folder, turn cards into
+  threads, map leftover worktrees. The same Settings section exports a JSON
+  dump of your projects and threads. Your data is never locked in.
 
 **Beyond one prompt**
 
