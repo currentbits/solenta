@@ -16,6 +16,15 @@
 # LIMITS: artifacts are unsigned and UNVERIFIED — unlike package-app.sh there
 # is no boot probe, because linux/win binaries cannot run on this Mac.
 #
+# This zip is a portable Electron tree, not an installer. winget publishes
+# an installer (or a signed portable with a publisher identity). Do not add
+# a winget manifest that points at this unsigned archive — that is worse
+# than nothing. #397 / #437. What a real Windows packaging story takes:
+# Authenticode signing, then either submit this zip as installerType:
+# portable or add NSIS/WiX (electron-builder is a product decision; this
+# repo avoids it because npm blocks native postinstalls). There is no
+# node-pty in the repo, so a ConPTY rebuild CI step would be a no-op.
+#
 # Usage:
 #   bash scripts/package-cross.sh                # both targets
 #   bash scripts/package-cross.sh linux-x64      # one target

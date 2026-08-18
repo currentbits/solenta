@@ -5,12 +5,26 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { EventEmitter } = require("node:events");
 const {
   captureServerUrl,
   detectScripts,
   scriptsFromPackageJson,
   appendLog,
+  start,
+  stop,
 } = require("../devservers.js");
+
+function fakeNpmChild() {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stdout.setEncoding = () => {};
+  child.stderr = new EventEmitter();
+  child.stderr.setEncoding = () => {};
+  child.pid = 0;
+  child.unref = () => {};
+  return child;
+}
 
 const temps = [];
 
@@ -151,5 +165,62 @@ describe("appendLog", () => {
     const rec = fresh();
     appendLog(rec, "a\r\nb\n");
     assert.deepEqual(rec.lines, ["a", "b"]);
+  });
+});
+
+describe("start spawn shape", () => {
+  it("spawns npm run <script> as argv, not /bin/sh -c", () => {
+    const calls = [];
+    start("t-posix", "/repo", "dev", {
+      platform: "darwin",
+      spawn: (bin, args, opts) => {
+        calls.push({ bin, args, opts });
+        return fakeNpmChild();
+      },
+    });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].bin, "npm");
+    assert.deepEqual(calls[0].args, ["run", "dev"]);
+    assert.equal(calls[0].opts.cwd, "/repo");
+    stop("t-posix");
+  });
+
+  it("uses wsl.exe for a WSL-side root on win32", () => {
+    const calls = [];
+    start("t-wsl", "\\\\wsl$\\Ubuntu\\home\\me\\repo", "dev", {
+      platform: "win32",
+      spawn: (bin, args, opts) => {
+        calls.push({ bin, args, opts });
+        return fakeNpmChild();
+      },
+    });
+    assert.equal(calls[0].bin, "wsl.exe");
+    assert.deepEqual(calls[0].args, [
+      "-d",
+      "Ubuntu",
+      "--cd",
+      "/home/me/repo",
+      "--",
+      "npm",
+      "run",
+      "dev",
+    ]);
+    assert.equal(calls[0].opts.cwd, undefined);
+    stop("t-wsl");
+  });
+
+  it("keeps npm as the binary on win32 windows-side (cross-spawn finds npm.cmd)", () => {
+    const calls = [];
+    start("t-win", "C:\\repo", "start", {
+      platform: "win32",
+      spawn: (bin, args, opts) => {
+        calls.push({ bin, args, opts });
+        return fakeNpmChild();
+      },
+    });
+    assert.equal(calls[0].bin, "npm");
+    assert.deepEqual(calls[0].args, ["run", "start"]);
+    assert.equal(calls[0].opts.cwd, "C:\\repo");
+    stop("t-win");
   });
 });

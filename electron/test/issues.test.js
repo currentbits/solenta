@@ -11,6 +11,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 const { parseIssueRef, fetchIssue, setPlanStatus } = require("../issues.js");
+const { writeFakeBin } = require("./support/fakeBin.js");
 
 function git(cwd, args) {
   return execFileSync("git", args, {
@@ -67,8 +68,7 @@ describe("fetchIssue", () => {
   let argsPath;
 
   function writeFakeGh(scriptBody) {
-    const bin = path.join(tmp, "fake-gh");
-    fs.writeFileSync(bin, scriptBody, { mode: 0o755 });
+    const bin = writeFakeBin(path.join(tmp, "fake-gh"), scriptBody);
     process.env.CODER_GH_BIN = bin;
     return bin;
   }
@@ -203,9 +203,8 @@ describe("setPlanStatus", () => {
 
   /** Fake gh that appends each invocation's args to callsPath. */
   function writeFakeGh(body) {
-    const bin = path.join(tmp, "fake-gh");
-    fs.writeFileSync(
-      bin,
+    const bin = writeFakeBin(
+      path.join(tmp, "fake-gh"),
       `#!/usr/bin/env node
 "use strict";
 const fs = require("node:fs");
@@ -216,7 +215,6 @@ prev.push(args);
 fs.writeFileSync(file, JSON.stringify(prev));
 ${body}
 `,
-      { mode: 0o755 },
     );
     process.env.CODER_GH_BIN = bin;
   }

@@ -16,6 +16,7 @@ const { pathToFileURL } = require("node:url");
 const { execFileSync } = require("node:child_process");
 
 const { flipKimiEffort, kimiConfigPath, runKimi } = require("../kimi.js");
+const { writeFakeBin } = require("./support/fakeBin.js");
 const { Store } = require("../store.js");
 const services = require("../services.js");
 const { createRunner } = require("../runner.js");
@@ -332,9 +333,8 @@ describe("runner wires thread.reasoningEffort to the kimi flip (config evidence)
     writeConfig();
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-kimi-run-"));
     const seenFile = path.join(tmpDir, "seen-effort.txt");
-    const fakeKimi = path.join(tmpDir, "fake-kimi");
-    fs.writeFileSync(
-      fakeKimi,
+    const fakeKimi = writeFakeBin(
+      path.join(tmpDir, "fake-kimi"),
       `#!/usr/bin/env node
 "use strict";
 const fs = require("fs");
@@ -350,7 +350,6 @@ function emit(obj) { process.stdout.write(JSON.stringify(obj) + "\\n"); }
 emit({ type: "text", text: "ok" });
 emit({ type: "usage", input_tokens: 1, output_tokens: 1 });
 `,
-      { mode: 0o755 },
     );
 
     const prev = {

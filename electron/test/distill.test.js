@@ -13,13 +13,11 @@ const {
   fallbackDistill,
   parseDistilled,
 } = require("../distill.js");
+const { writeFakeBin } = require("./support/fakeBin.js");
 
 /** Write an executable fake fm that runs `body` as node. */
 function writeFakeFm(dir, body) {
-  const bin = path.join(dir, "fake-fm");
-  fs.writeFileSync(bin, `#!/usr/bin/env node\n${body}\n`);
-  fs.chmodSync(bin, 0o755);
-  return bin;
+  return writeFakeBin(path.join(dir, "fake-fm"), body);
 }
 
 function thread(over = {}) {

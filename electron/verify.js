@@ -10,6 +10,22 @@
 
 const { spawn } = require("node:child_process");
 const { killTree } = require("./proc.js");
+const { wrapCommand } = require("./ssh.js");
+const { wslTarget } = require("./wsl.js");
+
+/**
+ * Shell that runs the user's verify command string.
+ *
+ * Windows has no /bin/sh. Git Bash (`bash` on PATH) is the POSIX shell the
+ * doctor already probes for (#435). Verify commands are POSIX (`npm test`,
+ * `>&2`, `exit 3`); cmd.exe or PowerShell would silently mis-parse them.
+ * Missing bash is a real spawn error — no cmd.exe fallback.
+ *
+ * @param {NodeJS.Platform} platform
+ */
+function verifyShell(platform) {
+  return platform === "win32" ? "bash" : "/bin/sh";
+}
 
 /** A command longer than this is a script, not a setting. */
 const VERIFY_COMMAND_MAX = 500;
@@ -61,7 +77,15 @@ function tailLog(text, max = VERIFY_LOG_MAX) {
  * is the error, because "could not run the tests" is a verification failure
  * like any other, not a crash of the run lifecycle.
  *
- * @param {{ command: string, cwd: string, timeoutMs?: number, env?: NodeJS.ProcessEnv }} input
+ * @param {{
+ *   command: string,
+ *   cwd: string,
+ *   timeoutMs?: number,
+ *   env?: NodeJS.ProcessEnv,
+ *   project?: { remoteHost?: string, remotePath?: string, path?: string } | null,
+ *   platform?: NodeJS.Platform,
+ *   spawn?: typeof spawn,
+ * }} input
  * @returns {Promise<{ ok: boolean, exitCode: number | null, timedOut: boolean, log: string, durationMs: number }>}
  */
 function runVerifyCommand(input) {
@@ -78,14 +102,27 @@ function runVerifyCommand(input) {
   }
   const timeoutMs =
     input.timeoutMs == null ? VERIFY_TIMEOUT_MS : Number(input.timeoutMs);
+  const platform = input.platform || process.platform;
+  const spawnFn = input.spawn || spawn;
+  const project = input.project || { path: input.cwd };
+  const shell = verifyShell(platform);
+  const argv = ["-c", command];
+  // WSL-side only: the command belongs inside the distro. Do not wrap ssh
+  // remotes here — that would change macOS remote-verify behaviour.
+  const wsl = wslTarget(project, platform);
+  const wrapped = wsl
+    ? wrapCommand(project, shell, argv, platform)
+    : { bin: shell, args: argv };
   return new Promise((resolve) => {
     let child;
     try {
-      child = spawn("/bin/sh", ["-c", command], {
-        cwd: input.cwd,
+      child = spawnFn(wrapped.bin, wrapped.args, {
+        cwd: wsl ? undefined : input.cwd,
         detached: true,
         env: input.env || process.env,
         stdio: ["ignore", "pipe", "pipe"],
+        // Hide the console window Git Bash would otherwise flash on win32.
+        windowsHide: platform === "win32",
       });
     } catch (err) {
       resolve({
@@ -186,6 +223,7 @@ module.exports = {
   MAX_FIX_ATTEMPTS,
   normalizeCommand,
   tailLog,
+  verifyShell,
   runVerifyCommand,
   buildFixPrompt,
 };

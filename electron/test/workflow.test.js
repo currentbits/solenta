@@ -10,6 +10,7 @@ const { execFileSync } = require("node:child_process");
 const { Store } = require("../store.js");
 const services = require("../services.js");
 const { createRunner } = require("../runner.js");
+const { writeFakeBin } = require("./support/fakeBin.js");
 
 function git(cwd, args) {
   execFileSync("git", args, { cwd, stdio: "ignore" });
@@ -245,8 +246,7 @@ async function failExit(msg) {
   process.exit(1);
 });
 `;
-  fs.writeFileSync(scriptPath, body, { mode: 0o755 });
-  return scriptPath;
+  return writeFakeBin(scriptPath, body);
 }
 
 /**
@@ -290,8 +290,7 @@ if (markerDir) {
   process.exit(0);
 })().catch((e) => { process.stderr.write(String(e)); process.exit(1); });
 `;
-  fs.writeFileSync(scriptPath, body, { mode: 0o755 });
-  return scriptPath;
+  return writeFakeBin(scriptPath, body);
 }
 
 /**
@@ -349,8 +348,7 @@ const text = "TEXT_FINAL_ANSWER: done via grok structured provider";
   process.exit(0);
 })().catch((e) => { process.stderr.write(String(e)); process.exit(1); });
 `;
-  fs.writeFileSync(scriptPath, body, { mode: 0o755 });
-  return scriptPath;
+  return writeFakeBin(scriptPath, body);
 }
 
 function lastWorkflowPush(pushes) {

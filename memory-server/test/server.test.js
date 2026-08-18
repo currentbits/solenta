@@ -213,8 +213,11 @@ describe('config validation', () => {
     assert.ok(cfg.port >= 49500 && cfg.port <= 49999)
     assert.equal(cfg.token.length, 64)
     assert.ok(cfg.dbPath)
-    const mode = fs.statSync(file).mode & 0o777
-    assert.equal(mode, 0o600)
+    // Windows has no POSIX permission bits; chmod 0o600 is a no-op there.
+    if (process.platform !== 'win32') {
+      const mode = fs.statSync(file).mode & 0o777
+      assert.equal(mode, 0o600)
+    }
     // second load returns same values, never regenerates
     const again = loadOrCreateConfig(file)
     assert.deepEqual(again, cfg)

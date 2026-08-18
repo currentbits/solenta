@@ -20,6 +20,7 @@ const {
   gitTryAsync,
 } = require("../worktrees.js");
 const ssh = require("../ssh.js");
+const { writeFakeBin } = require("./support/fakeBin.js");
 
 function git(cwd, args) {
   return execFileSync("git", args, {
@@ -163,8 +164,7 @@ if (args[0] === "pr" && args[1] === "create") {
 process.stderr.write("fake-gh: unhandled argv " + JSON.stringify(args) + "\\n");
 process.exit(2);
 `;
-  fs.writeFileSync(bin, body, { mode: 0o755 });
-  return bin;
+  return writeFakeBin(bin, body);
 }
 
 /**
