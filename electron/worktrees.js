@@ -810,6 +810,21 @@ function uniqueCoderBranch(repoPath, base) {
 }
 
 /**
+ * Verbatim git failure text. Prefer stderr (what the user needs to see);
+ * fall back to stdout, then the Error message. Never first-line-only.
+ * @param {any} err
+ * @returns {string}
+ */
+function gitFailureText(err) {
+  if (!err) return "unknown git error";
+  const stderr = err.stderr != null ? String(err.stderr).trim() : "";
+  if (stderr) return stderr;
+  const stdout = err.stdout != null ? String(err.stdout).trim() : "";
+  if (stdout) return stdout;
+  return String(err.message || err).trim() || "unknown git error";
+}
+
+/**
  * Create a git worktree + branch for the thread.
  * Idempotent when worktreePath is already set.
  *
@@ -854,9 +869,9 @@ function setupWorktree(opts) {
   try {
     gitOut(project.path, ["worktree", "add", "-b", branch, addPath]);
   } catch (err) {
-    const msg = err && err.message ? String(err.message) : String(err);
-    // Surface a clean error (clear of Error.prototype noise where possible)
-    throw new Error(`Failed to create worktree: ${msg.split("\n")[0]}`);
+    // Verbatim git stderr (#511). Never first-line-only: the lock/disk/
+    // submodule reason is almost always on a later line.
+    throw new Error(`Failed to create worktree:\n${gitFailureText(err)}`);
   }
 
   const updated = store.updateThread(threadId, {
@@ -3803,12 +3818,29 @@ function ensureWorktree(opts) {
 }
 
 /**
+ * Ready a worktree-isolated thread for a turn (#511). A missing folder
+ * re-arms pendingWorktree and rematerializes. Creation failure throws and
+ * keeps the flag — there is no fallback to the project checkout.
+ *
+ * @param {object} opts
+ * @param {import('./store').Store} opts.store
+ * @param {string} opts.threadId
+ * @param {string} opts.worktreeBase
+ * @param {(channel: string, payload: unknown) => void} [opts.broadcast]
+ * @returns {object} current ThreadInfo
+ */
+function prepareThreadWorktree(opts) {
+  clearMissingWorktree(opts);
+  return ensureWorktree(opts);
+}
+
+/**
  * Drop a worktreePath that no longer exists on disk. A worktree removed
  * outside the app (an agent running `git worktree remove`, or the folder
  * deleted by hand) leaves the thread pointing at nothing, and spawning a CLI
  * into a missing cwd fails as "spawn kimi ENOENT" — which reads as a missing
- * binary (#74). Leaves the thread in the same state the app's own removal
- * does, so it falls back to the project folder.
+ * binary (#74). Re-arms pendingWorktree so the next turn rematerializes
+ * instead of silently running in the project checkout (#511).
  *
  * @param {object} opts
  * @param {import('./store').Store} opts.store
@@ -3822,7 +3854,11 @@ function clearMissingWorktree(opts) {
   const wtPath = thread && thread.worktreePath;
   if (!wtPath || fs.existsSync(wtPath)) return null;
 
-  store.updateThread(threadId, { worktreePath: null, branch: null });
+  store.updateThread(threadId, {
+    worktreePath: null,
+    branch: null,
+    pendingWorktree: true,
+  });
   store.save();
 
   if (typeof broadcast === "function") {
@@ -3836,6 +3872,8 @@ module.exports = {
   assertNoOutboundSecrets,
   setupWorktree,
   clearMissingWorktree,
+  prepareThreadWorktree,
+  gitFailureText,
   maybeRenameWorktreeBranch,
   diff,
   commit,

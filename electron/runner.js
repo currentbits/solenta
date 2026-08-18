@@ -4245,24 +4245,64 @@ function createRunner(opts) {
    * @returns {Promise<{ runId: string }>}
    */
   /**
-   * Create the worktree for a pendingWorktree thread before its first run
-   * (lazy, t3-style). No-op for plain threads. Throws on setup failure so
-   * the run never silently drops the isolation the user asked for.
+   * Create or rematerialize the worktree for a thread that asked for one.
+   * No-op for plain checkout threads. Throws on setup failure so the run
+   * never silently drops the isolation the user asked for (#511).
    * @param {string} threadId
    */
   function materializePendingWorktree(threadId) {
     const thread = store.getThread(threadId);
-    if (!thread || !thread.pendingWorktree || thread.worktreePath) return;
+    if (!thread) return;
+    const wantsWorktree =
+      Boolean(thread.pendingWorktree) || Boolean(thread.worktreePath);
+    if (!wantsWorktree) return;
     if (!userDataPath) {
       throw new Error("worktreeBase is not configured");
     }
-    const { ensureWorktree } = require("./worktrees.js");
-    ensureWorktree({
+    const { prepareThreadWorktree } = require("./worktrees.js");
+    prepareThreadWorktree({
       store,
       threadId,
       worktreeBase: path.join(userDataPath, "worktrees"),
       broadcast: pushFn,
     });
+  }
+
+  /**
+   * Record a worktree-setup failure in the thread (user prompt + verbatim
+   * git stderr event + status failed) so Retry-turn can fire, then throw
+   * so callers (fork, drainQueued) know the agent never started.
+   * @param {string} threadId
+   * @param {string} prompt
+   * @param {{ kind: string, path: string, name: string }[] | undefined} attachments
+   * @param {any} err
+   * @param {{ fromQuotaWait?: boolean }} [opts]
+   */
+  function failWorktreeSetup(threadId, prompt, attachments, err, opts) {
+    const errText = String((err && err.message) || err);
+    const live = store.getThread(threadId);
+    const runId = randomUUID();
+    otel.startRun({
+      threadId,
+      runId,
+      provider: live ? resolveProvider(live) : "claude",
+      model: (live && live.model) || null,
+    });
+    if (!(opts && opts.fromQuotaWait)) {
+      appendMessage(threadId, "user", prompt, runId, null, attachments);
+    }
+    appendMessage(threadId, "event", errText, runId);
+    markRunFailed(threadId, errText);
+    store.save();
+    pushDetail(threadId);
+    pushThreadsChanged();
+    otel.endRun({
+      threadId,
+      runId,
+      status: "failed",
+      error: shortError(errText),
+    });
+    throw err instanceof Error ? err : new Error(errText);
   }
 
   /**
@@ -4555,20 +4595,15 @@ function createRunner(opts) {
 
     // Lazy worktree (t3-style): pendingWorktree threads materialize their
     // worktree + branch at first run, so never-run threads leave nothing.
-    // Throws before any thread mutation, so a failed setup fails the run
-    // cleanly and the flag survives for a retry.
-    materializePendingWorktree(threadId);
-
-    // Worktree deleted behind our back (agent ran `git worktree remove`, or
-    // the folder was thrown away): spawning into a missing cwd fails as
-    // "spawn <cli> ENOENT", which reads as a missing CLI. Drop the stale
-    // pointer so this and every later turn run in the project folder.
-    const { clearMissingWorktree } = require("./worktrees.js");
-    const droppedWorktree = clearMissingWorktree({
-      store,
-      threadId,
-      broadcast: pushFn,
-    });
+    // A missing folder rematerializes. Failure is recorded in-thread and
+    // thrown — never a silent fallback to the project checkout (#511).
+    try {
+      materializePendingWorktree(threadId);
+    } catch (err) {
+      failWorktreeSetup(threadId, prompt, attachments, err, {
+        fromQuotaWait: input.fromQuotaWait,
+      });
+    }
 
     // Prefix is CLI-only and must see the retained tail BEFORE this turn's
     // user message is appended (rewind replay would otherwise digest itself).
@@ -4592,15 +4627,6 @@ function createRunner(opts) {
     // exists yet. A quota-wait resume is the SAME turn: do not append again.
     if (!input.fromQuotaWait) {
       appendMessage(threadId, "user", prompt, runId, null, attachments);
-    }
-
-    if (droppedWorktree) {
-      appendMessage(
-        threadId,
-        "event",
-        `Worktree folder is gone (${droppedWorktree}); running in the project folder instead.`,
-        runId,
-      );
     }
 
     let title = thread.title;
@@ -4718,7 +4744,11 @@ function createRunner(opts) {
    * @returns {Promise<{ runId: string }>}
    */
   async function startWorkflowRun(input) {
-    materializePendingWorktree(input.threadId);
+    try {
+      materializePendingWorktree(input.threadId);
+    } catch (err) {
+      failWorktreeSetup(input.threadId, input.prompt, undefined, err);
+    }
     return workflowEngine.startWorkflowRun({
       threadId: input.threadId,
       prompt: input.prompt,
