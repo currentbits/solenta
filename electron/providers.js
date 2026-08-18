@@ -90,6 +90,7 @@ const PROVIDERS = [
         label: "Fable",
         description: "Fast everyday coding with strong defaults",
         vendor: "Anthropic",
+        contextTokens: 1_000_000,
       },
       {
         id: "claude-opus-5",
@@ -97,18 +98,21 @@ const PROVIDERS = [
         description: "Best for hard multi-step work",
         vendor: "Anthropic",
         recommended: true,
+        contextTokens: 1_000_000,
       },
       {
         id: "claude-sonnet-5",
         label: "Sonnet",
         description: "Balanced quality and speed",
         vendor: "Anthropic",
+        contextTokens: 1_000_000,
       },
       {
         id: "claude-haiku-4-5",
         label: "Haiku",
         description: "Cheapest and fastest replies",
         vendor: "Anthropic",
+        contextTokens: 200_000,
       },
     ],
     // claude --help / live warning: low, medium, high, xhigh, max

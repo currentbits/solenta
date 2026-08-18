@@ -72,6 +72,46 @@ function shortError(text) {
 }
 
 /**
+ * Full prompt size for the context ring. Claude's input_tokens excludes
+ * cache_read/cache_creation; omitting those reads as ~0% then jumps (#317).
+ * Returns undefined when the event does not report the cache fields — an
+ * inaccurate number is worse than none.
+ * @param {object | null | undefined} usage
+ * @returns {number | undefined}
+ */
+function claudeContextTokens(usage) {
+  if (!usage || typeof usage !== "object") return undefined;
+  if (
+    usage.cache_read_input_tokens == null &&
+    usage.cache_creation_input_tokens == null
+  ) {
+    return undefined;
+  }
+  const total =
+    (Number(usage.input_tokens) || 0) +
+    (Number(usage.cache_read_input_tokens) || 0) +
+    (Number(usage.cache_creation_input_tokens) || 0) +
+    (Number(usage.output_tokens) || 0);
+  return total > 0 ? total : undefined;
+}
+
+/**
+ * Carry forward measured context fields; never invent a 0.
+ * @param {object} next
+ * @param {object} prev
+ * @param {number | undefined} contextTokens
+ * @param {number | undefined} contextWindow
+ */
+function assignContextUsage(next, prev, contextTokens, contextWindow) {
+  const ctx = contextTokens != null ? Number(contextTokens) : NaN;
+  if (Number.isFinite(ctx) && ctx > 0) next.contextTokens = ctx;
+  else if (prev.contextTokens != null) next.contextTokens = prev.contextTokens;
+  const win = contextWindow != null ? Number(contextWindow) : NaN;
+  if (Number.isFinite(win) && win > 0) next.contextWindow = win;
+  else if (prev.contextWindow != null) next.contextWindow = prev.contextWindow;
+}
+
+/**
  * A kept-alive/resumed Claude CLI can emit a result that is not the answer to
  * the turn we just sent: settling a leftover background-task notification or
  * "Continue from where you left off." self-turn first (issue #17). Those
@@ -2558,7 +2598,6 @@ function createRunner(opts) {
             outputTokens: 0,
             costUsd: 0,
             turns: 0,
-            contextTokens: 0,
           };
           const usage = ev.usage || {};
           const turnIn = Number(usage.input_tokens) || 0;
@@ -2572,16 +2611,17 @@ function createRunner(opts) {
           const costUsd = prev.costUsd + costDelta;
           const model =
             capturedModel || prev.model || null;
-          store.setUsage(threadId, {
+          const nextUsage = {
             model,
             inputTokens,
             outputTokens,
             costUsd,
             turns: prev.turns + 1,
-            // Last turn's in+out approximates context-window fill.
-            contextTokens:
-              turnIn + turnOut > 0 ? turnIn + turnOut : prev.contextTokens || 0,
-          });
+          };
+          // inputTokens stay billable (no cache). contextTokens is the full
+          // prompt or stays unset when the event omitted cache fields (#317).
+          assignContextUsage(nextUsage, prev, claudeContextTokens(usage));
+          store.setUsage(threadId, nextUsage);
           if (costDelta > 0) {
             store.recordSpend(costDelta);
           }
@@ -3009,28 +3049,46 @@ function createRunner(opts) {
         outputTokens: 0,
         costUsd: 0,
         turns: 0,
-        contextTokens: 0,
       };
       const costDelta = Number(usageInfo.costUsd) || 0;
       const inDelta = Number(usageInfo.inputTokens) || 0;
       const outDelta = Number(usageInfo.outputTokens) || 0;
-      runUsage.tokensIn += inDelta;
-      runUsage.tokensOut += outDelta;
-      runUsage.costUsd += costDelta;
-      store.setUsage(threadId, {
+      // token_count.total_token_usage is session-cumulative. Replacing
+      // rather than adding is what stops the ring from double-counting (#317).
+      const snapshot = Boolean(usageInfo.snapshot);
+      if (snapshot) {
+        runUsage.tokensIn = inDelta;
+        runUsage.tokensOut = outDelta;
+        runUsage.costUsd += costDelta;
+      } else {
+        runUsage.tokensIn += inDelta;
+        runUsage.tokensOut += outDelta;
+        runUsage.costUsd += costDelta;
+      }
+      const nextUsage = {
         model: usageInfo.model || prev.model || thread.model || null,
-        inputTokens: prev.inputTokens + inDelta,
-        outputTokens: prev.outputTokens + outDelta,
+        inputTokens: snapshot ? inDelta : prev.inputTokens + inDelta,
+        outputTokens: snapshot ? outDelta : prev.outputTokens + outDelta,
         costUsd: prev.costUsd + costDelta,
-        turns: prev.turns + 1,
-        // Last turn's in+out approximates context-window fill.
-        contextTokens:
-          inDelta + outDelta > 0 ? inDelta + outDelta : prev.contextTokens || 0,
-      });
+        turns: snapshot && prev.turns > 0 ? prev.turns : prev.turns + 1,
+      };
+      assignContextUsage(
+        nextUsage,
+        prev,
+        usageInfo.contextTokens,
+        usageInfo.contextWindow,
+      );
+      store.setUsage(threadId, nextUsage);
       if (costDelta > 0) {
         store.recordSpend(costDelta);
       }
-      store.recordUsage({ provider: thread.provider, model: usageInfo.model || prev.model || thread.model || null, costUsd: costDelta, inputTokens: inDelta, outputTokens: outDelta });
+      const billedIn = snapshot
+        ? Math.max(0, inDelta - prev.inputTokens)
+        : inDelta;
+      const billedOut = snapshot
+        ? Math.max(0, outDelta - prev.outputTokens)
+        : outDelta;
+      store.recordUsage({ provider: thread.provider, model: usageInfo.model || prev.model || thread.model || null, costUsd: costDelta, inputTokens: billedIn, outputTokens: billedOut });
       sawTerminalUsage = true;
     }
 
@@ -3411,7 +3469,6 @@ function createRunner(opts) {
         outputTokens: 0,
         costUsd: 0,
         turns: 0,
-        contextTokens: 0,
       };
       const costDelta = Number(usageInfo.costUsd) || 0;
       const inDelta = Number(usageInfo.inputTokens) || 0;
@@ -3419,16 +3476,17 @@ function createRunner(opts) {
       runUsage.tokensIn += inDelta;
       runUsage.tokensOut += outDelta;
       runUsage.costUsd += costDelta;
-      store.setUsage(threadId, {
+      const nextUsage = {
         model: prev.model || thread.model || null,
         inputTokens: prev.inputTokens + inDelta,
         outputTokens: prev.outputTokens + outDelta,
         costUsd: prev.costUsd + costDelta,
         turns: prev.turns + 1,
-        // Last turn's in+out approximates context-window fill.
-        contextTokens:
-          inDelta + outDelta > 0 ? inDelta + outDelta : prev.contextTokens || 0,
-      });
+      };
+      // Kimi reports billable in/out at best, never a full prompt. Leave
+      // contextTokens unset rather than write an undefendable number (#317).
+      assignContextUsage(nextUsage, prev, undefined, undefined);
+      store.setUsage(threadId, nextUsage);
       if (costDelta > 0) {
         store.recordSpend(costDelta);
       }

@@ -329,27 +329,106 @@ function extractCommandItem(ev) {
 }
 
 /**
- * Extract token usage from completion / token_count events.
+ * token_count.info from exec JSONL, app-server `msg`, or session `payload`.
  * @param {object} ev
- * @returns {{ inputTokens: number, outputTokens: number, model: string | null, costUsd: number } | null}
+ * @returns {object | null}
+ */
+function tokenCountInfo(ev) {
+  if (!ev || typeof ev !== "object") return null;
+  const type = String(ev.type || "");
+  const payload = ev.payload && typeof ev.payload === "object" ? ev.payload : null;
+  const msg = ev.msg && typeof ev.msg === "object" ? ev.msg : null;
+  if (
+    ev.info &&
+    typeof ev.info === "object" &&
+    (type === "token_count" ||
+      type === "token.count" ||
+      ev.info.last_token_usage ||
+      ev.info.total_token_usage ||
+      ev.info.model_context_window != null)
+  ) {
+    return ev.info;
+  }
+  if (payload && (payload.type === "token_count" || payload.type === "token.count")) {
+    return payload.info && typeof payload.info === "object" ? payload.info : null;
+  }
+  if (msg && (msg.type === "token_count" || msg.type === "token.count")) {
+    return msg.info && typeof msg.info === "object" ? msg.info : null;
+  }
+  return null;
+}
+
+/**
+ * Codex input_tokens already includes cached_input_tokens (session logs:
+ * input + output === total_tokens). Prefer total_tokens when present.
+ * @param {object | null | undefined} usage
+ * @returns {number | undefined}
+ */
+function codexPromptTokens(usage) {
+  if (!usage || typeof usage !== "object") return undefined;
+  const total = Number(usage.total_tokens);
+  if (Number.isFinite(total) && total > 0) return total;
+  const input =
+    Number(
+      usage.input_tokens ??
+        usage.inputTokens ??
+        usage.prompt_tokens ??
+        usage.total_input_tokens ??
+        0,
+    ) || 0;
+  const output =
+    Number(
+      usage.output_tokens ??
+        usage.outputTokens ??
+        usage.completion_tokens ??
+        usage.total_output_tokens ??
+        0,
+    ) || 0;
+  return input + output > 0 ? input + output : undefined;
+}
+
+/**
+ * Extract token usage from completion / token_count events.
+ * token_count.last_token_usage is the per-request delta; total_token_usage
+ * is session-cumulative — never treat the latter as a turn delta (#317).
+ * @param {object} ev
+ * @returns {{ inputTokens: number, outputTokens: number, model: string | null, costUsd?: number, contextTokens?: number, contextWindow?: number, snapshot?: boolean } | null}
  */
 function extractUsage(ev) {
   if (!ev || typeof ev !== "object") return null;
   const type = String(ev.type || "");
 
+  const info = tokenCountInfo(ev);
+  if (info) {
+    const last =
+      info.last_token_usage && typeof info.last_token_usage === "object"
+        ? info.last_token_usage
+        : null;
+    const total =
+      info.total_token_usage && typeof info.total_token_usage === "object"
+        ? info.total_token_usage
+        : null;
+    const src = last || total;
+    if (!src && info.model_context_window == null) return null;
+    const inputTokens = Number(src?.input_tokens) || 0;
+    const outputTokens = Number(src?.output_tokens) || 0;
+    const window = Number(info.model_context_window);
+    /** @type {{ inputTokens: number, outputTokens: number, model: string | null, contextTokens?: number, contextWindow?: number, snapshot?: boolean }} */
+    const counted = { inputTokens, outputTokens, model: null };
+    const ctx = codexPromptTokens(src);
+    if (ctx != null) counted.contextTokens = ctx;
+    if (Number.isFinite(window) && window > 0) counted.contextWindow = window;
+    // No last_token_usage: totals are a snapshot, not a delta.
+    if (!last && total) counted.snapshot = true;
+    if (!src && counted.contextWindow == null) return null;
+    return counted;
+  }
+
   let usage = null;
   if (ev.usage && typeof ev.usage === "object") {
     usage = ev.usage;
-  } else if (type === "token_count" || type === "token.count") {
-    usage = ev;
-  } else if (ev.msg && typeof ev.msg === "object") {
-    if (ev.msg.type === "token_count" || ev.msg.usage) {
-      usage =
-        ev.msg.usage ||
-        ev.msg.info?.total_token_usage ||
-        ev.msg.info ||
-        ev.msg;
-    }
+  } else if (ev.msg && typeof ev.msg === "object" && ev.msg.usage) {
+    usage = ev.msg.usage;
   }
 
   if (
@@ -388,8 +467,6 @@ function extractUsage(ev) {
     usage.outputTokens != null ||
     usage.prompt_tokens != null ||
     usage.completion_tokens != null ||
-    type === "token_count" ||
-    type === "token.count" ||
     type === "turn.completed" ||
     type === "turn_completed";
 
@@ -410,11 +487,14 @@ function extractUsage(ev) {
     ev.cost_usd;
   const costUsd = costRaw != null ? Number(costRaw) || 0 : 0;
 
-  /** @type {{ inputTokens: number, outputTokens: number, model: string | null, costUsd?: number }} */
+  /** @type {{ inputTokens: number, outputTokens: number, model: string | null, costUsd?: number, contextTokens?: number }} */
   const out = { inputTokens, outputTokens, model };
   if (costRaw != null) {
     out.costUsd = costUsd;
   }
+  // exec --json turn.completed: input already includes cached_input_tokens.
+  const ctx = codexPromptTokens(usage);
+  if (ctx != null) out.contextTokens = ctx;
   return out;
 }
 
