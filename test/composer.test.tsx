@@ -18,6 +18,7 @@ import type {
   PermissionMode,
   ProviderInfo,
   ReasoningEffort,
+  ThreadTeach,
   WorkflowTemplateInfo,
 } from "../src/shared/ipc";
 
@@ -163,6 +164,7 @@ function composer(
   over: {
     threadId?: string;
     permissionMode?: PermissionMode;
+    teach?: ThreadTeach | null;
     provider?: string;
     model?: string | null;
     reasoningEffort?: ReasoningEffort | null;
@@ -185,6 +187,7 @@ function composer(
       threadId={over.threadId ?? "t1"}
       branch={over.branch === undefined ? "agentmux/abc" : over.branch}
       permissionMode={over.permissionMode ?? "default"}
+      teach={over.teach}
       onPermissionModeChange={(mode) => {
         harness.modes.push(mode);
         harness.callOrder.push("setPermissionMode");
@@ -1271,6 +1274,40 @@ describe("Composer permission mode", () => {
       ["bypassPermissions"],
       "changing permission mode must report the new mode",
     );
+    m.unmount();
+  });
+
+  it("Teach mode at hint disables Full access and Accept edits", async () => {
+    const h = makeHarness();
+    const m = await mount(
+      composer(h, {
+        permissionMode: "default",
+        teach: { autonomy: "hint", reviewsPassed: 0 },
+      }),
+    );
+    const modePill = Array.from(m.queryAll("button")).find((b) =>
+      (b.textContent || "").includes("Ask first"),
+    );
+    assert.ok(modePill);
+    await m.click(modePill);
+    const full = Array.from(m.queryAll("button")).find(
+      (b) => (b.textContent || "").trim() === "Full access",
+    );
+    const accept = Array.from(m.queryAll("button")).find(
+      (b) => (b.textContent || "").trim() === "Accept edits",
+    );
+    const plan = Array.from(m.queryAll("button")).find(
+      (b) => (b.textContent || "").trim() === "Plan mode",
+    );
+    assert.ok(full);
+    assert.ok(accept);
+    assert.ok(plan);
+    assert.equal((full as HTMLButtonElement).disabled, true);
+    assert.equal((accept as HTMLButtonElement).disabled, true);
+    assert.equal((plan as HTMLButtonElement).disabled, false);
+    assert.equal(full.getAttribute("data-teach-gated"), "true");
+    await m.click(full);
+    assert.deepEqual(h.modes, [], "a gated mode must not fire onPermissionModeChange");
     m.unmount();
   });
 });

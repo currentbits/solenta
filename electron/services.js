@@ -475,6 +475,12 @@ function setPermissionMode(store, input) {
   if (!thread) {
     throw new Error(`Unknown thread: ${threadId}`);
   }
+  if (!teachPermissionAllowed(mode, thread.teach)) {
+    const level = (thread.teach && thread.teach.autonomy) || "hint";
+    throw new Error(
+      `Teach mode (${level}) does not allow permission mode ${mode}`,
+    );
+  }
   const updated = store.updateThread(threadId, { permissionMode: mode });
   store.save();
   const row = updated || { ...thread, permissionMode: mode };
@@ -908,15 +914,28 @@ function forkThread(store, input) {
 
   // createThread stamps lastVisitedAt = createdAt and handoffFrom null;
   // patch config + provenance. sessionId stays null (fresh session).
-  const updated = store.updateThread(created.id, {
+  const forkPatch = {
     provider: nextProvider,
     model: nextModel,
     permissionMode: source.permissionMode,
     handoffFrom: source.id,
     sessionId: null,
-  });
+  };
+  // Teach mode is a thread persona, not a session: forks (including
+  // orchestrator workers on another provider) stay in teach mode.
+  if (source.teach && source.teach.autonomy) {
+    const reviewsPassed = Number(source.teach.reviewsPassed) || 0;
+    forkPatch.teach = {
+      autonomy: teachAutonomyFor(reviewsPassed),
+      reviewsPassed,
+    };
+    if (!teachPermissionAllowed(forkPatch.permissionMode, forkPatch.teach)) {
+      forkPatch.permissionMode = "default";
+    }
+  }
+  const updated = store.updateThread(created.id, forkPatch);
   store.save();
-  return updated ? { ...updated } : { ...created, handoffFrom: source.id };
+  return updated ? { ...updated } : { ...created, ...forkPatch };
 }
 
 /**
@@ -1932,6 +1951,177 @@ function specNoteFor(thread, cwd) {
     "When it is ready call the coder-threads tool spec_submit and stop — " +
     "a human approves each stage."
   );
+}
+
+/* --------------------------------------------------------------- teach mode */
+
+/** Passed-review counts that promote autonomy (issue #373). Mirror src/shared/ipc.ts. */
+const TEACH_REVIEW_THRESHOLDS = { review: 3, pair: 8 };
+
+/** What the standing note says at each autonomy rung. */
+const TEACH_AUTONOMY_COPY = {
+  hint:
+    "leave TODO(human) for every interesting piece of logic; scaffold only",
+  review:
+    "you may fill more scaffolding; still leave the core logic as TODO(human)",
+  pair:
+    "you may implement more of the glue, still explain, and leave at least " +
+    "one meaningful TODO(human) per turn unless the human asked for the solution",
+};
+
+const TEACH_REVIEW_PROMPT =
+  "The human filled the TODO(human) markers. Review their code now. " +
+  "Praise what is right, point at what is wrong, and do not rewrite the " +
+  "solution unless they asked. Then call the coder-threads tool teach_review " +
+  "with passed true or false and a short note.";
+
+/** Passed-review count → autonomy rung. */
+function teachAutonomyFor(reviewsPassed) {
+  const n = Number(reviewsPassed) || 0;
+  if (n >= TEACH_REVIEW_THRESHOLDS.pair) return "pair";
+  if (n >= TEACH_REVIEW_THRESHOLDS.review) return "review";
+  return "hint";
+}
+
+/**
+ * Permission modes allowed at this autonomy rung.
+ * hint: ask / plan. review: + accept edits. pair: full access too.
+ * @param {string} autonomy
+ * @returns {string[]}
+ */
+function teachAllowedModes(autonomy) {
+  if (autonomy === "pair") {
+    return ["default", "acceptEdits", "plan", "bypassPermissions"];
+  }
+  if (autonomy === "review") return ["default", "acceptEdits", "plan"];
+  return ["default", "plan"];
+}
+
+/**
+ * @param {string} mode
+ * @param {{ autonomy?: string } | null | undefined} teach
+ */
+function teachPermissionAllowed(mode, teach) {
+  if (!teach || !teach.autonomy) return true;
+  return teachAllowedModes(teach.autonomy).includes(String(mode));
+}
+
+/**
+ * Standing note appended to every dispatched prompt while Teach mode is on.
+ * Same rule as specNoteFor: returns "" when there is nothing to say.
+ *
+ * @param {{ teach?: { autonomy?: string, reviewsPassed?: number } | null } | null | undefined} thread
+ * @returns {string}
+ */
+function teachNoteFor(thread) {
+  const teach = thread && thread.teach;
+  if (!teach || !teach.autonomy) return "";
+  const reviewsPassed = Number(teach.reviewsPassed) || 0;
+  const level = teachAutonomyFor(reviewsPassed);
+  const how = TEACH_AUTONOMY_COPY[level] || TEACH_AUTONOMY_COPY.hint;
+  return (
+    "\n\n[Teach mode] You are a teacher, not a solution engine. " +
+    "Socratic: ask questions and give hints; do not dump a complete implementation. " +
+    "Scaffold structure and types, then leave TODO(human) markers on the " +
+    "interesting logic for the human to write. After they fill a marker, review " +
+    "their code: say what is right, point at what is wrong, and do not rewrite " +
+    "it unless they explicitly ask for the answer. Never replace a TODO(human) " +
+    "with the solution on your own. " +
+    `Autonomy: ${level} (${how}). ` +
+    "When you have reviewed a fill, call the coder-threads tool teach_review " +
+    "with passed true or false."
+  );
+}
+
+/**
+ * Turn Teach mode on at the hint rung. Idempotent. Downgrades permission
+ * mode when the current one is above the hint cap. Never bumps updatedAt.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string }} input
+ */
+function startTeach(store, input) {
+  const { threadId } = input || {};
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  if (thread.teach && thread.teach.autonomy) return { ...thread };
+  const teach = { autonomy: "hint", reviewsPassed: 0 };
+  /** @type {{ teach: { autonomy: string, reviewsPassed: number }, permissionMode?: string }} */
+  const patch = { teach };
+  if (!teachPermissionAllowed(thread.permissionMode, teach)) {
+    patch.permissionMode = "default";
+  }
+  const updated = store.updateThread(threadId, patch);
+  store.save();
+  return updated ? { ...updated } : { ...thread, ...patch };
+}
+
+/**
+ * Turn Teach mode off. Leaves permission mode where it is. Idempotent.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string }} input
+ */
+function stopTeach(store, input) {
+  const { threadId } = input || {};
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  if (!thread.teach) return { ...thread };
+  const updated = store.updateThread(threadId, { teach: null });
+  store.save();
+  return updated ? { ...updated } : { ...thread, teach: null };
+}
+
+/**
+ * Record a review of the human's TODO(human) fill. A pass increments
+ * reviewsPassed and may promote autonomy. Called by the coder-threads
+ * MCP tool `teach_review`, never inferred from the transcript.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, passed?: boolean, note?: string }} input
+ * @returns {{ reviewsPassed: number, autonomy: string, promoted: boolean, passed: boolean }}
+ */
+function recordTeachReview(store, input) {
+  const { threadId } = input || {};
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  if (!thread.teach || !thread.teach.autonomy) {
+    throw new Error("Thread is not in teach mode");
+  }
+  const passed = input && input.passed === true;
+  const prev = Number(thread.teach.reviewsPassed) || 0;
+  const reviewsPassed = passed ? prev + 1 : prev;
+  const autonomy = teachAutonomyFor(reviewsPassed);
+  const promoted = autonomy !== thread.teach.autonomy;
+  const teach = { autonomy, reviewsPassed };
+  store.updateThread(threadId, { teach });
+  store.save();
+  return { reviewsPassed, autonomy, promoted, passed };
+}
+
+/**
+ * The prompt that asks the agent to review the human's fills.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string }} input
+ * @returns {{ thread: object, prompt: string }}
+ */
+function requestTeachReview(store, input) {
+  const { threadId } = input || {};
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  if (!thread.teach || !thread.teach.autonomy) {
+    throw new Error("Thread is not in teach mode");
+  }
+  return { thread: { ...thread }, prompt: TEACH_REVIEW_PROMPT };
 }
 
 /** Whole-note cap so a 400K-LOC repo yields the same size prompt as a small one. */
@@ -3203,6 +3393,16 @@ module.exports = {
   nextSpecStage,
   specArtifactPath,
   specNoteFor,
+  teachNoteFor,
+  teachAutonomyFor,
+  teachAllowedModes,
+  teachPermissionAllowed,
+  TEACH_REVIEW_THRESHOLDS,
+  TEACH_REVIEW_PROMPT,
+  startTeach,
+  stopTeach,
+  recordTeachReview,
+  requestTeachReview,
   codeIndexNoteFor,
   specStagePrompt,
   startSpec,

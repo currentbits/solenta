@@ -681,6 +681,10 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           typeof input === "object" &&
           input !== null &&
           (input as { worktree?: boolean }).worktree === true;
+        const wantTeach =
+          typeof input === "object" &&
+          input !== null &&
+          (input as { teach?: boolean }).teach === true;
         // Match production createThread: a brand-new thread is visited at birth.
         const t = thread({
           id: "t-new",
@@ -694,6 +698,9 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
                 branch: "coder/new-thread-t-new",
                 worktreePath: "/fake/worktrees/t-new",
               }
+            : {}),
+          ...(wantTeach
+            ? { teach: { autonomy: "hint" as const, reviewsPassed: 0 } }
             : {}),
         });
         threads = [t, ...threads.filter((x) => x.id !== t.id)];
@@ -868,6 +875,49 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           : [next, ...threads];
         return Promise.resolve(next);
       },
+      startTeach: (input: unknown) => {
+        const i = input as { threadId: string };
+        calls.push({ channel: "threads.startTeach", args: [input] });
+        const existing = threads.find((t) => t.id === i.threadId);
+        if (!existing) {
+          return Promise.reject(new Error(`Unknown thread: ${i.threadId}`));
+        }
+        if (existing.teach) return Promise.resolve({ ...existing });
+        const next: ThreadInfo = {
+          ...existing,
+          teach: { autonomy: "hint", reviewsPassed: 0 },
+          permissionMode:
+            existing.permissionMode === "default" ||
+            existing.permissionMode === "plan"
+              ? existing.permissionMode
+              : "default",
+        };
+        threads = threads.map((t) => (t.id === i.threadId ? next : t));
+        return Promise.resolve(next);
+      },
+      stopTeach: (input: unknown) => {
+        const i = input as { threadId: string };
+        calls.push({ channel: "threads.stopTeach", args: [input] });
+        const existing = threads.find((t) => t.id === i.threadId);
+        if (!existing) {
+          return Promise.reject(new Error(`Unknown thread: ${i.threadId}`));
+        }
+        const next: ThreadInfo = { ...existing, teach: null };
+        threads = threads.map((t) => (t.id === i.threadId ? next : t));
+        return Promise.resolve(next);
+      },
+      requestTeachReview: (input: unknown) => {
+        const i = input as { threadId: string };
+        calls.push({ channel: "threads.requestTeachReview", args: [input] });
+        const existing = threads.find((t) => t.id === i.threadId);
+        if (!existing) {
+          return Promise.reject(new Error(`Unknown thread: ${i.threadId}`));
+        }
+        if (!existing.teach) {
+          return Promise.reject(new Error("Thread is not in teach mode"));
+        }
+        return Promise.resolve({ ...existing });
+      },
       /** Honest notes: trims, caps at 2000, never bumps updatedAt. */
       setNotes: (input: unknown) => {
         const i = input as { threadId: string; notes: string };
@@ -1019,6 +1069,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           model: nextModel,
           sessionId: null,
           permissionMode: source.permissionMode,
+          teach: source.teach ?? null,
           // Production fork never patches reasoningEffort; create leaves null.
           reasoningEffort: null,
           branch: null,
