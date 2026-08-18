@@ -6,6 +6,40 @@ const EXCERPT_MAX = 400
 const SHA_RE = /^[0-9a-f]{7,40}$/i
 const SEARCH_WINDOW = 25
 
+// Citation verification reads whole files synchronously, and one search or
+// bootstrap request can cite the same file many times. Cache file text keyed
+// on path, invalidated by mtimeMs+size (a stat per verify is cheap compared
+// to the read + excerpt scan). Entries hold full file text, so cap the map.
+const FILE_TEXT_CACHE_MAX = 64
+/** @type {Map<string, { mtimeMs: number, size: number, text: string }>} */
+const fileTextCache = new Map()
+
+/**
+ * Read a file as utf8, cached on mtimeMs+size. null when unreadable —
+ * callers treat that as "citation file gone".
+ * @param {string} abs
+ * @returns {string|null}
+ */
+function readFileTextCached(abs) {
+  let st
+  try {
+    st = fs.statSync(abs)
+  } catch {
+    return null
+  }
+  const hit = fileTextCache.get(abs)
+  if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return hit.text
+  let text
+  try {
+    text = fs.readFileSync(abs, 'utf8')
+  } catch {
+    return null
+  }
+  if (fileTextCache.size >= FILE_TEXT_CACHE_MAX) fileTextCache.clear()
+  fileTextCache.set(abs, { mtimeMs: st.mtimeMs, size: st.size, text })
+  return text
+}
+
 /**
  * @typedef {{ kind: 'file', path: string, line?: number, endLine?: number, excerpt?: string }} FileCitation
  * @typedef {{ kind: 'thread', id: string }} ThreadCitation
@@ -197,10 +231,8 @@ export function verifyFileCitation(root, citation) {
     // Outside the tree is a bad citation, not proof the fact is false.
     return { ok: true, verifiable: false }
   }
-  let text
-  try {
-    text = fs.readFileSync(abs, 'utf8')
-  } catch {
+  const text = readFileTextCached(abs)
+  if (text == null) {
     return { ok: false, reason: `citation file gone: ${citation.path}` }
   }
   const excerpt = citation.excerpt ? String(citation.excerpt).trim() : ''

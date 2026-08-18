@@ -2584,8 +2584,42 @@ function decorateThread(store, thread) {
   };
 }
 
+/**
+ * listThreads cache, keyed per store (WeakMap so a discarded store — tests
+ * create plenty — never leaks). See listThreads for the invariants.
+ * @type {WeakMap<import('./store').Store, { threads: object[], projects: object[], value: object[], rows: Map<object, object> }>}
+ */
+const listThreadsCache = new WeakMap();
+
 function listThreads(store) {
-  return store.getThreads().map((t) => decorateThread(store, t));
+  const threads = store.getThreads();
+  const projects = store.getProjects();
+  // pushThreadsChanged fires on every work-log step during a run, but
+  // work-log appends never touch the threads/projects arrays — both are
+  // replaced (never mutated in place) on any real change. Key the cache on
+  // those identities so no-op ticks skip the whole decorate+serialize, and
+  // reuse decorated rows keyed on the thread object so an updateThread that
+  // only patched one row keeps every other row's identity (the renderer's
+  // patchThreadList and memo'd cards key on that).
+  const cache = listThreadsCache.get(store);
+  if (cache && cache.threads === threads && cache.projects === projects) {
+    return cache.value;
+  }
+  const prevRows = cache ? cache.rows : null;
+  /** @type {Map<object, object>} */
+  const rows = new Map();
+  const value = threads.map((t) => {
+    const prev = prevRows && prevRows.get(t);
+    if (prev) {
+      rows.set(t, prev);
+      return prev;
+    }
+    const decorated = decorateThread(store, t);
+    rows.set(t, decorated);
+    return decorated;
+  });
+  listThreadsCache.set(store, { threads, projects, value, rows });
+  return value;
 }
 
 /**
