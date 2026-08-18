@@ -52,6 +52,12 @@ import { useEscapeClose } from "../useEscapeClose";
 import { applyMention, getMentionQuery, type MentionQuery } from "../mention";
 import { parseDelegate } from "../delegate";
 import { buildBestOfNEntries, providerVendor } from "../bestOfN";
+import {
+  commandQuery,
+  matchSlashCommands,
+  type SlashAction,
+  type SlashCommand,
+} from "../slashCommands";
 import { WorkflowsModal } from "./WorkflowsModal";
 import { DROP_REJECT_MESSAGE } from "../dropFiles";
 import { useFileDrop } from "../useFileDrop";
@@ -136,6 +142,12 @@ interface ComposerProps {
    */
   onDropAttachmentFiles?: (files: File[]) => Promise<AttachmentInfo[]>;
   /**
+   * CLI `/` verbs that live outside Composer (issue #472): rewind, usage,
+   * fork, new, clear, compact. Model / effort / permissions are handled
+   * here. Absent: those verbs still clear the token so they never send.
+   */
+  onSlashAction?: (action: SlashAction) => void;
+  /**
    * Larger drop target (thread pane). When set, listeners bind there so a
    * drop on the transcript or empty state reaches the same chip list.
    */
@@ -149,26 +161,6 @@ const STATIC = {
 };
 
 const DEFAULT_TEMPLATE_ID = "standard";
-
-/**
- * Composer `/` commands (issue #338). Discoverability only: the runner
- * intercepts the prompt, so this list exists to paint the popup and nothing
- * else reads it.
- */
-const ORCH_COMMANDS = [
-  { name: "/handoff", hint: "Plan here, implement on a fresh model" },
-  { name: "/advisor", hint: "One second opinion on a contrasting model" },
-  { name: "/committee", hint: "Two contrasting models converge on a root cause" },
-] as const;
-
-/**
- * The `/` token being typed, or null. Only at the very start of the draft,
- * and only while it is still one token — the first space ends the command
- * and everything after it belongs to the task.
- */
-function commandQuery(text: string): string | null {
-  return text.startsWith("/") && !/\s/.test(text) ? text : null;
-}
 
 /** Capped cascade index: row 30 shouldn't wait half a second to appear. */
 const rowEnterStyle = (index: number): CSSProperties =>
@@ -279,6 +271,7 @@ export function Composer({
   onSaveAttachmentImage,
   onLoadAttachmentImage,
   onDropAttachmentFiles,
+  onSlashAction,
   dropHostRef,
   onFileDragChange,
 }: ComposerProps) {
@@ -389,9 +382,7 @@ export function Composer({
    * the inserted trailing space ends the token on its own.
    */
   const commandDismissed = useRef(false);
-  const commandMatches = command
-    ? ORCH_COMMANDS.filter((c) => c.name.startsWith(command))
-    : [];
+  const commandMatches = command ? matchSlashCommands(command) : [];
   const commandOpen = commandMatches.length > 0;
 
   const closeCommand = useCallback(() => {
@@ -415,15 +406,45 @@ export function Composer({
   }, [disabled, closeCommand]);
 
   const acceptCommand = useCallback(
-    (name: string) => {
-      const inserted = `${name} `;
+    (cmd: SlashCommand) => {
+      if (cmd.kind === "insert") {
+        const inserted = `${cmd.name} `;
+        const el = textareaRef.current;
+        if (el) el.value = inserted;
+        pendingCaret.current = inserted.length;
+        setValue(inserted);
+        closeCommand();
+        return;
+      }
+      // Run verbs must not remain in the draft: sending `/compact` as a
+      // prompt is the bug this palette exists to stop.
       const el = textareaRef.current;
-      if (el) el.value = inserted;
-      pendingCaret.current = inserted.length;
-      setValue(inserted);
+      if (el) el.value = "";
+      pendingCaret.current = 0;
+      setValue("");
       closeCommand();
+      const action = cmd.action;
+      if (!action) return;
+      if (action === "model" || action === "effort") {
+        if (disabled || busy) return;
+        setModelOpen(true);
+        setModeOpen(false);
+        setBuildMenuOpen(false);
+        setBestOfNOpen(false);
+        onModelPickerOpen?.();
+        return;
+      }
+      if (action === "permissions") {
+        if (disabled || busy) return;
+        setModeOpen(true);
+        setModelOpen(false);
+        setBuildMenuOpen(false);
+        setBestOfNOpen(false);
+        return;
+      }
+      onSlashAction?.(action);
     },
-    [setValue, closeCommand],
+    [setValue, closeCommand, disabled, busy, onModelPickerOpen, onSlashAction],
   );
 
   useEffect(() => {
@@ -865,7 +886,7 @@ export function Composer({
       if (e.key === "Enter" || e.key === "Tab") {
         e.preventDefault();
         const cmd = commandMatches[commandIndex];
-        if (cmd) acceptCommand(cmd.name);
+        if (cmd) acceptCommand(cmd);
         return;
       }
       if (e.key === "Escape") {
@@ -1163,7 +1184,7 @@ export function Composer({
                   className={styles.mentionRow}
                   data-highlighted={i === commandIndex ? "true" : undefined}
                   onMouseEnter={() => setCommandIndex(i)}
-                  onClick={() => acceptCommand(cmd.name)}
+                  onClick={() => acceptCommand(cmd)}
                 >
                   <span className={styles.providerRowText}>
                     <span className={styles.modelRowLabel}>{cmd.name}</span>

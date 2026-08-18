@@ -291,6 +291,17 @@ export interface ThreadInfo {
   verifyCommand: string | null;
   /** Evidence from the latest verification attempt; null before the first. */
   verify: VerifyResult | null;
+  /**
+   * GitHub issue this thread was started from (planboard / "Start task").
+   * Absent/null when unknown; the first user prompt is also scanned for
+   * `GitHub issue #N:` as a fallback (issue #420).
+   */
+  issueNumber?: number | null;
+  /**
+   * Delayed post-merge re-check (issue #420). Absent/null until a PR
+   * merges on a thread that has a verify command. 'Merged' is not 'worked'.
+   */
+  postMergeVerify?: PostMergeVerify | null;
   /** Agent harness backing this thread: a ProviderInfo.id ("claude", "codex", "grok", "opencode", "simulate"). */
   provider: string;
   /** Model override passed to the provider CLI when set (e.g. claude --model). */
@@ -975,6 +986,32 @@ export interface VerifyResult {
   attempt: number;
 }
 
+/**
+ * One-shot delayed re-check after a thread's PR merges (issue #420).
+ * Scheduled on the MERGED flip; the scheduler re-runs `verifyCommand`
+ * against the merged default branch hours later.
+ */
+export type PostMergeVerifyStatus =
+  | "scheduled"
+  | "running"
+  | "passed"
+  | "failed"
+  | "skipped";
+
+export interface PostMergeVerify {
+  /** Epoch ms when the delayed check should run. */
+  dueAt: number;
+  status: PostMergeVerifyStatus;
+  /** When the check last ran or was skipped; null while still scheduled. */
+  at: number | null;
+  /** Evidence from the delayed check; independent of thread.verify. */
+  result: VerifyResult | null;
+  /** Fix thread spawned on regression; null until then. */
+  fixThreadId: string | null;
+  /** Why it was skipped, when status is skipped. */
+  skipReason?: string | null;
+}
+
 /** A TCP listener whose process cwd is the thread worktree or project. */
 export interface LocalServerInfo {
   pid: number;
@@ -1642,6 +1679,8 @@ export interface CoderApi {
       title: string;
       worktree?: boolean;
       orchestrate?: boolean;
+      /** Planboard issue this thread was started from (issue #420). */
+      issueNumber?: number | null;
     }): Promise<ThreadInfo>;
     get(id: string): Promise<ThreadDetail>;
     /** Sticky permission mode for future turns of this thread. */

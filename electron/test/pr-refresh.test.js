@@ -426,6 +426,27 @@ describe("refreshPrStates (round 47)", () => {
     );
   });
 
+  it("MERGED flip with a verify command arms a post-merge check", async () => {
+    fx = await makeFixture();
+    fx.store.updateThread(fx.thread.id, { verifyCommand: "npm test" });
+    seedOpenPr(fx, fx.thread.id, 42, "OPEN");
+    setGhState(fx, {
+      prsByNumber: {
+        "42": {
+          number: 42,
+          url: "https://github.com/acme/demo/pull/42",
+          state: "MERGED",
+        },
+      },
+    });
+    await refreshPrStates(fx.store, { broadcast: () => {} });
+    const row = fx.store.getThread(fx.thread.id);
+    assert.equal(row.prState, "MERGED");
+    assert.ok(row.postMergeVerify);
+    assert.equal(row.postMergeVerify.status, "scheduled");
+    assert.ok(row.postMergeVerify.dueAt > Date.now());
+  });
+
   it("B1: two threads both change → still ONE save and ONE push", async () => {
     // Spec headline: ONE store.save + ONE threads:changed per pass even when
     // multiple threads mutate. A single-thread change test cannot kill a

@@ -10,7 +10,12 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
-const { parseIssueRef, fetchIssue, setPlanStatus } = require("../issues.js");
+const {
+  parseIssueRef,
+  fetchIssue,
+  setPlanStatus,
+  reopenIssue,
+} = require("../issues.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
 
 function git(cwd, args) {
@@ -285,6 +290,103 @@ process.exit(1);
       reason: "unknown plan status: nope",
     });
     assert.deepEqual(await setPlanStatus(repo, 0, "doing"), {
+      ok: false,
+      reason: "invalid issue reference",
+    });
+    assert.deepEqual(calls(), []);
+  });
+});
+
+describe("reopenIssue", () => {
+  let tmp;
+  let repo;
+  let prevGh;
+  let callsPath;
+
+  function writeFakeGh(body) {
+    const bin = writeFakeBin(
+      path.join(tmp, "fake-gh"),
+      `#!/usr/bin/env node
+"use strict";
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+const file = ${JSON.stringify(callsPath)};
+const prev = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : [];
+prev.push(args);
+fs.writeFileSync(file, JSON.stringify(prev));
+${body}
+`,
+    );
+    process.env.CODER_GH_BIN = bin;
+  }
+
+  function calls() {
+    return fs.existsSync(callsPath)
+      ? JSON.parse(fs.readFileSync(callsPath, "utf8"))
+      : [];
+  }
+
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "coder-reopen-"));
+    repo = path.join(tmp, "repo");
+    fs.mkdirSync(repo);
+    git(repo, ["init", "-q", "-b", "main"]);
+    git(repo, ["remote", "add", "origin", "https://github.com/acme/demo.git"]);
+    callsPath = path.join(tmp, "gh-calls.json");
+    prevGh = process.env.CODER_GH_BIN;
+    writeFakeGh("process.exit(0);");
+  });
+
+  afterEach(() => {
+    if (prevGh == null) delete process.env.CODER_GH_BIN;
+    else process.env.CODER_GH_BIN = prevGh;
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("reopens, comments, and moves the issue to plan:todo", async () => {
+    assert.deepEqual(
+      await reopenIssue(repo, 420, { comment: "it regressed" }),
+      { ok: true },
+    );
+    const seen = calls();
+    assert.deepEqual(seen[0], ["issue", "reopen", "420"]);
+    assert.deepEqual(seen[1], [
+      "issue",
+      "comment",
+      "420",
+      "--body",
+      "it regressed",
+    ]);
+    assert.deepEqual(seen[2], [
+      "issue",
+      "edit",
+      "420",
+      "--add-label",
+      "plan:todo",
+      "--remove-label",
+      "plan:doing,plan:done",
+    ]);
+  });
+
+  it("treats already-open as success and still comments + labels", async () => {
+    writeFakeGh(`
+if (args[0] === "issue" && args[1] === "reopen") {
+  process.stderr.write("issue is not closed\\n");
+  process.exit(1);
+}
+process.exit(0);
+`);
+    assert.deepEqual(await reopenIssue(repo, 7, { comment: "again" }), {
+      ok: true,
+    });
+    const seen = calls();
+    assert.equal(seen[0][1], "reopen");
+    assert.equal(seen[1][1], "comment");
+    assert.equal(seen[2][1], "edit");
+  });
+
+  it("rejects a bad number without spawning gh", async () => {
+    assert.deepEqual(await reopenIssue(repo, 0, { comment: "x" }), {
       ok: false,
       reason: "invalid issue reference",
     });

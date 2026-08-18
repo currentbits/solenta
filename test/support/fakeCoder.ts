@@ -681,12 +681,19 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           typeof input === "object" &&
           input !== null &&
           (input as { worktree?: boolean }).worktree === true;
+        const issueNumber =
+          typeof input === "object" &&
+          input !== null &&
+          typeof (input as { issueNumber?: unknown }).issueNumber === "number"
+            ? (input as { issueNumber: number }).issueNumber
+            : null;
         // Match production createThread: a brand-new thread is visited at birth.
         const t = thread({
           id: "t-new",
           createdAt,
           updatedAt: createdAt,
           lastVisitedAt: createdAt,
+          issueNumber,
           // Mirror the threads:create worktree flag (electron ipc.js): the
           // thread starts on the placeholder branch in its own worktree.
           ...(wantWorktree

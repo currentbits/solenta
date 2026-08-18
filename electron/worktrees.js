@@ -1903,6 +1903,11 @@ async function prStatus(opts) {
     prUrl: info.url,
     prState: info.state,
   });
+  try {
+    require("./postmerge.js").onThreadPrState(store, threadId, info.state);
+  } catch {
+    // scheduling must never fail an interactive prStatus
+  }
   store.save();
   return info;
 }
@@ -2378,6 +2383,12 @@ async function refreshPrStates(store, opts) {
         // The PR path used to strand worktree+branch forever (t3 deep-dive).
         // Reclaim now; dirty/unpushed trees are skipped for manual cleanup.
         await maybeCleanupMergedWorktree(store, threadId);
+        // Issue #420: arm a delayed re-check. Does not save; this pass does.
+        try {
+          require("./postmerge.js").onThreadPrState(store, threadId, nextState);
+        } catch {
+          // scheduling must never fail a PR refresh
+        }
       }
     } catch {
       // A refresh failure is not an event. Never throw out of the loop.

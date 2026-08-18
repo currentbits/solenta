@@ -43,6 +43,7 @@ import { buildWaitStates, waitLabel, type WaitState } from "../waiting";
 import { MemoryTab } from "./MemoryTab";
 import { SkillsTab } from "./SkillsTab";
 import {
+  formatPostMergeLine,
   formatVerifySummary,
   verifyLogStartsCollapsed,
   verifyNowDisabled,
@@ -901,16 +902,18 @@ export function VerifyCard({
 
   const evidence = thread?.verify ?? null;
   const evidenceKey = evidence ? `${evidence.at}-${evidence.attempt}` : "";
+  const postMerge = thread?.postMergeVerify ?? null;
+  const postMergeLine = formatPostMergeLine(postMerge, now);
   useEffect(() => {
     if (!evidence) return;
     setLogOpen(!verifyLogStartsCollapsed(evidence));
   }, [evidenceKey]);
 
   useEffect(() => {
-    if (!evidence) return;
+    if (!evidence && postMerge?.status !== "scheduled") return;
     const id = window.setInterval(() => setNow(Date.now()), 60_000);
     return () => window.clearInterval(id);
-  }, [evidenceKey]);
+  }, [evidenceKey, postMerge?.status]);
 
   const runActive = thread?.status === "working";
   const disabled = verifyNowDisabled({
@@ -1001,6 +1004,21 @@ export function VerifyCard({
           {!saved && (
             <p className={styles.gitHint} data-verify-unarmed="">
               Runs settle on the agent&apos;s word alone.
+            </p>
+          )}
+          {postMergeLine && (
+            <p
+              className={styles.verifySummary}
+              data-post-merge=""
+              data-ok={
+                postMerge?.status === "passed"
+                  ? "true"
+                  : postMerge?.status === "failed"
+                    ? "false"
+                    : undefined
+              }
+            >
+              {postMergeLine}
             </p>
           )}
           {evidence && (

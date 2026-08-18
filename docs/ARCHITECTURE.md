@@ -303,13 +303,19 @@ choreographed by hand.
 |-------|------|
 | Rules + prompts (pure) | `electron/orchcommands.js` |
 | Dispatch | `electron/runner.js` `dispatchOrchCommand`, intercepted in `startRun` |
-| Menu | `src/components/Composer.tsx` (discoverability only — it sends the text) |
+| Menu | `src/slashCommands.ts` + `src/components/Composer.tsx` |
 
-**Intercepted in the runner, not the renderer.** The composer menu inserts
-text and nothing else, so the commands also work from an agent, a notice or
-the CLI path. The cheap `/`-prefix test keeps the provider probe off the
-ordinary send path, and `fromNotice` turns are never parsed — a worker
-quoting the command back would otherwise fan out again.
+**Orchestration is intercepted in the runner, not the renderer.** The
+composer menu inserts `/handoff` `/advisor` `/committee` as text, so those
+commands also work from an agent, a notice or the CLI path. The cheap
+`/`-prefix test keeps the provider probe off the ordinary send path, and
+`fromNotice` turns are never parsed — a worker quoting the command back
+would otherwise fan out again.
+
+Issue #472 grew the same `/` popup into the CLI verb palette
+(`/compact`, `/rewind`, `/usage`, `/model`, …). Those verbs run existing
+UI immediately and never become a prompt. Unknown `/foo` still goes to
+the model. `/btw` and `/goal` stay insert-only until their tickets land.
 
 **Defaults contrast on purpose.** Without `@provider` arguments the workers
 are picked from the installed set *excluding the caller's own provider*.

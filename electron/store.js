@@ -7,6 +7,10 @@ const {
   normalizeSubagentPool,
   validateSubagentPool,
 } = require("./subagentPool");
+const {
+  normalizeIssueNumber,
+  normalizePostMerge,
+} = require("./postmerge.js");
 
 /** Builtin "Plan and Verify" workflow template (seeded on every store). */
 const STANDARD_TEMPLATE = {
@@ -772,6 +776,10 @@ function migrateThread(t) {
     verifyCommand: typeof t.verifyCommand === "string" ? t.verifyCommand : null,
     // Latest verify evidence (issue #296): absent → none yet.
     verify: t.verify !== undefined ? t.verify : null,
+    // Planboard issue this thread was started from (issue #420).
+    issueNumber: normalizeIssueNumber(t.issueNumber),
+    // Delayed post-merge re-check (issue #420). Heal a crash mid-check.
+    postMergeVerify: normalizePostMerge(t.postMergeVerify),
   };
 }
 
