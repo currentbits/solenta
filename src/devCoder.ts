@@ -36,6 +36,9 @@ import type {
   ListIssuesResult,
   LocalServerInfo,
   MemoryEntryInfo,
+  AgentConfigDoctorReport,
+  AgentConfigPreview,
+  AgentConfigWriteResult,
   AgentProfile,
   McpServerInfo,
   SubagentPool,
@@ -2521,6 +2524,73 @@ function buildDevCoder(): CoderApi {
         threads = threads.filter((t) => t.projectId !== projectId);
         projects = projects.filter((p) => p.id !== projectId);
         emitThreads();
+      },
+      async lintAgentConfig(input: {
+        projectId: string;
+      }): Promise<AgentConfigDoctorReport> {
+        const project = projects.find((p) => p.id === input.projectId);
+        if (!project) throw new Error(`Unknown project: ${input.projectId}`);
+        const considered = memoryEntries.filter(
+          (e) =>
+            e.type === "convention" ||
+            e.type === "strategy" ||
+            e.type === "knowledge",
+        );
+        return {
+          projectId: project.id,
+          files: [],
+          score: 0,
+          grade: "F",
+          memory: {
+            considered: considered.length,
+            covered: 0,
+            missing: considered.map((e) => ({
+              id: e.id,
+              type: e.type,
+              title: e.title,
+            })),
+          },
+          issues: [
+            {
+              severity: "error",
+              message: "No AGENTS.md / CLAUDE.md (or sibling) in this repo",
+            },
+          ],
+          recommendations: [
+            "Generate AGENTS.md from shared memory so every agent reads the same conventions",
+          ],
+        };
+      },
+      async previewAgentConfig(input: {
+        projectId: string;
+        targets?: string[];
+      }): Promise<AgentConfigPreview> {
+        const project = projects.find((p) => p.id === input.projectId);
+        if (!project) throw new Error(`Unknown project: ${input.projectId}`);
+        const lines = [
+          `# ${project.name}`,
+          "",
+          "Standing instructions generated from Solenta shared memory.",
+          "",
+          "<!-- generated-by: solenta-config-doctor -->",
+          "",
+        ];
+        for (const e of memoryEntries) {
+          if (e.type !== "convention" && e.type !== "strategy") continue;
+          lines.push(`### ${e.title}`, "", e.body, "");
+        }
+        const targets = input.targets?.length ? input.targets : ["AGENTS.md"];
+        return {
+          projectId: project.id,
+          files: targets.map((p) => ({
+            path: p,
+            content: lines.join("\n"),
+            exists: false,
+          })),
+        };
+      },
+      async writeAgentConfig(): Promise<AgentConfigWriteResult> {
+        throw new Error("Config doctor writes are not available in browser dev");
       },
     },
     spaces: {

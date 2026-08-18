@@ -23,6 +23,9 @@ import type {
   LocalServerInfo,
   MemoryCitation,
   MemoryEntryInfo,
+  AgentConfigDoctorReport,
+  AgentConfigPreview,
+  AgentConfigWriteResult,
   PermissionDecision,
   PermissionMode,
   PlanStatus,
@@ -482,6 +485,17 @@ export interface UseCoderResult {
     project?: string;
     citations?: MemoryCitation[];
   }) => Promise<{ id: string }>;
+  lintAgentConfig: (input: {
+    projectId: string;
+  }) => Promise<AgentConfigDoctorReport>;
+  previewAgentConfig: (input: {
+    projectId: string;
+    targets?: string[];
+  }) => Promise<AgentConfigPreview>;
+  writeAgentConfig: (input: {
+    projectId: string;
+    targets?: string[];
+  }) => Promise<AgentConfigWriteResult>;
   /** Thin skills passthroughs; SkillsTab holds list state locally. */
   listSkills: (input?: { projectPath?: string }) => Promise<SkillInfo[]>;
   addSkill: (
@@ -2396,6 +2410,27 @@ export function useCoder(): UseCoderResult {
     [api],
   );
 
+  const lintAgentConfig = useCallback(
+    async (input: { projectId: string }) => {
+      return api.projects.lintAgentConfig(input);
+    },
+    [api],
+  );
+
+  const previewAgentConfig = useCallback(
+    async (input: { projectId: string; targets?: string[] }) => {
+      return api.projects.previewAgentConfig(input);
+    },
+    [api],
+  );
+
+  const writeAgentConfig = useCallback(
+    async (input: { projectId: string; targets?: string[] }) => {
+      return api.projects.writeAgentConfig(input);
+    },
+    [api],
+  );
+
   const listSkills = useCallback(
     async (input?: { projectPath?: string }) => {
       return api.skills.list(input);
@@ -2562,6 +2597,9 @@ export function useCoder(): UseCoderResult {
     updateMemory,
     removeMemory,
     storeMemory,
+    lintAgentConfig,
+    previewAgentConfig,
+    writeAgentConfig,
     listSkills,
     addSkill,
     removeSkill,

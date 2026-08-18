@@ -1,41 +1,34 @@
 {
   "version": 1,
-  "readOrder": ["tests", "critical", "impl", "docs"],
+  "readOrder": ["tests", "critical", "impl"],
   "chunks": [
     {
       "area": "tests",
-      "rationale": "PR #530 conflicted with origin/main after #531/#532. Two content conflicts: this itinerary and src/shared/ipc.ts. Resolution: keep the Vibe Kanban types, take main's ThreadStatus (quota-wait is gone). Re-run electron/test/vibe-kanban.test.js, test/vibeKanbanSection.test.tsx, ipc-seam, and tsc after the merge.",
+      "rationale": "PR #529 conflicted with origin/main after #530/#531/#532. Only content conflict was this itinerary. Re-run electron/test/config-doctor.test.js and tsc to prove the auto-merged IPC fan-out still typechecks against main's ThreadStatus (quota-wait removed) plus Vibe Kanban / Ask mode / peek additions.",
       "risks": [
-        "Fixture DBs are a subset of the real VK migration chain.",
-        "ipc-seam must still register vibeKanban:* after the Ask-mode and peek handlers landed on main."
+        "Auto-merge of ipc.ts/useCoder/fakeCoder/devCoder can silently drop one side of a method. tsc is the check.",
+        "Renderer MemoryTab tests do not remount App after the merge."
       ]
     },
     {
       "area": "critical",
-      "rationale": "src/shared/ipc.ts: VibeKanbanPreview / VibeKanbanImportResult stay above ThreadStatus. ThreadStatus is idle|working|done|failed — do not resurrect quota-wait. electron/vibeKanban.js did not conflict; the importer is unchanged.",
+      "rationale": "electron/configDoctor.js and the lint/preview/write services did not conflict. Confirm AgentConfig* types still sit above AddProjectOptions in src/shared/ipc.ts and CoderApi.projects still has lintAgentConfig/previewAgentConfig/writeAgentConfig after main's vibeKanban/ask/peek landings.",
       "risks": [
-        "A leftover quota-wait mention in our branch (useCoder, fakeCoder, ThreadInfo comments) would fail tsc against the narrowed union.",
-        "A VK project with several repos still keeps only the first repo path."
+        "A leftover quota-wait mention on our side would fail tsc against main's narrowed ThreadStatus.",
+        "Write still overwrites AGENTS.md/CLAUDE.md with no backup."
       ]
     },
     {
       "area": "impl",
-      "rationale": "README, SettingsModal, preload, ipc.js, wireClient, useCoder, fakeCoder, devCoder auto-merged. Confirm vibeKanban:* handlers and the Your data section still sit next to Ask-mode / peek additions from main.",
+      "rationale": "preload, ipc.js, wireClient, useCoder, App, AgentsPanel, fakeCoder, devCoder auto-merged. This itinerary is the only file we resolved by hand — keep our #412 doctor notes, drop the incoming Vibe Kanban merge notes.",
       "risks": [
-        "threads:changed still refreshes projects.list() so imported projects appear without a restart.",
-        "Web mode still has no folder/save dialog."
-      ]
-    },
-    {
-      "area": "docs",
-      "rationale": "README VK bullet and site/docs.html paragraph auto-merged next to the 0.7.0 feature list. Read last.",
-      "risks": [
-        "Site docs are the girder-deployed copy; this branch does not publish them."
+        "devCoder write still throws (browser-dev only).",
+        "Doctor card still hidden when the memory server is down."
       ]
     }
   ],
   "risks": [
-    "Cards become Solenta threads, not GitHub planboard issues.",
-    "Verification is the electron + renderer tests and tsc. No live Electron Settings click-through after this merge."
+    "Session-end auto-learning stays on #247. No fleet-wide grade rollup.",
+    "This is a merge-to-main restack of #529, not a feature change."
   ]
 }

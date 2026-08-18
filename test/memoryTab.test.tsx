@@ -13,7 +13,11 @@ import assert from "node:assert/strict";
 import { describe, it, afterEach } from "node:test";
 import { mount, unmountAll } from "./support/dom.ts";
 import { MemoryTab } from "../src/components/MemoryTab";
-import type { MemoryEntryInfo } from "../src/shared/ipc";
+import type {
+  AgentConfigDoctorReport,
+  AgentConfigPreview,
+  MemoryEntryInfo,
+} from "../src/shared/ipc";
 
 const LONG_BODY =
   "The deployment runbook for the payments service. " + "x".repeat(900);
@@ -513,6 +517,103 @@ describe("MemoryTab wiring the reviewer's mutations exposed", () => {
       m.query('input[placeholder="Title"]'),
       "the store form must be usable",
     );
+    m.unmount();
+  });
+});
+
+const SAMPLE_REPORT: AgentConfigDoctorReport = {
+  projectId: "p1",
+  files: [
+    {
+      path: "AGENTS.md",
+      bytes: 120,
+      score: 42,
+      grade: "D",
+      axes: [],
+      issues: [],
+      recommendations: [],
+    },
+  ],
+  score: 42,
+  grade: "D",
+  memory: {
+    considered: 3,
+    covered: 1,
+    missing: [
+      { id: "c1", type: "convention", title: "Fail closed on worktrees" },
+    ],
+  },
+  issues: [],
+  recommendations: [],
+};
+
+describe("MemoryTab config doctor", () => {
+  it("is absent when no lint callback is wired", async () => {
+    const m = await mount(tab());
+    assert.equal(m.query("[data-config-doctor]"), null);
+    m.unmount();
+  });
+
+  it("lints the selected project and shows grade + memory gap", async () => {
+    const linted: string[] = [];
+    const m = await mount(
+      <MemoryTab
+        projectSlug="coder"
+        projectId="p1"
+        searchMemory={async () => []}
+        recentMemory={async () => []}
+        getMemory={async (input) => entry({ id: input.id })}
+        updateMemory={async () => ({ id: "x" })}
+        removeMemory={async () => {}}
+        storeMemory={async () => ({ id: "x" })}
+        lintAgentConfig={async (input) => {
+          linted.push(input.projectId);
+          return SAMPLE_REPORT;
+        }}
+      />,
+    );
+    assert.deepEqual(linted, ["p1"]);
+    const card = m.query("[data-config-doctor]");
+    assert.ok(card, "doctor card must render");
+    assert.ok(card.textContent?.includes("D 42"));
+    assert.ok(card.textContent?.includes("AGENTS.md"));
+    assert.ok(card.textContent?.includes("1/3 memory"));
+    assert.ok(card.textContent?.includes("1 memory not in the files"));
+    m.unmount();
+  });
+
+  it("previews then confirms before writing", async () => {
+    const written: string[] = [];
+    const preview: AgentConfigPreview = {
+      projectId: "p1",
+      files: [{ path: "AGENTS.md", content: "# generated\n", exists: true }],
+    };
+    const m = await mount(
+      <MemoryTab
+        projectSlug="coder"
+        projectId="p1"
+        searchMemory={async () => []}
+        recentMemory={async () => []}
+        getMemory={async (input) => entry({ id: input.id })}
+        updateMemory={async () => ({ id: "x" })}
+        removeMemory={async () => {}}
+        storeMemory={async () => ({ id: "x" })}
+        lintAgentConfig={async () => SAMPLE_REPORT}
+        previewAgentConfig={async () => preview}
+        writeAgentConfig={async (input) => {
+          written.push(input.projectId);
+          return { projectId: input.projectId, written: ["AGENTS.md"] };
+        }}
+      />,
+    );
+    await m.click(m.byText("Preview"));
+    assert.ok(m.query("[data-config-preview]"));
+    assert.ok(m.text().includes("# generated"));
+    await m.click(m.byText("Write AGENTS.md"));
+    assert.equal(written.length, 0, "first click is confirm");
+    await m.click(m.byText("Confirm write"));
+    assert.deepEqual(written, ["p1"]);
+    assert.ok(m.query("[data-config-wrote]"));
     m.unmount();
   });
 });

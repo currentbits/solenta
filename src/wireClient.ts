@@ -30,6 +30,9 @@ import type {
   DevServerState,
   LocalServerInfo,
   MemoryEntryInfo,
+  AgentConfigDoctorReport,
+  AgentConfigPreview,
+  AgentConfigWriteResult,
   PrChecksResult,
   PrInfo,
   ProjectInfo,
@@ -345,6 +348,12 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
       addViaDialog: () => call<ProjectInfo | null>("projects:addViaDialog"),
       pickDirectory: () => call<string | null>("projects:pickDirectory"),
       remove: (input) => call<void>("projects:remove", input),
+      lintAgentConfig: (input) =>
+        call<AgentConfigDoctorReport>("projects:lintAgentConfig", input),
+      previewAgentConfig: (input) =>
+        call<AgentConfigPreview>("projects:previewAgentConfig", input),
+      writeAgentConfig: (input) =>
+        call<AgentConfigWriteResult>("projects:writeAgentConfig", input),
     },
     spaces: {
       list: () => call<SpaceInfo[]>("spaces:list"),

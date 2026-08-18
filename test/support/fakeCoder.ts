@@ -604,6 +604,32 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           return v;
         });
       },
+      lintAgentConfig: (input: { projectId: string }) =>
+        rec("projects.lintAgentConfig", [input], {
+          projectId: input.projectId,
+          files: [],
+          score: 0,
+          grade: "F",
+          memory: { considered: 0, covered: 0, missing: [] },
+          issues: [],
+          recommendations: [],
+        }),
+      previewAgentConfig: (input: { projectId: string; targets?: string[] }) =>
+        rec("projects.previewAgentConfig", [input], {
+          projectId: input.projectId,
+          files: [
+            {
+              path: "AGENTS.md",
+              content: "# preview\n",
+              exists: false,
+            },
+          ],
+        }),
+      writeAgentConfig: (input: { projectId: string; targets?: string[] }) =>
+        rec("projects.writeAgentConfig", [input], {
+          projectId: input.projectId,
+          written: ["AGENTS.md"],
+        }),
     },
     spaces: {
       list: () => rec("spaces.list", [], spaces.map((s) => ({ ...s }))),

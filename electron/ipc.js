@@ -259,6 +259,21 @@ const IPC_HANDLERS = {
     });
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
   },
+  "projects:lintAgentConfig": async (ctx, input) => {
+    return services.lintAgentConfig(ctx.store, input || {}, {
+      memory: ctx.memory,
+    });
+  },
+  "projects:previewAgentConfig": async (ctx, input) => {
+    return services.previewAgentConfig(ctx.store, input || {}, {
+      memory: ctx.memory,
+    });
+  },
+  "projects:writeAgentConfig": async (ctx, input) => {
+    return services.writeAgentConfig(ctx.store, input || {}, {
+      memory: ctx.memory,
+    });
+  },
   "spaces:list": async (ctx) => {
     return services.listSpaces(ctx.store);
   },

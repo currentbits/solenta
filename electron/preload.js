@@ -99,6 +99,9 @@ const coder = {
     update: (input) => invoke("projects:update", input),
     addViaDialog: () => invoke("projects:addViaDialog"),
     remove: (input) => invoke("projects:remove", input),
+    lintAgentConfig: (input) => invoke("projects:lintAgentConfig", input),
+    previewAgentConfig: (input) => invoke("projects:previewAgentConfig", input),
+    writeAgentConfig: (input) => invoke("projects:writeAgentConfig", input),
   },
   spaces: {
     list: () => invoke("spaces:list"),
