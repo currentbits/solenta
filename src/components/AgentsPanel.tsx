@@ -1892,12 +1892,16 @@ function TeamRow({
           data-status={
             summary.status === "working" && summary.awaitingInput
               ? "waiting"
-              : summary.status
+              : summary.status === "working" && summary.stalledAt
+                ? "stalled"
+                : summary.status
           }
         >
           {summary.status === "working" && summary.awaitingInput
             ? "waiting"
-            : summary.status}
+            : summary.status === "working" && summary.stalledAt
+              ? "stalled"
+              : summary.status}
         </span>
         {summary.lastActivity && (
           <span className={styles.teamActivity}>

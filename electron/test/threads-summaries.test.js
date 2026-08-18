@@ -72,11 +72,21 @@ describe("threads summaries", () => {
       handoffFrom: "orch",
       runStartedAt: 90,
       awaitingInput: true,
+      stalledAt: null,
       lastActivity: null,
     });
     const orch = rows.find((r) => r.id === "orch");
     assert.equal(orch.runStartedAt, null);
     assert.equal(orch.awaitingInput, false);
+    assert.equal(orch.stalledAt, null);
+  });
+
+  it("mirrors stalledAt onto the summary row", () => {
+    store.setThreads([
+      makeThread({ id: "hung", status: "working", stalledAt: 1234 }),
+    ]);
+    const [row] = services.threadSummaries(store);
+    assert.equal(row.stalledAt, 1234);
   });
 
   it("lastActivity is the first line of the LAST assistant message", () => {

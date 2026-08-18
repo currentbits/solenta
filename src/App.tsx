@@ -103,6 +103,7 @@ export default function App() {
     rewindAndResubmit,
     queued,
     cancelQueued,
+    retryQueued,
     fetchIssue,
     startWorkflowRun,
     saveWorkflow,
@@ -426,6 +427,10 @@ export default function App() {
   const handleCancelQueued = useCallback(() => {
     cancelQueued();
   }, [cancelQueued]);
+
+  const handleRetryQueued = useCallback(() => {
+    retryQueued();
+  }, [retryQueued]);
 
   const handleSetArchived = useCallback(
     async (archived: boolean) => {
@@ -894,7 +899,11 @@ export default function App() {
         queuedPrompt={
           selectedThreadId ? (queued[selectedThreadId]?.prompt ?? null) : null
         }
+        queuedError={
+          selectedThreadId ? (queued[selectedThreadId]?.error ?? null) : null
+        }
         onCancelQueued={handleCancelQueued}
+        onRetryQueued={handleRetryQueued}
         onSetPermissionMode={setPermissionMode}
         onRespondPermission={respondPermission}
         onSetProvider={setProvider}
