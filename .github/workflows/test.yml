@@ -1,12 +1,23 @@
 # The gate: every suite on every push. `npm run acceptance` stays manual —
 # it spends a real claude turn and needs credentials.
+#
+# windows-latest keeps the win32 paths honest (WSL wrap in electron/wsl.js).
+# There is no node-pty in this repo, so the ConPTY rebuild named in #397 is
+# a no-op — do not add a rebuild step. Most of the electron suite still
+# cannot run on win32 (shebang fakes); scripts/test-electron.js skips those
+# and runs the WSL contract only. Winget is blocked on an installer — see
+# the note in scripts/package-cross.sh.
 name: test
 
 on: push
 
 jobs:
   test:
-    runs-on: macos-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

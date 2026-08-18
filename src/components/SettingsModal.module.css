@@ -192,6 +192,36 @@
   color: #fca5a5;
 }
 
+.doctorLead {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--text);
+}
+
+.doctorList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.doctorItem {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.doctorFix {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--text-muted);
+  font-family: var(--mono);
+}
+
 .memoryRow {
   display: flex;
   align-items: flex-start;

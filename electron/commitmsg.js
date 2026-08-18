@@ -1,6 +1,10 @@
 "use strict";
 
-const { spawn } = require("node:child_process");
+// cross-spawn, not child_process: on Windows the agent CLIs install as
+// .cmd shims and Node refuses to exec those directly. cross-spawn routes
+// them through cmd.exe with correct escaping, which matters because the
+// prompt travels in argv (#442).
+const spawn = require("cross-spawn");
 const { getProvider, resolveBin, isBinAvailable } = require("./providers.js");
 const { diff, assertNoOutboundSecrets } = require("./worktrees.js");
 const { fmRun } = require("./fm.js");

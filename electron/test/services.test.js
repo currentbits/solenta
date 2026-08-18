@@ -3,10 +3,11 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { execFileSync } = require("node:child_process");
+const { execFile, execFileSync } = require("node:child_process");
 const { Store } = require("../store.js");
 const services = require("../services.js");
 const ssh = require("../ssh.js");
+const doctor = require("../doctor.js");
 
 function git(cwd, args) {
   execFileSync("git", args, { cwd, stdio: "ignore" });
@@ -24,6 +25,7 @@ describe("services", () => {
   afterEach(() => {
     ssh.setExecFileSync(null);
     ssh.setExecFile(null);
+    doctor.setPlatform(null);
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -103,6 +105,41 @@ describe("services", () => {
     );
   });
 
+  it("addProject does not attach a doctor off win32", async () => {
+    const repo = path.join(tmpDir, "mac-app");
+    fs.mkdirSync(repo);
+    git(repo, ["init"]);
+    const project = await services.addProject(store, repo);
+    assert.equal(project.windowsDoctor, undefined);
+    assert.equal(store.getProjects()[0].windowsDoctor, undefined);
+  });
+
+  it("addProject stays advisory when every Windows doctor check is red", async () => {
+    const repo = path.join(tmpDir, "win-app");
+    fs.mkdirSync(repo);
+    git(repo, ["init"]);
+    doctor.setPlatform("win32");
+    ssh.setExecFile((bin, args, opts, cb) => {
+      if (bin === "git" && args[0] === "config") return cb(null, "false\n");
+      if (bin === "bash") return cb(new Error("bash: not found"));
+      if (bin === "node") return cb(null, "v18.20.0\n");
+      execFile(bin, args, opts, cb);
+    });
+    const project = await services.addProject(store, repo);
+    assert.ok(project.id);
+    assert.equal(store.getProjects().length, 1);
+    assert.equal(
+      store.getProjects()[0].windowsDoctor,
+      undefined,
+      "doctor report must not be persisted",
+    );
+    const failed = (project.windowsDoctor && project.windowsDoctor.checks) || [];
+    assert.ok(
+      failed.filter((c) => !c.ok).length >= 3,
+      "longpaths, gitBash and node22 should all be red",
+    );
+  });
+
   it("addProject without remotes still requires a local git repo", async () => {
     const dir = path.join(tmpDir, "still-local");
     fs.mkdirSync(dir);
@@ -174,6 +211,9 @@ describe("services", () => {
       mode: "acceptEdits",
     });
     assert.equal(updated.permissionMode, "acceptEdits");
+    assert.equal(updated.sandbox.sandboxed, false);
+    assert.match(updated.sandbox.reason, /--permission-mode acceptEdits/);
+    assert.equal(store.getThread(thread.id).sandbox, undefined);
     assert.throws(
       () =>
         services.setPermissionMode(store, {
@@ -718,6 +758,10 @@ describe("services", () => {
     assert.deepEqual(detail.workLog, []);
     assert.equal(detail.workflow, null);
     assert.equal(detail.usage, null);
+    // #436: computed on the way out, never written back to the store row.
+    assert.equal(detail.thread.sandbox.sandboxed, false);
+    assert.match(detail.thread.sandbox.reason, /Claude --permission-mode default/);
+    assert.equal(store.getThread(thread.id).sandbox, undefined);
   });
 
   it("gitStatus reports branch and dirty flag", async () => {

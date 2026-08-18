@@ -37,6 +37,25 @@ export interface ProjectInfo {
    * so no commit is ever lost to GC.
    */
   worktreeRetention?: number;
+  /**
+   * Windows doctor (#435). Only on the add/create return value when the
+   * host is win32. Never persisted. Failed checks do not reject the add.
+   */
+  windowsDoctor?: WindowsDoctorReport;
+}
+
+/** One Windows doctor probe (#435). Advisory — never blocks add. */
+export interface WindowsDoctorCheck {
+  id: "longpaths" | "gitBash" | "node22" | "wslBoundary";
+  ok: boolean;
+  message: string;
+  /** What to do. Only when !ok. */
+  fix?: string;
+}
+
+/** Result of the win32 project-add doctor. Absent off win32 and on list(). */
+export interface WindowsDoctorReport {
+  checks: WindowsDoctorCheck[];
 }
 
 /** Optional remotes for projects.add. Empty/absent = local project. */
@@ -122,6 +141,16 @@ export interface GcCleanResult {
 export type ThreadStatus = "idle" | "working" | "done" | "failed";
 
 export type PermissionMode = "default" | "acceptEdits" | "plan" | "bypassPermissions";
+
+/**
+ * Computed (never persisted): whether this thread's next run is actually
+ * confined. Agent × repo-location; see electron/sandbox.js.
+ */
+export interface ThreadSandbox {
+  sandboxed: boolean;
+  /** Hover/title copy: yes/no why, including where the process runs. */
+  reason: string;
+}
 
 export interface ThreadInfo {
   id: string;
@@ -279,6 +308,11 @@ export interface ThreadInfo {
   replayContext?: boolean;
   /** Passed to the provider CLI (claude --permission-mode). Sticky per thread. */
   permissionMode: PermissionMode;
+  /**
+   * Computed at read time (#436). Whether the next run is actually confined
+   * (agent × repo location). Absent on store rows and older fixtures.
+   */
+  sandbox?: ThreadSandbox;
   /**
    * Reasoning effort for this thread, or null to use the provider's default.
    * Ignored by providers whose `efforts` list is empty.
