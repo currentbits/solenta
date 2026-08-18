@@ -7,6 +7,22 @@
   background: var(--bg);
 }
 
+.dropOverlay {
+  position: absolute;
+  inset: 8px;
+  z-index: 15;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  border-radius: var(--radius);
+  border: 1.5px dashed var(--blue-border);
+  background: color-mix(in srgb, var(--bg) 62%, transparent);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
 .header {
   display: flex;
   align-items: center;

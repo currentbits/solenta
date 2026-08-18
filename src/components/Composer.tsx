@@ -6,8 +6,8 @@ import {
   useState,
   type ClipboardEvent,
   type CSSProperties,
-  type DragEvent,
   type KeyboardEvent,
+  type RefObject,
 } from "react";
 import type {
   AgentProfile,
@@ -53,6 +53,8 @@ import { applyMention, getMentionQuery, type MentionQuery } from "../mention";
 import { parseDelegate } from "../delegate";
 import { buildBestOfNEntries, providerVendor } from "../bestOfN";
 import { WorkflowsModal } from "./WorkflowsModal";
+import { DROP_REJECT_MESSAGE } from "../dropFiles";
+import { useFileDrop } from "../useFileDrop";
 import styles from "./Composer.module.css";
 
 interface ComposerProps {
@@ -133,6 +135,13 @@ interface ComposerProps {
    * Classify drag-dropped files into attachments. Absent disables drop.
    */
   onDropAttachmentFiles?: (files: File[]) => Promise<AttachmentInfo[]>;
+  /**
+   * Larger drop target (thread pane). When set, listeners bind there so a
+   * drop on the transcript or empty state reaches the same chip list.
+   */
+  dropHostRef?: RefObject<HTMLElement | null>;
+  /** Host overlay: true while a file drag is hovering the drop target. */
+  onFileDragChange?: (dragging: boolean) => void;
 }
 
 const STATIC = {
@@ -270,6 +279,8 @@ export function Composer({
   onSaveAttachmentImage,
   onLoadAttachmentImage,
   onDropAttachmentFiles,
+  dropHostRef,
+  onFileDragChange,
 }: ComposerProps) {
   /**
    * Unsent drafts keyed by thread: one Composer instance serves every thread
@@ -915,15 +926,35 @@ export function Composer({
     }
   };
 
-  const onDrop = (e: DragEvent<HTMLDivElement>) => {
-    if (!onDropAttachmentFiles || disabled || sending) return;
-    const files = Array.from(e.dataTransfer?.files ?? []);
-    if (files.length === 0) return;
-    e.preventDefault();
-    onDropAttachmentFiles(files)
-      .then(addAttachments)
-      .catch(() => {});
-  };
+  const acceptDroppedFiles = useCallback(
+    async (files: File[]) => {
+      if (!onDropAttachmentFiles || disabled || sending) return;
+      try {
+        const items = await onDropAttachmentFiles(files);
+        if (items.length) {
+          addAttachments(items);
+          setLocalError(null);
+        } else {
+          setLocalError(DROP_REJECT_MESSAGE);
+        }
+      } catch (err) {
+        const msg =
+          err instanceof Error && err.message
+            ? err.message
+            : DROP_REJECT_MESSAGE;
+        setLocalError(msg);
+      }
+    },
+    [onDropAttachmentFiles, disabled, sending, addAttachments],
+  );
+
+  const composerRef = useRef<HTMLDivElement>(null);
+  const dropTargetRef = dropHostRef ?? composerRef;
+  const fileDrag = useFileDrop(dropTargetRef, {
+    enabled: Boolean(onDropAttachmentFiles) && !disabled && !sending,
+    onFiles: acceptDroppedFiles,
+    onDraggingChange: onFileDragChange,
+  });
 
   const pickMode = async (mode: PermissionMode) => {
     setModeOpen(false);
@@ -1077,13 +1108,12 @@ export function Composer({
   };
 
   return (
-    <div
-      className={styles.composer}
-      onDragOver={(e) => {
-        if (onDropAttachmentFiles) e.preventDefault();
-      }}
-      onDrop={onDrop}
-    >
+    <div className={styles.composer} ref={composerRef}>
+      {fileDrag && !dropHostRef && (
+        <div className={styles.dropOverlay} data-drop-overlay="" aria-hidden>
+          Drop images or folders
+        </div>
+      )}
       {shownError && (
         <div className={styles.errorBanner} role="alert">
           <span className={styles.errorText}>{shownError}</span>

@@ -361,7 +361,7 @@ interface ThreadViewProps {
   onSaveAttachmentImage?: (dataUrl: string) => Promise<AttachmentInfo | null>;
   /** Loads one attached image (absolute path) as a data URL. */
   onLoadAttachmentImage?: (path: string) => Promise<string | null>;
-  /** Classify drag-dropped files into attachments (Electron only). */
+  /** Classify drag-dropped files into attachments. */
   onDropAttachmentFiles?: (files: File[]) => Promise<AttachmentInfo[]>;
   /** Push the thread's current branch to origin. */
   onPush: () => Promise<{ remote: string; branch: string }>;
@@ -2002,6 +2002,8 @@ export const ThreadView = memo(function ThreadView({
   onModelPickerOpen,
 }: ThreadViewProps) {
   const bodyRef = useRef<HTMLDivElement>(null);
+  const dropHostRef = useRef<HTMLElement>(null);
+  const [fileDrag, setFileDrag] = useState(false);
   const stickToBottom = useRef(true);
   const prevThreadId = useRef<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -2685,7 +2687,16 @@ export const ThreadView = memo(function ThreadView({
       : "Push";
 
   return (
-    <main className={styles.main}>
+    <main
+      className={styles.main}
+      ref={dropHostRef}
+      data-thread-drop=""
+    >
+      {fileDrag && onDropAttachmentFiles ? (
+        <div className={styles.dropOverlay} data-drop-overlay="" aria-hidden>
+          Drop images or folders
+        </div>
+      ) : null}
       <header className={styles.header}>
         <div className={styles.breadcrumb}>
           <span className={styles.project}>
@@ -3440,6 +3451,8 @@ export const ThreadView = memo(function ThreadView({
         onSaveAttachmentImage={onSaveAttachmentImage}
         onLoadAttachmentImage={onLoadAttachmentImage}
         onDropAttachmentFiles={onDropAttachmentFiles}
+        dropHostRef={dropHostRef}
+        onFileDragChange={setFileDrag}
       />
 
       {lightbox && (

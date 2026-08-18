@@ -11,9 +11,10 @@
 import assert from "node:assert/strict";
 import { describe, it, afterEach } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { mount, unmountAll } from "./support/dom.ts";
+import { inAct, mount, unmountAll } from "./support/dom.ts";
 import { ThreadView } from "../src/components/ThreadView";
 import type {
+  AttachmentInfo,
   ChatMessage,
   ProjectInfo,
   ProviderInfo,
@@ -123,6 +124,7 @@ function view(props: {
   runStats?: (threadId: string) => Promise<RunStatInfo[]>;
   restoreCheckpoint?: (threadId: string, sha: string) => Promise<void>;
   onLoadImage?: (name: string) => Promise<string | null>;
+  onDropAttachmentFiles?: (files: File[]) => Promise<AttachmentInfo[]>;
 }) {
   return (
     <ThreadView
@@ -156,6 +158,7 @@ function view(props: {
       onSuggestCommitMessage={async () => ({ message: "feat: x" })}
       onPush={async () => ({ remote: "origin", branch: "main" })}
       onLoadImage={props.onLoadImage}
+      onDropAttachmentFiles={props.onDropAttachmentFiles}
     />
   );
 }
@@ -773,6 +776,127 @@ describe("ThreadView review bar", () => {
     await m.flush();
     assert.deepEqual(restores, [{ threadId: "t1", sha: "sha-turn-1-aaaaaaaa" }]);
     assert.equal(reviews, 2, "successful undo also opens Changes");
+    m.unmount();
+  });
+});
+
+const DROP_IMAGE: AttachmentInfo = {
+  kind: "image",
+  path: "/tmp/shot.png",
+  name: "shot.png",
+};
+
+function dropTransfer(
+  files: File[],
+  opts: { itemsOnly?: boolean; directories?: string[] } = {},
+) {
+  const dirs = new Set(opts.directories ?? []);
+  const items = files.map((file) => ({
+    kind: "file",
+    type: file.type,
+    getAsFile: () => file,
+    webkitGetAsEntry: () => ({
+      isDirectory: dirs.has(file.name),
+      isFile: !dirs.has(file.name),
+      name: file.name,
+    }),
+  }));
+  return {
+    files: opts.itemsOnly ? [] : files,
+    items,
+    types: ["Files"],
+    dropEffect: "none",
+  };
+}
+
+async function dispatchOn(
+  el: Element | null,
+  type: string,
+  dataTransfer: object,
+) {
+  assert.ok(el, `${type} target must exist`);
+  const ev = new Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperty(ev, "dataTransfer", { value: dataTransfer });
+  await inAct(() => {
+    el.dispatchEvent(ev);
+  });
+}
+
+describe("ThreadView file drop (issue #469)", () => {
+  it("attaches a file dropped on the transcript, not only the composer", async () => {
+    const seen: File[] = [];
+    const m = await mount(
+      view({
+        onDropAttachmentFiles: async (files) => {
+          seen.push(...files);
+          return [DROP_IMAGE];
+        },
+        detail: detail({
+          messages: [
+            msg({
+              id: "u1",
+              role: "user",
+              text: "TRANSCRIPT_DROP_TARGET",
+              createdAt: 10,
+            }),
+          ],
+        }),
+      }),
+    );
+    assert.ok(
+      m.text().includes("TRANSCRIPT_DROP_TARGET"),
+      "user message must be on screen",
+    );
+    const transcript =
+      m.query(".userBubble") ?? m.query("[class*='userBubble']");
+    assert.ok(transcript, "user bubble must be the drop target");
+    const file = new File([Uint8Array.from([1])], "shot.png", {
+      type: "image/png",
+    });
+    await dispatchOn(transcript, "drop", dropTransfer([file]));
+    await m.flush();
+    assert.equal(seen.length, 1, "transcript drop must reach the classifier");
+    assert.equal(seen[0].name, "shot.png");
+    assert.ok(
+      m.query('[data-attachment-kind="image"]'),
+      "chip must appear on the composer after a transcript drop",
+    );
+    m.unmount();
+  });
+
+  it("shows a drop overlay while a file drag hovers the thread", async () => {
+    const m = await mount(
+      view({
+        onDropAttachmentFiles: async () => [],
+        detail: detail({
+          messages: [
+            msg({
+              id: "u1",
+              role: "user",
+              text: "hover target",
+              createdAt: 10,
+            }),
+          ],
+        }),
+      }),
+    );
+    const host = m.query("[data-thread-drop]");
+    assert.ok(host, "open thread is the drop target");
+    assert.equal(
+      m.query("[data-drop-overlay]"),
+      null,
+      "overlay stays hidden until a file drag enters",
+    );
+    await dispatchOn(host, "dragenter", {
+      types: ["Files"],
+      items: [],
+      files: [],
+    });
+    assert.ok(m.query("[data-drop-overlay]"), "overlay must paint");
+    assert.ok(
+      m.text().includes("Drop images or folders"),
+      "overlay copy names images and folders",
+    );
     m.unmount();
   });
 });

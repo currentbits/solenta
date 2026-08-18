@@ -1766,8 +1766,9 @@ export function useCoder(): UseCoderResult {
 
   const dropAttachmentFiles = useCallback(
     async (files: File[]) => {
-      // Absolute paths of dropped Files exist only behind the Electron
-      // preload (webUtils). Web/dev bridges fall back to saveImage.
+      // Absolute paths of dropped Files (including Finder directories)
+      // exist only behind the Electron preload (webUtils). Web/dev
+      // bridges fall back to saveImage, which cannot attach folders.
       const pathOf = api.attachments.droppedFilePath;
       if (!pathOf) return filesToAttachments(files, saveAttachmentImage);
       const paths = files
