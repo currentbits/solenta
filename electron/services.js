@@ -930,14 +930,37 @@ function forkThread(store, input) {
  * the run is the caller's job: services must not depend on the runner.
  *
  * @param {any} store
- * @param {{ threadId: string, provider?: string, worktree?: boolean }} input
+ * @param {{ threadId: string, provider?: string, model?: string | null, pool?: string, worktree?: boolean }} input
  * @param {(store: any, input: any) => any} [forkImpl] seam for tests
  * @returns {any} the new worker thread
  */
 function forkWorkerThread(store, input, forkImpl = forkThread) {
-  /** @type {{ threadId: string, provider?: string }} */
+  const {
+    resolveSubagentPool,
+    poolFromStore,
+  } = require("./subagentPool");
+  const resolved = resolveSubagentPool(poolFromStore(store), {
+    pool: input.pool,
+    provider: input.provider,
+  });
+
+  /** @type {{ threadId: string, provider?: string, model?: string | null }} */
   const forkInput = { threadId: input.threadId };
-  if (input.provider != null) forkInput.provider = input.provider;
+  if (resolved) {
+    forkInput.provider = resolved.provider;
+    if (resolved.fromPool) {
+      forkInput.model = resolved.model;
+    } else if (Object.prototype.hasOwnProperty.call(input, "model")) {
+      forkInput.model = input.model;
+    }
+  } else if (input.provider != null) {
+    forkInput.provider = input.provider;
+    if (Object.prototype.hasOwnProperty.call(input, "model")) {
+      forkInput.model = input.model;
+    }
+  } else if (Object.prototype.hasOwnProperty.call(input, "model")) {
+    forkInput.model = input.model;
+  }
   const fork = forkImpl(store, forkInput);
 
   const patch = { orchWorker: true };
@@ -3156,6 +3179,8 @@ module.exports = {
   PLANBOARD_NOTE,
   planboardNoteFor,
   selfIdNoteFor,
+  subagentPoolNoteFor: require("./subagentPool").subagentPoolNoteFor,
+  resolveSubagentPool: require("./subagentPool").resolveSubagentPool,
   hypothesisNoteFor,
   HYPOTHESES_MAX,
   HYPOTHESIS_CLAIM_MAX,

@@ -4570,6 +4570,9 @@ function createRunner(opts) {
           (projectForGate && projectForGate.path) ||
           null,
       ) +
+      services.subagentPoolNoteFor(
+        store.getSettings && store.getSettings().subagentPool,
+      ) +
       services.hypothesisNoteFor(dispatchThread, (id) => store.getThread(id)) +
       services.specNoteFor(
         dispatchThread,

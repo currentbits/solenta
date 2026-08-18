@@ -1133,6 +1133,61 @@ describe("forkWorkerThread", () => {
     assert.equal(store.getThread(nonRepo.id).pendingWorktree, undefined);
   });
 
+  it("applies the pool default when no provider is given", () => {
+    services.setSettings(store, {
+      subagentPool: {
+        defaultAlias: "fast",
+        force: false,
+        entries: [
+          {
+            alias: "fast",
+            provider: "kimi",
+            model: "kimi-for-coding-highspeed",
+            description: "Fast and cheap. Good for small edits.",
+          },
+        ],
+      },
+    });
+    const source = services.createThread(store, {
+      projectId: project.id,
+      title: "Orchestrator",
+    });
+    const worker = services.forkWorkerThread(store, { threadId: source.id });
+    const stored = store.getThread(worker.id);
+    assert.equal(stored.provider, "kimi");
+    assert.equal(stored.model, "kimi-for-coding-highspeed");
+    // The source (user-facing) thread is not rerouted.
+    assert.equal(store.getThread(source.id).provider, source.provider);
+  });
+
+  it("force pins the default even when the lead names a provider", () => {
+    services.setSettings(store, {
+      subagentPool: {
+        defaultAlias: "fast",
+        force: true,
+        entries: [
+          {
+            alias: "fast",
+            provider: "kimi",
+            model: "kimi-for-coding-highspeed",
+            description: "Fast and cheap. Good for small edits.",
+          },
+        ],
+      },
+    });
+    const source = services.createThread(store, {
+      projectId: project.id,
+      title: "Orchestrator",
+    });
+    const worker = services.forkWorkerThread(store, {
+      threadId: source.id,
+      provider: "codex",
+    });
+    const stored = store.getThread(worker.id);
+    assert.equal(stored.provider, "kimi");
+    assert.equal(stored.model, "kimi-for-coding-highspeed");
+  });
+
   it("canHostWorktree rejects remote projects and non-repos", () => {
     assert.equal(services.canHostWorktree({ path: repo }), true);
     assert.equal(
