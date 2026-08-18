@@ -10,6 +10,7 @@ import { describe, it } from "node:test";
 import { useState } from "react";
 import { mount, inAct } from "./support/dom.ts";
 import { Markdown } from "../src/components/Markdown";
+import { PathLinkProvider } from "../src/components/PathLinks";
 
 describe("Markdown", () => {
   it("renders plain paragraphs", async () => {
@@ -96,3 +97,64 @@ describe("Markdown", () => {
     assert.equal(a.getAttribute("href"), "https://example.com");
   });
 });
+
+const EXISTING = new Set(["src/foo.ts", "images/1.jpg"]);
+
+function linked(text: string, opened: string[] = []) {
+  return (
+    <PathLinkProvider
+      resolvePaths={(paths) =>
+        Object.fromEntries(
+          paths.map((p) => [p, EXISTING.has(p) ? `/wt/${p}` : null]),
+        )
+      }
+      openPath={(abs, opts) => {
+        opened.push(opts?.reveal ? `reveal:${abs}` : abs);
+      }}
+    >
+      <Markdown text={text} />
+    </PathLinkProvider>
+  );
+}
+
+describe("Markdown path links", () => {
+  it("makes a relative file clickable and opens the worktree path", async () => {
+    const opened: string[] = [];
+    const m = await mount(linked("see `src/foo.ts` please", opened));
+    await m.flush();
+    const link = m.container.querySelector("[data-path-link]");
+    assert.ok(link, "existing relative path is a link");
+    assert.equal(link.getAttribute("data-path-link"), "src/foo.ts");
+    await m.click(link);
+    assert.deepEqual(opened, ["/wt/src/foo.ts"]);
+  });
+
+  it("does not link a missing file", async () => {
+    const m = await mount(linked("see `src/missing.ts` please"));
+    await m.flush();
+    assert.equal(m.container.querySelector("[data-path-link]"), null);
+    assert.match(m.text(), /src\/missing\.ts/);
+  });
+
+  it("strips :12 when opening file:12", async () => {
+    const opened: string[] = [];
+    const m = await mount(linked("see `src/foo.ts:12`", opened));
+    await m.flush();
+    const link = m.container.querySelector("[data-path-link]");
+    assert.ok(link);
+    assert.equal(link.getAttribute("data-path-link"), "src/foo.ts");
+    assert.equal(link.getAttribute("data-path-line"), "12");
+    await m.click(link);
+    assert.deepEqual(opened, ["/wt/src/foo.ts"]);
+  });
+
+  it("leaves http links alone", async () => {
+    const m = await mount(linked("[docs](https://example.com/src/foo.ts)"));
+    await m.flush();
+    assert.equal(m.container.querySelector("[data-path-link]"), null);
+    const a = m.container.querySelector("a");
+    assert.ok(a);
+    assert.equal(a.getAttribute("href"), "https://example.com/src/foo.ts");
+  });
+});
+

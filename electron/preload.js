@@ -196,6 +196,7 @@ const coder = {
   files: {
     list: (input) => invoke("files:list", input),
     image: (input) => invoke("files:image", input),
+    resolve: (input) => invoke("files:resolve", input),
   },
   attachments: {
     pick: () => invoke("attachments:pick"),
