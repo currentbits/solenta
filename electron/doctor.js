@@ -97,9 +97,19 @@ async function runWindowsDoctor(project, platform = getPlatform()) {
     // Linux git has no MAX_PATH. Only a Windows-side local repo needs this.
     const needsLongpaths = side.side === "windows" && !remote;
 
-    if (needsLongpaths) {
-      const r = await probe(project, "git", ["config", "--get", "core.longpaths"]);
-      const enabled = /^true$/i.test(r.stdout);
+    // The three probes are independent, so run them together: sequentially
+    // they stack three PROBE_TIMEOUT_MS waits into a 15s frozen add dialog on
+    // exactly the machine this doctor exists for.
+    const [longpaths, bash, node] = await Promise.all([
+      needsLongpaths
+        ? probe(project, "git", ["config", "--get", "core.longpaths"])
+        : Promise.resolve(null),
+      probe(project, "bash", ["-c", "echo ok"]),
+      probe(project, "node", ["-v"]),
+    ]);
+
+    if (longpaths) {
+      const enabled = /^true$/i.test(longpaths.stdout);
       checks.push({
         id: "longpaths",
         ok: enabled,
@@ -114,7 +124,6 @@ async function runWindowsDoctor(project, platform = getPlatform()) {
       });
     }
 
-    const bash = await probe(project, "bash", ["-c", "echo ok"]);
     const bashOk = bash.ok && bash.stdout === "ok";
     checks.push({
       id: "gitBash",
@@ -131,7 +140,6 @@ async function runWindowsDoctor(project, platform = getPlatform()) {
           : "Install Git for Windows and keep Git Bash on PATH",
     });
 
-    const node = await probe(project, "node", ["-v"]);
     const major = node.ok ? parseNodeMajor(node.stdout) : null;
     const nodeOk = major != null && major >= 22;
     checks.push({
