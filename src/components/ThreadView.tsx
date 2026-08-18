@@ -31,6 +31,8 @@ import type {
   WorkflowTemplateInfo,
 } from "../shared/ipc";
 import { SPEC_ARTIFACTS, THREAD_NOTES_MAX } from "../shared/ipc";
+import { TEACH_AUTONOMY_LABELS } from "../teach";
+import type { TeachAutonomy } from "../shared/ipc";
 import type { WorkflowSaveInput } from "../useCoder";
 import { diffLineKind, isEmptyDiff } from "../diffView";
 import {
@@ -333,7 +335,7 @@ interface ThreadViewProps {
    */
   onCreateThread?: (
     projectId?: string,
-    opts?: { worktree?: boolean; orchestrate?: boolean },
+    opts?: { worktree?: boolean; orchestrate?: boolean; teach?: boolean; issueNumber?: number | null },
   ) => void;
   /** Seed an automation from this thread's first prompt (#285). */
   onRepeatSchedule?: () => void;
@@ -356,6 +358,12 @@ interface ThreadViewProps {
     threadId: string,
     stage: SpecArtifact,
   ) => Promise<{ path: string; text: string | null }>;
+  /** Turn Teach mode on (issue #373). */
+  onStartTeach?: (threadId: string) => void | Promise<void>;
+  /** Turn Teach mode off. */
+  onStopTeach?: (threadId: string) => void | Promise<void>;
+  /** Ask the agent to review the human's TODO(human) fills. */
+  onRequestTeachReview?: (threadId: string) => void | Promise<void>;
   /** Permanently delete the open thread (caller already confirmed in UI). */
   onDeleteThread: () => void | Promise<void>;
   /** Center Changes panel open (lifted so the Git tab can open it). */
@@ -1812,6 +1820,83 @@ function SpecCard({
   );
 }
 
+const TEACH_STAGES: TeachAutonomy[] = ["hint", "review", "pair"];
+
+function teachStepStatus(
+  step: TeachAutonomy,
+  current: TeachAutonomy,
+): "todo" | "doing" | "done" {
+  const i = TEACH_STAGES.indexOf(step);
+  const j = TEACH_STAGES.indexOf(current);
+  if (i < j) return "done";
+  if (i === j) return "doing";
+  return "todo";
+}
+
+/**
+ * Teach mode card (issue #373): autonomy ladder, review-my-code, turn off.
+ */
+function TeachCard({
+  thread,
+  onStopTeach,
+  onRequestTeachReview,
+}: {
+  thread: ThreadInfo;
+  onStopTeach?: (threadId: string) => void | Promise<void>;
+  onRequestTeachReview?: (threadId: string) => void | Promise<void>;
+}) {
+  const teach = thread.teach;
+  if (!teach) return null;
+  const n = teach.reviewsPassed;
+  const reviewLabel = n === 1 ? "1 review passed" : `${n} reviews passed`;
+  return (
+    <div className={styles.specCard} data-teach-card="">
+      <div className={styles.specCardHead}>
+        <span className={styles.specCardTitle}>Teach</span>
+        <span className={styles.specStatus}>{reviewLabel}</span>
+      </div>
+      <ol className={styles.specStageList}>
+        {TEACH_STAGES.map((step) => (
+          <li
+            key={step}
+            className={styles.specStage}
+            data-teach-autonomy={step}
+            data-plan-step={teachStepStatus(step, teach.autonomy)}
+          >
+            {TEACH_AUTONOMY_LABELS[step]}
+          </li>
+        ))}
+      </ol>
+      <p className={styles.specStatus}>
+        Hints, not solutions. The agent leaves TODO(human) markers for you
+        to fill, then reviews your code.
+      </p>
+      <div className={styles.permissionActions}>
+        {onRequestTeachReview && (
+          <button
+            type="button"
+            className={styles.permissionAllow}
+            data-teach-review-btn=""
+            onClick={() => void onRequestTeachReview(thread.id)}
+          >
+            Review my code
+          </button>
+        )}
+        {onStopTeach && (
+          <button
+            type="button"
+            className={styles.permissionDeny}
+            data-teach-stop-btn=""
+            onClick={() => void onStopTeach(thread.id)}
+          >
+            Turn off
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function DiffLine({ line }: { line: string }) {
   const kind = diffLineKind(line);
   return (
@@ -2092,6 +2177,9 @@ export const ThreadView = memo(function ThreadView({
   onStopSpec,
   onReviewSpec,
   onSpecArtifact,
+  onStartTeach,
+  onStopTeach,
+  onRequestTeachReview,
   onDeleteThread,
   changesOpen,
   changesNonce,
@@ -2930,6 +3018,16 @@ export const ThreadView = memo(function ThreadView({
               Exit spec mode
             </button>
           )}
+          {onStartTeach && !thread.teach && (
+            <button
+              type="button"
+              className={styles.btn}
+              data-teach-mode-btn=""
+              onClick={() => void onStartTeach(thread.id)}
+            >
+              Teach mode
+            </button>
+          )}
           {onSetNotes && (
             <button
               type="button"
@@ -3330,6 +3428,14 @@ export const ThreadView = memo(function ThreadView({
           />
         ) : null}
 
+        {thread.teach ? (
+          <TeachCard
+            thread={thread}
+            onStopTeach={onStopTeach}
+            onRequestTeachReview={onRequestTeachReview}
+          />
+        ) : null}
+
         {/* A pending plan prompt already shows the plan — don't show it twice. */}
         {(thread.planSteps?.length || thread.plan) &&
         !detail.pendingPermission?.plan ? (
@@ -3474,6 +3580,7 @@ export const ThreadView = memo(function ThreadView({
         threadId={thread.id}
         branch={thread.branch}
         permissionMode={thread.permissionMode}
+        teach={thread.teach ?? null}
         onPermissionModeChange={onSetPermissionMode}
         provider={thread.provider}
         model={thread.model}

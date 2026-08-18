@@ -27,5 +27,8 @@ trap cleanup EXIT
 if command -v sips >/dev/null; then
   sips -g pixelWidth -g pixelHeight "$out"
 fi
-ls -lh "$out"
-echo "wrote $out"
+# Public share URL is card.png — a new filename busts crawler image caches.
+# Keep og.png as the render target so older links still resolve.
+cp "$out" "$root/site/assets/card.png"
+ls -lh "$out" "$root/site/assets/card.png"
+echo "wrote $out and site/assets/card.png"
