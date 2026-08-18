@@ -256,4 +256,46 @@ describe('memory is project-scoped (no global leakage)', () => {
     const all = await memory.search({ query: 'narwhal' })
     assert.equal(all.length, 3)
   })
+
+  // search() fusion re-applies liveSql but NOT projectScopeSql, so a missing
+  // filter on graphSearch would leak a sibling that shares an entity. The
+  // narwhal FTS/vector cases above never seed entities, so they would not catch it.
+  it('graphSearch (and graph-only search) stay inside the queried project', async () => {
+    const coder = memory.store({
+      type: 'knowledge',
+      title: 'Coder hidden graph target',
+      body: 'totally unrelated wording about pipelines only',
+      project: 'coder',
+      force: true,
+    })
+    const other = memory.store({
+      type: 'knowledge',
+      title: 'Other hidden graph target',
+      body: 'different pipelines wording with no shared tokens',
+      project: 'other',
+      force: true,
+    })
+    memory.db
+      .prepare(`INSERT INTO entities (id, name, kind) VALUES ('ent-scope-1', 'ScopeOnlyEntity', 'concept')`)
+      .run()
+    memory.db.prepare(`INSERT INTO mentions (entry_id, entity_id) VALUES (?, 'ent-scope-1')`).run(coder.id)
+    memory.db.prepare(`INSERT INTO mentions (entry_id, entity_id) VALUES (?, 'ent-scope-1')`).run(other.id)
+
+    const graphHits = memory.graphSearch('ScopeOnlyEntity', 'coder')
+    assert.deepEqual(
+      graphHits.map((h) => h.id),
+      [coder.id],
+      `graphSearch leaked out of project: ${JSON.stringify(graphHits.map((h) => h.title))}`,
+    )
+
+    const hits = await memory.search({ query: 'ScopeOnlyEntity', project: 'coder' })
+    assert.ok(
+      hits.some((h) => h.id === coder.id),
+      `graph-only search missed the in-project hit: ${JSON.stringify(hits.map((h) => h.title))}`,
+    )
+    assert.ok(
+      hits.every((h) => h.id !== other.id),
+      `search fusion leaked the sibling: ${JSON.stringify(hits.map((h) => h.title))}`,
+    )
+  })
 })
