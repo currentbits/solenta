@@ -11,6 +11,7 @@ const {
   normalizeIssueNumber,
   normalizePostMerge,
 } = require("./postmerge.js");
+const { normalizeAcceptedHunks } = require("./reviewItinerary.js");
 
 /** Builtin "Plan and Verify" workflow template (seeded on every store). */
 const STANDARD_TEMPLATE = {
@@ -787,6 +788,8 @@ function migrateThread(t) {
     issueNumber: normalizeIssueNumber(t.issueNumber),
     // Delayed post-merge re-check (issue #420). Heal a crash mid-check.
     postMergeVerify: normalizePostMerge(t.postMergeVerify),
+    // Review itinerary accepted hunks (issue #421).
+    reviewAcceptedHunks: normalizeAcceptedHunks(t.reviewAcceptedHunks),
   };
 }
 

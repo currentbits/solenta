@@ -3424,6 +3424,8 @@ module.exports = {
   nextSpecStage,
   specArtifactPath,
   specNoteFor,
+  reviewItineraryNoteFor: require("./reviewItinerary").reviewItineraryNoteFor,
+  REVIEW_ITINERARY_NOTE: require("./reviewItinerary").REVIEW_ITINERARY_NOTE,
   teachNoteFor,
   teachAutonomyFor,
   teachAllowedModes,

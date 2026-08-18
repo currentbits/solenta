@@ -3828,6 +3828,16 @@ function buildDevCoder(): CoderApi {
           updatedAt: now(),
         });
       },
+      async reviewContext(_input) {
+        return { annotation: null, symbols: [], acceptedHunks: [] };
+      },
+      async setReviewAccepted(input) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
+        return patchThread(input.threadId, {
+          reviewAcceptedHunks: input.hashes,
+        });
+      },
       async diff(input) {
         const detail = details.get(input.threadId);
         if (!detail) throw new Error(`Thread not found: ${input.threadId}`);

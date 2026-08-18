@@ -36,6 +36,7 @@ describe("matchSlashCommands", () => {
     for (const name of [
       "/compact",
       "/rewind",
+      "/review",
       "/undo",
       "/usage",
       "/context",

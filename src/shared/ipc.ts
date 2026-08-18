@@ -377,6 +377,11 @@ export interface ThreadInfo {
    */
   spec?: ThreadSpec;
   /**
+   * Hunk hashes the user marked reviewed (issue #421). The itinerary skips
+   * these until the hunk body changes. Absent → none accepted yet.
+   */
+  reviewAcceptedHunks?: string[];
+  /**
    * Teach mode (issue #373): hints-not-solutions persona, TODO(human)
    * markers, and skill-gated autonomy. Absent/null = off. Set by
    * threads.startTeach or threads.create({ teach: true }); cleared by
@@ -384,6 +389,19 @@ export interface ThreadInfo {
    * in teach mode across providers.
    */
   teach?: ThreadTeach | null;
+}
+
+/** One code-index symbol for the review itinerary reuse scan. */
+export interface ReviewSymbol {
+  name: string;
+  path: string;
+}
+
+/** Extras the Changes panel needs to build a review itinerary. */
+export interface ReviewContext {
+  annotation: unknown;
+  symbols: ReviewSymbol[];
+  acceptedHunks: string[];
 }
 
 /** Autonomy ladder while Teach mode is on (issue #373). */
@@ -2015,6 +2033,16 @@ export interface CoderApi {
     setupWorktree(input: { threadId: string }): Promise<ThreadInfo>;
     /** Working-tree changes in the thread's cwd (worktree if set, else project). */
     diff(input: { threadId: string }): Promise<DiffResult>;
+    /**
+     * Review itinerary extras (issue #421): author annotation file, code-index
+     * symbols for the reuse scan, and hunk hashes already marked reviewed.
+     */
+    reviewContext(input: { threadId: string }): Promise<ReviewContext>;
+    /** Persist hunk hashes the user marked reviewed on this thread. */
+    setReviewAccepted(input: {
+      threadId: string;
+      hashes: string[];
+    }): Promise<ThreadInfo>;
     /**
      * Commits every change in the thread's cwd (git add -A + commit -m).
      * Rejects on an empty message or when there is nothing to commit.

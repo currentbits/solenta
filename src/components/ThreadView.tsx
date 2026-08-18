@@ -75,6 +75,17 @@ import type { SlashAction } from "../slashCommands";
 import { buildBestOfNEntries } from "../bestOfN";
 import { createPrPrompt } from "../prUi";
 import { suggestNextGitAction } from "../nextGitAction";
+import {
+  buildReviewItinerary,
+  orderedPatches,
+  parseReviewAnnotation,
+  type ReviewItinerary,
+  type ReviewSymbol,
+} from "../reviewItinerary";
+import {
+  ChunkRationale,
+  ReviewItineraryView,
+} from "./ReviewItinerary";
 import { formatElapsed } from "../format";
 import { useEscapeClose } from "../useEscapeClose";
 import { Composer } from "./Composer";
@@ -378,6 +389,14 @@ interface ThreadViewProps {
   /** Hard-reset the worktree to a checkpoint (Undo confirm). */
   restoreCheckpoint?: (threadId: string, sha: string) => Promise<void>;
   onFetchDiff: () => Promise<DiffResult>;
+  /** Code-index symbols + author annotation + accepted hunks (issue #421). */
+  onFetchReviewContext?: () => Promise<{
+    annotation: unknown;
+    symbols: ReviewSymbol[];
+    acceptedHunks: string[];
+  }>;
+  /** Persist hunk hashes the user marked as reviewed. */
+  onSetReviewAccepted?: (hashes: string[]) => Promise<void>;
   /** Commit all changes shown in the Changes panel. */
   onCommitChanges: (message: string) => Promise<{ subject: string }>;
   /** Discard one changed file (untracked deletes the file). */
@@ -1906,26 +1925,100 @@ function DiffLine({ line }: { line: string }) {
   );
 }
 
+function planTextOf(detail: ThreadDetail | null | undefined): string {
+  if (!detail) return "";
+  const t = detail.thread;
+  const parts: string[] = [];
+  if (t.plan) parts.push(t.plan);
+  if (t.planSteps && t.planSteps.length > 0) {
+    parts.push(t.planSteps.map((s) => s.step).join("\n"));
+  }
+  const firstUser = detail.messages.find((m) => m.role === "user");
+  if (firstUser?.text) parts.push(firstUser.text);
+  return parts.join("\n\n");
+}
+
+function FileRow({
+  file,
+  confirmRevert,
+  reverting,
+  onRevert,
+}: {
+  file: FileChange;
+  confirmRevert: string | null;
+  reverting: string | null;
+  onRevert: (f: FileChange) => void;
+}) {
+  return (
+    <li className={styles.fileRow}>
+      <span className={styles.fileStatus}>{file.status}</span>
+      <span className={styles.filePath}>{file.path}</span>
+      <span className={styles.fileStats}>
+        <span className={styles.adds}>+{file.additions}</span>
+        <span className={styles.dels}>−{file.deletions}</span>
+      </span>
+      <button
+        type="button"
+        className={styles.fileRevert}
+        title={
+          file.status === "??" || file.status === "A"
+            ? confirmRevert === file.path
+              ? "Click again to delete this file"
+              : "Discard (deletes the file)"
+            : "Discard changes"
+        }
+        aria-label={`Discard changes to ${file.path}`}
+        disabled={reverting != null}
+        onClick={() => onRevert(file)}
+      >
+        {reverting === file.path
+          ? "…"
+          : confirmRevert === file.path
+            ? "Sure?"
+            : "↩"}
+      </button>
+    </li>
+  );
+}
+
 function ChangesPanel({
   open,
   threadId,
+  threadTitle,
+  planText,
   openNonce,
   onClose,
   onFetchDiff,
+  onFetchReviewContext,
+  onSetReviewAccepted,
   onCommit,
   onRevert,
   onSuggest,
 }: {
   open: boolean;
   threadId: string | null;
+  threadTitle: string;
+  planText: string;
   openNonce: number;
   onClose: () => void;
   onFetchDiff: () => Promise<DiffResult>;
+  onFetchReviewContext?: () => Promise<{
+    annotation: unknown;
+    symbols: ReviewSymbol[];
+    acceptedHunks: string[];
+  }>;
+  onSetReviewAccepted?: (hashes: string[]) => Promise<void>;
   onCommit: (message: string) => Promise<{ subject: string }>;
   onRevert: (path: string, status: string) => Promise<{ path: string }>;
   onSuggest: () => Promise<{ message: string }>;
 }) {
   const [diff, setDiff] = useState<DiffResult | null>(null);
+  const [symbols, setSymbols] = useState<ReviewSymbol[]>([]);
+  const [annotation, setAnnotation] = useState<
+    ReturnType<typeof parseReviewAnnotation>
+  >(null);
+  const [acceptedHunks, setAcceptedHunks] = useState<string[]>([]);
+  const [testsFirst, setTestsFirst] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState("");
@@ -1943,9 +2036,21 @@ function ChangesPanel({
     setError(null);
     setDiff(null);
     try {
-      const result = await onFetchDiff();
+      const [result, context] = await Promise.all([
+        onFetchDiff(),
+        onFetchReviewContext
+          ? onFetchReviewContext().catch(() => null)
+          : Promise.resolve(null),
+      ]);
       if (threadIdRef.current !== forThread) return;
       setDiff(result);
+      if (context) {
+        setSymbols(Array.isArray(context.symbols) ? context.symbols : []);
+        setAnnotation(parseReviewAnnotation(context.annotation));
+        setAcceptedHunks(
+          Array.isArray(context.acceptedHunks) ? context.acceptedHunks : [],
+        );
+      }
     } catch (err) {
       if (threadIdRef.current !== forThread) return;
       setError(
@@ -1962,12 +2067,29 @@ function ChangesPanel({
     setError(null);
     setMessage("");
     setConfirmRevert(null);
+    setSymbols([]);
+    setAnnotation(null);
+    setAcceptedHunks([]);
   }, [threadId]);
 
   useEffect(() => {
     if (open) void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- load when panel opens / thread / openNonce
   }, [open, threadId, openNonce]);
+
+  const itinerary: ReviewItinerary | null = useMemo(() => {
+    if (!diff || isEmptyDiff(diff)) return null;
+    return buildReviewItinerary({
+      files: diff.files,
+      patch: diff.patch,
+      planText,
+      threadTitle,
+      symbols,
+      annotation,
+      acceptedHunks,
+      testsFirst,
+    });
+  }, [diff, planText, threadTitle, symbols, annotation, acceptedHunks, testsFirst]);
 
   if (!open) return null;
 
@@ -1994,6 +2116,16 @@ function ChangesPanel({
     } finally {
       setReverting(null);
     }
+  };
+
+  const toggleHunk = (id: string, next: boolean) => {
+    const hashes = next
+      ? acceptedHunks.includes(id)
+        ? acceptedHunks
+        : [...acceptedHunks, id]
+      : acceptedHunks.filter((h) => h !== id);
+    setAcceptedHunks(hashes);
+    void onSetReviewAccepted?.(hashes);
   };
 
   const suggest = async () => {
@@ -2026,6 +2158,8 @@ function ChangesPanel({
     }
   };
 
+  const patches = itinerary ? orderedPatches(itinerary) : [];
+
   return (
     <section className={styles.changesPanel} aria-label="Changes">
       <header className={styles.changesHead}>
@@ -2057,46 +2191,67 @@ function ChangesPanel({
 
       {empty && <p className={styles.changesEmpty}>No changes</p>}
 
-      {diff && !empty && (
+      {diff && !empty && itinerary && (
         <>
-          {diff.files.length > 0 && (
-            <ul className={styles.fileList}>
-              {diff.files.map((f) => (
-                <li key={f.path} className={styles.fileRow}>
-                  <span className={styles.fileStatus}>{f.status}</span>
-                  <span className={styles.filePath}>{f.path}</span>
-                  <span className={styles.fileStats}>
-                    <span className={styles.adds}>+{f.additions}</span>
-                    <span className={styles.dels}>−{f.deletions}</span>
-                  </span>
-                  <button
-                    type="button"
-                    className={styles.fileRevert}
-                    title={
-                      f.status === "??" || f.status === "A"
-                        ? confirmRevert === f.path
-                          ? "Click again to delete this file"
-                          : "Discard (deletes the file)"
-                        : "Discard changes"
-                    }
-                    aria-label={`Discard changes to ${f.path}`}
-                    disabled={reverting != null}
-                    onClick={() => void revert(f)}
-                  >
-                    {reverting === f.path
-                      ? "…"
-                      : confirmRevert === f.path
-                        ? "Sure?"
-                        : "↩"}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-          {diff.patch.trim() !== "" && (
+          <ReviewItineraryView
+            itinerary={itinerary}
+            testsFirst={testsFirst}
+            onToggleTestsFirst={() => setTestsFirst((v) => !v)}
+          />
+          {itinerary.chunks.map((chunk) => (
+            <div key={chunk.area}>
+              <ChunkRationale itinerary={itinerary} area={chunk.area} />
+              <ul className={styles.fileList}>
+                {chunk.files.map((f) => (
+                  <FileRow
+                    key={f.path}
+                    file={f}
+                    confirmRevert={confirmRevert}
+                    reverting={reverting}
+                    onRevert={(file) => void revert(file)}
+                  />
+                ))}
+              </ul>
+            </div>
+          ))}
+          {patches.length > 0 && (
             <div className={styles.patchScroll}>
-              {diff.patch.split("\n").map((line, i) => (
-                <DiffLine key={i} line={line} />
+              {patches.map((p) => (
+                <Fragment key={p.path}>
+                  {p.hunks.length === 0 &&
+                    p.text.split("\n").map((line, i) => (
+                      <DiffLine key={`${p.path}:${i}`} line={line} />
+                    ))}
+                  {p.hunks.map((hunk) => (
+                    <div
+                      key={hunk.id}
+                      className={styles.hunkBlock}
+                      data-review-hunk={hunk.id}
+                      data-review-hunk-accepted={hunk.accepted ? "" : undefined}
+                    >
+                      <div className={styles.hunkBar}>
+                        <span className={styles.hunkPath}>{p.path}</span>
+                        <button
+                          type="button"
+                          className={styles.hunkSeen}
+                          aria-pressed={hunk.accepted}
+                          title={
+                            hunk.accepted
+                              ? "Mark this hunk as new again"
+                              : "Mark this hunk reviewed"
+                          }
+                          onClick={() => toggleHunk(hunk.id, !hunk.accepted)}
+                        >
+                          {hunk.accepted ? "Reviewed" : "Mark reviewed"}
+                        </button>
+                      </div>
+                      <DiffLine line={hunk.header} />
+                      {hunk.body.split("\n").map((line, i) => (
+                        <DiffLine key={`${hunk.id}:${i}`} line={line} />
+                      ))}
+                    </div>
+                  ))}
+                </Fragment>
               ))}
             </div>
           )}
@@ -2188,6 +2343,8 @@ export const ThreadView = memo(function ThreadView({
   runStats,
   restoreCheckpoint,
   onFetchDiff,
+  onFetchReviewContext,
+  onSetReviewAccepted,
   onCommitChanges,
   onRevertFile,
   onSuggestCommitMessage,
@@ -2504,6 +2661,10 @@ export const ThreadView = memo(function ThreadView({
         onNewThread?.();
         return;
       }
+      if (action === "review") {
+        onViewChanges?.();
+        return;
+      }
       if (action === "clear") {
         void handleSlashClear();
       }
@@ -2515,6 +2676,7 @@ export const ThreadView = memo(function ThreadView({
       handleSlashRewind,
       onNewThread,
       handleSlashClear,
+      onViewChanges,
     ],
   );
 
@@ -3254,9 +3416,13 @@ export const ThreadView = memo(function ThreadView({
       <ChangesPanel
         open={changesOpen}
         threadId={detail?.thread.id ?? null}
+        threadTitle={detail?.thread.title ?? ""}
+        planText={planTextOf(detail)}
         openNonce={changesNonce}
         onClose={onCloseChanges}
         onFetchDiff={onFetchDiff}
+        onFetchReviewContext={onFetchReviewContext}
+        onSetReviewAccepted={onSetReviewAccepted}
         onCommit={onCommitChanges}
         onRevert={onRevertFile}
         onSuggest={onSuggestCommitMessage}

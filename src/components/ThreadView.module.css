@@ -521,7 +521,7 @@ a.btn {
   padding: 12px 14px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-elevated);
-  max-height: min(42vh, 360px);
+  max-height: min(56vh, 520px);
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -646,6 +646,46 @@ a.btn {
 
 .diffLine[data-kind="meta"] {
   color: var(--text-dim);
+}
+
+.hunkBlock {
+  margin-bottom: 8px;
+}
+
+.hunkBlock[data-review-hunk-accepted] {
+  opacity: 0.55;
+}
+
+.hunkBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 0 4px;
+}
+
+.hunkPath {
+  font-size: 11px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hunkSeen {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 550;
+  padding: 1px 7px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.hunkSeen[aria-pressed="true"] {
+  border-color: var(--green);
+  color: var(--green);
 }
 
 .truncatedNote {
