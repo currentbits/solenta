@@ -240,6 +240,50 @@ describe("ThreadView empty states", () => {
   });
 });
 
+describe("ThreadView sandbox badge", () => {
+  it("hides the badge when the thread has no computed sandbox", () => {
+    const html = render();
+    assert.ok(
+      !html.includes("data-sandbox-badge"),
+      "absent sandbox must not invent a badge",
+    );
+  });
+
+  it("renders yes/no with the reason on title", () => {
+    const yes = render({
+      detail: detail({
+        thread: thread({
+          sandbox: {
+            sandboxed: true,
+            reason: "Codex default sandbox; runs locally as your user",
+          },
+        }),
+      }),
+    });
+    assert.ok(yes.includes("data-sandbox-badge"), "badge must render");
+    assert.ok(yes.includes('data-sandboxed="yes"'));
+    assert.ok(yes.includes("Sandboxed"));
+    assert.ok(
+      yes.includes('title="Codex default sandbox; runs locally as your user"'),
+      "reason must be the hover title",
+    );
+
+    const no = render({
+      detail: detail({
+        thread: thread({
+          sandbox: {
+            sandboxed: false,
+            reason: "Claude --permission-mode bypassPermissions (not gated); runs locally as your user",
+          },
+        }),
+      }),
+    });
+    assert.ok(no.includes('data-sandboxed="no"'));
+    assert.ok(no.includes("Not sandboxed"));
+    assert.ok(no.includes("bypassPermissions"));
+  });
+});
+
 describe("ThreadView message roles", () => {
   it("renders user and assistant messages with distinct structure", () => {
     const html = render({

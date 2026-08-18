@@ -38,6 +38,8 @@ const {
 } = require("./session-record.js");
 const workflowEngine = require("./workflow.js");
 const { wrapCommand } = require("./ssh.js");
+const { wslTarget } = require("./wsl.js");
+const { resolveSandbox } = require("./sandbox.js");
 const { killTree } = require("./proc.js");
 const {
   runVerifyCommand,
@@ -296,12 +298,13 @@ function resolveProvider(thread) {
 
 /**
  * Ensure the provider CLI binary is available; throw a clear Error if not.
- * Remote projects run the CLI on the host, so a missing local binary is fine.
+ * Across a boundary the CLI runs on the other side (the ssh host, or inside
+ * the WSL distro), so a missing local binary is fine.
  * @param {import('./providers').ProviderEntry} entry
- * @param {{ remoteHost?: string } | null} [project]
+ * @param {{ remoteHost?: string, path?: string } | null} [project]
  */
 function assertProviderBinary(entry, project) {
-  if (project && project.remoteHost) return;
+  if (crossesBoundary(project)) return;
   if (!entry || entry.kind === "simulate") return;
   const bin = resolveBin(entry);
   if (!isBinAvailable(bin)) {
@@ -312,9 +315,12 @@ function assertProviderBinary(entry, project) {
 }
 
 /**
- * Single spawn seam: when the project is remote, spawn ssh with the wrapped
- * CLI argv instead of the local binary. Local projects are unchanged.
- * Remote cwd is process.cwd() because the project path is on the other host.
+ * Single spawn seam: when the project sits across a boundary — an ssh remote
+ * or the WSL side of a Windows machine (#397) — spawn the wrapper with the
+ * wrapped CLI argv instead of the local binary. Plain local projects are
+ * unchanged. Across a boundary cwd is process.cwd(), because the project path
+ * is not a directory this process can chdir into (another host, or a UNC
+ * \\wsl$ path); the wrap carries the real directory itself.
  *
  * @param {{ remoteHost?: string, remotePath?: string, path?: string } | null} project
  * @param {string} binary
@@ -323,11 +329,21 @@ function assertProviderBinary(entry, project) {
  * @returns {{ binary: string, args: string[], cwd: string }}
  */
 function resolveSpawn(project, binary, args, localCwd) {
-  if (!project || !project.remoteHost) {
+  if (!crossesBoundary(project)) {
     return { binary, args, cwd: localCwd };
   }
-  const ssh = wrapCommand(project, binary, args);
-  return { binary: ssh.bin, args: ssh.args, cwd: process.cwd() };
+  const wrapped = wrapCommand(project, binary, args);
+  return { binary: wrapped.bin, args: wrapped.args, cwd: process.cwd() };
+}
+
+/**
+ * True when this project's commands must run through a wrapper (ssh or
+ * wsl.exe) rather than as a plain local child. The one predicate every
+ * boundary-sensitive branch in the runner should use.
+ * @param {{ remoteHost?: string, path?: string } | null | undefined} project
+ */
+function crossesBoundary(project) {
+  return Boolean(project && (project.remoteHost || wslTarget(project)));
 }
 
 /**
@@ -1978,14 +1994,15 @@ function createRunner(opts) {
     });
     active.set(threadId, entry);
 
-    const spawn = project.remoteHost
+    const crossing = crossesBoundary(project);
+    const spawn = crossing
       ? resolveSpawn(project, command, [...args, String(prompt ?? "")], localCwd)
       : { binary: command, args, cwd: localCwd };
     const handle = runAgent({
       command: spawn.binary,
       args: spawn.args,
       prompt,
-      appendPrompt: Boolean(project.remoteHost) ? false : true,
+      appendPrompt: !crossing,
       cwd: spawn.cwd,
       onChunk: (text) => {
         const e = active.get(threadId);
@@ -4814,6 +4831,7 @@ module.exports = {
   toWorkflowView: mapWorkflowView,
   resolveProvider,
   resolveSpawn,
+  resolveSandbox,
   ADJECTIVES,
   NOUNS,
   /** @internal test/diagnostics */
