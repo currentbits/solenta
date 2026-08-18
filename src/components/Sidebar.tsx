@@ -147,7 +147,7 @@ interface SidebarProps {
   /** Global + uses selected project; per-group New thread passes that projectId. */
   onCreateThread: (
     projectId?: string,
-    opts?: { worktree?: boolean; orchestrate?: boolean; teach?: boolean },
+    opts?: { worktree?: boolean; orchestrate?: boolean; teach?: boolean; issueNumber?: number | null },
   ) => void;
   /**
    * Mirrors SettingsInfo.defaultWorktree. The caret lists worktree,

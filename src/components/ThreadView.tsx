@@ -70,6 +70,7 @@ import {
   toggleRunCollapsed,
   type RunHeader,
 } from "../runHeader";
+import type { SlashAction } from "../slashCommands";
 import { buildBestOfNEntries } from "../bestOfN";
 import { createPrPrompt } from "../prUi";
 import { formatElapsed } from "../format";
@@ -114,26 +115,37 @@ function SandboxBadge({
   );
 }
 
-/** Small context-fill ring + percent; hover/focus opens the breakdown. */
+/** Small context-fill ring + percent; hover/focus/`/usage` opens the breakdown. */
 function ContextRingBadge({
   ring,
   segments,
   used,
+  open,
+  onOpenChange,
 }: {
   ring: ContextRingView;
   segments: ContextBreakdownSegment[];
   used: number;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
-  const [open, setOpen] = useState(false);
-  useEscapeClose(open, useCallback(() => setOpen(false), []));
+  useEscapeClose(open, useCallback(() => onOpenChange(false), [onOpenChange]));
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (!wrapRef.current?.contains(e.target as Node)) onOpenChange(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open, onOpenChange]);
   const label = `Context ${ring.percentLabel} of ${ring.windowLabel}`;
   return (
     <div
       className={styles.menuWrap}
       ref={wrapRef}
-      onMouseEnter={() => setOpen(true)}
-      onMouseLeave={() => setOpen(false)}
+      onMouseEnter={() => onOpenChange(true)}
+      onMouseLeave={() => onOpenChange(false)}
     >
       <button
         type="button"
@@ -143,10 +155,10 @@ function ContextRingBadge({
         aria-label={label}
         aria-haspopup="true"
         aria-expanded={open}
-        onFocus={() => setOpen(true)}
+        onFocus={() => onOpenChange(true)}
         onBlur={(e) => {
           if (!wrapRef.current?.contains(e.relatedTarget as Node)) {
-            setOpen(false);
+            onOpenChange(false);
           }
         }}
       >
@@ -320,7 +332,7 @@ interface ThreadViewProps {
    */
   onCreateThread?: (
     projectId?: string,
-    opts?: { worktree?: boolean; orchestrate?: boolean; teach?: boolean },
+    opts?: { worktree?: boolean; orchestrate?: boolean; teach?: boolean; issueNumber?: number | null },
   ) => void;
   /** Seed an automation from this thread's first prompt (#285). */
   onRepeatSchedule?: () => void;
@@ -412,6 +424,10 @@ interface ThreadViewProps {
   onSelectThread?: (id: string) => void;
   /** Fired when the composer model picker opens (provider list refresh). */
   onModelPickerOpen?: () => void;
+  /** Create a new thread in the current project (`/new`, `/clear`). */
+  onNewThread?: () => void;
+  /** Settle the open thread (`/clear`). Does not delete. */
+  onSettleThread?: () => void | Promise<void>;
 }
 
 function ToolCallCard({
@@ -2093,6 +2109,8 @@ export const ThreadView = memo(function ThreadView({
   devServerStatus,
   runError = null,
   onDismissRunError,
+  onNewThread,
+  onSettleThread,
   onFork,
   handoffSource = null,
   onSelectThread,
@@ -2136,6 +2154,8 @@ export const ThreadView = memo(function ThreadView({
   } | null>(null);
   const [rewindRestoreFiles, setRewindRestoreFiles] = useState(false);
   const [rewindPending, setRewindPending] = useState(false);
+  /** Header context breakdown; `/usage` pins this open. */
+  const [contextOpen, setContextOpen] = useState(false);
   /** Runs collapsed by the user; everything else stays open. */
   const [collapsedRuns, setCollapsedRuns] = useState<ReadonlySet<string>>(
     () => new Set<string>(),
@@ -2320,6 +2340,75 @@ export const ThreadView = memo(function ThreadView({
 
   useEscapeClose(Boolean(rewindConfirm) && !rewindPending, handleRewindCancel);
 
+  const handleSlashRewind = useCallback(() => {
+    if (isWorking || rewindPending) return;
+    const bars = detail
+      ? mapReviewBars({
+          messages: detail.messages,
+          stats: runStatList,
+          threadStatus: detail.thread.status,
+        })
+      : [];
+    for (let i = bars.length - 1; i >= 0; i--) {
+      const bar = bars[i];
+      if (bar?.undoSha && restoreCheckpoint) {
+        setRestoreError(null);
+        setRestoreConfirm(bar);
+        return;
+      }
+    }
+    const lastUser = detail ? lastUserMessage(detail.messages) : null;
+    if (lastUser && onRewindAndResubmit) {
+      handleRequestResubmit(lastUser.id, lastUser.text);
+    }
+  }, [
+    isWorking,
+    rewindPending,
+    detail,
+    runStatList,
+    restoreCheckpoint,
+    onRewindAndResubmit,
+    handleRequestResubmit,
+  ]);
+
+  const handleSlashClear = useCallback(async () => {
+    if (isWorking) return;
+    await onSettleThread?.();
+    onNewThread?.();
+  }, [isWorking, onSettleThread, onNewThread]);
+
+  const handleSlashAction = useCallback(
+    (action: SlashAction) => {
+      if (action === "usage" || action === "compact") {
+        if (ring) setContextOpen(true);
+        return;
+      }
+      if (action === "fork") {
+        if (!isWorking) void onFork?.();
+        return;
+      }
+      if (action === "rewind") {
+        handleSlashRewind();
+        return;
+      }
+      if (action === "new") {
+        onNewThread?.();
+        return;
+      }
+      if (action === "clear") {
+        void handleSlashClear();
+      }
+    },
+    [
+      ring,
+      isWorking,
+      onFork,
+      handleSlashRewind,
+      onNewThread,
+      handleSlashClear,
+    ],
+  );
+
   /**
    * Fork one thread per selected provider or profile, then start the same
    * prompt on each new fork. Sequential: a run cannot start until its fork
@@ -2398,6 +2487,7 @@ export const ThreadView = memo(function ThreadView({
       stickToBottom.current = true;
       setMenuOpen(false);
       setDeleteConfirm(false);
+      setContextOpen(false);
       setRenaming(false);
       renamingRef.current = false;
       // Flush the outgoing thread's dirty draft (⌘J/K and any other
@@ -2845,6 +2935,8 @@ export const ThreadView = memo(function ThreadView({
               ring={ring.view}
               segments={ring.segments}
               used={ring.used}
+              open={contextOpen}
+              onOpenChange={setContextOpen}
             />
           )}
           {onStartSpec && !thread.spec && (
@@ -3580,6 +3672,7 @@ export const ThreadView = memo(function ThreadView({
         onSaveAttachmentImage={onSaveAttachmentImage}
         onLoadAttachmentImage={onLoadAttachmentImage}
         onDropAttachmentFiles={onDropAttachmentFiles}
+        onSlashAction={handleSlashAction}
         dropHostRef={dropHostRef}
         onFileDragChange={setFileDrag}
       />

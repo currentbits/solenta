@@ -107,6 +107,9 @@ async function recordRunOutcome(args, deps = {}) {
       // implementation here could only drift out of sync with it.
       project: project && project.path ? String(project.path) : null,
     };
+    if (thread.id) {
+      payload.citations = [{ kind: "thread", id: String(thread.id) }];
+    }
 
     let proxy = deps.proxy;
     if (!proxy) {

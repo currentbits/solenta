@@ -47,7 +47,8 @@ function normalizeEntry(raw) {
         ? o.updated_at
         : "";
   const importance = Number(o.importance);
-  return {
+  /** @type {import('../src/shared/ipc').MemoryEntryInfo} */
+  const entry = {
     id: typeof o.id === "string" ? o.id : String(o.id ?? ""),
     type: /** @type {import('../src/shared/ipc').MemoryEntryInfo['type']} */ (
       typeof o.type === "string" ? o.type : "knowledge"
@@ -64,6 +65,33 @@ function normalizeEntry(raw) {
     createdAt,
     updatedAt,
   };
+  if (Array.isArray(o.citations)) {
+    /** @type {import('../src/shared/ipc').MemoryCitation[]} */
+    const citations = [];
+    for (const raw of o.citations) {
+      if (!raw || typeof raw !== "object") continue;
+      const kind = String(/** @type {{kind?: unknown}} */ (raw).kind || "");
+      if (kind === "file") {
+        const filePath = String(/** @type {{path?: unknown}} */ (raw).path || "").trim();
+        if (!filePath) continue;
+        /** @type {import('../src/shared/ipc').MemoryCitation} */
+        const cite = { kind: "file", path: filePath };
+        const line = Number(/** @type {{line?: unknown}} */ (raw).line);
+        if (Number.isInteger(line) && line >= 1) cite.line = line;
+        const excerpt = String(/** @type {{excerpt?: unknown}} */ (raw).excerpt || "").trim();
+        if (excerpt) cite.excerpt = excerpt;
+        citations.push(cite);
+      } else if (kind === "thread") {
+        const id = String(/** @type {{id?: unknown}} */ (raw).id || "").trim();
+        if (id) citations.push({ kind: "thread", id });
+      } else if (kind === "commit") {
+        const sha = String(/** @type {{sha?: unknown}} */ (raw).sha || "").trim();
+        if (sha) citations.push({ kind: "commit", sha });
+      }
+    }
+    entry.citations = citations;
+  }
+  return entry;
 }
 
 /**
@@ -270,7 +298,7 @@ function createMemoryProxy(opts) {
     },
 
     /**
-     * @param {{ type: string, title: string, body: string, project?: string }} input
+     * @param {{ type: string, title: string, body: string, project?: string, citations?: unknown }} input
      * @returns {Promise<{ id: string }>}
      */
     async store(input) {
@@ -281,6 +309,9 @@ function createMemoryProxy(opts) {
       };
       if (input && input.project !== undefined) {
         payload.project = input.project;
+      }
+      if (input && input.citations !== undefined) {
+        payload.citations = input.citations;
       }
       const raw = await request("POST", "/api/store", payload);
       const o =

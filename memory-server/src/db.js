@@ -376,6 +376,8 @@ export function createSchema(db) {
   addColumnIfMissing(db, 'entries', 'invalid_at', 'TEXT')
   addColumnIfMissing(db, 'entries', 'invalidated_by', 'TEXT')
   addColumnIfMissing(db, 'entries', 'invalidation_reason', 'TEXT')
+  // Citations (#395): JSON array of {kind: file|thread|commit, ...} evidence.
+  addColumnIfMissing(db, 'entries', 'citations', 'TEXT')
 
   try {
     normalizeEntities(db)

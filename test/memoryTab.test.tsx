@@ -97,6 +97,25 @@ function tab(
 afterEach(unmountAll);
 
 describe("MemoryTab list", () => {
+  it("renders file:line citations on the card", async () => {
+    const m = await mount(
+      tab({}, newCalls(), [
+        entry({
+          title: "Token check lives in auth",
+          citations: [
+            { kind: "file", path: "src/auth.ts", line: 12, excerpt: "checkToken" },
+            { kind: "commit", sha: "abcdef123456" },
+          ],
+        }),
+      ]),
+    );
+    const chips = m.queryAll("[data-citations] span");
+    assert.equal(chips.length, 2, "each citation must render as its own chip");
+    assert.equal(chips[0]?.textContent, "src/auth.ts:12");
+    assert.equal(chips[1]?.textContent, "abcdef1");
+    m.unmount();
+  });
+
   it("renders the entries the server returned", async () => {
     const m = await mount(tab());
     assert.ok(m.text().includes("Never use em dashes"), "title must render");

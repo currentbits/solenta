@@ -4,8 +4,10 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import type { VerifyResult } from "../src/shared/ipc.ts";
+import type { PostMergeVerify, VerifyResult } from "../src/shared/ipc.ts";
 import {
+  formatPostMergeLine,
+  formatPostMergeRemaining,
   formatVerifyAge,
   formatVerifyDuration,
   formatVerifyExit,
@@ -135,6 +137,58 @@ describe("verifyNowDisabled", () => {
     assert.equal(
       verifyNowDisabled({ command: "npm test", runActive: false, verifying: true }),
       true,
+    );
+  });
+});
+
+describe("formatPostMergeRemaining", () => {
+  it("labels the delay in minutes, hours, or days", () => {
+    assert.equal(formatPostMergeRemaining(NOW + 30_000, NOW), "under a minute");
+    assert.equal(formatPostMergeRemaining(NOW + 3 * 60_000, NOW), "3m");
+    assert.equal(formatPostMergeRemaining(NOW + 5 * 3_600_000, NOW), "5h");
+    assert.equal(formatPostMergeRemaining(NOW + 2 * 86_400_000, NOW), "2d");
+  });
+});
+
+describe("formatPostMergeLine", () => {
+  function check(over: Partial<PostMergeVerify> = {}): PostMergeVerify {
+    return {
+      dueAt: NOW + 3_600_000,
+      status: "scheduled",
+      at: null,
+      result: null,
+      fixThreadId: null,
+      ...over,
+    };
+  }
+
+  it("is silent when no check is armed", () => {
+    assert.equal(formatPostMergeLine(null), null);
+    assert.equal(formatPostMergeLine(undefined), null);
+  });
+
+  it("names the remaining delay, a pass, and a failed reopen", () => {
+    assert.equal(
+      formatPostMergeLine(check(), NOW),
+      "Post-merge check in 1h",
+    );
+    assert.equal(formatPostMergeLine(check({ status: "running" })), "Post-merge check running…");
+    assert.equal(
+      formatPostMergeLine(check({ status: "passed", at: NOW - 3 * 60_000 }), NOW),
+      "Post-merge check passed · 3m ago",
+    );
+    assert.equal(
+      formatPostMergeLine(
+        check({ status: "failed", at: NOW, fixThreadId: "fix-1" }),
+        NOW,
+      ),
+      "Post-merge check failed · fix thread started · now",
+    );
+    assert.equal(
+      formatPostMergeLine(
+        check({ status: "skipped", skipReason: "remote project" }),
+      ),
+      "Post-merge check skipped · remote project",
     );
   });
 });

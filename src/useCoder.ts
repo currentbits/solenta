@@ -19,6 +19,7 @@ import type {
   GitPullResult,
   FetchIssueResult,
   LocalServerInfo,
+  MemoryCitation,
   MemoryEntryInfo,
   PermissionDecision,
   PermissionMode,
@@ -170,7 +171,12 @@ export interface UseCoderResult {
   createThread: (
     title?: string,
     projectId?: string,
-    opts?: { worktree?: boolean; orchestrate?: boolean; teach?: boolean },
+    opts?: {
+      worktree?: boolean;
+      orchestrate?: boolean;
+      teach?: boolean;
+      issueNumber?: number | null;
+    },
   ) => Promise<ThreadInfo | null>;
   /**
    * Fork / hand off a thread (threads.fork). Selects the new thread the same
@@ -450,6 +456,7 @@ export interface UseCoderResult {
     title: string;
     body: string;
     project?: string;
+    citations?: MemoryCitation[];
   }) => Promise<{ id: string }>;
   /** Thin skills passthroughs; SkillsTab holds list state locally. */
   listSkills: (input?: { projectPath?: string }) => Promise<SkillInfo[]>;
@@ -976,7 +983,12 @@ export function useCoder(): UseCoderResult {
     async (
       title = "New Thread",
       projectId?: string,
-      opts?: { worktree?: boolean; orchestrate?: boolean; teach?: boolean },
+      opts?: {
+        worktree?: boolean;
+        orchestrate?: boolean;
+        teach?: boolean;
+        issueNumber?: number | null;
+      },
     ) => {
       const pid = projectId ?? selectedProjectId;
       if (!pid) return null;
@@ -1003,6 +1015,7 @@ export function useCoder(): UseCoderResult {
           ...(worktree ? { worktree: true } : {}),
           ...(orchestrate ? { orchestrate: true } : {}),
           ...(opts?.teach ? { teach: true } : {}),
+          ...(opts?.issueNumber != null ? { issueNumber: opts.issueNumber } : {}),
         });
       } catch (err) {
         setError({ scope: "run", message: errorMessage(err) });
@@ -2218,6 +2231,7 @@ export function useCoder(): UseCoderResult {
       title: string;
       body: string;
       project?: string;
+      citations?: MemoryCitation[];
     }) => {
       return api.memory.store(input);
     },

@@ -403,11 +403,12 @@ function removeSpace(store, input) {
 
 /**
  * @param {import('./store').Store} store
- * @param {{ projectId: string, title: string, worktree?: boolean, automationId?: string | null }} input
+ * @param {{ projectId: string, title: string, worktree?: boolean, automationId?: string | null, issueNumber?: number | null }} input
  * `worktree` is only consumed by the IPC layer (threads:create), which calls
  * setupWorktree after this returns; the service itself stays fs-free.
  * `automationId` tags threads minted by an automation so runAutomation can
  * retain only the last N (issue #134). Absent / falsy on hand-made threads.
+ * `issueNumber` is the planboard issue this thread was started from (#420).
  */
 function createThread(store, input) {
   const project = store.getProject(input.projectId);
@@ -440,6 +441,8 @@ function createThread(store, input) {
     notes: "",
     verifyCommand: null,
     verify: null,
+    issueNumber: require("./postmerge.js").normalizeIssueNumber(input.issueNumber),
+    postMergeVerify: null,
     provider: "claude",
     model: null,
     sessionId: null,

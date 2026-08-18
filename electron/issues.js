@@ -388,11 +388,68 @@ async function setPlanStatus(projectPath, number, status) {
   return { ok: false, reason: tailErr(errText, "gh issue edit failed") };
 }
 
+/**
+ * Reopen a closed planboard issue after a post-merge regression (issue #420).
+ * `gh issue reopen`, optional comment, then plan:todo. Already-open issues
+ * still get the comment and the column move. Never throws.
+ *
+ * @param {string} projectPath
+ * @param {unknown} number
+ * @param {{ comment?: string }} [opts]
+ * @returns {Promise<{ ok: true } | { ok: false, reason: string }>}
+ */
+async function reopenIssue(projectPath, number, opts) {
+  const cwd = String(projectPath || "");
+  const issueNumber = Number(number);
+  if (!cwd) return { ok: false, reason: "not a GitHub repo" };
+  if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
+    return { ok: false, reason: "invalid issue reference" };
+  }
+
+  const remote = gitTry(cwd, ["remote", "get-url", "origin"]);
+  if (!remote.ok || !isGitHubRemote(String(remote.stdout || "").trim())) {
+    return { ok: false, reason: "not a GitHub repo" };
+  }
+
+  const reopened = await ghTryAsync(
+    cwd,
+    ["issue", "reopen", String(issueNumber)],
+    GH_USER,
+  );
+  const reopenErr = reopened.stderr || reopened.combined || reopened.stdout || "";
+  // Already-open is success: we still want the comment + plan:todo.
+  const alreadyOpen =
+    reopened.ok || /already (?:open|reopened)|is not closed/i.test(reopenErr);
+  if (!alreadyOpen) {
+    if (reopened.enoent) return { ok: false, reason: "gh missing" };
+    if (isGhAuthFailure(reopenErr)) return { ok: false, reason: "auth" };
+    if (isIssueNotFound(reopenErr)) return { ok: false, reason: "issue not found" };
+    return { ok: false, reason: tailErr(reopenErr, "gh issue reopen failed") };
+  }
+
+  const comment = opts && typeof opts.comment === "string" ? opts.comment : "";
+  if (comment) {
+    const posted = await ghTryAsync(
+      cwd,
+      ["issue", "comment", String(issueNumber), "--body", comment],
+      GH_USER,
+    );
+    if (!posted.ok && !posted.enoent) {
+      // Comment is evidence, not the action. Keep going to plan:todo.
+    }
+  }
+
+  const moved = await setPlanStatus(cwd, issueNumber, "todo");
+  if (!moved.ok) return moved;
+  return { ok: true };
+}
+
 module.exports = {
   parseIssueRef,
   fetchIssue,
   listIssues,
   setPlanStatus,
+  reopenIssue,
   parseIssueListJson,
   ownerRepoFromRemote,
 };

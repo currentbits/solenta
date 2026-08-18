@@ -98,9 +98,11 @@ GitHub release check for updates.
   circles.
 - **Shared agent memory** — a supervised local memory server (MCP + HTTP) is
   auto-injected into sessions, so what one thread learns, the next one knows.
-  Entries carry provenance and per-agent trust; embeddings drive near-dup and
-  contradiction detection. A **hypothesis ledger** hands the next thread what
-  the last one already ruled out.
+  Entries carry provenance, per-agent trust, and file:line / thread / commit
+  citations. Before a fact is injected, its file citations are checked against
+  the current worktree and contradicted entries are invalidated. Embeddings
+  drive near-dup and contradiction detection. A **hypothesis ledger** hands
+  the next thread what the last one already ruled out.
 - **Shared code index** — a per-repo symbol index built once and injected into
   every dispatched prompt, so a fresh worker starts knowing where things live.
 - **Spec mode** — gated requirements → design → tasks artifacts per thread, each

@@ -35,6 +35,7 @@ describe('db schema', () => {
     assert.ok(cols.includes('importance'))
     assert.ok(cols.includes('access_count'))
     assert.ok(cols.includes('last_accessed_at'))
+    assert.ok(cols.includes('citations'))
     db2.close()
   })
 

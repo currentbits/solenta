@@ -119,6 +119,7 @@ describe("auto-dispatch", () => {
     assert.ok(thread);
     assert.equal(thread.title, "Auto-dispatch threads");
     assert.equal(thread.projectId, "p1");
+    assert.equal(thread.issueNumber, 165);
     assert.equal(thread.pendingWorktree, true);
     assert.equal(started[0].threadId, thread.id);
     assert.deepEqual(moved, [[tmpDir, 165, "doing"]]);

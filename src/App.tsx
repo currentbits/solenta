@@ -286,7 +286,7 @@ export default function App() {
   const clearReveal = useCallback(() => setRevealThreadId(null), []);
 
   const handleCreateThread = useCallback(
-    (projectId?: string, opts?: { worktree?: boolean; orchestrate?: boolean; teach?: boolean }) => {
+    (projectId?: string, opts?: { worktree?: boolean; orchestrate?: boolean; teach?: boolean; issueNumber?: number | null }) => {
       void createThread("New Thread", projectId, opts).then((t) => {
         if (t) setRevealThreadId(t.id);
       });
@@ -618,7 +618,10 @@ export default function App() {
               : input.mode === "plain"
                 ? { worktree: false, orchestrate: false }
                 : undefined;
-        thread = await createThread(issue.title, input.projectId, opts);
+        thread = await createThread(issue.title, input.projectId, {
+          ...opts,
+          issueNumber: issue.number,
+        });
       } catch (err) {
         return {
           ok: false as const,
@@ -972,6 +975,12 @@ export default function App() {
         handoffSource={handoffSource}
         onSelectThread={handleSelectThread}
         onModelPickerOpen={handleModelPickerOpen}
+        onNewThread={handleCreateThreadPlain}
+        onSettleThread={
+          selectedThreadId
+            ? () => setSettled(selectedThreadId, "settled")
+            : undefined
+        }
             />
           )}
           </ErrorBoundary>

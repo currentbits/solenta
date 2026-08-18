@@ -1,5 +1,5 @@
 import { formatElapsed, formatRelativeAge } from "./format";
-import type { VerifyResult } from "./shared/ipc";
+import type { PostMergeVerify, VerifyResult } from "./shared/ipc";
 
 /**
  * Duration of one verify run. formatElapsed is a from/now pair, so we
@@ -62,4 +62,49 @@ export function verifyNowDisabled(input: {
   return (
     !String(input.command ?? "").trim() || input.runActive || input.verifying
   );
+}
+
+/** Remaining delay until a scheduled post-merge check: "18h", "3d", "2m". */
+export function formatPostMergeRemaining(
+  dueAt: number,
+  now = Date.now(),
+): string {
+  const ms = Math.max(0, dueAt - now);
+  const minutes = Math.floor(ms / 60_000);
+  if (minutes < 1) return "under a minute";
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  return `${Math.floor(hours / 24)}d`;
+}
+
+/**
+ * One-line status for the delayed re-check after merge (issue #420).
+ * Null when the thread has never been armed.
+ */
+export function formatPostMergeLine(
+  check: PostMergeVerify | null | undefined,
+  now = Date.now(),
+): string | null {
+  if (!check) return null;
+  if (check.status === "scheduled") {
+    return `Post-merge check in ${formatPostMergeRemaining(check.dueAt, now)}`;
+  }
+  if (check.status === "running") return "Post-merge check running…";
+  const age = check.at != null ? formatVerifyAge(check.at, now) : null;
+  if (check.status === "passed") {
+    return age ? `Post-merge check passed · ${age}` : "Post-merge check passed";
+  }
+  if (check.status === "failed") {
+    const bits = ["Post-merge check failed"];
+    if (check.fixThreadId) bits.push("fix thread started");
+    if (age) bits.push(age);
+    return bits.join(" · ");
+  }
+  if (check.status === "skipped") {
+    return check.skipReason
+      ? `Post-merge check skipped · ${check.skipReason}`
+      : "Post-merge check skipped";
+  }
+  return null;
 }

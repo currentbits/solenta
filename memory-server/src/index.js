@@ -8,12 +8,13 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { z } from 'zod'
 import { Memory } from './memory.js'
+import { parseCitations } from './citations.js'
 import { runJanitor, readJanitorSnapshot } from './janitor.js'
 import { createRealEmbedder, semanticEnabled } from './embedder.js'
 import { exitWhenOrphaned } from './orphan.js'
 
 const INSTRUCTIONS =
-  'Solenta shared memory, PROJECT-SCOPED: everything you read and write belongs to the project you name, and other projects never see it. MEMORY PREFLIGHT: at session start call memory_bootstrap with project set to your working directory and treat its conventions as standing instructions. Always pass that same project on every memory call. While working, store durable non-obvious findings (decisions, gotchas, conventions) with memory_store; before finishing, record what a future agent must know. Search returns excerpts; use memory_get for full bodies. Record notable turns with session_record; session_search finds past conversation excerpts. memory_maintenance reports queue items to resolve with memory_resolve.'
+  'Solenta shared memory, PROJECT-SCOPED: everything you read and write belongs to the project you name, and other projects never see it. MEMORY PREFLIGHT: at session start call memory_bootstrap with project set to your working directory and treat its conventions as standing instructions. Always pass that same project on every memory call. While working, store durable non-obvious findings (decisions, gotchas, conventions) with memory_store and cite evidence (file path+line+excerpt, thread id, or commit sha). When project is a live working directory, bootstrap/search/get verify file citations against that tree and invalidate contradictions instead of injecting them. Before finishing, record what a future agent must know. Search returns excerpts; use memory_get for full bodies. Record notable turns with session_record; session_search finds past conversation excerpts. memory_maintenance reports queue items to resolve with memory_resolve.'
 
 export function defaultRoot() {
   return process.platform === 'darwin'
@@ -127,6 +128,15 @@ function sendJson(res, status, value) {
 
 const entryType = z.enum(['knowledge', 'task', 'convention', 'run', 'strategy'])
 const taskStatus = z.enum(['active', 'done', 'abandoned'])
+const citationSchema = z.object({
+  kind: z.enum(['file', 'thread', 'commit']),
+  path: z.string().optional(),
+  line: z.number().int().positive().optional(),
+  endLine: z.number().int().positive().optional(),
+  excerpt: z.string().optional(),
+  id: z.string().optional(),
+  sha: z.string().optional(),
+})
 const feedbackVerdict = z.enum(['helpful', 'harmful'])
 const sessionRole = z.enum(['user', 'assistant', 'tool', 'system'])
 const reviewResolution = z.enum(['update', 'invalidate', 'noop'])
@@ -144,7 +154,7 @@ export function buildServer(memory) {
     'memory_store',
     {
       description:
-        'Store a durable memory shared by all agents. Use for non-obvious facts: decisions, gotchas, conventions, task records. Near-duplicates (jaccard >= 0.7) are refused unless force: true; moderate overlap (>= 0.4) stores but enqueues a review pair.',
+        'Store a durable memory shared by all agents. Use for non-obvious facts: decisions, gotchas, conventions, task records. Cite evidence on learned facts: file (path, line, excerpt of the supporting code), thread, or commit. Near-duplicates (jaccard >= 0.7) are refused unless force: true; moderate overlap (>= 0.4) stores but enqueues a review pair.',
       inputSchema: {
         type: entryType,
         title: z.string().min(1),
@@ -154,6 +164,7 @@ export function buildServer(memory) {
         status: taskStatus.optional(),
         importance: z.number().int().min(1).max(5).optional(),
         force: z.boolean().optional(),
+        citations: z.array(citationSchema).optional(),
       },
     },
     // #409: source is set here, not by the caller. An agent that could label
@@ -165,12 +176,14 @@ export function buildServer(memory) {
   server.registerTool(
     'memory_get',
     {
-      description: 'Fetch one memory entry in full by id (search returns excerpts only).',
+      description:
+        'Fetch one memory entry in full by id (search returns excerpts only). Pass project as your working directory to verify file citations against that tree before applying the entry.',
       inputSchema: {
         id: z.string().min(1),
+        project: z.string().optional(),
       },
     },
-    async (args) => json(memory.get(args.id)),
+    async (args) => json(memory.get(args.id, { project: args.project })),
   )
 
   server.registerTool(
@@ -217,6 +230,7 @@ export function buildServer(memory) {
         importance: z.number().int().min(1).max(5).optional(),
         agent: z.string().optional(),
         project: z.string().optional(),
+        citations: z.array(citationSchema).optional(),
       },
     },
     async (args) => {
@@ -229,7 +243,7 @@ export function buildServer(memory) {
     'memory_bootstrap',
     {
       description:
-        'One-call startup context: conventions, distilled strategies, knowledge, and active tasks for a project, plus the usage protocol. Call at session start.',
+        'One-call startup context: conventions, distilled strategies, knowledge, and active tasks for a project, plus the usage protocol. Call at session start with project set to your working directory — file citations are verified against that tree and contradicted entries are invalidated instead of injected.',
       inputSchema: {
         project: z.string().optional(),
       },
@@ -404,6 +418,7 @@ function toApiRow(r) {
     importance: r.importance,
     created_at: r.created_at,
     updated_at: r.updated_at ?? r.created_at,
+    citations: parseCitations(r.citations),
   }
 }
 
