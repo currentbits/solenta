@@ -458,6 +458,11 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
       list: (input) => call<{ files: string[] }>("files:list", input),
       image: (input) =>
         call<{ dataUrl: string | null }>("files:image", input),
+      resolve: (input) =>
+        call<{ resolved: Array<{ path: string; abs: string | null }> }>(
+          "files:resolve",
+          input,
+        ),
     },
     attachments: {
       pick: () =>

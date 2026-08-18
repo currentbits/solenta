@@ -2,6 +2,7 @@
 
 const { BrowserWindow, shell } = require("electron");
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const services = require("./services.js");
 const {
@@ -110,7 +111,31 @@ function resolveThreadRoot(store, threadId) {
 }
 
 /**
- * Validate an absolute path exists and is the thread root or inside it.
+ * Drop a trailing `:line` / `:line:col` without eating a Windows drive.
+ * @param {string} raw
+ */
+function stripLineSuffix(raw) {
+  const m = String(raw).match(/^(.*?):(\d+)(?::(\d+))?$/);
+  if (!m) return raw;
+  if (/^[A-Za-z]$/.test(m[1])) return raw;
+  return m[1];
+}
+
+/**
+ * Expand `~` / `~/…` against the home directory.
+ * @param {string} raw
+ */
+function expandUserPath(raw) {
+  if (raw === "~") return os.homedir();
+  if (raw.startsWith("~/") || raw.startsWith("~\\")) {
+    return path.join(os.homedir(), raw.slice(2));
+  }
+  return raw;
+}
+
+/**
+ * Validate a path exists and is the thread root or inside it.
+ * Relative paths join against the thread worktree (or project checkout).
  * @param {import('./store').Store} store
  * @param {{ threadId?: string, path?: string }} input
  * @returns {string}
@@ -122,7 +147,10 @@ function resolveAllowedShellPath(store, input) {
   const { root } = resolveThreadRoot(store, input.threadId);
   const raw = input.path != null ? String(input.path) : root;
   if (!raw) throw new Error("Path is required");
-  const resolved = path.resolve(raw);
+  const expanded = expandUserPath(stripLineSuffix(raw));
+  const resolved = path.isAbsolute(expanded)
+    ? path.resolve(expanded)
+    : path.resolve(root, expanded);
   if (!fs.existsSync(resolved)) {
     throw new Error("Path does not exist");
   }
@@ -132,6 +160,21 @@ function resolveAllowedShellPath(store, input) {
     throw new Error("Path is outside the thread workspace");
   }
   return resolved;
+}
+
+/**
+ * Same as resolveAllowedShellPath, but missing / outside paths are null.
+ * @param {import('./store').Store} store
+ * @param {string} threadId
+ * @param {string} rawPath
+ * @returns {string | null}
+ */
+function tryResolveWorkspaceFile(store, threadId, rawPath) {
+  try {
+    return resolveAllowedShellPath(store, { threadId, path: rawPath });
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -616,6 +659,17 @@ const IPC_HANDLERS = {
       threadId: input.threadId,
       query: input.query,
     });
+  },
+  "files:resolve": async (ctx, input) => {
+    const threadId = input && input.threadId;
+    if (!threadId) throw new Error("threadId is required");
+    const raws = Array.isArray(input.paths) ? input.paths.slice(0, 80) : [];
+    return {
+      resolved: raws.map((raw) => {
+        const p = String(raw ?? "");
+        return { path: p, abs: tryResolveWorkspaceFile(ctx.store, threadId, p) };
+      }),
+    };
   },
   "files:image": async (ctx, input) => {
     return {
