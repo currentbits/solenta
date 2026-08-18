@@ -26,7 +26,7 @@ const SEARCH_DEBOUNCE_MS = 300;
 const MIN_QUERY_LEN = 3;
 const RECENT_LIMIT = 20;
 
-type StoreType = "knowledge" | "convention" | "task";
+type StoreType = "knowledge" | "convention" | "task" | "strategy";
 
 export interface MemoryTabProps {
   /** Project PATH of the selected thread (falls back to slug). The memory
@@ -64,6 +64,7 @@ function isNotRunningError(err: unknown): boolean {
 
 function typeBadgeClass(type: MemoryEntryInfo["type"]): string {
   if (type === "convention") return styles.badgeConvention;
+  if (type === "strategy") return styles.badgeStrategy;
   if (type === "knowledge") return styles.badgeKnowledge;
   if (type === "task") return styles.badgeTask;
   return styles.badgeRun;
@@ -626,6 +627,7 @@ export function MemoryTab({
           >
             <option value="knowledge">knowledge</option>
             <option value="convention">convention</option>
+            <option value="strategy">strategy</option>
             <option value="task">task</option>
           </select>
           <input

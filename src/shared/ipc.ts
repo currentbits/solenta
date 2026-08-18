@@ -1379,7 +1379,7 @@ export interface UpdateStatus {
 /** A shared-memory entry as surfaced to the UI (excerpt form unless fetched). */
 export interface MemoryEntryInfo {
   id: string;
-  type: "knowledge" | "task" | "convention" | "run";
+  type: "knowledge" | "task" | "convention" | "run" | "strategy";
   title: string;
   /** Excerpt in list/search results; full body from memory.get. */
   body: string;
