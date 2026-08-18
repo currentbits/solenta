@@ -789,6 +789,7 @@ function createRunner(opts) {
       // silent
     }
     sweepDoneWorkers(threadId);
+    maybeDrainQueued(threadId);
   }
 
   /**
@@ -938,6 +939,7 @@ function createRunner(opts) {
       // silent
     }
     sweepDoneWorkers(threadId);
+    maybeDrainQueued(threadId);
   }
 
   function settleVerifyCrash(threadId, err) {
@@ -1266,6 +1268,47 @@ function createRunner(opts) {
     } catch {
       // never affect the run path
     }
+    // Verify restamps status "working"; skip so we don't start the queued
+    // prompt on top of the gate. The verify settle path drains instead.
+    maybeDrainQueued(threadId);
+  }
+
+  /**
+   * Deliver a type-ahead prompt that survived the just-finished turn
+   * (issue #314). take-and-clear so the same prompt cannot fire twice.
+   * On throw, put it back with error so the renderer can Retry.
+   */
+  async function drainQueued(threadId) {
+    let taken;
+    try {
+      taken = services.takeQueued(store, { threadId });
+    } catch {
+      return;
+    }
+    if (!taken) return;
+    try {
+      await startRun({
+        threadId,
+        prompt: taken.prompt,
+        attachments: taken.attachments,
+      });
+    } catch (err) {
+      store.updateThread(threadId, {
+        queued: {
+          ...taken,
+          error: shortError(String((err && err.message) || err)),
+        },
+      });
+      store.save();
+      pushDetail(threadId);
+      pushThreadsChanged();
+    }
+  }
+
+  function maybeDrainQueued(threadId) {
+    const thread = store.getThread(threadId);
+    if (!thread || thread.status === "working") return;
+    void drainQueued(threadId);
   }
 
   /**
@@ -1300,11 +1343,37 @@ function createRunner(opts) {
     return i;
   }
 
-  function pushDetail(threadId, workflow) {
+  /**
+   * Activity stamp for the turn watchdog (issue #314). Persist lastEventAt
+   * at most every ~5s so the write does not re-sort the sidebar (no touch)
+   * on every stream chunk. Clearing a stall is always written — a live CLI
+   * must drop the flag on the next event.
+   */
+  function stampLastEvent(threadId) {
+    const thread = store.getThread(threadId);
+    if (!thread) return;
+    const now = Date.now();
+    const lastStored = thread.lastEventAt;
+    const clearingStall = thread.stalledAt != null;
+    if (!clearingStall && lastStored != null && now - lastStored <= 5000) {
+      return;
+    }
+    store.updateThread(threadId, {
+      lastEventAt: now,
+      ...(clearingStall ? { stalledAt: null } : {}),
+    });
+  }
+
+  function pushDetail(threadId, workflow, opts) {
     // Deleted threads must not resurrect via late agent/sim pushes.
     if (threadId == null || !store.getThread(threadId)) {
       lastPushByThread.delete(threadId);
       return null;
+    }
+    // skipStamp: the stall sweep's own push must not count as activity
+    // or it would clear stalledAt in the same turn it set it.
+    if (active.has(threadId) && !(opts && opts.skipStamp)) {
+      stampLastEvent(threadId);
     }
     if (workflow) {
       lastWorkflowByThread.set(threadId, workflow);
@@ -1710,6 +1779,10 @@ function createRunner(opts) {
       }
     }
     active.delete(threadId);
+    const thread = store.getThread(threadId);
+    if (thread && (thread.stalledAt != null || thread.lastEventAt != null)) {
+      store.updateThread(threadId, { stalledAt: null, lastEventAt: null });
+    }
   }
 
   /**
@@ -4236,6 +4309,8 @@ function createRunner(opts) {
         title,
         runStartedAt: Date.now(),
         awaitingInput: false,
+        lastEventAt: null,
+        stalledAt: null,
         ...services.clearSettledOnActivity(thread),
       },
       { touch: true },
@@ -4497,6 +4572,7 @@ function createRunner(opts) {
       } catch {
         // silent
       }
+      maybeDrainQueued(threadId);
     }
   }
 
@@ -4511,6 +4587,7 @@ function createRunner(opts) {
   }
 
   function stopAll() {
+    clearInterval(stallTimer);
     // Clean app quit (main.js before-quit). Mark each active run idle with an
     // interruption event so the next launch's recoverInterruptedRuns (crash
     // path only) does not re-stamp them as generic failures. Kill + flush
@@ -4614,6 +4691,45 @@ function createRunner(opts) {
     if (t.orchWorker && t.handoffFrom) sweepCrew(String(t.handoffFrom));
   }
 
+  /**
+   * Advisory stall sweep (issue #314). Scans every thread, not just `active`:
+   * a working row with no live run is the zombie this issue names. Never
+   * kills the CLI — a slow-but-alive stream clears stalledAt via stampLastEvent.
+   * STALL_MS is read at check time so a test can shorten the window.
+   */
+  function checkStalls() {
+    const stallMs = Number(process.env.CODER_STALL_MS) || 10 * 60 * 1000;
+    const now = Date.now();
+    for (const thread of store.getThreads()) {
+      if (thread.status !== "working") continue;
+      if (thread.awaitingInput) continue;
+      if (thread.stalledAt) continue;
+      const last = thread.lastEventAt ?? thread.runStartedAt ?? now;
+      if (now - last <= stallMs) continue;
+      store.updateThread(thread.id, { stalledAt: now });
+      const provider = resolveProvider(thread);
+      const mins = Math.max(1, Math.round((now - last) / 60000));
+      appendMessage(
+        thread.id,
+        "event",
+        `No output from the ${provider} CLI for ${mins} min — the turn may be hung. Stop and retry if it stays quiet.`,
+      );
+      store.save();
+      pushDetail(thread.id, undefined, { skipStamp: true });
+      pushThreadsChanged();
+    }
+  }
+
+  // Native timer (not setIntervalFn): tests replace that hook for sim ticks.
+  const stallTimer = setInterval(() => {
+    try {
+      checkStalls();
+    } catch {
+      // never break the runner
+    }
+  }, 15_000);
+  if (typeof stallTimer.unref === "function") stallTimer.unref();
+
   return {
     startRun,
     startWorkflowRun,
@@ -4629,6 +4745,8 @@ function createRunner(opts) {
     respondPermission,
     disposeClaudeSession,
     deliverNotice,
+    checkStalls,
+    drainQueued,
   };
 }
 

@@ -903,6 +903,8 @@ async function startWorkflowRun(deps) {
       title,
       runStartedAt: Date.now(),
       awaitingInput: false,
+      lastEventAt: null,
+      stalledAt: null,
       ...services.clearSettledOnActivity(thread),
     },
     { touch: true },
