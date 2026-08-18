@@ -43,6 +43,9 @@ const WIN32_FILES = [
 if (process.platform === "win32") {
   args.push(...WIN32_FILES);
 } else {
+  // Linux is POSIX: shebang fakes, signals, /bin/sh, and /tmp all work, so
+  // it shares the full glob with macOS. A third skip list would only hide a
+  // real Linux-only break. Win32 is the exception (CreateProcess / no shebang).
   args.push("electron/test/*.test.js");
 }
 

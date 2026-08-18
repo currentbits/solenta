@@ -8,9 +8,16 @@
 # and runs the WSL contract only. Winget is blocked on an installer — see
 # the note in scripts/package-cross.sh.
 #
+# ubuntu-latest is the Linux proof (#455). Linux is POSIX, so the full
+# electron glob runs — no third skip list. The smoke job is NOT one line:
+# Electron needs a display and the Ubuntu runner has none, so xvfb-run
+# wraps `npm run test:smoke` there only. scripts/test-smoke.js also
+# passes --no-sandbox on Linux (Chromium aborts as root / without a
+# setuid chrome-sandbox before any JS runs).
+#
 # `smoke` is a separate job on purpose: a boot/dispatch failure must show
 # up as a boot failure, not a needle inside `npm test`. It is the first
-# thing in CI that actually starts the app on Windows (#449).
+# thing in CI that actually starts the app on each OS (#449, #455).
 name: test
 
 on: push
@@ -21,7 +28,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        os: [macos-latest, windows-latest, ubuntu-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -40,7 +47,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        os: [macos-latest, windows-latest, ubuntu-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -52,4 +59,16 @@ jobs:
       - run: npm ci --prefix core
       - run: npm run build --prefix core
       - run: npx vite build
-      - run: npm run test:smoke
+      - name: Install xvfb
+        if: runner.os == 'Linux'
+        run: >
+          sudo apt-get update && sudo apt-get install -y
+          xvfb libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2
+          libgtk-3-0 libgbm1 libasound2 libxcomposite1 libxdamage1
+          libxfixes3 libxrandr2 libxkbcommon0
+      - name: Smoke
+        if: runner.os != 'Linux'
+        run: npm run test:smoke
+      - name: Smoke
+        if: runner.os == 'Linux'
+        run: xvfb-run --auto-servernum npm run test:smoke

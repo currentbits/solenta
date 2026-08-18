@@ -20,7 +20,7 @@
     "test:renderer": "node --import=./test/support/disable-grok-mcp.mjs --import=./test/support/render.mjs --experimental-strip-types --test --test-timeout=20000 test/*.test.ts test/*.test.tsx",
     "test:electron": "node scripts/test-electron.js",
     "test:memory": "npm test --prefix memory-server",
-    "test:smoke": "electron electron/smoke.js"
+    "test:smoke": "node scripts/test-smoke.js"
   },
   "dependencies": {
     "@formkit/auto-animate": "^0.10.0",
