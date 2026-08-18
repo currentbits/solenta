@@ -2640,8 +2640,12 @@ function buildDevCoder(): CoderApi {
           // Lazy worktree: only the intent is recorded, the fake worktree
           // materializes at first run. An orchestrator holds neither — its
           // worker does.
-          pendingWorktree: input.orchestrate !== true && input.worktree === true,
-          pendingFork: input.orchestrate === true,
+          pendingWorktree:
+            input.ask !== true &&
+            input.orchestrate !== true &&
+            input.worktree === true,
+          pendingFork: input.ask !== true && input.orchestrate === true,
+          ask: input.ask === true,
           issueNumber: input.issueNumber ?? null,
           ...(input.teach === true
             ? { teach: { autonomy: "hint" as const, reviewsPassed: 0 } }
@@ -2667,6 +2671,7 @@ function buildDevCoder(): CoderApi {
               : source.model,
           permissionMode: source.permissionMode,
           teach: source.teach ?? null,
+          ask: source.ask === true,
           handoffFrom: source.id,
         });
         return registerThread(created);
@@ -2847,6 +2852,21 @@ function buildDevCoder(): CoderApi {
       },
       async stopTeach(input: { threadId: string }) {
         return patchThread(input.threadId, { teach: null });
+      },
+      async startAsk(input: { threadId: string }) {
+        const existing = threads.find((t) => t.id === input.threadId);
+        if (existing?.ask) return { ...existing };
+        return patchThread(input.threadId, {
+          ask: true,
+          pendingWorktree: false,
+          teach: null,
+        });
+      },
+      async stopAsk(input: { threadId: string; worktree?: boolean }) {
+        return patchThread(input.threadId, {
+          ask: false,
+          ...(input.worktree ? { pendingWorktree: true } : {}),
+        });
       },
       async requestTeachReview(input: { threadId: string }) {
         const existing = threads.find((t) => t.id === input.threadId);

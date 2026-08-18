@@ -116,6 +116,32 @@ describe("plain New thread mode resolution", () => {
     m.unmount();
   });
 
+  it("Ask wins over defaultWorktree and defaultOrchestrate (issue #392)", async () => {
+    const fake = createFakeCoder({
+      settings: {
+        dailyBudgetUsd: null,
+        orchestrationBudgetUsd: null,
+        autoSettleAfterDays: 3,
+        mcpServers: [],
+        defaultWorktree: true,
+        defaultOrchestrate: true,
+        updateChannel: null,
+      },
+    });
+    const m = await boot(fake);
+    await m.click(m.query('[data-create-menu-btn="p1"]'));
+    await m.click(m.query('[data-create-ask-thread="p1"]'));
+
+    const input = fake.of("threads.create")[0].args[0] as Record<
+      string,
+      unknown
+    >;
+    assert.equal(input.ask, true);
+    assert.equal(input.worktree, undefined);
+    assert.equal(input.orchestrate, undefined);
+    m.unmount();
+  });
+
   it("breadcrumb slug uses the same default-mode create path (issue #445)", async () => {
     const fake = createFakeCoder({
       settings: {

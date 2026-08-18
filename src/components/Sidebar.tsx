@@ -150,11 +150,11 @@ interface SidebarProps {
   /** Global + uses selected project; per-group New thread passes that projectId. */
   onCreateThread: (
     projectId?: string,
-    opts?: { worktree?: boolean; orchestrate?: boolean; teach?: boolean; issueNumber?: number | null },
+    opts?: { worktree?: boolean; orchestrate?: boolean; teach?: boolean; ask?: boolean; issueNumber?: number | null },
   ) => void;
   /**
    * Mirrors SettingsInfo.defaultWorktree. The caret lists worktree,
-   * orchestrator, plain, and teach; this only documents the setting the
+   * orchestrator, plain, teach, and ask; this only documents the setting the
    * plain "New thread" button follows (issue #72). Unused in the menu itself.
    */
   defaultWorktree?: boolean;
@@ -579,6 +579,11 @@ export function ThreadCard({
             )}
             {(thread.worktreePath || thread.pendingWorktree) && (
               <span className={styles.worktreeTag}>wt</span>
+            )}
+            {thread.ask === true && (
+              <span className={styles.askTag} data-ask-tag="" title="Ask mode — repo Q&A, no worktree">
+                ask
+              </span>
             )}
             {thread.archived && (
               <span className={styles.archivedTag}>archived</span>
@@ -2087,6 +2092,19 @@ export const Sidebar = memo(function Sidebar({
                 }}
               >
                 New teach thread
+              </button>
+              <button
+                type="button"
+                className={styles.snoozeMenuItem}
+                role="menuitem"
+                data-create-ask-thread={project.id}
+                title="New read-only Ask thread: repo Q&A from the index and memory, no worktree"
+                onClick={() => {
+                  setCreateMenuFor(null);
+                  onCreateThread(project.id, { ask: true });
+                }}
+              >
+                New ask thread
               </button>
             </div>
           )}

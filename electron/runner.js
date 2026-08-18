@@ -23,6 +23,7 @@ const {
   listProviders,
 } = require("./providers.js");
 const orchcommands = require("./orchcommands.js");
+const ask = require("./ask.js");
 const {
   getClaudeMcpArgs,
   getCodexMcpArgs,
@@ -373,6 +374,8 @@ function tryReadCodeIndex(userDataPath, repoRoot) {
  * @param {typeof clearInterval} [opts.clearIntervalFn]
  * @param {string} [opts.userDataPath] - for memory auto-record
  * @param {() => { running: boolean, adopted: boolean, port: number | null }} [opts.getMemoryStatus]
+ * @param {(opts: object) => Promise<{ text: string, source: string } | null>} [opts.askComplete] - Ask mode seam (issue #392)
+ * @param {(query: string, projectPath: string) => Promise<object[]>} [opts.searchMemory] - Ask mode memory seam
  */
 function createRunner(opts) {
   const {
@@ -384,6 +387,8 @@ function createRunner(opts) {
     clearIntervalFn = clearInterval,
     userDataPath = "",
     getMemoryStatus: getMemStatus = getMemoryStatus,
+    askComplete = ask.completeAsk,
+    searchMemory = null,
   } = opts;
 
   /**
@@ -4384,6 +4389,186 @@ function createRunner(opts) {
     return started;
   }
 
+  /**
+   * Ask-mode turn (issue #392): no budget, no worktree, no tool loop, no
+   * usage row. fm → print-mode → retrieval-only. Returns { runId } the
+   * same way every other start*Run does; completion is async.
+   *
+   * @param {object} input
+   * @param {object} thread
+   */
+  async function startAskRun(input, thread) {
+    const { threadId, prompt } = input;
+    const attachments = sanitizeAttachments(input.attachments);
+    const project = store.getProject(thread.projectId);
+    const repoRoot = (project && project.path) || "";
+    if (userDataPath && repoRoot) {
+      try {
+        require("./codeindex.js").maybeRefreshIndex({ userDataPath, repoRoot });
+      } catch {
+        /* never block */
+      }
+    }
+
+    const runId = randomUUID();
+    otel.startRun({
+      threadId,
+      runId,
+      provider: "ask",
+      model: thread.model || null,
+      parentRunId: input.parentRunId || null,
+    });
+    if (!input.fromQuotaWait) {
+      appendMessage(threadId, "user", prompt, runId, null, attachments);
+    }
+
+    let title = thread.title;
+    if (title === "New Thread") {
+      const firstLine = String(prompt).split(/\r?\n/)[0].trim();
+      const max = services.THREAD_TITLE_MAX || 60;
+      title = firstLine.slice(0, max) || "New Thread";
+    }
+    store.updateThread(
+      threadId,
+      {
+        status: "working",
+        title,
+        runStartedAt: Date.now(),
+        awaitingInput: false,
+        lastEventAt: null,
+        stalledAt: null,
+        quotaWaitUntil: null,
+        pendingWorktree: false,
+        ...services.clearSettledOnActivity(thread),
+      },
+      { touch: true },
+    );
+    store.save();
+    pushDetail(threadId);
+    pushThreadsChanged();
+
+    /** @type {{ kill?: () => void }} */
+    const handle = {};
+    const entry = {
+      kind: "ask",
+      runId,
+      handle: {
+        kill() {
+          if (typeof handle.kill === "function") handle.kill();
+        },
+      },
+    };
+    active.set(threadId, entry);
+
+    const index = userDataPath && repoRoot
+      ? tryReadCodeIndex(userDataPath, repoRoot)
+      : null;
+    const indexNote = services.codeIndexNoteFor(index);
+    const matchNote = ask.formatMatchingFiles(index, prompt);
+    const digestNote = ask.formatThreadDigest(store.getMessages(threadId));
+
+    void (async () => {
+      let memoryNote = "";
+      try {
+        const search =
+          searchMemory ||
+          (async (query, projectPath) => {
+            if (!userDataPath) return [];
+            const { createMemoryProxy } = require("./memory-proxy.js");
+            const proxy = createMemoryProxy({ userDataPath });
+            return await proxy.search({
+              query,
+              project: projectPath || undefined,
+            });
+          });
+        const hits = await search(String(prompt || ""), repoRoot);
+        memoryNote = ask.formatMemoryHits(hits);
+      } catch {
+        memoryNote = "";
+      }
+
+      const pack = {
+        question: String(prompt || ""),
+        indexNote,
+        memoryNote,
+        digestNote,
+        matchNote,
+      };
+      const askPrompt = ask.buildAskPrompt(pack);
+
+      let answer = "";
+      let source = "retrieval";
+      try {
+        const result = await askComplete({
+          prompt: askPrompt,
+          provider: resolveProvider(thread),
+          model: thread.model,
+          onHandle: (h) => {
+            handle.kill = h && h.kill;
+          },
+        });
+        if (result && result.text) {
+          answer = result.text;
+          source = result.source || "print";
+        }
+      } catch {
+        answer = "";
+      }
+      if (!answer) answer = ask.retrievalFallback(pack);
+
+      if (!active.has(threadId) || active.get(threadId) !== entry) return;
+      if (entry.stopping) return;
+
+      appendMessage(threadId, "assistant", answer, runId);
+      if (source === "retrieval") {
+        appendMessage(
+          threadId,
+          "event",
+          "Answered from the repo map and memory (no model).",
+          runId,
+        );
+      }
+      clearRun(threadId);
+      store.updateThread(
+        threadId,
+        { status: "done", runStartedAt: null },
+        { touch: true },
+      );
+      store.save();
+      pushDetail(threadId);
+      pushThreadsChanged();
+      otel.endRun({ threadId, runId, status: "done" });
+      // Skip notifyRunTerminal: that path checkpoints the worktree and
+      // records agent spend. Ask must do neither.
+      finishSuccessfulTurn(threadId);
+    })().catch((err) => {
+      if (!active.has(threadId) || active.get(threadId) !== entry) return;
+      const errText = `Ask error: ${err && err.message ? err.message : String(err)}`;
+      appendMessage(threadId, "event", errText, runId);
+      clearRun(threadId);
+      store.updateThread(
+        threadId,
+        {
+          status: "failed",
+          runStartedAt: null,
+          lastError: shortError(errText),
+        },
+        { touch: true },
+      );
+      store.save();
+      pushDetail(threadId);
+      pushThreadsChanged();
+      otel.endRun({
+        threadId,
+        runId,
+        status: "failed",
+        error: shortError(errText),
+      });
+    });
+
+    return { runId };
+  }
+
   async function startRun(input) {
     const { threadId, prompt } = input;
     const attachments = sanitizeAttachments(input.attachments);
@@ -4399,6 +4584,14 @@ function createRunner(opts) {
     // Machine-delivered turns increment autoTurns in flushOrchNotices.
     // Anything else (user send, retry, verify fix) is a human in the loop.
     if (!input.fromNotice) autoTurns.set(threadId, 0);
+
+    // Ask mode (issue #392): cheap no-tools Q&A. Intercept BEFORE orch
+    // commands, budget, and worktree materialization so a `/advisor` on an
+    // Ask thread is just a question and a defaultWorktree leftover cannot
+    // touch the disk.
+    if (thread.ask === true) {
+      return startAskRun(input, thread);
+    }
 
     // Orchestration commands (issue #338): `/handoff`, `/advisor` and
     // `/committee` are named compositions of the fork-and-notice machinery
@@ -4616,6 +4809,7 @@ function createRunner(opts) {
       ) +
       services.reviewItineraryNoteFor(dispatchThread) +
       services.teachNoteFor(dispatchThread) +
+      services.askNoteFor(dispatchThread) +
       services.crewTaskNoteFor(store, dispatchThread) +
       services.codeIndexNoteFor(
         userDataPath && repoRoot
@@ -4767,7 +4961,8 @@ function createRunner(opts) {
         entry.kind === "codex" ||
         entry.kind === "kimi" ||
         entry.kind === "opencode" ||
-        entry.kind === "real") &&
+        entry.kind === "real" ||
+        entry.kind === "ask") &&
       entry.handle
     ) {
       try {
@@ -4867,7 +5062,8 @@ function createRunner(opts) {
           entry.kind === "codex" ||
           entry.kind === "kimi" ||
           entry.kind === "opencode" ||
-          entry.kind === "real") &&
+          entry.kind === "real" ||
+          entry.kind === "ask") &&
         entry.handle
       ) {
         entry.stopping = true;

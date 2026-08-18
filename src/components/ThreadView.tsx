@@ -346,7 +346,7 @@ interface ThreadViewProps {
    */
   onCreateThread?: (
     projectId?: string,
-    opts?: { worktree?: boolean; orchestrate?: boolean; teach?: boolean; issueNumber?: number | null },
+    opts?: { worktree?: boolean; orchestrate?: boolean; teach?: boolean; ask?: boolean; issueNumber?: number | null },
   ) => void;
   /** Seed an automation from this thread's first prompt (#285). */
   onRepeatSchedule?: () => void;
@@ -375,6 +375,15 @@ interface ThreadViewProps {
   onStopTeach?: (threadId: string) => void | Promise<void>;
   /** Ask the agent to review the human's TODO(human) fills. */
   onRequestTeachReview?: (threadId: string) => void | Promise<void>;
+  /** Turn Ask mode on (issue #392). */
+  onStartAsk?: (threadId: string) => void | Promise<void>;
+  /** Turn Ask mode off. worktree: true is Start work. */
+  onStopAsk?: (
+    threadId: string,
+    opts?: { worktree?: boolean },
+  ) => void | Promise<void>;
+  /** Settings.defaultWorktree — Start work arms a pending worktree when set. */
+  defaultWorktree?: boolean;
   /** Permanently delete the open thread (caller already confirmed in UI). */
   onDeleteThread: () => void | Promise<void>;
   /** Center Changes panel open (lifted so the Git tab can open it). */
@@ -1858,6 +1867,60 @@ function teachStepStatus(
 /**
  * Teach mode card (issue #373): autonomy ladder, review-my-code, turn off.
  */
+function AskCard({
+  thread,
+  onStopAsk,
+  promoteWorktree,
+}: {
+  thread: ThreadInfo;
+  onStopAsk?: (
+    threadId: string,
+    opts?: { worktree?: boolean },
+  ) => void | Promise<void>;
+  promoteWorktree: boolean;
+}) {
+  if (!thread.ask) return null;
+  return (
+    <div className={styles.specCard} data-ask-card="">
+      <div className={styles.specCardHead}>
+        <span className={styles.specCardTitle}>Ask</span>
+        <span className={styles.specStatus}>read-only</span>
+      </div>
+      <p className={styles.specStatus}>
+        Answers from the repo map and memory. No tools, no worktree, no
+        agent credits. Start work when you want a real thread.
+      </p>
+      <div className={styles.permissionActions}>
+        {onStopAsk && (
+          <button
+            type="button"
+            className={styles.permissionAllow}
+            data-ask-start-work-btn=""
+            onClick={() =>
+              void onStopAsk(
+                thread.id,
+                promoteWorktree ? { worktree: true } : undefined,
+              )
+            }
+          >
+            Start work
+          </button>
+        )}
+        {onStopAsk && (
+          <button
+            type="button"
+            className={styles.permissionDeny}
+            data-ask-stop-btn=""
+            onClick={() => void onStopAsk(thread.id)}
+          >
+            Turn off
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function TeachCard({
   thread,
   onStopTeach,
@@ -2338,6 +2401,9 @@ export const ThreadView = memo(function ThreadView({
   onStartTeach,
   onStopTeach,
   onRequestTeachReview,
+  onStartAsk,
+  onStopAsk,
+  defaultWorktree = false,
   onDeleteThread,
   changesOpen,
   changesNonce,
@@ -3163,7 +3229,7 @@ export const ThreadView = memo(function ThreadView({
               onOpenChange={setContextOpen}
             />
           )}
-          {onStartSpec && !thread.spec && (
+          {onStartSpec && !thread.spec && !thread.ask && (
             <button
               type="button"
               className={styles.btn}
@@ -3173,7 +3239,7 @@ export const ThreadView = memo(function ThreadView({
               Spec mode
             </button>
           )}
-          {onStopSpec && thread.spec && (
+          {onStopSpec && thread.spec && !thread.ask && (
             <button
               type="button"
               className={styles.btn}
@@ -3183,7 +3249,7 @@ export const ThreadView = memo(function ThreadView({
               Exit spec mode
             </button>
           )}
-          {onStartTeach && !thread.teach && (
+          {onStartTeach && !thread.teach && !thread.ask && (
             <button
               type="button"
               className={styles.btn}
@@ -3191,6 +3257,16 @@ export const ThreadView = memo(function ThreadView({
               onClick={() => void onStartTeach(thread.id)}
             >
               Teach mode
+            </button>
+          )}
+          {onStartAsk && !thread.ask && (
+            <button
+              type="button"
+              className={styles.btn}
+              data-ask-mode-btn=""
+              onClick={() => void onStartAsk(thread.id)}
+            >
+              Ask mode
             </button>
           )}
           {onSetNotes && (
@@ -3230,6 +3306,7 @@ export const ThreadView = memo(function ThreadView({
               ) : null}
             </button>
           )}
+          {!thread.ask && (
           <NextGitActionButton
             thread={thread}
             isWorking={isWorking}
@@ -3251,6 +3328,7 @@ export const ThreadView = memo(function ThreadView({
             }
             onPushed={() => setSyncRefreshNonce((n) => n + 1)}
           />
+          )}
           {gitSyncInfo && gitFetch && (
             <SyncPill
               threadId={thread.id}
@@ -3588,7 +3666,7 @@ export const ThreadView = memo(function ThreadView({
           );
         })}
 
-        {thread.spec ? (
+        {thread.spec && !thread.ask ? (
           <SpecCard
             thread={thread}
             onReviewSpec={onReviewSpec}
@@ -3597,7 +3675,17 @@ export const ThreadView = memo(function ThreadView({
           />
         ) : null}
 
-        {thread.teach ? (
+        {thread.ask ? (
+          <AskCard
+            thread={thread}
+            onStopAsk={onStopAsk}
+            promoteWorktree={
+              defaultWorktree === true && !project?.remoteHost
+            }
+          />
+        ) : null}
+
+        {thread.teach && !thread.ask ? (
           <TeachCard
             thread={thread}
             onStopTeach={onStopTeach}
@@ -3752,6 +3840,7 @@ export const ThreadView = memo(function ThreadView({
         branch={thread.branch}
         permissionMode={thread.permissionMode}
         teach={thread.teach ?? null}
+        ask={thread.ask === true}
         onPermissionModeChange={onSetPermissionMode}
         provider={thread.provider}
         model={thread.model}
@@ -3772,14 +3861,16 @@ export const ThreadView = memo(function ThreadView({
             ? "Unarchive to continue this thread"
             : isWorking
               ? "Queue the next instruction…"
-              : undefined
+              : thread.ask
+                ? "Ask about this repo…"
+                : undefined
         }
         onSend={(prompt, messageAttachments) =>
           onStartRun(prompt, undefined, messageAttachments)
         }
         onBuild={onStartWorkflow}
-        onBestOfN={onFork ? runBestOfN : undefined}
-        onDelegate={onFork ? runDelegate : undefined}
+        onBestOfN={onFork && !thread.ask ? runBestOfN : undefined}
+        onDelegate={onFork && !thread.ask ? runDelegate : undefined}
         onModelPickerOpen={onModelPickerOpen}
         error={runError}
         onDismissError={onDismissRunError}

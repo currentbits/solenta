@@ -126,6 +126,8 @@ export default function App() {
     specArtifact,
     startTeach,
     stopTeach,
+    startAsk,
+    stopAsk,
     requestTeachReview,
     deleteThread,
     removeProject,
@@ -294,7 +296,7 @@ export default function App() {
   const clearReveal = useCallback(() => setRevealThreadId(null), []);
 
   const handleCreateThread = useCallback(
-    (projectId?: string, opts?: { worktree?: boolean; orchestrate?: boolean; teach?: boolean; issueNumber?: number | null }) => {
+    (projectId?: string, opts?: { worktree?: boolean; orchestrate?: boolean; teach?: boolean; ask?: boolean; issueNumber?: number | null }) => {
       void createThread("New Thread", projectId, opts).then((t) => {
         if (t) setRevealThreadId(t.id);
       });
@@ -432,6 +434,20 @@ export default function App() {
       void requestTeachReview(threadId);
     },
     [requestTeachReview],
+  );
+
+  const handleStartAsk = useCallback(
+    (threadId: string) => {
+      void startAsk(threadId);
+    },
+    [startAsk],
+  );
+
+  const handleStopAsk = useCallback(
+    (threadId: string, opts?: { worktree?: boolean }) => {
+      void stopAsk(threadId, opts);
+    },
+    [stopAsk],
   );
 
   const handleRowArchived = useCallback(
@@ -967,6 +983,9 @@ export default function App() {
         onStartTeach={handleStartTeach}
         onStopTeach={handleStopTeach}
         onRequestTeachReview={handleRequestTeachReview}
+        onStartAsk={handleStartAsk}
+        onStopAsk={handleStopAsk}
+        defaultWorktree={settings?.defaultWorktree ?? false}
         onDeleteThread={deleteThread}
         changesOpen={changesOpen}
         changesNonce={changesNonce}

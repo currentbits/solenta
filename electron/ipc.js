@@ -292,6 +292,14 @@ const IPC_HANDLERS = {
   },
   "threads:create": async (ctx, input) => {
     const thread = services.createThread(ctx.store, input);
+    // Ask mode (issue #392): no worktree, no orchestrator fork. Wins over
+    // both so a defaultWorktree setting cannot sneak a pending worktree
+    // onto a read-only Q&A thread.
+    if (input && input.ask === true) {
+      services.startAsk(ctx.store, { threadId: thread.id });
+      ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+      return ctx.store.getThread(thread.id);
+    }
     // Orchestrator thread (issue #202): the first prompt is forked to a
     // worker, which is what gets the worktree — so this branch wins over
     // `worktree` and never touches the filesystem itself.
@@ -456,6 +464,16 @@ const IPC_HANDLERS = {
   },
   "threads:startTeach": async (ctx, input) => {
     const updated = services.startTeach(ctx.store, input);
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    return updated;
+  },
+  "threads:startAsk": async (ctx, input) => {
+    const updated = services.startAsk(ctx.store, input);
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    return updated;
+  },
+  "threads:stopAsk": async (ctx, input) => {
+    const updated = services.stopAsk(ctx.store, input);
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     return updated;
   },

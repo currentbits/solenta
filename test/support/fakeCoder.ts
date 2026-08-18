@@ -686,6 +686,10 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           typeof input === "object" &&
           input !== null &&
           (input as { teach?: boolean }).teach === true;
+        const wantAsk =
+          typeof input === "object" &&
+          input !== null &&
+          (input as { ask?: boolean }).ask === true;
         const issueNumber =
           typeof input === "object" &&
           input !== null &&
@@ -710,6 +714,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           ...(wantTeach
             ? { teach: { autonomy: "hint" as const, reviewsPassed: 0 } }
             : {}),
+          ...(wantAsk ? { ask: true } : {}),
         });
         threads = [t, ...threads.filter((x) => x.id !== t.id)];
         return rec("threads.create", [input], t);
@@ -919,6 +924,38 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         threads = threads.map((t) => (t.id === i.threadId ? next : t));
         return Promise.resolve(next);
       },
+      startAsk: (input: unknown) => {
+        const i = input as { threadId: string };
+        calls.push({ channel: "threads.startAsk", args: [input] });
+        const existing = threads.find((t) => t.id === i.threadId);
+        if (!existing) {
+          return Promise.reject(new Error(`Unknown thread: ${i.threadId}`));
+        }
+        if (existing.ask) return Promise.resolve({ ...existing });
+        const next: ThreadInfo = {
+          ...existing,
+          ask: true,
+          pendingWorktree: false,
+          teach: null,
+        };
+        threads = threads.map((t) => (t.id === i.threadId ? next : t));
+        return Promise.resolve(next);
+      },
+      stopAsk: (input: unknown) => {
+        const i = input as { threadId: string; worktree?: boolean };
+        calls.push({ channel: "threads.stopAsk", args: [input] });
+        const existing = threads.find((t) => t.id === i.threadId);
+        if (!existing) {
+          return Promise.reject(new Error(`Unknown thread: ${i.threadId}`));
+        }
+        const next: ThreadInfo = {
+          ...existing,
+          ask: false,
+          ...(i.worktree ? { pendingWorktree: true } : {}),
+        };
+        threads = threads.map((t) => (t.id === i.threadId ? next : t));
+        return Promise.resolve(next);
+      },
       requestTeachReview: (input: unknown) => {
         const i = input as { threadId: string };
         calls.push({ channel: "threads.requestTeachReview", args: [input] });
@@ -1083,6 +1120,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           sessionId: null,
           permissionMode: source.permissionMode,
           teach: source.teach ?? null,
+          ask: source.ask === true,
           // Production fork never patches reasoningEffort; create leaves null.
           reasoningEffort: null,
           branch: null,
