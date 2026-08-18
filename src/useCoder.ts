@@ -697,11 +697,12 @@ export function useCoder(): UseCoderResult {
       const prev = prevStatusRef.current.get(next.thread.id);
       const held = threadsRef.current.find((t) => t.id === next.thread.id);
       prevStatusRef.current.set(next.thread.id, next.thread.status);
-      // Runner snapshots include queued. Test fixtures (and any partial
-      // push that omits it) would otherwise wipe the persisted queue.
+      // Main owns the queue now (#314): an explicit null means it drained or
+      // cleared it, and holding onto our copy would strand the chip forever.
+      // Only a push that OMITS the field (fixtures, partial rows) falls back.
       const incoming = next.thread;
       const row =
-        incoming.queued == null && held?.queued
+        incoming.queued === undefined && held?.queued
           ? { ...incoming, queued: held.queued }
           : incoming;
       // List and open detail are separate subscribers of the same push: a tick

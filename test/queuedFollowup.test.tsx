@@ -69,9 +69,9 @@ async function bootOnBusyThread() {
 }
 
 /** Terminal push for the busy thread: the run landed. */
-function landed(busy: ThreadInfo) {
+function landed(busy: ThreadInfo, queued: ThreadInfo["queued"] = null) {
   return detail({
-    thread: { ...busy, status: "done", updatedAt: NOW + 9000 },
+    thread: { ...busy, status: "done", queued, updatedAt: NOW + 9000 },
   });
 }
 
@@ -95,7 +95,11 @@ describe("queued follow-up (issue #92 / #314)", () => {
       "the queued follow-up must be visible, not swallowed",
     );
 
-    await inAct(() => fake.emitThread(landed(busy)));
+    // Main's terminal push still carries the undelivered queue; it clears the
+    // field only once its own drain has taken the prompt.
+    await inAct(() =>
+      fake.emitThread(landed(busy, { prompt: "then update the changelog" })),
+    );
     await m.flush();
 
     assert.equal(
@@ -106,6 +110,38 @@ describe("queued follow-up (issue #92 / #314)", () => {
     assert.ok(
       m.query("[data-queued-prompt]"),
       "the queued strip stays until main drains it or the user cancels",
+    );
+    m.unmount();
+  });
+
+  it("clears the strip when main reports the queue drained", async () => {
+    const { fake, m, busy } = await bootOnBusyThread();
+
+    await m.type(m.query("textarea"), "then update the changelog");
+    await m.click(m.query('button[aria-label="Send"]'));
+    await m.flush();
+    assert.ok(m.query("[data-queued-prompt]"), "the queue must be visible");
+
+    // The seam: main drains at the terminal and pushes queued: null. A
+    // renderer that kept its own copy would strand this chip forever.
+    await inAct(() =>
+      fake.emitThread(
+        detail({
+          thread: {
+            ...busy,
+            status: "working",
+            queued: null,
+            updatedAt: NOW + 9000,
+          },
+        }),
+      ),
+    );
+    await m.flush();
+
+    assert.equal(
+      m.query("[data-queued-prompt]"),
+      null,
+      "a drained queue must clear the strip",
     );
     m.unmount();
   });
