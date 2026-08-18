@@ -206,6 +206,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     dailyBudgetUsd: null,
     orchestrationBudgetUsd: null,
     autoSettleAfterDays: 3,
+    autoSettleOnMerge: true,
     mcpServers: [],
     defaultWorktree: false,
     updateChannel: null,
@@ -760,7 +761,8 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           override: "settled" | "active" | null;
         };
         const existing = threads.find((t) => t.id === i.threadId);
-        // Mutual exclusion (contract): setSettled("settled") clears the pin.
+        // Mutual exclusion (contract): setSettled("settled") clears the pin
+        // and unsnoozes immediately so the row leaves the snoozed shelf.
         const next: ThreadInfo = {
           ...(existing ?? thread({ id: i.threadId })),
           settledOverride: i.override,
@@ -769,6 +771,10 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
             i.override === "settled"
               ? null
               : (existing?.pinnedAt ?? null),
+          snoozedUntil:
+            i.override === "settled" ? null : (existing?.snoozedUntil ?? null),
+          snoozedAt:
+            i.override === "settled" ? null : (existing?.snoozedAt ?? null),
         };
         threads = threads.map((t) => (t.id === i.threadId ? next : t));
         return rec("threads.setSettled", [input], next);

@@ -83,6 +83,8 @@ function Host({
                   settledOverride: override,
                   settledAt: override ? Date.now() : null,
                   pinnedAt: override === "settled" ? null : row.pinnedAt,
+                  snoozedUntil: override === "settled" ? null : row.snoozedUntil,
+                  snoozedAt: override === "settled" ? null : row.snoozedAt,
                 },
           ),
         );
@@ -473,8 +475,8 @@ describe("fakeCoder setPinned/setSnoozed honesty (round 44)", () => {
         await m.click(snoozeBtn!);
         await m.flush();
 
-        const preset = m.query('[data-snooze-preset="this-evening"]');
-        assert.ok(preset, "data-snooze-preset=this-evening must open in menu");
+        const preset = m.query('[data-snooze-preset="evening"]');
+        assert.ok(preset, "data-snooze-preset=evening must open in menu");
         await m.click(preset!);
         await m.flush();
         await inAct(async () => {
@@ -544,6 +546,91 @@ describe("fakeCoder setPinned/setSnoozed honesty (round 44)", () => {
       }
     } finally {
       Date.now = realNow;
+    }
+  });
+
+  it("Woke pill shows after a timer wake until the thread is selected", async () => {
+    const now = Date.now();
+    const selected = th({
+      id: "noise",
+      projectId: "p1",
+      title: "noise first",
+      updatedAt: now + 100,
+    });
+    const woke = th({
+      id: "woke-mid",
+      projectId: "p2",
+      title: "just woke",
+      snoozedUntil: now - 1000,
+      snoozedAt: now - 60_000,
+      lastVisitedAt: now - 120_000,
+      updatedAt: now - 60_000,
+    });
+    const m = await mount(
+      <Host
+        initial={[selected, woke]}
+        activeThreadId="noise"
+      />,
+    );
+    try {
+      const pill = m.query("[data-woke]");
+      assert.ok(pill, "Woke pill must render on a timer-woken unread row");
+      assert.equal(pill!.textContent, "Woke");
+    } finally {
+      m.unmount();
+    }
+  });
+
+  it("Settle on a snoozed shelf row unsnoozes and folds the thread", async () => {
+    const frozen = Date.now();
+    const tOpen = thread({
+      id: "t-open",
+      projectId: "p1",
+      title: "already open",
+      updatedAt: frozen + 200,
+    });
+    const tMid = thread({
+      id: "t-settle-snooze",
+      projectId: "p1",
+      title: "snoozed then settle",
+      snoozedUntil: frozen + 86_400_000,
+      snoozedAt: frozen - 1000,
+      lastVisitedAt: frozen - 2000,
+      updatedAt: frozen - 2000,
+    });
+    const fake = createFakeCoder({
+      projects: [project({ id: "p1" })],
+      threads: [tOpen, tMid],
+      details: {
+        "t-open": detail({ thread: tOpen }),
+        "t-settle-snooze": detail({ thread: tMid }),
+      },
+    });
+    const m = await boot(fake);
+    try {
+      await m.flush();
+      assert.ok(m.query("[data-snoozed-shelf]"), "snoozed shelf present");
+      await m.click(m.query("[data-snoozed-header]"));
+      await m.flush();
+      const settleBtn = m.query('[data-snooze-settle-btn="t-settle-snooze"]');
+      assert.ok(settleBtn, "snoozed row offers Settle");
+      await m.click(settleBtn!);
+      await m.flush();
+      await inAct(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      await m.flush();
+
+      const listed = await fake.api.threads.list();
+      const mid = listed.find((x) => x.id === "t-settle-snooze");
+      assert.equal(mid?.settledOverride, "settled");
+      assert.equal(mid?.snoozedUntil ?? null, null);
+      assert.equal(mid?.snoozedAt ?? null, null);
+      assert.equal(m.query("[data-snoozed-shelf]") != null, false);
+      assert.ok(m.query("[data-settled-tail]"), "thread lands in the settled tail");
+    } finally {
+      m.unmount();
     }
   });
 

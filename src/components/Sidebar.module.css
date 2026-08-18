@@ -623,7 +623,7 @@
   top: 100%;
   right: 0;
   z-index: 5;
-  min-width: 140px;
+  min-width: 176px;
   margin-top: 4px;
   padding: 4px;
   border-radius: var(--radius-sm);
@@ -643,7 +643,10 @@
 }
 
 .snoozeMenuItem {
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   width: 100%;
   text-align: left;
   padding: 6px 8px;
@@ -653,6 +656,13 @@
   color: var(--text);
   font-size: 12px;
   cursor: pointer;
+}
+
+.snoozeWhen {
+  color: var(--text-dim);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
 }
 
 .snoozeMenuItem:hover {
@@ -1163,6 +1173,12 @@
   color: #fca5a5;
   background: rgba(248, 113, 113, 0.12);
   border: 1px solid rgba(248, 113, 113, 0.35);
+}
+
+.badgeWoke {
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.12);
+  border: 1px solid rgba(251, 191, 36, 0.35);
 }
 
 .cardBadges {

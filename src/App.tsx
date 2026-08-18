@@ -816,6 +816,9 @@ export default function App() {
         autoSettleAfterDays={
           settings == null ? undefined : settings.autoSettleAfterDays
         }
+        autoSettleOnMerge={
+          settings == null ? undefined : settings.autoSettleOnMerge
+        }
         searchThreads={searchThreads}
         onSetSettled={handleSetSettled}
         onSetPinned={handleSetPinned}
@@ -904,6 +907,9 @@ export default function App() {
               onCreateThread={handleCreateThreadPlain}
               autoSettleAfterDays={
                 settings == null ? undefined : settings.autoSettleAfterDays
+              }
+              autoSettleOnMerge={
+                settings == null ? undefined : settings.autoSettleOnMerge
               }
               conflictForecast={forecast}
             />

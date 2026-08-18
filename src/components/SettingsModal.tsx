@@ -669,6 +669,32 @@ export function SettingsModal({
                 Empty means Never — quiet threads only settle via PR state or
                 an explicit settle.
               </p>
+              <label className={styles.fieldRow}>
+                <input
+                  type="checkbox"
+                  data-auto-settle-on-merge=""
+                  checked={settings?.autoSettleOnMerge !== false}
+                  disabled={saving || settings == null}
+                  onChange={(e) => {
+                    setError(null);
+                    void onSaveSettings({
+                      autoSettleOnMerge: e.target.checked,
+                    }).catch((err) => {
+                      setError(
+                        err instanceof Error && err.message
+                          ? err.message
+                          : "Failed to save settings",
+                      );
+                    });
+                  }}
+                />
+                <span>Settle a thread when its pull request merges</span>
+              </label>
+              <p className={styles.note}>
+                Closed pull requests still settle automatically. Turn this
+                off to keep a merged thread in the attention list until you
+                settle it yourself.
+              </p>
             </div>
           </section>
 

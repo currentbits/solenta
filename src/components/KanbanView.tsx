@@ -23,6 +23,7 @@ export interface KanbanViewProps {
   onSelectThread: (id: string) => void;
   onCreateThread?: () => void;
   autoSettleAfterDays?: number | null;
+  autoSettleOnMerge?: boolean;
   conflictForecast?: ConflictForecast | null;
 }
 
@@ -33,6 +34,7 @@ export function KanbanView({
   onSelectThread,
   onCreateThread,
   autoSettleAfterDays,
+  autoSettleOnMerge,
   conflictForecast = null,
 }: KanbanViewProps) {
   const [now, setNow] = useState(() => Date.now());
@@ -48,8 +50,9 @@ export function KanbanView({
         autoSettleAfterDays === undefined
           ? AUTO_SETTLE_AFTER_DAYS
           : autoSettleAfterDays,
+      autoSettleOnMerge: autoSettleOnMerge !== false,
     }),
-    [now, autoSettleAfterDays],
+    [now, autoSettleAfterDays, autoSettleOnMerge],
   );
 
   const columns = useMemo(

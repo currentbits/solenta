@@ -81,6 +81,23 @@ describe("kanbanColumns", () => {
     );
   });
 
+  it("excludes snoozed threads from the board", () => {
+    const columns = kanbanColumns(
+      [
+        thread({ id: "live", status: "idle" }),
+        thread({
+          id: "snoozed",
+          status: "idle",
+          snoozedUntil: NOW + 60_000,
+          snoozedAt: NOW - 1000,
+        }),
+      ],
+      settleOpts,
+    );
+    const ids = columns.flatMap((c) => c.threads.map((t) => t.id));
+    assert.deepEqual(ids, ["live"]);
+  });
+
   it("excludes archived threads and threads shelved as settled", () => {
     const columns = kanbanColumns(
       [

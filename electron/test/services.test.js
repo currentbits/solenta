@@ -370,6 +370,8 @@ describe("services", () => {
     assert.equal(store.getThread(thread.id).pinnedAt, null);
     assert.equal(store.getThread(thread.id).settledOverride, "settled");
     assert.equal(settled.updatedAt, 1_700_000_000_000);
+    assert.equal(settled.snoozedUntil, null);
+    assert.equal(settled.snoozedAt, null);
 
     // Pin again — must clear settled override + settledAt.
     const repin = services.setPinned(store, {
@@ -563,6 +565,24 @@ describe("services", () => {
     assert.equal(t.pinnedAt, pinnedAt);
     assert.equal(t.snoozedUntil, until);
     assert.equal(t.snoozedAt, snoozedAt);
+  });
+
+  it("setSettled('settled') unsnoozes immediately", async () => {
+    const thread = await makeThread("settle-clears-snooze");
+    store.updateThread(thread.id, { updatedAt: 1_700_000_000_000 });
+    const until = Date.now() + 86_400_000;
+    services.setSnoozed(store, { threadId: thread.id, until });
+    assert.equal(store.getThread(thread.id).snoozedUntil, until);
+
+    const settled = services.setSettled(store, {
+      threadId: thread.id,
+      override: "settled",
+    });
+    assert.equal(settled.settledOverride, "settled");
+    assert.equal(settled.snoozedUntil, null);
+    assert.equal(settled.snoozedAt, null);
+    assert.equal(store.getThread(thread.id).snoozedUntil, null);
+    assert.equal(settled.updatedAt, 1_700_000_000_000);
   });
 
   it("setSettled rejects settling a working thread", async () => {

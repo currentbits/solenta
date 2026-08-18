@@ -41,10 +41,10 @@ import {
   resolveSettledTimestamp,
 } from "../threadSettle";
 import {
-  SNOOZE_PRESETS,
   formatSnoozeWakeLabel,
   isPinned,
-  snoozePresetUntil,
+  resolveSnoozePresets,
+  showWokePill,
 } from "../threadSnooze";
 import { countUnread, isUnread } from "../threadUnread";
 import {
@@ -187,6 +187,11 @@ interface SidebarProps {
    */
   autoSettleAfterDays?: number | null;
   /**
+   * When false, a MERGED PR does not auto-settle. undefined while settings
+   * load → treat as true (the store default).
+   */
+  autoSettleOnMerge?: boolean;
+  /**
    * Full-content thread search (titles + message text). Called only for
    * queries of 2+ chars after debounce; empty / 1-char stays local.
    */
@@ -274,11 +279,14 @@ function StatusBadge({
   thread,
   now,
   wait = null,
+  active = false,
 }: {
   thread: ThreadInfo;
   now: number;
   /** Live delegated work; turns a done/idle turn into "Delegating". */
   wait?: WaitState | null;
+  /** Selected thread never renders Woke (you are looking at it). */
+  active?: boolean;
 }) {
   if (thread.status === "working" && thread.awaitingInput) {
     return (
@@ -306,6 +314,14 @@ function StatusBadge({
       <span className={`${styles.badge} ${styles.badgeWorking}`}>
         <span className={styles.spinner} aria-hidden />
         {label}
+      </span>
+    );
+  }
+
+  if (!active && showWokePill(thread, now)) {
+    return (
+      <span className={`${styles.badge} ${styles.badgeWoke}`} data-woke="">
+        Woke
       </span>
     );
   }
@@ -645,7 +661,12 @@ export function ThreadCard({
               forecast={conflictForecast}
               titles={threadTitles}
             />
-            <StatusBadge thread={thread} now={now} wait={wait} />
+            <StatusBadge
+              thread={thread}
+              now={now}
+              wait={wait}
+              active={active}
+            />
           </div>
         </div>
         {/* Own row, not a chip beside the status badge: on a narrow card the
@@ -755,7 +776,7 @@ export function ThreadCard({
                   role="menu"
                   data-snooze-menu={thread.id}
                 >
-                  {SNOOZE_PRESETS.map((p) => (
+                  {resolveSnoozePresets(now).map((p) => (
                     <button
                       key={p.id}
                       type="button"
@@ -764,14 +785,12 @@ export function ThreadCard({
                       data-snooze-preset={p.id}
                       onClick={(e) => {
                         e.stopPropagation();
-                        void onSetSnoozed(
-                          thread.id,
-                          snoozePresetUntil(p.id, now),
-                        );
+                        void onSetSnoozed(thread.id, p.until);
                         onToggleSnoozeMenu?.(null);
                       }}
                     >
-                      {p.label}
+                      <span>{p.label}</span>
+                      <span className={styles.snoozeWhen}>{p.whenLabel}</span>
                     </button>
                   ))}
                   {thread.snoozedUntil != null && (
@@ -787,6 +806,21 @@ export function ThreadCard({
                       }}
                     >
                       Clear snooze
+                    </button>
+                  )}
+                  {onSetSettled && thread.snoozedUntil != null && !working && (
+                    <button
+                      type="button"
+                      className={styles.snoozeMenuItem}
+                      role="menuitem"
+                      data-snooze-settle=""
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void onSetSettled(thread.id, "settled");
+                        onToggleSnoozeMenu?.(null);
+                      }}
+                    >
+                      Settle now
                     </button>
                   )}
                   {onRenameThread && (
@@ -1121,6 +1155,7 @@ export function SnoozedRow({
   now,
   onSelect,
   onSetSnoozed,
+  onSetSettled,
   multiSelected = false,
   indexHint = null,
 }: {
@@ -1130,6 +1165,10 @@ export function SnoozedRow({
   now: number;
   onSelect: (id: string, opts?: SelectOpts) => void;
   onSetSnoozed?: (threadId: string, until: number | null) => void | Promise<void>;
+  onSetSettled?: (
+    threadId: string,
+    override: "settled" | "active",
+  ) => void | Promise<void>;
   multiSelected?: boolean;
   indexHint?: number | null;
 }) {
@@ -1178,22 +1217,51 @@ export function SnoozedRow({
           {wake}
         </span>
       </div>
-      {onSetSnoozed && (
+      {(onSetSnoozed || onSetSettled) && (
         <div className={styles.cardActions}>
-          <button
-            type="button"
-            className={styles.settleBtn}
-            aria-label="Clear snooze"
-            title="Clear snooze"
-            data-snooze-clear-btn={thread.id}
-            data-snooze-clear=""
-            onClick={(e) => {
-              e.stopPropagation();
-              void onSetSnoozed(thread.id, null);
-            }}
-          >
-            wake
-          </button>
+          {onSetSettled && thread.status !== "working" && (
+            <button
+              type="button"
+              className={styles.settleBtn}
+              aria-label="Settle thread"
+              title="Settle thread"
+              data-snooze-settle-btn={thread.id}
+              onClick={(e) => {
+                e.stopPropagation();
+                void onSetSettled(thread.id, "settled");
+              }}
+            >
+              <svg
+                width="13"
+                height="13"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M8 2.5v10M4.5 9.5 8 13l3.5-3.5" />
+              </svg>
+            </button>
+          )}
+          {onSetSnoozed && (
+            <button
+              type="button"
+              className={styles.settleBtn}
+              aria-label="Clear snooze"
+              title="Clear snooze"
+              data-snooze-clear-btn={thread.id}
+              data-snooze-clear=""
+              onClick={(e) => {
+                e.stopPropagation();
+                void onSetSnoozed(thread.id, null);
+              }}
+            >
+              wake
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -1231,6 +1299,7 @@ export const Sidebar = memo(function Sidebar({
   spendTodayUsd = null,
   dailyBudgetUsd = null,
   autoSettleAfterDays,
+  autoSettleOnMerge,
   searchThreads,
   onSetSettled,
   onSetPinned,
@@ -1337,8 +1406,9 @@ export const Sidebar = memo(function Sidebar({
         autoSettleAfterDays === undefined
           ? AUTO_SETTLE_AFTER_DAYS
           : autoSettleAfterDays,
+      autoSettleOnMerge: autoSettleOnMerge !== false,
     }),
-    [now, autoSettleAfterDays],
+    [now, autoSettleAfterDays, autoSettleOnMerge],
   );
   const threadTitles = useMemo(() => {
     const titles = new Map<string, string>();
@@ -2886,6 +2956,7 @@ export const Sidebar = memo(function Sidebar({
                 now={now}
                 onSelect={handleSelect}
                 onSetSnoozed={onSetSnoozed}
+                onSetSettled={onSetSettled}
               />
             )}
             <button
@@ -2925,6 +2996,7 @@ export const Sidebar = memo(function Sidebar({
                   now={now}
                   onSelect={handleSelect}
                   onSetSnoozed={onSetSnoozed}
+                  onSetSettled={onSetSettled}
                 />
               ))}
           </div>
