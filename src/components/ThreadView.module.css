@@ -429,8 +429,9 @@
   font-size: 11.5px;
   line-height: 1.45;
   color: var(--text-muted);
-  white-space: pre;
-  overflow-x: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow-x: hidden;
   max-width: 100%;
 }
 
