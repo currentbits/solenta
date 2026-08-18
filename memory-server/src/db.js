@@ -168,14 +168,74 @@ export function normalizeEntities(db) {
 }
 
 /**
+ * Widen the entries.type CHECK constraint. SQLite cannot ALTER a CHECK, so an
+ * older DB needs the 12-step table rebuild; a DB that already allows the type
+ * (or has no entries table yet) is left alone.
+ * @param {import('node:sqlite').DatabaseSync} db
+ * @param {string} type type name that must be allowed
+ */
+export function widenEntryTypes(db, type = 'strategy') {
+  const row = db
+    .prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'entries'`)
+    .get()
+  if (!row || String(row.sql).includes(`'${type}'`)) return false
+
+  const cols = db
+    .prepare(`PRAGMA table_info(entries)`)
+    .all()
+    .map((c) => c.name)
+    .join(', ')
+
+  // Reuse the DB's own DDL with only the CHECK list swapped, so the column set
+  // is preserved exactly and the addColumnIfMissing migrations below still see
+  // (and backfill) whatever this DB is still missing.
+  const ddl = String(row.sql)
+    .replace(/CREATE\s+TABLE\s+("?entries"?)/i, 'CREATE TABLE entries_migrating')
+    .replace(/CHECK\s*\(\s*type\s+IN\s*\([^)]*\)\s*\)/i, `CHECK (type IN (${ENTRY_TYPE_SQL}))`)
+  if (!ddl.includes(`'${type}'`)) throw new Error('entries CHECK migration: could not widen DDL')
+
+  // FKs off for the swap: entry_vectors/review_queue point at entries(id) and
+  // the rows are unchanged, so the references stay valid across the rename.
+  db.exec('PRAGMA foreign_keys = OFF')
+  db.exec('BEGIN')
+  try {
+    db.exec(`
+      DROP TRIGGER IF EXISTS entries_fts_insert;
+      DROP TRIGGER IF EXISTS entries_fts_update;
+      ${ddl};
+      INSERT INTO entries_migrating (rowid, ${cols}) SELECT rowid, ${cols} FROM entries;
+      DROP TABLE entries;
+      ALTER TABLE entries_migrating RENAME TO entries;
+    `)
+    db.exec('COMMIT')
+  } catch (err) {
+    try {
+      db.exec('ROLLBACK')
+    } catch {
+      // ignore
+    }
+    db.exec('PRAGMA foreign_keys = ON')
+    throw err
+  }
+  db.exec('PRAGMA foreign_keys = ON')
+  return true
+}
+
+/** Allowed entries.type values, as a SQL literal list. */
+const ENTRY_TYPE_SQL = `'knowledge','task','convention','run','strategy'`
+
+/**
  * Idempotent schema: CREATE TABLE IF NOT EXISTS + column migrations.
  * @param {import('node:sqlite').DatabaseSync} db
  */
 export function createSchema(db) {
+  // Before the CREATE IF NOT EXISTS below, which is a no-op on an old shape.
+  widenEntryTypes(db)
+
   db.exec(`
     CREATE TABLE IF NOT EXISTS entries (
       id            TEXT PRIMARY KEY,
-      type          TEXT NOT NULL CHECK (type IN ('knowledge','task','convention','run')),
+      type          TEXT NOT NULL CHECK (type IN (${ENTRY_TYPE_SQL})),
       title         TEXT NOT NULL,
       body          TEXT NOT NULL,
       project       TEXT,

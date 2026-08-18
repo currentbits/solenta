@@ -125,7 +125,7 @@ function sendJson(res, status, value) {
   res.end(JSON.stringify(value))
 }
 
-const entryType = z.enum(['knowledge', 'task', 'convention', 'run'])
+const entryType = z.enum(['knowledge', 'task', 'convention', 'run', 'strategy'])
 const taskStatus = z.enum(['active', 'done', 'abandoned'])
 const feedbackVerdict = z.enum(['helpful', 'harmful'])
 const sessionRole = z.enum(['user', 'assistant', 'tool', 'system'])
@@ -229,7 +229,7 @@ export function buildServer(memory) {
     'memory_bootstrap',
     {
       description:
-        'One-call startup context: conventions, knowledge, and active tasks for a project, plus the usage protocol. Call at session start.',
+        'One-call startup context: conventions, distilled strategies, knowledge, and active tasks for a project, plus the usage protocol. Call at session start.',
       inputSchema: {
         project: z.string().optional(),
       },
