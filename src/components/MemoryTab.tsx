@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { MemoryCitation, MemoryEntryInfo } from "../shared/ipc";
+import type {
+  AgentConfigDoctorReport,
+  AgentConfigPreview,
+  AgentConfigWriteResult,
+  MemoryCitation,
+  MemoryEntryInfo,
+} from "../shared/ipc";
 import { formatRelativeAge } from "../format";
 import styles from "./MemoryTab.module.css";
 import {
@@ -34,6 +40,8 @@ export interface MemoryTabProps {
    *  agents store under — while a display slug like "owner/solenta" resolves
    *  to a scope no agent ever writes to. */
   projectSlug: string | null;
+  /** Project id for the config doctor. Absent = no doctor card. */
+  projectId?: string | null;
   searchMemory: (input: {
     query: string;
     project?: string;
@@ -55,6 +63,17 @@ export interface MemoryTabProps {
     body: string;
     project?: string;
   }) => Promise<{ id: string }>;
+  lintAgentConfig?: (input: {
+    projectId: string;
+  }) => Promise<AgentConfigDoctorReport>;
+  previewAgentConfig?: (input: {
+    projectId: string;
+    targets?: string[];
+  }) => Promise<AgentConfigPreview>;
+  writeAgentConfig?: (input: {
+    projectId: string;
+    targets?: string[];
+  }) => Promise<AgentConfigWriteResult>;
 }
 
 function isNotRunningError(err: unknown): boolean {
@@ -88,14 +107,211 @@ function errorMessage(err: unknown): string {
   return String(err);
 }
 
+function gradeClass(grade: AgentConfigDoctorReport["grade"]): string {
+  if (grade === "A" || grade === "B") return styles.gradeGood;
+  if (grade === "C") return styles.gradeMid;
+  return styles.gradeBad;
+}
+
+function ConfigDoctorCard({
+  projectId,
+  lintAgentConfig,
+  previewAgentConfig,
+  writeAgentConfig,
+}: {
+  projectId: string;
+  lintAgentConfig: (input: {
+    projectId: string;
+  }) => Promise<AgentConfigDoctorReport>;
+  previewAgentConfig?: (input: {
+    projectId: string;
+    targets?: string[];
+  }) => Promise<AgentConfigPreview>;
+  writeAgentConfig?: (input: {
+    projectId: string;
+    targets?: string[];
+  }) => Promise<AgentConfigWriteResult>;
+}) {
+  const [report, setReport] = useState<AgentConfigDoctorReport | null>(null);
+  const [preview, setPreview] = useState<AgentConfigPreview | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [confirmWrite, setConfirmWrite] = useState(false);
+  const [wrote, setWrote] = useState<string[] | null>(null);
+  const mounted = useRef(true);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
+  const loadLint = useCallback(async () => {
+    setBusy(true);
+    setError(null);
+    setWrote(null);
+    try {
+      const next = await lintAgentConfig({ projectId });
+      if (!mounted.current) return;
+      setReport(next);
+    } catch (err) {
+      if (!mounted.current) return;
+      setError(errorMessage(err));
+      setReport(null);
+    } finally {
+      if (mounted.current) setBusy(false);
+    }
+  }, [lintAgentConfig, projectId]);
+
+  useEffect(() => {
+    void loadLint();
+  }, [loadLint]);
+
+  const onPreview = async () => {
+    if (!previewAgentConfig) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const next = await previewAgentConfig({ projectId });
+      if (!mounted.current) return;
+      setPreview(next);
+      setConfirmWrite(false);
+    } catch (err) {
+      if (!mounted.current) return;
+      setError(errorMessage(err));
+    } finally {
+      if (mounted.current) setBusy(false);
+    }
+  };
+
+  const onWrite = async () => {
+    if (!writeAgentConfig) return;
+    if (!confirmWrite) {
+      setConfirmWrite(true);
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await writeAgentConfig({ projectId });
+      if (!mounted.current) return;
+      setWrote(result.written);
+      setConfirmWrite(false);
+      setPreview(null);
+      const next = await lintAgentConfig({ projectId });
+      if (!mounted.current) return;
+      setReport(next);
+    } catch (err) {
+      if (!mounted.current) return;
+      setError(errorMessage(err));
+    } finally {
+      if (mounted.current) setBusy(false);
+    }
+  };
+
+  const missing = report?.memory.missing.length ?? 0;
+  const considered = report?.memory.considered ?? 0;
+
+  return (
+    <section className={styles.doctor} data-config-doctor="">
+      <div className={styles.doctorHead}>
+        <span className={styles.doctorLabel}>Config doctor</span>
+        {report ? (
+          <span
+            className={`${styles.grade} ${gradeClass(report.grade)}`}
+            data-grade={report.grade}
+          >
+            {report.grade} {report.score}
+          </span>
+        ) : null}
+      </div>
+      {error ? (
+        <p className={styles.formError} role="alert">
+          {error}
+        </p>
+      ) : null}
+      {report ? (
+        <>
+          <p className={styles.doctorMeta}>
+            {report.files.length === 0
+              ? "No AGENTS.md or CLAUDE.md"
+              : `${report.files.length} file${report.files.length === 1 ? "" : "s"}`}
+            {considered > 0
+              ? ` · ${report.memory.covered}/${considered} memory`
+              : ""}
+          </p>
+          {report.files.length > 0 ? (
+            <ul className={styles.doctorFiles}>
+              {report.files.map((file) => (
+                <li key={file.path}>
+                  <span className={styles.doctorFilePath}>{file.path}</span>
+                  <span className={styles.doctorFileGrade}>
+                    {file.grade} {file.score}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {missing > 0 ? (
+            <p className={styles.doctorGap}>
+              {missing} memor{missing === 1 ? "y" : "ies"} not in the files
+            </p>
+          ) : null}
+        </>
+      ) : null}
+      {preview ? (
+        <pre className={styles.doctorPreview} data-config-preview="">
+          {preview.files.map((f) => `--- ${f.path} ---\n${f.content}`).join("\n")}
+        </pre>
+      ) : null}
+      {wrote ? (
+        <p className={styles.doctorWrote} data-config-wrote="">
+          Wrote {wrote.join(", ")}
+        </p>
+      ) : null}
+      <div className={styles.doctorActions}>
+        {previewAgentConfig ? (
+          <button
+            type="button"
+            className={styles.retryBtn}
+            disabled={busy}
+            onClick={() => void onPreview()}
+          >
+            {preview ? "Refresh preview" : "Preview"}
+          </button>
+        ) : null}
+        {writeAgentConfig ? (
+          <button
+            type="button"
+            className={confirmWrite ? styles.dangerBtn : styles.saveBtn}
+            disabled={busy}
+            onClick={() => void onWrite()}
+          >
+            {confirmWrite
+              ? "Confirm write"
+              : preview
+                ? `Write ${preview.files.map((f) => f.path).join(", ")}`
+                : "Write from memory"}
+          </button>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
 export function MemoryTab({
   projectSlug,
+  projectId,
   searchMemory,
   recentMemory,
   getMemory,
   updateMemory,
   removeMemory,
   storeMemory,
+  lintAgentConfig,
+  previewAgentConfig,
+  writeAgentConfig,
 }: MemoryTabProps) {
   const [entries, setEntries] = useState<MemoryEntryInfo[]>([]);
   const [query, setQuery] = useState("");
@@ -422,6 +638,14 @@ export function MemoryTab({
         <span className={styles.filterLabel} title="Memory is scoped to this project">
           {projectSlug ? projectSlug.split("/").filter(Boolean).pop() : "all projects"}
         </span>
+        {lintAgentConfig && projectId ? (
+          <ConfigDoctorCard
+            projectId={projectId}
+            lintAgentConfig={lintAgentConfig}
+            previewAgentConfig={previewAgentConfig}
+            writeAgentConfig={writeAgentConfig}
+          />
+        ) : null}
       </div>
 
       <div className={styles.list}>

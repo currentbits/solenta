@@ -58,6 +58,76 @@ export interface WindowsDoctorReport {
   checks: WindowsDoctorCheck[];
 }
 
+/** Anthropic six-axis bands (#412). */
+export type AgentConfigGrade = "A" | "B" | "C" | "D" | "F";
+
+export type AgentConfigAxisId =
+  | "commands"
+  | "architecture"
+  | "patterns"
+  | "conciseness"
+  | "currency"
+  | "actionability";
+
+export interface AgentConfigAxisScore {
+  id: AgentConfigAxisId;
+  score: number;
+  max: number;
+  notes: string;
+}
+
+export interface AgentConfigIssue {
+  severity: "error" | "warn" | "info";
+  message: string;
+}
+
+export interface AgentConfigFileReport {
+  path: string;
+  bytes: number;
+  score: number;
+  grade: AgentConfigGrade;
+  axes: AgentConfigAxisScore[];
+  issues: AgentConfigIssue[];
+  recommendations: string[];
+}
+
+export interface AgentConfigMemoryGap {
+  id: string;
+  type: MemoryEntryInfo["type"];
+  title: string;
+}
+
+/** Lint of a repo's AGENTS.md / CLAUDE.md against the six-axis rubric + memory. */
+export interface AgentConfigDoctorReport {
+  projectId: string;
+  files: AgentConfigFileReport[];
+  score: number;
+  grade: AgentConfigGrade;
+  memory: {
+    considered: number;
+    covered: number;
+    missing: AgentConfigMemoryGap[];
+  };
+  issues: AgentConfigIssue[];
+  recommendations: string[];
+}
+
+export interface AgentConfigPreviewFile {
+  path: string;
+  content: string;
+  exists: boolean;
+}
+
+export interface AgentConfigPreview {
+  projectId: string;
+  files: AgentConfigPreviewFile[];
+}
+
+export interface AgentConfigWriteResult {
+  projectId: string;
+  written: string[];
+}
+
 /** Optional remotes for projects.add. Empty/absent = local project. */
 export interface AddProjectOptions {
   remoteHost?: string;
@@ -1689,6 +1759,18 @@ export interface CoderApi {
      * prompt.
      */
     remove(input: { projectId: string }): Promise<void>;
+    /** Six-axis lint of AGENTS.md / CLAUDE.md vs shared memory (#412). */
+    lintAgentConfig(input: { projectId: string }): Promise<AgentConfigDoctorReport>;
+    /** Preview generated agent-instruction files (does not write). */
+    previewAgentConfig(input: {
+      projectId: string;
+      targets?: string[];
+    }): Promise<AgentConfigPreview>;
+    /** Write the previewed files into the project checkout. */
+    writeAgentConfig(input: {
+      projectId: string;
+      targets?: string[];
+    }): Promise<AgentConfigWriteResult>;
   };
   /**
    * Named sidebar groups. List order is display order (creation order).

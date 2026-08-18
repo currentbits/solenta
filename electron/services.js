@@ -11,6 +11,7 @@ const {
 const { getMemoryStatus } = require("./memory-sup.js");
 const { execCommandAsync } = require("./ssh.js");
 const { runWindowsDoctor } = require("./doctor.js");
+const configDoctor = require("./configDoctor.js");
 const { normalizeCommand, runVerifyCommand } = require("./verify.js");
 const { resolveSandbox } = require("./sandbox.js");
 
@@ -3288,6 +3289,136 @@ async function appStatus(store, deps = {}) {
   };
 }
 
+/**
+ * Agent-config doctor (#412). Resolve a local checkout or throw.
+ * @param {import('./store').Store} store
+ * @param {{ projectId?: string }} input
+ */
+function requireLocalProject(store, input) {
+  const projectId =
+    input && input.projectId != null ? String(input.projectId) : "";
+  const project = store.getProject(projectId);
+  if (!project) throw new Error(`Unknown project: ${projectId}`);
+  const root = project.path;
+  if (!root) throw new Error("Config doctor needs a local checkout");
+  try {
+    if (!fs.statSync(root).isDirectory()) {
+      throw new Error("Config doctor needs a local checkout");
+    }
+  } catch (err) {
+    if (err && err.message === "Config doctor needs a local checkout") throw err;
+    throw new Error("Config doctor needs a local checkout");
+  }
+  return { project, root };
+}
+
+/**
+ * Pull convention / strategy / knowledge rows (full bodies) for generate + coverage.
+ * Memory being down returns [] for lint; generate rethrows.
+ *
+ * @param {{ recent?: Function, get?: Function } | null | undefined} memory
+ * @param {string} projectPath
+ * @param {{ required?: boolean }} [opts]
+ */
+async function loadConfigSourceEntries(memory, projectPath, opts) {
+  const required = Boolean(opts && opts.required);
+  if (!memory || typeof memory.recent !== "function") {
+    if (required) throw new Error("Memory server is not running.");
+    return [];
+  }
+  const types = ["convention", "strategy", "knowledge"];
+  const seen = new Set();
+  const rows = [];
+  try {
+    for (const type of types) {
+      const list = await memory.recent({
+        limit: 50,
+        project: projectPath,
+        type,
+      });
+      if (!Array.isArray(list)) continue;
+      for (const row of list) {
+        if (!row || !row.id || seen.has(row.id)) continue;
+        seen.add(row.id);
+        rows.push(row);
+      }
+    }
+  } catch (err) {
+    if (required) throw err;
+    return [];
+  }
+
+  const full = [];
+  for (const row of rows) {
+    if (typeof memory.get !== "function") {
+      full.push(row);
+      continue;
+    }
+    try {
+      full.push(await memory.get({ id: row.id }));
+    } catch {
+      full.push(row);
+    }
+  }
+  return full;
+}
+
+/**
+ * @param {import('./store').Store} store
+ * @param {{ projectId: string }} input
+ * @param {{ memory?: object }} [deps]
+ */
+async function lintAgentConfig(store, input, deps) {
+  const { project, root } = requireLocalProject(store, input);
+  const files = configDoctor.discoverAgentConfigFiles(root);
+  const memoryEntries = await loadConfigSourceEntries(
+    deps && deps.memory,
+    root,
+  );
+  const report = configDoctor.lintAgentConfigFiles(files, {
+    root,
+    packageScripts: configDoctor.loadPackageScripts(root),
+    memoryEntries,
+  });
+  return {
+    projectId: project.id,
+    ...report,
+  };
+}
+
+/**
+ * @param {import('./store').Store} store
+ * @param {{ projectId: string, targets?: string[] }} input
+ * @param {{ memory?: object }} [deps]
+ */
+async function previewAgentConfig(store, input, deps) {
+  const { project, root } = requireLocalProject(store, input);
+  const memoryEntries = await loadConfigSourceEntries(
+    deps && deps.memory,
+    root,
+    { required: true },
+  );
+  const files = configDoctor.previewGeneratedFiles({
+    root,
+    name: project.name || project.slug || "Project",
+    memoryEntries,
+    targets: input && input.targets,
+  });
+  return { projectId: project.id, files };
+}
+
+/**
+ * @param {import('./store').Store} store
+ * @param {{ projectId: string, targets?: string[] }} input
+ * @param {{ memory?: object }} [deps]
+ */
+async function writeAgentConfig(store, input, deps) {
+  const preview = await previewAgentConfig(store, input, deps);
+  const { root } = requireLocalProject(store, input);
+  const written = configDoctor.writeAgentConfigFiles(root, preview.files);
+  return { projectId: preview.projectId, written };
+}
+
 /** GET /health on the local memory server; resolves null on any failure. */
 function fetchMemoryHealth(port) {
   return new Promise((resolve) => {
@@ -3407,6 +3538,9 @@ module.exports = {
   createProject,
   removeProject,
   updateProject,
+  lintAgentConfig,
+  previewAgentConfig,
+  writeAgentConfig,
   createThread,
   forkThread,
   canHostWorktree,

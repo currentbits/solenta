@@ -191,6 +191,9 @@ export default function App() {
     updateMemory,
     removeMemory,
     storeMemory,
+    lintAgentConfig,
+    previewAgentConfig,
+    writeAgentConfig,
     listSkills,
     addSkill,
     removeSkill,
@@ -1063,6 +1066,9 @@ export default function App() {
         updateMemory={updateMemory}
         removeMemory={removeMemory}
         storeMemory={storeMemory}
+        lintAgentConfig={lintAgentConfig}
+        previewAgentConfig={previewAgentConfig}
+        writeAgentConfig={writeAgentConfig}
         settings={settings}
         saveSettings={saveSettings}
         listSkills={listSkills}

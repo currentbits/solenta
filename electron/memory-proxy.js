@@ -282,6 +282,9 @@ function createMemoryProxy(opts) {
       if (input && input.project != null && input.project !== "") {
         pathWithQuery += `${pathWithQuery.includes("?") ? "&" : "?"}project=${encodeURIComponent(String(input.project))}`;
       }
+      if (input && input.type != null && input.type !== "") {
+        pathWithQuery += `${pathWithQuery.includes("?") ? "&" : "?"}type=${encodeURIComponent(String(input.type))}`;
+      }
       const raw = await request("GET", pathWithQuery);
       const list = Array.isArray(raw) ? raw : [];
       return list.map(normalizeEntry);

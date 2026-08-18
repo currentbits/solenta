@@ -1,27 +1,36 @@
 {
   "version": 1,
-  "readOrder": ["tests", "impl"],
+  "readOrder": ["tests", "critical", "impl"],
   "chunks": [
     {
       "area": "tests",
-      "rationale": "Start with test/conflictForecastBadge.test.tsx 'conflict tip readability'. Those three CSS-source assertions are the contract: opaque --card fill, card :has() z-index rise on hover/focus, no muted overlap copy. They failed on the #516 tip (background --bg-elevated, no sibling escape, --text-muted) and pass after the CSS change.",
+      "rationale": "Start with electron/test/config-doctor.test.js — it pins the six-axis rubric, memory coverage, generate-from-memory selection (convention/strategy/verified knowledge; no tasks/runs), write-path confinement, and the services layer (unknown project, missing checkout, memory-down lint vs generate). Then test/memoryTab.test.tsx for the confirm-before-write UI.",
       "risks": [
-        "Tests read the CSS file, not computed paint. They cannot prove Chromium stacking against a real next card.",
-        "The overlap-contrast test is a no-op if the muted rule is simply deleted; that is intentional but a weaker lock than a positive color assertion."
+        "Scoring tests pin specific axis numbers; a rubric tweak will fail them on purpose.",
+        "Renderer tests do not mount the full AgentsPanel wiring — that lives in the impl chunk."
+      ]
+    },
+    {
+      "area": "critical",
+      "rationale": "electron/configDoctor.js is the whole feature: discover files, score, generate, write. Read score* then selectSourceEntries/renderGeneratedMarkdown then assertWriteableRel/writeAgentConfigFiles. electron/services.js requireLocalProject + loadConfigSourceEntries is the fail-closed checkout/memory seam.",
+      "risks": [
+        "Heuristic scores can mis-grade unusual but good files (a one-line 'never do X' convention file will look sparse).",
+        "Write overwrites AGENTS.md/CLAUDE.md in the project checkout with no backup; the UI confirms, but there is no .bak.",
+        "Remote SSH projects with no local directory throw 'needs a local checkout' — intended, but the Memory tab will just show that error.",
+        "Generation is a template, not an LLM rewrite. It will not invent Commands/Architecture sections the memory never stored."
       ]
     },
     {
       "area": "impl",
-      "rationale": "Then src/components/Sidebar.module.css around .card:has(.conflictWrap:hover) and .conflictTip. The unreadable overlay in the screenshot is this tip hanging onto the next transparent thread card; raising the open card and using --card is the actual fix. No TS/JS change.",
+      "rationale": "IPC/preload/wire/fakeCoder/devCoder/useCoder/App/AgentsPanel are the usual fan-out. MemoryTab ConfigDoctorCard is the only new UI. memory-proxy now forwards recent({type}) so generate can pull conventions without a mixed recent() page.",
       "risks": [
-        "CSS modules must hash both .card and .conflictWrap inside :has(). If only .card is localized the rise never applies.",
-        "Kanban columns use overflow:hidden (KanbanView.module.css), so a tall tip can still clip there — pre-existing #516 geometry, not fixed here.",
-        "This worktree cherry-picked 6e10ae9 (#516) onto a diverged base; a PR against origin/main should contain only the readability CSS + tests, not a second copy of #516."
+        "devCoder write throws (browser-dev only); lint/preview are stubs and will not match electron.",
+        "Doctor card is hidden when the memory server is down (MemoryTab early-return). Lint could still run without memory, but generate cannot."
       ]
     }
   ],
   "risks": [
-    "No live Electron hover was driven; verification is the 17-test renderer run plus tsc --noEmit.",
-    "A parent overflow (sidebar list is overflow-y auto, fine; kanban column is hidden) can still clip the tip even after the z-index rise."
+    "Session-end auto-learning from Anthropic's plugin is explicitly not here — that is #247.",
+    "Fleet-wide rollup of every project's grade is not here; this is per-repo, on the Memory tab."
   ]
 }
