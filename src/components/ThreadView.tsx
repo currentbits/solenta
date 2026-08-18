@@ -14,6 +14,8 @@ import type {
   DiffResult,
   FileChange,
   GitSyncInfo,
+  PrChecksResult,
+  PrInfo,
   PendingPermissionInfo,
   PermissionDecision,
   PermissionMode,
@@ -70,6 +72,7 @@ import {
 } from "../runHeader";
 import { buildBestOfNEntries } from "../bestOfN";
 import { createPrPrompt } from "../prUi";
+import { suggestNextGitAction } from "../nextGitAction";
 import { formatElapsed } from "../format";
 import { useEscapeClose } from "../useEscapeClose";
 import { Composer } from "./Composer";
@@ -373,6 +376,19 @@ interface ThreadViewProps {
   onDropAttachmentFiles?: (files: File[]) => Promise<AttachmentInfo[]>;
   /** Push the thread's current branch to origin. */
   onPush: () => Promise<{ remote: string; branch: string }>;
+  /**
+   * Open (or re-return) a GitHub PR for this thread. When omitted, Create PR
+   * falls back to asking the agent via createPrPrompt.
+   */
+  onCreatePr?: (input: {
+    title: string;
+    body?: string;
+    draft?: boolean;
+  }) => Promise<PrInfo>;
+  /** CI checks for the current PR. Failures stay in-band. */
+  onPrChecks?: () => Promise<PrChecksResult>;
+  /** Squash-merge the current OPEN PR. */
+  onPrMerge?: () => Promise<PrInfo>;
   /** Upstream state for the header sync pill; absent hides the pill. */
   gitSyncInfo?: (threadId: string) => Promise<GitSyncInfo>;
   /** Fetch remotes before the sync pill re-reads state. */
@@ -966,6 +982,286 @@ function SyncPill({
       aria-busy={busy || undefined}
       onClick={() => void refresh()}
     >
+      {label}
+    </button>
+  );
+}
+
+const CHECKS_POLL_MS = 8000;
+
+/**
+ * One header control that always names the next git step (issue #382).
+ * Replaces the always-visible Push + Create PR pair.
+ */
+function NextGitActionButton({
+  thread,
+  isWorking,
+  remoteProject,
+  changesOpen,
+  changesNonce,
+  syncRefreshNonce,
+  onFetchDiff,
+  gitSyncInfo,
+  onViewChanges,
+  onPush,
+  onCreatePr,
+  onPrChecks,
+  onPrMerge,
+  onStartRun,
+  providerName,
+  onPushed,
+}: {
+  thread: ThreadInfo;
+  isWorking: boolean;
+  remoteProject: boolean;
+  changesOpen: boolean;
+  changesNonce: number;
+  syncRefreshNonce: number;
+  onFetchDiff: () => Promise<DiffResult>;
+  gitSyncInfo?: (threadId: string) => Promise<GitSyncInfo>;
+  onViewChanges?: () => void;
+  onPush: () => Promise<{ remote: string; branch: string }>;
+  onCreatePr?: (input: {
+    title: string;
+    body?: string;
+    draft?: boolean;
+  }) => Promise<PrInfo>;
+  onPrChecks?: () => Promise<PrChecksResult>;
+  onPrMerge?: () => Promise<PrInfo>;
+  onStartRun: (prompt: string) => void | Promise<void>;
+  providerName: string;
+  onPushed: () => void;
+}) {
+  const [dirty, setDirty] = useState(false);
+  const [fileCount, setFileCount] = useState(0);
+  const [sync, setSync] = useState<GitSyncInfo | null>(null);
+  const [checks, setChecks] = useState<PrChecksResult | null>(null);
+  const [pending, setPending] = useState(false);
+  const [flash, setFlash] = useState<string | null>(null);
+  const threadRef = useRef(thread.id);
+  threadRef.current = thread.id;
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (flashTimer.current != null) clearTimeout(flashTimer.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    setDirty(false);
+    setFileCount(0);
+    setSync(null);
+    setChecks(null);
+    setPending(false);
+    setFlash(null);
+  }, [thread.id]);
+
+  const loadGit = useCallback(async () => {
+    const id = thread.id;
+    try {
+      const diff = await onFetchDiff();
+      if (threadRef.current !== id) return;
+      setDirty(!isEmptyDiff(diff));
+      setFileCount(diff.files.length);
+    } catch {
+      if (threadRef.current !== id) return;
+      setDirty(false);
+      setFileCount(0);
+    }
+    if (!gitSyncInfo) {
+      if (threadRef.current === id) setSync(null);
+      return;
+    }
+    try {
+      const next = await gitSyncInfo(id);
+      if (threadRef.current === id) setSync(next);
+    } catch {
+      if (threadRef.current === id) setSync(null);
+    }
+  }, [thread.id, onFetchDiff, gitSyncInfo]);
+
+  const loadChecks = useCallback(async () => {
+    if (
+      !onPrChecks ||
+      thread.prNumber == null ||
+      thread.prState === "MERGED" ||
+      thread.prState === "CLOSED"
+    ) {
+      setChecks(null);
+      return;
+    }
+    const id = thread.id;
+    try {
+      const next = await onPrChecks();
+      if (threadRef.current === id) setChecks(next);
+    } catch {
+      if (threadRef.current === id) {
+        setChecks({ ok: false, reason: "failed to load checks" });
+      }
+    }
+  }, [thread.id, thread.prNumber, thread.prState, onPrChecks]);
+
+  useEffect(() => {
+    void loadGit();
+  }, [
+    loadGit,
+    changesNonce,
+    changesOpen,
+    thread.status,
+    thread.updatedAt,
+    syncRefreshNonce,
+  ]);
+
+  useEffect(() => {
+    void loadChecks();
+  }, [loadChecks, thread.status]);
+
+  const decided = suggestNextGitAction({
+    dirty,
+    fileCount,
+    sync,
+    hasWorktree: Boolean(thread.worktreePath),
+    remoteProject,
+    prNumber: thread.prNumber,
+    prUrl: thread.prUrl,
+    prState: thread.prState,
+    checks,
+  });
+  const action =
+    decided.kind === "merge" && !onPrMerge
+      ? { ...decided, actionable: false }
+      : decided;
+
+  useEffect(() => {
+    if (action.kind !== "watch-checks") return;
+    const id = window.setInterval(() => void loadChecks(), CHECKS_POLL_MS);
+    return () => window.clearInterval(id);
+  }, [action.kind, loadChecks]);
+
+  const handleClick = async () => {
+    if (!action.actionable || pending || isWorking) return;
+    if (action.kind === "commit") {
+      onViewChanges?.();
+      return;
+    }
+    if (action.kind === "push") {
+      setPending(true);
+      setFlash(null);
+      if (flashTimer.current != null) {
+        clearTimeout(flashTimer.current);
+        flashTimer.current = null;
+      }
+      try {
+        const result = await onPush();
+        setFlash(`Pushed ${result.branch}`);
+        onPushed();
+        flashTimer.current = setTimeout(() => {
+          setFlash(null);
+          flashTimer.current = null;
+        }, PUSH_FLASH_MS);
+        await loadGit();
+      } catch {
+        // Parent surfaces rejections via the runError banner.
+      } finally {
+        setPending(false);
+      }
+      return;
+    }
+    if (action.kind === "create-pr") {
+      if (onCreatePr) {
+        setPending(true);
+        try {
+          await onCreatePr({ title: thread.title, body: "" });
+          await loadGit();
+          await loadChecks();
+        } catch {
+          // Parent surfaces rejections via the runError banner.
+        } finally {
+          setPending(false);
+        }
+        return;
+      }
+      void onStartRun(createPrPrompt(providerName));
+      return;
+    }
+    if (action.kind === "watch-checks" || action.kind === "checks-failed") {
+      void loadChecks();
+      return;
+    }
+    if (action.kind === "merge") {
+      if (!onPrMerge) return;
+      setPending(true);
+      try {
+        await onPrMerge();
+        await loadGit();
+        await loadChecks();
+      } catch {
+        // Parent surfaces rejections via the runError banner.
+      } finally {
+        setPending(false);
+      }
+    }
+  };
+
+  if (action.kind === "idle") return null;
+
+  const disabled = isWorking || pending || !action.actionable;
+  const label = pending
+    ? action.kind === "push"
+      ? "Pushing…"
+      : action.kind === "create-pr"
+        ? "Creating PR…"
+        : action.kind === "merge"
+          ? "Merging…"
+          : action.label
+    : (flash ?? action.label);
+  const className = [
+    styles.btn,
+    action.primary ? styles.btnPrimary : "",
+    styles.pushBtn,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const dataCreatePr = action.kind === "create-pr" ? "" : undefined;
+  const href = action.href;
+
+  if (
+    href &&
+    (action.kind === "watch-checks" || action.kind === "checks-failed")
+  ) {
+    return (
+      <a
+        className={className}
+        data-next-git-action={action.kind}
+        href={href}
+        target="_blank"
+        rel="noreferrer"
+        title={action.title}
+        aria-disabled={disabled ? "true" : undefined}
+        onClick={() => {
+          void loadChecks();
+        }}
+      >
+        {pending && <span className={styles.pushSpinner} aria-hidden />}
+        {label}
+      </a>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      className={className}
+      data-next-git-action={action.kind}
+      data-create-pr={dataCreatePr}
+      disabled={disabled}
+      aria-disabled={disabled ? "true" : undefined}
+      aria-busy={pending || undefined}
+      title={action.title}
+      onClick={() => void handleClick()}
+    >
+      {pending && <span className={styles.pushSpinner} aria-hidden />}
       {label}
     </button>
   );
@@ -1997,6 +2293,9 @@ export const ThreadView = memo(function ThreadView({
   onLoadAttachmentImage,
   onDropAttachmentFiles,
   onPush,
+  onCreatePr,
+  onPrChecks,
+  onPrMerge,
   gitSyncInfo,
   gitFetch,
   listDevScripts,
@@ -2017,7 +2316,6 @@ export const ThreadView = memo(function ThreadView({
   const prevThreadId = useRef<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const handoffMenuRef = useRef<HTMLDivElement>(null);
-  const pushFlashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [renaming, setRenaming] = useState(false);
@@ -2028,9 +2326,6 @@ export const ThreadView = memo(function ThreadView({
   const notesOpenRef = useRef(false);
   /** Thread the open panel belongs to, plus the value it was seeded with. */
   const notesSourceRef = useRef<{ id: string; saved: string } | null>(null);
-  const [pushPending, setPushPending] = useState(false);
-  /** Shown briefly after a successful push; null when idle. */
-  const [pushFlashBranch, setPushFlashBranch] = useState<string | null>(null);
   /** Header hand-off submenu open. */
   const [handoffMenuOpen, setHandoffMenuOpen] = useState(false);
   /**
@@ -2326,8 +2621,6 @@ export const ThreadView = memo(function ThreadView({
       notesSourceRef.current = null;
       setNotesOpen(false);
       setNotesDraft(detail?.thread.notes ?? "");
-      setPushPending(false);
-      setPushFlashBranch(null);
       setHandoffMenuOpen(false);
       setHandoffBannerDismissed(false);
       setRestoreConfirm(null);
@@ -2341,10 +2634,6 @@ export const ThreadView = memo(function ThreadView({
       setSyncRefreshNonce(0);
       setCopiedThreadId(false);
       setLightbox(null);
-      if (pushFlashTimer.current != null) {
-        clearTimeout(pushFlashTimer.current);
-        pushFlashTimer.current = null;
-      }
       if (copyFlashTimer.current != null) {
         clearTimeout(copyFlashTimer.current);
         copyFlashTimer.current = null;
@@ -2437,9 +2726,6 @@ export const ThreadView = memo(function ThreadView({
 
   useEffect(() => {
     return () => {
-      if (pushFlashTimer.current != null) {
-        clearTimeout(pushFlashTimer.current);
-      }
       if (copyFlashTimer.current != null) {
         clearTimeout(copyFlashTimer.current);
       }
@@ -2651,29 +2937,6 @@ export const ThreadView = memo(function ThreadView({
     handoffSourceId != null && !handoffBannerDismissed;
   const otherProviders = providers.filter((p) => p.id !== thread.provider);
 
-  const handlePush = async () => {
-    if (isWorking || pushPending) return;
-    setPushPending(true);
-    setPushFlashBranch(null);
-    if (pushFlashTimer.current != null) {
-      clearTimeout(pushFlashTimer.current);
-      pushFlashTimer.current = null;
-    }
-    try {
-      const result = await onPush();
-      setPushFlashBranch(result.branch);
-      setSyncRefreshNonce((n) => n + 1);
-      pushFlashTimer.current = setTimeout(() => {
-        setPushFlashBranch(null);
-        pushFlashTimer.current = null;
-      }, PUSH_FLASH_MS);
-    } catch {
-      // Parent surfaces rejections via the runError banner.
-    } finally {
-      setPushPending(false);
-    }
-  };
-
   const handleCopyThreadId = async () => {
     try {
       await navigator.clipboard.writeText(thread.id);
@@ -2689,13 +2952,6 @@ export const ThreadView = memo(function ThreadView({
       copyFlashTimer.current = null;
     }, COPY_FLASH_MS);
   };
-
-  const pushDisabled = isWorking || pushPending;
-  const pushLabel = pushPending
-    ? "Pushing…"
-    : pushFlashBranch
-      ? `Pushed ${pushFlashBranch}`
-      : "Push";
 
   return (
     <main
@@ -2922,36 +3178,27 @@ export const ThreadView = memo(function ThreadView({
               </div>
             </>
           )}
-          <button
-            type="button"
-            className={styles.btn}
-            data-create-pr=""
-            disabled={isWorking}
-            aria-disabled={isWorking ? "true" : undefined}
-            title="Ask the agent to open a pull request"
-            onClick={() => {
-              if (isWorking) return;
-              const agent =
-                providers.find((p) => p.id === thread.provider)?.name ??
-                thread.provider;
-              void onStartRun(createPrPrompt(agent));
-            }}
-          >
-            Create PR
-          </button>
-          <button
-            type="button"
-            className={`${styles.btn} ${styles.btnPrimary} ${styles.pushBtn}`}
-            disabled={pushDisabled}
-            aria-disabled={pushDisabled ? "true" : undefined}
-            aria-busy={pushPending || undefined}
-            onClick={() => void handlePush()}
-          >
-            {pushPending && (
-              <span className={styles.pushSpinner} aria-hidden />
-            )}
-            {pushLabel}
-          </button>
+          <NextGitActionButton
+            thread={thread}
+            isWorking={isWorking}
+            remoteProject={Boolean(project?.remoteHost)}
+            changesOpen={changesOpen}
+            changesNonce={changesNonce}
+            syncRefreshNonce={syncRefreshNonce}
+            onFetchDiff={onFetchDiff}
+            gitSyncInfo={gitSyncInfo}
+            onViewChanges={onViewChanges}
+            onPush={onPush}
+            onCreatePr={onCreatePr}
+            onPrChecks={onPrChecks}
+            onPrMerge={onPrMerge}
+            onStartRun={onStartRun}
+            providerName={
+              providers.find((p) => p.id === thread.provider)?.name ??
+              thread.provider
+            }
+            onPushed={() => setSyncRefreshNonce((n) => n + 1)}
+          />
           {gitSyncInfo && gitFetch && (
             <SyncPill
               threadId={thread.id}

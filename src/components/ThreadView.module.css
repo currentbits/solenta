@@ -282,10 +282,16 @@ button.project:focus-visible {
   font-size: 12px;
   font-weight: 550;
   white-space: nowrap;
+  text-decoration: none;
+  box-sizing: border-box;
   transition:
     background-color 0.12s ease,
     color 0.12s ease,
     border-color 0.12s ease;
+}
+
+a.btn {
+  cursor: pointer;
 }
 
 .btn:hover:not(:disabled) {

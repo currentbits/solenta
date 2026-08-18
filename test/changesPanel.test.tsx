@@ -136,11 +136,21 @@ function mountPanel(): { m: Promise<Mounted>; spies: Spies } {
   return { m, spies };
 }
 
+/** The Changes panel footer — not the header next-action "Commit N files". */
+function panelCommit(view: { container: HTMLElement }): HTMLButtonElement | null {
+  return (
+    [...view.container.querySelectorAll("button")].find((b) => {
+      const text = (b.textContent || "").trim();
+      return text === "Commit" || text === "Committing…";
+    }) ?? null
+  ) as HTMLButtonElement | null;
+}
+
 describe("ChangesPanel commit flow", () => {
   it("Commit starts disabled; Generate fills the box and enables it", async () => {
     const { m, spies } = mountPanel();
     const view = await m;
-    const commitBtn = view.byText("Commit");
+    const commitBtn = panelCommit(view);
     assert.ok(commitBtn);
     assert.ok(commitBtn.hasAttribute("disabled"), "disabled while empty");
 
@@ -151,7 +161,7 @@ describe("ChangesPanel commit flow", () => {
     );
     assert.ok(input);
     assert.equal(input.value, "feat: generated");
-    assert.ok(!view.byText("Commit")?.hasAttribute("disabled"));
+    assert.ok(!panelCommit(view)?.hasAttribute("disabled"));
   });
 
   it("Commit sends the message and reloads the diff", async () => {
@@ -159,7 +169,7 @@ describe("ChangesPanel commit flow", () => {
     const view = await m;
     await view.click(view.byText("Generate"));
     const before = spies.diffLoads;
-    await view.click(view.byText("Commit"));
+    await view.click(panelCommit(view));
     assert.deepEqual(spies.commits, ["feat: generated"]);
     assert.ok(spies.diffLoads > before, "diff reloaded after commit");
     const input = view.container.querySelector<HTMLTextAreaElement>(

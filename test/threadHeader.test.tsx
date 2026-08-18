@@ -290,13 +290,21 @@ describe("sync pill", () => {
       }),
     );
     await m.flush();
-    assert.deepEqual(calls, ["fetch", "syncInfo"], "fetch then read on mount");
+    assert.ok(calls.includes("fetch"), "fetch on mount");
+    assert.ok(calls.includes("syncInfo"), "sync read on mount");
+    const fetches = calls.filter((c) => c === "fetch").length;
+    const reads = calls.filter((c) => c === "syncInfo").length;
     await m.click(m.query("[data-sync-pill]"));
     await m.flush();
-    assert.deepEqual(
-      calls,
-      ["fetch", "syncInfo", "fetch", "syncInfo"],
-      "click fetches then re-reads",
+    assert.equal(
+      calls.filter((c) => c === "fetch").length,
+      fetches + 1,
+      "click fetches",
+    );
+    assert.equal(
+      calls.filter((c) => c === "syncInfo").length,
+      reads + 1,
+      "click re-reads",
     );
     m.unmount();
   });
@@ -314,12 +322,13 @@ describe("sync pill", () => {
       }),
     );
     await m.flush();
-    assert.equal(syncReads, 1);
+    const before = syncReads;
+    assert.ok(before >= 1, "sync read on mount");
     const push = m.byText("Push");
     assert.ok(push, "Push button present");
     await m.click(push);
     await m.flush();
-    assert.equal(syncReads, 2, "sync re-read after push");
+    assert.ok(syncReads > before, "sync re-read after push");
     m.unmount();
   });
 });
@@ -468,6 +477,7 @@ describe("create PR button", () => {
     const prompts: string[] = [];
     const m = await mount(
       view({
+        gitSyncInfo: async () => ({ hasUpstream: true, ahead: 0, behind: 0 }),
         onStartRun: (prompt) => {
           prompts.push(prompt);
         },
