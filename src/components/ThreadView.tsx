@@ -3691,6 +3691,8 @@ export const ThreadView = memo(function ThreadView({
             <button
               type="button"
               className={styles.stopBtn}
+              title="Stop (Esc · Ctrl+C)"
+              aria-keyshortcuts="Escape Control+C"
               onClick={() => void onStopRun()}
             >
               Stop
@@ -3784,6 +3786,7 @@ export const ThreadView = memo(function ThreadView({
         onLoadAttachmentImage={onLoadAttachmentImage}
         onDropAttachmentFiles={onDropAttachmentFiles}
         onSlashAction={handleSlashAction}
+        onStopRun={onStopRun}
         dropHostRef={dropHostRef}
         onFileDragChange={setFileDrag}
       />
