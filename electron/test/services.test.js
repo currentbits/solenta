@@ -406,6 +406,37 @@ describe("services", () => {
     );
   });
 
+  it("setQueued drops a previous delivery error", async () => {
+    const thread = await makeThread("queued-error");
+    store.updateThread(thread.id, {
+      queued: { prompt: "old", error: "A run is already active" },
+    });
+    const next = services.setQueued(store, {
+      threadId: thread.id,
+      prompt: "retry this",
+    });
+    assert.equal(next.queued.prompt, "old\n\nretry this");
+    assert.equal(next.queued.error, undefined);
+  });
+
+  it("takeQueued reads and clears without bumping updatedAt", async () => {
+    const thread = await makeThread("take-queued");
+    store.updateThread(thread.id, { updatedAt: 1_700_000_000_000 });
+    services.setQueued(store, {
+      threadId: thread.id,
+      prompt: "hold this",
+      attachments: [{ kind: "folder", path: "/tmp/a", name: "a" }],
+    });
+    const taken = services.takeQueued(store, { threadId: thread.id });
+    assert.deepEqual(taken, {
+      prompt: "hold this",
+      attachments: [{ kind: "folder", path: "/tmp/a", name: "a" }],
+    });
+    assert.equal(store.getThread(thread.id).queued, null);
+    assert.equal(store.getThread(thread.id).updatedAt, 1_700_000_000_000);
+    assert.equal(services.takeQueued(store, { threadId: thread.id }), null);
+  });
+
   it("setSnoozed validation table: past, now-exact, future, null clears both", async () => {
     const thread = await makeThread("snooze-table");
     store.updateThread(thread.id, { updatedAt: 1_700_000_000_000 });
