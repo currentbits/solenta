@@ -4,7 +4,7 @@ const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const { spawn } = require("node:child_process");
-const { killTree } = require("../proc.js");
+const { killTree, agentSpawnOptions } = require("../proc.js");
 
 const posix = process.platform !== "win32";
 
@@ -45,6 +45,44 @@ function alive(pid) {
   }
   return true;
 }
+
+describe("agentSpawnOptions", () => {
+  it("keeps the child attached on win32 so .cmd stdout stays on the parent pipes (#480)", () => {
+    const opts = agentSpawnOptions({
+      cwd: ".",
+      stdio: ["pipe", "pipe", "pipe"],
+      platform: "win32",
+    });
+    assert.equal(opts.detached, false);
+    assert.equal(opts.windowsHide, true);
+    assert.equal(opts.shell, false);
+    assert.deepEqual(opts.stdio, ["pipe", "pipe", "pipe"]);
+    assert.equal(opts.cwd, ".");
+    assert.equal("env" in opts, false);
+  });
+
+  it("detaches on posix so killTree can signal the process group", () => {
+    const opts = agentSpawnOptions({
+      cwd: "/tmp",
+      stdio: ["ignore", "pipe", "pipe"],
+      platform: "darwin",
+    });
+    assert.equal(opts.detached, true);
+    assert.equal(opts.windowsHide, false);
+    assert.equal(opts.shell, false);
+  });
+
+  it("passes env through only when provided", () => {
+    const env = { FOO: "1" };
+    const withEnv = agentSpawnOptions({
+      cwd: ".",
+      stdio: "pipe",
+      env,
+      platform: "linux",
+    });
+    assert.equal(withEnv.env, env);
+  });
+});
 
 describe("killTree", { skip: !posix }, () => {
   it("kills a backgrounded grandchild via the process group", async () => {
