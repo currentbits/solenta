@@ -963,10 +963,6 @@ export default function App() {
         onPrMerge={prMerge}
         gitSyncInfo={gitSyncInfo}
         gitFetch={gitFetch}
-        listDevScripts={listDevScripts}
-        startDevServer={startDevServer}
-        stopDevServer={stopDevServer}
-        devServerStatus={devServerStatus}
         runError={error?.scope === "run" ? error.message : null}
         onDismissRunError={clearError}
         onFork={handleForkOpen}
@@ -1040,6 +1036,7 @@ export default function App() {
         onOpenFleet={openFleet}
         onOpenInsights={openInsights}
         onOpenDigest={openDigest}
+        onFork={handleForkOpen}
           />
           </ErrorBoundary>
         </div>

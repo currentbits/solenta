@@ -1,6 +1,6 @@
 /**
- * ThreadView header additions: "Worked for" run headers, sync pill, dev
- * dropdown, and Copy thread ID in the overflow menu.
+ * ThreadView header additions: "Worked for" run headers, sync pill,
+ * and Copy thread ID in the overflow menu.
  *
  * Run: npm run test:renderer
  */
@@ -10,7 +10,6 @@ import { mount, unmountAll } from "./support/dom.ts";
 import { ThreadView } from "../src/components/ThreadView";
 import type {
   ChatMessage,
-  DevServerState,
   GitSyncInfo,
   ProjectInfo,
   ProviderInfo,
@@ -98,13 +97,6 @@ function view(props: {
   detail?: ThreadDetail;
   gitSyncInfo?: (threadId: string) => Promise<GitSyncInfo>;
   gitFetch?: (threadId: string) => Promise<void>;
-  listDevScripts?: (threadId: string) => Promise<string[]>;
-  startDevServer?: (
-    threadId: string,
-    script: string,
-  ) => Promise<DevServerState>;
-  stopDevServer?: (threadId: string) => Promise<DevServerState>;
-  devServerStatus?: (threadId: string) => Promise<DevServerState>;
   onPush?: () => Promise<{ remote: string; branch: string }>;
   onStartRun?: (prompt: string, threadId?: string) => void | Promise<void>;
   onRepeatSchedule?: () => void;
@@ -147,10 +139,6 @@ function view(props: {
       onPush={props.onPush ?? (async () => ({ remote: "origin", branch: "main" }))}
       gitSyncInfo={props.gitSyncInfo}
       gitFetch={props.gitFetch}
-      listDevScripts={props.listDevScripts}
-      startDevServer={props.startDevServer}
-      stopDevServer={props.stopDevServer}
-      devServerStatus={props.devServerStatus}
     />
   );
 }
@@ -340,76 +328,15 @@ describe("sync pill", () => {
   });
 });
 
-describe("dev dropdown", () => {
-  it("starts and stops a script and shows the captured url", async () => {
-    const calls: string[] = [];
-    let current: DevServerState = { running: false };
-    const m = await mount(
-      view({
-        listDevScripts: async () => ["dev", "start"],
-        startDevServer: async (id, script) => {
-          calls.push(`start:${id}:${script}`);
-          current = {
-            running: true,
-            script,
-            url: "http://localhost:5173/",
-            startedAt: Date.now(),
-          };
-          return current;
-        },
-        stopDevServer: async (id) => {
-          calls.push(`stop:${id}`);
-          current = { running: false };
-          return current;
-        },
-        devServerStatus: async () => current,
-      }),
-    );
+describe("header no longer hosts Environment actions", () => {
+  it("does not render a dev menu, Fork, or Hand off in the thread header", async () => {
+    const m = await mount(view({}));
     await m.flush();
-    const btn = m.query("[data-dev-menu]") as HTMLButtonElement | null;
-    assert.ok(btn, "dev menu button present");
-    assert.ok(!btn!.disabled, "enabled with scripts");
-    assert.match(btn!.textContent || "", /dev/);
-
-    await m.click(btn);
-    await m.flush();
-    const rows = m.queryAll("[data-dev-script]");
-    assert.equal(rows.length, 2, "one row per script");
-    await m.click(m.query("[data-dev-script='dev']"));
-    await m.flush();
-    assert.deepEqual(calls, ["start:t1:dev"]);
-
-    const link = m.query("[data-dev-url]") as HTMLAnchorElement | null;
-    assert.ok(link, "captured url shows once running");
-    assert.equal(link!.getAttribute("href"), "http://localhost:5173/");
-    assert.equal(link!.getAttribute("target"), "_blank");
-
-    const stop = m.query("[data-dev-stop]");
-    assert.ok(stop, "Stop row while running");
-    await m.click(stop);
-    await m.flush();
-    assert.deepEqual(calls, ["start:t1:dev", "stop:t1"]);
-    assert.equal(m.query("[data-dev-stop]"), null, "Stop row gone once stopped");
-    m.unmount();
-  });
-
-  it("is disabled with a tooltip when there are no runnable scripts", async () => {
-    const m = await mount(
-      view({
-        listDevScripts: async () => [],
-        startDevServer: async () => ({ running: false }),
-        stopDevServer: async () => ({ running: false }),
-        devServerStatus: async () => ({ running: false }),
-      }),
-    );
-    await m.flush();
-    const btn = m.query("[data-dev-menu]") as HTMLButtonElement | null;
-    assert.ok(btn, "button still renders");
-    assert.equal(btn!.disabled, true);
-    assert.equal(btn!.getAttribute("title"), "No runnable scripts in package.json");
-    await m.click(btn);
-    await m.flush();
-    assert.equal(m.query("[data-dev-popover]"), null, "no popover when disabled");
+    const header = m.query("header");
+    assert.ok(header, "thread header present");
+    assert.equal(header!.querySelector("[data-dev-menu]"), null);
+    assert.equal(header!.querySelector("[data-thread-fork]"), null);
+    assert.equal(header!.querySelector("[data-thread-handoff]"), null);
     m.unmount();
   });
 });

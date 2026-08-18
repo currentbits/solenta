@@ -218,7 +218,7 @@ describe("App fork / hand-off wiring (round 49)", () => {
     m.unmount();
   });
 
-  it("header Hand off submenu excludes current provider (and lists others)", async () => {
+  it("Environment Hand off submenu excludes current provider (and lists others)", async () => {
     const d = decoy();
     const s = source();
     const o = otherProjectThread();
@@ -238,24 +238,27 @@ describe("App fork / hand-off wiring (round 49)", () => {
     const m = await boot(fake);
     await selectThread(m, "source handoff thread");
 
-    const headerHandoff = m.query("[data-thread-handoff]");
-    assert.ok(headerHandoff, "ThreadView header Hand off to… must render");
-    await m.click(headerHandoff as HTMLElement);
+    const envHandoff = m.query("[data-thread-handoff]");
+    assert.ok(envHandoff, "Environment Hand off to… must render");
+    assert.ok(
+      envHandoff!.closest("[data-thread-fork-card]"),
+      "Hand off lives on the Environment Fork card",
+    );
+    await m.click(envHandoff as HTMLElement);
     await m.flush();
 
-    assert.ok(m.query("[data-thread-handoff-menu]"), "header hand-off menu open");
-    // Only entries inside the header menu — scope via the menu root.
-    const headerMenu = m.query("[data-thread-handoff-menu]")!;
-    const headerEntries = Array.from(
-      headerMenu.querySelectorAll("[data-handoff-provider]"),
+    assert.ok(m.query("[data-thread-handoff-menu]"), "Environment hand-off menu open");
+    const envMenu = m.query("[data-thread-handoff-menu]")!;
+    const envEntries = Array.from(
+      envMenu.querySelectorAll("[data-handoff-provider]"),
     ).map((el) => el.getAttribute("data-handoff-provider"));
     assert.ok(
-      !headerEntries.includes("claude"),
-      `current provider must not appear in header Hand off menu, got: ${headerEntries.join(",")}`,
+      !envEntries.includes("claude"),
+      `current provider must not appear in Environment Hand off menu, got: ${envEntries.join(",")}`,
     );
     assert.ok(
-      headerEntries.includes("grok") && headerEntries.includes("kimi"),
-      "other providers must still be listed in header menu (positive control)",
+      envEntries.includes("grok") && envEntries.includes("kimi"),
+      "other providers must still be listed in Environment menu (positive control)",
     );
     m.unmount();
   });
@@ -422,7 +425,7 @@ describe("App fork / hand-off wiring (round 49)", () => {
     m.unmount();
   });
 
-  it("header Fork (near Push) also hits threads.fork without provider", async () => {
+  it("Environment Fork also hits threads.fork without provider", async () => {
     const d = decoy();
     const s = source();
     const o = otherProjectThread();
@@ -442,9 +445,13 @@ describe("App fork / hand-off wiring (round 49)", () => {
     const m = await boot(fake);
     await selectThread(m, "source handoff thread");
 
-    const headerFork = m.query("[data-thread-fork]");
-    assert.ok(headerFork, "ThreadView header Fork must render near Push");
-    await m.click(headerFork as HTMLElement);
+    const envFork = m.query("[data-thread-fork]");
+    assert.ok(envFork, "Environment Fork must render");
+    assert.ok(
+      envFork!.closest("[data-thread-fork-card]"),
+      "Fork lives on the Environment card",
+    );
+    await m.click(envFork as HTMLElement);
     await m.flush();
 
     const forks = fake.of("threads.fork");

@@ -162,7 +162,7 @@ describe("ThreadView / palette actions", () => {
     );
   });
 
-  it("/fork calls the same handler as the header button", async () => {
+  it("/fork calls the same handler as the Environment Fork card", async () => {
     const forks: number[] = [];
     const m = await mountView({ onFork: () => forks.push(1) });
     await acceptSlash(m, "/fork");
