@@ -1811,20 +1811,26 @@ export function useCoder(): UseCoderResult {
         throw new Error("No thread selected");
       }
       const threadId = selectedThreadId;
-      const pr = await api.git.createPr({
-        threadId,
-        title: input.title,
-        body: input.body,
-        draft: input.draft,
-      });
-      if (selectedRef.current !== threadId) return pr;
-      // createPr records prNumber/prUrl on the thread; refresh so the badge updates.
-      const d = await api.threads.get(threadId);
-      if (selectedRef.current === threadId) {
-        applyThreadUpdate(d.thread);
-        setDetail(d);
+      try {
+        const pr = await api.git.createPr({
+          threadId,
+          title: input.title,
+          body: input.body,
+          draft: input.draft,
+        });
+        if (selectedRef.current !== threadId) return pr;
+        // createPr records prNumber/prUrl on the thread; refresh so the badge updates.
+        const d = await api.threads.get(threadId);
+        if (selectedRef.current === threadId) {
+          applyThreadUpdate(d.thread);
+          setDetail(d);
+        }
+        setError(null);
+        return pr;
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+        throw err;
       }
-      return pr;
     },
     [api, selectedThreadId, applyThreadUpdate],
   );
@@ -1844,14 +1850,20 @@ export function useCoder(): UseCoderResult {
       throw new Error("No thread selected");
     }
     const threadId = selectedThreadId;
-    const pr = await api.git.prMerge({ threadId });
-    if (selectedRef.current !== threadId) return pr;
-    const d = await api.threads.get(threadId);
-    if (selectedRef.current === threadId) {
-      applyThreadUpdate(d.thread);
-      setDetail(d);
+    try {
+      const pr = await api.git.prMerge({ threadId });
+      if (selectedRef.current !== threadId) return pr;
+      const d = await api.threads.get(threadId);
+      if (selectedRef.current === threadId) {
+        applyThreadUpdate(d.thread);
+        setDetail(d);
+      }
+      setError(null);
+      return pr;
+    } catch (err) {
+      setError({ scope: "run", message: errorMessage(err) });
+      throw err;
     }
-    return pr;
   }, [api, selectedThreadId, applyThreadUpdate]);
 
   const listPrs = useCallback(
