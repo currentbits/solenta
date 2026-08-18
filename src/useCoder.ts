@@ -724,6 +724,13 @@ export function useCoder(): UseCoderResult {
     unsubChanged = api.on("threads:changed", (next) => {
       threadsListGen.current += 1;
       applyThreads(next);
+      // Import (and any other main-process mint) can add projects without
+      // going through projects.add. Refresh so the sidebar sees them.
+      if (typeof api.projects?.list === "function") {
+        void api.projects.list().then((p) => {
+          if (!cancelled) setProjects(p);
+        }).catch(() => {});
+      }
     });
 
     unsubSelect = api.on("thread:select", (id) => {

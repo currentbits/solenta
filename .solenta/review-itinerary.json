@@ -1,35 +1,41 @@
 {
   "version": 1,
-  "readOrder": ["tests", "critical", "impl"],
+  "readOrder": ["tests", "critical", "impl", "docs"],
   "chunks": [
     {
       "area": "tests",
-      "rationale": "PR #531 conflicted with origin/main after #532 Ask mode. Only two content conflicts: this itinerary and electron/test/ipc-seam.test.js. The seam list keeps peek and drops setQuotaWaitAutoResume, which main deleted with quota-wait.",
+      "rationale": "PR #530 conflicted with origin/main after #531/#532. Two content conflicts: this itinerary and src/shared/ipc.ts. Resolution: keep the Vibe Kanban types, take main's ThreadStatus (quota-wait is gone). Re-run electron/test/vibe-kanban.test.js, test/vibeKanbanSection.test.tsx, ipc-seam, and tsc after the merge.",
       "risks": [
-        "ipc-seam still asserts handlers.has('threads:peek'). A merge that drops the handler but keeps the list would fail that assertion — intended.",
-        "Did not re-run the full electron suite after the merge."
+        "Fixture DBs are a subset of the real VK migration chain.",
+        "ipc-seam must still register vibeKanban:* after the Ask-mode and peek handlers landed on main."
       ]
     },
     {
       "area": "critical",
-      "rationale": "threads.peek / threadDetailFor(markVisited:false) auto-merged. Selecting a compare target must still not stamp lastVisitedAt. isThreadDone no longer treats quota-wait: that status is gone from ThreadStatus.",
+      "rationale": "src/shared/ipc.ts: VibeKanbanPreview / VibeKanbanImportResult stay above ThreadStatus. ThreadStatus is idle|working|done|failed — do not resurrect quota-wait. electron/vibeKanban.js did not conflict; the importer is unchanged.",
       "risks": [
-        "A future merge that points the compare picker at threads.get will silently mark siblings read.",
-        "Ask-mode ThreadView props auto-merged next to DivergenceCard. If onStartAsk or the Ask header control vanished, that is a merge bug, not a divergence bug."
+        "A leftover quota-wait mention in our branch (useCoder, fakeCoder, ThreadInfo comments) would fail tsc against the narrowed union.",
+        "A VK project with several repos still keeps only the first repo path."
       ]
     },
     {
       "area": "impl",
-      "rationale": "Divergence pairing is unchanged: tool steps by number, sibling forks first. This itinerary is the merge-resolution note for #531, not Ask mode's leftover itinerary from #532.",
+      "rationale": "README, SettingsModal, preload, ipc.js, wireClient, useCoder, fakeCoder, devCoder auto-merged. Confirm vibeKanban:* handlers and the Your data section still sit next to Ask-mode / peek additions from main.",
       "risks": [
-        "Permission allow/deny is still not persisted on ToolCallInfo, so decision is only ok/error/pending.",
-        "comparePeers is still memo'd on rosterKey (id:status)."
+        "threads:changed still refreshes projects.list() so imported projects appear without a restart.",
+        "Web mode still has no folder/save dialog."
+      ]
+    },
+    {
+      "area": "docs",
+      "rationale": "README VK bullet and site/docs.html paragraph auto-merged next to the 0.7.0 feature list. Read last.",
+      "risks": [
+        "Site docs are the girder-deployed copy; this branch does not publish them."
       ]
     }
   ],
   "risks": [
-    "First divergence is the first paired tool step whose type/name/input/output/decision differs. Two models that take the same tools with different prose will report no divergence.",
-    "A still-running shorter side does not count extra steps on the other side as a split.",
-    "No live Electron click-through after this merge."
+    "Cards become Solenta threads, not GitHub planboard issues.",
+    "Verification is the electron + renderer tests and tsc. No live Electron Settings click-through after this merge."
   ]
 }

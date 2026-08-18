@@ -27,6 +27,7 @@ import type {
 import { useEscapeClose } from "../useEscapeClose";
 import styles from "./SettingsModal.module.css";
 import { WorktreeGcSection } from "./WorktreeGcSection";
+import { VibeKanbanSection } from "./VibeKanbanSection";
 
 interface SettingsModalProps {
   open: boolean;
@@ -1153,6 +1154,8 @@ export function SettingsModal({
             onGcScan={onGcScan}
             onGcClean={onGcClean}
           />
+
+          <VibeKanbanSection active={open} />
 
           <section className={styles.section}>
             <h3 className={styles.sectionLabel}>Memory</h3>

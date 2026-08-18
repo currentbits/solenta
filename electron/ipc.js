@@ -42,6 +42,7 @@ const { collectDigest } = require("./digest.js");
 const { collectFleet } = require("./fleet.js");
 const { distillThread } = require("./distill.js");
 const updater = require("./updater.js");
+const vibeKanban = require("./vibeKanban.js");
 
 /**
  * Default window fan-out (desktop transport). main.js replaces this with a
@@ -908,6 +909,41 @@ const IPC_HANDLERS = {
       paths: (input && input.paths) || [],
       broadcast: ctx.broadcast,
     });
+  },
+  "vibeKanban:preview": async (ctx, input) => {
+    return vibeKanban.preview(ctx.store, input || {});
+  },
+  "vibeKanban:import": async (ctx, input) => {
+    const result = await vibeKanban.importFrom(ctx.store, input || {});
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    return result;
+  },
+  "vibeKanban:pickDataDir": async (ctx) => {
+    if (!ctx.dialog || typeof ctx.dialog.showOpenDialog !== "function") {
+      throw new Error("Folder picker is not available in this mode");
+    }
+    const result = await ctx.dialog.showOpenDialog({
+      title: "Choose the Vibe Kanban data folder",
+      properties: ["openDirectory"],
+    });
+    if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
+      return null;
+    }
+    return result.filePaths[0];
+  },
+  "vibeKanban:export": async (ctx) => {
+    if (!ctx.dialog || typeof ctx.dialog.showSaveDialog !== "function") {
+      throw new Error("Save dialog is not available in this mode");
+    }
+    const result = await ctx.dialog.showSaveDialog({
+      title: "Export Solenta data",
+      defaultPath: "solenta-export.json",
+      filters: [{ name: "JSON", extensions: ["json"] }],
+    });
+    if (result.canceled || !result.filePath) return null;
+    const dump = vibeKanban.buildExport(ctx.store);
+    fs.writeFileSync(result.filePath, JSON.stringify(dump, null, 2));
+    return result.filePath;
   },
   "git:runStats": async (ctx, input) => {
     return runStats({

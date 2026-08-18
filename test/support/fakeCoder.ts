@@ -1405,6 +1405,31 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         return rec("git.runStats", [input], derived);
       },
     },
+    vibeKanban: {
+      preview: (input?: unknown) =>
+        rec("vibeKanban.preview", [input], {
+          found: false,
+          dataDir: null,
+          dbPath: null,
+          projects: [],
+          taskCount: 0,
+          worktreeCount: 0,
+          alreadyImported: 0,
+        }),
+      import: (input?: unknown) =>
+        rec("vibeKanban.import", [input], {
+          dataDir: null,
+          dbPath: null,
+          projectsAdded: 0,
+          projectsReused: 0,
+          threadsCreated: 0,
+          threadsSkipped: 0,
+          worktreesMapped: 0,
+          skipped: [],
+        }),
+      pickDataDir: () => rec("vibeKanban.pickDataDir", [], null),
+      export: () => rec("vibeKanban.export", [], null),
+    },
     issues: {
       fetch: (input: unknown) =>
         rec(
