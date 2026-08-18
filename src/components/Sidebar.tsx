@@ -1784,7 +1784,21 @@ export const Sidebar = memo(function Sidebar({
     );
   }, [attentionThreads, onSetSettled]);
 
-  // Jump shortcuts + cmd index hints + keyboard sheet.
+  /** Always the open thread's project, else the first project. */
+  const createInTargetProject = useCallback(() => {
+    if (!createTargetProject) return;
+    onCreateThread(createTargetProject.id);
+  }, [createTargetProject, onCreateThread]);
+
+  /**
+   * Brand-row + and ⌘N. Until #443's picker lands this is the same as
+   * createInTargetProject; after that, several projects open the picker.
+   */
+  const handleBrandCreate = useCallback(() => {
+    createInTargetProject();
+  }, [createInTargetProject]);
+
+  // Jump shortcuts + new-thread chords + cmd index hints + keyboard sheet.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Meta" || e.key === "Control") {
@@ -1828,6 +1842,14 @@ export const Sidebar = memo(function Sidebar({
           setSelectAnchor(next);
           onSelectThread(next);
         }
+        return;
+      }
+
+      // cmd+n: same as brand-row +. cmd+shift+n: always createTargetProject.
+      if (key === "n") {
+        e.preventDefault();
+        if (e.shiftKey) createInTargetProject();
+        else handleBrandCreate();
       }
     };
     const onKeyUp = (e: KeyboardEvent) => {
@@ -1844,7 +1866,14 @@ export const Sidebar = memo(function Sidebar({
       window.removeEventListener("keyup", onKeyUp);
       window.removeEventListener("blur", onBlur);
     };
-  }, [visibleIds, activeThreadId, onSelectThread, keyboardSheetOpen]);
+  }, [
+    visibleIds,
+    activeThreadId,
+    onSelectThread,
+    keyboardSheetOpen,
+    createInTargetProject,
+    handleBrandCreate,
+  ]);
 
   const indexHintFor = (id: string): number | null => {
     if (!cmdHeld) return null;
@@ -2100,7 +2129,7 @@ export const Sidebar = memo(function Sidebar({
         <button
           type="button"
           className={styles.headerAdd}
-          onClick={() => onCreateThread()}
+          onClick={handleBrandCreate}
           disabled={!canCreate}
           title={
             canCreate
