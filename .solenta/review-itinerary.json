@@ -1,138 +1,18 @@
 {
   "version": 1,
-  "readOrder": ["tests", "critical", "impl", "docs"],
+  "readOrder": ["impl"],
   "chunks": [
     {
-      "area": "tests",
-      "rationale": "test/sidebar.test.tsx new describe block pins the intended behavior first: running subagents nest under the parent card, done/failed render nothing, row click selects the parent thread. Read this to see the contract before the implementation.",
-      "risks": ["Tests only cover the attention list, not the archived-expanded list which got the same Fragment wrap."]
-    },
-    {
       "area": "impl",
-      "rationale": "src/components/Sidebar.tsx: new SubagentRows component (after SelectOpts) filters thread.subagents to status==='running' and renders compact rows that call onSelect(parentId). Both ThreadCard map sites (attention ~2926, archived ~2985) are wrapped in a Fragment keyed `${id}:card` to preserve the t3 unmount/remount key rule documented above the attention map.",
+      "rationale": "Single-token change in src/index.css: --text-dim #667085 -> #7d8798. The sidebar (projects/threadbar) renders most secondary text (branch names, ages, counts, provider tags, 'New thread' rows, group summaries) in --text-dim, which sat at ~3.7:1 contrast on --bg-elevated — below WCAG AA. The new value lands ~5:1 on the sidebar background and ~4.7:1 on card fills, while staying clearly darker than --text-muted (#8b95a8, ~6:1) so the dim/muted/text hierarchy survives. Token-level fix beats per-rule overrides in Sidebar.module.css: one line, no hardcoded colors, and other dim text app-wide benefits too.",
       "risks": [
-        "SubagentRows is not memoized; it re-renders with each sidebar tick. It is tiny (filter + map over <=20 rows) and only mounts rows while subagents run, so cost is negligible.",
-        "Shift-click on a subagent row forwards shift to onSelect, which may range-select threads; same semantics as clicking the parent card, judged harmless."
-      ]
-    },
-    {
-      "area": "critical",
-      "rationale": "src/components/Sidebar.module.css: .subagentList/.subagentRow reuse the nested-card geometry (width calc(100% - 14px), margin-left 14px, ::before elbow at left -9px) so subagent rows align exactly with nested worker cards; the pulsing dot reuses the existing .waitingDot class/animation from the wait line.",
-      "risks": [
-        "Elbow is per-row (top -4px to 50%), so multiple rows draw a chain of elbows rather than one continuous spine; matches how consecutive nested worker cards already look.",
-        "Running-only is a deliberate scope cut (issue #542): finished subagents remain visible in the Agents panel Subagents section, not the sidebar. If the user expected done rows too, this is the line to revisit."
-      ]
-    },
-    {
-      "area": "tests",
-      "rationale": "Contract first: electron/test/quota-wait.test.js is the parser (Claude/Codex/Kimi clocks, ISO/duration/Retry-After, #286 exclusion, wake-once, opt-out). electron/test/quota-wait-runner.test.js is the live runner (park, no-clock fail, budget fail, global opt-out, wake-once without a second user message, resumeQuotaWait). Renderer: test/quotaWait.test.ts, sidebarFailedBadge, settingsModal, kanban, threadSettle. Ask-mode suites must still pass — startAskRun shares fromQuotaWait and markRunFailed.",
-      "risks": [
-        "Runner tests force generic via CODER_AGENT_CMD; they do not exercise Claude/Codex JSON result paths that also call markRunFailed.",
-        "Wake-once test waits up to 20s for a 1s reset + 2s slack; a slow CI host can flake.",
-        "store.test.js round-trip must list every migrateThread key (quotaWait* plus reviewAcceptedHunks) or deepEqual fails."
-      ]
-    },
-    {
-      "area": "critical",
-      "rationale": "electron/quotaWait.js decides park vs fail. runner.markRunFailed writes quota-wait atomically so the first threads:changed never flashes Failed. fireQuotaWake / resumeQuotaWait resend the last user prompt with fromQuotaWait:true (no second transcript line). startRun cancels the timer, skips autoTurns reset, and startAskRun (#392) takes the same fromQuotaWait flag so Ask threads can park and resume without touching a worktree.",
-      "risks": [
-        "notifyRunTerminal is still called with status 'failed' after a park; it must see thread.status === 'quota-wait' and skip afterFailedTurn / drainQueued or a parked thread will look failed and start the queued prompt.",
-        "quotaWaitResumed is set on the resume start, not on park. A human send while parked starts a new turn and can park again — intended. A second quota hit on the same resume fails.",
-        "Ask-mode errors go through markRunFailed; only quota-shaped text parks. Retrieval/fm failures stay Failed."
-      ]
-    },
-    {
-      "area": "impl",
-      "rationale": "Persistence and UI: store.quotaWaitAutoResume (default on), thread.quotaWaitUntil/Resumed/AutoResume, lastError kept on quota-wait, IPC setQuotaWaitAutoResume + resumeQuotaWait, Settings toggle, Sidebar 'Quota wait · clock' badge, ThreadView Resume now / Don't auto-resume, kanban column, settle/GC treat quota-wait as live work.",
-      "risks": [
-        "Per-thread opt-out cancels the timer but leaves status quota-wait so Resume now still works; turning the global setting off mid-wait also cancels via refreshAllQuotaWaits.",
-        "formatQuotaWaitLabel is host-local; a named timezone in the provider error is parsed in quotaWait.js for the wake instant, then displayed in the user's zone."
-      ]
-    },
-    {
-      "area": "tests",
-      "rationale": "Start with electron/test/spec-tasks.test.js (the checkbox DAG contract: ids, needs:, cycles, waves), then spec-mode.test.js dispatch/converge (crew sync, wave-1 fork, wave-2 after complete), then spec-ipc.test.js (N worker runs vs one converge run), then test/specCard.test.tsx (Dispatch/Converge only at build).",
-      "risks": [
-        "Wave-2 is asserted inside the wave-1 test after completeCrewTask — easy to miss if a later edit splits the case.",
-        "IPC dispatch test writes tasks.md into the project checkout (no worktree on the spec thread fixture)."
-      ]
-    },
-    {
-      "area": "critical",
-      "rationale": "electron/specTasks.js is the format. electron/services.js dispatchSpec/syncSpecCrewFromParsed/forkSpecWave is the live path: parse → addCrewTasks (needs remapped to tN) → claim one orchWorker per open unblocked task. ipc.js threads:dispatchSpec starts those runs; threads:convergeSpec starts one run on the spec thread.",
-      "risks": [
-        "Crew sync matches by collapsed title. Two checkboxes with the same title collide; the second is treated as already added.",
-        "sourceToCrew precomputes tN the same way addCrewTasks does. If addCrewTasks ever changes id assignment, remapped needs silently point at the wrong task.",
-        "Dispatch is fail-closed on parse errors (cycle, unknown needs) — a typo in tasks.md blocks the whole wave, not just the bad line.",
-        "Next wave is not auto-started when workers finish. The human (or a later Dispatch click) has to come back. Crew claim still holds the DAG.",
-        "Workers land in their own worktrees (forkWorkerThread default). Ticking tasks.md there does not update the spec thread's copy; the crew list is the source of truth."
-      ]
-    },
-    {
-      "area": "impl",
-      "rationale": "UI is SpecCard at stage===build: Dispatch (permissionAllow) and Converge (btn). Wired through ipc.ts, preload, wireClient, useCoder, App, fakeCoder, devCoder. Approving tasks.md still starts a run, but the build prompt now tells the parent to orchestrate instead of implementing the checklist itself.",
-      "risks": [
-        "Changing the build-stage prompt is a behavior change for anyone who approved tasks.md expecting the old 'implement it yourself' turn.",
-        "useCoder.dispatchSpec only patches the source thread; new workers appear via the threads:changed broadcast that IPC already sends."
-      ]
-    },
-    {
-      "area": "docs",
-      "rationale": "SPEC_GOAL.tasks now documents the checkbox + needs: <id> format so newly written tasks.md is dispatchable. src/devCoder.ts dropped the 'out of scope' line.",
-      "risks": [
-        "Existing tasks.md files written before this change have no needs: annotations — they still parse (document-order ids, one big wave)."
-      ]
-    },
-    {
-      "area": "tests",
-      "rationale": "Issue #408 contract in threadView.test.tsx: jsdom has no ResizeObserver and no layout, so the suite installs a fake observer and overrides scrollHeight/clientHeight/scrollTop. Pinned + growth must set scrollTop to the new scrollHeight; scrolled-up (onScroll, distance > 80px) must leave scrollTop alone. Watch the tests fail first if the observer is missing.",
-      "risks": [
-        "The fake observer fires every watched target at once; it does not prove that a nested <img> load grows a direct child box in a real layout engine.",
-        "scrollTop is a writable backing field. A future pin that writes a clamped value (scrollHeight - clientHeight) would fail the first assertion (expects 1400, not 1000)."
-      ]
-    },
-    {
-      "area": "impl",
-      "rationale": "ThreadView adds a ResizeObserver after the existing state-driven pin effect. It observes the scroll body and each direct child, reconnects when `timeline` changes, and only writes scrollTop when stickToBottom.current is set and the view is actually detached (distance > 0). No-ops when ResizeObserver is missing (jsdom).",
-      "risks": [
-        "ResizeObserver on an overflow container reports the viewport box, not scrollHeight. Content growth is detected via the children. A descendant that grows inside a fixed-height / overflow:hidden child would not fire.",
-        "A pin that reveals a scrollbar can shrink child width and re-fire the observer. The distance <= 0 guard is what stops a loop.",
-        "timeline is memoized on the whole `detail` object, so a new detail identity rebinds observers even when messages are unchanged. Same churn as the existing pin effect."
-      ]
-    },
-    {
-      "area": "critical",
-      "rationale": "App.tsx now early-returns BuildMismatchScreen when isBuildMismatch(app.status().build.sha, __BUILD_SHA__) is true. The three-pane shell (data-layout=app) is not mounted, so a stale renderer cannot be clicked, typed into, or dismissed past. SHA equality and vite.config.ts stamping are unchanged — no protocolVersion.",
-      "risks": [
-        "appStatus is null until app.status() resolves, so a mismatched window still paints the live app for one IPC round-trip, then swaps to the hard stop. Same timing as the old banner.",
-        "useCoder still runs (hooks cannot be skipped), so background IPC/subscriptions continue under the block. User-facing chrome is gone; the stale renderer can still receive pushes.",
-        "rendererSha is an optional App prop used as a test seam. Production BootApp does not pass it."
-      ]
-    },
-    {
-      "area": "impl",
-      "rationale": "BuildMismatchScreen is a full-window alertdialog (title Reload required, existing copy, Restart -> applyUpdate). Banner CSS (mismatchBar) deleted from App.module.css so the old overlay cannot come back by accident.",
-      "risks": [
-        "alertdialog has one control so there is no focus trap. autoFocus on Restart is enough today; a second button would need a trap.",
-        "WebTokenGate is also not rendered on mismatch. Intentional: two blocking layers would be worse."
-      ]
-    },
-    {
-      "area": "tests",
-      "rationale": "test/buildMismatchUi.test.tsx mounts the real App against fakeCoder with a stamped main SHA and the rendererSha seam. It asserts data-layout=app is absent, Restart calls app.applyUpdate, matching/missing SHAs still show the app. Pure isBuildMismatch tests are unchanged.",
-      "risks": [
-        "Node ESM cannot see globalThis.__BUILD_SHA__, so the seam is required. A reviewer deleting the prop without another way to stamp the renderer SHA will make the blocking-state tests unwriteable."
+        "Dim text everywhere in the app gets brighter, not just the sidebar — intentional, but reviewers should confirm the dim/muted steps still read as distinct.",
+        "Settled rows still multiply the token by opacity 0.6 (intentional recession); they improve but remain low-contrast by design."
       ]
     }
   ],
   "risks": [
-    "Agents panel needed no change: the Subagents section (AgentsPanel.tsx ~2373) already renders subagents with TeamRow visuals in all non-workflow branches.",
-    "No electron/runner changes: subagent detection (runner.js addSubagentRow) and ThreadInfo.subagents transport already existed and feed the sidebar threads list.",
-    "This is a resurrection of 688e5a9 after 8bf223b deleted the feature in Ask-mode conflict resolution. Both features must stay. Do not drop fromQuotaWait on startAskRun.",
-    "Distinct from #286 (Solenta budget) and #294 (model failover). Exhausted balance with no reset clock fails once.",
-    "No MCP spec_dispatch/spec_converge tools — agents on the spec thread cannot trigger these without the card. Deliberate: issue asked for IPC + spec card, same seam as startSpec/reviewSpec.",
-    "No runner hook to dispatch the next wave when the last worker of the current wave completes.",
-    "The state-change pin effect is unchanged. This only covers post-paint growth (images, highlight, webfonts). A reviewer who deletes the new effect and keeps the old one would still have a green suite except the two #408 tests.",
-    "Issue #184 asked for a protocolVersion handshake. That was deliberately replaced with SHA equality and is NOT reintroduced here — only the hard-stop UX gap is closed."
+    "Only one test references the token (test/conflictForecastBadge.test.tsx, regex on the variable name, not the hex value); no snapshot pins the old color.",
+    "Contrast ratios were computed analytically from the hex values, not measured in a running app."
   ]
 }
