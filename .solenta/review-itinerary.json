@@ -1,87 +1,39 @@
 {
   "version": 1,
-  "readOrder": ["critical", "impl", "tests", "docs"],
+  "readOrder": ["critical", "impl", "tests"],
   "chunks": [
     {
-      "area": "critical: src/threadPatch.ts",
-      "rationale": "Read first. mergeThreadPatch now returns `prev` itself when a 700ms tick changed nothing, and reuses prev.messages/prev.workLog when the pushed tail is identical. Every downstream memo (ThreadView timeline derivation, AgentsPanel) depends on these identity semantics being exact — a wrong bail shows stale transcript data, a missed bail re-derivates O(n) per tick. Check sameTail's length guard and the six-field identity conjunction in the final return.",
+      "area": "critical",
+      "rationale": "Identity-semantics changes that everything else keys on: threadPatch.ts returns prev when a 700ms tick moved nothing (sameTail guards), Sidebar ThreadCard is memo'd (handleSelect via refs, threadTitles reuses its Map), services.listThreads caches the decorated list on threads/projects array identity (replace-only invariant, verified). A wrong bail = stale UI; a missed bail = O(n) per tick.",
       "risks": [
-        "sameTail compares element-wise via JSON.stringify; for a large replaced tail this costs more than the old blind concat on ticks where the tail DID change (streaming message). Net win is assumed because no-op ticks dominate, but a pathological provider that re-sends a huge changed tail every tick pays stringify on top of the rebuild.",
-        "patch.seq is dropped when returning prev — safe only because seq lives on ThreadPatch, not ThreadDetail, and gap detection happens in the caller before merge."
+        "listThreads caching rests on a convention: any future in-place mutation of a thread/project row or array silently serves a stale sidebar. The invariant is commented at the cache.",
+        "mergeThreadPatch returning prev drops patch.seq — safe only because seq lives on ThreadPatch, not ThreadDetail, and gap detection runs in the caller.",
+        "Sidebar handleSelect reads visibleIds/selectAnchor via refs synced in a passive effect — correct for user events, not for synthetic same-tick calls."
       ]
     },
     {
-      "area": "critical: src/components/Sidebar.tsx (ThreadCard memo)",
-      "rationale": "Second. ThreadCard is now memo'd, which only pays off because handleSelect was made ref-stable (visibleIdsRef/selectAnchorRef) and threadTitles reuses its Map when the id->title mapping is unchanged. Verify the ref pattern: refs are synced in a passive effect, so a shift-click always reads post-commit values. Also verify no ThreadCard caller passes freshly-built objects per render (waitStates.get is rebuilt per tick but only affects threads with live workers).",
+      "area": "impl",
+      "rationale": "Battery/memory trims: store flush compact JSON, lsof TTL 30s + renderer polls 15s/hidden-skip, codeindex parse cache on mtime, stderr tail-capped at 64KB in all five spawners, forecast effect keyed on derived branch/worktree key + refocus refresh, memory-server: mentions(entity_id) index, O(n) applyTokenBudget, statement cache, citation file cache, trust TTL 60s.",
       "risks": [
-        "threadTitles ref-cache compares prev.size === threads.length plus per-id title equality; correct for id-unique lists, but it is an impure useMemo (writes threadTitlesRef) — fine in practice, worth a second look if concurrent rendering is ever enabled.",
-        "handleSelect no longer closes over visibleIds/selectAnchor; keyboard shift-range selection correctness now depends on the effect having run — guaranteed for user events, not for synthetic same-tick calls."
+        "A new dev server can take up to ~30s to appear in the Local Servers card (15s poll + 30s main TTL). Deliberate.",
+        "codeindex/listThreads/citation caches share parsed objects across callers — all verified read-only today.",
+        "Merge resolution: quota-wait props/handlers dropped (removed upstream), ChangesPanel hunk UI taken from upstream; my patchLines memo is gone, memo'd DiffLine kept.",
+        "Merge resolution: itinerary rewritten to the fixed-area schema (area must equal ci-config/tests/critical/impl/docs for annotationForArea to attach; rationale truncates at 400 chars)."
       ]
     },
     {
-      "area": "impl: src/App.tsx",
-      "rationale": "Third. Three inline ThreadView props are now useCallback'd (preserving the undefined-when-no-thread semantics at the JSX site, because ThreadView.tsx:3538 gates rendering on prop presence). The conflict-forecast effect is keyed on a derived id:branch:worktreePath key instead of the churning threads array, with a visibilitychange refresh as the staleness safety net.",
+      "area": "tests",
+      "rationale": "Verified pre-merge: typecheck clean, renderer 1075/1075, memory 201/201, electron 1390/1396 — the 6 failures (checkpoints worktreeBase config, Store quota-wait round-trip keys, verify-gate) reproduce with the diff stashed. Re-run after this merge: quota-wait removal upstream touched App/ThreadView/ipc.",
       "risks": [
-        "Forecast now refreshes far less often; git-state changes that keep branch+worktreePath (merges, pulls) are only caught on window refocus, not within a focused session.",
-        "handleResumeQuotaWait/handleSetQuotaWaitAutoResume/handleSettleOpenThread change identity when selectedThreadId changes — intended, but any future consumer must not assume cross-thread identity."
-      ]
-    },
-    {
-      "area": "impl: src/components/AgentsPanel.tsx + ThreadView.tsx",
-      "rationale": "Poll cadence changes: SERVER_POLL_MS 5s->15s (matches the new 30s main-side lsof cache), SUMMARY_POLL_MS 2s->5s, both polls skip while document.hidden, and LocalServersCard bails out of setServers when the list is unchanged. ChangesPanel memoizes the diff patch split and DiffLine is memo'd.",
-      "risks": [
-        "A newly started dev server can take up to ~30s to appear in the Local Servers card (15s poll + 30s main-side cache TTL). Chosen deliberately; lower the main TTL if this feels sluggish.",
-        "setServers unchanged-bail compares pid/port/url/command positionally; relies on lsof output ordering being stable per scan — it is, since both lists come from the same sorted-by-pid parse."
-      ]
-    },
-    {
-      "area": "impl: electron main (store.js, servers.js, codeindex.js, agent/claude/codex/kimi/opencode)",
-      "rationale": "Battery/memory batch. store.js flushes compact JSON instead of pretty-printed (both async and saveNow paths). servers.js lsof cache TTL 5s->30s. codeindex.js caches the parsed index on file mtimeMs+size instead of re-parsing multi-MB JSON per dispatch. All five provider spawners tail-keep stderr at 64KB instead of growing unbounded for the process lifetime.",
-      "risks": [
-        "codeindex cache shares the parsed object across callers — verified consumers are read-only (runner's codeIndexNoteFor, refreshIndex's prev-row scan); a future mutating caller would poison the cache.",
-        "codeindex cache could serve stale data in the astronomically unlikely same-mtimeMs+same-size rewrite; accepted.",
-        "store file is no longer human-friendly; nothing in-repo parses it except JSON.parse.",
-        "stderr diagnostics lose everything before the last 64KB on very noisy CLIs."
-      ]
-    },
-    {
-      "area": "impl: memory-server (db.js, memory.js)",
-      "rationale": "New index idx_mentions_entity ON mentions(entity_id) fixes graphSearch/janitor full scans (IF NOT EXISTS, so existing DBs pick it up on open). applyTokenBudget precomputes per-row stringified costs instead of re-stringifying the remainder per pop (O(n^2) -> O(n)); the char accounting (brackets + items + commas) reproduces estimateTokens(JSON.stringify(...)) exactly, verified against estimateTokens = ceil(len/4).",
-      "risks": [
-        "applyTokenBudget's manual char accounting would silently drift if estimateTokens' divisor ever changes from 4 — the two functions are now coupled; a comment notes the relationship.",
-        "The MCP-server hoist suggested in the audit was REJECTED: SDK 1.12's Protocol.connect asserts single-transport, so a shared McpServer cannot serve concurrent stateless requests; per-request buildServer is the documented pattern and its cost is tool-registration only."
-      ]
-    },
-    {
-      "area": "critical: electron/services.js (listThreads cache) — round 2",
-      "rationale": "pushThreadsChanged fires on every work-log step from 54 call sites, but work-log appends never touch the threads/projects arrays. listThreads now caches the decorated list keyed on the identity of both arrays (both are replaced, never mutated in place — verified: all data.threads writes are inside store.js and use map/filter/assignment; fleet.js mutates only its own row copies), and reuses decorated rows keyed on thread object identity so a one-row updateThread keeps every other row's identity for the renderer's patchThreadList/memo'd cards. WeakMap keyed on store so test stores don't leak.",
-      "risks": [
-        "The cache's correctness rests on a convention, not an enforcement: any future code that mutates a thread row or project in place (or mutates the arrays) will serve a stale sidebar list with no error. A comment on listThreads states the invariant.",
-        "decorateThread output also depends on resolveSandbox, which reads only thread+project — if it ever reads settings or time, the cache key must grow."
-      ]
-    },
-    {
-      "area": "impl: memory-server round 2 (db.js statement cache, citations.js file cache, memory.js trust TTL)",
-      "rationale": "openDb wraps db.prepare with a per-connection statement cache (node:sqlite recompiles SQL per prepare; the request paths re-prepare identical literals). Dynamic-IN queries produce variable SQL, so the map is capped at 500 and cleared when exceeded. verifyFileCitation reads via readFileTextCached (path + mtimeMs + size; stat per verify, read only on change; map capped at 64 whole-file texts). TRUST_CACHE_TTL_MS 5s -> 60s: trust is ranking metadata, and the 5s TTL put a full-table GROUP BY inside arbitrary search queries.",
-      "risks": [
-        "db.prepare is monkey-patched on the DatabaseSync instance; any caller relying on prepare identity or preparing SQL with per-call side effects would misbehave — none found.",
-        "Citation cache holds up to 64 whole files in memory; bounded, but large cited files (multi-MB) each stay resident until eviction.",
-        "Trust staleness is now up to 60s — feedback written seconds ago won't affect ranking for a minute; acceptable for ranking metadata.",
-        "BUG FOUND WHILE ANNOTATING (round 1, shipped in auto-checkpoint ef40717): my idx_mentions_entity SQL comment contained backticks inside createSchema's JS template literal, terminating the string — every memory-server module load failed. Fixed by removing the backticks; lesson recorded in the comment itself. Round-1 verification missed it because the memory suite's output was never actually inspected (the grep window cut it off); round-2 caught it. The /tmp-copy-passed/node-check-failed confusion was node --check using a different module goal outside the package."
-      ]
-    },
-    {
-      "area": "impl: src/components/ThreadView.tsx round 2 (checks poll)",
-      "rationale": "The watch-checks 8s poll (a gh spawn per tick per open thread) now skips while document.hidden, matching the AgentsPanel polls. Initial load and status-change refetch are untouched.",
-      "risks": [
-        "Checks badge can be up to one poll interval stale when the window regains focus (the next tick fires within 8s; the visibilitychange path was not wired here since an 8s recovery is imperceptible for a CI badge)."
+        "Post-merge suites must confirm the auto-merged quota-wait removal didn't leave dangling references on this branch (tsc is the check).",
+        "No test pins mergeThreadPatch's return-prev identity or the ThreadCard memo — a 'no-op tick returns identical detail' test would harden the riskiest change."
       ]
     }
   ],
   "risks": [
-    "No automated test pins the new identity semantics of mergeThreadPatch (returning prev) or the ThreadCard memo — verified by typecheck plus the suites: renderer 1075/1075, core 38/38, memory 201/201, electron 1390/1396. The 6 remaining electron failures (checkpoints 'worktreeBase is not configured', Store round-trip quota-wait keys, verify-gate) reproduce with the diff stashed: pre-existing environment breakage. 10 orch-server/wireClient failures from the earlier baseline were environment rot (missing memory-server node_modules, broken core/dist symlink chain) and are now FIXED as a side effect of this pass.",
-    "core/dist repair: the main checkout's ~/code/coder/core/dist was a self-symlink (ELOOP), then deleted — every worktree's core/dist symlink dangled. Rebuilt core in the main checkout on 2026-08-18; worktree symlinks now resolve. Worktree tests share the main checkout's core build — fine only because this branch does not touch core/ source.",
-    "BUG SHIPPED IN AUTO-CHECKPOINT ef40717 (round 1): backticks in a SQL comment inside db.js createSchema's template literal broke every memory-server module load; round-1 verification never actually saw the memory suite's output (grep window cut it). Fixed in round 2 (db.js:310-314). Lesson: when a pipeline step's output is filtered, confirm each suite's summary line explicitly.",
-    "Larger audit findings deliberately NOT done here: runAgent O(n^2) full-text stdout redelivery (needs runner-protocol change), pushThreadsChanged full-list broadcast per tick (needs store-level invalidation), CLAUDE_IDLE_REAP_MS 30min held sessions (product trade-off), memory-server findNearDup re-tokenization and citation file-read cache. Tracked as follow-ups in issue #526/#528 comments."
+    "BUG FIXED IN FLIGHT: round-1 SQL comment in db.js createSchema contained backticks inside a JS template literal — broke every memory-server module load and shipped in auto-checkpoint ef40717 before round 2 caught it. Fixed (db.js:310-314).",
+    "Environment repaired during this branch: main checkout's core/dist self-symlink/deletion dangled every worktree's core build (rebuilt); memory-server node_modules installed here. 10 of 16 baseline electron failures were this rot, now green.",
+    "Deferred by design: runAgent intra-message deltas (needs ThreadPatch protocol change), 30-min CLAUDE_IDLE_REAP (product call), PR-refresher gh batching, fleet blame cache. Details on #526/#533.",
+    "Merge conflict with main resolved 2026-08-18: 3 files (App.tsx quota-wait props, ThreadView hunk UI, this itinerary). Incoming itinerary chunk was another thread's stale merge notes — dropped."
   ]
 }

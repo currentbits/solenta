@@ -36,6 +36,9 @@ import type {
   ListIssuesResult,
   LocalServerInfo,
   MemoryEntryInfo,
+  AgentConfigDoctorReport,
+  AgentConfigPreview,
+  AgentConfigWriteResult,
   AgentProfile,
   McpServerInfo,
   SubagentPool,
@@ -64,6 +67,8 @@ import type {
   WorkflowPhaseSpec,
   WorkflowTemplateInfo,
   WorkflowView,
+  VibeKanbanPreview,
+  VibeKanbanImportResult,
 } from "./shared/ipc";
 import { SPEC_ARTIFACTS, SPEC_DIR } from "./shared/ipc";
 import { buildActivity } from "./activity.ts";
@@ -1437,7 +1442,6 @@ function buildDevCoder(): CoderApi {
   /** Update channel override; null follows the (absent) dev stamp. */
   let updateChannel: "prod" | "nightly" | null = null;
   let notifications = true;
-  let quotaWaitAutoResume = true;
   let otel: OtelSettings = { endpoint: null, headers: {}, claudeMetrics: false };
   /** Saved agent profiles (Settings tab), in-memory. */
   let agentProfiles: AgentProfile[] = [];
@@ -2046,7 +2050,6 @@ function buildDevCoder(): CoderApi {
           defaultOrchestrate,
           updateChannel,
           notifications,
-          quotaWaitAutoResume,
           agentProfiles: agentProfiles.map((p) => ({ ...p })),
           subagentPool: {
             ...subagentPool,
@@ -2096,12 +2099,6 @@ function buildDevCoder(): CoderApi {
           }
           notifications = patch.notifications;
         }
-        if (Object.prototype.hasOwnProperty.call(patch, "quotaWaitAutoResume")) {
-          if (typeof patch.quotaWaitAutoResume !== "boolean") {
-            throw new Error("quotaWaitAutoResume must be a boolean");
-          }
-          quotaWaitAutoResume = patch.quotaWaitAutoResume;
-        }
         if (Object.prototype.hasOwnProperty.call(patch, "agentProfiles")) {
           if (!Array.isArray(patch.agentProfiles)) {
             throw new Error("agentProfiles must be an array");
@@ -2149,7 +2146,6 @@ function buildDevCoder(): CoderApi {
           defaultOrchestrate,
           updateChannel,
           notifications,
-          quotaWaitAutoResume,
           agentProfiles: agentProfiles.map((p) => ({ ...p })),
           subagentPool: {
             ...subagentPool,
@@ -2529,6 +2525,73 @@ function buildDevCoder(): CoderApi {
         projects = projects.filter((p) => p.id !== projectId);
         emitThreads();
       },
+      async lintAgentConfig(input: {
+        projectId: string;
+      }): Promise<AgentConfigDoctorReport> {
+        const project = projects.find((p) => p.id === input.projectId);
+        if (!project) throw new Error(`Unknown project: ${input.projectId}`);
+        const considered = memoryEntries.filter(
+          (e) =>
+            e.type === "convention" ||
+            e.type === "strategy" ||
+            e.type === "knowledge",
+        );
+        return {
+          projectId: project.id,
+          files: [],
+          score: 0,
+          grade: "F",
+          memory: {
+            considered: considered.length,
+            covered: 0,
+            missing: considered.map((e) => ({
+              id: e.id,
+              type: e.type,
+              title: e.title,
+            })),
+          },
+          issues: [
+            {
+              severity: "error",
+              message: "No AGENTS.md / CLAUDE.md (or sibling) in this repo",
+            },
+          ],
+          recommendations: [
+            "Generate AGENTS.md from shared memory so every agent reads the same conventions",
+          ],
+        };
+      },
+      async previewAgentConfig(input: {
+        projectId: string;
+        targets?: string[];
+      }): Promise<AgentConfigPreview> {
+        const project = projects.find((p) => p.id === input.projectId);
+        if (!project) throw new Error(`Unknown project: ${input.projectId}`);
+        const lines = [
+          `# ${project.name}`,
+          "",
+          "Standing instructions generated from Solenta shared memory.",
+          "",
+          "<!-- generated-by: solenta-config-doctor -->",
+          "",
+        ];
+        for (const e of memoryEntries) {
+          if (e.type !== "convention" && e.type !== "strategy") continue;
+          lines.push(`### ${e.title}`, "", e.body, "");
+        }
+        const targets = input.targets?.length ? input.targets : ["AGENTS.md"];
+        return {
+          projectId: project.id,
+          files: targets.map((p) => ({
+            path: p,
+            content: lines.join("\n"),
+            exists: false,
+          })),
+        };
+      },
+      async writeAgentConfig(): Promise<AgentConfigWriteResult> {
+        throw new Error("Config doctor writes are not available in browser dev");
+      },
     },
     spaces: {
       async list() {
@@ -2649,8 +2712,12 @@ function buildDevCoder(): CoderApi {
           // Lazy worktree: only the intent is recorded, the fake worktree
           // materializes at first run. An orchestrator holds neither — its
           // worker does.
-          pendingWorktree: input.orchestrate !== true && input.worktree === true,
-          pendingFork: input.orchestrate === true,
+          pendingWorktree:
+            input.ask !== true &&
+            input.orchestrate !== true &&
+            input.worktree === true,
+          pendingFork: input.ask !== true && input.orchestrate === true,
+          ask: input.ask === true,
           issueNumber: input.issueNumber ?? null,
           ...(input.teach === true
             ? { teach: { autonomy: "hint" as const, reviewsPassed: 0 } }
@@ -2676,6 +2743,7 @@ function buildDevCoder(): CoderApi {
               : source.model,
           permissionMode: source.permissionMode,
           teach: source.teach ?? null,
+          ask: source.ask === true,
           handoffFrom: source.id,
         });
         return registerThread(created);
@@ -2726,6 +2794,11 @@ function buildDevCoder(): CoderApi {
         } else {
           d.thread = { ...d.thread, lastVisitedAt: visitedAt };
         }
+        return cloneDetail(d);
+      },
+      async peek(threadId) {
+        const d = details.get(threadId);
+        if (!d) throw new Error(`Thread not found: ${threadId}`);
         return cloneDetail(d);
       },
       async setPermissionMode(input) {
@@ -2792,14 +2865,6 @@ function buildDevCoder(): CoderApi {
       async setMuted(input: { threadId: string; muted: boolean }) {
         return patchThread(input.threadId, { muted: input.muted });
       },
-      async setQuotaWaitAutoResume(input: {
-        threadId: string;
-        enabled: boolean | null;
-      }) {
-        return patchThread(input.threadId, {
-          quotaWaitAutoResume: input.enabled,
-        });
-      },
       async setNotes(input: { threadId: string; notes: string }) {
         return patchThread(input.threadId, {
           notes: String(input.notes ?? "").trim().slice(0, 2000),
@@ -2864,6 +2929,21 @@ function buildDevCoder(): CoderApi {
       },
       async stopTeach(input: { threadId: string }) {
         return patchThread(input.threadId, { teach: null });
+      },
+      async startAsk(input: { threadId: string }) {
+        const existing = threads.find((t) => t.id === input.threadId);
+        if (existing?.ask) return { ...existing };
+        return patchThread(input.threadId, {
+          ask: true,
+          pendingWorktree: false,
+          teach: null,
+        });
+      },
+      async stopAsk(input: { threadId: string; worktree?: boolean }) {
+        return patchThread(input.threadId, {
+          ask: false,
+          ...(input.worktree ? { pendingWorktree: true } : {}),
+        });
       },
       async requestTeachReview(input: { threadId: string }) {
         const existing = threads.find((t) => t.id === input.threadId);
@@ -3175,14 +3255,6 @@ function buildDevCoder(): CoderApi {
         emitDetail(detail);
         startRunTimer(input.threadId);
         return { runId };
-      },
-      async resumeQuotaWait(input: { threadId: string }) {
-        const detail = details.get(input.threadId);
-        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
-        if (detail.thread.status !== "quota-wait") {
-          throw new Error("Thread is not waiting on a provider quota reset");
-        }
-        return this.start({ threadId: input.threadId, prompt: "continue" });
       },
       async stop(input) {
         const detail = details.get(input.threadId);
@@ -3853,6 +3925,16 @@ function buildDevCoder(): CoderApi {
           updatedAt: now(),
         });
       },
+      async reviewContext(_input) {
+        return { annotation: null, symbols: [], acceptedHunks: [] };
+      },
+      async setReviewAccepted(input) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
+        return patchThread(input.threadId, {
+          reviewAcceptedHunks: input.hashes,
+        });
+      },
       async diff(input) {
         const detail = details.get(input.threadId);
         if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
@@ -3947,6 +4029,37 @@ function buildDevCoder(): CoderApi {
         syncThreadRow(thread);
         emitDetail(detail);
         return { ...thread };
+      },
+    },
+    vibeKanban: {
+      async preview(): Promise<VibeKanbanPreview> {
+        return {
+          found: false,
+          dataDir: null,
+          dbPath: null,
+          projects: [],
+          taskCount: 0,
+          worktreeCount: 0,
+          alreadyImported: 0,
+        };
+      },
+      async import(): Promise<VibeKanbanImportResult> {
+        return {
+          dataDir: null,
+          dbPath: null,
+          projectsAdded: 0,
+          projectsReused: 0,
+          threadsCreated: 0,
+          threadsSkipped: 0,
+          worktreesMapped: 0,
+          skipped: [],
+        };
+      },
+      async pickDataDir() {
+        return null;
+      },
+      async export() {
+        return null;
       },
     },
     issues: {

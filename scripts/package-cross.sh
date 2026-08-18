@@ -99,9 +99,17 @@ for f in electron/*.js; do
   cp "$f" "$PAYLOAD/electron/"
 done
 
+# Same explicit root deps as package-app.sh (ws + cross-spawn tree).
+ROOT_NM_PKGS=(ws cross-spawn path-key shebang-command shebang-regex which isexe)
 mkdir -p "$PAYLOAD/node_modules"
-rm -rf "$PAYLOAD/node_modules/ws"
-cp -R node_modules/ws "$PAYLOAD/node_modules/ws"
+for pkg in "${ROOT_NM_PKGS[@]}"; do
+  if [[ ! -d "node_modules/$pkg" ]]; then
+    echo "ERROR: node_modules/$pkg missing; npm install ($pkg is a production dep)" >&2
+    exit 1
+  fi
+  rm -rf "$PAYLOAD/node_modules/$pkg"
+  cp -R "node_modules/$pkg" "$PAYLOAD/node_modules/$pkg"
+done
 
 cp -R dist "$PAYLOAD/dist"
 if [[ -d "$PAYLOAD/dist/dist" ]] || ! diff -qr dist "$PAYLOAD/dist" >/dev/null; then
@@ -193,6 +201,9 @@ for target in "${TARGETS[@]}"; do
   }
   [[ -d "$MS_NM/ws" || -d "$APP_DIR/node_modules/ws" ]] || {
     echo "ERROR: [$target] ws missing" >&2; exit 1;
+  }
+  [[ -d "$APP_DIR/node_modules/cross-spawn" ]] || {
+    echo "ERROR: [$target] cross-spawn missing" >&2; exit 1;
   }
 
   SIZE="$(du -sh "$ARCHIVE" | awk '{print $1}')"

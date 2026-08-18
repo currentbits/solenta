@@ -127,6 +127,10 @@ describe("Store", () => {
       settledOverride: null,
       settledAt: null,
       prState: null,
+      prMergeable: null,
+      quotaWaitUntil: null,
+      quotaWaitResumed: false,
+      quotaWaitAutoResume: null,
       lastVisitedAt: null,
       pinnedAt: null,
       snoozedUntil: null,
@@ -650,6 +654,7 @@ describe("Store", () => {
     assert.equal(t.settledOverride, null);
     assert.equal(t.settledAt, null);
     assert.equal(t.prState, null);
+    assert.equal(t.prMergeable, null);
     assert.ok(
       Object.prototype.hasOwnProperty.call(t, "settledOverride"),
       "settledOverride key must exist after migration",
@@ -662,9 +667,14 @@ describe("Store", () => {
       Object.prototype.hasOwnProperty.call(t, "prState"),
       "prState key must exist after migration",
     );
+    assert.ok(
+      Object.prototype.hasOwnProperty.call(t, "prMergeable"),
+      "prMergeable key must exist after migration",
+    );
     assert.notEqual(t.settledOverride, undefined);
     assert.notEqual(t.settledAt, undefined);
     assert.notEqual(t.prState, undefined);
+    assert.notEqual(t.prMergeable, undefined);
     // Migration must not bump activity timestamp.
     assert.equal(t.updatedAt, 2);
   });

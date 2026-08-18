@@ -101,7 +101,7 @@ describe("lastVisitedAt (round 43)", () => {
     assert.equal(after.lastVisitedAt, detail.thread.lastVisitedAt);
   });
 
-  it("getThreadDetail({ markVisited: false }) does not stamp", () => {
+  it("getThreadDetail({ markVisited: false }) does not stamp (threads.peek)", () => {
     const thread = services.createThread(store, {
       projectId: project.id,
       title: "Background",

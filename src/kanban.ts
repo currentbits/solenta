@@ -21,7 +21,6 @@ export interface KanbanColumn {
 
 const COLUMN_ORDER: { id: KanbanColumnId; title: string }[] = [
   { id: "working", title: "Working" },
-  { id: "quota-wait", title: "Quota wait" },
   { id: "idle", title: "Idle" },
   { id: "done", title: "Done" },
   { id: "failed", title: "Failed" },
@@ -36,7 +35,7 @@ function defaultSettleOpts(): SettleOpts {
 }
 
 /**
- * Working / Quota wait / Idle / Done / Failed. Archived threads, snoozed threads, and
+ * Working / Idle / Done / Failed. Archived threads, snoozed threads, and
  * threads the sidebar already shelves as settled (effectiveSettled) are
  * excluded. Each column is newest-updated first.
  */
@@ -52,7 +51,6 @@ export function kanbanColumns(
   );
   const buckets: Record<KanbanColumnId, ThreadInfo[]> = {
     working: [],
-    "quota-wait": [],
     idle: [],
     done: [],
     failed: [],

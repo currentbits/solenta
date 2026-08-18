@@ -135,16 +135,22 @@ for f in electron/*.js; do
 done
 
 # Root node_modules is NOT copied into the bundle (only memory-server's is).
-# electron/webBridge.js `require("ws")` therefore needs an explicit copy. ws 8.x is
-# pure JS (no native addon, no transitive deps).
-if [[ ! -d node_modules/ws ]]; then
-  echo "ERROR: node_modules/ws missing; npm install (ws is a production dep)" >&2
-  exit 1
-fi
+# electron/webBridge.js `require("ws")` and the provider spawn path
+# `require("cross-spawn")` therefore need explicit copies. Both trees are
+# pure JS (no native addon). cross-spawn's production deps must come too:
+# a missing nested require hangs the packaged boot (Electron shows a
+# module-not-found dialog and never reaches whenReady).
+ROOT_NM_PKGS=(ws cross-spawn path-key shebang-command shebang-regex which isexe)
 mkdir -p "$APP_DIR/node_modules"
-rm -rf "$APP_DIR/node_modules/ws"
-cp -R node_modules/ws "$APP_DIR/node_modules/ws"
-echo "packaged node_modules: ws"
+for pkg in "${ROOT_NM_PKGS[@]}"; do
+  if [[ ! -d "node_modules/$pkg" ]]; then
+    echo "ERROR: node_modules/$pkg missing; npm install ($pkg is a production dep)" >&2
+    exit 1
+  fi
+  rm -rf "$APP_DIR/node_modules/$pkg"
+  cp -R "node_modules/$pkg" "$APP_DIR/node_modules/$pkg"
+done
+echo "packaged node_modules: ${ROOT_NM_PKGS[*]}"
 
 # vite build output
 cp -R dist "$APP_DIR/dist"

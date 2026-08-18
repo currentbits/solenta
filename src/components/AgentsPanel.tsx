@@ -18,6 +18,9 @@ import type {
   Hypothesis,
   LocalServerInfo,
   MemoryEntryInfo,
+  AgentConfigDoctorReport,
+  AgentConfigPreview,
+  AgentConfigWriteResult,
   PhaseView,
   ProjectInfo,
   ProviderInfo,
@@ -150,6 +153,17 @@ interface AgentsPanelProps {
     body: string;
     project?: string;
   }) => Promise<{ id: string }>;
+  lintAgentConfig?: (input: {
+    projectId: string;
+  }) => Promise<AgentConfigDoctorReport>;
+  previewAgentConfig?: (input: {
+    projectId: string;
+    targets?: string[];
+  }) => Promise<AgentConfigPreview>;
+  writeAgentConfig?: (input: {
+    projectId: string;
+    targets?: string[];
+  }) => Promise<AgentConfigWriteResult>;
   /** Skills tab: settings surface for MCP servers + skills CRUD. */
   settings: AppSettings | null;
   saveSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>;
@@ -2826,6 +2840,9 @@ export const AgentsPanel = memo(function AgentsPanel({
   updateMemory,
   removeMemory,
   storeMemory,
+  lintAgentConfig,
+  previewAgentConfig,
+  writeAgentConfig,
   settings,
   saveSettings,
   listSkills,
@@ -2939,12 +2956,16 @@ export const AgentsPanel = memo(function AgentsPanel({
       ) : tab === "memory" ? (
         <MemoryTab
           projectSlug={project?.path ?? project?.slug ?? null}
+          projectId={project?.id ?? null}
           searchMemory={searchMemory}
           recentMemory={recentMemory}
           getMemory={getMemory}
           updateMemory={updateMemory}
           removeMemory={removeMemory}
           storeMemory={storeMemory}
+          lintAgentConfig={lintAgentConfig}
+          previewAgentConfig={previewAgentConfig}
+          writeAgentConfig={writeAgentConfig}
         />
       ) : tab === "skills" ? (
         <SkillsTab

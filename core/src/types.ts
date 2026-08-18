@@ -7,7 +7,7 @@ export interface Project {
   name: string;
 }
 
-export type ThreadStatus = "idle" | "working" | "done" | "failed" | "quota-wait";
+export type ThreadStatus = "idle" | "working" | "done" | "failed";
 
 export interface Thread {
   id: string;

@@ -210,7 +210,6 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     mcpServers: [],
     defaultWorktree: false,
     updateChannel: null,
-    quotaWaitAutoResume: true,
     ...(opts.settings ?? {}),
   };
   const ALL_SKILL_TARGETS: SkillTarget[] = [
@@ -404,16 +403,6 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
             );
           }
           next.updateChannel = v ?? null;
-        }
-        if (Object.prototype.hasOwnProperty.call(p, "quotaWaitAutoResume")) {
-          const v = p.quotaWaitAutoResume;
-          if (typeof v !== "boolean") {
-            calls.push({ channel: "settings.set", args: [patch] });
-            return Promise.reject(
-              new Error("quotaWaitAutoResume must be a boolean"),
-            );
-          }
-          next.quotaWaitAutoResume = v;
         }
         settingsState = next;
         return rec("settings.set", [patch], { ...settingsState });
@@ -615,6 +604,32 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           return v;
         });
       },
+      lintAgentConfig: (input: { projectId: string }) =>
+        rec("projects.lintAgentConfig", [input], {
+          projectId: input.projectId,
+          files: [],
+          score: 0,
+          grade: "F",
+          memory: { considered: 0, covered: 0, missing: [] },
+          issues: [],
+          recommendations: [],
+        }),
+      previewAgentConfig: (input: { projectId: string; targets?: string[] }) =>
+        rec("projects.previewAgentConfig", [input], {
+          projectId: input.projectId,
+          files: [
+            {
+              path: "AGENTS.md",
+              content: "# preview\n",
+              exists: false,
+            },
+          ],
+        }),
+      writeAgentConfig: (input: { projectId: string; targets?: string[] }) =>
+        rec("projects.writeAgentConfig", [input], {
+          projectId: input.projectId,
+          written: ["AGENTS.md"],
+        }),
     },
     spaces: {
       list: () => rec("spaces.list", [], spaces.map((s) => ({ ...s }))),
@@ -697,6 +712,10 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           typeof input === "object" &&
           input !== null &&
           (input as { teach?: boolean }).teach === true;
+        const wantAsk =
+          typeof input === "object" &&
+          input !== null &&
+          (input as { ask?: boolean }).ask === true;
         const issueNumber =
           typeof input === "object" &&
           input !== null &&
@@ -721,6 +740,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           ...(wantTeach
             ? { teach: { autonomy: "hint" as const, reviewsPassed: 0 } }
             : {}),
+          ...(wantAsk ? { ask: true } : {}),
         });
         threads = [t, ...threads.filter((x) => x.id !== t.id)];
         return rec("threads.create", [input], t);
@@ -755,6 +775,22 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           thread: { ...fallback.thread, lastVisitedAt: stamp },
         };
         return rec("threads.get", [id], stampedFallback);
+      },
+      /**
+       * Sibling load for the divergence compare (issue #393). Same payload
+       * as get, but visiting is not implied — lastVisitedAt stays put.
+       */
+      peek: (id: string) => {
+        const existing = threads.find((t) => t.id === id);
+        const base =
+          details[id] ??
+          detail({ thread: existing ?? thread({ id }) });
+        const row = existing
+          ? { ...base.thread, ...existing }
+          : { ...base.thread };
+        const peeked: ThreadDetail = { ...base, thread: row };
+        details[id] = peeked;
+        return rec("threads.peek", [id], peeked);
       },
       setPermissionMode: (input: unknown) =>
         rec("threads.setPermissionMode", [input], thread()),
@@ -887,25 +923,6 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         }
         return Promise.resolve(next);
       },
-      setQuotaWaitAutoResume: (input: unknown) => {
-        const i = input as { threadId: string; enabled: boolean | null };
-        calls.push({ channel: "threads.setQuotaWaitAutoResume", args: [input] });
-        const existing = threads.find((t) => t.id === i.threadId);
-        if (!existing) {
-          return Promise.reject(new Error(`Unknown thread: ${i.threadId}`));
-        }
-        if (i.enabled !== true && i.enabled !== false && i.enabled !== null) {
-          return Promise.reject(
-            new Error("quotaWaitAutoResume must be true, false, or null"),
-          );
-        }
-        const next: ThreadInfo = {
-          ...existing,
-          quotaWaitAutoResume: i.enabled,
-        };
-        threads = threads.map((t) => (t.id === i.threadId ? next : t));
-        return Promise.resolve(next);
-      },
       /** Honest mute: flips the flag in place, never bumps updatedAt. */
       setMuted: (input: unknown) => {
         const i = input as { threadId: string; muted: boolean };
@@ -946,6 +963,38 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           return Promise.reject(new Error(`Unknown thread: ${i.threadId}`));
         }
         const next: ThreadInfo = { ...existing, teach: null };
+        threads = threads.map((t) => (t.id === i.threadId ? next : t));
+        return Promise.resolve(next);
+      },
+      startAsk: (input: unknown) => {
+        const i = input as { threadId: string };
+        calls.push({ channel: "threads.startAsk", args: [input] });
+        const existing = threads.find((t) => t.id === i.threadId);
+        if (!existing) {
+          return Promise.reject(new Error(`Unknown thread: ${i.threadId}`));
+        }
+        if (existing.ask) return Promise.resolve({ ...existing });
+        const next: ThreadInfo = {
+          ...existing,
+          ask: true,
+          pendingWorktree: false,
+          teach: null,
+        };
+        threads = threads.map((t) => (t.id === i.threadId ? next : t));
+        return Promise.resolve(next);
+      },
+      stopAsk: (input: unknown) => {
+        const i = input as { threadId: string; worktree?: boolean };
+        calls.push({ channel: "threads.stopAsk", args: [input] });
+        const existing = threads.find((t) => t.id === i.threadId);
+        if (!existing) {
+          return Promise.reject(new Error(`Unknown thread: ${i.threadId}`));
+        }
+        const next: ThreadInfo = {
+          ...existing,
+          ask: false,
+          ...(i.worktree ? { pendingWorktree: true } : {}),
+        };
         threads = threads.map((t) => (t.id === i.threadId ? next : t));
         return Promise.resolve(next);
       },
@@ -1113,6 +1162,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           sessionId: null,
           permissionMode: source.permissionMode,
           teach: source.teach ?? null,
+          ask: source.ask === true,
           // Production fork never patches reasoningEffort; create leaves null.
           reasoningEffort: null,
           branch: null,
@@ -1226,8 +1276,6 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           },
         ),
       stop: (input: unknown) => rec("runs.stop", [input], undefined),
-      resumeQuotaWait: (input: unknown) =>
-        rec("runs.resumeQuotaWait", [input], { runId: "r-quota" }),
     },
     git: {
       status: (projectId: string) =>
@@ -1243,6 +1291,14 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           patch: "",
           truncated: false,
         } as DiffResult),
+      reviewContext: (input: unknown) =>
+        rec("git.reviewContext", [input], {
+          annotation: null,
+          symbols: [],
+          acceptedHunks: [],
+        }),
+      setReviewAccepted: (input: unknown) =>
+        rec("git.setReviewAccepted", [input], thread()),
       commit: (input: unknown) =>
         rec("git.commit", [input], { subject: "test commit" }),
       revertFile: (input: unknown) =>
@@ -1374,6 +1430,31 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         }));
         return rec("git.runStats", [input], derived);
       },
+    },
+    vibeKanban: {
+      preview: (input?: unknown) =>
+        rec("vibeKanban.preview", [input], {
+          found: false,
+          dataDir: null,
+          dbPath: null,
+          projects: [],
+          taskCount: 0,
+          worktreeCount: 0,
+          alreadyImported: 0,
+        }),
+      import: (input?: unknown) =>
+        rec("vibeKanban.import", [input], {
+          dataDir: null,
+          dbPath: null,
+          projectsAdded: 0,
+          projectsReused: 0,
+          threadsCreated: 0,
+          threadsSkipped: 0,
+          worktreesMapped: 0,
+          skipped: [],
+        }),
+      pickDataDir: () => rec("vibeKanban.pickDataDir", [], null),
+      export: () => rec("vibeKanban.export", [], null),
     },
     issues: {
       fetch: (input: unknown) =>

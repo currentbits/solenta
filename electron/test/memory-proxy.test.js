@@ -272,6 +272,10 @@ describe("memory-proxy", () => {
     assert.equal(withBoth.searchParams.get("limit"), "5");
     assert.equal(withBoth.searchParams.get("project"), "coder");
 
+    await p.recent({ limit: 20, project: "coder", type: "convention" });
+    const withType = new URL(seen.at(-1), "http://x");
+    assert.equal(withType.searchParams.get("type"), "convention");
+
     // project alone must still produce a valid query string (leading "?").
     await p.recent({ project: "coder" });
     const projectOnly = new URL(seen.at(-1), "http://x");

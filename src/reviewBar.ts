@@ -16,7 +16,7 @@ export interface ReviewBar {
 
 /** Unique runIds in first-seen message order, dropping an in-progress last run. */
 export function completedRunIds(
-  messages: ChatMessage[],
+  messages: readonly ChatMessage[],
   threadStatus: ThreadStatus,
 ): string[] {
   const ids: string[] = [];

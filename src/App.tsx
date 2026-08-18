@@ -32,6 +32,7 @@ import {
   repeatDraftFromDetail,
   type RepeatDraft,
 } from "./repeatThread";
+import { sameTaskPeers, toComparePeer } from "./divergence";
 import type {
   ConflictForecast,
   DistilledWorkflow,
@@ -118,8 +119,6 @@ export default function App() {
     setPinned,
     setSnoozed,
     setMuted,
-    setQuotaWaitAutoResume,
-    resumeQuotaWait,
     renameThread,
     setNotes,
     startSpec,
@@ -128,6 +127,8 @@ export default function App() {
     specArtifact,
     startTeach,
     stopTeach,
+    startAsk,
+    stopAsk,
     requestTeachReview,
     deleteThread,
     removeProject,
@@ -135,6 +136,8 @@ export default function App() {
     mergeWorktree,
     removeWorktree,
     fetchDiff,
+    fetchReviewContext,
+    setReviewAccepted,
     commitChanges,
     revertFile,
     suggestCommitMessage,
@@ -191,11 +194,15 @@ export default function App() {
     updateMemory,
     removeMemory,
     storeMemory,
+    lintAgentConfig,
+    previewAgentConfig,
+    writeAgentConfig,
     listSkills,
     addSkill,
     removeSkill,
     syncSkills,
     searchThreads,
+    peekThread,
     automations,
     addAutomation,
     updateAutomation,
@@ -294,7 +301,7 @@ export default function App() {
   const clearReveal = useCallback(() => setRevealThreadId(null), []);
 
   const handleCreateThread = useCallback(
-    (projectId?: string, opts?: { worktree?: boolean; orchestrate?: boolean; teach?: boolean; issueNumber?: number | null }) => {
+    (projectId?: string, opts?: { worktree?: boolean; orchestrate?: boolean; teach?: boolean; ask?: boolean; issueNumber?: number | null }) => {
       void createThread("New Thread", projectId, opts).then((t) => {
         if (t) setRevealThreadId(t.id);
       });
@@ -349,21 +356,8 @@ export default function App() {
     [renameThread, selectedThreadId],
   );
 
-  // Inline arrows here would bust ThreadView's memo on every 700ms stream
-  // tick (issue #91); keep them identity-stable per selected thread.
-  const handleResumeQuotaWait = useCallback(
-    () => {
-      if (selectedThreadId) void resumeQuotaWait(selectedThreadId);
-    },
-    [selectedThreadId, resumeQuotaWait],
-  );
-  const handleSetQuotaWaitAutoResume = useCallback(
-    (enabled: boolean | null) => {
-      if (selectedThreadId)
-        void setQuotaWaitAutoResume(selectedThreadId, enabled);
-    },
-    [selectedThreadId, setQuotaWaitAutoResume],
-  );
+  // An inline arrow here would bust ThreadView's memo on every 700ms stream
+  // tick (issue #91); keep it identity-stable per selected thread.
   const handleSettleOpenThread = useCallback(
     () => {
       if (selectedThreadId) void setSettled(selectedThreadId, "settled");
@@ -454,6 +448,20 @@ export default function App() {
       void requestTeachReview(threadId);
     },
     [requestTeachReview],
+  );
+
+  const handleStartAsk = useCallback(
+    (threadId: string) => {
+      void startAsk(threadId);
+    },
+    [startAsk],
+  );
+
+  const handleStopAsk = useCallback(
+    (threadId: string, opts?: { worktree?: boolean }) => {
+      void stopAsk(threadId, opts);
+    },
+    [stopAsk],
   );
 
   const handleRowArchived = useCallback(
@@ -652,6 +660,22 @@ export default function App() {
     () => threads.map((t) => `${t.id}:${t.status}`).join(","),
     [threads],
   );
+
+  /**
+   * Same-task siblings for the divergence card. Keyed on roster + the open
+   * thread so a 700ms stream tick on an unrelated row does not rebuild this.
+   */
+  const comparePeers = useMemo(() => {
+    if (!visibleDetail) return [];
+    const peers = sameTaskPeers(visibleDetail.thread, threads);
+    return peers.map((t) => toComparePeer(t, peers, providers));
+  }, [
+    visibleDetail?.thread.id,
+    visibleDetail?.thread.handoffFrom,
+    visibleDetail?.thread.projectId,
+    rosterKey,
+    providers,
+  ]);
 
   const handleCreateThreadFromIssue = useCallback(
     async (input: {
@@ -985,10 +1009,6 @@ export default function App() {
         onSaveWorkflow={saveWorkflow}
         onRemoveWorkflow={removeWorkflow}
         onStopRun={stopRun}
-        onResumeQuotaWait={selectedThreadId ? handleResumeQuotaWait : undefined}
-        onSetQuotaWaitAutoResume={
-          selectedThreadId ? handleSetQuotaWaitAutoResume : undefined
-        }
         queuedPrompt={
           selectedThreadId ? (queued[selectedThreadId]?.prompt ?? null) : null
         }
@@ -1013,6 +1033,9 @@ export default function App() {
         onStartTeach={handleStartTeach}
         onStopTeach={handleStopTeach}
         onRequestTeachReview={handleRequestTeachReview}
+        onStartAsk={handleStartAsk}
+        onStopAsk={handleStopAsk}
+        defaultWorktree={settings?.defaultWorktree ?? false}
         onDeleteThread={deleteThread}
         changesOpen={changesOpen}
         changesNonce={changesNonce}
@@ -1021,6 +1044,8 @@ export default function App() {
         runStats={runStats}
         restoreCheckpoint={restoreCheckpoint}
         onFetchDiff={fetchDiff}
+        onFetchReviewContext={fetchReviewContext}
+        onSetReviewAccepted={setReviewAccepted}
         onCommitChanges={commitChanges}
         onRevertFile={revertFile}
         onSuggestCommitMessage={suggestCommitMessage}
@@ -1042,6 +1067,8 @@ export default function App() {
         onDismissRunError={clearError}
         onFork={handleForkOpen}
         handoffSource={handoffSource}
+        comparePeers={comparePeers}
+        onPeekThread={peekThread}
         onSelectThread={handleSelectThread}
         onModelPickerOpen={handleModelPickerOpen}
         onNewThread={handleCreateThreadPlain}
@@ -1094,6 +1121,9 @@ export default function App() {
         updateMemory={updateMemory}
         removeMemory={removeMemory}
         storeMemory={storeMemory}
+        lintAgentConfig={lintAgentConfig}
+        previewAgentConfig={previewAgentConfig}
+        writeAgentConfig={writeAgentConfig}
         settings={settings}
         saveSettings={saveSettings}
         listSkills={listSkills}
