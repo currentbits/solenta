@@ -352,6 +352,45 @@ describe("next-git-action button", () => {
     m.unmount();
   });
 
+  it("labels Update from main when the open PR is conflicting", async () => {
+    const merges: number[] = [];
+    const m = await mount(
+      view({
+        detail: detail({
+          thread: thread({
+            prNumber: 49,
+            prUrl: "https://github.com/acme/repo/pull/49",
+            prState: "OPEN",
+            prMergeable: "CONFLICTING",
+          }),
+        }),
+        gitSyncInfo: async () => ({ hasUpstream: true, ahead: 0, behind: 0 }),
+        onPrChecks: async () => ({
+          ok: true,
+          checks: [{ name: "ci", bucket: "pass" }],
+        }),
+        onPrMerge: async () => {
+          merges.push(49);
+          return {
+            number: 49,
+            url: "https://github.com/acme/repo/pull/49",
+            state: "MERGED",
+            branch: "coder/next-action-abc123",
+            created: false,
+          };
+        },
+      }),
+    );
+    await m.flush();
+    const btn = m.query('[data-next-git-action="merge"]');
+    assert.ok(btn, "merge action");
+    assert.equal((btn!.textContent || "").trim(), "Update from main");
+    await m.click(btn);
+    await m.flush();
+    assert.deepEqual(merges, [49]);
+    m.unmount();
+  });
+
   it("does not offer merge when checks failed", async () => {
     const m = await mount(
       view({

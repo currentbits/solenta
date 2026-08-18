@@ -398,4 +398,94 @@ describe("prChecks / mergePr", () => {
       /not open|not mergeable/i,
     );
   });
+
+  it("merges a non-overlapping main commit into the worktree before squash-merge", async () => {
+    const wt = store.getThread(thread.id).worktreePath;
+    fs.writeFileSync(path.join(repo, "other.txt"), "from main\n");
+    git(repo, ["add", "other.txt"]);
+    git(repo, ["commit", "-qm", "main moved"]);
+
+    const originBare = path.join(tmp, "origin.git");
+    git(tmp, ["init", "-q", "--bare", originBare]);
+    git(repo, ["remote", "set-url", "--push", "origin", originBare]);
+    git(repo, ["push", originBare, "main:main"]);
+
+    const info = await mergePr({ store, threadId: thread.id });
+    assert.equal(info.state, "MERGED");
+    assert.equal(
+      fs.readFileSync(path.join(wt, "other.txt"), "utf8"),
+      "from main\n",
+      "the worktree must pick up the new main commit before gh pr merge",
+    );
+    const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+    assert.ok(
+      state.calls.some((c) => c[0] === "pr" && c[1] === "merge"),
+      "must still squash-merge after a clean update",
+    );
+  });
+
+  it("throws MERGE_CONFLICT and skips gh pr merge when main overlaps", async () => {
+    const wt = store.getThread(thread.id).worktreePath;
+    fs.writeFileSync(path.join(repo, "feat.txt"), "main side\n");
+    git(repo, ["add", "feat.txt"]);
+    git(repo, ["commit", "-qm", "main took feat.txt"]);
+
+    await assert.rejects(
+      () => mergePr({ store, threadId: thread.id }),
+      (err) => {
+        assert.match(String(err && err.message), /MERGE_CONFLICT:/);
+        assert.match(String(err && err.message), /feat\.txt/);
+        return true;
+      },
+    );
+    const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+    assert.ok(
+      !state.calls.some((c) => c[0] === "pr" && c[1] === "merge"),
+      "must not call gh pr merge while the worktree is conflicted",
+    );
+    assert.match(
+      fs.readFileSync(path.join(wt, "feat.txt"), "utf8"),
+      /<<<<<<</,
+    );
+  });
+
+  it("finishes an in-progress merge after conflict markers are gone", async () => {
+    const wt = store.getThread(thread.id).worktreePath;
+    fs.writeFileSync(path.join(repo, "feat.txt"), "main side\n");
+    git(repo, ["add", "feat.txt"]);
+    git(repo, ["commit", "-qm", "main took feat.txt"]);
+
+    await assert.rejects(
+      () => mergePr({ store, threadId: thread.id }),
+      /MERGE_CONFLICT:/,
+    );
+
+    fs.writeFileSync(path.join(wt, "feat.txt"), "resolved\n");
+    const originBare = path.join(tmp, "origin.git");
+    git(tmp, ["init", "-q", "--bare", originBare]);
+    git(repo, ["remote", "set-url", "--push", "origin", originBare]);
+
+    const info = await mergePr({ store, threadId: thread.id });
+    assert.equal(info.state, "MERGED");
+    assert.equal(fs.readFileSync(path.join(wt, "feat.txt"), "utf8"), "resolved\n");
+    const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+    assert.ok(state.calls.some((c) => c[0] === "pr" && c[1] === "merge"));
+  });
+
+  it("tells the user to close the PR when the branch matches main", async () => {
+    const wt = store.getThread(thread.id).worktreePath;
+    fs.copyFileSync(path.join(wt, "feat.txt"), path.join(repo, "feat.txt"));
+    git(repo, ["add", "feat.txt"]);
+    git(repo, ["commit", "-qm", "already landed on main"]);
+
+    await assert.rejects(
+      () => mergePr({ store, threadId: thread.id }),
+      /already on main|close the PR/i,
+    );
+    const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+    assert.ok(
+      !state.calls.some((c) => c[0] === "pr" && c[1] === "merge"),
+      "an empty unique tree must not squash-merge",
+    );
+  });
 });

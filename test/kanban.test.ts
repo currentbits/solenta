@@ -47,28 +47,23 @@ function thread(
 }
 
 describe("kanbanColumns", () => {
-  it("assigns threads to Working, Quota wait, Idle, Done, Failed in that order", () => {
+  it("assigns threads to Working, Idle, Done, Failed in that order", () => {
     const columns = kanbanColumns(
       [
         thread({ id: "idle-1", status: "idle" }),
         thread({ id: "work-1", status: "working" }),
         thread({ id: "fail-1", status: "failed" }),
         thread({ id: "done-1", status: "done" }),
-        thread({
-          id: "quota-1",
-          status: "quota-wait",
-          quotaWaitUntil: NOW + 3600_000,
-        }),
       ],
       settleOpts,
     );
     assert.deepEqual(
       columns.map((c) => c.title),
-      ["Working", "Quota wait", "Idle", "Done", "Failed"],
+      ["Working", "Idle", "Done", "Failed"],
     );
     assert.deepEqual(
       columns.map((c) => c.threads.map((t) => t.id)),
-      [["work-1"], ["quota-1"], ["idle-1"], ["done-1"], ["fail-1"]],
+      [["work-1"], ["idle-1"], ["done-1"], ["fail-1"]],
     );
   });
 
@@ -82,7 +77,7 @@ describe("kanbanColumns", () => {
     );
     assert.deepEqual(
       columns.map((c) => c.threads.map((t) => t.id)),
-      [["orch", "w1"], [], [], [], []],
+      [["orch", "w1"], [], [], []],
     );
   });
 

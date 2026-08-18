@@ -68,13 +68,23 @@ GitHub release check for updates.
   work log in the middle, live agent / git / memory panel on the right.
 - **Desktop notifications** when a thread finishes or needs you — never while
   the window is focused.
+- **Teach mode** — hints, not solutions, across all five providers. Autonomy
+  steps from Hints to Review to Pair as reviews pass.
+- **Snooze** a thread until tonight or next week without stopping the agent;
+  settle-on-merge archives it when the PR lands.
+- **⌘N / ⌘⇧N** start a thread; Esc and Ctrl+C stop the live turn.
 
 **Git, in the loop**
 
 - **Isolated worktree per thread** — set up, diff, merge to main, push, or delete
-  from the Git tab. Nothing lands on your working copy by accident.
+  from the Git tab. Setup is fail-closed: a worktree thread never falls back to
+  your checkout. Nothing lands on your working copy by accident.
+- **Next git action** — one header button that names the next step (commit,
+  push, open a PR, watch checks, merge).
+- **Review itinerary** — a risk-ranked read order for every agent diff, not
+  an alphabetical file list.
 - **PRs with live CI** — open a PR from a thread and watch its checks as badges
-  on the thread row.
+  on the thread row. After merge, verify can run again and reopen on a regression.
 - **Issue ingestion** — paste a GitHub issue ref and start a thread from it.
 - **Generated commit messages** from the actual diff.
 - **Conflict forecast** — parallel worktrees heading for the same lines are
@@ -98,7 +108,9 @@ GitHub release check for updates.
   worktree thread and moves to `plan:doing`, up to three running at once.
 - **Agent teams** — workers under one orchestrator share a crew task list and
   message each other directly, with loop guardrails so a crew cannot talk in
-  circles.
+  circles. A **subagent model pool** lets the lead pick a described candidate
+  per spawn. `/handoff`, `/advisor` and `/committee` cover the common shapes
+  from the composer.
 - **Shared agent memory** — a supervised local memory server (MCP + HTTP) is
   auto-injected into sessions, so what one thread learns, the next one knows.
   Entries carry provenance, per-agent trust, and file:line / thread / commit
@@ -138,6 +150,10 @@ GitHub release check for updates.
 - **SSH remote projects** — register projects on other hosts and run agents
   against them over SSH.
 - **Activity feed** — one chronological view of everything your agents did.
+- **Pulse** — Automations, Usage, Fleet, Insights and the morning digest live
+  in the right panel, so the left sidebar stays threads.
+- **Windows** — WSL-boundary detection, a project-add doctor, a sandbox badge,
+  and agent CLIs that actually stop when you hit Stop.
 
 ## Install
 

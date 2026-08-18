@@ -4,39 +4,38 @@
   "chunks": [
     {
       "area": "tests",
-      "rationale": "Start with electron/test/vibe-kanban.test.js. It builds both VK schemas (legacy git_repo_path/worktree_path and v2 repos/container_ref) and asserts the contract: detect db.v2 then db.sqlite, cards become threads with notes + first user message, latest attempt maps branch/PR/worktree only when the directory still exists, done settles, missing checkouts skip, re-import is a no-op on vibeKanbanTaskId, export omits settings. Then test/vibeKanbanSection.test.tsx for the Settings surface (found preview, disabled import, export path, section is mounted).",
+      "rationale": "PR #530 conflicted with origin/main after #531/#532. Two content conflicts: this itinerary and src/shared/ipc.ts. Resolution: keep the Vibe Kanban types, take main's ThreadStatus (quota-wait is gone). Re-run electron/test/vibe-kanban.test.js, test/vibeKanbanSection.test.tsx, ipc-seam, and tsc after the merge.",
       "risks": [
-        "Fixture DBs are a subset of the real migration chain. A later VK table rename (tasks → something else besides issues) would pass these tests and fail on a live db.",
-        "No live Electron dialog or real ~/Library/Application Support/ai.bloop.vibe-kanban was driven."
+        "Fixture DBs are a subset of the real VK migration chain.",
+        "ipc-seam must still register vibeKanban:* after the Ask-mode and peek handlers landed on main."
       ]
     },
     {
       "area": "critical",
-      "rationale": "electron/vibeKanban.js is the whole feature. Read resolveSource/findDatabase (platform dirs + db.v2.sqlite preference), readSnapshot (PRAGMA-adaptive columns, UUID blobs), then importFrom (reuse project by path or vibeKanbanProjectId, createThread + patch, do not start a run, do not create a worktree, do not file GitHub issues). Idempotency is thread.vibeKanbanTaskId.",
+      "rationale": "src/shared/ipc.ts: VibeKanbanPreview / VibeKanbanImportResult stay above ThreadStatus. ThreadStatus is idle|working|done|failed — do not resurrect quota-wait. electron/vibeKanban.js did not conflict; the importer is unchanged.",
       "risks": [
-        "A VK project with several repos keeps only the first repo path; sibling repos are dropped.",
-        "A leftover container_ref that still exists on disk is bound as worktreePath even if git no longer lists it as a worktree.",
-        "node:sqlite is experimental; a Node downgrade below 22 would break preview/import with a thrown error rather than a silent skip."
+        "A leftover quota-wait mention in our branch (useCoder, fakeCoder, ThreadInfo comments) would fail tsc against the narrowed union.",
+        "A VK project with several repos still keeps only the first repo path."
       ]
     },
     {
       "area": "impl",
-      "rationale": "IPC + UI after the importer. electron/ipc.js vibeKanban:* handlers (preview, import broadcasts threads:changed, pickDataDir, export via save dialog). CoderApi in src/shared/ipc.ts, preload, wireClient, fakeCoder, devCoder. src/components/VibeKanbanSection.tsx in Settings under Your data. useCoder refreshes projects.list() on threads:changed so imported projects appear without a restart.",
+      "rationale": "README, SettingsModal, preload, ipc.js, wireClient, useCoder, fakeCoder, devCoder auto-merged. Confirm vibeKanban:* handlers and the Your data section still sit next to Ask-mode / peek additions from main.",
       "risks": [
-        "threads:changed now also lists projects. Cheap, but a failed projects.list is swallowed and would leave a stale sidebar after an import that only added projects.",
-        "Web mode has no folder/save dialog; pick/export throw. The section still renders and Import is disabled until a preview finds a db, which web cannot do."
+        "threads:changed still refreshes projects.list() so imported projects appear without a restart.",
+        "Web mode still has no folder/save dialog."
       ]
     },
     {
       "area": "docs",
-      "rationale": "README feature bullet and site/docs.html paragraph under worktrees. They state the data dir, the mapping (cards → threads), and the JSON export. Read last.",
+      "rationale": "README VK bullet and site/docs.html paragraph auto-merged next to the 0.7.0 feature list. Read last.",
       "risks": [
         "Site docs are the girder-deployed copy; this branch does not publish them."
       ]
     }
   ],
   "risks": [
-    "Cards become Solenta threads, not GitHub planboard issues. Filing every VK card as a gh issue would spam the origin; existing PR numbers on attempts are mapped onto the thread instead.",
-    "Verification is the electron + renderer tests and tsc. The Settings modal was not driven in a live Electron window."
+    "Cards become Solenta threads, not GitHub planboard issues.",
+    "Verification is the electron + renderer tests and tsc. No live Electron Settings click-through after this merge."
   ]
 }

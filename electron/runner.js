@@ -23,6 +23,7 @@ const {
   listProviders,
 } = require("./providers.js");
 const orchcommands = require("./orchcommands.js");
+const ask = require("./ask.js");
 const {
   getClaudeMcpArgs,
   getCodexMcpArgs,
@@ -51,11 +52,6 @@ const {
 } = require("./verify.js");
 const { maybeApplyFmTitle } = require("./fm-title.js");
 const { classifyTool } = require("./guardrails.js");
-const {
-  decideQuotaWait,
-  formatQuotaWaitClock,
-  quotaWaitEnabled,
-} = require("./quotaWait.js");
 
 const KIMI_PUSH_THROTTLE_MS = 250;
 
@@ -378,6 +374,8 @@ function tryReadCodeIndex(userDataPath, repoRoot) {
  * @param {typeof clearInterval} [opts.clearIntervalFn]
  * @param {string} [opts.userDataPath] - for memory auto-record
  * @param {() => { running: boolean, adopted: boolean, port: number | null }} [opts.getMemoryStatus]
+ * @param {(opts: object) => Promise<{ text: string, source: string } | null>} [opts.askComplete] - Ask mode seam (issue #392)
+ * @param {(query: string, projectPath: string) => Promise<object[]>} [opts.searchMemory] - Ask mode memory seam
  */
 function createRunner(opts) {
   const {
@@ -389,6 +387,8 @@ function createRunner(opts) {
     clearIntervalFn = clearInterval,
     userDataPath = "",
     getMemoryStatus: getMemStatus = getMemoryStatus,
+    askComplete = ask.completeAsk,
+    searchMemory = null,
   } = opts;
 
   /**
@@ -1252,13 +1252,7 @@ function createRunner(opts) {
     if (status === "done") {
       afterSuccessfulTurn(threadId);
     } else if (status === "failed") {
-      const parked = store.getThread(threadId);
-      if (parked && parked.status === "quota-wait") {
-        // Parked on a reset clock: not a failure. Skip orch wake-up, crew
-        // release, and the queued drain — those belong to a real terminal.
-      } else {
-        afterFailedTurn(threadId);
-      }
+      afterFailedTurn(threadId);
     } else {
       // stopped (and any other terminal): deliver notices that queued
       // while this thread was the orchestrator mid-run.
@@ -1339,11 +1333,7 @@ function createRunner(opts) {
     }
     // Verify restamps status "working"; skip so we don't start the queued
     // prompt on top of the gate. The verify settle path drains instead.
-    // A parked quota-wait is not a terminal — don't drain onto it.
-    const settled = store.getThread(threadId);
-    if (!settled || settled.status !== "quota-wait") {
-      maybeDrainQueued(threadId);
-    }
+    maybeDrainQueued(threadId);
   }
 
   /**
@@ -1773,165 +1763,6 @@ function createRunner(opts) {
   }
 
   /**
-   * Quota-wait (#462): one timer per parked thread. Wake once; a second
-   * quota error on the same prompt fails. Distinct from #286 / #294.
-   * @type {Map<string, ReturnType<typeof setTimeout>>}
-   */
-  const quotaTimers = new Map();
-
-  function cancelQuotaWake(threadId) {
-    const t = quotaTimers.get(threadId);
-    if (!t) return;
-    clearTimeout(t);
-    quotaTimers.delete(threadId);
-  }
-
-  function lastUserOnThread(threadId) {
-    const msgs = store.getMessages(threadId) || [];
-    for (let i = msgs.length - 1; i >= 0; i--) {
-      if (msgs[i] && msgs[i].role === "user") return msgs[i];
-    }
-    return null;
-  }
-
-  /**
-   * Park or fail. Call instead of writing status:"failed" on a provider
-   * turn so the first threads:changed never flashes Failed.
-   * @param {string} threadId
-   * @param {string} errText
-   * @param {object} [extraPatch]
-   * @returns {{ parked: boolean, until?: number }}
-   */
-  function markRunFailed(threadId, errText, extraPatch) {
-    const park = decideQuotaWait({
-      text: errText,
-      thread: store.getThread(threadId),
-      settings: store.getSettings(),
-    });
-    if (park) {
-      store.updateThread(
-        threadId,
-        {
-          ...(extraPatch || {}),
-          status: "quota-wait",
-          runStartedAt: null,
-          lastError: shortError(errText),
-          quotaWaitUntil: park.until,
-        },
-        { touch: true },
-      );
-      appendMessage(
-        threadId,
-        "event",
-        `Quota wait: usage limit reached. Resuming at ${formatQuotaWaitClock(park.until)}.`,
-      );
-      scheduleQuotaWake(threadId, park.until);
-      return { parked: true, until: park.until };
-    }
-    store.updateThread(
-      threadId,
-      {
-        ...(extraPatch || {}),
-        status: "failed",
-        runStartedAt: null,
-        lastError: shortError(errText),
-      },
-      { touch: true },
-    );
-    return { parked: false };
-  }
-
-  function scheduleQuotaWake(threadId, until) {
-    cancelQuotaWake(threadId);
-    const delay = Math.max(1000, Number(until) + 2000 - Date.now());
-    const cap = Math.min(delay, 2147483647);
-    const timer = setTimeout(() => {
-      quotaTimers.delete(threadId);
-      void fireQuotaWake(threadId);
-    }, cap);
-    if (typeof timer.unref === "function") timer.unref();
-    quotaTimers.set(threadId, timer);
-  }
-
-  async function fireQuotaWake(threadId) {
-    const thread = store.getThread(threadId);
-    if (!thread || thread.status !== "quota-wait") return;
-    if (!quotaWaitEnabled(thread, store.getSettings())) return;
-    if (active.has(threadId)) return;
-    const user = lastUserOnThread(threadId);
-    if (!user || !String(user.text || "").trim()) {
-      store.updateThread(
-        threadId,
-        {
-          status: "failed",
-          quotaWaitUntil: null,
-          lastError: shortError("Quota wait: nothing to resume"),
-        },
-        { touch: true },
-      );
-      store.save();
-      pushDetail(threadId);
-      pushThreadsChanged();
-      return;
-    }
-    try {
-      await startRun({
-        threadId,
-        prompt: user.text,
-        attachments: user.attachments,
-        fromQuotaWait: true,
-      });
-    } catch (err) {
-      const reason = err && err.message ? String(err.message) : String(err);
-      store.updateThread(
-        threadId,
-        {
-          status: "failed",
-          quotaWaitUntil: null,
-          quotaWaitResumed: true,
-          lastError: shortError(`Quota wait: resume failed: ${reason}`),
-        },
-        { touch: true },
-      );
-      appendMessage(
-        threadId,
-        "event",
-        `Quota wait: resume failed: ${reason}`,
-      );
-      store.save();
-      pushDetail(threadId);
-      pushThreadsChanged();
-    }
-  }
-
-  /**
-   * Resume a parked quota-wait now (banner / IPC). Counts as the one-shot.
-   * @param {{ threadId: string }} input
-   */
-  async function resumeQuotaWait(input) {
-    const threadId = input && input.threadId;
-    const thread = store.getThread(threadId);
-    if (!thread) throw new Error(`Unknown thread: ${threadId}`);
-    if (thread.status !== "quota-wait") {
-      throw new Error("Thread is not waiting on a provider quota reset");
-    }
-    cancelQuotaWake(threadId);
-    if (active.has(threadId)) {
-      throw new Error("A run is already active on this thread");
-    }
-    const user = lastUserOnThread(threadId);
-    if (!user || !String(user.text || "").trim()) {
-      throw new Error("Quota wait: nothing to resume");
-    }
-    return startRun({
-      threadId,
-      prompt: user.text,
-      attachments: user.attachments,
-      fromQuotaWait: true,
-    });
-  }
-
-  /**
    * Track phase transitions for simulated work log (one item per phase).
    * @param {string} threadId
    * @param {string} runId
@@ -2082,7 +1913,15 @@ function createRunner(opts) {
       } catch (err) {
         clearRun(threadId);
         const errText = `Run error: ${err && err.message ? err.message : String(err)}`;
-        markRunFailed(threadId, errText);
+        store.updateThread(
+          threadId,
+          {
+            status: "failed",
+            runStartedAt: null,
+            lastError: shortError(errText),
+          },
+          { touch: true },
+        );
         appendMessage(threadId, "event", errText, runId);
         appendDoneWorkLog(threadId, runId, "Run error");
         store.save();
@@ -2240,7 +2079,15 @@ function createRunner(opts) {
           : `Run error (exit ${exitCode == null ? "?" : exitCode})`;
         appendMessage(threadId, "event", errText, runId);
         appendDoneWorkLog(threadId, runId, "Run error");
-        markRunFailed(threadId, errText);
+        store.updateThread(
+          threadId,
+          {
+            status: "failed",
+            runStartedAt: null,
+            lastError: shortError(errText),
+          },
+          { touch: true },
+        );
         store.save();
         pushDetail(threadId, realState);
         pushThreadsChanged();
@@ -2259,7 +2106,15 @@ function createRunner(opts) {
         const errText = `Run error: ${msg}`;
         appendMessage(threadId, "event", errText, runId);
         appendDoneWorkLog(threadId, runId, "Run error");
-        markRunFailed(threadId, errText);
+        store.updateThread(
+          threadId,
+          {
+            status: "failed",
+            runStartedAt: null,
+            lastError: shortError(errText),
+          },
+          { touch: true },
+        );
         store.save();
         pushDetail(threadId, realState);
         pushThreadsChanged();
@@ -2839,23 +2694,20 @@ function createRunner(opts) {
               failText += "\nSession reset; the next message starts fresh.";
             }
           }
-          if (ok) {
-            store.updateThread(
-              threadId,
-              {
-                status: "done",
-                sessionId: sessionLost ? null : capturedSessionId,
-                runStartedAt: null,
-                lastError: null,
-              },
-              { touch: true },
-            );
-          } else {
+          store.updateThread(
+            threadId,
+            {
+              status: ok ? "done" : "failed",
+              sessionId: sessionLost ? null : capturedSessionId,
+              runStartedAt: null,
+              lastError: ok ? null : shortError(failText),
+            },
+            { touch: true },
+          );
+
+          if (!ok) {
             appendMessage(threadId, "event", failText, runId);
             appendDoneWorkLog(threadId, runId, "Run error");
-            markRunFailed(threadId, failText, {
-              sessionId: sessionLost ? null : capturedSessionId,
-            });
           }
 
           store.save();
@@ -2936,7 +2788,15 @@ function createRunner(opts) {
           : `Run error (exit ${code == null ? "?" : code})`;
         appendMessage(threadId, "event", errText, runId);
         appendDoneWorkLog(threadId, runId, "Run error");
-        markRunFailed(threadId, errText);
+        store.updateThread(
+          threadId,
+          {
+            status: "failed",
+            runStartedAt: null,
+            lastError: shortError(errText),
+          },
+          { touch: true },
+        );
         store.save();
         pushDetail(threadId, claudeState);
         pushThreadsChanged();
@@ -2960,7 +2820,15 @@ function createRunner(opts) {
         const errText = `Run error: ${msg}`;
         appendMessage(threadId, "event", errText, runId);
         appendDoneWorkLog(threadId, runId, "Run error");
-        markRunFailed(threadId, errText);
+        store.updateThread(
+          threadId,
+          {
+            status: "failed",
+            runStartedAt: null,
+            lastError: shortError(errText),
+          },
+          { touch: true },
+        );
         store.save();
         pushDetail(threadId, claudeState);
         pushThreadsChanged();
@@ -3440,7 +3308,15 @@ function createRunner(opts) {
           : `Run error (exit ${code == null ? "?" : code})`;
         appendMessage(threadId, "event", errText, runId);
         appendDoneWorkLog(threadId, runId, "Run error");
-        markRunFailed(threadId, errText);
+        store.updateThread(
+          threadId,
+          {
+            status: "failed",
+            runStartedAt: null,
+            lastError: shortError(errText),
+          },
+          { touch: true },
+        );
         store.save();
         pushDetail(threadId, codexState);
         pushThreadsChanged();
@@ -3463,7 +3339,15 @@ function createRunner(opts) {
         const errText = `Run error: ${msg}`;
         appendMessage(threadId, "event", errText, runId);
         appendDoneWorkLog(threadId, runId, "Run error");
-        markRunFailed(threadId, errText);
+        store.updateThread(
+          threadId,
+          {
+            status: "failed",
+            runStartedAt: null,
+            lastError: shortError(errText),
+          },
+          { touch: true },
+        );
         store.save();
         pushDetail(threadId, codexState);
         pushThreadsChanged();
@@ -3808,7 +3692,15 @@ function createRunner(opts) {
           : `Run error (exit ${code == null ? "?" : code})`;
         appendMessage(threadId, "event", errText, runId);
         appendDoneWorkLog(threadId, runId, "Run error");
-        markRunFailed(threadId, errText);
+        store.updateThread(
+          threadId,
+          {
+            status: "failed",
+            runStartedAt: null,
+            lastError: shortError(errText),
+          },
+          { touch: true },
+        );
         store.save();
         pushDetail(threadId, kimiState);
         pushThreadsChanged();
@@ -3834,7 +3726,15 @@ function createRunner(opts) {
         const errText = `Run error: ${msg}`;
         appendMessage(threadId, "event", errText, runId);
         appendDoneWorkLog(threadId, runId, "Run error");
-        markRunFailed(threadId, errText);
+        store.updateThread(
+          threadId,
+          {
+            status: "failed",
+            runStartedAt: null,
+            lastError: shortError(errText),
+          },
+          { touch: true },
+        );
         store.save();
         pushDetail(threadId, kimiState);
         pushThreadsChanged();
@@ -4195,7 +4095,15 @@ function createRunner(opts) {
           : `Run error (exit ${code == null ? "?" : code})`;
         appendMessage(threadId, "event", errText, runId);
         appendDoneWorkLog(threadId, runId, "Run error");
-        markRunFailed(threadId, errText);
+        store.updateThread(
+          threadId,
+          {
+            status: "failed",
+            runStartedAt: null,
+            lastError: shortError(errText),
+          },
+          { touch: true },
+        );
         store.save();
         pushDetail(threadId, opencodeState);
         pushThreadsChanged();
@@ -4221,7 +4129,15 @@ function createRunner(opts) {
         const errText = `Run error: ${msg}`;
         appendMessage(threadId, "event", errText, runId);
         appendDoneWorkLog(threadId, runId, "Run error");
-        markRunFailed(threadId, errText);
+        store.updateThread(
+          threadId,
+          {
+            status: "failed",
+            runStartedAt: null,
+            lastError: shortError(errText),
+          },
+          { touch: true },
+        );
         store.save();
         pushDetail(threadId, opencodeState);
         pushThreadsChanged();
@@ -4292,7 +4208,15 @@ function createRunner(opts) {
       appendMessage(threadId, "user", prompt, runId, null, attachments);
     }
     appendMessage(threadId, "event", errText, runId);
-    markRunFailed(threadId, errText);
+    store.updateThread(
+      threadId,
+      {
+        status: "failed",
+        runStartedAt: null,
+        lastError: shortError(errText),
+      },
+      { touch: true },
+    );
     store.save();
     pushDetail(threadId);
     pushThreadsChanged();
@@ -4465,6 +4389,186 @@ function createRunner(opts) {
     return started;
   }
 
+  /**
+   * Ask-mode turn (issue #392): no budget, no worktree, no tool loop, no
+   * usage row. fm → print-mode → retrieval-only. Returns { runId } the
+   * same way every other start*Run does; completion is async.
+   *
+   * @param {object} input
+   * @param {object} thread
+   */
+  async function startAskRun(input, thread) {
+    const { threadId, prompt } = input;
+    const attachments = sanitizeAttachments(input.attachments);
+    const project = store.getProject(thread.projectId);
+    const repoRoot = (project && project.path) || "";
+    if (userDataPath && repoRoot) {
+      try {
+        require("./codeindex.js").maybeRefreshIndex({ userDataPath, repoRoot });
+      } catch {
+        /* never block */
+      }
+    }
+
+    const runId = randomUUID();
+    otel.startRun({
+      threadId,
+      runId,
+      provider: "ask",
+      model: thread.model || null,
+      parentRunId: input.parentRunId || null,
+    });
+    if (!input.fromQuotaWait) {
+      appendMessage(threadId, "user", prompt, runId, null, attachments);
+    }
+
+    let title = thread.title;
+    if (title === "New Thread") {
+      const firstLine = String(prompt).split(/\r?\n/)[0].trim();
+      const max = services.THREAD_TITLE_MAX || 60;
+      title = firstLine.slice(0, max) || "New Thread";
+    }
+    store.updateThread(
+      threadId,
+      {
+        status: "working",
+        title,
+        runStartedAt: Date.now(),
+        awaitingInput: false,
+        lastEventAt: null,
+        stalledAt: null,
+        quotaWaitUntil: null,
+        pendingWorktree: false,
+        ...services.clearSettledOnActivity(thread),
+      },
+      { touch: true },
+    );
+    store.save();
+    pushDetail(threadId);
+    pushThreadsChanged();
+
+    /** @type {{ kill?: () => void }} */
+    const handle = {};
+    const entry = {
+      kind: "ask",
+      runId,
+      handle: {
+        kill() {
+          if (typeof handle.kill === "function") handle.kill();
+        },
+      },
+    };
+    active.set(threadId, entry);
+
+    const index = userDataPath && repoRoot
+      ? tryReadCodeIndex(userDataPath, repoRoot)
+      : null;
+    const indexNote = services.codeIndexNoteFor(index);
+    const matchNote = ask.formatMatchingFiles(index, prompt);
+    const digestNote = ask.formatThreadDigest(store.getMessages(threadId));
+
+    void (async () => {
+      let memoryNote = "";
+      try {
+        const search =
+          searchMemory ||
+          (async (query, projectPath) => {
+            if (!userDataPath) return [];
+            const { createMemoryProxy } = require("./memory-proxy.js");
+            const proxy = createMemoryProxy({ userDataPath });
+            return await proxy.search({
+              query,
+              project: projectPath || undefined,
+            });
+          });
+        const hits = await search(String(prompt || ""), repoRoot);
+        memoryNote = ask.formatMemoryHits(hits);
+      } catch {
+        memoryNote = "";
+      }
+
+      const pack = {
+        question: String(prompt || ""),
+        indexNote,
+        memoryNote,
+        digestNote,
+        matchNote,
+      };
+      const askPrompt = ask.buildAskPrompt(pack);
+
+      let answer = "";
+      let source = "retrieval";
+      try {
+        const result = await askComplete({
+          prompt: askPrompt,
+          provider: resolveProvider(thread),
+          model: thread.model,
+          onHandle: (h) => {
+            handle.kill = h && h.kill;
+          },
+        });
+        if (result && result.text) {
+          answer = result.text;
+          source = result.source || "print";
+        }
+      } catch {
+        answer = "";
+      }
+      if (!answer) answer = ask.retrievalFallback(pack);
+
+      if (!active.has(threadId) || active.get(threadId) !== entry) return;
+      if (entry.stopping) return;
+
+      appendMessage(threadId, "assistant", answer, runId);
+      if (source === "retrieval") {
+        appendMessage(
+          threadId,
+          "event",
+          "Answered from the repo map and memory (no model).",
+          runId,
+        );
+      }
+      clearRun(threadId);
+      store.updateThread(
+        threadId,
+        { status: "done", runStartedAt: null },
+        { touch: true },
+      );
+      store.save();
+      pushDetail(threadId);
+      pushThreadsChanged();
+      otel.endRun({ threadId, runId, status: "done" });
+      // Skip notifyRunTerminal: that path checkpoints the worktree and
+      // records agent spend. Ask must do neither.
+      finishSuccessfulTurn(threadId);
+    })().catch((err) => {
+      if (!active.has(threadId) || active.get(threadId) !== entry) return;
+      const errText = `Ask error: ${err && err.message ? err.message : String(err)}`;
+      appendMessage(threadId, "event", errText, runId);
+      clearRun(threadId);
+      store.updateThread(
+        threadId,
+        {
+          status: "failed",
+          runStartedAt: null,
+          lastError: shortError(errText),
+        },
+        { touch: true },
+      );
+      store.save();
+      pushDetail(threadId);
+      pushThreadsChanged();
+      otel.endRun({
+        threadId,
+        runId,
+        status: "failed",
+        error: shortError(errText),
+      });
+    });
+
+    return { runId };
+  }
+
   async function startRun(input) {
     const { threadId, prompt } = input;
     const attachments = sanitizeAttachments(input.attachments);
@@ -4479,8 +4583,15 @@ function createRunner(opts) {
 
     // Machine-delivered turns increment autoTurns in flushOrchNotices.
     // Anything else (user send, retry, verify fix) is a human in the loop.
-    if (!input.fromNotice && !input.fromQuotaWait) autoTurns.set(threadId, 0);
-    cancelQuotaWake(threadId);
+    if (!input.fromNotice) autoTurns.set(threadId, 0);
+
+    // Ask mode (issue #392): cheap no-tools Q&A. Intercept BEFORE orch
+    // commands, budget, and worktree materialization so a `/advisor` on an
+    // Ask thread is just a question and a defaultWorktree leftover cannot
+    // touch the disk.
+    if (thread.ask === true) {
+      return startAskRun(input, thread);
+    }
 
     // Orchestration commands (issue #338): `/handoff`, `/advisor` and
     // `/committee` are named compositions of the fork-and-notice machinery
@@ -4624,10 +4735,8 @@ function createRunner(opts) {
     });
     // Transcript stores the RAW user prompt. The hand-off / rewind context
     // block (if any) is CLI-only — applied once below when no sessionId
-    // exists yet. A quota-wait resume is the SAME turn: do not append again.
-    if (!input.fromQuotaWait) {
-      appendMessage(threadId, "user", prompt, runId, null, attachments);
-    }
+    // exists yet.
+    appendMessage(threadId, "user", prompt, runId, null, attachments);
 
     let title = thread.title;
     if (title === "New Thread") {
@@ -4648,8 +4757,6 @@ function createRunner(opts) {
         awaitingInput: false,
         lastEventAt: null,
         stalledAt: null,
-        quotaWaitUntil: null,
-        quotaWaitResumed: input.fromQuotaWait === true,
         ...services.clearSettledOnActivity(thread),
       },
       { touch: true },
@@ -4700,7 +4807,9 @@ function createRunner(opts) {
           (projectForGate && projectForGate.path) ||
           null,
       ) +
+      services.reviewItineraryNoteFor(dispatchThread) +
       services.teachNoteFor(dispatchThread) +
+      services.askNoteFor(dispatchThread) +
       services.crewTaskNoteFor(store, dispatchThread) +
       services.codeIndexNoteFor(
         userDataPath && repoRoot
@@ -4852,7 +4961,8 @@ function createRunner(opts) {
         entry.kind === "codex" ||
         entry.kind === "kimi" ||
         entry.kind === "opencode" ||
-        entry.kind === "real") &&
+        entry.kind === "real" ||
+        entry.kind === "ask") &&
       entry.handle
     ) {
       try {
@@ -4952,7 +5062,8 @@ function createRunner(opts) {
           entry.kind === "codex" ||
           entry.kind === "kimi" ||
           entry.kind === "opencode" ||
-          entry.kind === "real") &&
+          entry.kind === "real" ||
+          entry.kind === "ask") &&
         entry.handle
       ) {
         entry.stopping = true;
@@ -4976,9 +5087,6 @@ function createRunner(opts) {
         { touch: true },
       );
       marked = true;
-    }
-    for (const id of [...quotaTimers.keys()]) {
-      cancelQuotaWake(id);
     }
     // Kept-alive Claude sessions (idle between turns): kill + clear timers.
     for (const threadId of [...claudeSessions.keys()]) {
@@ -5070,25 +5178,6 @@ function createRunner(opts) {
     }
   }
 
-  function refreshQuotaWait(threadId) {
-    const thread = store.getThread(threadId);
-    if (!thread || thread.status !== "quota-wait" || !thread.quotaWaitUntil) {
-      cancelQuotaWake(threadId);
-      return;
-    }
-    if (!quotaWaitEnabled(thread, store.getSettings())) {
-      cancelQuotaWake(threadId);
-      return;
-    }
-    scheduleQuotaWake(threadId, thread.quotaWaitUntil);
-  }
-
-  function refreshAllQuotaWaits() {
-    for (const t of store.getThreads()) {
-      if (t.status === "quota-wait") refreshQuotaWait(t.id);
-    }
-  }
-
   // Native timer (not setIntervalFn): tests replace that hook for sim ticks.
   const stallTimer = setInterval(() => {
     try {
@@ -5099,15 +5188,10 @@ function createRunner(opts) {
   }, 15_000);
   if (typeof stallTimer.unref === "function") stallTimer.unref();
 
-  refreshAllQuotaWaits();
-
   return {
     startRun,
     startWorkflowRun,
     stopRun,
-    resumeQuotaWait,
-    refreshQuotaWait,
-    refreshAllQuotaWaits,
     getActiveWorkflow,
     isRunning,
     stopAll,

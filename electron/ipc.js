@@ -179,6 +179,33 @@ function tryResolveWorkspaceFile(store, threadId, rawPath) {
 }
 
 /**
+ * Shared get/peek payload. Selecting a thread (get) stamps lastVisitedAt;
+ * peeking a sibling for the divergence compare must not (issue #393).
+ */
+function threadDetailFor(ctx, id, markVisited) {
+  const workflow =
+    typeof ctx.runner.getActiveWorkflow === "function"
+      ? ctx.runner.getActiveWorkflow(id)
+      : null;
+  let view = null;
+  if (workflow && ctx.runner.toWorkflowView) {
+    // Surface workflow for simulate (core) and orchestrated multi-phase runs.
+    if (
+      workflow.__orchestrated ||
+      (!workflow.__real && !workflow.__claude && !workflow.__codex)
+    ) {
+      view = ctx.runner.toWorkflowView(workflow);
+    }
+  }
+  return services.getThreadDetail(ctx.store, id, view, {
+    markVisited,
+    pendingPermission: ctx.runner.getPendingPermission
+      ? ctx.runner.getPendingPermission(id)
+      : null,
+  });
+}
+
+/**
  * ONE channel → handler map. Both transports consume this object:
  *   ipcMain.handle(channel, (_, ...a) => IPC_HANDLERS[channel](ctx, ...a))
  *   webBridge dispatch: IPC_HANDLERS[channel](ctx, ...args)
@@ -293,6 +320,14 @@ const IPC_HANDLERS = {
   },
   "threads:create": async (ctx, input) => {
     const thread = services.createThread(ctx.store, input);
+    // Ask mode (issue #392): no worktree, no orchestrator fork. Wins over
+    // both so a defaultWorktree setting cannot sneak a pending worktree
+    // onto a read-only Q&A thread.
+    if (input && input.ask === true) {
+      services.startAsk(ctx.store, { threadId: thread.id });
+      ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+      return ctx.store.getThread(thread.id);
+    }
     // Orchestrator thread (issue #202): the first prompt is forked to a
     // worker, which is what gets the worktree — so this branch wins over
     // `worktree` and never touches the filesystem itself.
@@ -369,25 +404,9 @@ const IPC_HANDLERS = {
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     return result;
   },
-  "threads:get": async (ctx, id) => {
-    const workflow = ctx.runner.getActiveWorkflow(id);
-    let view = null;
-    if (workflow && ctx.runner.toWorkflowView) {
-      // Surface workflow for simulate (core) and orchestrated multi-phase runs.
-      if (
-        workflow.__orchestrated ||
-        (!workflow.__real && !workflow.__claude && !workflow.__codex)
-      ) {
-        view = ctx.runner.toWorkflowView(workflow);
-      }
-    }
-    return services.getThreadDetail(ctx.store, id, view, {
-      markVisited: true,
-      pendingPermission: ctx.runner.getPendingPermission
-        ? ctx.runner.getPendingPermission(id)
-        : null,
-    });
-  },
+  "threads:get": async (ctx, id) => threadDetailFor(ctx, id, true),
+  // Compare/sibling load (issue #393). Same payload as get, no visit stamp.
+  "threads:peek": async (ctx, id) => threadDetailFor(ctx, id, false),
   "threads:respondPermission": async (ctx, input) => {
     // runner.respondPermission pushes the updated detail itself.
     ctx.runner.respondPermission(input);
@@ -431,14 +450,6 @@ const IPC_HANDLERS = {
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     return updated;
   },
-  "threads:setQuotaWaitAutoResume": async (ctx, input) => {
-    const updated = services.setQuotaWaitAutoResume(ctx.store, input);
-    if (ctx.runner && typeof ctx.runner.refreshQuotaWait === "function") {
-      ctx.runner.refreshQuotaWait(input.threadId);
-    }
-    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
-    return updated;
-  },
   "threads:setNotes": async (ctx, input) => {
     const updated = services.setNotes(ctx.store, input);
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
@@ -465,6 +476,16 @@ const IPC_HANDLERS = {
   },
   "threads:startTeach": async (ctx, input) => {
     const updated = services.startTeach(ctx.store, input);
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    return updated;
+  },
+  "threads:startAsk": async (ctx, input) => {
+    const updated = services.startAsk(ctx.store, input);
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    return updated;
+  },
+  "threads:stopAsk": async (ctx, input) => {
+    const updated = services.stopAsk(ctx.store, input);
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     return updated;
   },
@@ -558,9 +579,6 @@ const IPC_HANDLERS = {
     } catch {
       // ignore
     }
-    if (ctx.runner && typeof ctx.runner.refreshAllQuotaWaits === "function") {
-      ctx.runner.refreshAllQuotaWaits();
-    }
     return next;
   },
   "skills:list": async (ctx, input) => {
@@ -626,9 +644,6 @@ const IPC_HANDLERS = {
   "runs:stop": async (ctx, input) => {
     return ctx.runner.stopRun(input);
   },
-  "runs:resumeQuotaWait": async (ctx, input) => {
-    return ctx.runner.resumeQuotaWait(input);
-  },
   "git:status": async (ctx, projectId) => {
     const project = ctx.store.getProject(projectId);
     if (!project) {
@@ -649,6 +664,18 @@ const IPC_HANDLERS = {
   },
   "git:diff": async (ctx, input) => {
     return diff({ store: ctx.store, threadId: input.threadId });
+  },
+  "git:reviewContext": async (ctx, input) => {
+    const { loadReviewContext } = require("./reviewItinerary.js");
+    return loadReviewContext({
+      store: ctx.store,
+      threadId: input.threadId,
+      userDataPath: ctx.userDataPath,
+    });
+  },
+  "git:setReviewAccepted": async (ctx, input) => {
+    const { setReviewAccepted } = require("./reviewItinerary.js");
+    return setReviewAccepted(ctx.store, input.threadId, input.hashes);
   },
   "git:commit": async (ctx, input) => {
     return commit({

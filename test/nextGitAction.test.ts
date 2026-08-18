@@ -244,6 +244,22 @@ describe("suggestNextGitAction", () => {
     assert.equal(none.kind, "merge");
   });
 
+  it("labels Update from main when the open PR is conflicting", () => {
+    const action = suggestNextGitAction(
+      input({
+        prNumber: 49,
+        prState: "OPEN",
+        mergeable: "CONFLICTING",
+        checks: { ok: true, checks: [{ name: "ci", bucket: "pass" }] },
+      }),
+    );
+    assert.equal(action.kind, "merge");
+    assert.equal(action.label, "Update from main");
+    assert.match(action.title, /main|base/i);
+    assert.equal(action.primary, true);
+    assert.equal(action.actionable, true);
+  });
+
   it("treats skipping as pass and cancel as fail", () => {
     const skip = suggestNextGitAction(
       input({
