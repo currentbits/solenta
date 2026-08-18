@@ -125,7 +125,7 @@ function sendJson(res, status, value) {
   res.end(JSON.stringify(value))
 }
 
-const entryType = z.enum(['knowledge', 'task', 'convention', 'run'])
+const entryType = z.enum(['knowledge', 'task', 'convention', 'run', 'strategy'])
 const taskStatus = z.enum(['active', 'done', 'abandoned'])
 const feedbackVerdict = z.enum(['helpful', 'harmful'])
 const sessionRole = z.enum(['user', 'assistant', 'tool', 'system'])
@@ -229,7 +229,7 @@ export function buildServer(memory) {
     'memory_bootstrap',
     {
       description:
-        'One-call startup context: conventions, knowledge, and active tasks for a project, plus the usage protocol. Call at session start.',
+        'One-call startup context: conventions, distilled strategies, knowledge, and active tasks for a project, plus the usage protocol. Call at session start.',
       inputSchema: {
         project: z.string().optional(),
       },
@@ -287,6 +287,18 @@ export function buildServer(memory) {
       },
     },
     async (args) => json(memory.maintenance(args)),
+  )
+
+  server.registerTool(
+    'memory_distill',
+    {
+      description:
+        'Read-only evidence pack for writing type:strategy memories: harmful-feedback entries and abandoned tasks (failures), recent runs and helpful-feedback entries (successes), plus titles of strategies already stored. Write each distilled rule with memory_store({ type: \'strategy\' }). Makes no changes.',
+      inputSchema: {
+        project: z.string().optional(),
+      },
+    },
+    async (args) => json(memory.distill(args)),
   )
 
   server.registerTool(

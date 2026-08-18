@@ -137,6 +137,12 @@
   border-color: rgba(251, 191, 36, 0.3);
 }
 
+.badgeStrategy {
+  color: #c4b5fd;
+  background: rgba(167, 139, 250, 0.12);
+  border-color: rgba(167, 139, 250, 0.3);
+}
+
 .badgeKnowledge {
   color: #93c5fd;
   background: var(--blue-soft);

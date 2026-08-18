@@ -112,6 +112,25 @@ describe("MemoryTab list", () => {
     m.unmount();
   });
 
+  it("renders a strategy entry with its own badge", async () => {
+    const m = await mount(
+      tab({}, newCalls(), [
+        entry({ type: "strategy", title: "When merging, stash by path" }),
+      ]),
+    );
+    const badge = m.query('[class*="badge"]');
+    assert.equal(badge?.textContent, "strategy", "the type badge must say strategy");
+    assert.ok(
+      badge?.className.includes("badgeStrategy"),
+      `strategy must use its own badge class, got: ${badge?.className}`,
+    );
+    assert.ok(
+      !badge?.className.includes("badgeRun"),
+      "strategy must not fall through to the run badge",
+    );
+    m.unmount();
+  });
+
   it("asks the server for THIS project only, and shows the tag", async () => {
     // The tag alone proves only that the fixture had a project field. What
     // matters is the argument: dropping it makes every project's memory show
@@ -398,6 +417,25 @@ describe("MemoryTab wiring the reviewer's mutations exposed", () => {
       inputs.length,
       0,
       "expanding another card must not put it into edit mode with A's draft",
+    );
+    m.unmount();
+  });
+
+  it("can store a strategy entry from the form", async () => {
+    const calls = newCalls();
+    const m = await mount(tab({}, calls));
+    await m.change(m.query('select[aria-label="Memory type"]'), "strategy");
+    await m.type(m.query('input[placeholder="Title"]'), "When merging, stash by path");
+    await m.type(
+      m.query('textarea[placeholder="What should future sessions know?"]'),
+      "When a worktree merge is dirty, stash by path then retry.",
+    );
+    await m.click(m.byText("Save"));
+    assert.equal(calls.store.length, 1, "Save must store once");
+    assert.equal(
+      (calls.store[0] as { type: string }).type,
+      "strategy",
+      "the store form must send type strategy",
     );
     m.unmount();
   });

@@ -18,12 +18,16 @@ cd memory-server && npm install && node src/index.js
 
 ## Tools
 
-- `memory_bootstrap` — conventions, knowledge, active tasks, protocol
+- `memory_bootstrap` — conventions, strategies, knowledge, active tasks, protocol
+
+Entry types: `convention` (standing rule, importance 5), `strategy` (distilled "when doing X, do/don't Y" procedural rule, 4), `knowledge` (fact, 3), `task` (3), `run` (episodic note, 1). Strategies are injected whole at bootstrap — a rule truncated mid-clause is worse than an absent one.
+
 - `memory_store` / `memory_get` / `memory_search` / `memory_supersede`
 - `memory_recent` — newest live entries (excerpts, limit ≤ 50)
 - `memory_feedback` — `{ id, verdict: helpful|harmful, note? }` evidence counters
 - `memory_resolve` — adjudicate a `review_queue` item (`update` | `invalidate` | `noop`)
 - `memory_maintenance` — read-only report (open queue, near-dups, aging runs, fat conventions)
+- `memory_distill` — read-only evidence pack (failures, successes, existing strategies) for writing type:strategy rules
 - `session_record` / `session_search` — append-only transcript turns and FTS over past conversation excerpts (30-day retention)
 
 Search fuses FTS5, a 2-hop entity graph, and local semantic vectors (RRF), then applies composite scoring and a 20% relevance gate. Vectors use `@huggingface/transformers` MiniLM (`Xenova/all-MiniLM-L6-v2`); set `CODER_MEMORY_SEMANTIC=0` to disable. Write-time Jaccard dedup refuses near-duplicates (≥0.7) unless `force: true`, and enqueues moderate pairs (≥0.4) for review. Entities are extracted conservatively on store/supersede (`[[wikilinks]]`, code/doc files, two-hump PascalCase modules). A janitor runs on start and every 6h (access decay, orphan sweep, session prune, contradiction scan, embedding backfill ≤64, health snapshot on `GET /health` as `janitor` plus `vectors: {enabled,count,model}`).
