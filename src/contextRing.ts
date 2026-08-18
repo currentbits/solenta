@@ -9,6 +9,9 @@ import type { ProviderInfo } from "./shared/ipc";
  * 2. Never show a dead zero: no ring before the first measured turn.
  * 3. Fraction clamps to 1; the percent label rounds to a whole number.
  */
+/** Fill at or above this is close enough that compaction is likely soon. */
+export const CONTEXT_WARN_FRACTION = 0.85;
+
 export interface ContextRingView {
   /** 0..1, for the SVG stroke. */
   fraction: number;
@@ -16,6 +19,8 @@ export interface ContextRingView {
   percentLabel: string;
   /** e.g. "1M", "256k". */
   windowLabel: string;
+  /** True when the fill is close enough that compaction is likely soon. */
+  warn: boolean;
 }
 
 export function contextRing(input: {
@@ -30,6 +35,7 @@ export function contextRing(input: {
     fraction,
     percentLabel: `${Math.round(fraction * 100)}%`,
     windowLabel: formatWindowSize(win),
+    warn: fraction >= CONTEXT_WARN_FRACTION,
   };
 }
 
@@ -64,4 +70,17 @@ export function contextWindowFor(
   const byId = modelId ? infos.find((m) => m.id === modelId) : undefined;
   const fallback = infos.find((m) => m.recommended) ?? infos[0];
   return byId?.contextTokens ?? fallback?.contextTokens ?? null;
+}
+
+/**
+ * Window for the ring: the CLI-reported figure when present, else the static
+ * catalog. A model change leaves the catalog stale (issue #317).
+ */
+export function threadContextWindow(
+  reported: number | null | undefined,
+  providers: ProviderInfo[],
+  providerId: string,
+  modelId: string | null | undefined,
+): number | null {
+  return reported ?? contextWindowFor(providers, providerId, modelId);
 }

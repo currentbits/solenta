@@ -151,8 +151,15 @@ describe("OTel spans from a real run", () => {
     services.createThread(store, { projectId: project.id, title: "OTel Thread" });
   });
 
-  afterEach(() => {
-    if (runner) runner.stopAll();
+  afterEach(async () => {
+    if (runner) {
+      try {
+        await runner.flushTranscripts();
+      } catch {
+        // ignore
+      }
+      runner.stopAll();
+    }
     globalThis.fetch = prevFetch;
     fs.rmSync(tmpDir, { recursive: true, force: true });
     if (prevBin === undefined) delete process.env.CODER_CLAUDE_BIN;
@@ -240,8 +247,10 @@ describe("OTel spans from a real run", () => {
     await waitFor(() => store.getThread(thread.id).status === "failed");
     await runner.flushTranscripts();
 
-    const run = spansFrom(calls).find((s) => s.name === "invoke_agent claude");
-    assert.ok(run, "no run span for the failed run");
+    const run = spansFrom(calls).find(
+      (s) => s.name === "invoke_agent claude" && s.status && s.status.code === 2,
+    );
+    assert.ok(run, "no ERROR run span for the failed run");
     assert.equal(run.status.code, 2);
     assert.match(run.status.message, /boom/);
     assert.equal(attrOf(run, "solenta.run.status"), "failed");

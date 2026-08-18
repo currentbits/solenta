@@ -597,7 +597,15 @@ function seedThreads(projects: ProjectInfo[]): ThreadInfo[] {
       // One seeded verify command so the browser demo shows the #296 gate.
       verifyCommand: card.id === "thread-1" ? "npm test" : null,
       verify: null,
-      queued: null,
+      // thread-3 is working but not the simulate timer, so stalledAt stays.
+      stalledAt: card.id === "thread-3" ? t0 - 10 * 60 * 1000 : null,
+      queued:
+        card.id === "thread-4"
+          ? {
+              prompt: "retry the failed push",
+              error: "CLI exited before ack",
+            }
+          : null,
       // One working thread carries a mirrored plan so the Planboard's
       // "Thread plans" section has something to show in dev mode.
       planSteps:
@@ -2523,6 +2531,7 @@ function buildDevCoder(): CoderApi {
             handoffFrom: t.handoffFrom ?? null,
             runStartedAt: t.runStartedAt ?? null,
             awaitingInput: t.awaitingInput === true,
+            stalledAt: t.stalledAt ?? null,
             lastActivity: last
               ? {
                   text: last.text.split(/\r?\n/, 1)[0].trim(),

@@ -38,7 +38,7 @@ import {
   providerDisplayName,
   shortSessionId,
 } from "../format";
-import { contextRing, contextWindowFor } from "../contextRing";
+import { contextRing, threadContextWindow } from "../contextRing";
 import { buildWaitStates, waitLabel, type WaitState } from "../waiting";
 import { MemoryTab } from "./MemoryTab";
 import { SkillsTab } from "./SkillsTab";
@@ -226,7 +226,8 @@ function SessionCard({
   const modelLabel = thread.model ?? usage?.model ?? "n/a";
   const ring = contextRing({
     used: usage?.contextTokens ?? null,
-    window: contextWindowFor(
+    window: threadContextWindow(
+      usage?.contextWindow,
       providers,
       thread.provider,
       thread.model ?? usage?.model,
@@ -1892,12 +1893,16 @@ function TeamRow({
           data-status={
             summary.status === "working" && summary.awaitingInput
               ? "waiting"
-              : summary.status
+              : summary.status === "working" && summary.stalledAt
+                ? "stalled"
+                : summary.status
           }
         >
           {summary.status === "working" && summary.awaitingInput
             ? "waiting"
-            : summary.status}
+            : summary.status === "working" && summary.stalledAt
+              ? "stalled"
+              : summary.status}
         </span>
         {summary.lastActivity && (
           <span className={styles.teamActivity}>

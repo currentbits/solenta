@@ -321,7 +321,12 @@ describe("wireClient × webBridge over a real socket", () => {
     for (const c of clients) c.close();
 
     await waitFor(() => resynced.length >= 1);
-    assert.equal(delays[0], 1000, "production first backoff is still 1s");
+    // invoke() also schedules INVOKE_TIMEOUT_MS (120s) on the same clock, so
+    // the backoff is no longer delays[0].
+    assert.ok(
+      delays.includes(1000),
+      `production first backoff is still 1s (got ${delays.join(",")})`,
+    );
     assert.deepEqual(resynced[0], services.listThreads(store));
 
     // Live invoke after resync still hits the same store.

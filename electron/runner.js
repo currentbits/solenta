@@ -74,6 +74,46 @@ function shortError(text) {
 }
 
 /**
+ * Full prompt size for the context ring. Claude's input_tokens excludes
+ * cache_read/cache_creation; omitting those reads as ~0% then jumps (#317).
+ * Returns undefined when the event does not report the cache fields — an
+ * inaccurate number is worse than none.
+ * @param {object | null | undefined} usage
+ * @returns {number | undefined}
+ */
+function claudeContextTokens(usage) {
+  if (!usage || typeof usage !== "object") return undefined;
+  if (
+    usage.cache_read_input_tokens == null &&
+    usage.cache_creation_input_tokens == null
+  ) {
+    return undefined;
+  }
+  const total =
+    (Number(usage.input_tokens) || 0) +
+    (Number(usage.cache_read_input_tokens) || 0) +
+    (Number(usage.cache_creation_input_tokens) || 0) +
+    (Number(usage.output_tokens) || 0);
+  return total > 0 ? total : undefined;
+}
+
+/**
+ * Carry forward measured context fields; never invent a 0.
+ * @param {object} next
+ * @param {object} prev
+ * @param {number | undefined} contextTokens
+ * @param {number | undefined} contextWindow
+ */
+function assignContextUsage(next, prev, contextTokens, contextWindow) {
+  const ctx = contextTokens != null ? Number(contextTokens) : NaN;
+  if (Number.isFinite(ctx) && ctx > 0) next.contextTokens = ctx;
+  else if (prev.contextTokens != null) next.contextTokens = prev.contextTokens;
+  const win = contextWindow != null ? Number(contextWindow) : NaN;
+  if (Number.isFinite(win) && win > 0) next.contextWindow = win;
+  else if (prev.contextWindow != null) next.contextWindow = prev.contextWindow;
+}
+
+/**
  * A kept-alive/resumed Claude CLI can emit a result that is not the answer to
  * the turn we just sent: settling a leftover background-task notification or
  * "Continue from where you left off." self-turn first (issue #17). Those
@@ -791,6 +831,7 @@ function createRunner(opts) {
       // silent
     }
     sweepDoneWorkers(threadId);
+    maybeDrainQueued(threadId);
   }
 
   /**
@@ -940,6 +981,7 @@ function createRunner(opts) {
       // silent
     }
     sweepDoneWorkers(threadId);
+    maybeDrainQueued(threadId);
   }
 
   function settleVerifyCrash(threadId, err) {
@@ -1268,6 +1310,47 @@ function createRunner(opts) {
     } catch {
       // never affect the run path
     }
+    // Verify restamps status "working"; skip so we don't start the queued
+    // prompt on top of the gate. The verify settle path drains instead.
+    maybeDrainQueued(threadId);
+  }
+
+  /**
+   * Deliver a type-ahead prompt that survived the just-finished turn
+   * (issue #314). take-and-clear so the same prompt cannot fire twice.
+   * On throw, put it back with error so the renderer can Retry.
+   */
+  async function drainQueued(threadId) {
+    let taken;
+    try {
+      taken = services.takeQueued(store, { threadId });
+    } catch {
+      return;
+    }
+    if (!taken) return;
+    try {
+      await startRun({
+        threadId,
+        prompt: taken.prompt,
+        attachments: taken.attachments,
+      });
+    } catch (err) {
+      store.updateThread(threadId, {
+        queued: {
+          ...taken,
+          error: shortError(String((err && err.message) || err)),
+        },
+      });
+      store.save();
+      pushDetail(threadId);
+      pushThreadsChanged();
+    }
+  }
+
+  function maybeDrainQueued(threadId) {
+    const thread = store.getThread(threadId);
+    if (!thread || thread.status === "working") return;
+    void drainQueued(threadId);
   }
 
   /**
@@ -1302,11 +1385,37 @@ function createRunner(opts) {
     return i;
   }
 
-  function pushDetail(threadId, workflow) {
+  /**
+   * Activity stamp for the turn watchdog (issue #314). Persist lastEventAt
+   * at most every ~5s so the write does not re-sort the sidebar (no touch)
+   * on every stream chunk. Clearing a stall is always written — a live CLI
+   * must drop the flag on the next event.
+   */
+  function stampLastEvent(threadId) {
+    const thread = store.getThread(threadId);
+    if (!thread) return;
+    const now = Date.now();
+    const lastStored = thread.lastEventAt;
+    const clearingStall = thread.stalledAt != null;
+    if (!clearingStall && lastStored != null && now - lastStored <= 5000) {
+      return;
+    }
+    store.updateThread(threadId, {
+      lastEventAt: now,
+      ...(clearingStall ? { stalledAt: null } : {}),
+    });
+  }
+
+  function pushDetail(threadId, workflow, opts) {
     // Deleted threads must not resurrect via late agent/sim pushes.
     if (threadId == null || !store.getThread(threadId)) {
       lastPushByThread.delete(threadId);
       return null;
+    }
+    // skipStamp: the stall sweep's own push must not count as activity
+    // or it would clear stalledAt in the same turn it set it.
+    if (active.has(threadId) && !(opts && opts.skipStamp)) {
+      stampLastEvent(threadId);
     }
     if (workflow) {
       lastWorkflowByThread.set(threadId, workflow);
@@ -1712,6 +1821,10 @@ function createRunner(opts) {
       }
     }
     active.delete(threadId);
+    const thread = store.getThread(threadId);
+    if (thread && (thread.stalledAt != null || thread.lastEventAt != null)) {
+      store.updateThread(threadId, { stalledAt: null, lastEventAt: null });
+    }
   }
 
   /**
@@ -2487,7 +2600,6 @@ function createRunner(opts) {
             outputTokens: 0,
             costUsd: 0,
             turns: 0,
-            contextTokens: 0,
           };
           const usage = ev.usage || {};
           const turnIn = Number(usage.input_tokens) || 0;
@@ -2501,16 +2613,17 @@ function createRunner(opts) {
           const costUsd = prev.costUsd + costDelta;
           const model =
             capturedModel || prev.model || null;
-          store.setUsage(threadId, {
+          const nextUsage = {
             model,
             inputTokens,
             outputTokens,
             costUsd,
             turns: prev.turns + 1,
-            // Last turn's in+out approximates context-window fill.
-            contextTokens:
-              turnIn + turnOut > 0 ? turnIn + turnOut : prev.contextTokens || 0,
-          });
+          };
+          // inputTokens stay billable (no cache). contextTokens is the full
+          // prompt or stays unset when the event omitted cache fields (#317).
+          assignContextUsage(nextUsage, prev, claudeContextTokens(usage));
+          store.setUsage(threadId, nextUsage);
           if (costDelta > 0) {
             store.recordSpend(costDelta);
           }
@@ -2938,28 +3051,46 @@ function createRunner(opts) {
         outputTokens: 0,
         costUsd: 0,
         turns: 0,
-        contextTokens: 0,
       };
       const costDelta = Number(usageInfo.costUsd) || 0;
       const inDelta = Number(usageInfo.inputTokens) || 0;
       const outDelta = Number(usageInfo.outputTokens) || 0;
-      runUsage.tokensIn += inDelta;
-      runUsage.tokensOut += outDelta;
-      runUsage.costUsd += costDelta;
-      store.setUsage(threadId, {
+      // token_count.total_token_usage is session-cumulative. Replacing
+      // rather than adding is what stops the ring from double-counting (#317).
+      const snapshot = Boolean(usageInfo.snapshot);
+      if (snapshot) {
+        runUsage.tokensIn = inDelta;
+        runUsage.tokensOut = outDelta;
+        runUsage.costUsd += costDelta;
+      } else {
+        runUsage.tokensIn += inDelta;
+        runUsage.tokensOut += outDelta;
+        runUsage.costUsd += costDelta;
+      }
+      const nextUsage = {
         model: usageInfo.model || prev.model || thread.model || null,
-        inputTokens: prev.inputTokens + inDelta,
-        outputTokens: prev.outputTokens + outDelta,
+        inputTokens: snapshot ? inDelta : prev.inputTokens + inDelta,
+        outputTokens: snapshot ? outDelta : prev.outputTokens + outDelta,
         costUsd: prev.costUsd + costDelta,
-        turns: prev.turns + 1,
-        // Last turn's in+out approximates context-window fill.
-        contextTokens:
-          inDelta + outDelta > 0 ? inDelta + outDelta : prev.contextTokens || 0,
-      });
+        turns: snapshot && prev.turns > 0 ? prev.turns : prev.turns + 1,
+      };
+      assignContextUsage(
+        nextUsage,
+        prev,
+        usageInfo.contextTokens,
+        usageInfo.contextWindow,
+      );
+      store.setUsage(threadId, nextUsage);
       if (costDelta > 0) {
         store.recordSpend(costDelta);
       }
-      store.recordUsage({ provider: thread.provider, model: usageInfo.model || prev.model || thread.model || null, costUsd: costDelta, inputTokens: inDelta, outputTokens: outDelta });
+      const billedIn = snapshot
+        ? Math.max(0, inDelta - prev.inputTokens)
+        : inDelta;
+      const billedOut = snapshot
+        ? Math.max(0, outDelta - prev.outputTokens)
+        : outDelta;
+      store.recordUsage({ provider: thread.provider, model: usageInfo.model || prev.model || thread.model || null, costUsd: costDelta, inputTokens: billedIn, outputTokens: billedOut });
       sawTerminalUsage = true;
     }
 
@@ -3340,7 +3471,6 @@ function createRunner(opts) {
         outputTokens: 0,
         costUsd: 0,
         turns: 0,
-        contextTokens: 0,
       };
       const costDelta = Number(usageInfo.costUsd) || 0;
       const inDelta = Number(usageInfo.inputTokens) || 0;
@@ -3348,16 +3478,17 @@ function createRunner(opts) {
       runUsage.tokensIn += inDelta;
       runUsage.tokensOut += outDelta;
       runUsage.costUsd += costDelta;
-      store.setUsage(threadId, {
+      const nextUsage = {
         model: prev.model || thread.model || null,
         inputTokens: prev.inputTokens + inDelta,
         outputTokens: prev.outputTokens + outDelta,
         costUsd: prev.costUsd + costDelta,
         turns: prev.turns + 1,
-        // Last turn's in+out approximates context-window fill.
-        contextTokens:
-          inDelta + outDelta > 0 ? inDelta + outDelta : prev.contextTokens || 0,
-      });
+      };
+      // Kimi reports billable in/out at best, never a full prompt. Leave
+      // contextTokens unset rather than write an undefendable number (#317).
+      assignContextUsage(nextUsage, prev, undefined, undefined);
+      store.setUsage(threadId, nextUsage);
       if (costDelta > 0) {
         store.recordSpend(costDelta);
       }
@@ -4380,6 +4511,8 @@ function createRunner(opts) {
         title,
         runStartedAt: Date.now(),
         awaitingInput: false,
+        lastEventAt: null,
+        stalledAt: null,
         ...services.clearSettledOnActivity(thread),
       },
       { touch: true },
@@ -4641,6 +4774,7 @@ function createRunner(opts) {
       } catch {
         // silent
       }
+      maybeDrainQueued(threadId);
     }
   }
 
@@ -4655,6 +4789,7 @@ function createRunner(opts) {
   }
 
   function stopAll() {
+    clearInterval(stallTimer);
     // Clean app quit (main.js before-quit). Mark each active run idle with an
     // interruption event so the next launch's recoverInterruptedRuns (crash
     // path only) does not re-stamp them as generic failures. Kill + flush
@@ -4758,6 +4893,45 @@ function createRunner(opts) {
     if (t.orchWorker && t.handoffFrom) sweepCrew(String(t.handoffFrom));
   }
 
+  /**
+   * Advisory stall sweep (issue #314). Scans every thread, not just `active`:
+   * a working row with no live run is the zombie this issue names. Never
+   * kills the CLI — a slow-but-alive stream clears stalledAt via stampLastEvent.
+   * STALL_MS is read at check time so a test can shorten the window.
+   */
+  function checkStalls() {
+    const stallMs = Number(process.env.CODER_STALL_MS) || 10 * 60 * 1000;
+    const now = Date.now();
+    for (const thread of store.getThreads()) {
+      if (thread.status !== "working") continue;
+      if (thread.awaitingInput) continue;
+      if (thread.stalledAt) continue;
+      const last = thread.lastEventAt ?? thread.runStartedAt ?? now;
+      if (now - last <= stallMs) continue;
+      store.updateThread(thread.id, { stalledAt: now });
+      const provider = resolveProvider(thread);
+      const mins = Math.max(1, Math.round((now - last) / 60000));
+      appendMessage(
+        thread.id,
+        "event",
+        `No output from the ${provider} CLI for ${mins} min — the turn may be hung. Stop and retry if it stays quiet.`,
+      );
+      store.save();
+      pushDetail(thread.id, undefined, { skipStamp: true });
+      pushThreadsChanged();
+    }
+  }
+
+  // Native timer (not setIntervalFn): tests replace that hook for sim ticks.
+  const stallTimer = setInterval(() => {
+    try {
+      checkStalls();
+    } catch {
+      // never break the runner
+    }
+  }, 15_000);
+  if (typeof stallTimer.unref === "function") stallTimer.unref();
+
   return {
     startRun,
     startWorkflowRun,
@@ -4773,6 +4947,8 @@ function createRunner(opts) {
     respondPermission,
     disposeClaudeSession,
     deliverNotice,
+    checkStalls,
+    drainQueued,
   };
 }
 

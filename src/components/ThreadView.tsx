@@ -32,7 +32,15 @@ import type {
 import { SPEC_ARTIFACTS, THREAD_NOTES_MAX } from "../shared/ipc";
 import type { WorkflowSaveInput } from "../useCoder";
 import { diffLineKind, isEmptyDiff } from "../diffView";
-import { contextRing, contextWindowFor, type ContextRingView } from "../contextRing";
+import {
+  contextBreakdown,
+  type ContextBreakdownSegment,
+} from "../contextBreakdown";
+import {
+  contextRing,
+  threadContextWindow,
+  type ContextRingView,
+} from "../contextRing";
 import { messageMetaLine } from "../messageMeta";
 import {
   buildTimeline,
@@ -62,6 +70,7 @@ import {
 } from "../runHeader";
 import { buildBestOfNEntries } from "../bestOfN";
 import { createPrPrompt } from "../prUi";
+import { formatElapsed } from "../format";
 import { useEscapeClose } from "../useEscapeClose";
 import { Composer } from "./Composer";
 import { Markdown } from "./Markdown";
@@ -83,27 +92,88 @@ const STICK_BOTTOM_PX = 80;
 const RING_R = 8;
 const RING_C = 2 * Math.PI * RING_R;
 
-/** Small context-fill ring + percent for the thread header. */
-function ContextRingBadge({ ring }: { ring: ContextRingView }) {
+/** Small context-fill ring + percent; hover/focus opens the breakdown. */
+function ContextRingBadge({
+  ring,
+  segments,
+  used,
+}: {
+  ring: ContextRingView;
+  segments: ContextBreakdownSegment[];
+  used: number;
+}) {
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  useEscapeClose(open, useCallback(() => setOpen(false), []));
+  const label = `Context ${ring.percentLabel} of ${ring.windowLabel}`;
   return (
-    <span
-      className={styles.contextRing}
-      title={`Context: ${ring.percentLabel} of ${ring.windowLabel} (last turn)`}
-      aria-label={`Context ${ring.percentLabel} of ${ring.windowLabel}`}
+    <div
+      className={styles.menuWrap}
+      ref={wrapRef}
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
     >
-      <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden>
-        <circle cx="10" cy="10" r={RING_R} className={styles.ringTrack} />
-        <circle
-          cx="10"
-          cy="10"
-          r={RING_R}
-          className={styles.ringFill}
-          strokeDasharray={`${(ring.fraction * RING_C).toFixed(2)} ${RING_C.toFixed(2)}`}
-          transform="rotate(-90 10 10)"
-        />
-      </svg>
-      <span className={styles.ringLabel}>{ring.percentLabel}</span>
-    </span>
+      <button
+        type="button"
+        className={styles.contextRing}
+        data-context-ring=""
+        data-warn={ring.warn ? "true" : undefined}
+        aria-label={label}
+        aria-haspopup="true"
+        aria-expanded={open}
+        onFocus={() => setOpen(true)}
+        onBlur={(e) => {
+          if (!wrapRef.current?.contains(e.relatedTarget as Node)) {
+            setOpen(false);
+          }
+        }}
+      >
+        <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden>
+          <circle cx="10" cy="10" r={RING_R} className={styles.ringTrack} />
+          <circle
+            cx="10"
+            cy="10"
+            r={RING_R}
+            className={styles.ringFill}
+            strokeDasharray={`${(ring.fraction * RING_C).toFixed(2)} ${RING_C.toFixed(2)}`}
+            transform="rotate(-90 10 10)"
+          />
+        </svg>
+        <span className={styles.ringLabel}>{ring.percentLabel}</span>
+      </button>
+      {open && (
+        <div
+          className={`${styles.menu} ${styles.contextPopover}`}
+          role="region"
+          aria-label="Context breakdown"
+          data-context-popover=""
+        >
+          <div className={styles.contextPopoverHead}>
+            <span>
+              {used.toLocaleString()} / {ring.windowLabel}
+            </span>
+            <span>{ring.percentLabel}</span>
+          </div>
+          <ul className={styles.contextSegList}>
+            {segments.map((seg) => (
+              <li key={seg.key} className={styles.contextSeg}>
+                <span>{seg.label}</span>
+                <span className={styles.contextSegTokens}>
+                  {seg.tokens.toLocaleString()}
+                </span>
+                <span className={styles.contextSegPct}>
+                  {Math.round(seg.fraction * 100)}%
+                </span>
+              </li>
+            ))}
+          </ul>
+          <p className={styles.contextNote}>Estimated from the thread (chars÷4)</p>
+          {ring.warn && (
+            <p className={styles.contextWarnNote}>Compaction is close</p>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -194,8 +264,12 @@ interface ThreadViewProps {
   onStopRun: () => void | Promise<void>;
   /** Follow-up typed during the run, waiting for it to land (issue #92). */
   queuedPrompt?: string | null;
+  /** Last delivery failure; the prompt is still queued (issue #314). */
+  queuedError?: string | null;
   /** Drop the queued follow-up. */
   onCancelQueued?: () => void;
+  /** Re-send a queued prompt after a delivery failure. */
+  onRetryQueued?: () => void;
   onSetPermissionMode: (
     mode: PermissionMode,
     threadId?: string,
@@ -1861,7 +1935,9 @@ export const ThreadView = memo(function ThreadView({
   onRemoveWorkflow,
   onStopRun,
   queuedPrompt = null,
+  queuedError = null,
   onCancelQueued,
+  onRetryQueued,
   onSetPermissionMode,
   onRespondPermission,
   onSetProvider,
@@ -2023,6 +2099,10 @@ export const ThreadView = memo(function ThreadView({
   }, [detail, latestWorkLogRunId]);
 
   const isWorking = detail?.thread.status === "working";
+  const stalledAt =
+    isWorking && detail?.thread.stalledAt != null
+      ? detail.thread.stalledAt
+      : null;
   const isArchived = Boolean(detail?.thread.archived);
   const emptyMessages = detail != null && detail.messages.length === 0;
 
@@ -2030,10 +2110,25 @@ export const ThreadView = memo(function ThreadView({
   const ring = useMemo(() => {
     if (!detail) return null;
     const modelId = detail.usage?.model ?? detail.thread.model;
-    return contextRing({
-      used: detail.usage?.contextTokens ?? null,
-      window: contextWindowFor(providers, detail.thread.provider, modelId),
+    const used = detail.usage?.contextTokens ?? null;
+    const view = contextRing({
+      used,
+      window: threadContextWindow(
+        detail.usage?.contextWindow,
+        providers,
+        detail.thread.provider,
+        modelId,
+      ),
     });
+    if (!view || used == null) return null;
+    return {
+      view,
+      used,
+      segments: contextBreakdown({
+        messages: detail.messages,
+        measured: used,
+      }),
+    };
   }, [detail, providers]);
   const hasTimeline = timeline.length > 0;
   const hasWorktree = Boolean(detail?.thread.worktreePath);
@@ -2603,7 +2698,13 @@ export const ThreadView = memo(function ThreadView({
           )}
         </div>
         <div className={styles.actions}>
-          {ring && <ContextRingBadge ring={ring} />}
+          {ring && (
+            <ContextRingBadge
+              ring={ring.view}
+              segments={ring.segments}
+              used={ring.used}
+            />
+          )}
           {onStartSpec && !thread.spec && (
             <button
               type="button"
@@ -3210,13 +3311,18 @@ export const ThreadView = memo(function ThreadView({
         )}
 
         {isWorking && (
-          <div className={styles.statusStrip}>
+          <div
+            className={`${styles.statusStrip}${stalledAt != null ? ` ${styles.statusStripStalled}` : ""}`}
+            data-stalled={stalledAt != null ? "" : undefined}
+          >
             <div className={styles.statusLeft}>
               <span className={styles.statusDot} aria-hidden />
               <span>
-                {detail.workflow
-                  ? `${runningAgents} agent${runningAgents === 1 ? "" : "s"} working in the background`
-                  : "Agent working…"}
+                {stalledAt != null
+                  ? `No output for ${formatElapsed(stalledAt)} — the agent may be hung`
+                  : detail.workflow
+                    ? `${runningAgents} agent${runningAgents === 1 ? "" : "s"} working in the background`
+                    : "Agent working…"}
               </span>
             </div>
             <button
@@ -3234,17 +3340,41 @@ export const ThreadView = memo(function ThreadView({
             <div className={styles.statusLeft}>
               <span className={styles.queuedLabel}>Queued</span>
               <span className={styles.queuedText}>{queuedPrompt}</span>
+              {queuedError ? (
+                <span
+                  className={styles.permissionGuardrail}
+                  data-queued-error=""
+                >
+                  {queuedError}
+                </span>
+              ) : null}
             </div>
-            {onCancelQueued && (
-              <button
-                type="button"
-                className={styles.stopBtn}
-                onClick={onCancelQueued}
-                data-cancel-queued=""
-              >
-                Cancel
-              </button>
-            )}
+            <div className={styles.statusLeft}>
+              {/* Any prompt still queued on a settled thread is one main did
+                  not deliver — offer the retry whether or not the failure
+                  reason survived a reload. */}
+              {onRetryQueued ? (
+                <button
+                  type="button"
+                  className={styles.retryBtn}
+                  onClick={onRetryQueued}
+                  disabled={isWorking}
+                  data-retry-queued=""
+                >
+                  Retry
+                </button>
+              ) : null}
+              {onCancelQueued && (
+                <button
+                  type="button"
+                  className={styles.stopBtn}
+                  onClick={onCancelQueued}
+                  data-cancel-queued=""
+                >
+                  Cancel
+                </button>
+              )}
+            </div>
           </div>
         )}
       </div>
