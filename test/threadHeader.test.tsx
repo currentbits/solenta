@@ -109,6 +109,11 @@ function view(props: {
   onStartRun?: (prompt: string, threadId?: string) => void | Promise<void>;
   onRepeatSchedule?: () => void;
   onDistillWorkflow?: () => void;
+  onCreateThread?: (
+    projectId?: string,
+    opts?: { worktree?: boolean; orchestrate?: boolean },
+  ) => void;
+  onRenameThread?: (title: string) => void | Promise<void>;
 }) {
   return (
     <ThreadView
@@ -118,6 +123,8 @@ function view(props: {
       workflows={[]}
       hasProjects={true}
       onAddProject={() => {}}
+      onCreateThread={props.onCreateThread}
+      onRenameThread={props.onRenameThread}
       onStartRun={props.onStartRun ?? (() => {})}
       onStartWorkflow={() => {}}
       onSaveWorkflow={noopSave}
@@ -476,6 +483,65 @@ describe("create PR button", () => {
     assert.ok(
       prompts[0]!.includes('"- PR created by the Claude Code agent"'),
       "prompt must carry the provider-name bullet",
+    );
+    m.unmount();
+  });
+});
+
+describe("breadcrumb new thread (issue #445)", () => {
+  it("turns the project slug into New thread in {slug}", async () => {
+    const m = await mount(view({ onCreateThread: () => {} }));
+    await m.flush();
+    const slug = m.query("[data-new-thread-in]") as HTMLButtonElement | null;
+    assert.ok(slug, "project slug is a create control");
+    assert.equal(slug!.tagName, "BUTTON");
+    assert.equal(slug!.textContent?.trim(), "owner/repo");
+    assert.equal(slug!.getAttribute("aria-label"), "New thread in owner/repo");
+    assert.equal(slug!.getAttribute("title"), "New thread in owner/repo");
+    m.unmount();
+  });
+
+  it("click calls onCreateThread with the thread project and no extra opts", async () => {
+    const calls: Array<{
+      projectId?: string;
+      opts?: { worktree?: boolean; orchestrate?: boolean };
+    }> = [];
+    const m = await mount(
+      view({
+        onCreateThread: (projectId, opts) => {
+          calls.push({ projectId, opts });
+        },
+      }),
+    );
+    await m.flush();
+    await m.click(m.query("[data-new-thread-in]"));
+    await m.flush();
+    assert.deepEqual(calls, [{ projectId: "p1", opts: undefined }]);
+    m.unmount();
+  });
+
+  it("does not steal a title rename click", async () => {
+    const creates: string[] = [];
+    const m = await mount(
+      view({
+        onCreateThread: (projectId) => {
+          creates.push(projectId ?? "");
+        },
+        onRenameThread: () => {},
+      }),
+    );
+    await m.flush();
+    const title = [...m.container.querySelectorAll("span")].find(
+      (el) => el.textContent === "header features",
+    );
+    assert.ok(title, "thread title stays a separate control");
+    await m.click(title);
+    await m.flush();
+    assert.deepEqual(creates, [], "title click must not create a thread");
+    assert.equal(
+      m.query("[data-thread-title-input]"),
+      null,
+      "slug is the only breadcrumb control; title is not a create button",
     );
     m.unmount();
   });

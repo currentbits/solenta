@@ -324,6 +324,14 @@ interface ThreadViewProps {
   onSetArchived: (archived: boolean) => void | Promise<void>;
   /** Rename the open thread (header overflow). */
   onRenameThread?: (title: string) => void | Promise<void>;
+  /**
+   * New thread in this project, same default as the sidebar "New thread"
+   * button (Settings defaultWorktree / orchestrator; remotes stay plain).
+   */
+  onCreateThread?: (
+    projectId?: string,
+    opts?: { worktree?: boolean; orchestrate?: boolean },
+  ) => void;
   /** Seed an automation from this thread's first prompt (#285). */
   onRepeatSchedule?: () => void;
   /** Distill this thread into a workflow draft for review (#285). */
@@ -373,7 +381,7 @@ interface ThreadViewProps {
   onSaveAttachmentImage?: (dataUrl: string) => Promise<AttachmentInfo | null>;
   /** Loads one attached image (absolute path) as a data URL. */
   onLoadAttachmentImage?: (path: string) => Promise<string | null>;
-  /** Classify drag-dropped files into attachments (Electron only). */
+  /** Classify drag-dropped files into attachments. */
   onDropAttachmentFiles?: (files: File[]) => Promise<AttachmentInfo[]>;
   /** Push the thread's current branch to origin. */
   onPush: () => Promise<{ remote: string; branch: string }>;
@@ -1980,6 +1988,7 @@ export const ThreadView = memo(function ThreadView({
   onSetReasoningEffort,
   onSetArchived,
   onRenameThread,
+  onCreateThread,
   onRepeatSchedule,
   onDistillWorkflow,
   onSetNotes,
@@ -2020,6 +2029,8 @@ export const ThreadView = memo(function ThreadView({
   onModelPickerOpen,
 }: ThreadViewProps) {
   const bodyRef = useRef<HTMLDivElement>(null);
+  const dropHostRef = useRef<HTMLElement>(null);
+  const [fileDrag, setFileDrag] = useState(false);
   const stickToBottom = useRef(true);
   const prevThreadId = useRef<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -2680,6 +2691,8 @@ export const ThreadView = memo(function ThreadView({
   }
 
   const { thread } = detail;
+  const projectSlug = project?.slug ?? "project";
+  const newThreadLabel = `New thread in ${projectSlug}`;
 
   const startRename = () => {
     setMenuOpen(false);
@@ -2775,12 +2788,32 @@ export const ThreadView = memo(function ThreadView({
       : "Push";
 
   return (
-    <main className={styles.main}>
+    <main
+      className={styles.main}
+      ref={dropHostRef}
+      data-thread-drop=""
+    >
+      {fileDrag && onDropAttachmentFiles ? (
+        <div className={styles.dropOverlay} data-drop-overlay="" aria-hidden>
+          Drop images or folders
+        </div>
+      ) : null}
       <header className={styles.header}>
         <div className={styles.breadcrumb}>
-          <span className={styles.project}>
-            {project?.slug ?? "project"}
-          </span>
+          {onCreateThread ? (
+            <button
+              type="button"
+              className={styles.project}
+              data-new-thread-in=""
+              title={newThreadLabel}
+              aria-label={newThreadLabel}
+              onClick={() => onCreateThread(thread.projectId)}
+            >
+              {projectSlug}
+            </button>
+          ) : (
+            <span className={styles.project}>{projectSlug}</span>
+          )}
           <span className={styles.sep}>/</span>
           {renaming ? (
             <input
@@ -3533,6 +3566,8 @@ export const ThreadView = memo(function ThreadView({
         onLoadAttachmentImage={onLoadAttachmentImage}
         onDropAttachmentFiles={onDropAttachmentFiles}
         onSlashAction={handleSlashAction}
+        dropHostRef={dropHostRef}
+        onFileDragChange={setFileDrag}
       />
 
       {lightbox && (

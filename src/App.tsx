@@ -888,6 +888,7 @@ export default function App() {
         workflows={workflows}
         hasProjects={projects.length > 0}
         onAddProject={handleAddProject}
+        onCreateThread={handleCreateThread}
         onStartRun={startRun}
         onRewindAndResubmit={rewindAndResubmit}
         onStartWorkflow={startWorkflowRun}

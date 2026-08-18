@@ -21,14 +21,14 @@ describe("normalizeSettings autoSettleAfterDays", () => {
       orchestrationBudgetUsd: null,
       autoSettleAfterDays: DEFAULT_AUTO_SETTLE_AFTER_DAYS,
       mcpServers: [],
-      defaultWorktree: false, defaultOrchestrate: false, updateChannel: null, notifications: true, agentProfiles: [], otel: { endpoint: null, headers: {}, claudeMetrics: false },
+      defaultWorktree: false, defaultOrchestrate: false, updateChannel: null, notifications: true, agentProfiles: [], subagentPool: { defaultAlias: null, force: false, entries: [] }, otel: { endpoint: null, headers: {}, claudeMetrics: false },
     });
     assert.deepEqual(normalizeSettings(null), {
       dailyBudgetUsd: null,
       orchestrationBudgetUsd: null,
       autoSettleAfterDays: 3,
       mcpServers: [],
-      defaultWorktree: false, defaultOrchestrate: false, updateChannel: null, notifications: true, agentProfiles: [], otel: { endpoint: null, headers: {}, claudeMetrics: false },
+      defaultWorktree: false, defaultOrchestrate: false, updateChannel: null, notifications: true, agentProfiles: [], subagentPool: { defaultAlias: null, force: false, entries: [] }, otel: { endpoint: null, headers: {}, claudeMetrics: false },
     });
     assert.equal(DEFAULT_AUTO_SETTLE_AFTER_DAYS, 3);
   });
@@ -90,13 +90,13 @@ describe("setSettings autoSettleAfterDays validation", () => {
 
     assert.deepEqual(
       services.setSettings(store, { autoSettleAfterDays: 7 }),
-      { dailyBudgetUsd: null, orchestrationBudgetUsd: null, autoSettleAfterDays: 7, mcpServers: [], defaultWorktree: false, defaultOrchestrate: false, updateChannel: null, notifications: true, agentProfiles: [], otel: { endpoint: null, headers: {}, claudeMetrics: false } },
+      { dailyBudgetUsd: null, orchestrationBudgetUsd: null, autoSettleAfterDays: 7, mcpServers: [], defaultWorktree: false, defaultOrchestrate: false, updateChannel: null, notifications: true, agentProfiles: [], subagentPool: { defaultAlias: null, force: false, entries: [] }, otel: { endpoint: null, headers: {}, claudeMetrics: false } },
     );
     assert.equal(store.getSettings().autoSettleAfterDays, 7);
 
     assert.deepEqual(
       services.setSettings(store, { autoSettleAfterDays: null }),
-      { dailyBudgetUsd: null, orchestrationBudgetUsd: null, autoSettleAfterDays: null, mcpServers: [], defaultWorktree: false, defaultOrchestrate: false, updateChannel: null, notifications: true, agentProfiles: [], otel: { endpoint: null, headers: {}, claudeMetrics: false } },
+      { dailyBudgetUsd: null, orchestrationBudgetUsd: null, autoSettleAfterDays: null, mcpServers: [], defaultWorktree: false, defaultOrchestrate: false, updateChannel: null, notifications: true, agentProfiles: [], subagentPool: { defaultAlias: null, force: false, entries: [] }, otel: { endpoint: null, headers: {}, claudeMetrics: false } },
     );
 
     assert.throws(
@@ -137,7 +137,7 @@ describe("setSettings autoSettleAfterDays validation", () => {
       orchestrationBudgetUsd: null,
       autoSettleAfterDays: 3,
       mcpServers: [],
-      defaultWorktree: false, defaultOrchestrate: false, updateChannel: null, notifications: true, agentProfiles: [], otel: { endpoint: null, headers: {}, claudeMetrics: false },
+      defaultWorktree: false, defaultOrchestrate: false, updateChannel: null, notifications: true, agentProfiles: [], subagentPool: { defaultAlias: null, force: false, entries: [] }, otel: { endpoint: null, headers: {}, claudeMetrics: false },
     });
   });
 

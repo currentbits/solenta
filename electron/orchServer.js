@@ -54,6 +54,9 @@ const INSTRUCTIONS =
   "with no taskId takes the next unblocked task. Finish with task_complete and a " +
   "note; hand a task back with task_release rather than looping. Talk to a peer " +
   "directly with peer_send instead of routing artifacts through the lead. " +
+  "When a worker model pool is configured, your prompt lists described aliases. " +
+  "Pass pool=<alias> on thread_fork to pick one; omit pool to use the default. " +
+  "Do not pass a raw model id. " +
   "Worktrees of one repo share a git object store, so the durable way to hand " +
   "over a document (plan.md, contract.md) is to COMMIT it on your branch and " +
   "send the peer a `branch:path` ref in the task note or peer message. The peer " +
@@ -269,7 +272,7 @@ function createToolHandlers(deps) {
       throw new Error(`Unknown thread: ${args.threadId}`);
     }
     assertSameProject(source, args.projectId);
-    /** @type {{ threadId: string, provider?: string, worktree?: boolean }} */
+    /** @type {{ threadId: string, provider?: string, pool?: string, worktree?: boolean }} */
     const input = { threadId: args.threadId };
     if (args.provider != null) {
       if (!getProvider(String(args.provider))) {
@@ -277,6 +280,7 @@ function createToolHandlers(deps) {
       }
       input.provider = String(args.provider);
     }
+    if (args.pool != null) input.pool = String(args.pool);
     if (args.worktree === false) input.worktree = false;
     // orchWorker + lazy worktree live in services.forkWorkerThread, shared
     // with the runner's pendingFork dispatch.
@@ -522,11 +526,15 @@ function buildMcpServer(sdk, handlers) {
         "The fork carries only a truncated digest of the source thread's last messages, not the " +
         "whole conversation — the prompt must be self-contained. " +
         "The worker gets its own git worktree so parallel workers never edit the same files; " +
-        "pass worktree:false to run it in the project checkout instead. Returns the new threadId.",
+        "pass worktree:false to run it in the project checkout instead. " +
+        "Optionally pass pool (an alias from the worker pool listed in your prompt) instead of " +
+        "provider. Omit both to use the pool default. When the pool is pinned (force), pool and " +
+        "provider are ignored. Returns the new threadId.",
       inputSchema: {
         threadId: z.string().min(1),
         projectId: z.string().min(1),
         provider: z.string().min(1).optional(),
+        pool: z.string().min(1).optional(),
         prompt: z.string().min(1),
         worktree: z.boolean().optional(),
       },

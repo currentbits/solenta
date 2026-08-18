@@ -1274,6 +1274,14 @@ export interface AppSettings {
    * combination, it does not introduce a fourth kind of thread state.
    */
   agentProfiles: AgentProfile[];
+  /**
+   * Described worker-model pool (issue #467). Orchestration workers default
+   * to `defaultAlias` (or inherit the lead when the pool is empty). The lead
+   * picks per spawn by alias from the one-line descriptions, not a raw
+   * model id. `force` pins every worker to the default. Does not route the
+   * user-facing thread (that is issue #246).
+   */
+  subagentPool: SubagentPool;
   /** OpenTelemetry export (issue #280). */
   otel: OtelSettings;
 }
@@ -1351,6 +1359,33 @@ export interface AgentProfile {
   /** null = provider default (no --effort flag). */
   reasoningEffort: ReasoningEffort | null;
   permissionMode: PermissionMode;
+}
+
+/**
+ * One described candidate in the worker-model pool. The lead picks by
+ * `alias`; `description` is the one-liner it sees.
+ */
+export interface SubagentPoolEntry {
+  /** Lowercase slug the lead passes as thread_fork `pool`. 1-32 chars. */
+  alias: string;
+  /** ProviderInfo.id. Kept even when that CLI is not installed. */
+  provider: string;
+  /** Model override id; null = provider default. */
+  model: string | null;
+  /** One-line scenario. 1-160 chars after trim. */
+  description: string;
+}
+
+/**
+ * Settings-level menu of worker models. Empty `entries` means workers
+ * inherit the lead's provider (today's behaviour).
+ */
+export interface SubagentPool {
+  /** Alias workers use when the lead omits `pool`. null = inherit lead. */
+  defaultAlias: string | null;
+  /** When true, every worker uses `defaultAlias`; lead picks are ignored. */
+  force: boolean;
+  entries: SubagentPoolEntry[];
 }
 
 /** A user-registered MCP server entry (settings slice). */
@@ -2075,7 +2110,8 @@ export interface CoderApi {
     readImage(input: { path: string }): Promise<{ dataUrl: string | null }>;
     /**
      * Electron-only (preload, webUtils.getPathForFile): absolute path of a
-     * drag-dropped File. Absent on web/dev bridges, where drop is disabled.
+     * drag-dropped File, including Finder directories. Absent on web/dev
+     * bridges, which fall back to saveImage (images only).
      */
     droppedFilePath?(file: File): string;
   };

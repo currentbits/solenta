@@ -3,6 +3,10 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { randomUUID } = require("node:crypto");
+const {
+  normalizeSubagentPool,
+  validateSubagentPool,
+} = require("./subagentPool");
 
 /** Builtin "Plan and Verify" workflow template (seeded on every store). */
 const STANDARD_TEMPLATE = {
@@ -57,6 +61,7 @@ const EMPTY = {
     autoSettleAfterDays: 3,
     mcpServers: [],
     agentProfiles: [],
+    subagentPool: { defaultAlias: null, force: false, entries: [] },
   },
 };
 
@@ -362,6 +367,9 @@ const DEFAULT_AUTO_SETTLE_AFTER_DAYS = 3;
  * agentProfiles: absent/junk/non-array → []; entries are healed
  * entry-by-entry (normalizeAgentProfiles), never throwing on a corrupt store.
  *
+ * subagentPool: absent/junk → { defaultAlias: null, force: false, entries: [] }.
+ * Invalid entries are dropped (normalizeSubagentPool).
+ *
  * defaultWorktree: absent/junk → false (new threads run in the checkout
  * unless the user opts in).
  *
@@ -388,6 +396,7 @@ function normalizeSettings(raw) {
     updateChannel: null,
     notifications: true,
     agentProfiles: [],
+    subagentPool: { defaultAlias: null, force: false, entries: [] },
     otel: { endpoint: null, headers: {}, claudeMetrics: false },
   };
   if (!raw || typeof raw !== "object") return settings;
@@ -431,6 +440,9 @@ function normalizeSettings(raw) {
   settings.mcpServers = normalizeMcpServers(obj.mcpServers);
   settings.agentProfiles = normalizeAgentProfiles(
     /** @type {{ agentProfiles?: unknown }} */ (obj).agentProfiles,
+  );
+  settings.subagentPool = normalizeSubagentPool(
+    /** @type {{ subagentPool?: unknown }} */ (obj).subagentPool,
   );
   settings.defaultWorktree =
     /** @type {{ defaultWorktree?: unknown }} */ (obj).defaultWorktree === true;
@@ -1354,6 +1366,7 @@ class Store {
       updateChannel: n.updateChannel,
       notifications: n.notifications,
       agentProfiles: n.agentProfiles,
+      subagentPool: n.subagentPool,
       otel: n.otel,
     };
   }
@@ -1425,6 +1438,11 @@ class Store {
     if (Object.prototype.hasOwnProperty.call(patch, "agentProfiles")) {
       this.data.settings.agentProfiles = validateAgentProfiles(
         patch.agentProfiles,
+      );
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "subagentPool")) {
+      this.data.settings.subagentPool = validateSubagentPool(
+        patch.subagentPool,
       );
     }
     if (Object.prototype.hasOwnProperty.call(patch, "defaultWorktree")) {
@@ -1787,6 +1805,7 @@ function cloneEmpty() {
       autoSettleAfterDays: 3,
       mcpServers: [],
       agentProfiles: [],
+      subagentPool: { defaultAlias: null, force: false, entries: [] },
     },
   };
   ensureWorkflowTemplates(data);

@@ -167,6 +167,10 @@ export interface FakeOptions {
   issueFetch?: FetchIssueResult;
   /** Override attachments.saveImage result (default: { attachment: null }). */
   saveImage?: (input: unknown) => { attachment: AttachmentInfo | null };
+  /** Override attachments.fromPaths result (default: { attachments: [] }). */
+  fromPaths?: (input: unknown) => { attachments: AttachmentInfo[] };
+  /** Electron-only path resolver for dropped Files. */
+  droppedFilePath?: (file: File) => string;
   /** Override runs.distill result. */
   distill?: DistilledWorkflow;
 }
@@ -1328,7 +1332,11 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     attachments: {
       pick: () => rec("attachments.pick", [], { attachments: [] }),
       fromPaths: (input: unknown) =>
-        rec("attachments.fromPaths", [input], { attachments: [] }),
+        rec(
+          "attachments.fromPaths",
+          [input],
+          opts.fromPaths?.(input) ?? { attachments: [] },
+        ),
       saveImage: (input: unknown) =>
         rec(
           "attachments.saveImage",
@@ -1337,6 +1345,9 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         ),
       readImage: (input: unknown) =>
         rec("attachments.readImage", [input], { dataUrl: null }),
+      ...(opts.droppedFilePath
+        ? { droppedFilePath: opts.droppedFilePath }
+        : {}),
     },
     on: (channel: string, cb: unknown) => {
       calls.push({ channel: `on:${channel}`, args: [] });

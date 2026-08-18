@@ -9,6 +9,8 @@ interface ShortcutRow {
 
 /** Static shortcut list — not a remapping panel. */
 const APP_SHORTCUTS: readonly ShortcutRow[] = [
+  { keys: "⌘ + N", action: "New thread" },
+  { keys: "⌘ + ⇧ + N", action: "New thread in current project" },
   { keys: "⌘ + click", action: "Toggle thread in multi-select" },
   { keys: "⇧ + click", action: "Select range in visible list" },
   { keys: "⌘ + 1…9", action: "Jump to nth visible thread" },
