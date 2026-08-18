@@ -1,7 +1,24 @@
 {
   "version": 1,
-  "readOrder": ["critical", "impl", "tests"],
+  "readOrder": ["tests", "impl"],
   "chunks": [
+    {
+      "area": "tests",
+      "rationale": "Issue #408 contract in threadView.test.tsx: jsdom has no ResizeObserver and no layout, so the suite installs a fake observer and overrides scrollHeight/clientHeight/scrollTop. Pinned + growth must set scrollTop to the new scrollHeight; scrolled-up (onScroll, distance > 80px) must leave scrollTop alone. Watch the tests fail first if the observer is missing.",
+      "risks": [
+        "The fake observer fires every watched target at once; it does not prove that a nested <img> load grows a direct child box in a real layout engine.",
+        "scrollTop is a writable backing field. A future pin that writes a clamped value (scrollHeight - clientHeight) would fail the first assertion (expects 1400, not 1000)."
+      ]
+    },
+    {
+      "area": "impl",
+      "rationale": "ThreadView adds a ResizeObserver after the existing state-driven pin effect. It observes the scroll body and each direct child, reconnects when `timeline` changes, and only writes scrollTop when stickToBottom.current is set and the view is actually detached (distance > 0). No-ops when ResizeObserver is missing (jsdom).",
+      "risks": [
+        "ResizeObserver on an overflow container reports the viewport box, not scrollHeight. Content growth is detected via the children. A descendant that grows inside a fixed-height / overflow:hidden child would not fire.",
+        "A pin that reveals a scrollbar can shrink child width and re-fire the observer. The distance <= 0 guard is what stops a loop.",
+        "timeline is memoized on the whole `detail` object, so a new detail identity rebinds observers even when messages are unchanged. Same churn as the existing pin effect."
+      ]
+    },
     {
       "area": "critical",
       "rationale": "App.tsx now early-returns BuildMismatchScreen when isBuildMismatch(app.status().build.sha, __BUILD_SHA__) is true. The three-pane shell (data-layout=app) is not mounted, so a stale renderer cannot be clicked, typed into, or dismissed past. SHA equality and vite.config.ts stamping are unchanged — no protocolVersion.",
@@ -28,6 +45,7 @@
     }
   ],
   "risks": [
+    "The state-change pin effect is unchanged. This only covers post-paint growth (images, highlight, webfonts). A reviewer who deletes the new effect and keeps the old one would still have a green suite except the two #408 tests.",
     "Issue #184 asked for a protocolVersion handshake. That was deliberately replaced with SHA equality and is NOT reintroduced here — only the hard-stop UX gap is closed."
   ]
 }
