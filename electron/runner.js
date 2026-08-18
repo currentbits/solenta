@@ -4581,6 +4581,7 @@ function createRunner(opts) {
           null,
       ) +
       services.reviewItineraryNoteFor(dispatchThread) +
+      services.teachNoteFor(dispatchThread) +
       services.crewTaskNoteFor(store, dispatchThread) +
       services.codeIndexNoteFor(
         userDataPath && repoRoot

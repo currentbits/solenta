@@ -382,6 +382,10 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
           "threads:specArtifact",
           input,
         ),
+      startTeach: (input) => call<ThreadInfo>("threads:startTeach", input),
+      stopTeach: (input) => call<ThreadInfo>("threads:stopTeach", input),
+      requestTeachReview: (input) =>
+        call<ThreadInfo>("threads:requestTeachReview", input),
       rename: (input) => call<ThreadInfo>("threads:rename", input),
       setProvider: (input) => call<ThreadInfo>("threads:setProvider", input),
       setReasoningEffort: (input) =>

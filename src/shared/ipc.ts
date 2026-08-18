@@ -381,6 +381,14 @@ export interface ThreadInfo {
    * these until the hunk body changes. Absent → none accepted yet.
    */
   reviewAcceptedHunks?: string[];
+  /**
+   * Teach mode (issue #373): hints-not-solutions persona, TODO(human)
+   * markers, and skill-gated autonomy. Absent/null = off. Set by
+   * threads.startTeach or threads.create({ teach: true }); cleared by
+   * threads.stopTeach. Copied onto forks so an orchestrator crew stays
+   * in teach mode across providers.
+   */
+  teach?: ThreadTeach | null;
 }
 
 /** One code-index symbol for the review itinerary reuse scan. */
@@ -394,6 +402,23 @@ export interface ReviewContext {
   annotation: unknown;
   symbols: ReviewSymbol[];
   acceptedHunks: string[];
+}
+
+/** Autonomy ladder while Teach mode is on (issue #373). */
+export const TEACH_AUTONOMY_LEVELS = ["hint", "review", "pair"] as const;
+export type TeachAutonomy = (typeof TEACH_AUTONOMY_LEVELS)[number];
+
+/**
+ * Passed teach_review counts that promote autonomy.
+ * 0..2 hint, 3..7 review, 8+ pair.
+ */
+export const TEACH_REVIEW_THRESHOLDS = { review: 3, pair: 8 } as const;
+
+/** A thread's teach-mode state (issue #373). */
+export interface ThreadTeach {
+  autonomy: TeachAutonomy;
+  /** Human TODO(human) fills the agent has reviewed as correct. */
+  reviewsPassed: number;
 }
 
 /** The three gated spec artifacts, in the order they are approved (issue #269). */
@@ -1714,6 +1739,8 @@ export interface CoderApi {
       title: string;
       worktree?: boolean;
       orchestrate?: boolean;
+      /** Turn Teach mode on at create (issue #373). */
+      teach?: boolean;
       /** Planboard issue this thread was started from (issue #420). */
       issueNumber?: number | null;
     }): Promise<ThreadInfo>;
@@ -1811,6 +1838,22 @@ export interface CoderApi {
       threadId: string;
       stage: SpecArtifact;
     }): Promise<{ path: string; text: string | null }>;
+    /**
+     * Turn Teach mode on (issue #373): the runner prefixes every provider
+     * turn with the hints-not-solutions persona and caps permission mode
+     * to the current autonomy rung. Idempotent. Never bumps updatedAt.
+     */
+    startTeach(input: { threadId: string }): Promise<ThreadInfo>;
+    /**
+     * Turn Teach mode off. Leaves permission mode where it is. Idempotent.
+     * Never bumps updatedAt.
+     */
+    stopTeach(input: { threadId: string }): Promise<ThreadInfo>;
+    /**
+     * Ask the agent to review the human's TODO(human) fills. Starts a run
+     * with the review prompt. Rejects a thread that is not in teach mode.
+     */
+    requestTeachReview(input: { threadId: string }): Promise<ThreadInfo>;
     /**
      * Rename a thread. Trims, truncates to THREAD_TITLE_MAX, rejects an
      * empty title. Never bumps updatedAt.

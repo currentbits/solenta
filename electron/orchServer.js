@@ -11,6 +11,7 @@ const {
   forkWorkerThread,
   recordHypothesis,
   submitSpec,
+  recordTeachReview,
   addCrewTasks,
   listCrewTasks,
   claimCrewTask,
@@ -32,6 +33,9 @@ const INSTRUCTIONS =
   "distinct approach as soon as you know how it turned out. " +
   "When a thread is in spec mode the prompt carries a [Spec mode] note; write only " +
   "that stage's artifact and call spec_submit. " +
+  "When a thread is in teach mode the prompt carries a [Teach mode] note; leave " +
+  "TODO(human) markers, give hints not solutions, review the human's fills, and " +
+  "call teach_review with passed true or false. " +
   "threads_list shows every thread with id, title, provider, status, handoffFrom, " +
   "projectId and projectName — filter it by your own projectId first. " +
   "thread_fork and thread_send reject a thread outside the projectId you pass. " +
@@ -380,6 +384,19 @@ function createToolHandlers(deps) {
     return submitSpec(store, { threadId: args.threadId });
   }
 
+  async function teach_review(args) {
+    const thread = store.getThread(args.threadId);
+    if (!thread) {
+      throw new Error(`Unknown thread: ${args.threadId}`);
+    }
+    assertSameProject(thread, args.projectId);
+    return recordTeachReview(store, {
+      threadId: args.threadId,
+      passed: args.passed === true,
+      note: args.note,
+    });
+  }
+
   async function task_add(args) {
     const thread = store.getThread(args.threadId);
     if (!thread) {
@@ -481,6 +498,7 @@ function createToolHandlers(deps) {
     thread_status,
     hypothesis_record,
     spec_submit,
+    teach_review,
     task_add,
     task_list,
     task_claim,
@@ -606,6 +624,26 @@ function buildMcpServer(sdk, handlers) {
       },
     },
     async (args) => json(await handlers.spec_submit(args)),
+  );
+
+  server.registerTool(
+    "teach_review",
+    {
+      description:
+        "Record a review of the human's TODO(human) fill on a teach-mode " +
+        "thread. passed:true increments the competence count and may promote " +
+        "autonomy (hint → review → pair); passed:false leaves it. Call after " +
+        "you have reviewed the fill, not instead of reviewing. projectId is " +
+        "YOUR OWN project id (stated at the end of your prompt); the thread " +
+        "must belong to it.",
+      inputSchema: {
+        threadId: z.string().min(1),
+        projectId: z.string().min(1),
+        passed: z.boolean(),
+        note: z.string().optional(),
+      },
+    },
+    async (args) => json(await handlers.teach_review(args)),
   );
 
   server.registerTool(
