@@ -763,6 +763,12 @@ function migrateThread(t) {
       t.settledOverride !== undefined ? t.settledOverride : null,
     settledAt: t.settledAt !== undefined ? t.settledAt : null,
     prState: t.prState !== undefined ? t.prState : null,
+    prMergeable:
+      t.prMergeable === "MERGEABLE" ||
+      t.prMergeable === "CONFLICTING" ||
+      t.prMergeable === "UNKNOWN"
+        ? t.prMergeable
+        : null,
     // Round 43 unread: null = legacy (renderer treats as visited so upgrades
     // do not light up every old thread). Visiting is stamped in threads.get.
     lastVisitedAt: t.lastVisitedAt !== undefined ? t.lastVisitedAt : null,

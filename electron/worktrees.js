@@ -1561,7 +1561,21 @@ function scanOutgoingPush(cwd, branch) {
 /** Interactive `gh pr view` field set. Background refresh and create stay minimal. */
 const PR_JSON_MINIMAL = "number,url,state";
 const PR_JSON_ENRICHED =
-  "number,url,state,title,additions,deletions,changedFiles";
+  "number,url,state,title,additions,deletions,changedFiles,mergeable,baseRefName";
+
+/** GitHub `mergeable` values we persist and show. */
+const PR_MERGEABLE = new Set(["MERGEABLE", "CONFLICTING", "UNKNOWN"]);
+
+/**
+ * Normalize gh's mergeable field. Unknown / empty → undefined (omitted).
+ * @param {unknown} value
+ * @returns {"MERGEABLE" | "CONFLICTING" | "UNKNOWN" | undefined}
+ */
+function normalizeMergeable(value) {
+  if (value == null || value === "") return undefined;
+  const s = String(value).toUpperCase();
+  return PR_MERGEABLE.has(s) ? s : undefined;
+}
 
 /**
  * Finite number from gh JSON, or undefined when the field is absent/unusable.
@@ -1590,6 +1604,8 @@ function optionalPrCount(value) {
  *   additions?: number,
  *   deletions?: number,
  *   changedFiles?: number,
+ *   mergeable?: "MERGEABLE" | "CONFLICTING" | "UNKNOWN",
+ *   baseRefName?: string,
  * }}
  */
 function parsePrJson(stdout, branch, created) {
@@ -1608,7 +1624,7 @@ function parsePrJson(stdout, branch, created) {
   /** @type {"OPEN" | "CLOSED" | "MERGED"} */
   const state =
     raw === "MERGED" ? "MERGED" : raw === "CLOSED" ? "CLOSED" : "OPEN";
-  /** @type {{ number: number, url: string, state: "OPEN" | "CLOSED" | "MERGED", branch: string, created: boolean, title?: string, additions?: number, deletions?: number, changedFiles?: number }} */
+  /** @type {{ number: number, url: string, state: "OPEN" | "CLOSED" | "MERGED", branch: string, created: boolean, title?: string, additions?: number, deletions?: number, changedFiles?: number, mergeable?: "MERGEABLE" | "CONFLICTING" | "UNKNOWN", baseRefName?: string }} */
   const info = { number, url, state, branch, created: Boolean(created) };
   if (data && data.title != null) info.title = String(data.title);
   const additions = optionalPrCount(data && data.additions);
@@ -1617,6 +1633,11 @@ function parsePrJson(stdout, branch, created) {
   if (deletions !== undefined) info.deletions = deletions;
   const changedFiles = optionalPrCount(data && data.changedFiles);
   if (changedFiles !== undefined) info.changedFiles = changedFiles;
+  const mergeable = normalizeMergeable(data && data.mergeable);
+  if (mergeable) info.mergeable = mergeable;
+  if (data && data.baseRefName != null && String(data.baseRefName).trim()) {
+    info.baseRefName = String(data.baseRefName).trim();
+  }
   return info;
 }
 
@@ -1917,6 +1938,7 @@ async function prStatus(opts) {
     prNumber: info.number,
     prUrl: info.url,
     prState: info.state,
+    prMergeable: info.mergeable || null,
   });
   try {
     require("./postmerge.js").onThreadPrState(store, threadId, info.state);
@@ -2210,8 +2232,131 @@ async function prChecks(opts) {
 }
 
 /**
+ * Fetch origin (best effort) and merge the PR base into the thread branch.
+ * Leaves the worktree conflicted and throws MERGE_CONFLICT: on overlap.
+ * Completing a previous conflicted merge (MERGE_HEAD, markers gone) commits
+ * it. An empty unique tree vs the base means the work is already landed.
+ *
+ * Tests set CODER_GH_BIN and skip the network fetch — they advance local
+ * main instead. Production always fetches.
+ *
+ * @param {object} opts
+ * @param {string} opts.cwd
+ * @param {string} opts.branch
+ * @param {object} opts.project
+ * @param {string} [opts.baseRefName]
+ * @returns {Promise<{ updated: boolean, baseName: string }>}
+ */
+async function updatePrBranchFromBase(opts) {
+  const { cwd, branch, project } = opts;
+  const pending = unresolvedFiles(cwd);
+  if (pending.length) {
+    throw conflictError(
+      "Unresolved conflicts in the worktree:",
+      pending,
+      "Resolve them in the worktree, then merge again.",
+    );
+  }
+
+  const mergeHead = await gitTryAsync(cwd, [
+    "rev-parse",
+    "-q",
+    "--verify",
+    "MERGE_HEAD",
+  ]);
+  if (mergeHead.ok) {
+    const committed = await gitTryAsync(cwd, [
+      "add",
+      "-A",
+    ]);
+    if (!committed.ok) {
+      throw new Error(
+        `Failed to stage resolved merge: ${tailErr(committed.combined, "git add failed")}`,
+      );
+    }
+    const finished = await gitTryAsync(cwd, [
+      "commit",
+      "--no-edit",
+      "-m",
+      `Merge base into ${branch}`,
+    ]);
+    if (!finished.ok) {
+      throw new Error(
+        `Failed to finish merge: ${tailErr(finished.combined, "git commit failed")}`,
+      );
+    }
+    return { updated: true, baseName: opts.baseRefName || "main" };
+  }
+
+  const status = await gitTryAsync(cwd, ["status", "--porcelain", "-uall"], {
+    raw: true,
+  });
+  if (String(status.stdout || "").trim()) {
+    throw new Error(
+      "Commit or discard uncommitted changes before merging the PR.",
+    );
+  }
+
+  // Fake-gh tests must not wait on a network fetch of the dummy origin.
+  if (!process.env.CODER_GH_BIN) {
+    await gitTryAsync(cwd, ["fetch", "origin"], { timeout: 15_000 });
+  }
+
+  let baseName =
+    opts.baseRefName && String(opts.baseRefName).trim()
+      ? String(opts.baseRefName).trim()
+      : "";
+  if (!baseName) {
+    try {
+      baseName = await defaultBranchAsync(project.path);
+    } catch {
+      baseName = "main";
+    }
+  }
+
+  const originBase = `origin/${baseName}`;
+  const hasOrigin = await gitTryAsync(cwd, ["rev-parse", "--verify", originBase]);
+  const hasLocal = await gitTryAsync(cwd, ["rev-parse", "--verify", baseName]);
+  const base = hasOrigin.ok ? originBase : hasLocal.ok ? baseName : null;
+  if (!base) {
+    return { updated: false, baseName };
+  }
+
+  const before = await gitOutAsync(cwd, ["rev-parse", "HEAD"]);
+  const merged = await gitTryAsync(cwd, [
+    "merge",
+    "--no-edit",
+    "-m",
+    `Merge ${baseName} into ${branch}`,
+    base,
+  ]);
+  if (!merged.ok) {
+    const files = unmergedFiles(cwd);
+    if (files.length) {
+      throw conflictError(
+        `${branch} conflicts with ${baseName}:`,
+        files,
+        `${baseName} was merged into the worktree — resolve these files there, then merge again.`,
+      );
+    }
+    throw new Error(tailErr(merged.combined, "git merge failed"));
+  }
+
+  const treeEq = await gitTryAsync(cwd, ["diff", "--quiet", base, "HEAD"]);
+  if (treeEq.ok) {
+    throw new Error(
+      `This branch has no unique commits vs ${baseName}. The work is already on ${baseName} — close the PR instead of merging.`,
+    );
+  }
+
+  const after = await gitOutAsync(cwd, ["rev-parse", "HEAD"]);
+  return { updated: before !== after, baseName };
+}
+
+/**
  * Squash-merge the thread's current PR via `gh pr merge --squash`, then
  * return the refreshed PrInfo. Throws (with gh's own tail) on failure.
+ * OPEN PRs are first updated from the base branch (issue #524).
  * CLOSED/MERGED PRs are left to gh; we do not invent a pre-check.
  *
  * @param {object} opts
@@ -2222,7 +2367,10 @@ async function prChecks(opts) {
  */
 async function mergePr(opts) {
   const { store, threadId, broadcast } = opts;
-  const { cwd, branch, originUrl } = await resolveThreadGit(store, threadId);
+  const { cwd, branch, originUrl, project } = await resolveThreadGit(
+    store,
+    threadId,
+  );
 
   if (!isGitHubRemote(originUrl)) {
     throw new Error(
@@ -2260,6 +2408,29 @@ async function mergePr(opts) {
   }
 
   const info = parsePrJson(viewed.stdout, branch, false);
+  if (info.state === "OPEN") {
+    const update = await updatePrBranchFromBase({
+      cwd,
+      branch,
+      project,
+      baseRefName: info.baseRefName,
+    });
+    if (update.updated) {
+      scanOutgoingPush(cwd, branch);
+      const pushed = await gitTryAsync(cwd, ["push", "-u", "origin", branch], {
+        timeout: 30_000,
+      });
+      if (!pushed.ok) {
+        throw new Error(
+          tailErr(
+            pushed.stderr || pushed.combined,
+            `git push failed after updating from ${update.baseName}`,
+          ),
+        );
+      }
+    }
+  }
+
   const merged = await ghTryAsync(cwd, [
     "pr",
     "merge",

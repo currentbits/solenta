@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "readOrder": ["tests", "critical", "impl"],
+  "chunks": [
+    {
+      "area": "tests",
+      "rationale": "New mergePr cases in electron/test/pr-checks.test.js are the contract: clean update from main, MERGE_CONFLICT skips gh, second merge after resolving markers, empty unique tree closes instead of squash. nextGitAction + button tests pin the CONFLICTING label. Read these before the implementation so the intended recovery loop is obvious.",
+      "risks": [
+        "Clean-update and resolve-again tests use a local --push URL because origin must stay a github.com URL for isGitHubRemote. That does not prove a real GitHub fetch+push path.",
+        "CODER_GH_BIN skips git fetch. A regression that fetches unconditionally will not fail in CI and will hang tests against the dummy origin."
+      ]
+    },
+    {
+      "area": "critical",
+      "rationale": "updatePrBranchFromBase + mergePr in electron/worktrees.js. This is the fix for the 'merge commit cannot be cleanly created' banner: merge the PR base into the worktree, push if HEAD moved, then gh pr merge --squash. Conflicts reuse MERGE_CONFLICT: and leave the worktree resolvable. Empty tree vs base tells the user to close the PR (already landed locally).",
+      "risks": [
+        "Merging local main when fetch is skipped (or origin/main is missing) can incorporate unpushed local main into the PR branch. That is intentional for Solenta's local mergeWorktree world, but it can surprise if the project checkout is not actually the PR base.",
+        "A failed push after a successful local merge leaves the worktree updated and the GitHub PR still CONFLICTING. Retry should finish via MERGE_HEAD or a new merge, but the user sees a push error, not the original gh message.",
+        "Completing MERGE_HEAD with git add -A + commit --no-edit will commit whatever else is dirty in the worktree.",
+        "defaultBranchAsync is still 'whatever the project checkout is on', not the repo default. baseRefName from gh is preferred; old gh falls back."
+      ]
+    },
+    {
+      "area": "impl",
+      "rationale": "Supporting surface: parsePrJson mergeable/baseRefName, prStatus persists prMergeable, nextGitAction relabels CONFLICTING as Update from main (same merge handler), errorMessage strips MERGE_CONFLICT: so the run banner is readable, store migration defaults prMergeable to null.",
+      "risks": [
+        "prMergeable is only stamped by interactive prStatus. Background refresh still uses number,url,state, so the header often still says Merge PR #N until something calls prStatus. The click path still updates from main.",
+        "PR_JSON_ENRICHED grew two fields. Older gh already falls back to MINIMAL via isUnknownJsonField; background refresh was left minimal on purpose."
+      ]
+    }
+  ],
+  "risks": [
+    "Did not add --auto. Conflicts still need a human or #163 agent resolve after the worktree is left conflicted.",
+    "Did not build the local merge queue (#346) or stacked bases (#187). Parallel threads that keep landing will still collide; this only recovers one PR at click time."
+  ]
+}
