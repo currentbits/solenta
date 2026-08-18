@@ -5,7 +5,7 @@
 // them through cmd.exe with correct escaping, which matters because the
 // prompt travels in argv (#442).
 const spawn = require("cross-spawn");
-const { killTree } = require("./proc.js");
+const { killTree, agentSpawnOptions } = require("./proc.js");
 
 const SIGKILL_AFTER_MS = 3000;
 const INPUT_TRUNCATE = 2000;
@@ -247,12 +247,14 @@ function runOpencode(opts) {
 
   let child;
   try {
-    child = spawn(binary, args, {
-      cwd,
-      shell: false,
-      detached: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    child = spawn(
+      binary,
+      args,
+      agentSpawnOptions({
+        cwd,
+        stdio: ["ignore", "pipe", "pipe"],
+      }),
+    );
   } catch (err) {
     const error = err instanceof Error ? err : new Error(String(err));
     if (typeof onError === "function") onError(error);

@@ -5,7 +5,7 @@
 // them through cmd.exe with correct escaping, which matters because the
 // prompt travels in argv (#442).
 const spawn = require("cross-spawn");
-const { killTree } = require("./proc.js");
+const { killTree, agentSpawnOptions } = require("./proc.js");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -477,12 +477,14 @@ function runKimi(opts) {
 
   let child;
   try {
-    child = spawn(binary, args, {
-      cwd,
-      shell: false,
-      detached: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    child = spawn(
+      binary,
+      args,
+      agentSpawnOptions({
+        cwd,
+        stdio: ["ignore", "pipe", "pipe"],
+      }),
+    );
   } catch (err) {
     restoreEffort();
     const error = err instanceof Error ? err : new Error(String(err));

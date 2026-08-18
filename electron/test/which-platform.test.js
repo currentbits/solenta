@@ -99,6 +99,25 @@ describe("agent CLI spawns go through cross-spawn (#442)", () => {
   });
 });
 
+describe("agent CLIs do not detach on win32 (#480)", () => {
+  // detached:true + cross-spawn of a .cmd wrapper is CREATE_NEW_PROCESS_GROUP
+  // | DETACHED_PROCESS. On Windows the parent then waits on cmd.exe (exit 0,
+  // empty pipes) while the node grandchild's stdout never arrives.
+  for (const file of [
+    "agent.js",
+    "claude.js",
+    "codex.js",
+    "kimi.js",
+    "opencode.js",
+  ]) {
+    it(`${file} uses agentSpawnOptions and does not hardcode detached: true`, () => {
+      const src = fs.readFileSync(path.join(__dirname, "..", file), "utf8");
+      assert.match(src, /agentSpawnOptions/);
+      assert.doesNotMatch(src, /detached:\s*true/);
+    });
+  }
+});
+
 describe("memory-sup.js PATH lookup", () => {
   it("uses defaultWhich (where on win32), not a raw `which`", () => {
     const src = fs.readFileSync(path.join(__dirname, "..", "memory-sup.js"), "utf8");
