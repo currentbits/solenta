@@ -51,7 +51,7 @@ export function effectiveSettled(
 ): boolean {
   // Live work always wins attention. Settling a running thread would hide
   // the thing the user is watching; backend refuses settle while working too.
-  if (thread.status === "working") return false;
+  if (thread.status === "working" || thread.status === "quota-wait") return false;
 
   // Round 44: a pin NEVER auto-settles (t3). pinnedAt is the pin clock;
   // mutual exclusion with settle is enforced by setPinned/setSettled.

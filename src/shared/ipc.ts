@@ -138,7 +138,7 @@ export interface GcCleanResult {
   bytes: number;
 }
 
-export type ThreadStatus = "idle" | "working" | "done" | "failed";
+export type ThreadStatus = "idle" | "working" | "done" | "failed" | "quota-wait";
 
 export type PermissionMode = "default" | "acceptEdits" | "plan" | "bypassPermissions";
 
@@ -161,8 +161,24 @@ export interface ThreadInfo {
   /** Set alongside prNumber so the badge can link out without calling gh. */
   prUrl: string | null;
   status: ThreadStatus;
-  /** Short reason a run failed ("Run error: ..."), null otherwise. Set when status becomes "failed", cleared when a run starts. */
+  /** Short reason a run failed ("Run error: ..."), null otherwise. Set when status becomes "failed" or "quota-wait", cleared when a run starts. */
   lastError: string | null;
+  /**
+   * Provider quota-wait (#462): epoch ms when the thread will auto-resume.
+   * Only meaningful while status is "quota-wait". Distinct from snooze
+   * (visibility only) and from Solenta's own budget cap (#286).
+   */
+  quotaWaitUntil?: number | null;
+  /**
+   * One-shot: this thread already woke from a quota-wait. The next quota
+   * error fails the turn instead of parking again. Cleared on a human turn.
+   */
+  quotaWaitResumed?: boolean;
+  /**
+   * Per-thread auto-resume override. null/absent inherits the global
+   * settings.quotaWaitAutoResume (default on). false is the opt-out.
+   */
+  quotaWaitAutoResume?: boolean | null;
   createdAt: number;
   /**
    * Last REAL activity: a message appended, a run status change, or a title
@@ -1354,6 +1370,12 @@ export interface AppSettings {
   subagentPool: SubagentPool;
   /** OpenTelemetry export (issue #280). */
   otel: OtelSettings;
+  /**
+   * Continue automatically when a provider usage limit resets (#462).
+   * Default on; only an explicit false opts out (Claude's /config row).
+   * Per-thread quotaWaitAutoResume overrides this.
+   */
+  quotaWaitAutoResume: boolean;
 }
 
 /**
@@ -1785,6 +1807,16 @@ export interface CoderApi {
     /** Mute/unmute desktop notifications for one thread. Never bumps updatedAt. */
     setMuted(input: { threadId: string; muted: boolean }): Promise<ThreadInfo>;
     /**
+     * Per-thread quota-wait auto-resume override (#462). true/false pins
+     * the thread; null inherits the global settings.quotaWaitAutoResume.
+     * Turning it off while parked cancels the wake timer but leaves the
+     * card parked so Resume now still works.
+     */
+    setQuotaWaitAutoResume(input: {
+      threadId: string;
+      enabled: boolean | null;
+    }): Promise<ThreadInfo>;
+    /**
      * Set or clear the per-thread scratch pad. Trims, caps at
      * THREAD_NOTES_MAX, empty string clears. Never bumps updatedAt.
      */
@@ -2007,6 +2039,12 @@ export interface CoderApi {
      */
     distill(input: { threadId: string }): Promise<DistilledWorkflow>;
     stop(input: { threadId: string }): Promise<void>;
+    /**
+     * Resume a parked quota-wait thread now (#462). Resends the last user
+     * prompt without appending it again. Rejects if the thread is not
+     * parked. Counts as the one-shot wake.
+     */
+    resumeQuotaWait(input: { threadId: string }): Promise<{ runId: string }>;
   };
   git: {
     status(projectId: string): Promise<GitStatus>;

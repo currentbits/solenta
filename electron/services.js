@@ -1157,7 +1157,10 @@ function setSettled(store, input) {
       `Invalid settle override: ${JSON.stringify(override)}. Expected "settled", "active", or null`,
     );
   }
-  if (override === "settled" && thread.status === "working") {
+  if (
+    override === "settled" &&
+    (thread.status === "working" || thread.status === "quota-wait")
+  ) {
     throw new Error("Cannot settle a thread while a run is active");
   }
   const patch = {
@@ -1307,6 +1310,28 @@ function setMuted(store, input) {
   const updated = store.updateThread(threadId, patch);
   store.save();
   return updated ? { ...updated } : { ...thread, ...patch };
+}
+
+/**
+ * Per-thread quota-wait auto-resume override (#462). true/false pins the
+ * thread; null inherits the global setting. Never bumps updatedAt.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, enabled: boolean | null }} input
+ */
+function setQuotaWaitAutoResume(store, input) {
+  const { threadId, enabled } = input;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  if (enabled !== true && enabled !== false && enabled !== null) {
+    throw new Error("quotaWaitAutoResume must be true, false, or null");
+  }
+  const patch = { quotaWaitAutoResume: enabled };
+  const updated = store.updateThread(threadId, patch);
+  store.save();
+  return decorateThread(store, updated || { ...thread, ...patch });
 }
 
 /**
@@ -3449,6 +3474,7 @@ module.exports = {
   takeQueued,
   setSnoozed,
   setMuted,
+  setQuotaWaitAutoResume,
   setNotes,
   setVerifyCommand,
   runVerifyNow,

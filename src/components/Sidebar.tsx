@@ -25,6 +25,7 @@ import {
   formatWorkingLabel,
   providerDisplayName,
 } from "../format";
+import { formatQuotaWaitLabel } from "../quotaWait";
 import { sidebarPrBadge } from "../prUi";
 import {
   GROUP_ATTENTION_CAP,
@@ -288,6 +289,24 @@ function StatusBadge({
   /** Selected thread never renders Woke (you are looking at it). */
   active?: boolean;
 }) {
+  if (thread.status === "quota-wait") {
+    const until = thread.quotaWaitUntil;
+    const clock =
+      until != null && Number.isFinite(until)
+        ? formatQuotaWaitLabel(until, now)
+        : "—";
+    return (
+      <span
+        className={`${styles.badge} ${styles.badgeQuotaWait}`}
+        data-quota-wait=""
+        title={thread.lastError ?? `Usage limit reached. Resuming at ${clock}.`}
+      >
+        <span className={styles.waitingDot} aria-hidden />
+        Quota wait · {clock}
+      </span>
+    );
+  }
+
   if (thread.status === "working" && thread.awaitingInput) {
     return (
       <span className={`${styles.badge} ${styles.badgeWaiting}`}>

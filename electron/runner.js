@@ -51,6 +51,11 @@ const {
 } = require("./verify.js");
 const { maybeApplyFmTitle } = require("./fm-title.js");
 const { classifyTool } = require("./guardrails.js");
+const {
+  decideQuotaWait,
+  formatQuotaWaitClock,
+  quotaWaitEnabled,
+} = require("./quotaWait.js");
 
 const KIMI_PUSH_THROTTLE_MS = 250;
 
@@ -1247,7 +1252,13 @@ function createRunner(opts) {
     if (status === "done") {
       afterSuccessfulTurn(threadId);
     } else if (status === "failed") {
-      afterFailedTurn(threadId);
+      const parked = store.getThread(threadId);
+      if (parked && parked.status === "quota-wait") {
+        // Parked on a reset clock: not a failure. Skip orch wake-up, crew
+        // release, and the queued drain — those belong to a real terminal.
+      } else {
+        afterFailedTurn(threadId);
+      }
     } else {
       // stopped (and any other terminal): deliver notices that queued
       // while this thread was the orchestrator mid-run.
@@ -1328,7 +1339,11 @@ function createRunner(opts) {
     }
     // Verify restamps status "working"; skip so we don't start the queued
     // prompt on top of the gate. The verify settle path drains instead.
-    maybeDrainQueued(threadId);
+    // A parked quota-wait is not a terminal — don't drain onto it.
+    const settled = store.getThread(threadId);
+    if (!settled || settled.status !== "quota-wait") {
+      maybeDrainQueued(threadId);
+    }
   }
 
   /**
@@ -1758,6 +1773,165 @@ function createRunner(opts) {
   }
 
   /**
+   * Quota-wait (#462): one timer per parked thread. Wake once; a second
+   * quota error on the same prompt fails. Distinct from #286 / #294.
+   * @type {Map<string, ReturnType<typeof setTimeout>>}
+   */
+  const quotaTimers = new Map();
+
+  function cancelQuotaWake(threadId) {
+    const t = quotaTimers.get(threadId);
+    if (!t) return;
+    clearTimeout(t);
+    quotaTimers.delete(threadId);
+  }
+
+  function lastUserOnThread(threadId) {
+    const msgs = store.getMessages(threadId) || [];
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i] && msgs[i].role === "user") return msgs[i];
+    }
+    return null;
+  }
+
+  /**
+   * Park or fail. Call instead of writing status:"failed" on a provider
+   * turn so the first threads:changed never flashes Failed.
+   * @param {string} threadId
+   * @param {string} errText
+   * @param {object} [extraPatch]
+   * @returns {{ parked: boolean, until?: number }}
+   */
+  function markRunFailed(threadId, errText, extraPatch) {
+    const park = decideQuotaWait({
+      text: errText,
+      thread: store.getThread(threadId),
+      settings: store.getSettings(),
+    });
+    if (park) {
+      store.updateThread(
+        threadId,
+        {
+          ...(extraPatch || {}),
+          status: "quota-wait",
+          runStartedAt: null,
+          lastError: shortError(errText),
+          quotaWaitUntil: park.until,
+        },
+        { touch: true },
+      );
+      appendMessage(
+        threadId,
+        "event",
+        `Quota wait: usage limit reached. Resuming at ${formatQuotaWaitClock(park.until)}.`,
+      );
+      scheduleQuotaWake(threadId, park.until);
+      return { parked: true, until: park.until };
+    }
+    store.updateThread(
+      threadId,
+      {
+        ...(extraPatch || {}),
+        status: "failed",
+        runStartedAt: null,
+        lastError: shortError(errText),
+      },
+      { touch: true },
+    );
+    return { parked: false };
+  }
+
+  function scheduleQuotaWake(threadId, until) {
+    cancelQuotaWake(threadId);
+    const delay = Math.max(1000, Number(until) + 2000 - Date.now());
+    const cap = Math.min(delay, 2147483647);
+    const timer = setTimeout(() => {
+      quotaTimers.delete(threadId);
+      void fireQuotaWake(threadId);
+    }, cap);
+    if (typeof timer.unref === "function") timer.unref();
+    quotaTimers.set(threadId, timer);
+  }
+
+  async function fireQuotaWake(threadId) {
+    const thread = store.getThread(threadId);
+    if (!thread || thread.status !== "quota-wait") return;
+    if (!quotaWaitEnabled(thread, store.getSettings())) return;
+    if (active.has(threadId)) return;
+    const user = lastUserOnThread(threadId);
+    if (!user || !String(user.text || "").trim()) {
+      store.updateThread(
+        threadId,
+        {
+          status: "failed",
+          quotaWaitUntil: null,
+          lastError: shortError("Quota wait: nothing to resume"),
+        },
+        { touch: true },
+      );
+      store.save();
+      pushDetail(threadId);
+      pushThreadsChanged();
+      return;
+    }
+    try {
+      await startRun({
+        threadId,
+        prompt: user.text,
+        attachments: user.attachments,
+        fromQuotaWait: true,
+      });
+    } catch (err) {
+      const reason = err && err.message ? String(err.message) : String(err);
+      store.updateThread(
+        threadId,
+        {
+          status: "failed",
+          quotaWaitUntil: null,
+          quotaWaitResumed: true,
+          lastError: shortError(`Quota wait: resume failed: ${reason}`),
+        },
+        { touch: true },
+      );
+      appendMessage(
+        threadId,
+        "event",
+        `Quota wait: resume failed: ${reason}`,
+      );
+      store.save();
+      pushDetail(threadId);
+      pushThreadsChanged();
+    }
+  }
+
+  /**
+   * Resume a parked quota-wait now (banner / IPC). Counts as the one-shot.
+   * @param {{ threadId: string }} input
+   */
+  async function resumeQuotaWait(input) {
+    const threadId = input && input.threadId;
+    const thread = store.getThread(threadId);
+    if (!thread) throw new Error(`Unknown thread: ${threadId}`);
+    if (thread.status !== "quota-wait") {
+      throw new Error("Thread is not waiting on a provider quota reset");
+    }
+    cancelQuotaWake(threadId);
+    if (active.has(threadId)) {
+      throw new Error("A run is already active on this thread");
+    }
+    const user = lastUserOnThread(threadId);
+    if (!user || !String(user.text || "").trim()) {
+      throw new Error("Quota wait: nothing to resume");
+    }
+    return startRun({
+      threadId,
+      prompt: user.text,
+      attachments: user.attachments,
+      fromQuotaWait: true,
+    });
+  }
+
+  /**
    * Track phase transitions for simulated work log (one item per phase).
    * @param {string} threadId
    * @param {string} runId
@@ -1908,15 +2082,7 @@ function createRunner(opts) {
       } catch (err) {
         clearRun(threadId);
         const errText = `Run error: ${err && err.message ? err.message : String(err)}`;
-        store.updateThread(
-          threadId,
-          {
-            status: "failed",
-            runStartedAt: null,
-            lastError: shortError(errText),
-          },
-          { touch: true },
-        );
+        markRunFailed(threadId, errText);
         appendMessage(threadId, "event", errText, runId);
         appendDoneWorkLog(threadId, runId, "Run error");
         store.save();
@@ -2074,15 +2240,7 @@ function createRunner(opts) {
           : `Run error (exit ${exitCode == null ? "?" : exitCode})`;
         appendMessage(threadId, "event", errText, runId);
         appendDoneWorkLog(threadId, runId, "Run error");
-        store.updateThread(
-          threadId,
-          {
-            status: "failed",
-            runStartedAt: null,
-            lastError: shortError(errText),
-          },
-          { touch: true },
-        );
+        markRunFailed(threadId, errText);
         store.save();
         pushDetail(threadId, realState);
         pushThreadsChanged();
@@ -2101,15 +2259,7 @@ function createRunner(opts) {
         const errText = `Run error: ${msg}`;
         appendMessage(threadId, "event", errText, runId);
         appendDoneWorkLog(threadId, runId, "Run error");
-        store.updateThread(
-          threadId,
-          {
-            status: "failed",
-            runStartedAt: null,
-            lastError: shortError(errText),
-          },
-          { touch: true },
-        );
+        markRunFailed(threadId, errText);
         store.save();
         pushDetail(threadId, realState);
         pushThreadsChanged();
@@ -2689,20 +2839,23 @@ function createRunner(opts) {
               failText += "\nSession reset; the next message starts fresh.";
             }
           }
-          store.updateThread(
-            threadId,
-            {
-              status: ok ? "done" : "failed",
-              sessionId: sessionLost ? null : capturedSessionId,
-              runStartedAt: null,
-              lastError: ok ? null : shortError(failText),
-            },
-            { touch: true },
-          );
-
-          if (!ok) {
+          if (ok) {
+            store.updateThread(
+              threadId,
+              {
+                status: "done",
+                sessionId: sessionLost ? null : capturedSessionId,
+                runStartedAt: null,
+                lastError: null,
+              },
+              { touch: true },
+            );
+          } else {
             appendMessage(threadId, "event", failText, runId);
             appendDoneWorkLog(threadId, runId, "Run error");
+            markRunFailed(threadId, failText, {
+              sessionId: sessionLost ? null : capturedSessionId,
+            });
           }
 
           store.save();
@@ -2783,15 +2936,7 @@ function createRunner(opts) {
           : `Run error (exit ${code == null ? "?" : code})`;
         appendMessage(threadId, "event", errText, runId);
         appendDoneWorkLog(threadId, runId, "Run error");
-        store.updateThread(
-          threadId,
-          {
-            status: "failed",
-            runStartedAt: null,
-            lastError: shortError(errText),
-          },
-          { touch: true },
-        );
+        markRunFailed(threadId, errText);
         store.save();
         pushDetail(threadId, claudeState);
         pushThreadsChanged();
@@ -2815,15 +2960,7 @@ function createRunner(opts) {
         const errText = `Run error: ${msg}`;
         appendMessage(threadId, "event", errText, runId);
         appendDoneWorkLog(threadId, runId, "Run error");
-        store.updateThread(
-          threadId,
-          {
-            status: "failed",
-            runStartedAt: null,
-            lastError: shortError(errText),
-          },
-          { touch: true },
-        );
+        markRunFailed(threadId, errText);
         store.save();
         pushDetail(threadId, claudeState);
         pushThreadsChanged();
@@ -3303,15 +3440,7 @@ function createRunner(opts) {
           : `Run error (exit ${code == null ? "?" : code})`;
         appendMessage(threadId, "event", errText, runId);
         appendDoneWorkLog(threadId, runId, "Run error");
-        store.updateThread(
-          threadId,
-          {
-            status: "failed",
-            runStartedAt: null,
-            lastError: shortError(errText),
-          },
-          { touch: true },
-        );
+        markRunFailed(threadId, errText);
         store.save();
         pushDetail(threadId, codexState);
         pushThreadsChanged();
@@ -3334,15 +3463,7 @@ function createRunner(opts) {
         const errText = `Run error: ${msg}`;
         appendMessage(threadId, "event", errText, runId);
         appendDoneWorkLog(threadId, runId, "Run error");
-        store.updateThread(
-          threadId,
-          {
-            status: "failed",
-            runStartedAt: null,
-            lastError: shortError(errText),
-          },
-          { touch: true },
-        );
+        markRunFailed(threadId, errText);
         store.save();
         pushDetail(threadId, codexState);
         pushThreadsChanged();
@@ -3687,15 +3808,7 @@ function createRunner(opts) {
           : `Run error (exit ${code == null ? "?" : code})`;
         appendMessage(threadId, "event", errText, runId);
         appendDoneWorkLog(threadId, runId, "Run error");
-        store.updateThread(
-          threadId,
-          {
-            status: "failed",
-            runStartedAt: null,
-            lastError: shortError(errText),
-          },
-          { touch: true },
-        );
+        markRunFailed(threadId, errText);
         store.save();
         pushDetail(threadId, kimiState);
         pushThreadsChanged();
@@ -3721,15 +3834,7 @@ function createRunner(opts) {
         const errText = `Run error: ${msg}`;
         appendMessage(threadId, "event", errText, runId);
         appendDoneWorkLog(threadId, runId, "Run error");
-        store.updateThread(
-          threadId,
-          {
-            status: "failed",
-            runStartedAt: null,
-            lastError: shortError(errText),
-          },
-          { touch: true },
-        );
+        markRunFailed(threadId, errText);
         store.save();
         pushDetail(threadId, kimiState);
         pushThreadsChanged();
@@ -4090,15 +4195,7 @@ function createRunner(opts) {
           : `Run error (exit ${code == null ? "?" : code})`;
         appendMessage(threadId, "event", errText, runId);
         appendDoneWorkLog(threadId, runId, "Run error");
-        store.updateThread(
-          threadId,
-          {
-            status: "failed",
-            runStartedAt: null,
-            lastError: shortError(errText),
-          },
-          { touch: true },
-        );
+        markRunFailed(threadId, errText);
         store.save();
         pushDetail(threadId, opencodeState);
         pushThreadsChanged();
@@ -4124,15 +4221,7 @@ function createRunner(opts) {
         const errText = `Run error: ${msg}`;
         appendMessage(threadId, "event", errText, runId);
         appendDoneWorkLog(threadId, runId, "Run error");
-        store.updateThread(
-          threadId,
-          {
-            status: "failed",
-            runStartedAt: null,
-            lastError: shortError(errText),
-          },
-          { touch: true },
-        );
+        markRunFailed(threadId, errText);
         store.save();
         pushDetail(threadId, opencodeState);
         pushThreadsChanged();
@@ -4350,7 +4439,8 @@ function createRunner(opts) {
 
     // Machine-delivered turns increment autoTurns in flushOrchNotices.
     // Anything else (user send, retry, verify fix) is a human in the loop.
-    if (!input.fromNotice) autoTurns.set(threadId, 0);
+    if (!input.fromNotice && !input.fromQuotaWait) autoTurns.set(threadId, 0);
+    cancelQuotaWake(threadId);
 
     // Orchestration commands (issue #338): `/handoff`, `/advisor` and
     // `/committee` are named compositions of the fork-and-notice machinery
@@ -4499,8 +4589,10 @@ function createRunner(opts) {
     });
     // Transcript stores the RAW user prompt. The hand-off / rewind context
     // block (if any) is CLI-only — applied once below when no sessionId
-    // exists yet.
-    appendMessage(threadId, "user", prompt, runId, null, attachments);
+    // exists yet. A quota-wait resume is the SAME turn: do not append again.
+    if (!input.fromQuotaWait) {
+      appendMessage(threadId, "user", prompt, runId, null, attachments);
+    }
 
     if (droppedWorktree) {
       appendMessage(
@@ -4530,6 +4622,8 @@ function createRunner(opts) {
         awaitingInput: false,
         lastEventAt: null,
         stalledAt: null,
+        quotaWaitUntil: null,
+        quotaWaitResumed: input.fromQuotaWait === true,
         ...services.clearSettledOnActivity(thread),
       },
       { touch: true },
@@ -4853,6 +4947,9 @@ function createRunner(opts) {
       );
       marked = true;
     }
+    for (const id of [...quotaTimers.keys()]) {
+      cancelQuotaWake(id);
+    }
     // Kept-alive Claude sessions (idle between turns): kill + clear timers.
     for (const threadId of [...claudeSessions.keys()]) {
       disposeClaudeSession(threadId);
@@ -4943,6 +5040,25 @@ function createRunner(opts) {
     }
   }
 
+  function refreshQuotaWait(threadId) {
+    const thread = store.getThread(threadId);
+    if (!thread || thread.status !== "quota-wait" || !thread.quotaWaitUntil) {
+      cancelQuotaWake(threadId);
+      return;
+    }
+    if (!quotaWaitEnabled(thread, store.getSettings())) {
+      cancelQuotaWake(threadId);
+      return;
+    }
+    scheduleQuotaWake(threadId, thread.quotaWaitUntil);
+  }
+
+  function refreshAllQuotaWaits() {
+    for (const t of store.getThreads()) {
+      if (t.status === "quota-wait") refreshQuotaWait(t.id);
+    }
+  }
+
   // Native timer (not setIntervalFn): tests replace that hook for sim ticks.
   const stallTimer = setInterval(() => {
     try {
@@ -4953,10 +5069,15 @@ function createRunner(opts) {
   }, 15_000);
   if (typeof stallTimer.unref === "function") stallTimer.unref();
 
+  refreshAllQuotaWaits();
+
   return {
     startRun,
     startWorkflowRun,
     stopRun,
+    resumeQuotaWait,
+    refreshQuotaWait,
+    refreshAllQuotaWaits,
     getActiveWorkflow,
     isRunning,
     stopAll,

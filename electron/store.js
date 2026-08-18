@@ -386,6 +386,9 @@ const DEFAULT_AUTO_SETTLE_AFTER_DAYS = 3;
  * notifications: only an explicit false turns desktop notifications off, so
  * absent/junk keeps the pre-setting behaviour (notify).
  *
+ * quotaWaitAutoResume: only an explicit false turns auto-resume off, so
+ * absent/junk keeps Claude's default (continue when the usage limit resets).
+ *
  * autoSettleOnMerge: only an explicit false turns merge-settle off, so
  * absent/junk keeps the previous "MERGED = settled" behaviour.
  *
@@ -403,6 +406,7 @@ function normalizeSettings(raw) {
     defaultOrchestrate: false,
     updateChannel: null,
     notifications: true,
+    quotaWaitAutoResume: true,
     agentProfiles: [],
     subagentPool: { defaultAlias: null, force: false, entries: [] },
     otel: { endpoint: null, headers: {}, claudeMetrics: false },
@@ -461,6 +465,9 @@ function normalizeSettings(raw) {
   settings.updateChannel = ch === "prod" || ch === "nightly" ? ch : null;
   settings.notifications =
     /** @type {{ notifications?: unknown }} */ (obj).notifications !== false;
+  settings.quotaWaitAutoResume =
+    /** @type {{ quotaWaitAutoResume?: unknown }} */ (obj)
+      .quotaWaitAutoResume !== false;
   settings.autoSettleOnMerge =
     /** @type {{ autoSettleOnMerge?: unknown }} */ (obj).autoSettleOnMerge !==
     false;
@@ -787,6 +794,18 @@ function migrateThread(t) {
     issueNumber: normalizeIssueNumber(t.issueNumber),
     // Delayed post-merge re-check (issue #420). Heal a crash mid-check.
     postMergeVerify: normalizePostMerge(t.postMergeVerify),
+    // Provider quota-wait (#462). Absent on old rows.
+    quotaWaitUntil:
+      typeof t.quotaWaitUntil === "number" && Number.isFinite(t.quotaWaitUntil)
+        ? t.quotaWaitUntil
+        : null,
+    quotaWaitResumed: t.quotaWaitResumed === true,
+    quotaWaitAutoResume:
+      t.quotaWaitAutoResume === true
+        ? true
+        : t.quotaWaitAutoResume === false
+          ? false
+          : null,
   };
 }
 
@@ -1381,6 +1400,7 @@ class Store {
       defaultOrchestrate: n.defaultOrchestrate,
       updateChannel: n.updateChannel,
       notifications: n.notifications,
+      quotaWaitAutoResume: n.quotaWaitAutoResume,
       agentProfiles: n.agentProfiles,
       subagentPool: n.subagentPool,
       otel: n.otel,
@@ -1509,6 +1529,13 @@ class Store {
       }
       this.data.settings.notifications = v;
     }
+    if (Object.prototype.hasOwnProperty.call(patch, "quotaWaitAutoResume")) {
+      const v = patch.quotaWaitAutoResume;
+      if (typeof v !== "boolean") {
+        throw new Error("quotaWaitAutoResume must be a boolean");
+      }
+      this.data.settings.quotaWaitAutoResume = v;
+    }
     return this.getSettings();
   }
 
@@ -1567,9 +1594,11 @@ class Store {
         p = { ...patch, sessionId: null };
       }
       // A retry/new run is any non-failed status — drop a stale reason.
+      // quota-wait keeps lastError so the card tooltip still explains why.
       if (
         Object.prototype.hasOwnProperty.call(p, "status") &&
-        p.status !== "failed"
+        p.status !== "failed" &&
+        p.status !== "quota-wait"
       ) {
         p = { ...p, lastError: null };
       }
