@@ -9,6 +9,7 @@ const { Store, localDayKey } = require("../store.js");
 const services = require("../services.js");
 const { createRunner } = require("../runner.js");
 const { getMemoryStatus, resetMemorySupForTests } = require("../memory-sup.js");
+const { writeFakeBin } = require("./support/fakeBin.js");
 
 function git(cwd, args) {
   execFileSync("git", args, { cwd, stdio: "ignore" });
@@ -72,8 +73,7 @@ emit({
 });
 process.exit(0);
 `;
-  fs.writeFileSync(scriptPath, body, { mode: 0o755 });
-  return scriptPath;
+  return writeFakeBin(scriptPath, body);
 }
 
 describe("spendByDay and settings", () => {

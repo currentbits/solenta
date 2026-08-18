@@ -19,6 +19,7 @@ const {
   mergePr,
   setupWorktree,
 } = require("../worktrees.js");
+const { writeFakeBin } = require("./support/fakeBin.js");
 
 const JSON_FIXTURE = `[
   {
@@ -170,7 +171,7 @@ describe("rollupPrChecks", () => {
 
 function writeFakeGh(dir) {
   const bin = path.join(dir, "fake-gh");
-  fs.writeFileSync(
+  return writeFakeBin(
     bin,
     `#!/usr/bin/env node
 "use strict";
@@ -258,9 +259,7 @@ if (args[0] === "pr" && args[1] === "merge") {
 process.stderr.write("fake-gh: unhandled " + JSON.stringify(args) + "\\n");
 process.exit(2);
 `,
-    { mode: 0o755 },
   );
-  return bin;
 }
 
 describe("prChecks / mergePr", () => {

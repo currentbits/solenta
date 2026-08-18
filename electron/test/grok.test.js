@@ -13,6 +13,7 @@ const { Store } = require("../store.js");
 const services = require("../services.js");
 const { createRunner } = require("../runner.js");
 const { getProvider } = require("../providers.js");
+const { writeFakeBin } = require("./support/fakeBin.js");
 
 const TOKEN = "test-bearer-token-64chars-abcdefghijklmnopqrstuvwxyz012345";
 
@@ -221,9 +222,7 @@ main().catch((e) => {
   process.exit(1);
 });
 `;
-  const launcher = path.join(dir, "fake-grok");
-  fs.writeFileSync(launcher, body, { mode: 0o755 });
-  return launcher;
+  return writeFakeBin(path.join(dir, "fake-grok"), body);
 }
 
 describe("grok provider registry", () => {

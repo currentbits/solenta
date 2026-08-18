@@ -14,6 +14,7 @@ const {
   buildRunTitle,
   buildRunBody,
 } = require("../memory-record.js");
+const { writeFakeBin } = require("./support/fakeBin.js");
 
 const TOKEN = "test-bearer-token-64chars-abcdefghijklmnopqrstuvwxyz012345";
 
@@ -117,9 +118,7 @@ emit({type:"assistant",message:{content:[{type:"text",text:"Final answer from as
 emit({type:"result",subtype:"success",result:"Final answer from assistant about the task.",usage:{input_tokens:11,output_tokens:22},total_cost_usd:0.012,session_id:"s-rec"});
 process.exit(0);
 `;
-  const fake = path.join(dir, "fake-claude-rec");
-  fs.writeFileSync(fake, body, { mode: 0o755 });
-  return fake;
+  return writeFakeBin(path.join(dir, "fake-claude-rec"), body);
 }
 
 function writeSlowClaude(dir) {
@@ -130,9 +129,7 @@ emit({type:"system",subtype:"init",session_id:"s-slow",model:"m"});
 emit({type:"assistant",message:{content:[{type:"text",text:"partial so far"}]}});
 setInterval(() => {}, 10000);
 `;
-  const fake = path.join(dir, "fake-claude-slow");
-  fs.writeFileSync(fake, body, { mode: 0o755 });
-  return fake;
+  return writeFakeBin(path.join(dir, "fake-claude-slow"), body);
 }
 
 function writeWorkflowFake(dir) {
@@ -153,9 +150,7 @@ emit({type:"assistant",message:{content:[{type:"text",text}]}});
 emit({type:"result",subtype:"success",result:text,usage:{input_tokens:3,output_tokens:5},total_cost_usd:0.001,session_id:"wf-s"});
 process.exit(0);
 `;
-  const fake = path.join(dir, "fake-claude-wf");
-  fs.writeFileSync(fake, fixed, { mode: 0o755 });
-  return fake;
+  return writeFakeBin(path.join(dir, "fake-claude-wf"), fixed);
 }
 
 describe("memory-record helpers", () => {
@@ -516,8 +511,7 @@ describe("auto-record on real run terminals", () => {
 process.stderr.write("wf-fail\\n");
 process.exit(2);
 `;
-    const bin = path.join(tmpDir, "fake-claude-wffail");
-    fs.writeFileSync(bin, failBody, { mode: 0o755 });
+    const bin = writeFakeBin(path.join(tmpDir, "fake-claude-wffail"), failBody);
     process.env.CODER_CLAUDE_BIN = bin;
     const project = store.getProjects()[0];
     const thread = services.createThread(store, {
@@ -568,8 +562,8 @@ emit({type:"item.completed",item:{id:"m1",type:"agent_message",text:"Hello from 
 emit({type:"turn.completed",usage:{input_tokens:30,output_tokens:12,total_cost_usd:0.004}});
 process.exit(0);
 `;
-    fs.writeFileSync(bin, body, { mode: 0o755 });
-    process.env.CODER_CODEX_BIN = bin;
+    const resolved = writeFakeBin(bin, body);
+    process.env.CODER_CODEX_BIN = resolved;
 
     try {
       const project = store.getProjects()[0];
@@ -631,8 +625,7 @@ emit({type:"item.completed",item:{id:"1",type:"agent_message",text:"ok"}});
 emit({type:"turn.completed",usage:{input_tokens:1,output_tokens:1}});
 process.exit(0);
 `;
-    const fake = path.join(tmpDir, "fake-codex");
-    fs.writeFileSync(fake, body, { mode: 0o755 });
+    const fake = writeFakeBin(path.join(tmpDir, "fake-codex"), body);
     process.env.CODER_CODEX_BIN = fake;
     process.env.CODER_FAKE_CODEX_ARGV_FILE = argvFile;
 

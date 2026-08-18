@@ -10,6 +10,7 @@ const { Store } = require("../store.js");
 const services = require("../services.js");
 const { setupWorktree, createPr, push, commit } = require("../worktrees.js");
 const { suggestCommitMessage } = require("../commitmsg.js");
+const { writeFakeBin } = require("./support/fakeBin.js");
 
 const FAKE_AWS_KEY = "AKIAIOSFODNN7EXAMPLE";
 const FAKE_GH_TOKEN = `ghp_${"a".repeat(36)}`;
@@ -29,7 +30,7 @@ function git(cwd, args) {
  */
 function writeFakeGh(dir) {
   const bin = path.join(dir, "fake-gh");
-  fs.writeFileSync(
+  return writeFakeBin(
     bin,
     `#!/usr/bin/env node
 "use strict";
@@ -70,9 +71,7 @@ if (args[0] === "pr" && args[1] === "create") {
 }
 process.exit(2);
 `,
-    { mode: 0o755 },
   );
-  return bin;
 }
 
 describe("guardrails outbound", () => {
@@ -220,14 +219,12 @@ describe("guardrails outbound", () => {
 
   it("refuses a generated commit message that contains a token", async () => {
     fs.writeFileSync(path.join(repo, "a.txt"), "one\n");
-    const fakeBin = path.join(tmpDir, "fake-claude");
-    fs.writeFileSync(
-      fakeBin,
+    const fakeBin = writeFakeBin(
+      path.join(tmpDir, "fake-claude"),
       `#!/usr/bin/env node
 console.log("feat: leak ${FAKE_GH_TOKEN}");
 `,
     );
-    fs.chmodSync(fakeBin, 0o755);
 
     await assert.rejects(
       suggestCommitMessage({

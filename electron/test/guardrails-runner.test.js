@@ -12,6 +12,7 @@ const { execFileSync } = require("node:child_process");
 const { Store } = require("../store.js");
 const services = require("../services.js");
 const { createRunner } = require("../runner.js");
+const { writeFakeBin } = require("./support/fakeBin.js");
 
 function git(cwd, args) {
   execFileSync("git", args, { cwd, stdio: "ignore" });
@@ -107,8 +108,7 @@ async function main() {
 }
 main();
 `;
-  fs.writeFileSync(launcher, body, { mode: 0o755 });
-  return launcher;
+  return writeFakeBin(launcher, body);
 }
 
 describe("runner × guardrails (issue #409)", () => {
