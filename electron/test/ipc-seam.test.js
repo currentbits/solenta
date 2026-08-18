@@ -213,6 +213,16 @@ exit 1`,
         "main must handle servers:list",
       );
 
+      assert.equal(
+        typeof api.files.resolve,
+        "function",
+        "preload must expose files.resolve",
+      );
+      assert.ok(
+        handlers.has("files:resolve"),
+        "main must handle files:resolve",
+      );
+
       for (const name of ["scripts", "start", "stop", "status"]) {
         assert.equal(
           typeof api.devserver[name],

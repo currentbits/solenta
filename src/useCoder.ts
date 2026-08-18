@@ -319,6 +319,15 @@ export interface UseCoderResult {
   suggestCommitMessage: () => Promise<{ message: string }>;
   /** File paths for the composer @-mention popup. */
   listFiles: (query: string) => Promise<string[]>;
+  /** Resolve transcript path tokens against the selected thread worktree. */
+  resolvePaths: (
+    paths: string[],
+  ) => Promise<Array<{ path: string; abs: string | null }>>;
+  /** Open or reveal a resolved worktree path in the default app / Finder. */
+  openWorkspacePath: (
+    abs: string,
+    opts?: { reveal?: boolean },
+  ) => Promise<void>;
   /** Data URL for one image a tool returned; null when it is gone. */
   loadToolImage: (name: string) => Promise<string | null>;
   /** Native image/folder picker, or a web <input type=file> for images. */
@@ -1740,6 +1749,36 @@ export function useCoder(): UseCoderResult {
     [api, selectedThreadId],
   );
 
+  const resolvePaths = useCallback(
+    async (paths: string[]) => {
+      if (!selectedThreadId || paths.length === 0) {
+        return paths.map((p) => ({ path: p, abs: null }));
+      }
+      try {
+        const result = await api.files.resolve({
+          threadId: selectedThreadId,
+          paths,
+        });
+        return result.resolved;
+      } catch {
+        return paths.map((p) => ({ path: p, abs: null }));
+      }
+    },
+    [api, selectedThreadId],
+  );
+
+  const openWorkspacePath = useCallback(
+    async (abs: string, opts?: { reveal?: boolean }) => {
+      if (!selectedThreadId || !abs) return;
+      if (opts?.reveal) {
+        await api.shell.reveal({ threadId: selectedThreadId, path: abs });
+        return;
+      }
+      await api.shell.openPath({ threadId: selectedThreadId, path: abs });
+    },
+    [api, selectedThreadId],
+  );
+
   const loadToolImage = useCallback(
     async (name: string) => {
       try {
@@ -2297,6 +2336,8 @@ export function useCoder(): UseCoderResult {
     revertFile,
     suggestCommitMessage,
     listFiles,
+    resolvePaths,
+    openWorkspacePath,
     loadToolImage,
     pickAttachments,
     saveAttachmentImage,

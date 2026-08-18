@@ -2141,6 +2141,15 @@ export interface CoderApi {
      * names). null when the file is gone or the name is not an image.
      */
     image(input: { name: string }): Promise<{ dataUrl: string | null }>;
+    /**
+     * Resolve transcript path tokens against the thread worktree (or the
+     * project checkout when no worktree is bound). Missing files, URLs, and
+     * paths outside the workspace come back as `abs: null`.
+     */
+    resolve(input: {
+      threadId: string;
+      paths: string[];
+    }): Promise<{ resolved: Array<{ path: string; abs: string | null }> }>;
   };
   /**
    * Composer attachments: images and folders the user pins to a message.

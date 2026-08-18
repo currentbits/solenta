@@ -125,6 +125,13 @@ function view(props: {
   restoreCheckpoint?: (threadId: string, sha: string) => Promise<void>;
   onLoadImage?: (name: string) => Promise<string | null>;
   onDropAttachmentFiles?: (files: File[]) => Promise<AttachmentInfo[]>;
+  onResolvePaths?: (
+    paths: string[],
+  ) => Promise<Array<{ path: string; abs: string | null }>>;
+  onOpenWorkspacePath?: (
+    abs: string,
+    opts?: { reveal?: boolean },
+  ) => void | Promise<void>;
 }) {
   return (
     <ThreadView
@@ -159,6 +166,8 @@ function view(props: {
       onPush={async () => ({ remote: "origin", branch: "main" })}
       onLoadImage={props.onLoadImage}
       onDropAttachmentFiles={props.onDropAttachmentFiles}
+      onResolvePaths={props.onResolvePaths}
+      onOpenWorkspacePath={props.onOpenWorkspacePath}
     />
   );
 }
@@ -367,6 +376,46 @@ describe("ThreadView message roles", () => {
     assert.ok(html.includes("Bash: npm test"), "tool summary must show");
     assert.ok(html.includes("toolCard") || html.includes("toolHeader"), "tool card chrome");
   });
+
+  it("opens a worktree path from a Read tool-card header", async () => {
+    const opened: string[] = [];
+    const m = await mount(
+      view({
+        onResolvePaths: async (paths) =>
+          paths.map((p) => ({
+            path: p,
+            abs: p === "src/foo.ts" ? "/tmp/wt/src/foo.ts" : null,
+          })),
+        onOpenWorkspacePath: (abs) => {
+          opened.push(abs);
+        },
+        detail: detail({
+          messages: [
+            msg({
+              id: "t-read",
+              role: "tool",
+              text: "Read: src/foo.ts",
+              createdAt: 15,
+              runId: "run-1",
+              tool: {
+                id: "tc-read",
+                name: "Read",
+                input: '{"file_path":"src/foo.ts"}',
+                output: "ok",
+                done: true,
+                isError: false,
+              },
+            }),
+          ],
+        }),
+      }),
+    );
+    await m.flush();
+    const link = m.container.querySelector("[data-path-link=\"src/foo.ts\"]");
+    assert.ok(link, "Read card path is clickable");
+    await m.click(link);
+    assert.deepEqual(opened, ["/tmp/wt/src/foo.ts"]);
+  });
 });
 
 describe("ThreadView timeline wiring", () => {
@@ -540,12 +589,12 @@ describe("ThreadView mounted interactions", () => {
       !m.text().includes("TOOL_INPUT_SECRET_PAYLOAD"),
       "collapsed tool body must hide input",
     );
-    // Prefer the tool header class (CSS modules stub to the key name). Avoid
-    // grabbing Composer/menu buttons that also use aria-expanded.
+    // Name/dot live on toolToggle so a path in the summary is not nested
+    // inside the expand button.
     const header =
-      m.query("button.toolHeader") ??
-      m.byText("Bash: echo hi");
-    assert.ok(header, "tool header is a button");
+      m.query("button.toolToggle") ??
+      m.byText("Bash");
+    assert.ok(header, "tool toggle is a button");
     await m.click(header);
     assert.ok(
       m.text().includes("TOOL_INPUT_SECRET_PAYLOAD"),
@@ -587,7 +636,7 @@ describe("ThreadView mounted interactions", () => {
       }),
     );
     assert.equal(m.queryAll("img").length, 0, "collapsed card shows no image");
-    await m.click(m.query("button.toolHeader"));
+    await m.click(m.query("button.toolToggle"));
     await m.flush();
     assert.deepEqual(asked, ["shot.png"]);
     const img = m.query("img");
@@ -624,7 +673,7 @@ describe("ThreadView mounted interactions", () => {
         }),
       }),
     );
-    await m.click(m.query("button.toolHeader"));
+    await m.click(m.query("button.toolToggle"));
     await m.flush();
     assert.equal(m.query("[data-image-lightbox]"), null, "closed by default");
 

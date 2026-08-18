@@ -78,6 +78,7 @@ import { formatElapsed } from "../format";
 import { useEscapeClose } from "../useEscapeClose";
 import { Composer } from "./Composer";
 import { Markdown } from "./Markdown";
+import { PathLinkProvider, PathText } from "./PathLinks";
 import styles from "./ThreadView.module.css";
 
 const PUSH_FLASH_MS = 3000;
@@ -378,6 +379,15 @@ interface ThreadViewProps {
   onSuggestCommitMessage: () => Promise<{ message: string }>;
   /** File lookup for the composer @-mention popup. */
   onListFiles?: (query: string) => Promise<string[]>;
+  /** Resolve transcript path tokens against the thread worktree. */
+  onResolvePaths?: (
+    paths: string[],
+  ) => Promise<Array<{ path: string; abs: string | null }>>;
+  /** Open or reveal a resolved worktree path. */
+  onOpenWorkspacePath?: (
+    abs: string,
+    opts?: { reveal?: boolean },
+  ) => void | Promise<void>;
   /** Loads an image a tool returned (ToolCallInfo.images) as a data URL. */
   onLoadImage?: (name: string) => Promise<string | null>;
   /** Native image/folder picker for composer attachments (Electron only). */
@@ -485,20 +495,30 @@ function ToolCallCard({
 
   return (
     <section className={`${styles.card} ${styles.toolCard}`}>
-      <button
-        type="button"
+      <div
         className={styles.toolHeader}
         onClick={() => setManual(!open)}
-        aria-expanded={open}
       >
-        <span
-          className={styles.toolDot}
-          data-status={status}
-          aria-label={status}
-        />
-        <span className={styles.toolName}>{tool.name}</span>
-        <span className={styles.toolSummary}>{message.text}</span>
-        <span className={styles.chevron} data-open={open}>
+        <button
+          type="button"
+          className={styles.toolToggle}
+          onClick={(e) => {
+            e.stopPropagation();
+            setManual(!open);
+          }}
+          aria-expanded={open}
+        >
+          <span
+            className={styles.toolDot}
+            data-status={status}
+            aria-label={status}
+          />
+          <span className={styles.toolName}>{tool.name}</span>
+        </button>
+        <span className={styles.toolSummary}>
+          <PathText text={message.text} />
+        </span>
+        <span className={styles.chevron} data-open={open} aria-hidden="true">
           <svg
             width="9"
             height="9"
@@ -508,19 +528,22 @@ function ToolCallCard({
             strokeWidth="1.6"
             strokeLinecap="round"
             strokeLinejoin="round"
-            aria-hidden="true"
           >
             <path d="M3.5 2 6.5 5 3.5 8" />
           </svg>
         </span>
-      </button>
+      </div>
       {open && (
         <div className={styles.toolBody}>
-          <pre className={styles.toolPre}>{tool.input}</pre>
+          <pre className={styles.toolPre}>
+            <PathText text={tool.input} />
+          </pre>
           {tool.output != null && tool.output !== "" && (
             <>
               <div className={styles.toolDivider} />
-              <pre className={styles.toolPre}>{tool.output}</pre>
+              <pre className={styles.toolPre}>
+                <PathText text={tool.output} />
+              </pre>
             </>
           )}
           {imageUrls.map((url) => (
@@ -2318,6 +2341,8 @@ export const ThreadView = memo(function ThreadView({
   onRevertFile,
   onSuggestCommitMessage,
   onListFiles,
+  onResolvePaths,
+  onOpenWorkspacePath,
   onLoadImage,
   onPickAttachments,
   onSaveAttachmentImage,
@@ -2391,6 +2416,24 @@ export const ThreadView = memo(function ThreadView({
     null,
   );
   const copyFlashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const resolvePathMap = useCallback(
+    async (paths: string[]) => {
+      if (!onResolvePaths) {
+        return Object.fromEntries(paths.map((p) => [p, null]));
+      }
+      const rows = await onResolvePaths(paths);
+      return Object.fromEntries(rows.map((r) => [r.path, r.abs]));
+    },
+    [onResolvePaths],
+  );
+
+  const handleOpenWorkspacePath = useCallback(
+    (abs: string, opts?: { reveal?: boolean }) => {
+      void onOpenWorkspacePath?.(abs, opts);
+    },
+    [onOpenWorkspacePath],
+  );
 
   const runningAgents = useMemo(() => {
     if (!detail?.workflow) return 0;
@@ -3059,6 +3102,11 @@ export const ThreadView = memo(function ThreadView({
   };
 
   return (
+    <PathLinkProvider
+      threadId={detail.thread.id}
+      resolvePaths={resolvePathMap}
+      openPath={handleOpenWorkspacePath}
+    >
     <main
       className={styles.main}
       ref={dropHostRef}
@@ -3972,5 +4020,6 @@ export const ThreadView = memo(function ThreadView({
         </div>
       )}
     </main>
+    </PathLinkProvider>
   );
 });

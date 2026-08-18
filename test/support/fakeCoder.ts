@@ -1341,6 +1341,23 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           files: all.filter((f) => !q || f.toLowerCase().includes(q)),
         });
       },
+      image: (input: unknown) =>
+        rec("files.image", [input], { dataUrl: null }),
+      resolve: (input: unknown) => {
+        const paths = ((input as { paths?: string[] }).paths ?? []).map(String);
+        const known = new Set([
+          "src/App.tsx",
+          "src/main.tsx",
+          "README.md",
+          "package.json",
+        ]);
+        return rec("files.resolve", [input], {
+          resolved: paths.map((p) => ({
+            path: p,
+            abs: known.has(p) ? `/tmp/wt/${p}` : null,
+          })),
+        });
+      },
     },
     attachments: {
       pick: () => rec("attachments.pick", [], { attachments: [] }),

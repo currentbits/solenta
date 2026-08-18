@@ -8,6 +8,7 @@ import {
 } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { linkifyNode } from "./PathLinks";
 import styles from "./Markdown.module.css";
 
 const COPIED_MS = 1500;
@@ -127,7 +128,20 @@ export const Markdown = memo(function Markdown({ text }: { text: string }) {
         components={{
           pre: (props) => <CodeBlock>{props.children}</CodeBlock>,
           code: (props) => (
-            <code className={styles.inlineCode}>{props.children}</code>
+            <code className={styles.inlineCode}>
+              {linkifyNode(props.children)}
+            </code>
+          ),
+          p: (props) => <p>{linkifyNode(props.children)}</p>,
+          li: (props) => <li>{linkifyNode(props.children)}</li>,
+          td: (props) => <td>{linkifyNode(props.children)}</td>,
+          th: (props) => <th>{linkifyNode(props.children)}</th>,
+          h1: (props) => <h1>{linkifyNode(props.children)}</h1>,
+          h2: (props) => <h2>{linkifyNode(props.children)}</h2>,
+          h3: (props) => <h3>{linkifyNode(props.children)}</h3>,
+          h4: (props) => <h4>{linkifyNode(props.children)}</h4>,
+          blockquote: (props) => (
+            <blockquote>{linkifyNode(props.children)}</blockquote>
           ),
           a: (props) => (
             <a href={props.href} target="_blank" rel="noreferrer">

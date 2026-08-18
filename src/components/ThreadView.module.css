@@ -413,10 +413,25 @@ a.btn {
   text-align: left;
   color: var(--text);
   min-width: 0;
+  cursor: pointer;
 }
 
 .toolHeader:hover {
   background: rgba(255, 255, 255, 0.03);
+}
+
+.toolToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  flex-shrink: 0;
 }
 
 .toolDot {

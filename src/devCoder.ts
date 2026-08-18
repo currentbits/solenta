@@ -4024,6 +4024,23 @@ function buildDevCoder(): CoderApi {
       async image(_input: { name: string }) {
         return { dataUrl: null };
       },
+      async resolve(input: { threadId: string; paths: string[] }) {
+        const known = new Set([
+          "src/App.tsx",
+          "src/components/ThreadView.tsx",
+          "src/components/Composer.tsx",
+          "src/useCoder.ts",
+          "electron/main.js",
+          "README.md",
+          "package.json",
+        ]);
+        return {
+          resolved: input.paths.map((p) => ({
+            path: p,
+            abs: known.has(p) ? `/Users/demo/project/${p}` : null,
+          })),
+        };
+      },
     },
     attachments: {
       async pick() {

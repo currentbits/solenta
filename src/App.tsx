@@ -134,6 +134,8 @@ export default function App() {
     revertFile,
     suggestCommitMessage,
     listFiles,
+    resolvePaths,
+    openWorkspacePath,
     loadToolImage,
     pickAttachments,
     saveAttachmentImage,
@@ -948,6 +950,8 @@ export default function App() {
         onRevertFile={revertFile}
         onSuggestCommitMessage={suggestCommitMessage}
         onListFiles={listFiles}
+        onResolvePaths={resolvePaths}
+        onOpenWorkspacePath={openWorkspacePath}
         onLoadImage={loadToolImage}
         onPickAttachments={pickAttachments}
         onSaveAttachmentImage={saveAttachmentImage}
