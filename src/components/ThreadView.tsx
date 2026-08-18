@@ -83,6 +83,26 @@ const STICK_BOTTOM_PX = 80;
 const RING_R = 8;
 const RING_C = 2 * Math.PI * RING_R;
 
+/** Per-thread sandbox yes/no; reason lives on hover (#436). */
+function SandboxBadge({
+  sandbox,
+}: {
+  sandbox: { sandboxed: boolean; reason: string };
+}) {
+  const label = sandbox.sandboxed ? "Sandboxed" : "Not sandboxed";
+  return (
+    <span
+      className={styles.sandboxBadge}
+      data-sandbox-badge=""
+      data-sandboxed={sandbox.sandboxed ? "yes" : "no"}
+      title={sandbox.reason}
+      aria-label={`${label}: ${sandbox.reason}`}
+    >
+      {label}
+    </span>
+  );
+}
+
 /** Small context-fill ring + percent for the thread header. */
 function ContextRingBadge({ ring }: { ring: ContextRingView }) {
   return (
@@ -2603,6 +2623,7 @@ export const ThreadView = memo(function ThreadView({
           )}
         </div>
         <div className={styles.actions}>
+          {thread.sandbox && <SandboxBadge sandbox={thread.sandbox} />}
           {ring && <ContextRingBadge ring={ring} />}
           {onStartSpec && !thread.spec && (
             <button

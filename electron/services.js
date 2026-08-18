@@ -11,6 +11,7 @@ const {
 const { getMemoryStatus } = require("./memory-sup.js");
 const { execCommandAsync } = require("./ssh.js");
 const { normalizeCommand, runVerifyCommand } = require("./verify.js");
+const { resolveSandbox } = require("./sandbox.js");
 
 const PERMISSION_MODES = new Set([
   "default",
@@ -464,7 +465,8 @@ function setPermissionMode(store, input) {
   }
   const updated = store.updateThread(threadId, { permissionMode: mode });
   store.save();
-  return updated ? { ...updated } : { ...thread, permissionMode: mode };
+  const row = updated || { ...thread, permissionMode: mode };
+  return decorateThread(store, row);
 }
 
 /**
@@ -969,7 +971,7 @@ function setProvider(store, input) {
   const modelProvided = Object.prototype.hasOwnProperty.call(input, "model");
 
   if (!providerProvided && !modelProvided) {
-    return { ...thread };
+    return decorateThread(store, thread);
   }
 
   const nextProvider = providerProvided ? input.provider : thread.provider;
@@ -1021,7 +1023,8 @@ function setProvider(store, input) {
 
   const updated = store.updateThread(threadId, patch);
   store.save();
-  return updated ? { ...updated } : { ...thread, ...patch };
+  const row = updated || { ...thread, ...patch };
+  return decorateThread(store, row);
 }
 
 /**
@@ -2257,8 +2260,27 @@ function removeProject(store, input, opts) {
 /**
  * @param {import('./store').Store} store
  */
+/**
+ * Attach the computed sandbox badge. Always a new object so a store row
+ * never grows a persisted `sandbox` field.
+ * @param {import('./store').Store} store
+ * @param {object} thread
+ */
+function decorateThread(store, thread) {
+  if (!thread) return thread;
+  const project = store.getProject(thread.projectId);
+  return {
+    ...thread,
+    sandbox: resolveSandbox({
+      provider: thread.provider,
+      permissionMode: thread.permissionMode,
+      project,
+    }),
+  };
+}
+
 function listThreads(store) {
-  return store.getThreads().slice();
+  return store.getThreads().map((t) => decorateThread(store, t));
 }
 
 /**
@@ -2330,7 +2352,7 @@ function getThreadDetail(store, threadId, workflow = null, opts) {
   }
   const current = store.getThread(threadId) || thread;
   return {
-    thread: { ...current },
+    thread: decorateThread(store, current),
     messages: store.getMessages(threadId).slice(),
     workLog: store.getWorkLog(threadId).slice(),
     workflow: workflow ?? null,

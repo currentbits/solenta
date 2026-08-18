@@ -174,6 +174,9 @@ describe("services", () => {
       mode: "acceptEdits",
     });
     assert.equal(updated.permissionMode, "acceptEdits");
+    assert.equal(updated.sandbox.sandboxed, false);
+    assert.match(updated.sandbox.reason, /--permission-mode acceptEdits/);
+    assert.equal(store.getThread(thread.id).sandbox, undefined);
     assert.throws(
       () =>
         services.setPermissionMode(store, {
@@ -687,6 +690,10 @@ describe("services", () => {
     assert.deepEqual(detail.workLog, []);
     assert.equal(detail.workflow, null);
     assert.equal(detail.usage, null);
+    // #436: computed on the way out, never written back to the store row.
+    assert.equal(detail.thread.sandbox.sandboxed, false);
+    assert.match(detail.thread.sandbox.reason, /Claude --permission-mode default/);
+    assert.equal(store.getThread(thread.id).sandbox, undefined);
   });
 
   it("gitStatus reports branch and dirty flag", async () => {

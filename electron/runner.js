@@ -39,6 +39,7 @@ const {
 const workflowEngine = require("./workflow.js");
 const { wrapCommand } = require("./ssh.js");
 const { wslTarget } = require("./wsl.js");
+const { resolveSandbox } = require("./sandbox.js");
 const { killTree } = require("./proc.js");
 const {
   runVerifyCommand,
@@ -4654,6 +4655,7 @@ module.exports = {
   toWorkflowView: mapWorkflowView,
   resolveProvider,
   resolveSpawn,
+  resolveSandbox,
   ADJECTIVES,
   NOUNS,
   /** @internal test/diagnostics */

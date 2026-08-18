@@ -123,6 +123,16 @@ export type ThreadStatus = "idle" | "working" | "done" | "failed";
 
 export type PermissionMode = "default" | "acceptEdits" | "plan" | "bypassPermissions";
 
+/**
+ * Computed (never persisted): whether this thread's next run is actually
+ * confined. Agent × repo-location; see electron/sandbox.js.
+ */
+export interface ThreadSandbox {
+  sandboxed: boolean;
+  /** Hover/title copy: yes/no why, including where the process runs. */
+  reason: string;
+}
+
 export interface ThreadInfo {
   id: string;
   projectId: string;
@@ -255,6 +265,11 @@ export interface ThreadInfo {
   replayContext?: boolean;
   /** Passed to the provider CLI (claude --permission-mode). Sticky per thread. */
   permissionMode: PermissionMode;
+  /**
+   * Computed at read time (#436). Whether the next run is actually confined
+   * (agent × repo location). Absent on store rows and older fixtures.
+   */
+  sandbox?: ThreadSandbox;
   /**
    * Reasoning effort for this thread, or null to use the provider's default.
    * Ignored by providers whose `efforts` list is empty.
