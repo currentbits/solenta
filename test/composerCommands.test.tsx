@@ -227,4 +227,34 @@ describe("Composer / command popup", () => {
     assert.equal(commandList(m), null);
     assert.equal(m.byText("/handoff"), null);
   });
+
+  it("keeps the highlighted command scrolled into view", async () => {
+    // 16 rows in a 240px box: without this the highlight walks off-screen
+    // past the last visible row while the list looks frozen.
+    const m = await mountComposer();
+    const el = textarea(m);
+    await m.type(el, "/");
+    await caretToEnd(m);
+    assert.ok(commandList(m), "popup open after /");
+
+    const seen: Element[] = [];
+    const proto = (m.query('[data-highlighted="true"]') as HTMLElement)
+      .constructor.prototype as { scrollIntoView: () => void };
+    const original = proto.scrollIntoView;
+    proto.scrollIntoView = function patched(this: Element) {
+      seen.push(this);
+    };
+    try {
+      await m.press(el, "ArrowDown");
+      await m.press(el, "ArrowDown");
+    } finally {
+      proto.scrollIntoView = original;
+    }
+    const highlighted = m.query('[data-highlighted="true"]');
+    assert.ok(highlighted, "a command stays highlighted after ArrowDown");
+    assert.ok(
+      seen.includes(highlighted),
+      "the highlighted command must be scrolled into view as it moves",
+    );
+  });
 });
