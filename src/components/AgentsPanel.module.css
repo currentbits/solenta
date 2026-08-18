@@ -224,7 +224,8 @@
   color: #fbbf24;
 }
 
-.teamStatus[data-status="waiting"] {
+.teamStatus[data-status="waiting"],
+.teamStatus[data-status="stalled"] {
   color: #fbbf24;
   border-color: rgba(251, 191, 36, 0.45);
 }

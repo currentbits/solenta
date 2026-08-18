@@ -114,6 +114,8 @@ function errorMessage(err: unknown): string {
 export interface QueuedMessage {
   prompt: string;
   attachments?: AttachmentInfo[];
+  /** Last delivery failure (issue #314); prompt is still queued. */
+  error?: string | null;
 }
 
 export type CoderErrorScope = "project" | "run";
@@ -203,6 +205,8 @@ export interface UseCoderResult {
   queued: Record<string, QueuedMessage>;
   /** Drop a thread's queued follow-up. Defaults to the selected thread. */
   cancelQueued: (threadId?: string) => void;
+  /** Re-send a queued prompt after a delivery failure (issue #314). */
+  retryQueued: (threadId?: string) => void;
   /** Fetch a GitHub issue for a project checkout (`gh issue view`). */
   fetchIssue: (
     projectPath: string,
@@ -483,11 +487,9 @@ export function useCoder(): UseCoderResult {
   /** Last thread:updated seq per thread; a gap means pushes were dropped. */
   const patchSeqRef = useRef<Map<string, number>>(new Map());
   /**
-   * Follow-ups typed while a thread was working (issue #92/#137), delivered
-   * at that thread's next run terminal — including "stopped", since
-   * interrupting and then running the queued instruction is the point of
-   * typing it mid-run. Derived from the persisted thread.queued field so a
-   * reload cannot drop it and an unselected thread can still show a hint.
+   * Follow-ups typed while a thread was working (issue #92/#137). Main
+   * drains the persisted queue at the run terminal (issue #314); the
+   * renderer only displays it and offers cancel / retry.
    */
   const queued = useMemo(() => {
     const next: Record<string, QueuedMessage> = {};
@@ -530,34 +532,6 @@ export function useCoder(): UseCoderResult {
     setThreads(next);
   }, []);
 
-  /** Send a thread's queued follow-up, if any. Safe to call twice. */
-  const flushQueued = useCallback(
-    (threadId: string) => {
-      const pending = threadsRef.current.find((t) => t.id === threadId)?.queued;
-      if (!pending) return;
-      // Clear first so a second settle (or a remount mid-flush) cannot
-      // deliver the same prompt twice.
-      applyThreads(
-        threadsRef.current.map((t) =>
-          t.id === threadId ? { ...t, queued: null } : t,
-        ),
-      );
-      void (async () => {
-        try {
-          await api.threads.setQueued({ threadId, prompt: null });
-          await api.runs.start({
-            threadId,
-            prompt: pending.prompt,
-            attachments: pending.attachments,
-          });
-        } catch (err) {
-          setError({ scope: "run", message: errorMessage(err) });
-        }
-      })();
-    },
-    [api, applyThreads],
-  );
-
   const cancelQueued = useCallback(
     (threadId?: string) => {
       const id = threadId ?? selectedRef.current;
@@ -572,6 +546,35 @@ export function useCoder(): UseCoderResult {
       void api.threads.setQueued({ threadId: id, prompt: null }).catch((err) => {
         setError({ scope: "run", message: errorMessage(err) });
       });
+    },
+    [api, applyThreads],
+  );
+
+  const retryQueued = useCallback(
+    (threadId?: string) => {
+      const id = threadId ?? selectedRef.current;
+      if (!id) return;
+      const held = threadsRef.current.find((t) => t.id === id);
+      const pending = held?.queued;
+      if (!pending || held?.status === "working") return;
+      // Clear first so a second click cannot double-send.
+      applyThreads(
+        threadsRef.current.map((t) =>
+          t.id === id ? { ...t, queued: null } : t,
+        ),
+      );
+      void (async () => {
+        try {
+          await api.threads.setQueued({ threadId: id, prompt: null });
+          await api.runs.start({
+            threadId: id,
+            prompt: pending.prompt,
+            attachments: pending.attachments,
+          });
+        } catch (err) {
+          setError({ scope: "run", message: errorMessage(err) });
+        }
+      })();
     },
     [api, applyThreads],
   );
@@ -677,8 +680,7 @@ export function useCoder(): UseCoderResult {
       const held = threadsRef.current.find((t) => t.id === next.thread.id);
       prevStatusRef.current.set(next.thread.id, next.thread.status);
       // Runner snapshots include queued. Test fixtures (and any partial
-      // push that omits it) would otherwise wipe the persisted queue
-      // before flushQueued can fire on settle.
+      // push that omits it) would otherwise wipe the persisted queue.
       const incoming = next.thread;
       const row =
         incoming.queued == null && held?.queued
@@ -709,10 +711,6 @@ export function useCoder(): UseCoderResult {
       // Refresh spend when a thread leaves "working" (run finished or stopped).
       if (prev === "working" && next.thread.status !== "working") {
         void refreshStatus();
-        // The run landed: deliver whatever the user queued while it ran. This
-        // fires for any thread, not just the selected one, so switching away
-        // from a queued thread still sends.
-        flushQueued(next.thread.id);
       }
     });
 
@@ -757,11 +755,6 @@ export function useCoder(): UseCoderResult {
         if (selectedRef.current == null && preferred) {
           selectedRef.current = preferred;
         }
-        // A queue that outlived a crash/reload never sees the settle
-        // transition that normally flushes it — fire those now.
-        for (const t of source) {
-          if (t.queued && t.status !== "working") flushQueued(t.id);
-        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -779,7 +772,7 @@ export function useCoder(): UseCoderResult {
       unsubSelect?.();
       window.clearInterval(statusHandle);
     };
-  }, [api, applyThreads, refreshStatus, reloadDetail, flushQueued]);
+  }, [api, applyThreads, refreshStatus, reloadDetail]);
 
   // Load ThreadDetail when selection changes. threads.get stamps lastVisitedAt
   // (select = visit); merge the returned row into the list so the sidebar
@@ -2212,6 +2205,7 @@ export function useCoder(): UseCoderResult {
     rewindAndResubmit,
     queued,
     cancelQueued,
+    retryQueued,
     startWorkflowRun,
     saveWorkflow,
     removeWorkflow,

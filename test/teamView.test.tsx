@@ -322,6 +322,24 @@ describe("Agents team view", () => {
     m.unmount();
   });
 
+  it("a watchdog-stalled worker reads stalled, not working (issue #314)", async () => {
+    const hung = summary({
+      id: "t-hung",
+      title: "Fork: hung grok",
+      provider: "grok",
+      status: "working",
+      handoffFrom: "t-orch",
+      stalledAt: Date.now() - 12 * 60 * 1000,
+      runStartedAt: Date.now() - 70 * 60 * 1000,
+    });
+    const m = await mount(content(thread(), [ORCHESTRATOR, hung]));
+    await m.flush();
+    const chip = m.query('[data-status="stalled"]');
+    assert.ok(chip, "team row must mark stalled");
+    assert.match(chip!.textContent || "", /stalled/i);
+    m.unmount();
+  });
+
   it("no wait line once every worker has landed", async () => {
     const done = summary({
       id: "t-done",

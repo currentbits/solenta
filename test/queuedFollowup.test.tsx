@@ -75,8 +75,8 @@ function landed(busy: ThreadInfo) {
   });
 }
 
-describe("queued follow-up (issue #92)", () => {
-  it("holds a mid-run send and delivers it when the run lands", async () => {
+describe("queued follow-up (issue #92 / #314)", () => {
+  it("holds a mid-run send and does not auto-deliver when the run lands", async () => {
     const { fake, m, busy } = await bootOnBusyThread();
 
     const ta = m.query("textarea") as HTMLTextAreaElement;
@@ -98,31 +98,20 @@ describe("queued follow-up (issue #92)", () => {
     await inAct(() => fake.emitThread(landed(busy)));
     await m.flush();
 
-    const started = fake.of("runs.start");
-    assert.equal(started.length, 1, "the run terminal must deliver the queue");
-    assert.deepEqual(
-      started[0]!.args[0],
-      {
-        threadId: "t-busy",
-        prompt: "then update the changelog",
-        attachments: undefined,
-      },
-      "the queued prompt must go to the thread it was typed on",
-    );
-
-    // Delivered exactly once: a later push must not re-send it.
-    await inAct(() => fake.emitThread(landed(busy)));
-    await m.flush();
     assert.equal(
       fake.of("runs.start").length,
-      1,
-      "the queue must not re-fire on a later push",
+      0,
+      "settling must not auto-send the queue — main drains it",
+    );
+    assert.ok(
+      m.query("[data-queued-prompt]"),
+      "the queued strip stays until main drains it or the user cancels",
     );
     m.unmount();
   });
 
   it("appends a second thought instead of dropping the first", async () => {
-    const { fake, m, busy } = await bootOnBusyThread();
+    const { fake, m } = await bootOnBusyThread();
 
     await m.type(m.query("textarea"), "first thought");
     await m.click(m.query('button[aria-label="Send"]'));
@@ -131,15 +120,18 @@ describe("queued follow-up (issue #92)", () => {
     await m.click(m.query('button[aria-label="Send"]'));
     await m.flush();
 
-    await inAct(() => fake.emitThread(landed(busy)));
-    await m.flush();
-
-    const started = fake.of("runs.start");
-    assert.equal(started.length, 1, "both thoughts land as one run");
-    assert.equal(
-      (started[0]!.args[0] as { prompt: string }).prompt,
-      "first thought\n\nsecond thought",
-      "queueing twice must keep both, in order",
+    assert.equal(fake.of("runs.start").length, 0);
+    const strip = m.query("[data-queued-prompt]");
+    assert.ok(strip, "queued strip must stay after the second send");
+    assert.match(
+      strip!.textContent || "",
+      /first thought/,
+      "queueing twice must keep the first thought",
+    );
+    assert.match(
+      strip!.textContent || "",
+      /second thought/,
+      "queueing twice must keep the second thought",
     );
     m.unmount();
   });
@@ -218,12 +210,15 @@ describe("queued follow-up (issue #92)", () => {
     remounted.unmount();
   });
 
-  it("flushes a persisted queue on a thread that is no longer working", async () => {
+  it("does not auto-send a leftover queue; retry delivers it", async () => {
     const idle = thread({
       id: "t-idle-q",
       title: "idle with leftover queue",
       status: "idle",
-      queued: { prompt: "finish the changelog" },
+      queued: {
+        prompt: "finish the changelog",
+        error: "CLI exited before ack",
+      },
     });
     const fake = createFakeCoder({
       projects: [project()],
@@ -234,14 +229,38 @@ describe("queued follow-up (issue #92)", () => {
       },
     });
     const m = await boot(fake);
+    const card = m.query(
+      'button[aria-label="Select thread: idle with leftover queue"]',
+    );
+    assert.ok(card, "leftover-queue thread card must exist");
+    await m.click(card);
     await m.flush();
 
-    const started = fake.of("runs.start");
     assert.equal(
-      started.length,
-      1,
-      "a leftover queue on a non-working thread must flush after load",
+      fake.of("runs.start").length,
+      0,
+      "a leftover queue must not flush on load — main drains, the user retries",
     );
+    assert.ok(
+      m.query("[data-queued-error]"),
+      "delivery failure must be visible on the queued strip",
+    );
+    const retry = m.query("button[data-retry-queued]") as HTMLButtonElement | null;
+    assert.ok(retry, "a failed delivery must offer Retry");
+    assert.equal(retry!.disabled, false);
+
+    await m.click(retry!);
+    await m.flush();
+
+    const clears = fake
+      .of("threads.setQueued")
+      .filter((c) => (c.args[0] as { prompt: string | null }).prompt === null);
+    assert.ok(
+      clears.length >= 1,
+      "retry must clear the persisted queue before starting the run",
+    );
+    const started = fake.of("runs.start");
+    assert.equal(started.length, 1, "retry must start the queued prompt");
     assert.deepEqual(
       started[0]!.args[0],
       {
@@ -249,14 +268,41 @@ describe("queued follow-up (issue #92)", () => {
         prompt: "finish the changelog",
         attachments: undefined,
       },
-      "the leftover prompt must go to the thread it was queued on",
+      "retry must send the queued prompt to the thread it was typed on",
     );
-    const clears = fake
-      .of("threads.setQueued")
-      .filter((c) => (c.args[0] as { prompt: string | null }).prompt === null);
-    assert.ok(
-      clears.length >= 1,
-      "flush must clear the persisted queue before starting the run",
+    const channels = fake.channels();
+    const clearAt = channels.lastIndexOf("threads.setQueued");
+    const startAt = channels.indexOf("runs.start");
+    assert.ok(clearAt >= 0 && startAt >= 0 && clearAt < startAt);
+    m.unmount();
+  });
+
+  it("disables retry while the thread is still working", async () => {
+    const busy = working();
+    busy.queued = { prompt: "held", error: "delivery failed" };
+    const fake = createFakeCoder({
+      projects: [project()],
+      threads: [decoy(), busy],
+      details: {
+        "t-decoy": detail({ thread: decoy() }),
+        "t-busy": detail({ thread: busy }),
+      },
+    });
+    const m = await boot(fake);
+    const card = m.query('button[aria-label="Select thread: busy target thread"]');
+    assert.ok(card);
+    await m.click(card);
+    await m.flush();
+
+    const retry = m.query("button[data-retry-queued]") as HTMLButtonElement | null;
+    assert.ok(retry, "failed delivery on a working thread still shows Retry");
+    assert.equal(retry!.disabled, true);
+    await m.click(retry!);
+    await m.flush();
+    assert.equal(
+      fake.of("runs.start").length,
+      0,
+      "a disabled retry must not start a run",
     );
     m.unmount();
   });

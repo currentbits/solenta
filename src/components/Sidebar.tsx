@@ -20,6 +20,7 @@ import type {
 import { pairsForThread } from "../conflictForecast";
 import { isWebMode } from "../shared/wire";
 import {
+  formatElapsed,
   formatRelativeAge,
   formatWorkingLabel,
   providerDisplayName,
@@ -284,6 +285,14 @@ function StatusBadge({
       <span className={`${styles.badge} ${styles.badgeWaiting}`}>
         <span className={styles.waitingDot} aria-hidden />
         Waiting
+      </span>
+    );
+  }
+
+  if (thread.status === "working" && thread.stalledAt != null) {
+    return (
+      <span className={`${styles.badge} ${styles.badgeWaiting}`} data-stalled="">
+        Stalled {formatElapsed(thread.stalledAt, now)}
       </span>
     );
   }

@@ -62,6 +62,7 @@ import {
 } from "../runHeader";
 import { buildBestOfNEntries } from "../bestOfN";
 import { createPrPrompt } from "../prUi";
+import { formatElapsed } from "../format";
 import { useEscapeClose } from "../useEscapeClose";
 import { Composer } from "./Composer";
 import { Markdown } from "./Markdown";
@@ -194,8 +195,12 @@ interface ThreadViewProps {
   onStopRun: () => void | Promise<void>;
   /** Follow-up typed during the run, waiting for it to land (issue #92). */
   queuedPrompt?: string | null;
+  /** Last delivery failure; the prompt is still queued (issue #314). */
+  queuedError?: string | null;
   /** Drop the queued follow-up. */
   onCancelQueued?: () => void;
+  /** Re-send a queued prompt after a delivery failure. */
+  onRetryQueued?: () => void;
   onSetPermissionMode: (
     mode: PermissionMode,
     threadId?: string,
@@ -1861,7 +1866,9 @@ export const ThreadView = memo(function ThreadView({
   onRemoveWorkflow,
   onStopRun,
   queuedPrompt = null,
+  queuedError = null,
   onCancelQueued,
+  onRetryQueued,
   onSetPermissionMode,
   onRespondPermission,
   onSetProvider,
@@ -2023,6 +2030,10 @@ export const ThreadView = memo(function ThreadView({
   }, [detail, latestWorkLogRunId]);
 
   const isWorking = detail?.thread.status === "working";
+  const stalledAt =
+    isWorking && detail?.thread.stalledAt != null
+      ? detail.thread.stalledAt
+      : null;
   const isArchived = Boolean(detail?.thread.archived);
   const emptyMessages = detail != null && detail.messages.length === 0;
 
@@ -3210,13 +3221,18 @@ export const ThreadView = memo(function ThreadView({
         )}
 
         {isWorking && (
-          <div className={styles.statusStrip}>
+          <div
+            className={`${styles.statusStrip}${stalledAt != null ? ` ${styles.statusStripStalled}` : ""}`}
+            data-stalled={stalledAt != null ? "" : undefined}
+          >
             <div className={styles.statusLeft}>
               <span className={styles.statusDot} aria-hidden />
               <span>
-                {detail.workflow
-                  ? `${runningAgents} agent${runningAgents === 1 ? "" : "s"} working in the background`
-                  : "Agent working…"}
+                {stalledAt != null
+                  ? `No output for ${formatElapsed(stalledAt)} — the agent may be hung`
+                  : detail.workflow
+                    ? `${runningAgents} agent${runningAgents === 1 ? "" : "s"} working in the background`
+                    : "Agent working…"}
               </span>
             </div>
             <button
@@ -3234,17 +3250,38 @@ export const ThreadView = memo(function ThreadView({
             <div className={styles.statusLeft}>
               <span className={styles.queuedLabel}>Queued</span>
               <span className={styles.queuedText}>{queuedPrompt}</span>
+              {queuedError ? (
+                <span
+                  className={styles.permissionGuardrail}
+                  data-queued-error=""
+                >
+                  {queuedError}
+                </span>
+              ) : null}
             </div>
-            {onCancelQueued && (
-              <button
-                type="button"
-                className={styles.stopBtn}
-                onClick={onCancelQueued}
-                data-cancel-queued=""
-              >
-                Cancel
-              </button>
-            )}
+            <div className={styles.statusLeft}>
+              {queuedError && onRetryQueued ? (
+                <button
+                  type="button"
+                  className={styles.retryBtn}
+                  onClick={onRetryQueued}
+                  disabled={isWorking}
+                  data-retry-queued=""
+                >
+                  Retry
+                </button>
+              ) : null}
+              {onCancelQueued && (
+                <button
+                  type="button"
+                  className={styles.stopBtn}
+                  onClick={onCancelQueued}
+                  data-cancel-queued=""
+                >
+                  Cancel
+                </button>
+              )}
+            </div>
           </div>
         )}
       </div>
