@@ -290,6 +290,18 @@ export function buildServer(memory) {
   )
 
   server.registerTool(
+    'memory_distill',
+    {
+      description:
+        'Read-only evidence pack for writing type:strategy memories: harmful-feedback entries and abandoned tasks (failures), recent runs and helpful-feedback entries (successes), plus titles of strategies already stored. Write each distilled rule with memory_store({ type: \'strategy\' }). Makes no changes.',
+      inputSchema: {
+        project: z.string().optional(),
+      },
+    },
+    async (args) => json(memory.distill(args)),
+  )
+
+  server.registerTool(
     'session_record',
     {
       description:
