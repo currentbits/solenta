@@ -1,6 +1,13 @@
 import { useCallback, useState } from "react";
 import { useEscapeClose } from "../useEscapeClose";
+import type { ProjectInfo, WindowsDoctorCheck } from "../shared/ipc";
 import styles from "./SettingsModal.module.css";
+
+function failedDoctorChecks(result: unknown): WindowsDoctorCheck[] {
+  if (!result || typeof result !== "object") return [];
+  const checks = (result as ProjectInfo).windowsDoctor?.checks;
+  return Array.isArray(checks) ? checks.filter((c) => !c.ok) : [];
+}
 
 interface AddProjectPathModalProps {
   onClose: () => void;
@@ -38,6 +45,9 @@ export function AddProjectPathModal({
   const [location, setLocation] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [doctorIssues, setDoctorIssues] = useState<WindowsDoctorCheck[] | null>(
+    null,
+  );
 
   const handleClose = useCallback(() => {
     if (pending) return;
@@ -79,7 +89,11 @@ export function AddProjectPathModal({
         const created = await onCreate(name.trim(), location.trim());
         if (!created) {
           setError("Could not create that project.");
+          return;
         }
+        const failed = failedDoctorChecks(created);
+        if (failed.length) setDoctorIssues(failed);
+        else onClose();
       } else {
         if (host && !rpath.startsWith("/")) {
           setError("Remote path must be an absolute path (start with /).");
@@ -91,7 +105,11 @@ export function AddProjectPathModal({
         const added = await onSubmit(path.trim(), remotes);
         if (!added) {
           setError("Could not add that path.");
+          return;
         }
+        const failed = failedDoctorChecks(added);
+        if (failed.length) setDoctorIssues(failed);
+        else onClose();
       }
     } catch (err) {
       setError(
@@ -141,6 +159,38 @@ export function AddProjectPathModal({
           </button>
         </div>
         <div className={styles.body}>
+          {doctorIssues ? (
+            <>
+              <p className={styles.doctorLead}>
+                Project added. Fix these before they bite:
+              </p>
+              <ul className={styles.doctorList} data-windows-doctor="">
+                {doctorIssues.map((check) => (
+                  <li
+                    key={check.id}
+                    className={styles.doctorItem}
+                    data-windows-doctor-check={check.id}
+                  >
+                    <span className={styles.fieldError}>{check.message}</span>
+                    {check.fix ? (
+                      <p className={styles.doctorFix}>{check.fix}</p>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+              <div className={styles.fieldRow}>
+                <button
+                  type="button"
+                  className={`${styles.btn} ${styles.btnPrimary}`}
+                  data-windows-doctor-continue=""
+                  onClick={onClose}
+                >
+                  Continue
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
           <div className={styles.fieldRow} role="group" aria-label="Add mode">
             <button
               type="button"
@@ -342,6 +392,8 @@ export function AddProjectPathModal({
               Cancel
             </button>
           </div>
+            </>
+          )}
         </div>
       </div>
     </div>
