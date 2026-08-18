@@ -75,8 +75,18 @@ import type { SlashAction } from "../slashCommands";
 import { buildBestOfNEntries } from "../bestOfN";
 import { createPrPrompt } from "../prUi";
 import { suggestNextGitAction } from "../nextGitAction";
+import {
+  buildReviewItinerary,
+  orderedPatches,
+  parseReviewAnnotation,
+  type ReviewItinerary,
+  type ReviewSymbol,
+} from "../reviewItinerary";
+import {
+  ChunkRationale,
+  ReviewItineraryView,
+} from "./ReviewItinerary";
 import { formatElapsed } from "../format";
-import { formatQuotaWaitLabel } from "../quotaWait";
 import { useEscapeClose } from "../useEscapeClose";
 import {
   comparePeerLabel,
@@ -313,12 +323,6 @@ interface ThreadViewProps {
   onSaveWorkflow: (template: WorkflowSaveInput) => Promise<WorkflowTemplateInfo>;
   onRemoveWorkflow: (id: string) => Promise<void>;
   onStopRun: () => void | Promise<void>;
-  /** Resume a parked quota-wait now (#462). */
-  onResumeQuotaWait?: () => void | Promise<void>;
-  /** Per-thread auto-resume override. null inherits the global setting. */
-  onSetQuotaWaitAutoResume?: (
-    enabled: boolean | null,
-  ) => void | Promise<void>;
   /** Follow-up typed during the run, waiting for it to land (issue #92). */
   queuedPrompt?: string | null;
   /** Last delivery failure; the prompt is still queued (issue #314). */
@@ -355,7 +359,7 @@ interface ThreadViewProps {
    */
   onCreateThread?: (
     projectId?: string,
-    opts?: { worktree?: boolean; orchestrate?: boolean; teach?: boolean; issueNumber?: number | null },
+    opts?: { worktree?: boolean; orchestrate?: boolean; teach?: boolean; ask?: boolean; issueNumber?: number | null },
   ) => void;
   /** Seed an automation from this thread's first prompt (#285). */
   onRepeatSchedule?: () => void;
@@ -384,6 +388,15 @@ interface ThreadViewProps {
   onStopTeach?: (threadId: string) => void | Promise<void>;
   /** Ask the agent to review the human's TODO(human) fills. */
   onRequestTeachReview?: (threadId: string) => void | Promise<void>;
+  /** Turn Ask mode on (issue #392). */
+  onStartAsk?: (threadId: string) => void | Promise<void>;
+  /** Turn Ask mode off. worktree: true is Start work. */
+  onStopAsk?: (
+    threadId: string,
+    opts?: { worktree?: boolean },
+  ) => void | Promise<void>;
+  /** Settings.defaultWorktree — Start work arms a pending worktree when set. */
+  defaultWorktree?: boolean;
   /** Permanently delete the open thread (caller already confirmed in UI). */
   onDeleteThread: () => void | Promise<void>;
   /** Center Changes panel open (lifted so the Git tab can open it). */
@@ -398,6 +411,14 @@ interface ThreadViewProps {
   /** Hard-reset the worktree to a checkpoint (Undo confirm). */
   restoreCheckpoint?: (threadId: string, sha: string) => Promise<void>;
   onFetchDiff: () => Promise<DiffResult>;
+  /** Code-index symbols + author annotation + accepted hunks (issue #421). */
+  onFetchReviewContext?: () => Promise<{
+    annotation: unknown;
+    symbols: ReviewSymbol[];
+    acceptedHunks: string[];
+  }>;
+  /** Persist hunk hashes the user marked as reviewed. */
+  onSetReviewAccepted?: (hashes: string[]) => Promise<void>;
   /** Commit all changes shown in the Changes panel. */
   onCommitChanges: (message: string) => Promise<{ subject: string }>;
   /** Discard one changed file (untracked deletes the file). */
@@ -1193,6 +1214,7 @@ function NextGitActionButton({
     prNumber: thread.prNumber,
     prUrl: thread.prUrl,
     prState: thread.prState,
+    mergeable: thread.prMergeable,
     checks,
   });
   const action =
@@ -1280,7 +1302,9 @@ function NextGitActionButton({
       : action.kind === "create-pr"
         ? "Creating PR…"
         : action.kind === "merge"
-          ? "Merging…"
+          ? action.label === "Update from main"
+            ? "Updating…"
+            : "Merging…"
           : action.label
     : (flash ?? action.label);
   const className = [
@@ -1863,6 +1887,60 @@ function teachStepStatus(
 /**
  * Teach mode card (issue #373): autonomy ladder, review-my-code, turn off.
  */
+function AskCard({
+  thread,
+  onStopAsk,
+  promoteWorktree,
+}: {
+  thread: ThreadInfo;
+  onStopAsk?: (
+    threadId: string,
+    opts?: { worktree?: boolean },
+  ) => void | Promise<void>;
+  promoteWorktree: boolean;
+}) {
+  if (!thread.ask) return null;
+  return (
+    <div className={styles.specCard} data-ask-card="">
+      <div className={styles.specCardHead}>
+        <span className={styles.specCardTitle}>Ask</span>
+        <span className={styles.specStatus}>read-only</span>
+      </div>
+      <p className={styles.specStatus}>
+        Answers from the repo map and memory. No tools, no worktree, no
+        agent credits. Start work when you want a real thread.
+      </p>
+      <div className={styles.permissionActions}>
+        {onStopAsk && (
+          <button
+            type="button"
+            className={styles.permissionAllow}
+            data-ask-start-work-btn=""
+            onClick={() =>
+              void onStopAsk(
+                thread.id,
+                promoteWorktree ? { worktree: true } : undefined,
+              )
+            }
+          >
+            Start work
+          </button>
+        )}
+        {onStopAsk && (
+          <button
+            type="button"
+            className={styles.permissionDeny}
+            data-ask-stop-btn=""
+            onClick={() => void onStopAsk(thread.id)}
+          >
+            Turn off
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function TeachCard({
   thread,
   onStopTeach,
@@ -1933,26 +2011,100 @@ function DiffLine({ line }: { line: string }) {
   );
 }
 
+function planTextOf(detail: ThreadDetail | null | undefined): string {
+  if (!detail) return "";
+  const t = detail.thread;
+  const parts: string[] = [];
+  if (t.plan) parts.push(t.plan);
+  if (t.planSteps && t.planSteps.length > 0) {
+    parts.push(t.planSteps.map((s) => s.step).join("\n"));
+  }
+  const firstUser = detail.messages.find((m) => m.role === "user");
+  if (firstUser?.text) parts.push(firstUser.text);
+  return parts.join("\n\n");
+}
+
+function FileRow({
+  file,
+  confirmRevert,
+  reverting,
+  onRevert,
+}: {
+  file: FileChange;
+  confirmRevert: string | null;
+  reverting: string | null;
+  onRevert: (f: FileChange) => void;
+}) {
+  return (
+    <li className={styles.fileRow}>
+      <span className={styles.fileStatus}>{file.status}</span>
+      <span className={styles.filePath}>{file.path}</span>
+      <span className={styles.fileStats}>
+        <span className={styles.adds}>+{file.additions}</span>
+        <span className={styles.dels}>−{file.deletions}</span>
+      </span>
+      <button
+        type="button"
+        className={styles.fileRevert}
+        title={
+          file.status === "??" || file.status === "A"
+            ? confirmRevert === file.path
+              ? "Click again to delete this file"
+              : "Discard (deletes the file)"
+            : "Discard changes"
+        }
+        aria-label={`Discard changes to ${file.path}`}
+        disabled={reverting != null}
+        onClick={() => onRevert(file)}
+      >
+        {reverting === file.path
+          ? "…"
+          : confirmRevert === file.path
+            ? "Sure?"
+            : "↩"}
+      </button>
+    </li>
+  );
+}
+
 function ChangesPanel({
   open,
   threadId,
+  threadTitle,
+  planText,
   openNonce,
   onClose,
   onFetchDiff,
+  onFetchReviewContext,
+  onSetReviewAccepted,
   onCommit,
   onRevert,
   onSuggest,
 }: {
   open: boolean;
   threadId: string | null;
+  threadTitle: string;
+  planText: string;
   openNonce: number;
   onClose: () => void;
   onFetchDiff: () => Promise<DiffResult>;
+  onFetchReviewContext?: () => Promise<{
+    annotation: unknown;
+    symbols: ReviewSymbol[];
+    acceptedHunks: string[];
+  }>;
+  onSetReviewAccepted?: (hashes: string[]) => Promise<void>;
   onCommit: (message: string) => Promise<{ subject: string }>;
   onRevert: (path: string, status: string) => Promise<{ path: string }>;
   onSuggest: () => Promise<{ message: string }>;
 }) {
   const [diff, setDiff] = useState<DiffResult | null>(null);
+  const [symbols, setSymbols] = useState<ReviewSymbol[]>([]);
+  const [annotation, setAnnotation] = useState<
+    ReturnType<typeof parseReviewAnnotation>
+  >(null);
+  const [acceptedHunks, setAcceptedHunks] = useState<string[]>([]);
+  const [testsFirst, setTestsFirst] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState("");
@@ -1970,9 +2122,21 @@ function ChangesPanel({
     setError(null);
     setDiff(null);
     try {
-      const result = await onFetchDiff();
+      const [result, context] = await Promise.all([
+        onFetchDiff(),
+        onFetchReviewContext
+          ? onFetchReviewContext().catch(() => null)
+          : Promise.resolve(null),
+      ]);
       if (threadIdRef.current !== forThread) return;
       setDiff(result);
+      if (context) {
+        setSymbols(Array.isArray(context.symbols) ? context.symbols : []);
+        setAnnotation(parseReviewAnnotation(context.annotation));
+        setAcceptedHunks(
+          Array.isArray(context.acceptedHunks) ? context.acceptedHunks : [],
+        );
+      }
     } catch (err) {
       if (threadIdRef.current !== forThread) return;
       setError(
@@ -1989,12 +2153,29 @@ function ChangesPanel({
     setError(null);
     setMessage("");
     setConfirmRevert(null);
+    setSymbols([]);
+    setAnnotation(null);
+    setAcceptedHunks([]);
   }, [threadId]);
 
   useEffect(() => {
     if (open) void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- load when panel opens / thread / openNonce
   }, [open, threadId, openNonce]);
+
+  const itinerary: ReviewItinerary | null = useMemo(() => {
+    if (!diff || isEmptyDiff(diff)) return null;
+    return buildReviewItinerary({
+      files: diff.files,
+      patch: diff.patch,
+      planText,
+      threadTitle,
+      symbols,
+      annotation,
+      acceptedHunks,
+      testsFirst,
+    });
+  }, [diff, planText, threadTitle, symbols, annotation, acceptedHunks, testsFirst]);
 
   if (!open) return null;
 
@@ -2021,6 +2202,16 @@ function ChangesPanel({
     } finally {
       setReverting(null);
     }
+  };
+
+  const toggleHunk = (id: string, next: boolean) => {
+    const hashes = next
+      ? acceptedHunks.includes(id)
+        ? acceptedHunks
+        : [...acceptedHunks, id]
+      : acceptedHunks.filter((h) => h !== id);
+    setAcceptedHunks(hashes);
+    void onSetReviewAccepted?.(hashes);
   };
 
   const suggest = async () => {
@@ -2053,6 +2244,8 @@ function ChangesPanel({
     }
   };
 
+  const patches = itinerary ? orderedPatches(itinerary) : [];
+
   return (
     <section className={styles.changesPanel} aria-label="Changes">
       <header className={styles.changesHead}>
@@ -2084,46 +2277,67 @@ function ChangesPanel({
 
       {empty && <p className={styles.changesEmpty}>No changes</p>}
 
-      {diff && !empty && (
+      {diff && !empty && itinerary && (
         <>
-          {diff.files.length > 0 && (
-            <ul className={styles.fileList}>
-              {diff.files.map((f) => (
-                <li key={f.path} className={styles.fileRow}>
-                  <span className={styles.fileStatus}>{f.status}</span>
-                  <span className={styles.filePath}>{f.path}</span>
-                  <span className={styles.fileStats}>
-                    <span className={styles.adds}>+{f.additions}</span>
-                    <span className={styles.dels}>−{f.deletions}</span>
-                  </span>
-                  <button
-                    type="button"
-                    className={styles.fileRevert}
-                    title={
-                      f.status === "??" || f.status === "A"
-                        ? confirmRevert === f.path
-                          ? "Click again to delete this file"
-                          : "Discard (deletes the file)"
-                        : "Discard changes"
-                    }
-                    aria-label={`Discard changes to ${f.path}`}
-                    disabled={reverting != null}
-                    onClick={() => void revert(f)}
-                  >
-                    {reverting === f.path
-                      ? "…"
-                      : confirmRevert === f.path
-                        ? "Sure?"
-                        : "↩"}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-          {diff.patch.trim() !== "" && (
+          <ReviewItineraryView
+            itinerary={itinerary}
+            testsFirst={testsFirst}
+            onToggleTestsFirst={() => setTestsFirst((v) => !v)}
+          />
+          {itinerary.chunks.map((chunk) => (
+            <div key={chunk.area}>
+              <ChunkRationale itinerary={itinerary} area={chunk.area} />
+              <ul className={styles.fileList}>
+                {chunk.files.map((f) => (
+                  <FileRow
+                    key={f.path}
+                    file={f}
+                    confirmRevert={confirmRevert}
+                    reverting={reverting}
+                    onRevert={(file) => void revert(file)}
+                  />
+                ))}
+              </ul>
+            </div>
+          ))}
+          {patches.length > 0 && (
             <div className={styles.patchScroll}>
-              {diff.patch.split("\n").map((line, i) => (
-                <DiffLine key={i} line={line} />
+              {patches.map((p) => (
+                <Fragment key={p.path}>
+                  {p.hunks.length === 0 &&
+                    p.text.split("\n").map((line, i) => (
+                      <DiffLine key={`${p.path}:${i}`} line={line} />
+                    ))}
+                  {p.hunks.map((hunk) => (
+                    <div
+                      key={hunk.id}
+                      className={styles.hunkBlock}
+                      data-review-hunk={hunk.id}
+                      data-review-hunk-accepted={hunk.accepted ? "" : undefined}
+                    >
+                      <div className={styles.hunkBar}>
+                        <span className={styles.hunkPath}>{p.path}</span>
+                        <button
+                          type="button"
+                          className={styles.hunkSeen}
+                          aria-pressed={hunk.accepted}
+                          title={
+                            hunk.accepted
+                              ? "Mark this hunk as new again"
+                              : "Mark this hunk reviewed"
+                          }
+                          onClick={() => toggleHunk(hunk.id, !hunk.accepted)}
+                        >
+                          {hunk.accepted ? "Reviewed" : "Mark reviewed"}
+                        </button>
+                      </div>
+                      <DiffLine line={hunk.header} />
+                      {hunk.body.split("\n").map((line, i) => (
+                        <DiffLine key={`${hunk.id}:${i}`} line={line} />
+                      ))}
+                    </div>
+                  ))}
+                </Fragment>
               ))}
             </div>
           )}
@@ -2398,8 +2612,6 @@ export const ThreadView = memo(function ThreadView({
   onSaveWorkflow,
   onRemoveWorkflow,
   onStopRun,
-  onResumeQuotaWait,
-  onSetQuotaWaitAutoResume,
   queuedPrompt = null,
   queuedError = null,
   onCancelQueued,
@@ -2421,6 +2633,9 @@ export const ThreadView = memo(function ThreadView({
   onStartTeach,
   onStopTeach,
   onRequestTeachReview,
+  onStartAsk,
+  onStopAsk,
+  defaultWorktree = false,
   onDeleteThread,
   changesOpen,
   changesNonce,
@@ -2429,6 +2644,8 @@ export const ThreadView = memo(function ThreadView({
   runStats,
   restoreCheckpoint,
   onFetchDiff,
+  onFetchReviewContext,
+  onSetReviewAccepted,
   onCommitChanges,
   onRevertFile,
   onSuggestCommitMessage,
@@ -2747,6 +2964,10 @@ export const ThreadView = memo(function ThreadView({
         onNewThread?.();
         return;
       }
+      if (action === "review") {
+        onViewChanges?.();
+        return;
+      }
       if (action === "clear") {
         void handleSlashClear();
       }
@@ -2758,6 +2979,7 @@ export const ThreadView = memo(function ThreadView({
       handleSlashRewind,
       onNewThread,
       handleSlashClear,
+      onViewChanges,
     ],
   );
 
@@ -3241,7 +3463,7 @@ export const ThreadView = memo(function ThreadView({
               onOpenChange={setContextOpen}
             />
           )}
-          {onStartSpec && !thread.spec && (
+          {onStartSpec && !thread.spec && !thread.ask && (
             <button
               type="button"
               className={styles.btn}
@@ -3251,7 +3473,7 @@ export const ThreadView = memo(function ThreadView({
               Spec mode
             </button>
           )}
-          {onStopSpec && thread.spec && (
+          {onStopSpec && thread.spec && !thread.ask && (
             <button
               type="button"
               className={styles.btn}
@@ -3261,7 +3483,7 @@ export const ThreadView = memo(function ThreadView({
               Exit spec mode
             </button>
           )}
-          {onStartTeach && !thread.teach && (
+          {onStartTeach && !thread.teach && !thread.ask && (
             <button
               type="button"
               className={styles.btn}
@@ -3269,6 +3491,16 @@ export const ThreadView = memo(function ThreadView({
               onClick={() => void onStartTeach(thread.id)}
             >
               Teach mode
+            </button>
+          )}
+          {onStartAsk && !thread.ask && (
+            <button
+              type="button"
+              className={styles.btn}
+              data-ask-mode-btn=""
+              onClick={() => void onStartAsk(thread.id)}
+            >
+              Ask mode
             </button>
           )}
           {onSetNotes && (
@@ -3308,6 +3540,7 @@ export const ThreadView = memo(function ThreadView({
               ) : null}
             </button>
           )}
+          {!thread.ask && (
           <NextGitActionButton
             thread={thread}
             isWorking={isWorking}
@@ -3329,6 +3562,7 @@ export const ThreadView = memo(function ThreadView({
             }
             onPushed={() => setSyncRefreshNonce((n) => n + 1)}
           />
+          )}
           {gitSyncInfo && gitFetch && (
             <SyncPill
               threadId={thread.id}
@@ -3497,9 +3731,13 @@ export const ThreadView = memo(function ThreadView({
       <ChangesPanel
         open={changesOpen}
         threadId={detail?.thread.id ?? null}
+        threadTitle={detail?.thread.title ?? ""}
+        planText={planTextOf(detail)}
         openNonce={changesNonce}
         onClose={onCloseChanges}
         onFetchDiff={onFetchDiff}
+        onFetchReviewContext={onFetchReviewContext}
+        onSetReviewAccepted={onSetReviewAccepted}
         onCommit={onCommitChanges}
         onRevert={onRevertFile}
         onSuggest={onSuggestCommitMessage}
@@ -3672,7 +3910,7 @@ export const ThreadView = memo(function ThreadView({
           );
         })}
 
-        {thread.spec ? (
+        {thread.spec && !thread.ask ? (
           <SpecCard
             thread={thread}
             onReviewSpec={onReviewSpec}
@@ -3681,7 +3919,17 @@ export const ThreadView = memo(function ThreadView({
           />
         ) : null}
 
-        {thread.teach ? (
+        {thread.ask ? (
+          <AskCard
+            thread={thread}
+            onStopAsk={onStopAsk}
+            promoteWorktree={
+              defaultWorktree === true && !project?.remoteHost
+            }
+          />
+        ) : null}
+
+        {thread.teach && !thread.ask ? (
           <TeachCard
             thread={thread}
             onStopTeach={onStopTeach}
@@ -3760,50 +4008,6 @@ export const ThreadView = memo(function ThreadView({
           </div>
         )}
 
-        {detail && detail.thread.status === "quota-wait" && (
-          <div
-            className={`${styles.statusStrip} ${styles.statusStripQuotaWait}`}
-            data-quota-wait-strip=""
-          >
-            <div className={styles.statusLeft}>
-              <span className={styles.statusDot} aria-hidden />
-              <span>
-                Usage limit reached. Resuming at{" "}
-                {detail.thread.quotaWaitUntil != null
-                  ? formatQuotaWaitLabel(
-                      detail.thread.quotaWaitUntil,
-                      Date.now(),
-                    )
-                  : "the reset"}
-                .
-              </span>
-            </div>
-            <div className={styles.statusLeft}>
-              {onResumeQuotaWait ? (
-                <button
-                  type="button"
-                  className={styles.retryBtn}
-                  onClick={() => void onResumeQuotaWait()}
-                  data-resume-quota-wait=""
-                >
-                  Resume now
-                </button>
-              ) : null}
-              {onSetQuotaWaitAutoResume &&
-              detail.thread.quotaWaitAutoResume !== false ? (
-                <button
-                  type="button"
-                  className={styles.stopBtn}
-                  onClick={() => void onSetQuotaWaitAutoResume(false)}
-                  data-quota-wait-opt-out=""
-                >
-                  Don&apos;t auto-resume
-                </button>
-              ) : null}
-            </div>
-          </div>
-        )}
-
         {isWorking && (
           <div
             className={`${styles.statusStrip}${stalledAt != null ? ` ${styles.statusStripStalled}` : ""}`}
@@ -3822,6 +4026,8 @@ export const ThreadView = memo(function ThreadView({
             <button
               type="button"
               className={styles.stopBtn}
+              title="Stop (Esc · Ctrl+C)"
+              aria-keyshortcuts="Escape Control+C"
               onClick={() => void onStopRun()}
             >
               Stop
@@ -3878,6 +4084,7 @@ export const ThreadView = memo(function ThreadView({
         branch={thread.branch}
         permissionMode={thread.permissionMode}
         teach={thread.teach ?? null}
+        ask={thread.ask === true}
         onPermissionModeChange={onSetPermissionMode}
         provider={thread.provider}
         model={thread.model}
@@ -3898,14 +4105,16 @@ export const ThreadView = memo(function ThreadView({
             ? "Unarchive to continue this thread"
             : isWorking
               ? "Queue the next instruction…"
-              : undefined
+              : thread.ask
+                ? "Ask about this repo…"
+                : undefined
         }
         onSend={(prompt, messageAttachments) =>
           onStartRun(prompt, undefined, messageAttachments)
         }
         onBuild={onStartWorkflow}
-        onBestOfN={onFork ? runBestOfN : undefined}
-        onDelegate={onFork ? runDelegate : undefined}
+        onBestOfN={onFork && !thread.ask ? runBestOfN : undefined}
+        onDelegate={onFork && !thread.ask ? runDelegate : undefined}
         onModelPickerOpen={onModelPickerOpen}
         error={runError}
         onDismissError={onDismissRunError}
@@ -3915,6 +4124,7 @@ export const ThreadView = memo(function ThreadView({
         onLoadAttachmentImage={onLoadAttachmentImage}
         onDropAttachmentFiles={onDropAttachmentFiles}
         onSlashAction={handleSlashAction}
+        onStopRun={onStopRun}
         dropHostRef={dropHostRef}
         onFileDragChange={setFileDrag}
       />

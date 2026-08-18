@@ -1,40 +1,35 @@
 {
   "version": 1,
-  "readOrder": ["tests", "critical", "impl", "ci-config"],
+  "readOrder": ["tests", "critical", "impl"],
   "chunks": [
     {
       "area": "tests",
-      "rationale": "The pairing rules live in src/divergence.ts and are proven by test/divergence.test.ts: first mismatched step (not a later one), live length-gaps stay pending, finished length-gaps are a verdict, siblings-not-grandchildren. test/divergenceCard.test.tsx is the wiring proof that Claude-vs-Codex peeks the sibling and never threads.get it.",
+      "rationale": "PR #531 conflicted with origin/main after #532 Ask mode. Only two content conflicts: this itinerary and electron/test/ipc-seam.test.js. The seam list keeps peek and drops setQuotaWaitAutoResume, which main deleted with quota-wait.",
       "risks": [
-        "App auto-selects the first sidebar thread on boot; a test that puts the source first will peek its children before the user clicks. The wiring test uses a decoy first for that reason."
+        "ipc-seam still asserts handlers.has('threads:peek'). A merge that drops the handler but keeps the list would fail that assertion — intended.",
+        "Did not re-run the full electron suite after the merge."
       ]
     },
     {
       "area": "critical",
-      "rationale": "threads.peek is get without lastVisitedAt. threadDetailFor in electron/ipc.js is the single payload path. Selecting a compare target must not mark the other run read.",
+      "rationale": "threads.peek / threadDetailFor(markVisited:false) auto-merged. Selecting a compare target must still not stamp lastVisitedAt. isThreadDone no longer treats quota-wait: that status is gone from ThreadStatus.",
       "risks": [
-        "A future caller that points the compare picker at threads.get will silently clear unread on every sibling.",
-        "React Strict Mode double-invokes peek; that is harmless (no visit stamp) but will show up as two threads.peek calls in traces."
+        "A future merge that points the compare picker at threads.get will silently mark siblings read.",
+        "Ask-mode ThreadView props auto-merged next to DivergenceCard. If onStartAsk or the Ask header control vanished, that is a merge bug, not a divergence bug."
       ]
     },
     {
       "area": "impl",
-      "rationale": "DivergenceCard in ThreadView pairs tool steps only (assistant prose always differs across models). sameTaskPeers prefers sibling forks over the source so the default pick is Codex, not the parent prompt. Same-thread Run N compare needs no peek.",
+      "rationale": "Divergence pairing is unchanged: tool steps by number, sibling forks first. This itinerary is the merge-resolution note for #531, not Ask mode's leftover itinerary from #532.",
       "risks": [
-        "Permission allow/deny is not persisted on ToolCallInfo, so decision is only ok/error/pending. Two runs that chose opposite approvals with the same tool input will not split on decision.",
-        "comparePeers is memo'd on rosterKey (id:status). A sibling title rename will not refresh the picker label until some status moves."
-      ]
-    },
-    {
-      "area": "ci-config",
-      "rationale": "CoderApi.threads.peek is added across preload, ipc, wireClient, fakeCoder, and devCoder. ipc-seam names the channel so a rename cannot slip through.",
-      "risks": [
-        "Any new CoderApi implementor that misses peek will fail typecheck; a JS-only caller that still uses get for compare will compile if it never touches the type."
+        "Permission allow/deny is still not persisted on ToolCallInfo, so decision is only ok/error/pending.",
+        "comparePeers is still memo'd on rosterKey (id:status)."
       ]
     }
   ],
   "risks": [
-    "First divergence is the first paired tool step whose type/name/input/output/decision differs. Two models that take the same tools with different prose will report no divergence, which is the intended product.",
-    "A still-running shorter side does not count extra steps on the other side as a split."
+    "First divergence is the first paired tool step whose type/name/input/output/decision differs. Two models that take the same tools with different prose will report no divergence.",
+    "A still-running shorter side does not count extra steps on the other side as a split.",
+    "No live Electron click-through after this merge."
   ]
 }

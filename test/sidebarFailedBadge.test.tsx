@@ -44,33 +44,4 @@ describe("failed badge lastError tooltip", () => {
     assert.equal(badge.getAttribute("title"), "Run error: exit 1");
     m.unmount();
   });
-
-  it("renders Quota wait · clock instead of Failed", async () => {
-    const now = Date.now();
-    const until = now + 3 * 60 * 60 * 1000;
-    const m = await mount(
-      <ThreadCard
-        thread={thread({
-          status: "quota-wait",
-          quotaWaitUntil: until,
-          lastError: "You've hit your limit · resets 3pm",
-        })}
-        slug="acme/ledger"
-        providers={providers}
-        active={false}
-        now={now}
-        onSelect={() => {}}
-      />,
-    );
-    const badge = m.query("[data-quota-wait]");
-    assert.ok(badge, "quota-wait badge must render");
-    assert.match((badge.textContent || "").trim(), /Quota wait/);
-    assert.ok(
-      !m
-        .queryAll("span")
-        .some((el) => (el.textContent || "").trim() === "Failed"),
-      "must not render Failed while parked",
-    );
-    m.unmount();
-  });
 });

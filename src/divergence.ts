@@ -255,7 +255,7 @@ export function sameThreadRuns(
 }
 
 export function isThreadDone(status: ThreadStatus): boolean {
-  return status !== "working" && status !== "quota-wait";
+  return status !== "working";
 }
 
 export function toComparePeer(
