@@ -69,7 +69,59 @@ function hrefOf(url: string | null | undefined): string | null {
   return trimmed === "" ? null : trimmed;
 }
 
-/** Next git step for the thread header. Null-ish fields stay in-band as idle. */
+function pushAction(sync: GitSyncInfo): NextGitAction {
+  if (sync.hasUpstream && sync.ahead > 0) {
+    const ahead = sync.ahead;
+    return {
+      kind: "push",
+      label: "Push",
+      title:
+        ahead === 1
+          ? "Push 1 commit to origin"
+          : `Push ${ahead} commits to origin`,
+      actionable: true,
+      primary: true,
+    };
+  }
+  return {
+    kind: "push",
+    label: "Push",
+    title: "Push this branch to origin",
+    actionable: true,
+    primary: true,
+  };
+}
+
+function createPrAction(sync: GitSyncInfo | null): NextGitAction {
+  const needsPush = sync == null || !sync.hasUpstream || sync.ahead > 0;
+  return {
+    kind: "create-pr",
+    label: "Create PR",
+    title: needsPush
+      ? "Push this branch and open a pull request"
+      : "Open a pull request for this branch",
+    actionable: true,
+    primary: true,
+  };
+}
+
+/** Branch still needs a push before an existing PR can see new commits. */
+function needsPushForOpenPr(
+  sync: GitSyncInfo,
+  hasWorktree: boolean,
+): boolean {
+  if (sync.hasUpstream) return sync.ahead > 0;
+  return hasWorktree;
+}
+
+/**
+ * Next git step for the thread header.
+ *
+ * Create PR is not gated on a prior Push or a loaded sync: `git.createPr`
+ * already pushes (issue #503). Push stays only for an existing open PR
+ * that is ahead of origin. `sync == null` on a worktree still offers
+ * Create PR so a failed or pending sync does not blank the header.
+ */
 export function suggestNextGitAction(input: NextGitActionInput): NextGitAction {
   if (input.remoteProject) return IDLE;
 
@@ -84,36 +136,15 @@ export function suggestNextGitAction(input: NextGitActionInput): NextGitAction {
     };
   }
 
-  if (input.sync?.hasUpstream && input.sync.ahead > 0) {
-    const ahead = input.sync.ahead;
-    return {
-      kind: "push",
-      label: "Push",
-      title:
-        ahead === 1
-          ? "Push 1 commit to origin"
-          : `Push ${ahead} commits to origin`,
-      actionable: true,
-      primary: true,
-    };
-  }
-
-  if (input.sync && !input.sync.hasUpstream && input.hasWorktree) {
-    return {
-      kind: "push",
-      label: "Push",
-      title: "Push this branch to origin",
-      actionable: true,
-      primary: true,
-    };
-  }
-
   if (input.prState === "MERGED" || input.prState === "CLOSED") {
     return IDLE;
   }
 
   const openPr = input.prNumber != null;
   if (openPr) {
+    if (input.sync && needsPushForOpenPr(input.sync, input.hasWorktree)) {
+      return pushAction(input.sync);
+    }
     const href = hrefOf(input.prUrl);
     if (input.checks == null) {
       return {
@@ -168,16 +199,10 @@ export function suggestNextGitAction(input: NextGitActionInput): NextGitAction {
     };
   }
 
-  if (input.sync == null) return IDLE;
-
-  if (input.sync.hasUpstream) {
-    return {
-      kind: "create-pr",
-      label: "Create PR",
-      title: "Open a pull request for this branch",
-      actionable: true,
-      primary: true,
-    };
+  // Typical Solenta worktree, or any published branch: ship it.
+  // Main checkout with no upstream stays idle (do not invent a first push).
+  if (input.hasWorktree || input.sync?.hasUpstream) {
+    return createPrAction(input.sync);
   }
 
   return IDLE;
