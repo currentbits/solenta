@@ -107,4 +107,24 @@ describe("wrapCommand on this platform", () => {
     assert.equal(out.bin, "ssh");
     assert.equal(out.args[out.args.length - 1], "cd '/srv/app' && 'git' 'status'");
   });
+
+  it("wraps a WSL-side project when platform is injected", () => {
+    const out = wrapCommand(
+      { path: "\\\\wsl$\\Ubuntu\\home\\me\\repo" },
+      "bash",
+      ["-c", "npm test"],
+      WIN,
+    );
+    assert.equal(out.bin, "wsl.exe");
+    assert.deepEqual(out.args, [
+      "-d",
+      "Ubuntu",
+      "--cd",
+      "/home/me/repo",
+      "--",
+      "bash",
+      "-c",
+      "npm test",
+    ]);
+  });
 });

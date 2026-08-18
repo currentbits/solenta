@@ -17,6 +17,7 @@ const {
   unregisterMcpServer,
   resolveKimiMcpPath,
   resetMemorySupForTests,
+  resolveNodeBinary,
 } = require("../memory-sup.js");
 
 function waitFor(predicate, { timeoutMs = 10000, intervalMs = 30 } = {}) {
@@ -1154,5 +1155,25 @@ process.exit(0);
       "-s",
       "user",
     ]);
+  });
+});
+
+describe("resolveNodeBinary", () => {
+  it("honours an existing CODER_NODE_BIN", () => {
+    assert.equal(
+      resolveNodeBinary({ CODER_NODE_BIN: process.execPath }),
+      process.execPath,
+    );
+  });
+
+  it("returns null for a missing CODER_NODE_BIN override", () => {
+    assert.equal(resolveNodeBinary({ CODER_NODE_BIN: "/nope/node" }), null);
+  });
+
+  it("does not throw when the PATH lookup is `where` on win32", () => {
+    // `where` is not a binary on macOS; defaultWhich returns null and we
+    // fall through to nvm/homebrew or null. The point is no thrown `which`.
+    const hit = resolveNodeBinary({ PATH: "" }, "win32");
+    assert.ok(hit === null || typeof hit === "string");
   });
 });

@@ -92,4 +92,17 @@ describe("agent CLI spawns go through cross-spawn (#442)", () => {
       assert.doesNotMatch(src, /\{\s*spawn\s*\}\s*=\s*require\("node:child_process"\)/);
     });
   }
+
+  it("devservers.js requires cross-spawn for npm.cmd", () => {
+    const src = fs.readFileSync(path.join(__dirname, "..", "devservers.js"), "utf8");
+    assert.match(src, /require\("cross-spawn"\)/);
+  });
+});
+
+describe("memory-sup.js PATH lookup", () => {
+  it("uses defaultWhich (where on win32), not a raw `which`", () => {
+    const src = fs.readFileSync(path.join(__dirname, "..", "memory-sup.js"), "utf8");
+    assert.match(src, /defaultWhich/);
+    assert.doesNotMatch(src, /execFileSync\("which"/);
+  });
 });

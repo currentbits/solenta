@@ -1043,7 +1043,7 @@ function createRunner(opts) {
     const runId = lastRunIdFor(threadId);
     let raw;
     try {
-      raw = await runVerifyCommand({ command, cwd });
+      raw = await runVerifyCommand({ command, cwd, project });
     } catch (err) {
       raw = {
         ok: false,

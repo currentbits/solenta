@@ -102,9 +102,14 @@ function newestNvmBin(home) {
  *
  * @param {NodeJS.ProcessEnv} env
  * @param {typeof execFileSync} [execFn] - test hook
+ * @param {NodeJS.Platform} [platform]
  * @returns {string[] | null}
  */
-function captureLoginPath(env, execFn = execFileSync) {
+function captureLoginPath(env, execFn = execFileSync, platform = process.platform) {
+  // Windows GUI apps inherit the user's PATH. There is no login shell of
+  // the macOS/launchd kind; spawning SHELL || /bin/zsh would only fail
+  // closed after SHELL_TIMEOUT_MS. Honest no-op, not a pretend try.
+  if (platform === "win32") return null;
   const shell = env.SHELL || "/bin/zsh";
   try {
     const out = execFn(
@@ -151,13 +156,21 @@ function mergePathEntries(...lists) {
  * @param {typeof execFileSync} [opts.execFn]
  * @param {(p: string) => boolean} [opts.existsFn]
  * @param {string} [opts.home]
- * @returns {{ source: "login-shell" | "fallback", entries: number }}
+ * @param {NodeJS.Platform} [opts.platform]
+ * @returns {{ source: "login-shell" | "fallback" | "win32", entries: number }}
  */
 function enrichProcessPath(opts = {}) {
   const env = opts.env || process.env;
+  const platform = opts.platform || process.platform;
+  if (platform === "win32") {
+    // ponytail: do not split PATH on ':'. Windows uses ';' and a drive
+    // letter would become a fake entry (`C`). Leave PATH alone.
+    const n = String(env.PATH || "").split(";").filter(Boolean).length;
+    return { source: "win32", entries: n };
+  }
   const home = opts.home || os.homedir();
   const current = String(env.PATH || "").split(":").filter(Boolean);
-  const login = captureLoginPath(env, opts.execFn);
+  const login = captureLoginPath(env, opts.execFn, platform);
   const fallback = fallbackBinDirs(home, opts.existsFn);
   const merged = login
     ? mergePathEntries(login, current, fallback)

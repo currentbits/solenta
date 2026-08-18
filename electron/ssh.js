@@ -96,11 +96,12 @@ function buildSshCommand(remoteHost, remotePath, argv) {
  * @param {{ remoteHost?: string, remotePath?: string, path?: string } | null | undefined} project
  * @param {string} bin
  * @param {string[]} argv
+ * @param {NodeJS.Platform} [platform]  injected so win32 WSL wrapping is testable off Windows
  * @returns {{ bin: string, args: string[] }}
  */
-function wrapCommand(project, bin, argv) {
+function wrapCommand(project, bin, argv, platform) {
   if (!project || !project.remoteHost) {
-    const wsl = wslTarget(project);
+    const wsl = wslTarget(project, platform);
     if (!wsl) return { bin, args: Array.isArray(argv) ? argv : [] };
     return buildWslCommand(wsl.distro, wsl.linuxPath, [
       basenameBin(bin),

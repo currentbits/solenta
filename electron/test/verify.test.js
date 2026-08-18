@@ -7,13 +7,28 @@
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 const os = require("node:os");
+const { EventEmitter } = require("node:events");
 const {
   normalizeCommand,
   tailLog,
   runVerifyCommand,
   buildFixPrompt,
+  verifyShell,
   VERIFY_COMMAND_MAX,
 } = require("../verify.js");
+
+/** Child-shaped stub so runVerifyCommand can settle without a real spawn. */
+function fakeChild(exitCode = 0, chunk = "ok\n") {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.pid = 0;
+  process.nextTick(() => {
+    if (chunk) child.stdout.emit("data", chunk);
+    child.emit("close", exitCode);
+  });
+  return child;
+}
 
 describe("normalizeCommand", () => {
   it("disarms on empty, whitespace and non-strings", () => {
@@ -76,6 +91,92 @@ describe("runVerifyCommand", () => {
   it("reports an unset command as a failure, not a throw", async () => {
     const r = await runVerifyCommand({ command: "  ", cwd: os.tmpdir() });
     assert.equal(r.ok, false);
+  });
+
+  it("uses /bin/sh off win32 and bash on win32", () => {
+    assert.equal(verifyShell("darwin"), "/bin/sh");
+    assert.equal(verifyShell("linux"), "/bin/sh");
+    assert.equal(verifyShell("win32"), "bash");
+  });
+
+  it("spawns /bin/sh -c on posix (injected spawn)", async () => {
+    const calls = [];
+    const r = await runVerifyCommand({
+      command: "npm test",
+      cwd: "/tmp/repo",
+      platform: "darwin",
+      spawn: (bin, args, opts) => {
+        calls.push({ bin, args, opts });
+        return fakeChild();
+      },
+    });
+    assert.equal(r.ok, true);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].bin, "/bin/sh");
+    assert.deepEqual(calls[0].args, ["-c", "npm test"]);
+    assert.equal(calls[0].opts.cwd, "/tmp/repo");
+    assert.equal(calls[0].opts.windowsHide, false);
+  });
+
+  it("spawns bash -c on win32, not /bin/sh or cmd.exe", async () => {
+    const calls = [];
+    const r = await runVerifyCommand({
+      command: "npm test",
+      cwd: "C:\\repo",
+      platform: "win32",
+      spawn: (bin, args, opts) => {
+        calls.push({ bin, args, opts });
+        return fakeChild();
+      },
+    });
+    assert.equal(r.ok, true);
+    assert.equal(calls[0].bin, "bash");
+    assert.deepEqual(calls[0].args, ["-c", "npm test"]);
+    assert.equal(calls[0].opts.cwd, "C:\\repo");
+    assert.equal(calls[0].opts.windowsHide, true);
+  });
+
+  it("routes a WSL-side project through wsl.exe so the command runs in the distro", async () => {
+    const calls = [];
+    const r = await runVerifyCommand({
+      command: "npm test",
+      cwd: "\\\\wsl$\\Ubuntu\\home\\me\\repo",
+      project: { path: "\\\\wsl$\\Ubuntu\\home\\me\\repo" },
+      platform: "win32",
+      spawn: (bin, args, opts) => {
+        calls.push({ bin, args, opts });
+        return fakeChild();
+      },
+    });
+    assert.equal(r.ok, true);
+    assert.equal(calls[0].bin, "wsl.exe");
+    assert.deepEqual(calls[0].args, [
+      "-d",
+      "Ubuntu",
+      "--cd",
+      "/home/me/repo",
+      "--",
+      "bash",
+      "-c",
+      "npm test",
+    ]);
+    assert.equal(calls[0].opts.cwd, undefined);
+  });
+
+  it("does not wrap an ssh remote on posix (non-win32 behaviour unchanged)", async () => {
+    const calls = [];
+    await runVerifyCommand({
+      command: "npm test",
+      cwd: "/local/unused",
+      project: { remoteHost: "dev@box", remotePath: "/srv/app" },
+      platform: "darwin",
+      spawn: (bin, args) => {
+        calls.push({ bin, args });
+        return fakeChild();
+      },
+    });
+    assert.equal(calls[0].bin, "/bin/sh");
+    assert.deepEqual(calls[0].args, ["-c", "npm test"]);
   });
 });
 

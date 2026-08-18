@@ -4,7 +4,8 @@ const fs = require("node:fs");
 const path = require("node:path");
 const http = require("node:http");
 const crypto = require("node:crypto");
-const { spawn, execFileSync, execFile } = require("node:child_process");
+const { spawn, execFile } = require("node:child_process");
+const { defaultWhich } = require("./providers.js");
 
 const CONFIG_NAME = "memory-server.json";
 const MCP_CONFIG_NAME = "mcp-coder-memory.json";
@@ -811,11 +812,13 @@ async function waitForHealth(port, maxMs = SPAWN_WAIT_MS, token) {
 }
 
 /**
- * Resolve a node binary: CODER_NODE_BIN, which node, nvm newest, homebrew.
+ * Resolve a node binary: CODER_NODE_BIN, PATH lookup, nvm newest, homebrew.
+ * PATH lookup uses providers.defaultWhich so win32 gets `where`, not `which`.
  * @param {NodeJS.ProcessEnv} [env]
+ * @param {NodeJS.Platform} [platform]
  * @returns {string | null}
  */
-function resolveNodeBinary(env = process.env) {
+function resolveNodeBinary(env = process.env, platform = process.platform) {
   if (env.CODER_NODE_BIN) {
     const p = String(env.CODER_NODE_BIN).trim();
     if (p && fs.existsSync(p)) return p;
@@ -823,16 +826,8 @@ function resolveNodeBinary(env = process.env) {
     if (p) return null;
   }
 
-  try {
-    const out = execFileSync("which", ["node"], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-      env,
-    }).trim();
-    if (out && fs.existsSync(out)) return out;
-  } catch {
-    // ignore
-  }
+  const out = defaultWhich("node", env, platform);
+  if (out && fs.existsSync(out)) return out;
 
   // nvm: newest version under ~/.nvm/versions/node/*/bin/node
   try {

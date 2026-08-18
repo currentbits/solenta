@@ -2,7 +2,11 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
-const { spawn } = require("node:child_process");
+// cross-spawn, not child_process: on Windows npm is npm.cmd and Node
+// refuses to exec .cmd shims without a shell. Same reason as agent.js (#442).
+const spawn = require("cross-spawn");
+const { wrapCommand } = require("./ssh.js");
+const { wslTarget } = require("./wsl.js");
 
 const PREFERRED_SCRIPTS = ["dev", "start", "serve"];
 const RING_LIMIT = 50;
@@ -75,6 +79,7 @@ function detectScripts(root) {
  *   pending: string,
  *   dead: boolean,
  *   deadAt: number | null,
+ *   platform: NodeJS.Platform,
  * }} DevServerRecord
  */
 
@@ -165,11 +170,16 @@ function toState(rec) {
 
 /**
  * @param {number} pid
+ * @param {NodeJS.Platform} [platform]
  */
-function killProcessGroup(pid) {
+function killProcessGroup(pid, platform = process.platform) {
   if (!pid) return;
+  // Windows has no POSIX process groups; process.kill(-pid) throws and
+  // SIGTERM is terminate. Kill the pid directly instead of failing closed
+  // through the catch.
+  const target = platform === "win32" ? pid : -pid;
   try {
-    process.kill(-pid, "SIGTERM");
+    process.kill(target, "SIGTERM");
   } catch {
     try {
       process.kill(pid, "SIGTERM");
@@ -181,7 +191,7 @@ function killProcessGroup(pid) {
   const timer = setTimeout(() => {
     pendingKills.delete(pid);
     try {
-      process.kill(-pid, "SIGKILL");
+      process.kill(target, "SIGKILL");
     } catch {
       try {
         process.kill(pid, "SIGKILL");
@@ -198,21 +208,40 @@ function killProcessGroup(pid) {
  * Spawn `npm run <script>` for this thread. Already-running returns
  * the current state without spawning again.
  *
+ * No /bin/sh: the command is argv (`npm`, `run`, script), not a user
+ * shell string. On win32, cross-spawn finds npm.cmd. A WSL-side root
+ * is wrapped through ssh.js so npm runs inside the distro.
+ *
  * @param {string} threadId
  * @param {string} root
  * @param {string} script
+ * @param {{
+ *   platform?: NodeJS.Platform,
+ *   spawn?: typeof spawn,
+ *   project?: { remoteHost?: string, remotePath?: string, path?: string } | null,
+ * }} [opts]
  */
-function start(threadId, root, script) {
+function start(threadId, root, script, opts = {}) {
   const existing = records.get(threadId);
   if (existing && !existing.dead && isAlive(existing.pid)) {
     return toState(existing);
   }
   if (existing) records.delete(threadId);
 
+  const platform = opts.platform || process.platform;
+  const spawnFn = opts.spawn || spawn;
+  const project = opts.project || { path: root };
+  // WSL-side only — do not wrap ssh remotes (would change macOS behaviour).
+  const wsl = wslTarget(project, platform);
+  const raw = { bin: "npm", args: ["run", script] };
+  const wrapped = wsl
+    ? wrapCommand(project, raw.bin, raw.args, platform)
+    : raw;
+
   let child;
   try {
-    child = spawn("npm", ["run", script], {
-      cwd: root,
+    child = spawnFn(wrapped.bin, wrapped.args, {
+      cwd: wsl ? undefined : root,
       detached: true,
       env: process.env,
       stdio: ["ignore", "pipe", "pipe"],
@@ -228,6 +257,7 @@ function start(threadId, root, script) {
       pending: "",
       dead: true,
       deadAt: Date.now(),
+      platform,
     };
     records.set(threadId, rec);
     return toState(rec);
@@ -244,6 +274,7 @@ function start(threadId, root, script) {
     pending: "",
     dead: !pid,
     deadAt: !pid ? Date.now() : null,
+    platform,
   };
   records.set(threadId, rec);
 
@@ -276,7 +307,7 @@ function start(threadId, root, script) {
 function stop(threadId) {
   const rec = records.get(threadId);
   if (!rec) return { running: false };
-  if (rec.pid) killProcessGroup(rec.pid);
+  if (rec.pid) killProcessGroup(rec.pid, rec.platform);
   records.delete(threadId);
   return { running: false };
 }

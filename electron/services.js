@@ -2069,6 +2069,7 @@ async function runVerifyNow(store, input, deps) {
   const ran = await runVerifyCommand({
     command: thread.verifyCommand,
     cwd,
+    project,
   });
 
   // Worktree HEAD only; a project checkout is not a checkpoint. Best-effort:
