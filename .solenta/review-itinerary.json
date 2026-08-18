@@ -4,32 +4,32 @@
   "chunks": [
     {
       "area": "tests",
-      "rationale": "test/conflictForecastBadge.test.tsx was an add/add-style content conflict: main added m.unmount() on the multi-pair case and a keyboard-focusable test; our branch already had that same keyboard test plus the later readability suite. Keep one keyboard test, add the missing unmount, do not drop the readability assertions that lock --card and the raised-card :has() rule.",
+      "rationale": "PR #531 conflicted with origin/main after #532 Ask mode. Only two content conflicts: this itinerary and electron/test/ipc-seam.test.js. The seam list keeps peek and drops setQuotaWaitAutoResume, which main deleted with quota-wait.",
       "risks": [
-        "If a future merge reintroduces .conflictTipLine[data-conflict-kind=overlap] { color: var(--text-muted) }, the readability test still fails closed — that is intended.",
-        "Did not re-run the full electron suite after the merge, only Ask + conflict-forecast + header/create-thread renderer tests."
+        "ipc-seam still asserts handlers.has('threads:peek'). A merge that drops the handler but keeps the list would fail that assertion — intended.",
+        "Did not re-run the full electron suite after the merge."
       ]
     },
     {
       "area": "critical",
-      "rationale": "src/components/Sidebar.module.css kept our readable conflict tip: raise the open card with :has(.conflictWrap:hover/:focus-within), paint the tip on --card, and drop main's muted overlap line. That is the newer #516 overlay fix; main only had the first hover-tip landing.",
+      "rationale": "threads.peek / threadDetailFor(markVisited:false) auto-merged. Selecting a compare target must still not stamp lastVisitedAt. isThreadDone no longer treats quota-wait: that status is gone from ThreadStatus.",
       "risks": [
-        "Main's muted overlap color is gone on purpose. If someone wanted quieter overlap copy, they will see full-contrast lines.",
-        "Ask mode code in Sidebar.tsx/ThreadView/runner auto-merged; I verified the ask tag, caret item, startAskRun intercept, and IPC create path survived, but I did not re-audit every auto-merged hunk in runner.js."
+        "A future merge that points the compare picker at threads.get will silently mark siblings read.",
+        "Ask-mode ThreadView props auto-merged next to DivergenceCard. If onStartAsk or the Ask header control vanished, that is a merge bug, not a divergence bug."
       ]
     },
     {
       "area": "impl",
-      "rationale": ".solenta/review-itinerary.json is per-PR author notes. Keep the Ask-mode itinerary (this PR), not main's merge-PR itinerary about updatePrBranchFromBase. Incoming main also deleted quota-wait; leftover fromQuotaWait fields in startAskRun are inert.",
+      "rationale": "Divergence pairing is unchanged: tool steps by number, sibling forks first. This itinerary is the merge-resolution note for #531, not Ask mode's leftover itinerary from #532.",
       "risks": [
-        "Main deleted electron/quotaWait.js. Auto-merge left a few fromQuotaWait / quotaWaitUntil mentions in runner.js. They do not require the deleted module, but they are dead.",
-        "A later cleanup should drop those leftovers rather than revive quota-wait on this branch."
+        "Permission allow/deny is still not persisted on ToolCallInfo, so decision is only ok/error/pending.",
+        "comparePeers is still memo'd on rosterKey (id:status)."
       ]
     }
   ],
   "risks": [
-    "PR #532 conflicted with origin/main after 122 commits, including #525 merge recovery, #516 conflict-pill hover, #511 worktree fail-closed, and the quota-wait deletion.",
-    "No live Electron click-through after the merge. Verification: tsc --noEmit, Ask electron+renderer tests, conflictForecastBadge, sidebar/header/threadView, fork-handoff, teach/orch.",
-    "Print-mode fallback still uses the provider CLI. That is cheap and no-tools, not zero subscription usage. fm is the free path."
+    "First divergence is the first paired tool step whose type/name/input/output/decision differs. Two models that take the same tools with different prose will report no divergence.",
+    "A still-running shorter side does not count extra steps on the other side as a split.",
+    "No live Electron click-through after this merge."
   ]
 }

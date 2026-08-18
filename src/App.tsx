@@ -32,6 +32,7 @@ import {
   repeatDraftFromDetail,
   type RepeatDraft,
 } from "./repeatThread";
+import { sameTaskPeers, toComparePeer } from "./divergence";
 import type {
   ConflictForecast,
   DistilledWorkflow,
@@ -198,6 +199,7 @@ export default function App() {
     removeSkill,
     syncSkills,
     searchThreads,
+    peekThread,
     automations,
     addAutomation,
     updateAutomation,
@@ -627,6 +629,22 @@ export default function App() {
     [threads],
   );
 
+  /**
+   * Same-task siblings for the divergence card. Keyed on roster + the open
+   * thread so a 700ms stream tick on an unrelated row does not rebuild this.
+   */
+  const comparePeers = useMemo(() => {
+    if (!visibleDetail) return [];
+    const peers = sameTaskPeers(visibleDetail.thread, threads);
+    return peers.map((t) => toComparePeer(t, peers, providers));
+  }, [
+    visibleDetail?.thread.id,
+    visibleDetail?.thread.handoffFrom,
+    visibleDetail?.thread.projectId,
+    rosterKey,
+    providers,
+  ]);
+
   const handleCreateThreadFromIssue = useCallback(
     async (input: {
       projectId: string;
@@ -1017,6 +1035,8 @@ export default function App() {
         onDismissRunError={clearError}
         onFork={handleForkOpen}
         handoffSource={handoffSource}
+        comparePeers={comparePeers}
+        onPeekThread={peekThread}
         onSelectThread={handleSelectThread}
         onModelPickerOpen={handleModelPickerOpen}
         onNewThread={handleCreateThreadPlain}

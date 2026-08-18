@@ -2724,6 +2724,11 @@ function buildDevCoder(): CoderApi {
         }
         return cloneDetail(d);
       },
+      async peek(threadId) {
+        const d = details.get(threadId);
+        if (!d) throw new Error(`Thread not found: ${threadId}`);
+        return cloneDetail(d);
+      },
       async setPermissionMode(input) {
         return patchThread(input.threadId, {
           permissionMode: input.mode,
