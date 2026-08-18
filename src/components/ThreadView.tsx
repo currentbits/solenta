@@ -3260,7 +3260,10 @@ export const ThreadView = memo(function ThreadView({
               ) : null}
             </div>
             <div className={styles.statusLeft}>
-              {queuedError && onRetryQueued ? (
+              {/* Any prompt still queued on a settled thread is one main did
+                  not deliver — offer the retry whether or not the failure
+                  reason survived a reload. */}
+              {onRetryQueued ? (
                 <button
                   type="button"
                   className={styles.retryBtn}

@@ -572,7 +572,25 @@ export function useCoder(): UseCoderResult {
             attachments: pending.attachments,
           });
         } catch (err) {
+          // A failed retry must not eat the prompt — that is the loss this
+          // issue exists to kill. Put it back, with the new error on it.
           setError({ scope: "run", message: errorMessage(err) });
+          await api.threads
+            .setQueued({
+              threadId: id,
+              prompt: pending.prompt,
+              attachments: pending.attachments,
+            })
+            .catch(() => null);
+          // setQueued clears the stored error (a fresh queue is not a failed
+          // one), so the reason lives on the local row until the next attempt.
+          applyThreads(
+            threadsRef.current.map((t) =>
+              t.id === id
+                ? { ...t, queued: { ...pending, error: errorMessage(err) } }
+                : t,
+            ),
+          );
         }
       })();
     },
