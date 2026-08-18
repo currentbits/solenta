@@ -12,7 +12,12 @@ import assert from "node:assert/strict";
 import { describe, it, afterEach } from "node:test";
 import { mount, unmountAll } from "./support/dom.ts";
 import { SettingsModal } from "../src/components/SettingsModal";
-import type { AppSettings, AppStatus } from "../src/shared/ipc";
+import type {
+  AppSettings,
+  AppStatus,
+  ProviderInfo,
+  SubagentPool,
+} from "../src/shared/ipc";
 
 function status(over: {
   spendTodayUsd?: number;
@@ -39,9 +44,27 @@ function status(over: {
   };
 }
 
+const KIMI: ProviderInfo = {
+  id: "kimi",
+  name: "Kimi",
+  available: true,
+  supportsResume: true,
+  models: ["kimi-code/kimi-for-coding-highspeed"],
+  modelInfo: [
+    {
+      id: "kimi-code/kimi-for-coding-highspeed",
+      label: "Highspeed",
+      description: "Fast",
+      vendor: "Moonshot",
+    },
+  ],
+  efforts: [],
+};
+
 interface Stubs {
   settings?: AppSettings | null;
   status?: AppStatus | null;
+  providers?: ProviderInfo[];
   onSaveSettings?: (patch: Partial<AppSettings>) => Promise<AppSettings>;
   onCheckUpdate?: () => Promise<void>;
   onClose?: () => void;
@@ -53,6 +76,7 @@ function modal(stubs: Stubs = {}) {
       open
       onClose={stubs.onClose ?? (() => {})}
       settings={stubs.settings ?? { dailyBudgetUsd: 5, autoSettleAfterDays: 3 }}
+      providers={stubs.providers}
       status={stubs.status === undefined ? status() : stubs.status}
       onCheckUpdate={stubs.onCheckUpdate}
       onSaveSettings={
@@ -718,6 +742,112 @@ describe("SettingsModal OpenTelemetry (issue #280)", () => {
     assert.equal(patches.length, 1);
     assert.equal(patches[0].otel?.claudeMetrics, true);
     assert.equal(patches[0].otel?.endpoint, "http://127.0.0.1:4318");
+    m.unmount();
+  });
+});
+
+describe("SettingsModal worker model pool (issue #467)", () => {
+  const namedPool: SubagentPool = {
+    defaultAlias: "fast",
+    force: false,
+    entries: [
+      {
+        alias: "fast",
+        provider: "kimi",
+        model: "kimi-code/kimi-for-coding-highspeed",
+        description: "Fast and cheap. Good for small edits.",
+      },
+    ],
+  };
+
+  it("shows the empty state and the add control", async () => {
+    const m = await mount(modal({ providers: [KIMI] }));
+    assert.ok(m.query("[data-subagent-pool]"), "pool section must render");
+    assert.ok(
+      m.text().includes("Workers inherit the lead"),
+      `empty copy, got: ${m.text()}`,
+    );
+    assert.ok(m.query("[data-add-pool-entry]"), "add candidate");
+    m.unmount();
+  });
+
+  it("lists a saved candidate and can pin the default", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const m = await mount(
+      modal({
+        providers: [KIMI],
+        settings: {
+          dailyBudgetUsd: null,
+          autoSettleAfterDays: 3,
+          subagentPool: namedPool,
+        } as AppSettings,
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return {
+            dailyBudgetUsd: null,
+            autoSettleAfterDays: 3,
+            subagentPool: patch.subagentPool ?? namedPool,
+          } as AppSettings;
+        },
+      }),
+    );
+    assert.ok(m.query('[data-pool-entry="fast"]'), "fast entry");
+    assert.ok(m.text().includes("fast (default)"));
+    assert.ok(m.text().includes("Fast and cheap"));
+    const box = m.query("[data-pool-force]") as HTMLInputElement;
+    assert.ok(box, "force checkbox");
+    assert.equal(box.checked, false);
+    await m.click(box);
+    assert.equal(patches.length, 1);
+    assert.equal(patches[0].subagentPool?.force, true);
+    assert.equal(patches[0].subagentPool?.defaultAlias, "fast");
+    m.unmount();
+  });
+
+  it("saves a new candidate from the form", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const m = await mount(
+      modal({
+        providers: [KIMI],
+        settings: {
+          dailyBudgetUsd: null,
+          autoSettleAfterDays: 3,
+          subagentPool: {
+            defaultAlias: null,
+            force: false,
+            entries: [],
+          },
+        } as AppSettings,
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return {
+            dailyBudgetUsd: null,
+            autoSettleAfterDays: 3,
+            subagentPool: patch.subagentPool,
+          } as AppSettings;
+        },
+      }),
+    );
+    await m.click(m.query("[data-add-pool-entry]"));
+    await m.type(m.query("#pool-alias"), "fast");
+    await m.type(
+      m.query("#pool-description"),
+      "Fast and cheap. Good for small edits.",
+    );
+    await m.click(m.query("[data-submit-pool]"));
+    assert.equal(patches.length, 1);
+    assert.deepEqual(patches[0].subagentPool, {
+      defaultAlias: "fast",
+      force: false,
+      entries: [
+        {
+          alias: "fast",
+          provider: "kimi",
+          model: null,
+          description: "Fast and cheap. Good for small edits.",
+        },
+      ],
+    });
     m.unmount();
   });
 });

@@ -112,6 +112,9 @@ function makeFakeStore() {
       return t || null;
     },
     save: () => {},
+    getSettings: () => ({
+      subagentPool: { defaultAlias: null, force: false, entries: [] },
+    }),
     threads,
   };
 }
@@ -151,6 +154,8 @@ describe("orch-server tool handlers", () => {
     assert.match(INSTRUCTIONS, /task_claim/);
     assert.match(INSTRUCTIONS, /peer_send/);
     assert.match(INSTRUCTIONS, /git show/);
+    assert.match(INSTRUCTIONS, /Pass pool=<alias>/);
+    assert.match(INSTRUCTIONS, /Do not pass a raw model id/);
     assert.doesNotMatch(INSTRUCTIONS, /poll thread_status until/);
   });
 
@@ -208,6 +213,56 @@ describe("orch-server tool handlers", () => {
     const h = createToolHandlers(deps);
     await h.thread_fork({ threadId: "t1", projectId: "p1", prompt: "go" });
     assert.deepEqual(deps.forks, [{ threadId: "t1" }]);
+  });
+
+  it("thread_fork resolves a pool alias to provider and model", async () => {
+    const deps = makeDeps();
+    deps.store.getSettings = () => ({
+      subagentPool: {
+        defaultAlias: "fast",
+        force: false,
+        entries: [
+          {
+            alias: "fast",
+            provider: "kimi",
+            model: "kimi-for-coding-highspeed",
+            description: "Fast and cheap. Good for small edits.",
+          },
+          {
+            alias: "strong",
+            provider: "claude",
+            model: null,
+            description: "Strong at hard problems.",
+          },
+        ],
+      },
+    });
+    const h = createToolHandlers(deps);
+    await h.thread_fork({
+      threadId: "t1",
+      projectId: "p1",
+      pool: "strong",
+      prompt: "go",
+    });
+    assert.deepEqual(deps.forks, [
+      { threadId: "t1", provider: "claude", model: null },
+    ]);
+  });
+
+  it("thread_fork rejects an unknown pool alias", async () => {
+    const deps = makeDeps();
+    const h = createToolHandlers(deps);
+    await assert.rejects(
+      () =>
+        h.thread_fork({
+          threadId: "t1",
+          projectId: "p1",
+          pool: "nope",
+          prompt: "x",
+        }),
+      /Unknown pool alias: nope/,
+    );
+    assert.equal(deps.forks.length, 0);
   });
 
   it("thread_fork marks the new thread as an orchestration worker", async () => {
