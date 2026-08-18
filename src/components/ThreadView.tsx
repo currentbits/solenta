@@ -30,7 +30,7 @@ import type {
   WorkLogItem,
   WorkflowTemplateInfo,
 } from "../shared/ipc";
-import { SPEC_ARTIFACTS, THREAD_NOTES_MAX } from "../shared/ipc";
+import { SPEC_ARTIFACTS, THREAD_NOTES_MAX, FELT_ESTIMATE_BUCKETS_MS } from "../shared/ipc";
 import { TEACH_AUTONOMY_LABELS } from "../teach";
 import type { TeachAutonomy } from "../shared/ipc";
 import type { WorkflowSaveInput } from "../useCoder";
@@ -405,6 +405,14 @@ interface ThreadViewProps {
   onStopAsk?: (
     threadId: string,
     opts?: { worktree?: boolean },
+  ) => void | Promise<void>;
+  /**
+   * Record the one-tap felt estimate for a finished thread (issue #401).
+   * savedMs null = the user declined.
+   */
+  onSetFeltEstimate?: (
+    threadId: string,
+    savedMs: number | null,
   ) => void | Promise<void>;
   /** Settings.defaultWorktree — Start work arms a pending worktree when set. */
   defaultWorktree?: boolean;
@@ -2047,8 +2055,59 @@ function TeachCard({
   );
 }
 
-const DiffLine = memo(function DiffLine({ line }: { line: string }) {
-  const kind = diffLineKind(line);
+const FELT_BUCKET_LABELS = ["15 min", "30 min", "1 h", "2 h", "4 h+"];
+
+/**
+ * Felt-estimate card (issue #401): one tap, asked once when a run completes.
+ * The estimate feeds the felt-vs-actual section of the fleet view; Skip
+ * records a decline so the card never nags twice.
+ */
+function FeltEstimateCard({
+  thread,
+  onSetFeltEstimate,
+}: {
+  thread: ThreadInfo;
+  onSetFeltEstimate?: (
+    threadId: string,
+    savedMs: number | null,
+  ) => void | Promise<void>;
+}) {
+  if (!onSetFeltEstimate) return null;
+  if (thread.status !== "done" || thread.feltEstimate != null) return null;
+  return (
+    <div className={styles.specCard} data-felt-card="">
+      <div className={styles.specCardHead}>
+        <span className={styles.specCardTitle}>How much time did this save you?</span>
+      </div>
+      <p className={styles.specStatus}>
+        One tap. We compare your gut with the actual clock in the Fleet view.
+      </p>
+      <div className={styles.permissionActions}>
+        {FELT_ESTIMATE_BUCKETS_MS.map((ms, i) => (
+          <button
+            key={ms}
+            type="button"
+            className={styles.permissionAllow}
+            data-felt-estimate-btn={ms}
+            onClick={() => void onSetFeltEstimate(thread.id, ms)}
+          >
+            {FELT_BUCKET_LABELS[i]}
+          </button>
+        ))}
+        <button
+          type="button"
+          className={styles.permissionDeny}
+          data-felt-skip-btn=""
+          onClick={() => void onSetFeltEstimate(thread.id, null)}
+        >
+          Skip
+        </button>
+      </div>
+    </div>
+  );
+}
+
+const DiffLine = memo(function DiffLine({ line }: { line: string }) {  const kind = diffLineKind(line);
   return (
     <div className={styles.diffLine} data-kind={kind}>
       {line || " "}
@@ -2684,6 +2743,7 @@ export const ThreadView = memo(function ThreadView({
   onRequestTeachReview,
   onStartAsk,
   onStopAsk,
+  onSetFeltEstimate,
   defaultWorktree = false,
   onDeleteThread,
   changesOpen,
@@ -4009,6 +4069,13 @@ export const ThreadView = memo(function ThreadView({
             thread={thread}
             onStopTeach={onStopTeach}
             onRequestTeachReview={onRequestTeachReview}
+          />
+        ) : null}
+
+        {!thread.ask && !thread.teach ? (
+          <FeltEstimateCard
+            thread={thread}
+            onSetFeltEstimate={onSetFeltEstimate}
           />
         ) : null}
 
