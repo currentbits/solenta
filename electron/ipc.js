@@ -465,6 +465,14 @@ const IPC_HANDLERS = {
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     return updated;
   },
+  "threads:setQuotaWaitAutoResume": async (ctx, input) => {
+    const updated = services.setQuotaWaitAutoResume(ctx.store, input);
+    if (ctx.runner && typeof ctx.runner.refreshQuotaWait === "function") {
+      ctx.runner.refreshQuotaWait(input.threadId);
+    }
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    return updated;
+  },
   "threads:setNotes": async (ctx, input) => {
     const updated = services.setNotes(ctx.store, input);
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
@@ -594,6 +602,9 @@ const IPC_HANDLERS = {
     } catch {
       // ignore
     }
+    if (ctx.runner && typeof ctx.runner.refreshAllQuotaWaits === "function") {
+      ctx.runner.refreshAllQuotaWaits();
+    }
     return next;
   },
   "skills:list": async (ctx, input) => {
@@ -658,6 +669,9 @@ const IPC_HANDLERS = {
   },
   "runs:stop": async (ctx, input) => {
     return ctx.runner.stopRun(input);
+  },
+  "runs:resumeQuotaWait": async (ctx, input) => {
+    return ctx.runner.resumeQuotaWait(input);
   },
   "git:status": async (ctx, projectId) => {
     const project = ctx.store.getProject(projectId);

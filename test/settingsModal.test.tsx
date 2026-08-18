@@ -777,6 +777,36 @@ describe("SettingsModal OpenTelemetry (issue #280)", () => {
   });
 });
 
+describe("SettingsModal quota-wait auto-resume (#462)", () => {
+  it("saves the continue-at-usage-limit toggle", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const m = await mount(
+      modal({
+        settings: {
+          dailyBudgetUsd: null,
+          autoSettleAfterDays: 3,
+          quotaWaitAutoResume: true,
+        } as AppSettings,
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return {
+            dailyBudgetUsd: null,
+            autoSettleAfterDays: 3,
+            quotaWaitAutoResume: patch.quotaWaitAutoResume !== false,
+          } as AppSettings;
+        },
+      }),
+    );
+    const box = m.query("[data-quota-wait-auto-resume]") as HTMLInputElement;
+    assert.ok(box, "quota-wait checkbox");
+    assert.equal(box.checked, true);
+    await m.click(box);
+    assert.equal(patches.length, 1);
+    assert.equal(patches[0].quotaWaitAutoResume, false);
+    m.unmount();
+  });
+});
+
 describe("SettingsModal worker model pool (issue #467)", () => {
   const namedPool: SubagentPool = {
     defaultAlias: "fast",

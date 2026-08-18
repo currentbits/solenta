@@ -3581,7 +3581,7 @@ function threadActivityAt(thread) {
  */
 function isSettledForGc(thread, now, autoSettleAfterDays) {
   if (!thread) return false;
-  if (thread.status === "working") return false;
+  if (thread.status === "working" || thread.status === "quota-wait") return false;
   if (thread.pinnedAt != null && Number.isFinite(thread.pinnedAt)) return false;
   // Archived is a stronger signal than settled: the user pushed the thread
   // out of sight entirely. The renderer filters archived threads BEFORE the
@@ -3769,7 +3769,7 @@ async function gcScanInner(opts) {
     if (!reason) continue;
 
     // working / pinned are never candidates (even as a safety net).
-    if (thread && thread.status === "working") continue;
+    if (thread && (thread.status === "working" || thread.status === "quota-wait")) continue;
     if (
       thread &&
       thread.pinnedAt != null &&
@@ -3781,7 +3781,7 @@ async function gcScanInner(opts) {
     let blocked;
     if (!insp.readable) blocked = "git could not read the directory";
     else if (insp.dirty) blocked = "uncommitted changes";
-    else if (thread && thread.status === "working") {
+    else if (thread && (thread.status === "working" || thread.status === "quota-wait")) {
       blocked = "thread is currently working";
     }
 
