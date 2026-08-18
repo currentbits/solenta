@@ -86,6 +86,7 @@ async function mountView(
       messageId: string,
       prompt: string,
     ) => void | Promise<void>;
+    onViewChanges?: () => void;
   } = {},
 ) {
   return mount(
@@ -110,6 +111,7 @@ async function mountView(
       changesOpen={false}
       changesNonce={0}
       onCloseChanges={() => {}}
+      onViewChanges={over.onViewChanges}
       onFetchDiff={async () => ({ files: [], patch: "", truncated: false })}
       onCommitChanges={async () => ({ subject: "x" })}
       onRevertFile={async (path) => ({ path })}
@@ -190,6 +192,17 @@ describe("ThreadView / palette actions", () => {
     await acceptSlash(m, "/clear");
     await m.flush();
     assert.deepEqual(order, ["settle", "new"]);
+  });
+
+  it("/review opens the Changes panel", async () => {
+    let opened = 0;
+    const m = await mountView({
+      onViewChanges: () => {
+        opened += 1;
+      },
+    });
+    await acceptSlash(m, "/review");
+    assert.equal(opened, 1);
   });
 
   it("/rewind opens the last-user-message confirm when there is no undo bar", async () => {

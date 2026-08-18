@@ -154,6 +154,11 @@ interface ComposerProps {
    */
   onSlashAction?: (action: SlashAction) => void;
   /**
+   * Live-turn interrupt (issue #478). Esc, and Ctrl+C with no selection,
+   * call this while `busy`. The draft is left alone.
+   */
+  onStopRun?: () => void | Promise<void>;
+  /**
    * Larger drop target (thread pane). When set, listeners bind there so a
    * drop on the transcript or empty state reaches the same chip list.
    */
@@ -171,6 +176,34 @@ const DEFAULT_TEMPLATE_ID = "standard";
 /** Capped cascade index: row 30 shouldn't wait half a second to appear. */
 const rowEnterStyle = (index: number): CSSProperties =>
   ({ "--i": String(Math.min(index, 10)) }) as CSSProperties;
+
+/** Two distinct Esc presses within this window rewind when idle (#478). */
+const DOUBLE_ESC_MS = 500;
+
+/**
+ * Esc must not steal from a modal, the narrow-window drawer, or another
+ * field (notes, rename, edit-resubmit). The composer textarea itself is
+ * allowed through — that is the interrupt surface.
+ */
+function escapeConsumedByChrome(
+  target: EventTarget | null,
+  composerField: HTMLTextAreaElement | null,
+): boolean {
+  if (typeof document !== "undefined") {
+    if (document.querySelector('[role="dialog"][aria-modal="true"]')) {
+      return true;
+    }
+    if (document.querySelector("[data-drawer-open]")) return true;
+  }
+  if (!(target instanceof HTMLElement)) return false;
+  const tag = target.tagName;
+  const typing =
+    tag === "INPUT" ||
+    tag === "TEXTAREA" ||
+    tag === "SELECT" ||
+    target.isContentEditable;
+  return typing && target !== composerField;
+}
 
 /** One pending attachment: thumbnail for images, folder glyph for folders. */
 function AttachmentChip({
@@ -280,6 +313,7 @@ export function Composer({
   onLoadAttachmentImage,
   onDropAttachmentFiles,
   onSlashAction,
+  onStopRun,
   dropHostRef,
   onFileDragChange,
 }: ComposerProps) {
@@ -390,6 +424,8 @@ export function Composer({
    * the inserted trailing space ends the token on its own.
    */
   const commandDismissed = useRef(false);
+  /** Last idle Esc; a second press within DOUBLE_ESC_MS rewinds (#478). */
+  const lastEscAt = useRef(0);
   const commandMatches = command ? matchSlashCommands(command) : [];
   const commandOpen = commandMatches.length > 0;
 
@@ -457,6 +493,7 @@ export function Composer({
 
   useEffect(() => {
     commandDismissed.current = false;
+    lastEscAt.current = 0;
   }, [threadId]);
 
   const closeMention = useCallback(() => {
@@ -771,6 +808,38 @@ export function Composer({
   }, [modelOpen, closeModelPicker]);
   useEscapeClose(anyMenuOpen, closeAllMenus);
 
+  const popupOpen = anyMenuOpen || mentionOpen || commandOpen || manageOpen;
+  useEffect(() => {
+    if (disabled) return;
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key !== "Escape" || e.repeat) return;
+      if (e.defaultPrevented) return;
+      // Mention / command / pill menus own Esc; do not stop or rewind.
+      if (popupOpen) return;
+      if (escapeConsumedByChrome(e.target, textareaRef.current)) return;
+
+      if (busy && onStopRun) {
+        e.preventDefault();
+        lastEscAt.current = 0;
+        void onStopRun();
+        return;
+      }
+
+      if (!busy && onSlashAction) {
+        const now = Date.now();
+        if (now - lastEscAt.current < DOUBLE_ESC_MS) {
+          lastEscAt.current = 0;
+          e.preventDefault();
+          onSlashAction("rewind");
+        } else {
+          lastEscAt.current = now;
+        }
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [disabled, busy, popupOpen, onStopRun, onSlashAction]);
+
   const runAction = async (
     action: (prompt: string) => void | Promise<void>,
     failLabel: string,
@@ -905,6 +974,22 @@ export function Composer({
         closeCommand();
         return;
       }
+    }
+    // Ctrl+C interrupts a live turn when nothing is selected so copy still
+    // works on a highlighted draft. Cmd+C is left to the platform copy chord.
+    if (
+      busy &&
+      onStopRun &&
+      e.ctrlKey &&
+      !e.metaKey &&
+      !e.altKey &&
+      (e.key === "c" || e.key === "C")
+    ) {
+      const el = e.currentTarget;
+      if (el.selectionStart !== el.selectionEnd) return;
+      e.preventDefault();
+      void onStopRun();
+      return;
     }
     if ((e.metaKey || e.ctrlKey || e.shiftKey) && e.key === "Enter") {
       e.preventDefault();

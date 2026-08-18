@@ -14,6 +14,8 @@ import type {
   ConflictForecast,
   DevServerState,
   DiffResult,
+  ReviewContext,
+  ReviewSymbol,
   GitSyncInfo,
   GitRepoInfo,
   GitPullResult,
@@ -107,8 +109,12 @@ function resolveApi(): CoderApi {
 }
 
 function errorMessage(err: unknown): string {
-  if (err instanceof Error && err.message) return err.message;
-  return String(err);
+  const raw = err instanceof Error && err.message ? err.message : String(err);
+  for (const marker of ["MERGE_CONFLICT:", "WORKTREE_DIRTY:"]) {
+    const at = raw.indexOf(marker);
+    if (at !== -1) return raw.slice(at + marker.length).trim();
+  }
+  return raw;
 }
 
 /** A follow-up typed during a run, waiting for that run to land. */
@@ -284,11 +290,6 @@ export interface UseCoderResult {
    */
   setSnoozed: (threadId: string, until: number | null) => Promise<void>;
   setMuted: (threadId: string, muted: boolean) => Promise<void>;
-  setQuotaWaitAutoResume: (
-    threadId: string,
-    enabled: boolean | null,
-  ) => Promise<void>;
-  resumeQuotaWait: (threadId: string) => Promise<void>;
   /** Rename a thread. Does not require selection. */
   renameThread: (threadId: string, title: string) => Promise<void>;
   /** Save scratch notes on a thread (header editor, issue #194). */
@@ -332,6 +333,8 @@ export interface UseCoderResult {
   mergeWorktree: () => Promise<ThreadInfo | null>;
   removeWorktree: (force?: boolean) => Promise<ThreadInfo | null>;
   fetchDiff: () => Promise<DiffResult>;
+  fetchReviewContext: () => Promise<ReviewContext>;
+  setReviewAccepted: (hashes: string[]) => Promise<void>;
   /** Commit all changes in the selected thread's cwd. */
   commitChanges: (message: string) => Promise<{ subject: string }>;
   /** Discard one changed file in the selected thread's cwd. */
@@ -1526,47 +1529,6 @@ export function useCoder(): UseCoderResult {
     [api, applyThreads],
   );
 
-  const setQuotaWaitAutoResume = useCallback(
-    async (threadId: string, enabled: boolean | null) => {
-      try {
-        const thread = await api.threads.setQuotaWaitAutoResume({
-          threadId,
-          enabled,
-        });
-        applyThreads(
-          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
-        );
-        setDetail((prev) =>
-          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
-        );
-        setError(null);
-      } catch (err) {
-        setError({ scope: "run", message: errorMessage(err) });
-      }
-    },
-    [api, applyThreads],
-  );
-
-  const resumeQuotaWait = useCallback(
-    async (threadId: string) => {
-      try {
-        await api.runs.resumeQuotaWait({ threadId });
-        const d = await api.threads.get(threadId);
-        if (selectedRef.current !== threadId) return;
-        setDetail(d);
-        applyThreads(
-          threadsRef.current.map((t) =>
-            t.id === d.thread.id ? d.thread : t,
-          ),
-        );
-        setError(null);
-      } catch (err) {
-        setError({ scope: "run", message: errorMessage(err) });
-      }
-    },
-    [api, applyThreads],
-  );
-
   const renameThread = useCallback(
     async (threadId: string, title: string) => {
       try {
@@ -1876,6 +1838,25 @@ export function useCoder(): UseCoderResult {
     const threadId = selectedThreadId;
     return api.git.diff({ threadId });
   }, [api, selectedThreadId]);
+
+  const fetchReviewContext = useCallback(async () => {
+    if (!selectedThreadId) {
+      return { annotation: null, symbols: [] as ReviewSymbol[], acceptedHunks: [] };
+    }
+    const threadId = selectedThreadId;
+    return api.git.reviewContext({ threadId });
+  }, [api, selectedThreadId]);
+
+  const setReviewAccepted = useCallback(
+    async (hashes: string[]) => {
+      if (!selectedThreadId) return;
+      const threadId = selectedThreadId;
+      const thread = await api.git.setReviewAccepted({ threadId, hashes });
+      if (selectedRef.current !== threadId) return;
+      applyThreadUpdate(thread);
+    },
+    [api, selectedThreadId, applyThreadUpdate],
+  );
 
   const commitChanges = useCallback(
     async (message: string) => {
@@ -2488,8 +2469,6 @@ export function useCoder(): UseCoderResult {
     setPinned,
     setSnoozed,
     setMuted,
-    setQuotaWaitAutoResume,
-    resumeQuotaWait,
     renameThread,
     setNotes,
     startSpec,
@@ -2507,6 +2486,8 @@ export function useCoder(): UseCoderResult {
     mergeWorktree,
     removeWorktree,
     fetchDiff,
+    fetchReviewContext,
+    setReviewAccepted,
     commitChanges,
     revertFile,
     suggestCommitMessage,

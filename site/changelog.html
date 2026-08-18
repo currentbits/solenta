@@ -56,6 +56,37 @@
         Every notable change to Solenta, newest first.
       </p>
 
+      <h2 id="v0-7-0">0.7.0 <small>2026-08-18</small></h2>
+      <h3>Added</h3>
+      <ul>
+        <li><strong>Teach mode.</strong> A thread can run as a tutor: hints, not solutions, across all five providers. Autonomy steps up as reviews pass — Hints, then Review, then Pair — and permission modes stay gated to the current rung.</li>
+        <li><strong>Review itinerary.</strong> Every agent diff gets a risk-ranked read order: CI and config first, then reuse, the critical path, tests, and the rest, chunked by area instead of alphabetically.</li>
+        <li><strong>Thread snooze.</strong> Hide a thread until this evening, tomorrow, next week, or a custom time. A thread that raises its hand — blocked on you, or a fresh failure — wakes early. Settle-on-merge can archive a thread the moment its PR lands. A <em>Woke</em> pill marks what came back.</li>
+        <li><strong>Next git action.</strong> One header button that always names the next step: commit, push, open a PR, watch checks, or merge. Create PR is available on an unpublished worktree without a prior Push.</li>
+        <li><strong>Subagent model pool.</strong> Describe candidate models once in Settings; the lead picks per spawn instead of every worker inheriting the same default.</li>
+        <li><strong>Orchestration commands.</strong> Type <code>/handoff</code>, <code>/advisor</code> or <code>/committee</code> in the composer to plan here and implement elsewhere, get a second opinion, or have two contrasting models converge on a root cause. The <code>/</code> palette now lists the CLI verbs too, not only the orchestration ones.</li>
+        <li><strong>Drop images and folders on the thread.</strong> The whole transcript is a drop target, not just the composer strip, and Finder folders keep their absolute paths.</li>
+        <li><strong>Memory strategies.</strong> Alongside facts, memory now stores distilled <em>how we work here</em> entries, and citations on a fact are checked against the current worktree before they are injected.</li>
+        <li><strong>Context breakdown.</strong> The ring counts cache tokens correctly, documents each provider's window, and opens a per-thread breakdown of what is filling it.</li>
+        <li><strong>Pulse.</strong> Automations, Usage, Fleet, Insights and the morning digest live on a Pulse tab in the right panel, so the left sidebar stays threads.</li>
+        <li><strong>Windows that actually runs agents.</strong> WSL-boundary detection, a project-add doctor (long paths, Git Bash, Node, WSL), a sandbox badge, and CI that would have caught the previous spawn bugs.</li>
+        <li><strong>Post-merge verification.</strong> After a PR merges, the verify command runs again on a delay and reopens the thread if the build regressed.</li>
+        <li><strong>Keyboard shortcuts.</strong> <kbd>⌘N</kbd> starts a thread, <kbd>⌘⇧N</kbd> starts one in a chosen project. Esc and Ctrl+C stop the live turn. Click the project slug in the header to start another thread there.</li>
+      </ul>
+      <h3>Fixed</h3>
+      <ul>
+        <li>A thread configured to run in a worktree never falls back to the project checkout if setup fails — it errors instead of silently editing your working copy.</li>
+        <li>A turn that dies mid-delivery no longer leaves the thread stuck on <em>Working</em>.</li>
+        <li>Hovering a conflict pill names the other thread and the colliding files.</li>
+        <li>Start Dev, Fork and Handoff moved off the thread header into the Environment panel, so the header stays the next action.</li>
+        <li>You can leave spec mode without approving the remaining stages.</li>
+        <li>File paths in the transcript open the file in the worktree.</li>
+        <li>The slash and mention palettes stay scrolled with the highlighted row.</li>
+        <li>Long tool-call bodies wrap instead of forcing a horizontal scrollbar.</li>
+        <li>On Windows, agent CLIs are no longer detached from the app, so a stop actually stops them.</li>
+        <li>Packaged builds include the <code>cross-spawn</code> tree, so the app boots instead of dying on a missing module the moment a provider starts.</li>
+      </ul>
+
       <h2 id="v0-6-0">0.6.0 <small>2026-08-17</small></h2>
       <h3>Added</h3>
       <ul>

@@ -1,37 +1,35 @@
 {
   "version": 1,
-  "readOrder": ["tests", "critical", "impl", "docs"],
+  "readOrder": ["tests", "critical", "impl"],
   "chunks": [
     {
       "area": "tests",
-      "rationale": "Start with electron/test/ask-runner.test.js. That is the contract the issue asked for: an ask thread answers without materializing a worktree, without tripping the daily budget, and without recording spend. Then electron/test/ask.test.js (prompt pack + fm-before-print) and electron/test/ask-mode.test.js (start/stop/fork). Renderer: test/askCard.test.tsx and the new case in test/orchestratorDefault.test.tsx (ask wins over defaultWorktree/defaultOrchestrate).",
+      "rationale": "test/conflictForecastBadge.test.tsx was an add/add-style content conflict: main added m.unmount() on the multi-pair case and a keyboard-focusable test; our branch already had that same keyboard test plus the later readability suite. Keep one keyboard test, add the missing unmount, do not drop the readability assertions that lock --card and the raised-card :has() rule.",
       "risks": [
-        "ask-runner injects askComplete/searchMemory, so it does not prove fm or a real CLI print-mode works on this machine.",
-        "The budget assertion only checks getSpendToday(); a future recordUsage-without-recordSpend leak would still be green."
+        "If a future merge reintroduces .conflictTipLine[data-conflict-kind=overlap] { color: var(--text-muted) }, the readability test still fails closed — that is intended.",
+        "Did not re-run the full electron suite after the merge, only Ask + conflict-forecast + header/create-thread renderer tests."
       ]
     },
     {
       "area": "critical",
-      "rationale": "Then electron/runner.js startAskRun and the startRun intercept (ask before orch commands, budget, and materializePendingWorktree). This is the fail-closed gate: if it is skipped, Ask becomes a normal agent run in the checkout. Read stopRun/stopAll kind===ask next so Stop still kills the print child.",
+      "rationale": "src/components/Sidebar.module.css kept our readable conflict tip: raise the open card with :has(.conflictWrap:hover/:focus-within), paint the tip on --card, and drop main's muted overlap line. That is the newer #516 overlay fix; main only had the first hover-tip landing.",
       "risks": [
-        "The intercept is a boolean on thread.ask. A missed persist (store dropping unknown fields) would silently fall through to a full agent.",
-        "startAskRun returns {runId} and completes in a detached async IIFE. A throw after active.set but before the IIFE is attached cannot happen, but a stop that races the IIFE relies on entry.stopping + active identity.",
-        "notifyRunTerminal is deliberately skipped so Ask never checkpoints or records spend. finishSuccessfulTurn still drains queued follow-ups — confirm that is wanted."
+        "Main's muted overlap color is gone on purpose. If someone wanted quieter overlap copy, they will see full-contrast lines.",
+        "Ask mode code in Sidebar.tsx/ThreadView/runner auto-merged; I verified the ask tag, caret item, startAskRun intercept, and IPC create path survived, but I did not re-audit every auto-merged hunk in runner.js."
       ]
     },
     {
       "area": "impl",
-      "rationale": "electron/ask.js is the pure pack (buildAskPrompt, completeAsk, retrievalFallback). services.js startAsk/stopAsk/fork copy + forkWorkerThread skipping pendingWorktree. ipc.js create: ask wins over worktree and orchestrate. Then the UI chain: Sidebar caret 'New ask thread', ThreadView AskCard + header button, Composer hiding permission/Build/Best-of-N/attach.",
+      "rationale": ".solenta/review-itinerary.json is per-PR author notes. Keep the Ask-mode itinerary (this PR), not main's merge-PR itinerary about updatePrBranchFromBase. Incoming main also deleted quota-wait; leftover fromQuotaWait fields in startAskRun are inert.",
       "risks": [
-        "stopAsk({worktree:true}) arms pendingWorktree only when canHostWorktree (local + .git). Start work on a non-git folder is a silent plain thread.",
-        "Ask on a thread that already has worktreePath leaves the directory on disk unused; we do not delete it.",
-        "Composer still allows slash commands to be typed; they become the question because the ask intercept is first. /handoff on an Ask thread will not fan out."
+        "Main deleted electron/quotaWait.js. Auto-merge left a few fromQuotaWait / quotaWaitUntil mentions in runner.js. They do not require the deleted module, but they are dead.",
+        "A later cleanup should drop those leftovers rather than revive quota-wait on this branch."
       ]
     }
   ],
   "risks": [
-    "No live Electron click-through of the caret or Ask card; verification is unit/renderer tests plus tsc --noEmit.",
-    "Print-mode fallback still uses the user's provider CLI (claude -p --max-turns 1). That is cheap and no-tools, but it is not zero subscription usage. fm is the free path.",
-    "Memory search fails closed (empty pack) if the memory server is down; the answer then comes from the code index alone."
+    "PR #532 conflicted with origin/main after 122 commits, including #525 merge recovery, #516 conflict-pill hover, #511 worktree fail-closed, and the quota-wait deletion.",
+    "No live Electron click-through after the merge. Verification: tsc --noEmit, Ask electron+renderer tests, conflictForecastBadge, sidebar/header/threadView, fork-handoff, teach/orch.",
+    "Print-mode fallback still uses the provider CLI. That is cheap and no-tools, not zero subscription usage. fm is the free path."
   ]
 }

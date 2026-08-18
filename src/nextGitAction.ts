@@ -34,6 +34,11 @@ export interface NextGitActionInput {
   prNumber: number | null;
   prUrl?: string | null;
   prState: "OPEN" | "CLOSED" | "MERGED" | null;
+  /**
+   * Live GitHub mergeability from `gh pr view --json mergeable`.
+   * CONFLICTING means the header should say Update from main, not Merge.
+   */
+  mergeable?: "MERGEABLE" | "CONFLICTING" | "UNKNOWN" | null;
   /** null until fetched, or when there is no open PR. */
   checks: PrChecksResult | null;
 }
@@ -188,6 +193,15 @@ export function suggestNextGitAction(input: NextGitActionInput): NextGitAction {
         actionable: true,
         primary: false,
         href,
+      };
+    }
+    if (input.mergeable === "CONFLICTING") {
+      return {
+        kind: "merge",
+        label: "Update from main",
+        title: "Merge the base branch into this PR, then squash-merge",
+        actionable: true,
+        primary: true,
       };
     }
     return {

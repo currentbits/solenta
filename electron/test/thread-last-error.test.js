@@ -56,16 +56,4 @@ describe("thread lastError", () => {
     const status = await h.thread_status({ threadId: "t1" });
     assert.equal(status.lastError, "Run error: stored reason");
   });
-
-  it("keeps lastError when parking as quota-wait", () => {
-    store.updateThread("t1", {
-      status: "quota-wait",
-      lastError: "You've hit your limit · resets 3pm",
-      quotaWaitUntil: Date.now() + 3600_000,
-    });
-    assert.equal(
-      store.getThread("t1").lastError,
-      "You've hit your limit · resets 3pm",
-    );
-  });
 });
