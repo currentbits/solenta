@@ -7,6 +7,7 @@ const { execFileSync } = require("node:child_process");
 const { Store } = require("../store.js");
 const services = require("../services.js");
 const { maybeApplyFmTitle } = require("../fm-title.js");
+const { writeFakeBin } = require("./support/fakeBin.js");
 
 function git(cwd, args) {
   return execFileSync("git", args, {
@@ -18,10 +19,7 @@ function git(cwd, args) {
 
 /** Write an executable fake fm that runs `body` as node. */
 function writeFakeFm(dir, body) {
-  const bin = path.join(dir, "fake-fm");
-  fs.writeFileSync(bin, `#!/usr/bin/env node\n${body}\n`);
-  fs.chmodSync(bin, 0o755);
-  return bin;
+  return writeFakeBin(path.join(dir, "fake-fm"), body);
 }
 
 function seedFirstTurn(store, threadId, userText, assistantText) {

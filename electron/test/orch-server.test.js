@@ -11,6 +11,7 @@ const {
   createToolHandlers,
   INSTRUCTIONS,
 } = require("../orchServer.js");
+const { writeFakeBin } = require("./support/fakeBin.js");
 const {
   createMemorySupervisor,
   getClaudeMcpArgs,
@@ -861,9 +862,8 @@ describe("orch-server provider injection", () => {
 
   it("grok mcp add runs once per server", async () => {
     const argvFile = path.join(tmpDir, "grok-argv.jsonl");
-    const fakeGrok = path.join(tmpDir, "fake-grok");
-    fs.writeFileSync(
-      fakeGrok,
+    const fakeGrok = writeFakeBin(
+      path.join(tmpDir, "fake-grok"),
       `#!/usr/bin/env node
 "use strict";
 const fs = require("fs");
@@ -874,7 +874,6 @@ fs.appendFileSync(
 );
 process.exit(0);
 `,
-      { mode: 0o755 },
     );
 
     const memPort = await freePort();

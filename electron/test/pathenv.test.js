@@ -9,6 +9,7 @@ const {
   fallbackBinDirs,
   newestNvmBin,
   enrichProcessPath,
+  captureLoginPath,
 } = require("../pathEnv.js");
 
 describe("parseLoginPath", () => {
@@ -125,5 +126,36 @@ describe("enrichProcessPath", () => {
     });
     assert.equal(info.source, "fallback");
     assert.equal(env.PATH, "/usr/bin");
+  });
+
+  it("does not spawn a login shell on win32", () => {
+    let called = false;
+    const execFn = () => {
+      called = true;
+      return "should not run";
+    };
+    assert.equal(
+      captureLoginPath({ SHELL: "C:\\Windows\\System32\\cmd.exe" }, execFn, "win32"),
+      null,
+    );
+    assert.equal(called, false);
+  });
+
+  it("leaves a Windows PATH untouched (does not split on ':')", () => {
+    const env = { PATH: "C:\\Windows\\system32;C:\\Windows" };
+    let called = false;
+    const info = enrichProcessPath({
+      env,
+      platform: "win32",
+      execFn: () => {
+        called = true;
+        return "";
+      },
+      existsFn: () => true,
+      home: "C:\\Users\\me",
+    });
+    assert.equal(info.source, "win32");
+    assert.equal(env.PATH, "C:\\Windows\\system32;C:\\Windows");
+    assert.equal(called, false);
   });
 });

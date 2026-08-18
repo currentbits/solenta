@@ -542,12 +542,29 @@ function resolveBin(entry, env = process.env) {
 const whichCache = new Map();
 
 /**
- * Default which: absolute/relative path via existsSync, else `which` on PATH.
+ * PATH lookup command for a platform. Windows has no `which`; `where` is the
+ * built-in equivalent and, unlike `which`, prints EVERY match (one per line)
+ * in PATH order — so the first line is the one the shell would pick.
+ *
+ * Only the LOCAL host matters here. A project across a boundary (ssh remote
+ * or WSL-side) never reaches this code: assertProviderBinary returns early on
+ * crossesBoundary(), because the CLI lives on the other side where that
+ * side's own `which` is the correct question.
+ *
+ * @param {NodeJS.Platform} platform
+ */
+function whichCommand(platform) {
+  return platform === "win32" ? "where" : "which";
+}
+
+/**
+ * Default which: absolute/relative path via existsSync, else a PATH lookup.
  * @param {string} bin
  * @param {NodeJS.ProcessEnv} [env]
+ * @param {NodeJS.Platform} [platform]
  * @returns {string | null}
  */
-function defaultWhich(bin, env = process.env) {
+function defaultWhich(bin, env = process.env, platform = process.platform) {
   if (!bin) return null;
   if (path.isAbsolute(bin) || bin.includes("/") || bin.includes("\\")) {
     try {
@@ -556,17 +573,26 @@ function defaultWhich(bin, env = process.env) {
       return null;
     }
   }
-  const key = `${bin} ${env.PATH || ""}`;
+  // `\0` as an escape, never a raw NUL byte: a literal NUL makes grep
+  // treat this entire file as binary, so every search silently reports no
+  // match rather than failing loudly (#441).
+  const key = `${bin}\0${platform}\0${env.PATH || ""}`;
   const hit = whichCache.get(key);
   if (hit) return hit;
   try {
-    const out = execFileSync("which", [bin], {
+    const out = execFileSync(whichCommand(platform), [bin], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
       env,
-    }).trim();
-    if (out) whichCache.set(key, out);
-    return out || null;
+    });
+    // `where` prints EVERY match, one per line, in PATH order; `which` prints
+    // one. Taking the first non-empty line is correct for both.
+    const first = String(out || "")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find(Boolean);
+    if (first) whichCache.set(key, first);
+    return first || null;
   } catch {
     return null;
   }

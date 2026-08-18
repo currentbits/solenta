@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { execFile } = require("node:child_process");
 const { execCommand, wrapCommand, SYNC_TIMEOUT_MS } = require("./ssh.js");
+const { pathSide, isWindowsMount, wslTarget, buildWslCommand } = require("./wsl.js");
 const { scanSecrets } = require("./guardrails.js");
 
 /** @type {typeof execFile} */
@@ -19,6 +20,100 @@ function setExecFile(fn) {
 }
 
 const PATCH_TRUNCATE = 100_000;
+
+/**
+ * The one git wrap for a path. A WSL UNC cwd means git must run *inside*
+ * the distro at that path — Windows git over 9p is the slow/broken case
+ * the boundary rule exists to prevent. Off win32 this is a no-op so macOS
+ * and Linux stay byte-for-byte unchanged.
+ *
+ * Args that are themselves WSL UNCs (worktree add/remove) are rewritten to
+ * the linux path git inside the distro can address.
+ *
+ * No file watcher lives in this process: status/diff are on-demand and PR
+ * refresh is interval-polled. inotify would not cross the boundary anyway;
+ * a future watcher must poll when the target is WSL-side.
+ *
+ * @param {string} cwd
+ * @param {string[]} args
+ * @param {NodeJS.Platform} [platform]
+ * @returns {{ bin: string, args: string[], cwd?: string }}
+ */
+function resolveGitCommand(cwd, args, platform = process.platform) {
+  const argv = Array.isArray(args) ? args : [];
+  const side = pathSide(cwd, platform);
+  if (side.side !== "wsl") {
+    return { bin: "git", args: argv, cwd };
+  }
+  const linuxArgs = argv.map((a) => {
+    const s = pathSide(typeof a === "string" ? a : "", platform);
+    return s.side === "wsl" ? s.linuxPath : a;
+  });
+  const cmd = buildWslCommand(side.distro, side.linuxPath, ["git", ...linuxArgs]);
+  return { bin: cmd.bin, args: cmd.args };
+}
+
+/**
+ * Turn a linux path inside a distro back into the same UNC flavour the
+ * project used (\\wsl$ vs \\wsl.localhost), so Windows-side existsSync
+ * and later pathSide() still recognise it.
+ * @param {string} projectPath
+ * @param {string} linuxPath
+ */
+function linuxPathToUnc(projectPath, linuxPath) {
+  const m = String(projectPath).match(/^(\\\\wsl(?:\$|\.localhost)\\[^\\]+)/i);
+  const prefix = m ? m[1] : "\\\\wsl$\\unknown";
+  const rest = String(linuxPath).replace(/^\/+/, "").replace(/\//g, "\\");
+  return `${prefix}\\${rest}`;
+}
+
+/**
+ * Where a thread worktree should live.
+ *
+ * Non-WSL: `<worktreeBase>/<threadId>` — today's userData path, unchanged.
+ *
+ * WSL-side: next to the repo, inside the distro
+ * (`<repoParent>/.solenta/worktrees/<threadId>`). userData is a Windows
+ * path; `git worktree add` running via wsl.exe --cd cannot address a UNC
+ * or /mnt/<drive>, and crossing the boundary is the slow/no-inotify case.
+ * Same-filesystem as the repo is also what git worktree wants. If the
+ * repo itself lives on /mnt/<drive>, park under /tmp/solenta-worktrees
+ * so we still land on real ext4.
+ *
+ * `dir` is what we store as worktreePath (a UNC Windows can still see).
+ * `addPath` is the argument `git worktree add` must receive (linux).
+ *
+ * ponytail: sweepOrphanWorktrees still only scans worktreeBase (userData).
+ * WSL worktrees live next to the repo; thread-keyed cleanup uses worktreePath.
+ *
+ * @param {{ path?: string, remoteHost?: string } | null | undefined} project
+ * @param {string} worktreeBase
+ * @param {string} threadId
+ * @param {NodeJS.Platform} [platform]
+ * @returns {{ dir: string, addPath: string }}
+ */
+function resolveWorktreeDir(project, worktreeBase, threadId, platform = process.platform) {
+  const wsl = wslTarget(project, platform);
+  if (!wsl) {
+    const dir = path.join(worktreeBase, threadId);
+    return { dir, addPath: dir };
+  }
+  let linuxDir = path.posix.join(
+    path.posix.dirname(wsl.linuxPath),
+    ".solenta",
+    "worktrees",
+    threadId,
+  );
+  if (isWindowsMount(linuxDir) || isWindowsMount(wsl.linuxPath)) {
+    linuxDir = path.posix.join("/tmp", "solenta-worktrees", threadId);
+  }
+  if (isWindowsMount(linuxDir)) {
+    throw new Error(
+      "Worktree path resolved onto a Windows mount; refusing to cross the WSL boundary",
+    );
+  }
+  return { dir: linuxPathToUnc(project.path, linuxDir), addPath: linuxDir };
+}
 
 const GIT_MAX_BUFFER = 32 * 1024 * 1024;
 
@@ -43,19 +138,22 @@ function gitOut(cwd, args, opts) {
   // CODER_LOOP_LAG probe puts a click path in p99.
   // execCommand, not execFileSync: it owns the default timeout that keeps a
   // hung git off the main-process event loop.
-  const raw = execCommand(null, "git", args, {
-    cwd,
+  const cmd = resolveGitCommand(cwd, args);
+  const execOpts = {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
     maxBuffer: GIT_MAX_BUFFER,
-  });
+  };
+  if (cmd.cwd) execOpts.cwd = cmd.cwd;
+  const raw = execCommand(null, cmd.bin, cmd.args, execOpts);
   const out = raw == null ? "" : String(raw);
   return opts && opts.raw ? out : out.trim();
 }
 
 /**
  * gitOut for the diff path: prefix git with ssh when the project is remote.
- * Other worktrees operations stay local (worktrees/PRs are out of scope on remotes).
+ * WSL-side cwds wrap inside gitOut via resolveGitCommand. Other worktrees
+ * operations stay local (worktrees/PRs are out of scope on remotes).
  * @param {{ remoteHost?: string, remotePath?: string, path?: string } | null} project
  * @param {string} cwd
  * @param {string[]} args
@@ -95,8 +193,11 @@ function gitTry(cwd, args, opts) {
     if (opts && opts.timeout != null) {
       execOpts.timeout = opts.timeout;
     }
+    const cmd = resolveGitCommand(cwd, args);
+    if (cmd.cwd) execOpts.cwd = cmd.cwd;
+    else delete execOpts.cwd;
     // execCommand defaults the timeout when the caller did not set one.
-    const raw = execCommand(null, "git", args, execOpts);
+    const raw = execCommand(null, cmd.bin, cmd.args, execOpts);
     const out = raw == null ? "" : String(raw);
     const stdout = opts && opts.raw ? out : out.trim();
     return { ok: true, stdout, stderr: "", combined: stdout };
@@ -155,7 +256,6 @@ function gitOutForDiffAsync(project, cwd, args, opts) {
  * @returns {Promise<string>}
  */
 function gitExecThrowAsync(project, cwd, args, opts) {
-  const cmd = wrapCommand(project, "git", args);
   const timeout =
     opts && opts.timeout != null ? opts.timeout : SYNC_TIMEOUT_MS;
   /** @type {import("node:child_process").ExecFileOptionsWithStringEncoding} */
@@ -165,8 +265,12 @@ function gitExecThrowAsync(project, cwd, args, opts) {
     timeout,
     stdio: ["ignore", "pipe", "pipe"],
   };
-  if (!(project && project.remoteHost)) {
-    execOpts.cwd = cwd;
+  let cmd;
+  if (project && project.remoteHost) {
+    cmd = wrapCommand(project, "git", args);
+  } else {
+    cmd = resolveGitCommand(cwd, args);
+    if (cmd.cwd) execOpts.cwd = cmd.cwd;
   }
   return new Promise((resolve, reject) => {
     execFileImpl(cmd.bin, cmd.args, execOpts, (err, stdout, stderr) => {
@@ -736,12 +840,19 @@ function setupWorktree(opts) {
   const shortId = String(thread.id).slice(0, 6);
   const wanted = `coder/${slugify(thread.title)}-${shortId}`;
   const branch = uniqueCoderBranch(project.path, wanted) || wanted;
-  const dir = path.join(worktreeBase, thread.id);
+  const { dir, addPath } = resolveWorktreeDir(project, worktreeBase, thread.id);
 
-  fs.mkdirSync(worktreeBase, { recursive: true });
+  if (addPath === dir) {
+    fs.mkdirSync(worktreeBase, { recursive: true });
+  } else {
+    // Parent of the linux worktree must exist inside the distro. The
+    // Windows userData path is the wrong side and git worktree add will
+    // not create intermediate directories.
+    execCommand(project, "mkdir", ["-p", path.posix.dirname(addPath)]);
+  }
 
   try {
-    gitOut(project.path, ["worktree", "add", "-b", branch, dir]);
+    gitOut(project.path, ["worktree", "add", "-b", branch, addPath]);
   } catch (err) {
     const msg = err && err.message ? String(err.message) : String(err);
     // Surface a clean error (clear of Error.prototype noise where possible)
@@ -2595,17 +2706,20 @@ function gitTryAsync(cwd, args, opts) {
     ...(opts && opts.env ? opts.env : {}),
     GIT_TERMINAL_PROMPT: "0",
   };
+  const cmd = resolveGitCommand(cwd, args);
+  /** @type {import("node:child_process").ExecFileOptionsWithStringEncoding} */
+  const execOpts = {
+    encoding: "utf8",
+    maxBuffer: GIT_MAX_BUFFER,
+    timeout,
+    env,
+  };
+  if (cmd.cwd) execOpts.cwd = cmd.cwd;
   return new Promise((resolve) => {
     execFileImpl(
-      "git",
-      args,
-      {
-        cwd,
-        encoding: "utf8",
-        maxBuffer: GIT_MAX_BUFFER,
-        timeout,
-        env,
-      },
+      cmd.bin,
+      cmd.args,
+      execOpts,
       (err, stdout, stderr) => {
         if (!err) {
           const out = opts && opts.raw ? String(stdout || "") : String(stdout || "").trim();
@@ -3744,6 +3858,9 @@ module.exports = {
   isPrRefreshCandidate,
   isGitHubRemote,
   gitTry,
+  resolveGitCommand,
+  resolveWorktreeDir,
+  linuxPathToUnc,
   defaultBranch,
   defaultBranchAsync,
   gitOutAsync,

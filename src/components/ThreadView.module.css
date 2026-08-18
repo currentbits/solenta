@@ -1038,6 +1038,23 @@
   color: var(--text);
 }
 
+.sandboxBadge {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 550;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.sandboxBadge[data-sandboxed="yes"] {
+  color: var(--green);
+}
+
 .contextRing {
   display: inline-flex;
   align-items: center;

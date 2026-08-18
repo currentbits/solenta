@@ -15,6 +15,7 @@ const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 const { fetchIssue, listIssues, setPlanStatus } = require("../issues.js");
 const { listPrs, ghTryAsync } = require("../worktrees.js");
+const { writeFakeBin } = require("./support/fakeBin.js");
 
 function git(cwd, args) {
   return execFileSync("git", args, {
@@ -25,8 +26,7 @@ function git(cwd, args) {
 }
 
 function writeFakeGh(dir, body) {
-  const bin = path.join(dir, "fake-gh");
-  fs.writeFileSync(bin, body, { mode: 0o755 });
+  const bin = writeFakeBin(path.join(dir, "fake-gh"), body);
   process.env.CODER_GH_BIN = bin;
   return bin;
 }

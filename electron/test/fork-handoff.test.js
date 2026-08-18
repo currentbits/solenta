@@ -15,6 +15,7 @@ const { execFileSync } = require("node:child_process");
 const { Store } = require("../store.js");
 const services = require("../services.js");
 const { createRunner } = require("../runner.js");
+const { writeFakeBin } = require("./support/fakeBin.js");
 
 function git(cwd, args) {
   execFileSync("git", args, { cwd, stdio: "ignore" });
@@ -305,7 +306,6 @@ describe("runner hand-off prefix on first turn only", () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-handoff-run-"));
     argvFile = path.join(tmpDir, "argv.json");
     argvLog = path.join(tmpDir, "argv-log.jsonl");
-    const fake = path.join(tmpDir, "fake-claude");
     // Captures each invocation's CLI prompt (delivered on stdin in
     // interactive mode) as a one-element array, and emits a session.
     const body = `#!/usr/bin/env node
@@ -331,7 +331,7 @@ process.stdin.on("data", (c) => {
   process.exit(0);
 });
 `;
-    fs.writeFileSync(fake, body, { mode: 0o755 });
+    const fake = writeFakeBin(path.join(tmpDir, "fake-claude"), body);
     process.env.CODER_CLAUDE_BIN = fake;
     process.env.CODER_FAKE_CLAUDE_ARGV_FILE = argvFile;
     process.env.CODER_FAKE_CLAUDE_ARGV_LOG = argvLog;

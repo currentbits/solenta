@@ -18,6 +18,7 @@ const {
   BATCH_SIZE,
   FLUSH_MS,
 } = require("../session-record.js");
+const { writeFakeBin } = require("./support/fakeBin.js");
 
 const TOKEN = "test-bearer-token-64chars-abcdefghijklmnopqrstuvwxyz012345";
 
@@ -146,9 +147,7 @@ emit({type:"assistant",message:{content:[
 emit({type:"result",subtype:"success",result:"Final assistant answer for session record.",usage:{input_tokens:5,output_tokens:9},total_cost_usd:0.002,session_id:"s-sess"});
 process.exit(0);
 `;
-  const fake = path.join(dir, "fake-claude-sess");
-  fs.writeFileSync(fake, body, { mode: 0o755 });
-  return fake;
+  return writeFakeBin(path.join(dir, "fake-claude-sess"), body);
 }
 
 async function writeStreamingClaude(dir) {
@@ -169,9 +168,7 @@ const parts = ["Hel", "lo ", "wor", "ld!", " done"];
   process.exit(0);
 })();
 `;
-  const fake = path.join(dir, "fake-claude-stream");
-  fs.writeFileSync(fake, body, { mode: 0o755 });
-  return fake;
+  return writeFakeBin(path.join(dir, "fake-claude-stream"), body);
 }
 
 function writeSlowClaude(dir) {
@@ -182,9 +179,7 @@ emit({type:"system",subtype:"init",session_id:"s-slow",model:"m"});
 emit({type:"assistant",message:{content:[{type:"text",text:"partial so far"}]}});
 setInterval(() => {}, 10000);
 `;
-  const fake = path.join(dir, "fake-claude-slow-sess");
-  fs.writeFileSync(fake, body, { mode: 0o755 });
-  return fake;
+  return writeFakeBin(path.join(dir, "fake-claude-slow-sess"), body);
 }
 
 describe("mapMessageRole", () => {

@@ -9,6 +9,7 @@ const services = require("../services.js");
 const { diff, setExecFile } = require("../worktrees.js");
 const { createRunner, resolveSpawn } = require("../runner.js");
 const ssh = require("../ssh.js");
+const { writeFakeBin } = require("./support/fakeBin.js");
 
 async function loadCore() {
   const corePath = path.join(__dirname, "../../core/dist/index.js");
@@ -165,9 +166,8 @@ describe("runner startRun remoteHost fake spawn", () => {
     const binDir = path.join(tmpDir, "bin");
     fs.mkdirSync(binDir);
     const logFile = path.join(tmpDir, "ssh-argv.json");
-    const sshBin = path.join(binDir, "ssh");
-    fs.writeFileSync(
-      sshBin,
+    writeFakeBin(
+      path.join(binDir, "ssh"),
       `#!/usr/bin/env node
 const fs = require("fs");
 fs.writeFileSync(${JSON.stringify(logFile)}, JSON.stringify(process.argv.slice(2)));
@@ -175,7 +175,6 @@ process.stdout.write("Hello_from_remote");
 process.exit(0);
 `,
     );
-    fs.chmodSync(sshBin, 0o755);
 
     process.env.PATH = `${binDir}${path.delimiter}${process.env.PATH || ""}`;
     process.env.CODER_AGENT_CMD = `${process.execPath} -e process.stdout.write('should-not-run')`;

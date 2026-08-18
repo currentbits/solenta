@@ -2,6 +2,7 @@
 
 const path = require("node:path");
 const { execFileSync: defaultExecFileSync, execFile: defaultExecFile } = require("node:child_process");
+const { wslTarget, buildWslCommand } = require("./wsl.js");
 
 /** @type {typeof defaultExecFileSync} */
 let execFileSyncImpl = defaultExecFileSync;
@@ -46,6 +47,17 @@ function posixQuote(value) {
 }
 
 /**
+ * A binary that must resolve on the OTHER side of a boundary: keep the CLI
+ * name, drop any local absolute path (it does not exist over there).
+ * @param {string} bin
+ */
+function basenameBin(bin) {
+  return typeof bin === "string" && (bin.includes("/") || bin.includes("\\"))
+    ? path.basename(bin)
+    : bin;
+}
+
+/**
  * Build an ssh argv that cds into remotePath then runs argv on the host.
  *
  * BatchMode=yes + ConnectTimeout=10 fail a dead/unauthenticated host fast
@@ -73,28 +85,32 @@ function buildSshCommand(remoteHost, remotePath, argv) {
 }
 
 /**
- * If the project lives on a remote, wrap bin+argv as an ssh command.
- * Local projects are returned unchanged. Branch ONLY on project.remoteHost.
+ * The single wrap seam for both boundary kinds. If the project lives on an
+ * ssh remote, wrap bin+argv as an ssh command; if it lives on the WSL side of
+ * a Windows machine (#397), wrap it as `wsl.exe -d ... --cd ... --`. Plain
+ * local projects are returned unchanged.
  *
- * A local absolute binary path will not exist on the remote, so remotes use
- * the basename (the CLI name the remote PATH is expected to provide).
+ * A local absolute binary path will not exist on the other side, so both
+ * wraps use the basename (the CLI name that PATH over there provides).
  *
  * @param {{ remoteHost?: string, remotePath?: string, path?: string } | null | undefined} project
  * @param {string} bin
  * @param {string[]} argv
+ * @param {NodeJS.Platform} [platform]  injected so win32 WSL wrapping is testable off Windows
  * @returns {{ bin: string, args: string[] }}
  */
-function wrapCommand(project, bin, argv) {
+function wrapCommand(project, bin, argv, platform) {
   if (!project || !project.remoteHost) {
-    return { bin, args: Array.isArray(argv) ? argv : [] };
+    const wsl = wslTarget(project, platform);
+    if (!wsl) return { bin, args: Array.isArray(argv) ? argv : [] };
+    return buildWslCommand(wsl.distro, wsl.linuxPath, [
+      basenameBin(bin),
+      ...(Array.isArray(argv) ? argv : []),
+    ]);
   }
   const remotePath = project.remotePath || project.path || "";
-  const remoteBin =
-    typeof bin === "string" && (bin.includes("/") || bin.includes("\\"))
-      ? path.basename(bin)
-      : bin;
   return buildSshCommand(project.remoteHost, remotePath, [
-    remoteBin,
+    basenameBin(bin),
     ...(Array.isArray(argv) ? argv : []),
   ]);
 }
@@ -113,7 +129,10 @@ function execCommand(project, bin, argv, execOpts) {
   const cmd = wrapCommand(project, bin, argv);
   const opts = { ...(execOpts || {}) };
   if (opts.timeout == null) opts.timeout = SYNC_TIMEOUT_MS;
-  if (project && project.remoteHost) {
+  // A UNC \\wsl$ path is not a valid cwd for a Windows child process, and the
+  // local project path does not exist on an ssh remote. Both wraps carry the
+  // directory themselves (--cd / cd &&), so drop cwd for either.
+  if ((project && project.remoteHost) || wslTarget(project)) {
     delete opts.cwd;
   }
   return execFileSyncImpl(cmd.bin, cmd.args, opts);
@@ -133,7 +152,10 @@ function execCommandAsync(project, bin, argv, execOpts) {
   const cmd = wrapCommand(project, bin, argv);
   const opts = { ...(execOpts || {}) };
   if (opts.timeout == null) opts.timeout = SYNC_TIMEOUT_MS;
-  if (project && project.remoteHost) {
+  // A UNC \\wsl$ path is not a valid cwd for a Windows child process, and the
+  // local project path does not exist on an ssh remote. Both wraps carry the
+  // directory themselves (--cd / cd &&), so drop cwd for either.
+  if ((project && project.remoteHost) || wslTarget(project)) {
     delete opts.cwd;
   }
   return new Promise((resolve, reject) => {

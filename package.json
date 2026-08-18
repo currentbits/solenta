@@ -16,13 +16,15 @@
     "acceptance": "electron scripts/acceptance.js",
     "beachball": "electron electron/beachball.js",
     "test": "npm run test:core && npm run test:renderer && npm run test:electron && npm run test:memory",
-    "test:core": "cd core && npm run build && npm test",
-    "test:renderer": "CODER_GROK_MCP_DISABLE=1 node --import=./test/support/render.mjs --experimental-strip-types --test --test-timeout=20000 test/*.test.ts test/*.test.tsx",
-    "test:electron": "node --import=./test/support/render.mjs --experimental-strip-types --test electron/test/*.test.js",
-    "test:memory": "cd memory-server && node --test test/*.test.js"
+    "test:core": "npm run build --prefix core && npm test --prefix core",
+    "test:renderer": "node --import=./test/support/disable-grok-mcp.mjs --import=./test/support/render.mjs --experimental-strip-types --test --test-timeout=20000 test/*.test.ts test/*.test.tsx",
+    "test:electron": "node scripts/test-electron.js",
+    "test:memory": "npm test --prefix memory-server",
+    "test:smoke": "electron electron/smoke.js"
   },
   "dependencies": {
     "@formkit/auto-animate": "^0.10.0",
+    "cross-spawn": "^7.0.6",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-markdown": "^10.1.0",

@@ -27,6 +27,7 @@ const {
   isPrRefreshCandidate,
   PR_REFRESH_TIMEOUT_MS,
 } = require("../worktrees.js");
+const { writeFakeBin } = require("./support/fakeBin.js");
 
 function git(cwd, args) {
   return execFileSync("git", args, {
@@ -145,8 +146,7 @@ if (args[0] === "pr" && args[1] === "view") {
 
 finish(2, "", "fake-gh-refresh: unhandled argv " + JSON.stringify(args) + "\\n");
 `;
-  fs.writeFileSync(bin, body, { mode: 0o755 });
-  return bin;
+  return writeFakeBin(bin, body);
 }
 
 /**
