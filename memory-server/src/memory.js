@@ -15,9 +15,9 @@ import { rejectInjectedMemory } from './guardrails-scan.js'
 
 export { contentTokens, jaccard, queueReview }
 
-const ENTRY_TYPES = new Set(['knowledge', 'task', 'convention', 'run'])
+const ENTRY_TYPES = new Set(['knowledge', 'task', 'convention', 'run', 'strategy'])
 const TASK_STATUSES = new Set(['active', 'done', 'abandoned'])
-const IMPORTANCE_DEFAULT = { convention: 5, knowledge: 3, task: 3, run: 1 }
+const IMPORTANCE_DEFAULT = { convention: 5, strategy: 4, knowledge: 3, task: 3, run: 1 }
 const FEEDBACK_VERDICTS = new Set(['helpful', 'harmful'])
 const SESSION_ROLES = new Set(['user', 'assistant', 'tool', 'system'])
 const RESOLUTIONS = new Set(['update', 'invalidate', 'noop'])
@@ -54,6 +54,7 @@ const TRUST_CACHE_TTL_MS = 5_000
 
 const SECTION_BUDGETS = {
   conventions: 800,
+  strategies: 500,
   knowledge: 500,
   tasks: 300,
 }
@@ -94,6 +95,7 @@ const HINT = 'call memory_get with this id for the full body'
 const PROTOCOL = [
   'MEMORY PREFLIGHT: call memory_bootstrap with project set to your working directory and treat its conventions as standing instructions.',
   'While working, store durable non-obvious findings (decisions, gotchas, conventions) with memory_store.',
+  'Strategies are distilled "when doing X, do/don\'t Y" rules from past runs: follow them, and report a bad one with memory_feedback.',
   'Before finishing, record what a future agent must know.',
   'Search returns excerpts; use memory_get for the full body.',
   'If active tasks may conflict, inspect with memory_search before changing files.',
@@ -1079,6 +1081,18 @@ export class Memory {
       )
       .all(project, project)
 
+    // Strategies go in whole: a "when X, do Y" rule truncated mid-clause is worse
+    // than absent. They are short by construction and the budget caps the count.
+    const strategiesRaw = this.db
+      .prepare(
+        `SELECT id, title, body, importance, created_at FROM entries
+         WHERE type = 'strategy' AND ${liveSql()}
+           AND (? IS NULL OR project = ?)
+         ORDER BY importance DESC, created_at DESC
+         LIMIT 50`,
+      )
+      .all(project, project)
+
     const knowledgeRaw = this.db
       .prepare(
         `SELECT id, title, body, importance, created_at FROM entries
@@ -1103,6 +1117,18 @@ export class Memory {
     const conventions = applyTokenBudget(
       conventionsRaw,
       SECTION_BUDGETS.conventions,
+      (r) => ({ id: r.id, title: r.title, body: r.body, importance: r.importance, created_at: r.created_at }),
+    ).map((r) => ({
+      id: r.id,
+      title: r.title,
+      body: r.body,
+      importance: r.importance,
+      created_at: r.created_at,
+    }))
+
+    const strategies = applyTokenBudget(
+      strategiesRaw,
+      SECTION_BUDGETS.strategies,
       (r) => ({ id: r.id, title: r.title, body: r.body, importance: r.importance, created_at: r.created_at }),
     ).map((r) => ({
       id: r.id,
@@ -1156,12 +1182,14 @@ export class Memory {
 
     this.markAccessed([
       ...conventions.map((c) => c.id),
+      ...strategies.map((s) => s.id),
       ...knowledge.map((k) => k.id),
       ...tasks.map((t) => t.id),
     ])
 
     return {
       conventions,
+      strategies,
       knowledge,
       tasks,
       protocol: [...PROTOCOL],
