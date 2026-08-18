@@ -384,6 +384,8 @@ export interface UseCoderResult {
     title: string;
     body?: string;
     draft?: boolean;
+    /** Override the PR-size cap for this creation (issue #402). */
+    allowOversize?: boolean;
   }) => Promise<PrInfo>;
   /** Live PR for the selected thread's branch, or null when none. */
   prStatus: () => Promise<PrInfo | null>;
@@ -2124,7 +2126,12 @@ export function useCoder(): UseCoderResult {
   }, [api, selectedThreadId]);
 
   const createPr = useCallback(
-    async (input: { title: string; body?: string; draft?: boolean }) => {
+    async (input: {
+      title: string;
+      body?: string;
+      draft?: boolean;
+      allowOversize?: boolean;
+    }) => {
       if (!selectedThreadId) {
         throw new Error("No thread selected");
       }
@@ -2135,6 +2142,7 @@ export function useCoder(): UseCoderResult {
           title: input.title,
           body: input.body,
           draft: input.draft,
+          allowOversize: input.allowOversize,
         });
         if (selectedRef.current !== threadId) return pr;
         // createPr records prNumber/prUrl on the thread; refresh so the badge updates.

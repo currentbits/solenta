@@ -73,7 +73,7 @@ import {
 } from "../runHeader";
 import type { SlashAction } from "../slashCommands";
 import { buildBestOfNEntries } from "../bestOfN";
-import { createPrPrompt } from "../prUi";
+import { createPrPrompt, isPrTooLargeMessage, splitPrPrompt } from "../prUi";
 import { suggestNextGitAction } from "../nextGitAction";
 import { formatQuotaWaitLabel } from "../quotaWait";
 import {
@@ -467,6 +467,8 @@ interface ThreadViewProps {
     title: string;
     body?: string;
     draft?: boolean;
+    /** Override the PR-size cap for this creation (issue #402). */
+    allowOversize?: boolean;
   }) => Promise<PrInfo>;
   /** CI checks for the current PR. Failures stay in-band. */
   onPrChecks?: () => Promise<PrChecksResult>;
@@ -1124,6 +1126,7 @@ function NextGitActionButton({
     title: string;
     body?: string;
     draft?: boolean;
+    allowOversize?: boolean;
   }) => Promise<PrInfo>;
   onPrChecks?: () => Promise<PrChecksResult>;
   onPrMerge?: () => Promise<PrInfo>;
@@ -1137,6 +1140,8 @@ function NextGitActionButton({
   const [checks, setChecks] = useState<PrChecksResult | null>(null);
   const [pending, setPending] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
+  /** Size-cap refusal message while the split/override choice is showing. */
+  const [oversizeMsg, setOversizeMsg] = useState<string | null>(null);
   const threadRef = useRef(thread.id);
   threadRef.current = thread.id;
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1154,6 +1159,7 @@ function NextGitActionButton({
     setChecks(null);
     setPending(false);
     setFlash(null);
+    setOversizeMsg(null);
   }, [thread.id]);
 
   const loadGit = useCallback(async () => {
@@ -1277,10 +1283,15 @@ function NextGitActionButton({
         setPending(true);
         try {
           await onCreatePr({ title: thread.title, body: "" });
+          setOversizeMsg(null);
           await loadGit();
           await loadChecks();
-        } catch {
-          // Parent surfaces rejections via the runError banner.
+        } catch (err) {
+          // The size-cap refusal (issue #402) is not a failure: offer the
+          // split-into-stack prompt or an explicit override inline. Other
+          // rejections surface via the parent's runError banner.
+          const msg = err instanceof Error ? err.message : String(err);
+          if (isPrTooLargeMessage(msg)) setOversizeMsg(msg);
         } finally {
           setPending(false);
         }
@@ -1309,6 +1320,22 @@ function NextGitActionButton({
   };
 
   if (action.kind === "idle") return null;
+
+  /** Retry PR creation with the explicit size-cap override (issue #402). */
+  const createOversizePr = async () => {
+    if (!onCreatePr || pending || isWorking) return;
+    setPending(true);
+    try {
+      await onCreatePr({ title: thread.title, body: "", allowOversize: true });
+      setOversizeMsg(null);
+      await loadGit();
+      await loadChecks();
+    } catch {
+      // Parent surfaces rejections via the runError banner.
+    } finally {
+      setPending(false);
+    }
+  };
 
   const disabled = isWorking || pending || !action.actionable;
   const label = pending
@@ -1356,20 +1383,59 @@ function NextGitActionButton({
   }
 
   return (
-    <button
-      type="button"
-      className={className}
-      data-next-git-action={action.kind}
-      data-create-pr={dataCreatePr}
-      disabled={disabled}
-      aria-disabled={disabled ? "true" : undefined}
-      aria-busy={pending || undefined}
-      title={action.title}
-      onClick={() => void handleClick()}
-    >
-      {pending && <span className={styles.pushSpinner} aria-hidden />}
-      {label}
-    </button>
+    <>
+      <button
+        type="button"
+        className={className}
+        data-next-git-action={action.kind}
+        data-create-pr={dataCreatePr}
+        disabled={disabled}
+        aria-disabled={disabled ? "true" : undefined}
+        aria-busy={pending || undefined}
+        title={action.title}
+        onClick={() => void handleClick()}
+      >
+        {pending && <span className={styles.pushSpinner} aria-hidden />}
+        {label}
+      </button>
+      {oversizeMsg ? (
+        <span
+          className={styles.oversizeBar}
+          data-pr-oversize=""
+          role="alert"
+        >
+          <span className={styles.oversizeText}>{oversizeMsg}</span>
+          <button
+            type="button"
+            className={styles.oversizeBtn}
+            data-pr-split=""
+            onClick={() => {
+              setOversizeMsg(null);
+              void onStartRun(splitPrPrompt(providerName));
+            }}
+          >
+            Split into stacked PRs
+          </button>
+          <button
+            type="button"
+            className={styles.oversizeBtn}
+            data-pr-create-anyway=""
+            disabled={disabled}
+            onClick={() => void createOversizePr()}
+          >
+            Create anyway
+          </button>
+          <button
+            type="button"
+            className={styles.oversizeDismiss}
+            aria-label="Dismiss"
+            onClick={() => setOversizeMsg(null)}
+          >
+            ×
+          </button>
+        </span>
+      ) : null}
+    </>
   );
 }
 

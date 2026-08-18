@@ -825,6 +825,7 @@ const IPC_HANDLERS = {
       title: input.title,
       body: input.body,
       draft: input.draft,
+      allowOversize: Boolean(input && input.allowOversize),
       broadcast: ctx.broadcast,
     });
   },

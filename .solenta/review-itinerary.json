@@ -1,115 +1,37 @@
 {
   "version": 1,
-  "readOrder": ["tests", "critical", "impl", "docs"],
+  "readOrder": ["tests", "critical", "impl"],
   "chunks": [
     {
       "area": "tests",
-      "rationale": "Contract first: electron/test/quota-wait.test.js is the parser (Claude/Codex/Kimi clocks, ISO/duration/Retry-After, #286 exclusion, wake-once, opt-out). electron/test/quota-wait-runner.test.js is the live runner (park, no-clock fail, budget fail, global opt-out, wake-once without a second user message, resumeQuotaWait). Renderer: test/quotaWait.test.ts, sidebarFailedBadge, settingsModal, kanban, threadSettle. Ask-mode suites must still pass — startAskRun shares fromQuotaWait and markRunFailed.",
+      "rationale": "Contract first. electron/test/pr-size-cap.test.js is the guardrail contract: default 400 cap, over-cap refusal BEFORE push/gh (asserts zero 'pr create' calls and no persisted prNumber), allowOversize override, null disables, custom cap, parseNumstat (binary files count as files, not lines). test/planboard.test.ts pins reviewLoad thresholds (busy at 4 PRs / >1200 lines, overloaded at 7 / >2400) and the draft/merged exclusions. test/planboardView.test.tsx proves the meter renders only when listPrs is wired and survives a PR-list failure. test/nextGitActionButton.test.tsx walks the full refusal UI: bar appears, Split sends the restack prompt, Create anyway retries with allowOversize:true, non-cap errors never show the bar. test/prUi.test.ts pins the cross-process message prefix.",
       "risks": [
-        "Runner tests force generic via CODER_AGENT_CMD; they do not exercise Claude/Codex JSON result paths that also call markRunFailed.",
-        "Wake-once test waits up to 20s for a 1s reset + 2s slack; a slow CI host can flake.",
-        "store.test.js round-trip must list every migrateThread key (quotaWait* plus reviewAcceptedHunks) or deepEqual fails."
+        "The oversize-bar test relies on gitSyncInfo {hasUpstream:true,ahead:0} resolving to the create-pr action; a nextGitAction table change would reroute the test, not break it — the assertions are on the bar, not the action.",
+        "pr-size-cap.test.js counts exact lines (450 > 400, 20 > 10); the numstat line count is git-version independent but the assertion strings embed them."
       ]
     },
     {
       "area": "critical",
-      "rationale": "electron/quotaWait.js decides park vs fail. runner.markRunFailed writes quota-wait atomically so the first threads:changed never flashes Failed. fireQuotaWake / resumeQuotaWait resend the last user prompt with fromQuotaWait:true (no second transcript line). startRun cancels the timer, skips autoTurns reset, and startAskRun (#392) takes the same fromQuotaWait flag so Ask threads can park and resume without touching a worktree.",
+      "rationale": "electron/worktrees.js: diffStatVsBase (three-dot numstat vs base, fails OPEN — a stat hiccup never blocks a PR) and the cap check inside createPr placed after the ahead-check but BEFORE push, so a refused PR leaves no remote branch and no gh trace. The error message prefix 'PR too large:' is a cross-process contract duplicated in src/prUi.ts (PR_TOO_LARGE_PREFIX) — the two processes share no module. electron/store.js owns the default: absent/junk heals to 400, only explicit null disables (DORA small batches as the shipped default).",
       "risks": [
-        "notifyRunTerminal is still called with status 'failed' after a park; it must see thread.status === 'quota-wait' and skip afterFailedTurn / drainQueued or a parked thread will look failed and start the queued prompt.",
-        "quotaWaitResumed is set on the resume start, not on park. A human send while parked starts a new turn and can park again — intended. A second quota hit on the same resume fails.",
-        "Ask-mode errors go through markRunFailed; only quota-shaped text parks. Retrieval/fm failures stay Failed."
+        "createPr is also called by agents via MCP/IPC, not just the header button; the cap applies there too, and the agent only sees the message text. The message must stay self-explanatory.",
+        "The cap counts lines vs the project checkout's current branch (defaultBranchAsync), same base the PR would get — but a thread stacked on another branch (#187/#240 not shipped) would be measured against main, overcounting. Accepted until base-branch support lands.",
+        "Binary files add 0 lines; a PR of only binary assets never trips the cap. Deliberate."
       ]
     },
     {
       "area": "impl",
-      "rationale": "Persistence and UI: store.quotaWaitAutoResume (default on), thread.quotaWaitUntil/Resumed/AutoResume, lastError kept on quota-wait, IPC setQuotaWaitAutoResume + resumeQuotaWait, Settings toggle, Sidebar 'Quota wait · clock' badge, ThreadView Resume now / Don't auto-resume, kanban column, settle/GC treat quota-wait as live work.",
+      "rationale": "Renderer flow: ThreadView's NextGitActionButton catches the refusal by prefix and swaps in an inline bar (Split into stacked PRs → splitPrPrompt via onStartRun; Create anyway → onCreatePr with allowOversize; dismiss ×). useCoder/ipc.js/preload thread allowOversize through unchanged. Planboard meter: planboard.ts reviewLoad/formatLineCount are pure; PlanboardView fetches listPrs alongside listIssues (Promise.all, stale-gen guard shared), meter sits in the existing header with ok/busy/overloaded colors; App.tsx wires the already-exposed listPrs. SettingsModal gains a 'Pull requests' section with the cap input following the dailyBudgetUsd blur-save pattern; devCoder mirrors the new setting so the web dev build typechecks.",
       "risks": [
-        "Per-thread opt-out cancels the timer but leaves status quota-wait so Resume now still works; turning the global setting off mid-wait also cancels via refreshAllQuotaWaits.",
-        "formatQuotaWaitLabel is host-local; a named timezone in the provider error is parsed in quotaWait.js for the wake instant, then displayed in the user's zone."
-      ]
-    },
-    {
-      "area": "tests",
-      "rationale": "Start with electron/test/spec-tasks.test.js (the checkbox DAG contract: ids, needs:, cycles, waves), then spec-mode.test.js dispatch/converge (crew sync, wave-1 fork, wave-2 after complete), then spec-ipc.test.js (N worker runs vs one converge run), then test/specCard.test.tsx (Dispatch/Converge only at build).",
-      "risks": [
-        "Wave-2 is asserted inside the wave-1 test after completeCrewTask — easy to miss if a later edit splits the case.",
-        "IPC dispatch test writes tasks.md into the project checkout (no worktree on the spec thread fixture)."
-      ]
-    },
-    {
-      "area": "critical",
-      "rationale": "electron/specTasks.js is the format. electron/services.js dispatchSpec/syncSpecCrewFromParsed/forkSpecWave is the live path: parse → addCrewTasks (needs remapped to tN) → claim one orchWorker per open unblocked task. ipc.js threads:dispatchSpec starts those runs; threads:convergeSpec starts one run on the spec thread.",
-      "risks": [
-        "Crew sync matches by collapsed title. Two checkboxes with the same title collide; the second is treated as already added.",
-        "sourceToCrew precomputes tN the same way addCrewTasks does. If addCrewTasks ever changes id assignment, remapped needs silently point at the wrong task.",
-        "Dispatch is fail-closed on parse errors (cycle, unknown needs) — a typo in tasks.md blocks the whole wave, not just the bad line.",
-        "Next wave is not auto-started when workers finish. The human (or a later Dispatch click) has to come back. Crew claim still holds the DAG.",
-        "Workers land in their own worktrees (forkWorkerThread default). Ticking tasks.md there does not update the spec thread's copy; the crew list is the source of truth."
-      ]
-    },
-    {
-      "area": "impl",
-      "rationale": "UI is SpecCard at stage===build: Dispatch (permissionAllow) and Converge (btn). Wired through ipc.ts, preload, wireClient, useCoder, App, fakeCoder, devCoder. Approving tasks.md still starts a run, but the build prompt now tells the parent to orchestrate instead of implementing the checklist itself.",
-      "risks": [
-        "Changing the build-stage prompt is a behavior change for anyone who approved tasks.md expecting the old 'implement it yourself' turn.",
-        "useCoder.dispatchSpec only patches the source thread; new workers appear via the threads:changed broadcast that IPC already sends."
-      ]
-    },
-    {
-      "area": "docs",
-      "rationale": "SPEC_GOAL.tasks now documents the checkbox + needs: <id> format so newly written tasks.md is dispatchable. src/devCoder.ts dropped the 'out of scope' line.",
-      "risks": [
-        "Existing tasks.md files written before this change have no needs: annotations — they still parse (document-order ids, one big wave)."
-      ]
-    },
-    {
-      "area": "tests",
-      "rationale": "Issue #408 contract in threadView.test.tsx: jsdom has no ResizeObserver and no layout, so the suite installs a fake observer and overrides scrollHeight/clientHeight/scrollTop. Pinned + growth must set scrollTop to the new scrollHeight; scrolled-up (onScroll, distance > 80px) must leave scrollTop alone. Watch the tests fail first if the observer is missing.",
-      "risks": [
-        "The fake observer fires every watched target at once; it does not prove that a nested <img> load grows a direct child box in a real layout engine.",
-        "scrollTop is a writable backing field. A future pin that writes a clamped value (scrollHeight - clientHeight) would fail the first assertion (expects 1400, not 1000)."
-      ]
-    },
-    {
-      "area": "impl",
-      "rationale": "ThreadView adds a ResizeObserver after the existing state-driven pin effect. It observes the scroll body and each direct child, reconnects when `timeline` changes, and only writes scrollTop when stickToBottom.current is set and the view is actually detached (distance > 0). No-ops when ResizeObserver is missing (jsdom).",
-      "risks": [
-        "ResizeObserver on an overflow container reports the viewport box, not scrollHeight. Content growth is detected via the children. A descendant that grows inside a fixed-height / overflow:hidden child would not fire.",
-        "A pin that reveals a scrollbar can shrink child width and re-fire the observer. The distance <= 0 guard is what stops a loop.",
-        "timeline is memoized on the whole `detail` object, so a new detail identity rebinds observers even when messages are unchanged. Same churn as the existing pin effect."
-      ]
-    },
-    {
-      "area": "critical",
-      "rationale": "App.tsx now early-returns BuildMismatchScreen when isBuildMismatch(app.status().build.sha, __BUILD_SHA__) is true. The three-pane shell (data-layout=app) is not mounted, so a stale renderer cannot be clicked, typed into, or dismissed past. SHA equality and vite.config.ts stamping are unchanged — no protocolVersion.",
-      "risks": [
-        "appStatus is null until app.status() resolves, so a mismatched window still paints the live app for one IPC round-trip, then swaps to the hard stop. Same timing as the old banner.",
-        "useCoder still runs (hooks cannot be skipped), so background IPC/subscriptions continue under the block. User-facing chrome is gone; the stale renderer can still receive pushes.",
-        "rendererSha is an optional App prop used as a test seam. Production BootApp does not pass it."
-      ]
-    },
-    {
-      "area": "impl",
-      "rationale": "BuildMismatchScreen is a full-window alertdialog (title Reload required, existing copy, Restart -> applyUpdate). Banner CSS (mismatchBar) deleted from App.module.css so the old overlay cannot come back by accident.",
-      "risks": [
-        "alertdialog has one control so there is no focus trap. autoFocus on Restart is enough today; a second button would need a trap.",
-        "WebTokenGate is also not rendered on mismatch. Intentional: two blocking layers would be worse."
-      ]
-    },
-    {
-      "area": "tests",
-      "rationale": "test/buildMismatchUi.test.tsx mounts the real App against fakeCoder with a stamped main SHA and the rendererSha seam. It asserts data-layout=app is absent, Restart calls app.applyUpdate, matching/missing SHAs still show the app. Pure isBuildMismatch tests are unchanged.",
-      "risks": [
-        "Node ESM cannot see globalThis.__BUILD_SHA__, so the seam is required. A reviewer deleting the prop without another way to stamp the renderer SHA will make the blocking-state tests unwriteable."
+        "The oversize bar renders as a sibling of the header button inside a flex header; very long messages are ellipsis-clamped (max-width 520px) — full text only in the runError banner is NOT shown for cap refusals (the catch swallows it into the bar), so the bar text is the only copy. It contains lines, base, files, and cap.",
+        "reviewLoad thresholds are compile-time constants, not derived from the user's configured cap; a user who raises the cap to 2000 still gets busy at 1200 lines of queue. Kept simple deliberately.",
+        "SettingsModal save() now sends prDiffCapLines in the same patch as budgets; backends older than this change would ignore the unknown key (store.setSettings patches per-key) — forward compatible, but a downgraded main process silently drops the cap."
       ]
     }
   ],
   "risks": [
-    "This is a resurrection of 688e5a9 after 8bf223b deleted the feature in Ask-mode conflict resolution. Both features must stay. Do not drop fromQuotaWait on startAskRun.",
-    "Distinct from #286 (Solenta budget) and #294 (model failover). Exhausted balance with no reset clock fails once.",
-    "No MCP spec_dispatch/spec_converge tools — agents on the spec thread cannot trigger these without the card. Deliberate: issue asked for IPC + spec card, same seam as startSpec/reviewSpec.",
-    "No runner hook to dispatch the next wave when the last worker of the current wave completes.",
-    "The state-change pin effect is unchanged. This only covers post-paint growth (images, highlight, webfonts). A reviewer who deletes the new effect and keeps the old one would still have a green suite except the two #408 tests.",
-    "Issue #184 asked for a protocolVersion handshake. That was deliberately replaced with SHA equality and is NOT reintroduced here — only the hard-stop UX gap is closed."
+    "Auto-split is agent-mediated (splitPrPrompt restacks the branch), not a git-level splitter: true stacked-PR UX (position badges, safe-prefix merge) remains #240. The prompt instructs --base <previous-slice-branch> so the chain is correct even before #240 ships.",
+    "The review-load meter reads gh pr list additions/deletions; on old gh versions listPrs falls back to the short field set and lines show as 0 — the meter then reflects PR count only.",
+    "fleet.js already aggregates similar PR data; the meter deliberately reuses listPrs instead to stay per-project and failure-in-band. If a third consumer appears, unify."
   ]
 }
