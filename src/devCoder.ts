@@ -38,6 +38,7 @@ import type {
   MemoryEntryInfo,
   AgentProfile,
   McpServerInfo,
+  SubagentPool,
   OtelSettings,
   PermissionMode,
   PlanIssue,
@@ -1434,6 +1435,12 @@ function buildDevCoder(): CoderApi {
   let otel: OtelSettings = { endpoint: null, headers: {}, claudeMetrics: false };
   /** Saved agent profiles (Settings tab), in-memory. */
   let agentProfiles: AgentProfile[] = [];
+  /** Described worker-model pool (Settings), in-memory. */
+  let subagentPool: SubagentPool = {
+    defaultAlias: null,
+    force: false,
+    entries: [],
+  };
   /** Writable targets a skill fans out to (mirrors CoderApi SkillTarget). */
   const ALL_SKILL_TARGETS: SkillTarget[] = [
     "claude",
@@ -2031,6 +2038,10 @@ function buildDevCoder(): CoderApi {
           updateChannel,
           notifications,
           agentProfiles: agentProfiles.map((p) => ({ ...p })),
+          subagentPool: {
+            ...subagentPool,
+            entries: subagentPool.entries.map((e) => ({ ...e })),
+          },
           otel: { ...otel, headers: { ...otel.headers } },
         };
       },
@@ -2075,6 +2086,20 @@ function buildDevCoder(): CoderApi {
           }
           agentProfiles = patch.agentProfiles.map((p) => ({ ...p }));
         }
+        if (Object.prototype.hasOwnProperty.call(patch, "subagentPool")) {
+          const v = patch.subagentPool;
+          if (!v || typeof v !== "object" || Array.isArray(v)) {
+            throw new Error("subagentPool must be an object");
+          }
+          if (!Array.isArray(v.entries)) {
+            throw new Error("subagentPool.entries must be an array");
+          }
+          subagentPool = {
+            defaultAlias: v.defaultAlias ?? null,
+            force: v.force === true,
+            entries: v.entries.map((e) => ({ ...e })),
+          };
+        }
         if (Object.prototype.hasOwnProperty.call(patch, "otel")) {
           const v = patch.otel;
           if (!v || typeof v !== "object") {
@@ -2102,6 +2127,10 @@ function buildDevCoder(): CoderApi {
           updateChannel,
           notifications,
           agentProfiles: agentProfiles.map((p) => ({ ...p })),
+          subagentPool: {
+            ...subagentPool,
+            entries: subagentPool.entries.map((e) => ({ ...e })),
+          },
           otel: { ...otel, headers: { ...otel.headers } },
         };
       },

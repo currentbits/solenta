@@ -20,6 +20,8 @@ import type {
   ProjectInfo,
   ProviderInfo,
   ReasoningEffort,
+  SubagentPool,
+  SubagentPoolEntry,
   UpdateStatus,
 } from "../shared/ipc";
 import { useEscapeClose } from "../useEscapeClose";
@@ -103,6 +105,50 @@ function defaultProviderId(providers: readonly ProviderInfo[]): string {
   return providers.find((p) => p.available)?.id ?? providers[0]?.id ?? "";
 }
 
+const EMPTY_POOL: SubagentPool = {
+  defaultAlias: null,
+  force: false,
+  entries: [],
+};
+
+interface PoolDraft {
+  originalAlias: string | null;
+  alias: string;
+  provider: string;
+  model: string | null;
+  description: string;
+  customModel: boolean;
+}
+
+function emptyPoolDraft(providers: readonly ProviderInfo[]): PoolDraft {
+  return {
+    originalAlias: null,
+    alias: "",
+    provider: defaultProviderId(providers),
+    model: null,
+    description: "",
+    customModel: false,
+  };
+}
+
+function draftFromPoolEntry(
+  entry: SubagentPoolEntry,
+  providers: readonly ProviderInfo[],
+): PoolDraft {
+  const provider = providers.find((p) => p.id === entry.provider);
+  const known =
+    entry.model != null &&
+    (provider?.modelInfo.some((m) => m.id === entry.model) ?? false);
+  return {
+    originalAlias: entry.alias,
+    alias: entry.alias,
+    provider: entry.provider,
+    model: entry.model,
+    description: entry.description,
+    customModel: entry.model != null && !known,
+  };
+}
+
 function emptyDraft(providers: readonly ProviderInfo[]): ProfileDraft {
   return {
     id: null,
@@ -156,6 +202,7 @@ export function SettingsModal({
   const [otelHeadersText, setOtelHeadersText] = useState("");
   const [otelClaudeMetrics, setOtelClaudeMetrics] = useState(false);
   const [draft, setDraft] = useState<ProfileDraft | null>(null);
+  const [poolDraft, setPoolDraft] = useState<PoolDraft | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
@@ -181,6 +228,7 @@ export function SettingsModal({
     setOtelHeadersText(formatOtelHeaders(otel.headers));
     setOtelClaudeMetrics(otel.claudeMetrics);
     setDraft(null);
+    setPoolDraft(null);
     setError(null);
     setSaving(false);
     savingRef.current = false;
@@ -324,6 +372,27 @@ export function SettingsModal({
     void persistOtel(otelFromDrafts());
   };
 
+  const persistPool = async (next: SubagentPool): Promise<boolean> => {
+    if (savingRef.current) return false;
+    savingRef.current = true;
+    setSaving(true);
+    setError(null);
+    try {
+      await onSaveSettings({ subagentPool: next });
+      return true;
+    } catch (err) {
+      const msg =
+        err instanceof Error && err.message
+          ? err.message
+          : "Failed to save settings";
+      setError(msg);
+      return false;
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
+  };
+
   const persistProfiles = async (next: AgentProfile[]): Promise<boolean> => {
     if (savingRef.current) return false;
     savingRef.current = true;
@@ -375,6 +444,58 @@ export function SettingsModal({
       ? list.map((p) => (p.id === draft.id ? nextProfile : p))
       : [...list, nextProfile];
     if (await persistProfiles(next)) setDraft(null);
+  };
+
+  const submitPoolDraft = async () => {
+    if (!poolDraft) return;
+    const alias = poolDraft.alias.trim().toLowerCase();
+    if (!alias) {
+      setError("Alias is required");
+      return;
+    }
+    if (!/^[a-z][a-z0-9-]{0,31}$/.test(alias)) {
+      setError('Alias must be a lowercase slug (e.g. "fast"), 1-32 characters');
+      return;
+    }
+    const description = poolDraft.description.replace(/\s+/g, " ").trim();
+    if (!description) {
+      setError("Description is required");
+      return;
+    }
+    if (description.length > 160) {
+      setError("Description must be 160 characters or fewer");
+      return;
+    }
+    const model = poolDraft.customModel
+      ? poolDraft.model?.trim() || null
+      : poolDraft.model;
+    const nextEntry: SubagentPoolEntry = {
+      alias,
+      provider: poolDraft.provider,
+      model,
+      description,
+    };
+    const current = settings?.subagentPool ?? EMPTY_POOL;
+    const withoutOld = poolDraft.originalAlias
+      ? current.entries.filter((e) => e.alias !== poolDraft.originalAlias)
+      : current.entries;
+    if (withoutOld.some((e) => e.alias === alias)) {
+      setError(`Alias "${alias}" is already in the pool`);
+      return;
+    }
+    const entries = poolDraft.originalAlias
+      ? current.entries.map((e) =>
+          e.alias === poolDraft.originalAlias ? nextEntry : e,
+        )
+      : [...current.entries, nextEntry];
+    let defaultAlias = current.defaultAlias;
+    if (poolDraft.originalAlias && defaultAlias === poolDraft.originalAlias) {
+      defaultAlias = alias;
+    }
+    if (defaultAlias == null && entries.length === 1) defaultAlias = alias;
+    if (await persistPool({ ...current, defaultAlias, entries })) {
+      setPoolDraft(null);
+    }
   };
 
   const memory = status?.memory;
@@ -837,6 +958,169 @@ export function SettingsModal({
             )}
           </section>
 
+          <section className={styles.section} data-subagent-pool="">
+            <h3 className={styles.sectionLabel}>Worker model pool</h3>
+            {error && (
+              <p className={styles.fieldError} role="alert">
+                {error}
+              </p>
+            )}
+            <p className={styles.note}>
+              Described candidates the lead picks per spawn. Workers default
+              to the cheap alias. Does not route the thread you are talking
+              to.
+            </p>
+            {(settings?.subagentPool?.entries ?? []).length === 0 &&
+              poolDraft == null && (
+                <p className={styles.note}>
+                  No pool. Workers inherit the lead&apos;s provider.
+                </p>
+              )}
+            {(settings?.subagentPool?.entries ?? []).map((item) => {
+              const current = settings?.subagentPool ?? EMPTY_POOL;
+              const isDefault = current.defaultAlias === item.alias;
+              return (
+                <div
+                  key={item.alias}
+                  className={`${styles.memoryRow} ${styles.profileRow}`}
+                  data-pool-entry={item.alias}
+                >
+                  <div className={styles.profileMeta}>
+                    <div className={styles.profileName}>
+                      {item.alias}
+                      {isDefault ? " (default)" : ""}
+                    </div>
+                    <p className={styles.note}>
+                      {item.description} ({item.provider} / {item.model ?? "default"})
+                    </p>
+                  </div>
+                  <div className={styles.fieldRow}>
+                    <button
+                      type="button"
+                      className={styles.btn}
+                      disabled={saving}
+                      onClick={() => {
+                        setError(null);
+                        setPoolDraft(draftFromPoolEntry(item, providers));
+                      }}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      className={styles.btn}
+                      disabled={saving}
+                      onClick={() => {
+                        if (poolDraft?.originalAlias === item.alias) {
+                          setPoolDraft(null);
+                        }
+                        const nextEntries = current.entries.filter(
+                          (e) => e.alias !== item.alias,
+                        );
+                        const defaultAlias =
+                          current.defaultAlias === item.alias
+                            ? (nextEntries[0]?.alias ?? null)
+                            : current.defaultAlias;
+                        void persistPool({
+                          defaultAlias,
+                          force: defaultAlias != null && current.force,
+                          entries: nextEntries,
+                        });
+                      }}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+            {(settings?.subagentPool?.entries ?? []).length > 0 && (
+              <>
+                <div className={styles.field}>
+                  <label className={styles.fieldLabel} htmlFor="pool-default">
+                    Default worker
+                  </label>
+                  <select
+                    id="pool-default"
+                    className={styles.input}
+                    data-pool-default=""
+                    value={settings?.subagentPool?.defaultAlias ?? ""}
+                    disabled={saving || settings == null}
+                    onChange={(e) => {
+                      const current = settings?.subagentPool ?? EMPTY_POOL;
+                      const defaultAlias = e.target.value || null;
+                      void persistPool({
+                        ...current,
+                        defaultAlias,
+                        force: defaultAlias != null && current.force,
+                      });
+                    }}
+                  >
+                    <option value="">Inherit lead&apos;s provider</option>
+                    {(settings?.subagentPool?.entries ?? []).map((item) => (
+                      <option key={item.alias} value={item.alias}>
+                        {item.alias}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className={styles.field}>
+                  <label className={styles.fieldRow}>
+                    <input
+                      type="checkbox"
+                      data-pool-force=""
+                      checked={settings?.subagentPool?.force === true}
+                      disabled={
+                        saving ||
+                        settings == null ||
+                        !settings.subagentPool?.defaultAlias
+                      }
+                      onChange={(e) => {
+                        const current = settings?.subagentPool ?? EMPTY_POOL;
+                        void persistPool({
+                          ...current,
+                          force: e.target.checked,
+                        });
+                      }}
+                    />
+                    <span>Pin every worker to the default</span>
+                  </label>
+                  <p className={styles.note}>
+                    When pinned, the lead cannot pick a different alias.
+                  </p>
+                </div>
+              </>
+            )}
+            {poolDraft ? (
+              <PoolForm
+                draft={poolDraft}
+                providers={providers}
+                saving={saving}
+                onChange={setPoolDraft}
+                onCancel={() => {
+                  setPoolDraft(null);
+                  setError(null);
+                }}
+                onSubmit={() => void submitPoolDraft()}
+              />
+            ) : (
+              <div className={styles.fieldRow}>
+                <button
+                  type="button"
+                  className={styles.btn}
+                  data-add-pool-entry=""
+                  disabled={saving || settings == null || providers.length === 0}
+                  onClick={() => {
+                    setError(null);
+                    setPoolDraft(emptyPoolDraft(providers));
+                  }}
+                >
+                  Add candidate
+                </button>
+              </div>
+            )}
+          </section>
+
           <WorktreeGcSection
             active={open}
             projects={projects}
@@ -1177,6 +1461,179 @@ function ProfileForm({
           onClick={onSubmit}
         >
           {draft.id ? "Update" : "Add"}
+        </button>
+        <button
+          type="button"
+          className={styles.btn}
+          disabled={saving}
+          onClick={onCancel}
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function PoolForm({
+  draft,
+  providers,
+  saving,
+  onChange,
+  onCancel,
+  onSubmit,
+}: {
+  draft: PoolDraft;
+  providers: ProviderInfo[];
+  saving: boolean;
+  onChange: (draft: PoolDraft) => void;
+  onCancel: () => void;
+  onSubmit: () => void;
+}) {
+  const selected = providers.find((p) => p.id === draft.provider);
+  const modelInfo = selected?.modelInfo ?? [];
+  const modelValue = draft.customModel ? CUSTOM_MODEL_ID : (draft.model ?? "");
+  const providerMissing =
+    draft.provider !== "" &&
+    !providers.some((p) => p.id === draft.provider);
+
+  const setProvider = (nextId: string) => {
+    const next = providers.find((p) => p.id === nextId);
+    const modelOk =
+      draft.model != null &&
+      (next?.modelInfo.some((m) => m.id === draft.model) ?? false);
+    onChange({
+      ...draft,
+      provider: nextId,
+      model: modelOk ? draft.model : null,
+      customModel: false,
+    });
+  };
+
+  return (
+    <div className={styles.section}>
+      <div className={styles.field}>
+        <label className={styles.fieldLabel} htmlFor="pool-alias">
+          Alias
+        </label>
+        <input
+          id="pool-alias"
+          className={styles.input}
+          value={draft.alias}
+          disabled={saving}
+          autoComplete="off"
+          spellCheck={false}
+          placeholder="fast"
+          onChange={(e) => onChange({ ...draft, alias: e.target.value })}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              onSubmit();
+            }
+          }}
+        />
+      </div>
+      <div className={styles.field}>
+        <label className={styles.fieldLabel} htmlFor="pool-description">
+          Description
+        </label>
+        <input
+          id="pool-description"
+          className={styles.input}
+          value={draft.description}
+          disabled={saving}
+          autoComplete="off"
+          placeholder="Fast and cheap. Good for small edits."
+          onChange={(e) => onChange({ ...draft, description: e.target.value })}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              onSubmit();
+            }
+          }}
+        />
+      </div>
+      <div className={styles.field}>
+        <label className={styles.fieldLabel} htmlFor="pool-provider">
+          Provider
+        </label>
+        <select
+          id="pool-provider"
+          className={styles.input}
+          value={draft.provider}
+          disabled={saving}
+          onChange={(e) => setProvider(e.target.value)}
+        >
+          {providerMissing && (
+            <option value={draft.provider}>{draft.provider}</option>
+          )}
+          {providers.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+              {!p.available ? " (not installed)" : ""}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className={styles.field}>
+        <label className={styles.fieldLabel} htmlFor="pool-model">
+          Model
+        </label>
+        <select
+          id="pool-model"
+          className={styles.input}
+          value={modelValue}
+          disabled={saving}
+          onChange={(e) => {
+            const value = e.target.value;
+            if (value === CUSTOM_MODEL_ID) {
+              onChange({ ...draft, customModel: true });
+              return;
+            }
+            onChange({
+              ...draft,
+              customModel: false,
+              model: value === "" ? null : value,
+            });
+          }}
+        >
+          <option value="">Default</option>
+          {modelInfo.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.label}
+            </option>
+          ))}
+          <option value={CUSTOM_MODEL_ID}>Custom...</option>
+        </select>
+        {draft.customModel && (
+          <>
+            <label className={styles.fieldLabel} htmlFor="pool-model-custom">
+              Model id
+            </label>
+            <input
+              id="pool-model-custom"
+              className={styles.input}
+              value={draft.model ?? ""}
+              disabled={saving}
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="Model id"
+              onChange={(e) =>
+                onChange({ ...draft, model: e.target.value || null })
+              }
+            />
+          </>
+        )}
+      </div>
+      <div className={styles.fieldRow}>
+        <button
+          type="button"
+          className={`${styles.btn} ${styles.btnPrimary}`}
+          data-submit-pool=""
+          disabled={saving}
+          onClick={onSubmit}
+        >
+          {draft.originalAlias ? "Update" : "Add"}
         </button>
         <button
           type="button"
