@@ -1,27 +1,37 @@
 {
   "version": 1,
-  "readOrder": ["tests", "impl"],
+  "readOrder": ["tests", "critical", "impl", "docs"],
   "chunks": [
     {
       "area": "tests",
-      "rationale": "Start with test/conflictForecastBadge.test.tsx 'conflict tip readability'. Those three CSS-source assertions are the contract: opaque --card fill, card :has() z-index rise on hover/focus, no muted overlap copy. They failed on the #516 tip (background --bg-elevated, no sibling escape, --text-muted) and pass after the CSS change.",
+      "rationale": "Start with electron/test/ask-runner.test.js. That is the contract the issue asked for: an ask thread answers without materializing a worktree, without tripping the daily budget, and without recording spend. Then electron/test/ask.test.js (prompt pack + fm-before-print) and electron/test/ask-mode.test.js (start/stop/fork). Renderer: test/askCard.test.tsx and the new case in test/orchestratorDefault.test.tsx (ask wins over defaultWorktree/defaultOrchestrate).",
       "risks": [
-        "Tests read the CSS file, not computed paint. They cannot prove Chromium stacking against a real next card.",
-        "The overlap-contrast test is a no-op if the muted rule is simply deleted; that is intentional but a weaker lock than a positive color assertion."
+        "ask-runner injects askComplete/searchMemory, so it does not prove fm or a real CLI print-mode works on this machine.",
+        "The budget assertion only checks getSpendToday(); a future recordUsage-without-recordSpend leak would still be green."
+      ]
+    },
+    {
+      "area": "critical",
+      "rationale": "Then electron/runner.js startAskRun and the startRun intercept (ask before orch commands, budget, and materializePendingWorktree). This is the fail-closed gate: if it is skipped, Ask becomes a normal agent run in the checkout. Read stopRun/stopAll kind===ask next so Stop still kills the print child.",
+      "risks": [
+        "The intercept is a boolean on thread.ask. A missed persist (store dropping unknown fields) would silently fall through to a full agent.",
+        "startAskRun returns {runId} and completes in a detached async IIFE. A throw after active.set but before the IIFE is attached cannot happen, but a stop that races the IIFE relies on entry.stopping + active identity.",
+        "notifyRunTerminal is deliberately skipped so Ask never checkpoints or records spend. finishSuccessfulTurn still drains queued follow-ups — confirm that is wanted."
       ]
     },
     {
       "area": "impl",
-      "rationale": "Then src/components/Sidebar.module.css around .card:has(.conflictWrap:hover) and .conflictTip. The unreadable overlay in the screenshot is this tip hanging onto the next transparent thread card; raising the open card and using --card is the actual fix. No TS/JS change.",
+      "rationale": "electron/ask.js is the pure pack (buildAskPrompt, completeAsk, retrievalFallback). services.js startAsk/stopAsk/fork copy + forkWorkerThread skipping pendingWorktree. ipc.js create: ask wins over worktree and orchestrate. Then the UI chain: Sidebar caret 'New ask thread', ThreadView AskCard + header button, Composer hiding permission/Build/Best-of-N/attach.",
       "risks": [
-        "CSS modules must hash both .card and .conflictWrap inside :has(). If only .card is localized the rise never applies.",
-        "Kanban columns use overflow:hidden (KanbanView.module.css), so a tall tip can still clip there — pre-existing #516 geometry, not fixed here.",
-        "This worktree cherry-picked 6e10ae9 (#516) onto a diverged base; a PR against origin/main should contain only the readability CSS + tests, not a second copy of #516."
+        "stopAsk({worktree:true}) arms pendingWorktree only when canHostWorktree (local + .git). Start work on a non-git folder is a silent plain thread.",
+        "Ask on a thread that already has worktreePath leaves the directory on disk unused; we do not delete it.",
+        "Composer still allows slash commands to be typed; they become the question because the ask intercept is first. /handoff on an Ask thread will not fan out."
       ]
     }
   ],
   "risks": [
-    "No live Electron hover was driven; verification is the 17-test renderer run plus tsc --noEmit.",
-    "A parent overflow (sidebar list is overflow-y auto, fine; kanban column is hidden) can still clip the tip even after the z-index rise."
+    "No live Electron click-through of the caret or Ask card; verification is unit/renderer tests plus tsc --noEmit.",
+    "Print-mode fallback still uses the user's provider CLI (claude -p --max-turns 1). That is cheap and no-tools, but it is not zero subscription usage. fm is the free path.",
+    "Memory search fails closed (empty pack) if the memory server is down; the answer then comes from the code index alone."
   ]
 }

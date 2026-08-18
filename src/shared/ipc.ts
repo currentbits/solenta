@@ -400,6 +400,14 @@ export interface ThreadInfo {
    * in teach mode across providers.
    */
   teach?: ThreadTeach | null;
+  /**
+   * Ask mode (issue #392): read-only repo Q&A from the code index and
+   * memory. Never a worktree, never tools, never the daily budget.
+   * Absent/false = off. Set by threads.startAsk or threads.create({ ask: true });
+   * cleared by threads.stopAsk. Copied onto forks; a worker of an Ask
+   * thread does not get a worktree.
+   */
+  ask?: boolean;
 }
 
 /** Autonomy ladder while Teach mode is on (issue #373). */
@@ -1745,6 +1753,11 @@ export interface CoderApi {
       orchestrate?: boolean;
       /** Turn Teach mode on at create (issue #373). */
       teach?: boolean;
+      /**
+       * Ask mode (issue #392): read-only Q&A, no worktree. Wins over
+       * `worktree` and `orchestrate`.
+       */
+      ask?: boolean;
       /** Planboard issue this thread was started from (issue #420). */
       issueNumber?: number | null;
     }): Promise<ThreadInfo>;
@@ -1868,6 +1881,17 @@ export interface CoderApi {
      * with the review prompt. Rejects a thread that is not in teach mode.
      */
     requestTeachReview(input: { threadId: string }): Promise<ThreadInfo>;
+    /**
+     * Turn Ask mode on (issue #392): read-only Q&A from the index and
+     * memory. Drops a pending worktree. Idempotent. Never bumps updatedAt.
+     */
+    startAsk(input: { threadId: string }): Promise<ThreadInfo>;
+    /**
+     * Turn Ask mode off. With `worktree: true` (Start work) the thread
+     * becomes a regular isolated thread when the project can host one.
+     * Idempotent. Never bumps updatedAt.
+     */
+    stopAsk(input: { threadId: string; worktree?: boolean }): Promise<ThreadInfo>;
     /**
      * Rename a thread. Trims, truncates to THREAD_TITLE_MAX, rejects an
      * empty title. Never bumps updatedAt.

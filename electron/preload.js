@@ -134,6 +134,8 @@ const coder = {
     specArtifact: (input) => invoke("threads:specArtifact", input),
     startTeach: (input) => invoke("threads:startTeach", input),
     stopTeach: (input) => invoke("threads:stopTeach", input),
+    startAsk: (input) => invoke("threads:startAsk", input),
+    stopAsk: (input) => invoke("threads:stopAsk", input),
     requestTeachReview: (input) =>
       invoke("threads:requestTeachReview", input),
     rename: (input) => invoke("threads:rename", input),

@@ -175,6 +175,7 @@ export interface UseCoderResult {
       worktree?: boolean;
       orchestrate?: boolean;
       teach?: boolean;
+      ask?: boolean;
       issueNumber?: number | null;
     },
   ) => Promise<ThreadInfo | null>;
@@ -311,6 +312,10 @@ export interface UseCoderResult {
   startTeach: (threadId: string) => Promise<void>;
   /** Turn Teach mode off. */
   stopTeach: (threadId: string) => Promise<void>;
+  /** Turn Ask mode on (issue #392). */
+  startAsk: (threadId: string) => Promise<void>;
+  /** Turn Ask mode off. worktree: true is Start work. */
+  stopAsk: (threadId: string, opts?: { worktree?: boolean }) => Promise<void>;
   /** Ask the agent to review the human's TODO(human) fills. Starts a run. */
   requestTeachReview: (threadId: string) => Promise<void>;
   /** Permanently delete the selected thread (after caller confirms). */
@@ -1003,6 +1008,7 @@ export function useCoder(): UseCoderResult {
         worktree?: boolean;
         orchestrate?: boolean;
         teach?: boolean;
+        ask?: boolean;
         issueNumber?: number | null;
       },
     ) => {
@@ -1012,11 +1018,16 @@ export function useCoder(): UseCoderResult {
       // orchestrator; explicit opts win. Both are local-only, so remote
       // projects always get plain threads. An orchestrator never holds a
       // worktree itself — its worker does — so it wins over `worktree`.
+      // Ask (issue #392) wins over both: a Q&A thread must never grow a
+      // worktree or fork a worker, even when those defaults are on.
       const project = projects.find((p) => p.id === pid);
       const local = !project?.remoteHost;
+      const ask = opts?.ask === true;
       const orchestrate =
-        opts?.orchestrate ?? (settings?.defaultOrchestrate === true && local);
+        !ask &&
+        (opts?.orchestrate ?? (settings?.defaultOrchestrate === true && local));
       const worktree =
+        !ask &&
         !orchestrate &&
         (opts?.worktree ?? (settings?.defaultWorktree === true && local));
       // Inherit provider+model from the currently selected thread when present.
@@ -1031,6 +1042,7 @@ export function useCoder(): UseCoderResult {
           ...(worktree ? { worktree: true } : {}),
           ...(orchestrate ? { orchestrate: true } : {}),
           ...(opts?.teach ? { teach: true } : {}),
+          ...(ask ? { ask: true } : {}),
           ...(opts?.issueNumber != null ? { issueNumber: opts.issueNumber } : {}),
         });
       } catch (err) {
@@ -1681,6 +1693,45 @@ export function useCoder(): UseCoderResult {
     async (threadId: string) => {
       try {
         const thread = await api.threads.stopTeach({ threadId });
+        applyThreads(
+          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
+        );
+        setDetail((prev) =>
+          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
+        );
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+      }
+    },
+    [api, applyThreads],
+  );
+
+  const startAsk = useCallback(
+    async (threadId: string) => {
+      try {
+        const thread = await api.threads.startAsk({ threadId });
+        applyThreads(
+          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
+        );
+        setDetail((prev) =>
+          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
+        );
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+      }
+    },
+    [api, applyThreads],
+  );
+
+  const stopAsk = useCallback(
+    async (threadId: string, opts?: { worktree?: boolean }) => {
+      try {
+        const thread = await api.threads.stopAsk({
+          threadId,
+          ...(opts?.worktree ? { worktree: true } : {}),
+        });
         applyThreads(
           threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
         );
@@ -2447,6 +2498,8 @@ export function useCoder(): UseCoderResult {
     specArtifact,
     startTeach,
     stopTeach,
+    startAsk,
+    stopAsk,
     requestTeachReview,
     deleteThread,
     removeProject,

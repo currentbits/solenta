@@ -74,6 +74,8 @@ interface ComposerProps {
   permissionMode: PermissionMode;
   /** Teach-mode autonomy cap on the permission picker (issue #373). */
   teach?: ThreadTeach | null;
+  /** Ask mode (issue #392): hide permission, Build, Best of N, attach. */
+  ask?: boolean;
   onPermissionModeChange: (mode: PermissionMode) => void | Promise<void>;
   /** Current thread provider id. */
   provider: string;
@@ -266,6 +268,7 @@ export function Composer({
   onSend,
   onBuild,
   onBestOfN,
+  ask = false,
   onDelegate,
   onModelPickerOpen,
   placeholder = "Ask anything, @tag files/folders, @provider delegates, $use skills, or / for commands",
@@ -1250,7 +1253,7 @@ export function Composer({
         />
         <div className={styles.controls}>
           <div className={styles.pills}>
-            {onPickAttachments && (
+            {onPickAttachments && !ask && (
               <button
                 type="button"
                 className={styles.pill}
@@ -1658,6 +1661,7 @@ export function Composer({
               )}
             </div>
 
+            {!ask && (
             <div className={styles.modeWrap} ref={modeWrapRef}>
               <button
                 type="button"
@@ -1727,7 +1731,9 @@ export function Composer({
                 </ul>
               )}
             </div>
+            )}
 
+            {!ask && (
             <div className={styles.buildSplit} ref={buildWrapRef}>
               <button
                 type="button"
@@ -1817,8 +1823,9 @@ export function Composer({
                 </ul>
               )}
             </div>
+            )}
 
-            {onBestOfN && (
+            {onBestOfN && !ask && (
               <div className={styles.bestOfNWrap} ref={bestOfNWrapRef}>
                 <button
                   type="button"
