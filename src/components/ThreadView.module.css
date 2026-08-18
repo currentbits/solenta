@@ -1063,6 +1063,46 @@ a.btn {
   user-select: none;
 }
 
+/* Provenance tier strip under an assistant message (issue #404). */
+.provStrip {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  user-select: none;
+}
+
+.provChip {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  font-size: 10.5px;
+  font-weight: 550;
+  color: var(--text-muted);
+  white-space: nowrap;
+  cursor: default;
+}
+
+.provChip[data-tier="repo"] {
+  color: var(--green);
+}
+
+.provChip[data-tier="memory"] {
+  color: var(--blue);
+}
+
+.provChip[data-tier="issue"] {
+  color: var(--text);
+}
+
+.provChip[data-tier="prior"] {
+  color: var(--amber);
+  border-style: dashed;
+}
+
 /* Per-run review strip: a tidy card row tucked under the run's last message. */
 .reviewBar {
   display: flex;
