@@ -79,7 +79,7 @@ const DEV_SPEC_ARTIFACTS: Record<SpecArtifact, string> = {
   requirements:
     "1. WHEN spec mode is on THE SYSTEM SHALL gate each stage on a human approval.\n" +
     "2. WHEN an artifact is submitted THE SYSTEM SHALL stop the thread until it is reviewed.\n\n" +
-    "Out of scope: parsing tasks.md into a dispatch DAG.",
+    "Out of scope: none — tasks.md is a checkbox DAG (needs: <id>) dispatched in waves.",
   design:
     "Thread carries `spec { slug, stage, awaitingApproval }`; artifacts live in\n" +
     "`.solenta/specs/<slug>/` so they diff like code.",
@@ -1442,6 +1442,7 @@ function buildDevCoder(): CoderApi {
   /** Update channel override; null follows the (absent) dev stamp. */
   let updateChannel: "prod" | "nightly" | null = null;
   let notifications = true;
+  let quotaWaitAutoResume = true;
   let otel: OtelSettings = { endpoint: null, headers: {}, claudeMetrics: false };
   /** Saved agent profiles (Settings tab), in-memory. */
   let agentProfiles: AgentProfile[] = [];
@@ -2050,6 +2051,7 @@ function buildDevCoder(): CoderApi {
           defaultOrchestrate,
           updateChannel,
           notifications,
+          quotaWaitAutoResume,
           agentProfiles: agentProfiles.map((p) => ({ ...p })),
           subagentPool: {
             ...subagentPool,
@@ -2099,6 +2101,12 @@ function buildDevCoder(): CoderApi {
           }
           notifications = patch.notifications;
         }
+        if (Object.prototype.hasOwnProperty.call(patch, "quotaWaitAutoResume")) {
+          if (typeof patch.quotaWaitAutoResume !== "boolean") {
+            throw new Error("quotaWaitAutoResume must be a boolean");
+          }
+          quotaWaitAutoResume = patch.quotaWaitAutoResume;
+        }
         if (Object.prototype.hasOwnProperty.call(patch, "agentProfiles")) {
           if (!Array.isArray(patch.agentProfiles)) {
             throw new Error("agentProfiles must be an array");
@@ -2146,6 +2154,7 @@ function buildDevCoder(): CoderApi {
           defaultOrchestrate,
           updateChannel,
           notifications,
+          quotaWaitAutoResume,
           agentProfiles: agentProfiles.map((p) => ({ ...p })),
           subagentPool: {
             ...subagentPool,
@@ -2865,6 +2874,14 @@ function buildDevCoder(): CoderApi {
       async setMuted(input: { threadId: string; muted: boolean }) {
         return patchThread(input.threadId, { muted: input.muted });
       },
+      async setQuotaWaitAutoResume(input: {
+        threadId: string;
+        enabled: boolean | null;
+      }) {
+        return patchThread(input.threadId, {
+          quotaWaitAutoResume: input.enabled,
+        });
+      },
       async setNotes(input: { threadId: string; notes: string }) {
         return patchThread(input.threadId, {
           notes: String(input.notes ?? "").trim().slice(0, 2000),
@@ -2914,6 +2931,24 @@ function buildDevCoder(): CoderApi {
           path: `${SPEC_DIR}/${slug}/${input.stage}.md`,
           text: DEV_SPEC_ARTIFACTS[input.stage],
         };
+      },
+      async dispatchSpec(input: { threadId: string }) {
+        const existing = threads.find((t) => t.id === input.threadId);
+        if (!existing) throw new Error(`Thread not found: ${input.threadId}`);
+        if (!existing.spec) throw new Error("Thread is not in spec mode");
+        if (existing.spec.stage !== "build") {
+          throw new Error("Dispatch is available after tasks.md is approved");
+        }
+        return { thread: { ...existing }, dispatched: [] };
+      },
+      async convergeSpec(input: { threadId: string }) {
+        const existing = threads.find((t) => t.id === input.threadId);
+        if (!existing) throw new Error(`Thread not found: ${input.threadId}`);
+        if (!existing.spec) throw new Error("Thread is not in spec mode");
+        if (existing.spec.stage !== "build") {
+          throw new Error("Converge is available after tasks.md is approved");
+        }
+        return { ...existing };
       },
       async startTeach(input: { threadId: string }) {
         const existing = threads.find((t) => t.id === input.threadId);
@@ -3255,6 +3290,14 @@ function buildDevCoder(): CoderApi {
         emitDetail(detail);
         startRunTimer(input.threadId);
         return { runId };
+      },
+      async resumeQuotaWait(input: { threadId: string }) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
+        if (detail.thread.status !== "quota-wait") {
+          throw new Error("Thread is not waiting on a provider quota reset");
+        }
+        return this.start({ threadId: input.threadId, prompt: "continue" });
       },
       async stop(input) {
         const detail = details.get(input.threadId);

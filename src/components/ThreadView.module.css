@@ -1861,6 +1861,18 @@ a.btn {
   animation: none;
 }
 
+.statusStripQuotaWait {
+  background: rgba(251, 191, 36, 0.08);
+  border-color: rgba(251, 191, 36, 0.35);
+  color: #fde68a;
+}
+
+.statusStripQuotaWait .statusDot {
+  background: #fbbf24;
+  box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.2);
+  animation: none;
+}
+
 /* Queued follow-up: the status strip, muted — it is waiting, not running. */
 .queuedStrip {
   display: flex;

@@ -150,6 +150,7 @@ describe("Store", () => {
       verify: null,
       issueNumber: null,
       postMergeVerify: null,
+      reviewAcceptedHunks: [],
     };
     const msg = {
       id: "m1",

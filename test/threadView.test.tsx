@@ -9,7 +9,7 @@
  * Run: node --import=./test/support/render.mjs --test test/threadView.test.tsx
  */
 import assert from "node:assert/strict";
-import { describe, it, afterEach } from "node:test";
+import { describe, it, afterEach, beforeEach } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { inAct, mount, unmountAll } from "./support/dom.ts";
 import { ThreadView } from "../src/components/ThreadView";
@@ -945,6 +945,155 @@ describe("ThreadView file drop (issue #469)", () => {
     assert.ok(
       m.text().includes("Drop images or folders"),
       "overlay copy names images and folders",
+    );
+    m.unmount();
+  });
+});
+
+/**
+ * jsdom has no ResizeObserver and no layout. The pin-to-bottom effect in
+ * ThreadView must still re-pin when a child's box grows after paint (images,
+ * highlight, webfonts) with no React state change — issue #408.
+ */
+type FakeROCallback = (
+  entries: ResizeObserverEntry[],
+  observer: ResizeObserver,
+) => void;
+
+const fakeObservers: Array<{
+  cb: FakeROCallback;
+  targets: Set<Element>;
+}> = [];
+
+class FakeResizeObserver {
+  private readonly targets = new Set<Element>();
+  constructor(private readonly cb: FakeROCallback) {
+    fakeObservers.push({ cb, targets: this.targets });
+  }
+  observe(el: Element) {
+    this.targets.add(el);
+  }
+  unobserve(el: Element) {
+    this.targets.delete(el);
+  }
+  disconnect() {
+    this.targets.clear();
+  }
+}
+
+function installFakeResizeObserver() {
+  fakeObservers.length = 0;
+  (
+    globalThis as unknown as { ResizeObserver: typeof ResizeObserver }
+  ).ResizeObserver = FakeResizeObserver as unknown as typeof ResizeObserver;
+}
+
+function fireObservedResizes() {
+  for (const o of fakeObservers) {
+    if (o.targets.size === 0) continue;
+    o.cb(
+      [...o.targets].map((target) => ({ target }) as ResizeObserverEntry),
+      o as unknown as ResizeObserver,
+    );
+  }
+}
+
+function fakeScrollMetrics(
+  el: HTMLElement,
+  layout: { clientHeight: number; scrollHeight: number; scrollTop: number },
+) {
+  Object.defineProperty(el, "clientHeight", {
+    configurable: true,
+    get: () => layout.clientHeight,
+  });
+  Object.defineProperty(el, "scrollHeight", {
+    configurable: true,
+    get: () => layout.scrollHeight,
+  });
+  Object.defineProperty(el, "scrollTop", {
+    configurable: true,
+    get: () => layout.scrollTop,
+    set: (value: number) => {
+      layout.scrollTop = value;
+    },
+  });
+}
+
+describe("ThreadView stick-to-bottom on content resize (issue #408)", () => {
+  const prevRO = (globalThis as { ResizeObserver?: typeof ResizeObserver })
+    .ResizeObserver;
+
+  beforeEach(() => {
+    installFakeResizeObserver();
+  });
+
+  afterEach(() => {
+    fakeObservers.length = 0;
+    if (prevRO) {
+      (
+        globalThis as unknown as { ResizeObserver: typeof ResizeObserver }
+      ).ResizeObserver = prevRO;
+    } else {
+      delete (globalThis as { ResizeObserver?: typeof ResizeObserver })
+        .ResizeObserver;
+    }
+  });
+
+  const sizedDetail = () =>
+    detail({
+      messages: [
+        msg({
+          id: "u1",
+          role: "user",
+          text: "PIN_TARGET_PROMPT",
+          createdAt: 10,
+        }),
+        msg({
+          id: "a1",
+          role: "assistant",
+          text: "PIN_TARGET_REPLY",
+          createdAt: 20,
+        }),
+      ],
+    });
+
+  it("re-pins to the bottom when content grows while the user is stuck", async () => {
+    const m = await mount(view({ detail: sizedDetail() }));
+    const body = m.query(".body") as HTMLElement | null;
+    assert.ok(body, "scroll body must render");
+    assert.ok(
+      fakeObservers.some((o) => o.targets.size > 0),
+      "ResizeObserver must watch the scroll body (or its children)",
+    );
+
+    const layout = { clientHeight: 400, scrollHeight: 1000, scrollTop: 600 };
+    fakeScrollMetrics(body, layout);
+    layout.scrollHeight = 1400;
+    fireObservedResizes();
+
+    assert.equal(
+      layout.scrollTop,
+      1400,
+      "pinned view must follow content that grew after paint",
+    );
+    m.unmount();
+  });
+
+  it("does not move the view when the user has scrolled up and content grows", async () => {
+    const m = await mount(view({ detail: sizedDetail() }));
+    const body = m.query(".body") as HTMLElement | null;
+    assert.ok(body, "scroll body must render");
+
+    const layout = { clientHeight: 400, scrollHeight: 1000, scrollTop: 80 };
+    fakeScrollMetrics(body, layout);
+    body.dispatchEvent(new Event("scroll"));
+    layout.scrollHeight = 1400;
+    fireObservedResizes();
+
+    assert.equal(
+      layout.scrollTop,
+      80,
+      "a user who scrolled up must not be yanked back to the bottom",
     );
     m.unmount();
   });

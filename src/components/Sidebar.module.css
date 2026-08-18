@@ -1200,6 +1200,12 @@
   border: 1px solid rgba(251, 191, 36, 0.35);
 }
 
+.badgeQuotaWait {
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.12);
+  border: 1px solid rgba(251, 191, 36, 0.35);
+}
+
 .waitingDot {
   width: 6px;
   height: 6px;

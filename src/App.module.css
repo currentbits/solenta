@@ -7,34 +7,6 @@
   container-name: coder;
 }
 
-.mismatchBar {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  padding: 8px 14px;
-  border-bottom: 1px solid rgba(248, 113, 113, 0.35);
-  background: rgba(248, 113, 113, 0.12);
-  color: #fca5a5;
-  font-size: 13px;
-}
-
-.mismatchRestart {
-  padding: 4px 10px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border-soft);
-  background: rgba(59, 130, 246, 0.12);
-  color: var(--blue);
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.mismatchRestart:hover {
-  background: rgba(59, 130, 246, 0.2);
-}
-
 .app {
   display: grid;
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr) var(--agents-width);

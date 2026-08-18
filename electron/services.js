@@ -1168,7 +1168,10 @@ function setSettled(store, input) {
       `Invalid settle override: ${JSON.stringify(override)}. Expected "settled", "active", or null`,
     );
   }
-  if (override === "settled" && thread.status === "working") {
+  if (
+    override === "settled" &&
+    (thread.status === "working" || thread.status === "quota-wait")
+  ) {
     throw new Error("Cannot settle a thread while a run is active");
   }
   const patch = {
@@ -1318,6 +1321,28 @@ function setMuted(store, input) {
   const updated = store.updateThread(threadId, patch);
   store.save();
   return updated ? { ...updated } : { ...thread, ...patch };
+}
+
+/**
+ * Per-thread quota-wait auto-resume override (#462). true/false pins the
+ * thread; null inherits the global setting. Never bumps updatedAt.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, enabled: boolean | null }} input
+ */
+function setQuotaWaitAutoResume(store, input) {
+  const { threadId, enabled } = input;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  if (enabled !== true && enabled !== false && enabled !== null) {
+    throw new Error("quotaWaitAutoResume must be true, false, or null");
+  }
+  const patch = { quotaWaitAutoResume: enabled };
+  const updated = store.updateThread(threadId, patch);
+  store.save();
+  return decorateThread(store, updated || { ...thread, ...patch });
 }
 
 /**
@@ -1810,8 +1835,11 @@ const SPEC_GOAL = {
     "design.md — the technical approach: files touched, data shapes, and " +
     "the alternatives you rejected and why",
   tasks:
-    "tasks.md — an ordered checklist of implementation tasks, each naming " +
-    "the files it touches and the requirement numbers it satisfies",
+    "tasks.md — an ordered checkbox list of implementation tasks, each " +
+    "naming the files it touches and the requirement numbers it satisfies. " +
+    "Independent tasks may run in parallel; express a dependency as " +
+    "`needs: <id>` on the same line (ids are a leading `1.` / `T1:` or " +
+    "1-based order)",
 };
 
 /** The stage after `stage`, or null when `stage` is unknown / already build. */
@@ -1918,8 +1946,11 @@ function specStagePrompt(stage, feedback) {
   const note = String(feedback || "").trim();
   if (stage === "build") {
     return (
-      "tasks.md is approved. Implement it now, task by task, and keep the " +
-      "checklist in tasks.md ticked off as you go."
+      "tasks.md is approved. Independent tasks dispatch as parallel workers " +
+      "from the spec card (Dispatch). Stay on this thread as the " +
+      "orchestrator — do not implement the checklist yourself unless asked. " +
+      "Converge compares the repo to the spec and appends any missing " +
+      "tasks to tasks.md."
     );
   }
   const goal = SPEC_GOAL[stage] || stage;
@@ -1969,6 +2000,257 @@ function reviewSpec(store, input) {
   return {
     thread: updated ? { ...updated } : { ...thread, spec },
     prompt: specStagePrompt(stage, decision === "revise" ? feedback : ""),
+  };
+}
+
+/**
+ * Worktree (or project checkout) the spec artifacts live in — same folder
+ * readSpecArtifact / the CLI use.
+ * @param {import('./store').Store} store
+ * @param {{ projectId?: string, worktreePath?: string | null }} thread
+ */
+function specCwd(store, thread) {
+  const project =
+    thread && thread.projectId != null && typeof store.getProject === "function"
+      ? store.getProject(thread.projectId)
+      : null;
+  return (thread && thread.worktreePath) || (project && project.path) || "";
+}
+
+/**
+ * @param {object} task
+ * @returns {string}
+ */
+function specDispatchPrompt(task) {
+  const id = task && task.id ? String(task.id) : "?";
+  const title = task && task.title ? String(task.title) : "";
+  return (
+    "[Spec dispatch] You are a worker forked from a spec thread. Your task:\n\n" +
+    `${id}: ${title}\n\n` +
+    "Implement this task and only this task. Tick it off in tasks.md " +
+    "(`- [x]`) when it lands. Then call task_complete with a short note " +
+    "(a summary, or a `branch:path` another worker can read with git show) " +
+    "and stop. Do not pick up another task."
+  );
+}
+
+/**
+ * @param {{ spec?: { slug?: string } } | null | undefined} thread
+ * @param {string} cwd
+ */
+function specConvergePrompt(thread, cwd) {
+  const req = specArtifactPath(thread, cwd, "requirements");
+  const design = specArtifactPath(thread, cwd, "design");
+  const tasks = specArtifactPath(thread, cwd, "tasks");
+  return (
+    "[Spec converge] Compare the codebase against the approved spec and " +
+    "append any missing work to tasks.md.\n\n" +
+    "Read:\n" +
+    `- ${req}\n- ${design}\n- ${tasks}\n\n` +
+    "Then inspect the repo. For each requirement or design decision that " +
+    "is not already covered by a checkbox (done or open), append a new " +
+    "checkbox to tasks.md using the same format:\n\n" +
+    "- [ ] N. Title (`files`) — req X\n" +
+    "- [ ] N. Title (`files`) — req X — needs: A, B\n\n" +
+    "Do not implement anything. Do not rewrite or reorder existing tasks. " +
+    "Only append. When you are done, stop — do not call spec_submit."
+  );
+}
+
+/**
+ * Fold a freshly parsed tasks.md into the crew list: add any checkbox the
+ * crew does not already have (matched by title), then close tasks whose
+ * box is already ticked. Services never start runs — the caller forks
+ * workers for the current wave.
+ *
+ * @param {import('./store').Store} store
+ * @param {string} threadId
+ * @param {Array<{ id: string, title: string, needs: string[], done: boolean }>} parsed
+ */
+function syncSpecCrewFromParsed(store, threadId, parsed) {
+  const { tasks: existing } = listCrewTasks(store, { threadId });
+  const titleKey = (s) => String(s || "").trim().replace(/\s+/g, " ");
+  const byTitle = new Map(existing.map((t) => [titleKey(t.title), t]));
+  /** @type {Map<string, string>} */
+  const sourceToCrew = new Map();
+  for (const p of parsed) {
+    const hit = byTitle.get(titleKey(p.title));
+    if (hit) sourceToCrew.set(p.id, hit.id);
+  }
+
+  const toAdd = parsed.filter((p) => !sourceToCrew.has(p.id));
+  if (toAdd.length > 0) {
+    let next = 1;
+    for (const t of existing) {
+      const n = Number(String(t.id).replace(/^t/, ""));
+      if (Number.isInteger(n) && n >= next) next = n + 1;
+    }
+    for (const p of toAdd) {
+      sourceToCrew.set(p.id, `t${next++}`);
+    }
+    addCrewTasks(store, {
+      threadId,
+      tasks: toAdd.map((p) => ({
+        title: p.title,
+        needs: p.needs
+          .map((n) => sourceToCrew.get(n))
+          .filter(Boolean),
+      })),
+    });
+  }
+
+  const { tasks: after } = listCrewTasks(store, { threadId });
+  const afterByTitle = new Map(after.map((t) => [titleKey(t.title), t]));
+  for (const p of parsed) {
+    if (!p.done) continue;
+    const hit = afterByTitle.get(titleKey(p.title));
+    if (hit && hit.status !== "done") {
+      completeCrewTask(store, {
+        threadId,
+        taskId: hit.id,
+        note: "already done in tasks.md",
+      });
+    }
+  }
+}
+
+/**
+ * Parse the spec thread's tasks.md, load it into the crew-task list, and
+ * describe the current wave of claimable tasks. The caller (IPC) forks a
+ * worker per wave entry and starts the run — services never start runs.
+ *
+ * Available only at the build stage (tasks.md is approved). A second click
+ * does not re-add existing titles; it only forks workers for tasks that
+ * are still open and unblocked.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string }} input
+ * @returns {{
+ *   thread: object,
+ *   path: string,
+ *   tasks: Array<object>,
+ *   waves: string[][],
+ *   wave: Array<object>,
+ *   reason?: string,
+ * }}
+ */
+function dispatchSpec(store, input) {
+  const { parseTasksMd } = require("./specTasks.js");
+  const { threadId } = input || {};
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  if (!thread.spec) {
+    throw new Error("Thread is not in spec mode");
+  }
+  if (thread.spec.stage !== "build") {
+    throw new Error("Dispatch is available after tasks.md is approved");
+  }
+
+  const cwd = specCwd(store, thread);
+  const file = specArtifactPath(thread, cwd, "tasks");
+  let text = null;
+  try {
+    text = fs.readFileSync(file, "utf8");
+  } catch {
+    text = null;
+  }
+  if (text == null) {
+    throw new Error(`tasks.md is not written yet (${file})`);
+  }
+
+  const parsed = parseTasksMd(text);
+  if (parsed.errors.length > 0) {
+    throw new Error(`tasks.md is not a valid DAG: ${parsed.errors.join("; ")}`);
+  }
+  if (parsed.tasks.length === 0) {
+    throw new Error("tasks.md has no checkbox tasks");
+  }
+
+  syncSpecCrewFromParsed(store, threadId, parsed.tasks);
+  const { tasks } = listCrewTasks(store, { threadId });
+  const wave = tasks.filter((t) => t.status === "open" && !t.blocked);
+  const reason =
+    wave.length === 0
+      ? tasks.some((t) => t.status === "open")
+        ? "No claimable tasks: remaining work is still blocked on dependencies."
+        : "No open tasks left."
+      : undefined;
+  return {
+    thread: { ...thread },
+    path: file,
+    tasks,
+    waves: parsed.waves,
+    wave,
+    reason,
+  };
+}
+
+/**
+ * Fork one orchWorker per claimable wave task, claim it, and return the
+ * prompts the caller must dispatch. Does not start runs.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, wave: Array<{ id: string, title?: string }> }} input
+ * @param {(store: any, input: any) => any} [forkImpl]
+ * @returns {Array<{ thread: object, task: object, prompt: string }>}
+ */
+function forkSpecWave(store, input, forkImpl) {
+  const threadId = input && input.threadId;
+  const wave = Array.isArray(input && input.wave) ? input.wave : [];
+  const dispatched = [];
+  for (const task of wave) {
+    const worker = forkWorkerThread(
+      store,
+      { threadId },
+      forkImpl || forkThread,
+    );
+    const claimed = claimCrewTask(store, {
+      threadId: worker.id,
+      taskId: task.id,
+    });
+    if (!claimed.task) continue;
+    const title = String(task.title || claimed.task.title || "")
+      .trim()
+      .slice(0, THREAD_TITLE_MAX);
+    if (title) store.updateThread(worker.id, { title });
+    const fresh = store.getThread(worker.id) || worker;
+    dispatched.push({
+      thread: { ...fresh, ...(title ? { title } : {}) },
+      task: claimed.task,
+      prompt: specDispatchPrompt(claimed.task),
+    });
+  }
+  if (dispatched.length > 0) store.save();
+  return dispatched;
+}
+
+/**
+ * Start a converge pass: the spec thread reads the three artifacts plus
+ * the repo and appends missing checkboxes to tasks.md. Available only at
+ * build. Services never start the run — the caller dispatches the prompt.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string }} input
+ * @returns {{ thread: object, prompt: string }}
+ */
+function convergeSpec(store, input) {
+  const { threadId } = input || {};
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  if (!thread.spec) {
+    throw new Error("Thread is not in spec mode");
+  }
+  if (thread.spec.stage !== "build") {
+    throw new Error("Converge is available after tasks.md is approved");
+  }
+  const cwd = specCwd(store, thread);
+  return {
+    thread: { ...thread },
+    prompt: specConvergePrompt(thread, cwd),
   };
 }
 
@@ -3697,6 +3979,11 @@ module.exports = {
   stopSpec,
   submitSpec,
   reviewSpec,
+  dispatchSpec,
+  forkSpecWave,
+  convergeSpec,
+  specDispatchPrompt,
+  specConvergePrompt,
   readSpecArtifact,
   planStepsFrom,
   setArchived,
@@ -3706,6 +3993,7 @@ module.exports = {
   takeQueued,
   setSnoozed,
   setMuted,
+  setQuotaWaitAutoResume,
   setNotes,
   setVerifyCommand,
   runVerifyNow,

@@ -75,6 +75,7 @@ import type { SlashAction } from "../slashCommands";
 import { buildBestOfNEntries } from "../bestOfN";
 import { createPrPrompt } from "../prUi";
 import { suggestNextGitAction } from "../nextGitAction";
+import { formatQuotaWaitLabel } from "../quotaWait";
 import {
   buildReviewItinerary,
   orderedPatches,
@@ -323,6 +324,12 @@ interface ThreadViewProps {
   onSaveWorkflow: (template: WorkflowSaveInput) => Promise<WorkflowTemplateInfo>;
   onRemoveWorkflow: (id: string) => Promise<void>;
   onStopRun: () => void | Promise<void>;
+  /** Resume a parked quota-wait now (#462). */
+  onResumeQuotaWait?: () => void | Promise<void>;
+  /** Per-thread auto-resume override. null inherits the global setting. */
+  onSetQuotaWaitAutoResume?: (
+    enabled: boolean | null,
+  ) => void | Promise<void>;
   /** Follow-up typed during the run, waiting for it to land (issue #92). */
   queuedPrompt?: string | null;
   /** Last delivery failure; the prompt is still queued (issue #314). */
@@ -377,6 +384,10 @@ interface ThreadViewProps {
     decision: "approve" | "revise",
     feedback?: string,
   ) => void | Promise<void>;
+  /** Dispatch the current tasks.md wave as parallel workers (issue #537). */
+  onDispatchSpec?: (threadId: string) => void | Promise<void>;
+  /** Start a converge run that appends missing tasks.md checkboxes. */
+  onConvergeSpec?: (threadId: string) => void | Promise<void>;
   /** Read the current spec artifact off disk. */
   onSpecArtifact?: (
     threadId: string,
@@ -1727,6 +1738,8 @@ function specStepStatus(
 function SpecCard({
   thread,
   onReviewSpec,
+  onDispatchSpec,
+  onConvergeSpec,
   onStopSpec,
   onSpecArtifact,
 }: {
@@ -1736,6 +1749,8 @@ function SpecCard({
     decision: "approve" | "revise",
     feedback?: string,
   ) => void | Promise<void>;
+  onDispatchSpec?: (threadId: string) => void | Promise<void>;
+  onConvergeSpec?: (threadId: string) => void | Promise<void>;
   onStopSpec?: (threadId: string) => void | Promise<void>;
   onSpecArtifact?: (
     threadId: string,
@@ -1817,7 +1832,33 @@ function SpecCard({
         ))}
       </ol>
       {spec.stage === "build" ? (
-        <p className={styles.specStatus}>The spec is approved.</p>
+        <>
+          <p className={styles.specStatus}>The spec is approved.</p>
+          {(onDispatchSpec || onConvergeSpec) && (
+            <div className={styles.permissionActions}>
+              {onDispatchSpec && (
+                <button
+                  type="button"
+                  className={styles.permissionAllow}
+                  data-spec-dispatch-btn=""
+                  onClick={() => void onDispatchSpec(thread.id)}
+                >
+                  Dispatch
+                </button>
+              )}
+              {onConvergeSpec && (
+                <button
+                  type="button"
+                  className={styles.btn}
+                  data-spec-converge-btn=""
+                  onClick={() => void onConvergeSpec(thread.id)}
+                >
+                  Converge
+                </button>
+              )}
+            </div>
+          )}
+        </>
       ) : spec.awaitingApproval ? (
         <>
           {artifactBody}
@@ -2616,6 +2657,8 @@ export const ThreadView = memo(function ThreadView({
   onSaveWorkflow,
   onRemoveWorkflow,
   onStopRun,
+  onResumeQuotaWait,
+  onSetQuotaWaitAutoResume,
   queuedPrompt = null,
   queuedError = null,
   onCancelQueued,
@@ -2633,6 +2676,8 @@ export const ThreadView = memo(function ThreadView({
   onStartSpec,
   onStopSpec,
   onReviewSpec,
+  onDispatchSpec,
+  onConvergeSpec,
   onSpecArtifact,
   onStartTeach,
   onStopTeach,
@@ -3220,6 +3265,30 @@ export const ThreadView = memo(function ThreadView({
     if (!el || !stickToBottom.current) return;
     el.scrollTop = el.scrollHeight;
   }, [timeline, isWorking, detail?.messages, detail?.workLog]);
+
+  /**
+   * Content can grow after paint with no React state change (images, syntax
+   * highlight, webfonts). Observe the scroll body and its children so a
+   * pinned view stays pinned. Re-attach when the timeline replaces children.
+   */
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+
+    const pinIfStuck = () => {
+      if (!stickToBottom.current) return;
+      const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+      if (distance <= 0) return;
+      el.scrollTop = el.scrollHeight;
+    };
+
+    const ro = new ResizeObserver(pinIfStuck);
+    ro.observe(el);
+    for (const child of el.children) {
+      ro.observe(child);
+    }
+    return () => ro.disconnect();
+  }, [timeline]);
 
   /**
    * Delegated: any image in the timeline (tool output, attachment thumb,
@@ -3918,6 +3987,8 @@ export const ThreadView = memo(function ThreadView({
           <SpecCard
             thread={thread}
             onReviewSpec={onReviewSpec}
+            onDispatchSpec={onDispatchSpec}
+            onConvergeSpec={onConvergeSpec}
             onStopSpec={onStopSpec}
             onSpecArtifact={onSpecArtifact}
           />
@@ -4008,6 +4079,50 @@ export const ThreadView = memo(function ThreadView({
               >
                 Deny
               </button>
+            </div>
+          </div>
+        )}
+
+        {detail && detail.thread.status === "quota-wait" && (
+          <div
+            className={`${styles.statusStrip} ${styles.statusStripQuotaWait}`}
+            data-quota-wait-strip=""
+          >
+            <div className={styles.statusLeft}>
+              <span className={styles.statusDot} aria-hidden />
+              <span>
+                Usage limit reached. Resuming at{" "}
+                {detail.thread.quotaWaitUntil != null
+                  ? formatQuotaWaitLabel(
+                      detail.thread.quotaWaitUntil,
+                      Date.now(),
+                    )
+                  : "the reset"}
+                .
+              </span>
+            </div>
+            <div className={styles.statusLeft}>
+              {onResumeQuotaWait ? (
+                <button
+                  type="button"
+                  className={styles.retryBtn}
+                  onClick={() => void onResumeQuotaWait()}
+                  data-resume-quota-wait=""
+                >
+                  Resume now
+                </button>
+              ) : null}
+              {onSetQuotaWaitAutoResume &&
+              detail.thread.quotaWaitAutoResume !== false ? (
+                <button
+                  type="button"
+                  className={styles.stopBtn}
+                  onClick={() => void onSetQuotaWaitAutoResume(false)}
+                  data-quota-wait-opt-out=""
+                >
+                  Don&apos;t auto-resume
+                </button>
+              ) : null}
             </div>
           </div>
         )}
