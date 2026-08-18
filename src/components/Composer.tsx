@@ -141,6 +141,26 @@ const STATIC = {
 
 const DEFAULT_TEMPLATE_ID = "standard";
 
+/**
+ * Composer `/` commands (issue #338). Discoverability only: the runner
+ * intercepts the prompt, so this list exists to paint the popup and nothing
+ * else reads it.
+ */
+const ORCH_COMMANDS = [
+  { name: "/handoff", hint: "Plan here, implement on a fresh model" },
+  { name: "/advisor", hint: "One second opinion on a contrasting model" },
+  { name: "/committee", hint: "Two contrasting models converge on a root cause" },
+] as const;
+
+/**
+ * The `/` token being typed, or null. Only at the very start of the draft,
+ * and only while it is still one token — the first space ends the command
+ * and everything after it belongs to the task.
+ */
+function commandQuery(text: string): string | null {
+  return text.startsWith("/") && !/\s/.test(text) ? text : null;
+}
+
 /** Capped cascade index: row 30 shouldn't wait half a second to appear. */
 const rowEnterStyle = (index: number): CSSProperties =>
   ({ "--i": String(Math.min(index, 10)) }) as CSSProperties;
@@ -347,6 +367,57 @@ export function Composer({
   /** Caret to restore after a mention insert re-renders the textarea. */
   const pendingCaret = useRef<number | null>(null);
   const mentionOpen = mention != null && mentionFiles.length > 0;
+
+  /** `/` command popup: `command` null means closed. */
+  const [command, setCommand] = useState<string | null>(null);
+  const [commandIndex, setCommandIndex] = useState(0);
+  /**
+   * Escape must stay closed while the same text is still in the box —
+   * without this the onSelect that follows the key would reopen it. Cleared
+   * by the next edit and by a thread switch. Accepting needs no such guard:
+   * the inserted trailing space ends the token on its own.
+   */
+  const commandDismissed = useRef(false);
+  const commandMatches = command
+    ? ORCH_COMMANDS.filter((c) => c.name.startsWith(command))
+    : [];
+  const commandOpen = commandMatches.length > 0;
+
+  const closeCommand = useCallback(() => {
+    setCommand(null);
+    setCommandIndex(0);
+  }, []);
+
+  /** Recompute the active `/` token from the live textarea. */
+  const refreshCommand = useCallback(() => {
+    const el = textareaRef.current;
+    const q =
+      el && !disabled && !commandDismissed.current
+        ? commandQuery(el.value)
+        : null;
+    if (q === null) {
+      closeCommand();
+      return;
+    }
+    setCommand(q);
+    setCommandIndex(0);
+  }, [disabled, closeCommand]);
+
+  const acceptCommand = useCallback(
+    (name: string) => {
+      const inserted = `${name} `;
+      const el = textareaRef.current;
+      if (el) el.value = inserted;
+      pendingCaret.current = inserted.length;
+      setValue(inserted);
+      closeCommand();
+    },
+    [setValue, closeCommand],
+  );
+
+  useEffect(() => {
+    commandDismissed.current = false;
+  }, [threadId]);
 
   const closeMention = useCallback(() => {
     setMention(null);
@@ -673,6 +744,7 @@ export function Composer({
       setValue("");
       clearAttachments();
       closeMention();
+      closeCommand();
     } catch (err) {
       const msg =
         err instanceof Error && err.message ? err.message : failLabel;
@@ -765,6 +837,32 @@ export function Composer({
         // popup closes.
         e.stopPropagation();
         closeMention();
+        return;
+      }
+    }
+    if (commandOpen) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setCommandIndex((i) => Math.min(i + 1, commandMatches.length - 1));
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setCommandIndex((i) => Math.max(i - 1, 0));
+        return;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        const cmd = commandMatches[commandIndex];
+        if (cmd) acceptCommand(cmd.name);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        // Same as mention: only this popup closes, not the pill popovers.
+        e.stopPropagation();
+        commandDismissed.current = true;
+        closeCommand();
         return;
       }
     }
@@ -1022,6 +1120,30 @@ export function Composer({
             ))}
           </ul>
         )}
+        {commandOpen && (
+          <ul
+            className={styles.mentionList}
+            role="listbox"
+            aria-label="Commands"
+          >
+            {commandMatches.map((cmd, i) => (
+              <li key={cmd.name} role="option" aria-selected={i === commandIndex}>
+                <button
+                  type="button"
+                  className={styles.mentionRow}
+                  data-highlighted={i === commandIndex ? "true" : undefined}
+                  onMouseEnter={() => setCommandIndex(i)}
+                  onClick={() => acceptCommand(cmd.name)}
+                >
+                  <span className={styles.providerRowText}>
+                    <span className={styles.modelRowLabel}>{cmd.name}</span>
+                    <span className={styles.modelRowVendor}>{cmd.hint}</span>
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
         {attachments.length > 0 && (
           <div className={styles.attachmentRow} aria-label="Attachments">
             {attachments.map((a) => (
@@ -1041,10 +1163,15 @@ export function Composer({
           rows={3}
           value={value}
           onChange={(e) => {
+            commandDismissed.current = false;
             setValue(e.target.value);
             refreshMention();
+            refreshCommand();
           }}
-          onSelect={refreshMention}
+          onSelect={() => {
+            refreshMention();
+            refreshCommand();
+          }}
           onKeyDown={onKeyDown}
           onPaste={onPaste}
           disabled={disabled || sending}
