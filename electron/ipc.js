@@ -497,6 +497,32 @@ const IPC_HANDLERS = {
   "threads:specArtifact": async (ctx, input) => {
     return services.readSpecArtifact(ctx.store, input);
   },
+  "threads:dispatchSpec": async (ctx, input) => {
+    const result = services.dispatchSpec(ctx.store, input);
+    const workers = services.forkSpecWave(ctx.store, {
+      threadId: input.threadId,
+      wave: result.wave,
+    });
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    for (const w of workers) {
+      await ctx.runner.startRun({ threadId: w.thread.id, prompt: w.prompt });
+    }
+    return {
+      thread: ctx.store.getThread(input.threadId),
+      dispatched: workers.map((w) => ({
+        threadId: w.thread.id,
+        taskId: w.task.id,
+        title: w.task.title,
+      })),
+      reason: result.reason,
+    };
+  },
+  "threads:convergeSpec": async (ctx, input) => {
+    const { thread, prompt } = services.convergeSpec(ctx.store, input);
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    await ctx.runner.startRun({ threadId: input.threadId, prompt });
+    return thread;
+  },
   "threads:startTeach": async (ctx, input) => {
     const updated = services.startTeach(ctx.store, input);
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));

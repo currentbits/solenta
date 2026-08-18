@@ -28,6 +28,7 @@ import { WorkflowsModal } from "./components/WorkflowsModal";
 import { WebTokenGate } from "./components/WebTokenGate";
 import { isWebMode } from "./shared/wire";
 import { isBuildMismatch } from "./buildMismatch";
+import { BuildMismatchScreen } from "./components/BuildMismatchScreen";
 import {
   repeatDraftFromDetail,
   type RepeatDraft,
@@ -75,7 +76,16 @@ function useNarrow(): boolean {
   return useSyncExternalStore(subscribeNarrow, getNarrow, () => false);
 }
 
-export default function App() {
+type AppProps = {
+  /**
+   * Test seam. Production reads compile-time __BUILD_SHA__; node tests
+   * leave that identifier undeclared (and ESM cannot see a globalThis
+   * assignment), so App-level mismatch tests pass a stamped value here.
+   */
+  rendererSha?: string | null;
+};
+
+export default function App({ rendererSha: rendererShaOverride }: AppProps = {}) {
   const {
     api,
     projects,
@@ -127,6 +137,8 @@ export default function App() {
     stopSpec,
     reviewSpec,
     specArtifact,
+    dispatchSpec,
+    convergeSpec,
     startTeach,
     stopTeach,
     startAsk,
@@ -429,6 +441,20 @@ export default function App() {
       void reviewSpec(threadId, decision, feedback);
     },
     [reviewSpec],
+  );
+
+  const handleDispatchSpec = useCallback(
+    (threadId: string) => {
+      void dispatchSpec(threadId);
+    },
+    [dispatchSpec],
+  );
+
+  const handleConvergeSpec = useCallback(
+    (threadId: string) => {
+      void convergeSpec(threadId);
+    },
+    [convergeSpec],
   );
 
   const handleStartTeach = useCallback(
@@ -771,7 +797,11 @@ export default function App() {
 
   // Vite replaces __BUILD_SHA__; node tests leave it undeclared.
   const rendererSha =
-    typeof __BUILD_SHA__ === "string" ? __BUILD_SHA__ : null;
+    rendererShaOverride !== undefined
+      ? rendererShaOverride
+      : typeof __BUILD_SHA__ === "string"
+        ? __BUILD_SHA__
+        : null;
   const buildMismatch = isBuildMismatch(appStatus?.build.sha, rendererSha);
 
   const submitEditProject = useCallback(
@@ -783,25 +813,15 @@ export default function App() {
     [updateProject],
   );
 
+  if (buildMismatch) {
+    return (
+      <BuildMismatchScreen onRestart={() => void applyUpdate()} />
+    );
+  }
+
   return (
     <div className={styles.shell}>
       {isWebMode() && <WebTokenGate />}
-      {buildMismatch && (
-        <div
-          className={styles.mismatchBar}
-          role="alert"
-          data-build-mismatch=""
-        >
-          <span>This window is out of date. Restart to load the new build.</span>
-          <button
-            type="button"
-            className={styles.mismatchRestart}
-            onClick={() => void applyUpdate()}
-          >
-            Restart
-          </button>
-        </div>
-      )}
       <div
         className={styles.app}
         data-layout="app"
@@ -1042,6 +1062,8 @@ export default function App() {
         onStartSpec={handleStartSpec}
         onStopSpec={handleStopSpec}
         onReviewSpec={handleReviewSpec}
+        onDispatchSpec={handleDispatchSpec}
+        onConvergeSpec={handleConvergeSpec}
         onSpecArtifact={specArtifact}
         onStartTeach={handleStartTeach}
         onStopTeach={handleStopTeach}

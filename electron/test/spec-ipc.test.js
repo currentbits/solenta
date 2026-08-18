@@ -113,4 +113,56 @@ describe("spec-mode IPC", () => {
     assert.match(artifact.path, /requirements\.md$/);
     assert.equal(broadcasts.length, beforeBroadcasts);
   });
+
+  it("threads:dispatchSpec forks a worker per wave and starts a run on each", async () => {
+    services.startSpec(store, { threadId });
+    const thread = store.getThread(threadId);
+    thread.spec.stage = "build";
+    store.updateThread(threadId, { spec: thread.spec });
+    const slug = thread.spec.slug;
+    const project = store.getProject(thread.projectId);
+    const file = path.join(project.path, ".solenta", "specs", slug, "tasks.md");
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(
+      file,
+      "- [ ] 1. First (`a.ts`) — req 1\n" +
+        "- [ ] 2. Second (`b.ts`) — req 2\n" +
+        "- [ ] 3. After (`c.ts`) — req 3 — needs: 1, 2\n",
+    );
+
+    const result = await IPC_HANDLERS["threads:dispatchSpec"](ctx, { threadId });
+    assert.equal(result.dispatched.length, 2);
+    assert.equal(startRunCalls.length, 2);
+    assert.deepEqual(
+      new Set(startRunCalls.map((c) => c.threadId)),
+      new Set(result.dispatched.map((d) => d.threadId)),
+    );
+    for (const call of startRunCalls) {
+      assert.notEqual(call.threadId, threadId, "runs land on the workers");
+      assert.match(call.prompt, /\[Spec dispatch\]/);
+    }
+    assert.ok(broadcasts.some((b) => b.channel === "threads:changed"));
+  });
+
+  it("threads:convergeSpec starts one run on the spec thread", async () => {
+    services.startSpec(store, { threadId });
+    const thread = store.getThread(threadId);
+    thread.spec.stage = "build";
+    store.updateThread(threadId, { spec: thread.spec });
+
+    const out = await IPC_HANDLERS["threads:convergeSpec"](ctx, { threadId });
+    assert.equal(out.id, threadId);
+    assert.equal(startRunCalls.length, 1);
+    assert.equal(startRunCalls[0].threadId, threadId);
+    assert.match(startRunCalls[0].prompt, /\[Spec converge\]/);
+  });
+
+  it("threads:dispatchSpec throws before build", async () => {
+    services.startSpec(store, { threadId });
+    await assert.rejects(
+      () => IPC_HANDLERS["threads:dispatchSpec"](ctx, { threadId }),
+      /after tasks.md is approved/,
+    );
+    assert.equal(startRunCalls.length, 0);
+  });
 });
