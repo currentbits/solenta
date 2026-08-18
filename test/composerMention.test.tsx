@@ -142,4 +142,39 @@ describe("Composer @-mention popup", () => {
     assert.equal(calls, 0);
     assert.equal(m.container.querySelector('[aria-label="Mention a file"]'), null);
   });
+
+  it("keeps the highlighted mention scrolled into view", async () => {
+    // Same 240px overflow box as the slash palette: arrowing past the last
+    // visible row must scroll the highlight, not walk off-screen.
+    const files = Array.from({ length: 16 }, (_, i) => `src/file-${i}.ts`);
+    const m = await mountComposer(async () => files);
+    const el = textarea(m);
+    await m.type(el, "@");
+    await caretToEnd(m);
+    await waitForPopup();
+    assert.ok(
+      m.container.querySelector('[role="listbox"][aria-label="Mention a file"]'),
+      "popup open after @",
+    );
+
+    const seen: Element[] = [];
+    const proto = (m.query('[data-highlighted="true"]') as HTMLElement)
+      .constructor.prototype as { scrollIntoView: () => void };
+    const original = proto.scrollIntoView;
+    proto.scrollIntoView = function patched(this: Element) {
+      seen.push(this);
+    };
+    try {
+      await m.press(el, "ArrowDown");
+      await m.press(el, "ArrowDown");
+    } finally {
+      proto.scrollIntoView = original;
+    }
+    const highlighted = m.query('[data-highlighted="true"]');
+    assert.ok(highlighted, "a mention stays highlighted after ArrowDown");
+    assert.ok(
+      seen.includes(highlighted),
+      "the highlighted mention must be scrolled into view as it moves",
+    );
+  });
 });
