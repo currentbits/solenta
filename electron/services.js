@@ -535,6 +535,8 @@ function setReasoningEffort(store, input) {
 const THREAD_TITLE_MAX = 60;
 /** Per-thread scratch pad cap (issue #194). */
 const THREAD_NOTES_MAX = 2000;
+/** Felt-estimate cap (issue #401). Mirror src/shared/ipc.ts FELT_ESTIMATE_MAX_MS. */
+const FELT_ESTIMATE_MAX_MS = 7 * 24 * 60 * 60 * 1000;
 /** Per-thread hypothesis ledger caps (issue #303). Mirror src/shared/ipc.ts. */
 const HYPOTHESES_MAX = 50;
 const HYPOTHESIS_CLAIM_MAX = 200;
@@ -1361,6 +1363,44 @@ function setNotes(store, input) {
   }
   const notes = String(input.notes ?? "").trim().slice(0, THREAD_NOTES_MAX);
   const patch = { notes };
+  const updated = store.updateThread(threadId, patch);
+  store.save();
+  return updated ? { ...updated } : { ...thread, ...patch };
+}
+
+/**
+ * Record the one-tap felt estimate for a thread (issue #401). savedMs is a
+ * non-negative duration clamped to FELT_ESTIMATE_MAX_MS; null records a
+ * decline so the transcript card never asks again. User-facing bookkeeping,
+ * never bumps updatedAt — same rule as setNotes.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, savedMs: number | null }} input
+ */
+function setFeltEstimate(store, input) {
+  const { threadId } = input;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  const at = Date.now();
+  let feltEstimate;
+  if (input.savedMs == null) {
+    feltEstimate = { kind: "declined", at };
+  } else {
+    const savedMs = Number(input.savedMs);
+    if (!Number.isFinite(savedMs) || savedMs < 0) {
+      throw new Error(
+        `Invalid felt estimate: ${JSON.stringify(input.savedMs)}. Expected a non-negative number of ms, or null to decline`,
+      );
+    }
+    feltEstimate = {
+      kind: "saved",
+      savedMs: Math.min(savedMs, FELT_ESTIMATE_MAX_MS),
+      at,
+    };
+  }
+  const patch = { feltEstimate };
   const updated = store.updateThread(threadId, patch);
   store.save();
   return updated ? { ...updated } : { ...thread, ...patch };
@@ -3995,6 +4035,7 @@ module.exports = {
   setMuted,
   setQuotaWaitAutoResume,
   setNotes,
+  setFeltEstimate,
   setVerifyCommand,
   runVerifyNow,
   renameThread,

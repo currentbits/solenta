@@ -478,6 +478,11 @@ const IPC_HANDLERS = {
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     return updated;
   },
+  "threads:setFeltEstimate": async (ctx, input) => {
+    const updated = services.setFeltEstimate(ctx.store, input);
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    return updated;
+  },
   "threads:startSpec": async (ctx, input) => {
     const updated = services.startSpec(ctx.store, input);
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
