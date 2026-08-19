@@ -46,7 +46,7 @@ import type {
   ThreadSummaryInfo,
   CrewTaskView,
   RewindResult,
-  UsageByDay,
+  UsageReport,
   FleetEvidence,
   WorkLogItem,
   WorkflowTemplateInfo,
@@ -1326,7 +1326,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       },
     },
     usage: {
-      byDay: () => rec("usage.byDay", [], {} as UsageByDay),
+      byDay: () => rec("usage.byDay", [], { byDay: {}, threadsByDay: {} } as UsageReport),
     },
     fleet: {
       evidence: (input?: unknown) =>

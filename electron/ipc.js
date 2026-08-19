@@ -300,7 +300,10 @@ const IPC_HANDLERS = {
     return buildActivity(threads, ctx.store.data.workLogByThread, Date.now());
   },
   "usage:byDay": async (ctx) => {
-    return ctx.store.getUsageByDay();
+    return {
+      byDay: ctx.store.getUsageByDay(),
+      threadsByDay: ctx.store.getUsageThreadsByDay(),
+    };
   },
   "insights:failureModes": async (ctx) => {
     const { clusterFailureModes } = require("./failuremodes.js");

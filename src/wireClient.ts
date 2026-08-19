@@ -46,7 +46,7 @@ import type {
   ThreadSummaryInfo,
   CrewTaskView,
   DigestResult,
-  UsageByDay,
+  UsageReport,
   WorkflowTemplateInfo,
 } from "./shared/ipc";
 import {
@@ -425,7 +425,7 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
       list: () => call<ActivityItem[]>("activity:list"),
     },
     usage: {
-      byDay: () => call<UsageByDay>("usage:byDay"),
+      byDay: () => call<UsageReport>("usage:byDay"),
     },
     insights: {
       failureModes: () => call<FailureMode[]>("insights:failureModes"),

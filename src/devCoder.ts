@@ -62,7 +62,8 @@ import type {
   ThreadInfo,
   CrewTaskView,
   DigestResult,
-  UsageByDay,
+  UsageEntry,
+  UsageReport,
   WorkLogItem,
   WorkflowPhaseSpec,
   WorkflowTemplateInfo,
@@ -3403,7 +3404,23 @@ function buildDevCoder(): CoderApi {
       },
     },
     usage: {
-      async byDay(): Promise<UsageByDay> {
+      async byDay(): Promise<UsageReport> {
+        const cell = (
+          costUsd: number,
+          inputTokens: number,
+          outputTokens: number,
+          turns: number,
+          extra: Partial<UsageEntry> = {},
+        ): UsageEntry => ({
+          costUsd,
+          inputTokens,
+          cachedInputTokens: 0,
+          cacheWriteTokens: 0,
+          outputTokens,
+          turns,
+          wastedUsd: 0,
+          ...extra,
+        });
         const day = (offset: number) => {
           const d = new Date(now());
           d.setDate(d.getDate() - offset);
@@ -3413,52 +3430,30 @@ function buildDevCoder(): CoderApi {
           return `${y}-${m}-${dd}`;
         };
         return {
-          [day(0)]: {
-            claude: {
-              "claude-opus-4": {
-                costUsd: 1.24,
-                inputTokens: 42000,
-                outputTokens: 8100,
-                turns: 6,
+          byDay: {
+            [day(0)]: {
+              claude: {
+                "claude-opus-4": cell(1.24, 42000, 8100, 6),
+              },
+              grok: {
+                "grok-4": cell(0, 18000, 3200, 4),
               },
             },
-            grok: {
-              "grok-4": {
-                costUsd: 0,
-                inputTokens: 18000,
-                outputTokens: 3200,
-                turns: 4,
+            [day(1)]: {
+              claude: {
+                "claude-sonnet-4": cell(0.41, 15000, 2400, 3),
+              },
+              kimi: {
+                "kimi-k2": cell(0.08, 9000, 1100, 2),
               },
             },
-          },
-          [day(1)]: {
-            claude: {
-              "claude-sonnet-4": {
-                costUsd: 0.41,
-                inputTokens: 15000,
-                outputTokens: 2400,
-                turns: 3,
-              },
-            },
-            kimi: {
-              "kimi-k2": {
-                costUsd: 0.08,
-                inputTokens: 9000,
-                outputTokens: 1100,
-                turns: 2,
+            [day(3)]: {
+              grok: {
+                "grok-4": cell(0, 22000, 4100, 5),
               },
             },
           },
-          [day(3)]: {
-            grok: {
-              "grok-4": {
-                costUsd: 0,
-                inputTokens: 22000,
-                outputTokens: 4100,
-                turns: 5,
-              },
-            },
-          },
+          threadsByDay: {},
         };
       },
     },

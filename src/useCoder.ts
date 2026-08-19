@@ -48,7 +48,7 @@ import type {
   ThreadSummaryInfo,
   CrewTaskView,
   UpdateStatus,
-  UsageByDay,
+  UsageReport,
   VerifyResult,
   WorkflowTemplateInfo,
 } from "./shared/ipc";
@@ -411,7 +411,7 @@ export interface UseCoderResult {
   /** Cross-thread newest-first activity feed. */
   listActivity: () => Promise<ActivityItem[]>;
   /** Per-day / provider / model usage ledger. */
-  listUsageByDay: () => Promise<UsageByDay>;
+  listUsageByDay: () => Promise<UsageReport>;
   /** Receipt for the last unattended window (issue #323). */
   listDigest: (input?: { sinceMs?: number }) => Promise<DigestResult>;
   /** Close the digest window so the next one starts now. */

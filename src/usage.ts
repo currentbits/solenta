@@ -74,8 +74,11 @@ function readEntry(raw: unknown): UsageEntry | null {
   return {
     costUsd: finiteNumber(rec.costUsd),
     inputTokens: finiteNumber(rec.inputTokens),
+    cachedInputTokens: finiteNumber(rec.cachedInputTokens),
+    cacheWriteTokens: finiteNumber(rec.cacheWriteTokens),
     outputTokens: finiteNumber(rec.outputTokens),
     turns: finiteNumber(rec.turns),
+    wastedUsd: finiteNumber(rec.wastedUsd),
   };
 }
 
