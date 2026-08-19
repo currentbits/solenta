@@ -4,31 +4,31 @@
   "chunks": [
     {
       "area": "tests",
-      "rationale": "test/sidebar.test.tsx describe 'Sidebar snooze nested submenu (#583)'. New ArrowDown/Up/Home/End cases sit after the existing drill-in and typeahead tests. They use pressFocused, not press(el). Identity checks are assert.ok(active === item) — assert.equal on two DOM nodes hangs the suite while dumping circular fibers, same trap as assert.equal(node, null).",
+      "rationale": "test/sidebar.test.tsx describe 'Sidebar snooze nested submenu (#583)'. New cases sit after the existing drill-in / ArrowUp-Down tests: click-open focuses first menuitem, keyboard-focused … then click does the same, ArrowDown works with no extra focus(), Escape / outside click / Fork restore …, Rename keeps the title input, switching cards does not bounce. pressFocused, not press(el). Identity is assert.ok(a === b); assert.equal on nodes hangs on circular fibers.",
       "risks": [
-        "Wrap tests assume last→first and first→last. A later clamp-instead-of-wrap change would fail them on purpose.",
-        "The disabled-Settle case uses status:'working'. If settle ever becomes clickable while a run is active, the skip test's precondition assert.equal(settle.disabled, true) fails first."
+        "The two-card bounce test depends on menu-src rendering earlier in the tree than menu-noise (p1 then p2). A later sidebar reorder would make the naive restore look green and hide the steal.",
+        "keyboard-on-… uses click after more.focus(), not Enter/Space. jsdom does not synthesize a button click from Enter, so a real keydown-on-trigger hole would not be caught."
       ]
     },
     {
       "area": "critical",
-      "rationale": "ThreadCard menu onKeyDown in src/components/Sidebar.tsx. ArrowDown/Up/Home/End are handled AFTER ArrowRight (open) and ArrowLeft/Backspace (back), so Snooze+ArrowDown cannot drill in. Escape is still useEscapeClose, not a back key. #582 stacking is untouched: data-menu-open on the card, .group:has([data-snooze-menu]) z-index 8.",
+      "rationale": "ThreadCard focus layout effect in src/components/Sidebar.tsx. On the false→true edge of snoozeMenuOpen, focusMenuEdge(menu, 'first') so arrows hit the menu's onKeyDown without Tab. pendingMenuFocus still wins for drill-in (preset) and back (snooze) so ArrowRight/Left do not get overwritten. On close, moreBtnRef.focus() unless renamingRef is set. Restore is skipped when activeElement is already a live node that is not this trigger — opening card B closes A, and A's later-in-tree effect must not yank focus off B's first item.",
       "risks": [
-        "ArrowDown preventDefault stops the sidebar list from scrolling while the menu is focused. If a future overlay steals those keys, this handler must stay first.",
-        "enabledMenuItems queries the whole [data-snooze-menu]. That is correct only because the first-level items unmount while nested (back + presets are the only menuitems then). Re-introducing a flyout that keeps both levels in the DOM would mix panels."
+        "justOpened is a ref, not a render bit, so a 700ms thread patch while the menu is open cannot re-steal focus. Clearing menuWasOpen anywhere else would re-trigger first-item focus on the next panel toggle.",
+        "Outside-click restore runs even when the click target is the search field. In the real app that target may already have been focused by mousedown; we steal it back. That matches the requested contract but is unlike native <select>."
       ]
     },
     {
       "area": "impl",
-      "rationale": "focusMenuItem / focusMenuEdge reuse enabledMenuItems (same :not([disabled]) set as typeahead). Wrap with (from+delta+len)%len. Home/End jump to the ends of the current panel, including ‹ Snooze as first nested item. Click contract and data-snooze-preset / data-snooze-clear hooks are unchanged.",
+      "rationale": "moreBtnRef on [data-more-btn]. No change to click contract, nested keys, data-snooze-preset / data-snooze-clear, or #582 stacking (data-menu-open, .group:has([data-snooze-menu]) z-index 8). first enabled item is usually [data-snooze-item]; without onSetSnoozed it is Fork.",
       "risks": [
-        "This is Arrow-key focus movement, not a tabindex=-1 roving set. Tab still walks every native button in the menu.",
-        "Opening the … menu does not auto-focus the first menuitem. Arrow keys do nothing until focus is already inside the menu."
+        "Tab still walks every native menuitem. This is open-focus, not a tabindex=-1 roving set.",
+        "ArrowDown on the closed … trigger still does nothing — the menu is not mounted, so its onKeyDown is not listening. Enter/Space/click are the only openers."
       ]
     }
   ],
   "risks": [
-    "data-snooze-preset / data-snooze-clear and #582 stacking were not edited this turn.",
-    "This branch still carries the #583 drill-in markup plus the prior drill-in keyboard. Reviewers landing stacked PRs will conflict on Sidebar.tsx."
+    "This branch still carries the #583 nested markup plus ArrowUp/Down from the parent worktree. Reviewers landing stacked PRs will conflict on Sidebar.tsx.",
+    "data-snooze-preset / data-snooze-clear and #582 stacking were not edited this turn."
   ]
 }

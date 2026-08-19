@@ -653,6 +653,8 @@ export const ThreadCard = memo(function ThreadCard({
   const [renameDraft, setRenameDraft] = useState("");
   const renamingRef = useRef(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const moreBtnRef = useRef<HTMLButtonElement>(null);
+  const menuWasOpen = useRef(false);
   const [menuPlaceUp, setMenuPlaceUp] = useState(false);
   // Drill-in (#583): a flyout would clip on .list { overflow-y: auto }.
   const [snoozePanelOpen, setSnoozePanelOpen] = useState(false);
@@ -706,19 +708,39 @@ export const ThreadCard = memo(function ThreadCard({
   useLayoutEffect(() => {
     if (!snoozeMenuOpen) {
       pendingMenuFocus.current = null;
+      if (menuWasOpen.current && !renamingRef.current) {
+        const active = document.activeElement as HTMLElement | null;
+        const more = moreBtnRef.current;
+        // Skip if another card already took focus (opening B closes A).
+        if (
+          more &&
+          (!active ||
+            active === document.body ||
+            active === more ||
+            !document.body.contains(active))
+        ) {
+          more.focus();
+        }
+      }
+      menuWasOpen.current = false;
       return;
     }
     const menu = menuRef.current;
     if (!menu) return;
+    const justOpened = !menuWasOpen.current;
+    menuWasOpen.current = true;
     const want = pendingMenuFocus.current;
-    if (!want) return;
-    pendingMenuFocus.current = null;
-    const el =
-      want === "snooze"
-        ? menu.querySelector<HTMLElement>("[data-snooze-item]")
-        : (menu.querySelector<HTMLElement>("[data-snooze-preset]") ??
-          menu.querySelector<HTMLElement>("[data-snooze-back]"));
-    el?.focus();
+    if (want) {
+      pendingMenuFocus.current = null;
+      const el =
+        want === "snooze"
+          ? menu.querySelector<HTMLElement>("[data-snooze-item]")
+          : (menu.querySelector<HTMLElement>("[data-snooze-preset]") ??
+            menu.querySelector<HTMLElement>("[data-snooze-back]"));
+      el?.focus();
+      return;
+    }
+    if (justOpened) focusMenuEdge(menu, "first");
   }, [snoozeMenuOpen, snoozePanelOpen]);
 
   // Card is a non-interactive shell. Stretch select + optional settle action
@@ -880,6 +902,7 @@ export const ThreadCard = memo(function ThreadCard({
           {(onSetSnoozed || onFork || onRenameThread || onSetMuted || onSetSettled) && (
             <div className={styles.snoozeWrap}>
               <button
+                ref={moreBtnRef}
                 type="button"
                 className={styles.settleBtn}
                 aria-label={`Thread actions: ${thread.title}`}

@@ -2508,4 +2508,137 @@ describe("Sidebar snooze nested submenu (#583)", () => {
     );
     m.unmount();
   });
+
+  it("clicking … focuses the first enabled menuitem", async () => {
+    const { m, menu } = await openMenu();
+    const snooze = menu.querySelector("[data-snooze-item]");
+    assert.ok(snooze, "Snooze is the first enabled item");
+    assert.ok(
+      document.activeElement === snooze,
+      "open must move focus into the menu so ArrowDown works without Tab",
+    );
+    m.unmount();
+  });
+
+  it("keyboard on … also focuses the first enabled menuitem", async () => {
+    const m = await mount(
+      sidebar(MENU_THREAD, {
+        projects: [p1, p2],
+        providers: extraProviders,
+        onSetSnoozed: () => {},
+        onSetPinned: () => {},
+        onSetMuted: () => {},
+        onRenameThread: () => {},
+        onSetSettled: () => {},
+        onFork: () => {},
+      }),
+    );
+    const more = m.query('[data-more-btn="menu-src"]') as HTMLElement | null;
+    assert.ok(more, "… trigger");
+    more.focus();
+    assert.ok(document.activeElement === more, "precondition: trigger focused");
+    await m.click(more);
+    const snooze = m.query("[data-snooze-item]");
+    assert.ok(snooze, "menu opened");
+    assert.ok(
+      document.activeElement === snooze,
+      "focus must leave the trigger even when it was already focused (keyboard open)",
+    );
+    m.unmount();
+  });
+
+  it("ArrowDown works immediately after opening, without Tabbing in", async () => {
+    const { m } = await openMenu();
+    await m.pressFocused("ArrowDown");
+    assert.equal(
+      (document.activeElement as HTMLElement | null)?.getAttribute("data-fork-btn"),
+      "menu-src",
+      "first-item focus on open is what makes arrows work; Tab is not required",
+    );
+    assert.ok(
+      !m.query("[data-snooze-submenu]"),
+      "ArrowDown still must not drill in",
+    );
+    m.unmount();
+  });
+
+  it("Escape restores focus to the … trigger", async () => {
+    const { m } = await openMenu();
+    await m.pressFocused("Escape");
+    assert.ok(
+      !m.query('[data-snooze-menu="menu-src"]'),
+      "Escape still closes the whole menu",
+    );
+    assert.equal(
+      (document.activeElement as HTMLElement | null)?.getAttribute("data-more-btn"),
+      "menu-src",
+      "focus returns to … so the next keyboard stroke is not lost on <body>",
+    );
+    m.unmount();
+  });
+
+  it("outside mousedown restores focus to the … trigger", async () => {
+    const { m } = await openMenu();
+    const search = m.query("input");
+    assert.ok(search, "search field is outside the menu");
+    await m.click(search);
+    assert.ok(
+      !m.query('[data-snooze-menu="menu-src"]'),
+      "outside click still dismisses",
+    );
+    assert.equal(
+      (document.activeElement as HTMLElement | null)?.getAttribute("data-more-btn"),
+      "menu-src",
+    );
+    m.unmount();
+  });
+
+  it("choosing Fork restores focus to the … trigger", async () => {
+    const { m, menu } = await openMenu();
+    await m.click(menu.querySelector("[data-fork-btn]"));
+    assert.ok(
+      !m.query('[data-snooze-menu="menu-src"]'),
+      "action still closes the menu",
+    );
+    assert.equal(
+      (document.activeElement as HTMLElement | null)?.getAttribute("data-more-btn"),
+      "menu-src",
+    );
+    m.unmount();
+  });
+
+  it("Rename leaves focus on the title input, not the … trigger", async () => {
+    const { m, menu } = await openMenu();
+    await m.click(menu.querySelector("[data-rename-thread]"));
+    const input = m.query('[data-thread-title-input="menu-src"]');
+    assert.ok(input, "rename field mounts");
+    assert.ok(
+      document.activeElement === input,
+      "restoring … on close must not steal autoFocus from the title input",
+    );
+    m.unmount();
+  });
+
+  it("opening another card's menu does not bounce focus back to the first …", async () => {
+    const { m } = await openMenu();
+    const later = m.query('[data-more-btn="menu-noise"]') as HTMLElement | null;
+    assert.ok(later, "decoy card also has a … trigger");
+    await m.click(later);
+    const first = m.query('[data-snooze-menu="menu-noise"] [data-snooze-item]');
+    assert.ok(first, "later card's menu opened");
+    assert.ok(
+      !m.query('[data-snooze-menu="menu-src"]'),
+      "only one menu at a time",
+    );
+    // menu-src is earlier in the tree, so its close effect runs first; then
+    // menu-noise opens. Flip the order: close the later card by opening src.
+    await m.click(m.query('[data-more-btn="menu-src"]'));
+    const srcItem = m.query('[data-snooze-menu="menu-src"] [data-snooze-item]');
+    assert.ok(srcItem, "src menu reopened");
+    assert.ok(
+      document.activeElement === srcItem,
+      "the later card's restore-on-close must not steal focus after src opened",
+    );
+    m.unmount();
+  });
 });
