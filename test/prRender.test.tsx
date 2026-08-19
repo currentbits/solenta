@@ -244,7 +244,7 @@ describe("sidebar thread card: select + settle + PR link (round 39)", () => {
     );
   });
 
-  it("wires the meta row into the same select hit target (structure + CSS)", () => {
+  it("wires the row content into the same select hit target (structure + CSS)", () => {
     const html = renderSidebar(
       thread({
         prNumber: 11,
@@ -266,19 +266,6 @@ describe("sidebar thread card: select + settle + PR link (round 39)", () => {
     assert.ok(
       /class="cardBody"/.test(card),
       "cardBody wrapper must hold non-interactive content",
-    );
-    assert.ok(
-      /class="cardMeta"/.test(card),
-      "cardMeta row must still exist",
-    );
-    // cardMeta is inside cardBody (not a second select button).
-    const bodyStart = card.indexOf('class="cardBody"');
-    const metaStart = card.indexOf('class="cardMeta"');
-    const selectStart = card.indexOf('class="cardSelect"');
-    assert.ok(bodyStart >= 0 && metaStart >= 0 && selectStart >= 0);
-    assert.ok(
-      metaStart > bodyStart,
-      "cardMeta must be inside cardBody so the stretch button covers it",
     );
     // Sibling, not wrapper. The old form was `selectStart < bodyStart || ...`,
     // whose first disjunct is unconditionally true because the overlay always

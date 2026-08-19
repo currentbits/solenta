@@ -360,13 +360,13 @@
   gap: 4px;
 }
 
+/* t3 flatten (#566): a thread row is one line — dot + title + age. */
 .card {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 4px;
   width: 100%;
-  padding: 10px 12px;
+  padding: 7px 10px;
   border-radius: var(--radius);
   border: 1px solid transparent;
   background: transparent;
@@ -466,7 +466,8 @@
 
 .indexHint {
   position: absolute;
-  top: 6px;
+  top: 50%;
+  transform: translateY(-50%);
   left: 6px;
   z-index: 3;
   min-width: 16px;
@@ -550,8 +551,8 @@
   z-index: 1;
   pointer-events: none;
   display: flex;
-  flex-direction: column;
-  gap: 4px;
+  align-items: center;
+  gap: 7px;
   min-width: 0;
 }
 
@@ -591,14 +592,34 @@
   }
 }
 
+/* "Waiting on 2 workers · 3m" (issue #42): slim second line, present only
+   while delegation is live. Amber when a worker is blocked on the user. */
+.waitRow {
+  position: relative;
+  z-index: 1;
+  pointer-events: none;
+  margin: 2px 0 0 15px;
+  font-size: 10px;
+  font-weight: 550;
+  color: var(--text-dim);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.waitRow[data-attention="true"] {
+  color: var(--amber);
+}
+
 /*
  * Hover/focus settle control (t3 settle-on-hover). Sibling of cardBody so it
  * is not nested in the select button; pointer-events auto like .prLink.
  */
 .cardActions {
   position: absolute;
-  top: 6px;
-  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  right: 4px;
   z-index: 2;
   display: flex;
   align-items: center;
@@ -925,18 +946,6 @@
   background: var(--card);
 }
 
-/*
- * Top row: [slug?] [tag pills] … [age]. The slug only renders for orphan
- * groups (issue #70) — inside a named group the header already carries it.
- * The tag cluster is flexible so the age stays pinned right.
- */
-.cardTop {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
 .repo {
   font-size: 11px;
   color: var(--text-muted);
@@ -947,32 +956,33 @@
 }
 
 .age {
-  margin-left: auto;
   font-size: 11px;
   color: var(--text-dim);
   flex-shrink: 0;
   transition: opacity 0.1s ease;
 }
 
-/* Title row holds the optional unread dot left of the title text. */
-.cardTitleRow {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  min-width: 0;
-}
-
+/* Read = quiet, unread = bright + heavy (mail pattern; the old blue dot is
+   gone). Active always bright: you are looking at it. */
 .cardTitle {
   font-size: 13px;
-  font-weight: 560;
-  line-height: 1.35;
-  color: var(--text);
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  font-weight: 450;
+  line-height: 1.4;
+  color: var(--text-muted);
+  white-space: nowrap;
   overflow: hidden;
+  text-overflow: ellipsis;
   min-width: 0;
   flex: 1;
+}
+
+.card[data-unread="true"] .cardTitle {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.card[data-active="true"] .cardTitle {
+  color: var(--text);
 }
 
 .titleInput {
@@ -1001,12 +1011,12 @@
  */
 .unreadDot {
   flex-shrink: 0;
+  align-self: center;
   width: 7px;
   height: 7px;
-  margin-top: 5px;
   border-radius: 50%;
   background: var(--blue);
-  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.25);
+  box-shadow: 0 0 0 1px var(--blue-soft);
 }
 
 /* Quiet hint that a follow-up is waiting on this thread (issue #137). */
@@ -1018,11 +1028,6 @@
   border-radius: 50%;
   background: var(--text-dim);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--text-dim) 35%, transparent);
-}
-
-.settledBody .unreadDot {
-  margin-top: 0;
-  align-self: center;
 }
 
 .srOnly {
@@ -1087,15 +1092,6 @@
 .archivedToggle:hover {
   color: var(--text-muted);
   background: var(--card);
-}
-
-.cardMeta {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 2px;
-  min-width: 0;
 }
 
 .badge {
@@ -1172,13 +1168,6 @@
   border: 1px solid rgba(251, 191, 36, 0.35);
 }
 
-.cardBadges {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  flex-shrink: 0;
-}
-
 .badgeConflict {
   color: var(--danger);
   background: rgba(248, 113, 113, 0.12);
@@ -1244,26 +1233,6 @@
 
 .conflictTipLine {
   display: block;
-}
-
-/* "Waiting on 2 workers · 3m" (issue #42): its own line under the meta row,
-   so the count survives on a narrow card. Amber when a child is blocked on
-   the user — that wait needs an answer, not patience. */
-.waitRow {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  margin-top: 3px;
-  font-size: 10.5px;
-  font-weight: 600;
-  color: var(--text-dim);
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.waitRow[data-attention="true"] {
-  color: #fbbf24;
 }
 
 .group {

@@ -324,7 +324,8 @@ function spendMeterTone(
 /**
  * t3 flatten (#566): the row's whole status vocabulary is one dot.
  * blue = running (working/delegating), amber = needs you (waiting/stalled/
- * quota/woke), red = failed, grey = queued follow-up, absent = idle/done.
+ * quota/woke/blocked workers), red = failed, grey = queued follow-up,
+ * absent = idle/done.
  * Words live in the title tooltip and the select button's accessible name;
  * detail lives in the thread header and Activity.
  */
@@ -369,6 +370,13 @@ function baseStatusDot(
   wait: WaitState | null,
   active: boolean,
 ): StatusDotInfo | null {
+  const waitSuffix = wait ? ` — ${waitTooltip(wait)}` : "";
+  const waitFlags: Record<string, string> = wait
+    ? {
+        "data-wait-badge": thread.id,
+        ...(wait.blocked > 0 ? { "data-attention": "true" } : {}),
+      }
+    : {};
   if (thread.status === "failed") {
     return {
       tone: "failed",
@@ -393,17 +401,25 @@ function baseStatusDot(
   if (thread.status === "working" && thread.awaitingInput) {
     return {
       tone: "attention",
-      label: "Waiting for input",
+      label: `Waiting for input${waitSuffix}`,
       spoken: "needs attention",
-      flags: { "data-waiting": "" },
+      flags: { "data-waiting": "", ...waitFlags },
     };
   }
   if (thread.status === "working" && thread.stalledAt != null) {
     return {
       tone: "attention",
-      label: `Stalled ${formatElapsed(thread.stalledAt, now)}`,
+      label: `Stalled ${formatElapsed(thread.stalledAt, now)}${waitSuffix}`,
       spoken: "needs attention",
-      flags: { "data-stalled": "" },
+      flags: { "data-stalled": "", ...waitFlags },
+    };
+  }
+  if (wait && wait.blocked > 0) {
+    return {
+      tone: "attention",
+      label: waitTooltip(wait),
+      spoken: "needs attention",
+      flags: waitFlags,
     };
   }
   if (thread.status === "working") {
@@ -413,17 +429,17 @@ function baseStatusDot(
         : "Working";
     return {
       tone: "working",
-      label,
+      label: `${label}${waitSuffix}`,
       spoken: "working",
-      flags: {},
+      flags: waitFlags,
     };
   }
   if (isDelegating(thread.status, wait)) {
     return {
       tone: "working",
-      label: "Delegating",
+      label: wait ? waitTooltip(wait) : "Delegating",
       spoken: "delegating",
-      flags: { "data-delegating": thread.id },
+      flags: { "data-delegating": thread.id, ...waitFlags },
     };
   }
   if (!active && showWokePill(thread, now)) {
@@ -641,26 +657,11 @@ export const ThreadCard = memo(function ThreadCard({
         }
         aria-label={selectLabel}
       />
+      {/* One line (#566): dot + title + age. Unread is a bright bold title. */}
       <div className={styles.cardBody}>
-        <div className={styles.cardTop}>
-          {showSlug && <span className={styles.repo}>{slug}</span>}
-          {contentMatch && (
-            <span className={styles.inMessagesTag}>in messages</span>
-          )}
-          <span className={styles.age}>
-            {formatRelativeAge(thread.updatedAt, now)}
-          </span>
-        </div>
-        <div className={styles.cardTitleRow}>
-          {showUnread && (
-            <span
-              className={styles.unreadDot}
-              data-unread-dot={thread.id}
-              aria-hidden="true"
-            />
-          )}
-          {showUnread && <span className={styles.srOnly}>unread</span>}
-          {renaming ? (
+        {dot && <StatusDot dot={dot} />}
+        {showUnread && <span className={styles.srOnly}>unread</span>}
+        {renaming ? (
             <input
               className={styles.titleInput}
               data-thread-title-input={thread.id}
@@ -683,35 +684,37 @@ export const ThreadCard = memo(function ThreadCard({
                 }
               }}
             />
-          ) : (
-            <div className={styles.cardTitle}>{thread.title}</div>
-          )}
-        </div>
-        <div className={styles.cardMeta}>
-          <div className={styles.cardBadges}>
-            <ConflictForecastBadge
-              threadId={thread.id}
-              forecast={conflictForecast}
-              titles={threadTitles}
-            />
-            {dot && <StatusDot dot={dot} />}
-          </div>
-        </div>
-        {/* Own row, not a chip beside the status badge: on a narrow card the
-            branch + PR chip squeeze a chip down to "Waiting on…", which loses
-            the count that is the whole point (issue #42). */}
-        {wait && (
-          <div
-            className={styles.waitRow}
-            data-wait-badge={thread.id}
-            data-attention={wait.blocked > 0 ? "true" : undefined}
-            title={waitTooltip(wait)}
-          >
-            <span className={styles.waitingDot} aria-hidden />
-            {waitLabel(wait, now)}
+        ) : (
+          <div className={styles.cardTitle} title={thread.title}>
+            {thread.title}
           </div>
         )}
+        {showSlug && <span className={styles.repo}>{slug}</span>}
+        {contentMatch && (
+          <span className={styles.inMessagesTag}>in messages</span>
+        )}
+        <ConflictForecastBadge
+          threadId={thread.id}
+          forecast={conflictForecast}
+          titles={threadTitles}
+        />
+        <span className={styles.age}>
+          {formatRelativeAge(thread.updatedAt, now)}
+        </span>
       </div>
+      {/* Live delegated work stays visible (issue #42, kept through the #566
+          flatten by request): the count is the point, and the line vanishes
+          on its own when the workers finish. */}
+      {wait && (
+        <div
+          className={styles.waitRow}
+          data-wait-row={thread.id}
+          data-attention={wait.blocked > 0 ? "true" : undefined}
+          title={waitTooltip(wait)}
+        >
+          {waitLabel(wait, now)}
+        </div>
+      )}
       {(onSetSettled || onSetPinned || onSetSnoozed || onFork) && (
         <div className={styles.cardActions} data-card-actions="">
           {onSetPinned && (

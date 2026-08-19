@@ -1318,31 +1318,33 @@ describe("Sidebar unread indicators (round 43)", () => {
     }),
   ];
 
-  it("renders an unread dot for a non-selected unread attention card", async () => {
+  it("marks a non-selected unread attention card (data-unread + sr-only)", async () => {
+    // #566: cards no longer paint a data-unread-dot; the card attribute,
+    // an sr-only "unread" span, and the select label carry the state.
     const m = await mount(
       sidebar(UNREAD_THREADS, { projects: [p1], activeThreadId: "sel" }),
     );
-    const dot = m.query('[data-unread-dot="u-mid"]');
-    assert.ok(dot, "unread mid must paint a data-unread-dot");
     const card = m.query('[data-thread-card="u-mid"]');
     assert.equal(card?.getAttribute("data-unread"), "true");
+    assert.ok(
+      Array.from(card!.querySelectorAll("span")).some(
+        (el) => (el.textContent || "").trim() === "unread",
+      ),
+      "card must carry an sr-only unread span",
+    );
     const select = m.query('button[aria-label="Select thread: unread mid, unread"]');
     assert.ok(select, "select aria-label must suffix , unread");
     m.unmount();
   });
 
-  it("suppresses the dot on the selected thread even when technically unread", async () => {
+  it("suppresses unread on the selected thread even when technically unread", async () => {
     const m = await mount(
       sidebar(UNREAD_THREADS, { projects: [p1], activeThreadId: "sel" }),
     );
     assert.equal(
-      m.query('[data-unread-dot="sel"]'),
-      null,
-      "selected card must not render an unread dot",
-    );
-    assert.equal(
       m.query('[data-thread-card="sel"]')?.getAttribute("data-unread"),
       null,
+      "selected card must not mark unread",
     );
     m.unmount();
   });
@@ -1352,7 +1354,7 @@ describe("Sidebar unread indicators (round 43)", () => {
       sidebar(UNREAD_THREADS, { projects: [p1], activeThreadId: "sel" }),
     );
     assert.equal(
-      m.query('[data-unread-dot="legacy-null"]'),
+      m.query('[data-thread-card="legacy-null"]')?.getAttribute("data-unread"),
       null,
       "legacy null is never unread",
     );
@@ -1374,7 +1376,6 @@ describe("Sidebar unread indicators (round 43)", () => {
     );
     m.unmount();
   });
-
 
   /**
    * B2: pin zero-unread omission on the settled tail header.
@@ -1423,7 +1424,7 @@ describe("Sidebar unread indicators (round 43)", () => {
     const zeroHeader = settledTailHeader(mZero).textContent || "";
     assert.ok(
       zeroHeader.includes("Settled ·"),
-      `tail header must still count settled, got: ${zeroHeader}`,
+      `shelf header must still count its rows, got: ${zeroHeader}`,
     );
     assert.ok(
       !zeroHeader.includes("unread"),
@@ -1558,21 +1559,34 @@ describe("Sidebar waiting-on badge (issue #42)", () => {
       ...over,
     });
 
-  it("an orchestrator with live workers says what it is waiting on", async () => {
+  it("an orchestrator with live workers says what it is waiting on (dot title)", async () => {
+    // #566: the status dot carries the wait flags and the tooltip carries the
+    // words. The visible count line stays too (kept by request): delegation
+    // must be readable at rest, and the line vanishes when workers finish.
     await clearSidebarStorage();
     const m = await mount(
       sidebar([ORCH, worker({ id: "w1" }), worker({ id: "w2" })]),
     );
 
-    const badge = m.query('[data-wait-badge="orch"]');
-    assert.ok(badge, "orchestrator card carries the wait badge");
-    assert.match(badge!.textContent || "", /Waiting on 2 workers · 3m/);
+    const row = m.query('[data-wait-row="orch"]');
+    assert.ok(row, "visible wait line renders while delegation is live");
+    assert.match(row!.textContent || "", /Waiting on 2 workers/);
+
+    const dot = m.query('[data-wait-badge="orch"]');
+    assert.ok(dot, "orchestrator dot carries the wait flag");
     assert.equal(
-      badge!.getAttribute("data-attention"),
+      dot!.getAttribute("data-status-dot"),
+      "working",
+      "delegating parent reads as working tone",
+    );
+    assert.equal(dot!.getAttribute("data-delegating"), "orch");
+    assert.match(dot!.getAttribute("title") || "", /Waiting on 2 workers/);
+    assert.match(dot!.getAttribute("title") || "", /w1/, "tooltip names workers");
+    assert.equal(
+      dot!.getAttribute("data-attention"),
       null,
       "nothing blocked: quiet styling",
     );
-    assert.match(badge!.getAttribute("title") || "", /w1/, "tooltip names workers");
     assert.equal(
       m.query('[data-wait-badge="w1"]'),
       null,
@@ -1581,16 +1595,17 @@ describe("Sidebar waiting-on badge (issue #42)", () => {
     m.unmount();
   });
 
-  it("a worker blocked on a prompt turns the badge into attention", async () => {
+  it("a worker blocked on a prompt turns the dot into attention", async () => {
     await clearSidebarStorage();
     const m = await mount(
       sidebar([ORCH, worker({ id: "w1", awaitingInput: true })]),
     );
 
-    const badge = m.query('[data-wait-badge="orch"]');
-    assert.match(badge!.textContent || "", /1 blocked/);
-    assert.equal(badge!.getAttribute("data-attention"), "true");
-    assert.match(badge!.getAttribute("title") || "", /blocked on you/);
+    const dot = m.query('[data-wait-badge="orch"]');
+    assert.ok(dot, "wait flag still present");
+    assert.equal(dot!.getAttribute("data-status-dot"), "attention");
+    assert.equal(dot!.getAttribute("data-attention"), "true");
+    assert.match(dot!.getAttribute("title") || "", /blocked on you/);
     m.unmount();
   });
 
@@ -1600,6 +1615,7 @@ describe("Sidebar waiting-on badge (issue #42)", () => {
       sidebar([ORCH, worker({ id: "w1", status: "done", runStartedAt: null })]),
     );
     assert.equal(m.query('[data-wait-badge="orch"]'), null);
+    assert.equal(m.query('[data-wait-row="orch"]'), null);
     m.unmount();
   });
 
@@ -1623,9 +1639,15 @@ describe("Sidebar waiting-on badge (issue #42)", () => {
       ]),
     );
 
-    const badge = m.query('[data-wait-badge="solo"]');
-    assert.equal(badge!.textContent, "Waiting on 1 worker");
-    assert.match(badge!.getAttribute("title") || "", /Background research/);
+    const dot = m.query('[data-wait-badge="solo"]');
+    assert.ok(dot, "working thread with a running subagent carries the flag");
+    const title = dot!.getAttribute("title") || "";
+    assert.match(title, /Waiting on 1 worker:/);
+    assert.match(title, /Background research/);
+    assert.ok(
+      !/Waiting on 1 worker · \d/.test(title),
+      "no false elapsed for in-agent subagents (no spawn timestamp)",
+    );
     m.unmount();
   });
 });
