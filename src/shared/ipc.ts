@@ -855,7 +855,18 @@ export interface ActivityItem {
  */
 export interface UsageEntry {
   costUsd: number;
-  /** Uncached input, billable at the full rate. */
+  /**
+   * Uncached input, billable at the full rate.
+   *
+   * Caveat for codex: its `input_tokens` ALREADY includes
+   * `cached_input_tokens` (electron/codex.js:372, and the test "does not add
+   * cached_input_tokens on turn.completed"), and it reports cumulative
+   * totals, so deriving a per-turn cached delta needs a snapshot the store
+   * does not keep. Codex therefore records its whole input here with
+   * cachedInputTokens 0. Processed totals stay correct; codex's cache split
+   * reads as "none reported" rather than a real zero. Fixing that is its own
+   * change, not this one.
+   */
   inputTokens: number;
   /** cache_read_input_tokens; 0 when the provider does not report it. */
   cachedInputTokens: number;
