@@ -538,8 +538,6 @@ export const ThreadCard = memo(function ThreadCard({
   onFork,
   snoozeMenuOpen = false,
   onToggleSnoozeMenu,
-  forkMenuOpen = false,
-  onToggleForkMenu,
   nested = false,
   wait = null,
   showSlug = true,
@@ -571,10 +569,9 @@ export const ThreadCard = memo(function ThreadCard({
     threadId: string,
     opts?: { provider?: string },
   ) => void | Promise<void>;
+  /** Single row menu (snooze/fork/hand-off/rename/mute/settle). */
   snoozeMenuOpen?: boolean;
   onToggleSnoozeMenu?: (threadId: string | null) => void;
-  forkMenuOpen?: boolean;
-  onToggleForkMenu?: (threadId: string | null) => void;
   /** Fork/worker rendered attached under its source thread (indent + elbow). */
   nested?: boolean;
   /** Live delegated work this thread is blocked on (issue #42); null when none. */
@@ -762,7 +759,7 @@ export const ThreadCard = memo(function ThreadCard({
               )}
             </button>
           )}
-          {(onSetSnoozed || onRenameThread || onSetMuted || onSetSettled) && (
+          {(onSetSnoozed || onFork || onRenameThread || onSetMuted || onSetSettled) && (
             <div className={styles.snoozeWrap}>
               <button
                 type="button"
@@ -775,7 +772,6 @@ export const ThreadCard = memo(function ThreadCard({
                 onClick={(e) => {
                   e.stopPropagation();
                   onToggleSnoozeMenu?.(snoozeMenuOpen ? null : thread.id);
-                  onToggleForkMenu?.(null);
                 }}
               >
                 <svg
@@ -829,6 +825,51 @@ export const ThreadCard = memo(function ThreadCard({
                       Clear snooze
                     </button>
                   )}
+                  {onFork && (
+                    <button
+                      type="button"
+                      className={styles.snoozeMenuItem}
+                      role="menuitem"
+                      data-fork-btn={thread.id}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onToggleSnoozeMenu?.(null);
+                        void onFork(thread.id);
+                      }}
+                    >
+                      Fork
+                    </button>
+                  )}
+                  {onFork &&
+                    providers
+                      .filter((p) => p.id !== thread.provider)
+                      .map((p) => {
+                        const disabled = !p.available;
+                        return (
+                          <button
+                            key={p.id}
+                            type="button"
+                            className={styles.snoozeMenuItem}
+                            role="menuitem"
+                            data-handoff-provider={p.id}
+                            disabled={disabled}
+                            aria-disabled={disabled ? "true" : undefined}
+                            title={
+                              disabled
+                                ? `${p.name} is not installed`
+                                : `Hand off to ${p.name}`
+                            }
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (disabled) return;
+                              void onFork(thread.id, { provider: p.id });
+                              onToggleSnoozeMenu?.(null);
+                            }}
+                          >
+                            Hand off · {p.name}
+                          </button>
+                        );
+                      })}
                   {onRenameThread && (
                     <button
                       type="button"
@@ -879,103 +920,6 @@ export const ThreadCard = memo(function ThreadCard({
                       {settleLabel}
                     </button>
                   )}
-                </div>
-              )}
-            </div>
-          )}
-          {onFork && (
-            <div className={styles.snoozeWrap}>
-              <button
-                type="button"
-                className={styles.settleBtn}
-                aria-label="Fork thread"
-                title="Fork thread"
-                data-fork-btn={thread.id}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onToggleForkMenu?.(null);
-                  onToggleSnoozeMenu?.(null);
-                  void onFork(thread.id);
-                }}
-              >
-                <svg
-                  width="12"
-                  height="12"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  aria-hidden="true"
-                >
-                  <circle cx="4" cy="3.5" r="1.8" />
-                  <circle cx="4" cy="12.5" r="1.8" />
-                  <circle cx="12" cy="8" r="1.8" />
-                  <path d="M4 5.3v5.4M4 8c0 2.2 3.2 2.6 6.2 2.7" />
-                </svg>
-              </button>
-              <button
-                type="button"
-                className={styles.settleBtn}
-                aria-label="Hand off to…"
-                title="Hand off to…"
-                aria-haspopup="menu"
-                aria-expanded={forkMenuOpen}
-                data-handoff-btn={thread.id}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onToggleSnoozeMenu?.(null);
-                  onToggleForkMenu?.(forkMenuOpen ? null : thread.id);
-                }}
-              >
-                <svg
-                  width="13"
-                  height="13"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <path d="M2.5 8h10M9 4.5 12.5 8 9 11.5" />
-                </svg>
-              </button>
-              {forkMenuOpen && (
-                <div
-                  className={styles.snoozeMenu}
-                  role="menu"
-                  data-handoff-menu={thread.id}
-                >
-                  {providers
-                    .filter((p) => p.id !== thread.provider)
-                    .map((p) => {
-                      const disabled = !p.available;
-                      return (
-                        <button
-                          key={p.id}
-                          type="button"
-                          className={styles.snoozeMenuItem}
-                          role="menuitem"
-                          data-handoff-provider={p.id}
-                          disabled={disabled}
-                          aria-disabled={disabled ? "true" : undefined}
-                          title={
-                            disabled
-                              ? `${p.name} is not installed`
-                              : `Hand off to ${p.name}`
-                          }
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (disabled) return;
-                            void onFork(thread.id, { provider: p.id });
-                            onToggleForkMenu?.(null);
-                          }}
-                        >
-                          {p.name}
-                        </button>
-                      );
-                    })}
                 </div>
               )}
             </div>
@@ -1302,10 +1246,7 @@ export const Sidebar = memo(function Sidebar({
   const [now, setNow] = useState(() => Date.now());
   /** Which thread's snooze preset menu is open (one at a time). */
   const [snoozeMenuFor, setSnoozeMenuFor] = useState<string | null>(null);
-  /** Which thread's hand-off provider menu is open (one at a time). */
-  const [forkMenuFor, setForkMenuFor] = useState<string | null>(null);
   useEscapeClose(snoozeMenuFor != null, () => setSnoozeMenuFor(null));
-  useEscapeClose(forkMenuFor != null, () => setForkMenuFor(null));
   /** Project id whose thread-create menu (plain vs worktree) is open. */
   const [createMenuFor, setCreateMenuFor] = useState<string | null>(null);
   useEscapeClose(createMenuFor != null, () => setCreateMenuFor(null));
@@ -2866,8 +2807,6 @@ export const Sidebar = memo(function Sidebar({
                                 onFork={onFork}
                                 snoozeMenuOpen={snoozeMenuFor === thread.id}
                                 onToggleSnoozeMenu={setSnoozeMenuFor}
-                                forkMenuOpen={forkMenuFor === thread.id}
-                                onToggleForkMenu={setForkMenuFor}
                                 nested={
                                   thread.handoffFrom != null &&
                                   attentionIdSet.has(thread.handoffFrom)
@@ -2915,8 +2854,8 @@ export const Sidebar = memo(function Sidebar({
                                   isSettled={effectiveSettled(thread, settleOpts)}
                                   onSetSettled={onSetSettled}
                                   onFork={onFork}
-                                  forkMenuOpen={forkMenuFor === thread.id}
-                                  onToggleForkMenu={setForkMenuFor}
+                                  snoozeMenuOpen={snoozeMenuFor === thread.id}
+                                  onToggleSnoozeMenu={setSnoozeMenuFor}
                                   nested={
                                     thread.handoffFrom != null &&
                                     archivedIdSet.has(thread.handoffFrom)
