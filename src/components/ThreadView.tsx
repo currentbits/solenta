@@ -97,6 +97,7 @@ import {
   isThreadDone,
   sameThreadRuns,
   truncateStepValue,
+  useDivergenceCardEnabled,
   type ComparePeer,
   type DivergenceField,
 } from "../divergence";
@@ -2677,6 +2678,7 @@ function DivergenceCard({
   const [peekError, setPeekError] = useState<string | null>(null);
   const [peeking, setPeeking] = useState(false);
   const [open, setOpen] = useState(true);
+  const enabled = useDivergenceCardEnabled();
 
   useEffect(() => {
     if (targets.length === 0) {
@@ -2692,7 +2694,7 @@ function DivergenceCard({
   const runId = selected.startsWith("run:") ? selected.slice(4) : null;
 
   useEffect(() => {
-    if (!peerId || !onPeekThread) {
+    if (!enabled || !peerId || !onPeekThread) {
       setPeeked(null);
       setPeekError(null);
       setPeeking(false);
@@ -2716,9 +2718,9 @@ function DivergenceCard({
     return () => {
       live = false;
     };
-  }, [peerId, onPeekThread]);
+  }, [enabled, peerId, onPeekThread]);
 
-  if (targets.length === 0) return null;
+  if (!enabled || targets.length === 0) return null;
 
   const leftLabel = peerId
     ? comparePeerLabel(detail.thread, peers, providers)

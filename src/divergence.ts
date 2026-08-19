@@ -1,3 +1,4 @@
+import { useSyncExternalStore } from "react";
 import { completedRunIds } from "./reviewBar";
 import type {
   ChatMessage,
@@ -274,4 +275,46 @@ export function toComparePeer(
 export function truncateStepValue(value: string, max = 160): string {
   if (value.length <= max) return value;
   return `${value.slice(0, Math.max(0, max - 1))}…`;
+}
+
+/**
+ * Whether the thread-header divergence card is shown at all, toggled from
+ * the Environment tab. Module state is the source of truth (so the toggle
+ * works even when localStorage does not persist); localStorage carries it
+ * across launches. Default on.
+ */
+const DIVERGENCE_CARD_KEY = "coder.divergenceCard";
+let divergenceCardOn: boolean | null = null;
+const divergenceCardListeners = new Set<() => void>();
+
+export function getDivergenceCardEnabled(): boolean {
+  if (divergenceCardOn == null) {
+    try {
+      divergenceCardOn = window.localStorage.getItem(DIVERGENCE_CARD_KEY) !== "off";
+    } catch {
+      divergenceCardOn = true;
+    }
+  }
+  return divergenceCardOn;
+}
+
+export function setDivergenceCardEnabled(on: boolean): void {
+  divergenceCardOn = on;
+  try {
+    window.localStorage.setItem(DIVERGENCE_CARD_KEY, on ? "on" : "off");
+  } catch {
+    // Private mode / quota: the toggle just stops persisting.
+  }
+  for (const l of divergenceCardListeners) l();
+}
+
+export function useDivergenceCardEnabled(): boolean {
+  return useSyncExternalStore(
+    (onChange) => {
+      divergenceCardListeners.add(onChange);
+      return () => divergenceCardListeners.delete(onChange);
+    },
+    getDivergenceCardEnabled,
+    () => true,
+  );
 }

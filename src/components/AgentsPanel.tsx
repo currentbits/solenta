@@ -58,6 +58,10 @@ import {
   groupHypotheses,
 } from "../hypothesisLedger";
 import { useEscapeClose } from "../useEscapeClose";
+import {
+  setDivergenceCardEnabled,
+  useDivergenceCardEnabled,
+} from "../divergence";
 import styles from "./AgentsPanel.module.css";
 
 type PanelTab = "agents" | "git" | "memory" | "skills" | "pulse";
@@ -590,6 +594,31 @@ function ChangesCard({
           View changes
         </button>
       </div>
+    </section>
+  );
+}
+
+function DivergenceCardToggle() {
+  const enabled = useDivergenceCardEnabled();
+  return (
+    <section className={styles.gitCard} data-divergence-pref="">
+      <div className={styles.gitCardLabel}>
+        <svg {...LABEL_ICON_PROPS} className={styles.labelIcon}>
+          <path d="M2.5 8h2c4.5 0 3.5-4.5 9-4.5" />
+          <path d="M4.5 8c4.5 0 3.5 4.5 9 4.5" />
+          <path d="M11.5 1.5l2 2-2 2" />
+          <path d="M11.5 10.5l2 2-2 2" />
+        </svg>
+        Divergence
+      </div>
+      <label className={styles.checkboxLabel}>
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={(e) => setDivergenceCardEnabled(e.target.checked)}
+        />
+        Show divergence compare on threads
+      </label>
     </section>
   );
 }
@@ -1886,6 +1915,7 @@ export function GitTab({
           hasThread={Boolean(thread)}
           onViewChanges={onViewChanges}
         />
+        <DivergenceCardToggle />
         {project?.remoteHost ? (
           <section className={styles.gitCard} data-remote-unavailable="">
             <div className={styles.gitCardLabel}>
