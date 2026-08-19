@@ -20,6 +20,7 @@ import type {
   GitRepoInfo,
   GitPullResult,
   FetchIssueResult,
+  CreateIssueResult,
   LocalServerInfo,
   MemoryCitation,
   MemoryEntryInfo,
@@ -51,6 +52,7 @@ import type {
   UsageReport,
   VerifyResult,
   WorkflowTemplateInfo,
+  WorkSuggestionStatus,
 } from "./shared/ipc";
 import { resolveCoderApi } from "./coderApi";
 import { isWebMode } from "./shared/wire";
@@ -195,7 +197,7 @@ export interface UseCoderResult {
    */
   forkThread: (
     threadId: string,
-    opts?: { provider?: string; model?: string | null },
+    opts?: { provider?: string; model?: string | null; worktree?: boolean },
   ) => Promise<ThreadInfo | null>;
   /**
    * Start a run, or queue the prompt when that thread is already working:
@@ -302,6 +304,25 @@ export interface UseCoderResult {
   renameThread: (threadId: string, title: string) => Promise<void>;
   /** Save scratch notes on a thread (header editor, issue #194). */
   setNotes: (threadId: string, notes: string) => Promise<void>;
+  /**
+   * Resolve a suggested-work chip (issue #550). Updates the thread from the
+   * returned ThreadInfo. status is never "open" — chips do not reopen.
+   */
+  resolveSuggestion: (
+    threadId: string,
+    suggestionId: string,
+    status: Exclude<WorkSuggestionStatus, "open">,
+    extra?: { startedThreadId?: string; issueNumber?: number },
+  ) => Promise<void>;
+  /**
+   * File a GitHub issue (`gh issue create`). Failures stay in-band; no
+   * thread-state merge.
+   */
+  createIssue: (
+    projectPath: string,
+    title: string,
+    body: string,
+  ) => Promise<CreateIssueResult>;
   /** Record the one-tap felt estimate (issue #401); savedMs null = declined. */
   setFeltEstimate: (
     threadId: string,
@@ -1118,19 +1139,23 @@ export function useCoder(): UseCoderResult {
   const forkThread = useCallback(
     async (
       threadId: string,
-      opts?: { provider?: string; model?: string | null },
+      opts?: { provider?: string; model?: string | null; worktree?: boolean },
     ) => {
       try {
         const input: {
           threadId: string;
           provider?: string;
           model?: string | null;
+          worktree?: boolean;
         } = { threadId };
         if (opts && Object.prototype.hasOwnProperty.call(opts, "provider")) {
           input.provider = opts.provider;
         }
         if (opts && Object.prototype.hasOwnProperty.call(opts, "model")) {
           input.model = opts.model;
+        }
+        if (opts && Object.prototype.hasOwnProperty.call(opts, "worktree")) {
+          input.worktree = opts.worktree;
         }
         const t = await api.threads.fork(input);
         // Same selection path as createThread: prepend row, select new id.
@@ -1631,6 +1656,34 @@ export function useCoder(): UseCoderResult {
     async (threadId: string, notes: string) => {
       try {
         const thread = await api.threads.setNotes({ threadId, notes });
+        applyThreads(
+          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
+        );
+        setDetail((prev) =>
+          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
+        );
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+      }
+    },
+    [api, applyThreads],
+  );
+
+  const resolveSuggestion = useCallback(
+    async (
+      threadId: string,
+      suggestionId: string,
+      status: Exclude<WorkSuggestionStatus, "open">,
+      extra?: { startedThreadId?: string; issueNumber?: number },
+    ) => {
+      try {
+        const thread = await api.threads.resolveSuggestion({
+          threadId,
+          suggestionId,
+          status,
+          ...extra,
+        });
         applyThreads(
           threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
         );
@@ -2236,6 +2289,13 @@ export function useCoder(): UseCoderResult {
     [api],
   );
 
+  const createIssue = useCallback(
+    async (projectPath: string, title: string, body: string) => {
+      return api.issues.create({ projectPath, title, body });
+    },
+    [api],
+  );
+
   const fetchIssue = useCallback(
     async (projectPath: string, ref: string) => {
       return api.issues.fetch({ projectPath, ref });
@@ -2641,6 +2701,7 @@ export function useCoder(): UseCoderResult {
     resumeQuotaWait,
     renameThread,
     setNotes,
+    resolveSuggestion,
     setFeltEstimate,
     startSpec,
     stopSpec,
@@ -2680,6 +2741,7 @@ export function useCoder(): UseCoderResult {
     listPrs,
     listIssues,
     setIssuePlanStatus,
+    createIssue,
     fetchIssue,
     listActivity,
     listUsageByDay,

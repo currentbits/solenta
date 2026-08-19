@@ -444,12 +444,62 @@ async function reopenIssue(projectPath, number, opts) {
   return { ok: true };
 }
 
+/**
+ * File an issue via `gh issue create` and label it plan:todo (issue #550
+ * "File on planboard" chip). Never throws; failures come back as
+ * `{ ok: false, reason }`. The label ride-along is best-effort: creation
+ * already succeeded if gh printed an issue URL.
+ *
+ * No `--label` on create — gh hard-fails when the label does not exist.
+ * Modeled on reopenIssue's create-then-label flow.
+ *
+ * @param {string} projectPath
+ * @param {{ title?: unknown, body?: unknown }} [input]
+ * @returns {Promise<{ ok: true, number: number, url: string } | { ok: false, reason: string }>}
+ */
+async function createIssue(projectPath, input) {
+  const cwd = String(projectPath || "");
+  const title = input && input.title != null ? String(input.title) : "";
+  const body = input && input.body != null ? String(input.body) : "";
+  if (!cwd) return { ok: false, reason: "not a GitHub repo" };
+
+  const remote = gitTry(cwd, ["remote", "get-url", "origin"]);
+  if (!remote.ok || !isGitHubRemote(String(remote.stdout || "").trim())) {
+    return { ok: false, reason: "not a GitHub repo" };
+  }
+
+  const created = await ghTryAsync(
+    cwd,
+    ["issue", "create", "--title", title, "--body", body],
+    GH_USER,
+  );
+  const errText = created.stderr || created.combined || created.stdout || "";
+  if (!created.ok) {
+    if (created.enoent) return { ok: false, reason: "gh missing" };
+    if (isGhAuthFailure(errText)) return { ok: false, reason: "auth" };
+    return { ok: false, reason: tailErr(errText, "gh issue create failed") };
+  }
+
+  const stdout = String(created.stdout || "").trim();
+  const urlMatch = stdout.match(/https?:\/\/\S+/);
+  const url = urlMatch ? urlMatch[0].replace(/[)\].,;]+$/, "") : stdout;
+  const numMatch = url.match(/\/(\d+)\s*$/) || url.match(/\/(\d+)/);
+  const number = numMatch ? Number(numMatch[1]) : NaN;
+  if (!Number.isInteger(number) || number <= 0) {
+    return { ok: false, reason: tailErr(stdout, "gh issue create failed") };
+  }
+
+  await setPlanStatus(cwd, number, "todo");
+  return { ok: true, number, url };
+}
+
 module.exports = {
   parseIssueRef,
   fetchIssue,
   listIssues,
   setPlanStatus,
   reopenIssue,
+  createIssue,
   parseIssueListJson,
   ownerRepoFromRemote,
 };

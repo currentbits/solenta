@@ -25,6 +25,7 @@ import type {
   RunStatInfo,
   DevServerState,
   DiffResult,
+  CreateIssueResult,
   FetchIssueResult,
   GitStatus,
   GitSyncInfo,
@@ -165,6 +166,8 @@ export interface FakeOptions {
   fail?: Record<string, Error>;
   /** Override issues.fetch result (default: a successful fixture). */
   issueFetch?: FetchIssueResult;
+  /** Override issues.create result (default: a successful fixture). */
+  issueCreate?: CreateIssueResult;
   /** Override attachments.saveImage result (default: { attachment: null }). */
   saveImage?: (input: unknown) => { attachment: AttachmentInfo | null };
   /** Override attachments.fromPaths result (default: { attachments: [] }). */
@@ -1069,6 +1072,39 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         threads = threads.map((t) => (t.id === i.threadId ? next : t));
         return Promise.resolve(next);
       },
+      resolveSuggestion: (input: unknown) => {
+        const i = input as {
+          threadId: string;
+          suggestionId: string;
+          status: "started" | "filed" | "dismissed";
+          startedThreadId?: string;
+          issueNumber?: number;
+        };
+        calls.push({ channel: "threads.resolveSuggestion", args: [input] });
+        const existing = threads.find((t) => t.id === i.threadId);
+        if (!existing) {
+          return Promise.reject(new Error(`Unknown thread: ${i.threadId}`));
+        }
+        const next: ThreadInfo = {
+          ...existing,
+          suggestions: (existing.suggestions ?? []).map((s) =>
+            s.id === i.suggestionId
+              ? {
+                  ...s,
+                  status: i.status,
+                  ...(i.startedThreadId
+                    ? { startedThreadId: i.startedThreadId }
+                    : {}),
+                  ...(i.issueNumber != null
+                    ? { issueNumber: i.issueNumber }
+                    : {}),
+                }
+              : s,
+          ),
+        };
+        threads = threads.map((t) => (t.id === i.threadId ? next : t));
+        return Promise.resolve(next);
+      },
       /** Honest felt estimate: saved shape or decline, never bumps updatedAt. */
       setFeltEstimate: (input: unknown) => {
         const i = input as { threadId: string; savedMs: number | null };
@@ -1120,6 +1156,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           threadId: string;
           provider?: string;
           model?: string | null;
+          worktree?: boolean;
         };
         calls.push({ channel: "threads.fork", args: [input] });
         const err = fail["threads.fork"];
@@ -1233,6 +1270,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           prUrl: null,
           prState: null,
           worktreePath: null,
+          ...(i.worktree === true ? { pendingWorktree: true } : {}),
         });
         threads = [forked, ...threads];
         details[forked.id] = detail({ thread: forked, messages: [] });
@@ -1557,6 +1595,16 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
                 url: "https://github.com/owner/repo/issues/12",
               },
             } as FetchIssueResult),
+        ),
+      create: (input: unknown) =>
+        rec(
+          "issues.create",
+          [input],
+          opts.issueCreate ?? {
+            ok: true as const,
+            number: 1234,
+            url: "https://github.com/dev/fixture/issues/1234",
+          },
         ),
     },
     servers: {

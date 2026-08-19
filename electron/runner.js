@@ -1767,6 +1767,17 @@ function createRunner(opts) {
   }
 
   /**
+   * Re-push the open thread's detail without waiting for the next stream
+   * tick. Used by work_suggest so a chip appears as soon as the MCP tool
+   * writes (issue #550). Keeps the last workflow so a mid-run refresh
+   * does not blank the progress pane.
+   * @param {string} threadId
+   */
+  function refreshDetail(threadId) {
+    pushDetail(threadId, lastWorkflowByThread.get(threadId) || null);
+  }
+
+  /**
    * Persist the agent's todo list as the thread's plan (Planboard steps).
    * No-op when it parses to nothing or hasn't changed — this rides every
    * threads:changed push.
@@ -5022,6 +5033,7 @@ function createRunner(opts) {
           (projectForGate && projectForGate.path) ||
           null,
       ) +
+      services.suggestedWorkNoteFor() +
       services.subagentPoolNoteFor(
         store.getSettings && store.getSettings().subagentPool,
       ) +
@@ -5457,6 +5469,7 @@ function createRunner(opts) {
     deliverNotice,
     checkStalls,
     drainQueued,
+    refreshDetail,
   };
 }
 

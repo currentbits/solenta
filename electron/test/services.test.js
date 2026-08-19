@@ -1219,3 +1219,301 @@ describe("forkWorkerThread", () => {
   });
 });
 
+describe("recordSuggestion", () => {
+  let tmpDir;
+  let store;
+  let threadId;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-suggest-"));
+    store = new Store(path.join(tmpDir, "store.json"));
+    store.setProjects([
+      { id: "p1", name: "Alpha", path: tmpDir, createdAt: 1, updatedAt: 1 },
+    ]);
+    const thread = services.createThread(store, {
+      projectId: "p1",
+      title: "Source",
+    });
+    threadId = thread.id;
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("appends a trimmed open entry", () => {
+    const entry = services.recordSuggestion(store, {
+      threadId,
+      title: "  fix the flaky test  ",
+      prompt: "  rewrite the race in runner.js  ",
+    });
+    assert.equal(entry.title, "fix the flaky test");
+    assert.equal(entry.prompt, "rewrite the race in runner.js");
+    assert.equal(entry.status, "open");
+    assert.ok(typeof entry.id === "string" && entry.id.length > 0);
+    assert.ok(typeof entry.at === "number" && entry.at > 0);
+    const thread = store.getThread(threadId);
+    assert.equal(thread.suggestions.length, 1);
+    assert.deepEqual(thread.suggestions[0], entry);
+  });
+
+  it("truncates title and prompt to the contract caps", () => {
+    const entry = services.recordSuggestion(store, {
+      threadId,
+      title: "t".repeat(services.SUGGESTION_TITLE_MAX + 20),
+      prompt: "p".repeat(services.SUGGESTION_PROMPT_MAX + 20),
+    });
+    assert.equal(entry.title.length, services.SUGGESTION_TITLE_MAX);
+    assert.equal(entry.prompt.length, services.SUGGESTION_PROMPT_MAX);
+  });
+
+  it("caps the list at 20 and drops the oldest", () => {
+    for (let i = 0; i < services.SUGGESTIONS_MAX + 3; i++) {
+      services.recordSuggestion(store, {
+        threadId,
+        title: `chip-${i}`,
+        prompt: `do ${i}`,
+      });
+    }
+    const suggestions = store.getThread(threadId).suggestions;
+    assert.equal(suggestions.length, services.SUGGESTIONS_MAX);
+    assert.equal(suggestions[0].title, "chip-3");
+    assert.equal(
+      suggestions[suggestions.length - 1].title,
+      `chip-${services.SUGGESTIONS_MAX + 2}`,
+    );
+  });
+
+  it("dedupes an open chip by lower-cased title", () => {
+    const first = services.recordSuggestion(store, {
+      threadId,
+      title: "Fix the flaky test",
+      prompt: "first prompt",
+    });
+    const again = services.recordSuggestion(store, {
+      threadId,
+      title: "fix the flaky test",
+      prompt: "different prompt",
+    });
+    assert.equal(again.id, first.id);
+    assert.equal(again.prompt, "first prompt");
+    assert.equal(store.getThread(threadId).suggestions.length, 1);
+  });
+
+  it("rejects an unknown thread and a blank title or prompt", () => {
+    assert.throws(
+      () =>
+        services.recordSuggestion(store, {
+          threadId: "ghost",
+          title: "x",
+          prompt: "y",
+        }),
+      /Unknown thread: ghost/,
+    );
+    assert.throws(
+      () =>
+        services.recordSuggestion(store, {
+          threadId,
+          title: "   ",
+          prompt: "y",
+        }),
+      /title must not be empty/,
+    );
+    assert.throws(
+      () =>
+        services.recordSuggestion(store, {
+          threadId,
+          title: "x",
+          prompt: "   ",
+        }),
+      /prompt must not be empty/,
+    );
+  });
+});
+
+describe("resolveSuggestion", () => {
+  let tmpDir;
+  let store;
+  let threadId;
+  let suggestionId;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-resolve-sug-"));
+    store = new Store(path.join(tmpDir, "store.json"));
+    store.setProjects([
+      { id: "p1", name: "Alpha", path: tmpDir, createdAt: 1, updatedAt: 1 },
+    ]);
+    const thread = services.createThread(store, {
+      projectId: "p1",
+      title: "Source",
+    });
+    threadId = thread.id;
+    const entry = services.recordSuggestion(store, {
+      threadId,
+      title: "chip",
+      prompt: "do the thing",
+    });
+    suggestionId = entry.id;
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("stamps started with startedThreadId", () => {
+    const updated = services.resolveSuggestion(store, {
+      threadId,
+      suggestionId,
+      status: "started",
+      startedThreadId: "fork-9",
+    });
+    const chip = updated.suggestions[0];
+    assert.equal(chip.status, "started");
+    assert.equal(chip.startedThreadId, "fork-9");
+  });
+
+  it("stamps filed with issueNumber", () => {
+    const updated = services.resolveSuggestion(store, {
+      threadId,
+      suggestionId,
+      status: "filed",
+      issueNumber: 550,
+    });
+    const chip = updated.suggestions[0];
+    assert.equal(chip.status, "filed");
+    assert.equal(chip.issueNumber, 550);
+  });
+
+  it("dismisses without extra stamps", () => {
+    const updated = services.resolveSuggestion(store, {
+      threadId,
+      suggestionId,
+      status: "dismissed",
+    });
+    const chip = updated.suggestions[0];
+    assert.equal(chip.status, "dismissed");
+    assert.equal(chip.startedThreadId, undefined);
+    assert.equal(chip.issueNumber, undefined);
+  });
+
+  it("rejects open, an unknown id, and an unknown thread", () => {
+    assert.throws(
+      () =>
+        services.resolveSuggestion(store, {
+          threadId,
+          suggestionId,
+          status: "open",
+        }),
+      /started, filed, dismissed/,
+    );
+    assert.throws(
+      () =>
+        services.resolveSuggestion(store, {
+          threadId,
+          suggestionId: "nope",
+          status: "dismissed",
+        }),
+      /Unknown suggestion: nope/,
+    );
+    assert.throws(
+      () =>
+        services.resolveSuggestion(store, {
+          threadId: "ghost",
+          suggestionId,
+          status: "dismissed",
+        }),
+      /Unknown thread: ghost/,
+    );
+  });
+});
+
+describe("forkThread worktree", () => {
+  let tmpDir;
+  let store;
+  let repo;
+  let project;
+
+  beforeEach(async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-fork-wt-"));
+    store = new Store(path.join(tmpDir, "store.json"));
+    repo = path.join(tmpDir, "repo");
+    fs.mkdirSync(repo);
+    git(repo, ["init"]);
+    project = await services.addProject(store, repo);
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("sets pendingWorktree when worktree is true and the project can host one", () => {
+    const source = services.createThread(store, {
+      projectId: project.id,
+      title: "Lead",
+    });
+    const fork = services.forkThread(store, {
+      threadId: source.id,
+      worktree: true,
+    });
+    assert.equal(store.getThread(fork.id).pendingWorktree, true);
+    assert.equal(
+      services.forkThread(store, { threadId: source.id }).pendingWorktree,
+      undefined,
+    );
+  });
+
+  it("does not arm a worktree on an Ask thread or a project that cannot host one", () => {
+    const source = services.createThread(store, {
+      projectId: project.id,
+      title: "Lead",
+    });
+    services.startAsk(store, { threadId: source.id });
+    const askFork = services.forkThread(store, {
+      threadId: source.id,
+      worktree: true,
+    });
+    assert.equal(askFork.ask, true);
+    assert.notEqual(store.getThread(askFork.id).pendingWorktree, true);
+
+    const other = services.createThread(store, {
+      projectId: project.id,
+      title: "Other",
+    });
+    fs.rmSync(path.join(repo, ".git"), { recursive: true, force: true });
+    const nonRepo = services.forkThread(store, {
+      threadId: other.id,
+      worktree: true,
+    });
+    assert.equal(store.getThread(nonRepo.id).pendingWorktree, undefined);
+  });
+});
+
+describe("suggestedWorkNoteFor", () => {
+  const {
+    registerMcpServer,
+    unregisterMcpServer,
+  } = require("../memory-sup.js");
+
+  afterEach(() => {
+    unregisterMcpServer("coder-threads");
+  });
+
+  it("returns empty unless coder-threads is registered", () => {
+    assert.equal(services.suggestedWorkNoteFor(), "");
+    assert.equal(
+      registerMcpServer({
+        name: "coder-threads",
+        port: 1234,
+        token: "tok",
+        userDataPath: fs.mkdtempSync(path.join(os.tmpdir(), "suggest-note-")),
+      }),
+      true,
+    );
+    const note = services.suggestedWorkNoteFor();
+    assert.match(note, /work_suggest/);
+    assert.match(note, /OUT OF SCOPE/);
+    unregisterMcpServer("coder-threads");
+    assert.equal(services.suggestedWorkNoteFor(), "");
+  });
+});
+

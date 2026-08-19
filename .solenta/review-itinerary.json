@@ -1,35 +1,32 @@
 {
   "version": 1,
-  "readOrder": ["critical", "impl", "docs"],
+  "readOrder": ["critical", "tests", "impl"],
   "chunks": [
     {
-      "area": "critical — site/style.css (full rewrite)",
-      "rationale": "Read first and top-to-bottom: every visual decision lives here, and docs.html/changelog.html consume it without their own changes, so a regression here breaks three pages. Check the docs section (docs-layout/docs-nav/docs-content/doc-table/callout/lede) against the class list both pages actually use, and confirm the reveal block keeps the no-JS-fully-visible contract.",
+      "area": "src/App.tsx handleStartSuggestion",
+      "rationale": "The only production behavior change this turn: resolve the chip as started immediately after a successful fork, then startRun. A startRun throw used to leave the chip open so a retry forked a second idle thread.",
       "risks": [
-        "@property --mx/--my and animation-timeline are Chromium/Safari-17.4+ features; all uses are wrapped so unsupported engines get the static design, but Firefox deserves a manual look (no scroll-driven shot entrance, progress bar stays scaleX(0) — both intended fallbacks).",
-        "body::after grain is a fixed full-viewport layer with an SVG turbulence fill — cheap in real browsers, but it defeated chromium-headless-shell's rasterizer in tall-window captures (blank tiles); verified with real Brave headless instead.",
-        ".cell-f changed to span 6; if a future cell reuses cell-f expecting span 3 it will go full-width."
+        "If resolveSuggestion fails after fork, the user still has an idle fork (same as before) and the chip stays open — retry still forks again. That path is rare (unknown thread/id) and not worse than the previous startRun-first order."
       ]
     },
     {
-      "area": "impl — site/index.html + site/main.js",
-      "rationale": "Second: shows how the CSS is consumed. New markup: .progress bar, .hero-bg aurora/grid, .hero-pill, .grad headline spans, .marquee provider strip, .glow hooks on cards, .pdot/.col-dot status dots, .final-cta. main.js adds pointer glow (--mx/--my), nav.scrolled, sibling reveal stagger; reveal/scroll-spy logic unchanged.",
-      "risks": [
-        "Marquee content is duplicated 4x and aria-hidden; screen readers skip it by design since providers are named in the hero copy.",
-        "Pointer glow listeners attach to every .cell/.glow at load — fine at this page size; a much larger bento would want delegation.",
-        "Copy changes are minimal but real: provider list moved out of the hero sub into the marquee, and a final CTA was added after the install grid."
-      ]
+      "area": "test/suggestedWorkChips.test.tsx",
+      "rationale": "App+useCoder wiring for the three chip actions. Pins fork(worktree:true) → resolve(started) → runs.start order, startRun-fail still resolves, file create+resolve, in-band create failure leaves the chip open, dismiss starts nothing.",
+      "risks": []
     },
     {
-      "area": "docs — site/docs.html, site/changelog.html",
-      "rationale": "Last: only cache-bust bumps (style.css v4, main.js v3). No markup changes; verify by skimming the diff, then judge them from the rendered pages.",
-      "risks": [
-        "None beyond the shared-stylesheet coupling noted above."
-      ]
+      "area": "test/threadView.test.tsx empty-transcript chip",
+      "rationale": "Pins the strip after the empty-inline prompt so chips are not trapped in a message-only branch.",
+      "risks": []
+    },
+    {
+      "area": "test/support/fakeCoder.ts",
+      "rationale": "fork honors worktree→pendingWorktree; issues.create is overridable so the file-failure test can return {ok:false} instead of throwing (production never throws).",
+      "risks": []
     }
   ],
   "risks": [
-    "Visual-only change verified by screenshot at 1440px and 390px plus docs/changelog captures; no automated tests exist for site/.",
-    "Firefox/Safari not actually launched — scroll-driven animations degrade to static by design, but that claim rests on the @supports guards, not a live run."
+    "The rest of #550 (MCP work_suggest, persist, IPC, strip UI) was already merged on this branch and is not in this diff. Review that stack via the earlier itinerary if this is the first read of the feature.",
+    "forkThread still selects the new thread; the source run continues unattended. That matches 'Start a thread' and 'current run is never interrupted'."
   ]
 }

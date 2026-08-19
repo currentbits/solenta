@@ -132,6 +132,8 @@ const coder = {
     setQuotaWaitAutoResume: (input) =>
       invoke("threads:setQuotaWaitAutoResume", input),
     setNotes: (input) => invoke("threads:setNotes", input),
+    resolveSuggestion: (input) =>
+      invoke("threads:resolveSuggestion", input),
     setFeltEstimate: (input) => invoke("threads:setFeltEstimate", input),
     startSpec: (input) => invoke("threads:startSpec", input),
     stopSpec: (input) => invoke("threads:stopSpec", input),
@@ -212,6 +214,7 @@ const coder = {
     fetch: (input) => invoke("issues:fetch", input),
     list: (projectPath) => invoke("issues:list", projectPath),
     setPlanStatus: (input) => invoke("issues:setPlanStatus", input),
+    create: (input) => invoke("issues:create", input),
   },
   files: {
     list: (input) => invoke("files:list", input),

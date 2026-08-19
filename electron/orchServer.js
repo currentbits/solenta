@@ -10,6 +10,7 @@ const { registerMcpServer, unregisterMcpServer } = require("./memory-sup.js");
 const {
   forkWorkerThread,
   recordHypothesis,
+  recordSuggestion,
   submitSpec,
   recordTeachReview,
   addCrewTasks,
@@ -31,6 +32,8 @@ const INSTRUCTIONS =
   "of your prompt; pass them, never guess an id from a title. " +
   "Keep the hypothesis ledger current as you work: call hypothesis_record for each " +
   "distinct approach as soon as you know how it turned out. " +
+  "When you notice work worth doing that is out of scope, call work_suggest with a " +
+  "short title and a self-contained prompt; do not start the work yourself. " +
   "When a thread is in spec mode the prompt carries a [Spec mode] note; write only " +
   "that stage's artifact and call spec_submit. " +
   "When a thread is in teach mode the prompt carries a [Teach mode] note; leave " +
@@ -375,6 +378,31 @@ function createToolHandlers(deps) {
     return { recorded: true, total };
   }
 
+  async function work_suggest(args) {
+    const thread = store.getThread(args.threadId);
+    if (!thread) {
+      throw new Error(`Unknown thread: ${args.threadId}`);
+    }
+    assertSameProject(thread, args.projectId);
+    recordSuggestion(store, {
+      threadId: args.threadId,
+      title: args.title,
+      prompt: args.prompt,
+    });
+    if (typeof runner.refreshDetail === "function") {
+      try {
+        runner.refreshDetail(args.threadId);
+      } catch {
+        // A missed chip push must not fail the tool.
+      }
+    }
+    const after = store.getThread(args.threadId);
+    const total = Array.isArray(after && after.suggestions)
+      ? after.suggestions.length
+      : 0;
+    return { recorded: true, total };
+  }
+
   async function spec_submit(args) {
     const thread = store.getThread(args.threadId);
     if (!thread) {
@@ -497,6 +525,7 @@ function createToolHandlers(deps) {
     thread_send,
     thread_status,
     hypothesis_record,
+    work_suggest,
     spec_submit,
     teach_review,
     task_add,
@@ -607,6 +636,25 @@ function buildMcpServer(sdk, handlers) {
       },
     },
     async (args) => json(await handlers.hypothesis_record(args)),
+  );
+
+  server.registerTool(
+    "work_suggest",
+    {
+      description:
+        "Offer out-of-scope work you noticed as a one-click chip on your own thread. " +
+        "title = short chip label; prompt = SELF-CONTAINED prompt for a fresh agent with " +
+        "none of your context. Do not start the work yourself. " +
+        "projectId is YOUR OWN project id (stated at the end of your prompt); " +
+        "the thread must belong to it.",
+      inputSchema: {
+        threadId: z.string().min(1),
+        projectId: z.string().min(1),
+        title: z.string().min(1),
+        prompt: z.string().min(1),
+      },
+    },
+    async (args) => json(await handlers.work_suggest(args)),
   );
 
   server.registerTool(

@@ -27,6 +27,7 @@ import type {
   ThreadDetail,
   ThreadInfo,
   WorkLogItem,
+  WorkSuggestion,
   WorkflowTemplateInfo,
 } from "../src/shared/ipc";
 
@@ -114,6 +115,17 @@ function detail(over: Partial<ThreadDetail> = {}): ThreadDetail {
   };
 }
 
+function suggestion(
+  over: Partial<WorkSuggestion> & Pick<WorkSuggestion, "id" | "title">,
+): WorkSuggestion {
+  return {
+    prompt: over.prompt ?? "Do the thing in its own thread.",
+    status: over.status ?? "open",
+    at: over.at ?? FRESH,
+    ...over,
+  };
+}
+
 const noopAsync = async () => {};
 const noopSave = async () =>
   ({ id: "wf", name: "standard", phases: [] }) as WorkflowTemplateInfo;
@@ -143,6 +155,9 @@ function view(props: {
     symbols: Array<{ name: string; path: string }>;
     acceptedHunks: string[];
   }>;
+  onStartSuggestion?: (s: WorkSuggestion) => void | Promise<void>;
+  onFileSuggestion?: (s: WorkSuggestion) => void | Promise<void>;
+  onDismissSuggestion?: (s: WorkSuggestion) => void | Promise<void>;
 }) {
   return (
     <ThreadView
@@ -183,6 +198,9 @@ function view(props: {
       onDropAttachmentFiles={props.onDropAttachmentFiles}
       onResolvePaths={props.onResolvePaths}
       onOpenWorkspacePath={props.onOpenWorkspacePath}
+      onStartSuggestion={props.onStartSuggestion}
+      onFileSuggestion={props.onFileSuggestion}
+      onDismissSuggestion={props.onDismissSuggestion}
     />
   );
 }
@@ -1418,5 +1436,196 @@ describe("ThreadView Changes panel commit box (issue #555)", () => {
       /min-height\s*:\s*0/,
       ".changesSplit must be allowed to shrink inside the pane",
     );
+  });
+});
+
+const twoOpenOneDismissed: WorkSuggestion[] = [
+  suggestion({ id: "s-open-1", title: "Fix flaky reconnect test" }),
+  suggestion({ id: "s-open-2", title: "Tighten cookie flags" }),
+  suggestion({
+    id: "s-gone",
+    title: "Already dismissed",
+    status: "dismissed",
+  }),
+];
+
+describe("ThreadView suggested-work chips (issue #550)", () => {
+  it("renders only open suggestions under data-suggested-work", () => {
+    const html = render({
+      detail: detail({
+        thread: thread({ suggestions: twoOpenOneDismissed }),
+      }),
+    });
+    assert.ok(
+      html.includes("data-suggested-work"),
+      "open chips render the strip",
+    );
+    assert.ok(html.includes('data-suggestion-id="s-open-1"'));
+    assert.ok(html.includes('data-suggestion-id="s-open-2"'));
+    assert.ok(
+      !html.includes('data-suggestion-id="s-gone"'),
+      "dismissed chips stay hidden",
+    );
+    assert.equal(
+      (html.match(/data-suggestion-id=/g) || []).length,
+      2,
+      "exactly two rows",
+    );
+    assert.ok(html.includes("Fix flaky reconnect test"));
+    assert.ok(html.includes("Tighten cookie flags"));
+    assert.ok(!html.includes("Already dismissed"));
+    assertNoNestedInteractive(html);
+  });
+
+  it("still renders open chips when the transcript is empty", () => {
+    const html = render({
+      detail: detail({
+        thread: thread({
+          suggestions: [
+            suggestion({ id: "s-empty", title: "Empty-transcript chip" }),
+          ],
+        }),
+        messages: [],
+        workLog: [],
+      }),
+    });
+    assert.ok(
+      html.includes("data-suggested-work"),
+      "empty transcript still shows the strip (not a message-only branch)",
+    );
+    assert.ok(html.includes('data-suggestion-id="s-empty"'));
+    assert.ok(html.includes("Empty-transcript chip"));
+    assert.ok(
+      html.includes("Start by describing what to build"),
+      "empty prompt stays visible next to the chips",
+    );
+  });
+
+  it("renders nothing when there are no suggestions", () => {
+    const html = render({ detail: detail({ thread: thread() }) });
+    assert.ok(
+      !html.includes("data-suggested-work"),
+      "absent suggestions hide the strip",
+    );
+  });
+
+  it("renders nothing when every suggestion is resolved", () => {
+    const html = render({
+      detail: detail({
+        thread: thread({
+          suggestions: [
+            suggestion({
+              id: "s-started",
+              title: "Started",
+              status: "started",
+            }),
+            suggestion({
+              id: "s-filed",
+              title: "Filed",
+              status: "filed",
+            }),
+            suggestion({
+              id: "s-dismissed",
+              title: "Dismissed",
+              status: "dismissed",
+            }),
+          ],
+        }),
+      }),
+    });
+    assert.ok(
+      !html.includes("data-suggested-work"),
+      "resolved chips hide the strip",
+    );
+  });
+});
+
+describe("ThreadView suggested-work chip actions (issue #550)", () => {
+  const openChip = suggestion({
+    id: "s-act",
+    title: "Fix flaky reconnect test",
+    prompt: "Pin the handshake before asserting ready.",
+  });
+
+  it("clicking each button fires the matching callback with that suggestion", async () => {
+    const started: WorkSuggestion[] = [];
+    const filed: WorkSuggestion[] = [];
+    const dismissed: WorkSuggestion[] = [];
+    const m = await mount(
+      view({
+        detail: detail({
+          thread: thread({ suggestions: [openChip] }),
+        }),
+        onStartSuggestion: (s) => {
+          started.push(s);
+        },
+        onFileSuggestion: (s) => {
+          filed.push(s);
+        },
+        onDismissSuggestion: (s) => {
+          dismissed.push(s);
+        },
+      }),
+    );
+    await m.click(m.query('[data-suggestion-action="start"]'));
+    await m.click(m.query('[data-suggestion-action="file"]'));
+    await m.click(m.query('[data-suggestion-action="dismiss"]'));
+    assert.deepEqual(
+      started.map((s) => s.id),
+      ["s-act"],
+    );
+    assert.deepEqual(
+      filed.map((s) => s.id),
+      ["s-act"],
+    );
+    assert.deepEqual(
+      dismissed.map((s) => s.id),
+      ["s-act"],
+    );
+    assert.equal(started[0], openChip);
+    assert.equal(filed[0], openChip);
+    assert.equal(dismissed[0], openChip);
+    m.unmount();
+  });
+
+  it("disables the row while its action promise is pending", async () => {
+    let release: () => void = () => {};
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const other = suggestion({ id: "s-other", title: "Other open chip" });
+    const m = await mount(
+      view({
+        detail: detail({
+          thread: thread({ suggestions: [openChip, other] }),
+        }),
+        onStartSuggestion: () => pending,
+      }),
+    );
+    const row = m.query('[data-suggestion-id="s-act"]') as HTMLElement;
+    const otherRow = m.query('[data-suggestion-id="s-other"]') as HTMLElement;
+    const start = row.querySelector(
+      '[data-suggestion-action="start"]',
+    ) as HTMLButtonElement;
+    const file = row.querySelector(
+      '[data-suggestion-action="file"]',
+    ) as HTMLButtonElement;
+    const dismiss = row.querySelector(
+      '[data-suggestion-action="dismiss"]',
+    ) as HTMLButtonElement;
+    const otherStart = otherRow.querySelector(
+      '[data-suggestion-action="start"]',
+    ) as HTMLButtonElement;
+    await m.click(start);
+    assert.equal(start.disabled, true);
+    assert.equal(file.disabled, true, "all buttons on the in-flight row");
+    assert.equal(dismiss.disabled, true);
+    assert.equal(otherStart.disabled, false, "sibling rows stay enabled");
+    release();
+    await m.flush();
+    assert.equal(start.disabled, false);
+    assert.equal(file.disabled, false);
+    assert.equal(dismiss.disabled, false);
+    m.unmount();
   });
 });
