@@ -24,6 +24,7 @@ import type {
   GitRepoInfo,
   GitPullResult,
   FetchIssueResult,
+  CreateIssueResult,
   ListIssuesResult,
   ListPrsResult,
   SetPlanStatusResult,
@@ -372,6 +373,8 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
       search: (input) => call<ThreadInfo[]>("threads:search", input),
       create: (input) => call<ThreadInfo>("threads:create", input),
       fork: (input) => call<ThreadInfo>("threads:fork", input),
+      resolveSuggestion: (input) =>
+        call<ThreadInfo>("threads:resolveSuggestion", input),
       rewind: (input) => call<RewindResult>("threads:rewind", input),
       get: (id) => call<ThreadDetail>("threads:get", id),
       peek: (id) => call<ThreadDetail>("threads:peek", id),
@@ -494,6 +497,7 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
       list: (projectPath) => call<ListIssuesResult>("issues:list", projectPath),
       setPlanStatus: (input) =>
         call<SetPlanStatusResult>("issues:setPlanStatus", input),
+      create: (input) => call<CreateIssueResult>("issues:create", input),
     },
     files: {
       list: (input) => call<{ files: string[] }>("files:list", input),
