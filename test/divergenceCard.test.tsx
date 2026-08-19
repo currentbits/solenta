@@ -23,7 +23,10 @@ import type {
   ToolCallInfo,
   WorkflowTemplateInfo,
 } from "../src/shared/ipc";
-import type { ComparePeer } from "../src/divergence";
+import {
+  setDivergenceCardEnabled,
+  type ComparePeer,
+} from "../src/divergence";
 
 const project: ProjectInfo = {
   id: "p1",
@@ -277,6 +280,28 @@ describe("divergence card", () => {
     assert.match(headline?.textContent ?? "", /thread gone/);
     assert.equal(m.query("[data-divergence-fields]"), null);
     m.unmount();
+  });
+
+  it("hides entirely (and skips the peek) when the Environment toggle is off", async () => {
+    setDivergenceCardEnabled(false);
+    try {
+      let peeks = 0;
+      const m = await mount(
+        view({
+          comparePeers: [codexPeer],
+          onPeekThread: async () => {
+            peeks += 1;
+            return codexDetail;
+          },
+        }),
+      );
+      await m.flush();
+      assert.equal(m.query("[data-divergence-card]"), null);
+      assert.equal(peeks, 0);
+      m.unmount();
+    } finally {
+      setDivergenceCardEnabled(true);
+    }
   });
 });
 
