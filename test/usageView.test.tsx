@@ -7,7 +7,7 @@ import { describe, it } from "node:test";
 import * as React from "react";
 import { mount } from "./support/dom.ts";
 import { UsageView } from "../src/components/UsageView";
-import type { UsageByDay, UsageEntry } from "../src/shared/ipc";
+import type { UsageByDay, UsageEntry, UsageReport, UsageThreadEntry } from "../src/shared/ipc";
 
 function localDayKey(d: Date): string {
   const y = d.getFullYear();
@@ -24,8 +24,23 @@ function entry(over: Partial<UsageEntry> = {}): UsageEntry {
   return {
     costUsd: 0,
     inputTokens: 0,
+    cachedInputTokens: 0,
+    cacheWriteTokens: 0,
     outputTokens: 0,
     turns: 0,
+    wastedUsd: 0,
+    ...over,
+  };
+}
+
+function thread(over: Partial<UsageThreadEntry> = {}): UsageThreadEntry {
+  return {
+    ...entry(),
+    projectId: "proj-1",
+    projectName: "nebula",
+    title: "A thread",
+    provider: "claude",
+    model: "sonnet",
     ...over,
   };
 }
@@ -49,6 +64,69 @@ function sampleData(): UsageByDay {
           inputTokens: 8000,
           outputTokens: 2000,
           turns: 8,
+        }),
+      },
+    },
+  };
+}
+
+function richReport(): UsageReport {
+  const today = daysAgo(0);
+  return {
+    byDay: {
+      [today]: {
+        claude: {
+          sonnet: entry({
+            costUsd: 2.5,
+            inputTokens: 200,
+            cachedInputTokens: 1000,
+            cacheWriteTokens: 100,
+            outputTokens: 300,
+            turns: 4,
+            wastedUsd: 1.5,
+          }),
+        },
+        kimi: {
+          "kimi-k2": entry({ turns: 41 }),
+        },
+      },
+    },
+    threadsByDay: {
+      [today]: {
+        "th-a": thread({
+          costUsd: 2.0,
+          inputTokens: 150,
+          cachedInputTokens: 800,
+          cacheWriteTokens: 80,
+          outputTokens: 200,
+          turns: 3,
+          wastedUsd: 1.5,
+          projectId: "proj-1",
+          projectName: "nebula",
+          title: "Fix the cache",
+          provider: "claude",
+          model: "sonnet",
+        }),
+        "th-b": thread({
+          costUsd: 0.5,
+          inputTokens: 50,
+          cachedInputTokens: 200,
+          cacheWriteTokens: 20,
+          outputTokens: 100,
+          turns: 1,
+          projectId: "proj-2",
+          projectName: "ledger",
+          title: "Tighten CSP",
+          provider: "claude",
+          model: "sonnet",
+        }),
+        "th-k": thread({
+          turns: 41,
+          projectId: "proj-2",
+          projectName: "ledger",
+          title: "Kimi research",
+          provider: "kimi",
+          model: "kimi-k2",
         }),
       },
     },
@@ -105,6 +183,69 @@ describe("UsageView", () => {
     assert.ok(m.query("[data-usage-empty]"), "empty marker");
     assert.equal(m.query("[data-usage-totals]"), null);
     assert.equal(m.query("[data-usage-bar]"), null);
+    m.unmount();
+  });
+
+  it("renders an unreported provider as usage not reported, never $0.00", async () => {
+    const m = await mount(<UsageView loadUsage={async () => richReport()} />);
+    await m.flush();
+    const kimi = m.query('[data-usage-provider="kimi"]');
+    assert.ok(kimi, "kimi provider row");
+    assert.ok(kimi.getAttribute("data-usage-unreported") !== null, "unreported marker");
+    const text = kimi.textContent ?? "";
+    assert.ok(text.includes("usage not reported"), "unreported copy");
+    assert.ok(text.includes("41 turns"), "turn count");
+    assert.ok(!text.includes("$0.00"), "must not look free");
+    assert.equal(kimi.querySelector("[class*='shareTrack']"), null, "no share bar");
+    m.unmount();
+  });
+
+  it("shows the headline caveat that the dollar figure is a counterfactual", async () => {
+    const m = await mount(<UsageView loadUsage={async () => richReport()} />);
+    await m.flush();
+    const caveat = m.query("[data-usage-caveat]");
+    assert.ok(caveat, "caveat marker");
+    assert.ok((caveat.textContent ?? "").includes("if billed at full API rate"));
+    m.unmount();
+  });
+
+  it("shows wasted spend on failed/stopped runs", async () => {
+    const m = await mount(<UsageView loadUsage={async () => richReport()} />);
+    await m.flush();
+    const text = m.text();
+    assert.ok(text.includes("Wasted"), "wasted column");
+    assert.ok(text.includes("failed/stopped") || m.query("[data-usage-wasted]"), "wasted surface");
+    assert.ok(text.includes("$1.50"), "wasted amount");
+    const wasted = m.query("[data-usage-wasted]");
+    assert.ok(wasted, "wasted cell");
+    assert.ok((wasted.textContent ?? "").includes("$1.50"));
+    m.unmount();
+  });
+
+  it("switches the breakdown between model, day, project and thread", async () => {
+    const m = await mount(<UsageView loadUsage={async () => richReport()} />);
+    await m.flush();
+
+    assert.equal(m.query("[data-usage]")?.getAttribute("data-usage-group"), "model");
+    assert.ok(m.query('[data-usage-model="claude/sonnet"]'), "model row");
+    assert.ok(m.text().includes("sonnet"));
+
+    await m.click(m.query('[data-usage-group-btn="day"]'));
+    assert.equal(m.query("[data-usage]")?.getAttribute("data-usage-group"), "day");
+    assert.ok(m.query(`[data-usage-row="${daysAgo(0)}"]`), "day row");
+
+    await m.click(m.query('[data-usage-group-btn="project"]'));
+    assert.equal(m.query("[data-usage]")?.getAttribute("data-usage-group"), "project");
+    const projectText = m.text();
+    assert.ok(projectText.includes("nebula"), "project nebula");
+    assert.ok(projectText.includes("ledger"), "project ledger");
+
+    await m.click(m.query('[data-usage-group-btn="thread"]'));
+    assert.equal(m.query("[data-usage]")?.getAttribute("data-usage-group"), "thread");
+    const threadText = m.text();
+    assert.ok(threadText.includes("Fix the cache"), "thread title");
+    assert.ok(threadText.includes("Tighten CSP"), "second thread");
+    assert.ok(threadText.includes("Kimi research"), "unreported thread");
     m.unmount();
   });
 });
