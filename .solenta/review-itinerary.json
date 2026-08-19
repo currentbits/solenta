@@ -32,6 +32,7 @@
     }
   ],
   "risks": [
-    "Packaged Solenta Nightly loads electron JS from the app bundle at start. Git merge alone does not change a running Nightly process."
+    "Packaged Solenta Nightly loads electron JS from the app bundle at start. Git merge alone does not change a running Nightly process.",
+    "plan mode can still auto-cancel gated tools in headless grok; we do not remap plan."
   ]
 }
