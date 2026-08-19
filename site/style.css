@@ -1,8 +1,10 @@
-/* Solenta site — 2026 redesign, slice 3: card sections.
+/* Solenta site — 2026 redesign.
    Dark-only by brand decision: the product is a dark UI tool.
-   So far: design foundation (1), aurora hero (2), glow-card system +
-   memory/planboard panels + provider marquee (this slice).
-   Bento, orchestration, trust and install land in slice 4. */
+   Modern CSS throughout: scroll-driven animations (animation-timeline),
+   registered @property glow tracking, color-mix() in oklch, mask-image
+   fades, background-clip: text gradients, fluid clamp() type.
+   Progressive enhancement: the page is complete without JS and without
+   support for animation-timeline; motion layers only ever add. */
 
 @font-face {
   font-family: "Geist";
@@ -44,9 +46,6 @@
   --violet: #8b5cf6;
   --cyan: #22d3ee;
   --green: #34d399;
-  /* Legacy tints, only used by the old bento styles; removed in slice 4. */
-  --accent-soft: rgba(59, 130, 246, 0.14);
-  --accent-border: rgba(59, 130, 246, 0.4);
   --radius-card: 14px;
   --radius-ctl: 9px;
   --max: 1200px;
@@ -350,6 +349,7 @@ code, pre, .mono { font-family: var(--font-mono); }
   font-size: 13.5px;
   line-height: 1.5;
 }
+
 .btn {
   display: inline-flex;
   align-items: center;
@@ -392,6 +392,7 @@ code, pre, .mono { font-family: var(--font-mono); }
   background: rgba(255, 255, 255, 0.06);
   text-decoration: none;
 }
+.btn-lg { padding: 15px 30px; font-size: 15.5px; }
 
 /* ---------------- hero screenshot ---------------- */
 .hero-shot { margin-top: clamp(52px, 7vw, 88px); }
@@ -691,9 +692,6 @@ section#memory .orch-points { max-width: 760px; }
   font-weight: 600;
 }
 
-section#trust { padding-bottom: 32px; }
-section#trust .section-head { margin-bottom: 0; max-width: 680px; }
-
 /* ---------------- bento ---------------- */
 .bento {
   display: grid;
@@ -701,16 +699,26 @@ section#trust .section-head { margin-bottom: 0; max-width: 680px; }
   gap: 16px;
 }
 .cell {
-  background: var(--surface);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.038), rgba(255, 255, 255, 0.014));
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
-  padding: 24px;
+  padding: 26px;
   overflow: hidden;
+  transition: transform 0.4s var(--ease), border-color 0.3s;
 }
-.cell h3 { margin: 0 0 8px; font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
-.cell p { margin: 0; color: var(--text-muted); font-size: 14.5px; }
+@media (hover: hover) {
+  .cell:hover { transform: translateY(-3px); border-color: var(--border-strong); }
+}
+.cell h3 {
+  margin: 0 0 9px;
+  font-size: 17px;
+  font-weight: 620;
+  letter-spacing: -0.015em;
+}
+.cell p { margin: 0; color: var(--text-muted); font-size: 14.5px; line-height: 1.65; }
+.cell p code { color: var(--text); font-size: 0.9em; }
 .cell .cell-img {
-  margin: 18px -24px -24px;
+  margin: 20px -26px -26px;
   border-top: 1px solid var(--border);
 }
 .cell .cell-img img { width: 100%; }
@@ -719,53 +727,84 @@ section#trust .section-head { margin-bottom: 0; max-width: 680px; }
 .cell-c { grid-column: span 2; }
 .cell-d { grid-column: span 2; }
 .cell-e { grid-column: span 3; }
-.cell-f { grid-column: span 3; }
+/* Automations closes the grid full-width so no row ends half-empty. */
+.cell-f { grid-column: span 6; }
 .cell-icon {
-  width: 34px;
-  height: 34px;
+  width: 36px;
+  height: 36px;
   border-radius: var(--radius-ctl);
-  background: var(--accent-soft);
-  border: 1px solid var(--accent-border);
+  background: linear-gradient(
+    180deg,
+    color-mix(in oklch, var(--accent) 24%, transparent),
+    color-mix(in oklch, var(--accent) 9%, transparent)
+  );
+  border: 1px solid color-mix(in oklch, var(--accent) 42%, transparent);
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-bottom: 16px;
-  color: var(--accent);
+  margin-bottom: 18px;
+  color: #a5c4ff;
+  box-shadow: 0 0 26px color-mix(in oklch, var(--accent) 22%, transparent);
 }
-.cell-icon svg { width: 18px; height: 18px; }
+.cell-icon .ph { font-size: 18px; }
 
 /* ---------------- orchestration ---------------- */
-.orch { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 56px; align-items: center; }
+.orch {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+  gap: clamp(40px, 5vw, 72px);
+  align-items: center;
+}
+.orch-title {
+  font-size: clamp(28px, 3.4vw, 44px);
+  letter-spacing: -0.028em;
+  line-height: 1.1;
+  margin: 0 0 16px;
+  font-weight: 660;
+  text-wrap: balance;
+}
+.orch-sub { color: var(--text-muted); margin: 0; font-size: 16px; line-height: 1.7; }
 .prompt-card {
-  background: var(--surface);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.015));
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
-  padding: 20px 22px;
+  padding: 24px 26px;
   font-size: 14px;
   color: var(--text);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.35);
 }
 .prompt-card .prompt-line {
   font-family: var(--font-mono);
-  font-size: 13.5px;
-  line-height: 1.7;
+  font-size: 14px;
+  line-height: 1.75;
   color: var(--text);
 }
 .prompt-card .prompt-label {
   font-family: var(--font-mono);
   font-size: 11px;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--text-dim);
-  margin-bottom: 10px;
+  margin-bottom: 12px;
 }
-.orch-points { margin: 22px 0 0; padding: 0; list-style: none; }
+.orch-points { margin: 24px 0 0; padding: 0; list-style: none; }
 .orch-points li {
-  padding: 12px 0;
+  padding: 13px 0;
   border-top: 1px solid var(--border);
   color: var(--text-muted);
   font-size: 15px;
+  line-height: 1.6;
 }
 .orch-points li strong { color: var(--text); font-weight: 600; }
+
+/* ---------------- trust ---------------- */
+section#trust { padding-bottom: clamp(48px, 6vw, 80px); }
+section#trust .section-head {
+  margin: 0 auto;
+  max-width: 720px;
+  text-align: center;
+}
+section#trust .section-head h2 { font-size: clamp(34px, 4.4vw, 58px); }
 
 /* ---------------- install ---------------- */
 .install-grid {
@@ -776,23 +815,31 @@ section#trust .section-head { margin-bottom: 0; max-width: 680px; }
 .install-card {
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
-  padding: 22px;
-  background: var(--surface);
+  padding: 24px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.038), rgba(255, 255, 255, 0.014));
 }
-.install-card h3 { margin: 0 0 4px; font-size: 15.5px; font-weight: 600; }
-.install-card .os-note { color: var(--text-dim); font-size: 13px; margin: 0 0 14px; }
+.install-card h3 { margin: 0 0 4px; font-size: 15.5px; font-weight: 620; }
+.install-card .os-note { color: var(--text-dim); font-size: 13px; margin: 0 0 16px; }
 .install-card pre {
   margin: 0;
-  background: var(--bg);
+  background: rgba(0, 0, 0, 0.35);
   border: 1px solid var(--border);
   border-radius: var(--radius-ctl);
-  padding: 12px 14px;
+  padding: 13px 15px;
   font-size: 12.5px;
-  line-height: 1.7;
+  line-height: 1.75;
   overflow-x: auto;
   color: var(--text-muted);
 }
 .install-card pre b { color: var(--text); font-weight: 600; }
+
+.final-cta {
+  margin-top: clamp(44px, 5vw, 64px);
+  display: flex;
+  gap: 14px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
 
 /* ---------------- footer ---------------- */
 footer {
@@ -950,17 +997,17 @@ html.js .reveal.in {
 
 /* ---------------- mobile ---------------- */
 @media (max-width: 900px) {
-  .hero { padding-top: 56px; }
+  .hero { padding-top: 60px; }
+  .hero h1 { letter-spacing: -0.035em; }
   .orch, .board { grid-template-columns: 1fr; gap: 36px; }
   .board { gap: 0; }
   .board > div + div { border-left: none; border-top: 1px solid var(--border); }
   .bento { grid-template-columns: 1fr; }
   .cell-a, .cell-b, .cell-c, .cell-d, .cell-e, .cell-f { grid-column: span 1; }
   .install-grid { grid-template-columns: 1fr; }
-  section { padding: 64px 0; }
-  section#memory { padding: 72px 0 80px; }
+  section { padding: 72px 0; }
   .memory-search-hint { display: none; }
-  .docs-layout { grid-template-columns: 1fr; gap: 24px; }
+  .docs-layout { grid-template-columns: 1fr; gap: 24px; padding-top: 40px; }
   .docs-nav {
     position: static;
     flex-direction: row;
@@ -968,4 +1015,6 @@ html.js .reveal.in {
     gap: 4px;
   }
   .docs-nav a { border-left: none; border: 1px solid var(--border); }
+  .nav-links { gap: 16px; }
+  .hero-bg i { filter: blur(70px); }
 }

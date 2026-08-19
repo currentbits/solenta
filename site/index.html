@@ -185,7 +185,8 @@
 <section id="features">
   <div class="wrap">
     <div class="section-head reveal">
-      <h2>Built for running agents, not watching terminals.</h2>
+      <p class="eyebrow">The toolkit</p>
+      <h2>Built for running agents,<br />not watching terminals.</h2>
       <p>Everything stays on your machine. Solenta drives the CLIs you already have installed.</p>
     </div>
     <div class="bento">
@@ -258,8 +259,9 @@
   <div class="wrap">
     <div class="orch">
       <div class="reveal">
-        <h2 style="font-size: clamp(26px, 3vw, 36px); letter-spacing: -0.02em; line-height: 1.15; margin: 0 0 14px; font-weight: 650;">Orchestration is a sentence, not a config.</h2>
-        <p style="color: var(--text-muted); margin: 0;">
+        <p class="eyebrow">Orchestration</p>
+        <h2 class="orch-title">Orchestration is a <span class="grad">sentence,</span> not a config.</h2>
+        <p class="orch-sub">
           Every thread carries tools to drive the other threads. You describe
           the fan-out in plain language; the agent spawns, supervises and
           reports back.
@@ -271,7 +273,7 @@
           <li><strong>Or pick a fixed pipeline.</strong> The Build button runs a known template when the shape is repeatable.</li>
         </ul>
       </div>
-      <div class="prompt-card reveal">
+      <div class="prompt-card glow reveal">
         <div class="prompt-label">You, in any thread</div>
         <div class="prompt-line">
           &ldquo;Fan out three Grok workers to build the settings migration,
@@ -285,7 +287,8 @@
 <section id="trust">
   <div class="wrap">
     <div class="section-head reveal">
-      <h2>You own the tools.</h2>
+      <p class="eyebrow eyebrow-center">Ownership</p>
+      <h2>You <span class="grad">own</span> the tools.</h2>
       <p>
         Solenta is MIT licensed and runs on your machine. It drives the agent
         CLIs you already installed. Plans live in GitHub issues. Memory lives
@@ -299,31 +302,38 @@
 <section id="install">
   <div class="wrap">
     <div class="section-head reveal">
+      <p class="eyebrow">Get started</p>
       <h2>Install in a minute.</h2>
       <p>Grab an archive from the latest release, then install whichever agent CLIs you want to drive. Solenta finds them on your PATH.</p>
     </div>
     <div class="install-grid">
-      <div class="install-card reveal">
+      <div class="install-card glow reveal">
         <h3>macOS</h3>
         <p class="os-note">Apple Silicon</p>
         <pre><b>Solenta-0.1.0-macos-arm64.zip</b>
 unzip, move to /Applications
 first launch: right-click &gt; Open</pre>
       </div>
-      <div class="install-card reveal">
+      <div class="install-card glow reveal">
         <h3>Windows</h3>
         <p class="os-note">x64</p>
         <pre><b>Solenta-0.1.0-win32-x64.zip</b>
 unzip anywhere
 run solenta.exe (SmartScreen asks once)</pre>
       </div>
-      <div class="install-card reveal">
+      <div class="install-card glow reveal">
         <h3>Linux</h3>
         <p class="os-note">x64</p>
         <pre><b>Solenta-0.1.0-linux-x64.tar.gz</b>
 tar xzf Solenta-*.tar.gz
 ./solenta/solenta</pre>
       </div>
+    </div>
+    <div class="final-cta reveal">
+      <a class="btn btn-primary btn-lg" href="https://github.com/currentbits/solenta/releases/latest">
+        Download Solenta
+      </a>
+      <a class="btn btn-ghost btn-lg" href="docs.html">Read the docs</a>
     </div>
   </div>
 </section>
