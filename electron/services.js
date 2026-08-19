@@ -873,7 +873,7 @@ function canHostWorktree(project) {
  * Fork / hand off: new thread in the source's project. Source is never modified.
  *
  * @param {import('./store').Store} store
- * @param {{ threadId: string, provider?: string, model?: string | null }} input
+ * @param {{ threadId: string, provider?: string, model?: string | null, worktree?: boolean }} input
  * @returns {object}
  */
 function forkThread(store, input) {
@@ -950,6 +950,19 @@ function forkThread(store, input) {
   // and must not grow a worktree (issue #392).
   if (source.ask === true) {
     forkPatch.ask = true;
+  }
+  // Opt-in worktree for user-facing forks (issue #550 chips). Same guards
+  // as forkWorkerThread: not an Ask thread, project can host a worktree.
+  if (input.worktree === true) {
+    const projectId = created.projectId ?? source.projectId;
+    const project =
+      typeof store.getProject === "function" && projectId != null
+        ? store.getProject(projectId)
+        : null;
+    const sourceAsk = Boolean(source.ask) || Boolean(forkPatch.ask);
+    if (!sourceAsk && canHostWorktree(project)) {
+      forkPatch.pendingWorktree = true;
+    }
   }
   const updated = store.updateThread(created.id, forkPatch);
   store.save();
