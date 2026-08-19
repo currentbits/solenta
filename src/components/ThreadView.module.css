@@ -27,11 +27,119 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: 12px;
   padding: 0 20px;
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
   height: 56px;
+}
+
+.paneTabs {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  height: 30px;
+  padding: 2px;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+}
+
+.paneTab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 24px;
+  padding: 0 10px;
+  border: none;
+  border-radius: calc(var(--radius-sm) - 1px);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 550;
+  transition:
+    background-color 0.16s cubic-bezier(0.23, 1, 0.32, 1),
+    color 0.16s cubic-bezier(0.23, 1, 0.32, 1),
+    transform 0.16s cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.paneTab:hover:not([data-active="true"]) {
+  color: var(--text);
+}
+
+.paneTab:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.paneTab[data-active="true"] {
+  background: var(--card-hover);
+  color: var(--text);
+}
+
+.paneTab:active {
+  transform: scale(0.97);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .paneTab,
+  .iconBtn {
+    transition: none;
+  }
+
+  .paneTab:active,
+  .iconBtn:active {
+    transform: none;
+  }
+}
+
+.iconBtn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease,
+    transform 0.16s cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.iconBtn:hover {
+  color: var(--text);
+  background: var(--card-hover);
+}
+
+.iconBtn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.iconBtn:active {
+  transform: scale(0.97);
+}
+
+.iconBtn[data-active="true"] {
+  color: #bfdbfe;
+  border-color: var(--blue-border);
+  background: var(--blue-soft);
+}
+
+.iconBtn[data-has-notes="true"] {
+  color: var(--text);
+}
+
+.iconBtn .notesDot {
+  position: absolute;
+  top: 5px;
+  right: 5px;
 }
 
 /* Round 49: provenance for threads created by fork/hand-off. Session-only dismiss. */
@@ -674,17 +782,15 @@ a.btn {
   }
 }
 
-.changesPanel {
-  flex-shrink: 0;
-  margin: 0 20px 0;
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-elevated);
-  max-height: min(56vh, 520px);
+.changesPane {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  background: var(--bg);
 }
 
 .changesHead {
@@ -693,6 +799,15 @@ a.btn {
   justify-content: space-between;
   gap: 12px;
   flex-shrink: 0;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.changesTitleGroup {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
 }
 
 .changesTitle {
@@ -703,15 +818,64 @@ a.btn {
   color: var(--text-muted);
 }
 
+.changesBranch {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+
 .changesActions {
   display: flex;
   gap: 6px;
 }
 
 .changesEmpty {
-  margin: 8px 0;
+  margin: 16px;
   color: var(--text-dim);
   font-size: 12.5px;
+}
+
+.changesSplit {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);
+}
+
+@media (max-width: 720px) {
+  .changesSplit {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(120px, 34%) minmax(0, 1fr);
+  }
+
+  .changesFiles {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+}
+
+.changesFiles {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px 12px 14px;
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.changesDiff {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px 12px 14px;
+}
+
+.changesPane .inlineError {
+  padding: 8px 16px 0;
 }
 
 .inlineError {
@@ -726,18 +890,43 @@ a.btn {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  flex-shrink: 0;
-  max-height: 120px;
-  overflow-y: auto;
+}
+
+.fileList > li {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
 }
 
 .fileRow {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 4px 2px;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  padding: 5px 6px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
   font-family: var(--mono);
   font-size: 12px;
+  text-align: left;
+  color: inherit;
+  transition: background-color 0.12s ease;
+}
+
+.fileRow:hover {
+  background: var(--card-hover);
+}
+
+.fileRow:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.fileRow[data-selected="true"] {
+  background: var(--blue-soft);
 }
 
 .fileStatus {
@@ -790,6 +979,7 @@ a.btn {
   font-family: var(--mono);
   font-size: 11.5px;
   line-height: 1.45;
+  user-select: text;
 }
 
 .diffLine {
@@ -889,11 +1079,9 @@ a.btn {
   flex-direction: column;
   gap: 8px;
   flex-shrink: 0;
-  position: sticky;
-  bottom: 0;
   background: var(--bg-elevated);
-  border-top: 1px solid var(--border-soft);
-  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  padding: 10px 16px 14px;
 }
 
 .commitInput {
@@ -917,6 +1105,10 @@ a.btn {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+
+.body[hidden] {
+  display: none;
 }
 
 .body {

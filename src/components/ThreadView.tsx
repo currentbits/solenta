@@ -424,12 +424,12 @@ interface ThreadViewProps {
   defaultWorktree?: boolean;
   /** Permanently delete the open thread (caller already confirmed in UI). */
   onDeleteThread: () => void | Promise<void>;
-  /** Center Changes panel open (lifted so the Git tab can open it). */
+  /** Git pane open (lifted so Environment / next-git / /review can open it). */
   changesOpen: boolean;
   /** Bumps on each open request so a re-open reloads the diff. */
   changesNonce: number;
   onCloseChanges: () => void;
-  /** Opens the center Changes panel (same path as the Environment tab). */
+  /** Opens the Git pane (same path as the Environment tab). */
   onViewChanges?: () => void;
   /** Per-checkpoint-pair shortstat for review bars. */
   runStats?: (threadId: string) => Promise<RunStatInfo[]>;
@@ -2274,23 +2274,36 @@ function planTextOf(detail: ThreadDetail | null | undefined): string {
 
 function FileRow({
   file,
+  selected,
   confirmRevert,
   reverting,
+  onSelect,
   onRevert,
 }: {
   file: FileChange;
+  selected: boolean;
   confirmRevert: string | null;
   reverting: string | null;
+  onSelect: (path: string) => void;
   onRevert: (f: FileChange) => void;
 }) {
   return (
-    <li className={styles.fileRow}>
-      <span className={styles.fileStatus}>{file.status}</span>
-      <span className={styles.filePath}>{file.path}</span>
-      <span className={styles.fileStats}>
-        <span className={styles.adds}>+{file.additions}</span>
-        <span className={styles.dels}>−{file.deletions}</span>
-      </span>
+    <li>
+      <button
+        type="button"
+        className={styles.fileRow}
+        data-file-row=""
+        data-selected={selected ? "true" : undefined}
+        aria-current={selected ? "true" : undefined}
+        onClick={() => onSelect(file.path)}
+      >
+        <span className={styles.fileStatus}>{file.status}</span>
+        <span className={styles.filePath}>{file.path}</span>
+        <span className={styles.fileStats}>
+          <span className={styles.adds}>+{file.additions}</span>
+          <span className={styles.dels}>−{file.deletions}</span>
+        </span>
+      </button>
       <button
         type="button"
         className={styles.fileRevert}
@@ -2319,9 +2332,9 @@ function ChangesPanel({
   open,
   threadId,
   threadTitle,
+  threadBranch,
   planText,
   openNonce,
-  onClose,
   onFetchDiff,
   onFetchReviewContext,
   onSetReviewAccepted,
@@ -2332,9 +2345,9 @@ function ChangesPanel({
   open: boolean;
   threadId: string | null;
   threadTitle: string;
+  threadBranch: string | null;
   planText: string;
   openNonce: number;
-  onClose: () => void;
   onFetchDiff: () => Promise<DiffResult>;
   onFetchReviewContext?: () => Promise<{
     annotation: unknown;
@@ -2347,6 +2360,7 @@ function ChangesPanel({
   onSuggest: () => Promise<{ message: string }>;
 }) {
   const [diff, setDiff] = useState<DiffResult | null>(null);
+  const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [symbols, setSymbols] = useState<ReviewSymbol[]>([]);
   const [annotation, setAnnotation] = useState<
     ReturnType<typeof parseReviewAnnotation>
@@ -2404,7 +2418,17 @@ function ChangesPanel({
     setSymbols([]);
     setAnnotation(null);
     setAcceptedHunks([]);
+    setSelectedPath(null);
   }, [threadId]);
+
+  useEffect(() => {
+    if (!diff || diff.files.length === 0) {
+      setSelectedPath(null);
+      return;
+    }
+    if (selectedPath && diff.files.some((f) => f.path === selectedPath)) return;
+    setSelectedPath(diff.files[0]!.path);
+  }, [diff, selectedPath]);
 
   useEffect(() => {
     if (open) void load();
@@ -2493,11 +2517,25 @@ function ChangesPanel({
   };
 
   const patches = itinerary ? orderedPatches(itinerary) : [];
+  const visiblePatches = selectedPath
+    ? patches.filter((p) => p.path === selectedPath)
+    : patches;
 
   return (
-    <section className={styles.changesPanel} aria-label="Changes">
+    <section
+      className={styles.changesPane}
+      data-git-pane=""
+      aria-label="Git"
+    >
       <header className={styles.changesHead}>
-        <span className={styles.changesTitle}>Changes</span>
+        <div className={styles.changesTitleGroup}>
+          <span className={styles.changesTitle}>Git</span>
+          {threadBranch ? (
+            <span className={styles.changesBranch} title={threadBranch}>
+              {threadBranch}
+            </span>
+          ) : null}
+        </div>
         <div className={styles.changesActions}>
           <button
             type="button"
@@ -2506,9 +2544,6 @@ function ChangesPanel({
             disabled={loading}
           >
             {loading ? "Refreshing…" : "Refresh"}
-          </button>
-          <button type="button" className={styles.btn} onClick={onClose}>
-            Close
           </button>
         </div>
       </header>
@@ -2523,76 +2558,90 @@ function ChangesPanel({
         <p className={styles.changesEmpty}>Loading diff…</p>
       )}
 
-      {empty && <p className={styles.changesEmpty}>No changes</p>}
+      {empty && (
+        <p className={styles.changesEmpty}>Working tree is clean</p>
+      )}
 
       {diff && !empty && itinerary && (
         <>
-          <div className={styles.changesScroll}>
-            <ReviewItineraryView
-              itinerary={itinerary}
-              testsFirst={testsFirst}
-              onToggleTestsFirst={() => setTestsFirst((v) => !v)}
-            />
-            {itinerary.chunks.map((chunk) => (
-              <div key={chunk.area}>
-                <ChunkRationale itinerary={itinerary} area={chunk.area} />
-                <ul className={styles.fileList}>
-                  {chunk.files.map((f) => (
-                    <FileRow
-                      key={f.path}
-                      file={f}
-                      confirmRevert={confirmRevert}
-                      reverting={reverting}
-                      onRevert={(file) => void revert(file)}
-                    />
-                  ))}
-                </ul>
-              </div>
-            ))}
-            {patches.length > 0 && (
-              <div className={styles.patchScroll}>
-                {patches.map((p) => (
-                  <Fragment key={p.path}>
-                    {p.hunks.length === 0 &&
-                      p.text.split("\n").map((line, i) => (
-                        <DiffLine key={`${p.path}:${i}`} line={line} />
-                      ))}
-                    {p.hunks.map((hunk) => (
-                      <div
-                        key={hunk.id}
-                        className={styles.hunkBlock}
-                        data-review-hunk={hunk.id}
-                        data-review-hunk-accepted={hunk.accepted ? "" : undefined}
-                      >
-                        <div className={styles.hunkBar}>
-                          <span className={styles.hunkPath}>{p.path}</span>
-                          <button
-                            type="button"
-                            className={styles.hunkSeen}
-                            aria-pressed={hunk.accepted}
-                            title={
-                              hunk.accepted
-                                ? "Mark this hunk as new again"
-                                : "Mark this hunk reviewed"
-                            }
-                            onClick={() => toggleHunk(hunk.id, !hunk.accepted)}
-                          >
-                            {hunk.accepted ? "Reviewed" : "Mark reviewed"}
-                          </button>
-                        </div>
-                        <DiffLine line={hunk.header} />
-                        {hunk.body.split("\n").map((line, i) => (
-                          <DiffLine key={`${hunk.id}:${i}`} line={line} />
-                        ))}
-                      </div>
+          <div className={styles.changesSplit}>
+            <div className={styles.changesFiles}>
+              <ReviewItineraryView
+                itinerary={itinerary}
+                testsFirst={testsFirst}
+                onToggleTestsFirst={() => setTestsFirst((v) => !v)}
+              />
+              {itinerary.chunks.map((chunk) => (
+                <div key={chunk.area}>
+                  <ChunkRationale itinerary={itinerary} area={chunk.area} />
+                  <ul className={styles.fileList}>
+                    {chunk.files.map((f) => (
+                      <FileRow
+                        key={f.path}
+                        file={f}
+                        selected={selectedPath === f.path}
+                        confirmRevert={confirmRevert}
+                        reverting={reverting}
+                        onSelect={setSelectedPath}
+                        onRevert={(file) => void revert(file)}
+                      />
                     ))}
-                  </Fragment>
-                ))}
-              </div>
-            )}
-            {diff.truncated && (
-              <p className={styles.truncatedNote}>Diff truncated</p>
-            )}
+                  </ul>
+                </div>
+              ))}
+            </div>
+            <div className={styles.changesDiff}>
+              {visiblePatches.length === 0 ? (
+                <p className={styles.changesEmpty}>No textual diff for this file</p>
+              ) : (
+                <div className={styles.patchScroll}>
+                  {visiblePatches.map((p) => (
+                    <Fragment key={p.path}>
+                      {p.hunks.length === 0 &&
+                        p.text.split("\n").map((line, i) => (
+                          <DiffLine key={`${p.path}:${i}`} line={line} />
+                        ))}
+                      {p.hunks.map((hunk) => (
+                        <div
+                          key={hunk.id}
+                          className={styles.hunkBlock}
+                          data-review-hunk={hunk.id}
+                          data-review-hunk-accepted={
+                            hunk.accepted ? "" : undefined
+                          }
+                        >
+                          <div className={styles.hunkBar}>
+                            <span className={styles.hunkPath}>{p.path}</span>
+                            <button
+                              type="button"
+                              className={styles.hunkSeen}
+                              aria-pressed={hunk.accepted}
+                              title={
+                                hunk.accepted
+                                  ? "Mark this hunk as new again"
+                                  : "Mark this hunk reviewed"
+                              }
+                              onClick={() =>
+                                toggleHunk(hunk.id, !hunk.accepted)
+                              }
+                            >
+                              {hunk.accepted ? "Reviewed" : "Mark reviewed"}
+                            </button>
+                          </div>
+                          <DiffLine line={hunk.header} />
+                          {hunk.body.split("\n").map((line, i) => (
+                            <DiffLine key={`${hunk.id}:${i}`} line={line} />
+                          ))}
+                        </div>
+                      ))}
+                    </Fragment>
+                  ))}
+                </div>
+              )}
+              {diff.truncated && (
+                <p className={styles.truncatedNote}>Diff truncated</p>
+              )}
+            </div>
           </div>
           <div className={styles.commitBox}>
             <textarea
@@ -3747,6 +3796,36 @@ export const ThreadView = memo(function ThreadView({
             <span className={styles.threadTitle}>{thread.title}</span>
           )}
         </div>
+        <div
+          className={styles.paneTabs}
+          role="tablist"
+          aria-label="Center pane"
+        >
+          <button
+            type="button"
+            role="tab"
+            className={styles.paneTab}
+            data-pane-tab="thread"
+            aria-selected={!changesOpen}
+            data-active={!changesOpen ? "true" : undefined}
+            onClick={() => {
+              if (changesOpen) onCloseChanges();
+            }}
+          >
+            Thread
+          </button>
+          <button
+            type="button"
+            role="tab"
+            className={styles.paneTab}
+            data-pane-tab="git"
+            aria-selected={changesOpen}
+            data-active={changesOpen ? "true" : undefined}
+            onClick={() => onViewChanges?.()}
+          >
+            Git
+          </button>
+        </div>
         <div className={styles.actions}>
           {thread.sandbox && <SandboxBadge sandbox={thread.sandbox} />}
           {ring && (
@@ -3758,16 +3837,6 @@ export const ThreadView = memo(function ThreadView({
               onOpenChange={setContextOpen}
             />
           )}
-          {onStartSpec && !thread.spec && !thread.ask && (
-            <button
-              type="button"
-              className={styles.btn}
-              data-spec-mode-btn=""
-              onClick={() => void onStartSpec(thread.id)}
-            >
-              Spec mode
-            </button>
-          )}
           {onStopSpec && thread.spec && !thread.ask && (
             <button
               type="button"
@@ -3778,30 +3847,10 @@ export const ThreadView = memo(function ThreadView({
               Exit spec mode
             </button>
           )}
-          {onStartTeach && !thread.teach && !thread.ask && (
-            <button
-              type="button"
-              className={styles.btn}
-              data-teach-mode-btn=""
-              onClick={() => void onStartTeach(thread.id)}
-            >
-              Teach mode
-            </button>
-          )}
-          {onStartAsk && !thread.ask && (
-            <button
-              type="button"
-              className={styles.btn}
-              data-ask-mode-btn=""
-              onClick={() => void onStartAsk(thread.id)}
-            >
-              Ask mode
-            </button>
-          )}
           {onSetNotes && (
             <button
               type="button"
-              className={styles.btn}
+              className={styles.iconBtn}
               data-thread-notes-btn=""
               data-has-notes={thread.notes ? "true" : undefined}
               data-active={notesOpen ? "true" : undefined}
@@ -3829,7 +3878,6 @@ export const ThreadView = memo(function ThreadView({
                 <path d="M4 2.5h8A1.5 1.5 0 0 1 13.5 4v9A1.5 1.5 0 0 1 12 14.5H4A1.5 1.5 0 0 1 2.5 13V4A1.5 1.5 0 0 1 4 2.5Z" />
                 <path d="M5.5 6h5M5.5 8.5h5M5.5 11h3" />
               </svg>
-              Notes
               {thread.notes ? (
                 <span className={styles.notesDot} data-notes-dot="" aria-hidden />
               ) : null}
@@ -3874,10 +3922,7 @@ export const ThreadView = memo(function ThreadView({
               title="Thread actions"
               aria-haspopup="menu"
               aria-expanded={menuOpen}
-              disabled={isWorking}
-              aria-disabled={isWorking ? "true" : undefined}
               onClick={() => {
-                if (isWorking) return;
                 setMenuOpen((v) => !v);
                 setDeleteConfirm(false);
               }}
@@ -3926,6 +3971,48 @@ export const ThreadView = memo(function ThreadView({
                   </div>
                 ) : (
                   <>
+                    {onStartSpec && !thread.spec && !thread.ask && (
+                      <button
+                        type="button"
+                        className={styles.menuItem}
+                        role="menuitem"
+                        data-spec-mode-btn=""
+                        onClick={() => {
+                          setMenuOpen(false);
+                          void onStartSpec(thread.id);
+                        }}
+                      >
+                        Spec mode
+                      </button>
+                    )}
+                    {onStartTeach && !thread.teach && !thread.ask && (
+                      <button
+                        type="button"
+                        className={styles.menuItem}
+                        role="menuitem"
+                        data-teach-mode-btn=""
+                        onClick={() => {
+                          setMenuOpen(false);
+                          void onStartTeach(thread.id);
+                        }}
+                      >
+                        Teach mode
+                      </button>
+                    )}
+                    {onStartAsk && !thread.ask && (
+                      <button
+                        type="button"
+                        className={styles.menuItem}
+                        role="menuitem"
+                        data-ask-mode-btn=""
+                        onClick={() => {
+                          setMenuOpen(false);
+                          void onStartAsk(thread.id);
+                        }}
+                      >
+                        Ask mode
+                      </button>
+                    )}
                     <button
                       type="button"
                       className={styles.menuItem}
@@ -3935,7 +4022,7 @@ export const ThreadView = memo(function ThreadView({
                     >
                       {copiedThreadId ? "Copied" : "Copy thread ID"}
                     </button>
-                    {onRenameThread && (
+                    {onRenameThread && !isWorking && (
                       <button
                         type="button"
                         className={styles.menuItem}
@@ -3974,25 +4061,29 @@ export const ThreadView = memo(function ThreadView({
                         Distill into workflow…
                       </button>
                     )}
-                    <button
-                      type="button"
-                      className={styles.menuItem}
-                      role="menuitem"
-                      onClick={() => {
-                        setMenuOpen(false);
-                        void onSetArchived(!isArchived);
-                      }}
-                    >
-                      {isArchived ? "Unarchive thread" : "Archive thread"}
-                    </button>
-                    <button
-                      type="button"
-                      className={`${styles.menuItem} ${styles.menuItemDanger}`}
-                      role="menuitem"
-                      onClick={() => setDeleteConfirm(true)}
-                    >
-                      Delete thread
-                    </button>
+                    {!isWorking && (
+                      <button
+                        type="button"
+                        className={styles.menuItem}
+                        role="menuitem"
+                        onClick={() => {
+                          setMenuOpen(false);
+                          void onSetArchived(!isArchived);
+                        }}
+                      >
+                        {isArchived ? "Unarchive thread" : "Archive thread"}
+                      </button>
+                    )}
+                    {!isWorking && (
+                      <button
+                        type="button"
+                        className={`${styles.menuItem} ${styles.menuItemDanger}`}
+                        role="menuitem"
+                        onClick={() => setDeleteConfirm(true)}
+                      >
+                        Delete thread
+                      </button>
+                    )}
                   </>
                 )}
               </div>
@@ -4027,9 +4118,9 @@ export const ThreadView = memo(function ThreadView({
         open={changesOpen}
         threadId={detail?.thread.id ?? null}
         threadTitle={detail?.thread.title ?? ""}
+        threadBranch={detail?.thread.branch ?? null}
         planText={planTextOf(detail)}
         openNonce={changesNonce}
-        onClose={onCloseChanges}
         onFetchDiff={onFetchDiff}
         onFetchReviewContext={onFetchReviewContext}
         onSetReviewAccepted={onSetReviewAccepted}
@@ -4038,7 +4129,7 @@ export const ThreadView = memo(function ThreadView({
         onSuggest={onSuggestCommitMessage}
       />
 
-      {showHandoffBanner && (
+      {!changesOpen && showHandoffBanner && (
         <div className={styles.handoffBanner} data-handoff-banner="">
           <span className={styles.handoffBannerText}>
             {handoffSource ? (
@@ -4071,7 +4162,7 @@ export const ThreadView = memo(function ThreadView({
         </div>
       )}
 
-      {detail && (
+      {!changesOpen && detail && (
         <DivergenceCard
           key={detail.thread.id}
           detail={detail}
@@ -4084,6 +4175,8 @@ export const ThreadView = memo(function ThreadView({
       <div
         className={styles.body}
         ref={bodyRef}
+        hidden={changesOpen}
+        inert={changesOpen}
         onScroll={onBodyScroll}
         onClick={(e) => openClickedImage(e.target)}
         onKeyDown={(e) => {
@@ -4430,6 +4523,7 @@ export const ThreadView = memo(function ThreadView({
         )}
       </div>
 
+      <div hidden={changesOpen} inert={changesOpen}>
       <Composer
         threadId={thread.id}
         branch={thread.branch}
@@ -4479,6 +4573,7 @@ export const ThreadView = memo(function ThreadView({
         dropHostRef={dropHostRef}
         onFileDragChange={setFileDrag}
       />
+      </div>
 
       {lightbox && (
         <ImageLightbox

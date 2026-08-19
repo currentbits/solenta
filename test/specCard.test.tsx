@@ -247,6 +247,7 @@ describe("SpecCard", () => {
       },
     });
     assert.equal(view.query("[data-spec-card]"), null);
+    await view.click(view.query("[aria-label='Thread actions']"));
     const btn = view.query("[data-spec-mode-btn]");
     assert.ok(btn);
     await view.click(btn);

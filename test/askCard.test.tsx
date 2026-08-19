@@ -133,6 +133,7 @@ describe("AskCard", () => {
       },
     });
     assert.equal(view.query("[data-ask-card]"), null);
+    await view.click(view.query("[aria-label='Thread actions']"));
     const btn = view.query("[data-ask-mode-btn]");
     assert.ok(btn);
     await view.click(btn);

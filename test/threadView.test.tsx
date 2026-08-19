@@ -1319,8 +1319,8 @@ describe("ThreadView Changes panel commit box (issue #555)", () => {
       }),
     );
 
-    const panel = m.query('[aria-label="Changes"]');
-    assert.ok(panel, "Changes panel must render");
+    const panel = m.query('[aria-label="Git"]');
+    assert.ok(panel, "Git pane must render");
     assert.ok(
       panel.querySelector("[data-review-hard-stop]"),
       "fixture must produce a hard-stop banner",
@@ -1382,12 +1382,7 @@ describe("ThreadView Changes panel commit box (issue #555)", () => {
     assert.match(
       commitBox,
       /flex-shrink\s*:\s*0/,
-      ".commitBox must not shrink below the itinerary",
-    );
-    assert.match(
-      commitBox,
-      /position\s*:\s*sticky/,
-      ".commitBox must stick to the bottom of the panel",
+      ".commitBox must not shrink below the file/diff split",
     );
 
     const changesHead = ruleBody("changesHead");
@@ -1398,24 +1393,30 @@ describe("ThreadView Changes panel commit box (issue #555)", () => {
       ".changesHead must not shrink when the itinerary is tall",
     );
 
-    const changesScroll = ruleBody("changesScroll");
-    assert.ok(changesScroll, ".changesScroll rule must exist");
+    const changesPane = ruleBody("changesPane");
+    assert.ok(changesPane, ".changesPane rule must exist");
     assert.match(
-      changesScroll,
-      /overflow-y\s*:\s*auto/,
-      ".changesScroll must be the itinerary scroller",
+      changesPane,
+      /flex\s*:\s*1/,
+      ".changesPane must fill the center column",
     );
     assert.match(
-      changesScroll,
+      changesPane,
       /min-height\s*:\s*0/,
-      ".changesScroll must be allowed to shrink inside the flex column",
+      ".changesPane must be allowed to shrink inside the thread column",
     );
 
-    const patchScroll = ruleBody("patchScroll");
-    assert.ok(patchScroll, ".patchScroll rule must exist");
-    assert.ok(
-      !/overflow\s*:\s*auto/.test(patchScroll),
-      ".patchScroll must not keep overflow:auto — that reintroduces the nested scroller and hides the commit box",
+    const changesSplit = ruleBody("changesSplit");
+    assert.ok(changesSplit, ".changesSplit rule must exist");
+    assert.match(
+      changesSplit,
+      /flex\s*:\s*1/,
+      ".changesSplit must take leftover height above the commit box",
+    );
+    assert.match(
+      changesSplit,
+      /min-height\s*:\s*0/,
+      ".changesSplit must be allowed to shrink inside the pane",
     );
   });
 });

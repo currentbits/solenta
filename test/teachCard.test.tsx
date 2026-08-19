@@ -130,6 +130,7 @@ describe("TeachCard", () => {
       },
     });
     assert.equal(view.query("[data-teach-card]"), null);
+    await view.click(view.query("[aria-label='Thread actions']"));
     const btn = view.query("[data-teach-mode-btn]");
     assert.ok(btn);
     await view.click(btn);

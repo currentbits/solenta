@@ -129,7 +129,7 @@ describe("Environment tab remote hint", () => {
     assert.ok(!html.includes("Local Servers"), "LocalServersCard must be hidden");
     assert.ok(!html.includes("Checkpoints"), "CheckpointsCard must be hidden");
     assert.ok(html.includes("Changes"), "ChangesCard must stay");
-    assert.ok(html.includes("View changes"), "diff action must stay");
+    assert.ok(html.includes("Open Git"), "diff action must stay");
   });
 
   it("keeps the full Environment cards on a local project", () => {

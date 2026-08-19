@@ -116,7 +116,7 @@ interface AgentsPanelProps {
   onSetupWorktree: () => Promise<unknown>;
   onMergeWorktree: () => Promise<unknown>;
   onRemoveWorktree: (force?: boolean) => Promise<unknown>;
-  /** Opens the center-pane Changes panel (fresh load). */
+  /** Opens the Git pane (fresh load). */
   onViewChanges: () => void;
   /** Worktree checkpoints (newest-first). */
   listCheckpoints: (threadId: string) => Promise<CheckpointInfo[]>;
@@ -591,7 +591,7 @@ function ChangesCard({
           onClick={onViewChanges}
           disabled={!hasThread}
         >
-          View changes
+          Open Git
         </button>
       </div>
     </section>

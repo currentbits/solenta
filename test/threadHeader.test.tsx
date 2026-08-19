@@ -106,6 +106,9 @@ function view(props: {
     opts?: { worktree?: boolean; orchestrate?: boolean },
   ) => void;
   onRenameThread?: (title: string) => void | Promise<void>;
+  changesOpen?: boolean;
+  onViewChanges?: () => void;
+  onCloseChanges?: () => void;
 }) {
   return (
     <ThreadView
@@ -129,9 +132,10 @@ function view(props: {
       onRepeatSchedule={props.onRepeatSchedule}
       onDistillWorkflow={props.onDistillWorkflow}
       onDeleteThread={() => {}}
-      changesOpen={false}
+      changesOpen={props.changesOpen ?? false}
       changesNonce={0}
-      onCloseChanges={() => {}}
+      onCloseChanges={props.onCloseChanges ?? (() => {})}
+      onViewChanges={props.onViewChanges}
       onFetchDiff={async () => ({ files: [], patch: "", truncated: false })}
       onCommitChanges={async () => ({ subject: "x" })}
       onRevertFile={async (path) => ({ path })}
@@ -337,6 +341,68 @@ describe("header no longer hosts Environment actions", () => {
     assert.equal(header!.querySelector("[data-dev-menu]"), null);
     assert.equal(header!.querySelector("[data-thread-fork]"), null);
     assert.equal(header!.querySelector("[data-thread-handoff]"), null);
+    m.unmount();
+  });
+});
+
+describe("Thread | Git pane tabs (issue #569)", () => {
+  it("renders Thread selected and Git idle", async () => {
+    const m = await mount(view({}));
+    await m.flush();
+    const threadTab = m.query("[data-pane-tab='thread']");
+    const gitTab = m.query("[data-pane-tab='git']");
+    assert.ok(threadTab, "Thread tab");
+    assert.ok(gitTab, "Git tab");
+    assert.equal(threadTab!.getAttribute("aria-selected"), "true");
+    assert.equal(gitTab!.getAttribute("aria-selected"), "false");
+    assert.equal(m.query("[data-git-pane]"), null);
+    m.unmount();
+  });
+
+  it("Git tab calls onViewChanges; Thread tab calls onCloseChanges", async () => {
+    const opened: string[] = [];
+    const m = await mount(
+      view({
+        onViewChanges: () => {
+          opened.push("git");
+        },
+        onCloseChanges: () => {
+          opened.push("thread");
+        },
+      }),
+    );
+    await m.flush();
+    await m.click(m.query("[data-pane-tab='git']"));
+    assert.deepEqual(opened, ["git"]);
+    m.unmount();
+
+    const closed: string[] = [];
+    const open = await mount(
+      view({
+        changesOpen: true,
+        onCloseChanges: () => {
+          closed.push("thread");
+        },
+      }),
+    );
+    await open.flush();
+    assert.ok(open.query("[data-git-pane]"), "Git pane mounts when open");
+    assert.equal(
+      open.query("[data-pane-tab='git']")!.getAttribute("aria-selected"),
+      "true",
+    );
+    await open.click(open.query("[data-pane-tab='thread']"));
+    assert.deepEqual(closed, ["thread"]);
+    open.unmount();
+  });
+
+  it("keeps Spec / Teach / Ask off the header chrome", async () => {
+    const m = await mount(view({}));
+    await m.flush();
+    const header = m.query("header");
+    assert.equal(header!.querySelector("[data-spec-mode-btn]"), null);
+    assert.equal(header!.querySelector("[data-teach-mode-btn]"), null);
+    assert.equal(header!.querySelector("[data-ask-mode-btn]"), null);
     m.unmount();
   });
 });

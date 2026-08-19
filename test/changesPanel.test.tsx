@@ -202,4 +202,38 @@ describe("ChangesPanel commit flow", () => {
     await view.click(find());
     assert.deepEqual(spies.reverts, [{ path: "notes.txt", status: "??" }]);
   });
+
+  it("renders as a Git pane with the branch, no Close control", async () => {
+    const { m } = mountPanel();
+    const view = await m;
+    const pane = view.query("[data-git-pane]");
+    assert.ok(pane, "Git pane");
+    assert.equal(pane!.getAttribute("aria-label"), "Git");
+    assert.match(pane!.textContent || "", /coder\/commit-flow/);
+    assert.equal(
+      [...pane!.querySelectorAll("button")].find(
+        (b) => (b.textContent || "").trim() === "Close",
+      ),
+      undefined,
+    );
+  });
+
+  it("selects a file row", async () => {
+    const { m } = mountPanel();
+    const view = await m;
+    await view.flush();
+    const rows = [...view.container.querySelectorAll("[data-file-row]")];
+    assert.ok(rows.length >= 2, "both files listed");
+    const selected = () =>
+      rows.find((r) => r.getAttribute("data-selected") === "true") ?? null;
+    assert.ok(selected(), "one file selected after load");
+    const other = rows.find((r) => r !== selected());
+    assert.ok(other);
+    await view.click(other);
+    assert.equal(other.getAttribute("data-selected"), "true");
+    assert.equal(
+      rows.filter((r) => r.getAttribute("data-selected") === "true").length,
+      1,
+    );
+  });
 });
