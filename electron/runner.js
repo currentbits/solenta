@@ -5033,6 +5033,7 @@ function createRunner(opts) {
           (projectForGate && projectForGate.path) ||
           null,
       ) +
+      services.suggestedWorkNoteFor() +
       services.subagentPoolNoteFor(
         store.getSettings && store.getSettings().subagentPool,
       ) +

@@ -688,6 +688,26 @@ function selfIdNoteFor(thread, project, cwd) {
 
 /**
  * Standing note appended to every dispatched prompt (CLI-only, never stored
+ * in the transcript) telling the agent it can offer out-of-scope work as a
+ * one-click chip via work_suggest (issue #550). Gated exactly like
+ * selfIdNoteFor: silent unless the coder-threads server is registered.
+ *
+ * @returns {string}
+ */
+function suggestedWorkNoteFor() {
+  try {
+    const { activeServers } = require("./memory-sup.js");
+    if (!activeServers().some((s) => s.name === "coder-threads")) return "";
+  } catch {
+    return "";
+  }
+  return (
+    "\n\n[Suggested work] When you notice work worth doing that is OUT OF SCOPE for the current task, call the coder-threads tool work_suggest (with your own threadId/projectId) — a short title plus a self-contained prompt for a fresh agent with none of your context. It renders as a chip the user can start as a new thread with one click. Never start or do that work yourself, never derail the current task for it, and suggest at most a few per run. Skip anything already suggested on this thread."
+  );
+}
+
+/**
+ * Standing note appended to every dispatched prompt (CLI-only, never stored
  * in the transcript) listing approaches earlier agents on this thread already
  * tried and rejected. The whole point of the ledger: it stops the next agent
  * (and the next best-of-N fork) from re-treading a dead end.
@@ -4096,6 +4116,7 @@ module.exports = {
   PLANBOARD_NOTE,
   planboardNoteFor,
   selfIdNoteFor,
+  suggestedWorkNoteFor,
   subagentPoolNoteFor: require("./subagentPool").subagentPoolNoteFor,
   resolveSubagentPool: require("./subagentPool").resolveSubagentPool,
   hypothesisNoteFor,
