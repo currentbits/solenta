@@ -24,13 +24,15 @@
   <meta name="twitter:description" content="One shared memory across every agent, and a planboard that is your GitHub issues. Agent six begins knowing what agents one through five already ruled out." />
   <meta name="twitter:image" content="https://solenta.app/assets/card.png" />
   <meta name="twitter:image:alt" content="Solenta. Your agents remember." />
-  <meta name="theme-color" content="#0b0e14" />
+  <meta name="theme-color" content="#05070d" />
   <link rel="icon" href="assets/icon.svg" type="image/svg+xml" />
   <script>document.documentElement.classList.add("js");</script>
-  <link rel="stylesheet" href="style.css?v=3" />
+  <link rel="stylesheet" href="style.css?v=4" />
   <script src="https://unpkg.com/@phosphor-icons/web@2.1.1" defer></script>
 </head>
 <body>
+
+<div class="progress" aria-hidden="true"></div>
 
 <nav class="nav">
   <div class="nav-inner">
@@ -50,12 +52,17 @@
 </nav>
 
 <header class="hero">
-  <div class="wrap">
-    <h1>Every agent starts where<br />the last one stopped.</h1>
-    <p class="sub">
-      One shared memory across every agent, and a planboard that is your GitHub issues. Agent six begins knowing what agents one through five already ruled out. Claude Code, Codex, Kimi, Grok and OpenCode, each thread in its own git worktree. Free and open source.
+  <div class="hero-bg" aria-hidden="true">
+    <div class="hero-grid"></div>
+    <i></i><i></i><i></i>
+  </div>
+  <div class="wrap hero-inner">
+    <p class="hero-pill reveal"><span class="dot"></span> Free &amp; open source &middot; MIT</p>
+    <h1 class="reveal">Every agent starts where the <span class="grad">last one stopped.</span></h1>
+    <p class="sub reveal">
+      One shared memory across every agent, and a planboard that is your GitHub issues. Agent six begins knowing what agents one through five already ruled out. Free and open source.
     </p>
-    <div class="hero-ctas">
+    <div class="hero-ctas reveal">
       <a class="btn btn-primary" href="https://github.com/currentbits/solenta/releases/latest">
         Download for macOS, Windows &amp; Linux
       </a>
@@ -64,12 +71,22 @@
         Star on GitHub
       </a>
     </div>
-    <p class="hero-trust">Your code never leaves your machine. &middot; Bring your own subscription, we don't resell tokens.</p>
+    <p class="hero-trust reveal">Your code never leaves your machine. &middot; Bring your own subscription, we don't resell tokens.</p>
     <div class="hero-shot">
-      <div class="shot">
-        <div class="shot-bar"><i></i><i></i><i></i></div>
-        <img src="assets/screen-main.png" alt="Solenta running a thread: work log, agent messages, and the environment panel with PR checks" />
+      <div class="shot-wrap">
+        <div class="shot">
+          <div class="shot-bar"><i></i><i></i><i></i></div>
+          <img src="assets/screen-main.png" alt="Solenta running a thread: work log, agent messages, and the environment panel with PR checks" />
+        </div>
       </div>
+    </div>
+  </div>
+  <div class="marquee" aria-hidden="true">
+    <div class="marquee-track">
+      <span>Claude Code</span><span>Codex</span><span>Kimi</span><span>Grok</span><span>OpenCode</span>
+      <span>Claude Code</span><span>Codex</span><span>Kimi</span><span>Grok</span><span>OpenCode</span>
+      <span>Claude Code</span><span>Codex</span><span>Kimi</span><span>Grok</span><span>OpenCode</span>
+      <span>Claude Code</span><span>Codex</span><span>Kimi</span><span>Grok</span><span>OpenCode</span>
     </div>
   </div>
 </header>
@@ -77,7 +94,8 @@
 <section id="memory">
   <div class="wrap">
     <div class="section-head reveal">
-      <h2>Your agents remember.</h2>
+      <p class="eyebrow">Shared memory</p>
+      <h2>Your agents <span class="grad">remember.</span></h2>
       <p>
         What one thread learns, the next one knows. Solenta injects a local
         memory server into every agent session automatically, so decisions and
@@ -87,22 +105,22 @@
         tenth session on a project is better informed than the first.
       </p>
     </div>
-    <div class="memory-panel reveal">
+    <div class="memory-panel glow reveal">
       <div class="memory-search">
         <i class="ph ph-magnifying-glass"></i>
         <span>Memory &middot; localhost &middot; SQLite</span>
         <span class="memory-search-hint">Search, read, store</span>
       </div>
       <div class="memory-entry">
-        <p class="memory-meta">Claude Code &middot; thread 1</p>
+        <p class="memory-meta"><span class="pdot pdot-a"></span>Claude Code &middot; thread 1</p>
         <p>Ruled out a rewrite of auth. Cookie session stays; refresh lives in src/lib/auth.ts.</p>
       </div>
       <div class="memory-entry">
-        <p class="memory-meta">Codex &middot; thread 3</p>
+        <p class="memory-meta"><span class="pdot pdot-b"></span>Codex &middot; thread 3</p>
         <p>The 401 retry is in src/lib/api.ts. Moving it breaks the refresh path.</p>
       </div>
       <div class="memory-entry">
-        <p class="memory-meta">Grok &middot; thread 6</p>
+        <p class="memory-meta"><span class="pdot pdot-c"></span>Grok &middot; thread 6</p>
         <p>Starts knowing both. Adds the expiry skew and leaves the rest alone.</p>
       </div>
     </div>
@@ -117,7 +135,8 @@
 <section id="planboard">
   <div class="wrap">
     <div class="section-head reveal">
-      <h2>Your planboard is your issue tracker.</h2>
+      <p class="eyebrow">Planboard</p>
+      <h2>Your planboard is your <span class="grad">issue tracker.</span></h2>
       <p>
         The board is plain GitHub issues with labels, so nothing is trapped in
         a local database. Agents update it with <code>gh</code>. Your teammates
@@ -127,29 +146,29 @@
       </p>
       <p class="board-claim">No local-only planner can copy this.</p>
     </div>
-    <div class="board reveal">
+    <div class="board glow reveal">
       <div>
-        <h3>Todo</h3>
+        <h3><span class="col-dot col-todo"></span>Todo</h3>
         <article>
           <p class="memory-meta">open</p>
           <p>Document SSH remote setup</p>
-          <p class="board-action">Start task</p>
+          <p class="board-action">Start task &rarr;</p>
         </article>
         <article>
           <p class="memory-meta">open</p>
           <p>Show remaining spend cap in the composer</p>
-          <p class="board-action">Start task</p>
+          <p class="board-action">Start task &rarr;</p>
         </article>
       </div>
       <div>
-        <h3>In progress</h3>
+        <h3><span class="col-dot col-doing"></span>In progress</h3>
         <article>
           <p class="memory-meta">plan:doing</p>
           <p>Lead the site with memory and the planboard</p>
         </article>
       </div>
       <div>
-        <h3>Done</h3>
+        <h3><span class="col-dot col-done"></span>Done</h3>
         <article>
           <p class="memory-meta">plan:done</p>
           <p>Inject the memory server into every session</p>
@@ -166,7 +185,8 @@
 <section id="features">
   <div class="wrap">
     <div class="section-head reveal">
-      <h2>Built for running agents, not watching terminals.</h2>
+      <p class="eyebrow">The toolkit</p>
+      <h2>Built for running agents,<br />not watching terminals.</h2>
       <p>Everything stays on your machine. Solenta drives the CLIs you already have installed.</p>
     </div>
     <div class="bento">
@@ -239,8 +259,9 @@
   <div class="wrap">
     <div class="orch">
       <div class="reveal">
-        <h2 style="font-size: clamp(26px, 3vw, 36px); letter-spacing: -0.02em; line-height: 1.15; margin: 0 0 14px; font-weight: 650;">Orchestration is a sentence, not a config.</h2>
-        <p style="color: var(--text-muted); margin: 0;">
+        <p class="eyebrow">Orchestration</p>
+        <h2 class="orch-title">Orchestration is a <span class="grad">sentence,</span> not a config.</h2>
+        <p class="orch-sub">
           Every thread carries tools to drive the other threads. You describe
           the fan-out in plain language; the agent spawns, supervises and
           reports back.
@@ -252,7 +273,7 @@
           <li><strong>Or pick a fixed pipeline.</strong> The Build button runs a known template when the shape is repeatable.</li>
         </ul>
       </div>
-      <div class="prompt-card reveal">
+      <div class="prompt-card glow reveal">
         <div class="prompt-label">You, in any thread</div>
         <div class="prompt-line">
           &ldquo;Fan out three Grok workers to build the settings migration,
@@ -266,7 +287,8 @@
 <section id="trust">
   <div class="wrap">
     <div class="section-head reveal">
-      <h2>You own the tools.</h2>
+      <p class="eyebrow eyebrow-center">Ownership</p>
+      <h2>You <span class="grad">own</span> the tools.</h2>
       <p>
         Solenta is MIT licensed and runs on your machine. It drives the agent
         CLIs you already installed. Plans live in GitHub issues. Memory lives
@@ -280,31 +302,38 @@
 <section id="install">
   <div class="wrap">
     <div class="section-head reveal">
+      <p class="eyebrow">Get started</p>
       <h2>Install in a minute.</h2>
       <p>Grab an archive from the latest release, then install whichever agent CLIs you want to drive. Solenta finds them on your PATH.</p>
     </div>
     <div class="install-grid">
-      <div class="install-card reveal">
+      <div class="install-card glow reveal">
         <h3>macOS</h3>
         <p class="os-note">Apple Silicon</p>
         <pre><b>Solenta-0.1.0-macos-arm64.zip</b>
 unzip, move to /Applications
 first launch: right-click &gt; Open</pre>
       </div>
-      <div class="install-card reveal">
+      <div class="install-card glow reveal">
         <h3>Windows</h3>
         <p class="os-note">x64</p>
         <pre><b>Solenta-0.1.0-win32-x64.zip</b>
 unzip anywhere
 run solenta.exe (SmartScreen asks once)</pre>
       </div>
-      <div class="install-card reveal">
+      <div class="install-card glow reveal">
         <h3>Linux</h3>
         <p class="os-note">x64</p>
         <pre><b>Solenta-0.1.0-linux-x64.tar.gz</b>
 tar xzf Solenta-*.tar.gz
 ./solenta/solenta</pre>
       </div>
+    </div>
+    <div class="final-cta reveal">
+      <a class="btn btn-primary btn-lg" href="https://github.com/currentbits/solenta/releases/latest">
+        Download Solenta
+      </a>
+      <a class="btn btn-ghost btn-lg" href="docs.html">Read the docs</a>
     </div>
   </div>
 </section>
@@ -327,6 +356,6 @@ tar xzf Solenta-*.tar.gz
   </div>
 </footer>
 
-<script src="main.js?v=2"></script>
+<script src="main.js?v=3"></script>
 </body>
 </html>
