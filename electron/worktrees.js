@@ -3834,6 +3834,8 @@ async function inspectWorktreeDir(dir) {
  * @param {object} opts
  * @param {import('./store').Store} opts.store
  * @param {string} opts.worktreeBase
+ * @param {boolean} [opts.skipSizes]  skip `du` — candidates and classification
+ *   are stat + git only. Boot retention never needs bytes; the GC dialog does.
  * @returns {Promise<{ candidates: object[], usage: object[], totalBytes: number }>}
  */
 async function gcScan(opts) {
@@ -3848,9 +3850,10 @@ async function gcScan(opts) {
  * @param {object} opts
  * @param {import('./store').Store} opts.store
  * @param {string} opts.worktreeBase
+ * @param {boolean} [opts.skipSizes]
  */
 async function gcScanInner(opts) {
-  const { store, worktreeBase } = opts || {};
+  const { store, worktreeBase, skipSizes } = opts || {};
   const empty = { candidates: [], usage: [], totalBytes: 0 };
   if (!worktreeBase) return empty;
 
@@ -3890,7 +3893,9 @@ async function gcScanInner(opts) {
     if (p.path) projectByPath.set(realpathOrResolve(p.path), p);
   }
 
-  const sizes = await Promise.all(dirs.map((d) => duBytes(d)));
+  const sizes = skipSizes
+    ? dirs.map(() => 0)
+    : await Promise.all(dirs.map((d) => duBytes(d)));
   const inspections = await Promise.all(dirs.map((d) => inspectWorktreeDir(d)));
 
   /** @type {Map<string, Array<{ thread: object, dir: string }>>} */
@@ -4041,12 +4046,13 @@ async function removeGcWorktree(store, cand) {
  * @param {string} opts.worktreeBase
  * @param {string[]} opts.paths
  * @param {(channel: string, payload: unknown) => void} [opts.broadcast]
+ * @param {boolean} [opts.skipSizes]
  * @returns {Promise<{ removed: string[], failed: Array<{path: string, error: string}>, bytes: number }>}
  */
 async function gcClean(opts) {
-  const { store, worktreeBase, paths, broadcast } = opts || {};
+  const { store, worktreeBase, paths, broadcast, skipSizes } = opts || {};
   const requested = Array.isArray(paths) ? paths : [];
-  const scan = await gcScan({ store, worktreeBase });
+  const scan = await gcScan({ store, worktreeBase, skipSizes });
   /** @type {Map<string, object>} */
   const cleanable = new Map();
   /** @type {Map<string, object>} */
@@ -4117,9 +4123,10 @@ async function gcClean(opts) {
 /**
  * Enforce per-project retention limits (#316): reclaim the settled worktrees
  * a project keeps past its `worktreeRetention`. Opt-in — a project without
- * the setting has nothing to reclaim, so this is a no-op by default. Runs
- * gcClean, so the same guards apply: dirty and unreadable trees are skipped,
- * and branches are never deleted.
+ * the setting has nothing to reclaim, so this returns without scanning.
+ * When a limit is set, the scan skips `du` (activity time, not size, picks
+ * what to drop). Runs gcClean, so the same guards apply: dirty and
+ * unreadable trees are skipped, and branches are never deleted.
  *
  * @param {object} opts
  * @param {import('./store').Store} opts.store
@@ -4129,12 +4136,23 @@ async function gcClean(opts) {
  */
 async function enforceRetention(opts) {
   const { store, worktreeBase, broadcast } = opts || {};
-  const scan = await gcScan({ store, worktreeBase });
+  const projects =
+    store && typeof store.getProjects === "function"
+      ? store.getProjects() || []
+      : [];
+  const anyRetention = projects.some((p) => {
+    const n = Math.floor(Number(p && p.worktreeRetention));
+    return n > 0;
+  });
+  // Unset on every project → nothing to reclaim; don't walk the disk.
+  if (!anyRetention) return { removed: [], failed: [], bytes: 0 };
+
+  const scan = await gcScan({ store, worktreeBase, skipSizes: true });
   const paths = scan.candidates
     .filter((c) => c.reason === "retention" && !c.blocked)
     .map((c) => c.path);
   if (paths.length === 0) return { removed: [], failed: [], bytes: 0 };
-  return gcClean({ store, worktreeBase, paths, broadcast });
+  return gcClean({ store, worktreeBase, paths, broadcast, skipSizes: true });
 }
 
 /**

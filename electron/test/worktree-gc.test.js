@@ -10,7 +10,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { execFileSync } = require("node:child_process");
+const { execFile, execFileSync } = require("node:child_process");
 const { Store } = require("../store.js");
 const services = require("../services.js");
 const {
@@ -19,6 +19,7 @@ const {
   gcScan,
   gcClean,
   enforceRetention,
+  setExecFile,
 } = require("../worktrees.js");
 
 function git(cwd, args) {
@@ -74,7 +75,17 @@ function branchExists(repo, name) {
   }
 }
 
-describe("gcScan / gcClean", () => {
+/** Count `du` spawns while forwarding every execFile (git still has to run). */
+function spyDu() {
+  const calls = [];
+  setExecFile((bin, args, opts, cb) => {
+    if (bin === "du") calls.push({ bin, args: args.slice() });
+    return execFile(bin, args, opts, cb);
+  });
+  return calls;
+}
+
+describe("gcScan / gcClean", { concurrency: 1 }, () => {
   let fx;
 
   beforeEach(async () => {
@@ -82,6 +93,7 @@ describe("gcScan / gcClean", () => {
   });
 
   afterEach(() => {
+    setExecFile(null);
     fs.rmSync(fx.tmpDir, { recursive: true, force: true });
   });
 
@@ -227,6 +239,55 @@ describe("gcScan / gcClean", () => {
     // Orphans are the batch dialog's job, not the boot sweep's.
     assert.ok(fs.existsSync(orphan.worktreePath));
     assert.equal(branchExists(fx.repo, drop.branch), true);
+  });
+
+  it("enforceRetention does not spawn du when no project sets retention (#563)", async () => {
+    addWorktree(fx, "Live");
+    const du = spyDu();
+    const result = await enforceRetention({
+      store: fx.store,
+      worktreeBase: fx.worktreeBase,
+    });
+    assert.deepEqual(result.removed, []);
+    assert.equal(du.length, 0);
+  });
+
+  it("enforceRetention reclaims past-limit worktrees without spawning du (#563)", async () => {
+    services.updateProject(fx.store, fx.project.id, { worktreeRetention: 1 });
+    const keep = addWorktree(fx, "Keep");
+    const drop = addWorktree(fx, "Drop");
+    fx.store.updateThread(keep.id, {
+      settledOverride: "settled",
+      updatedAt: 2_000,
+    });
+    fx.store.updateThread(drop.id, {
+      settledOverride: "settled",
+      updatedAt: 1_000,
+    });
+    fx.store.saveNow();
+
+    const du = spyDu();
+    const result = await enforceRetention({
+      store: fx.store,
+      worktreeBase: fx.worktreeBase,
+    });
+    assert.deepEqual(result.removed, [drop.worktreePath]);
+    assert.ok(!fs.existsSync(drop.worktreePath));
+    assert.ok(fs.existsSync(keep.worktreePath));
+    assert.equal(du.length, 0);
+  });
+
+  it("gcScan without skipSizes still reports bytes and totalBytes (#563)", async () => {
+    addWorktree(fx, "Live");
+    const du = spyDu();
+    const scan = await gcScan({
+      store: fx.store,
+      worktreeBase: fx.worktreeBase,
+    });
+    assert.ok(du.length > 0);
+    assert.ok(scan.totalBytes > 0);
+    assert.equal(scan.usage.length, 1);
+    assert.ok(scan.usage[0].bytes > 0);
   });
 
   it("counts archived threads as settled for retention", async () => {
