@@ -3,38 +3,44 @@
   "readOrder": ["critical", "impl", "tests"],
   "chunks": [
     {
-      "area": "src/components/ThreadView.module.css",
-      "rationale": "Read this first — the whole bug and the whole fix are here. .changesPanel is a fixed max-height flex column with overflow: hidden, and .patchScroll was the only scroller. A tall itinerary consumed the 520px, .patchScroll collapsed to zero (flex items do not shrink below min-content), and .commitBox landed past the clipped bottom edge with no scrollbar to reach it. The new .changesScroll takes flex: 1 / min-height: 0 / overflow-y: auto and carries gap: 10px to replace the spacing its children used to inherit from .changesPanel's own gap. flex-shrink: 0 on .changesHead and .commitBox is what actually guarantees the commit box can never be squeezed out again.",
+      "area": "electron/store.js",
+      "rationale": "Root cause lives here. recordUsage no longer drops all-zero turns (kimi's actual payload), ignores simulate, accumulates cachedInputTokens/cacheWriteTokens, and writes the same numbers into usageThreadsByDay when threadId is set. recordWastedSpend is the subset-not-sum waste ledger: it only bumps wastedUsd, and will mint a turns:0 row if waste arrives before any usage.",
       "risks": [
-        "position: sticky on .commitBox is inert as written: .changesScroll absorbs the flex space so .commitBox no longer overflows .changesPanel, and there is nothing to stick against. Harmless and requested by #555, but do not treat it as load-bearing — the flex-shrink rules are.",
-        ".changesScroll duplicates gap: 10px from .changesPanel. If someone later changes the panel gap the two will drift apart silently.",
-        "flex: 1 was removed from .patchScroll, so a very long diff now grows the scroller's content rather than fitting a flex track. Correct for this fix (the parent scrolls) but it changes how tall diffs lay out.",
-        "A long diff no longer has its own inner scrollbar — itinerary, file lists and patches now share one scroll. Nested scrolling survives only on .fileList, which keeps max-height: 120px + overflow-y: auto (verified in the stylesheet), so each chunk's file list is still individually capped.",
-        ".commitInput is resize: vertical. A user-stretched textarea eats review space — pre-existing, but more reachable now that the box can never be clipped away."
+        "A later recordUsage that omits projectId/title overwrites last-seen labels with empty strings. All five live call sites pass them; tests that call recordUsage without labels will wipe them.",
+        "recordWastedSpend uses the same (input.model || 'unknown') key as recordUsage. If notifyRunTerminal's model fallback disagrees, waste lands on a phantom provider/model cell.",
+        "usageThreadsByDay is created on first write; an older in-memory store that never loaded the contract field is healed, but only on the write path."
       ]
     },
     {
-      "area": "src/components/ThreadView.tsx",
-      "rationale": "Only two real lines: the opening <div className={styles.changesScroll}> before <ReviewItineraryView> and its close after the diff.truncated note, with .commitBox deliberately left outside. Read with `git diff -w` — the other ~128 changed lines are pure re-indentation of the wrapped children and carry no logic.",
+      "area": "electron/runner.js",
+      "rationale": "notifyRunTerminal is the single terminal seam: failed/stopped (not quota-wait) call recordWastedSpend with getUsage(threadId).model || thread.model || 'unknown'. The four provider recordUsage sites now pass thread context; only the claude-stream path (claude/grok) passes cache_read/cache_creation. runUsage.tokensIn is left as the billable number — memory/OTel still treat it that way.",
       "risks": [
-        "The wrap must not swallow .commitBox. Verify by eye that the closing </div> sits before <div className={styles.commitBox}> — nesting it inside would reintroduce the exact bug with a scrollbar instead of a clip, and would additionally re-target the sticky rule at the scroller.",
-        "The error/loading/empty paragraphs stay outside .changesScroll as direct panel children. Intentional, but it means an inline error shown above a tall itinerary still consumes non-scrollable flex space."
+        "Claude result events can record usage with model:null (→ 'unknown') if system/init never set capturedModel, while waste then falls through to thread.model. Fake tests emit model:'m' so they do not catch this.",
+        "Codex reports cached_input_tokens but extractUsage does not surface them, and input_tokens already includes the cache. Passing the cache field through would double-count processed tokens; cache counters stay 0 on purpose.",
+        "Call sites that omit extras.costUsd record nothing (0). Generic/text runs never populate waste even when they fail."
       ]
     },
     {
-      "area": "test/threadView.test.tsx",
-      "rationale": "Regression coverage for a pure-layout failure that no behavioural assertion catches. view() gains optional onFetchDiff / onFetchReviewContext overrides (the empty-diff stub stays the default, so every existing test is untouched). Test 1 mounts the panel with a genuinely tall itinerary — hard stop, author notes, 4+ steps, files across ci-config/critical/tests/impl/docs — and walks up from the commit textarea to [aria-label=Changes], so wrapping the box in .changesScroll fails the test. Test 2 reads the stylesheet per-rule-block and pins flex-shrink: 0 + sticky on .commitBox, flex-shrink: 0 on .changesHead, overflow-y: auto + min-height: 0 on .changesScroll, and the absence of overflow: auto on .patchScroll.",
+      "area": "electron/workflow.js",
+      "rationale": "The fifth recordUsage site. spawnAgentClaude now copies Claude's cache fields into the per-agent usage object; aggCached/aggCacheWrite ride along to the final-phase recordUsage plus thread context. Other spawners have no cache fields, so they add 0.",
       "risks": [
-        "Test 2's .patchScroll guard matches overflow: auto specifically, not overflow-y: auto — a nested-scroller regression reintroduced as overflow-y would slip past it. B flagged this itself; worth tightening if that rule is ever touched again.",
-        "Test 1 was already green before the fix, because .changesScroll did not exist to be found in the ancestor chain. It only becomes a real guard now the wrapper is in place.",
-        "The CSS-text guard is only as strong as its rule-block slicing — a whole-file substring check would pass on a match in an unrelated rule and prove nothing.",
-        "node:test stops at the first failed assertion in a test, so a partial CSS regression surfaces one missing declaration at a time rather than all of them."
+        "recordUsage still only fires on final-phase success (pre-existing). A workflow that dies mid-run has spendByDay via per-agent recordSpend and waste via notifyRunTerminal, but no usage-by-day turns for the completed agents.",
+        "agent.tokensUsed still sums only input+output; cache is not in that display number."
+      ]
+    },
+    {
+      "area": "electron/test/budget-spend.test.js",
+      "rationale": "Store-level coverage for the kimi zero-turn, cache split, old-cell coerce, thread rollup + 90-day prune, and waste-without-touching-costUsd. Runner-level coverage drives a fake Claude through startRun for cache passthrough, failed→wastedUsd, and quota-wait→no waste.",
+      "risks": [
+        "The failed/quota tests key on claude.m because the fake emits model:'m' on system/init. A regression that stopped capturing that model would fail these tests for the right reason.",
+        "Quota-wait depends on decideQuotaWait parsing the error string; a parser change would make the test park as a real failure and start attributing waste."
       ]
     }
   ],
   "risks": [
-    "jsdom does not lay out, so nothing in this suite can prove the commit box is actually visible at 520px with a tall itinerary — the CSS-text guard is a proxy for the real behaviour. Confirming the fix for real needs eyes on a running Electron window.",
-    "Both halves were written by parallel workers that never saw each other's files; the orchestrator ran tsc --noEmit and the full threadView suite on the merged result, which is the only place the two halves were tested together.",
-    "Worker A's first run was cancelled before it verified anything, and it later recommitted the identical source over the orchestrator's commit. The merged source content was diffed to confirm the two commits agree."
+    "Codex cached_input_tokens is inside input_tokens (electron/codex.js:372, :505). The Tokens toggle will show Codex input as the full prompt and cache counters as 0 — correct for this payload, different from Claude's split.",
+    "runUsage was not given cache fields. notifyRunTerminal extras.tokensIn and recordRunOutcome stay billable-only.",
+    "npm run test:electron: 1507 pass, 7 fail. Known worktree-base failures in checkpoints.test.js and verify-gate.test.js, plus package-app.sh node_modules/ws. Extra flake: memory-sup.test.js 'unregister runs grok mcp remove' waitFor timeout — not on this diff.",
+    "Renderer (src/, test/) is owned by the parallel worker; this branch does not render 'unreported' or the project/thread breakdown."
   ]
 }

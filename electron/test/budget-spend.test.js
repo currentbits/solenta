@@ -43,8 +43,12 @@ function waitFor(predicate, { timeoutMs = 15000, intervalMs = 20 } = {}) {
  * @param {string} dir
  * @param {number} costUsd
  */
-function writeFakeClaude(dir, costUsd) {
+function writeFakeClaude(dir, costUsd, opts = {}) {
   const scriptPath = path.join(dir, "fake-claude.js");
+  const subtype = opts.subtype || "success";
+  const errors = Array.isArray(opts.errors) ? opts.errors : [];
+  const exitCode = opts.exitCode == null ? 0 : Number(opts.exitCode);
+  const usage = opts.usage || { input_tokens: 10, output_tokens: 5 };
   const body = `#!/usr/bin/env node
 "use strict";
 const fs = require("fs");
@@ -65,13 +69,14 @@ emit({
 });
 emit({
   type: "result",
-  subtype: "success",
+  subtype: ${JSON.stringify(subtype)},
   result: "ok",
   session_id: "sess-budget",
-  usage: { input_tokens: 10, output_tokens: 5 },
+  usage: ${JSON.stringify(usage)},
   total_cost_usd: ${Number(costUsd)},
+  errors: ${JSON.stringify(errors)},
 });
-process.exit(0);
+process.exit(${exitCode});
 `;
   return writeFakeBin(scriptPath, body);
 }
@@ -202,7 +207,7 @@ describe("spendByDay and settings", () => {
       turns: 1,
       wastedUsd: 0,
     });
-    // All-zero / missing provider are ignored.
+    // Missing / simulate providers are ignored; all-zero turns are kept (#556).
     store.recordUsage(
       { provider: "grok", model: "grok-4", costUsd: 0, inputTokens: 0, outputTokens: 0 },
       new Date(2026, 7, 6, 12, 0, 0),
@@ -211,7 +216,13 @@ describe("spendByDay and settings", () => {
       { provider: "", model: "x", costUsd: 1, inputTokens: 1, outputTokens: 1 },
       new Date(2026, 7, 6, 12, 0, 0),
     );
-    assert.equal(store.getUsageByDay()["2026-08-06"].grok["grok-4"].turns, 1);
+    store.recordUsage(
+      { provider: "simulate", model: "sim", costUsd: 9, inputTokens: 9, outputTokens: 9 },
+      new Date(2026, 7, 6, 12, 0, 0),
+    );
+    assert.equal(store.getUsageByDay()["2026-08-06"].grok["grok-4"].turns, 2);
+    assert.equal(store.getUsageByDay()["2026-08-06"].x, undefined);
+    assert.equal(store.getUsageByDay()["2026-08-06"].simulate, undefined);
   });
 
   it("usageByDay buckets older than 90 days are pruned on load", () => {
@@ -307,6 +318,252 @@ describe("spendByDay and settings", () => {
     });
     assert.equal(map[today].claude, undefined);
     assert.equal(map[today].grok.bad, undefined);
+  });
+
+  it("recordUsage keeps a kimi all-zero turn (issue #556)", () => {
+    const store = new Store(filePath);
+    const now = new Date(2026, 7, 6, 12, 0, 0);
+    store.recordUsage(
+      { provider: "kimi", model: "kimi-k2", costUsd: 0, inputTokens: 0, outputTokens: 0 },
+      now,
+    );
+    const cell = store.getUsageByDay()["2026-08-06"].kimi["kimi-k2"];
+    assert.deepEqual(cell, {
+      costUsd: 0,
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      cacheWriteTokens: 0,
+      outputTokens: 0,
+      turns: 1,
+      wastedUsd: 0,
+    });
+    store.saveNow();
+    const reloaded = new Store(filePath);
+    assert.deepEqual(
+      reloaded.getUsageByDay()["2026-08-06"].kimi["kimi-k2"],
+      cell,
+    );
+  });
+
+  it("recordUsage splits billable input from cache read/write", () => {
+    const store = new Store(filePath);
+    store.recordUsage(
+      {
+        provider: "claude",
+        model: "opus",
+        costUsd: 0.5,
+        inputTokens: 2,
+        cachedInputTokens: 17028,
+        cacheWriteTokens: 20661,
+        outputTokens: 884,
+      },
+      new Date(2026, 7, 6, 12, 0, 0),
+    );
+    const cell = store.getUsageByDay()["2026-08-06"].claude.opus;
+    assert.equal(cell.inputTokens, 2);
+    assert.equal(cell.cachedInputTokens, 17028);
+    assert.equal(cell.cacheWriteTokens, 20661);
+    const processed =
+      cell.inputTokens + cell.cachedInputTokens + cell.cacheWriteTokens;
+    assert.equal(processed, 2 + 17028 + 20661);
+    assert.notEqual(processed, cell.inputTokens);
+  });
+
+  it("old usage cells missing cache/waste fields load as 0", () => {
+    fs.writeFileSync(
+      filePath,
+      JSON.stringify({
+        projects: [],
+        threads: [],
+        usageByDay: {
+          "2026-08-06": {
+            claude: {
+              opus: { costUsd: 1.5, inputTokens: 10, outputTokens: 4, turns: 2 },
+            },
+          },
+        },
+      }),
+      "utf8",
+    );
+    const loaded = new Store(filePath).getUsageByDay()["2026-08-06"].claude.opus;
+    assert.deepEqual(loaded, {
+      costUsd: 1.5,
+      inputTokens: 10,
+      cachedInputTokens: 0,
+      cacheWriteTokens: 0,
+      outputTokens: 4,
+      turns: 2,
+      wastedUsd: 0,
+    });
+  });
+
+  it("usageThreadsByDay accumulates per thread, labels, persists, and prunes at 90 days", () => {
+    const store = new Store(filePath);
+    const morning = new Date(2026, 7, 6, 10, 0, 0);
+    const evening = new Date(2026, 7, 6, 22, 0, 0);
+    store.recordUsage(
+      {
+        provider: "claude",
+        model: "opus",
+        costUsd: 0.01,
+        inputTokens: 100,
+        cachedInputTokens: 50,
+        cacheWriteTokens: 10,
+        outputTokens: 20,
+        threadId: "t1",
+        projectId: "p1",
+        projectName: "Alpha",
+        title: "Old title",
+      },
+      morning,
+    );
+    store.recordUsage(
+      {
+        provider: "claude",
+        model: "sonnet",
+        costUsd: 0.02,
+        inputTokens: 40,
+        outputTokens: 8,
+        threadId: "t1",
+        projectId: "p1",
+        projectName: "Alpha",
+        title: "Renamed",
+      },
+      evening,
+    );
+    store.recordUsage(
+      {
+        provider: "kimi",
+        model: "kimi-k2",
+        costUsd: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        threadId: "t2",
+        projectId: "p2",
+        projectName: "Beta",
+        title: "Silent",
+      },
+      evening,
+    );
+    const day = store.getUsageThreadsByDay()["2026-08-06"];
+    assert.deepEqual(day.t1, {
+      costUsd: 0.03,
+      inputTokens: 140,
+      cachedInputTokens: 50,
+      cacheWriteTokens: 10,
+      outputTokens: 28,
+      turns: 2,
+      wastedUsd: 0,
+      projectId: "p1",
+      projectName: "Alpha",
+      title: "Renamed",
+      provider: "claude",
+      model: "sonnet",
+    });
+    assert.equal(day.t2.turns, 1);
+    assert.equal(day.t2.provider, "kimi");
+    assert.equal(day.t2.title, "Silent");
+    store.saveNow();
+    const reloaded = new Store(filePath);
+    assert.deepEqual(
+      reloaded.getUsageThreadsByDay()["2026-08-06"].t1,
+      day.t1,
+    );
+
+    const now = new Date();
+    const keep = new Date(now);
+    keep.setDate(keep.getDate() - 30);
+    const edge = new Date(now);
+    edge.setDate(edge.getDate() - 90);
+    const old = new Date(now);
+    old.setDate(old.getDate() - 91);
+    const keepKey = localDayKey(keep);
+    const edgeKey = localDayKey(edge);
+    const oldKey = localDayKey(old);
+    const todayKey = localDayKey(now);
+    const threadRow = {
+      costUsd: 1,
+      inputTokens: 10,
+      outputTokens: 2,
+      turns: 1,
+      projectId: "p",
+      projectName: "P",
+      title: "T",
+      provider: "claude",
+      model: "opus",
+    };
+    fs.writeFileSync(
+      filePath,
+      JSON.stringify({
+        projects: [],
+        threads: [],
+        usageThreadsByDay: {
+          [oldKey]: { tOld: threadRow },
+          [edgeKey]: { tEdge: threadRow },
+          [keepKey]: { tKeep: threadRow },
+          [todayKey]: { tToday: threadRow },
+        },
+      }),
+      "utf8",
+    );
+    const pruned = new Store(filePath).getUsageThreadsByDay();
+    assert.equal(pruned[oldKey], undefined);
+    assert.ok(pruned[edgeKey]);
+    assert.ok(pruned[keepKey]);
+    assert.ok(pruned[todayKey]);
+  });
+
+  it("recordWastedSpend adds to wastedUsd without touching costUsd", () => {
+    const store = new Store(filePath);
+    const now = new Date(2026, 7, 6, 12, 0, 0);
+    store.recordUsage(
+      {
+        provider: "claude",
+        model: "opus",
+        costUsd: 1.25,
+        inputTokens: 10,
+        outputTokens: 4,
+        threadId: "t1",
+        projectId: "p1",
+        projectName: "Alpha",
+        title: "Run",
+      },
+      now,
+    );
+    store.recordWastedSpend(
+      { provider: "claude", model: "opus", threadId: "t1", costUsd: 1.25 },
+      now,
+    );
+    const cell = store.getUsageByDay()["2026-08-06"].claude.opus;
+    assert.equal(cell.costUsd, 1.25);
+    assert.equal(cell.wastedUsd, 1.25);
+    assert.equal(cell.turns, 1);
+    const threadCell = store.getUsageThreadsByDay()["2026-08-06"].t1;
+    assert.equal(threadCell.costUsd, 1.25);
+    assert.equal(threadCell.wastedUsd, 1.25);
+    assert.equal(threadCell.title, "Run");
+
+    store.recordWastedSpend(
+      { provider: "grok", model: "grok-4", threadId: "t-ghost", costUsd: 0.4 },
+      now,
+    );
+    const ghost = store.getUsageByDay()["2026-08-06"].grok["grok-4"];
+    assert.equal(ghost.costUsd, 0);
+    assert.equal(ghost.turns, 0);
+    assert.equal(ghost.wastedUsd, 0.4);
+    assert.equal(store.getUsageThreadsByDay()["2026-08-06"]["t-ghost"].turns, 0);
+    assert.equal(store.getUsageThreadsByDay()["2026-08-06"]["t-ghost"].wastedUsd, 0.4);
+
+    store.recordWastedSpend(
+      { provider: "claude", model: "opus", costUsd: 0 },
+      now,
+    );
+    store.recordWastedSpend(
+      { provider: "simulate", model: "x", costUsd: 9 },
+      now,
+    );
+    assert.equal(store.getUsageByDay()["2026-08-06"].claude.opus.wastedUsd, 1.25);
+    assert.equal(store.getUsageByDay()["2026-08-06"].simulate, undefined);
   });
 
   it("prunes spendByDay buckets older than 90 days on load", () => {
@@ -671,5 +928,78 @@ describe("budget gate and spend on real runs", () => {
     assert.ok(r2.runId);
     await waitFor(() => store.getThread(thread.id).status === "done");
     assert.equal(fs.existsSync(argvFile), true);
+  });
+
+  it("claude cache fields land on the usage cell as processed-not-billable", async () => {
+    fakeBin = writeFakeClaude(tmpDir, 0.01, {
+      usage: {
+        input_tokens: 2,
+        cache_read_input_tokens: 17028,
+        cache_creation_input_tokens: 20661,
+        output_tokens: 884,
+      },
+    });
+    process.env.CODER_CLAUDE_BIN = fakeBin;
+
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "cache me" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    const day = localDayKey();
+    const cell = store.getUsageByDay()[day].claude.m;
+    assert.equal(cell.inputTokens, 2);
+    assert.equal(cell.cachedInputTokens, 17028);
+    assert.equal(cell.cacheWriteTokens, 20661);
+    assert.equal(cell.outputTokens, 884);
+    assert.notEqual(
+      cell.inputTokens + cell.cachedInputTokens + cell.cacheWriteTokens,
+      cell.inputTokens,
+    );
+    const threadCell = store.getUsageThreadsByDay()[day][thread.id];
+    assert.equal(threadCell.title, "Budget Thread");
+    assert.equal(threadCell.cachedInputTokens, 17028);
+  });
+
+  it("failed run attributes cost to wastedUsd on the same provider/model row", async () => {
+    fakeBin = writeFakeClaude(tmpDir, 0.01, {
+      subtype: "error",
+      errors: ["something broke"],
+      exitCode: 1,
+    });
+    process.env.CODER_CLAUDE_BIN = fakeBin;
+
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "please fail" });
+    await waitFor(() => store.getThread(thread.id).status === "failed");
+
+    const day = localDayKey();
+    const cell = store.getUsageByDay()[day].claude.m;
+    assert.ok(Math.abs(cell.costUsd - 0.01) < 1e-9);
+    assert.ok(Math.abs(cell.wastedUsd - 0.01) < 1e-9);
+    assert.equal(cell.turns, 1);
+    const threadCell = store.getUsageThreadsByDay()[day][thread.id];
+    assert.ok(threadCell);
+    assert.ok(Math.abs(threadCell.wastedUsd - 0.01) < 1e-9);
+    assert.equal(threadCell.provider, "claude");
+    assert.equal(threadCell.model, "m");
+  });
+
+  it("quota-wait failure does not attribute wastedUsd", async () => {
+    fakeBin = writeFakeClaude(tmpDir, 0.01, {
+      subtype: "error",
+      errors: ["You've hit your limit · resets 11:59pm"],
+      exitCode: 1,
+    });
+    process.env.CODER_CLAUDE_BIN = fakeBin;
+
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "park me" });
+    await waitFor(() => store.getThread(thread.id).status === "quota-wait");
+
+    const day = localDayKey();
+    const cell = store.getUsageByDay()[day].claude.m;
+    assert.ok(Math.abs(cell.costUsd - 0.01) < 1e-9);
+    assert.equal(cell.wastedUsd, 0);
+    assert.equal(cell.turns, 1);
   });
 });
