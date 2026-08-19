@@ -1,78 +1,34 @@
 {
   "version": 1,
-<<<<<<< HEAD
-  "readOrder": ["critical", "impl", "docs"],
-  "chunks": [
-    {
-      "area": "critical — site/style.css (full rewrite)",
-      "rationale": "Read first and top-to-bottom: every visual decision lives here, and docs.html/changelog.html consume it without their own changes, so a regression here breaks three pages. Check the docs section (docs-layout/docs-nav/docs-content/doc-table/callout/lede) against the class list both pages actually use, and confirm the reveal block keeps the no-JS-fully-visible contract.",
-      "risks": [
-        "@property --mx/--my and animation-timeline are Chromium/Safari-17.4+ features; all uses are wrapped so unsupported engines get the static design, but Firefox deserves a manual look (no scroll-driven shot entrance, progress bar stays scaleX(0) — both intended fallbacks).",
-        "body::after grain is a fixed full-viewport layer with an SVG turbulence fill — cheap in real browsers, but it defeated chromium-headless-shell's rasterizer in tall-window captures (blank tiles); verified with real Brave headless instead.",
-        ".cell-f changed to span 6; if a future cell reuses cell-f expecting span 3 it will go full-width."
-      ]
-    },
-    {
-      "area": "impl — site/index.html + site/main.js",
-      "rationale": "Second: shows how the CSS is consumed. New markup: .progress bar, .hero-bg aurora/grid, .hero-pill, .grad headline spans, .marquee provider strip, .glow hooks on cards, .pdot/.col-dot status dots, .final-cta. main.js adds pointer glow (--mx/--my), nav.scrolled, sibling reveal stagger; reveal/scroll-spy logic unchanged.",
-      "risks": [
-        "Marquee content is duplicated 4x and aria-hidden; screen readers skip it by design since providers are named in the hero copy.",
-        "Pointer glow listeners attach to every .cell/.glow at load — fine at this page size; a much larger bento would want delegation.",
-        "Copy changes are minimal but real: provider list moved out of the hero sub into the marquee, and a final CTA was added after the install grid."
-      ]
-    },
-    {
-      "area": "docs — site/docs.html, site/changelog.html",
-      "rationale": "Last: only cache-bust bumps (style.css v4, main.js v3). No markup changes; verify by skimming the diff, then judge them from the rendered pages.",
-      "risks": [
-        "None beyond the shared-stylesheet coupling noted above."
-=======
-  "readOrder": ["tests", "critical", "impl", "docs"],
+  "readOrder": ["tests", "critical", "impl"],
   "chunks": [
     {
       "area": "tests",
-      "rationale": "The split-tree operations are the whole feature; read paneLayout.test.ts first so the UI is just a renderer of those ops. Then paneWorkspace.test.tsx (close/Cmd+\\/drag) and the Views menu cases in threadHeader.test.tsx.",
+      "rationale": "Read grok.test.js first: the argv contract is the whole fix (asking modes must emit bypassPermissions + --always-approve, never auto). Then providers.test.js (same buildArgs assertion on the registry unit) and sandbox.test.js (badge copy tracks the flags we actually pass).",
       "risks": [
-        "jsdom has no DragEvent; drag-swap is exercised via a module-level draggingPaneId plus generic Event('dragstart'|'drop')",
-        "unmountAll now wipes coder.paneLayout.* keys so tests cannot observe persistence across remounts — that path is covered only at the model layer"
+        "Runner grok tests spawn a fake binary and only check argv; they do not prove grok 1.0.5 honors --always-approve. That was verified live against the real CLI.",
+        "plan mode is asserted to stay plan and not get --always-approve — a reviewer skimming only the default case could miss a plan-mode regression."
       ]
     },
     {
       "area": "critical",
-      "rationale": "paneLayout.ts is the contract: binary split tree, open/close/resize/move, parse fallback, per-thread localStorage. Wrong close-last or extract logic loses a pane or the whole tree.",
+      "rationale": "electron/providers.js grok.buildArgs is the spawn argv. This is where default/acceptEdits used to map to --permission-mode auto, which grok 1.0.5 treats as default and auto-cancels run_terminal_command as a user stop.",
       "risks": [
-        "close of the last leaf is a no-op; an empty workspace is impossible on purpose",
-        "movePane extract+insert can no-op if the target leaf vanished with the extract (should not happen for a different leaf)",
-        "1 - MIN_RATIO is not 0.82 in IEEE; MAX_RATIO is a separate constant"
+        "default and acceptEdits on grok now fully auto-approve tools, indistinguishable from bypassPermissions. Headless -p cannot prompt anyway; the permission pill remains a no-op between those three modes (#177).",
+        "--always-approve and --permission-mode bypassPermissions are redundant on 1.0.5 (always-approve sets bypassPermissions). Both are passed because auto was the previous 'documented' mode and was silently ignored.",
+        "Already-running grok children keep the old argv until the next spawn; a live Solenta session will not pick this up mid-turn."
       ]
     },
     {
       "area": "impl",
-      "rationale": "PaneWorkspace renders the tree; ThreadView owns layout state, the Views menu, and maps chat/diff onto existing surfaces. Exclusive Thread|Git tabs are gone: chat and Git can share the center pane.",
+      "rationale": "electron/sandbox.js only changes the badge reason string so it matches the flags buildArgs now emits. No confinement change (grok still has no --sandbox).",
       "risks": [
-        "changesOpen is now an open-signal (Environment / next-git), not exclusive visibility — App still zeros it on thread switch, but persisted layouts restore Git independently",
-        "first-mount must not re-hydrate or it drops a changesOpen:true Git pane; only real thread switches reload from storage",
-        "PaneWorkspace .body was renamed leafBody because CSS-module tests stub class names as the key and query('.body') would hit the wrapper, breaking stick-to-bottom",
-        "Git ChangesPanel still paints its own header under the pane chrome when split — duplicate 'Git' title"
-      ]
-    },
-    {
-      "area": "docs",
-      "rationale": "KeyboardSheet gained ⌘ + \\ . No PRODUCT-SPEC change; terminal/browser/files/tasks/subagent are registry placeholders until those issues land.",
-      "risks": [
-        "Cmd+\\ is renderer-only; it is not in the Electron View menu"
->>>>>>> main
+        "If a future grok CLI honors auto again, the badge will still say bypassPermissions / --always-approve. That is honest about what we pass today."
       ]
     }
   ],
   "risks": [
-<<<<<<< HEAD
-    "Visual-only change verified by screenshot at 1440px and 390px plus docs/changelog captures; no automated tests exist for site/.",
-    "Firefox/Safari not actually launched — scroll-driven animations degrade to static by design, but that claim rests on the @supports guards, not a live run."
-=======
-    "Sidebar and Agents stay app chrome — they are not pane types. Putting them in the tree later would fight the narrow-window drawers.",
-    "Layout lives in localStorage (coder.paneLayout.<threadId>), not coder-store.json. Multi-window shares it; a store migration is out of scope.",
-    "No browser verification of drag/resize; jsdom has no layout."
->>>>>>> main
+    "This stops false 'Run stopped' from gated-tool auto-cancel. A real user Stop/Esc still goes through stopRun and still looks the same, which is correct.",
+    "plan mode can still auto-cancel gated tools in headless grok; we do not remap plan."
   ]
 }

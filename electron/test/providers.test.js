@@ -227,6 +227,12 @@ describe("providers registry", () => {
     assert.equal(grokArgs[grokArgs.length - 1], "hello");
     assert.ok(grokArgs.includes("streaming-messages-json"));
     assert.ok(grokArgs.includes("--permission-mode"));
+    assert.equal(
+      grokArgs[grokArgs.indexOf("--permission-mode") + 1],
+      "bypassPermissions",
+    );
+    assert.ok(grokArgs.includes("--always-approve"));
+    assert.ok(!grokArgs.includes("auto"));
     assert.ok(!grokArgs.includes("--verbose"));
     assert.ok(!grokArgs.some((a) => String(a).startsWith("--mcp-config")));
 

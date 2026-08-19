@@ -269,22 +269,25 @@ const PROVIDERS = [
      *
      * Permission modes: headless -p has NO prompt channel (no
      * --permission-prompt-tool / stream-json input like claude), so any mode
-     * that would ask auto-cancels the first gated tool and the run dies with
-     * `result subtype error_during_execution` (verified live, issue #3).
-     * Map the asking modes (default, acceptEdits) to grok's non-prompting
-     * "auto"; plan and bypassPermissions never prompt and pass through.
-     * Same spirit as kimi one-shot turns, which cannot ask either.
+     * that would ask auto-cancels the gated tool and the run dies with
+     * `errors: ["cancelled"]` — Solenta then shows "Run stopped" (#549).
+     * grok 1.0.5 treats `--permission-mode auto` as `default` (init event
+     * reports default; bash is "User cancelled"). Map asking modes to
+     * bypassPermissions + --always-approve, which 1.0.5 actually honors
+     * (issue #578). plan passes through; explicit bypassPermissions is
+     * already unprompted so the extra flag is not added.
      */
     buildArgs({ prompt, sessionId, permissionMode, model, reasoningEffort }) {
       const mode = String(permissionMode || "default");
-      const headlessMode =
-        mode === "default" || mode === "acceptEdits" ? "auto" : mode;
+      const asking = mode === "default" || mode === "acceptEdits";
+      const headlessMode = asking ? "bypassPermissions" : mode;
       const args = [
         "--output-format",
         "streaming-messages-json",
         "--permission-mode",
         headlessMode,
       ];
+      if (asking) args.push("--always-approve");
       if (model) {
         args.push("-m", String(model));
       }

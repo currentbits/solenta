@@ -85,14 +85,17 @@ describe("resolveSandbox per provider (local)", () => {
     }
   });
 
-  it("grok: asking modes become auto; never passes --sandbox", () => {
+  it("grok: asking modes become bypassPermissions; never passes --sandbox", () => {
     const asking = resolveSandbox({
       provider: "grok",
       permissionMode: "default",
       project: local,
     });
     assert.equal(asking.sandboxed, false);
-    assert.match(asking.reason, /--permission-mode auto \(tools unprompted\)/);
+    assert.match(
+      asking.reason,
+      /--always-approve|--permission-mode bypassPermissions/,
+    );
 
     const accept = resolveSandbox({
       provider: "grok",
@@ -100,7 +103,10 @@ describe("resolveSandbox per provider (local)", () => {
       project: local,
     });
     assert.equal(accept.sandboxed, false);
-    assert.match(accept.reason, /--permission-mode auto/);
+    assert.match(
+      accept.reason,
+      /--always-approve|--permission-mode bypassPermissions/,
+    );
 
     const plan = resolveSandbox({
       provider: "grok",
