@@ -56,6 +56,7 @@ const EMPTY = {
   workflowTemplates: [],
   spendByDay: {},
   usageByDay: {},
+  usageThreadsByDay: {},
   automations: [],
   tasksByCrew: {},
   digestSeenAt: null,
@@ -560,15 +561,53 @@ function coerceFiniteNumber(n) {
 }
 
 /**
+ * One usage cell. cachedInputTokens/cacheWriteTokens/wastedUsd are absent on
+ * rows written before #556 and read back as 0.
+ * @typedef {{ costUsd: number, inputTokens: number, cachedInputTokens: number, cacheWriteTokens: number, outputTokens: number, turns: number, wastedUsd: number }} UsageCell
+ * @typedef {UsageCell & { projectId: string, projectName: string, title: string, provider: string, model: string }} UsageThreadCell
+ */
+
+/** @returns {UsageCell} */
+function emptyUsageCell() {
+  return {
+    costUsd: 0,
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    cacheWriteTokens: 0,
+    outputTokens: 0,
+    turns: 0,
+    wastedUsd: 0,
+  };
+}
+
+/**
+ * Coerce a stored cell, defaulting fields older rows never wrote.
+ * @param {unknown} entry
+ * @returns {UsageCell}
+ */
+function coerceUsageCell(entry) {
+  const row = /** @type {Record<string, unknown>} */ (entry || {});
+  return {
+    costUsd: coerceFiniteNumber(row.costUsd),
+    inputTokens: coerceFiniteNumber(row.inputTokens),
+    cachedInputTokens: coerceFiniteNumber(row.cachedInputTokens),
+    cacheWriteTokens: coerceFiniteNumber(row.cacheWriteTokens),
+    outputTokens: coerceFiniteNumber(row.outputTokens),
+    turns: coerceFiniteNumber(row.turns),
+    wastedUsd: coerceFiniteNumber(row.wastedUsd),
+  };
+}
+
+/**
  * Normalize usageByDay map and prune old buckets.
- * day -> provider -> model -> { costUsd, inputTokens, outputTokens, turns }
+ * day -> provider -> model -> UsageCell
  * Malformed roots/entries are dropped; numbers are coerced.
  * @param {unknown} raw
  * @param {Date} [now]
- * @returns {Record<string, Record<string, Record<string, { costUsd: number, inputTokens: number, outputTokens: number, turns: number }>>>}
+ * @returns {Record<string, Record<string, Record<string, UsageCell>>>}
  */
 function normalizeUsageByDay(raw, now = new Date()) {
-  /** @type {Record<string, Record<string, Record<string, { costUsd: number, inputTokens: number, outputTokens: number, turns: number }>>>} */
+  /** @type {Record<string, Record<string, Record<string, UsageCell>>>} */
   const map = {};
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     pruneSpendByDay(map, now);
@@ -578,27 +617,61 @@ function normalizeUsageByDay(raw, now = new Date()) {
     if (typeof day !== "string" || !providers || typeof providers !== "object" || Array.isArray(providers)) {
       continue;
     }
-    /** @type {Record<string, Record<string, { costUsd: number, inputTokens: number, outputTokens: number, turns: number }>>} */
+    /** @type {Record<string, Record<string, UsageCell>>} */
     const dayMap = {};
     for (const [provider, models] of Object.entries(providers)) {
       if (typeof provider !== "string" || !models || typeof models !== "object" || Array.isArray(models)) {
         continue;
       }
-      /** @type {Record<string, { costUsd: number, inputTokens: number, outputTokens: number, turns: number }>} */
+      /** @type {Record<string, UsageCell>} */
       const modelMap = {};
       for (const [model, entry] of Object.entries(models)) {
         if (typeof model !== "string" || !entry || typeof entry !== "object" || Array.isArray(entry)) {
           continue;
         }
-        const row = /** @type {{ costUsd?: unknown, inputTokens?: unknown, outputTokens?: unknown, turns?: unknown }} */ (entry);
-        modelMap[model] = {
-          costUsd: coerceFiniteNumber(row.costUsd),
-          inputTokens: coerceFiniteNumber(row.inputTokens),
-          outputTokens: coerceFiniteNumber(row.outputTokens),
-          turns: coerceFiniteNumber(row.turns),
-        };
+        modelMap[model] = coerceUsageCell(entry);
       }
       if (Object.keys(modelMap).length > 0) dayMap[provider] = modelMap;
+    }
+    if (Object.keys(dayMap).length > 0) map[day] = dayMap;
+  }
+  pruneSpendByDay(map, now);
+  return map;
+}
+
+/**
+ * Normalize the per-thread rollup and prune old buckets.
+ * day -> threadId -> UsageThreadCell
+ * @param {unknown} raw
+ * @param {Date} [now]
+ * @returns {Record<string, Record<string, UsageThreadCell>>}
+ */
+function normalizeUsageThreadsByDay(raw, now = new Date()) {
+  /** @type {Record<string, Record<string, UsageThreadCell>>} */
+  const map = {};
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    pruneSpendByDay(map, now);
+    return map;
+  }
+  for (const [day, threads] of Object.entries(raw)) {
+    if (typeof day !== "string" || !threads || typeof threads !== "object" || Array.isArray(threads)) {
+      continue;
+    }
+    /** @type {Record<string, UsageThreadCell>} */
+    const dayMap = {};
+    for (const [threadId, entry] of Object.entries(threads)) {
+      if (typeof threadId !== "string" || !threadId || !entry || typeof entry !== "object" || Array.isArray(entry)) {
+        continue;
+      }
+      const row = /** @type {Record<string, unknown>} */ (entry);
+      dayMap[threadId] = {
+        ...coerceUsageCell(entry),
+        projectId: typeof row.projectId === "string" ? row.projectId : "",
+        projectName: typeof row.projectName === "string" ? row.projectName : "",
+        title: typeof row.title === "string" ? row.title : "",
+        provider: typeof row.provider === "string" ? row.provider : "",
+        model: typeof row.model === "string" ? row.model : "unknown",
+      };
     }
     if (Object.keys(dayMap).length > 0) map[day] = dayMap;
   }
@@ -969,6 +1042,7 @@ class Store {
         : [],
       spendByDay: normalizeSpendByDay(parsed.spendByDay),
       usageByDay: normalizeUsageByDay(parsed.usageByDay),
+      usageThreadsByDay: normalizeUsageThreadsByDay(parsed.usageThreadsByDay),
       automations: Array.isArray(parsed.automations)
         ? parsed.automations.map(migrateAutomation)
         : [],
@@ -1368,22 +1442,31 @@ class Store {
       ? dayMap[provider]
       : (dayMap[provider] = {});
     const model = (input && input.model) || "unknown";
-    const prev = providerMap[model] && typeof providerMap[model] === "object"
-      ? providerMap[model]
-      : { costUsd: 0, inputTokens: 0, outputTokens: 0, turns: 0 };
+    const prev = coerceUsageCell(providerMap[model]);
     providerMap[model] = {
-      costUsd: coerceFiniteNumber(prev.costUsd) + costUsd,
-      inputTokens: coerceFiniteNumber(prev.inputTokens) + inputTokens,
-      outputTokens: coerceFiniteNumber(prev.outputTokens) + outputTokens,
-      turns: coerceFiniteNumber(prev.turns) + 1,
+      ...prev,
+      costUsd: prev.costUsd + costUsd,
+      inputTokens: prev.inputTokens + inputTokens,
+      outputTokens: prev.outputTokens + outputTokens,
+      turns: prev.turns + 1,
     };
   }
 
   /**
-   * @returns {Record<string, Record<string, Record<string, { costUsd: number, inputTokens: number, outputTokens: number, turns: number }>>>}
+   * @returns {Record<string, Record<string, Record<string, UsageCell>>>}
    */
   getUsageByDay() {
     const raw = this.data.usageByDay;
+    if (!raw || typeof raw !== "object") return {};
+    return { ...raw };
+  }
+
+  /**
+   * Per-thread usage rollup, the input to the project/thread breakdown (#556).
+   * @returns {Record<string, Record<string, UsageThreadCell>>}
+   */
+  getUsageThreadsByDay() {
+    const raw = this.data.usageThreadsByDay;
     if (!raw || typeof raw !== "object") return {};
     return { ...raw };
   }
@@ -1925,6 +2008,7 @@ function cloneEmpty() {
     workflowTemplates: [],
     spendByDay: {},
     usageByDay: {},
+    usageThreadsByDay: {},
     automations: [],
     tasksByCrew: {},
     digestSeenAt: null,
@@ -1960,6 +2044,9 @@ module.exports = {
   DEFAULT_AUTO_SETTLE_AFTER_DAYS,
   normalizeSpendByDay,
   normalizeUsageByDay,
+  normalizeUsageThreadsByDay,
+  emptyUsageCell,
+  coerceUsageCell,
   SPEND_RETENTION_DAYS,
   MAX_MESSAGES_PER_THREAD,
   MESSAGE_OVERFLOW_SLACK,

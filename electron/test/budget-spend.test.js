@@ -155,20 +155,29 @@ describe("spendByDay and settings", () => {
     assert.deepEqual(day["2026-08-06"].claude.opus, {
       costUsd: 0.03,
       inputTokens: 150,
+      cachedInputTokens: 0,
+      cacheWriteTokens: 0,
       outputTokens: 30,
       turns: 2,
+      wastedUsd: 0,
     });
     assert.deepEqual(day["2026-08-06"].grok["grok-4"], {
       costUsd: 0.05,
       inputTokens: 200,
+      cachedInputTokens: 0,
+      cacheWriteTokens: 0,
       outputTokens: 40,
       turns: 1,
+      wastedUsd: 0,
     });
     assert.deepEqual(day["2026-08-07"].claude.sonnet, {
       costUsd: 0.03,
       inputTokens: 80,
+      cachedInputTokens: 0,
+      cacheWriteTokens: 0,
       outputTokens: 8,
       turns: 1,
+      wastedUsd: 0,
     });
 
     const reloaded = new Store(filePath);
@@ -187,8 +196,11 @@ describe("spendByDay and settings", () => {
     assert.deepEqual(store.getUsageByDay()["2026-08-06"].grok["grok-4"], {
       costUsd: 0,
       inputTokens: 1200,
+      cachedInputTokens: 0,
+      cacheWriteTokens: 0,
       outputTokens: 80,
       turns: 1,
+      wastedUsd: 0,
     });
     // All-zero / missing provider are ignored.
     store.recordUsage(
@@ -287,8 +299,11 @@ describe("spendByDay and settings", () => {
     assert.deepEqual(map[today].grok["grok-4"], {
       costUsd: 0.5,
       inputTokens: 10,
+      cachedInputTokens: 0,
+      cacheWriteTokens: 0,
       outputTokens: 0,
       turns: 2,
+      wastedUsd: 0,
     });
     assert.equal(map[today].claude, undefined);
     assert.equal(map[today].grok.bad, undefined);

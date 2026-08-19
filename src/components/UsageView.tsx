@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { formatCostUsd, formatTokenSum } from "../format";
-import type { UsageByDay } from "../shared/ipc";
+import type { UsageByDay, UsageReport } from "../shared/ipc";
 import {
   USAGE_RANGES,
   summarizeUsage,
@@ -11,7 +11,7 @@ import styles from "./UsageView.module.css";
 export type UsageMetric = "cost" | "tokens";
 
 export interface UsageViewProps {
-  loadUsage: () => Promise<UsageByDay>;
+  loadUsage: () => Promise<UsageReport>;
 }
 
 function metricValue(
@@ -47,8 +47,9 @@ export function UsageView({ loadUsage }: UsageViewProps) {
     const gen = ++loadGen.current;
     setLoading(true);
     try {
-      const next = await loadUsage();
+      const report = await loadUsage();
       if (gen !== loadGen.current) return;
+      const next = report && typeof report === "object" ? report.byDay : null;
       setData(next && typeof next === "object" && !Array.isArray(next) ? next : {});
       setNow(Date.now());
     } catch {

@@ -522,6 +522,101 @@ async function main() {
     return;
   }
 
+  // Issue #549: CLI-side cancel (Grok permission auto-cancel, user interrupt
+  // that still emitted a result). errors[] is the bare token "cancelled".
+  if (scenario === "result-cancelled") {
+    emit({
+      type: "system",
+      subtype: "init",
+      session_id: "sess-cancel",
+      model: "m",
+    });
+    await delay(20);
+    emit({
+      type: "assistant",
+      message: { content: [{ type: "text", text: "About to run a tool" }] },
+    });
+    await delay(20);
+    emit({
+      type: "result",
+      subtype: "error_during_execution",
+      duration_ms: 40,
+      is_error: true,
+      num_turns: 1,
+      session_id: "sess-cancel",
+      total_cost_usd: 0,
+      usage: { input_tokens: 1, output_tokens: 1 },
+      result: "About to run a tool",
+      errors: ["cancelled"],
+    });
+    process.exit(0);
+    return;
+  }
+
+  if (scenario === "result-exec-error") {
+    emit({
+      type: "system",
+      subtype: "init",
+      session_id: "sess-exec-err",
+      model: "m",
+    });
+    await delay(20);
+    emit({
+      type: "result",
+      subtype: "error_during_execution",
+      duration_ms: 10,
+      is_error: true,
+      num_turns: 0,
+      session_id: "sess-exec-err",
+      total_cost_usd: 0,
+      usage: { input_tokens: 0, output_tokens: 0 },
+      errors: ["MCP server memory failed: connection refused"],
+    });
+    process.exit(0);
+    return;
+  }
+
+  if (scenario === "result-exec-error-stderr") {
+    process.stderr.write("host: tool gated with no prompt channel\\n");
+    await delay(40);
+    emit({
+      type: "result",
+      subtype: "error_during_execution",
+      duration_ms: 10,
+      is_error: true,
+      num_turns: 0,
+      session_id: "sess-exec-stderr",
+      total_cost_usd: 0,
+      usage: { input_tokens: 0, output_tokens: 0 },
+      errors: [],
+    });
+    process.exit(0);
+    return;
+  }
+
+  if (scenario === "result-cancelled-plus-error") {
+    emit({
+      type: "system",
+      subtype: "init",
+      session_id: "sess-cancel-plus",
+      model: "m",
+    });
+    await delay(20);
+    emit({
+      type: "result",
+      subtype: "error_during_execution",
+      duration_ms: 10,
+      is_error: true,
+      num_turns: 1,
+      session_id: "sess-cancel-plus",
+      total_cost_usd: 0,
+      usage: { input_tokens: 1, output_tokens: 1 },
+      errors: ["cancelled", "Write: permission denied"],
+    });
+    process.exit(0);
+    return;
+  }
+
   if (scenario === "result-only") {
     emit({
       type: "system",
@@ -1603,13 +1698,116 @@ describe("runner claude provider", () => {
     const errEvent = msgs.find(
       (m) =>
         m.role === "event" &&
-        /error_during_execution/.test(m.text) &&
+        /Run error/i.test(m.text) &&
         m.runId === runId,
     );
     assert.ok(errEvent, "expected Run error event");
-    // The CLI's errors array must be visible, not just the subtype.
+    // The CLI's errors array must be visible; the adapter subtype must not.
     assert.ok(/No conversation found/.test(errEvent.text), errEvent.text);
     assert.ok(/starts fresh/.test(errEvent.text), errEvent.text);
+    assert.ok(
+      !/result subtype|error_during_execution/.test(errEvent.text),
+      errEvent.text,
+    );
+    assert.ok(
+      !/result subtype|error_during_execution/.test(
+        String(store.getThread(thread.id).lastError || ""),
+      ),
+    );
+  });
+
+  it("CLI-side cancelled result leaves idle + Run stopped, not failed", async () => {
+    process.env.CODER_FAKE_CLAUDE_SCENARIO = "result-cancelled";
+
+    const thread = store.getThreads()[0];
+    const { runId } = await runner.startRun({
+      threadId: thread.id,
+      prompt: "gated tool",
+    });
+
+    await waitFor(() =>
+      ["idle", "failed", "done"].includes(store.getThread(thread.id).status),
+    );
+
+    const after = store.getThread(thread.id);
+    assert.equal(after.status, "idle");
+    assert.equal(after.lastError, null);
+    const msgs = store.getMessages(thread.id);
+    assert.ok(
+      msgs.some(
+        (m) =>
+          m.role === "event" &&
+          m.text === "Run stopped" &&
+          m.runId === runId,
+      ),
+      `expected Run stopped event, got ${JSON.stringify(msgs.map((m) => m.text))}`,
+    );
+    assert.ok(
+      store
+        .getWorkLog(thread.id)
+        .some((w) => w.label === "Run stopped" && w.done && w.runId === runId),
+    );
+    assert.ok(
+      !msgs.some((m) => /result subtype|error_during_execution/i.test(m.text)),
+    );
+  });
+
+  it("error_during_execution surfaces CLI errors[] without the subtype", async () => {
+    process.env.CODER_FAKE_CLAUDE_SCENARIO = "result-exec-error";
+
+    const thread = store.getThreads()[0];
+    const { runId } = await runner.startRun({
+      threadId: thread.id,
+      prompt: "use memory",
+    });
+
+    await waitFor(() => store.getThread(thread.id).status === "failed");
+
+    const errEvent = store
+      .getMessages(thread.id)
+      .find((m) => m.role === "event" && m.runId === runId);
+    assert.ok(errEvent, "expected Run error event");
+    assert.match(errEvent.text, /MCP server memory failed: connection refused/);
+    assert.doesNotMatch(errEvent.text, /result subtype|error_during_execution/);
+    assert.match(
+      String(store.getThread(thread.id).lastError || ""),
+      /MCP server memory failed/,
+    );
+    assert.doesNotMatch(
+      String(store.getThread(thread.id).lastError || ""),
+      /result subtype|error_during_execution/,
+    );
+  });
+
+  it("error_during_execution with empty errors[] uses the stderr tail", async () => {
+    process.env.CODER_FAKE_CLAUDE_SCENARIO = "result-exec-error-stderr";
+
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "gated" });
+    await waitFor(() => store.getThread(thread.id).status === "failed");
+
+    const errEvent = store
+      .getMessages(thread.id)
+      .find((m) => m.role === "event" && /Run error/i.test(m.text));
+    assert.ok(errEvent, "expected Run error event");
+    assert.match(errEvent.text, /tool gated with no prompt channel/);
+    assert.doesNotMatch(errEvent.text, /result subtype|error_during_execution/);
+  });
+
+  it("cancelled plus another error stays a failure with the extra detail", async () => {
+    process.env.CODER_FAKE_CLAUDE_SCENARIO = "result-cancelled-plus-error";
+
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "write file" });
+    await waitFor(() => store.getThread(thread.id).status === "failed");
+
+    const errEvent = store
+      .getMessages(thread.id)
+      .find((m) => m.role === "event" && /Run error/i.test(m.text));
+    assert.ok(errEvent, "expected Run error event");
+    assert.match(errEvent.text, /Write: permission denied/);
+    assert.doesNotMatch(errEvent.text, /result subtype/);
+    assert.equal(store.getThread(thread.id).status, "failed");
   });
 
   it("stopRun kills claude process and leaves idle + Run stopped", async () => {

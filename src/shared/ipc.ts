@@ -845,12 +845,26 @@ export interface ActivityItem {
   threadTitle: string;
 }
 
-/** One provider/model cell in the usage-by-day rollup. */
+/**
+ * One provider/model cell in the usage-by-day rollup.
+ *
+ * The token split matters: under prompt caching `inputTokens` is only the
+ * uncached remainder, so it is the *billable* number and not the prompt size
+ * (#556, sibling of #317). Providers that report no cache fields leave both
+ * cache counters at 0, which is why an all-zero row is "unreported", not free.
+ */
 export interface UsageEntry {
   costUsd: number;
+  /** Uncached input, billable at the full rate. */
   inputTokens: number;
+  /** cache_read_input_tokens; 0 when the provider does not report it. */
+  cachedInputTokens: number;
+  /** cache_creation_input_tokens; 0 when the provider does not report it. */
+  cacheWriteTokens: number;
   outputTokens: number;
   turns: number;
+  /** Of costUsd, the share spent on runs that ended failed or stopped. */
+  wastedUsd: number;
 }
 
 /**
@@ -861,6 +875,30 @@ export type UsageByDay = Record<
   string,
   Record<string, Record<string, UsageEntry>>
 >;
+
+/**
+ * Per-thread usage cell. Project and title are the last seen values, copied in
+ * at record time so a deleted thread still attributes its spend (#403, #339).
+ */
+export interface UsageThreadEntry extends UsageEntry {
+  projectId: string;
+  projectName: string;
+  title: string;
+  provider: string;
+  model: string;
+}
+
+/** Local calendar day -> thread id -> entry. Same 90-day retention. */
+export type UsageThreadsByDay = Record<
+  string,
+  Record<string, UsageThreadEntry>
+>;
+
+/** Everything the usage view needs in one round trip. */
+export interface UsageReport {
+  byDay: UsageByDay;
+  threadsByDay: UsageThreadsByDay;
+}
 
 /**
  * One pull request seen by the fleet collector (issue #375), agent-authored
@@ -2210,8 +2248,8 @@ export interface CoderApi {
     list(): Promise<ActivityItem[]>;
   };
   usage: {
-    /** Per-day / provider / model usage ledger (90-day retention). */
-    byDay(): Promise<UsageByDay>;
+    /** Per-day usage ledger, by provider/model and by thread (90 days). */
+    byDay(): Promise<UsageReport>;
   };
   insights: {
     /**

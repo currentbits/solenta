@@ -116,7 +116,7 @@ function flattenContent(content) {
  * @param {(ev: object) => void} opts.onEvent - raw parsed NDJSON event
  * @param {(info: { code: number | null, stderr: string, gotResult: boolean }) => void} opts.onExit
  * @param {(err: Error) => void} [opts.onError]
- * @returns {{ kill: () => void, send: (prompt: string) => boolean, respond: (requestId: string, response: object) => boolean, respondError: (requestId: string, message: string) => boolean, child: import('node:child_process').ChildProcess | null }}
+ * @returns {{ kill: () => void, send: (prompt: string) => boolean, respond: (requestId: string, response: object) => boolean, respondError: (requestId: string, message: string) => boolean, getStderr: () => string, child: import('node:child_process').ChildProcess | null }}
  */
 function runClaude(opts) {
   const {
@@ -260,6 +260,7 @@ function runClaude(opts) {
       send: () => false,
       respond: () => false,
       respondError: () => false,
+      getStderr: () => "",
       child: null,
     };
   }
@@ -337,6 +338,9 @@ function runClaude(opts) {
       if (killed || finished) return;
       killed = true;
       killTimer = killTree(child, SIGKILL_AFTER_MS);
+    },
+    getStderr() {
+      return stderrText;
     },
   };
 }

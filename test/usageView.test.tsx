@@ -57,7 +57,7 @@ function sampleData(): UsageByDay {
 
 describe("UsageView", () => {
   it("renders range totals after load", async () => {
-    const m = await mount(<UsageView loadUsage={async () => sampleData()} />);
+    const m = await mount(<UsageView loadUsage={async () => ({ byDay: sampleData(), threadsByDay: {} })} />);
     await m.flush();
     const text = m.text();
     assert.ok(m.query("[data-usage]"), "root");
@@ -73,7 +73,7 @@ describe("UsageView", () => {
   });
 
   it("switching range and metric changes what is rendered", async () => {
-    const m = await mount(<UsageView loadUsage={async () => sampleData()} />);
+    const m = await mount(<UsageView loadUsage={async () => ({ byDay: sampleData(), threadsByDay: {} })} />);
     await m.flush();
 
     assert.equal(m.query("[data-usage]")?.getAttribute("data-range"), "7");
@@ -99,7 +99,7 @@ describe("UsageView", () => {
   });
 
   it("renders the empty state when there is no data", async () => {
-    const m = await mount(<UsageView loadUsage={async () => ({})} />);
+    const m = await mount(<UsageView loadUsage={async () => ({ byDay: {}, threadsByDay: {} })} />);
     await m.flush();
     assert.ok(m.text().includes("No usage in this range"));
     assert.ok(m.query("[data-usage-empty]"), "empty marker");

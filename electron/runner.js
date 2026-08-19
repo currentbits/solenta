@@ -146,6 +146,82 @@ function isPhantomClaudeResult(ev, sawTurnContent) {
   return !text;
 }
 
+/** CLI-side interrupt token. Exact match only — "Write cancelled" stays a fail. */
+function isBareCancelError(text) {
+  return /^(cancelled|canceled)$/i.test(String(text || "").trim());
+}
+
+function asErrorList(errors) {
+  return (Array.isArray(errors) ? errors : [])
+    .map((e) => String(e).trim())
+    .filter(Boolean);
+}
+
+function stderrTailLines(stderr) {
+  return String(stderr || "")
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .slice(-8);
+}
+
+function looksSessionLost(text) {
+  return /No conversation found/i.test(String(text || ""));
+}
+
+/**
+ * Map a claude-stream result event's errors[] (+ optional result/stderr) into
+ * a user-facing terminal. Bare `cancelled` is a stop (same idea as stopRun),
+ * not a crash. Remaining failures keep the CLI text and drop the adapter
+ * subtype from copy (issue #549).
+ *
+ * @param {{ errors?: unknown, stderr?: string, result?: unknown }} [input]
+ * @returns {{ kind: "stop" } | { kind: "fail", text: string, sessionLost: boolean }}
+ */
+function classifyClaudeResultError(input) {
+  const src = input && typeof input === "object" ? input : {};
+  const errors = asErrorList(src.errors);
+  const resultText = typeof src.result === "string" ? src.result.trim() : "";
+  const stderr = stderrTailLines(src.stderr);
+  const sessionLost =
+    errors.some(looksSessionLost) ||
+    looksSessionLost(resultText) ||
+    stderr.some(looksSessionLost);
+
+  const remaining = errors.filter((e) => !isBareCancelError(e));
+  // errors[] is authoritative. A partial result payload (streamed assistant
+  // text echoed on the error event) must not turn a bare cancel into a fail.
+  const cancelFromErrors =
+    remaining.length === 0 && errors.some(isBareCancelError);
+  const cancelFromResult =
+    errors.length === 0 && isBareCancelError(resultText);
+  if (!sessionLost && (cancelFromErrors || cancelFromResult)) {
+    return { kind: "stop" };
+  }
+
+  const primary = remaining.slice(-3);
+  const shown = [];
+  const pushUnique = (line) => {
+    if (!line || isBareCancelError(line)) return;
+    if (shown.some((d) => d === line || d.includes(line) || line.includes(d))) {
+      return;
+    }
+    shown.push(line);
+  };
+  for (const e of primary) pushUnique(e);
+  if (!shown.length && resultText) pushUnique(resultText);
+  for (const line of stderr) pushUnique(line);
+
+  let text;
+  if (!shown.length) text = "Run error";
+  else if (shown.length === 1) text = `Run error: ${shown[0]}`;
+  else text = `Run error\n${shown.join("\n")}`;
+  if (sessionLost) {
+    text += "\nSession reset; the next message starts fresh.";
+  }
+  return { kind: "fail", text, sessionLost: Boolean(sessionLost) };
+}
+
 /**
  * Claude children that outlive their active Map slot (result event clears the
  * run before process exit). stopAll reaps the process group with SIGTERM.
@@ -2792,9 +2868,12 @@ function createRunner(opts) {
           }
           store.recordUsage({ provider: thread.provider, model, costUsd: costDelta, inputTokens: turnIn, outputTokens: turnOut });
 
+          const ok = ev.subtype === "success";
           // Assistant text from stream, or fall back to result field
           // (skip when result merely repeats the last streamed bubble).
+          // Error/cancel results are not assistant copy (#549).
           if (
+            ok &&
             !assistantText &&
             typeof ev.result === "string" &&
             ev.result &&
@@ -2815,43 +2894,60 @@ function createRunner(opts) {
             }
           }
 
-          const ok = ev.subtype === "success";
-          const errors = (Array.isArray(ev.errors) ? ev.errors : [])
-            .map((e) => String(e))
-            .filter(Boolean);
-          // Resume target gone (session file deleted, or captured under a
-          // different cwd): keeping the id would fail every future turn the
-          // same way. Drop it so the next turn starts a fresh conversation.
-          const sessionLost = errors.some((e) =>
-            /No conversation found/i.test(e),
-          );
-          let failText = "";
-          if (!ok) {
-            failText = `Run error: result subtype ${ev.subtype || "unknown"}`;
-            if (errors.length) {
-              failText += `\n${errors.slice(-3).join("\n")}`;
-            }
-            if (sessionLost) {
-              failText += "\nSession reset; the next message starts fresh.";
-            }
-          }
+          /** @type {"done" | "failed" | "stopped"} */
+          let terminalStatus;
+          /** @type {string} */
+          let terminalText;
           if (ok) {
             store.updateThread(
               threadId,
               {
                 status: "done",
-                sessionId: sessionLost ? null : capturedSessionId,
+                sessionId: capturedSessionId,
                 runStartedAt: null,
                 lastError: null,
               },
               { touch: true },
             );
+            terminalStatus = "done";
+            terminalText =
+              assistantText ||
+              (typeof ev.result === "string" ? ev.result : "") ||
+              lastAssistantText(threadId, runId);
           } else {
-            appendMessage(threadId, "event", failText, runId);
-            appendDoneWorkLog(threadId, runId, "Run error");
-            markRunFailed(threadId, failText, {
-              sessionId: sessionLost ? null : capturedSessionId,
+            const classified = classifyClaudeResultError({
+              errors: ev.errors,
+              result: typeof ev.result === "string" ? ev.result : "",
+              stderr:
+                handle && typeof handle.getStderr === "function"
+                  ? handle.getStderr()
+                  : "",
             });
+            if (classified.kind === "stop") {
+              appendMessage(threadId, "event", "Run stopped", runId);
+              appendDoneWorkLog(threadId, runId, "Run stopped");
+              store.updateThread(
+                threadId,
+                {
+                  status: "idle",
+                  sessionId: capturedSessionId,
+                  runStartedAt: null,
+                },
+                { touch: true },
+              );
+              terminalStatus = "stopped";
+              terminalText =
+                lastAssistantText(threadId, runId) || "Run stopped";
+            } else {
+              const failText = classified.text;
+              appendMessage(threadId, "event", failText, runId);
+              appendDoneWorkLog(threadId, runId, "Run error");
+              markRunFailed(threadId, failText, {
+                sessionId: classified.sessionLost ? null : capturedSessionId,
+              });
+              terminalStatus = "failed";
+              terminalText = failText;
+            }
           }
 
           store.save();
@@ -2862,20 +2958,11 @@ function createRunner(opts) {
           scheduleClaudeIdleReap(threadId);
           pushDetail(threadId, claudeState);
           pushThreadsChanged();
-          notifyRunTerminal(
-            threadId,
-            ok ? "done" : "failed",
-            ok
-              ? assistantText ||
-                  (typeof ev.result === "string" ? ev.result : "") ||
-                  lastAssistantText(threadId, runId)
-              : failText,
-            {
-              tokensIn: runUsage.tokensIn,
-              tokensOut: runUsage.tokensOut,
-              costUsd: runUsage.costUsd,
-            },
-          );
+          notifyRunTerminal(threadId, terminalStatus, terminalText, {
+            tokensIn: runUsage.tokensIn,
+            tokensOut: runUsage.tokensOut,
+            costUsd: runUsage.costUsd,
+          });
           return;
         }
     };
@@ -5322,6 +5409,7 @@ module.exports = {
   resolveSandbox,
   ADJECTIVES,
   NOUNS,
+  classifyClaudeResultError,
   /** @internal test/diagnostics */
   liveClaudeChildren,
 };
