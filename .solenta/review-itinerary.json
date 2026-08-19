@@ -1,26 +1,27 @@
 {
   "version": 1,
-  "readOrder": ["ci-config", "impl"],
+  "readOrder": ["critical", "impl"],
   "chunks": [
     {
-      "area": "ci-config",
-      "rationale": ".github/workflows/test.yml: libasound2 -> libasound2t64 in the smoke job's apt install. ubuntu-latest is now noble (24.04), where libasound2 is a virtual package with no installation candidate — every PR's smoke (ubuntu-latest) job failed at the apt step with exit 100 before the app ever started. The t64 suffix is the noble package name; the sibling libs (libatk1.0-0 etc.) still resolve via transitional dummy packages, so only libasound2 needed the rename.",
+      "area": "critical",
+      "rationale": "ThreadView.tsx ChangesPanel (~2527-2624): the itinerary, chunk file lists, .patchScroll, and truncated note now live in one <div className={styles.changesScroll}>. .commitBox stays a direct sibling after that wrapper (still inside the fragment; header stays outside). This is the structural half of #555 — the tall itinerary can no longer push the only commit surface past the clipped panel edge.",
       "risks": [
-        "If GitHub ever points ubuntu-latest back at 22.04 (jammy), libasound2t64 does not exist there and the step breaks again — acceptable, ubuntu-latest only moves forward."
+        "If a later change nests .commitBox inside .changesScroll, sticky will attach to the scroller and the box will scroll away again — same user-visible bug.",
+        "Error/loading/empty nodes remain siblings of the fragment (unchanged). An inline error shown next to a loaded tall itinerary still consumes flex space above the scroller."
       ]
     },
     {
       "area": "impl",
-      "rationale": "src/index.css: --text-dim #667085 -> #7d8798. The sidebar (projects/threadbar) renders most secondary text (branch names, ages, counts, provider tags, 'New thread' rows, group summaries) in --text-dim, which sat at ~3.7:1 contrast on --bg-elevated — below WCAG AA. The new value lands ~5:1 on the sidebar background and ~4.7:1 on card fills, while staying clearly darker than --text-muted (#8b95a8, ~6:1) so the dim/muted/text hierarchy survives. Token-level fix beats per-rule overrides in Sidebar.module.css: one line, no hardcoded colors, and other dim text app-wide benefits too.",
+      "rationale": "ThreadView.module.css: new .changesScroll is the only flex:1 / overflow-y:auto child. .patchScroll lost flex:1 and overflow:auto so it no longer fights for space or nests a second scroller. .changesHead and .commitBox get flex-shrink:0. .commitBox is position:sticky; bottom:0 with background:var(--bg-elevated) so it stays painted at the panel's padding edge (sticky ancestor is .changesPanel, overflow:hidden — intentional).",
       "risks": [
-        "Dim text everywhere in the app gets brighter, not just the sidebar — intentional, but reviewers should confirm the dim/muted steps still read as distinct.",
-        "Settled rows still multiply the token by opacity 0.6 (intentional recession); they improve but remain low-contrast by design."
+        "A long diff no longer has its own inner scrollbar; itinerary + file lists + patches share one scroll. .fileList still has max-height:120px overflow-y:auto, so nested scroll remains on file lists only.",
+        "sticky is redundant with the flex layout (commit box is already a non-shrinking sibling after the scroller) but matches the contract; the opaque background still matters if overlap ever paints through.",
+        ".commitInput is resize:vertical — a user-stretched textarea can eat review space. Pre-existing, now more visible because the box cannot be clipped away."
       ]
     }
   ],
   "risks": [
-    "Merge with origin/main conflicted only on .solenta/review-itinerary.json (every thread writes it); resolved keeping this PR's version.",
-    "The 6 electron-suite test failures on this PR's checks (runner verification gate, auto-checkpoint, package-app.sh) are pre-existing main breakage tracked in #536 — they reproduce without this diff and are out of scope here.",
-    "Contrast ratios were computed analytically from hex values, not measured in a running app; local test run was not possible (worktree has no node_modules)."
+    "Layout-only; not verified in a running Electron window. jsdom tests cannot assert computed overflow/clip. Confidence is from the flex contract: header and commit box cannot shrink, the middle is the only scroller, panel still overflow:hidden.",
+    "Parallel worker owns test/threadView.test.tsx — this branch does not add the new class-name assertions those tests will look for."
   ]
 }

@@ -2526,71 +2526,73 @@ function ChangesPanel({
 
       {diff && !empty && itinerary && (
         <>
-          <ReviewItineraryView
-            itinerary={itinerary}
-            testsFirst={testsFirst}
-            onToggleTestsFirst={() => setTestsFirst((v) => !v)}
-          />
-          {itinerary.chunks.map((chunk) => (
-            <div key={chunk.area}>
-              <ChunkRationale itinerary={itinerary} area={chunk.area} />
-              <ul className={styles.fileList}>
-                {chunk.files.map((f) => (
-                  <FileRow
-                    key={f.path}
-                    file={f}
-                    confirmRevert={confirmRevert}
-                    reverting={reverting}
-                    onRevert={(file) => void revert(file)}
-                  />
-                ))}
-              </ul>
-            </div>
-          ))}
-          {patches.length > 0 && (
-            <div className={styles.patchScroll}>
-              {patches.map((p) => (
-                <Fragment key={p.path}>
-                  {p.hunks.length === 0 &&
-                    p.text.split("\n").map((line, i) => (
-                      <DiffLine key={`${p.path}:${i}`} line={line} />
-                    ))}
-                  {p.hunks.map((hunk) => (
-                    <div
-                      key={hunk.id}
-                      className={styles.hunkBlock}
-                      data-review-hunk={hunk.id}
-                      data-review-hunk-accepted={hunk.accepted ? "" : undefined}
-                    >
-                      <div className={styles.hunkBar}>
-                        <span className={styles.hunkPath}>{p.path}</span>
-                        <button
-                          type="button"
-                          className={styles.hunkSeen}
-                          aria-pressed={hunk.accepted}
-                          title={
-                            hunk.accepted
-                              ? "Mark this hunk as new again"
-                              : "Mark this hunk reviewed"
-                          }
-                          onClick={() => toggleHunk(hunk.id, !hunk.accepted)}
-                        >
-                          {hunk.accepted ? "Reviewed" : "Mark reviewed"}
-                        </button>
-                      </div>
-                      <DiffLine line={hunk.header} />
-                      {hunk.body.split("\n").map((line, i) => (
-                        <DiffLine key={`${hunk.id}:${i}`} line={line} />
-                      ))}
-                    </div>
+          <div className={styles.changesScroll}>
+            <ReviewItineraryView
+              itinerary={itinerary}
+              testsFirst={testsFirst}
+              onToggleTestsFirst={() => setTestsFirst((v) => !v)}
+            />
+            {itinerary.chunks.map((chunk) => (
+              <div key={chunk.area}>
+                <ChunkRationale itinerary={itinerary} area={chunk.area} />
+                <ul className={styles.fileList}>
+                  {chunk.files.map((f) => (
+                    <FileRow
+                      key={f.path}
+                      file={f}
+                      confirmRevert={confirmRevert}
+                      reverting={reverting}
+                      onRevert={(file) => void revert(file)}
+                    />
                   ))}
-                </Fragment>
-              ))}
-            </div>
-          )}
-          {diff.truncated && (
-            <p className={styles.truncatedNote}>Diff truncated</p>
-          )}
+                </ul>
+              </div>
+            ))}
+            {patches.length > 0 && (
+              <div className={styles.patchScroll}>
+                {patches.map((p) => (
+                  <Fragment key={p.path}>
+                    {p.hunks.length === 0 &&
+                      p.text.split("\n").map((line, i) => (
+                        <DiffLine key={`${p.path}:${i}`} line={line} />
+                      ))}
+                    {p.hunks.map((hunk) => (
+                      <div
+                        key={hunk.id}
+                        className={styles.hunkBlock}
+                        data-review-hunk={hunk.id}
+                        data-review-hunk-accepted={hunk.accepted ? "" : undefined}
+                      >
+                        <div className={styles.hunkBar}>
+                          <span className={styles.hunkPath}>{p.path}</span>
+                          <button
+                            type="button"
+                            className={styles.hunkSeen}
+                            aria-pressed={hunk.accepted}
+                            title={
+                              hunk.accepted
+                                ? "Mark this hunk as new again"
+                                : "Mark this hunk reviewed"
+                            }
+                            onClick={() => toggleHunk(hunk.id, !hunk.accepted)}
+                          >
+                            {hunk.accepted ? "Reviewed" : "Mark reviewed"}
+                          </button>
+                        </div>
+                        <DiffLine line={hunk.header} />
+                        {hunk.body.split("\n").map((line, i) => (
+                          <DiffLine key={`${hunk.id}:${i}`} line={line} />
+                        ))}
+                      </div>
+                    ))}
+                  </Fragment>
+                ))}
+              </div>
+            )}
+            {diff.truncated && (
+              <p className={styles.truncatedNote}>Diff truncated</p>
+            )}
+          </div>
           <div className={styles.commitBox}>
             <textarea
               className={styles.commitInput}

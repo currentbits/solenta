@@ -692,6 +692,7 @@ a.btn {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  flex-shrink: 0;
 }
 
 .changesTitle {
@@ -771,10 +772,17 @@ a.btn {
   color: #fca5a5;
 }
 
-.patchScroll {
+.changesScroll {
   flex: 1;
   min-height: 0;
-  overflow: auto;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.patchScroll {
+  min-height: 0;
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-sm);
   background: rgba(0, 0, 0, 0.18);
@@ -880,6 +888,10 @@ a.btn {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  flex-shrink: 0;
+  position: sticky;
+  bottom: 0;
+  background: var(--bg-elevated);
   border-top: 1px solid var(--border-soft);
   padding-top: 10px;
 }
