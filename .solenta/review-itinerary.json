@@ -1,32 +1,28 @@
 {
   "version": 1,
-  "readOrder": ["tests", "critical", "impl"],
+  "readOrder": ["tests", "docs"],
   "chunks": [
     {
       "area": "tests",
-      "rationale": "electron/test/worktree-gc.test.js #563 cases. spyDu wraps setExecFile and forwards git; it is the contract. Test 1 needs a live worktree or the empty-dirs path would skip du even before the fix. Test 2 is the trap: gcClean re-scans, so skipSizes on the first gcScan alone still spawned 4 du processes (2 dirs × 2 scans).",
+      "rationale": "Start with test/sidebar.test.tsx helpers (scopeTrigger, settledToggle, openCreateMenu) — every other file copies that selector contract. Then pinSnooze (pin block + two shelves + overflow data-pin-item) and multiSelect (flatVisibleThreadIds order: pinned, active, open shelves). Create/edit files (sidebarWorktreeCreate, sidebarIssue, orchestratorCreate, editProject) only swap header/scope selectors; ThreadCard files (prRender, sidebarFailedBadge, deliveryState) swap status-dot → data-status-label.",
       "risks": [
-        "setExecFile is process-global; the suite is serialized with concurrency: 1 so the spy cannot leak into a sibling gcScan that still needs real du.",
-        "spyDu matches bin === 'du' only. A future duBytes that uses a full path would silently miss the assertion."
+        "Shelves default collapsed. A UI that ships default-open will fail the collapsed-header copy assertions (Snoozed (N) / Settled (N)) even if the toggles exist.",
+        "Create-item and issue-form selectors are queried without a projectId value. If the UI keeps data-create-worktree-thread=\"p1\" that still matches; if it drops the attributes entirely the tests fail as intended.",
+        "SettledRow is still imported and mounted directly. If the UI worker unexports it, tsc fails — spec says keep the slim-row components.",
+        "data-settled-clear-all is not in the spec; clearSettled.test.tsx still pins it after opening the Settled shelf.",
+        "Runtime of npm run test:renderer is expected red until Sidebar.tsx lands. tsc --noEmit is the gate."
       ]
     },
     {
-      "area": "critical",
-      "rationale": "electron/worktrees.js enforceRetention. Two independent skips: (1) return before any scan when no project has worktreeRetention > 0 — today's boot path, every project unset; (2) gcScan + gcClean both get skipSizes: true when a limit is set, so #559 landing a default cannot bring the du storm back.",
+      "area": "docs",
+      "rationale": "The written contract is .solenta/specs/t3-flat-sidebar.md (Deletions + selector lists). Tests were authored against that file, not against src/components/Sidebar.tsx (untouched, still the #567 Later-shelf implementation).",
       "risks": [
-        "Retention predicate is duplicated (enforceRetention vs gcScanInner). If one starts treating 0 as 'keep none', the short-circuit would skip a real sweep.",
-        "enforceRetention now reports bytes: 0 even when it reclaims dirs. Boot only logs removed.length; the GC dialog never calls this function."
-      ]
-    },
-    {
-      "area": "impl",
-      "rationale": "gcScanInner skipSizes fills sizes with 0 instead of Promise.all(duBytes). Classification stays inspectWorktreeDir (git status). IPC git:gcScan / git:gcClean do not pass skipSizes, so the dialog still sizes.",
-      "risks": [
-        "If skipSizes ever reaches the dialog clean path, the confirm copy would read 'Removed N worktrees (0 B)' because gcClean sums cand.bytes."
+        "Spec is silent on data-settle-all, data-settled-clear-all, localStorage boolean encoding, and whether create-item data attributes still carry the project id."
       ]
     }
   ],
   "risks": [
-    "Boot still runs sweepOrphanWorktrees (git status per unreferenced dir) before enforceRetention. That walk is not du, and is out of scope for #563."
+    "A parallel UI worker is rewriting Sidebar.tsx. Selector drift (data-slim-row missing, status label without data-failed flags, pin item text) will only show up when the branches merge.",
+    "Old #567 knowledge (partitionSidebar, Later · N) still describes the logic layer which remains exported; only the Sidebar render contract changed."
   ]
 }
