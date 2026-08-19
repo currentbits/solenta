@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="28" result="b"/>
+      <feMerge>
+        <feMergeNode in="b"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <!-- Tile: app background with a subtle inner border -->
+  <rect x="32" y="32" width="960" height="960" rx="180" fill="#0b0e14"/>
+  <rect x="56" y="56" width="912" height="912" rx="164" fill="none" stroke="#232a38" stroke-width="8"/>
+  <!-- Hollow diamond mark (the sidebar logo glyph), app blue with a soft glow -->
+  <g filter="url(#glow)">
+    <path d="M512 236 L788 512 L512 788 L236 512 Z"
+          fill="none" stroke="#3b82f6" stroke-width="56" stroke-linejoin="round"/>
+  </g>
+</svg>
