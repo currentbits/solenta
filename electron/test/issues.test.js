@@ -15,6 +15,7 @@ const {
   fetchIssue,
   setPlanStatus,
   reopenIssue,
+  createIssue,
 } = require("../issues.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
 
@@ -389,6 +390,121 @@ process.exit(0);
     assert.deepEqual(await reopenIssue(repo, 0, { comment: "x" }), {
       ok: false,
       reason: "invalid issue reference",
+    });
+    assert.deepEqual(calls(), []);
+  });
+});
+
+describe("createIssue", () => {
+  let tmp;
+  let repo;
+  let prevGh;
+  let callsPath;
+
+  function writeFakeGh(body) {
+    const bin = writeFakeBin(
+      path.join(tmp, "fake-gh"),
+      `#!/usr/bin/env node
+"use strict";
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+const file = ${JSON.stringify(callsPath)};
+const prev = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : [];
+prev.push(args);
+fs.writeFileSync(file, JSON.stringify(prev));
+${body}
+`,
+    );
+    process.env.CODER_GH_BIN = bin;
+  }
+
+  function calls() {
+    return fs.existsSync(callsPath)
+      ? JSON.parse(fs.readFileSync(callsPath, "utf8"))
+      : [];
+  }
+
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "coder-create-issue-"));
+    repo = path.join(tmp, "repo");
+    fs.mkdirSync(repo);
+    git(repo, ["init", "-q", "-b", "main"]);
+    git(repo, ["remote", "add", "origin", "https://github.com/acme/demo.git"]);
+    callsPath = path.join(tmp, "gh-calls.json");
+    prevGh = process.env.CODER_GH_BIN;
+    writeFakeGh(`
+process.stdout.write("https://github.com/acme/demo/issues/77\\n");
+process.exit(0);
+`);
+  });
+
+  afterEach(() => {
+    if (prevGh == null) delete process.env.CODER_GH_BIN;
+    else process.env.CODER_GH_BIN = prevGh;
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("creates without --label then labels plan:todo", async () => {
+    assert.deepEqual(
+      await createIssue(repo, { title: "chip", body: "do the thing" }),
+      {
+        ok: true,
+        number: 77,
+        url: "https://github.com/acme/demo/issues/77",
+      },
+    );
+    const seen = calls();
+    assert.deepEqual(seen[0], [
+      "issue",
+      "create",
+      "--title",
+      "chip",
+      "--body",
+      "do the thing",
+    ]);
+    assert.equal(seen[0].includes("--label"), false);
+    assert.deepEqual(seen[1], [
+      "issue",
+      "edit",
+      "77",
+      "--add-label",
+      "plan:todo",
+      "--remove-label",
+      "plan:doing,plan:done",
+    ]);
+  });
+
+  it("still succeeds when the plan:todo label ride-along fails", async () => {
+    writeFakeGh(`
+if (args[0] === "issue" && args[1] === "create") {
+  process.stdout.write("https://github.com/acme/demo/issues/9\\n");
+  process.exit(0);
+}
+process.stderr.write("'plan:todo' not found\\n");
+process.exit(1);
+`);
+    assert.deepEqual(
+      await createIssue(repo, { title: "chip", body: "x" }),
+      { ok: true, number: 9, url: "https://github.com/acme/demo/issues/9" },
+    );
+  });
+
+  it("reports auth failure and never throws", async () => {
+    writeFakeGh(`
+process.stderr.write("To get started with GitHub CLI, please run: gh auth login\\n");
+process.exit(1);
+`);
+    assert.deepEqual(await createIssue(repo, { title: "chip", body: "x" }), {
+      ok: false,
+      reason: "auth",
+    });
+  });
+
+  it("rejects a non-GitHub remote without spawning gh", async () => {
+    git(repo, ["remote", "set-url", "origin", "https://gitlab.com/acme/demo.git"]);
+    assert.deepEqual(await createIssue(repo, { title: "chip", body: "x" }), {
+      ok: false,
+      reason: "not a GitHub repo",
     });
     assert.deepEqual(calls(), []);
   });

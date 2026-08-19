@@ -502,6 +502,13 @@ export interface ThreadInfo {
    */
   hypotheses?: Hypothesis[];
   /**
+   * Suggested-work chips (issue #550): out-of-scope findings the agent
+   * offered as one-click follow-up work. Written only by the coder-threads
+   * MCP tool `work_suggest`; resolved by threads.resolveSuggestion. Absent
+   * until an agent suggests something.
+   */
+  suggestions?: WorkSuggestion[];
+  /**
    * Spec mode (issue #269): the thread writes three gated artifacts before it
    * writes code. Absent = normal thread. Set by threads.startSpec, advanced
    * one stage per approval in threads.reviewSpec, cleared by threads.stopSpec.
@@ -627,6 +634,44 @@ export interface Hypothesis {
   /** The evidence behind the verdict, truncated to HYPOTHESIS_REASON_MAX. Empty when the agent gave none. */
   reason: string;
   at: number;
+}
+
+/* --------------------------------------------------- suggested work chips */
+
+/** Per-thread suggested-work caps: rows kept, chars per title, chars per prompt. */
+export const SUGGESTIONS_MAX = 20;
+export const SUGGESTION_TITLE_MAX = 120;
+export const SUGGESTION_PROMPT_MAX = 4000;
+
+/**
+ * Lifecycle of a suggested-work chip (issue #550). "open" renders as a chip;
+ * every other status hides it. Dismissal is per-thread and permanent — a
+ * dismissed chip never comes back, and nothing is ever auto-started.
+ */
+export type WorkSuggestionStatus = "open" | "started" | "filed" | "dismissed";
+
+/**
+ * Out-of-scope work the agent noticed mid-run (issue #550). Written only by
+ * the coder-threads MCP tool `work_suggest` — never parsed out of the
+ * transcript. Newest-last on the thread, capped to SUGGESTIONS_MAX.
+ */
+export interface WorkSuggestion {
+  /** Stable id, unique within the thread (write timestamp + a counter). */
+  id: string;
+  /** Chip label, one line, truncated to SUGGESTION_TITLE_MAX. */
+  title: string;
+  /**
+   * Self-contained prompt for the new thread (and issue body when filed),
+   * truncated to SUGGESTION_PROMPT_MAX. Self-contained because the fork only
+   * carries a digest, not the suggesting thread's context.
+   */
+  prompt: string;
+  status: WorkSuggestionStatus;
+  at: number;
+  /** Thread started from this chip, set when status is "started". */
+  startedThreadId?: string;
+  /** Issue filed from this chip, set when status is "filed". */
+  issueNumber?: number;
 }
 
 /* ------------------------------------------------------- crew task list */
@@ -1384,6 +1429,11 @@ export interface PlanIssue {
 /** Per-project listIssues result. Failures stay in-band so the UI can retry. */
 export type ListIssuesResult =
   | { ok: true; issues: PlanIssue[] }
+  | { ok: false; reason: string };
+
+/** `gh issue create` result. Failures stay in-band so the UI can show them. */
+export type CreateIssueResult =
+  | { ok: true; number: number; url: string }
   | { ok: false; reason: string };
 
 /** Planboard column an issue can be moved to, as a plan:* label. */
@@ -2176,6 +2226,26 @@ export interface CoderApi {
       threadId: string;
       provider?: string;
       model?: string | null;
+      /**
+       * Give the fork its own worktree (issue #550 chips): sets
+       * pendingWorktree so the runner materializes it on the first run,
+       * same lazy path as forkWorkerThread. Ignored when the project
+       * cannot host worktrees.
+       */
+      worktree?: boolean;
+    }): Promise<ThreadInfo>;
+    /**
+     * Resolve a suggested-work chip (issue #550): flip its status to
+     * "started" / "filed" / "dismissed" and stamp startedThreadId /
+     * issueNumber. Rejects an unknown thread or suggestion id, and a
+     * status of "open" (chips never reopen). Returns the updated thread.
+     */
+    resolveSuggestion(input: {
+      threadId: string;
+      suggestionId: string;
+      status: Exclude<WorkSuggestionStatus, "open">;
+      startedThreadId?: string;
+      issueNumber?: number;
     }): Promise<ThreadInfo>;
     /**
      * Edit-and-resubmit (issue #254): rewind the thread to just before one of
@@ -2515,6 +2585,18 @@ export interface CoderApi {
       number: number;
       status: PlanStatus;
     }): Promise<SetPlanStatusResult>;
+    /**
+     * File an issue via `gh issue create` and label it plan:todo (issue
+     * #550 "File on planboard" chip). The label ride-along is best-effort,
+     * same degradation rules as setPlanStatus. Never rejects for missing
+     * gh / non-GitHub remotes / auth: those come back as
+     * `{ ok: false, reason }`.
+     */
+    create(input: {
+      projectPath: string;
+      title: string;
+      body: string;
+    }): Promise<CreateIssueResult>;
   };
   files: {
     /**

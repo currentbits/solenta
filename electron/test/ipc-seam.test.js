@@ -267,6 +267,24 @@ exit 1`,
         handlers.has("threads:setNotes"),
         "main must handle threads:setNotes",
       );
+      assert.equal(
+        typeof api.threads.resolveSuggestion,
+        "function",
+        "preload must expose threads.resolveSuggestion",
+      );
+      assert.ok(
+        handlers.has("threads:resolveSuggestion"),
+        "main must handle threads:resolveSuggestion",
+      );
+      assert.equal(
+        typeof api.issues.create,
+        "function",
+        "preload must expose issues.create",
+      );
+      assert.ok(
+        handlers.has("issues:create"),
+        "main must handle issues:create",
+      );
       assert.ok(
         handlers.has("threads:setFeltEstimate"),
         "main must handle threads:setFeltEstimate",

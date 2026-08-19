@@ -656,6 +656,7 @@ describe("orch-server HTTP", () => {
       "thread_send",
       "thread_status",
       "threads_list",
+      "work_suggest",
     ]);
   });
 

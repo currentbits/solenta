@@ -44,6 +44,7 @@ import type {
   ThreadDetail,
   ThreadInfo,
   WorkLogItem,
+  WorkSuggestion,
   WorkflowTemplateInfo,
 } from "../shared/ipc";
 import { SPEC_ARTIFACTS, THREAD_NOTES_MAX, FELT_ESTIMATE_BUCKETS_MS } from "../shared/ipc";
@@ -517,6 +518,17 @@ interface ThreadViewProps {
   onFork?: (
     opts?: { provider?: string; model?: string | null },
   ) => void | Promise<void | ThreadInfo | null>;
+  /**
+   * Start a suggested-work chip as a new thread (issue #550). Caller forks
+   * with its own worktree and starts the suggestion prompt there.
+   */
+  onStartSuggestion?: (s: WorkSuggestion) => void | Promise<void>;
+  /**
+   * File a suggested-work chip on the planboard (`gh issue create`).
+   */
+  onFileSuggestion?: (s: WorkSuggestion) => void | Promise<void>;
+  /** Dismiss a suggested-work chip for this thread. Permanent. */
+  onDismissSuggestion?: (s: WorkSuggestion) => void | Promise<void>;
   /**
    * The thread this one was handed off from (handoffFrom), already resolved.
    * Resolved by App rather than passing the whole list: the list gets a new
@@ -1080,6 +1092,86 @@ function ReviewBarStrip({
           Review
         </button>
       </div>
+    </div>
+  );
+}
+
+/** Open suggested-work chips under the transcript (issue #550). */
+function SuggestedWorkStrip({
+  suggestions,
+  onStart,
+  onFile,
+  onDismiss,
+}: {
+  suggestions: WorkSuggestion[] | undefined;
+  onStart?: (s: WorkSuggestion) => void | Promise<void>;
+  onFile?: (s: WorkSuggestion) => void | Promise<void>;
+  onDismiss?: (s: WorkSuggestion) => void | Promise<void>;
+}) {
+  const [inFlight, setInFlight] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const open = (suggestions ?? []).filter((s) => s.status === "open");
+  if (open.length === 0) return null;
+
+  const run = (
+    s: WorkSuggestion,
+    action?: (s: WorkSuggestion) => void | Promise<void>,
+  ) => {
+    if (!action || inFlight.has(s.id)) return;
+    setInFlight((prev) => new Set(prev).add(s.id));
+    void Promise.resolve(action(s)).finally(() => {
+      setInFlight((prev) => {
+        const next = new Set(prev);
+        next.delete(s.id);
+        return next;
+      });
+    });
+  };
+
+  return (
+    <div className={styles.suggestedWork} data-suggested-work="">
+      {open.map((s) => {
+        const busy = inFlight.has(s.id);
+        return (
+          <div
+            key={s.id}
+            className={styles.suggestedRow}
+            data-suggestion-id={s.id}
+          >
+            <span className={styles.suggestedTitle}>{s.title}</span>
+            <div className={styles.suggestedActions}>
+              <button
+                type="button"
+                className={styles.reviewBtn}
+                data-suggestion-action="start"
+                disabled={busy}
+                onClick={() => run(s, onStart)}
+              >
+                Start a thread
+              </button>
+              <button
+                type="button"
+                className={styles.reviewBtn}
+                data-suggestion-action="file"
+                disabled={busy}
+                onClick={() => run(s, onFile)}
+              >
+                File on planboard
+              </button>
+              <button
+                type="button"
+                className={styles.reviewBtn}
+                data-suggestion-action="dismiss"
+                disabled={busy}
+                onClick={() => run(s, onDismiss)}
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -2989,6 +3081,9 @@ export const ThreadView = memo(function ThreadView({
   onNewThread,
   onSettleThread,
   onFork,
+  onStartSuggestion,
+  onFileSuggestion,
+  onDismissSuggestion,
   handoffSource = null,
   onSelectThread,
   comparePeers = EMPTY_COMPARE_PEERS,
@@ -4363,6 +4458,13 @@ export const ThreadView = memo(function ThreadView({
             />
           );
         })}
+
+        <SuggestedWorkStrip
+          suggestions={thread.suggestions}
+          onStart={onStartSuggestion}
+          onFile={onFileSuggestion}
+          onDismiss={onDismissSuggestion}
+        />
 
         {thread.spec && !thread.ask ? (
           <SpecCard
