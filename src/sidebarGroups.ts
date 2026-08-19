@@ -136,6 +136,63 @@ export function flattenLater(later: LaterPartition): ThreadInfo[] {
   return [...later.snoozed, ...later.settled, ...later.archived];
 }
 
+/**
+ * T3-style flat sidebar (no project group headers): one pinned block, one
+ * flat active list, then the Snoozed and Settled shelves. Every card carries
+ * its own project identity, so grouping happens per-card, not per-section.
+ */
+export interface FlatSidebar {
+  /** Pin order, oldest pin first (T3: reorderable block above the inbox). */
+  pinned: ThreadInfo[];
+  /** createdAt desc (static — activity never reorders), forks attached. */
+  active: ThreadInfo[];
+  /** Wake-soonest first. */
+  snoozed: ThreadInfo[];
+  /** Wrap-up newest first. */
+  settled: ThreadInfo[];
+  /** updatedAt desc; renders at the tail of the Settled shelf. */
+  archived: ThreadInfo[];
+}
+
+/**
+ * Partition for the flat T3 sidebar. Precedence (first match wins), same as
+ * partitionSidebar (#567) except pinned is its own section:
+ *   archived > snoozed > pinned > settled > active
+ * scopeProjectId filters every section ("All projects" = null).
+ */
+export function buildFlatSidebar(
+  threads: readonly ThreadInfo[],
+  opts: SettleOpts,
+  scopeProjectId: string | null = null,
+): FlatSidebar {
+  const pinned: ThreadInfo[] = [];
+  const active: ThreadInfo[] = [];
+  const snoozed: ThreadInfo[] = [];
+  const settled: ThreadInfo[] = [];
+  const archived: ThreadInfo[] = [];
+
+  for (const t of threads) {
+    if (scopeProjectId != null && t.projectId !== scopeProjectId) continue;
+    if (t.archived) archived.push(t);
+    else if (effectiveSnoozed(t, opts.now)) snoozed.push(t);
+    else if (isPinned(t)) pinned.push(t);
+    else if (effectiveSettled(t, opts)) settled.push(t);
+    else active.push(t);
+  }
+
+  pinned.sort(comparePinnedOldestFirst);
+  active.sort(
+    (a, b) => createdKey(b) - createdKey(a) || a.id.localeCompare(b.id),
+  );
+  snoozed.sort(compareSnoozedWakeSoonest);
+  settled.sort(compareSettledNewestFirst);
+  archived.sort(
+    (a, b) => b.updatedAt - a.updatedAt || a.id.localeCompare(b.id),
+  );
+
+  return { pinned, active: attachForks(active), snoozed, settled, archived };
+}
+
 /** Default opts when a caller has no clock of its own (tests, pure helpers). */
 export function defaultSettleOpts(now = Date.now()): SettleOpts {
   return {
