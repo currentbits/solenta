@@ -1,34 +1,35 @@
 {
   "version": 1,
-  "readOrder": ["critical", "impl", "tests", "docs"],
+  "readOrder": ["tests", "critical", "impl"],
   "chunks": [
     {
-      "area": "critical",
-      "rationale": "Thread | Git tabs and the full-height Git pane replace the 520px overlay. Wrong flex/hidden wiring hides the transcript permanently or clips commit again.",
+      "area": "tests",
+      "rationale": "ThreadView chips are the gate: static markup proves dismissed/resolved rows are omitted, mounted clicks prove the three actions fire with the same suggestion object, and in-flight disables only that row. fakeCoder records the two new channels so App-level wiring can be asserted later.",
       "risks": [
-        ".body { display:flex } can override [hidden] if .body[hidden] is missing",
-        "changesOpen is lifted in App; switching threads must still close the pane",
-        "Composer stays mounted while hidden so draft text is not lost"
+        "Static render uses empty messages; the strip must still mount after the timeline loop, not inside a message-only branch",
+        "The pending-click test depends on act() flushing setInFlight before the assertion; a microtask-only disable would flake"
+      ]
+    },
+    {
+      "area": "critical",
+      "rationale": "App start/file/dismiss must not interrupt the current run. Start captures the suggesting threadId before forkThread auto-selects, starts the prompt on the fork, then resolves the source chip. File uses the selected project's path, leaves the chip open on in-band create failure, and toasts r.reason. Dismiss is a single resolveSuggestion.",
+      "risks": [
+        "forkThread selects the new thread; resolving with selectedThreadId after await would stamp the fork instead of the source — the handler snapshots threadId first",
+        "handleFileSuggestion reads project.path; it must sit after the project lookup (it does, ~line 690) or TDZ would throw on click",
+        "createIssue failures stay in-band; if the toast is dismissed the chip is still open, which is intended"
       ]
     },
     {
       "area": "impl",
-      "rationale": "Header declutter: Spec/Teach/Ask start from overflow, Notes is icon-only, overflow stays usable while a run is in progress. Git pane is file list + selected diff + pinned commit.",
+      "rationale": "SuggestedWorkStrip is quiet UI under the transcript (not a tool card). useCoder.resolveSuggestion merges like setNotes; createIssue is in-band like setIssuePlanStatus; forkThread passes worktree. wireClient and devCoder implement the CoderApi gap so typecheck is green; the browser fixture seeds one open chip on thread-1.",
       "risks": [
-        "Overflow used to disable entirely while working; destructive items are now hidden instead",
-        "File selection defaults to diff.files[0], which may not be the first visible itinerary row"
-      ]
-    },
-    {
-      "area": "tests",
-      "rationale": "Pane tabs, Git chrome, file select, spec/teach/ask overflow, #555 commit-box pin (flex, not sticky).",
-      "risks": [
-        "CSS ruleBody() matcher is first-brace-wins; the 720px media query also has .changesSplit"
+        "Strip filters status===open in the renderer; a backend that leaves stale open rows would keep showing them",
+        "devCoder resolveSuggestion is dumb (no unknown-id reject) — electron main owns the real guards"
       ]
     }
   ],
   "risks": [
-    "The reference screenshot never reached this worker; the pane is inferred from Claude Code Desktop / #552, not pixel-matched",
-    "Environment still has a Changes card that opens the same pane; two entry points"
+    "No App-level test for the start/file/dismiss sequence (fork + startRun + resolveSuggestion). ThreadView tests are the gate as specified.",
+    "Sibling electron worker must implement threads:resolveSuggestion and issues:create or production clicks will reject"
   ]
 }
