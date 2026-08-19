@@ -9,8 +9,9 @@
  *
  * Provider truth, checked against buildArgs + live CLI help:
  *   claude  --permission-mode <mode>, no OS-sandbox flag
- *   grok    default/acceptEdits remapped to --permission-mode auto (tools
- *           unprompted); plan/bypassPermissions pass through; no --sandbox
+ *   grok    default/acceptEdits remapped to --always-approve /
+ *           --permission-mode bypassPermissions (tools unprompted);
+ *           plan/bypassPermissions pass through; no --sandbox
  *   kimi    -p cannot combine with -y/--auto; permission mode ignored
  *   opencode run --format json; no permission or sandbox flags
  *   codex   exec --json --skip-git-repo-check; Solenta never passes -s or
@@ -80,7 +81,8 @@ function agentSandbox(provider, permissionMode) {
     if (mode === "default" || mode === "acceptEdits") {
       return {
         sandboxed: false,
-        reason: "Grok --permission-mode auto (tools unprompted); no --sandbox",
+        reason:
+          "Grok --always-approve / --permission-mode bypassPermissions (tools unprompted); no --sandbox",
       };
     }
     if (mode === "bypassPermissions") {

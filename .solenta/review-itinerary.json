@@ -1,23 +1,37 @@
 {
   "version": 1,
-  "readOrder": ["critical", "tests", "impl"],
+  "readOrder": ["tests", "critical", "impl"],
   "chunks": [
     {
-      "area": "electron/worktrees.js — tryResolveItineraryOnly",
-      "rationale": "Read first: this is why Merge kept dying. When the sole unmerged path is .solenta/review-itinerary.json, combine ours+theirs (dedupe by area/risk) and stage it. Wired at mergeWorktree start, squash-into-main, replay-into-worktree, and updatePrBranchFromBase.",
+      "area": "tests",
+      "rationale": "Read grok.test.js first: the argv contract is the whole fix (asking modes must emit bypassPermissions + --always-approve, never auto). Then providers.test.js and sandbox.test.js.",
       "risks": [
-        "A real conflict that happens to include other files still surfaces as MERGE_CONFLICT — only the itinerary-only case is swallowed.",
-        "Malformed JSON on both sides falls back to --ours; if that also fails we still throw.",
-        "The running Solenta process loads worktrees.js from its own checkout; this fix is live only after this lands on main and the app reloads."
+        "Runner grok tests spawn a fake binary and only check argv; grok 1.0.5 honoring --always-approve was verified live.",
+        "plan mode must stay plan and not get --always-approve."
       ]
     },
     {
-      "area": "electron/test/worktrees.test.js — itinerary-only merge",
-      "rationale": "Divergent itineraries plus a unique feature file: mergeWorktree must land the feature, write a marker-free combined itinerary, and clean up the worktree.",
+      "area": "critical",
+      "rationale": "electron/providers.js grok.buildArgs. Asking modes used to map to --permission-mode auto, which grok 1.0.5 treats as default and auto-cancels run_terminal_command as a user stop.",
+      "risks": [
+        "default and acceptEdits on grok now fully auto-approve tools.",
+        "Already-running grok children keep the old argv until the next spawn; the packaged Nightly must be restarted after this lands."
+      ]
+    },
+    {
+      "area": "impl",
+      "rationale": "electron/sandbox.js badge reason string tracks the flags we actually pass.",
       "risks": []
+    },
+    {
+      "area": "electron/worktrees.js — tryResolveItineraryOnly",
+      "rationale": "When the sole unmerged path is .solenta/review-itinerary.json, combine ours+theirs and stage it so Merge does not stick.",
+      "risks": [
+        "A real conflict that includes other files still surfaces as MERGE_CONFLICT."
+      ]
     }
   ],
   "risks": [
-    "This worktree's sidebar work is already on local main (37cb1f2). This commit is the merge-path fix so the button does not stick again."
+    "Packaged Solenta Nightly loads electron JS from the app bundle at start. Git merge alone does not change a running Nightly process."
   ]
 }
