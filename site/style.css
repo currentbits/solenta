@@ -1,8 +1,8 @@
-/* Solenta site — 2026 redesign, slice 2: hero.
+/* Solenta site — 2026 redesign, slice 3: card sections.
    Dark-only by brand decision: the product is a dark UI tool.
-   So far: design foundation (slice 1), aurora hero with scroll-driven
-   screenshot entrance and gradient display type (this slice).
-   Card sections land in slices 3–4 of the stack. */
+   So far: design foundation (1), aurora hero (2), glow-card system +
+   memory/planboard panels + provider marquee (this slice).
+   Bento, orchestration, trust and install land in slice 4. */
 
 @font-face {
   font-family: "Geist";
@@ -15,6 +15,19 @@
   src: url("fonts/GeistMono-Variable.woff2") format("woff2");
   font-weight: 100 900;
   font-display: swap;
+}
+
+/* Glow coordinates, registered so they interpolate smoothly when JS
+   tracks the pointer across cards. */
+@property --mx {
+  syntax: "<length-percentage>";
+  initial-value: 50%;
+  inherits: false;
+}
+@property --my {
+  syntax: "<length-percentage>";
+  initial-value: 50%;
+  inherits: false;
 }
 
 :root {
@@ -450,52 +463,173 @@ code, pre, .mono { font-family: var(--font-mono); }
 }
 .shot img { width: 100%; }
 
-/* ---------------- sections ---------------- */
-section { padding: 96px 0; }
-.section-head { max-width: 620px; margin-bottom: 48px; }
-.section-head h2 {
-  font-size: clamp(26px, 3vw, 36px);
-  letter-spacing: -0.02em;
-  line-height: 1.15;
-  font-weight: 650;
-  margin: 0 0 14px;
+/* ---------------- provider marquee ---------------- */
+.marquee {
+  margin-top: clamp(56px, 7vw, 92px);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  padding: 20px 0;
+  overflow: hidden;
+  mask-image: linear-gradient(90deg, transparent, #000 14%, #000 86%, transparent);
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 14%, #000 86%, transparent);
 }
-.section-head p { color: var(--text-muted); margin: 0; font-size: 16.5px; }
+.marquee-track {
+  display: flex;
+  width: max-content;
+  animation: marquee 36s linear infinite;
+}
+.marquee-track span {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  padding-right: 72px;
+  position: relative;
+  white-space: nowrap;
+}
+.marquee-track span::after {
+  content: "·";
+  position: absolute;
+  right: 32px;
+  color: color-mix(in oklch, var(--accent) 70%, white);
+}
+@keyframes marquee {
+  to { transform: translateX(-50%); }
+}
+
+/* ---------------- sections ---------------- */
+section { padding: clamp(88px, 11vw, 152px) 0; position: relative; }
+.section-head { max-width: 640px; margin-bottom: clamp(40px, 5vw, 60px); }
+.section-head h2 {
+  font-size: clamp(30px, 3.8vw, 50px);
+  letter-spacing: -0.03em;
+  line-height: 1.08;
+  font-weight: 680;
+  margin: 0 0 18px;
+  text-wrap: balance;
+}
+.section-head p {
+  color: var(--text-muted);
+  margin: 0;
+  font-size: 16.5px;
+  line-height: 1.7;
+}
 .section-head p + p { margin-top: 14px; }
-.section-head code { font-size: 0.92em; color: var(--text); }
+.section-head code { font-size: 0.9em; color: var(--text); }
 
-section#memory { padding: 112px 0 120px; }
-section#memory .section-head { max-width: 720px; }
-section#memory .section-head h2 { font-size: clamp(32px, 4vw, 48px); }
-section#memory .orch-points { max-width: 720px; }
+.eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin: 0 0 18px;
+}
+.eyebrow::before {
+  content: "";
+  width: 26px;
+  height: 1px;
+  background: linear-gradient(90deg, var(--accent), transparent);
+}
+.eyebrow-center { justify-content: center; }
+.eyebrow-center::after {
+  content: "";
+  width: 26px;
+  height: 1px;
+  background: linear-gradient(-90deg, var(--accent), transparent);
+}
 
+section#memory .section-head { max-width: 760px; }
+section#memory .section-head h2 { font-size: clamp(34px, 4.4vw, 58px); }
+section#memory .orch-points { max-width: 760px; }
+
+/* ---------------- glow cards ----------------
+   Pointer-tracked radial highlight + gradient border. --mx/--my are
+   registered custom properties; JS writes them on pointermove. Without
+   JS the cards sit at their static, fully-legible state. */
+.glow, .cell {
+  position: relative;
+}
+.glow::before, .cell::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(
+    260px circle at var(--mx) var(--my),
+    color-mix(in oklch, var(--accent) 13%, transparent),
+    transparent 72%
+  );
+  opacity: 0;
+  transition: opacity 0.45s;
+  pointer-events: none;
+}
+.glow::after, .cell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: radial-gradient(
+    220px circle at var(--mx) var(--my),
+    color-mix(in oklch, var(--accent) 65%, transparent),
+    transparent 65%
+  );
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  opacity: 0;
+  transition: opacity 0.45s;
+  pointer-events: none;
+}
+@media (hover: hover) {
+  .glow:hover::before, .cell:hover::before,
+  .glow:hover::after, .cell:hover::after {
+    opacity: 1;
+  }
+}
+
+/* ---------------- memory panel ---------------- */
 .memory-panel {
-  background: var(--surface);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.015));
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
   overflow: hidden;
   margin-bottom: 8px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.35);
 }
 .memory-search {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 12px 22px;
+  padding: 13px 22px;
   border-bottom: 1px solid var(--border);
   color: var(--text-dim);
   font-size: 13px;
   font-family: var(--font-mono);
+  background: rgba(255, 255, 255, 0.02);
 }
 .memory-search .ph { font-size: 15px; color: var(--text-muted); }
 .memory-search-hint { margin-left: auto; color: var(--text-dim); }
 .memory-entry {
-  padding: 16px 22px;
+  padding: 17px 22px;
   border-top: 1px solid var(--border);
+  transition: background 0.25s;
 }
+.memory-entry:hover { background: rgba(255, 255, 255, 0.025); }
 .memory-search + .memory-entry { border-top: none; }
 .memory-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-family: var(--font-mono);
   font-size: 11.5px;
+  letter-spacing: 0.04em;
   color: var(--text-dim);
   margin: 0 0 6px;
 }
@@ -504,27 +638,40 @@ section#memory .orch-points { max-width: 720px; }
   color: var(--text);
   font-size: 14.5px;
 }
+.pdot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.pdot-a { background: var(--accent); box-shadow: 0 0 10px var(--accent); }
+.pdot-b { background: var(--violet); box-shadow: 0 0 10px var(--violet); }
+.pdot-c { background: var(--cyan); box-shadow: 0 0 10px var(--cyan); }
 
+/* ---------------- planboard ---------------- */
 .board {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  background: var(--surface);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.015));
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
   overflow: hidden;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.35);
 }
-.board > div { padding: 20px 22px 22px; }
+.board > div { padding: 22px 24px 24px; }
 .board > div + div { border-left: 1px solid var(--border); }
 .board h3 {
+  display: flex;
+  align-items: center;
+  gap: 9px;
   margin: 0 0 8px;
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 600;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--text-muted);
 }
+.col-dot { width: 8px; height: 8px; border-radius: 50%; }
+.col-todo { background: var(--text-dim); }
+.col-doing { background: var(--accent); box-shadow: 0 0 10px var(--accent); }
+.col-done { background: var(--green); box-shadow: 0 0 10px var(--green); }
 .board article {
-  padding: 12px 0;
+  padding: 13px 0;
   border-top: 1px solid var(--border);
 }
 .board article p { margin: 0; color: var(--text); font-size: 14.5px; }
@@ -534,7 +681,7 @@ section#memory .orch-points { max-width: 720px; }
   margin: 0 0 6px;
 }
 .board article .board-action {
-  margin-top: 8px;
+  margin-top: 9px;
   font-size: 12.5px;
   font-weight: 600;
   color: var(--accent);
@@ -546,15 +693,6 @@ section#memory .orch-points { max-width: 720px; }
 
 section#trust { padding-bottom: 32px; }
 section#trust .section-head { margin-bottom: 0; max-width: 680px; }
-
-.eyebrow {
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--accent);
-  margin: 0 0 14px;
-}
 
 /* ---------------- bento ---------------- */
 .bento {

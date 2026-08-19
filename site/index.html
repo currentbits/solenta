@@ -81,12 +81,21 @@
       </div>
     </div>
   </div>
+  <div class="marquee" aria-hidden="true">
+    <div class="marquee-track">
+      <span>Claude Code</span><span>Codex</span><span>Kimi</span><span>Grok</span><span>OpenCode</span>
+      <span>Claude Code</span><span>Codex</span><span>Kimi</span><span>Grok</span><span>OpenCode</span>
+      <span>Claude Code</span><span>Codex</span><span>Kimi</span><span>Grok</span><span>OpenCode</span>
+      <span>Claude Code</span><span>Codex</span><span>Kimi</span><span>Grok</span><span>OpenCode</span>
+    </div>
+  </div>
 </header>
 
 <section id="memory">
   <div class="wrap">
     <div class="section-head reveal">
-      <h2>Your agents remember.</h2>
+      <p class="eyebrow">Shared memory</p>
+      <h2>Your agents <span class="grad">remember.</span></h2>
       <p>
         What one thread learns, the next one knows. Solenta injects a local
         memory server into every agent session automatically, so decisions and
@@ -96,22 +105,22 @@
         tenth session on a project is better informed than the first.
       </p>
     </div>
-    <div class="memory-panel reveal">
+    <div class="memory-panel glow reveal">
       <div class="memory-search">
         <i class="ph ph-magnifying-glass"></i>
         <span>Memory &middot; localhost &middot; SQLite</span>
         <span class="memory-search-hint">Search, read, store</span>
       </div>
       <div class="memory-entry">
-        <p class="memory-meta">Claude Code &middot; thread 1</p>
+        <p class="memory-meta"><span class="pdot pdot-a"></span>Claude Code &middot; thread 1</p>
         <p>Ruled out a rewrite of auth. Cookie session stays; refresh lives in src/lib/auth.ts.</p>
       </div>
       <div class="memory-entry">
-        <p class="memory-meta">Codex &middot; thread 3</p>
+        <p class="memory-meta"><span class="pdot pdot-b"></span>Codex &middot; thread 3</p>
         <p>The 401 retry is in src/lib/api.ts. Moving it breaks the refresh path.</p>
       </div>
       <div class="memory-entry">
-        <p class="memory-meta">Grok &middot; thread 6</p>
+        <p class="memory-meta"><span class="pdot pdot-c"></span>Grok &middot; thread 6</p>
         <p>Starts knowing both. Adds the expiry skew and leaves the rest alone.</p>
       </div>
     </div>
@@ -126,7 +135,8 @@
 <section id="planboard">
   <div class="wrap">
     <div class="section-head reveal">
-      <h2>Your planboard is your issue tracker.</h2>
+      <p class="eyebrow">Planboard</p>
+      <h2>Your planboard is your <span class="grad">issue tracker.</span></h2>
       <p>
         The board is plain GitHub issues with labels, so nothing is trapped in
         a local database. Agents update it with <code>gh</code>. Your teammates
@@ -136,29 +146,29 @@
       </p>
       <p class="board-claim">No local-only planner can copy this.</p>
     </div>
-    <div class="board reveal">
+    <div class="board glow reveal">
       <div>
-        <h3>Todo</h3>
+        <h3><span class="col-dot col-todo"></span>Todo</h3>
         <article>
           <p class="memory-meta">open</p>
           <p>Document SSH remote setup</p>
-          <p class="board-action">Start task</p>
+          <p class="board-action">Start task &rarr;</p>
         </article>
         <article>
           <p class="memory-meta">open</p>
           <p>Show remaining spend cap in the composer</p>
-          <p class="board-action">Start task</p>
+          <p class="board-action">Start task &rarr;</p>
         </article>
       </div>
       <div>
-        <h3>In progress</h3>
+        <h3><span class="col-dot col-doing"></span>In progress</h3>
         <article>
           <p class="memory-meta">plan:doing</p>
           <p>Lead the site with memory and the planboard</p>
         </article>
       </div>
       <div>
-        <h3>Done</h3>
+        <h3><span class="col-dot col-done"></span>Done</h3>
         <article>
           <p class="memory-meta">plan:done</p>
           <p>Inject the memory server into every session</p>
