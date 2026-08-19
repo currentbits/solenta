@@ -64,6 +64,7 @@ import type {
   DigestResult,
   UsageEntry,
   UsageReport,
+  UsageThreadEntry,
   WorkLogItem,
   WorkflowPhaseSpec,
   WorkflowTemplateInfo,
@@ -3429,31 +3430,119 @@ function buildDevCoder(): CoderApi {
           const dd = String(d.getDate()).padStart(2, "0");
           return `${y}-${m}-${dd}`;
         };
+        const threadCell = (
+          costUsd: number,
+          inputTokens: number,
+          outputTokens: number,
+          turns: number,
+          meta: Pick<
+            UsageThreadEntry,
+            "projectId" | "projectName" | "title" | "provider" | "model"
+          >,
+          extra: Partial<UsageEntry> = {},
+        ): UsageThreadEntry => ({
+          ...cell(costUsd, inputTokens, outputTokens, turns, extra),
+          ...meta,
+        });
+        const nebula = {
+          projectId: "proj-1",
+          projectName: "nebula",
+        };
+        const ledger = {
+          projectId: "proj-2",
+          projectName: "ledger",
+        };
         return {
           byDay: {
             [day(0)]: {
               claude: {
-                "claude-opus-4": cell(1.24, 42000, 8100, 6),
+                "claude-opus-4": cell(12.4, 3000, 8200, 6, {
+                  cachedInputTokens: 2_400_000,
+                  cacheWriteTokens: 80_000,
+                  wastedUsd: 2.1,
+                }),
               },
               grok: {
-                "grok-4": cell(0, 18000, 3200, 4),
+                "grok-4": cell(4.2, 18000, 3200, 4),
+              },
+              kimi: {
+                "kimi-k2": cell(0, 0, 0, 41),
               },
             },
             [day(1)]: {
               claude: {
-                "claude-sonnet-4": cell(0.41, 15000, 2400, 3),
-              },
-              kimi: {
-                "kimi-k2": cell(0.08, 9000, 1100, 2),
+                "claude-sonnet-4": cell(0.41, 15000, 2400, 3, {
+                  cachedInputTokens: 120_000,
+                  cacheWriteTokens: 4_000,
+                }),
               },
             },
             [day(3)]: {
               grok: {
-                "grok-4": cell(0, 22000, 4100, 5),
+                "grok-4": cell(1.1, 22000, 4100, 5),
               },
             },
           },
-          threadsByDay: {},
+          threadsByDay: {
+            [day(0)]: {
+              "thread-1": threadCell(10.2, 2000, 6200, 4, {
+                ...nebula,
+                title: "Modernize Per-Device Provider Settings",
+                provider: "claude",
+                model: "claude-opus-4",
+              }, {
+                cachedInputTokens: 1_800_000,
+                cacheWriteTokens: 60_000,
+                wastedUsd: 2.1,
+              }),
+              "thread-2": threadCell(2.2, 1000, 2000, 2, {
+                ...nebula,
+                title: "Fix worktree path resolution on Windows",
+                provider: "claude",
+                model: "claude-opus-4",
+              }, {
+                cachedInputTokens: 600_000,
+                cacheWriteTokens: 20_000,
+              }),
+              "thread-grok-1": threadCell(4.2, 18000, 3200, 4, {
+                ...ledger,
+                title: "Tighten CSP for Electron preload",
+                provider: "grok",
+                model: "grok-4",
+              }),
+              "thread-kimi-1": threadCell(0, 0, 0, 21, {
+                ...ledger,
+                title: "Add INTEGER-SAFARI workflow runner",
+                provider: "kimi",
+                model: "kimi-k2",
+              }),
+            },
+            [day(1)]: {
+              "thread-1": threadCell(0.41, 15000, 2400, 3, {
+                ...nebula,
+                title: "Modernize Per-Device Provider Settings",
+                provider: "claude",
+                model: "claude-sonnet-4",
+              }, {
+                cachedInputTokens: 120_000,
+                cacheWriteTokens: 4_000,
+              }),
+              "thread-kimi-1": threadCell(0, 0, 0, 20, {
+                ...ledger,
+                title: "Add INTEGER-SAFARI workflow runner",
+                provider: "kimi",
+                model: "kimi-k2",
+              }),
+            },
+            [day(3)]: {
+              "thread-grok-2": threadCell(1.1, 22000, 4100, 5, {
+                ...ledger,
+                title: "Scaffold three-pane desktop shell",
+                provider: "grok",
+                model: "grok-4",
+              }),
+            },
+          },
         };
       },
     },

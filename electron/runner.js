@@ -1360,6 +1360,24 @@ function createRunner(opts) {
       const provider =
         extras.provider != null ? String(extras.provider) : thread.provider;
       if (provider === "simulate") return;
+      if (
+        (status === "failed" || status === "stopped") &&
+        !(status === "failed" && thread.status === "quota-wait")
+      ) {
+        const model =
+          (store.getUsage(threadId) && store.getUsage(threadId).model) ||
+          thread.model ||
+          "unknown";
+        store.recordWastedSpend({
+          provider,
+          model,
+          threadId,
+          costUsd: extras.costUsd,
+          projectId: thread.projectId,
+          projectName: store.getProject(thread.projectId)?.name,
+          title: thread.title,
+        });
+      }
       const project = store.getProject(thread.projectId);
       void recordRunOutcome(
         {
@@ -2866,7 +2884,19 @@ function createRunner(opts) {
           if (costDelta > 0) {
             store.recordSpend(costDelta);
           }
-          store.recordUsage({ provider: thread.provider, model, costUsd: costDelta, inputTokens: turnIn, outputTokens: turnOut });
+          store.recordUsage({
+            provider: thread.provider,
+            model,
+            costUsd: costDelta,
+            inputTokens: turnIn,
+            cachedInputTokens: Number(usage.cache_read_input_tokens) || 0,
+            cacheWriteTokens: Number(usage.cache_creation_input_tokens) || 0,
+            outputTokens: turnOut,
+            threadId,
+            projectId: thread.projectId,
+            projectName: store.getProject(thread.projectId)?.name,
+            title: thread.title,
+          });
 
           const ok = ev.subtype === "success";
           // Assistant text from stream, or fall back to result field
@@ -3327,7 +3357,17 @@ function createRunner(opts) {
       const billedOut = snapshot
         ? Math.max(0, outDelta - prev.outputTokens)
         : outDelta;
-      store.recordUsage({ provider: thread.provider, model: usageInfo.model || prev.model || thread.model || null, costUsd: costDelta, inputTokens: billedIn, outputTokens: billedOut });
+      store.recordUsage({
+        provider: thread.provider,
+        model: usageInfo.model || prev.model || thread.model || null,
+        costUsd: costDelta,
+        inputTokens: billedIn,
+        outputTokens: billedOut,
+        threadId,
+        projectId: thread.projectId,
+        projectName: store.getProject(thread.projectId)?.name,
+        title: thread.title,
+      });
       sawTerminalUsage = true;
     }
 
@@ -3713,7 +3753,17 @@ function createRunner(opts) {
       if (costDelta > 0) {
         store.recordSpend(costDelta);
       }
-      store.recordUsage({ provider: thread.provider, model: prev.model || thread.model || null, costUsd: costDelta, inputTokens: inDelta, outputTokens: outDelta });
+      store.recordUsage({
+        provider: thread.provider,
+        model: prev.model || thread.model || null,
+        costUsd: costDelta,
+        inputTokens: inDelta,
+        outputTokens: outDelta,
+        threadId,
+        projectId: thread.projectId,
+        projectName: store.getProject(thread.projectId)?.name,
+        title: thread.title,
+      });
       sawUsage = true;
     }
 
@@ -4079,7 +4129,17 @@ function createRunner(opts) {
       if (costDelta > 0) {
         store.recordSpend(costDelta);
       }
-      store.recordUsage({ provider: thread.provider, model: usageInfo.model || prev.model || thread.model || null, costUsd: costDelta, inputTokens: inDelta, outputTokens: outDelta });
+      store.recordUsage({
+        provider: thread.provider,
+        model: usageInfo.model || prev.model || thread.model || null,
+        costUsd: costDelta,
+        inputTokens: inDelta,
+        outputTokens: outDelta,
+        threadId,
+        projectId: thread.projectId,
+        projectName: store.getProject(thread.projectId)?.name,
+        title: thread.title,
+      });
     }
 
     completeWorkLogStep(threadId, startingId);

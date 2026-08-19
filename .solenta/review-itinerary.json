@@ -1,45 +1,76 @@
 {
   "version": 1,
-  "readOrder": ["tests", "critical", "impl"],
+  "readOrder": [
+    "critical",
+    "impl",
+    "tests",
+    "docs"
+  ],
   "chunks": [
     {
-      "area": "electron/test/claude-result-error.test.js",
-      "rationale": "Pure mapping contract for issue #549, independent of spawn. Start here: bare `cancelled`/`canceled` is a stop; leftover result text must not override that; remaining error_during_execution cases keep CLI errors[]/stderr and never mention `result subtype`; session-lost still adds the reset follow-up without duplicating the CLI line; empty input falls back to `Run error`.",
+      "area": "critical: electron/store.js recordUsage \u2014 the drop-zeros guard",
+      "rationale": "Start here; it is the whole first defect. The deleted line `if (costUsd === 0 && inputTokens === 0 && outputTokens === 0) return;` is why 41 kimi threads produced zero kimi rows. A named provider is now enough to record a turn, so zeros survive to the renderer as 'unreported' instead of the provider silently not existing. Note the new `provider === 'simulate'` guard added alongside: without it, removing the zero-drop would let dev fixture runs into the real ledger for the first time.",
       "risks": [
-        "Stop is an exact-token match. A CLI that says `cancelled: permission denied` in one string stays a failure (intentional) but a CLI that only says `cancelled` for an unrecoverable tool death will look like a user stop.",
-        "The suite never feeds subtype into the assertion besides checking it is absent from copy — a regression that puts subtype back in failText is caught; a regression that ignores errors[] and shows a generic Run error is also caught."
+        "Every turn from every provider now writes a row, so usageByDay grows faster than before. Bounded by the existing 90-day prune, but it is a real volume change.",
+        "recordUsage overwrites the thread row's projectId/projectName/title with '' if a caller omits them. All five call sites pass them, so this is latent, not live."
       ]
     },
     {
-      "area": "electron/runner.js",
-      "rationale": "classifyClaudeResultError plus the claude-stream `type === result` terminal. The old `Run error: result subtype ${ev.subtype}` path is gone. Bare cancel mirrors stopRun (idle, `Run stopped`, notify stopped, lastError cleared). Other failures go through markRunFailed with CLI text. Error result payloads are no longer copied into an assistant bubble.",
+      "area": "critical: electron/runner.js claude recordUsage call (~2805) \u2014 the cache split",
+      "rationale": "The second defect. inputTokens deliberately stays `usage.input_tokens` (the billable, uncached remainder) and the new cachedInputTokens/cacheWriteTokens carry cache_read/cache_creation alongside it. Compare with claudeContextTokens() at runner.js:85-103, which has summed exactly these three since #317 for the context ring \u2014 this is that same fix finally applied to the usage rollup. runUsage was deliberately left untouched so nothing downstream that reads tokensIn as billable shifts.",
       "risks": [
-        "stderr is read at result time via handle.getStderr(). stdout and stderr are different streams, so a result line can land before the stderr chunk. Empty errors[] then becomes a generic `Run error` until/unless stderr has already arrived. The integration test delays 40ms after writing stderr to hide that race.",
-        "CLI-side cancel does not cascade crew the way stopRun does. A worker that self-cancels leaves siblings running. That matches 'this thread's run ended', not 'the user stopped the orchestrator'.",
-        "notifyRunTerminal('stopped') skips afterFailedTurn, so an orchestrator will not get a failure wake from a gated-tool auto-cancel. Same as a user Stop.",
-        "Success no longer nulls sessionId on a hypothetical success+session-lost combo. That combination never existed in the wild."
+        "Codex reports input_tokens ALREADY INCLUDING cached_input_tokens (electron/codex.js:372 and the test 'does not add cached_input_tokens on turn.completed'), and reports cumulative totals, so a per-turn cached delta needs a snapshot setUsage does not keep. Codex therefore records its whole input as uncached with cachedInputTokens 0 and will render as doing no caching. Documented on UsageEntry.inputTokens; deliberately NOT fixed here \u2014 see risks below."
       ]
     },
     {
-      "area": "electron/claude.js",
-      "rationale": "getStderr() on the handle so the result path can attach a stderr tail without waiting for process exit (which no-ops once sawResult is set).",
+      "area": "critical: electron/runner.js notifyRunTerminal (~1287) \u2014 wasted spend",
+      "rationale": "One hook, not five: this is the single terminal seam every provider funnels through (its own comment names generic/claude/codex/kimi/opencode/workflow), and several call sites already pass the run's costUsd. Read the quota-wait exclusion carefully \u2014 a thread parked on a provider reset takes the `status === 'failed'` branch but is explicitly not a failure, so charging it as waste would be wrong.",
       "risks": [
-        "The spawn-failure stub returns getStderr: () => \"\". Callers that assume a live buffer must tolerate an empty string.",
-        "Tail is still 64KiB; a noisy CLI can push the useful last line out of the unique-line merge if errors[] already filled shown."
+        "wastedUsd is keyed by provider/model and must match the key recordUsage used, or it mints a phantom row. It resolves the model via store.getUsage(threadId).model with the same fallbacks as the recording sites.",
+        "Call sites that pass no extras.costUsd record nothing. Silent by design, but it means waste is undercounted rather than overcounted."
       ]
     },
     {
-      "area": "electron/test/claude.test.js",
-      "rationale": "Fake scenarios (result-cancelled, result-exec-error, result-exec-error-stderr, result-cancelled-plus-error) plus session-lost assertions updated to forbid `result subtype` / `error_during_execution` in user-facing copy. Read after the mapper so you see the terminal shape (idle vs failed, work-log label, lastError).",
+      "area": "impl: src/usage.ts \u2014 the rollup",
+      "rationale": "isUnreported() is the contract between the two halves: turns > 0 AND every numeric zero. Read it against what recordUsage writes. cacheMultiplier is deliberately a token-VOLUME ratio ((input + cached) / input), not a dollar saving \u2014 per-provider cache discounts are unknown, so a '6.8x cheaper' claim would be invented. It is null when a provider reports no cache reads, which is why it must never render as one global multiplier.",
       "risks": [
-        "result-exec-error-stderr is timing-sensitive: if the 40ms delay is not enough on a loaded CI runner, the test fails even though the mapper is correct.",
-        "orch-server.test.js still fixtures the old `Run error: result subtype error_during_execution` string. That is mock thread_status data, not runner output — do not 'fix' it as if the runner still produced it."
+        "A waste-only row has turns 0, so it is neither 'unreported' nor a real turn. Verified end to end: it is correctly not flagged unreported.",
+        "Project/thread costShare uses the byDay range total as the denominator. threadsByDay is only ever written alongside a byDay write, so the share can under-sum but never exceed 100%.",
+        "A provider with cachedInputTokens>0 and inputTokens===0 gets cacheMultiplier=null, so an all-cache day shows no multiplier."
       ]
+    },
+    {
+      "area": "impl: src/components/UsageView.tsx \u2014 the view",
+      "rationale": "The headline carries '* if billed at full API rate' because almost everyone here is on a subscription and the raw-rate figure is a counterfactual, not a bill. Unreported providers render 'N turns \u00b7 usage not reported' with no share bar \u2014 the distinction between 'costs nothing' and 'will not say what it costs' is the entire point of the issue. The Tokens toggle uses processedTokens, which is what finally makes providers comparable.",
+      "risks": [
+        "The Thread breakdown falls back to the raw thread id when a title was never recorded.",
+        "The 90-day range looks sparse: the store holds ~3 days of history. Expected, not a bug.",
+        "Daily areas are overlapped, not stacked: a high-token cheap provider can hide an expensive low-token one. The legend is the only decoder.",
+        "The 'on runs that ended failed/stopped' explanation is a <th title>, so it is hover-only; the visible header is just 'Wasted'.",
+        "jsdom does not lay out SVG, so no test proves the areas are visible or that legend colours match the paths.",
+        "Verified against the live store: on existing history the Project and Thread tabs are empty, so both now render an explicit empty state saying attribution starts from the first run after this update."
+      ]
+    },
+    {
+      "area": "tests: electron/test/budget-spend.test.js, test/usage.test.ts, test/usageView.test.tsx",
+      "rationale": "The three cases the issue named explicitly are here: an all-zero kimi turn persists with turns 1; a cache-split rollup where processed and billable totals differ; old entries without the new fields still load. The labelled-waste cases at the end of the recordWastedSpend test came from testing the store->rollup join by hand, which neither worker could do alone.",
+      "risks": [
+        "No test drives a real failed run all the way through notifyRunTerminal into wastedUsd at the runner level in this worktree; the runner-level waste tests exist but the surrounding checkpoints/verify-gate suites cannot run here (worktreeBase is not configured)."
+      ]
+    },
+    {
+      "area": "docs: src/shared/ipc.ts UsageEntry",
+      "rationale": "The field comments are the contract both halves were built against, including the codex caveat. Read last, as a check that the code above matches what the types claim.",
+      "risks": []
     }
   ],
   "risks": [
-    "A Grok permission auto-cancel that still emits this event will now look like a user Stop (idle, no Retry turn). That is the requested shape, but it can hide the underlying missing prompt channel (#3 / #177) if the user only notices a quiet stop.",
-    "jsdom/Electron UI is not exercised; Retry-turn absence follows from status idle + event text `Run stopped` (retryTurn.ts only lights on failed or `Run interrupted`).",
-    "Merge with main conflicted only this itinerary: main still had #555 Changes-panel notes. Kept the #549 annotation; the #555 notes belong to already-merged main and must not overwrite this PR's review order."
+    "THE FIX IS PROSPECTIVE, NOT RETROACTIVE. Confirmed by a read-only scan of the live store: usageThreadsByDay is empty and there are still zero kimi rows, because the dropped turns were never written to disk. The issue's '41 kimi threads' cannot be recovered; kimi, cache tokens and per-thread attribution all begin at the next run.",
+    "Codex has the same class of defect as claude, in the opposite direction: its input_tokens already includes cached tokens, so it will render as doing no caching at all. Data is available but needs its own cached-delta snapshot. Documented, not fixed, and worth a follow-up issue.",
+    "Subscription plan-quota (issue item 3) is not implemented: Solenta collects no plan-quota data from any CLI, so any number shown would be invented.",
+    "Three electron suites fail in any worktree for environmental reasons (worktreeBase not configured; package-app.sh node_modules/ws) and are unrelated to this change; verified by stashing and re-running on a clean tree.",
+    "devCoder's byDay and threadsByDay fixtures are hand-aligned rather than generated from one source; drift there is not caught by tests, which use their own fixtures.",
+    "appWiring.test.tsx mounts UsageView, so a wiring regression surfaces there rather than in usageView.test.tsx.",
+    "Merged origin/main (25 commits). The only conflict was this itinerary: origin's copy annotated PR #557's ThreadView work, which had already landed in the base, so this branch's copy was kept. ThreadView reached this branch earlier via dc1d612 and #557 landed byte-identical content, so it auto-merged and is NOT part of this PR's diff \u2014 verify with `git diff origin/main...HEAD --stat`."
   ]
 }
