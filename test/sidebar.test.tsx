@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import * as React from "react";
 import { inAct, mount } from "./support/dom";
-import { Sidebar, SettledRow } from "../src/components/Sidebar";
+import { Sidebar, SettledRow, ThreadCard } from "../src/components/Sidebar";
 import {
   SETTLED_TAIL_INITIAL_COUNT,
   SETTLED_TAIL_PAGE_COUNT,
@@ -92,6 +92,12 @@ function sidebar(
     onSetArchived?: (id: string, archived: boolean) => void;
     onSelectThread?: (id: string) => void;
     onRemoveProject?: (projectId: string) => void;
+    onSetSnoozed?: (id: string, until: number | null) => void;
+    onSetPinned?: (id: string, pinned: boolean) => void;
+    onSetMuted?: (id: string, muted: boolean) => void;
+    onRenameThread?: (id: string, title: string) => void;
+    onFork?: (id: string) => void;
+    providers?: ProviderInfo[];
     projectError?: string | null;
     revealThreadId?: string | null;
     onRevealHandled?: () => void;
@@ -106,7 +112,7 @@ function sidebar(
       projectsHeader="All projects"
       projects={projects}
       threads={threads}
-      providers={providers}
+      providers={over.providers ?? providers}
       activeThreadId={over.activeThreadId ?? null}
       onSelectThread={over.onSelectThread ?? (() => {})}
       onCreateThread={() => {}}
@@ -115,6 +121,11 @@ function sidebar(
       projectError={over.projectError ?? null}
       onSetSettled={over.onSetSettled}
       onSetArchived={over.onSetArchived}
+      onSetSnoozed={over.onSetSnoozed}
+      onSetPinned={over.onSetPinned}
+      onSetMuted={over.onSetMuted}
+      onRenameThread={over.onRenameThread}
+      onFork={over.onFork}
       revealThreadId={over.revealThreadId ?? null}
       onRevealHandled={over.onRevealHandled}
       updateState={over.updateState}
@@ -1937,6 +1948,390 @@ describe("Sidebar subagent rows (issue #542)", () => {
       m.query('[data-subagent-list="plain"]'),
       null,
       "done/failed subagents leave no sidebar rows",
+    );
+    m.unmount();
+  });
+});
+
+describe("Sidebar thread-actions menu chrome (#582)", () => {
+  const MENU_THREAD = [
+    thread({
+      id: "menu-src",
+      title: "menu source",
+      status: "idle",
+      updatedAt: FRESH + 80,
+      projectId: "p1",
+    }),
+    thread({
+      id: "menu-noise",
+      title: "other project decoy",
+      status: "idle",
+      updatedAt: FRESH + 10,
+      projectId: "p2",
+    }),
+  ];
+
+  async function openMenu() {
+    const m = await mount(
+      sidebar(MENU_THREAD, {
+        projects: [p1, p2],
+        onSetSnoozed: () => {},
+        onSetPinned: () => {},
+        onSetMuted: () => {},
+        onRenameThread: () => {},
+        onSetSettled: () => {},
+        onFork: () => {},
+      }),
+    );
+    await m.click(m.query('[data-more-btn="menu-src"]'));
+    const menu = m.query('[data-snooze-menu="menu-src"]');
+    assert.ok(menu, "… menu must open");
+    return { m, menu: menu as HTMLElement };
+  }
+
+  it("snooze rows use the preset label, not a wrapping Snooze · prefix", async () => {
+    const { m, menu } = await openMenu();
+    const trigger = menu.querySelector("[data-snooze-item]") as HTMLElement | null;
+    assert.ok(trigger, "Snooze is one first-level item (#583)");
+    await m.click(trigger);
+    const hour = m.query('[data-snooze-preset="hour"]') as HTMLElement | null;
+    assert.ok(hour, "hour preset is listed after opening Snooze");
+    const text = (hour!.textContent || "").replace(/\s+/g, " ").trim();
+    assert.match(text, /In 1 hour/, "preset label stays");
+    assert.equal(
+      text.includes("Snooze ·"),
+      false,
+      "repeating Snooze · is what wrapped 'In 1 hour' onto two lines",
+    );
+    m.unmount();
+  });
+
+  it("separates snooze, fork, and thread-admin items", async () => {
+    const { m, menu } = await openMenu();
+    assert.ok(
+      menu.querySelector('[data-menu-sep="snooze"]'),
+      "divider after the snooze block",
+    );
+    assert.ok(
+      menu.querySelector('[data-menu-sep="fork"]'),
+      "divider after fork / hand-off",
+    );
+    m.unmount();
+  });
+
+  it("raises the open card so later sticky project headers cannot paint over it", async () => {
+    const { m } = await openMenu();
+    const card = m.query('[data-thread-card="menu-src"]');
+    assert.ok(card, "source card");
+    assert.equal(
+      card!.getAttribute("data-menu-open"),
+      "true",
+      "open card is the stacking hook (later sticky group headers are z-index 2)",
+    );
+    m.unmount();
+  });
+
+  it("mousedown outside the menu closes it", async () => {
+    const { m } = await openMenu();
+    const search = m.query("input") as HTMLElement | null;
+    assert.ok(search, "search field is outside the menu");
+    await m.click(search);
+    assert.equal(
+      m.query('[data-snooze-menu="menu-src"]'),
+      null,
+      "outside click must dismiss; Escape-only left the menu covering the list",
+    );
+    m.unmount();
+  });
+});
+
+const extraProviders: ProviderInfo[] = [
+  ...providers,
+  {
+    id: "grok",
+    name: "Grok",
+    available: true,
+    supportsResume: true,
+    models: [],
+    modelInfo: [],
+    efforts: [],
+  },
+];
+
+describe("Sidebar snooze nested submenu (#583)", () => {
+  const MENU_THREAD = [
+    thread({
+      id: "menu-src",
+      title: "menu source",
+      status: "idle",
+      updatedAt: FRESH + 80,
+      projectId: "p1",
+    }),
+    thread({
+      id: "menu-noise",
+      title: "other project decoy",
+      status: "idle",
+      updatedAt: FRESH + 10,
+      projectId: "p2",
+    }),
+  ];
+
+  async function openMenu() {
+    const m = await mount(
+      sidebar(MENU_THREAD, {
+        projects: [p1, p2],
+        providers: extraProviders,
+        onSetSnoozed: () => {},
+        onSetPinned: () => {},
+        onSetMuted: () => {},
+        onRenameThread: () => {},
+        onSetSettled: () => {},
+        onFork: () => {},
+      }),
+    );
+    await m.click(m.query('[data-more-btn="menu-src"]'));
+    const menu = m.query('[data-snooze-menu="menu-src"]');
+    assert.ok(menu, "… menu must open");
+    return { m, menu: menu as HTMLElement };
+  }
+
+  it("first-level menu has one Snooze item; presets stay nested", async () => {
+    const { m, menu } = await openMenu();
+    const snooze = menu.querySelector("[data-snooze-item]") as HTMLElement | null;
+    assert.ok(snooze, "single Snooze item on the first level");
+    const snoozeText = (snooze!.textContent || "").replace(/\s+/g, " ").trim();
+    assert.match(snoozeText, /^Snooze\b/, "first-level label is Snooze");
+    assert.equal(snooze!.getAttribute("aria-haspopup"), "menu");
+    assert.equal(snooze!.getAttribute("aria-expanded"), "false");
+    assert.equal(
+      menu.querySelector("[data-snooze-preset]"),
+      null,
+      "presets must not sit on the first level — that is what made the menu cover the list",
+    );
+    assert.ok(menu.querySelector("[data-fork-btn]"), "Fork stays first-level");
+    assert.ok(
+      menu.querySelector("[data-handoff-provider]"),
+      "hand-off stays first-level",
+    );
+    assert.ok(menu.querySelector("[data-rename-thread]"), "Rename stays first-level");
+    assert.ok(menu.querySelector("[data-mute-toggle]"), "Mute stays first-level");
+    assert.ok(menu.querySelector("[data-settle-item]"), "Settle stays first-level");
+    m.unmount();
+  });
+
+  it("clicking Snooze reveals resolveSnoozePresets rows with wake times", async () => {
+    const { m, menu } = await openMenu();
+    await m.click(menu.querySelector("[data-snooze-item]"));
+    const sub = m.query("[data-snooze-submenu]");
+    assert.ok(sub, "nested snooze panel mounts");
+    const hour = sub!.querySelector(
+      '[data-snooze-preset="hour"]',
+    ) as HTMLElement | null;
+    assert.ok(hour, "data-snooze-preset=hour stays the click hook");
+    const text = (hour!.textContent || "").replace(/\s+/g, " ").trim();
+    assert.match(text, /In 1 hour/, "preset label from resolveSnoozePresets");
+    assert.match(
+      text,
+      /\d{1,2}(?::\d{2})?(am|pm)/i,
+      "wake time sits next to the label",
+    );
+    assert.ok(
+      sub!.querySelector('[data-snooze-preset="tomorrow"]'),
+      "calendar presets come along",
+    );
+    assert.equal(
+      menu.querySelector("[data-snooze-item]")!.getAttribute("aria-expanded"),
+      "true",
+    );
+    m.unmount();
+  });
+
+  it("already-snoozed card puts Clear snooze in the nested panel", async () => {
+    const frozen = FRESH;
+    const m = await mount(
+      <ThreadCard
+        thread={thread({
+          id: "t-snoozed",
+          title: "already snoozed",
+          snoozedUntil: frozen + 60 * 60 * 1000,
+          snoozedAt: frozen,
+        })}
+        slug="acme/ledger"
+        providers={providers}
+        active={false}
+        now={frozen}
+        onSelect={() => {}}
+        onSetSnoozed={() => {}}
+        snoozeMenuOpen={true}
+        onToggleSnoozeMenu={() => {}}
+      />,
+    );
+    assert.equal(
+      m.query("[data-snooze-clear]"),
+      null,
+      "Clear snooze is not a first-level item",
+    );
+    const trigger = m.query("[data-snooze-item]");
+    assert.ok(trigger, "Snooze item");
+    await m.click(trigger);
+    assert.ok(
+      m.query("[data-snooze-submenu] [data-snooze-clear]"),
+      "data-snooze-clear hook lives in the nested panel",
+    );
+    m.unmount();
+  });
+
+  it("keeps the #582 stacking hook while the nested panel is open", async () => {
+    const { m, menu } = await openMenu();
+    await m.click(menu.querySelector("[data-snooze-item]"));
+    assert.ok(m.query("[data-snooze-submenu]"), "panel open");
+    const card = m.query('[data-thread-card="menu-src"]');
+    assert.equal(
+      card!.getAttribute("data-menu-open"),
+      "true",
+      "open card still raises so later sticky headers cannot paint through",
+    );
+    assert.ok(
+      m.query('[data-snooze-menu="menu-src"]'),
+      "outer [data-snooze-menu] stays so the group :has() z-index rule still matches",
+    );
+    m.unmount();
+  });
+
+  async function focusSnooze(menu: HTMLElement) {
+    const snooze = menu.querySelector("[data-snooze-item]") as HTMLElement | null;
+    assert.ok(snooze, "Snooze item to focus");
+    snooze.focus();
+    return snooze;
+  }
+
+  it("ArrowRight on Snooze drills in and keeps focus inside the menu", async () => {
+    const { m, menu } = await openMenu();
+    await focusSnooze(menu);
+    await m.pressFocused("ArrowRight");
+    const sub = m.query("[data-snooze-submenu]");
+    assert.ok(sub, "ArrowRight must open the nested panel");
+    const active = document.activeElement as HTMLElement | null;
+    assert.ok(
+      menu.contains(active),
+      "the first-level Snooze button unmounts; focus must land on a nested item so ArrowLeft can run next",
+    );
+    assert.ok(
+      active?.hasAttribute("data-snooze-preset") ||
+        active?.hasAttribute("data-snooze-back"),
+      "focus lands on a nested menuitem, not the … trigger",
+    );
+    m.unmount();
+  });
+
+  it("ArrowRight on Fork does not open the snooze panel", async () => {
+    const { m, menu } = await openMenu();
+    const fork = menu.querySelector("[data-fork-btn]") as HTMLElement | null;
+    assert.ok(fork, "Fork is first-level");
+    fork.focus();
+    await m.pressFocused("ArrowRight");
+    assert.ok(
+      !m.query("[data-snooze-submenu]"),
+      "ArrowRight is a submenu key, not a global drill-in",
+    );
+    m.unmount();
+  });
+
+  it("ArrowLeft on the nested panel returns to first-level Snooze", async () => {
+    const { m, menu } = await openMenu();
+    await focusSnooze(menu);
+    await m.pressFocused("ArrowRight");
+    assert.ok(m.query("[data-snooze-submenu]"), "precondition: nested");
+    await m.pressFocused("ArrowLeft");
+    assert.ok(
+      !m.query("[data-snooze-submenu]"),
+      "ArrowLeft backs out of the drill-in",
+    );
+    assert.equal(
+      m.query("[data-snooze-item]")?.getAttribute("aria-expanded"),
+      "false",
+    );
+    assert.equal(
+      (document.activeElement as HTMLElement | null)?.getAttribute("data-snooze-item"),
+      "",
+      "focus returns to Snooze so ArrowRight can drill in again",
+    );
+    m.unmount();
+  });
+
+  it("Backspace on the nested panel also goes back", async () => {
+    const { m, menu } = await openMenu();
+    await focusSnooze(menu);
+    await m.pressFocused("ArrowRight");
+    assert.ok(m.query("[data-snooze-submenu]"), "precondition: nested");
+    await m.pressFocused("Backspace");
+    assert.ok(
+      !m.query("[data-snooze-submenu]"),
+      "Backspace is the other back key (no browser history in the app)",
+    );
+    assert.equal(
+      (document.activeElement as HTMLElement | null)?.getAttribute("data-snooze-item"),
+      "",
+    );
+    m.unmount();
+  });
+
+  it("ArrowLeft on the first level does not dismiss the menu", async () => {
+    const { m, menu } = await openMenu();
+    await focusSnooze(menu);
+    await m.pressFocused("ArrowLeft");
+    assert.ok(
+      m.query('[data-snooze-menu="menu-src"]'),
+      "ArrowLeft only steps back a panel; Escape still owns dismiss",
+    );
+    m.unmount();
+  });
+
+  it("Escape from the nested panel still closes the whole menu", async () => {
+    const { m, menu } = await openMenu();
+    await focusSnooze(menu);
+    await m.pressFocused("ArrowRight");
+    assert.ok(m.query("[data-snooze-submenu]"), "precondition: nested");
+    await m.pressFocused("Escape");
+    assert.ok(
+      !m.query('[data-snooze-menu="menu-src"]'),
+      "Escape remains whole-menu close via useEscapeClose; it is not a back key",
+    );
+    m.unmount();
+  });
+
+  it("typeahead on the first level jumps to Fork", async () => {
+    const { m, menu } = await openMenu();
+    await focusSnooze(menu);
+    await m.pressFocused("f");
+    assert.equal(
+      (document.activeElement as HTMLElement | null)?.getAttribute("data-fork-btn"),
+      "menu-src",
+      "f must focus Fork",
+    );
+    m.unmount();
+  });
+
+  it("typeahead in the nested panel jumps to Next week", async () => {
+    const { m, menu } = await openMenu();
+    await focusSnooze(menu);
+    await m.pressFocused("ArrowRight");
+    assert.ok(m.query("[data-snooze-submenu]"), "precondition: nested");
+    await m.pressFocused("n");
+    assert.equal(
+      (document.activeElement as HTMLElement | null)?.getAttribute("data-snooze-preset"),
+      "next-week",
+      "n must focus Next week (unique prefix; t matches This evening and Tomorrow)",
+    );
+    m.unmount();
+  });
+
+  it("clicking Snooze still opens the nested panel without keyboard", async () => {
+    const { m, menu } = await openMenu();
+    await m.click(menu.querySelector("[data-snooze-item]"));
+    assert.ok(
+      m.query("[data-snooze-submenu] [data-snooze-preset]"),
+      "click contract is unchanged",
     );
     m.unmount();
   });

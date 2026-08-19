@@ -4,29 +4,31 @@
   "chunks": [
     {
       "area": "tests",
-      "rationale": "electron/test/worktree-gc.test.js #563 cases. spyDu wraps setExecFile and forwards git; it is the contract. Test 1 needs a live worktree or the empty-dirs path would skip du even before the fix. Test 2 is the trap: gcClean re-scans, so skipSizes on the first gcScan alone still spawned 4 du processes (2 dirs × 2 scans).",
+      "rationale": "test/sidebar.test.tsx describe 'Sidebar snooze nested submenu (#583)'. Click contract tests stay first. Keyboard tests use pressFocused (not press(el)) so a panel swap that drops focus to <body> fails instead of dispatching on a detached node. DOM-absent asserts are assert.ok(!node) — assert.equal(node, null) hangs on a circular fiber when the node is still present.",
       "risks": [
-        "setExecFile is process-global; the suite is serialized with concurrency: 1 so the spy cannot leak into a sibling gcScan that still needs real du.",
-        "spyDu matches bin === 'du' only. A future duBytes that uses a full path would silently miss the assertion."
+        "Typeahead 'n' is pinned to next-week because 't' matches both This evening and Tomorrow. A future preset labelled 'Now' would steal that key.",
+        "ArrowRight tests focus [data-snooze-item] first. They do not prove the … trigger itself is in the tab order of the menu."
       ]
     },
     {
       "area": "critical",
-      "rationale": "electron/worktrees.js enforceRetention. Two independent skips: (1) return before any scan when no project has worktreeRetention > 0 — today's boot path, every project unset; (2) gcScan + gcClean both get skipSizes: true when a limit is set, so #559 landing a default cannot bring the du storm back.",
+      "rationale": "ThreadCard menu onKeyDown (Sidebar.tsx ~895). ArrowRight opens only when the event target is [data-snooze-item] and the panel is closed. ArrowLeft/Backspace go back only while snoozePanelOpen. Escape is not handled here — useEscapeClose still dismisses the whole menu. #582 stacking is untouched: data-menu-open on the card, .group:has([data-snooze-menu]) z-index 8.",
       "risks": [
-        "Retention predicate is duplicated (enforceRetention vs gcScanInner). If one starts treating 0 as 'keep none', the short-circuit would skip a real sweep.",
-        "enforceRetention now reports bytes: 0 even when it reclaims dirs. Boot only logs removed.length; the GC dialog never calls this function."
+        "Backspace preventDefault only while nested. A focused menuitem never is an input, but if rename ever mounts inside this menu the key would steal characters.",
+        "This branch also carries the #583 drill-in markup (it was not on this worktree's main). Reviewers landing both PRs will see a conflict on Sidebar.tsx."
       ]
     },
     {
       "area": "impl",
-      "rationale": "gcScanInner skipSizes fills sizes with 0 instead of Promise.all(duBytes). Classification stays inspectWorktreeDir (git status). IPC git:gcScan / git:gcClean do not pass skipSizes, so the dialog still sizes.",
+      "rationale": "openSnoozePanel/closeSnoozePanel set pendingMenuFocus then flip snoozePanelOpen. A layout effect focuses the first preset (drill in) or the Snooze item (back) after the panel swap — the first-level trigger unmounts, so without this ArrowLeft has nothing focused. focusTypeaheadItem is prefix search with 500ms reset and same-letter cycling. Click handlers go through the same open/close helpers, so click still opens the panel; it also moves focus into it.",
       "risks": [
-        "If skipSizes ever reaches the dialog clean path, the confirm copy would read 'Removed N worktrees (0 B)' because gcClean sums cand.bytes."
+        "Typeahead matches full textContent (wake times included). A digit can land on a preset whose whenLabel contains that hour.",
+        "No ArrowUp/Down roving tabindex. First-level navigation is still Tab."
       ]
     }
   ],
   "risks": [
-    "Boot still runs sweepOrphanWorktrees (git status per unreferenced dir) before enforceRetention. That walk is not du, and is out of scope for #563."
+    "data-snooze-preset / data-snooze-clear hooks are unchanged; pinSnooze.test.tsx still clicks through the nested panel.",
+    "Group :has([data-snooze-submenu]) was added in #583. Do not drop it — stacking while nested depends on it if the outer menu attribute were ever moved."
   ]
 }

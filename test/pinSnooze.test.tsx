@@ -641,8 +641,12 @@ describe("fakeCoder setPinned/setSnoozed honesty (round 44)", () => {
           "card menu opens",
         );
 
+        const snoozeItem = m.query("[data-snooze-item]");
+        assert.ok(snoozeItem, "Snooze is one first-level item (#583)");
+        await m.click(snoozeItem);
+        await m.flush();
         const preset = m.query('[data-snooze-preset="evening"]');
-        assert.ok(preset, "data-snooze-preset=evening must open in menu");
+        assert.ok(preset, "data-snooze-preset=evening must open in nested panel");
         await m.click(preset!);
         await m.flush();
         await inAct(async () => {

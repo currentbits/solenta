@@ -3,6 +3,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -496,6 +497,46 @@ function ConflictForecastBadge({
   );
 }
 
+/** Visible label for typeahead: strip the ‹/› carets, keep the words. */
+function menuItemLabel(el: HTMLElement): string {
+  return (el.textContent || "")
+    .replace(/[‹›]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function enabledMenuItems(menu: HTMLElement): HTMLElement[] {
+  return [...menu.querySelectorAll<HTMLElement>('[role="menuitem"]:not([disabled])')];
+}
+
+const TYPEAHEAD_MS = 500;
+
+function focusTypeaheadItem(
+  menu: HTMLElement,
+  state: { prefix: string; at: number },
+  key: string,
+): void {
+  const now = Date.now();
+  if (now - state.at > TYPEAHEAD_MS) state.prefix = "";
+  state.at = now;
+  state.prefix += key.toLowerCase();
+  const items = enabledMenuItems(menu);
+  if (items.length === 0) return;
+  const from = items.findIndex((el) => el === document.activeElement);
+  const start = from >= 0 ? from + 1 : 0;
+  const repeated =
+    state.prefix.length > 1 && [...state.prefix].every((c) => c === state.prefix[0]);
+  const needle = repeated ? state.prefix[0]! : state.prefix;
+  for (let i = 0; i < items.length; i++) {
+    const el = items[(start + i) % items.length]!;
+    if (menuItemLabel(el).startsWith(needle)) {
+      el.focus();
+      return;
+    }
+  }
+}
+
 /**
  * Memo'd: during a run main pushes thread updates every 700ms and the parent
  * list re-renders each tick — without memo every visible card re-renders too.
@@ -592,6 +633,21 @@ export const ThreadCard = memo(function ThreadCard({
   const [renaming, setRenaming] = useState(false);
   const [renameDraft, setRenameDraft] = useState("");
   const renamingRef = useRef(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [menuPlaceUp, setMenuPlaceUp] = useState(false);
+  // Drill-in (#583): a flyout would clip on .list { overflow-y: auto }.
+  const [snoozePanelOpen, setSnoozePanelOpen] = useState(false);
+  const pendingMenuFocus = useRef<"snooze" | "preset" | null>(null);
+  const typeaheadRef = useRef({ prefix: "", at: 0 });
+
+  const openSnoozePanel = () => {
+    pendingMenuFocus.current = "preset";
+    setSnoozePanelOpen(true);
+  };
+  const closeSnoozePanel = () => {
+    pendingMenuFocus.current = "snooze";
+    setSnoozePanelOpen(false);
+  };
 
   const startRename = () => {
     setRenameDraft(thread.title);
@@ -609,6 +665,43 @@ export const ThreadCard = memo(function ThreadCard({
     void onRenameThread?.(thread.id, next);
   };
 
+  useLayoutEffect(() => {
+    if (!snoozeMenuOpen) {
+      setMenuPlaceUp(false);
+      setSnoozePanelOpen(false);
+      return;
+    }
+    const menu = menuRef.current;
+    if (!menu) return;
+    const clip = menu.closest("[data-sidebar-list]");
+    const menuRect = menu.getBoundingClientRect();
+    const clipRect = clip?.getBoundingClientRect();
+    if (menuRect.height === 0) return;
+    const bottom = clipRect?.bottom ?? window.innerHeight;
+    const top = clipRect?.top ?? 0;
+    const overflows = menuRect.bottom > bottom - 8;
+    const fitsAbove = menuRect.height < menuRect.top - top - 8;
+    setMenuPlaceUp(overflows && fitsAbove);
+  }, [snoozeMenuOpen, snoozePanelOpen]);
+
+  useLayoutEffect(() => {
+    if (!snoozeMenuOpen) {
+      pendingMenuFocus.current = null;
+      return;
+    }
+    const menu = menuRef.current;
+    if (!menu) return;
+    const want = pendingMenuFocus.current;
+    if (!want) return;
+    pendingMenuFocus.current = null;
+    const el =
+      want === "snooze"
+        ? menu.querySelector<HTMLElement>("[data-snooze-item]")
+        : (menu.querySelector<HTMLElement>("[data-snooze-preset]") ??
+          menu.querySelector<HTMLElement>("[data-snooze-back]"));
+    el?.focus();
+  }, [snoozeMenuOpen, snoozePanelOpen]);
+
   // Card is a non-interactive shell. Stretch select + optional settle action
   // are separate focusables. Content sits in a sibling with pointer-events:none
   // so clicks fall through to select; PR <a> and settle re-enable pointer-events.
@@ -624,6 +717,7 @@ export const ThreadCard = memo(function ThreadCard({
       data-unread={showUnread ? "true" : undefined}
       data-pinned={pinned ? "true" : undefined}
       data-nested={nested ? "true" : undefined}
+      data-menu-open={snoozeMenuOpen ? "true" : undefined}
     >
       {indexHint != null && (
         <span className={styles.indexHint} data-index-hint={indexHint} aria-hidden>
@@ -793,43 +887,134 @@ export const ThreadCard = memo(function ThreadCard({
               </button>
               {snoozeMenuOpen && (
                 <div
+                  ref={menuRef}
                   className={styles.snoozeMenu}
                   role="menu"
                   data-snooze-menu={thread.id}
+                  data-placement={menuPlaceUp ? "up" : "down"}
+                  onKeyDown={(e) => {
+                    const menu = menuRef.current;
+                    if (!menu) return;
+                    if (
+                      snoozePanelOpen &&
+                      (e.key === "ArrowLeft" || e.key === "Backspace")
+                    ) {
+                      e.preventDefault();
+                      closeSnoozePanel();
+                      return;
+                    }
+                    if (
+                      !snoozePanelOpen &&
+                      e.key === "ArrowRight" &&
+                      (e.target as HTMLElement).closest("[data-snooze-item]")
+                    ) {
+                      e.preventDefault();
+                      openSnoozePanel();
+                      return;
+                    }
+                    if (
+                      e.key.length === 1 &&
+                      !e.ctrlKey &&
+                      !e.metaKey &&
+                      !e.altKey &&
+                      e.key !== " "
+                    ) {
+                      e.preventDefault();
+                      focusTypeaheadItem(menu, typeaheadRef.current, e.key);
+                    }
+                  }}
                 >
-                  {onSetSnoozed &&
-                    resolveSnoozePresets(now).map((p) => (
+                  {onSetSnoozed && snoozePanelOpen ? (
+                    <>
                       <button
-                        key={p.id}
                         type="button"
                         className={styles.snoozeMenuItem}
                         role="menuitem"
-                        data-snooze-preset={p.id}
+                        data-snooze-item=""
+                        data-snooze-back=""
+                        aria-haspopup="menu"
+                        aria-expanded="true"
                         onClick={(e) => {
                           e.stopPropagation();
-                          void onSetSnoozed(thread.id, p.until);
-                          onToggleSnoozeMenu?.(null);
+                          closeSnoozePanel();
                         }}
                       >
-                        <span>Snooze · {p.label}</span>
-                        <span className={styles.snoozeWhen}>{p.whenLabel}</span>
+                        <span className={styles.snoozeBack}>
+                          <span className={styles.snoozeCaret} aria-hidden>
+                            ‹
+                          </span>
+                          <span>Snooze</span>
+                        </span>
                       </button>
-                    ))}
-                  {onSetSnoozed && thread.snoozedUntil != null && (
+                      <div
+                        className={styles.snoozeSubmenu}
+                        data-snooze-submenu=""
+                        role="group"
+                        aria-label="Snooze until"
+                      >
+                        {resolveSnoozePresets(now).map((p) => (
+                          <button
+                            key={p.id}
+                            type="button"
+                            className={styles.snoozeMenuItem}
+                            role="menuitem"
+                            data-snooze-preset={p.id}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void onSetSnoozed(thread.id, p.until);
+                              onToggleSnoozeMenu?.(null);
+                            }}
+                          >
+                            <span>{p.label}</span>
+                            <span className={styles.snoozeWhen}>{p.whenLabel}</span>
+                          </button>
+                        ))}
+                        {thread.snoozedUntil != null && (
+                          <button
+                            type="button"
+                            className={styles.snoozeMenuItem}
+                            role="menuitem"
+                            data-snooze-clear=""
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void onSetSnoozed(thread.id, null);
+                              onToggleSnoozeMenu?.(null);
+                            }}
+                          >
+                            Clear snooze
+                          </button>
+                        )}
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                  {onSetSnoozed && (
                     <button
                       type="button"
                       className={styles.snoozeMenuItem}
                       role="menuitem"
-                      data-snooze-clear=""
+                      data-snooze-item=""
+                      aria-haspopup="menu"
+                      aria-expanded="false"
                       onClick={(e) => {
                         e.stopPropagation();
-                        void onSetSnoozed(thread.id, null);
-                        onToggleSnoozeMenu?.(null);
+                        openSnoozePanel();
                       }}
                     >
-                      Clear snooze
+                      <span>Snooze</span>
+                      <span className={styles.snoozeCaret} aria-hidden>
+                        ›
+                      </span>
                     </button>
                   )}
+                  {onSetSnoozed &&
+                    (onFork || onRenameThread || onSetMuted || onSetSettled) && (
+                      <div
+                        className={styles.snoozeMenuSep}
+                        role="separator"
+                        data-menu-sep="snooze"
+                      />
+                    )}
                   {onFork && (
                     <button
                       type="button"
@@ -875,6 +1060,13 @@ export const ThreadCard = memo(function ThreadCard({
                           </button>
                         );
                       })}
+                  {onFork && (onRenameThread || onSetMuted || onSetSettled) && (
+                    <div
+                      className={styles.snoozeMenuSep}
+                      role="separator"
+                      data-menu-sep="fork"
+                    />
+                  )}
                   {onRenameThread && (
                     <button
                       type="button"
@@ -924,6 +1116,8 @@ export const ThreadCard = memo(function ThreadCard({
                     >
                       {settleLabel}
                     </button>
+                  )}
+                    </>
                   )}
                 </div>
               )}
@@ -1275,6 +1469,32 @@ export const Sidebar = memo(function Sidebar({
   /** Project id whose thread-create menu (plain vs worktree) is open. */
   const [createMenuFor, setCreateMenuFor] = useState<string | null>(null);
   useEscapeClose(createMenuFor != null, () => setCreateMenuFor(null));
+  useEffect(() => {
+    if (snoozeMenuFor == null && createMenuFor == null) return;
+    const onDoc = (e: MouseEvent) => {
+      const el = e.target;
+      if (!(el instanceof Element)) {
+        setSnoozeMenuFor(null);
+        setCreateMenuFor(null);
+        return;
+      }
+      if (
+        el.closest(
+          "[data-snooze-menu], [data-snooze-submenu], [data-more-btn], [data-create-menu], [data-create-menu-btn]",
+        )
+      ) {
+        return;
+      }
+      setSnoozeMenuFor(null);
+      setCreateMenuFor(null);
+    };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("click", onDoc);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("click", onDoc);
+    };
+  }, [snoozeMenuFor, createMenuFor]);
   /** Project id whose "from GitHub issue" form is open. */
   const [issueFormFor, setIssueFormFor] = useState<string | null>(null);
   const [issueRef, setIssueRef] = useState("");
@@ -2310,7 +2530,7 @@ export const Sidebar = memo(function Sidebar({
         </button>
       </div>
 
-      <div className={styles.list}>
+      <div className={styles.list} data-sidebar-list="">
         {projects.length === 0 && (
           <button
             type="button"
