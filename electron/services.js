@@ -545,6 +545,11 @@ const HYPOTHESIS_STATUSES = ["validated", "invalidated", "inconclusive"];
 /** Ruled-out note: walk this many handoffFrom hops, emit at most this many lines. */
 const HYPOTHESIS_NOTE_HOPS = 5;
 const HYPOTHESIS_NOTE_MAX = 10;
+/** Per-thread suggested-work chip caps (issue #550). Mirror src/shared/ipc.ts. */
+const SUGGESTIONS_MAX = 20;
+const SUGGESTION_TITLE_MAX = 120;
+const SUGGESTION_PROMPT_MAX = 4000;
+const SUGGESTION_RESOLVE_STATUSES = ["started", "filed", "dismissed"];
 
 /**
  * @param {string} title
@@ -1454,6 +1459,69 @@ function recordHypothesis(store, input) {
     hypotheses.splice(0, hypotheses.length - HYPOTHESES_MAX);
   }
   store.updateThread(threadId, { hypotheses });
+  store.save();
+  return entry;
+}
+
+/**
+ * Append one suggested-work chip to a thread (issue #550). Agent-written
+ * only — never parsed out of the transcript. Trims and caps title/prompt,
+ * rejects a blank of either. Newest-last, capped at SUGGESTIONS_MAX (oldest
+ * dropped). An open chip with the same lower-cased title is returned as-is
+ * instead of appending a duplicate. Never bumps updatedAt: same rule as
+ * recordHypothesis / setNotes.
+ *
+ * ponytail: same-ms uniqueness is Date.now() plus a scan of this thread's
+ * existing ids (max 20).
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, title: unknown, prompt: unknown }} input
+ * @returns {{ id: string, title: string, prompt: string, status: string, at: number }}
+ */
+function recordSuggestion(store, input) {
+  const { threadId } = input;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  const title = String(input.title ?? "").trim().slice(0, SUGGESTION_TITLE_MAX);
+  if (!title) {
+    throw new Error("Suggestion title must not be empty");
+  }
+  const prompt = String(input.prompt ?? "")
+    .trim()
+    .slice(0, SUGGESTION_PROMPT_MAX);
+  if (!prompt) {
+    throw new Error("Suggestion prompt must not be empty");
+  }
+  const existing = Array.isArray(thread.suggestions) ? thread.suggestions : [];
+  const titleKey = title.toLowerCase();
+  for (const s of existing) {
+    if (
+      s &&
+      s.status === "open" &&
+      String(s.title || "").toLowerCase() === titleKey
+    ) {
+      return s;
+    }
+  }
+  const now = Date.now();
+  let seq = 0;
+  for (const s of existing) {
+    if (s && typeof s.id === "string" && s.id.startsWith(`${now}-`)) seq += 1;
+  }
+  const entry = {
+    id: `${now}-${seq}`,
+    title,
+    prompt,
+    status: "open",
+    at: now,
+  };
+  const suggestions = existing.concat(entry);
+  if (suggestions.length > SUGGESTIONS_MAX) {
+    suggestions.splice(0, suggestions.length - SUGGESTIONS_MAX);
+  }
+  store.updateThread(threadId, { suggestions });
   store.save();
   return entry;
 }
@@ -3981,6 +4049,10 @@ module.exports = {
   HYPOTHESIS_CLAIM_MAX,
   HYPOTHESIS_REASON_MAX,
   recordHypothesis,
+  SUGGESTIONS_MAX,
+  SUGGESTION_TITLE_MAX,
+  SUGGESTION_PROMPT_MAX,
+  recordSuggestion,
   CREW_TASK_TITLE_MAX,
   CREW_TASK_NOTE_MAX,
   CREW_TASKS_MAX,
