@@ -1526,6 +1526,47 @@ function recordSuggestion(store, input) {
   return entry;
 }
 
+/**
+ * Resolve a suggested-work chip (issue #550): flip its status to
+ * "started" / "filed" / "dismissed" and optionally stamp startedThreadId
+ * / issueNumber. Rejects an unknown thread or suggestion id, and a
+ * status of "open" (chips never reopen). Returns the updated thread,
+ * same convention as setNotes.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, suggestionId: string, status: unknown, startedThreadId?: unknown, issueNumber?: unknown }} input
+ * @returns {object}
+ */
+function resolveSuggestion(store, input) {
+  const { threadId, suggestionId, status } = input;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  if (!SUGGESTION_RESOLVE_STATUSES.includes(status)) {
+    throw new Error(
+      `Invalid suggestion status: ${status}. Must be one of: ${SUGGESTION_RESOLVE_STATUSES.join(", ")}`,
+    );
+  }
+  const existing = Array.isArray(thread.suggestions) ? thread.suggestions : [];
+  const idx = existing.findIndex((s) => s && s.id === suggestionId);
+  if (idx < 0) {
+    throw new Error(`Unknown suggestion: ${suggestionId}`);
+  }
+  const patched = { ...existing[idx], status };
+  if (input.startedThreadId != null) {
+    patched.startedThreadId = String(input.startedThreadId);
+  }
+  if (input.issueNumber != null) {
+    patched.issueNumber = Number(input.issueNumber);
+  }
+  const suggestions = existing.slice();
+  suggestions[idx] = patched;
+  const updated = store.updateThread(threadId, { suggestions });
+  store.save();
+  return updated ? { ...updated } : { ...thread, suggestions };
+}
+
 /* --------------------------------------------------------- crew task list */
 
 /** Caps for the shared task list (issue #277). Mirrors src/shared/ipc.ts. */
@@ -4053,6 +4094,7 @@ module.exports = {
   SUGGESTION_TITLE_MAX,
   SUGGESTION_PROMPT_MAX,
   recordSuggestion,
+  resolveSuggestion,
   CREW_TASK_TITLE_MAX,
   CREW_TASK_NOTE_MAX,
   CREW_TASKS_MAX,
