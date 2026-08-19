@@ -470,8 +470,8 @@ describe("fakeCoder setPinned/setSnoozed honesty (round 44)", () => {
       try {
         await m.flush();
 
-        const snoozeBtn = m.query('[data-snooze-btn="t-snooze-mid"]');
-        assert.ok(snoozeBtn, "data-snooze-btn must be present");
+        const snoozeBtn = m.query('[data-more-btn="t-snooze-mid"]');
+        assert.ok(snoozeBtn, "data-more-btn must be present");
         await m.click(snoozeBtn!);
         await m.flush();
 
@@ -660,7 +660,7 @@ describe("fakeCoder setPinned/setSnoozed honesty (round 44)", () => {
     try {
       await m.flush();
 
-      await m.click(m.query('[data-snooze-btn="t-mute-mid"]'));
+      await m.click(m.query('[data-more-btn="t-mute-mid"]'));
       await m.flush();
       const item = m.query('[data-mute-toggle="t-mute-mid"]');
       assert.ok(item, "mute item must be in the snooze menu");
@@ -687,7 +687,7 @@ describe("fakeCoder setPinned/setSnoozed honesty (round 44)", () => {
       );
 
       // Reopen: the item now offers the way back out.
-      await m.click(m.query('[data-snooze-btn="t-mute-mid"]'));
+      await m.click(m.query('[data-more-btn="t-mute-mid"]'));
       await m.flush();
       assert.equal(
         m.query('[data-mute-toggle="t-mute-mid"]')?.textContent,

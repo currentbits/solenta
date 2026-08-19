@@ -643,9 +643,9 @@ describe("Sidebar global settled tail (round 40)", () => {
     m.unmount();
   });
 
-  it("attention card settle click sends override settled (payload, not label)", async () => {
+  it("attention card menu settle sends override settled (payload, not label)", async () => {
     // Restored from round 39: hardcoding ThreadCard's override to "active"
-    // must fail this test.
+    // must fail this test. Settle now lives in the "…" actions menu (#566).
     const settleCalls: Array<{ id: string; o: string }> = [];
     const m = await mount(
       sidebar(THREADS, {
@@ -655,21 +655,27 @@ describe("Sidebar global settled tail (round 40)", () => {
         },
       }),
     );
-    const settleBtn = m
-      .queryAll("button")
-      .find(
-        (b) =>
-          b.getAttribute("aria-label") === "Settle thread" &&
-          !(b as HTMLButtonElement).disabled,
-      ) as HTMLButtonElement | undefined;
-    assert.ok(settleBtn, "attention cards offer Settle thread");
-    await m.click(settleBtn);
-    assert.equal(settleCalls.length, 1, "one settle call");
-    assert.equal(
-      settleCalls[0]!.o,
-      "settled",
+    // "finished" is a non-working attention card, so its settle item is enabled.
+    await m.click(m.query('[data-more-btn="finished"]'));
+    const item = m.query(
+      '[data-settle-item="finished"]',
+    ) as HTMLButtonElement | null;
+    assert.ok(item, "actions menu offers Settle thread");
+    assert.equal(item!.disabled, false, "not working → settle enabled");
+    assert.equal((item!.textContent || "").trim(), "Settle thread");
+    await m.click(item!);
+    assert.deepEqual(
+      settleCalls,
+      [{ id: "finished", o: "settled" }],
       "attention → settle must send override settled, not active",
     );
+    // Working cards keep the item but disabled.
+    await m.click(m.query('[data-more-btn="busy"]'));
+    const busyItem = m.query(
+      '[data-settle-item="busy"]',
+    ) as HTMLButtonElement | null;
+    assert.ok(busyItem, "working card still lists the settle item");
+    assert.equal(busyItem!.disabled, true, "disabled while status=working");
     m.unmount();
   });
 });

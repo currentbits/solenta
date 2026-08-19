@@ -385,9 +385,15 @@ describe("App archive undo toast wiring", () => {
     const m = await boot(fake);
 
     // Boot already selects the first thread; open its overflow and archive.
+    // Sidebar card "…" button shares the label (#566); the header overflow
+    // is the one without data-more-btn.
     const menuBtn = m
       .queryAll("button")
-      .find((b) => b.getAttribute("aria-label") === "Thread actions");
+      .find(
+        (b) =>
+          b.getAttribute("aria-label") === "Thread actions" &&
+          !b.hasAttribute("data-more-btn"),
+      );
     assert.ok(menuBtn, "Thread actions menu must be present on the open thread");
     await m.click(menuBtn as HTMLElement);
 
@@ -720,13 +726,16 @@ describe("App selection stamps lastVisitedAt (round 43 unread)", () => {
     try {
       await m.flush();
 
+      // #566: the visible unread dot and header "N unread" summary are gone;
+      // the card's data-unread attribute is the remaining unread signal.
       assert.equal(
         m
           .query('[data-thread-card="t-unread-mid"]')
           ?.getAttribute("data-unread"),
         "true",
-        "before select: unread mid must carry data-unread",
+        "before select: unread mid must be marked data-unread",
       );
+
       // Prefer data-thread-card select (stable under aria-label churn).
       const unreadCard = m.query('[data-thread-card="t-unread-mid"]');
       assert.ok(unreadCard, "unread card must render");
@@ -762,7 +771,6 @@ describe("App selection stamps lastVisitedAt (round 43 unread)", () => {
       });
       await m.flush();
 
-      // Boolean form: assert.equal(el, null) hangs serialising a live DOM node.
       assert.equal(
         m
           .query('[data-thread-card="t-unread-mid"]')
@@ -783,7 +791,6 @@ describe("App selection stamps lastVisitedAt (round 43 unread)", () => {
         mid!.lastVisitedAt! >= mid!.updatedAt,
         "stamped visit must leave the row not-unread by the pure predicate",
       );
-
     } finally {
       m.unmount();
     }

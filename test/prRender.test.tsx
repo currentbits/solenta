@@ -200,14 +200,14 @@ describe("sidebar thread card: select + settle + PR link (round 39)", () => {
       "stretch select button must be present",
     );
     assert.ok(
-      /aria-label="Settle thread"/.test(card),
-      "settle hover control must be present with Settle thread label",
+      /data-more-btn/.test(card),
+      "the row actions menu trigger must be present",
     );
     const buttons = card.match(/<button\b/g) ?? [];
     assert.equal(
       buttons.length,
       2,
-      `expected 2 buttons (stretch-select + settle), got ${buttons.length}`,
+      `expected 2 buttons (stretch-select + actions menu), got ${buttons.length}`,
     );
 
     // Empty stretch button: select control must not wrap the branch/meta text.

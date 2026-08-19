@@ -762,16 +762,16 @@ export const ThreadCard = memo(function ThreadCard({
               )}
             </button>
           )}
-          {onSetSnoozed && (
+          {(onSetSnoozed || onRenameThread || onSetMuted || onSetSettled) && (
             <div className={styles.snoozeWrap}>
               <button
                 type="button"
                 className={styles.settleBtn}
-                aria-label="Snooze thread"
-                title="Snooze thread"
+                aria-label={`Thread actions: ${thread.title}`}
+                title="Thread actions"
                 aria-haspopup="menu"
                 aria-expanded={snoozeMenuOpen}
-                data-snooze-btn={thread.id}
+                data-more-btn={thread.id}
                 onClick={(e) => {
                   e.stopPropagation();
                   onToggleSnoozeMenu?.(snoozeMenuOpen ? null : thread.id);
@@ -781,15 +781,13 @@ export const ThreadCard = memo(function ThreadCard({
                 <svg
                   width="13"
                   height="13"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
+                  viewBox="0 0 16 16"
+                  fill="currentColor"
                   aria-hidden="true"
                 >
-                  <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" />
+                  <circle cx="3.25" cy="8" r="1.25" />
+                  <circle cx="8" cy="8" r="1.25" />
+                  <circle cx="12.75" cy="8" r="1.25" />
                 </svg>
               </button>
               {snoozeMenuOpen && (
@@ -798,24 +796,25 @@ export const ThreadCard = memo(function ThreadCard({
                   role="menu"
                   data-snooze-menu={thread.id}
                 >
-                  {resolveSnoozePresets(now).map((p) => (
-                    <button
-                      key={p.id}
-                      type="button"
-                      className={styles.snoozeMenuItem}
-                      role="menuitem"
-                      data-snooze-preset={p.id}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void onSetSnoozed(thread.id, p.until);
-                        onToggleSnoozeMenu?.(null);
-                      }}
-                    >
-                      <span>{p.label}</span>
-                      <span className={styles.snoozeWhen}>{p.whenLabel}</span>
-                    </button>
-                  ))}
-                  {thread.snoozedUntil != null && (
+                  {onSetSnoozed &&
+                    resolveSnoozePresets(now).map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        className={styles.snoozeMenuItem}
+                        role="menuitem"
+                        data-snooze-preset={p.id}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void onSetSnoozed(thread.id, p.until);
+                          onToggleSnoozeMenu?.(null);
+                        }}
+                      >
+                        <span>Snooze · {p.label}</span>
+                        <span className={styles.snoozeWhen}>{p.whenLabel}</span>
+                      </button>
+                    ))}
+                  {onSetSnoozed && thread.snoozedUntil != null && (
                     <button
                       type="button"
                       className={styles.snoozeMenuItem}
@@ -828,21 +827,6 @@ export const ThreadCard = memo(function ThreadCard({
                       }}
                     >
                       Clear snooze
-                    </button>
-                  )}
-                  {onSetSettled && thread.snoozedUntil != null && !working && (
-                    <button
-                      type="button"
-                      className={styles.snoozeMenuItem}
-                      role="menuitem"
-                      data-snooze-settle=""
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void onSetSettled(thread.id, "settled");
-                        onToggleSnoozeMenu?.(null);
-                      }}
-                    >
-                      Settle now
                     </button>
                   )}
                   {onRenameThread && (
@@ -872,6 +856,27 @@ export const ThreadCard = memo(function ThreadCard({
                       }}
                     >
                       {thread.muted ? "Unmute notifications" : "Mute notifications"}
+                    </button>
+                  )}
+                  {onSetSettled && (
+                    <button
+                      type="button"
+                      className={styles.snoozeMenuItem}
+                      role="menuitem"
+                      data-settle-item={thread.id}
+                      disabled={working && !isSettled}
+                      title={
+                        working && !isSettled
+                          ? "Cannot settle while a run is active"
+                          : undefined
+                      }
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void onSetSettled(thread.id, settleOverride);
+                        onToggleSnoozeMenu?.(null);
+                      }}
+                    >
+                      {settleLabel}
                     </button>
                   )}
                 </div>
@@ -974,53 +979,6 @@ export const ThreadCard = memo(function ThreadCard({
                 </div>
               )}
             </div>
-          )}
-          {onSetSettled && (
-            <button
-              type="button"
-              className={styles.settleBtn}
-              aria-label={settleLabel}
-              title={
-                working
-                  ? "Cannot settle while a run is active"
-                  : settleLabel
-              }
-              disabled={working}
-              onClick={(e) => {
-                e.stopPropagation();
-                void onSetSettled(thread.id, settleOverride);
-              }}
-            >
-              {isSettled ? (
-                <svg
-                  width="13"
-                  height="13"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <path d="M8 13.5v-10M4.5 6.5 8 3l3.5 3.5" />
-                </svg>
-              ) : (
-                <svg
-                  width="13"
-                  height="13"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <path d="M8 2.5v10M4.5 9.5 8 13l3.5-3.5" />
-                </svg>
-              )}
-            </button>
           )}
         </div>
       )}
