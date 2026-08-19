@@ -18,6 +18,7 @@ import {
   firstLeafId,
   hasPaneType,
   hydratePaneLayout,
+  leaves,
   openPane,
   savePaneLayout,
   type LayoutNode,
@@ -2438,6 +2439,7 @@ function FileRow({
 
 function ChangesPanel({
   open,
+  embedded = false,
   threadId,
   threadTitle,
   threadBranch,
@@ -2451,6 +2453,8 @@ function ChangesPanel({
   onSuggest,
 }: {
   open: boolean;
+  /** Hide the "Git" title when the pane chrome already names it. */
+  embedded?: boolean;
   threadId: string | null;
   threadTitle: string;
   threadBranch: string | null;
@@ -2637,7 +2641,7 @@ function ChangesPanel({
     >
       <header className={styles.changesHead}>
         <div className={styles.changesTitleGroup}>
-          <span className={styles.changesTitle}>Git</span>
+          {embedded ? null : <span className={styles.changesTitle}>Git</span>}
           {threadBranch ? (
             <span className={styles.changesBranch} title={threadBranch}>
               {threadBranch}
@@ -3136,15 +3140,20 @@ export const ThreadView = memo(function ThreadView({
     null,
   );
   const copyFlashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const threadId = detail?.thread.id ?? null;
+  const [layoutThreadId, setLayoutThreadId] = useState<string | null>(threadId);
   const [layout, setLayout] = useState<LayoutNode>(() =>
-    hydratePaneLayout(detail?.thread.id ?? null, { openDiff: changesOpen })
-      .layout,
+    hydratePaneLayout(threadId, { openDiff: changesOpen }).layout,
   );
   const [focusedId, setFocusedId] = useState(
-    () =>
-      hydratePaneLayout(detail?.thread.id ?? null, { openDiff: changesOpen })
-        .focusId,
+    () => hydratePaneLayout(threadId, { openDiff: changesOpen }).focusId,
   );
+  if (threadId !== layoutThreadId) {
+    const hydrated = hydratePaneLayout(threadId);
+    setLayoutThreadId(threadId);
+    setLayout(hydrated.layout);
+    setFocusedId(hydrated.focusId);
+  }
 
   const resolvePathMap = useCallback(
     async (paths: string[]) => {
@@ -3497,7 +3506,6 @@ export const ThreadView = memo(function ThreadView({
   useEffect(() => {
     const id = detail?.thread.id ?? null;
     if (id !== prevThreadId.current) {
-      const switching = prevThreadId.current != null;
       prevThreadId.current = id;
       stickToBottom.current = true;
       setMenuOpen(false);
@@ -3535,25 +3543,22 @@ export const ThreadView = memo(function ThreadView({
         clearTimeout(copyFlashTimer.current);
         copyFlashTimer.current = null;
       }
-      if (switching) {
-        const hydrated = hydratePaneLayout(id);
-        setLayout(hydrated.layout);
-        setFocusedId(hydrated.focusId);
-      }
     }
   }, [detail?.thread.id]);
 
-  const threadIdForLayout = detail?.thread.id ?? null;
-
   useEffect(() => {
-    if (threadIdForLayout) savePaneLayout(threadIdForLayout, layout);
-  }, [threadIdForLayout, layout]);
+    if (threadId && threadId === layoutThreadId) {
+      savePaneLayout(threadId, layout);
+    }
+  }, [threadId, layoutThreadId, layout]);
 
   useEffect(() => {
     if (!changesOpen) return;
     setLayout((prev) => {
       if (hasPaneType(prev, "diff")) return prev;
-      return openPane(prev, "diff", focusedId).layout;
+      const next = openPane(prev, "diff", focusedId);
+      setFocusedId(next.focusId);
+      return next.layout;
     });
   }, [changesOpen, changesNonce]);
 
@@ -4269,6 +4274,7 @@ export const ThreadView = memo(function ThreadView({
             return (
               <ChangesPanel
                 open
+                embedded={leaves(layout).length > 1}
                 threadId={detail?.thread.id ?? null}
                 threadTitle={detail?.thread.title ?? ""}
                 threadBranch={detail?.thread.branch ?? null}

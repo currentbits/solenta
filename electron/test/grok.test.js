@@ -247,9 +247,12 @@ describe("grok provider registry", () => {
     assert.ok(first.includes("--output-format"));
     assert.ok(first.includes("streaming-messages-json"));
     assert.ok(first.includes("--permission-mode"));
-    // Headless grok cannot prompt: asking modes are mapped to "auto"
-    // (issue #3 — default mode auto-cancels the first gated tool).
-    assert.ok(first.includes("auto"));
+    // Headless grok cannot prompt. grok 1.0.5 treats `auto` as `default`
+    // and auto-cancels gated tools as "User cancelled" (issue #578), so
+    // asking modes map to bypassPermissions + --always-approve.
+    assert.ok(first.includes("bypassPermissions"));
+    assert.ok(first.includes("--always-approve"));
+    assert.ok(!first.includes("auto"));
     assert.ok(!first.includes("default"));
     assert.ok(!first.includes("--resume"));
     assert.ok(!first.includes("--verbose"));
@@ -257,8 +260,8 @@ describe("grok provider registry", () => {
     assert.ok(!first.includes("stream-json"));
 
     for (const [mode, expected] of [
-      ["default", "auto"],
-      ["acceptEdits", "auto"],
+      ["default", "bypassPermissions"],
+      ["acceptEdits", "bypassPermissions"],
       ["bypassPermissions", "bypassPermissions"],
       ["plan", "plan"],
     ]) {
@@ -266,6 +269,8 @@ describe("grok provider registry", () => {
       const idx = args.indexOf("--permission-mode");
       assert.ok(idx >= 0, mode);
       assert.equal(args[idx + 1], expected, mode);
+      const asking = mode === "default" || mode === "acceptEdits";
+      assert.equal(args.includes("--always-approve"), asking, mode);
     }
 
     const withModel = grok.buildArgs({
@@ -375,8 +380,10 @@ describe("runner grok provider (claude-stream path)", () => {
     assert.ok(argv.includes("--output-format"));
     assert.ok(argv.includes("streaming-messages-json"));
     assert.ok(argv.includes("--permission-mode"));
-    // default is mapped to auto for headless grok (issue #3).
-    assert.ok(argv.includes("auto"));
+    // default is mapped to bypassPermissions for headless grok (issue #578).
+    assert.ok(argv.includes("bypassPermissions"));
+    assert.ok(argv.includes("--always-approve"));
+    assert.ok(!argv.includes("auto"));
     assert.ok(!argv.includes("--resume"));
     assert.ok(!argv.includes("--verbose"));
     assert.ok(!argv.some((a) => String(a).startsWith("--mcp-config")));
@@ -432,13 +439,13 @@ describe("runner grok provider (claude-stream path)", () => {
     assert.equal(usage.model, "grok-4.5");
   });
 
-  it("maps asking modes to auto (headless cannot prompt) and propagates -m", async () => {
+  it("maps asking modes to bypassPermissions + --always-approve and propagates -m", async () => {
     process.env.CODER_FAKE_GROK_SCENARIO = "success";
     const project = store.getProjects()[0];
 
     for (const [mode, expected] of [
-      ["default", "auto"],
-      ["acceptEdits", "auto"],
+      ["default", "bypassPermissions"],
+      ["acceptEdits", "bypassPermissions"],
       ["bypassPermissions", "bypassPermissions"],
       ["plan", "plan"],
     ]) {
@@ -461,6 +468,8 @@ describe("runner grok provider (claude-stream path)", () => {
       const pmIdx = argv.indexOf("--permission-mode");
       assert.ok(pmIdx >= 0, mode);
       assert.equal(argv[pmIdx + 1], expected, mode);
+      const asking = mode === "default" || mode === "acceptEdits";
+      assert.equal(argv.includes("--always-approve"), asking, mode);
       const mIdx = argv.indexOf("-m");
       assert.ok(mIdx >= 0, mode);
       assert.equal(argv[mIdx + 1], "grok-4.5");

@@ -1,21 +1,34 @@
 {
   "version": 1,
-  "readOrder": ["critical", "tests", "impl"],
+  "readOrder": ["tests", "critical", "impl"],
   "chunks": [
     {
-      "area": "src/App.tsx handleStartSuggestion",
-      "rationale": "Resolve the chip as started immediately after a successful fork, then startRun. A startRun throw used to leave the chip open so a retry forked a second idle thread.",
+      "area": "tests",
+      "rationale": "Read grok.test.js first: the argv contract is the whole fix (asking modes must emit bypassPermissions + --always-approve, never auto). Then providers.test.js (same buildArgs assertion on the registry unit) and sandbox.test.js (badge copy tracks the flags we actually pass).",
       "risks": [
-        "If resolveSuggestion fails after fork, the user still has an idle fork and the chip stays open. Rare (unknown thread/id)."
+        "Runner grok tests spawn a fake binary and only check argv; they do not prove grok 1.0.5 honors --always-approve. That was verified live against the real CLI.",
+        "plan mode is asserted to stay plan and not get --always-approve — a reviewer skimming only the default case could miss a plan-mode regression."
       ]
     },
     {
-      "area": "test/suggestedWorkChips.test.tsx",
-      "rationale": "App+useCoder wiring for start / file / dismiss.",
-      "risks": []
+      "area": "critical",
+      "rationale": "electron/providers.js grok.buildArgs is the spawn argv. This is where default/acceptEdits used to map to --permission-mode auto, which grok 1.0.5 treats as default and auto-cancels run_terminal_command as a user stop.",
+      "risks": [
+        "default and acceptEdits on grok now fully auto-approve tools, indistinguishable from bypassPermissions. Headless -p cannot prompt anyway; the permission pill remains a no-op between those three modes (#177).",
+        "--always-approve and --permission-mode bypassPermissions are redundant on 1.0.5 (always-approve sets bypassPermissions). Both are passed because auto was the previous 'documented' mode and was silently ignored.",
+        "Already-running grok children keep the old argv until the next spawn; a live Solenta session will not pick this up mid-turn."
+      ]
+    },
+    {
+      "area": "impl",
+      "rationale": "electron/sandbox.js only changes the badge reason string so it matches the flags buildArgs now emits. No confinement change (grok still has no --sandbox).",
+      "risks": [
+        "If a future grok CLI honors auto again, the badge will still say bypassPermissions / --always-approve. That is honest about what we pass today."
+      ]
     }
   ],
   "risks": [
-    "#550 is on origin/main. This merge closed the worktree into the local checkout."
+    "This stops false 'Run stopped' from gated-tool auto-cancel. A real user Stop/Esc still goes through stopRun and still looks the same, which is correct.",
+    "plan mode can still auto-cancel gated tools in headless grok; we do not remap plan."
   ]
 }
