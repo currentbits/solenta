@@ -1,58 +1,21 @@
 {
   "version": 1,
-  "readOrder": ["critical", "impl", "tests", "docs"],
+  "readOrder": ["critical", "tests", "impl"],
   "chunks": [
     {
-      "area": "electron/store.js — load-time wipe of spaces + project.spaceId",
-      "rationale": "Read first: this is the migration. _readFile always sets spaces: [] and migrateProject deletes spaceId. If the on-disk file still had either, _recoveredOnLoad becomes true so the next save persists the flatten. getSpaces/setSpaces are no-ops that cannot revive rows.",
+      "area": "src/App.tsx handleStartSuggestion",
+      "rationale": "Resolve the chip as started immediately after a successful fork, then startRun. A startRun throw used to leave the chip open so a retry forked a second idle thread.",
       "risks": [
-        "The constructor still calls the debounced save() on recover, not saveNow() — a crash before the first flush would leave the old spaces key on disk, but the next successful load wipes them again.",
-        "hadSpaces is computed from the raw parsed file, before migrateProject, so a spaceId-only store still triggers persist."
+        "If resolveSuggestion fails after fork, the user still has an idle fork and the chip stays open. Rare (unknown thread/id)."
       ]
     },
     {
-      "area": "electron/services.js — IPC shims",
-      "rationale": "listSpaces always []. addSpace/updateSpace throw 'Spaces have been removed'. removeSpace is a no-op. updateProject ignores spaceId instead of validating it. IPC channels stay so an older renderer does not crash on boot.",
-      "risks": [
-        "An older renderer that still shows the + button will get a thrown add and a project-scope error toast — intended, not a silent no-op.",
-        "devCoder.ts still implements in-memory spaces for the web stub; it cannot persist them through this store."
-      ]
-    },
-    {
-      "area": "src/components/Sidebar.tsx + sidebarGroups.ts — flat project list",
-      "rationale": "buildSidebarSections is gone. Sidebar now maps buildSidebarGroups directly. All space chrome (add, rename, delete, collapse, drag-and-drop onto a space header) is deleted. visibleIds follows groups, no collapsed-space filter.",
-      "risks": [
-        "Project headers are no longer draggable. Nothing else used PROJECT_DRAG_TYPE.",
-        "coder.sidebar.collapsedSpaces localStorage keys are orphaned; harmless leftover.",
-        "The group-render block kept its old extra indent from the deleted section wrapper — style only."
-      ]
-    },
-    {
-      "area": "src/App.tsx, useCoder.ts, EditProjectModal.tsx",
-      "rationale": "Renderer no longer loads, holds, or edits spaces. Edit project drops the Space <select>. useCoder boot Promise.all no longer waits on spaces.list().",
-      "risks": [
-        "CoderApi.spaces remains on the wire contract; only the hook/UI stopped calling it."
-      ]
-    },
-    {
-      "area": "tests (spaces retirement)",
-      "rationale": "electron/test/spaces.test.js is now the retirement contract (wipe + ignore + throw). test/spaces.test.tsx asserts no space chrome. sidebarGroups section suite deleted.",
-      "risks": [
-        "fakeCoder still implements spaces.* so a test can seed leftover rows; the UI simply ignores them (covered by the edit-project test)."
-      ]
-    },
-    {
-      "area": "src/App.tsx handleStartSuggestion (from main)",
-      "rationale": "Incoming from main during update: resolve the chip as started immediately after a successful fork, then startRun. Combined so this merge does not drop the other branch's annotation.",
-      "risks": [
-        "If resolveSuggestion fails after fork, the user still has an idle fork and the chip stays open."
-      ]
+      "area": "test/suggestedWorkChips.test.tsx",
+      "rationale": "App+useCoder wiring for start / file / dismiss.",
+      "risks": []
     }
   ],
   "risks": [
-    "No live visual verification — macOS screen-recording TCC blocked earlier in this thread. Renderer 1197/1197 and electron spaces+services 58/58 pass.",
-    "IPC spaces:* channels are still registered. That is deliberate compatibility, not leftover UI.",
-    "Sidebar redesign 1/3 (#566) and 2/3 (#567) already shipped on this branch; this is 3/3 plus an update-from-main that also landed suggested-work chips and the site redesign.",
-    "This file was the only conflict when merging local main into the worktree."
+    "#550 is on origin/main at 43388f0. This merge only closes the worktree into the local checkout."
   ]
 }
