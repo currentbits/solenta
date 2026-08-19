@@ -96,7 +96,7 @@ async function selectThread(
   m: Awaited<ReturnType<typeof mount>>,
   title: string,
 ) {
-  const card = m.query(`button[aria-label="Select thread: ${title}"]`);
+  const card = m.query(`button[aria-label^="Select thread: ${title}"]`);
   assert.ok(card, `thread card for "${title}" must exist`);
   await m.click(card as HTMLElement);
   await m.flush();

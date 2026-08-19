@@ -115,10 +115,12 @@ describe("stalled badge (issue #314)", () => {
         onSelect={() => {}}
       />,
     );
+    // #566: stalled is an attention dot; the phrase lives in its tooltip.
     const badge = m.query("[data-stalled]");
-    assert.ok(badge, "Stalled badge must render");
-    assert.match(badge!.textContent || "", /Stalled/);
-    assert.match(badge!.textContent || "", /12m/);
+    assert.ok(badge, "Stalled dot must render");
+    assert.equal(badge!.getAttribute("data-status-dot"), "attention");
+    assert.match(badge!.getAttribute("title") || "", /Stalled/);
+    assert.match(badge!.getAttribute("title") || "", /12m/);
     assert.equal(
       badge!.querySelector("[class*='spinner']"),
       null,
@@ -144,7 +146,10 @@ describe("stalled badge (issue #314)", () => {
       />,
     );
     assert.equal(m.query("[data-stalled]"), null);
-    assert.match(m.text(), /Waiting/);
+    const waiting = m.query("[data-waiting]");
+    assert.ok(waiting, "waiting dot must render instead");
+    assert.equal(waiting!.getAttribute("data-status-dot"), "attention");
+    assert.match(waiting!.getAttribute("title") || "", /Waiting for input/);
     m.unmount();
   });
 });

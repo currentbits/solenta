@@ -61,7 +61,7 @@ async function bootOnBusyThread() {
     },
   });
   const m = await boot(fake);
-  const card = m.query('button[aria-label="Select thread: busy target thread"]');
+  const card = m.query('button[aria-label^="Select thread: busy target thread"]');
   assert.ok(card, "busy thread card must exist");
   await m.click(card);
   await m.flush();
@@ -227,7 +227,7 @@ describe("queued follow-up (issue #92 / #314)", () => {
       "a still-working thread must not flush its queue on remount",
     );
     const card = remounted.query(
-      'button[aria-label="Select thread: busy target thread"]',
+      'button[aria-label^="Select thread: busy target thread"]',
     );
     assert.ok(card, "busy thread card must exist after remount");
     await remounted.click(card);
@@ -238,10 +238,11 @@ describe("queued follow-up (issue #92 / #314)", () => {
     );
     const queuedDot = remounted.query('[data-queued-dot="t-busy"]');
     assert.ok(queuedDot, "sidebar must hint a queue pending on this thread");
-    assert.equal(
-      queuedDot.getAttribute("title"),
-      "then update the changelog",
-      "the sidebar hint must surface the queued text",
+    // #566: the queue rides along on the working dot's tooltip.
+    assert.match(
+      queuedDot.getAttribute("title") || "",
+      /Queued: then update the changelog$/,
+      "the sidebar dot tooltip must surface the queued text",
     );
     remounted.unmount();
   });
@@ -266,7 +267,7 @@ describe("queued follow-up (issue #92 / #314)", () => {
     });
     const m = await boot(fake);
     const card = m.query(
-      'button[aria-label="Select thread: idle with leftover queue"]',
+      'button[aria-label^="Select thread: idle with leftover queue"]',
     );
     assert.ok(card, "leftover-queue thread card must exist");
     await m.click(card);
@@ -325,7 +326,7 @@ describe("queued follow-up (issue #92 / #314)", () => {
       },
     });
     const m = await boot(fake);
-    const card = m.query('button[aria-label="Select thread: busy target thread"]');
+    const card = m.query('button[aria-label^="Select thread: busy target thread"]');
     assert.ok(card);
     await m.click(card);
     await m.flush();

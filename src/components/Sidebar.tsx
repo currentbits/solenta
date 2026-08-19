@@ -324,121 +324,131 @@ function spendMeterTone(
   return "ok";
 }
 
-function StatusBadge({
-  thread,
-  now,
-  wait = null,
-  active = false,
-}: {
-  thread: ThreadInfo;
-  now: number;
-  /** Live delegated work; turns a done/idle turn into "Delegating". */
-  wait?: WaitState | null;
-  /** Selected thread never renders Woke (you are looking at it). */
-  active?: boolean;
-}) {
+/**
+ * t3 flatten (#566): the row's whole status vocabulary is one dot.
+ * blue = running (working/delegating), amber = needs you (waiting/stalled/
+ * quota/woke), red = failed, grey = queued follow-up, absent = idle/done.
+ * Words live in the title tooltip and the select button's accessible name;
+ * detail lives in the thread header and Activity.
+ */
+export type StatusDotInfo = {
+  tone: "working" | "attention" | "failed" | "queued";
+  /** Tooltip: full phrase, e.g. "Stalled 4m". */
+  label: string;
+  /** Spoken triage word appended to the row's aria-label. */
+  spoken: string;
+  /** Legacy data hooks (tests, e2e selectors). */
+  flags: Record<string, string>;
+};
+
+export function statusDotFor(
+  thread: ThreadInfo,
+  now: number,
+  wait: WaitState | null,
+  active: boolean,
+): StatusDotInfo | null {
+  const base = baseStatusDot(thread, now, wait, active);
+  // Queued follow-up (#92) rides along on whatever dot is showing; it only
+  // owns the dot when the thread is otherwise idle.
+  if (!thread.queued) return base;
+  if (base == null) {
+    return {
+      tone: "queued",
+      label: `Queued: ${thread.queued.prompt}`,
+      spoken: "queued follow-up",
+      flags: { "data-queued-dot": thread.id },
+    };
+  }
+  return {
+    ...base,
+    label: `${base.label} — Queued: ${thread.queued.prompt}`,
+    flags: { ...base.flags, "data-queued-dot": thread.id },
+  };
+}
+
+function baseStatusDot(
+  thread: ThreadInfo,
+  now: number,
+  wait: WaitState | null,
+  active: boolean,
+): StatusDotInfo | null {
+  if (thread.status === "failed") {
+    return {
+      tone: "failed",
+      label: thread.lastError ?? "Failed",
+      spoken: "failed",
+      flags: { "data-failed": thread.id },
+    };
+  }
   if (thread.status === "quota-wait") {
     const until = thread.quotaWaitUntil;
     const clock =
       until != null && Number.isFinite(until)
         ? formatQuotaWaitLabel(until, now)
         : "—";
-    return (
-      <span
-        className={`${styles.badge} ${styles.badgeQuotaWait}`}
-        data-quota-wait=""
-        title={thread.lastError ?? `Usage limit reached. Resuming at ${clock}.`}
-      >
-        <span className={styles.waitingDot} aria-hidden />
-        Quota wait · {clock}
-      </span>
-    );
+    return {
+      tone: "attention",
+      label: thread.lastError ?? `Usage limit reached. Resuming at ${clock}.`,
+      spoken: "needs attention",
+      flags: { "data-quota-wait": "" },
+    };
   }
-
   if (thread.status === "working" && thread.awaitingInput) {
-    return (
-      <span className={`${styles.badge} ${styles.badgeWaiting}`}>
-        <span className={styles.waitingDot} aria-hidden />
-        Waiting
-      </span>
-    );
+    return {
+      tone: "attention",
+      label: "Waiting for input",
+      spoken: "needs attention",
+      flags: { "data-waiting": "" },
+    };
   }
-
   if (thread.status === "working" && thread.stalledAt != null) {
-    return (
-      <span className={`${styles.badge} ${styles.badgeWaiting}`} data-stalled="">
-        Stalled {formatElapsed(thread.stalledAt, now)}
-      </span>
-    );
+    return {
+      tone: "attention",
+      label: `Stalled ${formatElapsed(thread.stalledAt, now)}`,
+      spoken: "needs attention",
+      flags: { "data-stalled": "" },
+    };
   }
-
   if (thread.status === "working") {
     const label =
       thread.runStartedAt != null
         ? formatWorkingLabel(thread.runStartedAt, now)
         : "Working";
-    return (
-      <span className={`${styles.badge} ${styles.badgeWorking}`}>
-        <span className={styles.spinner} aria-hidden />
-        {label}
-      </span>
-    );
+    return {
+      tone: "working",
+      label,
+      spoken: "working",
+      flags: {},
+    };
   }
-
-  if (!active && showWokePill(thread, now)) {
-    return (
-      <span className={`${styles.badge} ${styles.badgeWoke}`} data-woke="">
-        Woke
-      </span>
-    );
-  }
-
   if (isDelegating(thread.status, wait)) {
-    return (
-      <span
-        className={`${styles.badge} ${styles.badgeDelegating}`}
-        data-delegating={thread.id}
-      >
-        <span className={styles.waitingDot} aria-hidden />
-        Delegating
-      </span>
-    );
+    return {
+      tone: "working",
+      label: "Delegating",
+      spoken: "delegating",
+      flags: { "data-delegating": thread.id },
+    };
   }
-
-  if (thread.status === "done") {
-    return (
-      <span className={`${styles.badge} ${styles.badgeDone}`}>
-        <span className={styles.check} aria-hidden>
-          <svg
-            width="10"
-            height="10"
-            viewBox="0 0 16 16"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="m3 8.75 3.25 3.25L13 5.25" />
-          </svg>
-        </span>
-        Done
-      </span>
-    );
+  if (!active && showWokePill(thread, now)) {
+    return {
+      tone: "attention",
+      label: "Woke from snooze",
+      spoken: "needs attention",
+      flags: { "data-woke": "" },
+    };
   }
-
-  if (thread.status === "failed") {
-    return (
-      <span
-        className={`${styles.badge} ${styles.badgeFailed}`}
-        title={thread.lastError ?? undefined}
-      >
-        Failed
-      </span>
-    );
-  }
-
   return null;
+}
+
+function StatusDot({ dot }: { dot: StatusDotInfo }) {
+  return (
+    <span
+      className={styles.statusDot}
+      data-status-dot={dot.tone}
+      title={dot.label}
+      {...dot.flags}
+    />
+  );
 }
 
 function ConflictForecastBadge({
@@ -583,9 +593,15 @@ export const ThreadCard = memo(function ThreadCard({
   const settleLabel = isSettled ? "Keep thread active" : "Settle thread";
   // Selected never paints unread (you are looking at it) — render rule only.
   const showUnread = !active && isUnread(thread);
-  const selectLabel = showUnread
-    ? `Select thread: ${thread.title}, unread`
-    : `Select thread: ${thread.title}`;
+  const dot = statusDotFor(thread, now, wait, active);
+  // The dot is color-only, so the select button speaks the triage state.
+  const selectLabel = [
+    `Select thread: ${thread.title}`,
+    showUnread ? "unread" : null,
+    dot ? dot.spoken : null,
+  ]
+    .filter(Boolean)
+    .join(", ");
   const [renaming, setRenaming] = useState(false);
   const [renameDraft, setRenameDraft] = useState("");
   const renamingRef = useRef(false);
@@ -675,13 +691,6 @@ export const ThreadCard = memo(function ThreadCard({
             />
           )}
           {showUnread && <span className={styles.srOnly}>unread</span>}
-          {thread.queued && (
-            <span
-              className={styles.queuedDot}
-              data-queued-dot={thread.id}
-              title={thread.queued.prompt}
-            />
-          )}
           {renaming ? (
             <input
               className={styles.titleInput}
@@ -738,12 +747,7 @@ export const ThreadCard = memo(function ThreadCard({
               forecast={conflictForecast}
               titles={threadTitles}
             />
-            <StatusBadge
-              thread={thread}
-              now={now}
-              wait={wait}
-              active={active}
-            />
+            {dot && <StatusDot dot={dot} />}
           </div>
         </div>
         {/* Own row, not a chip beside the status badge: on a narrow card the

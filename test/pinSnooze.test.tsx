@@ -574,8 +574,9 @@ describe("fakeCoder setPinned/setSnoozed honesty (round 44)", () => {
     );
     try {
       const pill = m.query("[data-woke]");
-      assert.ok(pill, "Woke pill must render on a timer-woken unread row");
-      assert.equal(pill!.textContent, "Woke");
+      assert.ok(pill, "Woke dot must render on a timer-woken unread row");
+      assert.equal(pill!.getAttribute("data-status-dot"), "attention");
+      assert.equal(pill!.getAttribute("title"), "Woke from snooze");
     } finally {
       m.unmount();
     }

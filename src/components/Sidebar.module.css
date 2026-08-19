@@ -556,6 +556,42 @@
 }
 
 /*
+ * The whole status vocabulary, one dot (#566). Words live in the title
+ * tooltip (pointer-events re-enabled — cardBody is none) and in the select
+ * button's aria-label.
+ */
+.statusDot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  pointer-events: auto;
+}
+
+.statusDot[data-status-dot="working"] {
+  background: var(--blue);
+  animation: waitingPulse 2.4s ease-in-out infinite;
+}
+
+.statusDot[data-status-dot="attention"] {
+  background: var(--amber);
+}
+
+.statusDot[data-status-dot="failed"] {
+  background: var(--danger);
+}
+
+.statusDot[data-status-dot="queued"] {
+  background: var(--text-dim);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .statusDot[data-status-dot="working"] {
+    animation: none;
+  }
+}
+
+/*
  * Hover/focus settle control (t3 settle-on-hover). Sibling of cardBody so it
  * is not nested in the select button; pointer-events auto like .prLink.
  */
