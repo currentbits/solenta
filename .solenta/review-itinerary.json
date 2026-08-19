@@ -1,26 +1,35 @@
 {
   "version": 1,
-  "readOrder": ["ci-config", "impl"],
+  "readOrder": ["critical", "impl", "tests"],
   "chunks": [
     {
-      "area": "ci-config",
-      "rationale": ".github/workflows/test.yml: libasound2 -> libasound2t64 in the smoke job's apt install. ubuntu-latest is now noble (24.04), where libasound2 is a virtual package with no installation candidate — every PR's smoke (ubuntu-latest) job failed at the apt step with exit 100 before the app ever started. The t64 suffix is the noble package name; the sibling libs (libatk1.0-0 etc.) still resolve via transitional dummy packages, so only libasound2 needed the rename.",
+      "area": "src/components/ThreadView.module.css",
+      "rationale": "Read this first — the whole bug and the whole fix are here. .changesPanel is a fixed max-height flex column with overflow: hidden, and .patchScroll was the only scroller. A tall itinerary consumed the 520px, .patchScroll collapsed to zero (flex items do not shrink below min-content), and .commitBox landed past the clipped bottom edge. The new .changesScroll takes flex: 1 / min-height: 0 / overflow-y: auto and carries gap: 10px to replace the spacing its children used to inherit from .changesPanel's own gap. flex-shrink: 0 on .changesHead and .commitBox is what actually guarantees the commit box can never be squeezed out again.",
       "risks": [
-        "If GitHub ever points ubuntu-latest back at 22.04 (jammy), libasound2t64 does not exist there and the step breaks again — acceptable, ubuntu-latest only moves forward."
+        "position: sticky on .commitBox is inert as written: .changesScroll absorbs the flex space so .commitBox no longer overflows .changesPanel, and there is nothing to stick against. Harmless and requested by #555, but do not treat it as load-bearing — the flex-shrink rules are.",
+        ".changesScroll duplicates gap: 10px from .changesPanel. If someone later changes the panel gap the two will drift apart silently.",
+        "flex: 1 was removed from .patchScroll, so a very long diff now grows the scroller's content rather than fitting a flex track. Correct for this fix (the parent scrolls) but it changes how tall diffs lay out."
       ]
     },
     {
-      "area": "impl",
-      "rationale": "src/index.css: --text-dim #667085 -> #7d8798. The sidebar (projects/threadbar) renders most secondary text (branch names, ages, counts, provider tags, 'New thread' rows, group summaries) in --text-dim, which sat at ~3.7:1 contrast on --bg-elevated — below WCAG AA. The new value lands ~5:1 on the sidebar background and ~4.7:1 on card fills, while staying clearly darker than --text-muted (#8b95a8, ~6:1) so the dim/muted/text hierarchy survives. Token-level fix beats per-rule overrides in Sidebar.module.css: one line, no hardcoded colors, and other dim text app-wide benefits too.",
+      "area": "src/components/ThreadView.tsx",
+      "rationale": "Only two real lines: the opening <div className={styles.changesScroll}> before <ReviewItineraryView> and its close after the diff.truncated note, with .commitBox deliberately left outside. Read with `git diff -w` — the other ~128 changed lines are pure re-indentation of the wrapped children and carry no logic.",
       "risks": [
-        "Dim text everywhere in the app gets brighter, not just the sidebar — intentional, but reviewers should confirm the dim/muted steps still read as distinct.",
-        "Settled rows still multiply the token by opacity 0.6 (intentional recession); they improve but remain low-contrast by design."
+        "The wrap must not swallow .commitBox. Verify by eye that the closing </div> sits before <div className={styles.commitBox}> — nesting it inside would reintroduce the exact bug with a scrollbar instead of a clip.",
+        "The error/loading/empty paragraphs stay outside .changesScroll as direct panel children. Intentional, but it means a long error message is still unscrollable."
+      ]
+    },
+    {
+      "area": "test/threadView.test.tsx",
+      "rationale": "Regression coverage for a pure-layout failure that no behavioural assertion catches: one render test walking the ancestor chain from the commit textarea to prove it is not inside .changesScroll, plus a per-rule-block read of the stylesheet pinning flex-shrink: 0, overflow-y: auto and the absence of overflow: auto on .patchScroll.",
+      "risks": [
+        "The CSS-text guard is only as good as its rule-block parsing — a whole-file `includes` would pass on a match in an unrelated rule and prove nothing.",
+        "CSS module class names may not resolve to usable strings in this harness; if the test falls back to asserting DOM structure it is weaker against a rename of .changesScroll."
       ]
     }
   ],
   "risks": [
-    "Merge with origin/main conflicted only on .solenta/review-itinerary.json (every thread writes it); resolved keeping this PR's version.",
-    "The 6 electron-suite test failures on this PR's checks (runner verification gate, auto-checkpoint, package-app.sh) are pre-existing main breakage tracked in #536 — they reproduce without this diff and are out of scope here.",
-    "Contrast ratios were computed analytically from hex values, not measured in a running app; local test run was not possible (worktree has no node_modules)."
+    "jsdom does not lay out, so no test here can prove the commit box is actually visible at 520px — the CSS-text guard is a proxy. Confirming the real fix needs eyes on the running app with a tall itinerary.",
+    "Worker A's run was cancelled before it verified anything; tsc --noEmit and the 29 threadView tests were run by the orchestrator after merge, not by the author."
   ]
 }
