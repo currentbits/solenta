@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # package-app.sh — dependency-free macOS packaging for Solenta.
-# Assembles a double-clickable out/Solenta.app by dropping the app into a stock
+# Assembles a double-clickable out/Solenta.app ("Solenta Nightly.app" on
+# --channel nightly) by dropping the app into a stock
 # Electron.app (no electron-builder / electron-packager; npm blocks native
 # postinstalls on this machine).
 #
@@ -31,6 +32,19 @@ if [[ "$CHANNEL" != "prod" && "$CHANNEL" != "nightly" ]]; then
   echo "ERROR: --channel must be prod or nightly (got: $CHANNEL)" >&2
   exit 1
 fi
+
+# Nightly ships under its own bundle name + identifier so a prod install and a
+# nightly install are tellable apart in Finder, the Dock and the app switcher.
+# ONLY the outside changes: the embedded productName stays "Solenta" because
+# userData derives from it (~/Library/Application Support/Solenta) — renaming
+# it would silently strand every existing install's store.
+APP_NAME="Solenta"
+BUNDLE_ID="com.willem.solenta"
+if [[ "$CHANNEL" == "nightly" ]]; then
+  APP_NAME="Solenta Nightly"
+  BUNDLE_ID="com.willem.solenta.nightly"
+fi
+APP_BUNDLE="out/${APP_NAME}.app"
 
 # ---------------------------------------------------------------------------
 # Preconditions
@@ -71,23 +85,23 @@ if [[ ! -d memory-server/node_modules ]]; then
 fi
 
 VERSION="$(node -p "require('./package.json').version")"
-echo "Packaging Solenta v${VERSION}..."
+echo "Packaging ${APP_NAME} v${VERSION} (${CHANNEL})..."
 
 # ---------------------------------------------------------------------------
-# Assemble out/Solenta.app (idempotent)
+# Assemble the .app (idempotent)
 # ---------------------------------------------------------------------------
 
-rm -rf out/Solenta.app
+rm -rf "$APP_BUNDLE"
 mkdir -p out
-cp -R "$ELECTRON_APP" out/Solenta.app
+cp -R "$ELECTRON_APP" "$APP_BUNDLE"
 
 # The stock Electron.app can carry a stale Resources/app from an earlier
 # mishap. With it in place, `cp -R dist "$APP_DIR/dist"` below nests the fresh
 # bundle as dist/dist and the app silently ships the OLD UI while the build
 # stamp claims otherwise. Always start from a clean slate.
-rm -rf "out/Solenta.app/Contents/Resources/app"
+rm -rf "$APP_BUNDLE/Contents/Resources/app"
 
-APP_DIR="out/Solenta.app/Contents/Resources/app"
+APP_DIR="$APP_BUNDLE/Contents/Resources/app"
 mkdir -p "$APP_DIR"
 
 # Minimal package.json for the embedded app.
@@ -203,20 +217,20 @@ fi
 # would load the vite dev URL instead of dist/.
 # ---------------------------------------------------------------------------
 
-PLIST="out/Solenta.app/Contents/Info.plist"
-MACOS_DIR="out/Solenta.app/Contents/MacOS"
+PLIST="$APP_BUNDLE/Contents/Info.plist"
+MACOS_DIR="$APP_BUNDLE/Contents/MacOS"
 if [[ -f "$MACOS_DIR/Electron" ]]; then
-  mv "$MACOS_DIR/Electron" "$MACOS_DIR/Solenta"
+  mv "$MACOS_DIR/Electron" "$MACOS_DIR/$APP_NAME"
 fi
 if [[ -f "$PLIST" ]]; then
-  /usr/libexec/PlistBuddy -c "Set :CFBundleName Solenta" "$PLIST" 2>/dev/null \
-    || /usr/libexec/PlistBuddy -c "Add :CFBundleName string Solenta" "$PLIST"
-  /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName Solenta" "$PLIST" 2>/dev/null \
-    || /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string Solenta" "$PLIST"
-  /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.willem.solenta" "$PLIST" 2>/dev/null \
-    || /usr/libexec/PlistBuddy -c "Add :CFBundleIdentifier string com.willem.solenta" "$PLIST"
-  /usr/libexec/PlistBuddy -c "Set :CFBundleExecutable Solenta" "$PLIST" 2>/dev/null \
-    || /usr/libexec/PlistBuddy -c "Add :CFBundleExecutable string Solenta" "$PLIST"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleName ${APP_NAME}" "$PLIST" 2>/dev/null \
+    || /usr/libexec/PlistBuddy -c "Add :CFBundleName string ${APP_NAME}" "$PLIST"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName ${APP_NAME}" "$PLIST" 2>/dev/null \
+    || /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string ${APP_NAME}" "$PLIST"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier ${BUNDLE_ID}" "$PLIST" 2>/dev/null \
+    || /usr/libexec/PlistBuddy -c "Add :CFBundleIdentifier string ${BUNDLE_ID}" "$PLIST"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleExecutable ${APP_NAME}" "$PLIST" 2>/dev/null \
+    || /usr/libexec/PlistBuddy -c "Add :CFBundleExecutable string ${APP_NAME}" "$PLIST"
   /usr/libexec/PlistBuddy -c "Set :CFBundleIconFile Solenta" "$PLIST" 2>/dev/null \
     || /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string Solenta" "$PLIST"
 else
@@ -229,14 +243,14 @@ fi
 if [[ ! -f assets/Solenta.icns ]]; then
   bash scripts/make-icon.sh
 fi
-cp assets/Solenta.icns "out/Solenta.app/Contents/Resources/Solenta.icns"
+cp assets/Solenta.icns "$APP_BUNDLE/Contents/Resources/Solenta.icns"
 echo "icon: Contents/Resources/Solenta.icns"
 
 # ---------------------------------------------------------------------------
 # Report size
 # ---------------------------------------------------------------------------
 
-APP_PATH="$ROOT/out/Solenta.app"
+APP_PATH="$ROOT/$APP_BUNDLE"
 SIZE="$(du -sh "$APP_PATH" | awk '{print $1}')"
 echo "Packaged: $APP_PATH ($SIZE)"
 
@@ -245,5 +259,5 @@ echo "Packaged: $APP_PATH ($SIZE)"
 # ---------------------------------------------------------------------------
 
 if [[ "$NO_VERIFY" -eq 0 ]]; then
-  bash "$ROOT/scripts/verify-package.sh"
+  bash "$ROOT/scripts/verify-package.sh" "$APP_BUNDLE"
 fi

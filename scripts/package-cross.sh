@@ -61,6 +61,14 @@ if [[ "$CHANNEL" != "prod" && "$CHANNEL" != "nightly" ]]; then
   exit 1
 fi
 
+# Launcher + top-level folder name. Nightly gets its own so an unpacked
+# nightly can sit next to a prod one. productName below stays "Solenta" on
+# both channels: userData derives from it and renaming strands the store.
+SLUG="solenta"
+if [[ "$CHANNEL" == "nightly" ]]; then
+  SLUG="solenta-nightly"
+fi
+
 # ---------------------------------------------------------------------------
 # Fresh builds (same reasoning as package-app.sh: never ship a stale dist).
 # ---------------------------------------------------------------------------
@@ -146,7 +154,7 @@ for target in "${TARGETS[@]}"; do
 
   WORK="$(mktemp -d "${TMPDIR:-/tmp}/solenta-cross-${target}.XXXXXX")"
   # bsdtar has no --transform, so the top-level "solenta/" folder is real.
-  TOP="$WORK/solenta"
+  TOP="$WORK/$SLUG"
   mkdir -p "$TOP"
   unzip -q "$cached" -d "$TOP"
 
@@ -183,16 +191,16 @@ for target in "${TARGETS[@]}"; do
 
   # Rename the binary so Electron treats the app as packaged.
   if [[ "$os" == "win32" ]]; then
-    mv "$BIN_DIR/electron.exe" "$BIN_DIR/solenta.exe"
+    mv "$BIN_DIR/electron.exe" "$BIN_DIR/${SLUG}.exe"
     ARCHIVE="out/Solenta-${VERSION}-win32-x64.zip"
     rm -f "$ARCHIVE"
-    (cd "$WORK" && zip -q -r -X "$ROOT/$ARCHIVE" solenta)
+    (cd "$WORK" && zip -q -r -X "$ROOT/$ARCHIVE" "$SLUG")
   else
-    mv "$BIN_DIR/electron" "$BIN_DIR/solenta"
-    chmod +x "$BIN_DIR/solenta"
+    mv "$BIN_DIR/electron" "$BIN_DIR/$SLUG"
+    chmod +x "$BIN_DIR/$SLUG"
     ARCHIVE="out/Solenta-${VERSION}-linux-x64.tar.gz"
     rm -f "$ARCHIVE"
-    tar -czf "$ARCHIVE" -C "$WORK" solenta
+    tar -czf "$ARCHIVE" -C "$WORK" "$SLUG"
   fi
 
   # Structural sanity: binary + payload markers must exist in the work tree.

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# verify-package.sh — smoke-check a packaged out/Solenta.app.
+# verify-package.sh [bundle] — smoke-check a packaged .app (default
+# out/Solenta.app; nightly builds are out/"Solenta Nightly".app).
 # Invoked by package-app.sh (skip with --no-verify).
 #
 # Does NOT run --version: with Resources/app present and the binary renamed,
@@ -10,9 +11,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-APP="out/Solenta.app"
-# Binary is renamed Electron -> Solenta during packaging (app.isPackaged).
-BIN="$APP/Contents/MacOS/Solenta"
+APP="${1:-out/Solenta.app}"
+# Binary is renamed Electron -> <bundle name> during packaging (app.isPackaged).
+BIN="$APP/Contents/MacOS/$(basename "${APP%.app}")"
 if [[ ! -f "$BIN" && -f "$APP/Contents/MacOS/Electron" ]]; then
   BIN="$APP/Contents/MacOS/Electron"
 fi

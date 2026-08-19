@@ -186,6 +186,11 @@ Builds are stamped with a channel. **prod** follows the newest normal release;
 On macOS the app downloads and swaps itself in place. Builds from a dev tree
 carry no stamp and never self-update.
 
+Nightly ships as **Solenta Nightly.app** (`com.willem.solenta.nightly`,
+`solenta-nightly` on linux/win) so it is tellable apart from a prod install at
+launch time. Both channels share one userData directory — the bundle is
+renamed, the app name inside it is not.
+
 ### Remote access
 
 ```bash

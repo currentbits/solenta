@@ -42,9 +42,17 @@ fi
 bash scripts/package-app.sh --channel "$CHANNEL" --tag "$TAG"
 bash scripts/package-cross.sh --channel "$CHANNEL" --tag "$TAG"
 
+# Nightly bundles carry their own name (package-app.sh) so both channels can
+# sit side by side in /Applications. The asset name keeps the platform token
+# the updater matches on.
+APP_BUNDLE="out/Solenta.app"
+if [[ "$CHANNEL" == "nightly" ]]; then
+  APP_BUNDLE="out/Solenta Nightly.app"
+fi
+
 ZIP="out/Solenta-${TAG}-macos-arm64.zip"
 rm -f "$ZIP"
-ditto -c -k --keepParent out/Solenta.app "$ZIP"
+ditto -c -k --keepParent "$APP_BUNDLE" "$ZIP"
 
 # Cross archives come out versioned; name release assets by tag so every
 # asset in a release carries the tag the updater compares against.
