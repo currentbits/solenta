@@ -132,6 +132,7 @@ const coder = {
     setQuotaWaitAutoResume: (input) =>
       invoke("threads:setQuotaWaitAutoResume", input),
     setNotes: (input) => invoke("threads:setNotes", input),
+    setFeltEstimate: (input) => invoke("threads:setFeltEstimate", input),
     startSpec: (input) => invoke("threads:startSpec", input),
     stopSpec: (input) => invoke("threads:stopSpec", input),
     reviewSpec: (input) => invoke("threads:reviewSpec", input),

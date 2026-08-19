@@ -6,11 +6,13 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   badgeLabels,
+  formatLineCount,
   isPlanEmpty,
   issueUpdatedMs,
   planColumns,
+  reviewLoad,
 } from "../src/planboard.ts";
-import type { PlanIssue } from "../src/shared/ipc.ts";
+import type { PlanIssue, PrListItem } from "../src/shared/ipc.ts";
 
 function issue(over: Partial<PlanIssue> & Pick<PlanIssue, "number">): PlanIssue {
   return {
@@ -89,5 +91,70 @@ describe("helpers", () => {
   it("isPlanEmpty", () => {
     assert.equal(isPlanEmpty(planColumns([])), true);
     assert.equal(isPlanEmpty(planColumns([issue({ number: 1 })])), false);
+  });
+});
+
+function pr(over: Partial<PrListItem> & Pick<PrListItem, "number">): PrListItem {
+  return {
+    title: `PR ${over.number}`,
+    url: `https://github.com/acme/demo/pull/${over.number}`,
+    state: "OPEN",
+    headRefName: `coder/pr-${over.number}`,
+    ...over,
+  };
+}
+
+describe("reviewLoad (#402)", () => {
+  it("counts only open, non-draft PRs and sums their lines", () => {
+    const load = reviewLoad([
+      pr({ number: 1, additions: 300, deletions: 50 }),
+      pr({ number: 2, additions: 200, deletions: 100 }),
+      pr({ number: 3, state: "MERGED", additions: 5000, deletions: 5000 }),
+      pr({ number: 4, isDraft: true, additions: 5000 }),
+      pr({ number: 5, state: "CLOSED" }),
+    ]);
+    assert.equal(load.openPrs, 2);
+    assert.equal(load.totalLines, 650);
+    assert.equal(load.level, "ok");
+  });
+
+  it("treats missing line counts as zero", () => {
+    const load = reviewLoad([pr({ number: 1 }), pr({ number: 2 })]);
+    assert.deepEqual(load, { openPrs: 2, totalLines: 0, level: "ok" });
+  });
+
+  it("goes busy at four open PRs or past 1200 lines", () => {
+    assert.equal(
+      reviewLoad([1, 2, 3, 4].map((n) => pr({ number: n }))).level,
+      "busy",
+    );
+    assert.equal(
+      reviewLoad([pr({ number: 1, additions: 1000, deletions: 201 })]).level,
+      "busy",
+    );
+    assert.equal(
+      reviewLoad([1, 2, 3].map((n) => pr({ number: n }))).level,
+      "ok",
+    );
+  });
+
+  it("goes overloaded at seven open PRs or past 2400 lines", () => {
+    assert.equal(
+      reviewLoad([1, 2, 3, 4, 5, 6, 7].map((n) => pr({ number: n }))).level,
+      "overloaded",
+    );
+    assert.equal(
+      reviewLoad([pr({ number: 1, additions: 2401 })]).level,
+      "overloaded",
+    );
+  });
+});
+
+describe("formatLineCount", () => {
+  it("keeps small counts literal and compacts thousands", () => {
+    assert.equal(formatLineCount(0), "0");
+    assert.equal(formatLineCount(950), "950");
+    assert.equal(formatLineCount(1600), "1.6k");
+    assert.equal(formatLineCount(12000), "12k");
   });
 });

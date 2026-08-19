@@ -397,3 +397,36 @@ describe("collectFleet", () => {
     assert.equal(result.threads.length, 1);
   });
 });
+
+describe("collectFleet felt estimate (issue #401)", () => {
+  it("carries a saved estimate as feltSavedMs; declined and absent are null", async () => {
+    const result = await collect({
+      store: makeStore({
+        threads: [
+          thread({
+            id: "t1",
+            feltEstimate: { kind: "saved", savedMs: 3_600_000, at: NOW },
+          }),
+          thread({
+            id: "t2",
+            title: "t2",
+            feltEstimate: { kind: "declined", at: NOW },
+          }),
+          thread({ id: "t3", title: "t3" }),
+          thread({
+            id: "t4",
+            title: "t4",
+            feltEstimate: { kind: "saved", savedMs: "2h", at: NOW },
+          }),
+        ],
+      }),
+    });
+    const byId = Object.fromEntries(
+      result.threads.map((t) => [t.threadId, t]),
+    );
+    assert.equal(byId.t1.feltSavedMs, 3_600_000);
+    assert.equal(byId.t2.feltSavedMs, null);
+    assert.equal(byId.t3.feltSavedMs, null);
+    assert.equal(byId.t4.feltSavedMs, null);
+  });
+});

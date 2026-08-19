@@ -133,6 +133,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     resumeQuotaWait,
     renameThread,
     setNotes,
+    setFeltEstimate,
     startSpec,
     stopSpec,
     reviewSpec,
@@ -420,6 +421,13 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       void setNotes(threadId, notes);
     },
     [setNotes],
+  );
+
+  const handleSetFeltEstimate = useCallback(
+    (threadId: string, savedMs: number | null) => {
+      void setFeltEstimate(threadId, savedMs);
+    },
+    [setFeltEstimate],
   );
 
   const handleStartSpec = useCallback(
@@ -988,6 +996,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             <PlanboardView
               projects={projects}
               listIssues={listIssues}
+              listPrs={listPrs}
               threads={threads}
               onSelectThread={handleSelectThread}
               onStartTask={async (input) => {
@@ -1059,6 +1068,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onRepeatSchedule={handleRepeatSchedule}
         onDistillWorkflow={handleDistillWorkflow}
         onSetNotes={handleSetNotes}
+        onSetFeltEstimate={handleSetFeltEstimate}
         onStartSpec={handleStartSpec}
         onStopSpec={handleStopSpec}
         onReviewSpec={handleReviewSpec}

@@ -14,7 +14,7 @@ import {
   FleetView,
   reviewTaxCopy,
 } from "../src/components/FleetView";
-import { emptyProviderRow, type FleetSummary, type FleetThreadRow } from "../src/fleet";
+import { emptyProviderRow, emptyPerception, type FleetSummary, type FleetThreadRow } from "../src/fleet";
 import type { FleetEvidence } from "../src/shared/ipc";
 
 const HOUR = 3_600_000;
@@ -28,6 +28,7 @@ function threadRow(
     costUsd: 1.25,
     activeMs: 12 * 60 * 1000,
     wallClockMs: 64 * 60 * 1000,
+    feltSavedMs: null,
     linesAdded: 40,
     durableShare: 0.8,
     outcome: "merged",
@@ -42,6 +43,7 @@ function summary(over: Partial<FleetSummary> = {}): FleetSummary {
     providers: [],
     totals: emptyProviderRow("all"),
     threads: [],
+    perception: emptyPerception(),
     humanReviewLatencyMs: null,
     reviewTax: null,
     durabilityWindowDays: 14,
@@ -338,6 +340,73 @@ describe("FleetView", () => {
     assert.ok(m.text().includes("store locked"));
     assert.ok(m.query('[role="alert"]'), "error uses role=alert");
     assert.equal(m.query("[data-fleet-report]"), null);
+    m.unmount();
+  });
+});
+
+describe("FleetReport felt vs actual (issue #401)", () => {
+  it("renders the felt sum against the measured clock with the ratio", async () => {
+    const m = await mount(
+      <FleetReport
+        summary={summary({
+          perception: {
+            estimates: 2,
+            feltSavedMs: 6 * HOUR,
+            wallClockMs: 4 * HOUR,
+            activeMs: 3 * HOUR,
+            feltVsWall: 1.5,
+            feltVsActive: 2,
+          },
+          threads: [
+            threadRow({ threadId: "t1", feltSavedMs: 4 * HOUR }),
+            threadRow({ threadId: "t2" }),
+          ],
+        })}
+      />,
+    );
+    const section = m.query("[data-fleet-perception]");
+    assert.ok(section, "perception section");
+    const headline = m.query("[data-felt-headline]")?.textContent ?? "";
+    assert.ok(headline.includes("6h"), "felt sum");
+    assert.ok(headline.includes("2 threads"), "estimate count");
+    assert.ok(headline.includes("4h"), "wall clock");
+    assert.equal(m.query("[data-felt-vs-wall]")?.textContent, "felt ÷ wall-clock 1.5×");
+    assert.ok(
+      (m.query("[data-felt-active]")?.textContent ?? "").includes("3h"),
+      "agent-active",
+    );
+    // Per-thread column: estimate renders, missing is an em dash.
+    const t1 = m.query('[data-fleet-thread="t1"] [data-felt-saved]');
+    assert.equal(t1?.textContent, "~4h");
+    const t2 = m.query('[data-fleet-thread="t2"] [data-felt-saved]');
+    assert.equal(t2?.textContent, "—");
+    m.unmount();
+  });
+
+  it("shows the no-estimates hint instead of inventing a zero", async () => {
+    const m = await mount(<FleetReport summary={summary()} />);
+    const headline = m.query("[data-felt-headline]")?.textContent ?? "";
+    assert.ok(headline.includes("no estimates yet"), headline);
+    assert.equal(m.query("[data-felt-vs-wall]"), null);
+    m.unmount();
+  });
+
+  it("renders a null ratio as an em dash", async () => {
+    const m = await mount(
+      <FleetReport
+        summary={summary({
+          perception: {
+            estimates: 1,
+            feltSavedMs: HOUR,
+            wallClockMs: 0,
+            activeMs: 0,
+            feltVsWall: null,
+            feltVsActive: null,
+          },
+        })}
+      />,
+    );
+    assert.equal(m.query("[data-felt-vs-wall]")?.textContent, "—");
     m.unmount();
   });
 });

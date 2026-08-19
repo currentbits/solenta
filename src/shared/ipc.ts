@@ -368,6 +368,12 @@ export interface ThreadInfo {
    */
   notes: string;
   /**
+   * One-tap estimate of time this thread saved the user (issue #401).
+   * Null/absent = never asked or never answered; the transcript card asks
+   * once a run completes. Never bumps updatedAt.
+   */
+  feltEstimate?: FeltEstimate | null;
+  /**
    * Follow-up typed while a run was active (issue #92/#137); flushed at the
    * next settle. Persisted on the thread so a reload cannot drop it and the
    * sidebar can show a queue pending on an unselected thread.
@@ -574,6 +580,30 @@ export interface ThreadSpec {
 
 /** Cap for ThreadInfo.notes / threads.setNotes (issue #194). */
 export const THREAD_NOTES_MAX = 2000;
+
+/**
+ * One-tap estimate of how much time a finished thread saved the user
+ * (issue #401, the "felt" half of felt-vs-actual). Recorded once, from the
+ * transcript card shown when a run completes; "declined" means the user
+ * dismissed the prompt, so the card stays gone without inventing a number.
+ * The "actual" half is never estimated — it comes from the fleet evidence
+ * (wall clock, agent-active time) and the two meet in src/fleet.ts.
+ */
+export type FeltEstimate =
+  | { kind: "saved"; savedMs: number; at: number }
+  | { kind: "declined"; at: number };
+
+/** One-tap buckets offered by the felt-estimate card (issue #401). */
+export const FELT_ESTIMATE_BUCKETS_MS: readonly number[] = [
+  15 * 60 * 1000,
+  30 * 60 * 1000,
+  60 * 60 * 1000,
+  2 * 60 * 60 * 1000,
+  4 * 60 * 60 * 1000,
+];
+
+/** Cap for a felt estimate so a corrupt/typed value cannot skew the rollup. */
+export const FELT_ESTIMATE_MAX_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** Per-thread ledger caps: rows kept, chars per claim, chars per reason. */
 export const HYPOTHESES_MAX = 50;
@@ -881,6 +911,11 @@ export interface FleetThread {
   turns: number;
   linesAdded: number | null;
   linesSurviving: number | null;
+  /**
+   * The user's one-tap estimate of time this thread saved them (issue #401),
+   * from ThreadInfo.feltEstimate; null when never answered or declined.
+   */
+  feltSavedMs: number | null;
   /**
    * True when this thread's merged work is older than the durability window,
    * so surviving lines are a real durability signal rather than "nobody has
@@ -1494,6 +1529,13 @@ export interface AppSettings {
    */
   quotaWaitAutoResume: boolean;
   /**
+   * PR size cap in changed lines (additions + deletions vs the base branch),
+   * enforced when a PR is created from the app (issue #402, DORA small
+   * batches as a product default). Default 400; null disables the cap.
+   * Oversized PRs can still be created via createPr's allowOversize override.
+   */
+  prDiffCapLines: number | null;
+  /**
    * Update channel override; null follows the channel stamped at package
    * time. Has no effect in an unstamped dev tree (updates stay disabled).
    */
@@ -1984,6 +2026,16 @@ export interface CoderApi {
      */
     setNotes(input: { threadId: string; notes: string }): Promise<ThreadInfo>;
     /**
+     * Record the one-tap felt estimate for a finished thread (issue #401).
+     * savedMs is a non-negative duration (clamped to FELT_ESTIMATE_MAX_MS);
+     * null records a decline so the card never asks again. Never bumps
+     * updatedAt.
+     */
+    setFeltEstimate(input: {
+      threadId: string;
+      savedMs: number | null;
+    }): Promise<ThreadInfo>;
+    /**
      * Turn spec mode on (issue #269): the thread starts at the requirements
      * stage and the runner tells the agent to write the artifact and stop.
      * Idempotent — calling it on a spec thread returns it unchanged.
@@ -2305,6 +2357,11 @@ export interface CoderApi {
       title: string;
       body?: string;
       draft?: boolean;
+      /**
+       * Explicit override for the prDiffCapLines guard (issue #402): create
+       * the PR even though the diff exceeds the configured size cap.
+       */
+      allowOversize?: boolean;
     }): Promise<PrInfo>;
     /**
      * Current PR for the thread's branch, or null when there is none. Reads

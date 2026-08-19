@@ -2688,6 +2688,53 @@ function createPrStateRefresher(opts) {
 }
 
 /**
+ * Stable prefix of the createPr oversize error (issue #402). The renderer
+ * matches on it to offer "split into stacked PRs" / "create anyway"; keep it
+ * in sync with PR_TOO_LARGE_PREFIX in src/prUi.ts.
+ */
+const PR_TOO_LARGE_PREFIX = "PR too large";
+
+/**
+ * Sum `git diff --numstat` output. Binary files ("-\t-\tpath") add no lines
+ * but still count as files.
+ * @param {string} text
+ * @returns {{ additions: number, deletions: number, files: number, lines: number }}
+ */
+function parseNumstat(text) {
+  let additions = 0;
+  let deletions = 0;
+  let files = 0;
+  for (const line of String(text || "").split("\n")) {
+    const m = line.match(/^(\d+|-)\t(\d+|-)\t/);
+    if (!m) continue;
+    files += 1;
+    if (m[1] !== "-") additions += Number(m[1]);
+    if (m[2] !== "-") deletions += Number(m[2]);
+  }
+  return { additions, deletions, files, lines: additions + deletions };
+}
+
+/**
+ * Changed lines of the thread branch vs the base branch (three-dot diff, the
+ * same range a PR would show). Null when git fails: a stat hiccup must never
+ * block PR creation — the guardrail fails open, the ahead-check already
+ * guarantees there is something to propose.
+ * @param {string} cwd
+ * @param {string} baseBranch
+ * @param {string} branch
+ * @returns {Promise<{ additions: number, deletions: number, files: number, lines: number } | null>}
+ */
+async function diffStatVsBase(cwd, baseBranch, branch) {
+  const res = await gitTryAsync(cwd, [
+    "diff",
+    "--numstat",
+    `${baseBranch}...${branch}`,
+  ]);
+  if (!res.ok) return null;
+  return parseNumstat(res.stdout);
+}
+
+/**
  * Push the thread branch, open a GitHub PR via gh, persist prNumber/prUrl.
  * Idempotent: an existing PR is returned with created:false.
  *
@@ -2697,6 +2744,7 @@ function createPrStateRefresher(opts) {
  * @param {string} opts.title
  * @param {string} [opts.body]
  * @param {boolean} [opts.draft]
+ * @param {boolean} [opts.allowOversize] skip the prDiffCapLines guard (#402)
  * @param {(channel: string, payload: unknown) => void} [opts.broadcast]
  * @returns {Promise<{ number: number, url: string, state: "OPEN" | "CLOSED" | "MERGED", branch: string, created: boolean }>}
  */
@@ -2725,6 +2773,21 @@ async function createPr(opts) {
     throw new Error(
       `Branch has no commits ahead of ${baseBranch}; nothing to propose in a pull request`,
     );
+  }
+
+  // Review-bottleneck guardrail (issue #402): refuse oversized PRs before
+  // anything is pushed. DORA small batches as the product default — the cap
+  // comes from settings (default 400 lines); allowOversize is the explicit
+  // human override, and a stat failure never blocks creation.
+  const settings = store.getSettings ? store.getSettings() : {};
+  const cap = settings.prDiffCapLines;
+  if (cap != null && !opts.allowOversize) {
+    const stats = await diffStatVsBase(cwd, baseBranch, branch);
+    if (stats && stats.lines > cap) {
+      throw new Error(
+        `${PR_TOO_LARGE_PREFIX}: ${stats.lines} lines changed vs ${baseBranch} across ${stats.files} file${stats.files === 1 ? "" : "s"} (cap ${cap}). Split the branch into smaller stacked PRs, or create the PR anyway.`,
+      );
+    }
   }
 
   // Reuse push for remote/branch/timeout/prompt discipline; no intermediate broadcast.
@@ -4054,6 +4117,9 @@ module.exports = {
   removeWorktree,
   push,
   createPr,
+  PR_TOO_LARGE_PREFIX,
+  parseNumstat,
+  diffStatVsBase,
   prStatus,
   prChecks,
   mergePr,

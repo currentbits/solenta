@@ -4,7 +4,13 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { createPrPrompt, sidebarPrBadge } from "../src/prUi.ts";
+import {
+  createPrPrompt,
+  isPrTooLargeMessage,
+  PR_TOO_LARGE_PREFIX,
+  sidebarPrBadge,
+  splitPrPrompt,
+} from "../src/prUi.ts";
 
 describe("sidebarPrBadge", () => {
   it("returns null when there is no PR number", () => {
@@ -46,5 +52,40 @@ describe("createPrPrompt", () => {
     );
     assert.ok(prompt.includes("pull request"));
     assert.ok(prompt.includes("gh pr create"));
+  });
+});
+
+describe("isPrTooLargeMessage (#402)", () => {
+  it("matches the main-process refusal by its stable prefix", () => {
+    assert.equal(
+      isPrTooLargeMessage(
+        "PR too large: 1532 lines changed vs main across 12 files (cap 400). Split the branch into smaller stacked PRs, or create the PR anyway.",
+      ),
+      true,
+    );
+  });
+
+  it("does not match unrelated errors", () => {
+    assert.equal(isPrTooLargeMessage("gh pr create failed: boom"), false);
+    assert.equal(isPrTooLargeMessage("PR too large"), false, "needs the colon");
+    assert.equal(isPrTooLargeMessage(""), false);
+  });
+
+  it("prefix constant stays aligned with the main process", () => {
+    // electron/worktrees.js throws `${PR_TOO_LARGE_PREFIX}: ...`.
+    assert.equal(PR_TOO_LARGE_PREFIX, "PR too large");
+  });
+});
+
+describe("splitPrPrompt (#402)", () => {
+  it("instructs a stacked-PR split under the cap, with attribution", () => {
+    const prompt = splitPrPrompt("Claude Code");
+    assert.ok(prompt.includes("stack of smaller"), "split into a stack");
+    assert.ok(prompt.includes("400"), "names the default cap");
+    assert.ok(prompt.includes("--base <previous-slice-branch>"), "stacked bases");
+    assert.ok(
+      prompt.includes('"- PR created by the Claude Code agent"'),
+      "must carry the exact attribution bullet",
+    );
   });
 });
