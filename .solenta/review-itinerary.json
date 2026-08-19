@@ -4,31 +4,33 @@
   "chunks": [
     {
       "area": "critical",
-      "rationale": "Thread | Git tabs and the full-height Git pane replace the 520px overlay. Wrong flex/hidden wiring hides the transcript permanently or clips commit again.",
+      "rationale": "recordSuggestion / resolveSuggestion / work_suggest are the write path for user-facing chips. Dedupe, cap, and terminal-only resolve must match src/shared/ipc.ts or the renderer will show stale or reopenable chips.",
       "risks": [
-        ".body { display:flex } can override [hidden] if .body[hidden] is missing",
-        "changesOpen is lifted in App; switching threads must still close the pane",
-        "Composer stays mounted while hidden so draft text is not lost"
+        "Open-title dedupe is case-insensitive on title only; two different prompts with the same label collapse",
+        "resolveSuggestion does not reject already-terminal chips (started can be dismissed later — intentional unless the UI hides them)",
+        "work_suggest refreshDetail is best-effort; if runner.refreshDetail is missing the chip waits for the next stream tick"
       ]
     },
     {
       "area": "impl",
-      "rationale": "Header declutter: Spec/Teach/Ask start from overflow, Notes is icon-only, overflow stays usable while a run is in progress. Git pane is file list + selected diff + pinned commit.",
+      "rationale": "forkThread worktree:true (same Ask/canHostWorktree guards as forkWorkerThread), createIssue (gh create then best-effort plan:todo), IPC/preload channels, suggestedWorkNoteFor in the dispatch note chain.",
       "risks": [
-        "Overflow used to disable entirely while working; destructive items are now hidden instead",
-        "File selection defaults to diff.files[0], which may not be the first visible itinerary row"
+        "createIssue parses the last /NNN from gh stdout; extra URLs in stderr should not leak because we read stdout",
+        "No --label on create: a repo without plan:todo still files the issue, but the board column may stay unlabeled until setPlanStatus retries",
+        "suggestedWorkNoteFor is process-global via activeServers(); tests that register coder-threads can race across files"
       ]
     },
     {
       "area": "tests",
-      "rationale": "Pane tabs, Git chrome, file select, spec/teach/ask overflow, #555 commit-box pin (flex, not sticky).",
+      "rationale": "services.test.js covers truncation/cap/dedupe/resolve/fork guards/note gating. issues.test.js uses the existing CODER_GH_BIN seam. ipc-seam pins the new channels. orch-server tools/list includes work_suggest.",
       "risks": [
-        "CSS ruleBody() matcher is first-brace-wins; the 720px media query also has .changesSplit"
+        "suggestedWorkNoteFor gating mutates the process-wide MCP registry",
+        "createIssue success test assumes setPlanStatus always issues the remove-label form"
       ]
     }
   ],
   "risks": [
-    "The reference screenshot never reached this worker; the pane is inferred from Claude Code Desktop / #552, not pixel-matched",
-    "Environment still has a Changes card that opens the same pane; two entry points"
+    "Renderer wireClient/devCoder stubs are the sibling worker's job; typecheck will fail until they land",
+    "Chip UI does not exist yet; backend writes are invisible until the renderer half merges"
   ]
 }

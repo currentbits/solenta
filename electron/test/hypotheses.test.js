@@ -354,3 +354,58 @@ describe("hypothesis_record MCP tool", () => {
     assert.equal(deps.store.getThread("t3").hypotheses, undefined);
   });
 });
+
+describe("work_suggest MCP tool", () => {
+  function makeDeps() {
+    const threads = [
+      makeThread({ id: "t1", projectId: "p1", title: "First" }),
+      makeThread({ id: "t3", projectId: "p2", title: "Other" }),
+    ];
+    const refreshed = [];
+    return {
+      store: makeFakeStore(threads),
+      runner: {
+        startRun: async () => ({}),
+        refreshDetail: (id) => refreshed.push(id),
+      },
+      forkThread: () => ({ id: "fork-1" }),
+      getProvider: () => null,
+      refreshed,
+    };
+  }
+
+  it("writes the chip and refreshes the open thread", async () => {
+    const deps = makeDeps();
+    const h = createToolHandlers(deps);
+    const out = await h.work_suggest({
+      threadId: "t1",
+      projectId: "p1",
+      title: "fix the flaky test",
+      prompt: "rewrite the race",
+    });
+    assert.deepEqual(out, { recorded: true, total: 1 });
+    const chips = deps.store.getThread("t1").suggestions;
+    assert.equal(chips.length, 1);
+    assert.equal(chips[0].title, "fix the flaky test");
+    assert.equal(chips[0].prompt, "rewrite the race");
+    assert.equal(chips[0].status, "open");
+    assert.deepEqual(deps.refreshed, ["t1"]);
+  });
+
+  it("rejects a cross-project threadId", async () => {
+    const deps = makeDeps();
+    const h = createToolHandlers(deps);
+    await assert.rejects(
+      () =>
+        h.work_suggest({
+          threadId: "t3",
+          projectId: "p1",
+          title: "x",
+          prompt: "y",
+        }),
+      /belongs to "Beta".*not to "Alpha"/s,
+    );
+    assert.equal(deps.store.getThread("t3").suggestions, undefined);
+    assert.deepEqual(deps.refreshed, []);
+  });
+});
