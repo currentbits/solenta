@@ -1,26 +1,19 @@
 {
   "version": 1,
-  "readOrder": ["ci-config", "impl"],
+  "readOrder": ["tests"],
   "chunks": [
     {
-      "area": "ci-config",
-      "rationale": ".github/workflows/test.yml: libasound2 -> libasound2t64 in the smoke job's apt install. ubuntu-latest is now noble (24.04), where libasound2 is a virtual package with no installation candidate — every PR's smoke (ubuntu-latest) job failed at the apt step with exit 100 before the app ever started. The t64 suffix is the noble package name; the sibling libs (libatk1.0-0 etc.) still resolve via transitional dummy packages, so only libasound2 needed the rename.",
+      "area": "tests",
+      "rationale": "test/threadView.test.tsx: two #555 regression tests. view() now takes optional onFetchDiff / onFetchReviewContext (empty-diff stub stays the default). Test 1 mounts Changes with a tall itinerary (hard-stop, author notes, ≥4 steps, files across ci-config/critical/tests/impl/docs) and walks from the commit textarea up to [aria-label=Changes] so wrapping the box in .changesScroll fails. Test 2 reads ThreadView.module.css per-rule-block and requires .commitBox flex-shrink:0 + sticky, .changesHead flex-shrink:0, .changesScroll overflow-y:auto + min-height:0, and no overflow:auto on .patchScroll.",
       "risks": [
-        "If GitHub ever points ubuntu-latest back at 22.04 (jammy), libasound2t64 does not exist there and the step breaks again — acceptable, ubuntu-latest only moves forward."
-      ]
-    },
-    {
-      "area": "impl",
-      "rationale": "src/index.css: --text-dim #667085 -> #7d8798. The sidebar (projects/threadbar) renders most secondary text (branch names, ages, counts, provider tags, 'New thread' rows, group summaries) in --text-dim, which sat at ~3.7:1 contrast on --bg-elevated — below WCAG AA. The new value lands ~5:1 on the sidebar background and ~4.7:1 on card fills, while staying clearly darker than --text-muted (#8b95a8, ~6:1) so the dim/muted/text hierarchy survives. Token-level fix beats per-rule overrides in Sidebar.module.css: one line, no hardcoded colors, and other dim text app-wide benefits too.",
-      "risks": [
-        "Dim text everywhere in the app gets brighter, not just the sidebar — intentional, but reviewers should confirm the dim/muted steps still read as distinct.",
-        "Settled rows still multiply the token by opacity 0.6 (intentional recession); they improve but remain low-contrast by design."
+        "Test 1 is green before the JSX/CSS fix because .changesScroll does not exist yet; the ancestor walk is the durable guard once the wrapper lands.",
+        "Test 2 is expected red until the parallel CSS worker lands. node:test stops at the first assertion, so a partial CSS fix will surface the next missing declaration rather than all of them at once.",
+        "The .patchScroll guard is specifically overflow:auto (not overflow-y:auto). A nested-scroller regression that used overflow-y:auto would not trip it."
       ]
     }
   ],
   "risks": [
-    "Merge with origin/main conflicted only on .solenta/review-itinerary.json (every thread writes it); resolved keeping this PR's version.",
-    "The 6 electron-suite test failures on this PR's checks (runner verification gate, auto-checkpoint, package-app.sh) are pre-existing main breakage tracked in #536 — they reproduce without this diff and are out of scope here.",
-    "Contrast ratios were computed analytically from hex values, not measured in a running app; local test run was not possible (worktree has no node_modules)."
+    "This worktree does not apply the ThreadView.tsx / ThreadView.module.css fix; those files are owned by a parallel worker. Merging tests first will keep the CSS layout test red until that worker lands.",
+    "jsdom has no layout, so Test 1 cannot assert clipping or sticky positioning — only DOM ancestry and CSS text."
   ]
 }

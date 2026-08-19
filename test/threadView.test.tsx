@@ -9,13 +9,18 @@
  * Run: node --import=./test/support/render.mjs --test test/threadView.test.tsx
  */
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import { describe, it, afterEach, beforeEach } from "node:test";
+import { fileURLToPath } from "node:url";
 import { renderToStaticMarkup } from "react-dom/server";
 import { inAct, mount, unmountAll } from "./support/dom.ts";
 import { ThreadView } from "../src/components/ThreadView";
+import styles from "../src/components/ThreadView.module.css";
 import type {
   AttachmentInfo,
   ChatMessage,
+  DiffResult,
   ProjectInfo,
   ProviderInfo,
   RunStatInfo,
@@ -132,6 +137,12 @@ function view(props: {
     abs: string,
     opts?: { reveal?: boolean },
   ) => void | Promise<void>;
+  onFetchDiff?: () => Promise<DiffResult>;
+  onFetchReviewContext?: () => Promise<{
+    annotation: unknown;
+    symbols: Array<{ name: string; path: string }>;
+    acceptedHunks: string[];
+  }>;
 }) {
   return (
     <ThreadView
@@ -159,7 +170,11 @@ function view(props: {
       onViewChanges={props.onViewChanges}
       runStats={props.runStats}
       restoreCheckpoint={props.restoreCheckpoint}
-      onFetchDiff={async () => ({ files: [], patch: "", truncated: false })}
+      onFetchDiff={
+        props.onFetchDiff ??
+        (async () => ({ files: [], patch: "", truncated: false }))
+      }
+      onFetchReviewContext={props.onFetchReviewContext}
       onCommitChanges={async () => ({ subject: "x" })}
       onRevertFile={async (path) => ({ path })}
       onSuggestCommitMessage={async () => ({ message: "feat: x" })}
@@ -1163,5 +1178,244 @@ describe("ThreadView stick-to-bottom on content resize (issue #408)", () => {
       "a user who scrolled up must not be yanked back to the bottom",
     );
     m.unmount();
+  });
+});
+
+/**
+ * Issue #555: a tall review itinerary used to consume the whole 520px
+ * Changes panel, clip the commit box, and leave no scrollbar to reach it.
+ * The commit box must stay a sibling of the itinerary scroller, not a child.
+ */
+describe("ThreadView Changes panel commit box (issue #555)", () => {
+  it("keeps the commit box outside the itinerary scroller when the itinerary is tall", async () => {
+    const m = await mount(
+      view({
+        changesOpen: true,
+        detail: detail({
+          thread: thread({
+            title: "Review itinerary layout",
+            plan: "GitHub issue #555: keep the commit box reachable under a tall itinerary",
+          }),
+          messages: [
+            msg({
+              id: "u1",
+              role: "user",
+              text: "GitHub issue #555: Changes panel: a tall review itinerary pushes the commit box out of the clipped panel",
+              createdAt: 10,
+            }),
+          ],
+        }),
+        onFetchDiff: async () => ({
+          files: [
+            {
+              path: ".github/workflows/ci.yml",
+              status: "M",
+              additions: 8,
+              deletions: 2,
+            },
+            {
+              path: "package.json",
+              status: "M",
+              additions: 3,
+              deletions: 1,
+            },
+            {
+              path: "src/App.tsx",
+              status: "M",
+              additions: 12,
+              deletions: 4,
+            },
+            {
+              path: "src/shared/ipc.ts",
+              status: "M",
+              additions: 6,
+              deletions: 1,
+            },
+            {
+              path: "src/reviewItinerary.ts",
+              status: "A",
+              additions: 40,
+              deletions: 0,
+            },
+            {
+              path: "electron/updater.js",
+              status: "M",
+              additions: 8,
+              deletions: 2,
+            },
+            {
+              path: "test/reviewItinerary.test.ts",
+              status: "A",
+              additions: 20,
+              deletions: 0,
+            },
+            {
+              path: "docs/ARCHITECTURE.md",
+              status: "M",
+              additions: 15,
+              deletions: 0,
+            },
+          ],
+          patch: [
+            "diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml",
+            "--- a/.github/workflows/ci.yml",
+            "+++ b/.github/workflows/ci.yml",
+            "@@ -1,1 +1,2 @@",
+            " name: ci",
+            "+  run: npm test",
+            "diff --git a/src/reviewItinerary.ts b/src/reviewItinerary.ts",
+            "--- /dev/null",
+            "+++ b/src/reviewItinerary.ts",
+            "@@ -0,0 +1,2 @@",
+            "+export function formatUsd() {}",
+            "+export function buildReviewItinerary() {}",
+            "diff --git a/electron/updater.js b/electron/updater.js",
+            "--- a/electron/updater.js",
+            "+++ b/electron/updater.js",
+            "@@ -1,1 +1,2 @@",
+            " module.exports = {}",
+            "+function extra() {}",
+          ].join("\n"),
+          truncated: false,
+        }),
+        onFetchReviewContext: async () => ({
+          annotation: {
+            version: 1,
+            readOrder: ["ci-config", "critical", "tests", "impl"],
+            chunks: [
+              {
+                area: "ci-config",
+                rationale:
+                  "Workflow files fail closed — a bad ci.yml ships to every run before anyone reads the rest.",
+                risks: ["CI skip on forks"],
+              },
+              {
+                area: "critical",
+                rationale:
+                  "App.tsx and ipc.ts are the contract; a miss here is a runtime miss on every thread.",
+                risks: ["prop drift"],
+              },
+              {
+                area: "tests",
+                rationale:
+                  "What this claims to prove about the commit box surviving a tall itinerary.",
+                risks: ["fixture too short"],
+              },
+              {
+                area: "impl",
+                rationale:
+                  "The itinerary builder plus updater path that does not match the issue title.",
+                risks: ["hash drift"],
+              },
+            ],
+            risks: [
+              "tall itinerary eats the commit box",
+              "nested scroller hides Generate/Commit",
+            ],
+          },
+          symbols: [{ name: "formatUsd", path: "src/format.ts" }],
+          acceptedHunks: [],
+        }),
+      }),
+    );
+
+    const panel = m.query('[aria-label="Changes"]');
+    assert.ok(panel, "Changes panel must render");
+    assert.ok(
+      panel.querySelector("[data-review-hard-stop]"),
+      "fixture must produce a hard-stop banner",
+    );
+    assert.ok(
+      panel.querySelector("[data-review-annotation]"),
+      "fixture must produce author notes",
+    );
+    assert.ok(
+      panel.querySelectorAll("[data-review-step]").length >= 4,
+      "fixture must produce at least four numbered steps",
+    );
+
+    const textarea = panel.querySelector('textarea[aria-label="Commit message"]');
+    assert.ok(textarea, "commit message box must be in the DOM");
+    const commitBtn = [...panel.querySelectorAll("button")].find((b) => {
+      const text = (b.textContent || "").trim();
+      return text === "Commit" || text === "Committing…";
+    });
+    assert.ok(commitBtn, "Commit button must be in the Changes panel");
+
+    // CSS modules resolve to identity class names in this harness
+    // (test/support/render-hooks.mjs). Walk ancestors so wrapping the
+    // commit box in .changesScroll fails even when the textarea still
+    // renders (jsdom has no layout, so clipping is invisible).
+    let node: Element | null = textarea.parentElement;
+    while (node && node !== panel) {
+      assert.ok(
+        !node.classList.contains(styles.changesScroll),
+        "commit box must sit outside .changesScroll, not inside the clipped itinerary scroller",
+      );
+      node = node.parentElement;
+    }
+    m.unmount();
+  });
+
+  it("pins the commit box in CSS so a tall itinerary cannot clip it", () => {
+    const cssPath = path.join(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "../src/components/ThreadView.module.css",
+    );
+    const css = fs.readFileSync(cssPath, "utf8");
+    // Strip comments first so a commented-out rule cannot satisfy or
+    // defeat an assertion. Slice each selector to its closing brace so
+    // a match in some other rule does not count.
+    const clean = css.replace(/\/\*[\s\S]*?\*\//g, "");
+    const ruleBody = (className: string): string => {
+      const re = new RegExp(`\\.${className}(?![\\w-])\\s*\\{`);
+      const match = re.exec(clean);
+      if (!match) return "";
+      const brace = match.index + match[0].length - 1;
+      const end = clean.indexOf("}", brace);
+      if (end < 0) return "";
+      return clean.slice(brace + 1, end);
+    };
+
+    const commitBox = ruleBody("commitBox");
+    assert.ok(commitBox, ".commitBox rule must exist");
+    assert.match(
+      commitBox,
+      /flex-shrink\s*:\s*0/,
+      ".commitBox must not shrink below the itinerary",
+    );
+    assert.match(
+      commitBox,
+      /position\s*:\s*sticky/,
+      ".commitBox must stick to the bottom of the panel",
+    );
+
+    const changesHead = ruleBody("changesHead");
+    assert.ok(changesHead, ".changesHead rule must exist");
+    assert.match(
+      changesHead,
+      /flex-shrink\s*:\s*0/,
+      ".changesHead must not shrink when the itinerary is tall",
+    );
+
+    const changesScroll = ruleBody("changesScroll");
+    assert.ok(changesScroll, ".changesScroll rule must exist");
+    assert.match(
+      changesScroll,
+      /overflow-y\s*:\s*auto/,
+      ".changesScroll must be the itinerary scroller",
+    );
+    assert.match(
+      changesScroll,
+      /min-height\s*:\s*0/,
+      ".changesScroll must be allowed to shrink inside the flex column",
+    );
+
+    const patchScroll = ruleBody("patchScroll");
+    assert.ok(patchScroll, ".patchScroll rule must exist");
+    assert.ok(
+      !/overflow\s*:\s*auto/.test(patchScroll),
+      ".patchScroll must not keep overflow:auto — that reintroduces the nested scroller and hides the commit box",
+    );
   });
 });
