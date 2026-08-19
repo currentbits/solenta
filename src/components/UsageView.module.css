@@ -299,6 +299,12 @@
   font-style: italic;
 }
 
+.breakdownEmpty {
+  color: var(--text-dim);
+  padding: 12px 8px;
+  text-align: left;
+}
+
 .breakdownHead {
   display: flex;
   align-items: center;

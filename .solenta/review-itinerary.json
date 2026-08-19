@@ -1,9 +1,14 @@
 {
   "version": 1,
-  "readOrder": ["critical", "impl", "tests", "docs"],
+  "readOrder": [
+    "critical",
+    "impl",
+    "tests",
+    "docs"
+  ],
   "chunks": [
     {
-      "area": "critical: electron/store.js recordUsage — the drop-zeros guard",
+      "area": "critical: electron/store.js recordUsage \u2014 the drop-zeros guard",
       "rationale": "Start here; it is the whole first defect. The deleted line `if (costUsd === 0 && inputTokens === 0 && outputTokens === 0) return;` is why 41 kimi threads produced zero kimi rows. A named provider is now enough to record a turn, so zeros survive to the renderer as 'unreported' instead of the provider silently not existing. Note the new `provider === 'simulate'` guard added alongside: without it, removing the zero-drop would let dev fixture runs into the real ledger for the first time.",
       "risks": [
         "Every turn from every provider now writes a row, so usageByDay grows faster than before. Bounded by the existing 90-day prune, but it is a real volume change.",
@@ -11,33 +16,39 @@
       ]
     },
     {
-      "area": "critical: electron/runner.js claude recordUsage call (~2805) — the cache split",
-      "rationale": "The second defect. inputTokens deliberately stays `usage.input_tokens` (the billable, uncached remainder) and the new cachedInputTokens/cacheWriteTokens carry cache_read/cache_creation alongside it. Compare with claudeContextTokens() at runner.js:85-103, which has summed exactly these three since #317 for the context ring — this is that same fix finally applied to the usage rollup. runUsage was deliberately left untouched so nothing downstream that reads tokensIn as billable shifts.",
+      "area": "critical: electron/runner.js claude recordUsage call (~2805) \u2014 the cache split",
+      "rationale": "The second defect. inputTokens deliberately stays `usage.input_tokens` (the billable, uncached remainder) and the new cachedInputTokens/cacheWriteTokens carry cache_read/cache_creation alongside it. Compare with claudeContextTokens() at runner.js:85-103, which has summed exactly these three since #317 for the context ring \u2014 this is that same fix finally applied to the usage rollup. runUsage was deliberately left untouched so nothing downstream that reads tokensIn as billable shifts.",
       "risks": [
-        "Codex reports input_tokens ALREADY INCLUDING cached_input_tokens (electron/codex.js:372 and the test 'does not add cached_input_tokens on turn.completed'), and reports cumulative totals, so a per-turn cached delta needs a snapshot setUsage does not keep. Codex therefore records its whole input as uncached with cachedInputTokens 0 and will render as doing no caching. Documented on UsageEntry.inputTokens; deliberately NOT fixed here — see risks below."
+        "Codex reports input_tokens ALREADY INCLUDING cached_input_tokens (electron/codex.js:372 and the test 'does not add cached_input_tokens on turn.completed'), and reports cumulative totals, so a per-turn cached delta needs a snapshot setUsage does not keep. Codex therefore records its whole input as uncached with cachedInputTokens 0 and will render as doing no caching. Documented on UsageEntry.inputTokens; deliberately NOT fixed here \u2014 see risks below."
       ]
     },
     {
-      "area": "critical: electron/runner.js notifyRunTerminal (~1287) — wasted spend",
-      "rationale": "One hook, not five: this is the single terminal seam every provider funnels through (its own comment names generic/claude/codex/kimi/opencode/workflow), and several call sites already pass the run's costUsd. Read the quota-wait exclusion carefully — a thread parked on a provider reset takes the `status === 'failed'` branch but is explicitly not a failure, so charging it as waste would be wrong.",
+      "area": "critical: electron/runner.js notifyRunTerminal (~1287) \u2014 wasted spend",
+      "rationale": "One hook, not five: this is the single terminal seam every provider funnels through (its own comment names generic/claude/codex/kimi/opencode/workflow), and several call sites already pass the run's costUsd. Read the quota-wait exclusion carefully \u2014 a thread parked on a provider reset takes the `status === 'failed'` branch but is explicitly not a failure, so charging it as waste would be wrong.",
       "risks": [
         "wastedUsd is keyed by provider/model and must match the key recordUsage used, or it mints a phantom row. It resolves the model via store.getUsage(threadId).model with the same fallbacks as the recording sites.",
         "Call sites that pass no extras.costUsd record nothing. Silent by design, but it means waste is undercounted rather than overcounted."
       ]
     },
     {
-      "area": "impl: src/usage.ts — the rollup",
-      "rationale": "isUnreported() is the contract between the two halves: turns > 0 AND every numeric zero. Read it against what recordUsage writes. cacheMultiplier is deliberately a token-VOLUME ratio ((input + cached) / input), not a dollar saving — per-provider cache discounts are unknown, so a '6.8x cheaper' claim would be invented. It is null when a provider reports no cache reads, which is why it must never render as one global multiplier.",
+      "area": "impl: src/usage.ts \u2014 the rollup",
+      "rationale": "isUnreported() is the contract between the two halves: turns > 0 AND every numeric zero. Read it against what recordUsage writes. cacheMultiplier is deliberately a token-VOLUME ratio ((input + cached) / input), not a dollar saving \u2014 per-provider cache discounts are unknown, so a '6.8x cheaper' claim would be invented. It is null when a provider reports no cache reads, which is why it must never render as one global multiplier.",
       "risks": [
-        "A waste-only row has turns 0, so it is neither 'unreported' nor a real turn. Verified end to end: it is correctly not flagged unreported."
+        "A waste-only row has turns 0, so it is neither 'unreported' nor a real turn. Verified end to end: it is correctly not flagged unreported.",
+        "Project/thread costShare uses the byDay range total as the denominator. threadsByDay is only ever written alongside a byDay write, so the share can under-sum but never exceed 100%.",
+        "A provider with cachedInputTokens>0 and inputTokens===0 gets cacheMultiplier=null, so an all-cache day shows no multiplier."
       ]
     },
     {
-      "area": "impl: src/components/UsageView.tsx — the view",
-      "rationale": "The headline carries '* if billed at full API rate' because almost everyone here is on a subscription and the raw-rate figure is a counterfactual, not a bill. Unreported providers render 'N turns · usage not reported' with no share bar — the distinction between 'costs nothing' and 'will not say what it costs' is the entire point of the issue. The Tokens toggle uses processedTokens, which is what finally makes providers comparable.",
+      "area": "impl: src/components/UsageView.tsx \u2014 the view",
+      "rationale": "The headline carries '* if billed at full API rate' because almost everyone here is on a subscription and the raw-rate figure is a counterfactual, not a bill. Unreported providers render 'N turns \u00b7 usage not reported' with no share bar \u2014 the distinction between 'costs nothing' and 'will not say what it costs' is the entire point of the issue. The Tokens toggle uses processedTokens, which is what finally makes providers comparable.",
       "risks": [
         "The Thread breakdown falls back to the raw thread id when a title was never recorded.",
-        "The 90-day range looks sparse: the store holds ~3 days of history. Expected, not a bug."
+        "The 90-day range looks sparse: the store holds ~3 days of history. Expected, not a bug.",
+        "Daily areas are overlapped, not stacked: a high-token cheap provider can hide an expensive low-token one. The legend is the only decoder.",
+        "The 'on runs that ended failed/stopped' explanation is a <th title>, so it is hover-only; the visible header is just 'Wasted'.",
+        "jsdom does not lay out SVG, so no test proves the areas are visible or that legend colours match the paths.",
+        "Verified against the live store: on existing history the Project and Thread tabs are empty, so both now render an explicit empty state saying attribution starts from the first run after this update."
       ]
     },
     {
@@ -54,8 +65,11 @@
     }
   ],
   "risks": [
+    "THE FIX IS PROSPECTIVE, NOT RETROACTIVE. Confirmed by a read-only scan of the live store: usageThreadsByDay is empty and there are still zero kimi rows, because the dropped turns were never written to disk. The issue's '41 kimi threads' cannot be recovered; kimi, cache tokens and per-thread attribution all begin at the next run.",
     "Codex has the same class of defect as claude, in the opposite direction: its input_tokens already includes cached tokens, so it will render as doing no caching at all. Data is available but needs its own cached-delta snapshot. Documented, not fixed, and worth a follow-up issue.",
     "Subscription plan-quota (issue item 3) is not implemented: Solenta collects no plan-quota data from any CLI, so any number shown would be invented.",
-    "Three electron suites fail in any worktree for environmental reasons (worktreeBase not configured; package-app.sh node_modules/ws) and are unrelated to this change; verified by stashing and re-running on a clean tree."
+    "Three electron suites fail in any worktree for environmental reasons (worktreeBase not configured; package-app.sh node_modules/ws) and are unrelated to this change; verified by stashing and re-running on a clean tree.",
+    "devCoder's byDay and threadsByDay fixtures are hand-aligned rather than generated from one source; drift there is not caught by tests, which use their own fixtures.",
+    "appWiring.test.tsx mounts UsageView, so a wiring regression surfaces there rather than in usageView.test.tsx."
   ]
 }

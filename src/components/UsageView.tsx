@@ -403,6 +403,15 @@ export function UsageView({ loadUsage }: UsageViewProps) {
                 </tr>
               </thead>
               <tbody>
+                {breakdownRows.length === 0 ? (
+                  <tr data-usage-breakdown-empty={group}>
+                    <td colSpan={7} className={styles.breakdownEmpty}>
+                      {group === "project" || group === "thread"
+                        ? "No per-thread usage recorded in this range. Attribution starts from the first run after this update — earlier turns were never stored per thread."
+                        : "No usage in this range."}
+                    </td>
+                  </tr>
+                ) : null}
                 {breakdownRows.map((row) => {
                   const share = metric === "cost" ? row.costShare : row.tokenShare;
                   const modelAttr =
@@ -477,7 +486,7 @@ function ProviderRow({
       >
         <span className={styles.providerName}>{row.provider}</span>
         <span className={styles.unreportedMeta}>
-          {row.turns} turns · usage not reported
+          · {row.turns} turns · usage not reported
         </span>
       </div>
     );

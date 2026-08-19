@@ -248,4 +248,28 @@ describe("UsageView", () => {
     assert.ok(threadText.includes("Kimi research"), "unreported thread");
     m.unmount();
   });
+
+  // Every store predating #556 has usageByDay but no threadsByDay, so these
+  // two tabs are empty on real history and must not read as broken.
+  it("explains an empty project/thread breakdown instead of showing a bare table", async () => {
+    const report = richReport();
+    const legacy: UsageReport = { byDay: report.byDay, threadsByDay: {} };
+    const m = await mount(<UsageView loadUsage={async () => legacy} />);
+    await m.flush();
+
+    await m.click(m.query('[data-usage-group-btn="project"]'));
+    assert.ok(m.query('[data-usage-breakdown-empty="project"]'), "project empty row");
+    assert.ok(
+      m.text().includes("Attribution starts from the first run after this update"),
+      "explains why it is empty",
+    );
+
+    await m.click(m.query('[data-usage-group-btn="thread"]'));
+    assert.ok(m.query('[data-usage-breakdown-empty="thread"]'), "thread empty row");
+
+    // The model tab still has data, so it must not show the empty row.
+    await m.click(m.query('[data-usage-group-btn="model"]'));
+    assert.equal(m.query('[data-usage-breakdown-empty="model"]'), null);
+    m.unmount();
+  });
 });
