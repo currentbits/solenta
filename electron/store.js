@@ -1417,20 +1417,23 @@ class Store {
 
   /**
    * Add a per-turn usage delta into today's local-day / provider / model bucket.
-   * Tokens are recorded even when costUsd is 0 (subscription providers).
-   * Ignored when provider is missing/empty, or when all three numeric deltas
-   * are 0 / non-finite.
-   * @param {{ provider?: unknown, model?: unknown, costUsd?: unknown, inputTokens?: unknown, outputTokens?: unknown }} input
+   * A named provider is enough — zeros stay zeros. Kimi reports no usage at
+   * all; dropping those turns hid the provider (#556). Simulate is ignored
+   * so fixture runs do not pollute the ledger.
+   * When threadId is a non-empty string, the same numbers accumulate into
+   * usageThreadsByDay; project/title/provider/model are last-seen labels.
+   * @param {{ provider?: unknown, model?: unknown, costUsd?: unknown, inputTokens?: unknown, cachedInputTokens?: unknown, cacheWriteTokens?: unknown, outputTokens?: unknown, threadId?: unknown, projectId?: unknown, projectName?: unknown, title?: unknown }} input
    * @param {Date} [now] - injectable clock for tests
    */
   recordUsage(input, now = new Date()) {
     const provider =
       input && typeof input.provider === "string" ? input.provider : "";
-    if (!provider) return;
+    if (!provider || provider === "simulate") return;
     const costUsd = coerceFiniteNumber(input && input.costUsd);
     const inputTokens = coerceFiniteNumber(input && input.inputTokens);
+    const cachedInputTokens = coerceFiniteNumber(input && input.cachedInputTokens);
+    const cacheWriteTokens = coerceFiniteNumber(input && input.cacheWriteTokens);
     const outputTokens = coerceFiniteNumber(input && input.outputTokens);
-    if (costUsd === 0 && inputTokens === 0 && outputTokens === 0) return;
     if (!this.data.usageByDay || typeof this.data.usageByDay !== "object") {
       this.data.usageByDay = {};
     }
@@ -1447,9 +1450,101 @@ class Store {
       ...prev,
       costUsd: prev.costUsd + costUsd,
       inputTokens: prev.inputTokens + inputTokens,
+      cachedInputTokens: prev.cachedInputTokens + cachedInputTokens,
+      cacheWriteTokens: prev.cacheWriteTokens + cacheWriteTokens,
       outputTokens: prev.outputTokens + outputTokens,
       turns: prev.turns + 1,
     };
+
+    const threadId =
+      input && typeof input.threadId === "string" ? input.threadId : "";
+    if (threadId) {
+      if (!this.data.usageThreadsByDay || typeof this.data.usageThreadsByDay !== "object") {
+        this.data.usageThreadsByDay = {};
+      }
+      const threadsDay =
+        this.data.usageThreadsByDay[day] && typeof this.data.usageThreadsByDay[day] === "object"
+          ? this.data.usageThreadsByDay[day]
+          : (this.data.usageThreadsByDay[day] = {});
+      const prevThread = coerceUsageCell(threadsDay[threadId]);
+      threadsDay[threadId] = {
+        ...prevThread,
+        costUsd: prevThread.costUsd + costUsd,
+        inputTokens: prevThread.inputTokens + inputTokens,
+        cachedInputTokens: prevThread.cachedInputTokens + cachedInputTokens,
+        cacheWriteTokens: prevThread.cacheWriteTokens + cacheWriteTokens,
+        outputTokens: prevThread.outputTokens + outputTokens,
+        turns: prevThread.turns + 1,
+        projectId: typeof input.projectId === "string" ? input.projectId : "",
+        projectName: typeof input.projectName === "string" ? input.projectName : "",
+        title: typeof input.title === "string" ? input.title : "",
+        provider,
+        model: typeof model === "string" ? model : "unknown",
+      };
+    }
+  }
+
+  /**
+   * Of cost already recorded by recordUsage, attribute the share spent on a
+   * run that ended failed or stopped. Not additive to costUsd.
+   * Creates the provider/model (and thread) row if absent — turns stay 0.
+   * @param {{ provider?: unknown, model?: unknown, threadId?: unknown, costUsd?: unknown, projectId?: unknown, projectName?: unknown, title?: unknown }} input
+   * @param {Date} [now] - injectable clock for tests
+   */
+  recordWastedSpend(input, now = new Date()) {
+    const provider =
+      input && typeof input.provider === "string" ? input.provider : "";
+    if (!provider || provider === "simulate") return;
+    const costUsd = coerceFiniteNumber(input && input.costUsd);
+    if (costUsd <= 0) return;
+    if (!this.data.usageByDay || typeof this.data.usageByDay !== "object") {
+      this.data.usageByDay = {};
+    }
+    const day = localDayKey(now);
+    const dayMap = this.data.usageByDay[day] && typeof this.data.usageByDay[day] === "object"
+      ? this.data.usageByDay[day]
+      : (this.data.usageByDay[day] = {});
+    const providerMap = dayMap[provider] && typeof dayMap[provider] === "object"
+      ? dayMap[provider]
+      : (dayMap[provider] = {});
+    const model = (input && input.model) || "unknown";
+    const prev = coerceUsageCell(providerMap[model]);
+    providerMap[model] = {
+      ...prev,
+      wastedUsd: prev.wastedUsd + costUsd,
+    };
+
+    const threadId =
+      input && typeof input.threadId === "string" ? input.threadId : "";
+    if (threadId) {
+      if (!this.data.usageThreadsByDay || typeof this.data.usageThreadsByDay !== "object") {
+        this.data.usageThreadsByDay = {};
+      }
+      const threadsDay =
+        this.data.usageThreadsByDay[day] && typeof this.data.usageThreadsByDay[day] === "object"
+          ? this.data.usageThreadsByDay[day]
+          : (this.data.usageThreadsByDay[day] = {});
+      const prevThread = coerceUsageCell(threadsDay[threadId]);
+      const prevRow =
+        threadsDay[threadId] && typeof threadsDay[threadId] === "object"
+          ? /** @type {UsageThreadCell} */ (threadsDay[threadId])
+          : null;
+      // Keep labels the turn already recorded; fall back to the caller's when
+      // the run burned cost without ever recording a turn, so the breakdown
+      // shows a name instead of "Unknown project" and a raw thread id.
+      const label = (fromRow, fromInput) =>
+        (prevRow && typeof fromRow === "string" && fromRow) ||
+        (typeof fromInput === "string" ? fromInput : "");
+      threadsDay[threadId] = {
+        ...prevThread,
+        wastedUsd: prevThread.wastedUsd + costUsd,
+        projectId: label(prevRow && prevRow.projectId, input.projectId),
+        projectName: label(prevRow && prevRow.projectName, input.projectName),
+        title: label(prevRow && prevRow.title, input.title),
+        provider,
+        model: typeof model === "string" ? model : "unknown",
+      };
+    }
   }
 
   /**

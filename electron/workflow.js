@@ -330,6 +330,8 @@ function spawnAgentClaude(opts) {
         const u = ev.usage || {};
         usage = {
           inputTokens: Number(u.input_tokens) || 0,
+          cachedInputTokens: Number(u.cache_read_input_tokens) || 0,
+          cacheWriteTokens: Number(u.cache_creation_input_tokens) || 0,
           outputTokens: Number(u.output_tokens) || 0,
           costUsd: Number(ev.total_cost_usd) || 0,
         };
@@ -919,6 +921,8 @@ async function startWorkflowRun(deps) {
   const liveHandles = new Map();
   /** Accumulated usage across agents (also on entry.runUsage for stop footers). */
   let aggInput = 0;
+  let aggCached = 0;
+  let aggCacheWrite = 0;
   let aggOutput = 0;
   let aggCost = 0;
   const runUsage = { tokensIn: 0, tokensOut: 0, costUsd: 0 };
@@ -1144,6 +1148,8 @@ async function startWorkflowRun(deps) {
           Math.ceil((result.text || "").length / 4) ||
           1;
         aggInput += result.usage.inputTokens || 0;
+        aggCached += result.usage.cachedInputTokens || 0;
+        aggCacheWrite += result.usage.cacheWriteTokens || 0;
         aggOutput += result.usage.outputTokens || 0;
         const agentCost = Number(result.usage.costUsd) || 0;
         aggCost += agentCost;
@@ -1162,6 +1168,8 @@ async function startWorkflowRun(deps) {
         agent.tokensUsed =
           (result.usage.inputTokens || 0) + (result.usage.outputTokens || 0);
         aggInput += result.usage.inputTokens || 0;
+        aggCached += result.usage.cachedInputTokens || 0;
+        aggCacheWrite += result.usage.cacheWriteTokens || 0;
         aggOutput += result.usage.outputTokens || 0;
         const agentCost = Number(result.usage.costUsd) || 0;
         aggCost += agentCost;
@@ -1289,7 +1297,19 @@ async function startWorkflowRun(deps) {
           costUsd: prev.costUsd + aggCost,
           turns: prev.turns + 1,
         });
-        store.recordUsage({ provider: thread.provider, model: prev.model || thread.model || agentModelLabel(phaseSpec), costUsd: aggCost, inputTokens: aggInput, outputTokens: aggOutput });
+        store.recordUsage({
+          provider: thread.provider,
+          model: prev.model || thread.model || agentModelLabel(phaseSpec),
+          costUsd: aggCost,
+          inputTokens: aggInput,
+          cachedInputTokens: aggCached,
+          cacheWriteTokens: aggCacheWrite,
+          outputTokens: aggOutput,
+          threadId,
+          projectId: thread.projectId,
+          projectName: store.getProject(thread.projectId)?.name,
+          title: thread.title,
+        });
         // spendByDay is updated per agent above; do not re-record aggCost here.
 
         recomputeView(view);
