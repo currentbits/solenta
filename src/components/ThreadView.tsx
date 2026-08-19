@@ -103,6 +103,11 @@ import {
 import { Composer } from "./Composer";
 import { Markdown } from "./Markdown";
 import { PathLinkProvider, PathText } from "./PathLinks";
+import {
+  messageProvenance,
+  provenanceVisible,
+  type MessageProvenance,
+} from "../provenance";
 import styles from "./ThreadView.module.css";
 
 const EMPTY_COMPARE_PEERS: ComparePeer[] = [];
@@ -851,6 +856,74 @@ const UserMessageBlock = memo(function UserMessageBlock({
   );
 });
 
+/** Last two path segments for a chip; full list stays on the tooltip. */
+function provShortPath(p: string): string {
+  const parts = p.split("/");
+  return parts.length > 2 ? parts.slice(-2).join("/") : p;
+}
+
+/**
+ * Provenance tier strip under an assistant message (issue #404). Grounded
+ * messages get one chip per addressable source tier; a substantive message
+ * with no addressable source gets the "model prior knowledge" tag — the
+ * fluent-summary warning this feature exists for.
+ */
+function ProvenanceStrip({
+  prov,
+  text,
+}: {
+  prov: MessageProvenance;
+  text: string;
+}) {
+  if (!provenanceVisible(prov, text)) return null;
+  if (!prov.grounded) {
+    return (
+      <div className={styles.provStrip} data-provenance="prior">
+        <span
+          className={styles.provChip}
+          data-tier="prior"
+          title="No repo file, shared-memory entry, or GitHub issue backs this message — it came from the model's prior knowledge."
+        >
+          model prior knowledge
+        </span>
+      </div>
+    );
+  }
+  return (
+    <div className={styles.provStrip} data-provenance="grounded">
+      {prov.repo.length > 0 && (
+        <span
+          className={styles.provChip}
+          data-tier="repo"
+          title={prov.repo.join("\n")}
+        >
+          repo: {provShortPath(prov.repo[0])}
+          {prov.repo.length > 1 ? ` +${prov.repo.length - 1}` : ""}
+        </span>
+      )}
+      {prov.memory.length > 0 && (
+        <span
+          className={styles.provChip}
+          data-tier="memory"
+          title={`Shared memory: ${prov.memory.join(", ")}`}
+        >
+          memory
+        </span>
+      )}
+      {prov.issues.map((ref) => (
+        <span
+          key={ref}
+          className={styles.provChip}
+          data-tier="issue"
+          title="GitHub issue/PR reference"
+        >
+          {ref.startsWith("#") ? ref : "issue"}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 const MessageBlock = memo(function MessageBlock({
   message,
   autoExpandTool,
@@ -864,6 +937,7 @@ const MessageBlock = memo(function MessageBlock({
   metaModel = null,
   metaEffort = null,
   metaDuration = null,
+  provenance = null,
   onLoadImage,
   onLoadAttachmentImage,
 }: {
@@ -882,6 +956,8 @@ const MessageBlock = memo(function MessageBlock({
   metaModel?: string | null;
   metaEffort?: string | null;
   metaDuration?: string | null;
+  /** Provenance tiers for assistant messages; null hides the strip. */
+  provenance?: MessageProvenance | null;
 }) {
   if (message.role === "tool") {
     return (
@@ -935,6 +1011,7 @@ const MessageBlock = memo(function MessageBlock({
   return (
     <article className={styles.message}>
       <Markdown text={message.text} />
+      {provenance && <ProvenanceStrip prov={provenance} text={message.text} />}
       <footer className={styles.msgMeta}>{metaLine}</footer>
     </article>
   );
@@ -2955,6 +3032,21 @@ export const ThreadView = memo(function ThreadView({
     return map;
   }, [detail]);
 
+  /**
+   * Provenance tiers per assistant message (issue #404), computed over the
+   * raw message list so turn boundaries (previous user message) are intact.
+   */
+  const provenanceById = useMemo(() => {
+    const map = new Map<string, MessageProvenance>();
+    if (!detail) return map;
+    for (let i = 0; i < detail.messages.length; i++) {
+      if (detail.messages[i].role !== "assistant") continue;
+      const prov = messageProvenance(detail.messages, i);
+      if (prov) map.set(detail.messages[i].id, prov);
+    }
+    return map;
+  }, [detail]);
+
   const latestWorkLogRunId = useMemo(() => {
     let latest: WorkLogGroup | null = null;
     for (const entry of timeline) {
@@ -4080,6 +4172,9 @@ export const ThreadView = memo(function ThreadView({
                         entry.message.runId
                           ? (durationByRunId.get(entry.message.runId) ?? null)
                           : null
+                      }
+                      provenance={
+                        provenanceById.get(entry.message.id) ?? null
                       }
                     />
                     {bar && (

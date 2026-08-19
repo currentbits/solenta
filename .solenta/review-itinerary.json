@@ -4,6 +4,25 @@
   "chunks": [
     {
       "area": "tests",
+      "rationale": "test/provenance.test.ts is the contract: it pins what counts as grounding (repo tool calls, memory tools, gh/#refs), the turn boundary, and the chatter threshold. Read it before the classifier so the regexes in src/provenance.ts have a spec to be checked against. The new block in test/threadView.test.tsx (describe 'ThreadView provenance tiers') then proves the strip actually renders in the transcript — the file's own header explains why render coverage matters here.",
+      "risks": [
+        "The 'turn boundary' test only proves scanning stops at a user message; it does not cover event messages interleaved with tool calls (they are skipped, which is intended).",
+        "Render tests assert data-tier attributes, not visual placement of the strip above the meta footer."
+      ]
+    },
+    {
+      "area": "impl",
+      "rationale": "src/provenance.ts is the pure classifier — start at messageProvenance (bottom), then classifyTool/classifyText. Then the ThreadView.tsx diff in render order: provenanceById memo (computes per assistant message over raw detail.messages), the provenance prop passed at the MessageBlock call site, and the ProvenanceStrip component above MessageBlock. Finish with the .provStrip/.provChip rules in ThreadView.module.css.",
+      "risks": [
+        "Evidence is turn-scoped: a long final summary whose reads happened in an earlier turn of the same run shows 'model prior knowledge' even though the run did touch the repo. Deliberate (per-turn attribution), but it is the most likely false-positive a user will report.",
+        "Backticked spans that merely look like paths (e.g. `node_modules/foo/index.js`) ground a message the model may never have read — the repo chip asserts citation, not verification against the worktree.",
+        "provenanceById recomputes over every assistant message on each detail update (stream tick); regex cost is small but the memo key is the whole detail object.",
+        "Truncated tool input falls back to a regex that stops at the first quote — an escaped quote in a path would misparse (cosmetic only, chip label).",
+        "Issue refs are collected from gh commands and #-refs without checking the issue exists; chips are labels, not verified links (no click-through in v1)."
+      ]
+    },
+    {
+      "area": "tests",
       "rationale": "Contract first. electron/test/pr-size-cap.test.js is the guardrail contract: default 400 cap, over-cap refusal BEFORE push/gh (asserts zero 'pr create' calls and no persisted prNumber), allowOversize override, null disables, custom cap, parseNumstat (binary files count as files, not lines). test/planboard.test.ts pins reviewLoad thresholds (busy at 4 PRs / >1200 lines, overloaded at 7 / >2400) and the draft/merged exclusions. test/planboardView.test.tsx proves the meter renders only when listPrs is wired and survives a PR-list failure. test/nextGitActionButton.test.tsx walks the full refusal UI: bar appears, Split sends the restack prompt, Create anyway retries with allowOversize:true, non-cap errors never show the bar. test/prUi.test.ts pins the cross-process message prefix.",
       "risks": [
         "The oversize-bar test relies on gitSyncInfo {hasUpstream:true,ahead:0} resolving to the create-pr action; a nextGitAction table change would reroute the test, not break it — the assertions are on the bar, not the action.",
@@ -85,6 +104,8 @@
     }
   ],
   "risks": [
+    "Feature is display-only: chips have titles but no click-through to file/memory/issue, although the issue calls those tiers 'addressable'. Addressability is a follow-up.",
+    "PRIOR_MIN_CHARS=240 is a judgement call; recaps just under the threshold escape the prior tag.",
     "Auto-split is agent-mediated (splitPrPrompt restacks the branch), not a git-level splitter: true stacked-PR UX (position badges, safe-prefix merge) remains #240. The prompt instructs --base <previous-slice-branch> so the chain is correct even before #240 ships.",
     "The review-load meter reads gh pr list additions/deletions; on old gh versions listPrs falls back to the short field set and lines show as 0 — the meter then reflects PR count only.",
     "fleet.js already aggregates similar PR data; the meter deliberately reuses listPrs instead to stay per-project and failure-in-band. If a third consumer appears, unify.",
