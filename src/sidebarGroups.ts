@@ -11,7 +11,6 @@ import {
   effectiveSnoozed,
   isPinned,
 } from "./threadSnooze";
-import { countUnread } from "./threadUnread";
 
 export interface SidebarGroup {
   project: ProjectInfo | null;
@@ -126,25 +125,6 @@ export function partitionSidebar(
     snoozed,
     settled,
   };
-}
-
-/**
- * Project header summary: working count (round 40) plus unread (round 43).
- * Examples: "2 working", "3 unread", "2 working · 3 unread".
- * Settled counts live on the global tail header, not here.
- * Null when there is nothing to say.
- */
-export function groupHeaderSummary(
-  threads: readonly ThreadInfo[],
-): string | null {
-  if (threads.length === 0) return null;
-  const working = threads.filter((t) => t.status === "working").length;
-  const unread = countUnread(threads);
-  const parts: string[] = [];
-  if (working > 0) parts.push(`${working} working`);
-  if (unread > 0) parts.push(`${unread} unread`);
-  if (parts.length === 0) return null;
-  return parts.join(" · ");
 }
 
 /** Default opts when a caller has no clock of its own (tests, pure helpers). */

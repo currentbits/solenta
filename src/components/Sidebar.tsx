@@ -27,14 +27,12 @@ import {
   formatElapsed,
   formatRelativeAge,
   formatWorkingLabel,
-  providerDisplayName,
 } from "../format";
 import { formatQuotaWaitLabel } from "../quotaWait";
 import { sidebarPrBadge } from "../prUi";
 import {
   GROUP_ATTENTION_CAP,
   buildSidebarSections,
-  groupHeaderSummary,
   partitionSidebar,
   visibleAttentionCount,
 } from "../sidebarGroups";
@@ -527,7 +525,6 @@ export const ThreadCard = memo(function ThreadCard({
   onToggleSnoozeMenu,
   forkMenuOpen = false,
   onToggleForkMenu,
-  remote = false,
   nested = false,
   wait = null,
   showSlug = true,
@@ -563,8 +560,6 @@ export const ThreadCard = memo(function ThreadCard({
   onToggleSnoozeMenu?: (threadId: string | null) => void;
   forkMenuOpen?: boolean;
   onToggleForkMenu?: (threadId: string | null) => void;
-  /** True when the thread's project lives on an SSH remote. */
-  remote?: boolean;
   /** Fork/worker rendered attached under its source thread (indent + elbow). */
   nested?: boolean;
   /** Live delegated work this thread is blocked on (issue #42); null when none. */
@@ -586,7 +581,6 @@ export const ThreadCard = memo(function ThreadCard({
     prNumber: thread.prNumber,
     prUrl: thread.prUrl,
   });
-  const providerLabel = providerDisplayName(thread.provider, providers);
   const working = thread.status === "working";
   // Settled cards offer "keep active"; attention cards offer "settle".
   const settleOverride = isSettled ? ("active" as const) : ("settled" as const);
@@ -656,28 +650,9 @@ export const ThreadCard = memo(function ThreadCard({
       <div className={styles.cardBody}>
         <div className={styles.cardTop}>
           {showSlug && <span className={styles.repo}>{slug}</span>}
-          <span className={styles.cardTags}>
-            <span className={styles.providerTag}>{providerLabel}</span>
-            {remote && (
-              <span className={styles.sshTag} data-ssh-tag="" title="SSH remote">
-                ssh
-              </span>
-            )}
-            {(thread.worktreePath || thread.pendingWorktree) && (
-              <span className={styles.worktreeTag}>wt</span>
-            )}
-            {thread.ask === true && (
-              <span className={styles.askTag} data-ask-tag="" title="Ask mode — repo Q&A, no worktree">
-                ask
-              </span>
-            )}
-            {thread.archived && (
-              <span className={styles.archivedTag}>archived</span>
-            )}
-            {contentMatch && (
-              <span className={styles.inMessagesTag}>in messages</span>
-            )}
-          </span>
+          {contentMatch && (
+            <span className={styles.inMessagesTag}>in messages</span>
+          )}
           <span className={styles.age}>
             {formatRelativeAge(thread.updatedAt, now)}
           </span>
@@ -764,15 +739,6 @@ export const ThreadCard = memo(function ThreadCard({
             {waitLabel(wait, now)}
           </div>
         )}
-        {thread.notes ? (
-          <div
-            className={styles.notesPreview}
-            data-notes-preview={thread.id}
-            title={thread.notes}
-          >
-            {thread.notes.split("\n")[0]}
-          </div>
-        ) : null}
       </div>
       {(onSetSettled || onSetPinned || onSetSnoozed || onFork) && (
         <div className={styles.cardActions} data-card-actions="">
@@ -2807,7 +2773,6 @@ export const Sidebar = memo(function Sidebar({
                   // A collapsed project shows only its header. Search overrides the
                   // collapse: hiding hits inside a collapsed group makes results lie.
                   const collapsed = !searching && collapsedGroups.has(groupKey);
-                  const summary = groupHeaderSummary(attentionThreads);
                   // Overflow cap (issue #70): a group renders its newest
                   // GROUP_ATTENTION_CAP attention threads; the rest hide behind a
                   // session-only "Show more". Search bypasses the cap like every
@@ -2865,9 +2830,6 @@ export const Sidebar = memo(function Sidebar({
                             </svg>
                           </span>
                           <span className={styles.groupSlug}>{slug}</span>
-                          {summary && (
-                            <span className={styles.groupSummary}>{summary}</span>
-                          )}
                           <span className={styles.groupCount}>
                             {searching
                               ? groupThreads.length
@@ -2952,7 +2914,6 @@ export const Sidebar = memo(function Sidebar({
                                 thread={thread}
                                 slug={slug}
                                 showSlug={project == null}
-                                remote={Boolean(project?.remoteHost)}
                                 providers={providers}
                                 active={thread.id === activeThreadId}
                                 multiSelected={multiSelected.has(thread.id)}
@@ -3012,7 +2973,6 @@ export const Sidebar = memo(function Sidebar({
                                   thread={thread}
                                   slug={slug}
                                   showSlug={project == null}
-                                  remote={Boolean(project?.remoteHost)}
                                   providers={providers}
                                   active={thread.id === activeThreadId}
                                   multiSelected={multiSelected.has(thread.id)}

@@ -8,7 +8,6 @@ import {
   GROUP_ATTENTION_CAP,
   buildSidebarGroups,
   buildSidebarSections,
-  groupHeaderSummary,
   partitionSidebar,
   splitSettled,
   visibleAttentionCount,
@@ -389,107 +388,6 @@ describe("splitSettled (round 39 effectiveSettled)", () => {
       settleOpts,
     );
     assert.deepEqual(settled.map((t) => t.id), ["quiet"]);
-  });
-});
-
-describe("groupHeaderSummary (round 40 working + round 43 unread)", () => {
-  it("counts working and omits settled (settled moved to the global tail)", () => {
-    assert.equal(
-      groupHeaderSummary([
-        thread({
-          id: "w1",
-          projectId: "a",
-          updatedAt: 3,
-          status: "working",
-        }),
-        thread({
-          id: "w2",
-          projectId: "a",
-          updatedAt: 2,
-          status: "working",
-        }),
-        thread({
-          id: "d",
-          projectId: "a",
-          updatedAt: 1,
-          status: "done",
-          prState: "MERGED",
-        }),
-      ]),
-      "2 working",
-      "no settled half on project headers after round 40",
-    );
-    assert.equal(
-      groupHeaderSummary([
-        thread({
-          id: "fresh",
-          projectId: "a",
-          updatedAt: NOW,
-          status: "done",
-        }),
-      ]),
-      null,
-      "no working threads → no summary",
-    );
-  });
-
-  it("appends unread count when any attention thread is unread", () => {
-    assert.equal(
-      groupHeaderSummary([
-        thread({
-          id: "w1",
-          projectId: "a",
-          updatedAt: 30,
-          status: "working",
-          lastVisitedAt: 10,
-        }),
-        thread({
-          id: "read",
-          projectId: "a",
-          updatedAt: 20,
-          status: "idle",
-          lastVisitedAt: 20,
-        }),
-        thread({
-          id: "newmsg",
-          projectId: "a",
-          updatedAt: 40,
-          status: "done",
-          lastVisitedAt: 5,
-        }),
-      ]),
-      "1 working · 2 unread",
-    );
-    assert.equal(
-      groupHeaderSummary([
-        thread({
-          id: "only-unread",
-          projectId: "a",
-          updatedAt: 50,
-          status: "idle",
-          lastVisitedAt: 1,
-        }),
-      ]),
-      "1 unread",
-      "unread alone is enough for a summary",
-    );
-    assert.equal(
-      groupHeaderSummary([
-        thread({
-          id: "legacy",
-          projectId: "a",
-          updatedAt: 99,
-          status: "idle",
-          lastVisitedAt: null,
-        }),
-      ]),
-      null,
-      "legacy null lastVisitedAt is not unread",
-    );
-  });
-
-  it("says nothing for empty groups", () => {
-    assert.equal(groupHeaderSummary([]), null);
   });
 });
 

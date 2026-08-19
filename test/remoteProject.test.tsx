@@ -102,21 +102,6 @@ function renderGit(project: ProjectInfo): string {
   );
 }
 
-describe("sidebar ssh tag", () => {
-  it("renders an ssh tag next to the provider tag on remote projects", () => {
-    const html = renderCard(true);
-    assert.ok(html.includes("data-ssh-tag"), "ssh tag hook missing");
-    assert.match(html, />ssh</);
-    assert.ok(html.includes("SSH remote"), "tag title tooltip missing");
-  });
-
-  it("does not render an ssh tag on local projects", () => {
-    const html = renderCard(false);
-    assert.ok(!html.includes("data-ssh-tag"));
-    assert.ok(!html.includes(">ssh<"));
-  });
-});
-
 describe("Environment tab remote hint", () => {
   it("replaces worktree/PR/servers/checkpoints with a hint on remotes", () => {
     const html = renderGit(remoteProject);

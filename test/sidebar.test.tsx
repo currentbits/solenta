@@ -288,19 +288,6 @@ describe("Sidebar project groups keep attention only (round 40)", () => {
     m.unmount();
   });
 
-  it("shows working-only summary on the group header (no settled half)", async () => {
-    const m = await mount(sidebar(THREADS, { projects: [p1, p2] }));
-    assert.match(
-      groupHeader(m, "acme/ledger").textContent || "",
-      /1 working/,
-      "header still counts working",
-    );
-    assert.ok(
-      !(groupHeader(m, "acme/ledger").textContent || "").includes("settled"),
-      "settled half must leave project headers",
-    );
-    m.unmount();
-  });
 
   it("archived wins over settled for a MERGED thread", async () => {
     const m = await mount(
@@ -1388,16 +1375,6 @@ describe("Sidebar unread indicators (round 43)", () => {
     m.unmount();
   });
 
-  it("extends the project header with · N unread", async () => {
-    const m = await mount(
-      sidebar(UNREAD_THREADS, { projects: [p1], activeThreadId: "sel" }),
-    );
-    const header = groupHeader(m, "acme/ledger").textContent || "";
-    // attention: visited-first, sel, u-mid, legacy-null → unread among them:
-    // sel is unread by predicate, u-mid is unread → 2 unread (legacy no).
-    assert.match(header, /\d+ unread/, `header must count unread, got: ${header}`);
-    m.unmount();
-  });
 
   /**
    * B2: pin zero-unread omission on the settled tail header.
@@ -1738,10 +1715,6 @@ describe("Sidebar group overflow cap + card density (issue #70)", () => {
     assert.ok(
       !(homeCard!.textContent || "").includes("acme/ledger"),
       "group header already carries the slug — the card must not repeat it",
-    );
-    assert.ok(
-      (homeCard!.textContent || "").includes("Claude Code"),
-      "provider tag survives the row merge",
     );
     const orphanCard = m.query('[data-thread-card="orphan-1"]');
     assert.ok(orphanCard, "orphan card renders");

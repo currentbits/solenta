@@ -1,5 +1,6 @@
 /**
- * Issue #194: per-thread scratch notes in the header + sidebar preview.
+ * Issue #194: per-thread scratch notes in the header.
+ * (The sidebar notes preview died with #566 one-line rows.)
  * Run: npm run test:renderer
  */
 import assert from "node:assert/strict";
@@ -12,23 +13,9 @@ import {
   thread,
   detail,
 } from "./support/fakeCoder";
-import { ThreadCard } from "../src/components/Sidebar";
 import App from "../src/App";
-import type { ProviderInfo } from "../src/shared/ipc";
 
 const FRESH = Date.now();
-
-const providers: ProviderInfo[] = [
-  {
-    id: "claude",
-    name: "Claude Code",
-    available: true,
-    supportsResume: true,
-    models: [],
-    modelInfo: [],
-    efforts: [],
-  },
-];
 
 async function boot(fake: ReturnType<typeof createFakeCoder>) {
   const shell = await mount(<div />);
@@ -271,62 +258,4 @@ describe("thread notes (issue #194)", () => {
     }
   });
 
-  it("sidebar card shows a notes preview only when the thread has notes", async () => {
-    const withNotes = thread({
-      id: "t-notes",
-      projectId: "p1",
-      notes: "merge after #42 lands\nsecond line stays in the title tooltip",
-    });
-    const without = thread({
-      id: "t-plain",
-      projectId: "p1",
-      notes: "",
-    });
-
-    const has = await mount(
-      <ThreadCard
-        thread={withNotes}
-        slug="acme/ledger"
-        providers={providers}
-        active={false}
-        now={FRESH}
-        onSelect={() => {}}
-      />,
-    );
-    try {
-      const preview = has.query('[data-notes-preview="t-notes"]');
-      assert.ok(preview, "preview on a card with notes");
-      assert.equal(
-        (preview!.textContent || "").trim(),
-        "merge after #42 lands",
-      );
-      assert.equal(
-        preview!.getAttribute("title"),
-        "merge after #42 lands\nsecond line stays in the title tooltip",
-      );
-    } finally {
-      has.unmount();
-    }
-
-    const empty = await mount(
-      <ThreadCard
-        thread={without}
-        slug="acme/ledger"
-        providers={providers}
-        active={false}
-        now={FRESH}
-        onSelect={() => {}}
-      />,
-    );
-    try {
-      assert.equal(
-        empty.query('[data-notes-preview="t-plain"]'),
-        null,
-        "no preview when notes are empty",
-      );
-      assert.equal(empty.query("[data-notes-preview]"), null);
-    } finally {
-      empty.unmount();
-    }
-  });
 });

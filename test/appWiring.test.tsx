@@ -724,15 +724,6 @@ describe("App selection stamps lastVisitedAt (round 43 unread)", () => {
         m.query('[data-unread-dot="t-unread-mid"]'),
         "before select: unread mid must show a dot",
       );
-      // Project header counts the one unread attention row.
-      const headerBefore = m
-        .queryAll("button")
-        .find((b) => (b.textContent || "").includes("owner/repo"));
-      assert.ok(
-        (headerBefore?.textContent || "").includes("1 unread"),
-        `header must count 1 unread before visit, got: ${headerBefore?.textContent}`,
-      );
-
       // Prefer data-thread-card select (stable under aria-label churn).
       const unreadCard = m.query('[data-thread-card="t-unread-mid"]');
       assert.ok(unreadCard, "unread card must render");
@@ -795,14 +786,6 @@ describe("App selection stamps lastVisitedAt (round 43 unread)", () => {
         "stamped visit must leave the row not-unread by the pure predicate",
       );
 
-      // Header unread count must drop (0 → no "unread" fragment).
-      const headerAfter = m
-        .queryAll("button")
-        .find((b) => (b.textContent || "").includes("owner/repo"));
-      assert.ok(
-        !(headerAfter?.textContent || "").includes("unread"),
-        `header must drop unread after visit, got: ${headerAfter?.textContent}`,
-      );
     } finally {
       m.unmount();
     }
