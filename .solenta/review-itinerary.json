@@ -70,6 +70,7 @@
     "Subscription plan-quota (issue item 3) is not implemented: Solenta collects no plan-quota data from any CLI, so any number shown would be invented.",
     "Three electron suites fail in any worktree for environmental reasons (worktreeBase not configured; package-app.sh node_modules/ws) and are unrelated to this change; verified by stashing and re-running on a clean tree.",
     "devCoder's byDay and threadsByDay fixtures are hand-aligned rather than generated from one source; drift there is not caught by tests, which use their own fixtures.",
-    "appWiring.test.tsx mounts UsageView, so a wiring regression surfaces there rather than in usageView.test.tsx."
+    "appWiring.test.tsx mounts UsageView, so a wiring regression surfaces there rather than in usageView.test.tsx.",
+    "Merged origin/main (25 commits). The only conflict was this itinerary: origin's copy annotated PR #557's ThreadView work, which had already landed in the base, so this branch's copy was kept. ThreadView reached this branch earlier via dc1d612 and #557 landed byte-identical content, so it auto-merged and is NOT part of this PR's diff \u2014 verify with `git diff origin/main...HEAD --stat`."
   ]
 }
