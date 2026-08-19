@@ -554,6 +554,40 @@ describe("spendByDay and settings", () => {
     assert.equal(store.getUsageThreadsByDay()["2026-08-06"]["t-ghost"].turns, 0);
     assert.equal(store.getUsageThreadsByDay()["2026-08-06"]["t-ghost"].wastedUsd, 0.4);
 
+    // A run that burned cost without ever recording a turn still needs labels,
+    // or the project/thread breakdown shows "Unknown project" and a raw id.
+    store.recordWastedSpend(
+      {
+        provider: "grok",
+        model: "grok-4",
+        threadId: "t-nolabel",
+        costUsd: 0.2,
+        projectId: "p2",
+        projectName: "Beta",
+        title: "Died early",
+      },
+      now,
+    );
+    const labelled = store.getUsageThreadsByDay()["2026-08-06"]["t-nolabel"];
+    assert.equal(labelled.projectName, "Beta");
+    assert.equal(labelled.title, "Died early");
+    // Labels already on the row win over a later caller's.
+    store.recordWastedSpend(
+      {
+        provider: "grok",
+        model: "grok-4",
+        threadId: "t-nolabel",
+        costUsd: 0.1,
+        projectName: "Stale",
+        title: "Stale",
+      },
+      now,
+    );
+    assert.equal(
+      store.getUsageThreadsByDay()["2026-08-06"]["t-nolabel"].title,
+      "Died early",
+    );
+
     store.recordWastedSpend(
       { provider: "claude", model: "opus", costUsd: 0 },
       now,

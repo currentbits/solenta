@@ -1297,6 +1297,9 @@ function createRunner(opts) {
           model,
           threadId,
           costUsd: extras.costUsd,
+          projectId: thread.projectId,
+          projectName: store.getProject(thread.projectId)?.name,
+          title: thread.title,
         });
       }
       const project = store.getProject(thread.projectId);

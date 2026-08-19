@@ -1488,7 +1488,7 @@ class Store {
    * Of cost already recorded by recordUsage, attribute the share spent on a
    * run that ended failed or stopped. Not additive to costUsd.
    * Creates the provider/model (and thread) row if absent — turns stay 0.
-   * @param {{ provider?: unknown, model?: unknown, threadId?: unknown, costUsd?: unknown }} input
+   * @param {{ provider?: unknown, model?: unknown, threadId?: unknown, costUsd?: unknown, projectId?: unknown, projectName?: unknown, title?: unknown }} input
    * @param {Date} [now] - injectable clock for tests
    */
   recordWastedSpend(input, now = new Date()) {
@@ -1529,16 +1529,18 @@ class Store {
         threadsDay[threadId] && typeof threadsDay[threadId] === "object"
           ? /** @type {UsageThreadCell} */ (threadsDay[threadId])
           : null;
+      // Keep labels the turn already recorded; fall back to the caller's when
+      // the run burned cost without ever recording a turn, so the breakdown
+      // shows a name instead of "Unknown project" and a raw thread id.
+      const label = (fromRow, fromInput) =>
+        (prevRow && typeof fromRow === "string" && fromRow) ||
+        (typeof fromInput === "string" ? fromInput : "");
       threadsDay[threadId] = {
         ...prevThread,
         wastedUsd: prevThread.wastedUsd + costUsd,
-        projectId:
-          prevRow && typeof prevRow.projectId === "string" ? prevRow.projectId : "",
-        projectName:
-          prevRow && typeof prevRow.projectName === "string"
-            ? prevRow.projectName
-            : "",
-        title: prevRow && typeof prevRow.title === "string" ? prevRow.title : "",
+        projectId: label(prevRow && prevRow.projectId, input.projectId),
+        projectName: label(prevRow && prevRow.projectName, input.projectName),
+        title: label(prevRow && prevRow.title, input.title),
         provider,
         model: typeof model === "string" ? model : "unknown",
       };
