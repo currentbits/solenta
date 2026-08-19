@@ -1,4 +1,4 @@
-// Solenta site: scroll reveals + docs scroll-spy. No dependencies.
+// Solenta site: scroll reveals + docs scroll-spy + nav state. No dependencies.
 (() => {
   const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -19,6 +19,14 @@
       { threshold: 0.12 },
     );
     revealEls.forEach((el) => io.observe(el));
+  }
+
+  // Nav picks up a border and stronger blur once the page scrolls.
+  const siteNav = document.querySelector(".nav");
+  if (siteNav) {
+    const onScroll = () => siteNav.classList.toggle("scrolled", window.scrollY > 8);
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
   }
 
   // Docs scroll-spy: highlight the nav link of the section in view.
