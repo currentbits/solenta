@@ -1,9 +1,8 @@
-/* Solenta site — 2026 redesign, slice 1: design foundation.
+/* Solenta site — 2026 redesign, slice 2: hero.
    Dark-only by brand decision: the product is a dark UI tool.
-   This slice: oklch color-mix tokens, grain/selection/scrollbar/focus
-   chrome, glassmorphic nav, gradient-button system, docs styles,
-   reveal motion, and the scroll-driven progress bar. Section layouts
-   (hero, bento, …) land in later slices of the stack. */
+   So far: design foundation (slice 1), aurora hero with scroll-driven
+   screenshot entrance and gradient display type (this slice).
+   Card sections land in slices 3–4 of the stack. */
 
 @font-face {
   font-family: "Geist";
@@ -92,6 +91,25 @@ code, pre, .mono { font-family: var(--font-mono); }
 ::-webkit-scrollbar-track { background: transparent; }
 
 .wrap { max-width: var(--max); margin: 0 auto; padding: 0 24px; }
+
+/* Gradient display text — slowly pans its own gradient. */
+.grad {
+  background: linear-gradient(
+    100deg,
+    #8fb6ff 0%,
+    #a78bfa 28%,
+    #67e8f9 55%,
+    #8fb6ff 82%
+  );
+  background-size: 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: grad-pan 14s linear infinite;
+}
+@keyframes grad-pan {
+  to { background-position: 250% 0; }
+}
 
 /* ---------------- scroll progress (scroll-driven animations) ------- */
 .progress {
@@ -189,24 +207,132 @@ code, pre, .mono { font-family: var(--font-mono); }
 
 /* ---------------- hero ---------------- */
 .hero {
-  padding: 88px 0 0;
+  position: relative;
+  padding: clamp(72px, 9vw, 128px) 0 0;
+  overflow: clip;
 }
+.hero-bg { position: absolute; inset: 0; pointer-events: none; }
+
+/* Faint engineering grid that fades out below the fold of the hero. */
+.hero-grid {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.045) 1px, transparent 1px);
+  background-size: 72px 72px;
+  mask-image: radial-gradient(ellipse 90% 62% at 50% 0%, #000 25%, transparent 78%);
+  -webkit-mask-image: radial-gradient(ellipse 90% 62% at 50% 0%, #000 25%, transparent 78%);
+}
+
+/* Aurora blobs — blurred color fields drifting on transform only. */
+.hero-bg i {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(100px);
+  will-change: transform;
+}
+.hero-bg i:nth-of-type(1) {
+  width: 720px;
+  height: 720px;
+  left: 50%;
+  top: -380px;
+  translate: -62% 0;
+  background: radial-gradient(
+    closest-side,
+    color-mix(in oklch, var(--accent) 34%, transparent),
+    transparent
+  );
+  animation: drift-a 26s ease-in-out infinite alternate;
+}
+.hero-bg i:nth-of-type(2) {
+  width: 560px;
+  height: 560px;
+  right: -160px;
+  top: -120px;
+  background: radial-gradient(
+    closest-side,
+    color-mix(in oklch, var(--violet) 26%, transparent),
+    transparent
+  );
+  animation: drift-b 32s ease-in-out infinite alternate;
+}
+.hero-bg i:nth-of-type(3) {
+  width: 480px;
+  height: 480px;
+  left: -180px;
+  top: 120px;
+  background: radial-gradient(
+    closest-side,
+    color-mix(in oklch, var(--cyan) 18%, transparent),
+    transparent
+  );
+  animation: drift-c 38s ease-in-out infinite alternate;
+}
+@keyframes drift-a {
+  to { transform: translate(90px, 70px) scale(1.12); }
+}
+@keyframes drift-b {
+  to { transform: translate(-110px, 90px) scale(0.92); }
+}
+@keyframes drift-c {
+  to { transform: translate(80px, -60px) scale(1.08); }
+}
+
+.hero-inner { position: relative; text-align: center; }
+
+.hero-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0 0 28px;
+  padding: 7px 16px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(8px);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+.hero-pill .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 12px var(--green);
+  animation: pulse 2.6s ease-in-out infinite;
+}
+@keyframes pulse {
+  50% { opacity: 0.45; }
+}
+
 .hero h1 {
-  font-size: clamp(34px, 4.6vw, 54px);
-  line-height: 1.06;
-  letter-spacing: -0.03em;
-  font-weight: 650;
-  margin: 0 0 20px;
+  font-size: clamp(44px, 7vw, 92px);
+  line-height: 1.02;
+  letter-spacing: -0.045em;
+  font-weight: 700;
+  margin: 0 auto 24px;
+  max-width: 18ch;
+  text-wrap: balance;
 }
 .hero .sub {
   color: var(--text-muted);
-  font-size: 17.5px;
-  max-width: 58ch;
-  margin: 0 0 28px;
+  font-size: clamp(16px, 1.6vw, 18.5px);
+  line-height: 1.65;
+  max-width: 62ch;
+  margin: 0 auto 34px;
+  text-wrap: pretty;
 }
-.hero-ctas { display: flex; gap: 12px; flex-wrap: wrap; }
+.hero-ctas {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
 .hero-trust {
-  margin: 18px 0 0;
+  margin: 22px 0 0;
   color: var(--text-dim);
   font-size: 13.5px;
   line-height: 1.5;
@@ -254,18 +380,66 @@ code, pre, .mono { font-family: var(--font-mono); }
   text-decoration: none;
 }
 
+/* ---------------- hero screenshot ---------------- */
+.hero-shot { margin-top: clamp(52px, 7vw, 88px); }
+.shot-wrap {
+  position: relative;
+  max-width: 1080px;
+  margin: 0 auto;
+}
+/* Halo behind the app window. */
+.shot-wrap::before {
+  content: "";
+  position: absolute;
+  inset: -10% -14%;
+  z-index: -1;
+  background:
+    radial-gradient(
+      46% 55% at 50% 38%,
+      color-mix(in oklch, var(--accent) 22%, transparent),
+      transparent 72%
+    ),
+    radial-gradient(
+      30% 40% at 72% 30%,
+      color-mix(in oklch, var(--violet) 14%, transparent),
+      transparent 70%
+    );
+  filter: blur(36px);
+}
 .shot {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-card);
+  border: 1px solid var(--border-strong);
+  border-radius: 16px;
   overflow: hidden;
-  background: var(--surface);
-  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.45);
+  background: var(--bg-2);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.08) inset,
+    0 40px 100px rgba(0, 0, 0, 0.6);
+}
+/* Scroll-driven entrance: the window tilts up and settles as it enters.
+   Unsupported engines just show the window — no JS fallback needed. */
+@supports (animation-timeline: view()) {
+  .shot {
+    animation: shot-rise linear both;
+    animation-timeline: view();
+    animation-range: entry 0% entry 55%;
+  }
+  @keyframes shot-rise {
+    from {
+      transform: perspective(1400px) rotateX(16deg) translateY(70px) scale(0.94);
+      opacity: 0.35;
+    }
+    to {
+      transform: perspective(1400px) rotateX(0deg) translateY(0) scale(1);
+      opacity: 1;
+    }
+  }
 }
 .shot-bar {
   display: flex;
   gap: 6px;
-  padding: 10px 12px;
+  padding: 11px 14px;
   border-bottom: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.02);
 }
 .shot-bar i {
   width: 10px;
@@ -275,8 +449,6 @@ code, pre, .mono { font-family: var(--font-mono); }
   border: 1px solid var(--border);
 }
 .shot img { width: 100%; }
-
-.hero-shot { margin-top: 64px; }
 
 /* ---------------- sections ---------------- */
 section { padding: 96px 0; }
