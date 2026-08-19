@@ -4,35 +4,29 @@
   "chunks": [
     {
       "area": "tests",
-      "rationale": "Read grok.test.js first: the argv contract is the whole fix (asking modes must emit bypassPermissions + --always-approve, never auto). Then providers.test.js and sandbox.test.js.",
+      "rationale": "electron/test/worktree-gc.test.js #563 cases. spyDu wraps setExecFile and forwards git; it is the contract. Test 1 needs a live worktree or the empty-dirs path would skip du even before the fix. Test 2 is the trap: gcClean re-scans, so skipSizes on the first gcScan alone still spawned 4 du processes (2 dirs × 2 scans).",
       "risks": [
-        "Runner grok tests spawn a fake binary and only check argv; grok 1.0.5 honoring --always-approve was verified live.",
-        "plan mode must stay plan and not get --always-approve."
+        "setExecFile is process-global; the suite is serialized with concurrency: 1 so the spy cannot leak into a sibling gcScan that still needs real du.",
+        "spyDu matches bin === 'du' only. A future duBytes that uses a full path would silently miss the assertion."
       ]
     },
     {
       "area": "critical",
-      "rationale": "electron/providers.js grok.buildArgs. Asking modes used to map to --permission-mode auto, which grok 1.0.5 treats as default and auto-cancels run_terminal_command as a user stop.",
+      "rationale": "electron/worktrees.js enforceRetention. Two independent skips: (1) return before any scan when no project has worktreeRetention > 0 — today's boot path, every project unset; (2) gcScan + gcClean both get skipSizes: true when a limit is set, so #559 landing a default cannot bring the du storm back.",
       "risks": [
-        "default and acceptEdits on grok now fully auto-approve tools.",
-        "Already-running grok children keep the old argv until the next spawn; the packaged Nightly must be restarted after this lands."
+        "Retention predicate is duplicated (enforceRetention vs gcScanInner). If one starts treating 0 as 'keep none', the short-circuit would skip a real sweep.",
+        "enforceRetention now reports bytes: 0 even when it reclaims dirs. Boot only logs removed.length; the GC dialog never calls this function."
       ]
     },
     {
       "area": "impl",
-      "rationale": "electron/sandbox.js badge reason string tracks the flags we actually pass.",
-      "risks": []
-    },
-    {
-      "area": "electron/worktrees.js — tryResolveItineraryOnly",
-      "rationale": "When the sole unmerged path is .solenta/review-itinerary.json, combine ours+theirs and stage it so Merge does not stick.",
+      "rationale": "gcScanInner skipSizes fills sizes with 0 instead of Promise.all(duBytes). Classification stays inspectWorktreeDir (git status). IPC git:gcScan / git:gcClean do not pass skipSizes, so the dialog still sizes.",
       "risks": [
-        "A real conflict that includes other files still surfaces as MERGE_CONFLICT."
+        "If skipSizes ever reaches the dialog clean path, the confirm copy would read 'Removed N worktrees (0 B)' because gcClean sums cand.bytes."
       ]
     }
   ],
   "risks": [
-    "Packaged Solenta Nightly loads electron JS from the app bundle at start. Git merge alone does not change a running Nightly process.",
-    "plan mode can still auto-cancel gated tools in headless grok; we do not remap plan."
+    "Boot still runs sweepOrphanWorktrees (git status per unreferenced dir) before enforceRetention. That walk is not du, and is out of scope for #563."
   ]
 }
