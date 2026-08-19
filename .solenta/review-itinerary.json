@@ -39,6 +39,7 @@
   ],
   "risks": [
     "A Grok permission auto-cancel that still emits this event will now look like a user Stop (idle, no Retry turn). That is the requested shape, but it can hide the underlying missing prompt channel (#3 / #177) if the user only notices a quiet stop.",
-    "jsdom/Electron UI is not exercised; Retry-turn absence follows from status idle + event text `Run stopped` (retryTurn.ts only lights on failed or `Run interrupted`)."
+    "jsdom/Electron UI is not exercised; Retry-turn absence follows from status idle + event text `Run stopped` (retryTurn.ts only lights on failed or `Run interrupted`).",
+    "Merge with main conflicted only this itinerary: main still had #555 Changes-panel notes. Kept the #549 annotation; the #555 notes belong to already-merged main and must not overwrite this PR's review order."
   ]
 }
