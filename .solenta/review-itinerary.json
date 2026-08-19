@@ -1,40 +1,62 @@
 {
   "version": 1,
-  "readOrder": ["critical", "impl", "tests"],
+  "readOrder": ["critical", "impl", "tests", "docs"],
   "chunks": [
     {
-      "area": "src/components/ThreadView.module.css",
-      "rationale": "Read this first — the whole bug and the whole fix are here. .changesPanel is a fixed max-height flex column with overflow: hidden, and .patchScroll was the only scroller. A tall itinerary consumed the 520px, .patchScroll collapsed to zero (flex items do not shrink below min-content), and .commitBox landed past the clipped bottom edge with no scrollbar to reach it. The new .changesScroll takes flex: 1 / min-height: 0 / overflow-y: auto and carries gap: 10px to replace the spacing its children used to inherit from .changesPanel's own gap. flex-shrink: 0 on .changesHead and .commitBox is what actually guarantees the commit box can never be squeezed out again.",
+      "area": "src/usage.ts",
+      "rationale": "The rollup is the contract the view trusts. summarizeUsage now takes a UsageReport (and still unwraps a bare UsageByDay). Every total carries cachedInputTokens / cacheWriteTokens / wastedUsd. processedTokens is input+cacheRead+cacheWrite+output; the Tokens toggle must use that, not uncached+output. isUnreported is turns>0 and every cost/token field is 0 — put on the row so the view cannot re-derive it wrong. cacheMultiplier is (inputTokens + cachedInputTokens) / inputTokens, only when cachedInputTokens>0 and inputTokens>0: a token-volume ratio, not a dollar saving. days[].byProvider is the per-day series for the overlay chart. models/byDay come from byDay; projects/threads come from threadsByDay using last-seen labels.",
       "risks": [
-        "position: sticky on .commitBox is inert as written: .changesScroll absorbs the flex space so .commitBox no longer overflows .changesPanel, and there is nothing to stick against. Harmless and requested by #555, but do not treat it as load-bearing — the flex-shrink rules are.",
-        ".changesScroll duplicates gap: 10px from .changesPanel. If someone later changes the panel gap the two will drift apart silently.",
-        "flex: 1 was removed from .patchScroll, so a very long diff now grows the scroller's content rather than fitting a flex track. Correct for this fix (the parent scrolls) but it changes how tall diffs lay out.",
-        "A long diff no longer has its own inner scrollbar — itinerary, file lists and patches now share one scroll. Nested scrolling survives only on .fileList, which keeps max-height: 120px + overflow-y: auto (verified in the stylesheet), so each chunk's file list is still individually capped.",
-        ".commitInput is resize: vertical. A user-stretched textarea eats review space — pre-existing, but more reachable now that the box can never be clipped away."
+        "Project/thread costShare uses the byDay range total as the denominator. If Worker A's two maps disagree, a project's share can exceed 100% or the column will not sum to 1. Internally consistent tables would need a per-grouping total instead.",
+        "A provider with cachedInputTokens>0 and inputTokens===0 (all-cache, no uncached remainder) gets cacheMultiplier=null. Honest, but a cache-only day is invisible as a multiplier.",
+        "unwrapReport treats any object lacking byDay/threadsByDay as a bare UsageByDay. A future field on UsageReport that is not those two keys is fine; a malformed payload whose top-level keys look like days is also accepted, which is the legacy path the existing tests rely on."
       ]
     },
     {
-      "area": "src/components/ThreadView.tsx",
-      "rationale": "Only two real lines: the opening <div className={styles.changesScroll}> before <ReviewItineraryView> and its close after the diff.truncated note, with .commitBox deliberately left outside. Read with `git diff -w` — the other ~128 changed lines are pure re-indentation of the wrapped children and carry no logic.",
+      "area": "src/components/UsageView.tsx",
+      "rationale": "Keeps the whole UsageReport (the contract commit's byDay unwrap was a placeholder). Headline is the selected metric plus '* if billed at full API rate' — the dollar figure is a subscription counterfactual. Unreported provider rows render 'kimi · N turns · usage not reported' with no $0.00 and no share bar. Tokens metric uses processedTokens. Daily chart is one SVG area per reported provider, with hit columns that keep data-usage-bar. Stat strip is processed / cached / uncached / output; cache savings stays on the provider row as 'N× cache'. Breakdown toggle is Model/Day/Project/Thread. Wasted column shows formatCostUsd only when wastedUsd>0.",
       "risks": [
-        "The wrap must not swallow .commitBox. Verify by eye that the closing </div> sits before <div className={styles.commitBox}> — nesting it inside would reintroduce the exact bug with a scrollbar instead of a clip, and would additionally re-target the sticky rule at the scroller.",
-        "The error/loading/empty paragraphs stay outside .changesScroll as direct panel children. Intentional, but it means an inline error shown above a tall itinerary still consumes non-scrollable flex space."
+        "Overlapped (not stacked) areas: a cheap high-token provider can hide a expensive low-token one when the Tokens toggle is on, and vice versa on Cost. Legend is the only decoder.",
+        "Unreported rows in the table print 'usage not reported' in the cost cell. A 90-day table with many kimi models will read as a wall of that phrase.",
+        "The wasted explanation 'on runs that ended failed/stopped' lives on the <th title>, so it is hover-only. The column header is just 'Wasted'.",
+        "allUnreported (every provider is zero-usage) replaces the headline number with 'usage not reported' so a kimi-only range does not show $0.00. Mixed ranges still headline the reported sum, which is correct.",
+        "jsdom does not lay out SVG, so no test proves the areas are visible or the legend colours match the paths."
       ]
     },
     {
-      "area": "test/threadView.test.tsx",
-      "rationale": "Regression coverage for a pure-layout failure that no behavioural assertion catches. view() gains optional onFetchDiff / onFetchReviewContext overrides (the empty-diff stub stays the default, so every existing test is untouched). Test 1 mounts the panel with a genuinely tall itinerary — hard stop, author notes, 4+ steps, files across ci-config/critical/tests/impl/docs — and walks up from the commit textarea to [aria-label=Changes], so wrapping the box in .changesScroll fails the test. Test 2 reads the stylesheet per-rule-block and pins flex-shrink: 0 + sticky on .commitBox, flex-shrink: 0 on .changesHead, overflow-y: auto + min-height: 0 on .changesScroll, and the absence of overflow: auto on .patchScroll.",
+      "area": "src/components/UsageView.module.css",
+      "rationale": "Extends the existing module: caveat under the headline, stat strip, SVG chart + overlay hits, legend, unreported provider row, breakdown header. Reuses --blue/--green/--amber/--danger/--text-muted rather than a new palette. Chart replaces the old bar flex; data-usage-bar hit columns stay so the empty-state test still holds.",
       "risks": [
-        "Test 2's .patchScroll guard matches overflow: auto specifically, not overflow-y: auto — a nested-scroller regression reintroduced as overflow-y would slip past it. B flagged this itself; worth tightening if that rule is ever touched again.",
-        "Test 1 was already green before the fix, because .changesScroll did not exist to be found in the ancestor chain. It only becomes a real guard now the wrapper is in place.",
-        "The CSS-text guard is only as strong as its rule-block slicing — a whole-file substring check would pass on a match in an unrelated rule and prove nothing.",
-        "node:test stops at the first failed assertion in a test, so a partial CSS regression surfaces one missing declaration at a time rather than all of them."
+        "providerRow is now 5 columns (name / bar / value / share / cache). A provider without a multiplier leaves the last track empty, so share% alignment can drift versus a cache-reporting neighbour.",
+        "Day and project tables keep an empty second column (the 'detail' slot used by model/thread). Harmless, slightly odd."
+      ]
+    },
+    {
+      "area": "src/devCoder.ts",
+      "rationale": "Browser-dev fixture for the new states: claude with large cache + wastedUsd, grok with tokens and no cache fields, all-zero kimi with 41 turns, threadsByDay across nebula and ledger and several threads. Without this the view is built blind.",
+      "risks": [
+        "byDay and threadsByDay are hand-aligned, not generated from one source. Drift here will not be caught by tests (tests use their own fixtures)."
+      ]
+    },
+    {
+      "area": "test/usage.test.ts",
+      "rationale": "Pins the issue's named cases: all-zero provider stays in providers with turns and unreported=true; processed ≠ billable when cache fields are set; old entries missing the new keys load as 0; cacheMultiplier is null for grok; day/project/thread groupings and share maths. Existing range/malformed tests still pass because unwrapReport accepts a bare UsageByDay.",
+      "risks": [
+        "Share assertions use byDay totals as the whole. They will go red if someone 'fixes' project/thread share to be relative to the grouping's own sum."
+      ]
+    },
+    {
+      "area": "test/usageView.test.tsx",
+      "rationale": "Existing 7/30/cost/tokens/empty cases stay. New cases: unreported kimi row has 'usage not reported' and not '$0.00'; caveat marker; wasted $1.50 cell; breakdown toggle walks model → day → project → thread.",
+      "risks": [
+        "The unreported test scopes 'not $0.00' to the kimi row. A regression that prints $0.00 in the wasted column of another row would not fail it — by design, because zero waste is not 'unreported'.",
+        "The share-bar absence check uses querySelector(\"[class*='shareTrack']\"). CSS-module hashes keep 'shareTrack' in the class today; a rename of the local class silently weakens the test."
       ]
     }
   ],
   "risks": [
-    "jsdom does not lay out, so nothing in this suite can prove the commit box is actually visible at 520px with a tall itinerary — the CSS-text guard is a proxy for the real behaviour. Confirming the fix for real needs eyes on a running Electron window.",
-    "Both halves were written by parallel workers that never saw each other's files; the orchestrator ran tsc --noEmit and the full threadView suite on the merged result, which is the only place the two halves were tested together.",
-    "Worker A's first run was cancelled before it verified anything, and it later recommitted the identical source over the orchestrator's commit. The merged source content was diffed to confirm the two commits agree."
+    "Subscription plan-quota next to the dollar figure is out of scope: no CLI reports it today, so it would be invented. Follow-up once any provider exposes remaining quota.",
+    "The 90-day preset will look sparse until the store has 90 days of the new shape. Expected, not a view bug.",
+    "Renderer suite beyond usage*.test was not the other worker's surface, but appWiring.test.tsx does mount UsageView — a wiring regression would show up there, not in usageView.test.tsx.",
+    "Project/thread attribution is only as good as Worker A's threadsByDay writer. This half cannot invent spend for a thread the store never recorded."
   ]
 }

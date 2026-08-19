@@ -477,7 +477,7 @@ function ProviderRow({
       >
         <span className={styles.providerName}>{row.provider}</span>
         <span className={styles.unreportedMeta}>
-          {row.turns} turns · usage not reported
+          · {row.turns} turns · usage not reported
         </span>
       </div>
     );
