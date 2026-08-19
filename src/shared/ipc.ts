@@ -1529,6 +1529,13 @@ export interface AppSettings {
    */
   quotaWaitAutoResume: boolean;
   /**
+   * PR size cap in changed lines (additions + deletions vs the base branch),
+   * enforced when a PR is created from the app (issue #402, DORA small
+   * batches as a product default). Default 400; null disables the cap.
+   * Oversized PRs can still be created via createPr's allowOversize override.
+   */
+  prDiffCapLines: number | null;
+  /**
    * Update channel override; null follows the channel stamped at package
    * time. Has no effect in an unstamped dev tree (updates stay disabled).
    */
@@ -2350,6 +2357,11 @@ export interface CoderApi {
       title: string;
       body?: string;
       draft?: boolean;
+      /**
+       * Explicit override for the prDiffCapLines guard (issue #402): create
+       * the PR even though the diff exceeds the configured size cap.
+       */
+      allowOversize?: boolean;
     }): Promise<PrInfo>;
     /**
      * Current PR for the thread's branch, or null when there is none. Reads

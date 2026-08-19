@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "readOrder": ["tests", "impl"],
+  "readOrder": ["tests", "critical", "impl"],
   "chunks": [
     {
       "area": "tests",
@@ -19,6 +19,32 @@
         "provenanceById recomputes over every assistant message on each detail update (stream tick); regex cost is small but the memo key is the whole detail object.",
         "Truncated tool input falls back to a regex that stops at the first quote — an escaped quote in a path would misparse (cosmetic only, chip label).",
         "Issue refs are collected from gh commands and #-refs without checking the issue exists; chips are labels, not verified links (no click-through in v1)."
+      ]
+    },
+    {
+      "area": "tests",
+      "rationale": "Contract first. electron/test/pr-size-cap.test.js is the guardrail contract: default 400 cap, over-cap refusal BEFORE push/gh (asserts zero 'pr create' calls and no persisted prNumber), allowOversize override, null disables, custom cap, parseNumstat (binary files count as files, not lines). test/planboard.test.ts pins reviewLoad thresholds (busy at 4 PRs / >1200 lines, overloaded at 7 / >2400) and the draft/merged exclusions. test/planboardView.test.tsx proves the meter renders only when listPrs is wired and survives a PR-list failure. test/nextGitActionButton.test.tsx walks the full refusal UI: bar appears, Split sends the restack prompt, Create anyway retries with allowOversize:true, non-cap errors never show the bar. test/prUi.test.ts pins the cross-process message prefix.",
+      "risks": [
+        "The oversize-bar test relies on gitSyncInfo {hasUpstream:true,ahead:0} resolving to the create-pr action; a nextGitAction table change would reroute the test, not break it — the assertions are on the bar, not the action.",
+        "pr-size-cap.test.js counts exact lines (450 > 400, 20 > 10); the numstat line count is git-version independent but the assertion strings embed them."
+      ]
+    },
+    {
+      "area": "critical",
+      "rationale": "electron/worktrees.js: diffStatVsBase (three-dot numstat vs base, fails OPEN — a stat hiccup never blocks a PR) and the cap check inside createPr placed after the ahead-check but BEFORE push, so a refused PR leaves no remote branch and no gh trace. The error message prefix 'PR too large:' is a cross-process contract duplicated in src/prUi.ts (PR_TOO_LARGE_PREFIX) — the two processes share no module. electron/store.js owns the default: absent/junk heals to 400, only explicit null disables (DORA small batches as the shipped default).",
+      "risks": [
+        "createPr is also called by agents via MCP/IPC, not just the header button; the cap applies there too, and the agent only sees the message text. The message must stay self-explanatory.",
+        "The cap counts lines vs the project checkout's current branch (defaultBranchAsync), same base the PR would get — but a thread stacked on another branch (#187/#240 not shipped) would be measured against main, overcounting. Accepted until base-branch support lands.",
+        "Binary files add 0 lines; a PR of only binary assets never trips the cap. Deliberate."
+      ]
+    },
+    {
+      "area": "impl",
+      "rationale": "Renderer flow: ThreadView's NextGitActionButton catches the refusal by prefix and swaps in an inline bar (Split into stacked PRs → splitPrPrompt via onStartRun; Create anyway → onCreatePr with allowOversize; dismiss ×). useCoder/ipc.js/preload thread allowOversize through unchanged. Planboard meter: planboard.ts reviewLoad/formatLineCount are pure; PlanboardView fetches listPrs alongside listIssues (Promise.all, stale-gen guard shared), meter sits in the existing header with ok/busy/overloaded colors; App.tsx wires the already-exposed listPrs. SettingsModal gains a 'Pull requests' section with the cap input following the dailyBudgetUsd blur-save pattern; devCoder mirrors the new setting so the web dev build typechecks.",
+      "risks": [
+        "The oversize bar renders as a sibling of the header button inside a flex header; very long messages are ellipsis-clamped (max-width 520px) — full text only in the runError banner is NOT shown for cap refusals (the catch swallows it into the bar), so the bar text is the only copy. It contains lines, base, files, and cap.",
+        "reviewLoad thresholds are compile-time constants, not derived from the user's configured cap; a user who raises the cap to 2000 still gets busy at 1200 lines of queue. Kept simple deliberately.",
+        "SettingsModal save() now sends prDiffCapLines in the same patch as budgets; backends older than this change would ignore the unknown key (store.setSettings patches per-key) — forward compatible, but a downgraded main process silently drops the cap."
       ]
     },
     {
@@ -80,6 +106,9 @@
   "risks": [
     "Feature is display-only: chips have titles but no click-through to file/memory/issue, although the issue calls those tiers 'addressable'. Addressability is a follow-up.",
     "PRIOR_MIN_CHARS=240 is a judgement call; recaps just under the threshold escape the prior tag.",
+    "Auto-split is agent-mediated (splitPrPrompt restacks the branch), not a git-level splitter: true stacked-PR UX (position badges, safe-prefix merge) remains #240. The prompt instructs --base <previous-slice-branch> so the chain is correct even before #240 ships.",
+    "The review-load meter reads gh pr list additions/deletions; on old gh versions listPrs falls back to the short field set and lines show as 0 — the meter then reflects PR count only.",
+    "fleet.js already aggregates similar PR data; the meter deliberately reuses listPrs instead to stay per-project and failure-in-band. If a third consumer appears, unify.",
     "No dedicated ThreadInfo.endedAt exists; fleet wall clock uses updatedAt, so a felt estimate recorded long after activity still compares against last-activity time — honest but worth knowing when reading the ratio.",
     "Electron suite had 7 pre-existing failures on main (tracked #536); verify this branch's failures do not exceed that baseline.",
     "Agents panel needed no change: the Subagents section (AgentsPanel.tsx ~2373) already renders subagents with TeamRow visuals in all non-workflow branches.",

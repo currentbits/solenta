@@ -211,6 +211,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     defaultWorktree: false,
     updateChannel: null,
     quotaWaitAutoResume: true,
+    prDiffCapLines: 400,
     ...(opts.settings ?? {}),
   };
   const ALL_SKILL_TARGETS: SkillTarget[] = [
@@ -414,6 +415,19 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
             );
           }
           next.quotaWaitAutoResume = v;
+        }
+        if (Object.prototype.hasOwnProperty.call(p, "prDiffCapLines")) {
+          const v = p.prDiffCapLines;
+          if (
+            v !== null &&
+            (typeof v !== "number" || !Number.isInteger(v) || v <= 0)
+          ) {
+            calls.push({ channel: "settings.set", args: [patch] });
+            return Promise.reject(
+              new Error("PR diff cap must be a positive integer or null"),
+            );
+          }
+          next.prDiffCapLines = v;
         }
         settingsState = next;
         return rec("settings.set", [patch], { ...settingsState });

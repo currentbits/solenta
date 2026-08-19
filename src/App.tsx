@@ -996,6 +996,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             <PlanboardView
               projects={projects}
               listIssues={listIssues}
+              listPrs={listPrs}
               threads={threads}
               onSelectThread={handleSelectThread}
               onStartTask={async (input) => {
