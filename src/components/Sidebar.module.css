@@ -1092,71 +1092,10 @@
 .cardMeta {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 8px;
   margin-top: 2px;
   min-width: 0;
-}
-
-/* Branch truncates; separator + PR chip never shrink away. */
-.branchRow {
-  display: flex;
-  align-items: center;
-  /* Load-bearing: without min-width:0 this flex item's automatic minimum size
-     is the FULL untruncated branch width, so .branch never truncates and the
-     PR chip is pushed outside the card. That is the round 26 bug exactly. */
-  min-width: 0;
-  flex: 1 1 auto;
-}
-
-.branch {
-  font-size: 11px;
-  color: var(--text-dim);
-  font-family: var(--mono);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
-  /* Shrink to truncate, never GROW: flex-grow here inflates a short branch
-     past its text and strands the PR chip in dead space to the right. */
-  flex: 0 1 auto;
-}
-
-.branchSep {
-  flex-shrink: 0;
-  font-size: 11px;
-  color: var(--text-dim);
-  font-family: var(--mono);
-  white-space: pre;
-}
-
-.prLabel {
-  flex-shrink: 0;
-  font-size: 11px;
-  color: var(--text-dim);
-  font-family: var(--mono);
-}
-
-.prLink {
-  flex-shrink: 0;
-  position: relative;
-  z-index: 1;
-  pointer-events: auto;
-  color: #93c5fd;
-  text-decoration: none;
-  font-size: 11px;
-  font-family: var(--mono);
-}
-
-.prLink:hover {
-  color: #bfdbfe;
-  text-decoration: underline;
-}
-
-.prLink:focus-visible {
-  outline: 2px solid var(--blue);
-  outline-offset: 1px;
-  border-radius: 2px;
 }
 
 .badge {

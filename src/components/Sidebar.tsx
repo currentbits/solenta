@@ -29,7 +29,6 @@ import {
   formatWorkingLabel,
 } from "../format";
 import { formatQuotaWaitLabel } from "../quotaWait";
-import { sidebarPrBadge } from "../prUi";
 import {
   GROUP_ATTENTION_CAP,
   buildSidebarSections,
@@ -576,11 +575,6 @@ export const ThreadCard = memo(function ThreadCard({
   /** Titles for the other side of each pair, used in the tooltip. */
   threadTitles?: ReadonlyMap<string, string>;
 }) {
-  const branch = thread.branch ?? "";
-  const prBadge = sidebarPrBadge({
-    prNumber: thread.prNumber,
-    prUrl: thread.prUrl,
-  });
   const working = thread.status === "working";
   // Settled cards offer "keep active"; attention cards offer "settle".
   const settleOverride = isSettled ? ("active" as const) : ("settled" as const);
@@ -694,28 +688,6 @@ export const ThreadCard = memo(function ThreadCard({
           )}
         </div>
         <div className={styles.cardMeta}>
-          <div className={styles.branchRow}>
-            {/* Truncation applies only to the branch name; PR chip is a sibling. */}
-            <span className={styles.branch}>{branch}</span>
-            {branch && prBadge ? (
-              <span className={styles.branchSep} aria-hidden>
-                {" · "}
-              </span>
-            ) : null}
-            {prBadge?.href ? (
-              <a
-                className={styles.prLink}
-                href={prBadge.href}
-                target="_blank"
-                rel="noreferrer"
-                title={prBadge.href}
-              >
-                {prBadge.label}
-              </a>
-            ) : prBadge ? (
-              <span className={styles.prLabel}>{prBadge.label}</span>
-            ) : null}
-          </div>
           <div className={styles.cardBadges}>
             <ConflictForecastBadge
               threadId={thread.id}

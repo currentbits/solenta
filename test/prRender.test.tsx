@@ -159,49 +159,9 @@ function assertNoNestedInteractive(html: string): void {
 }
 
 describe("sidebar PR badge (rendered)", () => {
-  it("renders a real link to the PR when the thread has one", () => {
-    const html = renderSidebar(
-      thread({
-        prNumber: 842,
-        prUrl: "https://github.com/owner/repo/pull/842",
-      }),
-    );
-    assert.ok(html.includes("PR #842"), "the PR number must be visible");
-    assert.ok(
-      html.includes('href="https://github.com/owner/repo/pull/842"'),
-      "the badge must link to the PR",
-    );
-  });
 
-  it("opens the PR link safely, outside the app", () => {
-    const html = renderSidebar(
-      thread({ prNumber: 7, prUrl: "https://github.com/owner/repo/pull/7" }),
-    );
-    const anchor = html.slice(
-      html.indexOf("<a "),
-      html.indexOf("</a>") + 4,
-    );
-    assert.ok(anchor.includes('target="_blank"'), "must leave the app window");
-    // noreferrer implies noopener: without it the opened page gets window.opener.
-    assert.ok(
-      anchor.includes('rel="noreferrer"') || anchor.includes('rel="noopener'),
-      `PR link needs rel=noreferrer, got: ${anchor}`,
-    );
-  });
 
-  it("shows the number without a link when the url is missing", () => {
-    const html = renderSidebar(thread({ prNumber: 99, prUrl: null }));
-    assert.ok(html.includes("PR #99"), "number still shown");
-    assert.ok(
-      !html.includes("<a "),
-      "must not invent a link when there is no url",
-    );
-  });
 
-  it("shows no PR chip at all when the thread has no PR", () => {
-    const html = renderSidebar(thread());
-    assert.ok(!html.includes("PR #"), "no PR chip without a PR");
-  });
 
   it("does not nest interactive elements inside the thread card", () => {
     // A nested <a> or <button> inside a <button> is invalid HTML and drops
@@ -211,104 +171,6 @@ describe("sidebar PR badge (rendered)", () => {
     );
     const card = extractCard(html, "t1");
     assertNoNestedInteractive(card);
-  });
-});
-
-describe("sidebar thread card: PR chip vs long branch (round 27)", () => {
-  const longBranch =
-    "coder/" + "very-long-slugified-title-segment-".repeat(4) + "abcdef";
-
-  it("keeps the PR chip outside the truncating branch element", () => {
-    assert.ok(longBranch.length >= 120, "fixture must be long enough");
-    const html = renderSidebar(
-      thread({
-        branch: longBranch,
-        prNumber: 842,
-        prUrl: "https://github.com/owner/repo/pull/842",
-      }),
-    );
-    const card = extractCard(html);
-
-    assert.ok(card.includes("PR #842"), "PR chip must be present in the card");
-    assert.ok(
-      card.includes('href="https://github.com/owner/repo/pull/842"'),
-      "PR link href must be present",
-    );
-    assert.ok(card.includes(longBranch), "long branch text must still render");
-
-    // Truncation class is on .branch only. The PR <a> must not be a child of it.
-    const branchMatch = card.match(
-      /<span class="branch">([\s\S]*?)<\/span>/,
-    );
-    assert.ok(branchMatch, "expected a .branch span to carry truncation");
-    assert.equal(
-      branchMatch[1],
-      longBranch,
-      "branch span must hold only the branch name (not the PR chip)",
-    );
-    assert.ok(
-      !branchMatch[1].includes("<a"),
-      "PR link must not live inside the truncating .branch element",
-    );
-    assert.ok(
-      !branchMatch[1].includes("PR #"),
-      "PR label must not live inside the truncating .branch element",
-    );
-
-    // PR chip must still be a real anchor elsewhere in the card.
-    assert.ok(
-      /<a\b[^>]*>[\s\S]*PR #842[\s\S]*<\/a>/.test(card),
-      "PR chip must be its own anchor outside .branch",
-    );
-  });
-
-  it("truncates only .branch in CSS (ellipsis stays; chip is a flex sibling)", () => {
-    const cssPath = path.join(
-      path.dirname(fileURLToPath(import.meta.url)),
-      "../src/components/Sidebar.module.css",
-    );
-    const css = fs.readFileSync(cssPath, "utf8");
-    const branch = cssRuleBody(css, "branch");
-    const branchRow = cssRuleBody(css, "branchRow");
-    const prLink = cssRuleBody(css, "prLink");
-
-    assert.ok(
-      /overflow\s*:\s*hidden/.test(branch),
-      ".branch must keep overflow:hidden for ellipsis",
-    );
-    assert.ok(
-      /text-overflow\s*:\s*ellipsis/.test(branch),
-      ".branch must keep text-overflow:ellipsis",
-    );
-    assert.ok(
-      /white-space\s*:\s*nowrap/.test(branch),
-      ".branch must keep white-space:nowrap",
-    );
-    assert.ok(
-      /display\s*:\s*flex/.test(branchRow),
-      ".branchRow must be a flex row so the chip can sit outside truncation",
-    );
-    // Load-bearing and easy to delete by accident: without min-width:0 this
-    // flex item's automatic minimum size is the full untruncated branch width,
-    // so nothing truncates and the chip lands outside the card. Measured at
-    // ~1065px on a 266px card, i.e. the round 26 bug verbatim.
-    assert.ok(
-      /min-width\s*:\s*0/.test(branchRow),
-      ".branchRow must allow shrink (min-width:0) or the chip is pushed out of the card",
-    );
-    // flex-grow on .branch inflates a short branch past its text and strands
-    // the chip in dead space (measured: 83.5px gap after "main").
-    const branchFlex = /flex\s*:\s*([^;]+)/.exec(branch);
-    assert.ok(branchFlex, ".branch must declare flex");
-    assert.equal(
-      branchFlex[1].trim().split(/\s+/)[0],
-      "0",
-      ".branch must not grow, or a short branch strands the PR chip to the right",
-    );
-    assert.ok(
-      /flex-shrink\s*:\s*0/.test(prLink),
-      ".prLink must not shrink away when the branch is long",
-    );
   });
 });
 
@@ -348,24 +210,9 @@ describe("sidebar thread card: select + settle + PR link (round 39)", () => {
       `expected 2 buttons (stretch-select + settle), got ${buttons.length}`,
     );
 
-    const anchors = card.match(/<a\b/g) ?? [];
-    assert.equal(
-      anchors.length,
-      1,
-      "PR link is an <a>; no extra anchors",
-    );
-    assert.ok(
-      card.includes("PR #842"),
-      "the one anchor must be the PR chip",
-    );
-
     // Empty stretch button: select control must not wrap the branch/meta text.
     const buttonChunk = card.match(/<button\b[\s\S]*?<\/button>/);
     assert.ok(buttonChunk, "select button present");
-    assert.ok(
-      !buttonChunk[0].includes("PR #842"),
-      "PR must not be nested inside the select button",
-    );
     assert.ok(
       !buttonChunk[0].includes("coder/"),
       "branch text must not be nested inside the select button",
@@ -376,7 +223,7 @@ describe("sidebar thread card: select + settle + PR link (round 39)", () => {
     );
   });
 
-  it("keeps the select overlay UNDER the card body so the PR link stays clickable", () => {
+  it("keeps the select overlay UNDER the card body so row content stays hoverable", () => {
     // The overlay is position:absolute inset:0 across the whole card. The link
     // survives only because .cardBody paints above it. Raise the overlay and
     // elementFromPoint at the link flips to the button: clicking the PR link
@@ -442,7 +289,7 @@ describe("sidebar thread card: select + settle + PR link (round 39)", () => {
       !selectChunk[0].includes("cardBody"),
       "cardSelect must be a sibling of cardBody, not wrap it",
     );
-    // Stretch select + settle hover; no metaSelect maze. PR stays an <a>.
+    // Stretch select + settle hover; no metaSelect maze.
     assert.equal(
       (card.match(/<button\b/g) ?? []).length,
       1,
@@ -458,7 +305,6 @@ describe("sidebar thread card: select + settle + PR link (round 39)", () => {
     const css = fs.readFileSync(cssPath, "utf8");
     const cardSelect = cssRuleBody(css, "cardSelect");
     const cardBody = cssRuleBody(css, "cardBody");
-    const prLink = cssRuleBody(css, "prLink");
 
     assert.ok(
       /position\s*:\s*absolute/.test(cardSelect),
@@ -471,10 +317,6 @@ describe("sidebar thread card: select + settle + PR link (round 39)", () => {
     assert.ok(
       /pointer-events\s*:\s*none/.test(cardBody),
       ".cardBody must let clicks fall through to the stretch select button",
-    );
-    assert.ok(
-      /pointer-events\s*:\s*auto/.test(prLink),
-      ".prLink must re-enable pointer-events so the chip stays clickable",
     );
     assert.ok(
       /:focus-visible/.test(css) && css.includes(".cardSelect:focus-visible"),
@@ -511,48 +353,9 @@ describe("sidebar thread card: select + settle + PR link (round 39)", () => {
     );
     assert.ok(card.includes("Failed"), "status badge still shows");
     assert.ok(card.includes("archived"), "archived tag still shows");
-    // Still one select button + PR link after the layout fix.
+    // Still one select button; the PR chip left the row (#566).
     assert.equal((card.match(/<button\b/g) ?? []).length, 1);
-    assert.equal((card.match(/<a\b/g) ?? []).length, 1);
+    assert.equal((card.match(/<a\b/g) ?? []).length, 0);
   });
 
-  it("keeps the PR badge outside the truncating branch span", () => {
-    // Round 26 nested PR #N inside .branch (overflow:ellipsis). Long branch
-    // names then clipped the badge off the end. The PR must be a sibling of
-    // the branch text, not a child of the ellipsis span.
-    const longBranch =
-      "coder/very-long-feature-branch-name-that-would-eat-the-pr-badge-abc12345";
-    const html = renderSidebar(
-      thread({
-        branch: longBranch,
-        prNumber: 842,
-        prUrl: "https://github.com/owner/repo/pull/842",
-      }),
-    );
-    assert.ok(html.includes("PR #842"), "PR number must still render");
-    assert.ok(
-      html.includes(longBranch),
-      "branch text must still render in markup",
-    );
-
-    // Structural: the branch span must contain only the branch string, not
-    // the PR anchor. Mutation that re-nests the <a> fails this.
-    const branchSpan = html.match(
-      /<span class="branch"[^>]*>([\s\S]*?)<\/span>/,
-    );
-    assert.ok(branchSpan, "branch span must exist");
-    assert.equal(
-      branchSpan![1].trim(),
-      longBranch,
-      `branch span must be branch-only, got: ${branchSpan![1]}`,
-    );
-    assert.ok(
-      !branchSpan![1].includes("<a"),
-      "PR link must not live inside the ellipsis span",
-    );
-    assert.ok(
-      html.includes('href="https://github.com/owner/repo/pull/842"'),
-      "PR link still present as a sibling",
-    );
-  });
 });
