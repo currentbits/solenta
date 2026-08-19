@@ -1,9 +1,19 @@
-// Solenta site: scroll reveals + docs scroll-spy + nav state. No dependencies.
+// Solenta site: scroll reveals, pointer glow tracking, nav state,
+// docs scroll-spy. No dependencies.
 (() => {
   const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const canHover = window.matchMedia("(hover: hover)").matches;
 
-  // Reveal on scroll.
-  const revealEls = document.querySelectorAll(".reveal");
+  // Reveal on scroll, with a light stagger between siblings that share
+  // a parent (bento grids, install cards, hero stack).
+  const revealEls = [...document.querySelectorAll(".reveal")];
+  const groups = new Map();
+  for (const el of revealEls) {
+    const key = el.parentElement;
+    const n = groups.get(key) || 0;
+    el.style.setProperty("--d", `${Math.min(n * 70, 420)}ms`);
+    groups.set(key, n + 1);
+  }
   if (reduce || !("IntersectionObserver" in window)) {
     revealEls.forEach((el) => el.classList.add("in"));
   } else {
@@ -21,19 +31,33 @@
     revealEls.forEach((el) => io.observe(el));
   }
 
+  // Pointer-tracked glow: writes registered custom properties --mx/--my
+  // so cards light up under the cursor. Pointer Events cover mouse and
+  // pen; touch never fires move without pressure, and hover:none skips it.
+  if (canHover && !reduce) {
+    const glowEls = document.querySelectorAll(".glow, .cell");
+    for (const el of glowEls) {
+      el.addEventListener("pointermove", (ev) => {
+        const r = el.getBoundingClientRect();
+        el.style.setProperty("--mx", `${ev.clientX - r.left}px`);
+        el.style.setProperty("--my", `${ev.clientY - r.top}px`);
+      });
+    }
+  }
+
   // Nav picks up a border and stronger blur once the page scrolls.
-  const siteNav = document.querySelector(".nav");
-  if (siteNav) {
-    const onScroll = () => siteNav.classList.toggle("scrolled", window.scrollY > 8);
+  const nav = document.querySelector(".nav");
+  if (nav) {
+    const onScroll = () => nav.classList.toggle("scrolled", window.scrollY > 8);
     onScroll();
     window.addEventListener("scroll", onScroll, { passive: true });
   }
 
   // Docs scroll-spy: highlight the nav link of the section in view.
-  const nav = document.getElementById("docs-nav");
-  if (nav && "IntersectionObserver" in window) {
+  const docsNav = document.getElementById("docs-nav");
+  if (docsNav && "IntersectionObserver" in window) {
     const links = new Map(
-      [...nav.querySelectorAll("a")].map((a) => [
+      [...docsNav.querySelectorAll("a")].map((a) => [
         a.getAttribute("href").slice(1),
         a,
       ]),
@@ -42,7 +66,7 @@
       (entries) => {
         for (const e of entries) {
           if (!e.isIntersecting) continue;
-          nav.querySelectorAll("a").forEach((a) => a.classList.remove("active"));
+          docsNav.querySelectorAll("a").forEach((a) => a.classList.remove("active"));
           links.get(e.target.id)?.classList.add("active");
         }
       },
