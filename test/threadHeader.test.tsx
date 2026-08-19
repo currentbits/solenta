@@ -345,39 +345,45 @@ describe("header no longer hosts Environment actions", () => {
   });
 });
 
-describe("Thread | Git pane tabs (issue #569)", () => {
-  it("renders Thread selected and Git idle", async () => {
+describe("Views menu pane workspace (issue #552)", () => {
+  it("defaults to chat only, with a Views menu in the session toolbar", async () => {
     const m = await mount(view({}));
     await m.flush();
-    const threadTab = m.query("[data-pane-tab='thread']");
-    const gitTab = m.query("[data-pane-tab='git']");
-    assert.ok(threadTab, "Thread tab");
-    assert.ok(gitTab, "Git tab");
-    assert.equal(threadTab!.getAttribute("aria-selected"), "true");
-    assert.equal(gitTab!.getAttribute("aria-selected"), "false");
+    assert.ok(m.query("[data-views-btn]"), "Views control");
+    assert.ok(m.query("[data-pane-chat]"), "chat leaf");
     assert.equal(m.query("[data-git-pane]"), null);
     m.unmount();
   });
 
-  it("Git tab calls onViewChanges; Thread tab calls onCloseChanges", async () => {
+  it("opens Git beside chat from Views and reports onViewChanges", async () => {
     const opened: string[] = [];
     const m = await mount(
       view({
         onViewChanges: () => {
           opened.push("git");
         },
-        onCloseChanges: () => {
-          opened.push("thread");
-        },
       }),
     );
     await m.flush();
-    await m.click(m.query("[data-pane-tab='git']"));
+    await m.click(m.query("[data-views-btn]"));
+    await m.click(m.query("[data-views-item='diff']"));
     assert.deepEqual(opened, ["git"]);
+    assert.ok(m.query("[data-git-pane]"), "Git pane mounts");
+    assert.ok(m.query("[data-pane-chat]"), "chat stays visible");
     m.unmount();
+  });
 
+  it("mounts Git when changesOpen is already true (Environment / next-git)", async () => {
+    const open = await mount(view({ changesOpen: true }));
+    await open.flush();
+    assert.ok(open.query("[data-git-pane]"), "Git pane mounts when open");
+    assert.ok(open.query("[data-pane-chat]"), "chat stays beside Git");
+    open.unmount();
+  });
+
+  it("Reset layout restores a single chat pane", async () => {
     const closed: string[] = [];
-    const open = await mount(
+    const m = await mount(
       view({
         changesOpen: true,
         onCloseChanges: () => {
@@ -385,15 +391,26 @@ describe("Thread | Git pane tabs (issue #569)", () => {
         },
       }),
     );
-    await open.flush();
-    assert.ok(open.query("[data-git-pane]"), "Git pane mounts when open");
-    assert.equal(
-      open.query("[data-pane-tab='git']")!.getAttribute("aria-selected"),
-      "true",
-    );
-    await open.click(open.query("[data-pane-tab='thread']"));
+    await m.flush();
+    await m.click(m.query("[data-views-btn]"));
+    await m.click(m.query("[data-views-reset]"));
+    assert.equal(m.query("[data-git-pane]"), null);
+    assert.ok(m.query("[data-pane-chat]"));
     assert.deepEqual(closed, ["thread"]);
-    open.unmount();
+    m.unmount();
+  });
+
+  it("opens an unshipped pane type as a placeholder slot", async () => {
+    const m = await mount(view({}));
+    await m.flush();
+    await m.click(m.query("[data-views-btn]"));
+    await m.click(m.query("[data-views-item='terminal']"));
+    assert.ok(
+      m.query("[data-pane-placeholder='terminal']"),
+      "terminal registers as a pane even before the PTY lands",
+    );
+    assert.ok(m.query("[data-pane-chat]"), "chat stays");
+    m.unmount();
   });
 
   it("keeps Spec / Teach / Ask off the header chrome", async () => {

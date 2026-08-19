@@ -20,6 +20,7 @@ const APP_SHORTCUTS: readonly ShortcutRow[] = [
   { keys: "Escape Escape", action: "Rewind the last turn" },
   { keys: "Ctrl + C", action: "Stop the live turn" },
   { keys: "?", action: "Show this keyboard reference" },
+  { keys: "⌘ + \\", action: "Close the focused pane" },
 ];
 
 interface KeyboardSheetProps {

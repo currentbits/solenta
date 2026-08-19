@@ -7,6 +7,22 @@ import {
   useRef,
   useState,
 } from "react";
+import {
+  PanePlaceholder,
+  PaneWorkspace,
+  ViewsMenu,
+} from "./PaneWorkspace";
+import {
+  defaultPaneLayout,
+  findLeaf,
+  firstLeafId,
+  hasPaneType,
+  hydratePaneLayout,
+  openPane,
+  savePaneLayout,
+  type LayoutNode,
+  type PaneType,
+} from "../paneLayout";
 import type {
   AttachmentInfo,
   ChatMessage,
@@ -3025,6 +3041,15 @@ export const ThreadView = memo(function ThreadView({
     null,
   );
   const copyFlashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [layout, setLayout] = useState<LayoutNode>(() =>
+    hydratePaneLayout(detail?.thread.id ?? null, { openDiff: changesOpen })
+      .layout,
+  );
+  const [focusedId, setFocusedId] = useState(
+    () =>
+      hydratePaneLayout(detail?.thread.id ?? null, { openDiff: changesOpen })
+        .focusId,
+  );
 
   const resolvePathMap = useCallback(
     async (paths: string[]) => {
@@ -3377,6 +3402,7 @@ export const ThreadView = memo(function ThreadView({
   useEffect(() => {
     const id = detail?.thread.id ?? null;
     if (id !== prevThreadId.current) {
+      const switching = prevThreadId.current != null;
       prevThreadId.current = id;
       stickToBottom.current = true;
       setMenuOpen(false);
@@ -3414,8 +3440,57 @@ export const ThreadView = memo(function ThreadView({
         clearTimeout(copyFlashTimer.current);
         copyFlashTimer.current = null;
       }
+      if (switching) {
+        const hydrated = hydratePaneLayout(id);
+        setLayout(hydrated.layout);
+        setFocusedId(hydrated.focusId);
+      }
     }
   }, [detail?.thread.id]);
+
+  const threadIdForLayout = detail?.thread.id ?? null;
+
+  useEffect(() => {
+    if (threadIdForLayout) savePaneLayout(threadIdForLayout, layout);
+  }, [threadIdForLayout, layout]);
+
+  useEffect(() => {
+    if (!changesOpen) return;
+    setLayout((prev) => {
+      if (hasPaneType(prev, "diff")) return prev;
+      return openPane(prev, "diff", focusedId).layout;
+    });
+  }, [changesOpen, changesNonce]);
+
+  const applyLayout = useCallback(
+    (next: LayoutNode, focusId: string) => {
+      setLayout(next);
+      setFocusedId(findLeaf(next, focusId) ? focusId : firstLeafId(next));
+      if (!hasPaneType(next, "diff")) onCloseChanges();
+    },
+    [onCloseChanges],
+  );
+
+  const handlePaneChange = useCallback(
+    (next: LayoutNode) => {
+      applyLayout(next, focusedId);
+    },
+    [applyLayout, focusedId],
+  );
+
+  const handleOpenPane = useCallback(
+    (type: PaneType) => {
+      const next = openPane(layout, type, focusedId);
+      applyLayout(next.layout, next.focusId);
+      if (type === "diff") onViewChanges?.();
+    },
+    [layout, focusedId, applyLayout, onViewChanges],
+  );
+
+  const handleResetLayout = useCallback(() => {
+    const next = defaultPaneLayout();
+    applyLayout(next, firstLeafId(next));
+  }, [applyLayout]);
 
   const refreshRunStats = useCallback(async () => {
     const threadId = detail?.thread.id;
@@ -3796,36 +3871,11 @@ export const ThreadView = memo(function ThreadView({
             <span className={styles.threadTitle}>{thread.title}</span>
           )}
         </div>
-        <div
-          className={styles.paneTabs}
-          role="tablist"
-          aria-label="Center pane"
-        >
-          <button
-            type="button"
-            role="tab"
-            className={styles.paneTab}
-            data-pane-tab="thread"
-            aria-selected={!changesOpen}
-            data-active={!changesOpen ? "true" : undefined}
-            onClick={() => {
-              if (changesOpen) onCloseChanges();
-            }}
-          >
-            Thread
-          </button>
-          <button
-            type="button"
-            role="tab"
-            className={styles.paneTab}
-            data-pane-tab="git"
-            aria-selected={changesOpen}
-            data-active={changesOpen ? "true" : undefined}
-            onClick={() => onViewChanges?.()}
-          >
-            Git
-          </button>
-        </div>
+        <ViewsMenu
+          layout={layout}
+          onOpen={handleOpenPane}
+          onReset={handleResetLayout}
+        />
         <div className={styles.actions}>
           {thread.sandbox && <SandboxBadge sandbox={thread.sandbox} />}
           {ring && (
@@ -4114,22 +4164,36 @@ export const ThreadView = memo(function ThreadView({
         </div>
       )}
 
-      <ChangesPanel
-        open={changesOpen}
-        threadId={detail?.thread.id ?? null}
-        threadTitle={detail?.thread.title ?? ""}
-        threadBranch={detail?.thread.branch ?? null}
-        planText={planTextOf(detail)}
-        openNonce={changesNonce}
-        onFetchDiff={onFetchDiff}
-        onFetchReviewContext={onFetchReviewContext}
-        onSetReviewAccepted={onSetReviewAccepted}
-        onCommit={onCommitChanges}
-        onRevert={onRevertFile}
-        onSuggest={onSuggestCommitMessage}
-      />
-
-      {!changesOpen && showHandoffBanner && (
+      <PaneWorkspace
+        layout={layout}
+        focusedId={focusedId}
+        onChange={handlePaneChange}
+        onFocus={setFocusedId}
+        renderPane={(leaf) => {
+          if (leaf.type === "diff") {
+            return (
+              <ChangesPanel
+                open
+                threadId={detail?.thread.id ?? null}
+                threadTitle={detail?.thread.title ?? ""}
+                threadBranch={detail?.thread.branch ?? null}
+                planText={planTextOf(detail)}
+                openNonce={changesNonce}
+                onFetchDiff={onFetchDiff}
+                onFetchReviewContext={onFetchReviewContext}
+                onSetReviewAccepted={onSetReviewAccepted}
+                onCommit={onCommitChanges}
+                onRevert={onRevertFile}
+                onSuggest={onSuggestCommitMessage}
+              />
+            );
+          }
+          if (leaf.type !== "chat") {
+            return <PanePlaceholder type={leaf.type} />;
+          }
+          return (
+            <div className={styles.chatSlot} data-pane-chat="">
+      {showHandoffBanner && (
         <div className={styles.handoffBanner} data-handoff-banner="">
           <span className={styles.handoffBannerText}>
             {handoffSource ? (
@@ -4162,7 +4226,7 @@ export const ThreadView = memo(function ThreadView({
         </div>
       )}
 
-      {!changesOpen && detail && (
+      {detail && (
         <DivergenceCard
           key={detail.thread.id}
           detail={detail}
@@ -4174,9 +4238,8 @@ export const ThreadView = memo(function ThreadView({
 
       <div
         className={styles.body}
+        data-thread-body=""
         ref={bodyRef}
-        hidden={changesOpen}
-        inert={changesOpen}
         onScroll={onBodyScroll}
         onClick={(e) => openClickedImage(e.target)}
         onKeyDown={(e) => {
@@ -4523,7 +4586,6 @@ export const ThreadView = memo(function ThreadView({
         )}
       </div>
 
-      <div hidden={changesOpen} inert={changesOpen}>
       <Composer
         threadId={thread.id}
         branch={thread.branch}
@@ -4573,7 +4635,10 @@ export const ThreadView = memo(function ThreadView({
         dropHostRef={dropHostRef}
         onFileDragChange={setFileDrag}
       />
-      </div>
+            </div>
+          );
+        }}
+      />
 
       {lightbox && (
         <ImageLightbox

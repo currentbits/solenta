@@ -1,34 +1,45 @@
 {
   "version": 1,
-  "readOrder": ["critical", "impl", "tests", "docs"],
+  "readOrder": ["tests", "critical", "impl", "docs"],
   "chunks": [
     {
-      "area": "critical",
-      "rationale": "Thread | Git tabs and the full-height Git pane replace the 520px overlay. Wrong flex/hidden wiring hides the transcript permanently or clips commit again.",
+      "area": "tests",
+      "rationale": "The split-tree operations are the whole feature; read paneLayout.test.ts first so the UI is just a renderer of those ops. Then paneWorkspace.test.tsx (close/Cmd+\\/drag) and the Views menu cases in threadHeader.test.tsx.",
       "risks": [
-        ".body { display:flex } can override [hidden] if .body[hidden] is missing",
-        "changesOpen is lifted in App; switching threads must still close the pane",
-        "Composer stays mounted while hidden so draft text is not lost"
+        "jsdom has no DragEvent; drag-swap is exercised via a module-level draggingPaneId plus generic Event('dragstart'|'drop')",
+        "unmountAll now wipes coder.paneLayout.* keys so tests cannot observe persistence across remounts — that path is covered only at the model layer"
+      ]
+    },
+    {
+      "area": "critical",
+      "rationale": "paneLayout.ts is the contract: binary split tree, open/close/resize/move, parse fallback, per-thread localStorage. Wrong close-last or extract logic loses a pane or the whole tree.",
+      "risks": [
+        "close of the last leaf is a no-op; an empty workspace is impossible on purpose",
+        "movePane extract+insert can no-op if the target leaf vanished with the extract (should not happen for a different leaf)",
+        "1 - MIN_RATIO is not 0.82 in IEEE; MAX_RATIO is a separate constant"
       ]
     },
     {
       "area": "impl",
-      "rationale": "Header declutter: Spec/Teach/Ask start from overflow, Notes is icon-only, overflow stays usable while a run is in progress. Git pane is file list + selected diff + pinned commit.",
+      "rationale": "PaneWorkspace renders the tree; ThreadView owns layout state, the Views menu, and maps chat/diff onto existing surfaces. Exclusive Thread|Git tabs are gone: chat and Git can share the center pane.",
       "risks": [
-        "Overflow used to disable entirely while working; destructive items are now hidden instead",
-        "File selection defaults to diff.files[0], which may not be the first visible itinerary row"
+        "changesOpen is now an open-signal (Environment / next-git), not exclusive visibility — App still zeros it on thread switch, but persisted layouts restore Git independently",
+        "first-mount must not re-hydrate or it drops a changesOpen:true Git pane; only real thread switches reload from storage",
+        "PaneWorkspace .body was renamed leafBody because CSS-module tests stub class names as the key and query('.body') would hit the wrapper, breaking stick-to-bottom",
+        "Git ChangesPanel still paints its own header under the pane chrome when split — duplicate 'Git' title"
       ]
     },
     {
-      "area": "tests",
-      "rationale": "Pane tabs, Git chrome, file select, spec/teach/ask overflow, #555 commit-box pin (flex, not sticky).",
+      "area": "docs",
+      "rationale": "KeyboardSheet gained ⌘ + \\ . No PRODUCT-SPEC change; terminal/browser/files/tasks/subagent are registry placeholders until those issues land.",
       "risks": [
-        "CSS ruleBody() matcher is first-brace-wins; the 720px media query also has .changesSplit"
+        "Cmd+\\ is renderer-only; it is not in the Electron View menu"
       ]
     }
   ],
   "risks": [
-    "The reference screenshot never reached this worker; the pane is inferred from Claude Code Desktop / #552, not pixel-matched",
-    "Environment still has a Changes card that opens the same pane; two entry points"
+    "Sidebar and Agents stay app chrome — they are not pane types. Putting them in the tree later would fight the narrow-window drawers.",
+    "Layout lives in localStorage (coder.paneLayout.<threadId>), not coder-store.json. Multi-window shares it; a store migration is out of scope.",
+    "No browser verification of drag/resize; jsdom has no layout."
   ]
 }

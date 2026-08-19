@@ -133,6 +133,19 @@ export function unmountAll(): void {
       // already torn down
     }
   }
+  try {
+    const ls = globalThis.window?.localStorage;
+    if (ls) {
+      const keys: string[] = [];
+      for (let i = 0; i < ls.length; i++) {
+        const key = ls.key(i);
+        if (key && key.startsWith("coder.paneLayout.")) keys.push(key);
+      }
+      for (const key of keys) ls.removeItem(key);
+    }
+  } catch {
+    // jsdom without storage
+  }
   const noise = consoleErrors.splice(0);
   if (noise.length) {
     // React reports key warnings, act warnings and controlled/uncontrolled
