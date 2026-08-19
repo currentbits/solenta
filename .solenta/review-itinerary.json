@@ -8,7 +8,9 @@
       "risks": [
         "position: sticky on .commitBox is inert as written: .changesScroll absorbs the flex space so .commitBox no longer overflows .changesPanel, and there is nothing to stick against. Harmless and requested by #555, but do not treat it as load-bearing — the flex-shrink rules are.",
         ".changesScroll duplicates gap: 10px from .changesPanel. If someone later changes the panel gap the two will drift apart silently.",
-        "flex: 1 was removed from .patchScroll, so a very long diff now grows the scroller's content rather than fitting a flex track. Correct for this fix (the parent scrolls) but it changes how tall diffs lay out."
+        "flex: 1 was removed from .patchScroll, so a very long diff now grows the scroller's content rather than fitting a flex track. Correct for this fix (the parent scrolls) but it changes how tall diffs lay out.",
+        "A long diff no longer has its own inner scrollbar — itinerary, file lists and patches now share one scroll. Nested scrolling survives only on .fileList, which keeps max-height: 120px + overflow-y: auto (verified at ThreadView.module.css:.fileList), so each chunk's file list is still individually capped.",
+        ".commitInput is resize: vertical. A user-stretched textarea eats review space — pre-existing, but more reachable now that the box can never be clipped away."
       ]
     },
     {
