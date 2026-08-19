@@ -5,9 +5,9 @@
 <h1 align="center">Solenta</h1>
 
 <p align="center">
-  <strong>A local-first desktop control surface for coding agents.</strong><br/>
-  Run Claude Code, Codex, Kimi, Grok, and OpenCode side by side — with git worktrees,
-  PRs, spend caps, and shared agent memory, in one window.
+  <strong>Every agent starts where the last one stopped.</strong><br/>
+  Shared local memory across Claude Code, Codex, Kimi, Grok, and OpenCode.<br/>
+  Session ten does not re-learn what session one already ruled out.
 </p>
 
 <p align="center">
@@ -26,134 +26,66 @@
 </p>
 
 <p align="center">
-  <img src="assets/screenshot.png" alt="Solenta: threads with PR badges, live work log, and the environment panel" width="100%" />
+  <img src="assets/screenshot.png" alt="Solenta: threads sidebar, conversation with work log, and the environment panel" width="100%" />
 </p>
 
-## What it is
+## The problem
 
-Solenta turns "kick off an agent in a terminal and hope" into a directed, visible
-workflow.
+New coding-agent sessions start blank. Context gets re-pasted across Claude Code,
+Codex, and Grok. The tenth thread is not smarter than the first — just more
+expensive.
 
-Each **thread** is one provider session against one of your projects, in its own
-git worktree. You watch the conversation and the work log live, read the diff,
-and land the result as a merge or a PR — without juggling terminal tabs,
-branches, or stray PIDs. Run five threads at once and the sidebar tells you
-which ones are working, which are waiting on you, and which are done.
+## What Solenta remembers
 
-## What's the catch?
+A local memory server is auto-injected into every session. SQLite on disk, FTS +
+vector search, HTTP + MCP, localhost-only, bearer-token gated. No per-agent
+wiring.
 
-There isn't one. Solenta is MIT-licensed and there is no Solenta account, no
-Solenta cloud, and nothing to buy.
+```text
+Claude Code · thread 1
+  Ruled out a rewrite of auth. Cookie session stays.
+  Refresh lives in src/lib/auth.ts.
 
-It shells out to the agent CLIs you already have installed and bills against the
-subscriptions you already pay for. Your projects, threads, transcripts, and
-memory stay on your disk; the only network traffic Solenta itself makes is a
-GitHub release check for updates.
+Codex · thread 3
+  The 401 retry is in src/lib/api.ts.
+  Moving it breaks the refresh path.
 
-## Features
+Grok · thread 6
+  Starts knowing both. Adds the expiry skew
+  and leaves the rest alone.
+```
 
-**Threads and providers**
+- **Hypothesis ledger** — the next thread inherits what the last one already
+  ruled out.
+- **Provenance and trust score** — every entry tracks which agent wrote it and
+  how reliable that agent has been.
+- **File:line / thread / commit citations** — before a fact is injected, its
+  file citations are checked against the current worktree; contradicted entries
+  are invalidated.
+- **Embeddings** — near-dup and contradiction detection so the store does not
+  bloat with repeated or conflicting facts.
+- **memory_distill** — collapse raw entries into strategy notes.
+- **Memory tab** — reads the same SQLite file, so you see what the agents see.
+- **Per-repo code index** — a symbol index built once and injected into every
+  dispatched prompt, so a fresh worker starts knowing where things live.
+
+## The rest of the desk
+
+Memory is why Solenta exists. The rest is so you can run the agents that write
+it.
 
 - **Five providers, one UI** — Claude Code, Codex, Kimi Code, Grok, and OpenCode,
-  with sticky permission modes, per-thread model and reasoning-effort overrides,
-  and session resume where the provider supports it.
-- **Hand off mid-task** — switch a thread's provider and let a second model pick
-  up the same context.
-- **Agent profiles** — save a provider + model + effort + permission combination
-  and apply it in one click.
-- **Edit and resubmit** any past message of yours and run again from that point.
-- **Per-thread scratch notes** and **rename**, previewed in the sidebar.
-- **Spaces** — named groups for organizing projects in the sidebar.
-- **Three-pane workspace** — projects and threads on the left, conversation +
-  work log in the middle, live agent / git / memory panel on the right.
-- **Desktop notifications** when a thread finishes or needs you — never while
-  the window is focused.
-- **Teach mode** — hints, not solutions, across all five providers. Autonomy
-  steps from Hints to Review to Pair as reviews pass.
-- **Snooze** a thread until tonight or next week without stopping the agent;
-  settle-on-merge archives it when the PR lands.
-- **⌘N / ⌘⇧N** start a thread; Esc and Ctrl+C stop the live turn.
-
-**Git, in the loop**
-
-- **Isolated worktree per thread** — set up, diff, merge to main, push, or delete
-  from the Git tab. Setup is fail-closed: a worktree thread never falls back to
-  your checkout. Nothing lands on your working copy by accident.
-- **Next git action** — one header button that names the next step (commit,
-  push, open a PR, watch checks, merge).
-- **Review itinerary** — a risk-ranked read order for every agent diff, not
-  an alphabetical file list.
-- **PRs with live CI** — open a PR from a thread and watch its checks as badges
-  on the thread row. After merge, verify can run again and reopen on a regression.
-- **Issue ingestion** — paste a GitHub issue ref and start a thread from it.
-- **Generated commit messages** from the actual diff.
-- **Conflict forecast** — parallel worktrees heading for the same lines are
-  flagged while both are still cheap to redirect, not at the merge.
-- **Worktree GC** — per-project retention, batch cleanup, and visible disk usage.
-- **Vibe Kanban import** — read the local VK data folder, turn cards into
-  threads, map leftover worktrees. The same Settings section exports a JSON
-  dump of your projects and threads. Your data is never locked in.
-
-**Beyond one prompt**
-
-- **Orchestrator threads** — a thread that hands its first prompt to a worker in
-  its own worktree and supervises instead of editing. Pick it per thread, or make
-  it the default for every new thread in Settings.
-- **Build workflows** — multi-phase pipelines (plan → analyze → verify …) with a
-  provider per phase, fan-out, and a judge step. Each phase settles visibly in
-  the Agents panel.
-- **Planboard** — a project's plan as its GitHub issues, written by agents with
-  nothing but `gh`, with **Start task** to open a thread on a card. Opt a project
-  in to **auto-dispatch** and every issue that enters `plan:todo` starts its own
-  worktree thread and moves to `plan:doing`, up to three running at once.
-- **Agent teams** — workers under one orchestrator share a crew task list and
-  message each other directly, with loop guardrails so a crew cannot talk in
-  circles. A **subagent model pool** lets the lead pick a described candidate
-  per spawn. `/handoff`, `/advisor` and `/committee` cover the common shapes
-  from the composer.
-- **Shared agent memory** — a supervised local memory server (MCP + HTTP) is
-  auto-injected into sessions, so what one thread learns, the next one knows.
-  Entries carry provenance, per-agent trust, and file:line / thread / commit
-  citations. Before a fact is injected, its file citations are checked against
-  the current worktree and contradicted entries are invalidated. Embeddings
-  drive near-dup and contradiction detection. A **hypothesis ledger** hands
-  the next thread what the last one already ruled out.
-- **Shared code index** — a per-repo symbol index built once and injected into
-  every dispatched prompt, so a fresh worker starts knowing where things live.
-- **Spec mode** — gated requirements → design → tasks artifacts per thread, each
-  approved before the next unlocks.
-- **Automations** — recurring prompts (hourly / daily / weekly) against any
-  project, and **repeat a finished thread**: put its prompt on a schedule or
-  distill the run into a Build workflow.
-- **Skills** — browse and edit the `SKILL.md` files your agents can reach, and
-  install a skill once to fan it out to every provider's skills directory.
-- **Dev servers** — start a project's `dev` script from the app and get the URL.
-
-**Control**
-
-- **Spend guardrails** — an optional daily budget cap blocks new runs once the
-  day's spend hits the limit, and a per-orchestration cap bounds what one
-  fan-out can spend across its crew; token usage is visible per thread.
-- **Verification gate** — a thread only settles green once its verify command
-  exits 0, so nothing reports itself done over a red build.
-- **Orchestrator guardrails** — protected config a worker may not edit, hook
-  packs installed at spawn time, and injection + secret scanning on what comes
-  back.
-- **Usage and fleet analytics** — cost and tokens per provider/model over
-  7/30/90 days, plus merge rate, review tax, rework and cost per merged PR read
-  off git and GitHub rather than off the agents' own reports. OTel GenAI spans
-  ship to your tracing backend.
-- **Morning digest** — one summary of everything that ran unattended: what ran,
-  what it cost, what changed.
-- **Web mode** — `--serve-web` serves the same UI over HTTP + WebSocket behind a
-  session token, so you can check in from a browser or your phone.
-- **SSH remote projects** — register projects on other hosts and run agents
-  against them over SSH.
-- **Activity feed** — one chronological view of everything your agents did.
-- **Pulse** — Automations, Usage, Fleet, Insights and the morning digest live
-  in the right panel, so the left sidebar stays threads.
-- **Windows** — WSL-boundary detection, a project-add doctor, a sandbox badge,
-  and agent CLIs that actually stop when you hit Stop.
+  with model overrides and session resume.
+- **Git in the loop** — fail-closed worktrees, next-git-action button, live CI
+  badges, review itinerary, conflict forecast.
+- **Planboard** — a project's plan as its GitHub issues via `gh`, with auto-
+  dispatch to spin up threads from `plan:todo`.
+- **Orchestration** — workers, crews, `/handoff`, `/advisor`, `/committee`, and
+  a subagent model pool.
+- **Verify means green** — a thread settles done only when its verify command
+  exits 0, plus optional daily and per-orchestration spend caps.
+- **You own it** — MIT, no Solenta account, no Solenta cloud, local SQLite,
+  GitHub issues. The only network traffic is a release check.
 
 ## Install
 
@@ -271,6 +203,32 @@ printf 'Electron.app/Contents/MacOS/Electron' > node_modules/electron/path.txt
 
 The root `package.json` already allows scripts for the pinned Electron version.
 </details>
+
+## Also in the box
+
+- **Teach mode** — hints, not solutions, across all five providers. Autonomy
+  steps from Hints to Review to Pair as reviews pass.
+- **Snooze** a thread until tonight or next week; settle-on-merge archives it
+  when the PR lands.
+- **Automations** — recurring prompts (hourly / daily / weekly) against any
+  project, and repeat a finished thread on a schedule.
+- **Usage and fleet analytics** — cost and tokens per provider/model, merge
+  rate, review tax, rework and cost per merged PR. OTel GenAI spans ship to
+  your tracing backend.
+- **Morning digest** — one summary of everything that ran unattended.
+- **Agent profiles** — save a provider + model + effort + permission combination
+  and apply it in one click.
+- **Spec mode** — gated requirements → design → tasks artifacts, each approved
+  before the next unlocks.
+- **Skills** — browse and edit the `SKILL.md` files your agents can reach.
+- **Dev servers** — start a project's `dev` script from the app and get the URL.
+- **Web mode** — `--serve-web` serves the same UI over HTTP + WebSocket.
+- **SSH remote projects** — register projects on other hosts and run agents
+  against them.
+- **Windows** — WSL-boundary detection, project-add doctor, sandbox badge.
+- **Worktree GC** — per-project retention, batch cleanup, visible disk usage.
+- **Vibe Kanban import** — read the local VK data folder, turn cards into
+  threads, export a JSON dump of your projects and threads.
 
 ## Status
 
