@@ -661,6 +661,20 @@ function seedThreads(projects: ProjectInfo[]): ThreadInfo[] {
               },
             ]
           : undefined,
+      // One seeded chip so npm run dev:browser shows the #550 strip.
+      suggestions:
+        card.id === "thread-1"
+          ? [
+              {
+                id: "sug-reconnect",
+                title: "Fix flaky reconnect test",
+                prompt:
+                  "The reconnect test flakes when the socket handshake races the ready event. Pin the handshake before asserting ready, and add a regression case for a mid-handshake drop.",
+                status: "open" as const,
+                at: t0 - 8 * 60 * 1000,
+              },
+            ]
+          : undefined,
     };
   });
 }
@@ -2903,6 +2917,32 @@ function buildDevCoder(): CoderApi {
           notes: String(input.notes ?? "").trim().slice(0, 2000),
         });
       },
+      async resolveSuggestion(input: {
+        threadId: string;
+        suggestionId: string;
+        status: "started" | "filed" | "dismissed";
+        startedThreadId?: string;
+        issueNumber?: number;
+      }) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
+        return patchThread(input.threadId, {
+          suggestions: (detail.thread.suggestions ?? []).map((s) =>
+            s.id === input.suggestionId
+              ? {
+                  ...s,
+                  status: input.status,
+                  ...(input.startedThreadId
+                    ? { startedThreadId: input.startedThreadId }
+                    : {}),
+                  ...(input.issueNumber != null
+                    ? { issueNumber: input.issueNumber }
+                    : {}),
+                }
+              : s,
+          ),
+        });
+      },
       async setFeltEstimate(input: {
         threadId: string;
         savedMs: number | null;
@@ -4254,6 +4294,17 @@ function buildDevCoder(): CoderApi {
       }): Promise<SetPlanStatusResult> {
         demoPlanStatus.set(input.number, input.status);
         return { ok: true };
+      },
+      async create(_input: {
+        projectPath: string;
+        title: string;
+        body: string;
+      }) {
+        return {
+          ok: true as const,
+          number: 1234,
+          url: "https://github.com/dev/fixture/issues/1234",
+        };
       },
       async list(projectPath: string): Promise<ListIssuesResult> {
         const project = projects.find((p) => p.path === projectPath);

@@ -51,8 +51,9 @@ function t(
 }
 
 describe("buildVisibleThreadIds", () => {
-  it("matches render order across pinned, two projects, snoozed, settled", () => {
-    // Fixture: pinned mid, two projects, snoozed, settled — interesting not index 0.
+  it("matches render order: per-group attention (pinned first in group) then Later shelf", () => {
+    // Fixture: pinned mid-list inside its group, two projects, Later shelf
+    // with a snoozed and a settled row — interesting case not index 0.
     const pin = t("pin-a", { pinnedAt: NOW - 100, projectId: "p2" });
     const a1 = t("a-noise", { projectId: "p1" });
     const a2 = t("a-mid", { projectId: "p1" });
@@ -86,37 +87,32 @@ describe("buildVisibleThreadIds", () => {
           name: "b",
           path: "/b",
         },
-        threads: [b1],
+        // buildSidebarGroups sorts pinned rows first within the group.
+        threads: [pin, b1],
       },
     ];
 
     const ids = buildVisibleThreadIds({
-      pinned: [pin],
       groups,
       collapsedGroupKeys: new Set(),
-      showArchivedKeys: new Set(),
-      snoozed: [sn],
-      snoozedOpen: true,
-      selectedSnoozedId: null,
-      settled: [st],
-      settledOpen: true,
-      settledVisibleCount: 10,
-      selectedSettledId: null,
+      later: [sn, st],
+      laterOpen: true,
+      laterVisibleCount: 10,
+      selectedLaterId: null,
     });
 
     assert.deepEqual(ids, [
-      "pin-a",
       "a-noise",
       "a-mid",
+      "pin-a",
       "b-mid",
       "snooze-x",
       "settled-y",
     ]);
   });
 
-  it("skips collapsed groups; carve-outs when shelves collapsed", () => {
+  it("skips collapsed groups; carve-out when the Later shelf is closed", () => {
     const ids = buildVisibleThreadIds({
-      pinned: [],
       groups: [
         {
           project: { id: "p1", slug: "a", name: "a", path: "/a" },
@@ -128,29 +124,24 @@ describe("buildVisibleThreadIds", () => {
         },
       ],
       collapsedGroupKeys: new Set(["p1"]),
-      showArchivedKeys: new Set(),
-      snoozed: [t("sn1"), t("sn2")],
-      snoozedOpen: false,
-      selectedSnoozedId: "sn2",
-      settled: [t("st1"), t("st2")],
-      settledOpen: false,
-      settledVisibleCount: 10,
-      selectedSettledId: "st1",
+      later: [t("sn1"), t("sn2"), t("st1"), t("st2")],
+      laterOpen: false,
+      laterVisibleCount: 10,
+      selectedLaterId: "sn2",
     });
-    assert.deepEqual(ids, ["shown", "sn2", "st1"]);
+    assert.deepEqual(ids, ["shown", "sn2"], "closed shelf shows only the selected row");
   });
 
-  it("paged settled tail contributes only the visible page (M3)", () => {
-    // More settled rows than the page size — slice must drop the rest.
-    const settled = [
-      t("st-page-0", { projectId: "p1", status: "done", settledAt: NOW }),
-      t("st-page-1", { projectId: "p1", status: "done", settledAt: NOW - 1 }),
-      t("st-page-2", { projectId: "p2", status: "done", settledAt: NOW - 2 }),
-      t("st-page-3", { projectId: "p2", status: "done", settledAt: NOW - 3 }),
-      t("st-page-4", { projectId: "p2", status: "done", settledAt: NOW - 4 }),
+  it("paged Later shelf contributes only the visible page", () => {
+    // More Later rows than the page size — slice must drop the rest.
+    const later = [
+      t("lt-page-0", { projectId: "p1", status: "done", settledAt: NOW }),
+      t("lt-page-1", { projectId: "p1", status: "done", settledAt: NOW - 1 }),
+      t("lt-page-2", { projectId: "p2", status: "done", settledAt: NOW - 2 }),
+      t("lt-page-3", { projectId: "p2", status: "done", settledAt: NOW - 3 }),
+      t("lt-page-4", { projectId: "p2", status: "done", settledAt: NOW - 4 }),
     ];
     const ids = buildVisibleThreadIds({
-      pinned: [],
       groups: [
         {
           project: { id: "p1", slug: "a", name: "a", path: "/a" },
@@ -158,84 +149,72 @@ describe("buildVisibleThreadIds", () => {
         },
       ],
       collapsedGroupKeys: new Set(),
-      showArchivedKeys: new Set(),
-      snoozed: [],
-      snoozedOpen: false,
-      selectedSnoozedId: null,
-      settled,
-      settledOpen: true,
-      settledVisibleCount: 2,
-      selectedSettledId: null,
+      later,
+      laterOpen: true,
+      laterVisibleCount: 2,
+      selectedLaterId: null,
     });
-    assert.deepEqual(ids, ["attn-noise", "st-page-0", "st-page-1"]);
-    assert.equal(ids.includes("st-page-2"), false);
-    assert.equal(ids.includes("st-page-4"), false);
+    assert.deepEqual(ids, ["attn-noise", "lt-page-0", "lt-page-1"]);
+    assert.equal(ids.includes("lt-page-2"), false);
+    assert.equal(ids.includes("lt-page-4"), false);
   });
 
-  it("collapsed archived contribute nothing until expanded (M11)", () => {
+  it("group archived rows appear only when searching; shelf skipped in search", () => {
     const groups: SidebarGroup[] = [
       {
         project: { id: "p1", slug: "a", name: "a", path: "/a" },
         threads: [
           t("attn-a", { projectId: "p1" }),
-          t("arch-hidden", { projectId: "p1", archived: true }),
+          t("arch-hit", { projectId: "p1", archived: true }),
           t("arch-also", { projectId: "p1", archived: true }),
         ],
       },
       {
         project: { id: "p2", slug: "b", name: "b", path: "/b" },
         threads: [
+          t("pin-x", { pinnedAt: NOW, projectId: "p2" }),
           t("attn-b", { projectId: "p2" }),
-          t("arch-b", { projectId: "p2", archived: true }),
         ],
       },
     ];
+    const later = [t("shelf-row", { projectId: "p1", status: "done", settledAt: NOW })];
 
-    const collapsed = buildVisibleThreadIds({
-      pinned: [t("pin-x", { pinnedAt: NOW, projectId: "p2" })],
+    const normal = buildVisibleThreadIds({
       groups,
       collapsedGroupKeys: new Set(),
-      showArchivedKeys: new Set(),
-      snoozed: [],
-      snoozedOpen: false,
-      selectedSnoozedId: null,
-      settled: [],
-      settledOpen: false,
-      settledVisibleCount: 10,
-      selectedSettledId: null,
+      later,
+      laterOpen: true,
+      laterVisibleCount: 10,
+      selectedLaterId: null,
     });
-    assert.deepEqual(collapsed, ["pin-x", "attn-a", "attn-b"]);
-    assert.equal(collapsed.includes("arch-hidden"), false);
-    assert.equal(collapsed.includes("arch-b"), false);
+    assert.deepEqual(
+      normal,
+      ["attn-a", "pin-x", "attn-b", "shelf-row"],
+      "non-search: archived never render inside groups (they live in Later)",
+    );
 
-    const expanded = buildVisibleThreadIds({
-      pinned: [t("pin-x", { pinnedAt: NOW, projectId: "p2" })],
+    const searching = buildVisibleThreadIds({
       groups,
-      collapsedGroupKeys: new Set(),
-      showArchivedKeys: new Set(["p1"]),
-      snoozed: [],
-      snoozedOpen: false,
-      selectedSnoozedId: null,
-      settled: [],
-      settledOpen: false,
-      settledVisibleCount: 10,
-      selectedSettledId: null,
+      collapsedGroupKeys: new Set(["p1"]), // collapse ignored while searching
+      later,
+      laterOpen: true,
+      laterVisibleCount: 10,
+      selectedLaterId: null,
+      searching: true,
     });
-    assert.deepEqual(expanded, [
-      "pin-x",
-      "attn-a",
-      "arch-hidden",
-      "arch-also",
-      "attn-b",
-    ]);
-    assert.equal(expanded.includes("arch-b"), false, "p2 still collapsed");
+    assert.deepEqual(
+      searching,
+      ["attn-a", "arch-hit", "arch-also", "pin-x", "attn-b"],
+      "search: archived hits flatten in after each group's attention; no shelf",
+    );
+    assert.equal(searching.includes("shelf-row"), false, "shelf skipped in search");
   });
 });
 
 describe("rangeSelectIds", () => {
   it("selects inclusive range across section boundary order", () => {
     const ordered = ["pin-a", "a-mid", "b-mid", "settled-y"];
-    // Anchor in project attention, shift into settled tail.
+    // Anchor in project attention, shift into the Later shelf.
     assert.deepEqual(rangeSelectIds(ordered, "a-mid", "settled-y"), [
       "a-mid",
       "b-mid",
@@ -299,16 +278,11 @@ describe("buildVisibleThreadIds group overflow cap (issue #70)", () => {
   });
 
   const baseInput = {
-    pinned: [],
     collapsedGroupKeys: new Set<string>(),
-    showArchivedKeys: new Set<string>(),
-    snoozed: [],
-    snoozedOpen: false,
-    selectedSnoozedId: null,
-    settled: [],
-    settledOpen: false,
-    settledVisibleCount: 0,
-    selectedSettledId: null,
+    later: [],
+    laterOpen: false,
+    laterVisibleCount: 0,
+    selectedLaterId: null,
   };
 
   it("a capped group contributes only the newest 8 attention threads", () => {

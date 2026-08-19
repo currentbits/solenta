@@ -806,7 +806,7 @@ function migrateAutomation(a) {
 /**
  * Projects: remoteHost/remotePath stay absent on old rows. Empty strings
  * (or other junk) are dropped so the keys remain optional, not null.
- * Spaces (#159): spaceId is the same optional-key shape.
+ * Spaces (#568): spaceId is dropped on load.
  * Worktree retention (#316): keep a finite number > 0; drop otherwise.
  * @param {object} p
  */
@@ -820,10 +820,8 @@ function migrateProject(p) {
   else delete next.remoteHost;
   if (remotePath) next.remotePath = remotePath;
   else delete next.remotePath;
-  // Spaces (#159): empty/junk spaceId must stay absent, not null.
-  const spaceId = typeof next.spaceId === "string" ? next.spaceId.trim() : "";
-  if (spaceId) next.spaceId = spaceId;
-  else delete next.spaceId;
+  // Spaces (#568): retired. Drop any leftover spaceId so old stores flatten.
+  delete next.spaceId;
   const retention = next.worktreeRetention;
   if (typeof retention === "number" && Number.isFinite(retention) && retention > 0) {
     next.worktreeRetention = retention;
@@ -831,19 +829,6 @@ function migrateProject(p) {
     delete next.worktreeRetention;
   }
   return next;
-}
-
-/**
- * A space row is { id, name }. Drop anything else so a corrupt store
- * cannot invent groups; old files without `spaces` load as [].
- * @param {unknown} s
- * @returns {{ id: string, name: string } | null}
- */
-function migrateSpace(s) {
-  if (!s || typeof s !== "object") return null;
-  const id = typeof s.id === "string" ? s.id.trim() : "";
-  if (!id || typeof s.name !== "string") return null;
-  return { id, name: s.name };
 }
 
 /**
@@ -1017,13 +1002,20 @@ class Store {
     const threads = Array.isArray(parsed.threads)
       ? parsed.threads.map(migrateThread)
       : [];
+    const rawProjects = Array.isArray(parsed.projects) ? parsed.projects : [];
+    const hadSpaces =
+      (Array.isArray(parsed.spaces) && parsed.spaces.length > 0) ||
+      rawProjects.some(
+        (p) =>
+          p &&
+          typeof p === "object" &&
+          typeof p.spaceId === "string" &&
+          p.spaceId.trim() !== "",
+      );
     const data = {
-      projects: Array.isArray(parsed.projects)
-        ? parsed.projects.map(migrateProject)
-        : [],
-      spaces: Array.isArray(parsed.spaces)
-        ? parsed.spaces.map(migrateSpace).filter(Boolean)
-        : [],
+      projects: rawProjects.map(migrateProject),
+      // #568: Spaces retired. Keep the key so old files still parse; never load rows.
+      spaces: [],
       threads,
       messagesByThread:
         parsed.messagesByThread && typeof parsed.messagesByThread === "object"
@@ -1054,7 +1046,7 @@ class Store {
       settings: normalizeSettings(parsed.settings),
     };
     ensureWorkflowTemplates(data);
-    this._recoveredOnLoad = recoverInterruptedRuns(data);
+    this._recoveredOnLoad = recoverInterruptedRuns(data) || hadSpaces;
     this._lastAssistantByThread.clear();
     return data;
   }
@@ -1250,11 +1242,11 @@ class Store {
   }
 
   getSpaces() {
-    return this.data.spaces;
+    return [];
   }
 
-  setSpaces(spaces) {
-    this.data.spaces = (spaces || []).map(migrateSpace).filter(Boolean);
+  setSpaces() {
+    this.data.spaces = [];
   }
 
   getThreads() {

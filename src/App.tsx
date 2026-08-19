@@ -38,6 +38,7 @@ import type {
   ConflictForecast,
   DistilledWorkflow,
   ProjectUpdateInput,
+  WorkSuggestion,
 } from "./shared/ipc";
 import styles from "./App.module.css";
 
@@ -89,7 +90,6 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   const {
     api,
     projects,
-    spaces,
     threads,
     providers,
     workflows,
@@ -104,10 +104,6 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     addProject,
     createProject,
     updateProject,
-    addSpace,
-    renameSpace,
-    removeSpace,
-    assignProjectToSpace,
     createThread,
     forkThread,
     startRun,
@@ -133,6 +129,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     resumeQuotaWait,
     renameThread,
     setNotes,
+    resolveSuggestion,
     setFeltEstimate,
     startSpec,
     stopSpec,
@@ -171,6 +168,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     listPrs,
     listIssues,
     setIssuePlanStatus,
+    createIssue,
     listActivity,
     listUsageByDay,
     listDigest,
@@ -244,6 +242,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   );
   const [workflowsOpen, setWorkflowsOpen] = useState(false);
   const [distillError, setDistillError] = useState<string | null>(null);
+  const [chipError, setChipError] = useState<string | null>(null);
   /** Freshly created thread the Sidebar should reveal (expand/scroll/flash). */
   const [revealThreadId, setRevealThreadId] = useState<string | null>(null);
   const [drawer, setDrawer] = useState<DrawerId | null>(null);
@@ -522,6 +521,10 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     [selectedThreadId, forkThread],
   );
 
+  const dismissChipError = useCallback(() => {
+    setChipError(null);
+  }, []);
+
   const handleModelPickerOpen = useCallback(() => {
     void refreshProviders();
   }, [refreshProviders]);
@@ -683,6 +686,59 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     (visibleDetail && projectById.get(visibleDetail.thread.projectId)) ||
     (selectedProjectId ? projectById.get(selectedProjectId) : undefined) ||
     null;
+
+  const handleStartSuggestion = useCallback(
+    async (s: WorkSuggestion) => {
+      const threadId = selectedThreadId;
+      if (!threadId) return;
+      const t = await forkThread(threadId, { worktree: true });
+      if (!t) return;
+      // Resolve before startRun so a failed kickoff cannot leave the chip
+      // open — a retry would fork a second idle thread.
+      await resolveSuggestion(threadId, s.id, "started", {
+        startedThreadId: t.id,
+      });
+      try {
+        await startRun(s.prompt, t.id);
+      } catch {
+        // startRun already set the run-scope error. The fork exists, the
+        // chip is started, and forkThread selected the new thread.
+      }
+    },
+    [selectedThreadId, forkThread, startRun, resolveSuggestion],
+  );
+
+  const handleFileSuggestion = useCallback(
+    async (s: WorkSuggestion) => {
+      const threadId = selectedThreadId;
+      const projectPath = project?.path;
+      if (!threadId || !projectPath) return;
+      const r = await createIssue(
+        projectPath,
+        s.title,
+        `${s.prompt}\n\n_Filed from a Solenta suggested-work chip._`,
+      );
+      if (!r.ok) {
+        // In-band like setIssuePlanStatus / planboard: show the reason, leave
+        // the chip open. ArchiveToast is App's surface for action failures.
+        setChipError(r.reason);
+        return;
+      }
+      setChipError(null);
+      await resolveSuggestion(threadId, s.id, "filed", {
+        issueNumber: r.number,
+      });
+    },
+    [selectedThreadId, project?.path, createIssue, resolveSuggestion],
+  );
+
+  const handleDismissSuggestion = useCallback(
+    async (s: WorkSuggestion) => {
+      if (!selectedThreadId) return;
+      await resolveSuggestion(selectedThreadId, s.id, "dismissed");
+    },
+    [selectedThreadId, resolveSuggestion],
+  );
 
   /** Provenance of a handed-off thread; a stable object while the row is. */
   const handoffFrom = visibleDetail?.thread.handoffFrom ?? null;
@@ -891,7 +947,6 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         searchPlaceholder="Search threads…"
         projectsHeader="All projects"
         projects={projects}
-        spaces={spaces}
         threads={threads}
         providers={providers}
         activeThreadId={selectedThreadId}
@@ -912,10 +967,6 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onAddProject={handleAddProject}
         onRemoveProject={handleRemoveProject}
         onEditProject={setEditProjectId}
-        onAddSpace={addSpace}
-        onRenameSpace={renameSpace}
-        onRemoveSpace={removeSpace}
-        onAssignProjectToSpace={assignProjectToSpace}
         projectError={error?.scope === "project" ? error.message : null}
         onDismissProjectError={clearError}
         onOpenSettings={openSettings}
@@ -1111,6 +1162,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         runError={error?.scope === "run" ? error.message : null}
         onDismissRunError={clearError}
         onFork={handleForkOpen}
+        onStartSuggestion={handleStartSuggestion}
+        onFileSuggestion={handleFileSuggestion}
+        onDismissSuggestion={handleDismissSuggestion}
         handoffSource={handoffSource}
         comparePeers={comparePeers}
         onPeekThread={peekThread}
@@ -1235,6 +1289,14 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             onDismiss={dismissDistillError}
           />
         )}
+        {chipError && (
+          <ArchiveToast
+            key={`chip-fail-${chipError}`}
+            variant="error"
+            title={chipError}
+            onDismiss={dismissChipError}
+          />
+        )}
         {addPathOpen && (
           <AddProjectPathModal
             onClose={() => setAddPathOpen(false)}
@@ -1248,7 +1310,6 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         {editProject && (
           <EditProjectModal
             project={editProject}
-            spaces={spaces}
             onClose={() => setEditProjectId(null)}
             onSubmit={submitEditProject}
           />

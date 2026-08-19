@@ -214,106 +214,6 @@
   color: var(--text);
 }
 
-.spaceAddBtn {
-  flex-shrink: 0;
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-muted);
-  font-size: 16px;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.spaceAddBtn:hover,
-.spaceAddBtn:focus-visible {
-  color: var(--text);
-  background: var(--card);
-}
-
-.spaceInput {
-  display: block;
-  width: calc(100% - 32px);
-  margin: 0 16px 8px;
-  padding: 6px 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg-elevated);
-  color: var(--text);
-  font: inherit;
-  font-size: 13px;
-  outline: none;
-}
-
-.spaceInput:focus {
-  border-color: var(--blue-border);
-}
-
-.spaceHeaderRow .spaceInput {
-  flex: 1;
-  width: auto;
-  margin: 0 4px;
-}
-
-.spaceSection {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.spaceHeaderRow {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  width: calc(100% - 16px);
-  margin: 4px 8px 4px;
-  min-width: 0;
-  border-radius: var(--radius-sm);
-}
-
-.spaceDropOver {
-  background: var(--blue-soft);
-  box-shadow: inset 0 0 0 1px var(--blue-border);
-}
-
-.spaceHeader {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: 1;
-  min-width: 0;
-  padding: 6px 10px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  text-align: left;
-  cursor: pointer;
-}
-
-.spaceHeader:hover {
-  background: var(--card);
-  color: var(--text);
-}
-
-.spaceName {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.spaceHeaderRow:hover .groupRemove,
-.spaceHeaderRow:focus-within .groupRemove {
-  opacity: 1;
-}
-
 /* Primary collapse affordance: larger than body text, rotates on open. */
 .chevron {
   display: inline-flex;
@@ -360,13 +260,13 @@
   gap: 4px;
 }
 
+/* t3 flatten (#566): a thread row is one line — dot + title + age. */
 .card {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 4px;
   width: 100%;
-  padding: 10px 12px;
+  padding: 7px 10px;
   border-radius: var(--radius);
   border: 1px solid transparent;
   background: transparent;
@@ -446,6 +346,18 @@
   pointer-events: none;
 }
 
+/* Continuous rail: every row but the last extends the vertical line past its
+   own elbow, so a run of subagents reads as one tree, not dashes. */
+.subagentList > li:not(:last-child) .subagentRow::after {
+  content: "";
+  position: absolute;
+  left: -9px;
+  top: 50%;
+  bottom: -4px;
+  border-left: 1px solid var(--border);
+  pointer-events: none;
+}
+
 .subagentRow:hover {
   background: var(--card);
   color: var(--text);
@@ -466,7 +378,8 @@
 
 .indexHint {
   position: absolute;
-  top: 6px;
+  top: 50%;
+  transform: translateY(-50%);
   left: 6px;
   z-index: 3;
   min-width: 16px;
@@ -476,7 +389,7 @@
   background: var(--blue);
   color: #fff;
   font-size: 10px;
-  font-weight: 700;
+  font-weight: 650;
   font-family: var(--mono);
   display: grid;
   place-items: center;
@@ -550,9 +463,64 @@
   z-index: 1;
   pointer-events: none;
   display: flex;
-  flex-direction: column;
-  gap: 4px;
+  align-items: center;
+  gap: 7px;
   min-width: 0;
+}
+
+/*
+ * The whole status vocabulary, one dot (#566). Words live in the title
+ * tooltip (pointer-events re-enabled — cardBody is none) and in the select
+ * button's aria-label.
+ */
+.statusDot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  pointer-events: auto;
+}
+
+.statusDot[data-status-dot="working"] {
+  background: var(--blue);
+  animation: waitingPulse 2.4s ease-in-out infinite;
+}
+
+.statusDot[data-status-dot="attention"] {
+  background: var(--amber);
+}
+
+.statusDot[data-status-dot="failed"] {
+  background: var(--danger);
+}
+
+.statusDot[data-status-dot="queued"] {
+  background: var(--text-dim);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .statusDot[data-status-dot="working"] {
+    animation: none;
+  }
+}
+
+/* "Waiting on 2 workers · 3m" (issue #42): slim second line, present only
+   while delegation is live. Amber when a worker is blocked on the user. */
+.waitRow {
+  position: relative;
+  z-index: 1;
+  pointer-events: none;
+  margin: 2px 0 0 15px;
+  font-size: 10px;
+  font-weight: 550;
+  color: var(--text-dim);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.waitRow[data-attention="true"] {
+  color: var(--amber);
 }
 
 /*
@@ -561,8 +529,9 @@
  */
 .cardActions {
   position: absolute;
-  top: 6px;
-  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  right: 4px;
   z-index: 2;
   display: flex;
   align-items: center;
@@ -591,7 +560,8 @@
 
 .settleBtn {
   pointer-events: auto;
-  width: 22px;
+  min-width: 22px;
+  width: auto;
   height: 22px;
   display: grid;
   place-items: center;
@@ -618,38 +588,6 @@
 .settleBtn:focus-visible {
   outline: 2px solid var(--blue);
   outline-offset: 1px;
-}
-
-/* Global PINNED shelf (round 44, t3): always open, above project groups. */
-.pinnedSection {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin-bottom: 6px;
-  padding-bottom: 6px;
-  border-bottom: 1px solid var(--border-soft);
-}
-
-.pinnedHeader {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 8px;
-  color: var(--text-dim);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
-}
-
-/* Global SNOOZED shelf (round 44): between groups and settled. */
-.snoozedShelf {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin-top: 8px;
-  padding-top: 6px;
-  border-top: 1px solid var(--border-soft);
 }
 
 .snoozeWrap {
@@ -820,6 +758,18 @@
 
 .settledRow:hover,
 .settledRow:focus-within,
+.settledRow[data-archived="true"] {
+  opacity: 0.55;
+}
+
+.pinFlag {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-dim);
+  line-height: 1;
+}
+
 .settledRow[data-active="true"] {
   opacity: 1;
   background: var(--card);
@@ -844,7 +794,7 @@
 
 .settledTitle {
   font-size: 12px;
-  font-weight: 520;
+  font-weight: 550;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -889,18 +839,6 @@
   background: var(--card);
 }
 
-/*
- * Top row: [slug?] [tag pills] … [age]. The slug only renders for orphan
- * groups (issue #70) — inside a named group the header already carries it.
- * The tag cluster is flexible so the age stays pinned right.
- */
-.cardTop {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
 .repo {
   font-size: 11px;
   color: var(--text-muted);
@@ -917,25 +855,27 @@
   transition: opacity 0.1s ease;
 }
 
-/* Title row holds the optional unread dot left of the title text. */
-.cardTitleRow {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  min-width: 0;
-}
-
+/* Read = quiet, unread = bright + heavy (mail pattern; the old blue dot is
+   gone). Active always bright: you are looking at it. */
 .cardTitle {
   font-size: 13px;
-  font-weight: 560;
-  line-height: 1.35;
-  color: var(--text);
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  font-weight: 450;
+  line-height: 1.4;
+  color: var(--text-muted);
+  white-space: nowrap;
   overflow: hidden;
+  text-overflow: ellipsis;
   min-width: 0;
   flex: 1;
+}
+
+.card[data-unread="true"] .cardTitle {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.card[data-active="true"] .cardTitle {
+  color: var(--text);
 }
 
 .titleInput {
@@ -947,7 +887,7 @@
   flex: 1;
   font: inherit;
   font-size: 13px;
-  font-weight: 560;
+  font-weight: 550;
   line-height: 1.35;
   color: var(--text);
   background: var(--bg-elevated);
@@ -964,28 +904,12 @@
  */
 .unreadDot {
   flex-shrink: 0;
+  align-self: center;
   width: 7px;
   height: 7px;
-  margin-top: 5px;
   border-radius: 50%;
   background: var(--blue);
-  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.25);
-}
-
-/* Quiet hint that a follow-up is waiting on this thread (issue #137). */
-.queuedDot {
-  flex-shrink: 0;
-  width: 7px;
-  height: 7px;
-  margin-top: 5px;
-  border-radius: 50%;
-  background: var(--text-dim);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--text-dim) 35%, transparent);
-}
-
-.settledBody .unreadDot {
-  margin-top: 0;
-  align-self: center;
+  box-shadow: 0 0 0 1px var(--blue-soft);
 }
 
 .srOnly {
@@ -1000,180 +924,12 @@
   border: 0;
 }
 
-/* Tag cluster lives inline on .cardTop (issue #70): flexes so .age stays right. */
-.cardTags {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-}
-
-.providerTag {
-  display: inline-flex;
-  align-items: center;
-  padding: 1px 6px;
-  border-radius: var(--radius-pill);
-  border: 1px solid var(--border-soft);
-  background: rgba(255, 255, 255, 0.03);
-  color: var(--text-dim);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  text-transform: lowercase;
-  max-width: 9ch;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.worktreeTag {
-  display: inline-flex;
-  align-items: center;
-  padding: 1px 5px;
-  border-radius: var(--radius-pill);
-  border: 1px solid rgba(52, 211, 153, 0.28);
-  background: var(--green-soft);
-  color: var(--green);
-  font-size: 10px;
-  font-weight: 650;
-  font-family: var(--mono);
-}
-
-.askTag {
-  display: inline-flex;
-  align-items: center;
-  padding: 1px 5px;
-  border-radius: var(--radius-pill);
-  border: 1px solid rgba(167, 139, 250, 0.35);
-  background: rgba(167, 139, 250, 0.12);
-  color: #c4b5fd;
-  font-size: 10px;
-  font-weight: 650;
-  font-family: var(--mono);
-}
-
-.sshTag {
-  display: inline-flex;
-  align-items: center;
-  padding: 1px 5px;
-  border-radius: var(--radius-pill);
-  border: 1px solid var(--blue-border);
-  background: var(--blue-soft);
-  color: var(--blue);
-  font-size: 10px;
-  font-weight: 650;
-  font-family: var(--mono);
-}
-
-.archivedTag {
-  display: inline-flex;
-  align-items: center;
-  padding: 1px 5px;
-  border-radius: var(--radius-pill);
-  border: 1px solid var(--border-soft);
-  background: rgba(255, 255, 255, 0.03);
-  color: var(--text-dim);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-}
-
 .card[data-archived="true"] {
   opacity: 0.55;
 }
 
 .card[data-archived="true"] .cardTitle {
   color: var(--text-muted);
-}
-
-.archivedToggle {
-  align-self: flex-start;
-  margin: 0 8px 2px;
-  padding: 4px 8px;
-  border-radius: var(--radius-sm);
-  border: none;
-  background: transparent;
-  color: var(--text-dim);
-  font-size: 11px;
-  font-weight: 550;
-  text-align: left;
-}
-
-.archivedToggle:hover {
-  color: var(--text-muted);
-  background: var(--card);
-}
-
-.cardMeta {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-top: 2px;
-  min-width: 0;
-}
-
-/* Branch truncates; separator + PR chip never shrink away. */
-.branchRow {
-  display: flex;
-  align-items: center;
-  /* Load-bearing: without min-width:0 this flex item's automatic minimum size
-     is the FULL untruncated branch width, so .branch never truncates and the
-     PR chip is pushed outside the card. That is the round 26 bug exactly. */
-  min-width: 0;
-  flex: 1 1 auto;
-}
-
-.branch {
-  font-size: 11px;
-  color: var(--text-dim);
-  font-family: var(--mono);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
-  /* Shrink to truncate, never GROW: flex-grow here inflates a short branch
-     past its text and strands the PR chip in dead space to the right. */
-  flex: 0 1 auto;
-}
-
-.branchSep {
-  flex-shrink: 0;
-  font-size: 11px;
-  color: var(--text-dim);
-  font-family: var(--mono);
-  white-space: pre;
-}
-
-.prLabel {
-  flex-shrink: 0;
-  font-size: 11px;
-  color: var(--text-dim);
-  font-family: var(--mono);
-}
-
-.prLink {
-  flex-shrink: 0;
-  position: relative;
-  z-index: 1;
-  pointer-events: auto;
-  color: #93c5fd;
-  text-decoration: none;
-  font-size: 11px;
-  font-family: var(--mono);
-}
-
-.prLink:hover {
-  color: #bfdbfe;
-  text-decoration: underline;
-}
-
-.prLink:focus-visible {
-  outline: 2px solid var(--blue);
-  outline-offset: 1px;
-  border-radius: 2px;
 }
 
 .badge {
@@ -1183,27 +939,9 @@
   flex-shrink: 0;
   padding: 2px 7px;
   border-radius: var(--radius-pill);
-  font-size: 10.5px;
+  font-size: 10px;
   font-weight: 600;
   line-height: 1.3;
-}
-
-.badgeWorking {
-  color: #93c5fd;
-  background: var(--blue-soft);
-  border: 1px solid var(--blue-border);
-}
-
-.badgeWaiting {
-  color: #fbbf24;
-  background: rgba(251, 191, 36, 0.12);
-  border: 1px solid rgba(251, 191, 36, 0.35);
-}
-
-.badgeQuotaWait {
-  color: #fbbf24;
-  background: rgba(251, 191, 36, 0.12);
-  border: 1px solid rgba(251, 191, 36, 0.35);
 }
 
 .waitingDot {
@@ -1222,39 +960,6 @@
   50% {
     opacity: 0.3;
   }
-}
-
-/* Own turn ended, workers still running: in flight, not finished. Violet so
-   it reads as neither done (green) nor blocked on you (amber). */
-.badgeDelegating {
-  color: #c4b5fd;
-  background: rgba(167, 139, 250, 0.12);
-  border: 1px solid rgba(167, 139, 250, 0.35);
-}
-
-.badgeDone {
-  color: var(--green);
-  background: var(--green-soft);
-  border: 1px solid rgba(52, 211, 153, 0.28);
-}
-
-.badgeFailed {
-  color: #fca5a5;
-  background: rgba(248, 113, 113, 0.12);
-  border: 1px solid rgba(248, 113, 113, 0.35);
-}
-
-.badgeWoke {
-  color: #fbbf24;
-  background: rgba(251, 191, 36, 0.12);
-  border: 1px solid rgba(251, 191, 36, 0.35);
-}
-
-.cardBadges {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  flex-shrink: 0;
 }
 
 .badgeConflict {
@@ -1322,37 +1027,6 @@
 
 .conflictTipLine {
   display: block;
-}
-
-/* "Waiting on 2 workers · 3m" (issue #42): its own line under the meta row,
-   so the count survives on a narrow card. Amber when a child is blocked on
-   the user — that wait needs an answer, not patience. */
-.waitRow {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  margin-top: 3px;
-  font-size: 10.5px;
-  font-weight: 600;
-  color: var(--text-dim);
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.waitRow[data-attention="true"] {
-  color: #fbbf24;
-}
-
-/* Single-line scratch-note preview (issue #194). Quieter than title + branch. */
-.notesPreview {
-  margin-top: 3px;
-  font-size: 11px;
-  font-weight: 450;
-  color: var(--text-dim);
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
 }
 
 .group {
@@ -1514,14 +1188,6 @@
 
 .removeConfirmCancel:hover {
   color: var(--text);
-}
-
-.groupSummary {
-  font-size: 10px;
-  color: var(--text-dim);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .groupSlug {
@@ -1710,7 +1376,7 @@
   padding: 8px;
   text-align: center;
   color: var(--text-dim);
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .searchHint {
@@ -1718,7 +1384,7 @@
   padding: 4px 8px;
   text-align: center;
   color: var(--text-dim);
-  font-size: 11.5px;
+  font-size: 11px;
 }
 
 .inMessagesTag {
@@ -1732,27 +1398,6 @@
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.01em;
-}
-
-.spinner {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  border: 1.5px solid rgba(147, 197, 253, 0.25);
-  border-top-color: #93c5fd;
-  animation: spin 0.7s linear infinite;
-}
-
-.check {
-  display: inline-flex;
-  align-items: center;
-  line-height: 1;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 /* New-thread reveal (t3): one accent-tinted flash that fades out. The class

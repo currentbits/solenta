@@ -1,8 +1,9 @@
 /**
- * Sidebar: project collapse + global settled tail (round 40), jsdom.
+ * Sidebar: project collapse + global Later shelf (#567), jsdom.
  *
- * Round 40: settled is ONE global tail at the bottom (t3 placement), not
- * per-project folds. Fresh done stays in project groups; MERGED goes to tail.
+ * #567: two zones — Active project groups (pinned rows first) and ONE global
+ * "Later · N" shelf at the bottom holding snoozed + settled + archived rows.
+ * Fresh done stays in project groups; MERGED goes to the shelf.
  *
  * Run: npm run test:renderer
  */
@@ -88,6 +89,7 @@ function sidebar(
     projects?: ProjectInfo[];
     activeThreadId?: string | null;
     onSetSettled?: (id: string, o: "settled" | "active") => void;
+    onSetArchived?: (id: string, archived: boolean) => void;
     onSelectThread?: (id: string) => void;
     onRemoveProject?: (projectId: string) => void;
     projectError?: string | null;
@@ -112,6 +114,7 @@ function sidebar(
       onRemoveProject={over.onRemoveProject}
       projectError={over.projectError ?? null}
       onSetSettled={over.onSetSettled}
+      onSetArchived={over.onSetArchived}
       revealThreadId={over.revealThreadId ?? null}
       onRevealHandled={over.onRevealHandled}
       updateState={over.updateState}
@@ -215,12 +218,13 @@ function groupChevron(
 function settledTailHeader(
   m: Awaited<ReturnType<typeof mount>>,
 ): HTMLButtonElement {
+  // #567: the shelf header reads "Later · N" (snoozed + settled + archived).
   const header = m
     .queryAll("button")
-    .find((b) => (b.textContent || "").includes("Settled ·")) as
+    .find((b) => (b.textContent || "").includes("Later ·")) as
     | HTMLButtonElement
     | undefined;
-  assert.ok(header, "global Settled · N header must exist");
+  assert.ok(header, "global Later · N header must exist");
   return header;
 }
 
@@ -288,21 +292,22 @@ describe("Sidebar project groups keep attention only (round 40)", () => {
     m.unmount();
   });
 
-  it("shows working-only summary on the group header (no settled half)", async () => {
+  it("group header carries no working/unread summary (t3 flatten #566)", async () => {
     const m = await mount(sidebar(THREADS, { projects: [p1, p2] }));
-    assert.match(
-      groupHeader(m, "acme/ledger").textContent || "",
-      /1 working/,
-      "header still counts working",
-    );
+    const header = groupHeader(m, "acme/ledger").textContent || "";
     assert.ok(
-      !(groupHeader(m, "acme/ledger").textContent || "").includes("settled"),
-      "settled half must leave project headers",
+      !header.includes("working"),
+      "groupHeaderSummary was deleted — no working count on headers",
     );
+    assert.ok(!header.includes("unread"), "no unread count on headers either");
     m.unmount();
   });
 
-  it("archived wins over settled for a MERGED thread", async () => {
+  it("archived wins over settled: MERGED+archived renders as a Later archived row", async () => {
+    // #567: the per-group "N archived" toggle is gone; archived threads live
+    // on the Later shelf as dim rows with an unarchive hover action.
+    await clearSidebarStorage();
+    const archiveCalls: Array<[string, boolean]> = [];
     const m = await mount(
       sidebar(
         [
@@ -320,18 +325,53 @@ describe("Sidebar project groups keep attention only (round 40)", () => {
             archived: true,
           }),
         ],
-        { projects: [p1] },
+        {
+          projects: [p1],
+          onSetArchived: (id, a) => archiveCalls.push([id, a]),
+        },
       ),
     );
-    assert.ok(m.byText("1 archived"), "archived toggle claims the thread");
     assert.ok(
-      !m.text().includes("Settled ·"),
-      "archived MERGED must not enter the global settled tail",
+      !m.text().includes("1 archived"),
+      "per-group archived toggle is gone (#567)",
+    );
+    assert.ok(
+      (settledTailHeader(m).textContent || "").includes("Later · 1"),
+      "archived thread counts into the Later shelf header",
+    );
+    const row = m.query('[data-thread-card="gone"]');
+    assert.ok(row, "archived thread renders on the Later shelf");
+    assert.equal(
+      row!.getAttribute("data-archived"),
+      "true",
+      "archived beats settled: the row is archived, not settled",
+    );
+    assert.equal(
+      row!.getAttribute("data-settled"),
+      null,
+      "archived MERGED must not present as a settled row",
+    );
+    assert.ok(
+      !Array.from(row!.querySelectorAll("button")).some(
+        (b) => b.getAttribute("aria-label") === "Keep thread active",
+      ),
+      "archived rows have no keep-active affordance",
+    );
+    const unarchive = m.query(
+      '[data-unarchive-btn="gone"]',
+    ) as HTMLButtonElement | null;
+    assert.ok(unarchive, "archived row offers an unarchive hover button");
+    assert.equal((unarchive!.textContent || "").trim(), "unarchive");
+    await m.click(unarchive!);
+    assert.deepEqual(
+      archiveCalls,
+      [["gone", false]],
+      "unarchive calls setArchived(id, false)",
     );
     m.unmount();
   });
 
-  it("shows All settled when a project has only settled threads", async () => {
+  it("shows Nothing active when a project's threads are all on the Later shelf", async () => {
     const m = await mount(
       sidebar(
         [
@@ -355,27 +395,27 @@ describe("Sidebar project groups keep attention only (round 40)", () => {
       ),
     );
     assert.ok(
-      m.text().includes("All settled"),
+      m.text().includes("Nothing active"),
       "fully-settled project must not claim No threads yet",
     );
     assert.ok(
       !m
         .queryAll("[class*='emptyThreads']")
         .some((el) => (el.textContent || "") === "No threads yet"),
-      "the empty-group copy for a settled-only project is All settled",
+      "the empty-group copy for an all-Later project is Nothing active",
     );
     m.unmount();
   });
 });
 
 describe("Sidebar global settled tail (round 40)", () => {
-  it("expands by default (t3) with a Settled · N header spanning projects", async () => {
+  it("expands by default (t3) with a Later · N header spanning projects", async () => {
     await clearSidebarStorage();
     const m = await mount(sidebar(THREADS, { projects: [p1, p2] }));
     const header = settledTailHeader(m);
     assert.ok(
-      (header.textContent || "").includes("Settled · 2"),
-      "tail header counts settled from every project",
+      (header.textContent || "").includes("Later · 2"),
+      "shelf header counts settled from every project",
     );
     assert.equal(
       header.getAttribute("aria-expanded"),
@@ -415,21 +455,33 @@ describe("Sidebar global settled tail (round 40)", () => {
     await clearSidebarStorage();
   });
 
-  it("Settle all on the tail bar settles attention threads, skips working", async () => {
+  it("Settle all on the shelf bar settles attention threads, skips working and pinned", async () => {
     const calls: Array<[string, string]> = [];
+    const withPinned = [
+      ...THREADS,
+      // #567: pinned rows are Active but Settle all must leave them alone.
+      thread({
+        id: "pinned-idle",
+        title: "pinned idle",
+        status: "idle",
+        pinnedAt: FRESH,
+        updatedAt: FRESH + 5,
+        projectId: "p1",
+      }),
+    ];
     const m = await mount(
-      sidebar(THREADS, {
+      sidebar(withPinned, {
         projects: [p1, p2],
         onSetSettled: (id, o) => calls.push([id, o]),
       }),
     );
     const btn = m.query("[data-settle-all]") as HTMLButtonElement | null;
-    assert.ok(btn, "Settle all button must render on the settled tail bar");
+    assert.ok(btn, "Settle all button must render on the Later shelf bar");
     await m.click(btn!);
     assert.deepEqual(
       calls.map(([id]) => id).sort(),
       ["billing-idle", "broken", "finished"],
-      "settles every attention thread except the working one",
+      "settles every attention thread except the working and pinned ones",
     );
     assert.ok(
       calls.every(([, o]) => o === "settled"),
@@ -457,7 +509,7 @@ describe("Sidebar global settled tail (round 40)", () => {
     await clearSidebarStorage();
   });
 
-  it("pages the tail: 40 settled → 10 visible, Show more → 35, header stays Settled · 40", async () => {
+  it("pages the shelf: 40 settled → 10 visible, Show more → 35, header stays Later · 40", async () => {
     // Literal 40 / 10 / 35 so mutating INITIAL 10→4 or PAGE 25→1 fails.
     const TOTAL = 40;
     const many = Array.from({ length: TOTAL }, (_, i) =>
@@ -484,8 +536,8 @@ describe("Sidebar global settled tail (round 40)", () => {
     const m = await mount(sidebar(many, { projects: [p1, p2] }));
     const header = settledTailHeader(m);
     assert.ok(
-      (header.textContent || "").includes("Settled · 40"),
-      "header reports the full settled count, not the page size",
+      (header.textContent || "").includes("Later · 40"),
+      "header reports the full Later count, not the page size",
     );
     // Default-expanded (t3): the first page is already on screen.
     const shown = cardTitles(m).filter((id) => id.startsWith("s"));
@@ -500,8 +552,8 @@ describe("Sidebar global settled tail (round 40)", () => {
       "one Show more adds exactly 25 (t3 PAGE) → 10+25=35",
     );
     assert.ok(
-      (header.textContent || "").includes("Settled · 40"),
-      "header still says Settled · 40 after paging",
+      (header.textContent || "").includes("Later · 40"),
+      "header still says Later · 40 after paging",
     );
     m.unmount();
   });
@@ -530,7 +582,7 @@ describe("Sidebar global settled tail (round 40)", () => {
     );
     const m = await mount(sidebar(many, { projects: [p1, p2] }));
     const header = settledTailHeader(m);
-    assert.ok((header.textContent || "").includes("Settled · 10"));
+    assert.ok((header.textContent || "").includes("Later · 10"));
     assert.equal(
       cardTitles(m).filter((id) => id.startsWith("exact")).length,
       10,
@@ -656,9 +708,9 @@ describe("Sidebar global settled tail (round 40)", () => {
     m.unmount();
   });
 
-  it("attention card settle click sends override settled (payload, not label)", async () => {
+  it("attention card menu settle sends override settled (payload, not label)", async () => {
     // Restored from round 39: hardcoding ThreadCard's override to "active"
-    // must fail this test.
+    // must fail this test. Settle now lives in the "…" actions menu (#566).
     const settleCalls: Array<{ id: string; o: string }> = [];
     const m = await mount(
       sidebar(THREADS, {
@@ -668,21 +720,27 @@ describe("Sidebar global settled tail (round 40)", () => {
         },
       }),
     );
-    const settleBtn = m
-      .queryAll("button")
-      .find(
-        (b) =>
-          b.getAttribute("aria-label") === "Settle thread" &&
-          !(b as HTMLButtonElement).disabled,
-      ) as HTMLButtonElement | undefined;
-    assert.ok(settleBtn, "attention cards offer Settle thread");
-    await m.click(settleBtn);
-    assert.equal(settleCalls.length, 1, "one settle call");
-    assert.equal(
-      settleCalls[0]!.o,
-      "settled",
+    // "finished" is a non-working attention card, so its settle item is enabled.
+    await m.click(m.query('[data-more-btn="finished"]'));
+    const item = m.query(
+      '[data-settle-item="finished"]',
+    ) as HTMLButtonElement | null;
+    assert.ok(item, "actions menu offers Settle thread");
+    assert.equal(item!.disabled, false, "not working → settle enabled");
+    assert.equal((item!.textContent || "").trim(), "Settle thread");
+    await m.click(item!);
+    assert.deepEqual(
+      settleCalls,
+      [{ id: "finished", o: "settled" }],
       "attention → settle must send override settled, not active",
     );
+    // Working cards keep the item but disabled.
+    await m.click(m.query('[data-more-btn="busy"]'));
+    const busyItem = m.query(
+      '[data-settle-item="busy"]',
+    ) as HTMLButtonElement | null;
+    assert.ok(busyItem, "working card still lists the settle item");
+    assert.equal(busyItem!.disabled, true, "disabled while status=working");
     m.unmount();
   });
 });
@@ -1331,31 +1389,33 @@ describe("Sidebar unread indicators (round 43)", () => {
     }),
   ];
 
-  it("renders an unread dot for a non-selected unread attention card", async () => {
+  it("marks a non-selected unread attention card (data-unread + sr-only)", async () => {
+    // #566: cards no longer paint a data-unread-dot; the card attribute,
+    // an sr-only "unread" span, and the select label carry the state.
     const m = await mount(
       sidebar(UNREAD_THREADS, { projects: [p1], activeThreadId: "sel" }),
     );
-    const dot = m.query('[data-unread-dot="u-mid"]');
-    assert.ok(dot, "unread mid must paint a data-unread-dot");
     const card = m.query('[data-thread-card="u-mid"]');
     assert.equal(card?.getAttribute("data-unread"), "true");
+    assert.ok(
+      Array.from(card!.querySelectorAll("span")).some(
+        (el) => (el.textContent || "").trim() === "unread",
+      ),
+      "card must carry an sr-only unread span",
+    );
     const select = m.query('button[aria-label="Select thread: unread mid, unread"]');
     assert.ok(select, "select aria-label must suffix , unread");
     m.unmount();
   });
 
-  it("suppresses the dot on the selected thread even when technically unread", async () => {
+  it("suppresses unread on the selected thread even when technically unread", async () => {
     const m = await mount(
       sidebar(UNREAD_THREADS, { projects: [p1], activeThreadId: "sel" }),
     );
     assert.equal(
-      m.query('[data-unread-dot="sel"]'),
-      null,
-      "selected card must not render an unread dot",
-    );
-    assert.equal(
       m.query('[data-thread-card="sel"]')?.getAttribute("data-unread"),
       null,
+      "selected card must not mark unread",
     );
     m.unmount();
   });
@@ -1365,7 +1425,7 @@ describe("Sidebar unread indicators (round 43)", () => {
       sidebar(UNREAD_THREADS, { projects: [p1], activeThreadId: "sel" }),
     );
     assert.equal(
-      m.query('[data-unread-dot="legacy-null"]'),
+      m.query('[data-thread-card="legacy-null"]')?.getAttribute("data-unread"),
       null,
       "legacy null is never unread",
     );
@@ -1385,17 +1445,6 @@ describe("Sidebar unread indicators (round 43)", () => {
       (settledTailHeader(m).textContent || "").includes("unread"),
       "settled tail header must include · N unread",
     );
-    m.unmount();
-  });
-
-  it("extends the project header with · N unread", async () => {
-    const m = await mount(
-      sidebar(UNREAD_THREADS, { projects: [p1], activeThreadId: "sel" }),
-    );
-    const header = groupHeader(m, "acme/ledger").textContent || "";
-    // attention: visited-first, sel, u-mid, legacy-null → unread among them:
-    // sel is unread by predicate, u-mid is unread → 2 unread (legacy no).
-    assert.match(header, /\d+ unread/, `header must count unread, got: ${header}`);
     m.unmount();
   });
 
@@ -1445,8 +1494,8 @@ describe("Sidebar unread indicators (round 43)", () => {
     );
     const zeroHeader = settledTailHeader(mZero).textContent || "";
     assert.ok(
-      zeroHeader.includes("Settled ·"),
-      `tail header must still count settled, got: ${zeroHeader}`,
+      zeroHeader.includes("Later ·"),
+      `shelf header must still count its rows, got: ${zeroHeader}`,
     );
     assert.ok(
       !zeroHeader.includes("unread"),
@@ -1581,21 +1630,34 @@ describe("Sidebar waiting-on badge (issue #42)", () => {
       ...over,
     });
 
-  it("an orchestrator with live workers says what it is waiting on", async () => {
+  it("an orchestrator with live workers says what it is waiting on (dot title)", async () => {
+    // #566: the status dot carries the wait flags and the tooltip carries the
+    // words. The visible count line stays too (kept by request): delegation
+    // must be readable at rest, and the line vanishes when workers finish.
     await clearSidebarStorage();
     const m = await mount(
       sidebar([ORCH, worker({ id: "w1" }), worker({ id: "w2" })]),
     );
 
-    const badge = m.query('[data-wait-badge="orch"]');
-    assert.ok(badge, "orchestrator card carries the wait badge");
-    assert.match(badge!.textContent || "", /Waiting on 2 workers · 3m/);
+    const row = m.query('[data-wait-row="orch"]');
+    assert.ok(row, "visible wait line renders while delegation is live");
+    assert.match(row!.textContent || "", /Waiting on 2 workers/);
+
+    const dot = m.query('[data-wait-badge="orch"]');
+    assert.ok(dot, "orchestrator dot carries the wait flag");
     assert.equal(
-      badge!.getAttribute("data-attention"),
+      dot!.getAttribute("data-status-dot"),
+      "working",
+      "delegating parent reads as working tone",
+    );
+    assert.equal(dot!.getAttribute("data-delegating"), "orch");
+    assert.match(dot!.getAttribute("title") || "", /Waiting on 2 workers/);
+    assert.match(dot!.getAttribute("title") || "", /w1/, "tooltip names workers");
+    assert.equal(
+      dot!.getAttribute("data-attention"),
       null,
       "nothing blocked: quiet styling",
     );
-    assert.match(badge!.getAttribute("title") || "", /w1/, "tooltip names workers");
     assert.equal(
       m.query('[data-wait-badge="w1"]'),
       null,
@@ -1604,16 +1666,17 @@ describe("Sidebar waiting-on badge (issue #42)", () => {
     m.unmount();
   });
 
-  it("a worker blocked on a prompt turns the badge into attention", async () => {
+  it("a worker blocked on a prompt turns the dot into attention", async () => {
     await clearSidebarStorage();
     const m = await mount(
       sidebar([ORCH, worker({ id: "w1", awaitingInput: true })]),
     );
 
-    const badge = m.query('[data-wait-badge="orch"]');
-    assert.match(badge!.textContent || "", /1 blocked/);
-    assert.equal(badge!.getAttribute("data-attention"), "true");
-    assert.match(badge!.getAttribute("title") || "", /blocked on you/);
+    const dot = m.query('[data-wait-badge="orch"]');
+    assert.ok(dot, "wait flag still present");
+    assert.equal(dot!.getAttribute("data-status-dot"), "attention");
+    assert.equal(dot!.getAttribute("data-attention"), "true");
+    assert.match(dot!.getAttribute("title") || "", /blocked on you/);
     m.unmount();
   });
 
@@ -1623,6 +1686,7 @@ describe("Sidebar waiting-on badge (issue #42)", () => {
       sidebar([ORCH, worker({ id: "w1", status: "done", runStartedAt: null })]),
     );
     assert.equal(m.query('[data-wait-badge="orch"]'), null);
+    assert.equal(m.query('[data-wait-row="orch"]'), null);
     m.unmount();
   });
 
@@ -1646,9 +1710,15 @@ describe("Sidebar waiting-on badge (issue #42)", () => {
       ]),
     );
 
-    const badge = m.query('[data-wait-badge="solo"]');
-    assert.equal(badge!.textContent, "Waiting on 1 worker");
-    assert.match(badge!.getAttribute("title") || "", /Background research/);
+    const dot = m.query('[data-wait-badge="solo"]');
+    assert.ok(dot, "working thread with a running subagent carries the flag");
+    const title = dot!.getAttribute("title") || "";
+    assert.match(title, /Waiting on 1 worker:/);
+    assert.match(title, /Background research/);
+    assert.ok(
+      !/Waiting on 1 worker · \d/.test(title),
+      "no false elapsed for in-agent subagents (no spawn timestamp)",
+    );
     m.unmount();
   });
 });
@@ -1738,10 +1808,6 @@ describe("Sidebar group overflow cap + card density (issue #70)", () => {
     assert.ok(
       !(homeCard!.textContent || "").includes("acme/ledger"),
       "group header already carries the slug — the card must not repeat it",
-    );
-    assert.ok(
-      (homeCard!.textContent || "").includes("Claude Code"),
-      "provider tag survives the row merge",
     );
     const orphanCard = m.query('[data-thread-card="orphan-1"]');
     assert.ok(orphanCard, "orphan card renders");

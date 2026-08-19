@@ -191,13 +191,12 @@ describe("effectiveSettled pin blocker (round 44)", () => {
   });
 });
 
-describe("partitionSidebar pin+snooze precedence", () => {
+describe("partitionSidebar pin+snooze precedence (#567 Active/Later)", () => {
   const opts = defaultSettleOpts(NOW);
 
-  it("pinned + settled-override → pinned wins (mutual exclusion path leaves pin)", () => {
+  it("pinned + settled-override → stays Active (pin beats settle)", () => {
     // A race can leave both; partition: pin beats settle when not snoozed.
     // (Honest setPinned clears settled; this is the residual-race case.)
-    // After mutual exclusion, pin has settledOverride null. If both set:
     const row = t({
       id: "both",
       projectId: "p1",
@@ -206,14 +205,13 @@ describe("partitionSidebar pin+snooze precedence", () => {
       settledAt: NOW - 5,
       status: "done",
     });
-    // pin blocks effectiveSettled; not snoozed → pinned shelf
-    const { pinned, settled, attentionThreads } = partitionSidebar([row], opts);
-    assert.deepEqual(pinned.map((x) => x.id), ["both"]);
-    assert.equal(settled.length, 0);
-    assert.equal(attentionThreads.length, 0);
+    const { attentionThreads, later } = partitionSidebar([row], opts);
+    assert.deepEqual(attentionThreads.map((x) => x.id), ["both"]);
+    assert.equal(later.settled.length, 0);
+    assert.equal(later.snoozed.length, 0);
   });
 
-  it("snoozed + pinned → snooze shelf (suspends pin)", () => {
+  it("snoozed + pinned → Later shelf (snooze suspends pin)", () => {
     const row = t({
       id: "sp",
       projectId: "p1",
@@ -221,9 +219,8 @@ describe("partitionSidebar pin+snooze precedence", () => {
       snoozedUntil: NOW + 50_000,
       snoozedAt: NOW - 10,
     });
-    const { pinned, snoozed, attentionThreads } = partitionSidebar([row], opts);
-    assert.deepEqual(snoozed.map((x) => x.id), ["sp"]);
-    assert.equal(pinned.length, 0);
+    const { attentionThreads, later } = partitionSidebar([row], opts);
+    assert.deepEqual(later.snoozed.map((x) => x.id), ["sp"]);
     assert.equal(attentionThreads.length, 0);
   });
 
@@ -235,12 +232,12 @@ describe("partitionSidebar pin+snooze precedence", () => {
       snoozedAt: NOW - 10_000,
       status: "idle",
     });
-    const { snoozed, attentionThreads } = partitionSidebar([row], opts);
-    assert.equal(snoozed.length, 0);
+    const { attentionThreads, later } = partitionSidebar([row], opts);
+    assert.equal(later.snoozed.length, 0);
     assert.deepEqual(attentionThreads.map((x) => x.id), ["woke"]);
   });
 
-  it("pinned sorted oldest-first; snoozed wake-soonest first", () => {
+  it("pinned stay Active; snoozed sort wake-soonest first", () => {
     const threads = [
       t({ id: "p-new", projectId: "p1", pinnedAt: NOW - 10 }),
       t({ id: "p-old", projectId: "p2", pinnedAt: NOW - 1000 }),
@@ -257,13 +254,14 @@ describe("partitionSidebar pin+snooze precedence", () => {
         snoozedAt: NOW,
       }),
     ];
-    const { pinned, snoozed } = partitionSidebar(threads, opts);
+    const { attentionThreads, later } = partitionSidebar(threads, opts);
     assert.deepEqual(
-      pinned.map((x) => x.id),
-      ["p-old", "p-new"],
+      attentionThreads.map((x) => x.id).sort(),
+      ["p-new", "p-old"],
+      "pinned rows are Active (group order handles pinned-first)",
     );
     assert.deepEqual(
-      snoozed.map((x) => x.id),
+      later.snoozed.map((x) => x.id),
       ["s-soon", "s-late"],
     );
   });

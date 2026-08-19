@@ -51,7 +51,11 @@ describe("thread rename (issue #139)", () => {
     try {
       await m.flush();
 
-      const menuBtn = m.query("[aria-label='Thread actions']");
+      // The sidebar row's … button shares the "Thread actions" label since
+      // #566; the header one is the only match without data-more-btn.
+      const menuBtn = m.query(
+        "[aria-label='Thread actions']:not([data-more-btn])",
+      );
       assert.ok(menuBtn, "overflow menu button");
       await m.click(menuBtn);
       const item = m.query("[data-rename-thread]");
@@ -74,7 +78,9 @@ describe("thread rename (issue #139)", () => {
         title: "new title",
       });
 
-      await m.click(m.query("[aria-label='Thread actions']"));
+      await m.click(
+        m.query("[aria-label='Thread actions']:not([data-more-btn])"),
+      );
       await m.click(m.query("[data-rename-thread]"));
       const again = m.query(
         "[data-thread-title-input]",
@@ -117,7 +123,7 @@ describe("thread rename (issue #139)", () => {
     try {
       await m.flush();
 
-      await m.click(m.query('[data-snooze-btn="t-row"]'));
+      await m.click(m.query('[data-more-btn="t-row"]'));
       await m.flush();
       const item = m.query('[data-rename-thread="t-row"]');
       assert.ok(item, "Rename item must be in the row menu");

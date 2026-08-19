@@ -1,4 +1,4 @@
-import type { ProjectInfo, SpaceInfo, ThreadInfo } from "./shared/ipc";
+import type { ProjectInfo, ThreadInfo } from "./shared/ipc";
 import {
   AUTO_SETTLE_AFTER_DAYS,
   compareSettledNewestFirst,
@@ -11,7 +11,6 @@ import {
   effectiveSnoozed,
   isPinned,
 } from "./threadSnooze";
-import { countUnread } from "./threadUnread";
 
 export interface SidebarGroup {
   project: ProjectInfo | null;
@@ -74,77 +73,67 @@ export function splitSettled(
   return { attention, settled };
 }
 
+/** The single "not now" shelf (#567): snoozed wake-soonest, then settled
+ *  newest, then archived newest. Rendered in that order. */
+export interface LaterPartition {
+  snoozed: ThreadInfo[];
+  settled: ThreadInfo[];
+  archived: ThreadInfo[];
+}
+
 /**
- * Global partition for the sidebar (rounds 40–44, t3-style).
+ * Global partition for the sidebar (#567: two zones, Active and Later).
  *
  * Precedence (first match wins):
- *   1. snoozed  — beats pin (suspends, never clears) and settle
- *   2. pinned   — global shelf, oldest pin first; beats settle
- *   3. settled  — PR/inactivity/override (pin already blocked above)
- *   4. attention — everything else, for per-project groups
- *
- * Archived never enters any shelf.
+ *   1. archived — Later, always
+ *   2. snoozed  — Later (an explicit "not now" beats a pin)
+ *   3. pinned   — Active, sorted first in its project group; beats settle
+ *   4. settled  — Later (PR/inactivity/override)
+ *   5. attention — Active, per-project groups
  */
 export function partitionSidebar(
   threads: readonly ThreadInfo[],
   opts: SettleOpts,
 ): {
-  pinned: ThreadInfo[];
   attentionThreads: ThreadInfo[];
-  snoozed: ThreadInfo[];
-  settled: ThreadInfo[];
+  later: LaterPartition;
 } {
-  const nonArchived = threads.filter((t) => !t.archived);
-  const pinned: ThreadInfo[] = [];
   const snoozed: ThreadInfo[] = [];
   const attention: ThreadInfo[] = [];
   const settled: ThreadInfo[] = [];
+  const archived: ThreadInfo[] = [];
 
-  for (const t of nonArchived) {
+  for (const t of threads) {
+    if (t.archived) {
+      archived.push(t);
+      continue;
+    }
     if (effectiveSnoozed(t, opts.now)) {
       snoozed.push(t);
       continue;
     }
-    if (isPinned(t)) {
-      pinned.push(t);
-      continue;
-    }
-    if (effectiveSettled(t, opts)) {
-      settled.push(t);
-    } else {
+    if (isPinned(t) || !effectiveSettled(t, opts)) {
       attention.push(t);
+    } else {
+      settled.push(t);
     }
   }
 
-  pinned.sort(comparePinnedOldestFirst);
   snoozed.sort(compareSnoozedWakeSoonest);
   settled.sort(compareSettledNewestFirst);
+  archived.sort(
+    (a, b) => b.updatedAt - a.updatedAt || a.id.localeCompare(b.id),
+  );
 
   return {
-    pinned,
     attentionThreads: attention,
-    snoozed,
-    settled,
+    later: { snoozed, settled, archived },
   };
 }
 
-/**
- * Project header summary: working count (round 40) plus unread (round 43).
- * Examples: "2 working", "3 unread", "2 working · 3 unread".
- * Settled counts live on the global tail header, not here.
- * Null when there is nothing to say.
- */
-export function groupHeaderSummary(
-  threads: readonly ThreadInfo[],
-): string | null {
-  if (threads.length === 0) return null;
-  const working = threads.filter((t) => t.status === "working").length;
-  const unread = countUnread(threads);
-  const parts: string[] = [];
-  if (working > 0) parts.push(`${working} working`);
-  if (unread > 0) parts.push(`${unread} unread`);
-  if (parts.length === 0) return null;
-  return parts.join(" · ");
+/** Later shelf render order, flattened. */
+export function flattenLater(later: LaterPartition): ThreadInfo[] {
+  return [...later.snoozed, ...later.settled, ...later.archived];
 }
 
 /** Default opts when a caller has no clock of its own (tests, pure helpers). */
@@ -219,8 +208,14 @@ export function buildSidebarGroups(
   }
 
   for (const [key, list] of byProject) {
+    // Pinned rows sort first in their group (#567: the pinned shelf is gone).
+    // Among pinned, oldest pin first; the rest keep static createdAt order.
     list.sort(
-      (a, b) => createdKey(b) - createdKey(a) || a.id.localeCompare(b.id),
+      (a, b) =>
+        Number(isPinned(b)) - Number(isPinned(a)) ||
+        (isPinned(a) && isPinned(b) ? comparePinnedOldestFirst(a, b) : 0) ||
+        createdKey(b) - createdKey(a) ||
+        a.id.localeCompare(b.id),
     );
     byProject.set(key, attachForks(list));
   }
@@ -252,68 +247,4 @@ export function buildSidebarGroups(
   orphans.sort((a, b) => newest(b.threads) - newest(a.threads));
 
   return [...withThreads, ...empty, ...orphans];
-}
-
-export interface SidebarSpaceSection {
-  /** null = the trailing Unassigned section (and the only section when there are no spaces). */
-  space: SpaceInfo | null;
-  groups: SidebarGroup[];
-}
-
-/**
- * Layer named spaces on top of buildSidebarGroups without changing it.
- *
- * Sections follow `spaces` array order, then one trailing Unassigned
- * section (space: null). A dangling spaceId lands in Unassigned so the
- * project never vanishes. Empty spaces still emit a section (that is
- * how a user drops the first project in).
- *
- * Zero spaces is a no-op: one Unassigned section whose groups equal
- * buildSidebarGroups(projects, threads). Activity never reorders within
- * a section — that rule stays inside buildSidebarGroups.
- */
-export function buildSidebarSections(
-  spaces: SpaceInfo[],
-  projects: ProjectInfo[],
-  threads: ThreadInfo[],
-): SidebarSpaceSection[] {
-  const known = new Set(spaces.map((s) => s.id));
-  const allProjectIds = new Set(projects.map((p) => p.id));
-  const bySpace = new Map<string, ProjectInfo[]>();
-  const unassigned: ProjectInfo[] = [];
-  for (const p of projects) {
-    if (p.spaceId && known.has(p.spaceId)) {
-      const list = bySpace.get(p.spaceId) ?? [];
-      list.push(p);
-      bySpace.set(p.spaceId, list);
-    } else {
-      unassigned.push(p);
-    }
-  }
-
-  const threadsFor = (ids: Set<string>, includeOrphans: boolean) =>
-    threads.filter(
-      (t) =>
-        ids.has(t.projectId) ||
-        (includeOrphans && !allProjectIds.has(t.projectId)),
-    );
-
-  const sections: SidebarSpaceSection[] = spaces.map((space) => {
-    const spaceProjects = bySpace.get(space.id) ?? [];
-    const ids = new Set(spaceProjects.map((p) => p.id));
-    return {
-      space,
-      groups: buildSidebarGroups(spaceProjects, threadsFor(ids, false)),
-    };
-  });
-
-  const unassignedIds = new Set(unassigned.map((p) => p.id));
-  sections.push({
-    space: null,
-    groups: buildSidebarGroups(
-      unassigned,
-      threadsFor(unassignedIds, true),
-    ),
-  });
-  return sections;
 }

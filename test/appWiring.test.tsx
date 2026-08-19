@@ -385,9 +385,15 @@ describe("App archive undo toast wiring", () => {
     const m = await boot(fake);
 
     // Boot already selects the first thread; open its overflow and archive.
+    // Sidebar card "…" button shares the label (#566); the header overflow
+    // is the one without data-more-btn.
     const menuBtn = m
       .queryAll("button")
-      .find((b) => b.getAttribute("aria-label") === "Thread actions");
+      .find(
+        (b) =>
+          b.getAttribute("aria-label") === "Thread actions" &&
+          !b.hasAttribute("data-more-btn"),
+      );
     assert.ok(menuBtn, "Thread actions menu must be present on the open thread");
     await m.click(menuBtn as HTMLElement);
 
@@ -720,17 +726,14 @@ describe("App selection stamps lastVisitedAt (round 43 unread)", () => {
     try {
       await m.flush();
 
-      assert.ok(
-        m.query('[data-unread-dot="t-unread-mid"]'),
-        "before select: unread mid must show a dot",
-      );
-      // Project header counts the one unread attention row.
-      const headerBefore = m
-        .queryAll("button")
-        .find((b) => (b.textContent || "").includes("owner/repo"));
-      assert.ok(
-        (headerBefore?.textContent || "").includes("1 unread"),
-        `header must count 1 unread before visit, got: ${headerBefore?.textContent}`,
+      // #566: the visible unread dot and header "N unread" summary are gone;
+      // the card's data-unread attribute is the remaining unread signal.
+      assert.equal(
+        m
+          .query('[data-thread-card="t-unread-mid"]')
+          ?.getAttribute("data-unread"),
+        "true",
+        "before select: unread mid must be marked data-unread",
       );
 
       // Prefer data-thread-card select (stable under aria-label churn).
@@ -768,12 +771,6 @@ describe("App selection stamps lastVisitedAt (round 43 unread)", () => {
       });
       await m.flush();
 
-      // Boolean form: assert.equal(el, null) hangs serialising a live DOM node.
-      assert.equal(
-        m.query('[data-unread-dot="t-unread-mid"]') != null,
-        false,
-        "after select → select-elsewhere: only a real stamp+merge keeps the dot gone",
-      );
       assert.equal(
         m
           .query('[data-thread-card="t-unread-mid"]')
@@ -793,15 +790,6 @@ describe("App selection stamps lastVisitedAt (round 43 unread)", () => {
       assert.ok(
         mid!.lastVisitedAt! >= mid!.updatedAt,
         "stamped visit must leave the row not-unread by the pure predicate",
-      );
-
-      // Header unread count must drop (0 → no "unread" fragment).
-      const headerAfter = m
-        .queryAll("button")
-        .find((b) => (b.textContent || "").includes("owner/repo"));
-      assert.ok(
-        !(headerAfter?.textContent || "").includes("unread"),
-        `header must drop unread after visit, got: ${headerAfter?.textContent}`,
       );
     } finally {
       m.unmount();

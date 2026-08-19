@@ -289,17 +289,9 @@ function updateProject(store, projectId, patch) {
     }
   }
 
+  // #568: Spaces retired. Ignore leftover spaceId patches; never persist the key.
   if (typeof input.spaceId === "string") {
-    const spaceId = input.spaceId.trim();
-    if (spaceId) {
-      const known = store.getSpaces().some((s) => s && s.id === spaceId);
-      if (!known) {
-        throw new Error(`Unknown space: ${spaceId}`);
-      }
-      next.spaceId = spaceId;
-    } else {
-      delete next.spaceId;
-    }
+    delete next.spaceId;
   }
 
   // true persists the key; false deletes it so old stores stay clean.
@@ -333,73 +325,32 @@ function updateProject(store, projectId, patch) {
  * @param {import('./store').Store} store
  * @returns {{ id: string, name: string }[]}
  */
-function listSpaces(store) {
-  return store.getSpaces().slice();
+function listSpaces() {
+  return [];
 }
 
 /**
- * @param {import('./store').Store} store
- * @param {{ name?: string }} input
+ * @param {import('./store').Store} _store
+ * @param {{ name?: string }} _input
  */
-function addSpace(store, input) {
-  const name =
-    input && typeof input.name === "string" ? input.name.trim() : "";
-  if (!name) {
-    throw new Error("Name cannot be empty");
-  }
-  const space = { id: randomUUID(), name };
-  const spaces = store.getSpaces().slice();
-  spaces.push(space);
-  store.setSpaces(spaces);
-  store.save();
-  return space;
+function addSpace(_store, _input) {
+  throw new Error("Spaces have been removed");
 }
 
 /**
- * @param {import('./store').Store} store
- * @param {{ id?: string, name?: string }} input
+ * @param {import('./store').Store} _store
+ * @param {{ id?: string, name?: string }} _input
  */
-function updateSpace(store, input) {
-  const id = input && input.id != null ? String(input.id) : "";
-  const spaces = store.getSpaces().slice();
-  const idx = spaces.findIndex((s) => s && s.id === id);
-  if (idx === -1) {
-    throw new Error(`Unknown space: ${id}`);
-  }
-  const name =
-    input && typeof input.name === "string" ? input.name.trim() : "";
-  if (!name) {
-    throw new Error("Name cannot be empty");
-  }
-  const next = { ...spaces[idx], name };
-  spaces[idx] = next;
-  store.setSpaces(spaces);
-  store.save();
-  return next;
+function updateSpace(_store, _input) {
+  throw new Error("Spaces have been removed");
 }
 
 /**
- * Drops the space and clears spaceId on every project that used it.
- * Threads and on-disk repos are never touched.
- * @param {import('./store').Store} store
- * @param {{ id?: string }} input
+ * Idempotent: Spaces are already gone after the #568 store migration.
+ * @param {import('./store').Store} _store
+ * @param {{ id?: string }} _input
  */
-function removeSpace(store, input) {
-  const id = input && input.id != null ? String(input.id) : "";
-  const spaces = store.getSpaces();
-  if (!spaces.some((s) => s && s.id === id)) {
-    throw new Error(`Unknown space: ${id}`);
-  }
-  store.setSpaces(spaces.filter((s) => !s || s.id !== id));
-  store.setProjects(
-    store.getProjects().map((p) => {
-      if (!p || p.spaceId !== id) return p;
-      const next = { ...p };
-      delete next.spaceId;
-      return next;
-    }),
-  );
-  store.save();
+function removeSpace(_store, _input) {
 }
 
 /**
@@ -545,6 +496,11 @@ const HYPOTHESIS_STATUSES = ["validated", "invalidated", "inconclusive"];
 /** Ruled-out note: walk this many handoffFrom hops, emit at most this many lines. */
 const HYPOTHESIS_NOTE_HOPS = 5;
 const HYPOTHESIS_NOTE_MAX = 10;
+/** Per-thread suggested-work chip caps (issue #550). Mirror src/shared/ipc.ts. */
+const SUGGESTIONS_MAX = 20;
+const SUGGESTION_TITLE_MAX = 120;
+const SUGGESTION_PROMPT_MAX = 4000;
+const SUGGESTION_RESOLVE_STATUSES = ["started", "filed", "dismissed"];
 
 /**
  * @param {string} title
@@ -678,6 +634,26 @@ function selfIdNoteFor(thread, project, cwd) {
     `(projectId ${thread.projectId})${where}. Pass these ids to the ` +
     `coder-threads tools; never guess another thread's id from its title. ` +
     `Threads in other projects are off limits.`
+  );
+}
+
+/**
+ * Standing note appended to every dispatched prompt (CLI-only, never stored
+ * in the transcript) telling the agent it can offer out-of-scope work as a
+ * one-click chip via work_suggest (issue #550). Gated exactly like
+ * selfIdNoteFor: silent unless the coder-threads server is registered.
+ *
+ * @returns {string}
+ */
+function suggestedWorkNoteFor() {
+  try {
+    const { activeServers } = require("./memory-sup.js");
+    if (!activeServers().some((s) => s.name === "coder-threads")) return "";
+  } catch {
+    return "";
+  }
+  return (
+    "\n\n[Suggested work] When you notice work worth doing that is OUT OF SCOPE for the current task, call the coder-threads tool work_suggest (with your own threadId/projectId) — a short title plus a self-contained prompt for a fresh agent with none of your context. It renders as a chip the user can start as a new thread with one click. Never start or do that work yourself, never derail the current task for it, and suggest at most a few per run. Skip anything already suggested on this thread."
   );
 }
 
@@ -868,7 +844,7 @@ function canHostWorktree(project) {
  * Fork / hand off: new thread in the source's project. Source is never modified.
  *
  * @param {import('./store').Store} store
- * @param {{ threadId: string, provider?: string, model?: string | null }} input
+ * @param {{ threadId: string, provider?: string, model?: string | null, worktree?: boolean }} input
  * @returns {object}
  */
 function forkThread(store, input) {
@@ -945,6 +921,19 @@ function forkThread(store, input) {
   // and must not grow a worktree (issue #392).
   if (source.ask === true) {
     forkPatch.ask = true;
+  }
+  // Opt-in worktree for user-facing forks (issue #550 chips). Same guards
+  // as forkWorkerThread: not an Ask thread, project can host a worktree.
+  if (input.worktree === true) {
+    const projectId = created.projectId ?? source.projectId;
+    const project =
+      typeof store.getProject === "function" && projectId != null
+        ? store.getProject(projectId)
+        : null;
+    const sourceAsk = Boolean(source.ask) || Boolean(forkPatch.ask);
+    if (!sourceAsk && canHostWorktree(project)) {
+      forkPatch.pendingWorktree = true;
+    }
   }
   const updated = store.updateThread(created.id, forkPatch);
   store.save();
@@ -1456,6 +1445,110 @@ function recordHypothesis(store, input) {
   store.updateThread(threadId, { hypotheses });
   store.save();
   return entry;
+}
+
+/**
+ * Append one suggested-work chip to a thread (issue #550). Agent-written
+ * only — never parsed out of the transcript. Trims and caps title/prompt,
+ * rejects a blank of either. Newest-last, capped at SUGGESTIONS_MAX (oldest
+ * dropped). An open chip with the same lower-cased title is returned as-is
+ * instead of appending a duplicate. Never bumps updatedAt: same rule as
+ * recordHypothesis / setNotes.
+ *
+ * ponytail: same-ms uniqueness is Date.now() plus a scan of this thread's
+ * existing ids (max 20).
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, title: unknown, prompt: unknown }} input
+ * @returns {{ id: string, title: string, prompt: string, status: string, at: number }}
+ */
+function recordSuggestion(store, input) {
+  const { threadId } = input;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  const title = String(input.title ?? "").trim().slice(0, SUGGESTION_TITLE_MAX);
+  if (!title) {
+    throw new Error("Suggestion title must not be empty");
+  }
+  const prompt = String(input.prompt ?? "")
+    .trim()
+    .slice(0, SUGGESTION_PROMPT_MAX);
+  if (!prompt) {
+    throw new Error("Suggestion prompt must not be empty");
+  }
+  const existing = Array.isArray(thread.suggestions) ? thread.suggestions : [];
+  const titleKey = title.toLowerCase();
+  for (const s of existing) {
+    if (
+      s &&
+      s.status === "open" &&
+      String(s.title || "").toLowerCase() === titleKey
+    ) {
+      return s;
+    }
+  }
+  const now = Date.now();
+  let seq = 0;
+  for (const s of existing) {
+    if (s && typeof s.id === "string" && s.id.startsWith(`${now}-`)) seq += 1;
+  }
+  const entry = {
+    id: `${now}-${seq}`,
+    title,
+    prompt,
+    status: "open",
+    at: now,
+  };
+  const suggestions = existing.concat(entry);
+  if (suggestions.length > SUGGESTIONS_MAX) {
+    suggestions.splice(0, suggestions.length - SUGGESTIONS_MAX);
+  }
+  store.updateThread(threadId, { suggestions });
+  store.save();
+  return entry;
+}
+
+/**
+ * Resolve a suggested-work chip (issue #550): flip its status to
+ * "started" / "filed" / "dismissed" and optionally stamp startedThreadId
+ * / issueNumber. Rejects an unknown thread or suggestion id, and a
+ * status of "open" (chips never reopen). Returns the updated thread,
+ * same convention as setNotes.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, suggestionId: string, status: unknown, startedThreadId?: unknown, issueNumber?: unknown }} input
+ * @returns {object}
+ */
+function resolveSuggestion(store, input) {
+  const { threadId, suggestionId, status } = input;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  if (!SUGGESTION_RESOLVE_STATUSES.includes(status)) {
+    throw new Error(
+      `Invalid suggestion status: ${status}. Must be one of: ${SUGGESTION_RESOLVE_STATUSES.join(", ")}`,
+    );
+  }
+  const existing = Array.isArray(thread.suggestions) ? thread.suggestions : [];
+  const idx = existing.findIndex((s) => s && s.id === suggestionId);
+  if (idx < 0) {
+    throw new Error(`Unknown suggestion: ${suggestionId}`);
+  }
+  const patched = { ...existing[idx], status };
+  if (input.startedThreadId != null) {
+    patched.startedThreadId = String(input.startedThreadId);
+  }
+  if (input.issueNumber != null) {
+    patched.issueNumber = Number(input.issueNumber);
+  }
+  const suggestions = existing.slice();
+  suggestions[idx] = patched;
+  const updated = store.updateThread(threadId, { suggestions });
+  store.save();
+  return updated ? { ...updated } : { ...thread, suggestions };
 }
 
 /* --------------------------------------------------------- crew task list */
@@ -3974,6 +4067,7 @@ module.exports = {
   PLANBOARD_NOTE,
   planboardNoteFor,
   selfIdNoteFor,
+  suggestedWorkNoteFor,
   subagentPoolNoteFor: require("./subagentPool").subagentPoolNoteFor,
   resolveSubagentPool: require("./subagentPool").resolveSubagentPool,
   hypothesisNoteFor,
@@ -3981,6 +4075,11 @@ module.exports = {
   HYPOTHESIS_CLAIM_MAX,
   HYPOTHESIS_REASON_MAX,
   recordHypothesis,
+  SUGGESTIONS_MAX,
+  SUGGESTION_TITLE_MAX,
+  SUGGESTION_PROMPT_MAX,
+  recordSuggestion,
+  resolveSuggestion,
   CREW_TASK_TITLE_MAX,
   CREW_TASK_NOTE_MAX,
   CREW_TASKS_MAX,

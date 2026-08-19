@@ -35,7 +35,7 @@ const { readToolImage } = require("./tool-images.js");
 const attachments = require("./attachments.js");
 const { syncUserMcpServers } = require("./memory-sup.js");
 const skills = require("./skills.js");
-const { fetchIssue, listIssues, setPlanStatus } = require("./issues.js");
+const { fetchIssue, listIssues, setPlanStatus, createIssue } = require("./issues.js");
 const automations = require("./automations.js");
 const { buildActivity } = require("./activity.js");
 const { collectDigest } = require("./digest.js");
@@ -481,6 +481,18 @@ const IPC_HANDLERS = {
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     return updated;
   },
+  "threads:resolveSuggestion": async (ctx, input) => {
+    const updated = services.resolveSuggestion(ctx.store, input);
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    if (ctx.runner && typeof ctx.runner.refreshDetail === "function") {
+      try {
+        ctx.runner.refreshDetail(input && input.threadId);
+      } catch {
+        /* chip already persisted; a missed push is a refresh away */
+      }
+    }
+    return updated;
+  },
   "threads:setFeltEstimate": async (ctx, input) => {
     const updated = services.setFeltEstimate(ctx.store, input);
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
@@ -881,6 +893,12 @@ const IPC_HANDLERS = {
       input && input.number,
       input && input.status,
     );
+  },
+  "issues:create": async (_ctx, input) => {
+    return createIssue(input && input.projectPath, {
+      title: input && input.title,
+      body: input && input.body,
+    });
   },
   "git:listCheckpoints": async (ctx, input) => {
     return listCheckpoints({
