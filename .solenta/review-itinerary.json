@@ -1,34 +1,35 @@
 {
   "version": 1,
-  "readOrder": ["critical", "impl", "tests", "docs"],
+  "readOrder": ["critical", "impl", "docs"],
   "chunks": [
     {
-      "area": "critical",
-      "rationale": "Thread | Git tabs and the full-height Git pane replace the 520px overlay. Wrong flex/hidden wiring hides the transcript permanently or clips commit again.",
+      "area": "critical — site/style.css (full rewrite)",
+      "rationale": "Read first and top-to-bottom: every visual decision lives here, and docs.html/changelog.html consume it without their own changes, so a regression here breaks three pages. Check the docs section (docs-layout/docs-nav/docs-content/doc-table/callout/lede) against the class list both pages actually use, and confirm the reveal block keeps the no-JS-fully-visible contract.",
       "risks": [
-        ".body { display:flex } can override [hidden] if .body[hidden] is missing",
-        "changesOpen is lifted in App; switching threads must still close the pane",
-        "Composer stays mounted while hidden so draft text is not lost"
+        "@property --mx/--my and animation-timeline are Chromium/Safari-17.4+ features; all uses are wrapped so unsupported engines get the static design, but Firefox deserves a manual look (no scroll-driven shot entrance, progress bar stays scaleX(0) — both intended fallbacks).",
+        "body::after grain is a fixed full-viewport layer with an SVG turbulence fill — cheap in real browsers, but it defeated chromium-headless-shell's rasterizer in tall-window captures (blank tiles); verified with real Brave headless instead.",
+        ".cell-f changed to span 6; if a future cell reuses cell-f expecting span 3 it will go full-width."
       ]
     },
     {
-      "area": "impl",
-      "rationale": "Header declutter: Spec/Teach/Ask start from overflow, Notes is icon-only, overflow stays usable while a run is in progress. Git pane is file list + selected diff + pinned commit.",
+      "area": "impl — site/index.html + site/main.js",
+      "rationale": "Second: shows how the CSS is consumed. New markup: .progress bar, .hero-bg aurora/grid, .hero-pill, .grad headline spans, .marquee provider strip, .glow hooks on cards, .pdot/.col-dot status dots, .final-cta. main.js adds pointer glow (--mx/--my), nav.scrolled, sibling reveal stagger; reveal/scroll-spy logic unchanged.",
       "risks": [
-        "Overflow used to disable entirely while working; destructive items are now hidden instead",
-        "File selection defaults to diff.files[0], which may not be the first visible itinerary row"
+        "Marquee content is duplicated 4x and aria-hidden; screen readers skip it by design since providers are named in the hero copy.",
+        "Pointer glow listeners attach to every .cell/.glow at load — fine at this page size; a much larger bento would want delegation.",
+        "Copy changes are minimal but real: provider list moved out of the hero sub into the marquee, and a final CTA was added after the install grid."
       ]
     },
     {
-      "area": "tests",
-      "rationale": "Pane tabs, Git chrome, file select, spec/teach/ask overflow, #555 commit-box pin (flex, not sticky).",
+      "area": "docs — site/docs.html, site/changelog.html",
+      "rationale": "Last: only cache-bust bumps (style.css v4, main.js v3). No markup changes; verify by skimming the diff, then judge them from the rendered pages.",
       "risks": [
-        "CSS ruleBody() matcher is first-brace-wins; the 720px media query also has .changesSplit"
+        "None beyond the shared-stylesheet coupling noted above."
       ]
     }
   ],
   "risks": [
-    "The reference screenshot never reached this worker; the pane is inferred from Claude Code Desktop / #552, not pixel-matched",
-    "Environment still has a Changes card that opens the same pane; two entry points"
+    "Visual-only change verified by screenshot at 1440px and 390px plus docs/changelog captures; no automated tests exist for site/.",
+    "Firefox/Safari not actually launched — scroll-driven animations degrade to static by design, but that claim rests on the @supports guards, not a live run."
   ]
 }
