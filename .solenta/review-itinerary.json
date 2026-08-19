@@ -1,6 +1,5 @@
 {
   "version": 1,
-<<<<<<< HEAD
   "readOrder": ["critical", "impl", "docs"],
   "chunks": [
     {
@@ -26,53 +25,11 @@
       "rationale": "Last: only cache-bust bumps (style.css v4, main.js v3). No markup changes; verify by skimming the diff, then judge them from the rendered pages.",
       "risks": [
         "None beyond the shared-stylesheet coupling noted above."
-=======
-  "readOrder": ["tests", "critical", "impl", "docs"],
-  "chunks": [
-    {
-      "area": "tests",
-      "rationale": "The split-tree operations are the whole feature; read paneLayout.test.ts first so the UI is just a renderer of those ops. Then paneWorkspace.test.tsx (close/Cmd+\\/drag) and the Views menu cases in threadHeader.test.tsx.",
-      "risks": [
-        "jsdom has no DragEvent; drag-swap is exercised via a module-level draggingPaneId plus generic Event('dragstart'|'drop')",
-        "unmountAll now wipes coder.paneLayout.* keys so tests cannot observe persistence across remounts — that path is covered only at the model layer"
-      ]
-    },
-    {
-      "area": "critical",
-      "rationale": "paneLayout.ts is the contract: binary split tree, open/close/resize/move, parse fallback, per-thread localStorage. Wrong close-last or extract logic loses a pane or the whole tree.",
-      "risks": [
-        "close of the last leaf is a no-op; an empty workspace is impossible on purpose",
-        "movePane extract+insert can no-op if the target leaf vanished with the extract (should not happen for a different leaf)",
-        "1 - MIN_RATIO is not 0.82 in IEEE; MAX_RATIO is a separate constant"
-      ]
-    },
-    {
-      "area": "impl",
-      "rationale": "PaneWorkspace renders the tree; ThreadView owns layout state, the Views menu, and maps chat/diff onto existing surfaces. Exclusive Thread|Git tabs are gone: chat and Git can share the center pane.",
-      "risks": [
-        "changesOpen is now an open-signal (Environment / next-git), not exclusive visibility — App still zeros it on thread switch, but persisted layouts restore Git independently",
-        "first-mount must not re-hydrate or it drops a changesOpen:true Git pane; only real thread switches reload from storage",
-        "PaneWorkspace .body was renamed leafBody because CSS-module tests stub class names as the key and query('.body') would hit the wrapper, breaking stick-to-bottom",
-        "Git ChangesPanel still paints its own header under the pane chrome when split — duplicate 'Git' title"
-      ]
-    },
-    {
-      "area": "docs",
-      "rationale": "KeyboardSheet gained ⌘ + \\ . No PRODUCT-SPEC change; terminal/browser/files/tasks/subagent are registry placeholders until those issues land.",
-      "risks": [
-        "Cmd+\\ is renderer-only; it is not in the Electron View menu"
->>>>>>> main
       ]
     }
   ],
   "risks": [
-<<<<<<< HEAD
     "Visual-only change verified by screenshot at 1440px and 390px plus docs/changelog captures; no automated tests exist for site/.",
     "Firefox/Safari not actually launched — scroll-driven animations degrade to static by design, but that claim rests on the @supports guards, not a live run."
-=======
-    "Sidebar and Agents stay app chrome — they are not pane types. Putting them in the tree later would fight the narrow-window drawers.",
-    "Layout lives in localStorage (coder.paneLayout.<threadId>), not coder-store.json. Multi-window shares it; a store migration is out of scope.",
-    "No browser verification of drag/resize; jsdom has no layout."
->>>>>>> main
   ]
 }
