@@ -1,40 +1,44 @@
 {
   "version": 1,
-  "readOrder": ["critical", "impl", "tests"],
+  "readOrder": ["tests", "critical", "impl"],
   "chunks": [
     {
-      "area": "src/components/ThreadView.module.css",
-      "rationale": "Read this first — the whole bug and the whole fix are here. .changesPanel is a fixed max-height flex column with overflow: hidden, and .patchScroll was the only scroller. A tall itinerary consumed the 520px, .patchScroll collapsed to zero (flex items do not shrink below min-content), and .commitBox landed past the clipped bottom edge with no scrollbar to reach it. The new .changesScroll takes flex: 1 / min-height: 0 / overflow-y: auto and carries gap: 10px to replace the spacing its children used to inherit from .changesPanel's own gap. flex-shrink: 0 on .changesHead and .commitBox is what actually guarantees the commit box can never be squeezed out again.",
+      "area": "electron/test/claude-result-error.test.js",
+      "rationale": "Pure mapping contract for issue #549, independent of spawn. Start here: bare `cancelled`/`canceled` is a stop; leftover result text must not override that; remaining error_during_execution cases keep CLI errors[]/stderr and never mention `result subtype`; session-lost still adds the reset follow-up without duplicating the CLI line; empty input falls back to `Run error`.",
       "risks": [
-        "position: sticky on .commitBox is inert as written: .changesScroll absorbs the flex space so .commitBox no longer overflows .changesPanel, and there is nothing to stick against. Harmless and requested by #555, but do not treat it as load-bearing — the flex-shrink rules are.",
-        ".changesScroll duplicates gap: 10px from .changesPanel. If someone later changes the panel gap the two will drift apart silently.",
-        "flex: 1 was removed from .patchScroll, so a very long diff now grows the scroller's content rather than fitting a flex track. Correct for this fix (the parent scrolls) but it changes how tall diffs lay out.",
-        "A long diff no longer has its own inner scrollbar — itinerary, file lists and patches now share one scroll. Nested scrolling survives only on .fileList, which keeps max-height: 120px + overflow-y: auto (verified in the stylesheet), so each chunk's file list is still individually capped.",
-        ".commitInput is resize: vertical. A user-stretched textarea eats review space — pre-existing, but more reachable now that the box can never be clipped away."
+        "Stop is an exact-token match. A CLI that says `cancelled: permission denied` in one string stays a failure (intentional) but a CLI that only says `cancelled` for an unrecoverable tool death will look like a user stop.",
+        "The suite never feeds subtype into the assertion besides checking it is absent from copy — a regression that puts subtype back in failText is caught; a regression that ignores errors[] and shows a generic Run error is also caught."
       ]
     },
     {
-      "area": "src/components/ThreadView.tsx",
-      "rationale": "Only two real lines: the opening <div className={styles.changesScroll}> before <ReviewItineraryView> and its close after the diff.truncated note, with .commitBox deliberately left outside. Read with `git diff -w` — the other ~128 changed lines are pure re-indentation of the wrapped children and carry no logic.",
+      "area": "electron/runner.js",
+      "rationale": "classifyClaudeResultError plus the claude-stream `type === result` terminal. The old `Run error: result subtype ${ev.subtype}` path is gone. Bare cancel mirrors stopRun (idle, `Run stopped`, notify stopped, lastError cleared). Other failures go through markRunFailed with CLI text. Error result payloads are no longer copied into an assistant bubble.",
       "risks": [
-        "The wrap must not swallow .commitBox. Verify by eye that the closing </div> sits before <div className={styles.commitBox}> — nesting it inside would reintroduce the exact bug with a scrollbar instead of a clip, and would additionally re-target the sticky rule at the scroller.",
-        "The error/loading/empty paragraphs stay outside .changesScroll as direct panel children. Intentional, but it means an inline error shown above a tall itinerary still consumes non-scrollable flex space."
+        "stderr is read at result time via handle.getStderr(). stdout and stderr are different streams, so a result line can land before the stderr chunk. Empty errors[] then becomes a generic `Run error` until/unless stderr has already arrived. The integration test delays 40ms after writing stderr to hide that race.",
+        "CLI-side cancel does not cascade crew the way stopRun does. A worker that self-cancels leaves siblings running. That matches 'this thread's run ended', not 'the user stopped the orchestrator'.",
+        "notifyRunTerminal('stopped') skips afterFailedTurn, so an orchestrator will not get a failure wake from a gated-tool auto-cancel. Same as a user Stop.",
+        "Success no longer nulls sessionId on a hypothetical success+session-lost combo. That combination never existed in the wild."
       ]
     },
     {
-      "area": "test/threadView.test.tsx",
-      "rationale": "Regression coverage for a pure-layout failure that no behavioural assertion catches. view() gains optional onFetchDiff / onFetchReviewContext overrides (the empty-diff stub stays the default, so every existing test is untouched). Test 1 mounts the panel with a genuinely tall itinerary — hard stop, author notes, 4+ steps, files across ci-config/critical/tests/impl/docs — and walks up from the commit textarea to [aria-label=Changes], so wrapping the box in .changesScroll fails the test. Test 2 reads the stylesheet per-rule-block and pins flex-shrink: 0 + sticky on .commitBox, flex-shrink: 0 on .changesHead, overflow-y: auto + min-height: 0 on .changesScroll, and the absence of overflow: auto on .patchScroll.",
+      "area": "electron/claude.js",
+      "rationale": "getStderr() on the handle so the result path can attach a stderr tail without waiting for process exit (which no-ops once sawResult is set).",
       "risks": [
-        "Test 2's .patchScroll guard matches overflow: auto specifically, not overflow-y: auto — a nested-scroller regression reintroduced as overflow-y would slip past it. B flagged this itself; worth tightening if that rule is ever touched again.",
-        "Test 1 was already green before the fix, because .changesScroll did not exist to be found in the ancestor chain. It only becomes a real guard now the wrapper is in place.",
-        "The CSS-text guard is only as strong as its rule-block slicing — a whole-file substring check would pass on a match in an unrelated rule and prove nothing.",
-        "node:test stops at the first failed assertion in a test, so a partial CSS regression surfaces one missing declaration at a time rather than all of them."
+        "The spawn-failure stub returns getStderr: () => \"\". Callers that assume a live buffer must tolerate an empty string.",
+        "Tail is still 64KiB; a noisy CLI can push the useful last line out of the unique-line merge if errors[] already filled shown."
+      ]
+    },
+    {
+      "area": "electron/test/claude.test.js",
+      "rationale": "Fake scenarios (result-cancelled, result-exec-error, result-exec-error-stderr, result-cancelled-plus-error) plus session-lost assertions updated to forbid `result subtype` / `error_during_execution` in user-facing copy. Read after the mapper so you see the terminal shape (idle vs failed, work-log label, lastError).",
+      "risks": [
+        "result-exec-error-stderr is timing-sensitive: if the 40ms delay is not enough on a loaded CI runner, the test fails even though the mapper is correct.",
+        "orch-server.test.js still fixtures the old `Run error: result subtype error_during_execution` string. That is mock thread_status data, not runner output — do not 'fix' it as if the runner still produced it."
       ]
     }
   ],
   "risks": [
-    "jsdom does not lay out, so nothing in this suite can prove the commit box is actually visible at 520px with a tall itinerary — the CSS-text guard is a proxy for the real behaviour. Confirming the fix for real needs eyes on a running Electron window.",
-    "Both halves were written by parallel workers that never saw each other's files; the orchestrator ran tsc --noEmit and the full threadView suite on the merged result, which is the only place the two halves were tested together.",
-    "Worker A's first run was cancelled before it verified anything, and it later recommitted the identical source over the orchestrator's commit. The merged source content was diffed to confirm the two commits agree."
+    "A Grok permission auto-cancel that still emits this event will now look like a user Stop (idle, no Retry turn). That is the requested shape, but it can hide the underlying missing prompt channel (#3 / #177) if the user only notices a quiet stop.",
+    "jsdom/Electron UI is not exercised; Retry-turn absence follows from status idle + event text `Run stopped` (retryTurn.ts only lights on failed or `Run interrupted`)."
   ]
 }
