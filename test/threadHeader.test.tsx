@@ -6,8 +6,14 @@
  */
 import assert from "node:assert/strict";
 import { describe, it, afterEach } from "node:test";
+import { useState } from "react";
 import { mount, unmountAll } from "./support/dom.ts";
 import { ThreadView } from "../src/components/ThreadView";
+import {
+  defaultPaneLayout,
+  openPane,
+  savePaneLayout,
+} from "../src/paneLayout";
 import type {
   ChatMessage,
   GitSyncInfo,
@@ -94,7 +100,7 @@ const noopSave = async () =>
   ({ id: "wf", name: "standard", phases: [] }) as WorkflowTemplateInfo;
 
 function view(props: {
-  detail?: ThreadDetail;
+  detail?: ThreadDetail | null;
   gitSyncInfo?: (threadId: string) => Promise<GitSyncInfo>;
   gitFetch?: (threadId: string) => Promise<void>;
   onPush?: () => Promise<{ remote: string; branch: string }>;
@@ -112,7 +118,7 @@ function view(props: {
 }) {
   return (
     <ThreadView
-      detail={props.detail ?? detail()}
+      detail={props.detail === undefined ? detail() : props.detail}
       project={project}
       providers={providers}
       workflows={[]}
@@ -397,6 +403,76 @@ describe("Views menu pane workspace (issue #552)", () => {
     assert.equal(m.query("[data-git-pane]"), null);
     assert.ok(m.query("[data-pane-chat]"));
     assert.deepEqual(closed, ["thread"]);
+    m.unmount();
+  });
+
+  it("reloads a persisted layout when an already-mounted ThreadView receives a thread", async () => {
+    savePaneLayout(
+      "t-restore",
+      openPane(defaultPaneLayout(), "diff", "pane-1").layout,
+    );
+
+    function Harness() {
+      const [d, setD] = useState<ThreadDetail | null>(null);
+      return (
+        <>
+          <button
+            type="button"
+            data-open-thread=""
+            onClick={() =>
+              setD(detail({ thread: thread({ id: "t-restore" }) }))
+            }
+          >
+            Open
+          </button>
+          {view({ detail: d })}
+        </>
+      );
+    }
+
+    const m = await mount(<Harness />);
+    await m.flush();
+    assert.equal(
+      m.query("[data-git-pane]"),
+      null,
+      "empty state has no git pane",
+    );
+    await m.click(m.query("[data-open-thread]"));
+    assert.ok(
+      m.query("[data-git-pane]"),
+      "selecting a thread must restore its saved split, not a fresh chat-only default",
+    );
+    m.unmount();
+  });
+
+  it("does not leak one thread's split onto the next thread", async () => {
+    savePaneLayout(
+      "t-a",
+      openPane(defaultPaneLayout(), "diff", "pane-1").layout,
+    );
+    savePaneLayout("t-b", defaultPaneLayout());
+
+    function Harness() {
+      const [id, setId] = useState("t-a");
+      return (
+        <>
+          <button type="button" data-go="t-b" onClick={() => setId("t-b")}>
+            B
+          </button>
+          {view({ detail: detail({ thread: thread({ id }) }) })}
+        </>
+      );
+    }
+
+    const m = await mount(<Harness />);
+    await m.flush();
+    assert.ok(m.query("[data-git-pane]"), "thread A restores Git");
+    await m.click(m.query("[data-go='t-b']"));
+    assert.equal(
+      m.query("[data-git-pane]"),
+      null,
+      "thread B stays chat-only; A's split must not write under B's key",
+    );
     m.unmount();
   });
 

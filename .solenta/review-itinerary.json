@@ -4,42 +4,39 @@
   "chunks": [
     {
       "area": "tests",
-      "rationale": "The split-tree operations are the whole feature; read paneLayout.test.ts first so the UI is just a renderer of those ops. Then paneWorkspace.test.tsx (close/Cmd+\\/drag) and the Views menu cases in threadHeader.test.tsx.",
+      "rationale": "Start with paneLayout.test.ts (the tree ops). Then paneWorkspace.test.tsx for close/Cmd+\\/drag. Then threadHeader Views cases, especially the two persistence tests: empty→thread restore, and A→B isolation.",
       "risks": [
-        "jsdom has no DragEvent; drag-swap is exercised via a module-level draggingPaneId plus generic Event('dragstart'|'drop')",
-        "unmountAll now wipes coder.paneLayout.* keys so tests cannot observe persistence across remounts — that path is covered only at the model layer"
+        "jsdom has no DragEvent; drag-swap uses a module-level draggingPaneId plus generic Event('dragstart'|'drop')",
+        "unmountAll wipes coder.paneLayout.* after each test; persistence-across-remount is asserted inside a single test before afterEach"
       ]
     },
     {
       "area": "critical",
-      "rationale": "paneLayout.ts is the contract: binary split tree, open/close/resize/move, parse fallback, per-thread localStorage. Wrong close-last or extract logic loses a pane or the whole tree.",
+      "rationale": "Layout is owned per threadId. ThreadView adjusts layout during render when detail.thread.id !== layoutThreadId (React's 'store previous render' pattern) so we never persist thread A's tree under B's key, and empty→thread reloads storage instead of a chat-only default.",
       "risks": [
-        "close of the last leaf is a no-op; an empty workspace is impossible on purpose",
-        "movePane extract+insert can no-op if the target leaf vanished with the extract (should not happen for a different leaf)",
-        "1 - MIN_RATIO is not 0.82 in IEEE; MAX_RATIO is a separate constant"
+        "setState during render must only run when the ids differ; a loop here would freeze the pane",
+        "the changesOpen effect must NOT list threadId in its deps or a stale changesOpen=true on the first frame after a switch would force Git open on the new thread"
       ]
     },
     {
       "area": "impl",
-      "rationale": "PaneWorkspace renders the tree; ThreadView owns layout state, the Views menu, and maps chat/diff onto existing surfaces. Exclusive Thread|Git tabs are gone: chat and Git can share the center pane.",
+      "rationale": "PaneWorkspace renders the binary split tree. Views menu lives in the session toolbar. Chat and Git are real panes; other registry types are placeholders. Exclusive Thread|Git tabs are gone. When the pane chrome is showing, ChangesPanel hides its own 'Git' title (embedded).",
       "risks": [
-        "changesOpen is now an open-signal (Environment / next-git), not exclusive visibility — App still zeros it on thread switch, but persisted layouts restore Git independently",
-        "first-mount must not re-hydrate or it drops a changesOpen:true Git pane; only real thread switches reload from storage",
-        "PaneWorkspace .body was renamed leafBody because CSS-module tests stub class names as the key and query('.body') would hit the wrapper, breaking stick-to-bottom",
-        "Git ChangesPanel still paints its own header under the pane chrome when split — duplicate 'Git' title"
+        "changesOpen is an open-request, not exclusive visibility",
+        "PaneWorkspace class leafBody (not body) so CSS-module tests that query('.body') still hit the transcript scroller"
       ]
     },
     {
       "area": "docs",
-      "rationale": "KeyboardSheet gained ⌘ + \\ . No PRODUCT-SPEC change; terminal/browser/files/tasks/subagent are registry placeholders until those issues land.",
+      "rationale": "KeyboardSheet gained ⌘ + \\. Cmd+\\ is renderer-only on purpose: adding an Electron View-menu accelerator would double-fire with the window keydown and close two panes.",
       "risks": [
-        "Cmd+\\ is renderer-only; it is not in the Electron View menu"
+        "Shortcut is missing from the native View menu; KeyboardSheet is the discovery path"
       ]
     }
   ],
   "risks": [
-    "Sidebar and Agents stay app chrome — they are not pane types. Putting them in the tree later would fight the narrow-window drawers.",
-    "Layout lives in localStorage (coder.paneLayout.<threadId>), not coder-store.json. Multi-window shares it; a store migration is out of scope.",
+    "Sidebar and Agents stay app chrome, not pane types.",
+    "Layout lives in localStorage (coder.paneLayout.<threadId>), not coder-store.json.",
     "No browser verification of drag/resize; jsdom has no layout."
   ]
 }
