@@ -8,7 +8,11 @@ import * as React from "react";
 import { mount, inAct } from "./support/dom.ts";
 import { thread } from "./support/fakeCoder.ts";
 import { PlanboardView } from "../src/components/PlanboardView";
-import type { ListIssuesResult, ProjectInfo } from "../src/shared/ipc";
+import type {
+  ListIssuesResult,
+  ListPrsResult,
+  ProjectInfo,
+} from "../src/shared/ipc";
 
 const projects: ProjectInfo[] = [
   { id: "p1", slug: "acme/ledger", name: "ledger", path: "/tmp/ledger" },
@@ -226,3 +230,105 @@ describe("PlanboardView", () => {
   });
 });
 
+describe("PlanboardView review-load meter (#402)", () => {
+  const prsResult: ListPrsResult = {
+    ok: true,
+    prs: [
+      {
+        number: 11,
+        title: "a",
+        url: "https://github.com/acme/ledger/pull/11",
+        state: "OPEN",
+        headRefName: "coder/a",
+        additions: 300,
+        deletions: 50,
+      },
+      {
+        number: 12,
+        title: "b",
+        url: "https://github.com/acme/ledger/pull/12",
+        state: "OPEN",
+        headRefName: "coder/b",
+        additions: 200,
+        deletions: 100,
+      },
+      {
+        number: 13,
+        title: "merged",
+        url: "https://github.com/acme/ledger/pull/13",
+        state: "MERGED",
+        headRefName: "coder/c",
+        additions: 9000,
+      },
+      {
+        number: 14,
+        title: "draft",
+        url: "https://github.com/acme/ledger/pull/14",
+        state: "OPEN",
+        headRefName: "coder/d",
+        isDraft: true,
+        additions: 9000,
+      },
+    ],
+  };
+
+  it("shows open non-draft PR pressure in the header", async () => {
+    const m = await mount(
+      <PlanboardView
+        projects={projects}
+        listIssues={async () => okResult}
+        listPrs={async () => prsResult}
+      />,
+    );
+    const meter = m.query("[data-review-load]");
+    assert.ok(meter, "meter renders");
+    assert.equal(meter.getAttribute("data-review-load"), "ok");
+    assert.ok(meter.textContent?.includes("Review load: 2 PRs"));
+    assert.ok(meter.textContent?.includes("650 lines"));
+    m.unmount();
+  });
+
+  it("marks the queue busy at four open PRs", async () => {
+    const busy: ListPrsResult = {
+      ok: true,
+      prs: [1, 2, 3, 4].map((n) => ({
+        number: n,
+        title: `pr ${n}`,
+        url: `https://github.com/acme/ledger/pull/${n}`,
+        state: "OPEN" as const,
+        headRefName: `coder/${n}`,
+      })),
+    };
+    const m = await mount(
+      <PlanboardView
+        projects={projects}
+        listIssues={async () => okResult}
+        listPrs={async () => busy}
+      />,
+    );
+    const meter = m.query("[data-review-load]");
+    assert.equal(meter?.getAttribute("data-review-load"), "busy");
+    m.unmount();
+  });
+
+  it("hides the meter when the PR list fails, board unaffected", async () => {
+    const m = await mount(
+      <PlanboardView
+        projects={projects}
+        listIssues={async () => okResult}
+        listPrs={async () => ({ ok: false as const, reason: "auth" })}
+      />,
+    );
+    assert.equal(m.query("[data-review-load]"), null);
+    assert.ok(m.query('[data-plan-column="todo"]'), "board still renders");
+    m.unmount();
+  });
+
+  it("hides the meter when listPrs is not wired", async () => {
+    const m = await mount(
+      <PlanboardView projects={projects} listIssues={async () => okResult} />,
+    );
+    assert.equal(m.query("[data-review-load]"), null);
+    m.unmount();
+  });
+});

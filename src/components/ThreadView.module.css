@@ -494,6 +494,51 @@ a.btn {
   justify-content: center;
 }
 
+/* PR-size-cap refusal (issue #402): split / create-anyway choice. */
+.oversizeBar {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border: 1px solid var(--amber);
+  border-radius: var(--radius);
+  color: var(--amber);
+  font-size: 12px;
+  max-width: 520px;
+}
+
+.oversizeText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.oversizeBtn {
+  flex-shrink: 0;
+  border: 1px solid var(--amber);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--amber);
+  font-size: 12px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+.oversizeBtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.oversizeDismiss {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 0 2px;
+}
+
 .pushSpinner {
   width: 12px;
   height: 12px;

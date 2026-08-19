@@ -355,6 +355,14 @@ function pruneSpendByDay(spendByDay, now = new Date()) {
 const DEFAULT_AUTO_SETTLE_AFTER_DAYS = 3;
 
 /**
+ * Default PR size cap in changed lines (additions + deletions vs the base
+ * branch). DORA small-batches as a product default (issue #402): PRs larger
+ * than this are refused at creation unless explicitly overridden. null in
+ * settings disables the cap.
+ */
+const DEFAULT_PR_DIFF_CAP_LINES = 400;
+
+/**
  * Normalize settings from disk.
  *
  * autoSettleAfterDays tri-state at the store boundary:
@@ -390,11 +398,14 @@ const DEFAULT_AUTO_SETTLE_AFTER_DAYS = 3;
  * quotaWaitAutoResume: only an explicit false turns auto-resume off, so
  * absent/junk keeps Claude's default (continue when the usage limit resets).
  *
+ * prDiffCapLines: absent/junk → DEFAULT_PR_DIFF_CAP_LINES (400); only an
+ * explicit null disables the PR-size cap (issue #402).
+ *
  * autoSettleOnMerge: only an explicit false turns merge-settle off, so
  * absent/junk keeps the previous "MERGED = settled" behaviour.
  *
  * @param {unknown} raw
- * @returns {{ dailyBudgetUsd: number | null, orchestrationBudgetUsd: number | null, autoSettleAfterDays: number | null, autoSettleOnMerge: boolean, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }>, defaultWorktree: boolean, defaultOrchestrate: boolean, updateChannel: "prod" | "nightly" | null, notifications: boolean, agentProfiles: Array<{ id: string, name: string, provider: string, model: string | null, reasoningEffort: string | null, permissionMode: string }> }}
+ * @returns {{ dailyBudgetUsd: number | null, orchestrationBudgetUsd: number | null, autoSettleAfterDays: number | null, autoSettleOnMerge: boolean, prDiffCapLines: number | null, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }>, defaultWorktree: boolean, defaultOrchestrate: boolean, updateChannel: "prod" | "nightly" | null, notifications: boolean, agentProfiles: Array<{ id: string, name: string, provider: string, model: string | null, reasoningEffort: string | null, permissionMode: string }> }}
  */
 function normalizeSettings(raw) {
   const settings = {
@@ -408,6 +419,7 @@ function normalizeSettings(raw) {
     updateChannel: null,
     notifications: true,
     quotaWaitAutoResume: true,
+    prDiffCapLines: DEFAULT_PR_DIFF_CAP_LINES,
     agentProfiles: [],
     subagentPool: { defaultAlias: null, force: false, entries: [] },
     otel: { endpoint: null, headers: {}, claudeMetrics: false },
@@ -449,6 +461,24 @@ function normalizeSettings(raw) {
     }
   }
   // key absent → leave default 3
+
+  // prDiffCapLines (issue #402): absent → default 400; explicit null disables
+  // the cap; junk heals to the default rather than disabling the guardrail.
+  if (Object.prototype.hasOwnProperty.call(obj, "prDiffCapLines")) {
+    const c = /** @type {{ prDiffCapLines?: unknown }} */ (obj).prDiffCapLines;
+    if (c === null) {
+      settings.prDiffCapLines = null;
+    } else if (
+      typeof c === "number" &&
+      Number.isFinite(c) &&
+      Number.isInteger(c) &&
+      c > 0
+    ) {
+      settings.prDiffCapLines = c;
+    } else {
+      settings.prDiffCapLines = DEFAULT_PR_DIFF_CAP_LINES;
+    }
+  }
 
   settings.mcpServers = normalizeMcpServers(obj.mcpServers);
   settings.agentProfiles = normalizeAgentProfiles(
@@ -1406,7 +1436,7 @@ class Store {
   }
 
   /**
-   * @returns {{ dailyBudgetUsd: number | null, orchestrationBudgetUsd: number | null, autoSettleAfterDays: number | null, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }>, defaultWorktree: boolean, defaultOrchestrate: boolean }}
+   * @returns {{ dailyBudgetUsd: number | null, orchestrationBudgetUsd: number | null, autoSettleAfterDays: number | null, prDiffCapLines: number | null, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }>, defaultWorktree: boolean, defaultOrchestrate: boolean }}
    */
   getSettings() {
     if (!this.data.settings || typeof this.data.settings !== "object") {
@@ -1432,6 +1462,7 @@ class Store {
       updateChannel: n.updateChannel,
       notifications: n.notifications,
       quotaWaitAutoResume: n.quotaWaitAutoResume,
+      prDiffCapLines: n.prDiffCapLines,
       agentProfiles: n.agentProfiles,
       subagentPool: n.subagentPool,
       otel: n.otel,
@@ -1441,8 +1472,8 @@ class Store {
   /**
    * Validate and merge settings. Does not touch threads.
    * Does not save; caller must save.
-   * @param {Partial<{ dailyBudgetUsd: number | null, orchestrationBudgetUsd: number | null, autoSettleAfterDays: number | null, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }>, defaultWorktree: boolean, defaultOrchestrate: boolean }>} patch
-   * @returns {{ dailyBudgetUsd: number | null, orchestrationBudgetUsd: number | null, autoSettleAfterDays: number | null, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }>, defaultWorktree: boolean, defaultOrchestrate: boolean }}
+   * @param {Partial<{ dailyBudgetUsd: number | null, orchestrationBudgetUsd: number | null, autoSettleAfterDays: number | null, prDiffCapLines: number | null, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }>, defaultWorktree: boolean, defaultOrchestrate: boolean }>} patch
+   * @returns {{ dailyBudgetUsd: number | null, orchestrationBudgetUsd: number | null, autoSettleAfterDays: number | null, prDiffCapLines: number | null, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }>, defaultWorktree: boolean, defaultOrchestrate: boolean }}
    */
   setSettings(patch) {
     if (!patch || typeof patch !== "object") {
@@ -1499,8 +1530,24 @@ class Store {
       }
       this.data.settings.autoSettleAfterDays = v === null ? null : v;
     }
-    if (Object.prototype.hasOwnProperty.call(patch, "autoSettleOnMerge")) {
-      const v = patch.autoSettleOnMerge;
+    if (Object.prototype.hasOwnProperty.call(patch, "prDiffCapLines")) {
+      const v = patch.prDiffCapLines;
+      if (v !== null) {
+        // Positive integer only (reject 0, negatives, fractions, NaN, strings).
+        if (
+          typeof v !== "number" ||
+          !Number.isFinite(v) ||
+          !Number.isInteger(v) ||
+          !(v > 0)
+        ) {
+          throw new Error(
+            `PR diff cap must be a positive integer or null (got ${String(v)})`,
+          );
+        }
+      }
+      this.data.settings.prDiffCapLines = v === null ? null : v;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "autoSettleOnMerge")) {      const v = patch.autoSettleOnMerge;
       if (typeof v !== "boolean") {
         throw new Error("autoSettleOnMerge must be a boolean");
       }

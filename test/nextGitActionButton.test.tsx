@@ -99,6 +99,7 @@ function view(props: {
     title: string;
     body?: string;
     draft?: boolean;
+    allowOversize?: boolean;
   }) => Promise<PrInfo>;
   onPrChecks?: () => Promise<PrChecksResult>;
   onPrMerge?: () => Promise<PrInfo>;
@@ -282,6 +283,77 @@ describe("next-git-action button", () => {
     await m.click(btn);
     await m.flush();
     assert.deepEqual(created, [{ title: "next action" }]);
+    m.unmount();
+  });
+
+  it("offers split or override when the PR exceeds the size cap (#402)", async () => {
+    const calls: Array<{ allowOversize?: boolean }> = [];
+    const prompts: string[] = [];
+    const m = await mount(
+      view({
+        gitSyncInfo: async () => ({ hasUpstream: true, ahead: 0, behind: 0 }),
+        onCreatePr: async (input) => {
+          calls.push({ allowOversize: input.allowOversize });
+          if (!input.allowOversize) {
+            throw new Error(
+              "PR too large: 900 lines changed vs main across 3 files (cap 400). Split the branch into smaller stacked PRs, or create the PR anyway.",
+            );
+          }
+          return {
+            number: 42,
+            url: "https://github.com/acme/repo/pull/42",
+            state: "OPEN",
+            branch: "coder/next-action-abc123",
+            created: true,
+          };
+        },
+        onStartRun: (prompt) => {
+          prompts.push(prompt);
+        },
+      }),
+    );
+    await m.flush();
+    await m.click(m.query('[data-next-git-action="create-pr"]'));
+    await m.flush();
+
+    const bar = m.query("[data-pr-oversize]");
+    assert.ok(bar, "size-cap refusal shows the split/override bar");
+    assert.ok(bar!.textContent?.includes("900 lines"));
+
+    // Split path: the agent gets the restack prompt, the bar dismisses.
+    await m.click(m.query("[data-pr-split]"));
+    await m.flush();
+    assert.equal(prompts.length, 1);
+    assert.ok(prompts[0].includes("stack of smaller"));
+    assert.equal(m.query("[data-pr-oversize]"), null, "bar dismissed");
+
+    // Override path: retry with allowOversize.
+    await m.click(m.query('[data-next-git-action="create-pr"]'));
+    await m.flush();
+    await m.click(m.query("[data-pr-create-anyway]"));
+    await m.flush();
+    assert.deepEqual(calls, [
+      { allowOversize: undefined },
+      { allowOversize: undefined },
+      { allowOversize: true },
+    ]);
+    assert.equal(m.query("[data-pr-oversize]"), null, "bar cleared on success");
+    m.unmount();
+  });
+
+  it("a non-cap createPr failure does not show the oversize bar", async () => {
+    const m = await mount(
+      view({
+        gitSyncInfo: async () => ({ hasUpstream: true, ahead: 0, behind: 0 }),
+        onCreatePr: async () => {
+          throw new Error("gh pr create failed: boom");
+        },
+      }),
+    );
+    await m.flush();
+    await m.click(m.query('[data-next-git-action="create-pr"]'));
+    await m.flush();
+    assert.equal(m.query("[data-pr-oversize]"), null);
     m.unmount();
   });
 

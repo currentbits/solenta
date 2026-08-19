@@ -199,6 +199,7 @@ export function SettingsModal({
   const [budgetText, setBudgetText] = useState("");
   const [orchBudgetText, setOrchBudgetText] = useState("");
   const [settleDaysText, setSettleDaysText] = useState("");
+  const [prCapText, setPrCapText] = useState("");
   const [otelEndpoint, setOtelEndpoint] = useState("");
   const [otelHeadersText, setOtelHeadersText] = useState("");
   const [otelClaudeMetrics, setOtelClaudeMetrics] = useState(false);
@@ -224,6 +225,7 @@ export function SettingsModal({
       budgetToInput(settings?.orchestrationBudgetUsd ?? null),
     );
     setSettleDaysText(settleDaysToInput(settings?.autoSettleAfterDays ?? null));
+    setPrCapText(budgetToInput(settings?.prDiffCapLines ?? null));
     const otel = settings?.otel ?? EMPTY_OTEL;
     setOtelEndpoint(otel.endpoint ?? "");
     setOtelHeadersText(formatOtelHeaders(otel.headers));
@@ -233,7 +235,7 @@ export function SettingsModal({
     setError(null);
     setSaving(false);
     savingRef.current = false;
-  }, [open, settings?.dailyBudgetUsd, settings?.orchestrationBudgetUsd, settings?.autoSettleAfterDays, settings?.otel]);
+  }, [open, settings?.dailyBudgetUsd, settings?.orchestrationBudgetUsd, settings?.autoSettleAfterDays, settings?.prDiffCapLines, settings?.otel]);
 
   const handleClose = useCallback(() => {
     onClose();
@@ -265,14 +267,21 @@ export function SettingsModal({
       const autoSettleAfterDays: number | null =
         settleRaw === "" ? null : Number(settleRaw);
 
+      const prCapRaw = prCapText.trim();
+      // Empty = no size cap. Otherwise parse; the backend validates.
+      const prDiffCapLines: number | null =
+        prCapRaw === "" ? null : Number(prCapRaw);
+
       const saved = await onSaveSettings({
         dailyBudgetUsd,
         orchestrationBudgetUsd,
         autoSettleAfterDays,
+        prDiffCapLines,
       });
       setBudgetText(budgetToInput(saved.dailyBudgetUsd));
       setOrchBudgetText(budgetToInput(saved.orchestrationBudgetUsd));
       setSettleDaysText(settleDaysToInput(saved.autoSettleAfterDays));
+      setPrCapText(budgetToInput(saved.prDiffCapLines));
     } catch (err) {
       const msg =
         err instanceof Error && err.message
@@ -324,6 +333,19 @@ export function SettingsModal({
         Number.isFinite(next) &&
         next === current &&
         settleDaysText.trim() !== "");
+    if (same && error == null) return;
+    void save();
+  };
+
+  const onBlurPrCap = () => {
+    const current = settings?.prDiffCapLines ?? null;
+    const next = prCapText.trim() === "" ? null : Number(prCapText.trim());
+    const same =
+      (current == null && (prCapText.trim() === "" || next === null)) ||
+      (current != null &&
+        Number.isFinite(next) &&
+        next === current &&
+        prCapText.trim() !== "");
     if (same && error == null) return;
     void save();
   };
@@ -622,6 +644,54 @@ export function SettingsModal({
                 fan-out workers. When a crew reaches it, the next worker
                 wake-up is refused and the thread lands failed with the
                 reason — raise or clear the cap, then Retry turn.
+              </p>
+            </div>
+          </section>
+
+          <section className={styles.section}>
+            <h3 className={styles.sectionLabel}>Pull requests</h3>
+            <div className={styles.field}>
+              <label className={styles.fieldLabel} htmlFor="pr-diff-cap">
+                PR size cap (lines changed)
+              </label>
+              <div className={styles.fieldRow}>
+                <input
+                  id="pr-diff-cap"
+                  className={styles.input}
+                  type="number"
+                  inputMode="numeric"
+                  min="1"
+                  step="1"
+                  placeholder="No cap"
+                  value={prCapText}
+                  disabled={saving}
+                  data-pr-diff-cap=""
+                  onChange={(e) => {
+                    setPrCapText(e.target.value);
+                    setError(null);
+                  }}
+                  onBlur={() => onBlurPrCap()}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      void save();
+                    }
+                  }}
+                />
+                <span className={styles.note}>lines</span>
+                <button
+                  type="button"
+                  className={`${styles.btn} ${styles.btnPrimary}`}
+                  disabled={saving}
+                  onClick={() => void save()}
+                >
+                  {saving ? "Saving…" : "Save"}
+                </button>
+              </div>
+              <p className={styles.note}>
+                PRs created from the app larger than this are refused with an
+                offer to split them into stacked PRs — small batches keep
+                human review affordable. Default 400; empty means no cap.
               </p>
             </div>
           </section>

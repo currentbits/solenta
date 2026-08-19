@@ -2,11 +2,18 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { formatRelativeAge } from "../format";
 import {
   badgeLabels,
+  formatLineCount,
   isPlanEmpty,
   issueUpdatedMs,
   planColumns,
+  reviewLoad,
 } from "../planboard";
-import type { ListIssuesResult, ProjectInfo, ThreadInfo } from "../shared/ipc";
+import type {
+  ListIssuesResult,
+  ListPrsResult,
+  ProjectInfo,
+  ThreadInfo,
+} from "../shared/ipc";
 import styles from "./PlanboardView.module.css";
 
 /** How the Planboard's Start task button creates its thread. */
@@ -15,6 +22,11 @@ export type ThreadStartMode = "default" | "plain" | "worktree" | "orchestrator";
 export interface PlanboardViewProps {
   projects: ProjectInfo[];
   listIssues: (projectPath: string) => Promise<ListIssuesResult>;
+  /**
+   * Open PRs for the selected project (review-load meter, issue #402).
+   * Omitted by older tests, which keeps the meter off those boards.
+   */
+  listPrs?: (projectPath: string) => Promise<ListPrsResult>;
   /**
    * Threads of every project; those of the selected one with a mirrored plan
    * (ThreadInfo.planSteps) render under the issue columns. Omitted by older
@@ -37,12 +49,14 @@ export interface PlanboardViewProps {
 export function PlanboardView({
   projects,
   listIssues,
+  listPrs,
   threads,
   onSelectThread,
   onStartTask,
 }: PlanboardViewProps) {
   const [projectId, setProjectId] = useState<string | null>(null);
   const [result, setResult] = useState<ListIssuesResult | null>(null);
+  const [prs, setPrs] = useState<ListPrsResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   /** Issue number whose start is in flight, and the last start's message. */
@@ -59,16 +73,22 @@ export function PlanboardView({
     if (!project) return;
     const gen = ++loadGen.current;
     setLoading(true);
-    const res = await listIssues(project.path);
+    // Issues and PRs load together; a PR-list failure only costs the meter.
+    const [res, prRes] = await Promise.all([
+      listIssues(project.path),
+      listPrs ? listPrs(project.path) : Promise.resolve(null),
+    ]);
     // Drop a stale response if the selector moved on meanwhile.
     if (gen !== loadGen.current) return;
     setResult(res);
+    setPrs(prRes);
     setLoading(false);
     setNow(Date.now());
-  }, [project, listIssues]);
+  }, [project, listIssues, listPrs]);
 
   useEffect(() => {
     setResult(null);
+    setPrs(null);
     void load();
   }, [load]);
 
@@ -99,6 +119,11 @@ export function PlanboardView({
     () => planColumns(result && result.ok ? result.issues : []),
     [result],
   );
+  // Review-load meter: open non-draft PRs consume the human review budget.
+  const review = useMemo(
+    () => (prs && prs.ok ? reviewLoad(prs.prs) : null),
+    [prs],
+  );
   // Live agent plans for this project, newest thread first.
   const plans = useMemo(
     () =>
@@ -119,6 +144,16 @@ export function PlanboardView({
     <main className={styles.main} data-planboard="">
       <header className={styles.header}>
         <h1 className={styles.title}>Planboard</h1>
+        {review ? (
+          <span
+            className={styles.reviewLoad}
+            data-review-load={review.level}
+            title="Open, non-draft PRs awaiting human review and their combined size — the reviewer is the bottleneck, not the agents"
+          >
+            Review load: {review.openPrs} PR{review.openPrs === 1 ? "" : "s"} ·{" "}
+            {formatLineCount(review.totalLines)} lines
+          </span>
+        ) : null}
         <div className={styles.controls}>
           {projects.length > 0 ? (
             <select

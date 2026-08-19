@@ -1433,6 +1433,8 @@ function buildDevCoder(): CoderApi {
   let autoSettleAfterDays: number | null = 3;
   /** Default true = MERGED PRs auto-settle. */
   let autoSettleOnMerge = true;
+  /** PR size cap in lines (issue #402); default 400, null disables. */
+  let prDiffCapLines: number | null = 400;
   /** User MCP servers (Skills tab), in-memory. */
   let mcpServers: McpServerInfo[] = [];
   /** Default new threads into a fake worktree (Settings toggle). */
@@ -2046,6 +2048,7 @@ function buildDevCoder(): CoderApi {
           orchestrationBudgetUsd,
           autoSettleAfterDays,
           autoSettleOnMerge,
+          prDiffCapLines,
           mcpServers: mcpServers.map((s) => ({ ...s })),
           defaultWorktree,
           defaultOrchestrate,
@@ -2069,6 +2072,16 @@ function buildDevCoder(): CoderApi {
             throw new Error("autoSettleOnMerge must be a boolean");
           }
           autoSettleOnMerge = patch.autoSettleOnMerge;
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, "prDiffCapLines")) {
+          const v = patch.prDiffCapLines;
+          if (
+            v !== null &&
+            (typeof v !== "number" || !Number.isInteger(v) || v <= 0)
+          ) {
+            throw new Error("PR diff cap must be a positive integer or null");
+          }
+          prDiffCapLines = v;
         }
         if (Object.prototype.hasOwnProperty.call(patch, "mcpServers")) {
           if (!Array.isArray(patch.mcpServers)) {
@@ -2149,6 +2162,7 @@ function buildDevCoder(): CoderApi {
           orchestrationBudgetUsd,
           autoSettleAfterDays,
           autoSettleOnMerge,
+          prDiffCapLines,
           mcpServers: mcpServers.map((s) => ({ ...s })),
           defaultWorktree,
           defaultOrchestrate,

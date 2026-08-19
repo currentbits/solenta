@@ -142,6 +142,7 @@ describe("Store", () => {
       reasoningEffort: null,
       worktreePath: null,
       handoffFrom: null,
+      feltEstimate: null,
       replayContext: false,
       muted: false,
       notes: "",
