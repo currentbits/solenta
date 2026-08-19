@@ -78,9 +78,15 @@ function finishedThread() {
 }
 
 async function openThreadMenu(m: Awaited<ReturnType<typeof boot>>) {
+  // Sidebar card "…" button shares the label; the header overflow is the
+  // one without data-more-btn.
   const menuBtn = m
     .queryAll("button")
-    .find((b) => b.getAttribute("aria-label") === "Thread actions");
+    .find(
+      (b) =>
+        b.getAttribute("aria-label") === "Thread actions" &&
+        !b.hasAttribute("data-more-btn"),
+    );
   assert.ok(menuBtn, "Thread actions menu must be present");
   await m.click(menuBtn as HTMLElement);
 }

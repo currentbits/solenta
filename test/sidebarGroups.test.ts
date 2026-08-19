@@ -1,5 +1,5 @@
 /**
- * Sidebar grouping + global settle partition (round 40).
+ * Sidebar grouping + Active/Later partition (#567).
  * Run: node --experimental-strip-types --test test/sidebarGroups.test.ts
  */
 import assert from "node:assert/strict";
@@ -7,14 +7,13 @@ import { describe, it } from "node:test";
 import {
   GROUP_ATTENTION_CAP,
   buildSidebarGroups,
-  buildSidebarSections,
-  groupHeaderSummary,
+  flattenLater,
   partitionSidebar,
   splitSettled,
   visibleAttentionCount,
 } from "../src/sidebarGroups.ts";
 import { AUTO_SETTLE_AFTER_DAYS } from "../src/threadSettle.ts";
-import type { ProjectInfo, SpaceInfo, ThreadInfo } from "../src/shared/ipc.ts";
+import type { ProjectInfo, ThreadInfo } from "../src/shared/ipc.ts";
 
 const NOW = 1_700_000_000_000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -157,6 +156,35 @@ describe("buildSidebarGroups", () => {
     );
   });
 
+  it("pinned rows sort first in their group: oldest pin first, rest keep createdAt desc (#567)", () => {
+    // pin-late was CREATED first but PINNED last; pin order must win among
+    // pinned rows while unpinned rows keep static creation order.
+    const threads = [
+      thread({ id: "plain-old", projectId: "a", createdAt: 200, updatedAt: 200 }),
+      thread({
+        id: "pin-late",
+        projectId: "a",
+        createdAt: 100,
+        updatedAt: 100,
+        pinnedAt: NOW - 10,
+      }),
+      thread({ id: "plain-new", projectId: "a", createdAt: 400, updatedAt: 400 }),
+      thread({
+        id: "pin-early",
+        projectId: "a",
+        createdAt: 300,
+        updatedAt: 300,
+        pinnedAt: NOW - 500,
+      }),
+    ];
+    const groups = buildSidebarGroups([pA], threads);
+    assert.deepEqual(
+      groups[0]!.threads.map((t) => t.id),
+      ["pin-early", "pin-late", "plain-new", "plain-old"],
+      "pinned block first (oldest pin first), then createdAt desc",
+    );
+  });
+
   it("keeps orphan threads (missing project) in a trailing group", () => {
     const threads = [
       thread({ id: "orphan", projectId: "gone", updatedAt: 500 }),
@@ -168,110 +196,8 @@ describe("buildSidebarGroups", () => {
   });
 });
 
-describe("buildSidebarSections", () => {
-  const pA = project({ id: "a", slug: "org/alpha" });
-  const pB = project({ id: "b", slug: "org/beta" });
-  const pEmpty = project({ id: "c", slug: "org/empty" });
-  const s1: SpaceInfo = { id: "s1", name: "Client work" };
-  const s2: SpaceInfo = { id: "s2", name: "Experiments" };
-
-  const shape = (sections: ReturnType<typeof buildSidebarSections>) =>
-    sections.map((s) => [
-      s.space?.id ?? null,
-      s.groups.map((g) => [g.project?.id ?? null, g.threads.map((t) => t.id)]),
-    ]);
-
-  it("zero spaces is identical to buildSidebarGroups", () => {
-    const threads = [
-      thread({ id: "t1", projectId: "a", updatedAt: 100 }),
-      thread({ id: "t2", projectId: "b", updatedAt: 300 }),
-      thread({ id: "orphan", projectId: "gone", updatedAt: 500 }),
-    ];
-    const projects = [pA, pB, pEmpty];
-    const sections = buildSidebarSections([], projects, threads);
-    assert.equal(sections.length, 1, "exactly one Unassigned section");
-    assert.equal(sections[0]!.space, null);
-    assert.deepEqual(
-      sections[0]!.groups,
-      buildSidebarGroups(projects, threads),
-      "groups equal today's flat list",
-    );
-  });
-
-  it("projects land under their space; empty spaces still emit a section", () => {
-    const client = { ...pA, spaceId: "s1" };
-    const experiment = { ...pB, spaceId: "s2" };
-    const threads = [
-      thread({ id: "t1", projectId: "a", createdAt: 100, updatedAt: 100 }),
-      thread({ id: "t2", projectId: "b", createdAt: 300, updatedAt: 300 }),
-    ];
-    const sections = buildSidebarSections(
-      [s1, s2, { id: "s3", name: "Empty" }],
-      [client, experiment],
-      threads,
-    );
-    assert.deepEqual(shape(sections), [
-      ["s1", [["a", ["t1"]]]],
-      ["s2", [["b", ["t2"]]]],
-      ["s3", []],
-      [null, []],
-    ]);
-  });
-
-  it("a dangling spaceId falls into Unassigned rather than disappearing", () => {
-    const dangling = { ...pA, spaceId: "missing" };
-    const assigned = { ...pB, spaceId: "s1" };
-    const threads = [
-      thread({ id: "t1", projectId: "a", updatedAt: 100 }),
-      thread({ id: "t2", projectId: "b", updatedAt: 200 }),
-    ];
-    const sections = buildSidebarSections(
-      [s1],
-      [dangling, assigned],
-      threads,
-    );
-    assert.deepEqual(shape(sections), [
-      ["s1", [["b", ["t2"]]]],
-      [null, [["a", ["t1"]]]],
-    ]);
-  });
-
-  it("ordering within a section matches buildSidebarGroups", () => {
-    const a = { ...pA, spaceId: "s1" };
-    const b = { ...pB, spaceId: "s1" };
-    const empty = { ...pEmpty, spaceId: "s1" };
-    const threads = [
-      thread({ id: "t1", projectId: "a", createdAt: 100, updatedAt: 900 }),
-      thread({ id: "t2", projectId: "b", createdAt: 300, updatedAt: 300 }),
-      thread({ id: "t3", projectId: "a", createdAt: 200, updatedAt: 200 }),
-    ];
-    const section = buildSidebarSections([s1], [a, b, empty], threads)[0]!;
-    assert.deepEqual(
-      section.groups,
-      buildSidebarGroups([a, b, empty], threads),
-      "section order is the existing group order, not a new sort",
-    );
-  });
-
-  it("orphans stay in Unassigned, not in a named space", () => {
-    const assigned = { ...pA, spaceId: "s1" };
-    const threads = [
-      thread({ id: "t1", projectId: "a", updatedAt: 100 }),
-      thread({ id: "orphan", projectId: "gone", updatedAt: 500 }),
-    ];
-    const sections = buildSidebarSections([s1], [assigned], threads);
-    assert.deepEqual(shape(sections), [
-      ["s1", [["a", ["t1"]]]],
-      [null, [[null, ["orphan"]]]],
-    ]);
-  });
-});
-
-describe("partitionSidebar (round 40 global settled)", () => {
-  const pA = project({ id: "a", slug: "org/alpha" });
-  const pB = project({ id: "b", slug: "org/beta" });
-
-  it("collects settled across two projects into one newest-first list", () => {
+describe("partitionSidebar (#567 Active vs Later)", () => {
+  it("collects settled across two projects into later.settled, newest first", () => {
     // Settled threads deliberately span projects; interesting case not index 0.
     const threads = [
       thread({
@@ -304,21 +230,56 @@ describe("partitionSidebar (round 40 global settled)", () => {
         status: "done",
       }),
     ];
-    const { attentionThreads, settled } = partitionSidebar(threads, settleOpts);
+    const { attentionThreads, later } = partitionSidebar(threads, settleOpts);
     assert.deepEqual(
       attentionThreads.map((t) => t.id).sort(),
       ["a-work", "b-fresh"].sort(),
       "fresh done and working stay in attention",
     );
     assert.deepEqual(
-      settled.map((t) => t.id),
+      later.settled.map((t) => t.id),
       ["a-merged", "b-merged"],
       "one flat settled list, newest settledAt first, spanning both projects",
     );
+    assert.deepEqual(later.snoozed, []);
+    assert.deepEqual(later.archived, []);
   });
 
-  it("excludes archived from the global settled list", () => {
-    const { settled } = partitionSidebar(
+  it("archived beats pin and snooze; sorted updatedAt desc with id tiebreak", () => {
+    const { attentionThreads, later } = partitionSidebar(
+      [
+        thread({
+          id: "arch-pinned",
+          projectId: "a",
+          updatedAt: NOW - 50,
+          archived: true,
+          pinnedAt: NOW,
+        }),
+        thread({
+          id: "arch-snoozed",
+          projectId: "a",
+          updatedAt: NOW - 10,
+          archived: true,
+          snoozedUntil: NOW + 9999,
+          snoozedAt: NOW - 20,
+        }),
+        // Equal updatedAt pair: id decides, ascending.
+        thread({ id: "arch-b", projectId: "a", updatedAt: NOW - 30, archived: true }),
+        thread({ id: "arch-a", projectId: "a", updatedAt: NOW - 30, archived: true }),
+      ],
+      settleOpts,
+    );
+    assert.deepEqual(attentionThreads, [], "a pinned archived row is still Later");
+    assert.deepEqual(later.snoozed, [], "a snoozed archived row is still archived");
+    assert.deepEqual(
+      later.archived.map((t) => t.id),
+      ["arch-snoozed", "arch-a", "arch-b", "arch-pinned"],
+      "updatedAt desc, id asc on ties",
+    );
+  });
+
+  it("excludes archived from later.settled", () => {
+    const { later } = partitionSidebar(
       [
         thread({
           id: "gone",
@@ -338,7 +299,89 @@ describe("partitionSidebar (round 40 global settled)", () => {
       ],
       settleOpts,
     );
-    assert.deepEqual(settled.map((t) => t.id), ["kept"]);
+    assert.deepEqual(later.settled.map((t) => t.id), ["kept"]);
+    assert.deepEqual(later.archived.map((t) => t.id), ["gone"]);
+  });
+
+  it("snooze beats pin: a pinned+snoozed thread lands in later.snoozed, wake soonest first", () => {
+    const { attentionThreads, later } = partitionSidebar(
+      [
+        thread({
+          id: "sn-late",
+          projectId: "a",
+          updatedAt: NOW - 5,
+          snoozedUntil: NOW + 5000,
+          snoozedAt: NOW - 10,
+        }),
+        thread({
+          id: "sn-pinned-soon",
+          projectId: "a",
+          updatedAt: NOW - 5,
+          pinnedAt: NOW - 100,
+          snoozedUntil: NOW + 1000,
+          snoozedAt: NOW - 10,
+        }),
+      ],
+      settleOpts,
+    );
+    assert.deepEqual(attentionThreads, [], "explicit not-now beats the pin");
+    assert.deepEqual(
+      later.snoozed.map((t) => t.id),
+      ["sn-pinned-soon", "sn-late"],
+      "wake-soonest first",
+    );
+  });
+
+  it("pin beats settle: a pinned MERGED thread stays in attention", () => {
+    const { attentionThreads, later } = partitionSidebar(
+      [
+        thread({
+          id: "pinned-merged",
+          projectId: "a",
+          updatedAt: NOW - 10,
+          status: "done",
+          prState: "MERGED",
+          pinnedAt: NOW - 1,
+        }),
+        thread({
+          id: "plain-merged",
+          projectId: "a",
+          updatedAt: NOW - 20,
+          status: "done",
+          prState: "MERGED",
+        }),
+      ],
+      settleOpts,
+    );
+    assert.deepEqual(attentionThreads.map((t) => t.id), ["pinned-merged"]);
+    assert.deepEqual(later.settled.map((t) => t.id), ["plain-merged"]);
+  });
+
+  it("flattenLater is snoozed, then settled, then archived (render order)", () => {
+    const { later } = partitionSidebar(
+      [
+        thread({ id: "z-arch", projectId: "a", updatedAt: NOW, archived: true }),
+        thread({
+          id: "m-settled",
+          projectId: "a",
+          updatedAt: NOW - 1,
+          status: "done",
+          prState: "MERGED",
+        }),
+        thread({
+          id: "a-snoozed",
+          projectId: "a",
+          updatedAt: NOW - 2,
+          snoozedUntil: NOW + 9999,
+          snoozedAt: NOW - 3,
+        }),
+      ],
+      settleOpts,
+    );
+    assert.deepEqual(
+      flattenLater(later).map((t) => t.id),
+      ["a-snoozed", "m-settled", "z-arch"],
+    );
   });
 });
 
@@ -389,107 +432,6 @@ describe("splitSettled (round 39 effectiveSettled)", () => {
       settleOpts,
     );
     assert.deepEqual(settled.map((t) => t.id), ["quiet"]);
-  });
-});
-
-describe("groupHeaderSummary (round 40 working + round 43 unread)", () => {
-  it("counts working and omits settled (settled moved to the global tail)", () => {
-    assert.equal(
-      groupHeaderSummary([
-        thread({
-          id: "w1",
-          projectId: "a",
-          updatedAt: 3,
-          status: "working",
-        }),
-        thread({
-          id: "w2",
-          projectId: "a",
-          updatedAt: 2,
-          status: "working",
-        }),
-        thread({
-          id: "d",
-          projectId: "a",
-          updatedAt: 1,
-          status: "done",
-          prState: "MERGED",
-        }),
-      ]),
-      "2 working",
-      "no settled half on project headers after round 40",
-    );
-    assert.equal(
-      groupHeaderSummary([
-        thread({
-          id: "fresh",
-          projectId: "a",
-          updatedAt: NOW,
-          status: "done",
-        }),
-      ]),
-      null,
-      "no working threads → no summary",
-    );
-  });
-
-  it("appends unread count when any attention thread is unread", () => {
-    assert.equal(
-      groupHeaderSummary([
-        thread({
-          id: "w1",
-          projectId: "a",
-          updatedAt: 30,
-          status: "working",
-          lastVisitedAt: 10,
-        }),
-        thread({
-          id: "read",
-          projectId: "a",
-          updatedAt: 20,
-          status: "idle",
-          lastVisitedAt: 20,
-        }),
-        thread({
-          id: "newmsg",
-          projectId: "a",
-          updatedAt: 40,
-          status: "done",
-          lastVisitedAt: 5,
-        }),
-      ]),
-      "1 working · 2 unread",
-    );
-    assert.equal(
-      groupHeaderSummary([
-        thread({
-          id: "only-unread",
-          projectId: "a",
-          updatedAt: 50,
-          status: "idle",
-          lastVisitedAt: 1,
-        }),
-      ]),
-      "1 unread",
-      "unread alone is enough for a summary",
-    );
-    assert.equal(
-      groupHeaderSummary([
-        thread({
-          id: "legacy",
-          projectId: "a",
-          updatedAt: 99,
-          status: "idle",
-          lastVisitedAt: null,
-        }),
-      ]),
-      null,
-      "legacy null lastVisitedAt is not unread",
-    );
-  });
-
-  it("says nothing for empty groups", () => {
-    assert.equal(groupHeaderSummary([]), null);
   });
 });
 

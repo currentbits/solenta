@@ -151,17 +151,12 @@ function Host({
 }
 
 async function openShelves(m: Awaited<ReturnType<typeof mount>>) {
-  const snoozeH = m.query("[data-snoozed-header]");
-  if (snoozeH) {
-    await m.click(snoozeH);
-    await m.flush();
-  }
-  const settledH = m
+  // #567: one Later shelf (snoozed + settled + archived), expanded by default.
+  const laterH = m
     .queryAll("button")
-    .find((b) => (b.textContent || "").includes("Settled ·"));
-  // Settled tail defaults to expanded (t3); click only when collapsed.
-  if (settledH && settledH.getAttribute("aria-expanded") === "false") {
-    await m.click(settledH);
+    .find((b) => (b.textContent || "").includes("Later ·"));
+  if (laterH && laterH.getAttribute("aria-expanded") === "false") {
+    await m.click(laterH);
     await m.flush();
   }
 }
@@ -450,11 +445,11 @@ describe("Sidebar jump shortcuts (round 46)", () => {
       dispatchKey("keydown", "3", { metaKey: true });
     });
     await m.flush();
-    // 3rd visible: pin-mid is 1st (index 0), noise might be in p1...
-    // Order: pin-mid, noise, p1-mid, working-x, p2-mid, snooze-mid, settled-mid
-    // cmd+3 → index 2 = p1-mid
+    // #567 order: p1 group (noise, p1-mid, working-x), p2 group (pin-mid
+    // first — pinned sorts first, then p2-mid), Later (snooze-mid, settled-mid).
+    // cmd+3 → index 2 = working-x
     assert.equal(
-      m.query('[data-thread-card="p1-mid"]')?.getAttribute("data-active"),
+      m.query('[data-thread-card="working-x"]')?.getAttribute("data-active"),
       "true",
     );
 
@@ -487,17 +482,18 @@ describe("Sidebar jump shortcuts (round 46)", () => {
   it("cmd+j / cmd+k wrap through the list", async () => {
     const m = await mount(<Host />);
     await openShelves(m);
-    // Order: pin-mid, noise, …, settled-mid. Start at pin-mid, cmd+k wraps to last.
-    const pinBtn = m
-      .query('[data-thread-card="pin-mid"]')!
+    // #567 order: noise first, …, settled-mid last. Start at the first row;
+    // cmd+k wraps to the shelf's last row.
+    const firstBtn = m
+      .query('[data-thread-card="noise"]')!
       .querySelector("button")!;
-    await m.click(pinBtn);
+    await m.click(firstBtn);
     await m.flush();
     assert.equal(
       m.query("[data-thread-card][data-active=true]")?.getAttribute(
         "data-thread-card",
       ),
-      "pin-mid",
+      "noise",
     );
 
     await inAct(async () => {
@@ -520,7 +516,7 @@ describe("Sidebar jump shortcuts (round 46)", () => {
       m.query("[data-thread-card][data-active=true]")?.getAttribute(
         "data-thread-card",
       ),
-      "pin-mid",
+      "noise",
       "cmd+j from last wraps to first",
     );
     m.unmount();

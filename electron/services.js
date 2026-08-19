@@ -289,17 +289,9 @@ function updateProject(store, projectId, patch) {
     }
   }
 
+  // #568: Spaces retired. Ignore leftover spaceId patches; never persist the key.
   if (typeof input.spaceId === "string") {
-    const spaceId = input.spaceId.trim();
-    if (spaceId) {
-      const known = store.getSpaces().some((s) => s && s.id === spaceId);
-      if (!known) {
-        throw new Error(`Unknown space: ${spaceId}`);
-      }
-      next.spaceId = spaceId;
-    } else {
-      delete next.spaceId;
-    }
+    delete next.spaceId;
   }
 
   // true persists the key; false deletes it so old stores stay clean.
@@ -333,73 +325,32 @@ function updateProject(store, projectId, patch) {
  * @param {import('./store').Store} store
  * @returns {{ id: string, name: string }[]}
  */
-function listSpaces(store) {
-  return store.getSpaces().slice();
+function listSpaces() {
+  return [];
 }
 
 /**
- * @param {import('./store').Store} store
- * @param {{ name?: string }} input
+ * @param {import('./store').Store} _store
+ * @param {{ name?: string }} _input
  */
-function addSpace(store, input) {
-  const name =
-    input && typeof input.name === "string" ? input.name.trim() : "";
-  if (!name) {
-    throw new Error("Name cannot be empty");
-  }
-  const space = { id: randomUUID(), name };
-  const spaces = store.getSpaces().slice();
-  spaces.push(space);
-  store.setSpaces(spaces);
-  store.save();
-  return space;
+function addSpace(_store, _input) {
+  throw new Error("Spaces have been removed");
 }
 
 /**
- * @param {import('./store').Store} store
- * @param {{ id?: string, name?: string }} input
+ * @param {import('./store').Store} _store
+ * @param {{ id?: string, name?: string }} _input
  */
-function updateSpace(store, input) {
-  const id = input && input.id != null ? String(input.id) : "";
-  const spaces = store.getSpaces().slice();
-  const idx = spaces.findIndex((s) => s && s.id === id);
-  if (idx === -1) {
-    throw new Error(`Unknown space: ${id}`);
-  }
-  const name =
-    input && typeof input.name === "string" ? input.name.trim() : "";
-  if (!name) {
-    throw new Error("Name cannot be empty");
-  }
-  const next = { ...spaces[idx], name };
-  spaces[idx] = next;
-  store.setSpaces(spaces);
-  store.save();
-  return next;
+function updateSpace(_store, _input) {
+  throw new Error("Spaces have been removed");
 }
 
 /**
- * Drops the space and clears spaceId on every project that used it.
- * Threads and on-disk repos are never touched.
- * @param {import('./store').Store} store
- * @param {{ id?: string }} input
+ * Idempotent: Spaces are already gone after the #568 store migration.
+ * @param {import('./store').Store} _store
+ * @param {{ id?: string }} _input
  */
-function removeSpace(store, input) {
-  const id = input && input.id != null ? String(input.id) : "";
-  const spaces = store.getSpaces();
-  if (!spaces.some((s) => s && s.id === id)) {
-    throw new Error(`Unknown space: ${id}`);
-  }
-  store.setSpaces(spaces.filter((s) => !s || s.id !== id));
-  store.setProjects(
-    store.getProjects().map((p) => {
-      if (!p || p.spaceId !== id) return p;
-      const next = { ...p };
-      delete next.spaceId;
-      return next;
-    }),
-  );
-  store.save();
+function removeSpace(_store, _input) {
 }
 
 /**

@@ -96,10 +96,25 @@ async function selectThread(
   m: Awaited<ReturnType<typeof mount>>,
   title: string,
 ) {
-  const card = m.query(`button[aria-label="Select thread: ${title}"]`);
+  // aria-label may carry ", unread" / ", working" suffixes (#566).
+  const card = m.query(`button[aria-label^="Select thread: ${title}"]`);
   assert.ok(card, `thread card for "${title}" must exist`);
   await m.click(card as HTMLElement);
   await m.flush();
+}
+
+/** #566: card actions (Fork / Hand off) live in the single "…" menu now. */
+async function openCardMenu(
+  m: Awaited<ReturnType<typeof mount>>,
+  threadId: string,
+) {
+  const more = m.query(`[data-more-btn="${threadId}"]`);
+  assert.ok(more, `"…" menu button must exist on ${threadId}`);
+  await m.click(more as HTMLElement);
+  await m.flush();
+  const menu = m.query(`[data-snooze-menu="${threadId}"]`);
+  assert.ok(menu, "card menu must be open");
+  return menu as HTMLElement;
 }
 
 describe("App fork / hand-off wiring (round 49)", () => {
@@ -124,8 +139,9 @@ describe("App fork / hand-off wiring (round 49)", () => {
     const m = await boot(fake);
     await selectThread(m, "source handoff thread");
 
+    await openCardMenu(m, "t-source-fork");
     const forkBtn = m.query('[data-fork-btn="t-source-fork"]');
-    assert.ok(forkBtn, "card Fork control must exist on the source");
+    assert.ok(forkBtn, "card Fork menu item must exist on the source");
     await m.click(forkBtn as HTMLElement);
     await m.flush();
 
@@ -179,18 +195,12 @@ describe("App fork / hand-off wiring (round 49)", () => {
     const m = await boot(fake);
     await selectThread(m, "source handoff thread");
 
-    const handoffBtn = m.query('[data-handoff-btn="t-source-fork"]');
-    assert.ok(handoffBtn, "Hand off control must exist");
-    await m.click(handoffBtn as HTMLElement);
-    await m.flush();
-
-    // B1: current provider must be ABSENT from the card hand-off submenu.
+    // B1: current provider must be ABSENT from the card menu's hand-off items.
     // Mutant that drops `p.id !== thread.provider` re-lists claude here.
-    const cardMenu = m.query('[data-handoff-menu="t-source-fork"]');
-    assert.ok(cardMenu, "card hand-off menu must be open");
-    const cardEntries = m
-      .queryAll("[data-handoff-provider]")
-      .map((el) => el.getAttribute("data-handoff-provider"));
+    const cardMenu = await openCardMenu(m, "t-source-fork");
+    const cardEntries = Array.from(
+      cardMenu.querySelectorAll("[data-handoff-provider]"),
+    ).map((el) => el.getAttribute("data-handoff-provider"));
     assert.ok(
       !cardEntries.includes("claude"),
       `current provider must not appear in card Hand off menu, got: ${cardEntries.join(",")}`,
@@ -283,8 +293,7 @@ describe("App fork / hand-off wiring (round 49)", () => {
     const m = await boot(fake);
     await selectThread(m, "source handoff thread");
 
-    await m.click(m.query('[data-handoff-btn="t-source-fork"]') as HTMLElement);
-    await m.flush();
+    await openCardMenu(m, "t-source-fork");
 
     const kimi = m.query('[data-handoff-provider="kimi"]');
     assert.ok(kimi, "unavailable Kimi must still be listed");
@@ -411,6 +420,7 @@ describe("App fork / hand-off wiring (round 49)", () => {
     const m = await boot(fake);
     await selectThread(m, "source handoff thread");
 
+    await openCardMenu(m, "t-source-fork");
     await m.click(m.query('[data-fork-btn="t-source-fork"]') as HTMLElement);
     await m.flush();
 

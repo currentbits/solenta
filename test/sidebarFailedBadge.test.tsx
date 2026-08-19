@@ -1,5 +1,6 @@
 /**
- * Failed sidebar badge: lastError is the native title tooltip (issue #140).
+ * Failed status dot: lastError is the native title tooltip (issue #140,
+ * flattened to the one-dot row contract in #566).
  *
  * Run: npm run test:renderer
  */
@@ -22,14 +23,15 @@ const providers: ProviderInfo[] = [
   },
 ];
 
-describe("failed badge lastError tooltip", () => {
-  it("renders lastError as the Failed badge title", async () => {
+describe("failed dot lastError tooltip", () => {
+  it("renders lastError as the failed dot title", async () => {
+    const t = thread({
+      status: "failed",
+      lastError: "Run error: exit 1",
+    });
     const m = await mount(
       <ThreadCard
-        thread={thread({
-          status: "failed",
-          lastError: "Run error: exit 1",
-        })}
+        thread={t}
         slug="acme/ledger"
         providers={providers}
         active={false}
@@ -37,15 +39,18 @@ describe("failed badge lastError tooltip", () => {
         onSelect={() => {}}
       />,
     );
-    const badge = m
-      .queryAll("span")
-      .find((el) => (el.textContent || "").trim() === "Failed");
-    assert.ok(badge, "Failed badge must render");
-    assert.equal(badge.getAttribute("title"), "Run error: exit 1");
+    const dot = m.query('[data-status-dot="failed"]');
+    assert.ok(dot, "failed dot must render");
+    assert.equal(dot!.getAttribute("title"), "Run error: exit 1");
+    assert.equal(dot!.getAttribute("data-failed"), t.id, "legacy failed flag");
+    assert.ok(
+      m.query(`button[aria-label="Select thread: ${t.title}, failed"]`),
+      "select button speaks the failed state",
+    );
     m.unmount();
   });
 
-  it("renders Quota wait · clock instead of Failed", async () => {
+  it("renders an attention quota-wait dot instead of failed", async () => {
     const now = Date.now();
     const until = now + 3 * 60 * 60 * 1000;
     const m = await mount(
@@ -62,14 +67,18 @@ describe("failed badge lastError tooltip", () => {
         onSelect={() => {}}
       />,
     );
-    const badge = m.query("[data-quota-wait]");
-    assert.ok(badge, "quota-wait badge must render");
-    assert.match((badge.textContent || "").trim(), /Quota wait/);
-    assert.ok(
-      !m
-        .queryAll("span")
-        .some((el) => (el.textContent || "").trim() === "Failed"),
-      "must not render Failed while parked",
+    const dot = m.query("[data-quota-wait]");
+    assert.ok(dot, "quota-wait dot must render");
+    assert.equal(dot!.getAttribute("data-status-dot"), "attention");
+    assert.equal(
+      dot!.getAttribute("title"),
+      "You've hit your limit · resets 3pm",
+      "lastError wins the tooltip over the resume clock",
+    );
+    assert.equal(
+      m.query('[data-status-dot="failed"]'),
+      null,
+      "must not render a failed dot while parked",
     );
     m.unmount();
   });

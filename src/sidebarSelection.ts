@@ -6,13 +6,12 @@ import {
 } from "./sidebarGroups";
 
 /**
- * Inputs for the ordered visible sidebar list (round 46).
- * Order mirrors render: pinned → per-project attention (+ archived if open)
- * → snoozed visible rows → settled visible rows.
+ * Inputs for the ordered visible sidebar list (round 46, reshaped by #567).
+ * Order mirrors render: per-project attention (pinned rows already sort
+ * first inside each group) → Later shelf visible rows.
  */
 interface VisibleListInput {
-  pinned: readonly ThreadInfo[];
-  /** Project groups already filtered to attention (+ optional archived). */
+  /** Project groups already filtered to attention (search: full hit list). */
   groups: readonly SidebarGroup[];
   /** Group keys currently collapsed (non-search). */
   collapsedGroupKeys: ReadonlySet<string>;
@@ -20,17 +19,13 @@ interface VisibleListInput {
   expandedGroupKeys?: ReadonlySet<string>;
   /** Thread ids the cap must keep visible (active / revealed). */
   keepThreadIds?: readonly (string | null | undefined)[];
-  /** Group keys with archived rows expanded. */
-  showArchivedKeys: ReadonlySet<string>;
-  snoozed: readonly ThreadInfo[];
-  snoozedOpen: boolean;
-  /** Carve-out when shelf collapsed; null when open or none selected. */
-  selectedSnoozedId: string | null;
-  settled: readonly ThreadInfo[];
-  settledOpen: boolean;
-  settledVisibleCount: number;
-  selectedSettledId: string | null;
-  /** Search mode: flat groups only (no shelves, no cap). */
+  /** Later shelf in render order (snoozed, settled, archived). */
+  later: readonly ThreadInfo[];
+  laterOpen: boolean;
+  laterVisibleCount: number;
+  /** Carve-out when the shelf is collapsed; null when open or none selected. */
+  selectedLaterId: string | null;
+  /** Search mode: flat groups only (no shelf, no cap). */
   searching?: boolean;
 }
 
@@ -47,10 +42,6 @@ export function buildVisibleThreadIds(input: VisibleListInput): string[] {
     seen.add(id);
     ids.push(id);
   };
-
-  if (!input.searching) {
-    for (const t of input.pinned) push(t.id);
-  }
 
   for (const g of input.groups) {
     const groupKey =
@@ -70,28 +61,20 @@ export function buildVisibleThreadIds(input: VisibleListInput): string[] {
       keepIds: input.keepThreadIds,
     });
     for (const t of attention.slice(0, visibleCount)) push(t.id);
-    const archived = g.threads.filter((t) => t.archived);
-    if (
-      input.searching ||
-      input.showArchivedKeys.has(groupKey)
-    ) {
-      for (const t of archived) push(t.id);
+    if (input.searching) {
+      for (const t of g.threads) {
+        if (t.archived) push(t.id);
+      }
     }
   }
 
   if (!input.searching) {
-    if (input.snoozedOpen) {
-      for (const t of input.snoozed) push(t.id);
-    } else if (input.selectedSnoozedId) {
-      push(input.selectedSnoozedId);
-    }
-
-    if (input.settledOpen) {
-      for (const t of input.settled.slice(0, input.settledVisibleCount)) {
+    if (input.laterOpen) {
+      for (const t of input.later.slice(0, input.laterVisibleCount)) {
         push(t.id);
       }
-    } else if (input.selectedSettledId) {
-      push(input.selectedSettledId);
+    } else if (input.selectedLaterId) {
+      push(input.selectedLaterId);
     }
   }
 

@@ -6,10 +6,8 @@
 // Push channels: "threads:changed", "thread:updated", "thread:select".
 
 /**
- * A named sidebar group ("Space"). Store array order IS display order.
- * ponytail: no icon field — a name holds an emoji fine. No manual ordering
- * within a space either: project order stays activity-derived
- * (buildSidebarGroups). Add both when someone actually asks.
+ * Retired (#568). The IPC type stays so old callers still typecheck;
+ * list() is always [] and add/update reject.
  */
 export interface SpaceInfo {
   id: string;
@@ -26,7 +24,7 @@ export interface ProjectInfo {
   remoteHost?: string;
   /** Absolute path on the remote host. Required when remoteHost is set. */
   remotePath?: string;
-  /** Space membership. Absent = unassigned (renders in the trailing group). */
+  /** Retired (#568). Stripped on store load; never written. */
   spaceId?: string;
   /** When true, a background poller starts a thread for every issue that enters plan:todo (issue #165). Absent = off. */
   autoDispatch?: boolean;
@@ -154,7 +152,7 @@ export interface ProjectUpdateInput {
   name?: string;
   remoteHost?: string;
   remotePath?: string;
-  /** Space membership: an id assigns, empty string ("") unassigns. */
+  /** Retired (#568). Ignored; never persisted. */
   spaceId?: string;
   /** When true, a background poller starts a thread for every issue that enters plan:todo (issue #165). Absent = off. */
   autoDispatch?: boolean;
@@ -1983,17 +1981,13 @@ export interface CoderApi {
     }): Promise<AgentConfigWriteResult>;
   };
   /**
-   * Named sidebar groups. List order is display order (creation order).
-   * Removing a space unassigns its projects; it never touches projects
-   * themselves.
+   * Retired (#568). list() is always []; add/update throw;
+   * remove is a no-op. Kept so an older renderer does not crash on boot.
    */
   spaces: {
     list(): Promise<SpaceInfo[]>;
-    /** Rejects an empty name. Duplicate names are allowed (ids are the key). */
     add(input: { name: string }): Promise<SpaceInfo>;
-    /** Rename. Rejects an empty name or an unknown id. */
     update(input: { id: string; name: string }): Promise<SpaceInfo>;
-    /** Drops the space and clears spaceId on every project that used it. */
     remove(input: { id: string }): Promise<void>;
   };
   threads: {

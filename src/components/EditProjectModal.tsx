@@ -1,11 +1,10 @@
 import { useCallback, useState } from "react";
 import { useEscapeClose } from "../useEscapeClose";
-import type { ProjectInfo, ProjectUpdateInput, SpaceInfo } from "../shared/ipc";
+import type { ProjectInfo, ProjectUpdateInput } from "../shared/ipc";
 import styles from "./SettingsModal.module.css";
 
 interface EditProjectModalProps {
   project: ProjectInfo;
-  spaces?: SpaceInfo[];
   onClose: () => void;
   onSubmit: (input: ProjectUpdateInput) => Promise<unknown>;
 }
@@ -18,14 +17,12 @@ interface EditProjectModalProps {
  */
 export function EditProjectModal({
   project,
-  spaces = [],
   onClose,
   onSubmit,
 }: EditProjectModalProps) {
   const [name, setName] = useState(project.name);
   const [remoteHost, setRemoteHost] = useState(project.remoteHost ?? "");
   const [remotePath, setRemotePath] = useState(project.remotePath ?? "");
-  const [spaceId, setSpaceId] = useState(project.spaceId ?? "");
   const [autoDispatch, setAutoDispatch] = useState(
     project.autoDispatch ?? false,
   );
@@ -76,7 +73,6 @@ export function EditProjectModal({
         remoteHost: host,
         remotePath: rpath,
         worktreeRetention,
-        ...(spaces.length > 0 ? { spaceId } : {}),
         autoDispatch,
       });
       if (!updated) {
@@ -157,28 +153,6 @@ export function EditProjectModal({
               disabled
             />
           </div>
-          {spaces.length > 0 && (
-            <div className={styles.field}>
-              <label className={styles.fieldLabel} htmlFor="edit-project-space">
-                Space
-              </label>
-              <select
-                id="edit-project-space"
-                className={styles.input}
-                data-edit-project-space=""
-                value={spaceId}
-                onChange={(e) => setSpaceId(e.target.value)}
-                disabled={pending}
-              >
-                <option value="">No space</option>
-                {spaces.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
           <div className={styles.field}>
             <label
               className={styles.fieldLabel}
