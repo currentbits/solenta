@@ -30,7 +30,7 @@ import type {
   WorkLogItem,
   WorkflowTemplateInfo,
 } from "../shared/ipc";
-import { SPEC_ARTIFACTS, THREAD_NOTES_MAX } from "../shared/ipc";
+import { SPEC_ARTIFACTS, THREAD_NOTES_MAX, FELT_ESTIMATE_BUCKETS_MS } from "../shared/ipc";
 import { TEACH_AUTONOMY_LABELS } from "../teach";
 import type { TeachAutonomy } from "../shared/ipc";
 import type { WorkflowSaveInput } from "../useCoder";
@@ -73,7 +73,7 @@ import {
 } from "../runHeader";
 import type { SlashAction } from "../slashCommands";
 import { buildBestOfNEntries } from "../bestOfN";
-import { createPrPrompt } from "../prUi";
+import { createPrPrompt, isPrTooLargeMessage, splitPrPrompt } from "../prUi";
 import { suggestNextGitAction } from "../nextGitAction";
 import { formatQuotaWaitLabel } from "../quotaWait";
 import {
@@ -103,6 +103,11 @@ import {
 import { Composer } from "./Composer";
 import { Markdown } from "./Markdown";
 import { PathLinkProvider, PathText } from "./PathLinks";
+import {
+  messageProvenance,
+  provenanceVisible,
+  type MessageProvenance,
+} from "../provenance";
 import styles from "./ThreadView.module.css";
 
 const EMPTY_COMPARE_PEERS: ComparePeer[] = [];
@@ -406,6 +411,14 @@ interface ThreadViewProps {
     threadId: string,
     opts?: { worktree?: boolean },
   ) => void | Promise<void>;
+  /**
+   * Record the one-tap felt estimate for a finished thread (issue #401).
+   * savedMs null = the user declined.
+   */
+  onSetFeltEstimate?: (
+    threadId: string,
+    savedMs: number | null,
+  ) => void | Promise<void>;
   /** Settings.defaultWorktree — Start work arms a pending worktree when set. */
   defaultWorktree?: boolean;
   /** Permanently delete the open thread (caller already confirmed in UI). */
@@ -467,6 +480,8 @@ interface ThreadViewProps {
     title: string;
     body?: string;
     draft?: boolean;
+    /** Override the PR-size cap for this creation (issue #402). */
+    allowOversize?: boolean;
   }) => Promise<PrInfo>;
   /** CI checks for the current PR. Failures stay in-band. */
   onPrChecks?: () => Promise<PrChecksResult>;
@@ -841,6 +856,74 @@ const UserMessageBlock = memo(function UserMessageBlock({
   );
 });
 
+/** Last two path segments for a chip; full list stays on the tooltip. */
+function provShortPath(p: string): string {
+  const parts = p.split("/");
+  return parts.length > 2 ? parts.slice(-2).join("/") : p;
+}
+
+/**
+ * Provenance tier strip under an assistant message (issue #404). Grounded
+ * messages get one chip per addressable source tier; a substantive message
+ * with no addressable source gets the "model prior knowledge" tag — the
+ * fluent-summary warning this feature exists for.
+ */
+function ProvenanceStrip({
+  prov,
+  text,
+}: {
+  prov: MessageProvenance;
+  text: string;
+}) {
+  if (!provenanceVisible(prov, text)) return null;
+  if (!prov.grounded) {
+    return (
+      <div className={styles.provStrip} data-provenance="prior">
+        <span
+          className={styles.provChip}
+          data-tier="prior"
+          title="No repo file, shared-memory entry, or GitHub issue backs this message — it came from the model's prior knowledge."
+        >
+          model prior knowledge
+        </span>
+      </div>
+    );
+  }
+  return (
+    <div className={styles.provStrip} data-provenance="grounded">
+      {prov.repo.length > 0 && (
+        <span
+          className={styles.provChip}
+          data-tier="repo"
+          title={prov.repo.join("\n")}
+        >
+          repo: {provShortPath(prov.repo[0])}
+          {prov.repo.length > 1 ? ` +${prov.repo.length - 1}` : ""}
+        </span>
+      )}
+      {prov.memory.length > 0 && (
+        <span
+          className={styles.provChip}
+          data-tier="memory"
+          title={`Shared memory: ${prov.memory.join(", ")}`}
+        >
+          memory
+        </span>
+      )}
+      {prov.issues.map((ref) => (
+        <span
+          key={ref}
+          className={styles.provChip}
+          data-tier="issue"
+          title="GitHub issue/PR reference"
+        >
+          {ref.startsWith("#") ? ref : "issue"}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 const MessageBlock = memo(function MessageBlock({
   message,
   autoExpandTool,
@@ -854,6 +937,7 @@ const MessageBlock = memo(function MessageBlock({
   metaModel = null,
   metaEffort = null,
   metaDuration = null,
+  provenance = null,
   onLoadImage,
   onLoadAttachmentImage,
 }: {
@@ -872,6 +956,8 @@ const MessageBlock = memo(function MessageBlock({
   metaModel?: string | null;
   metaEffort?: string | null;
   metaDuration?: string | null;
+  /** Provenance tiers for assistant messages; null hides the strip. */
+  provenance?: MessageProvenance | null;
 }) {
   if (message.role === "tool") {
     return (
@@ -925,6 +1011,7 @@ const MessageBlock = memo(function MessageBlock({
   return (
     <article className={styles.message}>
       <Markdown text={message.text} />
+      {provenance && <ProvenanceStrip prov={provenance} text={message.text} />}
       <footer className={styles.msgMeta}>{metaLine}</footer>
     </article>
   );
@@ -1124,6 +1211,7 @@ function NextGitActionButton({
     title: string;
     body?: string;
     draft?: boolean;
+    allowOversize?: boolean;
   }) => Promise<PrInfo>;
   onPrChecks?: () => Promise<PrChecksResult>;
   onPrMerge?: () => Promise<PrInfo>;
@@ -1137,6 +1225,8 @@ function NextGitActionButton({
   const [checks, setChecks] = useState<PrChecksResult | null>(null);
   const [pending, setPending] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
+  /** Size-cap refusal message while the split/override choice is showing. */
+  const [oversizeMsg, setOversizeMsg] = useState<string | null>(null);
   const threadRef = useRef(thread.id);
   threadRef.current = thread.id;
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1154,6 +1244,7 @@ function NextGitActionButton({
     setChecks(null);
     setPending(false);
     setFlash(null);
+    setOversizeMsg(null);
   }, [thread.id]);
 
   const loadGit = useCallback(async () => {
@@ -1277,10 +1368,15 @@ function NextGitActionButton({
         setPending(true);
         try {
           await onCreatePr({ title: thread.title, body: "" });
+          setOversizeMsg(null);
           await loadGit();
           await loadChecks();
-        } catch {
-          // Parent surfaces rejections via the runError banner.
+        } catch (err) {
+          // The size-cap refusal (issue #402) is not a failure: offer the
+          // split-into-stack prompt or an explicit override inline. Other
+          // rejections surface via the parent's runError banner.
+          const msg = err instanceof Error ? err.message : String(err);
+          if (isPrTooLargeMessage(msg)) setOversizeMsg(msg);
         } finally {
           setPending(false);
         }
@@ -1309,6 +1405,22 @@ function NextGitActionButton({
   };
 
   if (action.kind === "idle") return null;
+
+  /** Retry PR creation with the explicit size-cap override (issue #402). */
+  const createOversizePr = async () => {
+    if (!onCreatePr || pending || isWorking) return;
+    setPending(true);
+    try {
+      await onCreatePr({ title: thread.title, body: "", allowOversize: true });
+      setOversizeMsg(null);
+      await loadGit();
+      await loadChecks();
+    } catch {
+      // Parent surfaces rejections via the runError banner.
+    } finally {
+      setPending(false);
+    }
+  };
 
   const disabled = isWorking || pending || !action.actionable;
   const label = pending
@@ -1356,20 +1468,59 @@ function NextGitActionButton({
   }
 
   return (
-    <button
-      type="button"
-      className={className}
-      data-next-git-action={action.kind}
-      data-create-pr={dataCreatePr}
-      disabled={disabled}
-      aria-disabled={disabled ? "true" : undefined}
-      aria-busy={pending || undefined}
-      title={action.title}
-      onClick={() => void handleClick()}
-    >
-      {pending && <span className={styles.pushSpinner} aria-hidden />}
-      {label}
-    </button>
+    <>
+      <button
+        type="button"
+        className={className}
+        data-next-git-action={action.kind}
+        data-create-pr={dataCreatePr}
+        disabled={disabled}
+        aria-disabled={disabled ? "true" : undefined}
+        aria-busy={pending || undefined}
+        title={action.title}
+        onClick={() => void handleClick()}
+      >
+        {pending && <span className={styles.pushSpinner} aria-hidden />}
+        {label}
+      </button>
+      {oversizeMsg ? (
+        <span
+          className={styles.oversizeBar}
+          data-pr-oversize=""
+          role="alert"
+        >
+          <span className={styles.oversizeText}>{oversizeMsg}</span>
+          <button
+            type="button"
+            className={styles.oversizeBtn}
+            data-pr-split=""
+            onClick={() => {
+              setOversizeMsg(null);
+              void onStartRun(splitPrPrompt(providerName));
+            }}
+          >
+            Split into stacked PRs
+          </button>
+          <button
+            type="button"
+            className={styles.oversizeBtn}
+            data-pr-create-anyway=""
+            disabled={disabled}
+            onClick={() => void createOversizePr()}
+          >
+            Create anyway
+          </button>
+          <button
+            type="button"
+            className={styles.oversizeDismiss}
+            aria-label="Dismiss"
+            onClick={() => setOversizeMsg(null)}
+          >
+            ×
+          </button>
+        </span>
+      ) : null}
+    </>
   );
 }
 
@@ -2047,8 +2198,59 @@ function TeachCard({
   );
 }
 
-const DiffLine = memo(function DiffLine({ line }: { line: string }) {
-  const kind = diffLineKind(line);
+const FELT_BUCKET_LABELS = ["15 min", "30 min", "1 h", "2 h", "4 h+"];
+
+/**
+ * Felt-estimate card (issue #401): one tap, asked once when a run completes.
+ * The estimate feeds the felt-vs-actual section of the fleet view; Skip
+ * records a decline so the card never nags twice.
+ */
+function FeltEstimateCard({
+  thread,
+  onSetFeltEstimate,
+}: {
+  thread: ThreadInfo;
+  onSetFeltEstimate?: (
+    threadId: string,
+    savedMs: number | null,
+  ) => void | Promise<void>;
+}) {
+  if (!onSetFeltEstimate) return null;
+  if (thread.status !== "done" || thread.feltEstimate != null) return null;
+  return (
+    <div className={styles.specCard} data-felt-card="">
+      <div className={styles.specCardHead}>
+        <span className={styles.specCardTitle}>How much time did this save you?</span>
+      </div>
+      <p className={styles.specStatus}>
+        One tap. We compare your gut with the actual clock in the Fleet view.
+      </p>
+      <div className={styles.permissionActions}>
+        {FELT_ESTIMATE_BUCKETS_MS.map((ms, i) => (
+          <button
+            key={ms}
+            type="button"
+            className={styles.permissionAllow}
+            data-felt-estimate-btn={ms}
+            onClick={() => void onSetFeltEstimate(thread.id, ms)}
+          >
+            {FELT_BUCKET_LABELS[i]}
+          </button>
+        ))}
+        <button
+          type="button"
+          className={styles.permissionDeny}
+          data-felt-skip-btn=""
+          onClick={() => void onSetFeltEstimate(thread.id, null)}
+        >
+          Skip
+        </button>
+      </div>
+    </div>
+  );
+}
+
+const DiffLine = memo(function DiffLine({ line }: { line: string }) {  const kind = diffLineKind(line);
   return (
     <div className={styles.diffLine} data-kind={kind}>
       {line || " "}
@@ -2684,6 +2886,7 @@ export const ThreadView = memo(function ThreadView({
   onRequestTeachReview,
   onStartAsk,
   onStopAsk,
+  onSetFeltEstimate,
   defaultWorktree = false,
   onDeleteThread,
   changesOpen,
@@ -2825,6 +3028,21 @@ export const ThreadView = memo(function ThreadView({
     if (!detail) return map;
     for (const header of mapRunHeaders(detail.messages, detail.thread.status)) {
       map.set(header.firstMessageId, header);
+    }
+    return map;
+  }, [detail]);
+
+  /**
+   * Provenance tiers per assistant message (issue #404), computed over the
+   * raw message list so turn boundaries (previous user message) are intact.
+   */
+  const provenanceById = useMemo(() => {
+    const map = new Map<string, MessageProvenance>();
+    if (!detail) return map;
+    for (let i = 0; i < detail.messages.length; i++) {
+      if (detail.messages[i].role !== "assistant") continue;
+      const prov = messageProvenance(detail.messages, i);
+      if (prov) map.set(detail.messages[i].id, prov);
     }
     return map;
   }, [detail]);
@@ -3955,6 +4173,9 @@ export const ThreadView = memo(function ThreadView({
                           ? (durationByRunId.get(entry.message.runId) ?? null)
                           : null
                       }
+                      provenance={
+                        provenanceById.get(entry.message.id) ?? null
+                      }
                     />
                     {bar && (
                       <ReviewBarStrip
@@ -4009,6 +4230,13 @@ export const ThreadView = memo(function ThreadView({
             thread={thread}
             onStopTeach={onStopTeach}
             onRequestTeachReview={onRequestTeachReview}
+          />
+        ) : null}
+
+        {!thread.ask && !thread.teach ? (
+          <FeltEstimateCard
+            thread={thread}
+            onSetFeltEstimate={onSetFeltEstimate}
           />
         ) : null}
 

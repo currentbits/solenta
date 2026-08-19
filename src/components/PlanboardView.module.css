@@ -26,6 +26,27 @@
   color: var(--text);
 }
 
+/* Review-load meter (issue #402): open-PR pressure on the human reviewer. */
+.reviewLoad {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--green);
+  border: 1px solid var(--green);
+  border-radius: 999px;
+  padding: 2px 10px;
+  white-space: nowrap;
+}
+
+.reviewLoad[data-review-load="busy"] {
+  color: var(--amber);
+  border-color: var(--amber);
+}
+
+.reviewLoad[data-review-load="overloaded"] {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
 .controls {
   display: flex;
   align-items: center;

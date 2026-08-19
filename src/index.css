@@ -9,7 +9,8 @@
   --border-soft: #202838;
   --text: #e8ecf4;
   --text-muted: #8b95a8;
-  --text-dim: #667085;
+  /* ~4.7:1 on --card / ~5:1 on --bg-elevated: sidebar metadata stays readable. */
+  --text-dim: #7d8798;
   --blue: #3b82f6;
   --blue-soft: rgba(59, 130, 246, 0.15);
   --blue-border: rgba(59, 130, 246, 0.35);

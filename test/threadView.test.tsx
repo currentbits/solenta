@@ -418,6 +418,73 @@ describe("ThreadView message roles", () => {
   });
 });
 
+describe("ThreadView provenance tiers (issue #404)", () => {
+  const LONG_CLAIM =
+    "The billing service retries failed charges three times with exponential " +
+    "backoff, then marks the subscription past_due and notifies the account " +
+    "owner by email. Webhook deliveries are deduplicated by event id, so a " +
+    "retried send is safe to acknowledge more than once in the receiver.";
+
+  it("labels a grounded assistant message with its repo tier", () => {
+    const html = render({
+      detail: detail({
+        messages: [
+          msg({ id: "u1", role: "user", text: "where is billing?", createdAt: 10 }),
+          msg({
+            id: "t1",
+            role: "tool",
+            text: "Read: src/billing.ts",
+            createdAt: 15,
+            runId: "run-1",
+            tool: {
+              id: "tc1",
+              name: "Read",
+              input: '{"file_path":"src/billing.ts"}',
+              output: "ok",
+              done: true,
+              isError: false,
+            },
+          }),
+          msg({
+            id: "a1",
+            role: "assistant",
+            text: "Billing lives in `src/billing.ts`.",
+            createdAt: 20,
+            runId: "run-1",
+          }),
+        ],
+      }),
+    });
+    assert.ok(html.includes('data-provenance="grounded"'), "grounded strip");
+    assert.ok(html.includes('data-tier="repo"'), "repo tier chip");
+  });
+
+  it("tags a substantive ungrounded answer as model prior knowledge", () => {
+    const html = render({
+      detail: detail({
+        messages: [
+          msg({ id: "u1", role: "user", text: "how does billing retry?", createdAt: 10 }),
+          msg({ id: "a1", role: "assistant", text: LONG_CLAIM, createdAt: 20 }),
+        ],
+      }),
+    });
+    assert.ok(html.includes('data-provenance="prior"'), "prior strip");
+    assert.ok(html.includes("model prior knowledge"), "prior tag text");
+  });
+
+  it("leaves short chatter untagged", () => {
+    const html = render({
+      detail: detail({
+        messages: [
+          msg({ id: "u1", role: "user", text: "fix it", createdAt: 10 }),
+          msg({ id: "a1", role: "assistant", text: "On it — looking now.", createdAt: 20 }),
+        ],
+      }),
+    });
+    assert.ok(!html.includes("data-provenance"), "no strip on chatter");
+  });
+});
+
 describe("ThreadView timeline wiring", () => {
   it("renders work-log steps from buildTimeline, not a raw dump of the array", () => {
     // Two work-log items same run, one user message earlier: user then Work Log card.

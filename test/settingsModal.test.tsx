@@ -239,6 +239,55 @@ describe("SettingsModal build section", () => {
   });
 });
 
+describe("SettingsModal PR size cap (#402)", () => {
+  it("saves a positive integer cap", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const m = await mount(
+      modal({
+        settings: { dailyBudgetUsd: null, autoSettleAfterDays: 3, prDiffCapLines: 400 },
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return {
+            dailyBudgetUsd: null,
+            autoSettleAfterDays: 3,
+            prDiffCapLines: patch.prDiffCapLines ?? null,
+          };
+        },
+      }),
+    );
+    const input = m.query("#pr-diff-cap");
+    assert.ok(input, "PR cap input must render");
+    await m.type(input, "250");
+    await m.click(m.byText("Save"));
+    assert.equal(patches.length, 1, "save must call onSaveSettings once");
+    assert.equal(patches[0].prDiffCapLines, 250);
+    m.unmount();
+  });
+
+  it("empty input saves null (cap disabled)", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const m = await mount(
+      modal({
+        settings: { dailyBudgetUsd: null, autoSettleAfterDays: 3, prDiffCapLines: 400 },
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return {
+            dailyBudgetUsd: null,
+            autoSettleAfterDays: 3,
+            prDiffCapLines: patch.prDiffCapLines ?? null,
+          };
+        },
+      }),
+    );
+    const input = m.query("#pr-diff-cap") as HTMLInputElement;
+    assert.equal(input.value, "400", "prefilled from settings");
+    await m.type(input, "");
+    await m.click(m.byText("Save"));
+    assert.equal(patches[0].prDiffCapLines, null);
+    m.unmount();
+  });
+});
+
 describe("SettingsModal daily budget", () => {
   it("accepts a valid number and reports the saved value", async () => {
     const patches: Partial<AppSettings>[] = [];

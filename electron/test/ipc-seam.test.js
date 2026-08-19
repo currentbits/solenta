@@ -240,7 +240,7 @@ exit 1`,
       }
 
       // Round 44 pin + snooze (mirror setSettled seam).
-      for (const name of ["setPinned", "setSnoozed", "setQueued", "setNotes", "setQuotaWaitAutoResume", "peek"]) {
+      for (const name of ["setPinned", "setSnoozed", "setQueued", "setNotes", "setFeltEstimate", "setQuotaWaitAutoResume", "peek"]) {
         assert.equal(
           typeof api.threads[name],
           "function",
@@ -266,6 +266,10 @@ exit 1`,
       assert.ok(
         handlers.has("threads:setNotes"),
         "main must handle threads:setNotes",
+      );
+      assert.ok(
+        handlers.has("threads:setFeltEstimate"),
+        "main must handle threads:setFeltEstimate",
       );
       assert.ok(
         handlers.has("threads:setQuotaWaitAutoResume"),

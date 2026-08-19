@@ -494,6 +494,51 @@ a.btn {
   justify-content: center;
 }
 
+/* PR-size-cap refusal (issue #402): split / create-anyway choice. */
+.oversizeBar {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border: 1px solid var(--amber);
+  border-radius: var(--radius);
+  color: var(--amber);
+  font-size: 12px;
+  max-width: 520px;
+}
+
+.oversizeText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.oversizeBtn {
+  flex-shrink: 0;
+  border: 1px solid var(--amber);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--amber);
+  font-size: 12px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+.oversizeBtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.oversizeDismiss {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 0 2px;
+}
+
 .pushSpinner {
   width: 12px;
   height: 12px;
@@ -1061,6 +1106,46 @@ a.btn {
   display: flex;
   gap: 6px;
   user-select: none;
+}
+
+/* Provenance tier strip under an assistant message (issue #404). */
+.provStrip {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  user-select: none;
+}
+
+.provChip {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  font-size: 10.5px;
+  font-weight: 550;
+  color: var(--text-muted);
+  white-space: nowrap;
+  cursor: default;
+}
+
+.provChip[data-tier="repo"] {
+  color: var(--green);
+}
+
+.provChip[data-tier="memory"] {
+  color: var(--blue);
+}
+
+.provChip[data-tier="issue"] {
+  color: var(--text);
+}
+
+.provChip[data-tier="prior"] {
+  color: var(--amber);
+  border-style: dashed;
 }
 
 /* Per-run review strip: a tidy card row tucked under the run's last message. */

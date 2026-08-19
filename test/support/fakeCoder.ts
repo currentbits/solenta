@@ -211,6 +211,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     defaultWorktree: false,
     updateChannel: null,
     quotaWaitAutoResume: true,
+    prDiffCapLines: 400,
     ...(opts.settings ?? {}),
   };
   const ALL_SKILL_TARGETS: SkillTarget[] = [
@@ -414,6 +415,19 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
             );
           }
           next.quotaWaitAutoResume = v;
+        }
+        if (Object.prototype.hasOwnProperty.call(p, "prDiffCapLines")) {
+          const v = p.prDiffCapLines;
+          if (
+            v !== null &&
+            (typeof v !== "number" || !Number.isInteger(v) || v <= 0)
+          ) {
+            calls.push({ channel: "settings.set", args: [patch] });
+            return Promise.reject(
+              new Error("PR diff cap must be a positive integer or null"),
+            );
+          }
+          next.prDiffCapLines = v;
         }
         settingsState = next;
         return rec("settings.set", [patch], { ...settingsState });
@@ -1051,6 +1065,25 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         const next: ThreadInfo = {
           ...existing,
           notes: String(i.notes ?? "").trim().slice(0, 2000),
+        };
+        threads = threads.map((t) => (t.id === i.threadId ? next : t));
+        return Promise.resolve(next);
+      },
+      /** Honest felt estimate: saved shape or decline, never bumps updatedAt. */
+      setFeltEstimate: (input: unknown) => {
+        const i = input as { threadId: string; savedMs: number | null };
+        calls.push({ channel: "threads.setFeltEstimate", args: [input] });
+        const existing = threads.find((t) => t.id === i.threadId);
+        if (!existing) {
+          return Promise.reject(new Error(`Unknown thread: ${i.threadId}`));
+        }
+        const at = Date.now();
+        const next: ThreadInfo = {
+          ...existing,
+          feltEstimate:
+            i.savedMs == null
+              ? { kind: "declined", at }
+              : { kind: "saved", savedMs: Math.max(0, Number(i.savedMs)), at },
         };
         threads = threads.map((t) => (t.id === i.threadId ? next : t));
         return Promise.resolve(next);

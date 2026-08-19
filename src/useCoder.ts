@@ -302,6 +302,11 @@ export interface UseCoderResult {
   renameThread: (threadId: string, title: string) => Promise<void>;
   /** Save scratch notes on a thread (header editor, issue #194). */
   setNotes: (threadId: string, notes: string) => Promise<void>;
+  /** Record the one-tap felt estimate (issue #401); savedMs null = declined. */
+  setFeltEstimate: (
+    threadId: string,
+    savedMs: number | null,
+  ) => Promise<void>;
   /** Turn spec mode on (issue #269). Updates thread from the returned ThreadInfo. */
   startSpec: (threadId: string) => Promise<void>;
   /** Turn spec mode off (issue #500). Updates thread from the returned ThreadInfo. */
@@ -384,6 +389,8 @@ export interface UseCoderResult {
     title: string;
     body?: string;
     draft?: boolean;
+    /** Override the PR-size cap for this creation (issue #402). */
+    allowOversize?: boolean;
   }) => Promise<PrInfo>;
   /** Live PR for the selected thread's branch, or null when none. */
   prStatus: () => Promise<PrInfo | null>;
@@ -1638,6 +1645,24 @@ export function useCoder(): UseCoderResult {
     [api, applyThreads],
   );
 
+  const setFeltEstimate = useCallback(
+    async (threadId: string, savedMs: number | null) => {
+      try {
+        const thread = await api.threads.setFeltEstimate({ threadId, savedMs });
+        applyThreads(
+          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
+        );
+        setDetail((prev) =>
+          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
+        );
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+      }
+    },
+    [api, applyThreads],
+  );
+
   const startSpec = useCallback(
     async (threadId: string) => {
       try {
@@ -2124,7 +2149,12 @@ export function useCoder(): UseCoderResult {
   }, [api, selectedThreadId]);
 
   const createPr = useCallback(
-    async (input: { title: string; body?: string; draft?: boolean }) => {
+    async (input: {
+      title: string;
+      body?: string;
+      draft?: boolean;
+      allowOversize?: boolean;
+    }) => {
       if (!selectedThreadId) {
         throw new Error("No thread selected");
       }
@@ -2135,6 +2165,7 @@ export function useCoder(): UseCoderResult {
           title: input.title,
           body: input.body,
           draft: input.draft,
+          allowOversize: input.allowOversize,
         });
         if (selectedRef.current !== threadId) return pr;
         // createPr records prNumber/prUrl on the thread; refresh so the badge updates.
@@ -2610,6 +2641,7 @@ export function useCoder(): UseCoderResult {
     resumeQuotaWait,
     renameThread,
     setNotes,
+    setFeltEstimate,
     startSpec,
     stopSpec,
     reviewSpec,
