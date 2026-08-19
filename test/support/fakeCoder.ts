@@ -25,6 +25,7 @@ import type {
   RunStatInfo,
   DevServerState,
   DiffResult,
+  CreateIssueResult,
   FetchIssueResult,
   GitStatus,
   GitSyncInfo,
@@ -165,6 +166,8 @@ export interface FakeOptions {
   fail?: Record<string, Error>;
   /** Override issues.fetch result (default: a successful fixture). */
   issueFetch?: FetchIssueResult;
+  /** Override issues.create result (default: a successful fixture). */
+  issueCreate?: CreateIssueResult;
   /** Override attachments.saveImage result (default: { attachment: null }). */
   saveImage?: (input: unknown) => { attachment: AttachmentInfo | null };
   /** Override attachments.fromPaths result (default: { attachments: [] }). */
@@ -1153,6 +1156,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           threadId: string;
           provider?: string;
           model?: string | null;
+          worktree?: boolean;
         };
         calls.push({ channel: "threads.fork", args: [input] });
         const err = fail["threads.fork"];
@@ -1266,6 +1270,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           prUrl: null,
           prState: null,
           worktreePath: null,
+          ...(i.worktree === true ? { pendingWorktree: true } : {}),
         });
         threads = [forked, ...threads];
         details[forked.id] = detail({ thread: forked, messages: [] });
@@ -1592,11 +1597,15 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
             } as FetchIssueResult),
         ),
       create: (input: unknown) =>
-        rec("issues.create", [input], {
-          ok: true as const,
-          number: 1234,
-          url: "https://github.com/dev/fixture/issues/1234",
-        }),
+        rec(
+          "issues.create",
+          [input],
+          opts.issueCreate ?? {
+            ok: true as const,
+            number: 1234,
+            url: "https://github.com/dev/fixture/issues/1234",
+          },
+        ),
     },
     servers: {
       list: (input: unknown) => rec("servers.list", [input], [] as LocalServerInfo[]),

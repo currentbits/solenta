@@ -1477,6 +1477,30 @@ describe("ThreadView suggested-work chips (issue #550)", () => {
     assertNoNestedInteractive(html);
   });
 
+  it("still renders open chips when the transcript is empty", () => {
+    const html = render({
+      detail: detail({
+        thread: thread({
+          suggestions: [
+            suggestion({ id: "s-empty", title: "Empty-transcript chip" }),
+          ],
+        }),
+        messages: [],
+        workLog: [],
+      }),
+    });
+    assert.ok(
+      html.includes("data-suggested-work"),
+      "empty transcript still shows the strip (not a message-only branch)",
+    );
+    assert.ok(html.includes('data-suggestion-id="s-empty"'));
+    assert.ok(html.includes("Empty-transcript chip"));
+    assert.ok(
+      html.includes("Start by describing what to build"),
+      "empty prompt stays visible next to the chips",
+    );
+  });
+
   it("renders nothing when there are no suggestions", () => {
     const html = render({ detail: detail({ thread: thread() }) });
     assert.ok(

@@ -698,10 +698,17 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       if (!threadId) return;
       const t = await forkThread(threadId, { worktree: true });
       if (!t) return;
-      await startRun(s.prompt, t.id);
+      // Resolve before startRun so a failed kickoff cannot leave the chip
+      // open — a retry would fork a second idle thread.
       await resolveSuggestion(threadId, s.id, "started", {
         startedThreadId: t.id,
       });
+      try {
+        await startRun(s.prompt, t.id);
+      } catch {
+        // startRun already set the run-scope error. The fork exists, the
+        // chip is started, and forkThread selected the new thread.
+      }
     },
     [selectedThreadId, forkThread, startRun, resolveSuggestion],
   );
