@@ -1407,6 +1407,40 @@ a.btn {
   cursor: not-allowed;
 }
 
+/* Suggested-work chips (issue #550): quiet row under the transcript. */
+.suggestedWork {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0 4px;
+}
+
+.suggestedRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 8px 7px 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: transparent;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.suggestedTitle {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.suggestedActions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
 .reviewError {
   margin: 0;
   padding: 8px 20px;

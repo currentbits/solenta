@@ -1069,6 +1069,39 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         threads = threads.map((t) => (t.id === i.threadId ? next : t));
         return Promise.resolve(next);
       },
+      resolveSuggestion: (input: unknown) => {
+        const i = input as {
+          threadId: string;
+          suggestionId: string;
+          status: "started" | "filed" | "dismissed";
+          startedThreadId?: string;
+          issueNumber?: number;
+        };
+        calls.push({ channel: "threads.resolveSuggestion", args: [input] });
+        const existing = threads.find((t) => t.id === i.threadId);
+        if (!existing) {
+          return Promise.reject(new Error(`Unknown thread: ${i.threadId}`));
+        }
+        const next: ThreadInfo = {
+          ...existing,
+          suggestions: (existing.suggestions ?? []).map((s) =>
+            s.id === i.suggestionId
+              ? {
+                  ...s,
+                  status: i.status,
+                  ...(i.startedThreadId
+                    ? { startedThreadId: i.startedThreadId }
+                    : {}),
+                  ...(i.issueNumber != null
+                    ? { issueNumber: i.issueNumber }
+                    : {}),
+                }
+              : s,
+          ),
+        };
+        threads = threads.map((t) => (t.id === i.threadId ? next : t));
+        return Promise.resolve(next);
+      },
       /** Honest felt estimate: saved shape or decline, never bumps updatedAt. */
       setFeltEstimate: (input: unknown) => {
         const i = input as { threadId: string; savedMs: number | null };
@@ -1558,6 +1591,12 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
               },
             } as FetchIssueResult),
         ),
+      create: (input: unknown) =>
+        rec("issues.create", [input], {
+          ok: true as const,
+          number: 1234,
+          url: "https://github.com/dev/fixture/issues/1234",
+        }),
     },
     servers: {
       list: (input: unknown) => rec("servers.list", [input], [] as LocalServerInfo[]),

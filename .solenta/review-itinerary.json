@@ -3,34 +3,56 @@
   "readOrder": ["critical", "impl", "tests", "docs"],
   "chunks": [
     {
-      "area": "critical",
-      "rationale": "recordSuggestion / resolveSuggestion / work_suggest are the write path for user-facing chips. Dedupe, cap, and terminal-only resolve must match src/shared/ipc.ts or the renderer will show stale or reopenable chips.",
+      "area": "src/shared/ipc.ts (contract)",
+      "rationale": "Read first: WorkSuggestion/WorkSuggestionStatus, ThreadInfo.suggestions, fork worktree flag, threads.resolveSuggestion, issues.create. Everything else implements this.",
+      "risks": []
+    },
+    {
+      "area": "electron/services.js recordSuggestion/resolveSuggestion/forkThread/suggestedWorkNoteFor",
+      "rationale": "The store semantics: hypothesis-ledger pattern, open-title dedupe, 20-cap, never-reopen statuses, worktree flag under forkWorkerThread's guards, prompt note gated on coder-threads.",
       "risks": [
-        "Open-title dedupe is case-insensitive on title only; two different prompts with the same label collapse",
-        "resolveSuggestion does not reject already-terminal chips (started can be dismissed later — intentional unless the UI hides them)",
-        "work_suggest refreshDetail is best-effort; if runner.refreshDetail is missing the chip waits for the next stream tick"
+        "recordSuggestion drops the OLDEST suggestion past the cap even if it is open and the newest are resolved"
       ]
     },
     {
-      "area": "impl",
-      "rationale": "forkThread worktree:true (same Ask/canHostWorktree guards as forkWorkerThread), createIssue (gh create then best-effort plan:todo), IPC/preload channels, suggestedWorkNoteFor in the dispatch note chain.",
+      "area": "electron/orchServer.js work_suggest + electron/runner.js refreshDetail/note wiring",
+      "rationale": "The agent-facing seam: MCP tool with project guard, immediate detail push so chips appear mid-run, note joins the dispatch chain.",
       "risks": [
-        "createIssue parses the last /NNN from gh stdout; extra URLs in stderr should not leak because we read stdout",
-        "No --label on create: a repo without plan:todo still files the issue, but the board column may stay unlabeled until setPlanStatus retries",
-        "suggestedWorkNoteFor is process-global via activeServers(); tests that register coder-threads can race across files"
+        "refreshDetail pushes even when no window is subscribed; harmless but unmeasured"
       ]
     },
     {
-      "area": "tests",
-      "rationale": "services.test.js covers truncation/cap/dedupe/resolve/fork guards/note gating. issues.test.js uses the existing CODER_GH_BIN seam. ipc-seam pins the new channels. orch-server tools/list includes work_suggest.",
+      "area": "electron/ipc.js + electron/preload.js + src/wireClient.ts",
+      "rationale": "Channel seam written by two different workers: threads:resolveSuggestion and issues:create must match string-for-string on both sides (verified by ipc-seam test + orchestrator join check).",
+      "risks": []
+    },
+    {
+      "area": "electron/issues.js createIssue",
+      "rationale": "gh issue create with no --label (missing label hard-fails), number parsed from printed URL, plan:todo via best-effort setPlanStatus after creation.",
       "risks": [
-        "suggestedWorkNoteFor gating mutates the process-wide MCP registry",
-        "createIssue success test assumes setPlanStatus always issues the remove-label form"
+        "URL/number regex trusts gh stdout shape; a gh output change degrades to ok:false, never a crash"
       ]
+    },
+    {
+      "area": "src/App.tsx + src/useCoder.ts chip handlers",
+      "rationale": "The three actions: start = fork(worktree:true)+startRun+resolve(started); file = issues.create+resolve(filed); dismiss = resolve(dismissed). Current run is never touched.",
+      "risks": [
+        "start-a-thread is three awaited IPC calls with no rollback: a startRun failure leaves a forked idle thread and an unresolved chip (user can retry or delete)"
+      ]
+    },
+    {
+      "area": "src/components/ThreadView.tsx SuggestedWorkStrip + module.css",
+      "rationale": "Quiet chip row at the bottom of the transcript, open-status only, in-flight ids disable the row's buttons; data-suggested-work/data-suggestion-action test hooks.",
+      "risks": []
+    },
+    {
+      "area": "tests (electron/test/services|issues|ipc-seam|hypotheses, test/threadView.test.tsx, test/support/fakeCoder.ts, src/devCoder.ts)",
+      "rationale": "Read after impl: cap/dedupe/status-transition coverage, chip render + click + disabled-while-pending, seeded dev fixture.",
+      "risks": []
     }
   ],
   "risks": [
-    "Renderer wireClient/devCoder stubs are the sibling worker's job; typecheck will fail until they land",
-    "Chip UI does not exist yet; backend writes are invisible until the renderer half merges"
+    "Two workers built the two sides of the IPC seam against the shared contract; the orchestrator merge ran the full suite plus a manual channel-name join check rather than trusting either side's mocks",
+    "The [Suggested work] prompt note ships to every provider whenever coder-threads is registered — chip volume depends on agent compliance with the 'at most a few per run' line, and nothing rate-limits beyond the 20-cap and open-title dedupe"
   ]
 }
