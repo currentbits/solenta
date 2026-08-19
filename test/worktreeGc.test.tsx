@@ -240,7 +240,8 @@ describe("worktree retention", () => {
     });
     const m = await boot(fake);
 
-    await m.click(m.query('[data-project-edit="p1"]'));
+    await m.click(m.query("[data-scope-trigger]"));
+    await m.click(m.query('[data-scope-edit="p1"]'));
     const input = m.query(
       "[data-edit-project-retention]",
     ) as HTMLInputElement | null;

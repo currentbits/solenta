@@ -91,7 +91,7 @@ describe("Sidebar thread-mode menu", () => {
       />,
     );
 
-    await m.click(m.query('[data-create-menu-btn="p1"]'));
+    await m.click(m.query("[data-new-thread-caret]"));
 
     for (const attr of [
       "data-create-worktree-thread",
@@ -100,10 +100,10 @@ describe("Sidebar thread-mode menu", () => {
       "data-create-teach-thread",
       "data-create-ask-thread",
     ]) {
-      assert.ok(m.query(`[${attr}="p1"]`), `menu is missing ${attr}`);
+      assert.ok(m.query(`[${attr}]`), `menu is missing ${attr}`);
     }
 
-    await m.click(m.query('[data-create-orchestrator-thread="p1"]'));
+    await m.click(m.query("[data-create-orchestrator-thread]"));
     assert.deepEqual(calls, [["p1", { orchestrate: true }]]);
   });
 
@@ -115,8 +115,8 @@ describe("Sidebar thread-mode menu", () => {
         onCreateThread={(projectId, opts) => calls.push([projectId!, opts])}
       />,
     );
-    await m.click(m.query('[data-create-menu-btn="p1"]'));
-    await m.click(m.query('[data-create-teach-thread="p1"]'));
+    await m.click(m.query("[data-new-thread-caret]"));
+    await m.click(m.query("[data-create-teach-thread]"));
     assert.deepEqual(calls, [["p1", { worktree: true, teach: true }]]);
   });
 
@@ -128,12 +128,12 @@ describe("Sidebar thread-mode menu", () => {
         onCreateThread={(projectId, opts) => calls.push([projectId!, opts])}
       />,
     );
-    await m.click(m.query('[data-create-menu-btn="p1"]'));
-    await m.click(m.query('[data-create-ask-thread="p1"]'));
+    await m.click(m.query("[data-new-thread-caret]"));
+    await m.click(m.query("[data-create-ask-thread]"));
     assert.deepEqual(calls, [["p1", { ask: true }]]);
   });
 
-  it("hides the menu for remote projects", async () => {
+  it("hides worktree-only items for remote projects", async () => {
     const m = await mount(
       <Sidebar
         {...baseProps}
@@ -142,6 +142,9 @@ describe("Sidebar thread-mode menu", () => {
         onCreateThread={() => {}}
       />,
     );
-    assert.equal(m.query('[data-create-menu-btn="p2"]'), null);
+    assert.ok(m.query("[data-new-thread-caret]"), "caret still renders");
+    await m.click(m.query("[data-new-thread-caret]"));
+    assert.equal(m.query("[data-create-worktree-thread]"), null);
+    assert.ok(m.query("[data-create-plain-thread]"));
   });
 });

@@ -33,9 +33,7 @@ async function boot(fake: FakeCoder) {
 
 /** Click the sidebar's plain "New thread" button (no explicit mode). */
 async function clickNewThread(m: Awaited<ReturnType<typeof boot>>) {
-  const btn = m.query(
-    'button[aria-label^="New thread in"]:not([data-new-thread-in])',
-  );
+  const btn = m.query("[data-new-thread]");
   assert.ok(btn, "sidebar has a plain New thread button");
   await inAct(() => btn.click());
 }
@@ -129,8 +127,8 @@ describe("plain New thread mode resolution", () => {
       },
     });
     const m = await boot(fake);
-    await m.click(m.query('[data-create-menu-btn="p1"]'));
-    await m.click(m.query('[data-create-ask-thread="p1"]'));
+    await m.click(m.query("[data-new-thread-caret]"));
+    await m.click(m.query("[data-create-ask-thread]"));
 
     const input = fake.of("threads.create")[0].args[0] as Record<
       string,

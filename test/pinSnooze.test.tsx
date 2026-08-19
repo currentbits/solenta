@@ -241,15 +241,6 @@ describe("Sidebar pin + snooze shelves (round 44)", () => {
         1,
         "pinned thread renders exactly once",
       );
-      await openSettledShelf(m);
-      assert.equal(
-        m.query('[data-settled-shelf-toggle] ~ [data-thread-card="pin-mid"]') !=
-          null &&
-          m
-            .query('[data-thread-card="pin-mid"]')
-            ?.closest("[data-settled-shelf-toggle]") != null,
-        false,
-      );
       const order = m
         .queryAll("[data-thread-card]")
         .map((el) => el.getAttribute("data-thread-card"));

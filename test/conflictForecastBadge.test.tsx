@@ -188,6 +188,8 @@ describe("ThreadCard conflict forecast badge", () => {
 });
 
 describe("conflict tip readability", () => {
+  // Spec: restyle the forecast marker to plain 11px text/icon, no pill.
+  // These CSS pins keep the tip readable after that restyle.
   it("paints the tip on an opaque card surface, not the sidebar fill", () => {
     const body = cssRuleBody(sidebarCss, "conflictTip");
     assert.match(

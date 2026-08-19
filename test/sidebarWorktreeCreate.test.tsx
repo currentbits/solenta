@@ -99,8 +99,8 @@ describe("Sidebar worktree thread creation", () => {
       calls.push([pid, opts]);
     });
 
-    const btn = m.query(".groupNewThread");
-    assert.ok(btn, "New thread button renders");
+    const btn = m.query("[data-new-thread]");
+    assert.ok(btn, "New thread button renders in the header");
     await m.click(btn);
     assert.deepEqual(calls, [["p1", undefined]]);
   });
@@ -112,27 +112,31 @@ describe("Sidebar worktree thread creation", () => {
       calls.push([pid, opts]);
     });
 
-    const caret = m.query('[data-create-menu-btn="p1"]');
-    assert.ok(caret, "caret renders for a local project");
-    assert.equal(m.query('[data-create-menu="p1"]'), null);
+    const caret = m.query("[data-new-thread-caret]");
+    assert.ok(caret, "caret renders in the header");
+    assert.equal(m.query("[data-new-thread-menu]"), null);
 
     await m.click(caret);
-    const item = m.query('[data-create-worktree-thread="p1"]');
+    const item = m.query("[data-create-worktree-thread]");
     assert.ok(item, "menu offers the worktree variant");
 
     await m.click(item);
     assert.deepEqual(calls, [["p1", { worktree: true }]]);
     assert.equal(
-      m.query('[data-create-menu="p1"]'),
+      m.query("[data-new-thread-menu]"),
       null,
       "menu closes after selection",
     );
   });
 
-  it("hides the caret for remote projects (worktrees are local-only)", async () => {
+  it("hides worktree-only items for remote projects", async () => {
     const m = await mountSidebar([remoteProject], () => {});
-    assert.equal(m.query('[data-create-menu-btn="p2"]'), null);
-    assert.ok(m.query(".groupNewThread"), "plain button still renders");
+    assert.ok(m.query("[data-new-thread]"), "plain button still renders");
+    const caret = m.query("[data-new-thread-caret]");
+    assert.ok(caret, "caret still renders; only worktree items hide");
+    await m.click(caret);
+    assert.equal(m.query("[data-create-worktree-thread]"), null);
+    assert.ok(m.query("[data-create-plain-thread]"));
   });
 
   it("offers a no-worktree opt-out when defaultWorktree is on (issue #72)", async () => {
@@ -146,17 +150,17 @@ describe("Sidebar worktree thread creation", () => {
       true,
     );
 
-    const caret = m.query('[data-create-menu-btn="p1"]');
-    assert.ok(caret, "caret renders for a local project");
+    const caret = m.query("[data-new-thread-caret]");
+    assert.ok(caret, "caret renders in the header");
     await m.click(caret);
 
-    const item = m.query('[data-create-plain-thread="p1"]');
+    const item = m.query("[data-create-plain-thread]");
     assert.ok(item, "menu offers the no-worktree variant");
 
     await m.click(item);
     assert.deepEqual(calls, [["p1", { worktree: false }]]);
     assert.equal(
-      m.query('[data-create-menu="p1"]'),
+      m.query("[data-new-thread-menu]"),
       null,
       "menu closes after selection",
     );
@@ -164,12 +168,12 @@ describe("Sidebar worktree thread creation", () => {
 
   it("offers the no-worktree item even when defaultWorktree is off", async () => {
     const m = await mountSidebar([project], () => {});
-    const caret = m.query('[data-create-menu-btn="p1"]');
+    const caret = m.query("[data-new-thread-caret]");
     assert.ok(caret);
     await m.click(caret);
-    assert.ok(m.query('[data-create-worktree-thread="p1"]'));
+    assert.ok(m.query("[data-create-worktree-thread]"));
     assert.ok(
-      m.query('[data-create-plain-thread="p1"]'),
+      m.query("[data-create-plain-thread]"),
       "plain-thread item is always listed",
     );
   });
