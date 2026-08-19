@@ -4,12 +4,12 @@
   "chunks": [
     {
       "area": "src/components/ThreadView.module.css",
-      "rationale": "Read this first — the whole bug and the whole fix are here. .changesPanel is a fixed max-height flex column with overflow: hidden, and .patchScroll was the only scroller. A tall itinerary consumed the 520px, .patchScroll collapsed to zero (flex items do not shrink below min-content), and .commitBox landed past the clipped bottom edge. The new .changesScroll takes flex: 1 / min-height: 0 / overflow-y: auto and carries gap: 10px to replace the spacing its children used to inherit from .changesPanel's own gap. flex-shrink: 0 on .changesHead and .commitBox is what actually guarantees the commit box can never be squeezed out again.",
+      "rationale": "Read this first — the whole bug and the whole fix are here. .changesPanel is a fixed max-height flex column with overflow: hidden, and .patchScroll was the only scroller. A tall itinerary consumed the 520px, .patchScroll collapsed to zero (flex items do not shrink below min-content), and .commitBox landed past the clipped bottom edge with no scrollbar to reach it. The new .changesScroll takes flex: 1 / min-height: 0 / overflow-y: auto and carries gap: 10px to replace the spacing its children used to inherit from .changesPanel's own gap. flex-shrink: 0 on .changesHead and .commitBox is what actually guarantees the commit box can never be squeezed out again.",
       "risks": [
         "position: sticky on .commitBox is inert as written: .changesScroll absorbs the flex space so .commitBox no longer overflows .changesPanel, and there is nothing to stick against. Harmless and requested by #555, but do not treat it as load-bearing — the flex-shrink rules are.",
         ".changesScroll duplicates gap: 10px from .changesPanel. If someone later changes the panel gap the two will drift apart silently.",
         "flex: 1 was removed from .patchScroll, so a very long diff now grows the scroller's content rather than fitting a flex track. Correct for this fix (the parent scrolls) but it changes how tall diffs lay out.",
-        "A long diff no longer has its own inner scrollbar — itinerary, file lists and patches now share one scroll. Nested scrolling survives only on .fileList, which keeps max-height: 120px + overflow-y: auto (verified at ThreadView.module.css:.fileList), so each chunk's file list is still individually capped.",
+        "A long diff no longer has its own inner scrollbar — itinerary, file lists and patches now share one scroll. Nested scrolling survives only on .fileList, which keeps max-height: 120px + overflow-y: auto (verified in the stylesheet), so each chunk's file list is still individually capped.",
         ".commitInput is resize: vertical. A user-stretched textarea eats review space — pre-existing, but more reachable now that the box can never be clipped away."
       ]
     },
@@ -17,21 +17,24 @@
       "area": "src/components/ThreadView.tsx",
       "rationale": "Only two real lines: the opening <div className={styles.changesScroll}> before <ReviewItineraryView> and its close after the diff.truncated note, with .commitBox deliberately left outside. Read with `git diff -w` — the other ~128 changed lines are pure re-indentation of the wrapped children and carry no logic.",
       "risks": [
-        "The wrap must not swallow .commitBox. Verify by eye that the closing </div> sits before <div className={styles.commitBox}> — nesting it inside would reintroduce the exact bug with a scrollbar instead of a clip.",
-        "The error/loading/empty paragraphs stay outside .changesScroll as direct panel children. Intentional, but it means a long error message is still unscrollable."
+        "The wrap must not swallow .commitBox. Verify by eye that the closing </div> sits before <div className={styles.commitBox}> — nesting it inside would reintroduce the exact bug with a scrollbar instead of a clip, and would additionally re-target the sticky rule at the scroller.",
+        "The error/loading/empty paragraphs stay outside .changesScroll as direct panel children. Intentional, but it means an inline error shown above a tall itinerary still consumes non-scrollable flex space."
       ]
     },
     {
       "area": "test/threadView.test.tsx",
-      "rationale": "Regression coverage for a pure-layout failure that no behavioural assertion catches: one render test walking the ancestor chain from the commit textarea to prove it is not inside .changesScroll, plus a per-rule-block read of the stylesheet pinning flex-shrink: 0, overflow-y: auto and the absence of overflow: auto on .patchScroll.",
+      "rationale": "Regression coverage for a pure-layout failure that no behavioural assertion catches. view() gains optional onFetchDiff / onFetchReviewContext overrides (the empty-diff stub stays the default, so every existing test is untouched). Test 1 mounts the panel with a genuinely tall itinerary — hard stop, author notes, 4+ steps, files across ci-config/critical/tests/impl/docs — and walks up from the commit textarea to [aria-label=Changes], so wrapping the box in .changesScroll fails the test. Test 2 reads the stylesheet per-rule-block and pins flex-shrink: 0 + sticky on .commitBox, flex-shrink: 0 on .changesHead, overflow-y: auto + min-height: 0 on .changesScroll, and the absence of overflow: auto on .patchScroll.",
       "risks": [
-        "The CSS-text guard is only as good as its rule-block parsing — a whole-file `includes` would pass on a match in an unrelated rule and prove nothing.",
-        "CSS module class names may not resolve to usable strings in this harness; if the test falls back to asserting DOM structure it is weaker against a rename of .changesScroll."
+        "Test 2's .patchScroll guard matches overflow: auto specifically, not overflow-y: auto — a nested-scroller regression reintroduced as overflow-y would slip past it. B flagged this itself; worth tightening if that rule is ever touched again.",
+        "Test 1 was already green before the fix, because .changesScroll did not exist to be found in the ancestor chain. It only becomes a real guard now the wrapper is in place.",
+        "The CSS-text guard is only as strong as its rule-block slicing — a whole-file substring check would pass on a match in an unrelated rule and prove nothing.",
+        "node:test stops at the first failed assertion in a test, so a partial CSS regression surfaces one missing declaration at a time rather than all of them."
       ]
     }
   ],
   "risks": [
-    "jsdom does not lay out, so no test here can prove the commit box is actually visible at 520px — the CSS-text guard is a proxy. Confirming the real fix needs eyes on the running app with a tall itinerary.",
-    "Worker A's run was cancelled before it verified anything; tsc --noEmit and the 29 threadView tests were run by the orchestrator after merge, not by the author."
+    "jsdom does not lay out, so nothing in this suite can prove the commit box is actually visible at 520px with a tall itinerary — the CSS-text guard is a proxy for the real behaviour. Confirming the fix for real needs eyes on a running Electron window.",
+    "Both halves were written by parallel workers that never saw each other's files; the orchestrator ran tsc --noEmit and the full threadView suite on the merged result, which is the only place the two halves were tested together.",
+    "Worker A's first run was cancelled before it verified anything, and it later recommitted the identical source over the orchestrator's commit. The merged source content was diffed to confirm the two commits agree."
   ]
 }
