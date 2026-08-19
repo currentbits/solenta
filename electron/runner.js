@@ -1262,7 +1262,12 @@ function createRunner(opts) {
     if (crew.some((t) => t.status === "working" && active.has(t.id))) return;
     let changed = false;
     for (const t of crew) {
-      if (t.status === "done" && !t.archived) {
+      // "idle" is a terminal too: stopped runs and app-quit interrupts land
+      // there (grok CLIs often end "cancelled" after finishing their work).
+      // pendingFork idle means the worker never ran — leave it visible.
+      const finished =
+        t.status === "done" || (t.status === "idle" && !t.pendingFork);
+      if (finished && !t.archived) {
         // Not real activity: no touch, same as threads:setArchived.
         store.updateThread(t.id, { archived: true });
         changed = true;

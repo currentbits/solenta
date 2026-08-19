@@ -378,6 +378,32 @@ describe("runner simulated mode", () => {
     assert.equal(store.getThread(orch.id).archived, false);
   });
 
+  it("archives an idle (stopped) worker too, but not a pendingFork one", async () => {
+    const { orch, worker } = orchPair(store);
+    // Worker B's run was stopped (or the CLI ended "cancelled"): terminal
+    // status is "idle", not "done". It must still be swept off the sidebar.
+    const stopped = services.forkThread(store, { threadId: orch.id });
+    store.updateThread(stopped.id, {
+      orchWorker: true,
+      title: "Worker B",
+      status: "idle",
+    });
+    // Worker C is queued and never ran: idle + pendingFork stays visible.
+    const queued = services.forkThread(store, { threadId: orch.id });
+    store.updateThread(queued.id, {
+      orchWorker: true,
+      title: "Worker C",
+      status: "idle",
+      pendingFork: true,
+    });
+    store.saveNow();
+    await runner.startRun({ threadId: worker.id, prompt: "worker task" });
+    await waitFor(() => store.getThread(worker.id).status === "done");
+    await waitFor(() => store.getThread(worker.id).archived === true);
+    assert.equal(store.getThread(stopped.id).archived, true);
+    assert.equal(store.getThread(queued.id).archived, false);
+  });
+
   it("a stale 'working' sibling with no live run does not block the sweep", async () => {
     const { orch, worker } = orchPair(store);
     // Worker B died mid-run (crash / hung CLI): status says working but the
