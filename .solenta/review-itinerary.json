@@ -4,31 +4,31 @@
   "chunks": [
     {
       "area": "tests",
-      "rationale": "test/sidebar.test.tsx describe 'Sidebar snooze nested submenu (#583)'. Click contract tests stay first. Keyboard tests use pressFocused (not press(el)) so a panel swap that drops focus to <body> fails instead of dispatching on a detached node. DOM-absent asserts are assert.ok(!node) — assert.equal(node, null) hangs on a circular fiber when the node is still present.",
+      "rationale": "test/sidebar.test.tsx describe 'Sidebar snooze nested submenu (#583)'. New ArrowDown/Up/Home/End cases sit after the existing drill-in and typeahead tests. They use pressFocused, not press(el). Identity checks are assert.ok(active === item) — assert.equal on two DOM nodes hangs the suite while dumping circular fibers, same trap as assert.equal(node, null).",
       "risks": [
-        "Typeahead 'n' is pinned to next-week because 't' matches both This evening and Tomorrow. A future preset labelled 'Now' would steal that key.",
-        "ArrowRight tests focus [data-snooze-item] first. They do not prove the … trigger itself is in the tab order of the menu."
+        "Wrap tests assume last→first and first→last. A later clamp-instead-of-wrap change would fail them on purpose.",
+        "The disabled-Settle case uses status:'working'. If settle ever becomes clickable while a run is active, the skip test's precondition assert.equal(settle.disabled, true) fails first."
       ]
     },
     {
       "area": "critical",
-      "rationale": "ThreadCard menu onKeyDown (Sidebar.tsx ~895). ArrowRight opens only when the event target is [data-snooze-item] and the panel is closed. ArrowLeft/Backspace go back only while snoozePanelOpen. Escape is not handled here — useEscapeClose still dismisses the whole menu. #582 stacking is untouched: data-menu-open on the card, .group:has([data-snooze-menu]) z-index 8.",
+      "rationale": "ThreadCard menu onKeyDown in src/components/Sidebar.tsx. ArrowDown/Up/Home/End are handled AFTER ArrowRight (open) and ArrowLeft/Backspace (back), so Snooze+ArrowDown cannot drill in. Escape is still useEscapeClose, not a back key. #582 stacking is untouched: data-menu-open on the card, .group:has([data-snooze-menu]) z-index 8.",
       "risks": [
-        "Backspace preventDefault only while nested. A focused menuitem never is an input, but if rename ever mounts inside this menu the key would steal characters.",
-        "This branch also carries the #583 drill-in markup (it was not on this worktree's main). Reviewers landing both PRs will see a conflict on Sidebar.tsx."
+        "ArrowDown preventDefault stops the sidebar list from scrolling while the menu is focused. If a future overlay steals those keys, this handler must stay first.",
+        "enabledMenuItems queries the whole [data-snooze-menu]. That is correct only because the first-level items unmount while nested (back + presets are the only menuitems then). Re-introducing a flyout that keeps both levels in the DOM would mix panels."
       ]
     },
     {
       "area": "impl",
-      "rationale": "openSnoozePanel/closeSnoozePanel set pendingMenuFocus then flip snoozePanelOpen. A layout effect focuses the first preset (drill in) or the Snooze item (back) after the panel swap — the first-level trigger unmounts, so without this ArrowLeft has nothing focused. focusTypeaheadItem is prefix search with 500ms reset and same-letter cycling. Click handlers go through the same open/close helpers, so click still opens the panel; it also moves focus into it.",
+      "rationale": "focusMenuItem / focusMenuEdge reuse enabledMenuItems (same :not([disabled]) set as typeahead). Wrap with (from+delta+len)%len. Home/End jump to the ends of the current panel, including ‹ Snooze as first nested item. Click contract and data-snooze-preset / data-snooze-clear hooks are unchanged.",
       "risks": [
-        "Typeahead matches full textContent (wake times included). A digit can land on a preset whose whenLabel contains that hour.",
-        "No ArrowUp/Down roving tabindex. First-level navigation is still Tab."
+        "This is Arrow-key focus movement, not a tabindex=-1 roving set. Tab still walks every native button in the menu.",
+        "Opening the … menu does not auto-focus the first menuitem. Arrow keys do nothing until focus is already inside the menu."
       ]
     }
   ],
   "risks": [
-    "data-snooze-preset / data-snooze-clear hooks are unchanged; pinSnooze.test.tsx still clicks through the nested panel.",
-    "Group :has([data-snooze-submenu]) was added in #583. Do not drop it — stacking while nested depends on it if the outer menu attribute were ever moved."
+    "data-snooze-preset / data-snooze-clear and #582 stacking were not edited this turn.",
+    "This branch still carries the #583 drill-in markup plus the prior drill-in keyboard. Reviewers landing stacked PRs will conflict on Sidebar.tsx."
   ]
 }

@@ -510,6 +510,25 @@ function enabledMenuItems(menu: HTMLElement): HTMLElement[] {
   return [...menu.querySelectorAll<HTMLElement>('[role="menuitem"]:not([disabled])')];
 }
 
+function focusMenuItem(menu: HTMLElement, delta: number): void {
+  const items = enabledMenuItems(menu);
+  if (items.length === 0) return;
+  const from = items.findIndex((el) => el === document.activeElement);
+  const next =
+    from < 0
+      ? delta > 0
+        ? 0
+        : items.length - 1
+      : (from + delta + items.length) % items.length;
+  items[next]!.focus();
+}
+
+function focusMenuEdge(menu: HTMLElement, edge: "first" | "last"): void {
+  const items = enabledMenuItems(menu);
+  if (items.length === 0) return;
+  (edge === "first" ? items[0] : items[items.length - 1])!.focus();
+}
+
 const TYPEAHEAD_MS = 500;
 
 function focusTypeaheadItem(
@@ -910,6 +929,26 @@ export const ThreadCard = memo(function ThreadCard({
                     ) {
                       e.preventDefault();
                       openSnoozePanel();
+                      return;
+                    }
+                    if (e.key === "ArrowDown") {
+                      e.preventDefault();
+                      focusMenuItem(menu, 1);
+                      return;
+                    }
+                    if (e.key === "ArrowUp") {
+                      e.preventDefault();
+                      focusMenuItem(menu, -1);
+                      return;
+                    }
+                    if (e.key === "Home") {
+                      e.preventDefault();
+                      focusMenuEdge(menu, "first");
+                      return;
+                    }
+                    if (e.key === "End") {
+                      e.preventDefault();
+                      focusMenuEdge(menu, "last");
                       return;
                     }
                     if (

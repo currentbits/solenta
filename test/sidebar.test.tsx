@@ -2326,6 +2326,179 @@ describe("Sidebar snooze nested submenu (#583)", () => {
     m.unmount();
   });
 
+  function enabledItems(menu: HTMLElement): HTMLElement[] {
+    return [
+      ...menu.querySelectorAll<HTMLElement>('[role="menuitem"]:not([disabled])'),
+    ];
+  }
+
+  it("ArrowDown from Snooze moves to Fork and does not drill in", async () => {
+    const { m, menu } = await openMenu();
+    await focusSnooze(menu);
+    await m.pressFocused("ArrowDown");
+    assert.equal(
+      (document.activeElement as HTMLElement | null)?.getAttribute("data-fork-btn"),
+      "menu-src",
+      "ArrowDown is roving, not a drill-in",
+    );
+    assert.ok(
+      !m.query("[data-snooze-submenu]"),
+      "ArrowDown must not open the nested panel",
+    );
+    m.unmount();
+  });
+
+  it("ArrowUp from Fork returns to Snooze", async () => {
+    const { m, menu } = await openMenu();
+    const fork = menu.querySelector("[data-fork-btn]") as HTMLElement | null;
+    assert.ok(fork, "Fork is first-level");
+    fork.focus();
+    await m.pressFocused("ArrowUp");
+    assert.equal(
+      (document.activeElement as HTMLElement | null)?.getAttribute("data-snooze-item"),
+      "",
+    );
+    m.unmount();
+  });
+
+  it("ArrowDown and ArrowUp wrap among enabled first-level items", async () => {
+    const { m, menu } = await openMenu();
+    const items = enabledItems(menu);
+    assert.ok(items.length >= 2, "precondition: more than one menuitem");
+    items[items.length - 1]!.focus();
+    await m.pressFocused("ArrowDown");
+    assert.ok(
+      document.activeElement === items[0],
+      "ArrowDown from last wraps to first",
+    );
+    await m.pressFocused("ArrowUp");
+    assert.ok(
+      document.activeElement === items[items.length - 1],
+      "ArrowUp from first wraps to last",
+    );
+    m.unmount();
+  });
+
+  it("Home and End jump to the first and last enabled first-level items", async () => {
+    const { m, menu } = await openMenu();
+    const items = enabledItems(menu);
+    const fork = menu.querySelector("[data-fork-btn]") as HTMLElement | null;
+    assert.ok(fork, "Fork is a middle item");
+    fork.focus();
+    await m.pressFocused("Home");
+    assert.ok(document.activeElement === items[0], "Home → first enabled");
+    await m.pressFocused("End");
+    assert.ok(
+      document.activeElement === items[items.length - 1],
+      "End → last enabled",
+    );
+    m.unmount();
+  });
+
+  it("ArrowDown in the nested panel moves from ‹ Snooze to the first preset", async () => {
+    const { m, menu } = await openMenu();
+    await focusSnooze(menu);
+    await m.pressFocused("ArrowRight");
+    const back = m.query("[data-snooze-back]") as HTMLElement | null;
+    assert.ok(back, "back item is in the nested panel");
+    back.focus();
+    await m.pressFocused("ArrowDown");
+    assert.equal(
+      (document.activeElement as HTMLElement | null)?.getAttribute("data-snooze-preset"),
+      "hour",
+      "ArrowDown from ‹ Snooze lands on In 1 hour",
+    );
+    m.unmount();
+  });
+
+  it("ArrowUp from the first nested preset returns to ‹ Snooze", async () => {
+    const { m, menu } = await openMenu();
+    await focusSnooze(menu);
+    await m.pressFocused("ArrowRight");
+    const hour = m.query('[data-snooze-preset="hour"]') as HTMLElement | null;
+    assert.ok(hour, "hour preset");
+    hour.focus();
+    await m.pressFocused("ArrowUp");
+    assert.ok(
+      (document.activeElement as HTMLElement | null)?.hasAttribute("data-snooze-back"),
+      "ArrowUp from the first preset lands on the back item",
+    );
+    m.unmount();
+  });
+
+  it("nested Home/End stay inside the current panel", async () => {
+    const { m, menu } = await openMenu();
+    await focusSnooze(menu);
+    await m.pressFocused("ArrowRight");
+    const items = enabledItems(menu);
+    const hour = m.query('[data-snooze-preset="hour"]') as HTMLElement | null;
+    assert.ok(hour, "hour preset is a middle nested item");
+    hour.focus();
+    await m.pressFocused("Home");
+    assert.ok(
+      document.activeElement === items[0],
+      "Home in the nested panel is ‹ Snooze, not the first-level Snooze",
+    );
+    assert.ok(
+      (document.activeElement as HTMLElement | null)?.hasAttribute("data-snooze-back"),
+    );
+    await m.pressFocused("End");
+    assert.ok(
+      document.activeElement === items[items.length - 1],
+      "End → last nested menuitem",
+    );
+    assert.ok(
+      m.query("[data-snooze-submenu]"),
+      "End must not close the nested panel",
+    );
+    m.unmount();
+  });
+
+  it("ArrowDown skips a disabled Settle item", async () => {
+    const working = [
+      thread({
+        id: "menu-src",
+        title: "menu source",
+        status: "working",
+        updatedAt: FRESH + 80,
+        projectId: "p1",
+      }),
+      MENU_THREAD[1]!,
+    ];
+    const m = await mount(
+      sidebar(working, {
+        projects: [p1, p2],
+        providers: extraProviders,
+        onSetSnoozed: () => {},
+        onSetPinned: () => {},
+        onSetMuted: () => {},
+        onRenameThread: () => {},
+        onSetSettled: () => {},
+        onFork: () => {},
+      }),
+    );
+    await m.click(m.query('[data-more-btn="menu-src"]'));
+    const menu = m.query('[data-snooze-menu="menu-src"]') as HTMLElement | null;
+    assert.ok(menu, "… menu must open");
+    const settle = menu.querySelector("[data-settle-item]") as HTMLButtonElement | null;
+    assert.ok(settle, "Settle is still listed");
+    assert.equal(settle.disabled, true, "precondition: cannot settle a working thread");
+    const mute = menu.querySelector("[data-mute-toggle]") as HTMLElement | null;
+    assert.ok(mute, "Mute is the item above Settle");
+    mute.focus();
+    await m.pressFocused("ArrowDown");
+    assert.equal(
+      (document.activeElement as HTMLElement | null)?.getAttribute("data-snooze-item"),
+      "",
+      "ArrowDown from Mute wraps to Snooze, skipping disabled Settle",
+    );
+    assert.ok(
+      document.activeElement !== settle,
+      "disabled menuitems are not in the roving set",
+    );
+    m.unmount();
+  });
+
   it("clicking Snooze still opens the nested panel without keyboard", async () => {
     const { m, menu } = await openMenu();
     await m.click(menu.querySelector("[data-snooze-item]"));
