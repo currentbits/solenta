@@ -16,6 +16,6 @@
     }
   ],
   "risks": [
-    "#550 is on origin/main at 43388f0. This merge only closes the worktree into the local checkout."
+    "#550 is on origin/main. This merge closed the worktree into the local checkout."
   ]
 }
