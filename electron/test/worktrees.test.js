@@ -631,6 +631,63 @@ describe("worktrees", () => {
     assert.equal(fs.readFileSync(path.join(repo, "README.md"), "utf8"), "resolved\n");
   });
 
+  it("mergeWorktree auto-combines an itinerary-only conflict", async () => {
+    const setup = setupWorktree({
+      store,
+      threadId: thread.id,
+      worktreeBase,
+      broadcast: () => {},
+    });
+
+    fs.mkdirSync(path.join(repo, ".solenta"), { recursive: true });
+    fs.writeFileSync(
+      path.join(repo, ".solenta", "review-itinerary.json"),
+      `${JSON.stringify({
+        version: 1,
+        readOrder: ["tests"],
+        chunks: [{ area: "main-side", rationale: "from main", risks: [] }],
+        risks: ["main risk"],
+      })}\n`,
+    );
+    git(repo, ["add", ".solenta/review-itinerary.json"]);
+    git(repo, ["commit", "-m", "main itinerary"]);
+
+    fs.mkdirSync(path.join(setup.worktreePath, ".solenta"), { recursive: true });
+    fs.writeFileSync(
+      path.join(setup.worktreePath, ".solenta", "review-itinerary.json"),
+      `${JSON.stringify({
+        version: 1,
+        readOrder: ["critical", "impl"],
+        chunks: [{ area: "thread-side", rationale: "from thread", risks: [] }],
+        risks: ["thread risk"],
+      })}\n`,
+    );
+    fs.writeFileSync(path.join(setup.worktreePath, "feature.txt"), "landed\n");
+    git(setup.worktreePath, ["add", "-A"]);
+    git(setup.worktreePath, ["commit", "-m", "thread itinerary + feature"]);
+
+    const merged = mergeWorktree({
+      store,
+      threadId: thread.id,
+      broadcast: () => {},
+    });
+    assert.equal(merged.worktreePath, null);
+    assert.equal(
+      fs.readFileSync(path.join(repo, "feature.txt"), "utf8"),
+      "landed\n",
+    );
+    const landed = JSON.parse(
+      fs.readFileSync(path.join(repo, ".solenta", "review-itinerary.json"), "utf8"),
+    );
+    assert.doesNotMatch(
+      fs.readFileSync(path.join(repo, ".solenta", "review-itinerary.json"), "utf8"),
+      /<<<<<<</,
+    );
+    const areas = landed.chunks.map((c) => c.area);
+    assert.ok(areas.includes("thread-side") || areas.includes("main-side"));
+    assert.ok(landed.risks.length >= 1);
+  });
+
   it("removeWorktree without force rejects dirty worktree with WORKTREE_DIRTY", async () => {
     const setup = setupWorktree({
       store,

@@ -3,19 +3,21 @@
   "readOrder": ["critical", "tests", "impl"],
   "chunks": [
     {
-      "area": "src/App.tsx handleStartSuggestion",
-      "rationale": "Resolve the chip as started immediately after a successful fork, then startRun. A startRun throw used to leave the chip open so a retry forked a second idle thread.",
+      "area": "electron/worktrees.js — tryResolveItineraryOnly",
+      "rationale": "Read first: this is why Merge kept dying. When the sole unmerged path is .solenta/review-itinerary.json, combine ours+theirs (dedupe by area/risk) and stage it. Wired at mergeWorktree start, squash-into-main, replay-into-worktree, and updatePrBranchFromBase.",
       "risks": [
-        "If resolveSuggestion fails after fork, the user still has an idle fork and the chip stays open. Rare (unknown thread/id)."
+        "A real conflict that happens to include other files still surfaces as MERGE_CONFLICT — only the itinerary-only case is swallowed.",
+        "Malformed JSON on both sides falls back to --ours; if that also fails we still throw.",
+        "The running Solenta process loads worktrees.js from its own checkout; this fix is live only after this lands on main and the app reloads."
       ]
     },
     {
-      "area": "test/suggestedWorkChips.test.tsx",
-      "rationale": "App+useCoder wiring for start / file / dismiss.",
+      "area": "electron/test/worktrees.test.js — itinerary-only merge",
+      "rationale": "Divergent itineraries plus a unique feature file: mergeWorktree must land the feature, write a marker-free combined itinerary, and clean up the worktree.",
       "risks": []
     }
   ],
   "risks": [
-    "#550 is on origin/main. This merge closed the worktree into the local checkout."
+    "This worktree's sidebar work is already on local main (37cb1f2). This commit is the merge-path fix so the button does not stick again."
   ]
 }

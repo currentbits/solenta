@@ -433,6 +433,99 @@ function conflictError(headline, files, footer) {
   return new Error(`MERGE_CONFLICT:${lines.join("\n")}`);
 }
 
+/** Per-thread annotation. Both sides rewrite it on every turn, so it is
+ *  almost always the sole conflict when landing a worktree. */
+const REVIEW_ITINERARY_FILE = ".solenta/review-itinerary.json";
+
+function isItineraryOnly(files) {
+  return files.length === 1 && files[0] === REVIEW_ITINERARY_FILE;
+}
+
+function parseItineraryJson(raw) {
+  try {
+    const value = JSON.parse(String(raw || ""));
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    return value;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Merge two review-itinerary JSON bodies. Dedupes chunks by `area` and
+ * risks by text. Prefers ours for readOrder. Returns null if neither
+ * side is valid JSON (caller should fall back).
+ * @param {string} oursRaw
+ * @param {string} theirsRaw
+ * @returns {string | null}
+ */
+function combineReviewItineraries(oursRaw, theirsRaw) {
+  const ours = parseItineraryJson(oursRaw);
+  const theirs = parseItineraryJson(theirsRaw);
+  if (!ours && !theirs) return null;
+  if (!ours) {
+    const t = String(theirsRaw || "");
+    return t.endsWith("\n") ? t : `${t}\n`;
+  }
+  if (!theirs) {
+    const o = String(oursRaw || "");
+    return o.endsWith("\n") ? o : `${o}\n`;
+  }
+  const chunks = [];
+  const seenArea = new Set();
+  for (const chunk of [...(ours.chunks || []), ...(theirs.chunks || [])]) {
+    if (!chunk || typeof chunk !== "object") continue;
+    const area = String(chunk.area || "");
+    if (area && seenArea.has(area)) continue;
+    if (area) seenArea.add(area);
+    chunks.push(chunk);
+  }
+  const risks = [];
+  const seenRisk = new Set();
+  for (const risk of [...(ours.risks || []), ...(theirs.risks || [])]) {
+    const text = String(risk || "").trim();
+    if (!text || seenRisk.has(text)) continue;
+    seenRisk.add(text);
+    risks.push(text);
+  }
+  const readOrder =
+    Array.isArray(ours.readOrder) && ours.readOrder.length
+      ? ours.readOrder
+      : theirs.readOrder || ["critical", "impl", "tests", "docs"];
+  return `${JSON.stringify({ version: 1, readOrder, chunks, risks }, null, 2)}\n`;
+}
+
+/**
+ * If the only unmerged path is the review itinerary, combine both sides
+ * and stage the result. Returns true when the index has no unmerged paths.
+ * @param {string} cwd
+ * @returns {boolean}
+ */
+function tryResolveItineraryOnly(cwd) {
+  if (!isItineraryOnly(unmergedFiles(cwd))) return false;
+  const ours = gitTry(cwd, ["show", `:2:${REVIEW_ITINERARY_FILE}`]);
+  const theirs = gitTry(cwd, ["show", `:3:${REVIEW_ITINERARY_FILE}`]);
+  const combined = combineReviewItineraries(
+    ours.ok ? ours.stdout : "",
+    theirs.ok ? theirs.stdout : "",
+  );
+  const dest = path.join(cwd, REVIEW_ITINERARY_FILE);
+  if (combined) {
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.writeFileSync(dest, combined, "utf8");
+  } else {
+    const take = gitTry(cwd, [
+      "checkout",
+      "--ours",
+      "--",
+      REVIEW_ITINERARY_FILE,
+    ]);
+    if (!take.ok) return false;
+  }
+  const added = gitTry(cwd, ["add", "--", REVIEW_ITINERARY_FILE]);
+  return added.ok && unmergedFiles(cwd).length === 0;
+}
+
 /**
  * Squash-merge the thread worktree into the project default branch, then remove
  * the worktree and branch. Commits any uncommitted worktree changes first.
@@ -471,11 +564,13 @@ function mergeWorktree(opts) {
   // unresolved: `add -A` would happily commit the markers.
   const pending = unresolvedFiles(wtPath);
   if (pending.length) {
-    throw conflictError(
-      "Unresolved conflicts in the worktree:",
-      pending,
-      "Resolve them in the worktree, then merge again.",
-    );
+    if (!tryResolveItineraryOnly(wtPath) || unresolvedFiles(wtPath).length) {
+      throw conflictError(
+        "Unresolved conflicts in the worktree:",
+        unresolvedFiles(wtPath).length ? unresolvedFiles(wtPath) : pending,
+        "Resolve them in the worktree, then merge again.",
+      );
+    }
   }
 
   const wtStatus = gitOut(wtPath, ["status", "--porcelain", "-uall"], {
@@ -587,6 +682,7 @@ function mergeInto(project, branch, baseBranch, wtPath, thread) {
   const squash = () => {
     const res = gitTry(project.path, ["merge", "--squash", branch]);
     if (res.ok) return null;
+    if (tryResolveItineraryOnly(project.path)) return null;
     const files = unmergedFiles(project.path);
     gitTry(project.path, ["merge", "--abort"]);
     gitTry(project.path, ["reset", "--hard", "HEAD"]);
@@ -599,7 +695,17 @@ function mergeInto(project, branch, baseBranch, wtPath, thread) {
     // editor and the user can actually resolve it. A clean replay means the
     // branch only needed the newer base commits, so the squash can retry.
     const replay = gitTry(wtPath, ["merge", baseBranch]);
-    failed = replay.ok ? squash() : failed;
+    if (!replay.ok && tryResolveItineraryOnly(wtPath)) {
+      gitTry(wtPath, [
+        "commit",
+        "--no-edit",
+        "-m",
+        `Merge ${baseBranch} into ${branch}`,
+      ]);
+      failed = squash();
+    } else {
+      failed = replay.ok ? squash() : failed;
+    }
     if (failed) {
       const inWorktree = unmergedFiles(wtPath);
       throw conflictError(
@@ -2251,11 +2357,13 @@ async function updatePrBranchFromBase(opts) {
   const { cwd, branch, project } = opts;
   const pending = unresolvedFiles(cwd);
   if (pending.length) {
-    throw conflictError(
-      "Unresolved conflicts in the worktree:",
-      pending,
-      "Resolve them in the worktree, then merge again.",
-    );
+    if (!tryResolveItineraryOnly(cwd) || unresolvedFiles(cwd).length) {
+      throw conflictError(
+        "Unresolved conflicts in the worktree:",
+        unresolvedFiles(cwd).length ? unresolvedFiles(cwd) : pending,
+        "Resolve them in the worktree, then merge again.",
+      );
+    }
   }
 
   const mergeHead = await gitTryAsync(cwd, [
@@ -2332,14 +2440,27 @@ async function updatePrBranchFromBase(opts) {
   ]);
   if (!merged.ok) {
     const files = unmergedFiles(cwd);
-    if (files.length) {
+    if (tryResolveItineraryOnly(cwd)) {
+      const finished = await gitTryAsync(cwd, [
+        "commit",
+        "--no-edit",
+        "-m",
+        `Merge ${baseName} into ${branch}`,
+      ]);
+      if (!finished.ok) {
+        throw new Error(
+          `Failed to finish merge: ${tailErr(finished.combined, "git commit failed")}`,
+        );
+      }
+    } else if (files.length) {
       throw conflictError(
         `${branch} conflicts with ${baseName}:`,
         files,
         `${baseName} was merged into the worktree — resolve these files there, then merge again.`,
       );
+    } else {
+      throw new Error(tailErr(merged.combined, "git merge failed"));
     }
-    throw new Error(tailErr(merged.combined, "git merge failed"));
   }
 
   const treeEq = await gitTryAsync(cwd, ["diff", "--quiet", base, "HEAD"]);
