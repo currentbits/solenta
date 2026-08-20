@@ -236,6 +236,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   const [addPathOpen, setAddPathOpen] = useState(false);
   const [editProjectId, setEditProjectId] = useState<string | null>(null);
   const [view, setView] = useState<AppView>("thread");
+  const [planboardProjectId, setPlanboardProjectId] = useState<string | null>(null);
   const [repeatDraft, setRepeatDraft] = useState<RepeatDraft | null>(null);
   const [workflowDraft, setWorkflowDraft] = useState<DistilledWorkflow | null>(
     null,
@@ -269,7 +270,10 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   // ones (handoffSource, rosterKey) collapse the churning array to a value
   // that moves when the thing the pane cares about moves.
   const openKanban = useCallback(() => setView("kanban"), []);
-  const openPlanboard = useCallback(() => setView("planboard"), []);
+  const openPlanboard = useCallback((pid?: string | null) => {
+    setPlanboardProjectId(pid ?? null);
+    setView("planboard");
+  }, []);
   const openPrs = useCallback(() => {
     setView("prs");
     setDrawer(null);
@@ -1046,6 +1050,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           ) : view === "planboard" ? (
             <PlanboardView
               projects={projects}
+              initialProjectId={planboardProjectId}
               listIssues={listIssues}
               listPrs={listPrs}
               threads={threads}
