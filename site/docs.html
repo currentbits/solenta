@@ -199,6 +199,20 @@
         <li><strong>Drop</strong> images and folders anywhere on the transcript, not only on the composer strip.</li>
       </ul>
       <p>
+        The sidebar is a flat list, not per-project groups. Each card
+        carries its project slug; a scope filter at the top of the list
+        limits every section to one repo. <strong>Pinned</strong> threads
+        sit in their own block at the top (oldest pin first) and never
+        auto-settle. Below that, active threads; then a
+        <strong>Snoozed</strong> shelf (wake-soonest first) and a
+        <strong>Settled</strong> shelf (newest wrap-up first, archived
+        threads at the tail). Right-click a card, or its overflow button,
+        for the thread-actions menu: snooze (a nested submenu of presets),
+        pin, fork or hand off, rename, mute, and settle. The menu is the
+        native Electron menu when the app can show one, otherwise a
+        keyboard-driven overlay (arrows, Home, End, Escape).
+      </p>
+      <p>
         <kbd>⌘N</kbd> starts a new thread, <kbd>⌘⇧N</kbd> starts one in a
         chosen project. Esc or Ctrl+C stops the live turn. Click the project
         slug in the header to start another thread there. The composer's
