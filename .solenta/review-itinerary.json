@@ -1,48 +1,33 @@
 {
   "version": 1,
-  "readOrder": ["critical", "tests", "impl"],
+  "readOrder": ["tests", "critical", "impl"],
   "chunks": [
     {
-      "area": "critical",
-      "rationale": "electron/runner.js respondPermission is the load-bearing seam: updatedCommand is merged into updatedInput (command/cmd/script only), empty edits throw before splice so the prompt stays pending, and allowAlways after an edit emits addRules.ruleContent for the *edited* prefix via sessionAllowRule. Unedited Accept all still whole-tools, which is #479's job.",
-      "risks": [
-        "Claude's npm build:* glob also matches npm build && rm -rf. Prefix matching is the CLI contract; this ticket only promises the glob is derived from the edited command, not the original.",
-        "updatedCommand on a non-command tool (Edit/Write) is ignored — an inbox that sent it anyway would silently approve the original JSON."
-      ]
-    },
-    {
-      "area": "electron/permissionCommand.js",
-      "rationale": "Pure helpers so #479 can reuse commandPrefix / sessionAllowRule without scraping runner.js. extractCommand is also what getPendingPermission exposes as pending.command.",
-      "risks": [
-        "TWO_TOKEN_BINS is a denylist-of-sorts: python script.py becomes python:*, which is broader than npm test:*. Intentional; #479 can tighten the default glob UI later."
-      ]
-    },
-    {
-      "area": "src/components/ThreadView.tsx PermissionPrompt",
-      "rationale": "Replaces the inline <pre> card. Command-bearing tools get a textarea; others keep the JSON preview. Accept/Accept all send the field value; Reset restores; empty disables allow. Named so #291 can extract it later — QuestionPrompt/PlanPrompt still live in this file too.",
-      "risks": [
-        "Always passing updatedCommand (even when unchanged) is load-bearing for 'what you see is what runs'; the runner treats trim-equal as not edited so audit text and session rules stay on the unedited path.",
-        "No autoFocus: a follow-up in the composer should not lose the caret when a permission appears."
-      ]
-    },
-    {
-      "area": "src/shared/ipc.ts + useCoder.ts",
-      "rationale": "PendingPermissionInfo.command and respondPermission.updatedCommand are the inbox contract (#291). The selected-thread hook just forwards the new field; a future inbox can call api.threads.respondPermission with any threadId.",
-      "risks": [
-        "Older renderers that omit command still get a read-only JSON card (command == null)."
-      ]
-    },
-    {
       "area": "tests",
-      "rationale": "permissionCommand.test.js covers extract/apply/prefix/session-rule. permissionPrompt.test.tsx covers edit, reset, empty, non-command tools. claude.test.js drives the fake CLI: edited allow, edited allowAlways prefix, empty does not consume the prompt. Existing unedited allowAlways still asserts whole-tool.",
+      "rationale": "test/threadView.test.tsx #607 cases are the contract: (1) A→null→B remount plus a late scroll at scrollTop=0 must still pin; (2) a permission card that grows after the first pin, then a late scroll, must pin to the new scrollHeight. The older #408 cases still prove ResizeObserver follows growth while stuck and does not yank a user who scrolled up.",
       "risks": [
-        "The fake CLI permission scenario always proposes npm test; compound-command originals (rm -rf dist && npm build) are only covered in the renderer test."
+        "jsdom has no layout, so the tests fake clientHeight/scrollHeight/scrollTop. They cannot prove Chrome overflow-anchoring; that is why .body also sets overflow-anchor: none.",
+        "forceStick is only armed on a real thread recovery/switch or a new pendingPermission.requestId — the #408 'scrolled up' case is initial mount and must keep unsticking."
+      ]
+    },
+    {
+      "area": "critical",
+      "rationale": "src/components/ThreadView.tsx pinIfStuck + useLayoutEffect + onBodyScroll. Stick used to clear when Chrome fired a delayed scroll after the #83 loading-gap remount or after a tall permission/plan/question card landed. forceStick re-pins those events until a pin actually moves scrollTop onto the bottom; pinning.current ignores the scroll event we ourselves caused.",
+      "risks": [
+        "If pinIfStuck never moves scrollTop (flex unconstrained, distance always 0) forceStick stays true and a later user scroll-up would be treated as layout noise and re-pinned. ResizeObserver on the body viewport is the intended release when real overflow appears.",
+        "A new permission requestId force-sticks even if the user had scrolled up to copy something. That is the product intent for a blocking prompt; a question/plan prompt shares the same requestId path."
+      ]
+    },
+    {
+      "area": "impl",
+      "rationale": "ThreadView.module.css .body overflow-anchor: none stops Chrome from adjusting scrollTop when a card is inserted at the bottom. ResizeObserver now also re-attaches when pendingPermission or isWorking change so the new sibling (card / working strip) is observed.",
+      "risks": [
+        "overflow-anchor: none is global for the transcript. That is what we want for chat pinning; it does not affect nested scrollers (plan body, code blocks)."
       ]
     }
   ],
   "risks": [
-    "Wand rewrite (NL edit via a fast model) is explicitly out of v1.",
-    "Unedited Accept all is still whole-tool Bash; do not treat this PR as shipping #479.",
-    "Guardrails are not re-run on the edited command — a user who edits ls into rm -rf / is approving it on purpose."
+    "Not verified in a live Electron window — renderer tests plus tsc only. The race is Chromium-specific (async scroll + overflow anchoring + flex remount).",
+    "This is the center transcript (.body), not AgentsPanel's right-rail .scroll. If the report was about the Environment/Agents tab keeping scroll across threads, that is still open."
   ]
 }

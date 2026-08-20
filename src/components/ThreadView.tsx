@@ -3,6 +3,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -3304,6 +3305,17 @@ export const ThreadView = memo(function ThreadView({
   const dropHostRef = useRef<HTMLElement>(null);
   const [fileDrag, setFileDrag] = useState(false);
   const stickToBottom = useRef(true);
+  /**
+   * Thread switch (#83 loading gap) and a new permission card both remount
+   * or grow the transcript, then Chrome fires a delayed scroll that is not
+   * a user scroll-up. Keep pinning until a pin actually moves scrollTop
+   * onto the bottom; a leftover scroll must not clear stickToBottom (#607).
+   */
+  const forceStick = useRef(false);
+  const pinning = useRef(false);
+  const prevLayoutThreadId = useRef<string | null>(null);
+  const seenThread = useRef(false);
+  const prevPermReq = useRef<string | null>(null);
   const prevThreadId = useRef<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -3938,11 +3950,66 @@ export const ThreadView = memo(function ThreadView({
     setRestoreConfirm(null);
   });
 
-  useEffect(() => {
+  const pinIfStuck = () => {
     const el = bodyRef.current;
     if (!el || !stickToBottom.current) return;
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (distance <= 0) return;
+    pinning.current = true;
+    const before = el.scrollTop;
     el.scrollTop = el.scrollHeight;
-  }, [timeline, isWorking, detail?.messages, detail?.workLog]);
+    const landed =
+      el.scrollHeight - el.scrollTop - el.clientHeight <= STICK_BOTTOM_PX;
+    if (el.scrollTop !== before && landed) {
+      forceStick.current = false;
+    }
+    requestAnimationFrame(() => {
+      pinning.current = false;
+    });
+  };
+  const pinIfStuckRef = useRef(pinIfStuck);
+  pinIfStuckRef.current = pinIfStuck;
+
+  /**
+   * Pin before paint so a remounted body (thread switch) and a newly
+   * inserted permission card never flash at the wrong scrollTop. #408's
+   * ResizeObserver still covers post-paint growth.
+   */
+  useLayoutEffect(() => {
+    const id = detail?.thread.id ?? null;
+    if (id !== prevLayoutThreadId.current) {
+      const switching =
+        prevLayoutThreadId.current !== null &&
+        id !== null &&
+        prevLayoutThreadId.current !== id;
+      const recovering =
+        prevLayoutThreadId.current === null &&
+        id !== null &&
+        seenThread.current;
+      prevLayoutThreadId.current = id;
+      if (id) seenThread.current = true;
+      if (switching || recovering) {
+        stickToBottom.current = true;
+        forceStick.current = true;
+      } else if (id) {
+        stickToBottom.current = true;
+      }
+    }
+    const req = detail?.pendingPermission?.requestId ?? null;
+    if (req && req !== prevPermReq.current) {
+      stickToBottom.current = true;
+      forceStick.current = true;
+    }
+    prevPermReq.current = req;
+    pinIfStuck();
+  }, [
+    timeline,
+    isWorking,
+    detail?.messages,
+    detail?.workLog,
+    detail?.pendingPermission,
+    detail?.thread.id,
+  ]);
 
   /**
    * Content can grow after paint with no React state change (images, syntax
@@ -3953,20 +4020,14 @@ export const ThreadView = memo(function ThreadView({
     const el = bodyRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
 
-    const pinIfStuck = () => {
-      if (!stickToBottom.current) return;
-      const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
-      if (distance <= 0) return;
-      el.scrollTop = el.scrollHeight;
-    };
-
-    const ro = new ResizeObserver(pinIfStuck);
+    const onResize = () => pinIfStuckRef.current();
+    const ro = new ResizeObserver(onResize);
     ro.observe(el);
     for (const child of el.children) {
       ro.observe(child);
     }
     return () => ro.disconnect();
-  }, [timeline]);
+  }, [timeline, detail?.pendingPermission, isWorking]);
 
   /**
    * Delegated: any image in the timeline (tool output, attachment thumb,
@@ -3981,8 +4042,17 @@ export const ThreadView = memo(function ThreadView({
 
   const onBodyScroll = () => {
     const el = bodyRef.current;
-    if (!el) return;
+    if (!el || pinning.current) return;
     const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (forceStick.current) {
+      if (distance <= STICK_BOTTOM_PX) {
+        forceStick.current = false;
+        stickToBottom.current = true;
+        return;
+      }
+      pinIfStuck();
+      return;
+    }
     stickToBottom.current = distance <= STICK_BOTTOM_PX;
   };
 

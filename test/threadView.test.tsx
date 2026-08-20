@@ -13,6 +13,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, it, afterEach, beforeEach } from "node:test";
 import { fileURLToPath } from "node:url";
+import { useState } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { inAct, mount, unmountAll } from "./support/dom.ts";
 import { ThreadView } from "../src/components/ThreadView";
@@ -21,6 +22,7 @@ import type {
   AttachmentInfo,
   ChatMessage,
   DiffResult,
+  PendingPermissionInfo,
   ProjectInfo,
   ProviderInfo,
   RunStatInfo,
@@ -112,6 +114,7 @@ function detail(over: Partial<ThreadDetail> = {}): ThreadDetail {
     workLog: over.workLog ?? [],
     workflow: over.workflow ?? null,
     usage: over.usage ?? null,
+    pendingPermission: over.pendingPermission,
   };
 }
 
@@ -175,6 +178,7 @@ function view(props: {
       onRemoveWorkflow={noopAsync}
       onStopRun={() => {}}
       onSetPermissionMode={() => {}}
+      onRespondPermission={() => {}}
       onSetProvider={() => {}}
       onSetReasoningEffort={() => {}}
       onSetArchived={() => {}}
@@ -1194,6 +1198,129 @@ describe("ThreadView stick-to-bottom on content resize (issue #408)", () => {
       layout.scrollTop,
       80,
       "a user who scrolled up must not be yanked back to the bottom",
+    );
+    m.unmount();
+  });
+
+  /**
+   * Issue #607: Chrome fires a delayed scroll when the transcript remounts
+   * (thread switch) or a tall permission card lands. That event used to
+   * clear stickToBottom, after which ResizeObserver refused to pin.
+   */
+  it("re-pins after a thread switch even if a late scroll reports not-at-bottom (issue #607)", async () => {
+    const threadA = sizedDetail();
+    const threadB = detail({
+      thread: thread({ id: "t2", title: "other thread" }),
+      messages: [
+        msg({
+          id: "u2",
+          role: "user",
+          text: "THREAD_B_PROMPT",
+          createdAt: 10,
+        }),
+        msg({
+          id: "a2",
+          role: "assistant",
+          text: "THREAD_B_REPLY",
+          createdAt: 20,
+        }),
+      ],
+    });
+
+    function SwitchHarness() {
+      const [open, setOpen] = useState<ThreadDetail | null>(threadA);
+      return (
+        <div>
+          <button type="button" data-stick-null="" onClick={() => setOpen(null)}>
+            gap
+          </button>
+          <button type="button" data-stick-b="" onClick={() => setOpen(threadB)}>
+            b
+          </button>
+          {view({ detail: open })}
+        </div>
+      );
+    }
+
+    const m = await mount(<SwitchHarness />);
+    const firstBody = m.query(".body") as HTMLElement | null;
+    assert.ok(firstBody, "thread A scroll body");
+    const firstLayout = { clientHeight: 400, scrollHeight: 1000, scrollTop: 80 };
+    fakeScrollMetrics(firstBody, firstLayout);
+    firstBody.dispatchEvent(new Event("scroll"));
+
+    await inAct(async () => {
+      (m.query("[data-stick-null]") as HTMLButtonElement).click();
+    });
+    assert.equal(m.query(".body"), null, "loading gap unmounts the body");
+
+    await inAct(async () => {
+      (m.query("[data-stick-b]") as HTMLButtonElement).click();
+    });
+    const body = m.query(".body") as HTMLElement | null;
+    assert.ok(body, "thread B scroll body");
+    assert.ok(m.text().includes("THREAD_B_REPLY"));
+
+    const layout = { clientHeight: 400, scrollHeight: 2000, scrollTop: 0 };
+    fakeScrollMetrics(body, layout);
+    body.dispatchEvent(new Event("scroll"));
+    fireObservedResizes();
+
+    assert.equal(
+      layout.scrollTop,
+      2000,
+      "switching threads must land on the latest messages even if a leftover scroll event reported we were away from the bottom",
+    );
+    m.unmount();
+  });
+
+  it("re-pins when a permission prompt appears even if a late scroll unsticks (issue #607)", async () => {
+    const pending: PendingPermissionInfo = {
+      requestId: "req-607",
+      toolName: "Bash",
+      summary: "Bash: npm test",
+      input: '{"command":"npm test"}',
+      command: "npm test",
+    };
+
+    function PermHarness() {
+      const [open, setOpen] = useState(sizedDetail());
+      return (
+        <div>
+          <button
+            type="button"
+            data-stick-perm=""
+            onClick={() =>
+              setOpen((prev) => ({ ...prev, pendingPermission: pending }))
+            }
+          >
+            perm
+          </button>
+          {view({ detail: open })}
+        </div>
+      );
+    }
+
+    const m = await mount(<PermHarness />);
+    const body = m.query(".body") as HTMLElement | null;
+    assert.ok(body, "scroll body");
+
+    const layout = { clientHeight: 400, scrollHeight: 1000, scrollTop: 600 };
+    fakeScrollMetrics(body, layout);
+
+    await inAct(async () => {
+      (m.query("[data-stick-perm]") as HTMLButtonElement).click();
+    });
+    assert.ok(m.query("[data-permission-card]"), "permission card mounted");
+
+    layout.scrollHeight = 1400;
+    body.dispatchEvent(new Event("scroll"));
+    fireObservedResizes();
+
+    assert.equal(
+      layout.scrollTop,
+      1400,
+      "a permission prompt must pull the view to the action even if a non-user scroll event reported we had left the bottom",
     );
     m.unmount();
   });
