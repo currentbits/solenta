@@ -143,3 +143,89 @@
   filter: brightness(1.08);
   color: #dbeafe;
 }
+
+/* CliStep */
+.stepHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.cliList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cliRow {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--card);
+}
+
+.cliRowMain {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.cliName {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.cliState {
+  font-size: 11px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.cliRow[data-available="true"] .cliState {
+  color: var(--green);
+}
+
+.cliHintRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.cliHint {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.cliDocs {
+  font-size: 11px;
+  color: var(--blue);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.cliDocs:hover {
+  text-decoration: underline;
+}
+
+.cliWarning {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--danger);
+}
