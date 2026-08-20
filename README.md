@@ -75,15 +75,17 @@ Memory is why Solenta exists. The rest is so you can run the agents that write
 it.
 
 - **Five providers, one UI** — Claude Code, Codex, Kimi Code, Grok, and OpenCode,
-  with model overrides and session resume.
+  with model overrides, session resume, and one-shot resume on quota reset.
 - **Git in the loop** — fail-closed worktrees, next-git-action button, live CI
-  badges, review itinerary, conflict forecast.
+  badges, review itinerary, conflict forecast. Oversized PRs (default 400
+  lines) are refused and offered as a stacked split.
 - **Planboard** — a project's plan as its GitHub issues via `gh`, with auto-
-  dispatch to spin up threads from `plan:todo`.
+  dispatch from `plan:todo` and a review-load meter on the open PR queue.
 - **Orchestration** — workers, crews, `/handoff`, `/advisor`, `/committee`, and
   a subagent model pool.
 - **Verify means green** — a thread settles done only when its verify command
-  exits 0, plus optional daily and per-orchestration spend caps.
+  exits 0. After merge the command re-runs 24h later; a failure starts a
+  fix thread and reopens the planboard issue. Optional spend caps.
 - **You own it** — MIT, no Solenta account, no Solenta cloud, local SQLite,
   GitHub issues. The only network traffic is a release check.
 
