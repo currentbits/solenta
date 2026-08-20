@@ -69,6 +69,35 @@ hard-reset this thread onto the fork's tree. Numbering counts checkpoint
 *commits*, not turns — a turn that changes nothing skips a number — so anything
 mapping messages to files must select by commit time, never by turn N.
 
+**Fail-closed isolation** (issue #511). A thread with `pendingWorktree` or
+a bound `worktreePath` must not run in the project checkout.
+`setupWorktree` throws `Failed to create worktree:\n` plus verbatim git
+stderr (`gitFailureText` prefers `err.stderr`; never first-line-only).
+`prepareThreadWorktree` = `clearMissingWorktree` + `ensureWorktree`. A
+folder gone from disk re-arms `pendingWorktree` so the next turn
+rematerializes. `runner.startRun` / `startWorkflowRun` catch setup
+failure, record user + event + status failed + `lastError` (Retry-turn
+attaches), and throw so fork / drainQueued know the agent never started.
+Zero children spawn. `workflow.js` throws if the folder is gone rather
+than using `project.path`.
+
+**Retention and GC** (issues #316 / #559 / #601 / #563). Per-project
+`worktreeRetention` defaults to 10 settled worktrees (0 = keep everything)
+and is persisted on every project so `enforceRetention` actually runs.
+The boot sweep is delayed 15s and unref'd; `enforceRetention` scans with
+`skipSizes: true` so launch does not `du`-walk every worktree. Candidates
+are picked by activity time, not size. Dirty trees and unmerged branches
+are never deleted — directories only, commits survive. Archive / merge
+call `scheduleRetention` so a GC failure cannot fail the user-facing
+action.
+
+**Forge probe** (issue #608, `electron/sourceControl.js`). Settings →
+Source Control probes each known forge CLI up front (present, version,
+signed-in-as) so git actions do not have to parse stderr after a failed
+push/PR. Cached until Rescan or a mid-session auth miss. The renderer
+(`src/sourceControl.ts` `forgeReadiness`) disables Create PR / checks /
+merge when GitHub is not ready.
+
 **PR-size cap** (issue #402). `createPr` in `electron/worktrees.js` refuses
 an oversize diff **before** push or `gh pr create`. Cap is
 `settings.prDiffCapLines` (default `DEFAULT_PR_DIFF_CAP_LINES` 400;
@@ -233,6 +262,10 @@ resolves the defaults — an orchestrator never holds a worktree itself, its
 worker does — and `threads:create` applies the same precedence on the options.
 Explicit `worktree` / `orchestrate` options override the defaults; both modes
 are local-only, so remote projects always get plain threads.
+
+Spaces (#568) are retired: leftover `spaceId` is dropped on load and never
+persisted; `listSpaces` / create / update throw. The `spaces` key stays on
+disk so old files still parse.
 
 `updateThread` does not bump `updatedAt` unless the caller opts in (sidebar age
 must reflect real activity). Interrupted "working" threads are recovered on load.
@@ -434,6 +467,42 @@ MCP instructions — there is deliberately no artifact registry.
 A failed run releases the thread's claims (`afterFailedTurn`) with the error as
 the outcome, so a crashed worker never leaves a task stranded.
 
+## coder-threads MCP
+
+In-main orchestrator MCP server (`electron/orchServer.js`, name
+`coder-threads`). Loopback HTTP on 127.0.0.1 with a bearer token at
+`<userData>/orch-server.json`, same pattern as the memory server. Fails
+soft: invalid config, missing SDK, or an unbindable port logs once and
+the app continues without thread tools. Folded into every provider's MCP
+injection alongside `coder-memory`. Built-ins are untouched by the user
+MCP sync.
+
+Every mutating tool takes `projectId` and rejects a thread outside it.
+The standing note at the end of a dispatched prompt states the calling
+thread's own ids so the agent does not guess from a title.
+
+Host tools wrap the same actions as the sidebar / header:
+
+| Tool | Action |
+|------|--------|
+| `threads_list` / `thread_status` | roster + last assistant line |
+| `thread_fork` / `thread_send` | start a worker / continue one |
+| `thread_archive` / `thread_settle` / `thread_stop` / `thread_rename` | sidebar lifecycle |
+| `thread_merge` | squash the worker onto the caller's tree, then delete its worktree |
+| `thread_pr` | push the worker branch and open a PR; leave the worktree for review |
+| `work_suggest` | out-of-scope finding → one-click chip (`thread.suggestions`) |
+| `hypothesis_record` / `spec_submit` / `teach_review` | mode-specific |
+| `task_*` / `peer_send` | crew task list and peer messaging (above) |
+
+`thread_merge` onto the project's default branch, and `thread_pr`, need
+`approved:true` on a user-started turn (`assertUserApproved`). A
+machine-delivered worker-finished notice cannot self-approve. A lead
+that already has a worktree may merge onto *its own* branch without
+that gate — that is staging, and the user still gates the lead's
+branch. `work_suggest` never starts the work; the chip is Start a
+thread / File on the planboard / Dismiss (`SuggestedWorkStrip` in
+`ThreadView.tsx`).
+
 ## Orchestration commands
 
 Issue #338. Three named compositions of machinery that already exists, behind
@@ -465,6 +534,15 @@ UI immediately and never become a prompt. Unknown `/foo` still goes to
 the model. `/btw` stays insert-only so the send path intercepts it as a
 side question (issue #471). `/goal` stays insert-only until its ticket
 lands.
+
+Issue #606 adds the underlying CLI's invocable skills and custom
+commands to the same palette (`electron/cliCommands.js`
+`listPaletteCommands` / `expandInvocableCommand`). Listing is for the
+composer; expansion is for the runner: the transcript keeps the raw
+`/name`, the CLI sees the expanded body. A name Solenta already owns
+stays ours. Orchestration verbs never expand as skills even if a
+`SKILL.md` exists. Skill-dir scanning follows the same symlink-farm
+rule as `skills.scanSkillDir`.
 
 **Defaults contrast on purpose.** Without `@provider` arguments the workers
 are picked from the installed set *excluding the caller's own provider*.
@@ -595,6 +673,36 @@ or reorder, do not `spec_submit`. Also build-stage only.
   input, Enter commits, Escape cancels). Non-empty → Default + list only.
 - setProvider validation lives in `electron/services.js` only. `src/devCoder.ts`
   assigns what the picker sends: it is a fixture, not a second contract.
+- Permission card (issue #509, `electron/permissionCommand.js`): a proposed
+  shell command is an editable field. Approving sends the edited command,
+  never the original. Non-command tools keep the JSON preview.
+
+## Pane workspace
+
+Nested split-tree layout for the thread center pane (issue #552,
+`src/paneLayout.ts`, `src/components/PaneWorkspace.tsx`). Binary tree,
+two orientations; not a docking framework. Persistence is UI chrome
+(`localStorage` `coder.paneLayout.<threadId>`), not store state.
+
+`PANE_TYPES`: chat, diff, terminal, browser, files, tasks, subagent.
+Shipped: **chat** (the transcript) and **diff** (Git — `ChangesPanel`).
+The rest open a placeholder that reserves a slot. The header **Views**
+menu opens / focuses a type; Environment “Open Git”, the next-git
+Commit action, and `/review` call `onViewChanges`, which hydrates a
+diff leaf (`hydratePaneLayout(..., { openDiff: true })`). This is the
+first pane type toward #552; it is not the 520px overlay and not an
+AgentsPanel tab (the right-rail Git tab is Environment cards, and
+“Open Git” from there opens this pane).
+
+## Build SHA mismatch
+
+After `downloadUpdate` swaps the on-disk bundle, a reload can load the
+new renderer into the old preload. `src/buildMismatch.ts`
+`isBuildMismatch` compares compile-time `__BUILD_SHA__` with
+`app.status().build.sha`; either side unstamped (dev tree, test fake)
+is not a mismatch. On mismatch `App.tsx` mounts only
+`BuildMismatchScreen` (Restart → `applyUpdate`) — the rest of the app
+must not mount underneath (issue #538).
 
 ## Divergence
 
@@ -682,4 +790,21 @@ and tests cover it; the UI does not call it. There is no
 - **New-thread reveal**: creation sets `revealThreadId` in `App.tsx`; the
   sidebar scrolls `[data-thread-card="<id>"]` into view and flashes a
   highlight. The global "+" names its target project
-  ("New thread in \<slug\>").
+  ("New thread in \<slug\>"). Create options (worktree / orchestrator /
+  plain / teach / ask / from-issue) live on the header caret, not as
+  per-project clusters in the list.
+- **Native thread-actions menu** (issues #592 / #594): right-click or ⋯
+  calls `showContextMenu` (`src/contextMenu.ts`) — Electron
+  `Menu.popup` when the preload bridge is present, otherwise a
+  `position:fixed` portal. Items from `buildThreadActionMenuItems`
+  (snooze as a parent with children, pin, fork / handoff, rename, mute,
+  settle). Never an in-card overlay inside the sidebar scroller.
+- **Project icons** (`electron/projectIcon.js`): user override, then a
+  checked-in `solenta.json` / `t3.json` `iconPath`, then well-known
+  favicon / app-icon files, then `<link rel="icon">`. Cached per
+  git-common-dir so worktrees of the same repo share the main
+  checkout's answer. `iconUrl` is never persisted.
+- **Nested workers**: `attachForks` puts `handoffFrom` children under
+  their source (`data-nested`). Running in-agent subagents render as
+  up to three name rows under the wait row (issue #542); a click falls
+  through to the parent thread.
