@@ -2,8 +2,10 @@
  * Composer `/` palette (issue #472).
  *
  * Orchestration verbs stay insert-only: the runner intercepts the sent text
- * (#338). CLI verbs that map to existing UI run immediately and never reach
- * the model. Unknown `/foo` is not in this list, so a send still goes through.
+ * (#338). `/btw` stays insert-only so the send path can intercept it as a
+ * side question (#471) without occupying the live turn. CLI verbs that map
+ * to existing UI run immediately and never reach the model. Unknown `/foo`
+ * is not in this list, so a send still goes through.
  */
 
 /** Immediate actions the palette can fire. Insert verbs have no action. */

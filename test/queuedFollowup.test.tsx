@@ -345,3 +345,33 @@ describe("queued follow-up (issue #92 / #314)", () => {
     m.unmount();
   });
 });
+
+describe("side question /btw during a run (issue #471)", () => {
+  it("opens a card instead of queueing a follow-up", async () => {
+    const { fake, m } = await bootOnBusyThread();
+
+    await m.type(m.query("textarea"), "/btw where is createThread");
+    await m.click(m.query('button[aria-label="Send"]'));
+    await m.flush();
+
+    assert.equal(
+      fake.of("runs.start").length,
+      0,
+      "a side question must not start a second run",
+    );
+    assert.equal(
+      fake.of("threads.setQueued").length,
+      0,
+      "a side question must not become the next follow-up",
+    );
+    const btwCalls = fake.of("threads.btw");
+    assert.equal(btwCalls.length, 1);
+    assert.deepEqual(btwCalls[0]!.args[0], {
+      threadId: "t-busy",
+      question: "where is createThread",
+    });
+    assert.ok(m.query("[data-btw-card]"), "the side card must appear on the thread");
+    assert.match(m.text(), /where is createThread/);
+    m.unmount();
+  });
+});

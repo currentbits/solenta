@@ -462,7 +462,9 @@ would otherwise fan out again.
 Issue #472 grew the same `/` popup into the CLI verb palette
 (`/compact`, `/rewind`, `/usage`, `/model`, …). Those verbs run existing
 UI immediately and never become a prompt. Unknown `/foo` still goes to
-the model. `/btw` and `/goal` stay insert-only until their tickets land.
+the model. `/btw` stays insert-only so the send path intercepts it as a
+side question (issue #471). `/goal` stays insert-only until its ticket
+lands.
 
 **Defaults contrast on purpose.** Without `@provider` arguments the workers
 are picked from the installed set *excluding the caller's own provider*.
@@ -510,6 +512,37 @@ tools" instruction cannot start a loop; no MCP, no session), then
 `cwd: undefined`. Caps: `ASK_PROMPT_LIMIT` 80_000, `ASK_MAX_OUTPUT`
 256 KiB, `MEMORY_HITS` 8. `askNoteFor` is the standing note if the
 intercept is missed — empty when Ask is off.
+
+## Side questions (`/btw`)
+
+Issue #471. A mid-turn question that does **not** pause, steer, or queue
+behind the live turn. Distinct from #156 (steer) and #468 (queued follow-up).
+
+`/btw <question>` in the composer, or ⌥Enter on a plain draft, opens a
+card on the **same** thread. The main run keeps going. Completions reuse
+Ask mode (`completeAsk`: fm → print-mode → retrieval), with the parent
+transcript digest as prefix. No worktree, no tools, no daily budget, no
+transcript messages.
+
+| Piece | Path |
+|-------|------|
+| Parse (renderer) | `src/btw.ts` `parseBtwCommand` — intercepts in `useCoder.startRun` **before** the busy-queue path |
+| Parse + prompt (main) | `electron/btw.js` |
+| Cards | `services.addBtw` / `finishBtw` / `dismissBtw` / `promoteBtw` on `thread.btw` |
+| In-flight | `runner.startBtw` — a map separate from `active`, so `stopRun` does not kill them |
+| UI | `BtwSideCard` in `ThreadView.tsx` |
+
+The renderer intercept is load-bearing: while a run is `working`, a
+normal send calls `threads.setQueued`. `/btw` must not. The runner
+re-parses `startRun` before the "already active" throw as defense in
+depth (IPC `runs.start`, idle send). `fromNotice` is skipped so a worker
+quoting `/btw` cannot open a card on itself.
+
+Dismiss drops the card (and kills an in-flight complete). Promote queues
+the question via `setQueued` (then it is #468) and drops the card.
+Caps: 3 in flight, 8 cards kept, 4000-char question. Running cards
+become `error: Interrupted` on store load — the helper is gone after a
+crash.
 
 ## Spec mode
 

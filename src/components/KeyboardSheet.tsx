@@ -16,6 +16,7 @@ const APP_SHORTCUTS: readonly ShortcutRow[] = [
   { keys: "⌘ + 1…9", action: "Jump to nth visible thread" },
   { keys: "⌘ + J / K", action: "Next / previous thread" },
   { keys: "⌘ + Enter", action: "Send message" },
+  { keys: "⌥ + Enter", action: "Ask a side question (/btw)" },
   { keys: "Escape", action: "Stop the live turn · close menus" },
   { keys: "Escape Escape", action: "Rewind the last turn" },
   { keys: "Ctrl + C", action: "Stop the live turn" },

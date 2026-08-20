@@ -293,6 +293,22 @@ exit 1`,
         handlers.has("threads:setQuotaWaitAutoResume"),
         "main must handle threads:setQuotaWaitAutoResume",
       );
+      for (const name of ["btw", "dismissBtw", "promoteBtw"]) {
+        assert.equal(
+          typeof api.threads[name],
+          "function",
+          `preload must expose threads.${name}`,
+        );
+      }
+      assert.ok(handlers.has("threads:btw"), "main must handle threads:btw");
+      assert.ok(
+        handlers.has("threads:dismissBtw"),
+        "main must handle threads:dismissBtw",
+      );
+      assert.ok(
+        handlers.has("threads:promoteBtw"),
+        "main must handle threads:promoteBtw",
+      );
       assert.equal(
         typeof api.runs.resumeQuotaWait,
         "function",

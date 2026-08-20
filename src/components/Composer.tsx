@@ -51,6 +51,7 @@ import {
 import { useEscapeClose } from "../useEscapeClose";
 import { applyMention, getMentionQuery, type MentionQuery } from "../mention";
 import { parseDelegate } from "../delegate";
+import { asBtwPrompt } from "../btw";
 import { buildBestOfNEntries, providerVendor } from "../bestOfN";
 import {
   commandQuery,
@@ -891,6 +892,15 @@ export function Composer({
     }, "Failed to start run");
   };
 
+  const submitBtw = () => {
+    if (!canSend) return;
+    void runAction(async (prompt) => {
+      const body = asBtwPrompt(prompt);
+      if (!body) return;
+      await onSend(body);
+    }, "Failed to ask");
+  };
+
   const submitBuild = () => {
     if (!canBuild) return;
     setBuildMenuOpen(false);
@@ -997,6 +1007,17 @@ export function Composer({
       if (el.selectionStart !== el.selectionEnd) return;
       e.preventDefault();
       void onStopRun();
+      return;
+    }
+    if (
+      e.altKey &&
+      !e.metaKey &&
+      !e.ctrlKey &&
+      !e.shiftKey &&
+      e.key === "Enter"
+    ) {
+      e.preventDefault();
+      submitBtw();
       return;
     }
     if ((e.metaKey || e.ctrlKey || e.shiftKey) && e.key === "Enter") {
@@ -2053,8 +2074,8 @@ export function Composer({
             data-queues={busy ? "" : undefined}
             title={
               busy
-                ? "Queue for when this run lands (⌘Enter)"
-                : "Send (⌘Enter)"
+                ? "Queue for when this run lands (⌘Enter). ⌥Enter asks a side question."
+                : "Send (⌘Enter). ⌥Enter asks a side question."
             }
             onClick={() => submitSend()}
           >

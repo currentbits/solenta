@@ -50,13 +50,23 @@ export interface Mounted {
   hover(el: Element | null): Promise<void>;
   pressFocused(
     key: string,
-    mods?: { metaKey?: boolean; ctrlKey?: boolean; shiftKey?: boolean },
+    mods?: {
+      metaKey?: boolean;
+      ctrlKey?: boolean;
+      shiftKey?: boolean;
+      altKey?: boolean;
+    },
   ): Promise<void>;
   /** Press a key on an element, e.g. press(el, "Enter", { metaKey: true }). */
   press(
     el: Element | null,
     key: string,
-    mods?: { metaKey?: boolean; ctrlKey?: boolean; shiftKey?: boolean },
+    mods?: {
+      metaKey?: boolean;
+      ctrlKey?: boolean;
+      shiftKey?: boolean;
+      altKey?: boolean;
+    },
   ): Promise<void>;
   /** Let pending promises and effects settle. */
   flush(): Promise<void>;

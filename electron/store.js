@@ -12,6 +12,7 @@ const {
   normalizePostMerge,
 } = require("./postmerge.js");
 const { normalizeAcceptedHunks } = require("./reviewItinerary.js");
+const { normalizeBtwCards } = require("./btw.js");
 
 /** Builtin "Plan and Verify" workflow template (seeded on every store). */
 const STANDARD_TEMPLATE = {
@@ -858,7 +859,7 @@ function normalizeFeltEstimate(value) {
 
 function migrateThread(t) {
   if (!t || typeof t !== "object") return t;
-  return {
+  const next = {
     ...t,
     provider: t.provider != null ? t.provider : "claude",
     model: migrateKimiModel(t),
@@ -931,6 +932,13 @@ function migrateThread(t) {
           ? false
           : null,
   };
+  // Side questions (issue #471). Running cards become errors on load:
+  // the completeAsk process is gone. Omit the field on old rows so
+  // fixtures without `btw` still deepEqual.
+  const cards = normalizeBtwCards(t.btw);
+  if (cards) next.btw = cards;
+  else delete next.btw;
+  return next;
 }
 
 /**

@@ -575,6 +575,33 @@ const IPC_HANDLERS = {
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     return updated;
   },
+  "threads:btw": async (ctx, input) => {
+    const start =
+      ctx.runner && typeof ctx.runner.startBtw === "function"
+        ? ctx.runner.startBtw
+        : async (body) => services.addBtw(ctx.store, body).thread;
+    const updated = await start(input);
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    return updated;
+  },
+  "threads:dismissBtw": async (ctx, input) => {
+    const cancel =
+      ctx.runner && typeof ctx.runner.cancelBtw === "function"
+        ? ctx.runner.cancelBtw
+        : (body) => services.dismissBtw(ctx.store, body);
+    const updated = await cancel(input);
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    return updated;
+  },
+  "threads:promoteBtw": async (ctx, input) => {
+    const promote =
+      ctx.runner && typeof ctx.runner.promoteBtw === "function"
+        ? ctx.runner.promoteBtw
+        : (body) => services.promoteBtw(ctx.store, body);
+    const updated = await promote(input);
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    return updated;
+  },
   "threads:stopTeach": async (ctx, input) => {
     const updated = services.stopTeach(ctx.store, input);
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));

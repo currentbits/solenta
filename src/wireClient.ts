@@ -416,6 +416,9 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
       stopTeach: (input) => call<ThreadInfo>("threads:stopTeach", input),
       startAsk: (input) => call<ThreadInfo>("threads:startAsk", input),
       stopAsk: (input) => call<ThreadInfo>("threads:stopAsk", input),
+      btw: (input) => call<ThreadInfo>("threads:btw", input),
+      dismissBtw: (input) => call<ThreadInfo>("threads:dismissBtw", input),
+      promoteBtw: (input) => call<ThreadInfo>("threads:promoteBtw", input),
       requestTeachReview: (input) =>
         call<ThreadInfo>("threads:requestTeachReview", input),
       rename: (input) => call<ThreadInfo>("threads:rename", input),

@@ -141,6 +141,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     stopTeach,
     startAsk,
     stopAsk,
+    dismissBtw,
+    promoteBtw,
     requestTeachReview,
     deleteThread,
     removeProject,
@@ -510,6 +512,20 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       void stopAsk(threadId, opts);
     },
     [stopAsk],
+  );
+
+  const handleDismissBtw = useCallback(
+    (threadId: string, id: string) => {
+      void dismissBtw(threadId, id);
+    },
+    [dismissBtw],
+  );
+
+  const handlePromoteBtw = useCallback(
+    (threadId: string, id: string) => {
+      void promoteBtw(threadId, id);
+    },
+    [promoteBtw],
   );
 
   const handleRowArchived = useCallback(
@@ -1147,6 +1163,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onRequestTeachReview={handleRequestTeachReview}
         onStartAsk={handleStartAsk}
         onStopAsk={handleStopAsk}
+        onDismissBtw={handleDismissBtw}
+        onPromoteBtw={handlePromoteBtw}
         defaultWorktree={settings?.defaultWorktree ?? false}
         onDeleteThread={deleteThread}
         changesOpen={changesOpen}

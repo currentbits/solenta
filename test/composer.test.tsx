@@ -1565,6 +1565,24 @@ describe("Composer keyboard send", () => {
     assert.deepEqual(h.sends, []);
     m.unmount();
   });
+
+  it("sends /btw on Alt+Enter (issue #471)", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h));
+    await m.type(m.query("textarea"), "where is createThread");
+    await m.press(m.query("textarea"), "Enter", { altKey: true });
+    assert.deepEqual(h.sends, ["/btw where is createThread"]);
+    m.unmount();
+  });
+
+  it("does not double-prefix an already-/btw draft on Alt+Enter", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h));
+    await m.type(m.query("textarea"), "/btw which file owns parseBtw");
+    await m.press(m.query("textarea"), "Enter", { altKey: true });
+    assert.deepEqual(h.sends, ["/btw which file owns parseBtw"]);
+    m.unmount();
+  });
 });
 
 describe("Composer reasoning belongs to the current provider", () => {

@@ -45,6 +45,7 @@ import type {
   SpecStage,
   ThreadDetail,
   ThreadInfo,
+  BtwCard as BtwCardInfo,
   WorkLogItem,
   WorkSuggestion,
   WorkflowTemplateInfo,
@@ -431,6 +432,10 @@ interface ThreadViewProps {
     threadId: string,
     opts?: { worktree?: boolean },
   ) => void | Promise<void>;
+  /** Drop a `/btw` side-question card (issue #471). */
+  onDismissBtw?: (threadId: string, id: string) => void | Promise<void>;
+  /** Queue a side question as a follow-up and drop the card. */
+  onPromoteBtw?: (threadId: string, id: string) => void | Promise<void>;
   /**
    * Record the one-tap felt estimate for a finished thread (issue #401).
    * savedMs null = the user declined.
@@ -2196,6 +2201,75 @@ function teachStepStatus(
 }
 
 /**
+ * `/btw` side-question card (issue #471). Lives on the thread, not a new
+ * thread and not the live turn. Dismiss drops it; promote queues a follow-up.
+ */
+function BtwSideCard({
+  threadId,
+  card,
+  onDismiss,
+  onPromote,
+}: {
+  threadId: string;
+  card: BtwCardInfo;
+  onDismiss?: (threadId: string, id: string) => void | Promise<void>;
+  onPromote?: (threadId: string, id: string) => void | Promise<void>;
+}) {
+  const statusLabel =
+    card.status === "running"
+      ? "asking"
+      : card.status === "error"
+        ? "failed"
+        : "answered";
+  return (
+    <div
+      className={styles.specCard}
+      data-btw-card=""
+      data-btw-status={card.status}
+    >
+      <div className={styles.specCardHead}>
+        <span className={styles.specCardTitle}>Side question</span>
+        <span className={styles.specStatus}>{statusLabel}</span>
+      </div>
+      <p className={styles.btwQuestion}>{card.question}</p>
+      {card.status === "running" ? (
+        <p className={styles.specStatus}>Answering from the repo map…</p>
+      ) : null}
+      {card.answer ? (
+        <div className={styles.btwAnswer}>
+          <Markdown text={card.answer} />
+        </div>
+      ) : null}
+      {card.error && !card.answer ? (
+        <p className={styles.specStatus}>{card.error}</p>
+      ) : null}
+      <div className={styles.permissionActions}>
+        {onPromote && (
+          <button
+            type="button"
+            className={styles.permissionAllow}
+            data-btw-promote-btn=""
+            onClick={() => void onPromote(threadId, card.id)}
+          >
+            Promote to follow-up
+          </button>
+        )}
+        {onDismiss && (
+          <button
+            type="button"
+            className={styles.permissionDeny}
+            data-btw-dismiss-btn=""
+            onClick={() => void onDismiss(threadId, card.id)}
+          >
+            Dismiss
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
  * Teach mode card (issue #373): autonomy ladder, review-my-code, turn off.
  */
 function AskCard({
@@ -3056,6 +3130,8 @@ export const ThreadView = memo(function ThreadView({
   onRequestTeachReview,
   onStartAsk,
   onStopAsk,
+  onDismissBtw,
+  onPromoteBtw,
   onSetFeltEstimate,
   defaultWorktree = false,
   onDeleteThread,
@@ -4525,6 +4601,16 @@ export const ThreadView = memo(function ThreadView({
           />
         ) : null}
 
+        {(thread.btw ?? []).map((card) => (
+          <BtwSideCard
+            key={card.id}
+            threadId={thread.id}
+            card={card}
+            onDismiss={onDismissBtw}
+            onPromote={onPromoteBtw}
+          />
+        ))}
+
         {thread.teach && !thread.ask ? (
           <TeachCard
             thread={thread}
@@ -4751,7 +4837,7 @@ export const ThreadView = memo(function ThreadView({
           isArchived
             ? "Unarchive to continue this thread"
             : isWorking
-              ? "Queue the next instruction…"
+              ? "Queue a follow-up, or /btw a side question…"
               : thread.ask
                 ? "Ask about this repo…"
                 : undefined

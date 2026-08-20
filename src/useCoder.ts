@@ -58,6 +58,7 @@ import { resolveCoderApi } from "./coderApi";
 import { isWebMode } from "./shared/wire";
 import { nextVisibleThreadId } from "./threadSelection";
 import { mergeThreadPatch, patchThreadList } from "./threadPatch";
+import { parseBtwCommand } from "./btw";
 
 const STATUS_POLL_MS = 60_000;
 
@@ -345,6 +346,10 @@ export interface UseCoderResult {
   startAsk: (threadId: string) => Promise<void>;
   /** Turn Ask mode off. worktree: true is Start work. */
   stopAsk: (threadId: string, opts?: { worktree?: boolean }) => Promise<void>;
+  /** Drop a `/btw` side-question card (issue #471). */
+  dismissBtw: (threadId: string, id: string) => Promise<void>;
+  /** Queue a side question as a follow-up and drop the card. */
+  promoteBtw: (threadId: string, id: string) => Promise<void>;
   /** Ask the agent to review the human's TODO(human) fills. Starts a run. */
   requestTeachReview: (threadId: string) => Promise<void>;
   /** Permanently delete the selected thread (after caller confirms). */
@@ -1121,6 +1126,32 @@ export function useCoder(): UseCoderResult {
     ) => {
       const threadId = targetThreadId ?? selectedThreadId;
       if (!threadId) return;
+      // Side question (issue #471): intercept BEFORE the busy-queue path so
+      // `/btw` never becomes the next follow-up and never starts a main turn.
+      const btwQuestion = parseBtwCommand(prompt);
+      if (btwQuestion) {
+        try {
+          const updated = await api.threads.btw({
+            threadId,
+            question: btwQuestion,
+          });
+          applyThreads(
+            threadsRef.current.map((t) =>
+              t.id === updated.id ? updated : t,
+            ),
+          );
+          setDetail((prev) =>
+            prev && prev.thread.id === updated.id
+              ? { ...prev, thread: updated }
+              : prev,
+          );
+          setError(null);
+        } catch (err) {
+          setError({ scope: "run", message: errorMessage(err) });
+          throw err;
+        }
+        return;
+      }
       // Busy thread: hold the prompt instead of bouncing off the backend's
       // "run already active" (issue #92). Append lives in setQueued so two
       // mid-run sends cannot race-replace each other across the IPC hop.
@@ -1821,6 +1852,42 @@ export function useCoder(): UseCoderResult {
           threadId,
           ...(opts?.worktree ? { worktree: true } : {}),
         });
+        applyThreads(
+          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
+        );
+        setDetail((prev) =>
+          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
+        );
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+      }
+    },
+    [api, applyThreads],
+  );
+
+  const dismissBtw = useCallback(
+    async (threadId: string, id: string) => {
+      try {
+        const thread = await api.threads.dismissBtw({ threadId, id });
+        applyThreads(
+          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
+        );
+        setDetail((prev) =>
+          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
+        );
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+      }
+    },
+    [api, applyThreads],
+  );
+
+  const promoteBtw = useCallback(
+    async (threadId: string, id: string) => {
+      try {
+        const thread = await api.threads.promoteBtw({ threadId, id });
         applyThreads(
           threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
         );
@@ -2654,6 +2721,8 @@ export function useCoder(): UseCoderResult {
     stopTeach,
     startAsk,
     stopAsk,
+    dismissBtw,
+    promoteBtw,
     requestTeachReview,
     deleteThread,
     removeProject,

@@ -14,6 +14,7 @@ const { runWindowsDoctor } = require("./doctor.js");
 const configDoctor = require("./configDoctor.js");
 const { normalizeCommand, runVerifyCommand } = require("./verify.js");
 const { resolveSandbox } = require("./sandbox.js");
+const btw = require("./btw.js");
 const { DEFAULT_WORKTREE_RETENTION } = require("./store.js");
 
 const PERMISSION_MODES = new Set([
@@ -1265,6 +1266,146 @@ function takeQueued(store, input) {
   store.updateThread(threadId, { queued: null });
   store.save();
   return queued;
+}
+
+/**
+ * Open a `/btw` side-question card (issue #471). Returns `{ thread, card }`.
+ * Never bumps updatedAt: a side question is not thread activity, same rule
+ * as setQueued. Caps in-flight cards at BTW_RUNNING_MAX.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, question: unknown }} input
+ * @returns {{ thread: object, card: object }}
+ */
+function addBtw(store, input) {
+  const { threadId } = input;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  const question = btw.normalizeBtwQuestion(input.question);
+  if (!question) {
+    throw new Error("Side question is empty");
+  }
+  const cards = Array.isArray(thread.btw) ? thread.btw.slice() : [];
+  const running = cards.filter((c) => c && c.status === "running").length;
+  if (running >= btw.BTW_RUNNING_MAX) {
+    throw new Error(
+      `Already ${btw.BTW_RUNNING_MAX} side questions in flight`,
+    );
+  }
+  const card = {
+    id: randomUUID(),
+    question,
+    status: "running",
+    createdAt: Date.now(),
+  };
+  cards.push(card);
+  if (cards.length > btw.BTW_MAX) {
+    cards.splice(0, cards.length - btw.BTW_MAX);
+  }
+  const updated = store.updateThread(threadId, { btw: cards });
+  store.save();
+  const next = updated ? { ...updated } : { ...thread, btw: cards };
+  return { thread: next, card };
+}
+
+/**
+ * Write the answer (or error) onto an existing card. No-op when the card
+ * is gone (dismissed). Never bumps updatedAt.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, id: string, answer?: unknown, error?: unknown, source?: unknown }} input
+ * @returns {object | null}
+ */
+function finishBtw(store, input) {
+  const { threadId, id } = input;
+  const thread = store.getThread(threadId);
+  if (!thread) return null;
+  const cards = Array.isArray(thread.btw) ? thread.btw.slice() : [];
+  const idx = cards.findIndex((c) => c && c.id === id);
+  if (idx === -1) return null;
+  const prev = cards[idx];
+  const errText =
+    input.error != null && String(input.error).trim()
+      ? String(input.error).trim()
+      : "";
+  const answer =
+    input.answer != null ? String(input.answer).slice(0, btw.BTW_ANSWER_MAX) : "";
+  const source =
+    input.source === "fm" ||
+    input.source === "print" ||
+    input.source === "retrieval"
+      ? input.source
+      : undefined;
+  const nextCard = {
+    ...prev,
+    status: errText && !answer ? "error" : "done",
+    answer: answer || prev.answer,
+  };
+  if (errText) nextCard.error = errText;
+  else delete nextCard.error;
+  if (source) nextCard.source = source;
+  cards[idx] = nextCard;
+  const updated = store.updateThread(threadId, { btw: cards });
+  store.save();
+  return updated ? { ...updated } : { ...thread, btw: cards };
+}
+
+/**
+ * Drop a side-question card. Unknown id is a no-op (already gone).
+ * Never bumps updatedAt.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, id: string }} input
+ * @returns {object}
+ */
+function dismissBtw(store, input) {
+  const { threadId, id } = input;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  const cards = Array.isArray(thread.btw) ? thread.btw : [];
+  const next = cards.filter((c) => c && c.id !== id);
+  if (next.length === cards.length) {
+    return { ...thread };
+  }
+  const patch = { btw: next.length ? next : undefined };
+  const updated = store.updateThread(threadId, patch);
+  store.save();
+  return updated ? { ...updated } : { ...thread, btw: patch.btw };
+}
+
+/**
+ * Queue the side question as a follow-up and drop the card. The answer
+ * (when present) rides along so the main agent does not redo the lookup.
+ * Unknown id is an error so a double-click cannot silently no-op.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, id: string }} input
+ * @returns {object}
+ */
+function promoteBtw(store, input) {
+  const { threadId, id } = input;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  const cards = Array.isArray(thread.btw) ? thread.btw : [];
+  const card = cards.find((c) => c && c.id === id);
+  if (!card) {
+    throw new Error(`Unknown side question: ${id}`);
+  }
+  const answer = typeof card.answer === "string" ? card.answer.trim() : "";
+  const prompt = answer
+    ? `Follow-up from a side question:\n${card.question}\n\n(Already answered off-thread; use or ignore:)\n${answer}`
+    : card.question;
+  const remaining = cards.filter((c) => c && c.id !== id);
+  store.updateThread(threadId, {
+    btw: remaining.length ? remaining : undefined,
+  });
+  return setQueued(store, { threadId, prompt });
 }
 
 /**
@@ -4131,6 +4272,10 @@ module.exports = {
   setPinned,
   setQueued,
   takeQueued,
+  addBtw,
+  finishBtw,
+  dismissBtw,
+  promoteBtw,
   setSnoozed,
   setMuted,
   setQuotaWaitAutoResume,

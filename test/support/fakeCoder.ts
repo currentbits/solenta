@@ -1059,6 +1059,71 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         threads = threads.map((t) => (t.id === i.threadId ? next : t));
         return Promise.resolve(next);
       },
+      btw: (input: unknown) => {
+        const i = input as { threadId: string; question: string };
+        calls.push({ channel: "threads.btw", args: [input] });
+        const existing = threads.find((t) => t.id === i.threadId);
+        if (!existing) {
+          return Promise.reject(new Error(`Unknown thread: ${i.threadId}`));
+        }
+        const question = String(i.question || "").trim();
+        if (!question) {
+          return Promise.reject(new Error("Side question is empty"));
+        }
+        const card = {
+          id: `btw-${Date.now()}`,
+          question,
+          status: "running" as const,
+          createdAt: Date.now(),
+        };
+        const next: ThreadInfo = {
+          ...existing,
+          btw: [...(existing.btw ?? []), card],
+        };
+        threads = threads.map((t) => (t.id === i.threadId ? next : t));
+        return Promise.resolve(next);
+      },
+      dismissBtw: (input: unknown) => {
+        const i = input as { threadId: string; id: string };
+        calls.push({ channel: "threads.dismissBtw", args: [input] });
+        const existing = threads.find((t) => t.id === i.threadId);
+        if (!existing) {
+          return Promise.reject(new Error(`Unknown thread: ${i.threadId}`));
+        }
+        const remaining = (existing.btw ?? []).filter((c) => c.id !== i.id);
+        const next: ThreadInfo = {
+          ...existing,
+          btw: remaining.length ? remaining : undefined,
+        };
+        threads = threads.map((t) => (t.id === i.threadId ? next : t));
+        return Promise.resolve(next);
+      },
+      promoteBtw: (input: unknown) => {
+        const i = input as { threadId: string; id: string };
+        calls.push({ channel: "threads.promoteBtw", args: [input] });
+        const existing = threads.find((t) => t.id === i.threadId);
+        if (!existing) {
+          return Promise.reject(new Error(`Unknown thread: ${i.threadId}`));
+        }
+        const card = (existing.btw ?? []).find((c) => c.id === i.id);
+        if (!card) {
+          return Promise.reject(new Error(`Unknown side question: ${i.id}`));
+        }
+        const remaining = (existing.btw ?? []).filter((c) => c.id !== i.id);
+        const prev = existing.queued;
+        const next: ThreadInfo = {
+          ...existing,
+          btw: remaining.length ? remaining : undefined,
+          queued: {
+            prompt: prev
+              ? `${prev.prompt}\n\n${card.question}`
+              : card.question,
+            attachments: prev?.attachments,
+          },
+        };
+        threads = threads.map((t) => (t.id === i.threadId ? next : t));
+        return Promise.resolve(next);
+      },
       requestTeachReview: (input: unknown) => {
         const i = input as { threadId: string };
         calls.push({ channel: "threads.requestTeachReview", args: [input] });

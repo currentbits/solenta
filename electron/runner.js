@@ -25,6 +25,7 @@ const {
 const orchcommands = require("./orchcommands.js");
 const cliCommands = require("./cliCommands.js");
 const ask = require("./ask.js");
+const btw = require("./btw.js");
 const {
   getClaudeMcpArgs,
   getCodexMcpArgs,
@@ -477,6 +478,12 @@ function createRunner(opts) {
    * @type {Map<string, object>}
    */
   const active = new Map();
+  /**
+   * In-flight `/btw` cards, keyed `${threadId}:${cardId}`. Separate from
+   * `active` so a side question never occupies the live turn (issue #471).
+   * @type {Map<string, { threadId: string, id: string, handle?: { kill?: () => void }, stopping?: boolean }>}
+   */
+  const btwActive = new Map();
 
   // OTel GenAI spans (issue #280). Inert while settings.otel.endpoint is null,
   // and every method swallows its own failures, so no call site below guards.
@@ -4816,9 +4823,190 @@ function createRunner(opts) {
     return { runId };
   }
 
+  /**
+   * Side question (issue #471). Does not take `active`, does not change
+   * thread.status, does not append transcript messages, does not spend.
+   * @param {{ threadId: string, question: string }} input
+   */
+  async function startBtw(input) {
+    const threadId = input && input.threadId;
+    const thread = store.getThread(threadId);
+    if (!thread) {
+      throw new Error(`Unknown thread: ${threadId}`);
+    }
+    const { thread: next, card } = services.addBtw(store, {
+      threadId,
+      question: input.question,
+    });
+    const key = `${threadId}:${card.id}`;
+    const entry = { threadId, id: card.id };
+    btwActive.set(key, entry);
+    pushDetail(threadId, undefined, { skipStamp: true });
+    pushThreadsChanged();
+
+    const project = store.getProject(thread.projectId);
+    const repoRoot = (project && project.path) || "";
+    if (userDataPath && repoRoot) {
+      try {
+        require("./codeindex.js").maybeRefreshIndex({ userDataPath, repoRoot });
+      } catch {
+        /* never block */
+      }
+    }
+    const index =
+      userDataPath && repoRoot
+        ? tryReadCodeIndex(userDataPath, repoRoot)
+        : null;
+    const indexNote = services.codeIndexNoteFor(index);
+    const matchNote = ask.formatMatchingFiles(index, card.question);
+    const digestNote = ask.formatThreadDigest(store.getMessages(threadId));
+
+    void (async () => {
+      let memoryNote = "";
+      try {
+        const search =
+          searchMemory ||
+          (async (query, projectPath) => {
+            if (!userDataPath) return [];
+            const { createMemoryProxy } = require("./memory-proxy.js");
+            const proxy = createMemoryProxy({ userDataPath });
+            return await proxy.search({
+              query,
+              project: projectPath || undefined,
+            });
+          });
+        const hits = await search(String(card.question || ""), repoRoot);
+        memoryNote = ask.formatMemoryHits(hits);
+      } catch {
+        memoryNote = "";
+      }
+
+      const pack = {
+        question: String(card.question || ""),
+        indexNote,
+        memoryNote,
+        digestNote,
+        matchNote,
+      };
+      const askPrompt = btw.buildBtwPrompt(pack);
+
+      let answer = "";
+      let source = "retrieval";
+      let errText = "";
+      try {
+        const result = await askComplete({
+          prompt: askPrompt,
+          provider: resolveProvider(thread),
+          model: thread.model,
+          onHandle: (h) => {
+            const live = btwActive.get(key);
+            if (!live || live.stopping) {
+              if (h && typeof h.kill === "function") h.kill();
+              return;
+            }
+            live.handle = h;
+          },
+        });
+        if (result && result.text) {
+          answer = result.text;
+          source = result.source || "print";
+        }
+      } catch (err) {
+        errText = err && err.message ? String(err.message) : String(err);
+      }
+      if (!answer && !errText) answer = ask.retrievalFallback(pack);
+
+      const live = btwActive.get(key);
+      if (!live || live.stopping) return;
+      btwActive.delete(key);
+      if (!store.getThread(threadId)) return;
+      services.finishBtw(store, {
+        threadId,
+        id: card.id,
+        answer,
+        error: errText || undefined,
+        source: answer ? source : undefined,
+      });
+      pushDetail(threadId, undefined, { skipStamp: true });
+      pushThreadsChanged();
+    })().catch(() => {
+      const live = btwActive.get(key);
+      if (!live || live.stopping) return;
+      btwActive.delete(key);
+      if (!store.getThread(threadId)) return;
+      services.finishBtw(store, {
+        threadId,
+        id: card.id,
+        error: "Side question failed",
+      });
+      pushDetail(threadId, undefined, { skipStamp: true });
+      pushThreadsChanged();
+    });
+
+    return store.getThread(threadId) || next;
+  }
+
+  /**
+   * Kill an in-flight side question (if any) and drop the card.
+   * @param {{ threadId: string, id: string }} input
+   */
+  function cancelBtw(input) {
+    const threadId = input && input.threadId;
+    const id = input && input.id;
+    const key = `${threadId}:${id}`;
+    const entry = btwActive.get(key);
+    if (entry) {
+      entry.stopping = true;
+      if (entry.handle && typeof entry.handle.kill === "function") {
+        try {
+          entry.handle.kill();
+        } catch {
+          /* ignore */
+        }
+      }
+      btwActive.delete(key);
+    }
+    return services.dismissBtw(store, { threadId, id });
+  }
+
+  /**
+   * Queue the side question as a follow-up and drop the card. Cancels
+   * an in-flight completeAsk first so it cannot rewrite a gone card.
+   * @param {{ threadId: string, id: string }} input
+   */
+  function promoteBtw(input) {
+    const threadId = input && input.threadId;
+    const id = input && input.id;
+    const key = `${threadId}:${id}`;
+    const entry = btwActive.get(key);
+    if (entry) {
+      entry.stopping = true;
+      if (entry.handle && typeof entry.handle.kill === "function") {
+        try {
+          entry.handle.kill();
+        } catch {
+          /* ignore */
+        }
+      }
+      btwActive.delete(key);
+    }
+    return services.promoteBtw(store, { threadId, id });
+  }
+
   async function startRun(input) {
     const { threadId, prompt } = input;
     const attachments = sanitizeAttachments(input.attachments);
+    // Side question (issue #471): intercept BEFORE the "already active"
+    // throw so a `/btw` typed during a run is not bounced and is not
+    // queued as the next prompt. fromNotice is skipped so a worker
+    // quoting `/btw` cannot open a card on itself.
+    if (!input.fromNotice) {
+      const question = btw.parseBtwCommand(prompt);
+      if (question) {
+        const thread = await startBtw({ threadId, question });
+        return { runId: null, thread };
+      }
+    }
     if (active.has(threadId)) {
       throw new Error("A run is already active on this thread");
     }
@@ -5340,6 +5528,17 @@ function createRunner(opts) {
 
   function stopAll() {
     clearInterval(stallTimer);
+    for (const entry of btwActive.values()) {
+      entry.stopping = true;
+      if (entry.handle && typeof entry.handle.kill === "function") {
+        try {
+          entry.handle.kill();
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+    btwActive.clear();
     // Clean app quit (main.js before-quit). Mark each active run idle with an
     // interruption event so the next launch's recoverInterruptedRuns (crash
     // path only) does not re-stamp them as generic failures. Kill + flush
@@ -5490,6 +5689,9 @@ function createRunner(opts) {
 
   return {
     startRun,
+    startBtw,
+    cancelBtw,
+    promoteBtw,
     startWorkflowRun,
     stopRun,
     resumeQuotaWait,

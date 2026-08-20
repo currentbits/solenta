@@ -146,6 +146,9 @@ const coder = {
     stopTeach: (input) => invoke("threads:stopTeach", input),
     startAsk: (input) => invoke("threads:startAsk", input),
     stopAsk: (input) => invoke("threads:stopAsk", input),
+    btw: (input) => invoke("threads:btw", input),
+    dismissBtw: (input) => invoke("threads:dismissBtw", input),
+    promoteBtw: (input) => invoke("threads:promoteBtw", input),
     requestTeachReview: (input) =>
       invoke("threads:requestTeachReview", input),
     rename: (input) => invoke("threads:rename", input),

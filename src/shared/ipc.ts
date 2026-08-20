@@ -541,6 +541,25 @@ export interface ThreadInfo {
    * thread does not get a worktree.
    */
   ask?: boolean;
+  /**
+   * Side questions (issue #471): `/btw` cards on this thread. Not a new
+   * thread, not the live turn, not the follow-up queue. Newest-last.
+   * Absent → none. Dismiss removes a row; promote queues it as a follow-up.
+   */
+  btw?: BtwCard[];
+}
+
+/** One `/btw` side-question card (issue #471). */
+export type BtwStatus = "running" | "done" | "error";
+export type BtwSource = "fm" | "print" | "retrieval";
+export interface BtwCard {
+  id: string;
+  question: string;
+  status: BtwStatus;
+  createdAt: number;
+  answer?: string;
+  error?: string;
+  source?: BtwSource;
 }
 
 /** One code-index symbol for the review itinerary reuse scan. */
@@ -2221,6 +2240,19 @@ export interface CoderApi {
      * Idempotent. Never bumps updatedAt.
      */
     stopAsk(input: { threadId: string; worktree?: boolean }): Promise<ThreadInfo>;
+    /**
+     * Side question (issue #471): cheap read-only answer on a card, not a
+     * new thread and not the live turn. Does not pause, steer, or queue
+     * behind the current run. Never bumps updatedAt.
+     */
+    btw(input: { threadId: string; question: string }): Promise<ThreadInfo>;
+    /** Drop a side-question card (cancels it if still running). */
+    dismissBtw(input: { threadId: string; id: string }): Promise<ThreadInfo>;
+    /**
+     * Queue the side question as a follow-up (#468) and drop the card.
+     * Uses threads.setQueued, so an existing queue is appended to.
+     */
+    promoteBtw(input: { threadId: string; id: string }): Promise<ThreadInfo>;
     /**
      * Rename a thread. Trims, truncates to THREAD_TITLE_MAX, rejects an
      * empty title. Never bumps updatedAt.

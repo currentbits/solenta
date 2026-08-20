@@ -3062,6 +3062,61 @@ function buildDevCoder(): CoderApi {
           ...(input.worktree ? { pendingWorktree: true } : {}),
         });
       },
+      async btw(input: { threadId: string; question: string }) {
+        const existing = details.get(input.threadId)?.thread;
+        if (!existing) throw new Error(`Thread not found: ${input.threadId}`);
+        const question = String(input.question || "").trim();
+        if (!question) throw new Error("Side question is empty");
+        const card = {
+          id: id("btw"),
+          question,
+          status: "running" as const,
+          createdAt: now(),
+        };
+        const running = patchThread(input.threadId, {
+          btw: [...(existing.btw ?? []), card],
+        });
+        setTimeout(() => {
+          const live = details.get(input.threadId)?.thread;
+          if (!live) return;
+          const cards = (live.btw ?? []).map((c) =>
+            c.id === card.id
+              ? {
+                  ...c,
+                  status: "done" as const,
+                  answer: `(dev) ${c.question}`,
+                  source: "retrieval" as const,
+                }
+              : c,
+          );
+          if (!cards.some((c) => c.id === card.id)) return;
+          patchThread(input.threadId, { btw: cards });
+        }, 400);
+        return running;
+      },
+      async dismissBtw(input: { threadId: string; id: string }) {
+        const existing = details.get(input.threadId)?.thread;
+        if (!existing) throw new Error(`Thread not found: ${input.threadId}`);
+        const remaining = (existing.btw ?? []).filter((c) => c.id !== input.id);
+        return patchThread(input.threadId, {
+          btw: remaining.length ? remaining : undefined,
+        });
+      },
+      async promoteBtw(input: { threadId: string; id: string }) {
+        const existing = details.get(input.threadId)?.thread;
+        if (!existing) throw new Error(`Thread not found: ${input.threadId}`);
+        const card = (existing.btw ?? []).find((c) => c.id === input.id);
+        if (!card) throw new Error(`Unknown side question: ${input.id}`);
+        const remaining = (existing.btw ?? []).filter((c) => c.id !== input.id);
+        const prev = existing.queued;
+        return patchThread(input.threadId, {
+          btw: remaining.length ? remaining : undefined,
+          queued: {
+            prompt: prev ? `${prev.prompt}\n\n${card.question}` : card.question,
+            attachments: prev?.attachments,
+          },
+        });
+      },
       async requestTeachReview(input: { threadId: string }) {
         const existing = threads.find((t) => t.id === input.threadId);
         if (!existing?.teach) throw new Error("Thread is not in teach mode");
