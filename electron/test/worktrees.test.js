@@ -19,6 +19,7 @@ const {
   gitTry,
   gitTryAsync,
 } = require("../worktrees.js");
+const { reviewItineraryPathFor } = require("../reviewItinerary.js");
 const ssh = require("../ssh.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
 
@@ -246,14 +247,13 @@ describe("worktrees", () => {
   afterEach(() => {
     // Remove worktrees first so rm of tmpDir succeeds
     try {
-      const list = git(repo, ["worktree", "list", "--porcelain"]);
-      // best-effort cleanup via store paths
-      const t = store.getThread(thread.id);
-      if (t && t.worktreePath && fs.existsSync(t.worktreePath)) {
-        try {
-          git(repo, ["worktree", "remove", "--force", t.worktreePath]);
-        } catch {
-          // ignore
+      for (const t of store.getThreads()) {
+        if (t && t.worktreePath && fs.existsSync(t.worktreePath)) {
+          try {
+            git(repo, ["worktree", "remove", "--force", t.worktreePath]);
+          } catch {
+            // ignore
+          }
         }
       }
     } catch {
@@ -686,6 +686,75 @@ describe("worktrees", () => {
     const areas = landed.chunks.map((c) => c.area);
     assert.ok(areas.includes("thread-side") || areas.includes("main-side"));
     assert.ok(landed.risks.length >= 1);
+  });
+
+  it("mergeWorktree lands two per-thread itineraries without a conflict (#621)", async () => {
+    const other = services.createThread(store, {
+      projectId: project.id,
+      title: "Other Feature Work",
+    });
+    const a = setupWorktree({
+      store,
+      threadId: thread.id,
+      worktreeBase,
+      broadcast: () => {},
+    });
+    const b = setupWorktree({
+      store,
+      threadId: other.id,
+      worktreeBase,
+      broadcast: () => {},
+    });
+
+    const writeItinerary = (dir, threadId, area, feature) => {
+      const rel = reviewItineraryPathFor(threadId);
+      fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+      fs.writeFileSync(
+        path.join(dir, rel),
+        `${JSON.stringify({
+          version: 1,
+          readOrder: ["impl"],
+          chunks: [{ area, rationale: area, risks: [] }],
+          risks: [`${area} risk`],
+        })}\n`,
+      );
+      fs.writeFileSync(path.join(dir, feature), `${area}\n`);
+      git(dir, ["add", "-A"]);
+      git(dir, ["commit", "-m", `${area} itinerary`]);
+    };
+
+    writeItinerary(a.worktreePath, thread.id, "thread-a", "a.txt");
+    writeItinerary(b.worktreePath, other.id, "thread-b", "b.txt");
+
+    const first = mergeWorktree({
+      store,
+      threadId: thread.id,
+      broadcast: () => {},
+    });
+    assert.equal(first.worktreePath, null);
+    const second = mergeWorktree({
+      store,
+      threadId: other.id,
+      broadcast: () => {},
+    });
+    assert.equal(second.worktreePath, null);
+
+    const aFile = path.join(repo, reviewItineraryPathFor(thread.id));
+    const bFile = path.join(repo, reviewItineraryPathFor(other.id));
+    const aLanded = JSON.parse(fs.readFileSync(aFile, "utf8"));
+    const bLanded = JSON.parse(fs.readFileSync(bFile, "utf8"));
+    assert.doesNotMatch(fs.readFileSync(aFile, "utf8"), /<<<<<<</);
+    assert.doesNotMatch(fs.readFileSync(bFile, "utf8"), /<<<<<<</);
+    assert.deepEqual(
+      aLanded.chunks.map((c) => c.area),
+      ["thread-a"],
+    );
+    assert.deepEqual(
+      bLanded.chunks.map((c) => c.area),
+      ["thread-b"],
+    );
+    assert.equal(fs.readFileSync(path.join(repo, "a.txt"), "utf8"), "thread-a\n");
+    assert.equal(fs.readFileSync(path.join(repo, "b.txt"), "utf8"), "thread-b\n");
   });
 
   it("mergeWorktree auto-resolves a generated AGENTS.md alongside the itinerary", async () => {

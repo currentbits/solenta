@@ -55,6 +55,10 @@ describe("classifyPath", () => {
     assert.equal(classifyPath("README.md"), "docs");
     assert.equal(classifyPath("docs/guide.md"), "docs");
     assert.equal(classifyPath(".solenta/review-itinerary.json"), "meta");
+    assert.equal(
+      classifyPath(".solenta/review-itinerary/a2db4269-c85d-4822-815d-c03f5d92a395.json"),
+      "meta",
+    );
     assert.equal(classifyPath("src/reviewItinerary.ts"), "impl");
   });
 });
@@ -188,6 +192,10 @@ describe("buildReviewItinerary", () => {
     file("README.md", { additions: 3, deletions: 0 }),
     file("src/alpha.ts", { additions: 20, deletions: 4 }),
     file(".solenta/review-itinerary.json", { status: "??", additions: 10 }),
+    file(".solenta/review-itinerary/thread-aaa.json", {
+      status: "??",
+      additions: 10,
+    }),
   ];
 
   const patch = [
@@ -212,7 +220,7 @@ describe("buildReviewItinerary", () => {
     );
     assert.ok(
       !plan.chunks.some((c) =>
-        c.files.some((f) => f.path.includes("review-itinerary.json")),
+        c.files.some((f) => f.path.includes("review-itinerary")),
       ),
     );
   });
