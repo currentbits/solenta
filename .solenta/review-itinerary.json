@@ -1,6 +1,10 @@
 {
   "version": 1,
-  "readOrder": ["tests", "critical", "impl"],
+  "readOrder": [
+    "tests",
+    "critical",
+    "impl"
+  ],
   "chunks": [
     {
       "area": "electron/test/orch-server.test.js — host-tool contract",
@@ -34,6 +38,14 @@
       "rationale": "Without this, archive/settle/rename would mutate RAM and retire the CLI, but the sidebar would stay stale until the next unrelated threads:changed. Same broadcast function the IPC handlers already close over.",
       "risks": [
         "orchServer is constructed after registerIpc; broadcast is in scope. A future move of createOrchServer above the broadcast function would be a ReferenceError at boot."
+      ]
+    },
+    {
+      "area": "src/components/Sidebar.tsx new-thread menu anchor",
+      "rationale": "One-class fix: the new-thread dropdown used styles.menuLeft (left: 0), opening rightward from a caret that sits at the sidebar's far-right edge, so the 176px menu spilled past the sidebar and was clipped. Dropping menuLeft falls back to .menu's right: 0, opening leftward inside the sidebar.",
+      "risks": [
+        "The scope menu at Sidebar.tsx:1972 keeps menuLeft on purpose — its trigger is on the left side.",
+        "No test asserts anchor direction; verified by CSS inspection plus the full sidebar suite (58/58)."
       ]
     }
   ],

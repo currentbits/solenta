@@ -1889,7 +1889,7 @@ export const Sidebar = memo(function Sidebar({
               </button>
               {createMenuOpen && (
                 <div
-                  className={`${styles.menu} ${styles.menuLeft}`}
+                  className={styles.menu}
                   role="menu"
                   data-new-thread-menu=""
                 >
