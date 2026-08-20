@@ -373,6 +373,7 @@ interface ThreadViewProps {
     requestId: string,
     decision: PermissionDecision,
     answers?: Record<string, string>,
+    updatedCommand?: string,
   ) => void | Promise<void>;
   onSetProvider: (input: {
     provider?: string;
@@ -1932,6 +1933,129 @@ function PlanPrompt({
           onClick={() => answer("deny")}
         >
           Keep planning
+        </button>
+      </div>
+    </div>
+  );
+}
+
+type PermissionRespond = (
+  requestId: string,
+  decision: PermissionDecision,
+  answers?: Record<string, string>,
+  updatedCommand?: string,
+) => void | Promise<void>;
+
+/**
+ * Tool permission (#509): the proposed command is an editable field.
+ * Approving sends the edited command, not the original. Non-command tools
+ * (Edit/Write/…) keep the JSON preview. Same component the inbox (#291)
+ * should reuse — the IPC already accepts updatedCommand.
+ */
+function PermissionPrompt({
+  pending,
+  onRespond,
+}: {
+  pending: PendingPermissionInfo;
+  onRespond: PermissionRespond;
+}) {
+  const original = pending.command ?? null;
+  const editable = original !== null;
+  const [command, setCommand] = useState(original ?? "");
+  const [sent, setSent] = useState(false);
+  const edited =
+    original !== null && command.trim() !== original.trim();
+  const empty = original !== null && command.trim() === "";
+
+  const answer = (decision: PermissionDecision) => {
+    if (sent) return;
+    if (decision !== "deny" && empty) return;
+    setSent(true);
+    void onRespond(
+      pending.requestId,
+      decision,
+      undefined,
+      editable ? command : undefined,
+    );
+  };
+
+  return (
+    <div
+      className={styles.permissionCard}
+      role="alertdialog"
+      aria-label="Permission request"
+      data-permission-card=""
+      data-edited={edited || undefined}
+    >
+      <div className={styles.permissionHead}>
+        Agent wants to use <strong>{pending.toolName}</strong>
+        {edited ? (
+          <span className={styles.permissionEdited} data-permission-edited="">
+            edited
+          </span>
+        ) : null}
+      </div>
+      {pending.guardrail ? (
+        <div className={styles.permissionGuardrail}>
+          ⚠ {pending.guardrail.reason} ({pending.guardrail.rule})
+        </div>
+      ) : null}
+      {editable ? (
+        <>
+          <textarea
+            className={`${styles.permissionInput} ${styles.permissionCommand}`}
+            data-permission-command=""
+            aria-label="Proposed command"
+            value={command}
+            rows={Math.min(8, Math.max(2, command.split("\n").length))}
+            spellCheck={false}
+            autoComplete="off"
+            autoCorrect="off"
+            onChange={(ev) => setCommand(ev.target.value)}
+          />
+          {edited ? (
+            <div className={styles.permissionWas} data-permission-was="">
+              <span>was: {original}</span>
+              <button
+                type="button"
+                className={styles.permissionReset}
+                data-permission-reset=""
+                onClick={() => {
+                  if (original !== null) setCommand(original);
+                }}
+              >
+                Reset
+              </button>
+            </div>
+          ) : null}
+        </>
+      ) : (
+        <pre className={styles.permissionInput}>{pending.input}</pre>
+      )}
+      <div className={styles.permissionActions}>
+        <button
+          type="button"
+          className={styles.permissionAllow}
+          disabled={sent || empty}
+          onClick={() => answer("allow")}
+        >
+          Accept
+        </button>
+        <button
+          type="button"
+          className={styles.permissionAllow}
+          disabled={sent || empty}
+          onClick={() => answer("allowAlways")}
+        >
+          Accept all
+        </button>
+        <button
+          type="button"
+          className={styles.permissionDeny}
+          disabled={sent}
+          onClick={() => answer("deny")}
+        >
+          Deny
         </button>
       </div>
     </div>
@@ -4644,58 +4768,13 @@ export const ThreadView = memo(function ThreadView({
             pending={detail.pendingPermission}
             onRespond={onRespondPermission}
           />
-        ) : detail.pendingPermission && (
-          <div className={styles.permissionCard} role="alertdialog" aria-label="Permission request">
-            <div className={styles.permissionHead}>
-              Agent wants to use <strong>{detail.pendingPermission.toolName}</strong>
-            </div>
-            {detail.pendingPermission.guardrail ? (
-              <div className={styles.permissionGuardrail}>
-                ⚠ {detail.pendingPermission.guardrail.reason} (
-                {detail.pendingPermission.guardrail.rule})
-              </div>
-            ) : null}
-            <pre className={styles.permissionInput}>{detail.pendingPermission.input}</pre>
-            <div className={styles.permissionActions}>
-              <button
-                type="button"
-                className={styles.permissionAllow}
-                onClick={() =>
-                  void onRespondPermission(
-                    detail.pendingPermission!.requestId,
-                    "allow",
-                  )
-                }
-              >
-                Accept
-              </button>
-              <button
-                type="button"
-                className={styles.permissionAllow}
-                onClick={() =>
-                  void onRespondPermission(
-                    detail.pendingPermission!.requestId,
-                    "allowAlways",
-                  )
-                }
-              >
-                Accept all
-              </button>
-              <button
-                type="button"
-                className={styles.permissionDeny}
-                onClick={() =>
-                  void onRespondPermission(
-                    detail.pendingPermission!.requestId,
-                    "deny",
-                  )
-                }
-              >
-                Deny
-              </button>
-            </div>
-          </div>
-        )}
+        ) : detail.pendingPermission ? (
+          <PermissionPrompt
+            key={detail.pendingPermission.requestId}
+            pending={detail.pendingPermission}
+            onRespond={onRespondPermission}
+          />
+        ) : null}
 
         {detail && detail.thread.status === "quota-wait" && (
           <div

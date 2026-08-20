@@ -250,6 +250,7 @@ export interface UseCoderResult {
     requestId: string,
     decision: PermissionDecision,
     answers?: Record<string, string>,
+    updatedCommand?: string,
   ) => Promise<void>;
   /** Set provider and/or model on the selected thread (selectedRef-guarded). */
   setProvider: (input: {
@@ -1374,6 +1375,7 @@ export function useCoder(): UseCoderResult {
       requestId: string,
       decision: PermissionDecision,
       answers?: Record<string, string>,
+      updatedCommand?: string,
     ) => {
       if (!selectedThreadId) return;
       const threadId = selectedThreadId;
@@ -1385,6 +1387,7 @@ export function useCoder(): UseCoderResult {
           requestId,
           decision,
           answers,
+          updatedCommand,
         });
         setError(null);
       } catch (err) {

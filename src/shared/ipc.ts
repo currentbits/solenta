@@ -1151,6 +1151,12 @@ export interface PendingPermissionInfo {
   /** Pretty-printed JSON of the tool input (truncated like ToolCallInfo). */
   input: string;
   /**
+   * Proposed shell command when the tool input has a command/cmd/script
+   * string (#509). The permission card edits this; null/absent means the
+   * JSON preview stays read-only (Edit/Write/etc).
+   */
+  command?: string | null;
+  /**
    * Present when the agent is asking the user a question (AskUserQuestion):
    * render an option picker instead of the generic allow/deny prompt and
    * answer via respondPermission's `answers`.
@@ -2101,6 +2107,12 @@ export interface CoderApi {
        * per question text; sent to the agent as updatedInput.answers.
        */
       answers?: Record<string, string>;
+      /**
+       * Edited shell command (#509). Approving runs this instead of the
+       * original; the inbox (#291) uses the same field. Ignored when the
+       * pending tool has no command field.
+       */
+      updatedCommand?: string;
     }): Promise<void>;
     /** Archive or unarchive; archived threads are hidden by default but fully intact. */
     setArchived(input: { threadId: string; archived: boolean }): Promise<ThreadInfo>;

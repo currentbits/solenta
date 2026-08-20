@@ -1,109 +1,48 @@
 {
   "version": 1,
-  "readOrder": [
-    "critical",
-    "impl"
-  ],
+  "readOrder": ["critical", "tests", "impl"],
   "chunks": [
     {
-      "area": "src/components/Sidebar.tsx — statusLabelFor tone",
-      "rationale": "The T3 flat-sidebar rewrite folded Delegating into the working tone, so it painted blue like Working. Restore a distinct 'delegating' tone on StatusLabelInfo and return it from the isDelegating branch. statusDotFor's tone is untouched: it is no longer used for colour, only for label/flags.",
+      "area": "critical",
+      "rationale": "electron/runner.js respondPermission is the load-bearing seam: updatedCommand is merged into updatedInput (command/cmd/script only), empty edits throw before splice so the prompt stays pending, and allowAlways after an edit emits addRules.ruleContent for the *edited* prefix via sessionAllowRule. Unedited Accept all still whole-tools, which is #479's job.",
       "risks": [
-        "data-dim previously keyed off tone === 'working'; delegating rows would have stopped dimming when unselected, so the check now covers both tones."
+        "Claude's npm build:* glob also matches npm build && rm -rf. Prefix matching is the CLI contract; this ticket only promises the glob is derived from the edited command, not the original.",
+        "updatedCommand on a non-command tool (Edit/Write) is ignored — an inbox that sent it anyway would silently approve the original JSON."
       ]
     },
     {
-      "area": "src/index.css + Sidebar.module.css — violet",
-      "rationale": "Adds --violet (#a78bfa, the pre-rewrite .badgeDelegating hue) and a .statusLabel[data-tone=\"delegating\"] rule. Waiting/Stalled/Quota/Woke stay amber because they shared amber before the rewrite too.",
+      "area": "electron/permissionCommand.js",
+      "rationale": "Pure helpers so #479 can reuse commandPrefix / sessionAllowRule without scraping runner.js. extractCommand is also what getPendingPermission exposes as pending.command.",
       "risks": [
-        "Violet on --card is ~5.4:1, in line with the other tones; no other consumer of --violet yet."
+        "TWO_TOKEN_BINS is a denylist-of-sorts: python script.py becomes python:*, which is broader than npm test:*. Intentional; #479 can tighten the default glob UI later."
       ]
     },
     {
-      "area": "electron/store.js migrateProject + DEFAULT_WORKTREE_RETENTION",
-      "rationale": "The whole #559 fix is this default becoming a stored number. Missing/junk → 10; explicit 0 must survive or the default would wipe the keep-everything hatch. setProjects maps migrateProject, so load and save both apply it.",
+      "area": "src/components/ThreadView.tsx PermissionPrompt",
+      "rationale": "Replaces the inline <pre> card. Command-bearing tools get a textarea; others keep the JSON preview. Accept/Accept all send the field value; Reset restores; empty disables allow. Named so #291 can extract it later — QuestionPrompt/PlanPrompt still live in this file too.",
       "risks": [
-        "updateProject used to delete the key on 0; if that path still deleted, migrate would immediately rewrite 0 back to 10 and the hatch would be unreachable."
+        "Always passing updatedCommand (even when unchanged) is load-bearing for 'what you see is what runs'; the runner treats trim-equal as not edited so audit text and session rules stay on the unedited path.",
+        "No autoFocus: a follow-up in the composer should not lose the caret when a permission appears."
       ]
     },
     {
-      "area": "electron/services.js addProject + updateProject",
-      "rationale": "addProject returns the pre-setProjects object, so it must stamp worktreeRetention: 10 itself or callers see undefined. updateProject now stores 0 instead of deleting.",
+      "area": "src/shared/ipc.ts + useCoder.ts",
+      "rationale": "PendingPermissionInfo.command and respondPermission.updatedCommand are the inbox contract (#291). The selected-thread hook just forwards the new field; a future inbox can call api.threads.respondPermission with any threadId.",
       "risks": [
-        "EditProjectModal used to send 0 on an empty field. After prefill 10, a name-only save keeps 10; clearing the field still sends 0 (keep everything)."
-      ]
-    },
-    {
-      "area": "electron/worktrees.js retentionFor / enforceRetention / scheduleRetention",
-      "rationale": "retentionFor treats stored 0 as keep-everything (does not fall back to 10). enforceRetention still uses explicitRetention > 0 so a 0 project is skipped even when a sibling is at 10. scheduleRetention swallows errors so archive/merge cannot fail on GC.",
-      "risks": [
-        "After migrate, every existing project is 'configured' at 10, so the boot sweep and archive path will git-inspect every worktree dir. skipSizes avoids the #563 du storm; the git inspect cost remains.",
-        "Unmerged candidates are still skipped by enforceRetention; dirty/working/pinned still never drop. Branches are never deleted."
-      ]
-    },
-    {
-      "area": "electron/ipc.js + electron/orchServer.js archive/merge hooks",
-      "rationale": "Reclaim on the transition, not only the 15s boot sweep. threads:setArchived, git:mergeWorktree, git:prMerge, thread_archive, thread_merge all call scheduleRetention. orch handlers must read userDataPath from createToolHandlers deps (tests call createToolHandlers, not createOrchServer).",
-      "risks": [
-        "Awaiting the scan on archive makes a 166-dir machine wait on git inspect. Chosen over fire-and-forget so the archive test can assert the oldest dir is gone."
-      ]
-    },
-    {
-      "area": "src/components/Sidebar.tsx worktree usage line",
-      "rationale": "Count from threads that still hold worktreePath (no du). Click opens Settings (existing WorktreeGcSection). Hidden at 0. Scoped filter applies.",
-      "risks": [
-        "Orphan directories (no thread pointer) are invisible here; Settings gcScan still lists them.",
-        "Bytes are omitted on purpose so the header never walks disk."
+        "Older renderers that omit command still get a read-only JSON card (command == null)."
       ]
     },
     {
       "area": "tests",
-      "rationale": "electron/test/cli-commands.test.js defines discovery (user/project/bundled/plugin skills, custom commands, user-invocable:false, project-wins) and expansion ($ARGUMENTS, namespaced /si:review, reserved orch verbs). cli-commands-runner.test.js is the join: transcript keeps /commit, grok -p gets the SKILL.md body. slashCommands.test.ts and composerCommands.test.tsx cover palette merge and collision with Solenta verbs.",
+      "rationale": "permissionCommand.test.js covers extract/apply/prefix/session-rule. permissionPrompt.test.tsx covers edit, reset, empty, non-command tools. claude.test.js drives the fake CLI: edited allow, edited allowAlways prefix, empty does not consume the prompt. Existing unedited allowAlways still asserts whole-tool.",
       "risks": [
-        "Runner join sets HOME to the tmp dir; a leak would expand against the real skill library.",
-        "Composer extra test only checks /imagine prefix filter, not a 100-row / dump."
-      ]
-    },
-    {
-      "area": "critical",
-      "rationale": "electron/cliCommands.js is the contract: listInvocableCommands + expandInvocableCommand. Plugin roots come from ~/.claude/plugins/installed_plugins.json; namespaced /plugin:skill is always added, bare /skill only if free. ORCH_TOKENS (handoff/advisor/committee) never expand. runner.js startRun expands after orch intercept, keeps the raw slash in the transcript, and puts the expanded (or raw slash) body FIRST so Solenta notes cannot bury the token.",
-      "risks": [
-        "Scanning every SKILL.md on each send is disk-bound; fine at ~100 skills, not if someone points HOME at a huge tree.",
-        "A skill named /review is omitted from the palette (Solenta owns /review) but /review <args> still expands on send — intentional, easy to misread as a bug.",
-        "fromNotice skips expansion; a worker that is supposed to invoke a skill via /name will not."
-      ]
-    },
-    {
-      "area": "impl",
-      "rationale": "IPC skills:commands → listPaletteCommands (no filesystem paths). Composer cliCommands extras are insert-only. ThreadView loads on project.path / threadId. fakeCoder and devCoder stub commands from the in-memory skill list.",
-      "risks": [
-        "Web/devCoder extras are only the fake Skills-tab rows, not real plugins.",
-        "ThreadView refetches the full list on every thread switch; no cache."
-      ]
-    },
-    {
-      "area": "electron/test/checkpoints.test.js + electron/test/verify-gate.test.js — userDataPath on createRunner",
-      "rationale": "Both fixtures already call setupWorktree into tmpDir/worktrees, then startRun. After #511, materializePendingWorktree rematerializes any thread with worktreePath and throws 'worktreeBase is not configured' when userDataPath is empty. Passing userDataPath: fx.tmpDir matches the fixture layout (runner uses path.join(userDataPath, 'worktrees')). Production code is unchanged.",
-      "risks": [
-        "If makeWorktreeFixture ever points worktreeBase somewhere other than tmpDir/worktrees, rematerialize would create a second tree instead of reusing the fixture one."
-      ]
-    },
-    {
-      "area": "electron/test/web.test.js — desktop-only IPC + packaging regex",
-      "rationale": "Two drifted assertions, not product bugs. contextMenu:show is registered in registerIpc outside IPC_HANDLERS on purpose (native Menu.popup needs the sender window; the web bridge must not pop a menu). The test now skips that channel in the IPC_HANDLERS map and still asserts ipcMain.handle(\"contextMenu:show\") exists. package-app.sh copies ws via ROOT_NM_PKGS + node_modules/$pkg; the literal node_modules/ws string lives in verify-package.sh, which the test already checked.",
-      "risks": [
-        "desktopOnly is a skip list. A new desktop-only channel that is NOT registered in registerIpc would still fail the ipcMain.handle regex; a new shared channel dumped into the set would hide a real missing handler.",
-        "ROOT_NM_PKGS=(ws  is order-sensitive. Moving ws off the front of the array would fail the test even if ws is still copied."
+        "The fake CLI permission scenario always proposes npm test; compound-command originals (rm -rf dist && npm build) are only covered in the renderer test."
       ]
     }
   ],
   "risks": [
-    "No test asserts data-tone anywhere, so the colour split is only covered by the existing 'Delegating' text assertions.",
-    "#601 taught that enforceRetention must stay opt-in so one project's setting cannot license reclaiming another's. That split remains (configured Set + explicit 0), but the default is now persisted so boot GC actually runs. Do not collapse retentionFor and explicitRetention.",
-    "A user who opens Edit project and clears Keep worktrees to empty/0 opts out of GC for that project.",
-    "Grok TUI chrome (/skills, /plugins, /memory, /flush) is still not implemented — only skills and custom command markdown.",
-    "Claude custom commands with $0/$1 and YAML argument hints are not substituted; only $ARGUMENTS.",
-    "store.test.js reviewAcceptedHunks mismatch from the original #536 report is already gone on this tree (fixture includes the field plus worktreeRetention: 10 from #559). No store.js change.",
-    "Full electron suite still has environmental reds when memory-server/node_modules is missing (orch-server HTTP + provider injection, MCP SDK). Those are not #536."
+    "Wand rewrite (NL edit via a fast model) is explicitly out of v1.",
+    "Unedited Accept all is still whole-tool Bash; do not treat this PR as shipping #479.",
+    "Guardrails are not re-run on the edited command — a user who edits ls into rm -rf / is approving it on purpose."
   ]
 }

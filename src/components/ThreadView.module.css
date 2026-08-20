@@ -1943,6 +1943,68 @@ a.btn {
   word-break: break-word;
 }
 
+/* Editable command (#509). Looks like the JSON preview until focused. */
+.permissionCommand {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid transparent;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", monospace;
+  line-height: 1.45;
+  resize: vertical;
+  min-height: 3.2em;
+}
+
+.permissionCommand:hover {
+  border-color: rgba(251, 191, 36, 0.35);
+}
+
+.permissionCommand:focus {
+  outline: none;
+  border-color: rgba(251, 191, 36, 0.7);
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.permissionEdited {
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #fbbf24;
+}
+
+.permissionWas {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.permissionReset {
+  margin-left: auto;
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #fde68a;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.permissionReset:hover {
+  text-decoration: underline;
+}
+
 /* Plan approval (ExitPlanMode): rendered markdown, scrolls when long. */
 .planBody {
   padding: 10px 12px;

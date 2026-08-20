@@ -1315,6 +1315,7 @@ describe("runner claude provider", () => {
       const pending = runner.getPendingPermission(thread.id);
       assert.equal(pending.toolName, "Bash");
       assert.equal(pending.summary, "Bash: npm test");
+      assert.equal(pending.command, "npm test");
       assert.ok(pending.requestId);
 
       // The sidebar sees Waiting: awaitingInput set and threads:changed pushed.
@@ -1388,6 +1389,126 @@ describe("runner claude provider", () => {
     } finally {
       delete process.env.CODER_FAKE_CLAUDE_CTRL_FILE;
       delete process.env.CODER_FAKE_CLAUDE_STDIN_FILE;
+    }
+  });
+
+  it("approving an edited command runs the edit, not the original (#509)", async () => {
+    process.env.CODER_FAKE_CLAUDE_SCENARIO = "permission";
+    const ctrlFile = path.join(tmpDir, "ctrl-edit.json");
+    process.env.CODER_FAKE_CLAUDE_CTRL_FILE = ctrlFile;
+    try {
+      const thread = store.getThreads()[0];
+      await runner.startRun({ threadId: thread.id, prompt: "guarded work" });
+      await waitFor(() => runner.getPendingPermission(thread.id) != null);
+      const pending = runner.getPendingPermission(thread.id);
+      assert.equal(pending.command, "npm test");
+
+      runner.respondPermission({
+        threadId: thread.id,
+        requestId: pending.requestId,
+        decision: "allow",
+        updatedCommand: "npm build",
+      });
+      await waitFor(() => store.getThread(thread.id).status === "done");
+
+      const ctrl = JSON.parse(fs.readFileSync(ctrlFile, "utf8"));
+      assert.equal(ctrl.response.response.behavior, "allow");
+      assert.deepEqual(ctrl.response.response.updatedInput, {
+        command: "npm build",
+      });
+      assert.equal(ctrl.response.response.updatedPermissions, undefined);
+
+      const msgs = store.getMessages(thread.id);
+      assert.ok(
+        msgs.some(
+          (m) =>
+            m.role === "event" &&
+            m.text === "Allowed (edited): npm test → npm build",
+        ),
+      );
+    } finally {
+      delete process.env.CODER_FAKE_CLAUDE_CTRL_FILE;
+    }
+  });
+
+  it("allow-always after an edit keys the session rule on the edited prefix (#509)", async () => {
+    process.env.CODER_FAKE_CLAUDE_SCENARIO = "permission";
+    const ctrlFile = path.join(tmpDir, "ctrl-edit-always.json");
+    process.env.CODER_FAKE_CLAUDE_CTRL_FILE = ctrlFile;
+    try {
+      const thread = store.getThreads()[0];
+      await runner.startRun({ threadId: thread.id, prompt: "guarded work" });
+      await waitFor(() => runner.getPendingPermission(thread.id) != null);
+      const pending = runner.getPendingPermission(thread.id);
+
+      runner.respondPermission({
+        threadId: thread.id,
+        requestId: pending.requestId,
+        decision: "allowAlways",
+        updatedCommand: "npm build --watch",
+      });
+      await waitFor(() => store.getThread(thread.id).status === "done");
+
+      const ctrl = JSON.parse(fs.readFileSync(ctrlFile, "utf8"));
+      assert.deepEqual(ctrl.response.response.updatedInput, {
+        command: "npm build --watch",
+      });
+      assert.deepEqual(ctrl.response.response.updatedPermissions, [
+        {
+          type: "addRules",
+          rules: [{ toolName: "Bash", ruleContent: "npm build:*" }],
+          behavior: "allow",
+          destination: "session",
+        },
+      ]);
+
+      const msgs = store.getMessages(thread.id);
+      assert.ok(
+        msgs.some(
+          (m) =>
+            m.role === "event" &&
+            m.text ===
+              "Allowed for session (edited): npm test → npm build --watch",
+        ),
+      );
+    } finally {
+      delete process.env.CODER_FAKE_CLAUDE_CTRL_FILE;
+    }
+  });
+
+  it("rejects an empty edited command without consuming the prompt (#509)", async () => {
+    process.env.CODER_FAKE_CLAUDE_SCENARIO = "permission";
+    const ctrlFile = path.join(tmpDir, "ctrl-empty.json");
+    process.env.CODER_FAKE_CLAUDE_CTRL_FILE = ctrlFile;
+    try {
+      const thread = store.getThreads()[0];
+      await runner.startRun({ threadId: thread.id, prompt: "guarded work" });
+      await waitFor(() => runner.getPendingPermission(thread.id) != null);
+      const pending = runner.getPendingPermission(thread.id);
+
+      assert.throws(
+        () =>
+          runner.respondPermission({
+            threadId: thread.id,
+            requestId: pending.requestId,
+            decision: "allow",
+            updatedCommand: "   ",
+          }),
+        /Command cannot be empty/,
+      );
+      assert.equal(
+        runner.getPendingPermission(thread.id)?.requestId,
+        pending.requestId,
+      );
+
+      runner.respondPermission({
+        threadId: thread.id,
+        requestId: pending.requestId,
+        decision: "deny",
+      });
+      await waitFor(() => store.getThread(thread.id).status === "done");
+    } finally {
+      delete process.env.CODER_FAKE_CLAUDE_CTRL_FILE;
     }
   });
 

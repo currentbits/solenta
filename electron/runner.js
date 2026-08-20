@@ -55,6 +55,11 @@ const {
 const { maybeApplyFmTitle } = require("./fm-title.js");
 const { classifyTool } = require("./guardrails.js");
 const {
+  extractCommand,
+  resolveEditedCommand,
+  sessionAllowRule,
+} = require("./permissionCommand.js");
+const {
   decideQuotaWait,
   formatQuotaWaitClock,
   quotaWaitEnabled,
@@ -1634,6 +1639,7 @@ function createRunner(opts) {
    *   toolName: string,
    *   summary: string,
    *   input: string,
+   *   command: string | null,
    *   questions: ReturnType<typeof questionInfo>,
    *   plan: ReturnType<typeof planText>,
    *   guardrail: { rule: string | null, reason: string } | null,
@@ -1651,6 +1657,7 @@ function createRunner(opts) {
       toolName: p.toolName,
       summary: p.summary,
       input: p.input,
+      command: extractCommand(p.rawInput),
       questions: questionInfo(p.toolName, p.rawInput),
       plan: planText(p.toolName, p.rawInput),
       guardrail: p.guardrail || null,
@@ -1704,10 +1711,13 @@ function createRunner(opts) {
   /**
    * Answer a pending permission prompt. For question prompts, `answers`
    * (question text -> chosen label) rides back as updatedInput.answers.
-   * @param {{ threadId: string, requestId: string, decision: "allow" | "allowAlways" | "deny", answers?: Record<string, string> }} input
+   * `updatedCommand` (#509) replaces the shell command in updatedInput;
+   * allow-always after an edit keys the session rule on the edited prefix.
+   * @param {{ threadId: string, requestId: string, decision: "allow" | "allowAlways" | "deny", answers?: Record<string, string>, updatedCommand?: string }} input
    */
   function respondPermission(input) {
-    const { threadId, requestId, decision, answers } = input || {};
+    const { threadId, requestId, decision, answers, updatedCommand } =
+      input || {};
     const e = active.get(threadId);
     if (!e || e.kind !== "claude" || !e.handle) {
       throw new Error("No active agent run for this thread");
@@ -1716,7 +1726,16 @@ function createRunner(opts) {
     if (idx < 0) {
       throw new Error("Permission request no longer pending");
     }
-    const [pending] = e.pendingPermissions.splice(idx, 1);
+    const pending = e.pendingPermissions[idx];
+    const resolved = resolveEditedCommand(pending.rawInput, updatedCommand);
+    if (
+      (decision === "allow" || decision === "allowAlways") &&
+      resolved.field &&
+      resolved.next === ""
+    ) {
+      throw new Error("Command cannot be empty");
+    }
+    e.pendingPermissions.splice(idx, 1);
     const answerMap =
       answers && typeof answers === "object" && !Array.isArray(answers)
         ? answers
@@ -1727,19 +1746,16 @@ function createRunner(opts) {
       response = {
         behavior: "allow",
         updatedInput: answerMap
-          ? { ...pending.rawInput, answers: answerMap }
-          : pending.rawInput,
+          ? { ...resolved.input, answers: answerMap }
+          : resolved.input,
       };
       if (decision === "allowAlways") {
-        // "Accept all": stop asking for this tool for the rest of the CLI
-        // session (matches Claude Code's own "don't ask again" scope).
+        // Unedited: whole-tool session rule (matches today's Accept all).
+        // Edited: prefix of the *edited* command, never the original (#509).
         response.updatedPermissions = [
-          {
-            type: "addRules",
-            rules: [{ toolName: pending.toolName }],
-            behavior: "allow",
-            destination: "session",
-          },
+          sessionAllowRule(pending.toolName, resolved.next, {
+            edited: resolved.edited,
+          }),
         ];
       }
     } else {
@@ -1773,9 +1789,15 @@ function createRunner(opts) {
         ? `Denied: ${pending.summary}`
         : answerMap
           ? `Answered: ${truncate(Object.values(answerMap).join("; "), 200)}`
-          : decision === "allowAlways"
-            ? `Allowed for session: ${pending.summary}`
-            : `Allowed: ${pending.summary}`;
+          : resolved.edited
+            ? `${
+                decision === "allowAlways"
+                  ? "Allowed for session (edited)"
+                  : "Allowed (edited)"
+              }: ${truncate(resolved.original, 200)} → ${truncate(resolved.next, 200)}`
+            : decision === "allowAlways"
+              ? `Allowed for session: ${pending.summary}`
+              : `Allowed: ${pending.summary}`;
     appendMessage(threadId, "event", label, e.runId);
     if (e.pendingPermissions.length === 0) {
       store.updateThread(threadId, { awaitingInput: false });
