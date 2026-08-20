@@ -187,6 +187,29 @@ already exists or the repo has no instruction file yet. Generated
 files carry `<!-- generated-by: solenta-config-doctor -->`. Local
 checkout only (`requireLocalProject`).
 
+## Code index
+
+Shared per-repo symbol map (issue #377, `electron/codeindex.js`). One
+index per repo, keyed on the project's **main checkout**, read by every
+thread including worktrees — worktrees do not get their own index. On
+disk it is JSON, not sqlite: `userData/codeindex/<first 16 of
+sha1(repoRoot)>.json` (`indexPathFor`), `INDEX_VERSION` 1 (an older
+file is treated as absent). Write is tmp-then-rename.
+
+Refresh is fire-and-forget from the dispatch path (`maybeRefreshIndex`),
+debounced per repo to `REFRESH_MIN_INTERVAL_MS` 60s, never throws,
+inert when `CODER_CODEINDEX_DISABLE=1`. Incremental: a file whose
+`mtimeMs` and `size` still match keeps its symbols. Caps: `MAX_FILES`
+20_000, `MAX_FILE_BYTES` 512 KiB, `MAX_SYMBOLS_PER_FILE` 60. Rank is
+how many of the last 300 commits touched the path (`touchCounts`).
+`readIndex` is synchronous and cached on file mtime+size so the
+dispatch path never scans the repo.
+
+The standing note (`services.codeIndexNoteFor`) is appended to every
+dispatched prompt, never stored in the transcript. Empty when there is
+no index, `fileCount < MIN_FILES_FOR_NOTE` (20), or the disable env is
+set. Whole-note cap `CODEINDEX_NOTE_MAX` 3500 chars.
+
 ## Store
 
 `electron/store.js` persists JSON under Electron userData. Shape:
