@@ -165,7 +165,13 @@
         card. Agent sessions are told this convention, so &ldquo;keep the plan
         on the board&rdquo; is enough to have multi-step work tracked as
         issues. The view needs the GitHub CLI installed and authenticated, and
-        a project whose <code>origin</code> is on GitHub.
+        a project whose <code>origin</code> is on GitHub. The header also
+        shows <strong>review load</strong>: how many open, non-draft PRs
+        are waiting and their combined line count. Thresholds follow the
+        400-line cap &mdash; four PRs or 1,200 lines is busy; seven or
+        2,400 is overloaded &mdash; because an orchestrator that
+        parallelizes agents manufactures review bottleneck, not agent
+        bottleneck.
       </p>
       <p>
         The board can also dispatch for you: turn on auto-dispatch and an issue
@@ -278,7 +284,12 @@
         the next git step — commit, push, open a PR, watch checks, or merge —
         instead of a row of always-visible controls. Create PR works on an
         unpublished worktree without a prior Push. File paths in the
-        transcript open the file in that worktree.
+        transcript open the file in that worktree. Create PR refuses a
+        diff larger than the configured <strong>PR size cap</strong>
+        (default 400 changed lines) before anything is pushed. The
+        header then offers to split the branch into a stack of smaller
+        PRs, or to create this one anyway. Empty the cap in Settings to
+        disable it.
       </p>
       <p>
         PR state is live: checks show as badges on the thread card, and merging
