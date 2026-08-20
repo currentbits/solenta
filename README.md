@@ -211,18 +211,26 @@ The root `package.json` already allows scripts for the pinned Electron version.
 
 - **Teach mode** — hints, not solutions, across all five providers. Autonomy
   steps from Hints to Review to Pair as reviews pass.
-- **Snooze** a thread until tonight or next week; settle-on-merge archives it
-  when the PR lands.
+- **Ask mode** — read-only Q&A from the code map and memory. No tools, no
+  worktree, no agent credits.
+- **Snooze** until tonight or next week; settle-on-merge archives when the
+  PR lands. Pinned threads sit above the list; snoozed, settled, and
+  archived live in shelves. Right-click or ⋯ for rename, pin, snooze, settle.
 - **Automations** — recurring prompts (hourly / daily / weekly) against any
   project, and repeat a finished thread on a schedule.
 - **Usage and fleet analytics** — cost and tokens per provider/model, merge
-  rate, review tax, rework and cost per merged PR. OTel GenAI spans ship to
-  your tracing backend.
+  rate, review tax, rework and cost per merged PR, and felt vs wall-clock
+  speedup. OTel GenAI spans ship to your tracing backend.
 - **Morning digest** — one summary of everything that ran unattended.
 - **Agent profiles** — save a provider + model + effort + permission combination
   and apply it in one click.
 - **Spec mode** — gated requirements → design → tasks artifacts, each approved
-  before the next unlocks.
+  before the next unlocks. tasks.md becomes a dispatch DAG (`needs:`);
+  converge appends missing work back onto the file.
+- **Divergence** — Environment-toggle compare of two runs at the first
+  mismatched tool step (default on).
+- **Claim provenance** — assistant claims tagged repo, memory, issue, or
+  model prior knowledge when ungrounded.
 - **Skills** — browse and edit the `SKILL.md` files your agents can reach.
 - **Dev servers** — start a project's `dev` script from the app and get the URL.
 - **Web mode** — `--serve-web` serves the same UI over HTTP + WebSocket.
