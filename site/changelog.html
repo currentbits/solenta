@@ -56,6 +56,43 @@
         Every notable change to Solenta, newest first.
       </p>
 
+      <h2 id="v0-8-0">0.8.0 <small>2026-08-20</small></h2>
+      <h3>Added</h3>
+      <ul>
+        <li><strong>Flat sidebar.</strong> Thread rows are a status dot, a title and an age — no project group headers. Cards carry their project slug; a scope filter still limits the list to one repo. Pinned threads sit in their own block at the top; snoozed and settled have their own shelves; archived sit at the settled tail. Spaces are gone.</li>
+        <li><strong>Sidebar polish.</strong> Right-click a card for the native thread-actions menu. Subagents nest under the thread that spawned them, idle stopped fork workers drop off the list, and Delegating / Orchestrating / Working statuses are back. Project icons are picked up from the repo's favicon or app icon.</li>
+        <li><strong>Git in the thread.</strong> The worktree diff is a full-height Git tab in the thread header, not a card in the right-hand panel. Environment's Open Git, the next-action Commit, and <code>/review</code> all open it there.</li>
+        <li><strong>Ask mode.</strong> Read-only questions about the repo, answered from the code index and shared memory. No worktree, no tools, and no spend against the daily budget. <em>Start work</em> turns it into a normal thread.</li>
+        <li><strong>Spec dispatch.</strong> Once <code>tasks.md</code> is approved, the checkboxes are a DAG. Dispatch forks a worker per unblocked task; Converge re-reads the artifacts and the repo and appends missing checkboxes.</li>
+        <li><strong>Divergence compare.</strong> When two runs of the same task exist, Environment can pair their tool steps and name the first mismatch. Opt-in per thread.</li>
+        <li><strong><code>/btw</code>.</strong> Ask a side question on the same thread without interrupting the live run. <kbd>⌥Enter</kbd> on a plain draft does the same.</li>
+        <li><strong>Slash palette extras.</strong> The <code>/</code> menu lists the underlying CLI's own skills and custom commands alongside Solenta's verbs.</li>
+        <li><strong>Suggested-work chips.</strong> Out-of-scope findings become one-click new threads — or a planboard issue — instead of derailing the current run.</li>
+        <li><strong>Host thread tools.</strong> Agents can archive, settle, stop, rename, merge and open a PR on threads, not just list, fork, send and poll.</li>
+        <li><strong>Quota-wait.</strong> A provider usage-limit with a reset clock parks the thread and resumes the same prompt when the quota comes back, instead of failing.</li>
+        <li><strong>Review bottleneck.</strong> Create PR refuses a diff larger than the PR size cap (default 400 lines) and offers to split the branch into a stack. Planboard shows review load.</li>
+        <li><strong>Perception gap.</strong> After a thread finishes, a one-tap card asks how much time it felt like it saved; fleet analytics compares that to wall-clock.</li>
+        <li><strong>Provenance chips.</strong> Assistant claims in the transcript are labelled by what they actually cited — repo paths, shared memory, GitHub — or tagged <em>model prior knowledge</em>.</li>
+        <li><strong>Config doctor.</strong> The Memory tab lints <code>AGENTS.md</code> / <code>CLAUDE.md</code> against shared memory, and can write those files from it.</li>
+        <li><strong>Vibe Kanban import.</strong> Settings → <em>Your data</em> reads a local VK database and turns cards into threads.</li>
+        <li><strong>Edit before approve.</strong> A permission prompt that is a shell command is an editable field; approving sends the edited command, not the original.</li>
+        <li><strong>Nightly, side by side.</strong> Nightly ships as Solenta Nightly with its own bundle identifier, so prod and nightly install next to each other.</li>
+      </ul>
+      <h3>Fixed</h3>
+      <ul>
+        <li>Boot no longer walks <code>du</code> over every worktree.</li>
+        <li>Worktree GC actually enforces per-project retention, so stale archived worktrees get cleaned up instead of accumulating.</li>
+        <li>The Electron main process, renderer re-renders and polling, and the memory-server query and write path are snappier.</li>
+        <li>The thread view re-pins when content grows after paint, and autoscroll no longer unsticks on a thread switch.</li>
+        <li><code>error_during_execution</code> / cancelled is no longer shown as a raw Run error.</li>
+        <li>Grok runs in asking modes no longer look user-stopped.</li>
+        <li>Usage view: Kimi is visible again, and Claude token counts include cache tokens.</li>
+        <li>You can add a folder that is not a git repository yet; the destination path is typeable and browsable. Projects can be removed again.</li>
+        <li>A renderer from an older main-process build hard-blocks until you reload.</li>
+        <li>Planboard, Kanban and Activity follow the sidebar's project scope.</li>
+        <li>The new-thread dropdown is fully visible.</li>
+      </ul>
+
       <h2 id="v0-7-0">0.7.0 <small>2026-08-18</small></h2>
       <h3>Added</h3>
       <ul>
