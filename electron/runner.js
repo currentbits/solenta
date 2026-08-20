@@ -23,6 +23,7 @@ const {
   listProviders,
 } = require("./providers.js");
 const orchcommands = require("./orchcommands.js");
+const cliCommands = require("./cliCommands.js");
 const ask = require("./ask.js");
 const {
   getClaudeMcpArgs,
@@ -5036,10 +5037,33 @@ function createRunner(opts) {
         /* never block dispatch */
       }
     }
+    // Slash commands (#606): the TUI would expand `/skill args` before the
+    // model sees them. Headless `-p` does not. Keep the raw `/name` in the
+    // transcript (already appended above) and send the SKILL.md / command
+    // body to the CLI. A leading `/` also stays FIRST in the CLI prompt so
+    // unknown `/foo` is not buried under the hand-off prefix.
+    const rawPrompt = String(prompt ?? "");
+    let cliPrompt = rawPrompt;
+    let slashExpanded = false;
+    if (!input.fromNotice && rawPrompt.trimStart().startsWith("/")) {
+      try {
+        const hit = cliCommands.expandInvocableCommand(rawPrompt, {
+          projectPath: projectForGate && projectForGate.path,
+        });
+        if (hit) {
+          cliPrompt = hit.prompt;
+          slashExpanded = true;
+        }
+      } catch {
+        /* discovery is best-effort; send the raw slash */
+      }
+    }
+    const leadSlash =
+      slashExpanded || rawPrompt.trimStart().startsWith("/");
     const dispatchPrompt =
-      prefix +
-      String(prompt ?? "") +
+      (leadSlash ? cliPrompt : prefix + cliPrompt) +
       attachmentPromptSection(attachments) +
+      (leadSlash ? prefix : "") +
       services.planboardNoteFor(projectForGate && projectForGate.path) +
       services.selfIdNoteFor(
         dispatchThread,

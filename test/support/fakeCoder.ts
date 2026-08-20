@@ -38,6 +38,7 @@ import type {
   PrInfo,
   ProjectInfo,
   ProviderInfo,
+  CliSlashCommand,
   SkillInfo,
   SkillTarget,
   SpaceInfo,
@@ -508,6 +509,16 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           };
         });
         return rec("skills.sync", [], { copied, skills: names });
+      },
+      commands: (input: unknown) => {
+        const rows: CliSlashCommand[] = skillsState
+          .filter((s) => s.source !== "project")
+          .map((s) => ({
+            name: `/${s.name}`,
+            hint: s.description,
+            kind: "insert" as const,
+          }));
+        return rec("skills.commands", [input], rows);
       },
     },
     providers: { list: () => rec("providers.list", [], providers) },

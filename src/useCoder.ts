@@ -39,6 +39,7 @@ import type {
   ProjectUpdateInput,
   ProviderInfo,
   ReasoningEffort,
+  CliSlashCommand,
   SkillInfo,
   SkillTarget,
   SkillWrite,
@@ -529,6 +530,9 @@ export interface UseCoderResult {
   ) => Promise<{ name: string; installedIn: SkillTarget[] }>;
   removeSkill: (input: { name: string }) => Promise<void>;
   syncSkills: () => Promise<{ copied: number; skills: string[] }>;
+  listCliCommands: (input?: {
+    projectPath?: string;
+  }) => Promise<CliSlashCommand[]>;
   /** Full-content thread search (titles + message text); Sidebar owns debounce/state. */
   searchThreads: (input: { query: string }) => Promise<ThreadInfo[]>;
   /** Load another thread's transcript without marking it visited (#393). */
@@ -2569,6 +2573,13 @@ export function useCoder(): UseCoderResult {
     return api.skills.sync();
   }, [api]);
 
+  const listCliCommands = useCallback(
+    async (input?: { projectPath?: string }) => {
+      return api.skills.commands(input);
+    },
+    [api],
+  );
+
   const searchThreads = useCallback(
     async (input: { query: string }) => {
       return api.threads.search(input);
@@ -2719,6 +2730,7 @@ export function useCoder(): UseCoderResult {
     addSkill,
     removeSkill,
     syncSkills,
+    listCliCommands,
     searchThreads,
     peekThread,
   };

@@ -35,6 +35,7 @@ import type {
   PendingPermissionInfo,
   PermissionDecision,
   PermissionMode,
+  CliSlashCommand,
   ProjectInfo,
   AgentProfile,
   ProviderInfo,
@@ -89,7 +90,7 @@ import {
   toggleRunCollapsed,
   type RunHeader,
 } from "../runHeader";
-import type { SlashAction } from "../slashCommands";
+import type { SlashAction, SlashCommand } from "../slashCommands";
 import { buildBestOfNEntries } from "../bestOfN";
 import { createPrPrompt, isPrTooLargeMessage, splitPrPrompt } from "../prUi";
 import { suggestNextGitAction } from "../nextGitAction";
@@ -470,6 +471,10 @@ interface ThreadViewProps {
   onSuggestCommitMessage: () => Promise<{ message: string }>;
   /** File lookup for the composer @-mention popup. */
   onListFiles?: (query: string) => Promise<string[]>;
+  /** CLI skills and custom commands for the composer `/` palette (#606). */
+  onListCliCommands?: (input?: {
+    projectPath?: string;
+  }) => Promise<CliSlashCommand[]>;
   /** Resolve transcript path tokens against the thread worktree. */
   onResolvePaths?: (
     paths: string[],
@@ -3067,6 +3072,7 @@ export const ThreadView = memo(function ThreadView({
   onRevertFile,
   onSuggestCommitMessage,
   onListFiles,
+  onListCliCommands,
   onResolvePaths,
   onOpenWorkspacePath,
   onLoadImage,
@@ -3139,8 +3145,34 @@ export const ThreadView = memo(function ThreadView({
   const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(
     null,
   );
+  const [cliCommands, setCliCommands] = useState<SlashCommand[]>([]);
   const copyFlashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const threadId = detail?.thread.id ?? null;
+
+  useEffect(() => {
+    if (!onListCliCommands) {
+      setCliCommands([]);
+      return;
+    }
+    let cancelled = false;
+    onListCliCommands({ projectPath: project?.path })
+      .then((rows) => {
+        if (cancelled) return;
+        setCliCommands(
+          rows.map((r) => ({
+            name: r.name,
+            hint: r.hint,
+            kind: "insert" as const,
+          })),
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setCliCommands([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [onListCliCommands, project?.path, threadId]);
   const [layoutThreadId, setLayoutThreadId] = useState<string | null>(threadId);
   const [layout, setLayout] = useState<LayoutNode>(() =>
     hydratePaneLayout(threadId, { openDiff: changesOpen }).layout,
@@ -4739,6 +4771,7 @@ export const ThreadView = memo(function ThreadView({
         onLoadAttachmentImage={onLoadAttachmentImage}
         onDropAttachmentFiles={onDropAttachmentFiles}
         onSlashAction={handleSlashAction}
+        cliCommands={cliCommands}
         onStopRun={onStopRun}
         dropHostRef={dropHostRef}
         onFileDragChange={setFileDrag}

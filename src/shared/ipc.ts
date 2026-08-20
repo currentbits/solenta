@@ -1815,6 +1815,16 @@ export interface SkillWrite {
   body: string;
 }
 
+/**
+ * A CLI skill or custom command for the composer `/` palette (#606).
+ * Insert-only: the runner expands `/name args` into SKILL.md / command body.
+ */
+export interface CliSlashCommand {
+  name: string;
+  hint: string;
+  kind: "insert";
+}
+
 export interface AppStatus {
   /** Aggregated cost of all runs that finished today (local time). */
   spendTodayUsd: number;
@@ -1930,6 +1940,8 @@ export interface CoderApi {
     remove(input: { name: string }): Promise<void>;
     /** Copies every skill into the targets it is missing from. */
     sync(): Promise<{ copied: number; skills: string[] }>;
+    /** CLI `/` extras: invocable skills and custom commands (#606). */
+    commands(input?: { projectPath?: string }): Promise<CliSlashCommand[]>;
   };
   providers: {
     list(): Promise<ProviderInfo[]>;

@@ -39,6 +39,7 @@ import type {
   ProjectInfo,
   ProviderInfo,
   RewindResult,
+  CliSlashCommand,
   SkillInfo,
   SkillTarget,
   SpaceInfo,
@@ -323,6 +324,8 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
         call<{ name: string; installedIn: SkillTarget[] }>("skills:add", input),
       remove: (input) => call<void>("skills:remove", input),
       sync: () => call<{ copied: number; skills: string[] }>("skills:sync"),
+      commands: (input) =>
+        call<CliSlashCommand[]>("skills:commands", input),
     },
     providers: {
       list: () => call<ProviderInfo[]>("providers:list"),

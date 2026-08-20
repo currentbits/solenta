@@ -53,6 +53,7 @@ import type {
   ProviderInfo,
   ReasoningEffort,
   SessionUsage,
+  CliSlashCommand,
   SkillInfo,
   SkillTarget,
   SkillWrite,
@@ -2260,6 +2261,15 @@ function buildDevCoder(): CoderApi {
           };
         });
         return { copied, skills };
+      },
+      async commands(): Promise<CliSlashCommand[]> {
+        return skillsList
+          .filter((s) => s.source !== "project")
+          .map((s) => ({
+            name: `/${s.name}`,
+            hint: s.description,
+            kind: "insert" as const,
+          }));
       },
     },
     providers: {

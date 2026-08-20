@@ -75,6 +75,7 @@ const coder = {
     add: (input) => invoke("skills:add", input),
     remove: (input) => invoke("skills:remove", input),
     sync: () => invoke("skills:sync"),
+    commands: (input) => invoke("skills:commands", input),
   },
   providers: {
     list: () => invoke("providers:list"),

@@ -197,6 +197,48 @@ describe("Composer / command popup", () => {
     );
   });
 
+  it("lists CLI skill extras after the built-in verbs", async () => {
+    const m = await mount(
+      <Composer
+        threadId="t1"
+        branch="agentmux/abc"
+        permissionMode="default"
+        onPermissionModeChange={() => {}}
+        provider="claude"
+        model={null}
+        reasoningEffort={null}
+        providers={PROVIDERS}
+        workflows={[]}
+        onSetProvider={() => {}}
+        onSetReasoningEffort={() => {}}
+        onSaveWorkflow={async (t) => ({
+          id: "saved",
+          name: t.name,
+          builtin: false,
+          phases: t.phases,
+        })}
+        onRemoveWorkflow={async () => {}}
+        sessionId={null}
+        hasWorktree={true}
+        onSend={() => {}}
+        onBuild={() => {}}
+        cliCommands={[
+          {
+            name: "/imagine",
+            hint: "Generate an image",
+            kind: "insert",
+          },
+        ]}
+      />,
+    );
+    const el = textarea(m);
+    await m.type(el, "/im");
+    await caretToEnd(m);
+    assert.ok(commandList(m), "popup open after /im");
+    assert.ok(m.byText("/imagine"), "skill extra listed");
+    assert.equal(m.byText("/compact"), null, "compact filtered out");
+  });
+
   it("unknown /foo never opens the popup so a send still goes to the model", async () => {
     const sends: string[] = [];
     const m = await mountComposer((prompt) => sends.push(prompt));

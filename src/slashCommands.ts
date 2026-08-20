@@ -143,7 +143,15 @@ export function commandQuery(text: string): string | null {
   return text.startsWith("/") && !/\s/.test(text) ? text : null;
 }
 
-/** Commands whose name starts with the live token. */
-export function matchSlashCommands(query: string): SlashCommand[] {
-  return SLASH_COMMANDS.filter((c) => c.name.startsWith(query));
+/**
+ * Commands whose name starts with the live token. `extras` are CLI skills
+ * and custom commands (#606); a name Solenta already owns stays ours.
+ */
+export function matchSlashCommands(
+  query: string,
+  extras: readonly SlashCommand[] = [],
+): SlashCommand[] {
+  const reserved = new Set(SLASH_COMMANDS.map((c) => c.name));
+  const extra = extras.filter((c) => !reserved.has(c.name));
+  return [...SLASH_COMMANDS, ...extra].filter((c) => c.name.startsWith(query));
 }

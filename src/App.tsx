@@ -214,6 +214,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     addSkill,
     removeSkill,
     syncSkills,
+    listCliCommands,
     searchThreads,
     peekThread,
     automations,
@@ -1161,6 +1162,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onRevertFile={revertFile}
         onSuggestCommitMessage={suggestCommitMessage}
         onListFiles={listFiles}
+        onListCliCommands={listCliCommands}
         onResolvePaths={resolvePaths}
         onOpenWorkspacePath={openWorkspacePath}
         onLoadImage={loadToolImage}

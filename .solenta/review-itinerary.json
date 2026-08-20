@@ -55,11 +55,38 @@
         "Orphan directories (no thread pointer) are invisible here; Settings gcScan still lists them.",
         "Bytes are omitted on purpose so the header never walks disk."
       ]
+    },
+    {
+      "area": "tests",
+      "rationale": "electron/test/cli-commands.test.js defines discovery (user/project/bundled/plugin skills, custom commands, user-invocable:false, project-wins) and expansion ($ARGUMENTS, namespaced /si:review, reserved orch verbs). cli-commands-runner.test.js is the join: transcript keeps /commit, grok -p gets the SKILL.md body. slashCommands.test.ts and composerCommands.test.tsx cover palette merge and collision with Solenta verbs.",
+      "risks": [
+        "Runner join sets HOME to the tmp dir; a leak would expand against the real skill library.",
+        "Composer extra test only checks /imagine prefix filter, not a 100-row / dump."
+      ]
+    },
+    {
+      "area": "critical",
+      "rationale": "electron/cliCommands.js is the contract: listInvocableCommands + expandInvocableCommand. Plugin roots come from ~/.claude/plugins/installed_plugins.json; namespaced /plugin:skill is always added, bare /skill only if free. ORCH_TOKENS (handoff/advisor/committee) never expand. runner.js startRun expands after orch intercept, keeps the raw slash in the transcript, and puts the expanded (or raw slash) body FIRST so Solenta notes cannot bury the token.",
+      "risks": [
+        "Scanning every SKILL.md on each send is disk-bound; fine at ~100 skills, not if someone points HOME at a huge tree.",
+        "A skill named /review is omitted from the palette (Solenta owns /review) but /review <args> still expands on send — intentional, easy to misread as a bug.",
+        "fromNotice skips expansion; a worker that is supposed to invoke a skill via /name will not."
+      ]
+    },
+    {
+      "area": "impl",
+      "rationale": "IPC skills:commands → listPaletteCommands (no filesystem paths). Composer cliCommands extras are insert-only. ThreadView loads on project.path / threadId. fakeCoder and devCoder stub commands from the in-memory skill list.",
+      "risks": [
+        "Web/devCoder extras are only the fake Skills-tab rows, not real plugins.",
+        "ThreadView refetches the full list on every thread switch; no cache."
+      ]
     }
   ],
   "risks": [
     "No test asserts data-tone anywhere, so the colour split is only covered by the existing 'Delegating' text assertions.",
     "#601 taught that enforceRetention must stay opt-in so one project's setting cannot license reclaiming another's. That split remains (configured Set + explicit 0), but the default is now persisted so boot GC actually runs. Do not collapse retentionFor and explicitRetention.",
-    "A user who opens Edit project and clears Keep worktrees to empty/0 opts out of GC for that project."
+    "A user who opens Edit project and clears Keep worktrees to empty/0 opts out of GC for that project.",
+    "Grok TUI chrome (/skills, /plugins, /memory, /flush) is still not implemented — only skills and custom command markdown.",
+    "Claude custom commands with $0/$1 and YAML argument hints are not substituted; only $ARGUMENTS."
   ]
 }

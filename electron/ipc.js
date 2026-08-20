@@ -36,6 +36,7 @@ const { readToolImage } = require("./tool-images.js");
 const attachments = require("./attachments.js");
 const { syncUserMcpServers } = require("./memory-sup.js");
 const skills = require("./skills.js");
+const cliCommands = require("./cliCommands.js");
 const { fetchIssue, listIssues, setPlanStatus, createIssue } = require("./issues.js");
 const automations = require("./automations.js");
 const { buildActivity } = require("./activity.js");
@@ -684,6 +685,13 @@ const IPC_HANDLERS = {
   },
   "skills:sync": async (ctx) => {
     return skills.syncSkills();
+  },
+  "skills:commands": async (ctx, input) => {
+    const projectPath =
+      input && typeof input.projectPath === "string"
+        ? input.projectPath
+        : null;
+    return cliCommands.listPaletteCommands({ projectPath });
   },
   "providers:list": async (ctx) => {
     return services.listProvidersForApi(ctx.store);

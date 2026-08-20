@@ -154,6 +154,11 @@ interface ComposerProps {
    */
   onSlashAction?: (action: SlashAction) => void;
   /**
+   * Extra `/` rows from the underlying CLI (#606): skills and custom
+   * commands. Insert-only; Solenta-owned names in the static palette win.
+   */
+  cliCommands?: readonly SlashCommand[];
+  /**
    * Live-turn interrupt (issue #478). Esc, and Ctrl+C with no selection,
    * call this while `busy`. The draft is left alone.
    */
@@ -313,6 +318,7 @@ export function Composer({
   onLoadAttachmentImage,
   onDropAttachmentFiles,
   onSlashAction,
+  cliCommands,
   onStopRun,
   dropHostRef,
   onFileDragChange,
@@ -426,7 +432,9 @@ export function Composer({
   const commandDismissed = useRef(false);
   /** Last idle Esc; a second press within DOUBLE_ESC_MS rewinds (#478). */
   const lastEscAt = useRef(0);
-  const commandMatches = command ? matchSlashCommands(command) : [];
+  const commandMatches = command
+    ? matchSlashCommands(command, cliCommands)
+    : [];
   const commandOpen = commandMatches.length > 0;
 
   const closeCommand = useCallback(() => {
