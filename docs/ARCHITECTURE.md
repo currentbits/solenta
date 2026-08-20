@@ -155,6 +155,38 @@ Config file (env `CODER_MEMORY_CONFIG` or default under Application Support/code
 
 `GET /health` is open; other routes and MCP require the bearer token.
 
+**Provenance** (issue #404, `src/provenance.ts`). Every assistant
+message is classified by where its content could have come from: repo
+paths (Read/Edit/Grep/… tools or backticked paths in the text), shared
+memory (`memory_*` / `session_*` tools, including
+`mcp__coder-memory__…` prefixes), or GitHub issue/PR refs (`#404`,
+`gh issue`/`gh pr`, github.com URLs). Those three tiers are
+addressable. A substantive message with no addressable source is the
+case the feature exists for (model prior knowledge). Short chatter is
+never tagged: `PRIOR_MIN_CHARS` 240. Cap per tier `MAX_REFS` 6.
+`messageProvenance` scans back to the previous user message so chip
+order matches tool order. `provenanceVisible` is always true when
+grounded, otherwise only when the trimmed text is long enough.
+
+**Agent-config doctor** (issue #412, `electron/configDoctor.js`). Lints
+`AGENTS.md` / `CLAUDE.md` (and siblings in `ROOT_FILE_NAMES`, plus
+one-level `packages/*/AGENTS.md|CLAUDE.md`) against Anthropic's
+six-axis 100-point rubric (`AXIS_MAX`: commands 20, architecture 20,
+patterns 15, conciseness 15, currency 15, actionability 15). Grades
+A≥90 / B≥70 / C≥50 / D≥30 / else F. Deterministic — no LLM. Scoring
+is heuristic; generation is a template over memory entries
+(`convention` + `strategy` always, `knowledge` only when
+importance ≥ 3 or it has citations; caps 20 / 10 / 15). IPC:
+`projects:lintAgentConfig` / `previewAgentConfig` /
+`writeAgentConfig` (`services.lintAgentConfig` etc.). UI is
+`ConfigDoctorCard` in `src/components/MemoryTab.tsx`. Writes only
+`AGENTS.md` / `CLAUDE.md` / `GEMINI.md` (`WRITEABLE_BASENAMES`);
+`assertWriteableRel` refuses `..` and paths outside the project.
+Default write set is always `AGENTS.md`, plus `CLAUDE.md` when it
+already exists or the repo has no instruction file yet. Generated
+files carry `<!-- generated-by: solenta-config-doctor -->`. Local
+checkout only (`requireLocalProject`).
+
 ## Store
 
 `electron/store.js` persists JSON under Electron userData. Shape:
