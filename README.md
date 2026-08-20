@@ -65,7 +65,8 @@ Grok · thread 6
 - **Embeddings** — near-dup and contradiction detection so the store does not
   bloat with repeated or conflicting facts.
 - **memory_distill** — collapse raw entries into strategy notes.
-- **Memory tab** — reads the same SQLite file, so you see what the agents see.
+- **Memory tab** — reads the same SQLite file. A config doctor lints and
+  regenerates CLAUDE.md / AGENTS.md from shared memory.
 - **Per-repo code index** — a symbol index built once and injected into every
   dispatched prompt, so a fresh worker starts knowing where things live.
 
