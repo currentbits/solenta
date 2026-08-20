@@ -75,11 +75,11 @@ Grok · thread 6
 Memory is why Solenta exists. The rest is so you can run the agents that write
 it.
 
-- **Five providers, one UI** — Claude Code, Codex, Kimi Code, Grok, and OpenCode,
-  with model overrides, session resume, and one-shot resume on quota reset.
+- **Five providers, one UI** — Claude Code, Codex, Kimi Code, Grok, and
+  OpenCode, with model overrides, session resume, and quota-reset resume.
 - **Git in the loop** — fail-closed worktrees, next-git-action button, live CI
   badges, review itinerary, conflict forecast. Oversized PRs (default 400
-  lines) are refused and offered as a stacked split.
+  lines) are refused; the header offers a stacked split.
 - **Planboard** — a project's plan as its GitHub issues via `gh`, with auto-
   dispatch from `plan:todo` and a review-load meter on the open PR queue.
 - **Orchestration** — workers, crews, `/handoff`, `/advisor`, `/committee`, and
@@ -227,8 +227,8 @@ The root `package.json` already allows scripts for the pinned Electron version.
 - **Spec mode** — gated requirements → design → tasks artifacts, each approved
   before the next unlocks. tasks.md becomes a dispatch DAG (`needs:`);
   converge appends missing work back onto the file.
-- **Divergence** — Environment-toggle compare of two runs at the first
-  mismatched tool step (default on).
+- **Divergence** — compare two runs at the first mismatched tool step.
+  Toggled from Environment (default on).
 - **Claim provenance** — assistant claims tagged repo, memory, issue, or
   model prior knowledge when ungrounded.
 - **Skills** — browse and edit the `SKILL.md` files your agents can reach.
