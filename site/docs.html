@@ -230,9 +230,13 @@
         Each thread can get its own <strong>git worktree</strong>, so agents
         work on an isolated branch and never touch your checkout. Setup is
         fail-closed: if the worktree cannot be created, the thread errors
-        instead of silently running in your working copy. The Environment
-        panel shows the diff, runs <code>git pull</code>, starts the project
-        dev server, and holds Fork and Handoff.
+        instead of silently running in your working copy. The worktree
+        diff is a full-height <strong>Git</strong> pane in the thread
+        center &mdash; Environment's Open Git, the next-action Commit, and
+        <code>/review</code> all open it there, not as a card in the
+        right-hand panel. The Environment tab still runs
+        <code>git pull --ff-only</code>, starts the project dev server, and
+        holds Fork and Handoff.
       </p>
       <p>
         The header carries one <strong>next-action</strong> button that names
