@@ -1118,7 +1118,11 @@ describe("Sidebar remove + edit project (scope menu)", () => {
         "This permanently clears conversation history for those threads.",
       ),
     );
-    assert.ok(text.includes("This removes only this project entry."));
+    assert.ok(text.includes("The repository checkout itself is not deleted."));
+    assert.ok(
+      !/\bworktree/.test(text),
+      "no worktree copy when none of the project's threads have a worktreePath",
+    );
     m.unmount();
   });
 
@@ -1160,6 +1164,85 @@ describe("Sidebar remove + edit project (scope menu)", () => {
     const text = m.query('[data-remove-confirm="p2"]')?.textContent || "";
     assert.ok(
       text.includes("Remove project acme/billing and delete its 1 thread?"),
+    );
+    m.unmount();
+  });
+
+  it("confirm names how many worktrees will be deleted from disk", async () => {
+    await clearSidebarStorage();
+    const m = await mount(
+      sidebar(
+        [
+          thread({
+            id: "t-p1-a",
+            title: "ledger a",
+            projectId: "p1",
+            worktreePath: "/tmp/wt/other",
+          }),
+          thread({
+            id: "t-p2-a",
+            title: "billing a",
+            projectId: "p2",
+            worktreePath: "/tmp/wt/a",
+          }),
+          thread({
+            id: "t-p2-b",
+            title: "billing b",
+            projectId: "p2",
+            worktreePath: "/tmp/wt/b",
+          }),
+          thread({
+            id: "t-p2-c",
+            title: "billing c",
+            projectId: "p2",
+          }),
+        ],
+        {
+          projects: [p1, p2],
+          onRemoveProject: () => {},
+        },
+      ),
+    );
+    await openScopeMenu(m);
+    await m.click(m.query('[data-project-remove="p2"]')!);
+    const text = m.query('[data-remove-confirm="p2"]')?.textContent || "";
+    assert.ok(
+      text.includes(
+        "Deletes 2 worktrees from disk, including any uncommitted changes in them.",
+      ),
+    );
+    assert.ok(
+      !text.includes("Deletes 1 worktree"),
+      "other-project worktrees must not count",
+    );
+    m.unmount();
+  });
+
+  it("confirm uses singular worktree wording", async () => {
+    await clearSidebarStorage();
+    const m = await mount(
+      sidebar(
+        [
+          thread({
+            id: "only",
+            title: "only",
+            projectId: "p2",
+            worktreePath: "/tmp/wt/only",
+          }),
+        ],
+        {
+          projects: [p1, p2],
+          onRemoveProject: () => {},
+        },
+      ),
+    );
+    await openScopeMenu(m);
+    await m.click(m.query('[data-project-remove="p2"]')!);
+    const text = m.query('[data-remove-confirm="p2"]')?.textContent || "";
+    assert.ok(
+      text.includes(
+        "Deletes 1 worktree from disk, including any uncommitted changes in them.",
+      ),
     );
     m.unmount();
   });

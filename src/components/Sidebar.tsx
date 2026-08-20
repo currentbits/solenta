@@ -2348,7 +2348,11 @@ export const Sidebar = memo(function Sidebar({
           const count = threads.filter(
             (t) => t.projectId === confirmProject.id,
           ).length;
+          const worktreeCount = threads.filter(
+            (t) => t.projectId === confirmProject.id && t.worktreePath,
+          ).length;
           const threadWord = count === 1 ? "thread" : "threads";
+          const worktreeWord = worktreeCount === 1 ? "worktree" : "worktrees";
           const title = `Remove project ${confirmProject.slug} and delete its ${count} ${threadWord}?`;
           const closeConfirm = () => {
             if (removePending) return;
@@ -2379,8 +2383,14 @@ export const Sidebar = memo(function Sidebar({
                   This permanently clears conversation history for those
                   threads.
                 </p>
+                {worktreeCount > 0 && (
+                  <p className={styles.removeConfirmBody}>
+                    Deletes {worktreeCount} {worktreeWord} from disk, including
+                    any uncommitted changes in them.
+                  </p>
+                )}
                 <p className={styles.removeConfirmBody}>
-                  This removes only this project entry.
+                  The repository checkout itself is not deleted.
                 </p>
                 <div className={styles.removeConfirmActions}>
                   <button

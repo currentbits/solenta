@@ -669,8 +669,10 @@ describe("App remove-project wiring (round 41)", () => {
     const toast = m.query('[data-toast="error"]');
     assert.ok(toast, "error toast must render on reject");
     assert.ok(
-      (toast!.textContent || "").includes('Failed to remove "acme/drop"'),
-      "toast title must be Failed to remove \"slug\"",
+      (toast!.textContent || "").includes(
+        'Failed to remove "acme/drop": Cannot remove a project while a run is active',
+      ),
+      "toast title must include the main-process reason",
     );
     // Dialog closed; app still alive.
     assert.equal(m.query('[data-remove-confirm="p-drop"]'), null);
