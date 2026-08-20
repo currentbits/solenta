@@ -19,6 +19,8 @@ const TICK_MS = 5000;
 export interface KanbanViewProps {
   threads: ThreadInfo[];
   projects: ProjectInfo[];
+  /** Sidebar project scope: only show this project's threads. Null/omitted shows all. */
+  projectScope?: string | null;
   providers: ProviderInfo[];
   onSelectThread: (id: string) => void;
   onCreateThread?: () => void;
@@ -30,6 +32,7 @@ export interface KanbanViewProps {
 export function KanbanView({
   threads,
   projects,
+  projectScope = null,
   providers,
   onSelectThread,
   onCreateThread,
@@ -55,9 +58,16 @@ export function KanbanView({
     [now, autoSettleAfterDays, autoSettleOnMerge],
   );
 
+  const scoped = useMemo(
+    () =>
+      projectScope
+        ? threads.filter((t) => t.projectId === projectScope)
+        : threads,
+    [threads, projectScope],
+  );
   const columns = useMemo(
-    () => kanbanColumns(threads, settleOpts),
-    [threads, settleOpts],
+    () => kanbanColumns(scoped, settleOpts),
+    [scoped, settleOpts],
   );
   const empty = isKanbanEmpty(columns);
   const waitStates = useMemo(() => buildWaitStates(threads), [threads]);

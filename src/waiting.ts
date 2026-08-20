@@ -102,10 +102,30 @@ export function isDelegating(
   return wait != null && (status === "done" || status === "idle");
 }
 
+/**
+ * Descriptions of the running in-agent subagents (issue #542). A WaitChild
+ * with no thread id is an Agent-tool subagent: nothing to navigate to, and
+ * the only place its description is visible.
+ */
+export function subagentNames(state: WaitState): string[] {
+  return state.children.filter((c) => c.id == null).map((c) => c.title);
+}
+
+/** "2 workers", "1 subagent", or "2 workers · 1 subagent". */
+function childPhrase(children: readonly WaitChild[]): string {
+  const subs = children.filter((c) => c.id == null).length;
+  const workers = children.length - subs;
+  const parts: string[] = [];
+  if (workers > 0) {
+    parts.push(`${workers} ${workers === 1 ? "worker" : "workers"}`);
+  }
+  if (subs > 0) parts.push(`${subs} ${subs === 1 ? "subagent" : "subagents"}`);
+  return parts.join(" · ");
+}
+
 /** "Waiting on 2 workers · 3m · 1 blocked". */
 export function waitLabel(state: WaitState, now = Date.now()): string {
-  const n = state.children.length;
-  const parts = [`Waiting on ${n} ${n === 1 ? "worker" : "workers"}`];
+  const parts = [`Waiting on ${childPhrase(state.children)}`];
   if (state.since != null) parts.push(formatElapsed(state.since, now));
   if (state.blocked > 0) parts.push(`${state.blocked} blocked`);
   return parts.join(" · ");
@@ -113,8 +133,7 @@ export function waitLabel(state: WaitState, now = Date.now()): string {
 
 /** Hover detail: one line per child, blocked ones called out. */
 export function waitTooltip(state: WaitState): string {
-  const n = state.children.length;
-  const head = `Waiting on ${n} ${n === 1 ? "worker" : "workers"}:`;
+  const head = `Waiting on ${childPhrase(state.children)}:`;
   return [
     head,
     ...state.children.map(

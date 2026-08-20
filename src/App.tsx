@@ -237,6 +237,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   const [editProjectId, setEditProjectId] = useState<string | null>(null);
   const [view, setView] = useState<AppView>("thread");
   const [planboardProjectId, setPlanboardProjectId] = useState<string | null>(null);
+  const [kanbanProjectId, setKanbanProjectId] = useState<string | null>(null);
+  const [activityProjectId, setActivityProjectId] = useState<string | null>(null);
   const [repeatDraft, setRepeatDraft] = useState<RepeatDraft | null>(null);
   const [workflowDraft, setWorkflowDraft] = useState<DistilledWorkflow | null>(
     null,
@@ -269,7 +271,10 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   // stays identical, so the handlers below are stable and the list-derived
   // ones (handoffSource, rosterKey) collapse the churning array to a value
   // that moves when the thing the pane cares about moves.
-  const openKanban = useCallback(() => setView("kanban"), []);
+  const openKanban = useCallback((pid?: string | null) => {
+    setKanbanProjectId(pid ?? null);
+    setView("kanban");
+  }, []);
   const openPlanboard = useCallback((pid?: string | null) => {
     setPlanboardProjectId(pid ?? null);
     setView("planboard");
@@ -283,7 +288,10 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     setView("automations");
     setDrawer(null);
   }, []);
-  const openActivity = useCallback(() => setView("activity"), []);
+  const openActivity = useCallback((pid?: string | null) => {
+    setActivityProjectId(pid ?? null);
+    setView("activity");
+  }, []);
   const openUsage = useCallback(() => {
     setView("usage");
     setDrawer(null);
@@ -1004,6 +1012,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           {view === "activity" ? (
             <ActivityView
               projects={projects}
+              projectScope={activityProjectId}
               listActivity={listActivity}
               onSelectThread={handleSelectThread}
             />
@@ -1067,6 +1076,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             <KanbanView
               threads={threads}
               projects={projects}
+              projectScope={kanbanProjectId}
               providers={providers}
               onSelectThread={handleSelectThread}
               onCreateThread={handleCreateThreadPlain}

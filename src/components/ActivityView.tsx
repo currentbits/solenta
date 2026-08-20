@@ -6,12 +6,15 @@ import styles from "./ActivityView.module.css";
 
 export interface ActivityViewProps {
   projects: ProjectInfo[];
+  /** Sidebar project scope: only show this project's activity. Null/omitted shows all. */
+  projectScope?: string | null;
   listActivity: () => Promise<ActivityItem[]>;
   onSelectThread: (id: string) => void;
 }
 
 export function ActivityView({
   projects,
+  projectScope = null,
   listActivity,
   onSelectThread,
 }: ActivityViewProps) {
@@ -49,8 +52,15 @@ export function ActivityView({
     return map;
   }, [projects]);
 
-  const groups = useMemo(() => groupActivityByDay(items, now), [items, now]);
-  const empty = !loading && items.length === 0;
+  const scoped = useMemo(
+    () =>
+      projectScope
+        ? items.filter((i) => i.projectId === projectScope)
+        : items,
+    [items, projectScope],
+  );
+  const groups = useMemo(() => groupActivityByDay(scoped, now), [scoped, now]);
+  const empty = !loading && scoped.length === 0;
 
   return (
     <main className={styles.main} data-activity="">

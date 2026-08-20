@@ -138,6 +138,8 @@ function sidebar(
     onRenameThread?: (threadId: string, title: string) => void;
     onFork?: (threadId: string, opts?: { provider?: string }) => void;
     onOpenPlanboard?: (scopedProjectId?: string | null) => void;
+    onOpenKanban?: (scopedProjectId?: string | null) => void;
+    onOpenActivity?: (scopedProjectId?: string | null) => void;
     revealThreadId?: string | null;
     onRevealHandled?: () => void;
     updateState?: UpdateStatus["state"] | null;
@@ -167,6 +169,8 @@ function sidebar(
       onRenameThread={over.onRenameThread}
       onFork={over.onFork}
       onOpenPlanboard={over.onOpenPlanboard}
+      onOpenKanban={over.onOpenKanban}
+      onOpenActivity={over.onOpenActivity}
       onCreateThreadFromIssue={over.onCreateThreadFromIssue}
       revealThreadId={over.revealThreadId ?? null}
       onRevealHandled={over.onRevealHandled}
@@ -874,6 +878,88 @@ describe("Sidebar project scope", () => {
     assert.deepEqual(opened, [null]);
     m.unmount();
   });
+
+  it("kanban nav passes the scoped project id (#598)", async () => {
+    await clearSidebarStorage();
+    const opened: Array<string | null | undefined> = [];
+    const m = await mount(
+      sidebar(THREADS, {
+        projects: [p1, p2],
+        onOpenKanban: (pid) => {
+          opened.push(pid);
+        },
+      }),
+    );
+    await openScopeMenu(m);
+    await m.click(m.query('[data-scope-item="p2"]')!);
+    await m.flush();
+    const btn = m.query('[data-view-nav="kanban"]') as HTMLButtonElement | null;
+    assert.ok(btn, "kanban nav button");
+    await m.click(btn);
+    await m.flush();
+    assert.deepEqual(opened, ["p2"]);
+    m.unmount();
+  });
+
+  it("kanban nav passes null when unscoped (#598)", async () => {
+    await clearSidebarStorage();
+    const opened: Array<string | null | undefined> = [];
+    const m = await mount(
+      sidebar(THREADS, {
+        projects: [p1, p2],
+        onOpenKanban: (pid) => {
+          opened.push(pid);
+        },
+      }),
+    );
+    const btn = m.query('[data-view-nav="kanban"]') as HTMLButtonElement | null;
+    assert.ok(btn, "kanban nav button");
+    await m.click(btn);
+    await m.flush();
+    assert.deepEqual(opened, [null]);
+    m.unmount();
+  });
+
+  it("activity nav passes the scoped project id (#598)", async () => {
+    await clearSidebarStorage();
+    const opened: Array<string | null | undefined> = [];
+    const m = await mount(
+      sidebar(THREADS, {
+        projects: [p1, p2],
+        onOpenActivity: (pid) => {
+          opened.push(pid);
+        },
+      }),
+    );
+    await openScopeMenu(m);
+    await m.click(m.query('[data-scope-item="p2"]')!);
+    await m.flush();
+    const btn = m.query('[data-view-nav="activity"]') as HTMLButtonElement | null;
+    assert.ok(btn, "activity nav button");
+    await m.click(btn);
+    await m.flush();
+    assert.deepEqual(opened, ["p2"]);
+    m.unmount();
+  });
+
+  it("activity nav passes null when unscoped (#598)", async () => {
+    await clearSidebarStorage();
+    const opened: Array<string | null | undefined> = [];
+    const m = await mount(
+      sidebar(THREADS, {
+        projects: [p1, p2],
+        onOpenActivity: (pid) => {
+          opened.push(pid);
+        },
+      }),
+    );
+    const btn = m.query('[data-view-nav="activity"]') as HTMLButtonElement | null;
+    assert.ok(btn, "activity nav button");
+    await m.click(btn);
+    await m.flush();
+    assert.deepEqual(opened, [null]);
+    m.unmount();
+  });
 });
 
 describe("Sidebar header create + issue form", () => {
@@ -1395,6 +1481,11 @@ describe("Sidebar status label + wait row", () => {
     assert.match(row!.textContent || "", /Waiting on 2 workers/);
     const label = m.query('[data-thread-card="orch"] [data-status-label]');
     assert.ok(label, "delegating parent still has a status label");
+    assert.equal(
+      label!.textContent,
+      "Delegating",
+      "a parent waiting on workers reads Delegating, not Working",
+    );
     assert.match(label!.getAttribute("title") || "", /Waiting on 2 workers/);
     assert.match(label!.getAttribute("title") || "", /w1/);
     m.unmount();
@@ -1423,6 +1514,25 @@ describe("Sidebar status label + wait row", () => {
     m.unmount();
   });
 
+  it("an idle thread with a queued follow-up says so", async () => {
+    await clearSidebarStorage();
+    const m = await mount(
+      sidebar([
+        thread({
+          id: "q",
+          status: "idle",
+          updatedAt: FRESH,
+          queued: { prompt: "then update the changelog" },
+        }),
+      ]),
+    );
+    const label = m.query('[data-thread-card="q"] [data-status-label]');
+    assert.ok(label, "a queued follow-up must still show in the sidebar");
+    assert.equal(label!.textContent, "Queued");
+    assert.match(label!.getAttribute("title") || "", /then update the changelog/);
+    m.unmount();
+  });
+
   it("in-agent subagents count too, without a false elapsed", async () => {
     await clearSidebarStorage();
     const m = await mount(
@@ -1445,9 +1555,111 @@ describe("Sidebar status label + wait row", () => {
     const label = m.query('[data-thread-card="solo"] [data-status-label]');
     assert.ok(label);
     const title = label!.getAttribute("title") || "";
-    assert.match(title, /Waiting on 1 worker:/);
+    assert.match(title, /Waiting on 1 subagent:/);
     assert.match(title, /Background research/);
-    assert.ok(!/Waiting on 1 worker · \d/.test(title));
+    assert.ok(!/Waiting on 1 subagent · \d/.test(title));
+    m.unmount();
+  });
+});
+
+describe("Sidebar subagent rows (#542)", () => {
+  const withSubagents = (subagents: ThreadInfo["subagents"]) =>
+    thread({ id: "solo", status: "working", runStartedAt: FRESH, subagents });
+
+  it("names each running subagent under the wait row", async () => {
+    await clearSidebarStorage();
+    const m = await mount(
+      sidebar([
+        withSubagents([
+          {
+            id: "toolu_1",
+            description: "Background research",
+            agentType: "general-purpose",
+            status: "running",
+          },
+        ]),
+      ]),
+    );
+    const rows = m.queryAll('[data-thread-card="solo"] [data-subagent-row]');
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0]!.textContent, "Background research");
+    // The count noun distinguishes it from a forked worker thread.
+    const wait = m.query('[data-wait-row="solo"]');
+    assert.match(wait!.textContent || "", /Waiting on 1 subagent/);
+    m.unmount();
+  });
+
+  it("a finished subagent renders no row", async () => {
+    await clearSidebarStorage();
+    const m = await mount(
+      sidebar([
+        withSubagents([
+          {
+            id: "toolu_1",
+            description: "Background research",
+            agentType: "general-purpose",
+            status: "done",
+          },
+        ]),
+      ]),
+    );
+    assert.ok(!m.query('[data-thread-card="solo"] [data-subagent-row]'));
+    assert.ok(!m.query('[data-wait-row="solo"]'));
+    m.unmount();
+  });
+
+  it("rows are not interactive: a click reaches the card select", async () => {
+    await clearSidebarStorage();
+    const picked: string[] = [];
+    const m = await mount(
+      sidebar(
+        [
+          withSubagents([
+            {
+              id: "toolu_1",
+              description: "Background research",
+              agentType: "general-purpose",
+              status: "running",
+            },
+          ]),
+        ],
+        { onSelectThread: (id: string) => picked.push(id) },
+      ),
+    );
+    const row = m.query('[data-thread-card="solo"] [data-subagent-row]');
+    assert.ok(row);
+    assert.ok(
+      !row!.querySelector("button, a, input"),
+      "no interactive child inside the card's stretch-select area",
+    );
+    // The row itself is inert (pointer-events:none in CSS, which jsdom does
+    // not model) — selection comes from the card's own stretch button.
+    const select = m.query('button[aria-label^="Select thread: solo"]');
+    assert.ok(select);
+    await m.click(select!);
+    assert.deepEqual(picked, ["solo"]);
+    m.unmount();
+  });
+
+  it("caps at three named rows plus a +N more tail", async () => {
+    await clearSidebarStorage();
+    const m = await mount(
+      sidebar([
+        withSubagents(
+          ["one", "two", "three", "four", "five"].map((d, i) => ({
+            id: `toolu_${i}`,
+            description: d,
+            agentType: null,
+            status: "running" as const,
+          })),
+        ),
+      ]),
+    );
+    const rows = m.queryAll('[data-thread-card="solo"] [data-subagent-row]');
+    assert.deepEqual(
+      rows.map((r) => r.textContent),
+      ["one", "two", "three", "+2 more"],
+    );
     m.unmount();
   });
 });

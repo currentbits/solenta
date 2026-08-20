@@ -65,7 +65,8 @@ Grok · thread 6
 - **Embeddings** — near-dup and contradiction detection so the store does not
   bloat with repeated or conflicting facts.
 - **memory_distill** — collapse raw entries into strategy notes.
-- **Memory tab** — reads the same SQLite file, so you see what the agents see.
+- **Memory tab** — reads the same SQLite file. A config doctor lints and
+  regenerates CLAUDE.md / AGENTS.md from shared memory.
 - **Per-repo code index** — a symbol index built once and injected into every
   dispatched prompt, so a fresh worker starts knowing where things live.
 
@@ -74,16 +75,18 @@ Grok · thread 6
 Memory is why Solenta exists. The rest is so you can run the agents that write
 it.
 
-- **Five providers, one UI** — Claude Code, Codex, Kimi Code, Grok, and OpenCode,
-  with model overrides and session resume.
+- **Five providers, one UI** — Claude Code, Codex, Kimi Code, Grok, and
+  OpenCode, with model overrides, session resume, and quota-reset resume.
 - **Git in the loop** — fail-closed worktrees, next-git-action button, live CI
-  badges, review itinerary, conflict forecast.
+  badges, review itinerary, conflict forecast. Oversized PRs (default 400
+  lines) are refused; the header offers a stacked split.
 - **Planboard** — a project's plan as its GitHub issues via `gh`, with auto-
-  dispatch to spin up threads from `plan:todo`.
+  dispatch from `plan:todo` and a review-load meter on the open PR queue.
 - **Orchestration** — workers, crews, `/handoff`, `/advisor`, `/committee`, and
   a subagent model pool.
 - **Verify means green** — a thread settles done only when its verify command
-  exits 0, plus optional daily and per-orchestration spend caps.
+  exits 0. After merge the command re-runs 24h later; a failure starts a
+  fix thread and reopens the planboard issue. Optional spend caps.
 - **You own it** — MIT, no Solenta account, no Solenta cloud, local SQLite,
   GitHub issues. The only network traffic is a release check.
 
@@ -208,18 +211,26 @@ The root `package.json` already allows scripts for the pinned Electron version.
 
 - **Teach mode** — hints, not solutions, across all five providers. Autonomy
   steps from Hints to Review to Pair as reviews pass.
-- **Snooze** a thread until tonight or next week; settle-on-merge archives it
-  when the PR lands.
+- **Ask mode** — read-only Q&A from the code map and memory. No tools, no
+  worktree, no agent credits.
+- **Snooze** until tonight or next week; settle-on-merge archives when the
+  PR lands. Pinned threads sit above the list; snoozed, settled, and
+  archived live in shelves. Right-click or ⋯ for rename, pin, snooze, settle.
 - **Automations** — recurring prompts (hourly / daily / weekly) against any
   project, and repeat a finished thread on a schedule.
 - **Usage and fleet analytics** — cost and tokens per provider/model, merge
-  rate, review tax, rework and cost per merged PR. OTel GenAI spans ship to
-  your tracing backend.
+  rate, review tax, rework and cost per merged PR, and felt vs wall-clock
+  speedup. OTel GenAI spans ship to your tracing backend.
 - **Morning digest** — one summary of everything that ran unattended.
 - **Agent profiles** — save a provider + model + effort + permission combination
   and apply it in one click.
 - **Spec mode** — gated requirements → design → tasks artifacts, each approved
-  before the next unlocks.
+  before the next unlocks. tasks.md becomes a dispatch DAG (`needs:`);
+  converge appends missing work back onto the file.
+- **Divergence** — compare two runs at the first mismatched tool step.
+  Toggled from Environment (default on).
+- **Claim provenance** — assistant claims tagged repo, memory, issue, or
+  model prior knowledge when ungrounded.
 - **Skills** — browse and edit the `SKILL.md` files your agents can reach.
 - **Dev servers** — start a project's `dev` script from the app and get the URL.
 - **Web mode** — `--serve-web` serves the same UI over HTTP + WebSocket.

@@ -69,6 +69,53 @@ hard-reset this thread onto the fork's tree. Numbering counts checkpoint
 *commits*, not turns — a turn that changes nothing skips a number — so anything
 mapping messages to files must select by commit time, never by turn N.
 
+**PR-size cap** (issue #402). `createPr` in `electron/worktrees.js` refuses
+an oversize diff **before** push or `gh pr create`. Cap is
+`settings.prDiffCapLines` (default `DEFAULT_PR_DIFF_CAP_LINES` 400;
+absent/junk heals to 400; explicit null disables). Count is additions +
+deletions vs the base branch (`git diff --numstat base...branch`,
+`parseNumstat`); binary files (`-\t-\tpath`) add no lines but still
+count as files. A numstat failure returns null and **fails open** — a
+stat hiccup must not block creation. `allowOversize: true` is the
+explicit human override. The error prefix `PR_TOO_LARGE_PREFIX`
+(`"PR too large"`) is the renderer contract: `src/prUi.ts` duplicates
+the string (the two processes share no module) so
+`isPrTooLargeMessage` can offer `splitPrPrompt` (restack into a chain
+of smaller PRs) vs Create anyway. Pinned by
+`electron/test/pr-size-cap.test.js`.
+
+Planboard review-load (`src/planboard.ts` `reviewLoad`) is the same
+bottleneck measured the other way: open non-draft PRs vs
+`REVIEW_LOAD_BUSY_PRS` 4 / `REVIEW_LOAD_BUSY_LINES` 1200 (three
+cap-sized PRs) and `REVIEW_LOAD_OVERLOADED_PRS` 7 /
+`REVIEW_LOAD_OVERLOADED_LINES` 2400. Drafts do not count.
+
+## Post-merge verification
+
+One-shot delayed re-check after a thread's PR merges (issue #420).
+`electron/postmerge.js`; renderer labels in `src/verifyCard.ts`
+(`formatPostMergeLine`). Not a user-visible Automation — those mint
+agent turns on a cadence.
+
+Armed by `onThreadPrState` when `prState` becomes MERGED **and** the
+thread has a `verifyCommand` **and** no existing `postMergeVerify`
+blob. Default delay `DEFAULT_DELAY_MS` 24h (`CODER_POSTMERGE_DELAY_MS`
+in tests). Persistence is `ThreadInfo.postMergeVerify` +
+`issueNumber`. Status: scheduled / running / passed / failed /
+skipped. A crash mid-check leaves `"running"`; `normalizePostMerge`
+and `duePostMergeChecks` heal it to scheduled-due
+(`STALE_RUNNING_MS` 15 min). The minute ticker
+(`startPostMergeScheduler`, 60s) is started from `electron/main.js`.
+
+The check runs in a detached worktree at the merged default branch
+(`prepareMergedCheckout`: fetch best-effort, then origin/HEAD →
+origin/main → origin/master → HEAD). Remote projects skip. A pass
+appends an event via `setMessages` (does not bump `updatedAt`). A
+fail spawns a fixer thread (`spawnFixThread`, `pendingWorktree: true`,
+`handoffFrom` the source, prompt from `verify.js` `buildFixPrompt`)
+and best-effort reopens the planboard issue (`issues.reopenIssue`).
+The fixer thread is the durable action if reopen throws.
+
 ## Rewind (edit and resubmit)
 
 `threads.rewind` (issue #254) truncates the transcript at a past user message,
@@ -108,6 +155,61 @@ Config file (env `CODER_MEMORY_CONFIG` or default under Application Support/code
 
 `GET /health` is open; other routes and MCP require the bearer token.
 
+**Provenance** (issue #404, `src/provenance.ts`). Every assistant
+message is classified by where its content could have come from: repo
+paths (Read/Edit/Grep/… tools or backticked paths in the text), shared
+memory (`memory_*` / `session_*` tools, including
+`mcp__coder-memory__…` prefixes), or GitHub issue/PR refs (`#404`,
+`gh issue`/`gh pr`, github.com URLs). Those three tiers are
+addressable. A substantive message with no addressable source is the
+case the feature exists for (model prior knowledge). Short chatter is
+never tagged: `PRIOR_MIN_CHARS` 240. Cap per tier `MAX_REFS` 6.
+`messageProvenance` scans back to the previous user message so chip
+order matches tool order. `provenanceVisible` is always true when
+grounded, otherwise only when the trimmed text is long enough.
+
+**Agent-config doctor** (issue #412, `electron/configDoctor.js`). Lints
+`AGENTS.md` / `CLAUDE.md` (and siblings in `ROOT_FILE_NAMES`, plus
+one-level `packages/*/AGENTS.md|CLAUDE.md`) against Anthropic's
+six-axis 100-point rubric (`AXIS_MAX`: commands 20, architecture 20,
+patterns 15, conciseness 15, currency 15, actionability 15). Grades
+A≥90 / B≥70 / C≥50 / D≥30 / else F. Deterministic — no LLM. Scoring
+is heuristic; generation is a template over memory entries
+(`convention` + `strategy` always, `knowledge` only when
+importance ≥ 3 or it has citations; caps 20 / 10 / 15). IPC:
+`projects:lintAgentConfig` / `previewAgentConfig` /
+`writeAgentConfig` (`services.lintAgentConfig` etc.). UI is
+`ConfigDoctorCard` in `src/components/MemoryTab.tsx`. Writes only
+`AGENTS.md` / `CLAUDE.md` / `GEMINI.md` (`WRITEABLE_BASENAMES`);
+`assertWriteableRel` refuses `..` and paths outside the project.
+Default write set is always `AGENTS.md`, plus `CLAUDE.md` when it
+already exists or the repo has no instruction file yet. Generated
+files carry `<!-- generated-by: solenta-config-doctor -->`. Local
+checkout only (`requireLocalProject`).
+
+## Code index
+
+Shared per-repo symbol map (issue #377, `electron/codeindex.js`). One
+index per repo, keyed on the project's **main checkout**, read by every
+thread including worktrees — worktrees do not get their own index. On
+disk it is JSON, not sqlite: `userData/codeindex/<first 16 of
+sha1(repoRoot)>.json` (`indexPathFor`), `INDEX_VERSION` 1 (an older
+file is treated as absent). Write is tmp-then-rename.
+
+Refresh is fire-and-forget from the dispatch path (`maybeRefreshIndex`),
+debounced per repo to `REFRESH_MIN_INTERVAL_MS` 60s, never throws,
+inert when `CODER_CODEINDEX_DISABLE=1`. Incremental: a file whose
+`mtimeMs` and `size` still match keeps its symbols. Caps: `MAX_FILES`
+20_000, `MAX_FILE_BYTES` 512 KiB, `MAX_SYMBOLS_PER_FILE` 60. Rank is
+how many of the last 300 commits touched the path (`touchCounts`).
+`readIndex` is synchronous and cached on file mtime+size so the
+dispatch path never scans the repo.
+
+The standing note (`services.codeIndexNoteFor`) is appended to every
+dispatched prompt, never stored in the transcript. Empty when there is
+no index, `fileCount < MIN_FILES_FOR_NOTE` (20), or the disable env is
+set. Whole-note cap `CODEINDEX_NOTE_MAX` 3500 chars.
+
 ## Store
 
 `electron/store.js` persists JSON under Electron userData. Shape:
@@ -122,6 +224,7 @@ settings: { dailyBudgetUsd: number | null, orchestrationBudgetUsd: number | null
             autoSettleAfterDays: number | null, mcpServers[],
             defaultWorktree: boolean, defaultOrchestrate: boolean,
             updateChannel: "prod" | "nightly" | null, notifications: boolean,
+            quotaWaitAutoResume: boolean, prDiffCapLines: number | null,
             otel: { endpoint, headers, claudeMetrics } }
 ```
 
@@ -156,6 +259,33 @@ has its next wake-up refused and lands failed with the reason via the #34
 surfacing path, while user-sent turns (Retry after raising the cap) still run.
 Nested crews are not rolled up; each worker that fans out is its own
 orchestrator.
+
+## Quota wait
+
+Provider usage-limit parking (issue #462), distinct from Solenta's own
+budget cap and from model failover. Parsing and park/wake live in
+`electron/quotaWait.js`; `src/quotaWait.ts` is the renderer clock
+(`isQuotaWaitStatus`, `formatQuotaWaitLabel` — same local calendar
+rules as snooze).
+
+`decideQuotaWait` parks only on a quota-like error that carries a
+parseable reset clock (`kind: "reset"`). Exhausted balance with no clock
+is a hard fail — do not retry-storm. Solenta's own messages
+(`OWN_BUDGET_RE`: daily budget / orchestration budget / crew auto-turn
+cap / spend cap) never park. Waits longer than `MAX_WAIT_MS` (8 days)
+are treated as a parse bug. Wake-once: `quotaWaitResumed` blocks a
+second park. `startRun` stamps that flag from
+`input.fromQuotaWait === true`, so a human send re-arms parking; only
+the auto-resume (and banner `resumeQuotaWait`) consume the one-shot.
+
+Default on: `settings.quotaWaitAutoResume` is true unless an explicit
+false is on disk; per-thread `quotaWaitAutoResume` true/false/null
+overrides (`quotaWaitEnabled`). `runner.markRunFailed` is the seam —
+the first `threads:changed` never flashes Failed. Wake is
+`scheduleQuotaWake` (`until + 2s`, min 1s) → `fireQuotaWake` which
+re-sends the last user message with `fromQuotaWait: true`. Banner
+`resumeQuotaWait` is the same one-shot. `working` and `quota-wait`
+never auto-settle.
 
 ## Fleet analytics
 
@@ -356,6 +486,31 @@ A worker that fails to start is dropped as an orphan; peers that already
 started keep running, and the lead's event message says which never went out.
 Only an empty fan-out throws.
 
+## Ask mode
+
+Read-only repo Q&A (issue #392). Prompt + completion live in
+`electron/ask.js`; `services.startAsk` / `stopAsk` own the thread flag;
+the runner owns the turn. Same split as `orchcommands.js`.
+
+`startRun` intercepts `thread.ask === true` **before** orchestration
+commands, `assertUnderDailyBudget`, and worktree materialization, so a
+`/advisor` on an Ask thread is just a question and a leftover
+`pendingWorktree` cannot touch the disk. `startAsk` is idempotent, drops
+`pendingWorktree`, and clears teach (the personas conflict); an already-
+created worktree stays on disk unused. A fork of an Ask thread stays Ask
+(`forkThread` refuses to arm a worktree). `startAskRun` also stamps
+`pendingWorktree: false` and skips `notifyRunTerminal` (no checkpoint,
+no spend).
+
+The turn never starts a CLI tool loop. `completeAsk` tries `fm` first
+(free, on-device, `ASK_TIMEOUT_MS` 90s), then the thread's provider in
+print-mode (`buildAskArgs`: Claude `-p --max-turns 1` so a missed "no
+tools" instruction cannot start a loop; no MCP, no session), then
+`retrievalFallback` from the code map + memory. Print-mode spawn uses
+`cwd: undefined`. Caps: `ASK_PROMPT_LIMIT` 80_000, `ASK_MAX_OUTPUT`
+256 KiB, `MEMORY_HITS` 8. `askNoteFor` is the standing note if the
+intercept is missed — empty when Ask is off.
+
 ## Spec mode
 
 Optional per-thread gate (issue #269): the agent writes `requirements.md`,
@@ -369,6 +524,38 @@ approving in the SpecCard advances the stage and starts the next run. Exit
 spec mode (header or SpecCard) drops `thread.spec` without approving remaining
 stages (issue #500). The gate is procedural, not sandboxed.
 
+Once `tasks.md` is approved (stage `build`), Dispatch and Converge are
+available (issue #537). Parser: `electron/specTasks.js` `parseTasksMd`.
+Format is GitHub-style checkboxes; every other line is ignored:
+
+```
+- [ ] 1. Title (`src/foo.ts`) — req 1
+- [ ] 2. Title (`src/bar.ts`) — req 2 — needs: 1
+- [x] T3: Already done — needs: 1, 2
+```
+
+Ids are a leading `1.` / `1)` / `#1` / `T1:` token (`normalizeTaskId`:
+`T1`, `t1`, `#1`, and `1` are the same id). A line with no id gets the
+next unused 1-based number. `needs:` is a comma/space list of those
+ids. Checked boxes (`[x]`) are done. Duplicate ids, self-needs, unknown
+needs, and cycles (`taskWaves`) are errors — `dispatchSpec` refuses a
+file with `parsed.errors.length > 0`. Waves are every remaining open
+task whose still-open dependencies are already in a previous wave.
+
+`services.dispatchSpec` (IPC `threads:dispatchSpec`) reads the artifact,
+syncs checkboxes into the crew-task list (`syncSpecCrewFromParsed`:
+match by title, add missing, complete already-ticked), and returns the
+current claimable wave (`status === "open" && !blocked`). Services
+never start runs. `ipc.js` then `forkSpecWave` (one `orchWorker` per
+wave entry, `claimCrewTask`, `specDispatchPrompt`) and `startRun`s
+each. A second click does not re-add existing titles. An empty wave is
+not an error — `reason` explains blocked-on-deps vs nothing open.
+
+`convergeSpec` (IPC `threads:convergeSpec`) starts a run on the spec
+thread with `specConvergePrompt`: read the three artifacts plus the
+repo, **append** missing checkboxes, do not implement, do not rewrite
+or reorder, do not `spec_submit`. Also build-stage only.
+
 ## Renderer notes
 
 - Composer model pill: always shown. Empty `models` → Default + Custom… (inline
@@ -376,28 +563,90 @@ stages (issue #500). The gate is procedural, not sandboxed.
 - setProvider validation lives in `electron/services.js` only. `src/devCoder.ts`
   assigns what the picker sends: it is a fixture, not a second contract.
 
+## Divergence
+
+Opt-in compare of two runs of the same task (`src/divergence.ts`).
+The header card (`data-divergence-card` in `ThreadView.tsx`) is
+hidden unless `useDivergenceCardEnabled()` is on.
+The toggle lives on the Environment tab (`DivergenceCardToggle` in
+`AgentsPanel.tsx`). Module state is the source of truth; localStorage
+`coder.divergenceCard` (`"on"` / `"off"`) carries it across launches.
+Default on (`getItem !== "off"`). The toggle still works when
+localStorage does not persist.
+
+Comparison is tool steps only (`extractSteps`): assistant prose always
+differs across models, so including it would make every Claude-vs-Codex
+pair "diverge at step 1". Fields in report order:
+`DIVERGENCE_FIELDS` = type, name, input, output, decision. A length gap
+is a verdict only when the shorter run has finished (`pending: true`
+otherwise). Peers (`sameTaskPeers`): a fork compares with its source
+and sibling forks (same `handoffFrom`); a source compares with its
+children. Same-thread completed runs that called a tool are labeled
+Run 1….
+
 ## Sidebar ordering and settle model
 
 The sidebar follows the t3code (pingdotgg/t3code, MIT) sidebar behavior as a
 model. No t3code code is vendored; the rules are reimplemented in
-`src/sidebarGroups.ts` / `src/threadSettle.ts` / `src/components/Sidebar.tsx`.
-The one third-party package this uses is `@formkit/auto-animate` (MIT).
+`src/sidebarGroups.ts` / `src/threadSettle.ts` / `src/threadSnooze.ts` /
+`src/components/Sidebar.tsx`. The one third-party package this uses is
+`@formkit/auto-animate` (MIT).
 
-- **Static order**: threads within a project group, and the groups themselves,
-  sort by `createdAt` (newest first). Activity NEVER reorders the list; a row
-  moves only at a lifecycle transition (create, settle, unsettle, pin, snooze,
-  archive). `updatedAt` is bumped per streamed message for unread dots and age
-  labels and must never be used as a sidebar sort key.
-- **Partition precedence**: snoozed → pinned → settled → attention
-  (`partitionSidebar`). Settle resolution in `effectiveSettled`: working and
-  pinned never settle, explicit override wins, MERGED/CLOSED PR settles, OPEN
-  PR blocks, otherwise inactivity window (`AUTO_SETTLE_AFTER_DAYS`, default 3).
-- **Settled tail**: one global section, expanded by default (collapse persists
-  in `coder.sidebar.settledCollapsed`), paged 10 + "Show 25 more".
-- **Animation**: `auto-animate` (150ms ease-out) per list container; rows key
-  as `${id}:card` in groups vs `${id}:slim` on shelves so a settle move
-  cross-fades instead of sliding.
+The live list is T3-flat: `Sidebar.tsx` calls `buildFlatSidebar`, not
+`partitionSidebar`. Every card carries its own project slug
+(`data-card-slug`); there are no project group headers.
+`scopeProjectId` (localStorage `sidebar:projectScope`) filters every
+section ("All projects" = null). `partitionSidebar` still exists as a
+helper — `{ attentionThreads, later: { snoozed, settled, archived } }`
+with precedence archived > snoozed > pinned-stays-active > settled —
+and tests cover it; the UI does not call it. There is no
+`data-later-shelf` and no `data-pinned-section`.
+
+- **Static order**: activity NEVER reorders a row. A row moves only at a
+  lifecycle transition (create, settle, unsettle, pin, snooze, archive).
+  `updatedAt` is bumped per streamed message for unread dots and age
+  labels and must never be used as an active-list sort key.
+- **Partition precedence** (`buildFlatSidebar`, first match wins):
+  archived → snoozed → pinned → settled → active. Same as
+  `partitionSidebar` except pinned is its own top block.
+  `effectiveSnoozed` (a live `snoozedUntil`) beats a pin; `isPinned`
+  beats `effectiveSettled`.
+- **Pinned block**: oldest `pinnedAt` first (`comparePinnedOldestFirst`).
+  Rendered as full cards (`data-pinned`, `data-pin-flag`, ", pinned" in
+  `aria-label`). A `data-pinned-divider` follows when the block is
+  non-empty.
+- **Active list**: `createdAt` desc (legacy NaN `createdAt` falls back to
+  `updatedAt`), then `attachForks` so `handoffFrom` children sit under
+  their source (`data-nested`). Search bypasses shelves and renders a
+  flat hit list.
+- **Snoozed shelf**: wake-soonest (`compareSnoozedWakeSoonest`). Collapsed
+  by default; expand persists in `sidebar:snoozedOpen`. Toggle is
+  `data-snoozed-shelf-toggle`. Snooze is visibility only
+  (`ThreadInfo.snoozedUntil`); it never touches the agent. A thread
+  wakes early when it raises its hand (`awaitingInput`, or a
+  `failed`/`done` `updatedAt` newer than `snoozedAt`). Timer wakes are
+  client-derived.
+- **Settled shelf**: settled newest (`compareSettledNewestFirst` via
+  `resolveSettledTimestamp`) then archived (`updatedAt` desc) as one
+  paged tail (`SETTLED_TAIL_INITIAL_COUNT` 10; each "Show more" adds
+  `SETTLED_TAIL_PAGE_COUNT` 25, `data-settled-more`). Collapsed by
+  default; expand persists in `sidebar:settledOpen`. Toggle is
+  `data-settled-shelf-toggle`. Archived slim rows carry `data-archived`
+  and `data-unarchive-btn`. The retired key
+  `coder.sidebar.settledCollapsed` is unused.
+- **Settle resolution** (`effectiveSettled`): `working` and `quota-wait`
+  never settle; a finite `pinnedAt` never auto-settles; explicit
+  `settledOverride` (`"settled"` / `"active"`) wins; CLOSED always
+  settles; MERGED settles when `autoSettleOnMerge` is not false (store
+  default true); OPEN PR blocks; otherwise the inactivity window
+  (`settings.autoSettleAfterDays`, default `AUTO_SETTLE_AFTER_DAYS` = 3;
+  null disables the inactivity path).
+- **Animation**: `auto-animate` (150ms ease-out) on `data-sidebar-list`;
+  rows key as `${id}:card` on the inbox vs `${id}:slim` on shelves so a
+  settle move cross-fades instead of sliding. The open thread and a
+  `revealThreadId` target are carved out of a collapsed shelf so they
+  never vanish.
 - **New-thread reveal**: creation sets `revealThreadId` in `App.tsx`; the
-  sidebar expands the target project group, scrolls the card into view, and
-  flashes a highlight. The global "+" names its target project
+  sidebar scrolls `[data-thread-card="<id>"]` into view and flashes a
+  highlight. The global "+" names its target project
   ("New thread in \<slug\>").

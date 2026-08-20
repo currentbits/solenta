@@ -48,6 +48,7 @@ import { isUnread } from "../threadUnread";
 import {
   buildWaitStates,
   isDelegating,
+  subagentNames,
   waitLabel,
   waitTooltip,
   type WaitState,
@@ -218,7 +219,7 @@ interface SidebarProps {
   ) => void | Promise<void>;
   /** Which main view is showing. Defaults to thread so existing callers stay idle. */
   activeView?: "thread" | "kanban" | "planboard" | "activity";
-  onOpenKanban?: () => void;
+  onOpenKanban?: (scopedProjectId?: string | null) => void;
   onOpenPlanboard?: (scopedProjectId?: string | null) => void;
   /**
    * Paste a GitHub issue into this project. Omitted by existing tests so
@@ -229,7 +230,7 @@ interface SidebarProps {
     projectPath: string;
     ref: string;
   }) => Promise<{ ok: true } | { ok: false; reason: string }>;
-  onOpenActivity?: () => void;
+  onOpenActivity?: (scopedProjectId?: string | null) => void;
   /**
    * Freshly created thread to reveal (t3: new work must be visible): the
    * sidebar expands its project group, scrolls the card into view and flashes
@@ -260,7 +261,7 @@ export type StatusDotInfo = {
 
 export type StatusLabelInfo = {
   text: string;
-  tone: "working" | "attention" | "failed" | "done";
+  tone: "working" | "attention" | "failed" | "done" | "queued";
   title: string;
   spoken: string;
   flags: Record<string, string>;
@@ -451,7 +452,7 @@ export function statusLabelFor(
   }
   if (isDelegating(thread.status, wait)) {
     return {
-      text: "Working",
+      text: "Delegating",
       tone: "working",
       title: dot?.label ?? "Delegating",
       spoken: "delegating",
@@ -465,6 +466,17 @@ export function statusLabelFor(
       title: dot?.label ?? "Woke from snooze",
       spoken: "needs attention",
       flags: dot?.flags ?? { "data-woke": "" },
+    };
+  }
+  // Queued follow-up (#92) owns the slot only when nothing louder does;
+  // on a busy card it rides along in the tooltip via statusDotFor.
+  if (thread.queued) {
+    return {
+      text: "Queued",
+      tone: "queued",
+      title: dot?.label ?? `Queued: ${thread.queued.prompt}`,
+      spoken: "queued follow-up",
+      flags: dot?.flags ?? { "data-queued-dot": thread.id },
     };
   }
   if (
@@ -599,6 +611,7 @@ export const ThreadCard = memo(function ThreadCard({
   const label = statusLabelFor(thread, now, wait, active);
   const pinned = isPinned(thread);
   const recede = working && !active && !multiSelected;
+  const subagentLines = wait ? subagentNames(wait) : [];
   // Menus are native Menu.popup / a body portal (#592) — the card only
   // tracks openness so the hover actions stay pinned underneath.
   const [menuOpen, setMenuOpen] = useState(false);
@@ -959,6 +972,30 @@ export const ThreadCard = memo(function ThreadCard({
             title={waitTooltip(wait)}
           >
             {waitLabel(wait, now)}
+          </div>
+        )}
+        {/*
+          Issue #542: name the running in-agent subagents under the wait row.
+          Plain 11px lines inside cardBody — no elbow, no dot, no interactive
+          child; cardBody is pointer-events:none, so a click falls through to
+          the stretch-select button and picks the parent thread, same as the
+          old nested rows did explicitly.
+          ponytail: 3 lines then a "+N more" tail; if fan-outs routinely run
+          wider, cap by card height instead of a count.
+        */}
+        {subagentLines.slice(0, 3).map((name, i) => (
+          <div
+            key={i}
+            className={styles.subagentRow}
+            data-subagent-row={thread.id}
+            title={name}
+          >
+            {name}
+          </div>
+        ))}
+        {subagentLines.length > 3 && (
+          <div className={styles.subagentRow} data-subagent-row={thread.id}>
+            +{subagentLines.length - 3} more
           </div>
         )}
       </div>
@@ -2055,7 +2092,7 @@ export const Sidebar = memo(function Sidebar({
           data-active={activeView === "activity" ? "true" : undefined}
           title="Activity"
           aria-label="Activity"
-          onClick={() => onOpenActivity?.()}
+          onClick={() => onOpenActivity?.(projectScope)}
         >
           <Icon size={15}>
             <path d="M3 12h3l2-6 4 12 2-6h4" />
@@ -2068,7 +2105,7 @@ export const Sidebar = memo(function Sidebar({
           data-active={activeView === "kanban" ? "true" : undefined}
           title="Kanban"
           aria-label="Kanban"
-          onClick={() => onOpenKanban?.()}
+          onClick={() => onOpenKanban?.(projectScope)}
         >
           <Icon size={15}>
             <rect x="3" y="4" width="5" height="16" rx="1" />

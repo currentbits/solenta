@@ -8,6 +8,7 @@ import { describe, it } from "node:test";
 import {
   buildWaitStates,
   isDelegating,
+  subagentNames,
   waitLabel,
   waitTooltip,
   type WaitRow,
@@ -97,8 +98,35 @@ describe("buildWaitStates", () => {
     assert.equal(wait.children.length, 1, "only running subagents");
     assert.equal(wait.children[0]!.id, null, "no thread to navigate to");
     assert.equal(wait.since, null, "no spawn stamp: elapsed stays off");
-    assert.equal(waitLabel(wait, NOW), "Waiting on 1 worker");
+    // #542: the noun distinguishes an in-agent subagent from a forked thread.
+    assert.equal(waitLabel(wait, NOW), "Waiting on 1 subagent");
+    assert.deepEqual(subagentNames(wait), ["Map the panel"]);
     assert.match(waitTooltip(wait), /Map the panel/);
+  });
+
+  it("a mixed fan-out counts workers and subagents separately", () => {
+    const states = buildWaitStates([
+      row({
+        id: "t1",
+        status: "working",
+        subagents: [
+          { id: "a", description: "Map the panel", agentType: null, status: "running" },
+        ],
+      }),
+      row({
+        id: "w1",
+        status: "working",
+        handoffFrom: "t1",
+        runStartedAt: NOW - 3 * 60_000,
+      }),
+    ]);
+
+    const wait = states.get("t1")!;
+    assert.equal(
+      waitLabel(wait, NOW),
+      "Waiting on 1 worker · 1 subagent · 3m",
+    );
+    assert.deepEqual(subagentNames(wait), ["Map the panel"]);
   });
 
   it("isDelegating: a finished turn with live workers is not done", () => {
