@@ -3863,6 +3863,25 @@ function isSettledForGc(thread, now, autoSettleAfterDays) {
   return updatedAt < now - autoSettleAfterDays * 24 * 60 * 60 * 1000;
 }
 
+/** Quiet time an unmerged fork / archived worktree gets before GC takes it. */
+const UNMERGED_GRACE_MS = 3 * 24 * 60 * 60 * 1000;
+
+/**
+ * A worktree that was never meant to outlive its thread (#624): one a fork
+ * created (`handoffFrom` — worker threads and handoffs) or one whose thread
+ * the user archived. These do not occupy the per-project keep-N buffer —
+ * ten abandoned worker checkouts is ~7 GB of node_modules nobody will open
+ * again — and unmerged commits do not block them, because GC removes the
+ * directory only and the branch stays.
+ *
+ * @param {object} thread
+ * @returns {boolean}
+ */
+function isTransientWorktree(thread) {
+  if (!thread) return false;
+  return thread.archived === true || thread.handoffFrom != null;
+}
+
 /**
  * Realpath when the path exists so macOS /var vs /private/var matches.
  * @param {string} p
@@ -4036,16 +4055,31 @@ async function gcScanInner(opts) {
 
   /** @type {Map<string, Array<{ thread: object, dir: string }>>} */
   const settledByProject = new Map();
+  /** @type {Set<string>} */
+  const transientDrop = new Set();
   for (let i = 0; i < dirs.length; i++) {
     const thread = threadByWt.get(path.resolve(dirs[i]));
     if (!thread || !isSettledForGc(thread, now, autoSettleAfterDays)) continue;
+    if (isTransientWorktree(thread)) {
+      // Unmerged commits do not block a transient worktree, but they buy a
+      // grace period: the directory is what makes the branch mergeable in
+      // app, so wait until the thread has actually gone quiet.
+      if (
+        inspections[i].unmerged > 0 &&
+        threadActivityAt(thread) > now - UNMERGED_GRACE_MS
+      ) {
+        continue;
+      }
+      transientDrop.add(path.resolve(dirs[i]));
+      continue;
+    }
     const list = settledByProject.get(thread.projectId) || [];
     list.push({ thread, dir: dirs[i] });
     settledByProject.set(thread.projectId, list);
   }
 
   /** @type {Set<string>} */
-  const retentionDrop = new Set();
+  const retentionDrop = new Set(transientDrop);
   for (const [projectId, list] of settledByProject) {
     const project = store.getProject(projectId);
     const n = retentionFor(project);
@@ -4118,6 +4152,7 @@ async function gcScanInner(opts) {
       title: thread ? thread.title || null : null,
       projectId,
       branch: thread ? thread.branch || null : insp.branch,
+      ...(transientDrop.has(path.resolve(dir)) ? { transient: true } : {}),
       ...(insp.unmerged > 0 ? { unmerged: insp.unmerged } : {}),
       ...(blocked ? { blocked } : {}),
     });
@@ -4293,8 +4328,10 @@ async function enforceRetention(opts) {
         // Skip a project whose stored value is 0 (keep everything). The
         // default of 10 is persisted (#559), so it is in `configured`.
         configured.has(c.projectId) &&
-        // ...and never a worktree holding commits nobody landed.
-        !(c.unmerged > 0),
+        // ...and never a worktree holding commits nobody landed, unless it is
+        // a fork / archived one, which the scan already put past its grace
+        // period (#624). The branch survives either way.
+        (c.transient === true || !(c.unmerged > 0)),
     )
     .map((c) => c.path);
   if (paths.length === 0) return { removed: [], failed: [], bytes: 0 };
