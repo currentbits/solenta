@@ -113,21 +113,18 @@ describe("services.updateProject", () => {
     assert.equal(store.getProjects()[0].autoDispatch, true);
   });
 
-  it("sets worktreeRetention and clears it with 0 (#316)", () => {
+  it("sets worktreeRetention and stores 0 as keep-everything (#559)", () => {
     const set = services.updateProject(store, project.id, {
       worktreeRetention: 2,
     });
     assert.equal(set.worktreeRetention, 2);
     assert.equal(store.getProjects()[0].worktreeRetention, 2);
 
-    const cleared = services.updateProject(store, project.id, {
+    const unlimited = services.updateProject(store, project.id, {
       worktreeRetention: 0,
     });
-    assert.equal(Object.hasOwn(cleared, "worktreeRetention"), false);
-    assert.equal(
-      Object.hasOwn(store.getProjects()[0], "worktreeRetention"),
-      false,
-    );
+    assert.equal(unlimited.worktreeRetention, 0);
+    assert.equal(store.getProjects()[0].worktreeRetention, 0);
   });
 
   it("rejects a junk worktreeRetention", () => {

@@ -1,6 +1,9 @@
 {
   "version": 1,
-  "readOrder": ["critical", "impl"],
+  "readOrder": [
+    "critical",
+    "impl"
+  ],
   "chunks": [
     {
       "area": "src/components/Sidebar.tsx — statusLabelFor tone",
@@ -15,9 +18,48 @@
       "risks": [
         "Violet on --card is ~5.4:1, in line with the other tones; no other consumer of --violet yet."
       ]
+    },
+    {
+      "area": "electron/store.js migrateProject + DEFAULT_WORKTREE_RETENTION",
+      "rationale": "The whole #559 fix is this default becoming a stored number. Missing/junk → 10; explicit 0 must survive or the default would wipe the keep-everything hatch. setProjects maps migrateProject, so load and save both apply it.",
+      "risks": [
+        "updateProject used to delete the key on 0; if that path still deleted, migrate would immediately rewrite 0 back to 10 and the hatch would be unreachable."
+      ]
+    },
+    {
+      "area": "electron/services.js addProject + updateProject",
+      "rationale": "addProject returns the pre-setProjects object, so it must stamp worktreeRetention: 10 itself or callers see undefined. updateProject now stores 0 instead of deleting.",
+      "risks": [
+        "EditProjectModal used to send 0 on an empty field. After prefill 10, a name-only save keeps 10; clearing the field still sends 0 (keep everything)."
+      ]
+    },
+    {
+      "area": "electron/worktrees.js retentionFor / enforceRetention / scheduleRetention",
+      "rationale": "retentionFor treats stored 0 as keep-everything (does not fall back to 10). enforceRetention still uses explicitRetention > 0 so a 0 project is skipped even when a sibling is at 10. scheduleRetention swallows errors so archive/merge cannot fail on GC.",
+      "risks": [
+        "After migrate, every existing project is 'configured' at 10, so the boot sweep and archive path will git-inspect every worktree dir. skipSizes avoids the #563 du storm; the git inspect cost remains.",
+        "Unmerged candidates are still skipped by enforceRetention; dirty/working/pinned still never drop. Branches are never deleted."
+      ]
+    },
+    {
+      "area": "electron/ipc.js + electron/orchServer.js archive/merge hooks",
+      "rationale": "Reclaim on the transition, not only the 15s boot sweep. threads:setArchived, git:mergeWorktree, git:prMerge, thread_archive, thread_merge all call scheduleRetention. orch handlers must read userDataPath from createToolHandlers deps (tests call createToolHandlers, not createOrchServer).",
+      "risks": [
+        "Awaiting the scan on archive makes a 166-dir machine wait on git inspect. Chosen over fire-and-forget so the archive test can assert the oldest dir is gone."
+      ]
+    },
+    {
+      "area": "src/components/Sidebar.tsx worktree usage line",
+      "rationale": "Count from threads that still hold worktreePath (no du). Click opens Settings (existing WorktreeGcSection). Hidden at 0. Scoped filter applies.",
+      "risks": [
+        "Orphan directories (no thread pointer) are invisible here; Settings gcScan still lists them.",
+        "Bytes are omitted on purpose so the header never walks disk."
+      ]
     }
   ],
   "risks": [
-    "No test asserts data-tone anywhere, so the colour split is only covered by the existing 'Delegating' text assertions."
+    "No test asserts data-tone anywhere, so the colour split is only covered by the existing 'Delegating' text assertions.",
+    "#601 taught that enforceRetention must stay opt-in so one project's setting cannot license reclaiming another's. That split remains (configured Set + explicit 0), but the default is now persisted so boot GC actually runs. Do not collapse retentionFor and explicitRetention.",
+    "A user who opens Edit project and clears Keep worktrees to empty/0 opts out of GC for that project."
   ]
 }

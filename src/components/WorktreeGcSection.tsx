@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { resolveCoderApi } from "../coderApi";
-import { formatBytes } from "../format";
+import { formatBytes, formatWorktreeUsage } from "../format";
 import type {
   CoderApi,
   GcCandidate,
@@ -220,10 +220,7 @@ export function WorktreeGcSection({
                 {names[row.projectId] ?? row.projectId}
               </div>
               <p className={styles.note}>
-                {row.worktrees}{" "}
-                {row.worktrees === 1 ? "worktree" : "worktrees"}
-                {" · "}
-                {formatBytes(row.bytes)}
+                {formatWorktreeUsage(row.worktrees, row.bytes)}
               </p>
             </div>
           </div>

@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   formatBytes,
+  formatWorktreeUsage,
   formatRelativeAge,
   formatWorkingLabel,
   shortModelName,
@@ -76,6 +77,20 @@ describe("formatBytes", () => {
     assert.equal(formatBytes(1024), "1.0 KB");
     assert.equal(formatBytes(5 * 1024 * 1024), "5.0 MB");
     assert.equal(formatBytes(12 * 1024 * 1024), "12 MB");
+  });
+});
+
+describe("formatWorktreeUsage", () => {
+  it("omits bytes when they are unknown", () => {
+    assert.equal(formatWorktreeUsage(119), "worktrees · 119");
+    assert.equal(formatWorktreeUsage(119, 0), "worktrees · 119");
+  });
+
+  it("puts size first when bytes are known (#559)", () => {
+    assert.equal(
+      formatWorktreeUsage(3, 5 * 1024 * 1024),
+      "worktrees 5.0 MB · 3",
+    );
   });
 });
 

@@ -51,6 +51,7 @@ import type {
   FleetEvidence,
   WorkLogItem,
   WorkflowTemplateInfo,
+  GcScanResult,
 } from "../../src/shared/ipc";
 import { buildActivity } from "../../src/activity";
 
@@ -176,6 +177,8 @@ export interface FakeOptions {
   droppedFilePath?: (file: File) => string;
   /** Override runs.distill result. */
   distill?: DistilledWorkflow;
+  /** Override git.gcScan result (default: empty). */
+  gcScan?: GcScanResult;
 }
 
 export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
@@ -1532,6 +1535,14 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           ok: true,
           summary: "Already up to date",
         } as GitPullResult),
+      gcScan: () =>
+        rec(
+          "git.gcScan",
+          [],
+          opts.gcScan ?? { candidates: [], usage: [], totalBytes: 0 },
+        ),
+      gcClean: (input: unknown) =>
+        rec("git.gcClean", [input], { removed: [], failed: [], bytes: 0 }),
       runStats: (input: unknown) => {
         const i = input as { threadId: string };
         const t = threads.find((x) => x.id === i.threadId);

@@ -29,10 +29,10 @@ export interface ProjectInfo {
   /** When true, a background poller starts a thread for every issue that enters plan:todo (issue #165). Absent = off. */
   autoDispatch?: boolean;
   /**
-   * Worktree retention (#316): how many SETTLED threads keep their worktree
-   * on disk. Absent or 0 = keep everything (today's behaviour). Reclaiming
-   * only ever removes the worktree directory — the branch always survives,
-   * so no commit is ever lost to GC.
+   * Worktree retention (#316 / #559): how many SETTLED threads keep their
+   * worktree on disk. Default 10. 0 = keep everything. Reclaiming only
+   * ever removes the worktree directory — the branch always survives, so
+   * no commit is ever lost to GC.
    */
   worktreeRetention?: number;
   /**
@@ -156,7 +156,7 @@ export interface ProjectUpdateInput {
   spaceId?: string;
   /** When true, a background poller starts a thread for every issue that enters plan:todo (issue #165). Absent = off. */
   autoDispatch?: boolean;
-  /** Worktree retention (#316): 0 clears the limit, N > 0 sets it. */
+  /** Worktree retention (#316 / #559): 0 keeps everything, N > 0 sets the keep count. Default 10. */
   worktreeRetention?: number;
 }
 

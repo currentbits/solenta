@@ -6,6 +6,8 @@ const { execFile } = require("node:child_process");
 const { execCommand, wrapCommand, SYNC_TIMEOUT_MS } = require("./ssh.js");
 const { pathSide, isWindowsMount, wslTarget, buildWslCommand } = require("./wsl.js");
 const { scanSecrets } = require("./guardrails.js");
+// #559 persists this default (10) on every project; 0 is keep-everything.
+const { DEFAULT_WORKTREE_RETENTION } = require("./store.js");
 
 /** @type {typeof execFile} */
 let execFileImpl = execFile;
@@ -122,18 +124,6 @@ const PR_REFRESH_TIMEOUT_MS = 8_000;
 
 /** MERGED/CLOSED are terminal — never re-query. */
 const TERMINAL_PR_STATES = new Set(["MERGED", "CLOSED"]);
-
-/**
- * Settled worktrees per project the GC scan leaves alone when the project has
- * no explicit `worktreeRetention` (#601). Before this, the retention bucket was
- * gated on the setting being present — unset on every real project — so a
- * settled thread's worktree was never classified and the GC dialog showed
- * nothing to reclaim (191 finished orchestrator workers / 100 GB on the
- * reporter's machine). Classification only: `enforceRetention` still reclaims
- * for explicitly-configured projects only, because it is the one path that
- * deletes with no human in the loop.
- */
-const DEFAULT_WORKTREE_RETENTION = 10;
 
 /**
  * @param {string} cwd
@@ -3779,19 +3769,25 @@ function threadActivityAt(thread) {
 }
 
 /**
- * A project's settled-worktree keep count, falling back to the default (#601).
- * `explicitRetention` is the opt-in subset `enforceRetention` may delete from.
+ * A project's settled-worktree keep count (#601 / #559).
+ * Missing field → default 10. Stored 0 → keep everything. Positive → that N.
  * @param {object} project
  * @returns {number}
  */
 function retentionFor(project) {
-  const n = explicitRetention(project);
-  return n > 0 ? n : DEFAULT_WORKTREE_RETENTION;
+  if (
+    project &&
+    Object.prototype.hasOwnProperty.call(project, "worktreeRetention")
+  ) {
+    const n = Math.floor(Number(project.worktreeRetention));
+    if (Number.isFinite(n) && n >= 0) return n;
+  }
+  return DEFAULT_WORKTREE_RETENTION;
 }
 
 /**
- * The per-project setting only — 0 when unset, so callers can tell a
- * configured project from one riding the default.
+ * The per-project setting only — 0 when unset or explicitly unlimited, so
+ * `enforceRetention` can skip a keep-everything project.
  * @param {object} project
  * @returns {number}
  */
@@ -4229,12 +4225,13 @@ async function gcClean(opts) {
 }
 
 /**
- * Enforce per-project retention limits (#316): reclaim the settled worktrees
- * a project keeps past its `worktreeRetention`. Opt-in — a project without
- * the setting has nothing to reclaim, so this returns without scanning.
- * When a limit is set, the scan skips `du` (activity time, not size, picks
- * what to drop). Runs gcClean, so the same guards apply: dirty and
- * unreadable trees are skipped, and branches are never deleted.
+ * Enforce per-project retention limits (#316 / #559): reclaim the settled
+ * worktrees a project keeps past its `worktreeRetention`. After #559 the
+ * default is 10, persisted on every project, so this actually runs. 0 is
+ * the keep-everything hatch and is skipped. When a limit is set, the scan
+ * skips `du` (activity time, not size, picks what to drop). Runs gcClean,
+ * so the same guards apply: dirty and unreadable trees are skipped, and
+ * branches are never deleted.
  *
  * @param {object} opts
  * @param {import('./store').Store} opts.store
@@ -4260,9 +4257,8 @@ async function enforceRetention(opts) {
       (c) =>
         c.reason === "retention" &&
         !c.blocked &&
-        // gcScan classifies with DEFAULT_WORKTREE_RETENTION so the GC dialog
-        // can offer everything; boot GC deletes with nobody watching, so it
-        // only ever touches projects the user opted in (#601)...
+        // Skip a project whose stored value is 0 (keep everything). The
+        // default of 10 is persisted (#559), so it is in `configured`.
         configured.has(c.projectId) &&
         // ...and never a worktree holding commits nobody landed.
         !(c.unmerged > 0),
@@ -4270,6 +4266,25 @@ async function enforceRetention(opts) {
     .map((c) => c.path);
   if (paths.length === 0) return { removed: [], failed: [], bytes: 0 };
   return gcClean({ store, worktreeBase, paths, broadcast, skipSizes: true });
+}
+
+/**
+ * Run enforceRetention without throwing. Archive / merge call this so a
+ * GC failure cannot fail the user-facing action (#559).
+ *
+ * @param {object} opts
+ * @returns {Promise<{ removed: string[], failed: Array<{path: string, error: string}>, bytes: number }>}
+ */
+async function scheduleRetention(opts) {
+  try {
+    return await enforceRetention(opts);
+  } catch (err) {
+    console.warn(
+      "worktree retention:",
+      err && err.message ? err.message : err,
+    );
+    return { removed: [], failed: [], bytes: 0 };
+  }
 }
 
 /**
@@ -4396,6 +4411,7 @@ module.exports = {
   gcScan,
   gcClean,
   enforceRetention,
+  scheduleRetention,
   DEFAULT_WORKTREE_RETENTION,
   ensureWorktree,
   isPrRefreshCandidate,

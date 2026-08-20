@@ -127,11 +127,11 @@ describe("worktree GC usage", () => {
     assert.ok(m.query('[data-gc-usage-row="p1"]'), "ledger row");
     assert.ok(m.query('[data-gc-usage-row="p2"]'), "inbox row");
     assert.ok(t.includes("ledger"), "project name");
-    assert.ok(t.includes("3 worktrees"), "worktree count");
-    assert.ok(t.includes("5.0 MB"), "formatted size");
+    assert.ok(t.includes("worktrees 5.0 MB · 3"), "project rollup");
     assert.ok(t.includes("inbox"), "second project");
-    assert.ok(t.includes("12 MB"), "second size");
+    assert.ok(t.includes("worktrees 12 MB · 1"), "second rollup");
     assert.ok(t.includes("Total 17 MB"), "total bytes");
+    assert.equal(m.query("[data-gc-dialog]"), null, "cleanup dialog stays closed");
     m.unmount();
   });
 
@@ -309,6 +309,59 @@ describe("worktree GC unmerged candidates (#601)", () => {
       "/tmp/wt/dead",
       "/tmp/wt/unlanded",
     ]);
+    m.unmount();
+  });
+});
+
+describe("worktree usage header (#559)", () => {
+  it("renders the rollup in the sidebar without opening the GC dialog", async () => {
+    const p1 = project({ id: "p1", name: "ledger", path: "/tmp/ledger" });
+    const t1 = thread({
+      id: "t1",
+      projectId: "p1",
+      worktreePath: "/tmp/wt/t1",
+    });
+    const t2 = thread({
+      id: "t2",
+      projectId: "p1",
+      worktreePath: "/tmp/wt/t2",
+    });
+    const t3 = thread({ id: "t3", projectId: "p1" });
+    const fake = createFakeCoder({
+      projects: [p1],
+      threads: [t1, t2, t3],
+      details: {
+        t1: detail({ thread: t1 }),
+        t2: detail({ thread: t2 }),
+        t3: detail({ thread: t3 }),
+      },
+      gcScan: scanResult({
+        usage: [{ projectId: "p1", worktrees: 2, bytes: 5 * MB }],
+        totalBytes: 5 * MB,
+      }),
+    });
+    const m = await boot(fake);
+    const usage = m.query("[data-worktree-usage]");
+    assert.ok(usage, "sidebar must show a worktree usage line");
+    assert.match(usage.textContent ?? "", /worktrees · 2/);
+    assert.equal(m.query("[data-gc-dialog]"), null, "GC dialog is not open");
+    assert.equal(
+      m.query("[data-worktree-gc]"),
+      null,
+      "Settings GC section is not open yet",
+    );
+
+    await m.click(usage);
+    await m.flush();
+    assert.ok(
+      m.query("[data-worktree-gc]"),
+      "clicking the line opens Settings → Worktrees",
+    );
+    assert.equal(
+      m.query("[data-gc-dialog]"),
+      null,
+      "cleanup dialog stays closed",
+    );
     m.unmount();
   });
 });

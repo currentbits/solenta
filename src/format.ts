@@ -96,6 +96,12 @@ export function providerDisplayName(
   return providers.find((p) => p.id === providerId)?.name ?? providerId;
 }
 
+/** Project worktree rollup: "worktrees 57.3 GB · 119" or "worktrees · 119". */
+export function formatWorktreeUsage(worktrees: number, bytes = 0): string {
+  if (bytes > 0) return `worktrees ${formatBytes(bytes)} · ${worktrees}`;
+  return `worktrees · ${worktrees}`;
+}
+
 /** Human file size: "512 B", "1.5 KB", "12 MB". */
 export function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";

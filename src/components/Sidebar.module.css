@@ -169,6 +169,22 @@
   background: var(--card-hover);
 }
 
+.worktreeUsage {
+  flex-shrink: 0;
+  height: 32px;
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.worktreeUsage:hover {
+  background: var(--card-hover);
+  color: var(--text);
+}
+
 .viewNav {
   display: flex;
   align-items: center;

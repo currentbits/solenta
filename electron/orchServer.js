@@ -226,7 +226,8 @@ async function loadOrCreateConfig(file) {
  * @param {(channel: string, payload: unknown) => void} [deps.broadcast]
  */
 function createToolHandlers(deps) {
-  const { store, runner, forkThread, getProvider, broadcast } = deps;
+  const { store, runner, forkThread, getProvider, broadcast, userDataPath } =
+    deps;
 
   /**
    * The project a thread belongs to, or null when it has been deleted.
@@ -393,6 +394,14 @@ function createToolHandlers(deps) {
       intoPath: self.worktreePath || undefined,
       broadcast,
     });
+    if (userDataPath) {
+      const { scheduleRetention } = require("./worktrees.js");
+      await scheduleRetention({
+        store,
+        worktreeBase: path.join(userDataPath, "worktrees"),
+        broadcast,
+      });
+    }
     return {
       merged: true,
       branch,
@@ -631,6 +640,14 @@ function createToolHandlers(deps) {
     });
     if (updated && updated.archived) retireAgent(updated.id);
     broadcastThreadsChanged();
+    if (updated && updated.archived && userDataPath) {
+      const { scheduleRetention } = require("./worktrees.js");
+      await scheduleRetention({
+        store,
+        worktreeBase: path.join(userDataPath, "worktrees"),
+        broadcast,
+      });
+    }
     return {
       threadId: args.threadId,
       archived: Boolean(updated && updated.archived),
@@ -1133,6 +1150,7 @@ function createOrchServer(opts) {
       forkThread,
       getProvider,
       broadcast,
+      userDataPath,
     });
 
     server = http.createServer(async (req, res) => {

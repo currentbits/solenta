@@ -390,9 +390,9 @@ app.whenReady().then(async () => {
             `worktree sweep: removed ${result.removed.length} orphan(s)`,
           );
         }
-        // Per-project retention (#316): projects that opted in shed the
-        // settled worktrees past their limit. Directories only — branches
-        // always survive, so this can never lose a commit.
+        // Per-project retention (#316 / #559): default 10 settled
+        // worktrees per project. Directories only — branches always
+        // survive, so this can never lose a commit. 0 opts out.
         return enforceRetention({ store, worktreeBase, broadcast });
       })
       .then((result) => {

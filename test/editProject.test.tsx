@@ -63,7 +63,7 @@ describe("edit project", () => {
       name: "ledger",
       remoteHost: "dev@box",
       remotePath: "/srv/app",
-      worktreeRetention: 0,
+      worktreeRetention: 10,
       autoDispatch: false,
     });
     assert.equal(

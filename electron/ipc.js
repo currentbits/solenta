@@ -26,6 +26,7 @@ const {
   conflictForecast,
   gcScan,
   gcClean,
+  scheduleRetention,
 } = require("./worktrees.js");
 const { suggestCommitMessage } = require("./commitmsg.js");
 const { listLocalServers } = require("./servers.js");
@@ -68,6 +69,20 @@ function retireAgent(ctx, threadId) {
   if (typeof ctx.runner.disposeClaudeSession === "function") {
     ctx.runner.disposeClaudeSession(threadId);
   }
+}
+
+/**
+ * Reclaim settled worktrees past retention after a done-transition (#559).
+ * No-op without a worktreeBase (tests that never configured one).
+ * @param {object} ctx
+ */
+function runRetention(ctx) {
+  if (!ctx || !ctx.worktreeBase) return Promise.resolve();
+  return scheduleRetention({
+    store: ctx.store,
+    worktreeBase: ctx.worktreeBase,
+    broadcast: ctx.broadcast,
+  });
 }
 
 /**
@@ -438,6 +453,7 @@ const IPC_HANDLERS = {
     const updated = services.setArchived(ctx.store, input);
     if (updated && updated.archived) retireAgent(ctx, updated.id);
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    if (updated && updated.archived) await runRetention(ctx);
     return updated;
   },
   "threads:setSettled": async (ctx, input) => {
@@ -817,11 +833,13 @@ const IPC_HANDLERS = {
     return { dataUrl: attachments.readImage(input && input.path) };
   },
   "git:mergeWorktree": async (ctx, input) => {
-    return mergeWorktree({
+    const merged = mergeWorktree({
       store: ctx.store,
       threadId: input.threadId,
       broadcast: ctx.broadcast,
     });
+    await runRetention(ctx);
+    return merged;
   },
   "git:removeWorktree": async (ctx, input) => {
     return removeWorktree({
@@ -874,6 +892,7 @@ const IPC_HANDLERS = {
       ctx.store.save();
       ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     }
+    await runRetention(ctx);
     return info;
   },
   "git:listPrs": async (_ctx, projectPath) => {

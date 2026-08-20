@@ -27,9 +27,11 @@ export function EditProjectModal({
     project.autoDispatch ?? false,
   );
   const [retentionText, setRetentionText] = useState(
-    project.worktreeRetention && project.worktreeRetention > 0
-      ? String(project.worktreeRetention)
-      : "",
+    String(
+      typeof project.worktreeRetention === "number"
+        ? project.worktreeRetention
+        : 10,
+    ),
   );
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -57,7 +59,7 @@ export function EditProjectModal({
       const n = Number(retentionRaw);
       if (!Number.isInteger(n) || n < 0) {
         setError(
-          "Keep worktrees must be a non-negative integer, or empty for unlimited.",
+          "Keep worktrees must be a non-negative integer. 0 keeps every worktree.",
         );
         return;
       }
@@ -168,15 +170,15 @@ export function EditProjectModal({
               inputMode="numeric"
               min="0"
               step="1"
-              placeholder="Unlimited"
+              placeholder="10"
               value={retentionText}
               onChange={(e) => setRetentionText(e.target.value)}
               disabled={pending}
               onKeyDown={enterToSubmit}
             />
             <p className={styles.note}>
-              Empty or 0 keeps every worktree. Cleanup removes directories
-              only. Branches stay.
+              0 keeps every worktree. New projects start at 10. Cleanup
+              removes directories only. Branches stay.
             </p>
           </div>
           <div className={styles.field}>

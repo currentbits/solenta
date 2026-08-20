@@ -14,6 +14,7 @@ const { runWindowsDoctor } = require("./doctor.js");
 const configDoctor = require("./configDoctor.js");
 const { normalizeCommand, runVerifyCommand } = require("./verify.js");
 const { resolveSandbox } = require("./sandbox.js");
+const { DEFAULT_WORKTREE_RETENTION } = require("./store.js");
 
 const PERMISSION_MODES = new Set([
   "default",
@@ -110,6 +111,7 @@ async function addProject(store, projectPath, opts) {
       path: localPath,
       remoteHost,
       remotePath,
+      worktreeRetention: DEFAULT_WORKTREE_RETENTION,
     };
     const projects = store.getProjects().slice();
     projects.push(project);
@@ -167,6 +169,7 @@ async function addProject(store, projectPath, opts) {
     slug,
     name,
     path: resolved,
+    worktreeRetention: DEFAULT_WORKTREE_RETENTION,
   };
 
   const projects = store.getProjects().slice();
@@ -304,13 +307,11 @@ function updateProject(store, projectId, patch) {
 
   if (Object.prototype.hasOwnProperty.call(input, "worktreeRetention")) {
     const v = input.worktreeRetention;
-    if (v === 0) {
-      delete next.worktreeRetention;
-    } else if (typeof v === "number" && Number.isFinite(v) && v > 0) {
-      next.worktreeRetention = v;
+    if (typeof v === "number" && Number.isFinite(v) && v >= 0) {
+      next.worktreeRetention = Math.floor(v);
     } else {
       throw new Error(
-        "worktreeRetention must be a number greater than 0, or 0 to clear",
+        "worktreeRetention must be a number greater than 0, or 0 to keep everything",
       );
     }
   }

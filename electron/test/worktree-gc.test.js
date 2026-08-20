@@ -220,7 +220,8 @@ describe("gcScan / gcClean", { concurrency: 1 }, () => {
     });
     fx.store.saveNow();
 
-    // No limit set: retention is opt-in, so nothing is reclaimed.
+    // Two settled worktrees sit under the default of 10, so nothing drops
+    // until the project is tightened to 1.
     const noop = await enforceRetention({
       store: fx.store,
       worktreeBase: fx.worktreeBase,
@@ -242,6 +243,7 @@ describe("gcScan / gcClean", { concurrency: 1 }, () => {
   });
 
   it("enforceRetention does not spawn du when no project sets retention (#563)", async () => {
+    services.updateProject(fx.store, fx.project.id, { worktreeRetention: 0 });
     addWorktree(fx, "Live");
     const du = spyDu();
     const result = await enforceRetention({

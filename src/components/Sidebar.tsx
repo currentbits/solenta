@@ -26,6 +26,7 @@ import {
   formatElapsed,
   formatRelativeAge,
   formatWorkingLabel,
+  formatWorktreeUsage,
 } from "../format";
 import { formatQuotaWaitLabel } from "../quotaWait";
 import { buildFlatSidebar } from "../sidebarGroups";
@@ -1803,6 +1804,16 @@ export const Sidebar = memo(function Sidebar({
       ? projectById.get(projectScope)?.slug ?? "All projects"
       : "All projects";
 
+  const worktreeCount = useMemo(() => {
+    let n = 0;
+    for (const t of threads) {
+      if (!t.worktreePath) continue;
+      if (projectScope && t.projectId !== projectScope) continue;
+      n += 1;
+    }
+    return n;
+  }, [threads, projectScope]);
+
   const listEmpty =
     !searching &&
     flat.pinned.length +
@@ -2071,6 +2082,18 @@ export const Sidebar = memo(function Sidebar({
             </div>
           )}
         </span>
+        {worktreeCount > 0 && (
+          <button
+            type="button"
+            className={styles.worktreeUsage}
+            data-worktree-usage=""
+            title="Worktree disk usage — open Settings to clean up"
+            aria-label={`${worktreeCount} worktrees. Open Settings to clean up.`}
+            onClick={() => onOpenSettings?.()}
+          >
+            {formatWorktreeUsage(worktreeCount)}
+          </button>
+        )}
         <button
           type="button"
           className={styles.iconBtn}

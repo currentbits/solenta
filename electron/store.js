@@ -804,10 +804,18 @@ function migrateAutomation(a) {
 }
 
 /**
+ * Settled worktrees each project keeps on disk (#559). Same number
+ * worktrees.js uses for classification. 0 on a project is keep-everything.
+ */
+const DEFAULT_WORKTREE_RETENTION = 10;
+
+/**
  * Projects: remoteHost/remotePath stay absent on old rows. Empty strings
  * (or other junk) are dropped so the keys remain optional, not null.
  * Spaces (#568): spaceId is dropped on load.
- * Worktree retention (#316): keep a finite number > 0; drop otherwise.
+ * Worktree retention (#316 / #559): a finite number >= 0 stays. Missing
+ * or junk becomes DEFAULT_WORKTREE_RETENTION (10). 0 is the explicit
+ * keep-everything hatch — it must survive, or the default would wipe it.
  * @param {object} p
  */
 function migrateProject(p) {
@@ -823,10 +831,10 @@ function migrateProject(p) {
   // Spaces (#568): retired. Drop any leftover spaceId so old stores flatten.
   delete next.spaceId;
   const retention = next.worktreeRetention;
-  if (typeof retention === "number" && Number.isFinite(retention) && retention > 0) {
-    next.worktreeRetention = retention;
+  if (typeof retention === "number" && Number.isFinite(retention) && retention >= 0) {
+    next.worktreeRetention = Math.floor(retention);
   } else {
-    delete next.worktreeRetention;
+    next.worktreeRetention = DEFAULT_WORKTREE_RETENTION;
   }
   return next;
 }
@@ -2116,6 +2124,7 @@ function cloneEmpty() {
 module.exports = {
   Store,
   EMPTY,
+  DEFAULT_WORKTREE_RETENTION,
   migrateProject,
   migrateThread,
   migrateAutomation,

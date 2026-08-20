@@ -110,6 +110,7 @@ describe("Store", () => {
       slug: "owner/repo",
       name: "repo",
       path: "/tmp/repo",
+      worktreeRetention: 10,
     };
     const thread = {
       id: "t1",
@@ -433,7 +434,7 @@ describe("Store", () => {
     assert.equal(Object.prototype.hasOwnProperty.call(empty, "remotePath"), false);
   });
 
-  it("keeps a positive worktreeRetention and drops junk (#316)", () => {
+  it("defaults a missing worktreeRetention to 10 and keeps an explicit 0 (#559)", () => {
     const old = {
       projects: [
         {
@@ -451,6 +452,12 @@ describe("Store", () => {
           worktreeRetention: 0,
         },
         {
+          id: "p-missing",
+          slug: "m",
+          name: "m",
+          path: "/tmp/m",
+        },
+        {
           id: "p-junk",
           slug: "j",
           name: "j",
@@ -466,10 +473,12 @@ describe("Store", () => {
     const store = new Store(filePath);
     const keep = store.getProjects().find((p) => p.id === "p-keep");
     const zero = store.getProjects().find((p) => p.id === "p-zero");
+    const missing = store.getProjects().find((p) => p.id === "p-missing");
     const junk = store.getProjects().find((p) => p.id === "p-junk");
     assert.equal(keep.worktreeRetention, 3);
-    assert.equal(Object.prototype.hasOwnProperty.call(zero, "worktreeRetention"), false);
-    assert.equal(Object.prototype.hasOwnProperty.call(junk, "worktreeRetention"), false);
+    assert.equal(zero.worktreeRetention, 0);
+    assert.equal(missing.worktreeRetention, 10);
+    assert.equal(junk.worktreeRetention, 10);
   });
 
   it("migrates old-shape threads missing session fields on load", () => {
