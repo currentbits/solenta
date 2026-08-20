@@ -3187,8 +3187,8 @@ async function rewindThread(store, input, opts) {
 }
 
 /**
- * Shared with deleteThread and removeProject — one string so the two cannot
- * drift. Renderer and Git tab copy depend on this exact wording.
+ * Shared with deleteThread — one string so Git tab copy cannot drift.
+ * removeProject no longer uses this guard; it tears worktrees down instead.
  */
 const THREAD_STILL_HAS_WORKTREE =
   "Thread still has a worktree. Merge or delete it in the Git tab first.";
@@ -3229,10 +3229,12 @@ function deleteThread(store, input, opts) {
 
 /**
  * Remove the project ENTRY and delete its threads' conversation history
- * (t3-style). The repository on disk is never touched — no fs calls on the
- * project path. Same worktree guard string as deleteThread; active-run copy
- * is project-scoped. All guards run before any deletion so a reject cannot
- * leave a half-removed project.
+ * (t3-style). The repository checkout on disk is never deleted. Worktrees
+ * attached to its threads are torn down (`git worktree remove --force`,
+ * `git branch -D`, one `git worktree prune`); per-command failure is
+ * tolerated so a missing dir, gone branch, or gone checkout cannot block
+ * removal. Active-run guard still runs over every thread before anything
+ * is deleted. Do not call cleanupWorktree: it save()s per thread.
  * @param {import('./store').Store} store
  * @param {{ projectId: string }} input
  * @param {{ isRunning?: (threadId: string) => boolean }} [opts]
@@ -3260,11 +3262,17 @@ function removeProject(store, input, opts) {
       throw new Error("Cannot remove a project while a run is active");
     }
   }
+
+  const { gitTry } = require("./worktrees.js");
+  const cwd = project.path;
   for (const thread of threads) {
-    if (thread.worktreePath) {
-      throw new Error(THREAD_STILL_HAS_WORKTREE);
+    if (!thread.worktreePath) continue;
+    gitTry(cwd, ["worktree", "remove", "--force", thread.worktreePath]);
+    if (thread.branch) {
+      gitTry(cwd, ["branch", "-D", thread.branch]);
     }
   }
+  gitTry(cwd, ["worktree", "prune"]);
 
   for (const thread of threads) {
     purgeThread(store, thread.id);

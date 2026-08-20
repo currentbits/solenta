@@ -36,6 +36,8 @@
   "risks": [
     "Did not verify in a live Electron window — renderer tests + tsc only. The live failure is an IPC reject; the toast path is covered by appWiring with fail: projects.remove.",
     "electron/ is owned by a parallel worker. Do not expect this branch to make Remove project succeed on the live store.",
-    "Issue #613 stays open (plan:doing) until the electron half lands."
+    "Issue #613 stays open (plan:doing) until the electron half lands.",
+    "Not verified in a live Electron window — electron tests only. Removing a project with archived worktrees on the running app is the real check.",
+    "npm run test:electron in this worktree is 1645/1645 pass once core/dist and memory-server/node_modules are symlinked from the main checkout. Without those links the suite reports hundreds of MODULE_NOT_FOUND / orch-server port-null failures that are not this change."
   ]
 }

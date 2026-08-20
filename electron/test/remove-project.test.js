@@ -175,7 +175,7 @@ describe("removeProject", () => {
     assert.ok(store.getProject(projectB.id), "other project must remain");
   });
 
-  it("rejects when any thread has a worktree (shared string with deleteThread)", async () => {
+  it("succeeds when a thread has a worktreePath", async () => {
     const repo = path.join(tmpDir, "wt-repo");
     initRepo(repo);
     const project = await services.addProject(store, repo);
@@ -192,21 +192,66 @@ describe("removeProject", () => {
     });
     store.saveNow();
 
-    assert.throws(
-      () => services.removeProject(store, { projectId: project.id }),
-      (err) => {
-        assert.ok(err instanceof Error);
-        assert.equal(err.message, services.THREAD_STILL_HAS_WORKTREE);
-        assert.equal(
-          err.message,
-          "Thread still has a worktree. Merge or delete it in the Git tab first.",
-        );
-        return true;
-      },
-    );
-    assert.ok(store.getThread(t1.id));
-    assert.ok(store.getThread(t2.id));
-    assert.ok(store.getProject(project.id));
+    services.removeProject(store, { projectId: project.id });
+
+    assert.equal(store.getProject(project.id), null);
+    assert.equal(store.getThread(t1.id), null);
+    assert.equal(store.getThread(t2.id), null);
+  });
+
+  it("tears down attached worktrees and deletes their branches", async () => {
+    const repo = path.join(tmpDir, "wt-real");
+    fs.mkdirSync(repo, { recursive: true });
+    git(repo, ["init", "-q", "-b", "main"]);
+    git(repo, ["config", "user.email", "t@example.com"]);
+    git(repo, ["config", "user.name", "t"]);
+    fs.writeFileSync(path.join(repo, "a.txt"), "1");
+    git(repo, ["add", "."]);
+    git(repo, ["commit", "-qm", "init"]);
+
+    const project = await services.addProject(store, repo);
+    const thread = services.createThread(store, {
+      projectId: project.id,
+      title: "has-wt",
+    });
+    const wtDir = path.join(tmpDir, "wt-dir");
+    const branch = "coder/rm-proj-wt";
+    git(repo, ["worktree", "add", wtDir, "-b", branch]);
+    store.updateThread(thread.id, { worktreePath: wtDir, branch });
+    store.saveNow();
+    assert.ok(fs.existsSync(wtDir));
+
+    services.removeProject(store, { projectId: project.id });
+
+    assert.ok(!fs.existsSync(wtDir), "worktree dir must be gone");
+    const listed = execFileSync("git", ["branch", "--list", branch], {
+      cwd: repo,
+      encoding: "utf8",
+    }).trim();
+    assert.equal(listed, "", "branch must be gone");
+    assert.equal(store.getProject(project.id), null);
+    assert.equal(store.getThread(thread.id), null);
+    assert.ok(fs.existsSync(repo), "checkout must remain");
+  });
+
+  it("does not block removal when a worktreePath no longer exists", async () => {
+    const repo = path.join(tmpDir, "gone-wt");
+    initRepo(repo);
+    const project = await services.addProject(store, repo);
+    const thread = services.createThread(store, {
+      projectId: project.id,
+      title: "ghost-wt",
+    });
+    store.updateThread(thread.id, {
+      worktreePath: path.join(tmpDir, "already-deleted"),
+      branch: "coder/ghost",
+    });
+    store.saveNow();
+
+    services.removeProject(store, { projectId: project.id });
+
+    assert.equal(store.getProject(project.id), null);
+    assert.equal(store.getThread(thread.id), null);
   });
 
   it("isRunning opt rejects even when status is not working", async () => {
@@ -290,7 +335,7 @@ describe("removeProject", () => {
     assert.ok(fs.existsSync(path.join(repo, ".git")));
   });
 
-  it("deleteThread and removeProject share the worktree guard string", async () => {
+  it("deleteThread still rejects a thread that has a worktree", async () => {
     assert.equal(
       services.THREAD_STILL_HAS_WORKTREE,
       "Thread still has a worktree. Merge or delete it in the Git tab first.",
@@ -304,19 +349,15 @@ describe("removeProject", () => {
     });
     store.updateThread(thread.id, { worktreePath: "/tmp/wt" });
 
-    let deleteMsg = "";
-    try {
-      services.deleteThread(store, { threadId: thread.id });
-    } catch (err) {
-      deleteMsg = err.message;
-    }
-    let removeMsg = "";
-    try {
-      services.removeProject(store, { projectId: project.id });
-    } catch (err) {
-      removeMsg = err.message;
-    }
-    assert.equal(deleteMsg, removeMsg);
-    assert.equal(deleteMsg, services.THREAD_STILL_HAS_WORKTREE);
+    assert.throws(
+      () => services.deleteThread(store, { threadId: thread.id }),
+      (err) => {
+        assert.ok(err instanceof Error);
+        assert.equal(err.message, services.THREAD_STILL_HAS_WORKTREE);
+        return true;
+      },
+    );
+    assert.ok(store.getThread(thread.id), "thread must remain");
+    assert.ok(store.getProject(project.id), "project must remain");
   });
 });
