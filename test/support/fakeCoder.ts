@@ -37,6 +37,7 @@ import type {
   PrChecksResult,
   PrInfo,
   ProjectInfo,
+  FsBrowseResult,
   ProviderInfo,
   CliSlashCommand,
   SkillInfo,
@@ -180,6 +181,8 @@ export interface FakeOptions {
   distill?: DistilledWorkflow;
   /** Override git.gcScan result (default: empty). */
   gcScan?: GcScanResult;
+  /** Override fs.browse result (default: demo home directories). */
+  browse?: (input: unknown) => FsBrowseResult;
 }
 
 export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
@@ -577,16 +580,28 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     },
     projects: {
       list: () => rec("projects.list", [], projects.map((p) => ({ ...p }))),
-      add: (path: string, opts?: { remoteHost?: string; remotePath?: string }) =>
-        rec(
-          "projects.add",
-          opts ? [path, opts] : [path],
+      add: (path: string, opts?: { remoteHost?: string; remotePath?: string }) => {
+        const host = opts?.remoteHost?.trim() || "";
+        const existing = host
+          ? projects.find(
+              (p) =>
+                (p.remoteHost || "") === host &&
+                (p.remotePath || "") === (opts?.remotePath || ""),
+            )
+          : projects.find((p) => p.path === path);
+        const created =
+          existing ??
           project({
             path: path || opts?.remotePath || "/tmp/repo",
             remoteHost: opts?.remoteHost,
             remotePath: opts?.remotePath,
-          }),
-        ),
+          });
+        return rec(
+          "projects.add",
+          opts ? [path, opts] : [path],
+          created,
+        );
+      },
       addViaDialog: () => rec("projects.addViaDialog", [], project()),
       create: (input: { name: string; parentDir: string }) => {
         const name = input.name.trim();
@@ -1742,6 +1757,23 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
             abs: known.has(p) ? `/tmp/wt/${p}` : null,
           })),
         });
+      },
+    },
+    fs: {
+      browse: (input: unknown) => {
+        const fallback: FsBrowseResult = {
+          parentPath: "/Users/demo/",
+          existed: true,
+          entries: [
+            { name: "Code", fullPath: "/Users/demo/Code" },
+            { name: "Projects", fullPath: "/Users/demo/Projects" },
+          ],
+        };
+        return rec(
+          "fs.browse",
+          [input],
+          opts.browse?.(input) ?? fallback,
+        );
       },
     },
     attachments: {

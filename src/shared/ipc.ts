@@ -132,6 +132,28 @@ export interface AddProjectOptions {
   remotePath?: string;
 }
 
+/** One directory in an `fs:browse` listing (#609). */
+export interface FsBrowseEntry {
+  name: string;
+  fullPath: string;
+  recent?: boolean;
+}
+
+export interface FsBrowseInput {
+  /** Directory or partial path. Empty / `~` / `~/` lists home + recent projects. */
+  path: string;
+  /** SSH `user@host`. Omit/empty = this machine. */
+  environment?: string | null;
+  /** Active project cwd; required to resolve `./` and `../`. */
+  cwd?: string | null;
+}
+
+export interface FsBrowseResult {
+  parentPath: string;
+  entries: FsBrowseEntry[];
+  existed?: boolean;
+}
+
 /**
  * Input for projects.create: a plain folder name plus the absolute path of
  * an existing parent directory. The backend mkdirs name inside parentDir,
@@ -2677,6 +2699,14 @@ export interface CoderApi {
       threadId: string;
       paths: string[];
     }): Promise<{ resolved: Array<{ path: string; abs: string | null }> }>;
+  };
+  /**
+   * Environment-scoped directory listing for add-project (#609) and the
+   * clone destination step (#459). Local readdir, or ls over SSH when
+   * `environment` is set. Empty query includes a bounded recent-project list.
+   */
+  fs: {
+    browse(input: FsBrowseInput): Promise<FsBrowseResult>;
   };
   /**
    * Composer attachments: images and folders the user pins to a message.

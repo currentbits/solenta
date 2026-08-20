@@ -225,6 +225,9 @@ const coder = {
     image: (input) => invoke("files:image", input),
     resolve: (input) => invoke("files:resolve", input),
   },
+  fs: {
+    browse: (input) => invoke("fs:browse", input),
+  },
   attachments: {
     pick: () => invoke("attachments:pick"),
     fromPaths: (input) => invoke("attachments:fromPaths", input),

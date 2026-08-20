@@ -222,6 +222,15 @@ exit 1`,
         handlers.has("files:resolve"),
         "main must handle files:resolve",
       );
+      assert.equal(
+        typeof api.fs.browse,
+        "function",
+        "preload must expose fs.browse",
+      );
+      assert.ok(
+        handlers.has("fs:browse"),
+        "main must handle fs:browse",
+      );
 
       for (const name of ["scripts", "start", "stop", "status"]) {
         assert.equal(

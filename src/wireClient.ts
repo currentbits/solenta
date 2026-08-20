@@ -24,6 +24,7 @@ import type {
   GitRepoInfo,
   GitPullResult,
   FetchIssueResult,
+  FsBrowseResult,
   CreateIssueResult,
   ListIssuesResult,
   ListPrsResult,
@@ -514,6 +515,9 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
           "files:resolve",
           input,
         ),
+    },
+    fs: {
+      browse: (input) => call<FsBrowseResult>("fs:browse", input),
     },
     attachments: {
       pick: () =>

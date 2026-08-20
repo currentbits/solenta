@@ -4480,6 +4480,19 @@ function buildDevCoder(): CoderApi {
         };
       },
     },
+    fs: {
+      async browse(input: { path: string; environment?: string | null }) {
+        const parent = input.path?.trim() || "~/";
+        return {
+          parentPath: parent.endsWith("/") ? parent : `${parent}/`,
+          existed: true,
+          entries: [
+            { name: "Code", fullPath: "/Users/demo/Code" },
+            { name: "Projects", fullPath: "/Users/demo/Projects" },
+          ],
+        };
+      },
+    },
     attachments: {
       async pick() {
         // Dev mock: no native dialog in a browser.

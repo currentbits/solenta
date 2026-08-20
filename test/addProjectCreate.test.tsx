@@ -86,18 +86,8 @@ describe("Add project: create new", () => {
     await m.type(m.query("[data-add-project-create-input]"), "fresh-app");
     assert.equal(
       submit.disabled,
-      true,
-      "name alone must keep Create disabled",
-    );
-
-    await m.type(
-      m.query("[data-add-project-create-location]"),
-      "/Users/demo/code",
-    );
-    assert.equal(
-      submit.disabled,
       false,
-      "name + location must enable Create",
+      "name plus the seeded ~/ location must enable Create",
     );
     assert.equal(
       fake.of("projects.create").length,

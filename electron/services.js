@@ -3,6 +3,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { randomUUID } = require("node:crypto");
+const { expandUserPath } = require("./fsBrowse.js");
 const {
   getProvider,
   knownProviderIds,
@@ -80,6 +81,50 @@ function slugFromRemoteUrl(url) {
   return null;
 }
 
+function normalizePathKey(value) {
+  return String(value || "")
+    .trim()
+    .replace(/[\\/]+$/, "")
+    .toLowerCase();
+}
+
+function isWindowsAbsolutePath(value) {
+  return (
+    value.startsWith("\\\\") || /^[a-zA-Z]:([/\\]|$)/.test(String(value || ""))
+  );
+}
+
+/**
+ * Already-added project for this environment: same remote host+path, or the
+ * same local path. Trailing slashes and `~` do not create a second entry.
+ * @param {import('./store').Store} store
+ * @param {{ path?: string, remoteHost?: string, remotePath?: string }} input
+ */
+function findExistingProject(store, input) {
+  const host = input && input.remoteHost ? String(input.remoteHost).trim() : "";
+  const projects = store.getProjects();
+  if (host) {
+    const rpath = normalizePathKey(input && input.remotePath);
+    if (!rpath) return null;
+    return (
+      projects.find(
+        (p) =>
+          String(p.remoteHost || "").trim() === host &&
+          normalizePathKey(p.remotePath || p.path) === rpath,
+      ) || null
+    );
+  }
+  const raw = input && input.path ? String(input.path).trim() : "";
+  if (!raw) return null;
+  const resolved = path.resolve(expandUserPath(raw));
+  const key = normalizePathKey(resolved);
+  return (
+    projects.find(
+      (p) => !p.remoteHost && normalizePathKey(p.path) === key,
+    ) || null
+  );
+}
+
 /**
  * True when cwd is a git work tree. A missing git binary, a non-repo, or a
  * bare repo all return false — callers then decide whether to init.
@@ -119,6 +164,8 @@ async function ensureGitWorkTree(resolved) {
  * Validate remotes (when set) or a local directory; add ProjectInfo.
  * A local folder that is not yet a git work tree is initialized with
  * `git init -q` (same as createProject). SSH remotes skip the local check.
+ * Local paths also get `~` expansion, create-if-missing, and return the
+ * existing project instead of duplicating it (#609).
  * @param {import('./store').Store} store
  * @param {string} projectPath
  * @param {{ remoteHost?: string, remotePath?: string } | null} [opts]
@@ -133,13 +180,18 @@ async function addProject(store, projectPath, opts) {
     if (!remotePath) {
       throw new Error("Remote path is required when remote host is set");
     }
-    if (!remotePath.startsWith("/")) {
-      throw new Error("Remote path must be an absolute path (start with /)");
+    if (!remotePath.startsWith("/") && !remotePath.startsWith("~")) {
+      throw new Error("Remote path must be an absolute path (start with / or ~)");
     }
+    const existingRemote = findExistingProject(store, {
+      remoteHost,
+      remotePath,
+    });
+    if (existingRemote) return attachWindowsDoctor(existingRemote);
     const folderName = path.posix.basename(remotePath) || "remote";
     const localPath =
       typeof projectPath === "string" && projectPath.trim()
-        ? path.resolve(projectPath.trim())
+        ? path.resolve(expandUserPath(projectPath.trim()))
         : remotePath;
     const project = {
       id: randomUUID(),
@@ -157,19 +209,43 @@ async function addProject(store, projectPath, opts) {
     return attachWindowsDoctor(project);
   }
 
-  const resolved = path.resolve(projectPath);
+  const raw = typeof projectPath === "string" ? projectPath.trim() : "";
+  if (!raw) {
+    throw new Error("Path is required");
+  }
+  if (isWindowsAbsolutePath(raw) && process.platform !== "win32") {
+    throw new Error(
+      "Windows-style paths are only supported on Windows environments.",
+    );
+  }
+  const resolved = path.resolve(expandUserPath(raw));
+  const existing = findExistingProject(store, { path: resolved });
+  if (existing) return attachWindowsDoctor(existing);
 
   let stat;
+  let created = false;
   try {
     stat = fs.statSync(resolved);
   } catch {
-    throw new Error(`Path does not exist: ${resolved}`);
+    fs.mkdirSync(resolved, { recursive: true });
+    created = true;
+    try {
+      stat = fs.statSync(resolved);
+    } catch {
+      throw new Error(`Could not create directory: ${resolved}`);
+    }
   }
   if (!stat.isDirectory()) {
     throw new Error(`Path is not a directory: ${resolved}`);
   }
 
-  await ensureGitWorkTree(resolved);
+  try {
+    await ensureGitWorkTree(resolved);
+  } catch (err) {
+    // Roll back only a directory this call created; never an existing one.
+    if (created) fs.rmSync(resolved, { recursive: true, force: true });
+    throw err;
+  }
 
   const folderName = path.basename(resolved);
   let slug = folderName;
@@ -235,7 +311,7 @@ async function createProject(store, input) {
     throw new Error("Location is required");
   }
 
-  const parent = path.resolve(parentDir);
+  const parent = path.resolve(expandUserPath(parentDir));
   let stat;
   try {
     stat = fs.statSync(parent);

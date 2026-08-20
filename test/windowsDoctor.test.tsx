@@ -48,7 +48,7 @@ describe("Windows doctor on project add", () => {
     const m = await mount(<App />);
 
     await m.click(m.byText("Add project"));
-    await m.type(m.query("[data-add-project-path-input]"), "C:\\\\repo");
+    await m.type(m.query("[data-add-project-path-input]"), "/Users/demo/repo");
     await m.click(m.query("[data-add-project-path-submit]"));
 
     assert.equal(fake.of("projects.add").length, 1, "add must still run");

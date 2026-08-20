@@ -2,7 +2,6 @@
 
 const { BrowserWindow, shell } = require("electron");
 const fs = require("node:fs");
-const os = require("node:os");
 const path = require("node:path");
 const services = require("./services.js");
 const {
@@ -45,6 +44,7 @@ const { collectFleet } = require("./fleet.js");
 const { distillThread } = require("./distill.js");
 const updater = require("./updater.js");
 const vibeKanban = require("./vibeKanban.js");
+const { browseFilesystem, expandUserPath } = require("./fsBrowse.js");
 
 /**
  * Default window fan-out (desktop transport). main.js replaces this with a
@@ -136,18 +136,6 @@ function stripLineSuffix(raw) {
   if (!m) return raw;
   if (/^[A-Za-z]$/.test(m[1])) return raw;
   return m[1];
-}
-
-/**
- * Expand `~` / `~/…` against the home directory.
- * @param {string} raw
- */
-function expandUserPath(raw) {
-  if (raw === "~") return os.homedir();
-  if (raw.startsWith("~/") || raw.startsWith("~\\")) {
-    return path.join(os.homedir(), raw.slice(2));
-  }
-  return raw;
 }
 
 /**
@@ -268,6 +256,19 @@ const IPC_HANDLERS = {
       return null;
     }
     return services.addProject(ctx.store, result.filePaths[0]);
+  },
+  /**
+   * Directory listing for the in-app add-project browser (#609).
+   * `environment` is an SSH user@host; omit/empty = this machine.
+   */
+  "fs:browse": async (ctx, input) => {
+    const payload = input && typeof input === "object" ? input : {};
+    return browseFilesystem({
+      store: ctx.store,
+      path: payload.path,
+      environment: payload.environment,
+      cwd: payload.cwd,
+    });
   },
   "projects:remove": async (ctx, input) => {
     services.removeProject(ctx.store, input, {

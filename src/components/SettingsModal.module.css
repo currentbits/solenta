@@ -11,8 +11,8 @@
 .modal {
   display: flex;
   flex-direction: column;
-  width: min(440px, 100%);
-  max-height: min(520px, 100%);
+  width: min(480px, 100%);
+  max-height: min(640px, 100%);
   border-radius: 14px;
   border: 1px solid var(--border);
   background: var(--bg-elevated);
@@ -93,6 +93,60 @@
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.pathInput {
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
+
+.browseList {
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  max-height: 180px;
+  overflow-y: auto;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.browseRow {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 5px 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browseRow[data-highlighted="true"],
+.browseRow:hover {
+  background: var(--card-hover);
+  color: var(--text);
+}
+
+.browseHint {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--text-dim);
+}
+
+.browseEmpty {
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--text-dim);
 }
 
 .input {

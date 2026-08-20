@@ -57,6 +57,9 @@
   "risks": [
     "Not verified in a live Electron window — electron + renderer tests only. Re-adding /Users/willem/code/Shipnest-pivot in the running app is the real check.",
     "git init does not create a commit or set user.name; origin is unset. Publish/clone remain #459.",
-    "Delete/modify or binary conflicts on a generated doc: stage :2 or :3 is missing, isGeneratedDocConflict returns false, so the merge still refuses — no silent side-taking."
+    "Delete/modify or binary conflicts on a generated doc: stage :2 or :3 is missing, isGeneratedDocConflict returns false, so the merge still refuses — no silent side-taking.",
+    "Did not drop the git requirement for existing directories. T3 projects are just folders; Solenta still errors on an existing non-git dir. Only missing paths get git init.",
+    "Native showOpenDialog remains as Browse… on local; web/headless already had no dialog and now get the same in-app list via the web bridge's IPC_HANDLERS.",
+    "No UI verification in the running desktop app this turn — coverage is unit/component/electron tests."
   ]
 }

@@ -885,6 +885,11 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     [api],
   );
 
+  const browseFilesystem = useCallback(
+    (input: Parameters<typeof api.fs.browse>[0]) => api.fs.browse(input),
+    [api],
+  );
+
   const editProject =
     projects.find((p) => p.id === editProjectId) ?? null;
 
@@ -1337,6 +1342,12 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             onClose={() => setAddPathOpen(false)}
             onSubmit={submitAddPath}
             onCreate={submitCreateProject}
+            onBrowse={browseFilesystem}
+            currentProjectCwd={
+              (selectedProjectId
+                ? projectById.get(selectedProjectId)?.path
+                : null) ?? null
+            }
             onPickDirectory={
               isWebMode() ? undefined : pickProjectDirectory
             }

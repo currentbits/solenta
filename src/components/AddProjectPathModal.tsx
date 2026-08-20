@@ -1,12 +1,26 @@
 import { useCallback, useState } from "react";
 import { useEscapeClose } from "../useEscapeClose";
-import type { ProjectInfo, WindowsDoctorCheck } from "../shared/ipc";
+import type {
+  FsBrowseInput,
+  FsBrowseResult,
+  ProjectInfo,
+  WindowsDoctorCheck,
+} from "../shared/ipc";
+import { getAddProjectInitialQuery, resolveAddProjectPath } from "../browsePath";
+import { PathBrowser } from "./PathBrowser";
 import styles from "./SettingsModal.module.css";
 
 function failedDoctorChecks(result: unknown): WindowsDoctorCheck[] {
   if (!result || typeof result !== "object") return [];
   const checks = (result as ProjectInfo).windowsDoctor?.checks;
   return Array.isArray(checks) ? checks.filter((c) => !c.ok) : [];
+}
+
+function browsePlatform(): string {
+  if (typeof navigator !== "undefined" && navigator.platform) {
+    return navigator.platform;
+  }
+  return "";
 }
 
 interface AddProjectPathModalProps {
@@ -20,30 +34,41 @@ interface AddProjectPathModalProps {
   onCreate: (name: string, parentDir: string) => Promise<unknown>;
   /**
    * Native directory picker; omit where no dialog exists (web mode) and the
-   * Browse buttons disappear, leaving plain text inputs.
+   * Browse buttons disappear, leaving the typed/browsable path.
    */
   onPickDirectory?: () => Promise<string | null>;
+  /** IPC-backed directory listing (local or SSH). */
+  onBrowse: (input: FsBrowseInput) => Promise<FsBrowseResult>;
+  /** Active project cwd so `./` and `../` can resolve. */
+  currentProjectCwd?: string | null;
 }
 
 /**
- * Add-project dialog in both modes. "Add existing" takes a path (web) or a
- * picked folder (native), with optional SSH remotes; a folder that is not
- * yet a git repo is initialized on add. "Create new" mkdirs a fresh folder
- * via projects.create (git-init happens in addProject). Reuses the Settings
- * modal chrome so we do not invent a second dialog system.
+ * Add-project dialog in both modes. "Add existing" is a typed/browsable
+ * destination (#609): the query is both the input and the browse cursor,
+ * Browse… stays a local OS-dialog shortcut, and a folder that is missing or
+ * not yet a git repo is created/initialized on add. "Create new" mkdirs a
+ * fresh folder via projects.create (git-init happens in addProject). Reuses
+ * the Settings modal chrome so we do not invent a second dialog system.
  */
 export function AddProjectPathModal({
   onClose,
   onSubmit,
   onCreate,
   onPickDirectory,
+  onBrowse,
+  currentProjectCwd,
 }: AddProjectPathModalProps) {
   const [mode, setMode] = useState<"existing" | "create">("existing");
-  const [path, setPath] = useState("");
+  const [path, setPath] = useState(() => getAddProjectInitialQuery(null));
   const [remoteHost, setRemoteHost] = useState("");
-  const [remotePath, setRemotePath] = useState("");
+  const [remotePath, setRemotePath] = useState(() =>
+    getAddProjectInitialQuery(null),
+  );
   const [name, setName] = useState("");
-  const [location, setLocation] = useState("");
+  const [location, setLocation] = useState(() =>
+    getAddProjectInitialQuery(null),
+  );
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [doctorIssues, setDoctorIssues] = useState<WindowsDoctorCheck[] | null>(
@@ -66,28 +91,22 @@ export function AddProjectPathModal({
         ? Boolean(rpath)
         : Boolean(path.trim());
 
-  const browse = async (apply: (picked: string) => void) => {
-    if (pending || !onPickDirectory) return;
-    setError(null);
-    try {
-      const picked = await onPickDirectory();
-      if (picked) apply(picked);
-    } catch (err) {
-      setError(
-        err instanceof Error && err.message
-          ? err.message
-          : "Could not open the folder picker.",
-      );
-    }
-  };
-
   const submit = async () => {
     if (pending || !canSubmit) return;
     setPending(true);
     setError(null);
     try {
       if (mode === "create") {
-        const created = await onCreate(name.trim(), location.trim());
+        const resolved = resolveAddProjectPath({
+          rawPath: location.trim(),
+          platform: browsePlatform(),
+          currentProjectCwd,
+        });
+        if (!resolved.ok) {
+          setError(resolved.error);
+          return;
+        }
+        const created = await onCreate(name.trim(), resolved.path);
         if (!created) {
           setError("Could not create that project.");
           return;
@@ -96,14 +115,27 @@ export function AddProjectPathModal({
         if (failed.length) setDoctorIssues(failed);
         else onClose();
       } else {
-        if (host && !rpath.startsWith("/")) {
-          setError("Remote path must be an absolute path (start with /).");
+        if (host && !(rpath.startsWith("/") || rpath.startsWith("~"))) {
+          setError("Remote path must be an absolute path (start with / or ~).");
           return;
+        }
+        let submitPath = path.trim();
+        if (!host) {
+          const resolved = resolveAddProjectPath({
+            rawPath: submitPath,
+            platform: browsePlatform(),
+            currentProjectCwd,
+          });
+          if (!resolved.ok) {
+            setError(resolved.error);
+            return;
+          }
+          submitPath = resolved.path;
         }
         const remotes = host
           ? { remoteHost: host, remotePath: rpath }
           : undefined;
-        const added = await onSubmit(path.trim(), remotes);
+        const added = await onSubmit(submitPath, remotes);
         if (!added) {
           setError("Could not add that path.");
           return;
@@ -258,31 +290,19 @@ export function AddProjectPathModal({
                 >
                   Create in
                 </label>
-                <input
+                <PathBrowser
                   id="add-project-create-location"
-                  className={styles.input}
-                  data-add-project-create-location=""
                   value={location}
-                  onChange={(e) => setLocation(e.target.value)}
-                  placeholder="/absolute/path/to/parent"
-                  autoComplete="off"
-                  spellCheck={false}
+                  onChange={setLocation}
+                  onBrowse={onBrowse}
+                  onPickDirectory={onPickDirectory}
+                  cwd={currentProjectCwd}
                   disabled={pending}
-                  onKeyDown={onEnter}
+                  placeholder="~/code"
+                  onSubmit={() => void submit()}
+                  inputDataAttr="data-add-project-create-location"
+                  browseDataAttr="data-add-project-browse-location"
                 />
-                {onPickDirectory && (
-                  <div className={styles.fieldRow}>
-                    <button
-                      type="button"
-                      className={styles.btn}
-                      data-add-project-browse-location=""
-                      disabled={pending}
-                      onClick={() => void browse(setLocation)}
-                    >
-                      Browse…
-                    </button>
-                  </div>
-                )}
               </div>
             </>
           ) : (
@@ -294,34 +314,22 @@ export function AddProjectPathModal({
                 >
                   Project path
                 </label>
-                <input
+                <PathBrowser
                   id="add-project-path-input"
-                  className={styles.input}
-                  data-add-project-path-input=""
                   value={path}
-                  onChange={(e) => setPath(e.target.value)}
-                  placeholder="/absolute/path/to/folder"
-                  autoComplete="off"
-                  spellCheck={false}
+                  onChange={setPath}
+                  onBrowse={onBrowse}
+                  onPickDirectory={onPickDirectory}
+                  cwd={currentProjectCwd}
                   disabled={pending}
-                  onKeyDown={onEnter}
+                  placeholder="~/code/my-repo"
+                  onSubmit={() => void submit()}
+                  inputDataAttr="data-add-project-path-input"
+                  browseDataAttr="data-add-project-browse-path"
                 />
-                {onPickDirectory && (
-                  <div className={styles.fieldRow}>
-                    <button
-                      type="button"
-                      className={styles.btn}
-                      data-add-project-browse-path=""
-                      disabled={pending}
-                      onClick={() => void browse(setPath)}
-                    >
-                      Browse…
-                    </button>
-                  </div>
-                )}
                 <p className={styles.fieldNote} data-add-project-git-init-note="">
-                  If the folder is not a git repository yet, Solenta will
-                  initialize one.
+                  If the folder does not exist yet, or is not a git repository,
+                  Solenta will create and initialize it.
                 </p>
               </div>
               <div className={styles.field}>
@@ -351,17 +359,16 @@ export function AddProjectPathModal({
                 >
                   Remote path
                 </label>
-                <input
+                <PathBrowser
                   id="add-project-remote-path"
-                  className={styles.input}
-                  data-add-project-remote-path=""
                   value={remotePath}
-                  onChange={(e) => setRemotePath(e.target.value)}
-                  placeholder="/absolute/path/on/the/remote"
-                  autoComplete="off"
-                  spellCheck={false}
-                  disabled={pending}
-                  onKeyDown={onEnter}
+                  onChange={setRemotePath}
+                  onBrowse={onBrowse}
+                  environment={host || null}
+                  disabled={pending || !host}
+                  placeholder="/absolute/path/on/the-remote"
+                  onSubmit={() => void submit()}
+                  inputDataAttr="data-add-project-remote-path"
                 />
               </div>
             </>

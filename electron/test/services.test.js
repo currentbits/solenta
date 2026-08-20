@@ -29,11 +29,36 @@ describe("services", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("addProject rejects a path that is not a directory", async () => {
-    const missing = path.join(tmpDir, "nope");
+  it("addProject creates a missing path (mkdir + git init) (#609)", async () => {
+    const missing = path.join(tmpDir, "brand-new");
+    const project = await services.addProject(store, missing);
+    assert.equal(project.path, path.resolve(missing));
+    assert.ok(fs.statSync(missing).isDirectory());
+    const inside = String(
+      execFileSync("git", ["rev-parse", "--is-inside-work-tree"], {
+        cwd: missing,
+        encoding: "utf8",
+      }),
+    ).trim();
+    assert.equal(inside, "true");
+  });
+
+  it("addProject returns the existing project instead of duplicating it", async () => {
+    const repo = path.join(tmpDir, "already");
+    fs.mkdirSync(repo);
+    git(repo, ["init"]);
+    const first = await services.addProject(store, repo);
+    const second = await services.addProject(store, repo + "/");
+    assert.equal(second.id, first.id);
+    assert.equal(store.getProjects().length, 1);
+  });
+
+  it("addProject rejects a path that is a file, not a directory", async () => {
+    const file = path.join(tmpDir, "file.txt");
+    fs.writeFileSync(file, "x");
     await assert.rejects(
-      () => services.addProject(store, missing),
-      /not a directory|does not exist|directory/i,
+      () => services.addProject(store, file),
+      /not a directory/i,
     );
   });
 
