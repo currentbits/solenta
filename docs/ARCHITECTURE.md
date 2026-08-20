@@ -69,6 +69,53 @@ hard-reset this thread onto the fork's tree. Numbering counts checkpoint
 *commits*, not turns — a turn that changes nothing skips a number — so anything
 mapping messages to files must select by commit time, never by turn N.
 
+**PR-size cap** (issue #402). `createPr` in `electron/worktrees.js` refuses
+an oversize diff **before** push or `gh pr create`. Cap is
+`settings.prDiffCapLines` (default `DEFAULT_PR_DIFF_CAP_LINES` 400;
+absent/junk heals to 400; explicit null disables). Count is additions +
+deletions vs the base branch (`git diff --numstat base...branch`,
+`parseNumstat`); binary files (`-\t-\tpath`) add no lines but still
+count as files. A numstat failure returns null and **fails open** — a
+stat hiccup must not block creation. `allowOversize: true` is the
+explicit human override. The error prefix `PR_TOO_LARGE_PREFIX`
+(`"PR too large"`) is the renderer contract: `src/prUi.ts` duplicates
+the string (the two processes share no module) so
+`isPrTooLargeMessage` can offer `splitPrPrompt` (restack into a chain
+of smaller PRs) vs Create anyway. Pinned by
+`electron/test/pr-size-cap.test.js`.
+
+Planboard review-load (`src/planboard.ts` `reviewLoad`) is the same
+bottleneck measured the other way: open non-draft PRs vs
+`REVIEW_LOAD_BUSY_PRS` 4 / `REVIEW_LOAD_BUSY_LINES` 1200 (three
+cap-sized PRs) and `REVIEW_LOAD_OVERLOADED_PRS` 7 /
+`REVIEW_LOAD_OVERLOADED_LINES` 2400. Drafts do not count.
+
+## Post-merge verification
+
+One-shot delayed re-check after a thread's PR merges (issue #420).
+`electron/postmerge.js`; renderer labels in `src/verifyCard.ts`
+(`formatPostMergeLine`). Not a user-visible Automation — those mint
+agent turns on a cadence.
+
+Armed by `onThreadPrState` when `prState` becomes MERGED **and** the
+thread has a `verifyCommand` **and** no existing `postMergeVerify`
+blob. Default delay `DEFAULT_DELAY_MS` 24h (`CODER_POSTMERGE_DELAY_MS`
+in tests). Persistence is `ThreadInfo.postMergeVerify` +
+`issueNumber`. Status: scheduled / running / passed / failed /
+skipped. A crash mid-check leaves `"running"`; `normalizePostMerge`
+and `duePostMergeChecks` heal it to scheduled-due
+(`STALE_RUNNING_MS` 15 min). The minute ticker
+(`startPostMergeScheduler`, 60s) is started from `electron/main.js`.
+
+The check runs in a detached worktree at the merged default branch
+(`prepareMergedCheckout`: fetch best-effort, then origin/HEAD →
+origin/main → origin/master → HEAD). Remote projects skip. A pass
+appends an event via `setMessages` (does not bump `updatedAt`). A
+fail spawns a fixer thread (`spawnFixThread`, `pendingWorktree: true`,
+`handoffFrom` the source, prompt from `verify.js` `buildFixPrompt`)
+and best-effort reopens the planboard issue (`issues.reopenIssue`).
+The fixer thread is the durable action if reopen throws.
+
 ## Rewind (edit and resubmit)
 
 `threads.rewind` (issue #254) truncates the transcript at a past user message,
