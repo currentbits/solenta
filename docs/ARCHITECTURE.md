@@ -524,6 +524,38 @@ approving in the SpecCard advances the stage and starts the next run. Exit
 spec mode (header or SpecCard) drops `thread.spec` without approving remaining
 stages (issue #500). The gate is procedural, not sandboxed.
 
+Once `tasks.md` is approved (stage `build`), Dispatch and Converge are
+available (issue #537). Parser: `electron/specTasks.js` `parseTasksMd`.
+Format is GitHub-style checkboxes; every other line is ignored:
+
+```
+- [ ] 1. Title (`src/foo.ts`) — req 1
+- [ ] 2. Title (`src/bar.ts`) — req 2 — needs: 1
+- [x] T3: Already done — needs: 1, 2
+```
+
+Ids are a leading `1.` / `1)` / `#1` / `T1:` token (`normalizeTaskId`:
+`T1`, `t1`, `#1`, and `1` are the same id). A line with no id gets the
+next unused 1-based number. `needs:` is a comma/space list of those
+ids. Checked boxes (`[x]`) are done. Duplicate ids, self-needs, unknown
+needs, and cycles (`taskWaves`) are errors — `dispatchSpec` refuses a
+file with `parsed.errors.length > 0`. Waves are every remaining open
+task whose still-open dependencies are already in a previous wave.
+
+`services.dispatchSpec` (IPC `threads:dispatchSpec`) reads the artifact,
+syncs checkboxes into the crew-task list (`syncSpecCrewFromParsed`:
+match by title, add missing, complete already-ticked), and returns the
+current claimable wave (`status === "open" && !blocked`). Services
+never start runs. `ipc.js` then `forkSpecWave` (one `orchWorker` per
+wave entry, `claimCrewTask`, `specDispatchPrompt`) and `startRun`s
+each. A second click does not re-add existing titles. An empty wave is
+not an error — `reason` explains blocked-on-deps vs nothing open.
+
+`convergeSpec` (IPC `threads:convergeSpec`) starts a run on the spec
+thread with `specConvergePrompt`: read the three artifacts plus the
+repo, **append** missing checkboxes, do not implement, do not rewrite
+or reorder, do not `spec_submit`. Also build-stage only.
+
 ## Renderer notes
 
 - Composer model pill: always shown. Empty `models` → Default + Custom… (inline
