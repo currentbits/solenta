@@ -688,6 +688,84 @@ describe("worktrees", () => {
     assert.ok(landed.risks.length >= 1);
   });
 
+  it("mergeWorktree auto-resolves a generated AGENTS.md alongside the itinerary", async () => {
+    const setup = setupWorktree({
+      store,
+      threadId: thread.id,
+      worktreeBase,
+      broadcast: () => {},
+    });
+    const marker = require("../configDoctor.js").GENERATED_MARKER;
+    const itinerary = (area) =>
+      `${JSON.stringify({
+        version: 1,
+        readOrder: ["impl"],
+        chunks: [{ area, rationale: area, risks: [] }],
+        risks: [],
+      })}\n`;
+
+    const seed = (dir, side) => {
+      fs.mkdirSync(path.join(dir, ".solenta"), { recursive: true });
+      fs.writeFileSync(
+        path.join(dir, ".solenta", "review-itinerary.json"),
+        itinerary(side),
+      );
+      fs.writeFileSync(
+        path.join(dir, "AGENTS.md"),
+        `# solenta\n\n${marker}\n\n## ${side} conventions\n`,
+      );
+    };
+
+    seed(repo, "main-side");
+    git(repo, ["add", "-A"]);
+    git(repo, ["commit", "-m", "main generated docs"]);
+
+    seed(setup.worktreePath, "thread-side");
+    fs.writeFileSync(path.join(setup.worktreePath, "feature.txt"), "landed\n");
+    git(setup.worktreePath, ["add", "-A"]);
+    git(setup.worktreePath, ["commit", "-m", "thread generated docs + feature"]);
+
+    const merged = mergeWorktree({
+      store,
+      threadId: thread.id,
+      broadcast: () => {},
+    });
+    assert.equal(merged.worktreePath, null);
+    assert.equal(
+      fs.readFileSync(path.join(repo, "feature.txt"), "utf8"),
+      "landed\n",
+    );
+    const agents = fs.readFileSync(path.join(repo, "AGENTS.md"), "utf8");
+    assert.doesNotMatch(agents, /<<<<<<</);
+    assert.ok(agents.includes(marker));
+  });
+
+  it("mergeWorktree still refuses a hand-authored AGENTS.md conflict", async () => {
+    const setup = setupWorktree({
+      store,
+      threadId: thread.id,
+      worktreeBase,
+      broadcast: () => {},
+    });
+
+    // No generated-by marker: a human wrote this, so it needs a human resolve.
+    fs.writeFileSync(path.join(repo, "AGENTS.md"), "# main rules\n");
+    git(repo, ["add", "-A"]);
+    git(repo, ["commit", "-m", "main agents"]);
+
+    fs.writeFileSync(path.join(setup.worktreePath, "AGENTS.md"), "# thread rules\n");
+    git(setup.worktreePath, ["add", "-A"]);
+    git(setup.worktreePath, ["commit", "-m", "thread agents"]);
+
+    assert.throws(
+      () => mergeWorktree({ store, threadId: thread.id, broadcast: () => {} }),
+      (err) => {
+        assert.match(err.message, /MERGE_CONFLICT:[\s\S]*AGENTS\.md/);
+        return true;
+      },
+    );
+  });
+
   it("removeWorktree without force rejects dirty worktree with WORKTREE_DIRTY", async () => {
     const setup = setupWorktree({
       store,

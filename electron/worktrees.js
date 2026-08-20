@@ -6,6 +6,7 @@ const { execFile } = require("node:child_process");
 const { execCommand, wrapCommand, SYNC_TIMEOUT_MS } = require("./ssh.js");
 const { pathSide, isWindowsMount, wslTarget, buildWslCommand } = require("./wsl.js");
 const { scanSecrets } = require("./guardrails.js");
+const { GENERATED_MARKER } = require("./configDoctor.js");
 // #559 persists this default (10) on every project; 0 is keep-everything.
 const { DEFAULT_WORKTREE_RETENTION } = require("./store.js");
 
@@ -439,10 +440,6 @@ function conflictError(headline, files, footer) {
  *  almost always the sole conflict when landing a worktree. */
 const REVIEW_ITINERARY_FILE = ".solenta/review-itinerary.json";
 
-function isItineraryOnly(files) {
-  return files.length === 1 && files[0] === REVIEW_ITINERARY_FILE;
-}
-
 function parseItineraryJson(raw) {
   try {
     const value = JSON.parse(String(raw || ""));
@@ -497,35 +494,60 @@ function combineReviewItineraries(oursRaw, theirsRaw) {
   return `${JSON.stringify({ version: 1, readOrder, chunks, risks }, null, 2)}\n`;
 }
 
-/**
- * If the only unmerged path is the review itinerary, combine both sides
- * and stage the result. Returns true when the index has no unmerged paths.
- * @param {string} cwd
- * @returns {boolean}
- */
-function tryResolveItineraryOnly(cwd) {
-  if (!isItineraryOnly(unmergedFiles(cwd))) return false;
+/** Combine both sides of the itinerary conflict onto disk. */
+function resolveItineraryConflict(cwd) {
   const ours = gitTry(cwd, ["show", `:2:${REVIEW_ITINERARY_FILE}`]);
   const theirs = gitTry(cwd, ["show", `:3:${REVIEW_ITINERARY_FILE}`]);
   const combined = combineReviewItineraries(
     ours.ok ? ours.stdout : "",
     theirs.ok ? theirs.stdout : "",
   );
-  const dest = path.join(cwd, REVIEW_ITINERARY_FILE);
-  if (combined) {
-    fs.mkdirSync(path.dirname(dest), { recursive: true });
-    fs.writeFileSync(dest, combined, "utf8");
-  } else {
-    const take = gitTry(cwd, [
-      "checkout",
-      "--ours",
-      "--",
-      REVIEW_ITINERARY_FILE,
-    ]);
-    if (!take.ok) return false;
+  if (!combined) {
+    return gitTry(cwd, ["checkout", "--ours", "--", REVIEW_ITINERARY_FILE]).ok;
   }
-  const added = gitTry(cwd, ["add", "--", REVIEW_ITINERARY_FILE]);
-  return added.ok && unmergedFiles(cwd).length === 0;
+  const dest = path.join(cwd, REVIEW_ITINERARY_FILE);
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  fs.writeFileSync(dest, combined, "utf8");
+  return true;
+}
+
+/**
+ * True when both sides of the conflict are config-doctor output (AGENTS.md /
+ * CLAUDE.md / GEMINI.md regenerated from shared memory). Nobody hand-edits
+ * those, and the marker is what tells a generated file from an authored one.
+ * @param {string} cwd
+ * @param {string} file
+ */
+function isGeneratedDocConflict(cwd, file) {
+  return [":2:", ":3:"].every((stage) => {
+    const side = gitTry(cwd, ["show", `${stage}${file}`]);
+    return side.ok && side.stdout.includes(GENERATED_MARKER);
+  });
+}
+
+/**
+ * Resolve the conflicts in files the app itself writes: the review itinerary
+ * gets both sides combined, a generated agent doc keeps ours (the next doctor
+ * run rewrites it from memory anyway). Any other conflicted path is a real one
+ * and bails out. Returns true when the index has no unmerged paths.
+ *
+ * @param {string} cwd
+ * @returns {boolean}
+ */
+function autoResolveMergeArtifacts(cwd) {
+  const files = unmergedFiles(cwd);
+  if (!files.length) return false;
+  for (const file of files) {
+    if (file === REVIEW_ITINERARY_FILE) {
+      if (!resolveItineraryConflict(cwd)) return false;
+    } else if (isGeneratedDocConflict(cwd, file)) {
+      if (!gitTry(cwd, ["checkout", "--ours", "--", file]).ok) return false;
+    } else {
+      return false;
+    }
+    if (!gitTry(cwd, ["add", "--", file]).ok) return false;
+  }
+  return unmergedFiles(cwd).length === 0;
 }
 
 /**
@@ -576,7 +598,7 @@ function mergeWorktree(opts) {
   // unresolved: `add -A` would happily commit the markers.
   const pending = unresolvedFiles(wtPath);
   if (pending.length) {
-    if (!tryResolveItineraryOnly(wtPath) || unresolvedFiles(wtPath).length) {
+    if (!autoResolveMergeArtifacts(wtPath) || unresolvedFiles(wtPath).length) {
       throw conflictError(
         "Unresolved conflicts in the worktree:",
         unresolvedFiles(wtPath).length ? unresolvedFiles(wtPath) : pending,
@@ -694,7 +716,7 @@ function mergeInto(target, branch, baseBranch, wtPath, thread) {
   const squash = () => {
     const res = gitTry(target, ["merge", "--squash", branch]);
     if (res.ok) return null;
-    if (tryResolveItineraryOnly(target)) return null;
+    if (autoResolveMergeArtifacts(target)) return null;
     const files = unmergedFiles(target);
     gitTry(target, ["merge", "--abort"]);
     gitTry(target, ["reset", "--hard", "HEAD"]);
@@ -707,7 +729,7 @@ function mergeInto(target, branch, baseBranch, wtPath, thread) {
     // editor and the user can actually resolve it. A clean replay means the
     // branch only needed the newer base commits, so the squash can retry.
     const replay = gitTry(wtPath, ["merge", baseBranch]);
-    if (!replay.ok && tryResolveItineraryOnly(wtPath)) {
+    if (!replay.ok && autoResolveMergeArtifacts(wtPath)) {
       gitTry(wtPath, [
         "commit",
         "--no-edit",
@@ -2369,7 +2391,7 @@ async function updatePrBranchFromBase(opts) {
   const { cwd, branch, project } = opts;
   const pending = unresolvedFiles(cwd);
   if (pending.length) {
-    if (!tryResolveItineraryOnly(cwd) || unresolvedFiles(cwd).length) {
+    if (!autoResolveMergeArtifacts(cwd) || unresolvedFiles(cwd).length) {
       throw conflictError(
         "Unresolved conflicts in the worktree:",
         unresolvedFiles(cwd).length ? unresolvedFiles(cwd) : pending,
@@ -2452,7 +2474,7 @@ async function updatePrBranchFromBase(opts) {
   ]);
   if (!merged.ok) {
     const files = unmergedFiles(cwd);
-    if (tryResolveItineraryOnly(cwd)) {
+    if (autoResolveMergeArtifacts(cwd)) {
       const finished = await gitTryAsync(cwd, [
         "commit",
         "--no-edit",

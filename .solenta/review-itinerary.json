@@ -1,6 +1,10 @@
 {
   "version": 1,
-  "readOrder": ["tests", "critical", "impl"],
+  "readOrder": [
+    "tests",
+    "critical",
+    "impl"
+  ],
   "chunks": [
     {
       "area": "tests",
@@ -28,10 +32,31 @@
         "addViaDialog still goes through addProject, so the native leftover picker also inits. Fine.",
         "The toast in the screenshot came from useCoder.addProject catch (setError) because addProject threw. After this, a successful init returns the project and clears the error."
       ]
+    },
+    {
+      "area": "electron/worktrees.js — autoResolveMergeArtifacts",
+      "rationale": "The reported failure: merge blocked on '.solenta/review-itinerary.json + AGENTS.md'. tryResolveItineraryOnly only fired when the itinerary was the SOLE unmerged path, so any second app-generated file (config-doctor AGENTS.md/CLAUDE.md/GEMINI.md) sent the user to hand-resolve in the worktree. Now each unmerged path is classified: itinerary -> combine both sides (unchanged logic), config-doctor output -> checkout --ours, anything else -> bail, exactly as before.",
+      "risks": [
+        "Auto-taking ours on a generated doc drops the other side's regeneration; safe because the file is a projection of shared memory and the next doctor run rewrites it whole.",
+        "Gate is the GENERATED_MARKER present in BOTH stages :2 and :3 — a hand-authored AGENTS.md still conflicts (second test covers this)."
+      ]
+    },
+    {
+      "area": "electron/worktrees.js — call sites (5) + configDoctor require",
+      "rationale": "Same helper is used by mergeWorktree, mergeInto's squash and replay, updatePrBranchFromBase and the PR-update path; renaming in place keeps one shared resolution policy instead of per-caller guards. New require of ./configDoctor.js is leaf-only (fs/path), no cycle.",
+      "risks": [
+        "mergeInto squash site runs in the project checkout, where --ours = the target branch — intended."
+      ]
+    },
+    {
+      "area": "electron/test/worktrees.test.js",
+      "rationale": "Two cases: generated AGENTS.md + itinerary conflicting together now merges clean; hand-authored AGENTS.md still throws MERGE_CONFLICT.",
+      "risks": []
     }
   ],
   "risks": [
     "Not verified in a live Electron window — electron + renderer tests only. Re-adding /Users/willem/code/Shipnest-pivot in the running app is the real check.",
-    "git init does not create a commit or set user.name; origin is unset. Publish/clone remain #459."
+    "git init does not create a commit or set user.name; origin is unset. Publish/clone remain #459.",
+    "Delete/modify or binary conflicts on a generated doc: stage :2 or :3 is missing, isGeneratedDocConflict returns false, so the merge still refuses — no silent side-taking."
   ]
 }
