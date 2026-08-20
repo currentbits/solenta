@@ -1,34 +1,20 @@
 {
   "version": 1,
-  "readOrder": ["critical", "impl", "tests"],
+  "readOrder": ["docs"],
   "chunks": [
     {
-      "area": "critical",
-      "rationale": "electron/orchServer.js is the whole fix. Read assertUserApproved first (the new gate), then its one call site inside thread_merge — the gate fires ONLY when the lead has no worktree of its own, because that is the case where mergeWorktree commits to the project's default branch. A lead that has a worktree keeps merging workers onto its own branch unasked; that is staging, and the user still gates the lead's branch from the thread header. requireLandableWorker is a pure extraction of thread_merge's old preflight so thread_pr shares it — diff it against the old body and check nothing was dropped. thread_pr is new and delegates to the existing createPr; it deliberately does NOT clean up the worker's worktree.",
+      "area": "docs",
+      "rationale": "README.md first (user-facing capability bullets under The rest of the desk / Also in the box / Updates), then docs/ARCHITECTURE.md in heading order: Worktrees (fail-closed, retention/GC, forge probe), Store (Spaces retired), coder-threads MCP (new section), Orchestration commands (#606 palette), Renderer notes + Pane workspace + Build SHA mismatch, Sidebar (native menu, icons, nested workers). The two files are one story: README says what you can do, ARCHITECTURE says where it lives. Diff is additive except the old snooze/pin/shelves README bullet, which described a contract the UI no longer renders.",
       "risks": [
-        "approved:true is the agent's own claim. The real lock is the turn check; if isAutoTurn is missing from a runner (test fakes, any future createToolHandlers caller) the gate falls open to the claim alone.",
-        "A lead that forks a worker and polls it to done inside its own human turn can still merge without asking — the turn genuinely is human-started, just not an answer to a question. The notice path (the common case, and the one that put 13 branches on main) is covered.",
-        "requireLandableWorker throws for a missing worker worktree nowhere — thread_merge still returns merged:false for a worktree:false worker, thread_pr throws. Confirm the two callers handle that case differently on purpose."
-      ]
-    },
-    {
-      "area": "impl",
-      "rationale": "electron/runner.js has two small changes. isAutoTurn exposes the existing autoTurns map (already the codebase's own definition of 'human in the loop', see the comment at startRun) — no new state. The worker-finished notice text is the behavioural half: it used to say 'call thread_merge', which is what the lead obeyed. It now says report and ask. Verify the notice and the tool description agree, since the agent reads both.",
-      "risks": [
-        "autoTurns resets to 0 on any startRun without fromNotice, which includes machine-ish paths (verify auto-fix). Those would read as human turns; merge still needs approved:true so the blast radius is one gate, not both.",
-        "Instruction/notice wording is the only thing steering a lead that has NOT yet hit the gate. If the wording and the refusal text disagree the agent will loop."
-      ]
-    },
-    {
-      "area": "tests",
-      "rationale": "orch-merge.test.js replaces the old 'merges into the project checkout when the lead has no worktree' case — that test asserted exactly the behaviour being removed, so read the replacement pair (refuses / approved) together. The isAutoTurn case builds its own handlers with a fake that returns true. thread_pr coverage is gate-and-guards only: the push/gh half belongs to createPr and would need a CODER_GH_BIN fake (POSIX-only, per the fakeBin split).",
-      "risks": [
-        "thread_pr's happy path is untested here — a typo in the createPr argument shape would not be caught by this suite."
+        "The hand-off brief listed a single Later shelf (#567) and per-project create clusters. Live UI is buildFlatSidebar (T3-flat): pinned block + snoozed shelf + settled shelf, create options on the header caret. Docs follow the code, not that brief. A reviewer scoring against the brief will think Later is missing.",
+        "Pane workspace: only chat and diff are shipped; terminal/browser/files/tasks/subagent are placeholders. ARCHITECTURE says so. Do not read the README Git-as-center-pane bullet as implying Thread|Git header tabs — the header is a Views menu plus onViewChanges hydration.",
+        "coder-threads host-tool table is a summary, not the MCP input schemas. thread_merge's default-branch gate vs own-worktree staging is the load-bearing sentence; if that is wrong the docs teach the agent to land on main again."
       ]
     }
   ],
   "risks": [
-    "Behaviour change for crews already running: their next worker-finished notice will refuse the merge they were told to do. Intended, but it will look like a regression to an in-flight orchestration.",
-    "Full electron suite run green (1682 pass) after building core/dist; a second run showed the known flaky 'wireClient x webBridge over a real socket'. Renderer suite not run — no renderer files changed."
+    "Issue #560 (archived transcripts not re-stringified) was in the brief as shipped. It is a closed duplicate of still-open #225; store.js still JSON.stringify(this.data) including messagesByThread. Left out on purpose — documenting it as done would be a lie.",
+    "Perf-pass issue numbers (#526/#527/#528/#533) are closed but have no user-facing surface worth a README bullet; ARCHITECTURE already described the store debounce that those passes landed on. Nothing new to cite without inventing.",
+    "No site/, package.json, or app source was touched. Website worker owns site/."
   ]
 }
