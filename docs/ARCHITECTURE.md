@@ -380,24 +380,65 @@ stages (issue #500). The gate is procedural, not sandboxed.
 
 The sidebar follows the t3code (pingdotgg/t3code, MIT) sidebar behavior as a
 model. No t3code code is vendored; the rules are reimplemented in
-`src/sidebarGroups.ts` / `src/threadSettle.ts` / `src/components/Sidebar.tsx`.
-The one third-party package this uses is `@formkit/auto-animate` (MIT).
+`src/sidebarGroups.ts` / `src/threadSettle.ts` / `src/threadSnooze.ts` /
+`src/components/Sidebar.tsx`. The one third-party package this uses is
+`@formkit/auto-animate` (MIT).
 
-- **Static order**: threads within a project group, and the groups themselves,
-  sort by `createdAt` (newest first). Activity NEVER reorders the list; a row
-  moves only at a lifecycle transition (create, settle, unsettle, pin, snooze,
-  archive). `updatedAt` is bumped per streamed message for unread dots and age
-  labels and must never be used as a sidebar sort key.
-- **Partition precedence**: snoozed → pinned → settled → attention
-  (`partitionSidebar`). Settle resolution in `effectiveSettled`: working and
-  pinned never settle, explicit override wins, MERGED/CLOSED PR settles, OPEN
-  PR blocks, otherwise inactivity window (`AUTO_SETTLE_AFTER_DAYS`, default 3).
-- **Settled tail**: one global section, expanded by default (collapse persists
-  in `coder.sidebar.settledCollapsed`), paged 10 + "Show 25 more".
-- **Animation**: `auto-animate` (150ms ease-out) per list container; rows key
-  as `${id}:card` in groups vs `${id}:slim` on shelves so a settle move
-  cross-fades instead of sliding.
+The live list is T3-flat: `Sidebar.tsx` calls `buildFlatSidebar`, not
+`partitionSidebar`. Every card carries its own project slug
+(`data-card-slug`); there are no project group headers.
+`scopeProjectId` (localStorage `sidebar:projectScope`) filters every
+section ("All projects" = null). `partitionSidebar` still exists as a
+helper — `{ attentionThreads, later: { snoozed, settled, archived } }`
+with precedence archived > snoozed > pinned-stays-active > settled —
+and tests cover it; the UI does not call it. There is no
+`data-later-shelf` and no `data-pinned-section`.
+
+- **Static order**: activity NEVER reorders a row. A row moves only at a
+  lifecycle transition (create, settle, unsettle, pin, snooze, archive).
+  `updatedAt` is bumped per streamed message for unread dots and age
+  labels and must never be used as an active-list sort key.
+- **Partition precedence** (`buildFlatSidebar`, first match wins):
+  archived → snoozed → pinned → settled → active. Same as
+  `partitionSidebar` except pinned is its own top block.
+  `effectiveSnoozed` (a live `snoozedUntil`) beats a pin; `isPinned`
+  beats `effectiveSettled`.
+- **Pinned block**: oldest `pinnedAt` first (`comparePinnedOldestFirst`).
+  Rendered as full cards (`data-pinned`, `data-pin-flag`, ", pinned" in
+  `aria-label`). A `data-pinned-divider` follows when the block is
+  non-empty.
+- **Active list**: `createdAt` desc (legacy NaN `createdAt` falls back to
+  `updatedAt`), then `attachForks` so `handoffFrom` children sit under
+  their source (`data-nested`). Search bypasses shelves and renders a
+  flat hit list.
+- **Snoozed shelf**: wake-soonest (`compareSnoozedWakeSoonest`). Collapsed
+  by default; expand persists in `sidebar:snoozedOpen`. Toggle is
+  `data-snoozed-shelf-toggle`. Snooze is visibility only
+  (`ThreadInfo.snoozedUntil`); it never touches the agent. A thread
+  wakes early when it raises its hand (`awaitingInput`, or a
+  `failed`/`done` `updatedAt` newer than `snoozedAt`). Timer wakes are
+  client-derived.
+- **Settled shelf**: settled newest (`compareSettledNewestFirst` via
+  `resolveSettledTimestamp`) then archived (`updatedAt` desc) as one
+  paged tail (`SETTLED_TAIL_INITIAL_COUNT` 10; each "Show more" adds
+  `SETTLED_TAIL_PAGE_COUNT` 25, `data-settled-more`). Collapsed by
+  default; expand persists in `sidebar:settledOpen`. Toggle is
+  `data-settled-shelf-toggle`. Archived slim rows carry `data-archived`
+  and `data-unarchive-btn`. The retired key
+  `coder.sidebar.settledCollapsed` is unused.
+- **Settle resolution** (`effectiveSettled`): `working` and `quota-wait`
+  never settle; a finite `pinnedAt` never auto-settles; explicit
+  `settledOverride` (`"settled"` / `"active"`) wins; CLOSED always
+  settles; MERGED settles when `autoSettleOnMerge` is not false (store
+  default true); OPEN PR blocks; otherwise the inactivity window
+  (`settings.autoSettleAfterDays`, default `AUTO_SETTLE_AFTER_DAYS` = 3;
+  null disables the inactivity path).
+- **Animation**: `auto-animate` (150ms ease-out) on `data-sidebar-list`;
+  rows key as `${id}:card` on the inbox vs `${id}:slim` on shelves so a
+  settle move cross-fades instead of sliding. The open thread and a
+  `revealThreadId` target are carved out of a collapsed shelf so they
+  never vanish.
 - **New-thread reveal**: creation sets `revealThreadId` in `App.tsx`; the
-  sidebar expands the target project group, scrolls the card into view, and
-  flashes a highlight. The global "+" names its target project
+  sidebar scrolls `[data-thread-card="<id>"]` into view and flashes a
+  highlight. The global "+" names its target project
   ("New thread in \<slug\>").
