@@ -122,6 +122,7 @@ settings: { dailyBudgetUsd: number | null, orchestrationBudgetUsd: number | null
             autoSettleAfterDays: number | null, mcpServers[],
             defaultWorktree: boolean, defaultOrchestrate: boolean,
             updateChannel: "prod" | "nightly" | null, notifications: boolean,
+            quotaWaitAutoResume: boolean, prDiffCapLines: number | null,
             otel: { endpoint, headers, claudeMetrics } }
 ```
 
@@ -156,6 +157,33 @@ has its next wake-up refused and lands failed with the reason via the #34
 surfacing path, while user-sent turns (Retry after raising the cap) still run.
 Nested crews are not rolled up; each worker that fans out is its own
 orchestrator.
+
+## Quota wait
+
+Provider usage-limit parking (issue #462), distinct from Solenta's own
+budget cap and from model failover. Parsing and park/wake live in
+`electron/quotaWait.js`; `src/quotaWait.ts` is the renderer clock
+(`isQuotaWaitStatus`, `formatQuotaWaitLabel` — same local calendar
+rules as snooze).
+
+`decideQuotaWait` parks only on a quota-like error that carries a
+parseable reset clock (`kind: "reset"`). Exhausted balance with no clock
+is a hard fail — do not retry-storm. Solenta's own messages
+(`OWN_BUDGET_RE`: daily budget / orchestration budget / crew auto-turn
+cap / spend cap) never park. Waits longer than `MAX_WAIT_MS` (8 days)
+are treated as a parse bug. Wake-once: `quotaWaitResumed` blocks a
+second park; a human turn (not `fromNotice` / `fromQuotaWait`) clears
+the auto-turn counter and the next `startRun` stamps
+`quotaWaitResumed: fromQuotaWait`.
+
+Default on: `settings.quotaWaitAutoResume` is true unless an explicit
+false is on disk; per-thread `quotaWaitAutoResume` true/false/null
+overrides (`quotaWaitEnabled`). `runner.markRunFailed` is the seam —
+the first `threads:changed` never flashes Failed. Wake is
+`scheduleQuotaWake` (`until + 2s`, min 1s) → `fireQuotaWake` which
+re-sends the last user message with `fromQuotaWait: true`. Banner
+`resumeQuotaWait` is the same one-shot. `working` and `quota-wait`
+never auto-settle.
 
 ## Fleet analytics
 
