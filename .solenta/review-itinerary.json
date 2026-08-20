@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "readOrder": ["critical", "impl", "tests"],
+  "chunks": [
+    {
+      "area": "critical",
+      "rationale": "src/components/onboarding/SetupStep.tsx is the whole of #630. Read the save() helper first: every onSaveSettings call is try/caught, pending disables the defaults fieldset, and the returned AppSettings is not mirrored locally — checkboxes read props.settings, so App's saveSettings re-render is the source of truth. Then the two sections: projects.length === 0 renders data-onboarding-add-project (calls props.onAddProject, which App already wires to AddProjectPathModal) plus the git-init sentence; projects.length > 0 renders data-onboarding-projects-done with the count and first four names. Toggles patch { defaultWorktree } / { defaultOrchestrate } independently; Use recommended patches both true; budget reimplements SettingsModal's empty→null / Number(raw) parse and saves { dailyBudgetUsd } on the Save button only.",
+      "risks": [
+        "test/support/fakeCoder.ts settings.set still does not persist defaultOrchestrate (pre-existing). Use recommended records both flags in the call args — production electron/store.js does persist them — but the orchestrate checkbox will not appear checked after that click in renderer tests. Do not 'fix' by adding local toggle state; the contract forbids a settings mirror.",
+        "Budget parse is intentionally backend-validated: 0, negatives, and NaN are sent through and the rejection is painted on data-onboarding-setup-error. Same contract as SettingsModal, not a client-side filter.",
+        "AddProjectPathModal shares z-index 100 with the wizard. App renders it after OnboardingModal, so it stacks on top. Reordering those two siblings in App.tsx (out of this worker's files) would hide the add-project modal behind the wizard."
+      ]
+    },
+    {
+      "area": "impl",
+      "rationale": "OnboardingModal.module.css is append-only at EOF under a /* SetupStep */ marker so the parallel #629/#631 workers' end-of-file appends merge. New class names are setup-prefixed (setupSection, setupToggle, setupInput, setupError) to avoid colliding with whatever CliStep/TourStep add to the same module. Fieldset disabled opacity covers the settings-null loading state.",
+      "risks": [
+        "Three workers appending to the same CSS file. Prefixed names avoid rule-name clashes; a textual conflict at EOF is still possible and should be resolved by concatenating, not by picking one block."
+      ]
+    },
+    {
+      "area": "tests",
+      "rationale": "test/onboardingSetup.test.tsx mounts App with onboardingSeen: false, clicks Next twice onto setup, and queries only data-* attrs. Cases: empty projects → Add project opens [data-add-project-path]; two named projects → done-state lists them; worktree checkbox → settings.set { defaultWorktree: true }; Use recommended → both flags in one patch; budget '12' then '' → 12 then null; budget '0' → inline error from the fakeCoder validator.",
+      "risks": [
+        "Does not click the orchestrate checkbox in isolation (Use recommended covers the patch). fakeCoder's missing defaultOrchestrate persist would make a checked-state assertion after that click fail even if the component is correct."
+      ]
+    }
+  ],
+  "risks": [
+    "Did not run the electron suite (known 7 baseline failures, #536).",
+    "Did not close or relabel #630 — lead owns the board.",
+    "File discipline held: only SetupStep.tsx, the CSS EOF append, onboardingSetup.test.tsx, and this itinerary."
+  ]
+}
