@@ -55,10 +55,19 @@ const INSTRUCTIONS =
   "needs. The worker runs in its own git worktree and branch " +
   "so parallel workers never edit the same files (pass worktree:false to share the " +
   "project checkout). " +
-  "A worker's commits live ONLY on its own branch until you land them: when one " +
-  "finishes, check its result and call thread_merge to squash its branch into your " +
-  "working tree and delete its worktree. A crew you never merge produced nothing " +
-  "the user can see, and leaves a worktree behind per worker. " +
+  "A worker's commits live ONLY on its own branch until they are landed. WORKERS " +
+  "BUILD; YOU ASK. When one finishes, check its result and REPORT it to the user — " +
+  "its branch, what it changed, whether it looks right — then ask whether to merge " +
+  "it or open a pull request. Do not land it on your own initiative. " +
+  "thread_merge squashes the branch into your working tree and deletes its worktree; " +
+  "thread_pr pushes the branch and opens a PR instead, leaving the worktree alone so " +
+  "the worker can address review. When you are working in a worktree of your own, " +
+  "thread_merge lands on YOUR branch and needs no approval — that is staging, and " +
+  "the user still gates your branch. Otherwise it commits to the project's default " +
+  "branch, and both tools then require approved:true in a turn the user started; " +
+  "asking on the machine-delivered turn that woke you IS the job, not a detour. " +
+  "A crew whose work is never landed produced nothing the user can see, and leaves " +
+  "a worktree behind per worker — so always close the loop by asking. " +
   "thread_send starts a run with your prompt on an " +
   "existing thread. thread_status reports a thread's status and the first line of " +
   "its last assistant reply. Runs are asynchronous: send work, then continue. " +
@@ -341,16 +350,11 @@ function createToolHandlers(deps) {
   }
 
   /**
-   * Land a finished worker's branch on the CALLER's working tree, then delete
-   * the worker's worktree and branch. Without this the crew's work never left
-   * its worktree: 190 of 195 finished workers on the live store still held an
-   * unmerged worktree, because the orchestrator had no tool to land one.
-   *
-   * Merges into the caller's own worktree when it has one — a lead working on
-   * a branch wants the worker's commits on THAT branch, not squashed onto main
-   * behind the user's back.
+   * Shared preflight for landing a worker's work (thread_merge / thread_pr):
+   * the caller owns the worker, and the worker is not still writing in it.
+   * @returns {{ self: any, worker: any }}
    */
-  async function thread_merge(args) {
+  function requireLandableWorker(args) {
     const self = store.getThread(args.threadId);
     if (!self) {
       throw new Error(`Unknown thread: ${args.threadId}`);
@@ -378,6 +382,59 @@ function createToolHandlers(deps) {
           `before merging.`,
       );
     }
+    return { self, worker };
+  }
+
+  /**
+   * Gate the two ways a crew's work escapes its branch for good: a commit on
+   * the project's default branch, and a push to the forge. Neither is the
+   * agent's call.
+   *
+   * Without this the orchestrator instructions told the lead to merge the
+   * moment a worker finished, and it did — 13 worker branches were committed
+   * straight onto main in a single day on the live repo, with no chance to say
+   * "open a PR instead". Workers build; the lead asks.
+   *
+   * ponytail: `approved` is the agent's own claim, so the turn check is the
+   * real lock. A worker-finished notice wakes the lead on a machine-delivered
+   * turn — exactly when it would reflexively land the work, and provably
+   * before any human has spoken. A runner without the predicate (test fakes)
+   * falls back to the claim alone.
+   *
+   * @param {{ id: string }} self - the calling lead thread
+   * @param {{ approved?: unknown, workerThreadId?: unknown }} args
+   * @param {string} action - sentence-initial description for the refusal
+   */
+  function assertUserApproved(self, args, action) {
+    const auto =
+      typeof runner.isAutoTurn === "function" && runner.isAutoTurn(self.id);
+    if (args.approved === true && !auto) return;
+    throw new Error(
+      `${action} is the user's decision, not yours. Report what worker ` +
+        `${args.workerThreadId} built — its branch and what changed — then ask ` +
+        `whether to merge it, open a pull request (thread_pr), or leave the ` +
+        `branch alone, and call this again with approved:true in the turn their ` +
+        `answer starts.` +
+        (auto
+          ? " This turn was machine-delivered (nobody has answered yet), so" +
+            " approved:true is not true here however you set it."
+          : ""),
+    );
+  }
+
+  /**
+   * Land a finished worker's branch on the CALLER's working tree, then delete
+   * the worker's worktree and branch. Without this the crew's work never left
+   * its worktree: 190 of 195 finished workers on the live store still held an
+   * unmerged worktree, because the orchestrator had no tool to land one.
+   *
+   * Merges into the caller's own worktree when it has one — a lead working on
+   * a branch wants the worker's commits on THAT branch, not squashed onto main
+   * behind the user's back. With no worktree of its own the target IS main, so
+   * the user has to have said yes (assertUserApproved).
+   */
+  async function thread_merge(args) {
+    const { self, worker } = requireLandableWorker(args);
     if (!worker.worktreePath) {
       return {
         merged: false,
@@ -385,6 +442,11 @@ function createToolHandlers(deps) {
           "Worker ran in the project checkout (worktree:false), so its " +
           "changes are already there; nothing to merge.",
       };
+    }
+    // No worktree of your own = the merge target is the project checkout, and
+    // mergeWorktree COMMITS there, on the default branch.
+    if (!self.worktreePath) {
+      assertUserApproved(self, args, "Merging a worker onto the project's default branch");
     }
     const branch = worker.branch ?? null;
     const { mergeWorktree } = require("./worktrees.js");
@@ -407,6 +469,36 @@ function createToolHandlers(deps) {
       branch,
       into: self.worktreePath ? self.branch ?? null : "project checkout",
     };
+  }
+
+  /**
+   * Open a pull request from a finished worker's branch — the other half of
+   * the question the lead has to ask. Same user gate as thread_merge: this
+   * pushes the branch to the forge, which no local undo takes back.
+   *
+   * The worker's worktree and branch SURVIVE on purpose. Review asks for
+   * changes, and thread_send puts the same worker back to work on them.
+   */
+  async function thread_pr(args) {
+    const { self, worker } = requireLandableWorker(args);
+    if (!worker.worktreePath) {
+      throw new Error(
+        `Worker ${worker.id} ran in the project checkout (worktree:false), so ` +
+          `it has no branch of its own to propose. Its changes are already in ` +
+          `the checkout.`,
+      );
+    }
+    assertUserApproved(self, args, "Opening a pull request");
+    const { createPr } = require("./worktrees.js");
+    return createPr({
+      store,
+      threadId: worker.id,
+      title: args.title,
+      body: args.body,
+      draft: args.draft,
+      allowOversize: args.allowOversize,
+      broadcast,
+    });
   }
 
   async function thread_send(args) {
@@ -690,6 +782,7 @@ function createToolHandlers(deps) {
     threads_list,
     thread_fork,
     thread_merge,
+    thread_pr,
     thread_send,
     thread_status,
     thread_archive,
@@ -773,7 +866,11 @@ function buildMcpServer(sdk, handlers) {
         "you forked. Call this once you have checked a worker's result — " +
         "until you do, its commits exist only on its own branch and nothing " +
         "else can see them. When you are working in a worktree the merge " +
-        "lands on YOUR branch, not on main. Refuses while the worker is still " +
+        "lands on YOUR branch, not on main, and needs no approval. With no " +
+        "worktree of your own it COMMITS TO THE DEFAULT BRANCH, so the user " +
+        "decides: report the worker's branch and what it changed, ask whether " +
+        "to merge or open a PR (thread_pr), and pass approved:true only in the " +
+        "turn their answer starts. Refuses while the worker is still " +
         "running. On a conflict it merges your branch into the worker's " +
         "worktree and tells you which files clash: thread_send the worker to " +
         "resolve them there, then call thread_merge again.",
@@ -781,9 +878,38 @@ function buildMcpServer(sdk, handlers) {
         threadId: z.string().min(1),
         projectId: z.string().min(1),
         workerThreadId: z.string().min(1),
+        approved: z.boolean().optional(),
       },
     },
     async (args) => json(await handlers.thread_merge(args)),
+  );
+
+  server.registerTool(
+    "thread_pr",
+    {
+      description:
+        "Open a pull request from a finished worker's branch instead of " +
+        "merging it: pushes workerThreadId's branch and opens the PR through " +
+        "the forge, returning its number and url. threadId and projectId are " +
+        "YOUR OWN; the worker must be one you forked and must have run in a " +
+        "worktree. Unlike thread_merge this leaves the worker's worktree and " +
+        "branch in place, so thread_send can put it back to work on review " +
+        "comments. Pushing is outward-facing and not undoable locally, so the " +
+        "user decides: ask first, then pass approved:true in the turn their " +
+        "answer starts. If it refuses for an oversized diff, relay the split " +
+        "suggestion and only retry with allowOversize when the user says so.",
+      inputSchema: {
+        threadId: z.string().min(1),
+        projectId: z.string().min(1),
+        workerThreadId: z.string().min(1),
+        title: z.string().min(1),
+        body: z.string().optional(),
+        draft: z.boolean().optional(),
+        allowOversize: z.boolean().optional(),
+        approved: z.boolean().optional(),
+      },
+    },
+    async (args) => json(await handlers.thread_pr(args)),
   );
 
   server.registerTool(

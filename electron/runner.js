@@ -846,14 +846,17 @@ function createRunner(opts) {
       }
     }
     const title = thread.title ? ` ("${thread.title}")` : "";
-    // Its commits are on its own branch and nowhere else until the lead lands
-    // them, and nothing else ever will — say so at the one moment the lead is
-    // awake and looking at this worker.
+    // Its commits are on its own branch and nowhere else until someone lands
+    // them — say so at the one moment the lead is awake and looking at this
+    // worker. But this notice is machine-delivered: telling the lead to merge
+    // here is what put 13 worker branches on main in a day. Landing is the
+    // user's call, so what the lead owes them right now is the report.
     const merge =
       status === "done" && thread.worktreePath
         ? ` Its work is still only on branch ${thread.branch || "(its own)"}:` +
-          ` check it, then call thread_merge with workerThreadId ${threadId}` +
-          ` to land it and clean up its worktree.`
+          ` check it, then tell the user what it built and ask whether to merge` +
+          ` it (thread_merge) or open a pull request (thread_pr) with` +
+          ` workerThreadId ${threadId}. Do not land it before they answer.`
         : "";
     enqueueNotice(
       parentId,
@@ -5529,6 +5532,17 @@ function createRunner(opts) {
     return active.has(threadId);
   }
 
+  /**
+   * True while the thread's current turn chain was delivered by the machine
+   * (a worker-finished or peer notice) rather than started by a human. Read
+   * by orchServer to refuse a worker merge/PR the user never approved: on an
+   * auto turn, nobody has answered the lead's question yet.
+   * @param {string} threadId
+   */
+  function isAutoTurn(threadId) {
+    return (autoTurns.get(threadId) || 0) > 0;
+  }
+
   function refreshQuotaWait(threadId) {
     const thread = store.getThread(threadId);
     if (!thread || thread.status !== "quota-wait" || !thread.quotaWaitUntil) {
@@ -5721,6 +5735,7 @@ function createRunner(opts) {
     refreshAllQuotaWaits,
     getActiveWorkflow,
     isRunning,
+    isAutoTurn,
     stopAll,
     flushTranscripts,
     workflowNameFromThreadId,

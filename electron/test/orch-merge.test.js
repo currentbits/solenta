@@ -96,7 +96,71 @@ describe("thread_merge", () => {
     assert.equal(branches, "");
   });
 
-  it("merges into the project checkout when the lead has no worktree", async () => {
+  it("refuses to commit onto the default branch without the user", async () => {
+    // No lead worktree: the merge target is the project checkout, so this
+    // would commit straight onto main. 13 worker branches landed that way in
+    // one day before the gate existed.
+    workOn(worker, "worker.txt", "worker\n");
+    store.updateThread(worker.id, { status: "done" });
+
+    await assert.rejects(
+      () =>
+        handlers.thread_merge({
+          threadId: lead.id,
+          projectId: project.id,
+          workerThreadId: worker.id,
+        }),
+      /the user's decision/,
+    );
+    assert.ok(!fs.existsSync(path.join(project.path, "worker.txt")));
+    // Nothing was cleaned up either — the branch is still there to ask about.
+    assert.ok(store.getThread(worker.id).worktreePath);
+  });
+
+  it("merges into the project checkout once the user has approved", async () => {
+    workOn(worker, "worker.txt", "worker\n");
+    store.updateThread(worker.id, { status: "done" });
+
+    const res = await handlers.thread_merge({
+      threadId: lead.id,
+      projectId: project.id,
+      workerThreadId: worker.id,
+      approved: true,
+    });
+
+    assert.equal(res.merged, true);
+    assert.ok(fs.existsSync(path.join(project.path, "worker.txt")));
+  });
+
+  it("ignores approved:true on a machine-delivered turn", async () => {
+    // The worker-finished notice wakes the lead on an auto turn: the user has
+    // not answered yet, so the claim cannot be true however the agent sets it.
+    handlers = createToolHandlers({
+      store,
+      runner: { isRunning: () => false, isAutoTurn: () => true },
+      forkThread: services.forkThread,
+      getProvider: () => ({ id: "claude" }),
+    });
+    workOn(worker, "worker.txt", "worker\n");
+    store.updateThread(worker.id, { status: "done" });
+
+    await assert.rejects(
+      () =>
+        handlers.thread_merge({
+          threadId: lead.id,
+          projectId: project.id,
+          workerThreadId: worker.id,
+          approved: true,
+        }),
+      /machine-delivered/,
+    );
+    assert.ok(!fs.existsSync(path.join(project.path, "worker.txt")));
+  });
+
+  it("still stages onto the lead's own branch unasked", async () => {
+    // A lead working in a worktree is assembling the crew's work on ITS
+    // branch; the user still gates that branch from the thread header.
+    const leadWt = workOn(lead, "lead.txt", "lead\n");
     workOn(worker, "worker.txt", "worker\n");
     store.updateThread(worker.id, { status: "done" });
 
@@ -107,7 +171,7 @@ describe("thread_merge", () => {
     });
 
     assert.equal(res.merged, true);
-    assert.ok(fs.existsSync(path.join(project.path, "worker.txt")));
+    assert.ok(fs.existsSync(path.join(leadWt.worktreePath, "worker.txt")));
   });
 
   it("refuses a running worker, a foreign thread and a non-worker", async () => {
@@ -134,6 +198,44 @@ describe("thread_merge", () => {
           workerThreadId: worker.id,
         }),
       /not one of your workers/,
+    );
+  });
+
+  // thread_pr is the other answer to the lead's question. Only the gate and
+  // the guards are covered here — the push/gh half is createPr's own.
+  it("refuses a pull request the user did not ask for", async () => {
+    workOn(worker, "worker.txt", "worker\n");
+    store.updateThread(worker.id, { status: "done" });
+
+    await assert.rejects(
+      () =>
+        handlers.thread_pr({
+          threadId: lead.id,
+          projectId: project.id,
+          workerThreadId: worker.id,
+          title: "Worker work",
+        }),
+      /the user's decision/,
+    );
+  });
+
+  it("has no branch to propose for a checkout worker", async () => {
+    const shared = services.forkWorkerThread(store, {
+      threadId: lead.id,
+      worktree: false,
+    });
+    store.updateThread(shared.id, { status: "done" });
+
+    await assert.rejects(
+      () =>
+        handlers.thread_pr({
+          threadId: lead.id,
+          projectId: project.id,
+          workerThreadId: shared.id,
+          title: "Worker work",
+          approved: true,
+        }),
+      /no branch of its own/,
     );
   });
 
