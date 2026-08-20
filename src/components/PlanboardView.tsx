@@ -21,6 +21,8 @@ export type ThreadStartMode = "default" | "plain" | "worktree" | "orchestrator";
 
 export interface PlanboardViewProps {
   projects: ProjectInfo[];
+  /** Seed the project selector. Sidebar scope passes this on open (#597). */
+  initialProjectId?: string | null;
   listIssues: (projectPath: string) => Promise<ListIssuesResult>;
   /**
    * Open PRs for the selected project (review-load meter, issue #402).
@@ -53,8 +55,9 @@ export function PlanboardView({
   threads,
   onSelectThread,
   onStartTask,
+  initialProjectId,
 }: PlanboardViewProps) {
-  const [projectId, setProjectId] = useState<string | null>(null);
+  const [projectId, setProjectId] = useState<string | null>(initialProjectId ?? null);
   const [result, setResult] = useState<ListIssuesResult | null>(null);
   const [prs, setPrs] = useState<ListPrsResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -65,6 +68,12 @@ export function PlanboardView({
   /** Thread mode for Start task; "default" follows the app setting. */
   const [startMode, setStartMode] = useState<ThreadStartMode>("default");
   const loadGen = useRef(0);
+
+  useEffect(() => {
+    if (initialProjectId !== undefined) {
+      setProjectId(initialProjectId ?? null);
+    }
+  }, [initialProjectId]);
 
   const project =
     projects.find((p) => p.id === projectId) ?? projects[0] ?? null;
