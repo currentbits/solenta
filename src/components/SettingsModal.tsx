@@ -57,6 +57,8 @@ interface SettingsModalProps {
   onDiscoverSourceControl?: (input?: {
     rescan?: boolean;
   }) => Promise<SourceControlDiscovery>;
+  /** Relaunch the first-run welcome tour (#628). */
+  onShowOnboarding?: () => void;
 }
 
 function budgetToInput(value: number | null | undefined): string {
@@ -202,6 +204,7 @@ export function SettingsModal({
   onGcScan,
   onGcClean,
   onDiscoverSourceControl,
+  onShowOnboarding,
 }: SettingsModalProps) {
   const [budgetText, setBudgetText] = useState("");
   const [orchBudgetText, setOrchBudgetText] = useState("");
@@ -1296,6 +1299,19 @@ export function SettingsModal({
 
           <section className={styles.section}>
             <h3 className={styles.sectionLabel}>Build</h3>
+            {onShowOnboarding && (
+              <div className={styles.fieldRow}>
+                <p className={styles.note}>Replay the first-run tour.</p>
+                <button
+                  type="button"
+                  className={styles.btn}
+                  data-show-onboarding=""
+                  onClick={() => onShowOnboarding()}
+                >
+                  Show welcome tour
+                </button>
+              </div>
+            )}
             {/* A stale packaged bundle behaves like a broken app; name the build. */}
             <p className={styles.note}>
               {status?.build
