@@ -61,7 +61,7 @@ describe("clusterFailureModes", () => {
         ],
         c: [
           event(
-            "Run error: spawn /Users/willem/.local/bin/claude ENOENT (pid 991)",
+            "Run error: spawn /Users/dev/.local/bin/claude ENOENT (pid 991)",
             NOW - 100,
           ),
         ],

@@ -7,5 +7,8 @@ out/
 *.log
 .DS_Store
 assets/Solenta.iconset/
+# Per-session agent scratch: spec drafts, review itineraries, design critiques.
+.solenta/
+.impeccable/
 trailer/node_modules/
 trailer/out/
