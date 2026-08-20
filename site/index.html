@@ -24,10 +24,10 @@
   <meta name="twitter:description" content="One shared memory across every agent, and a planboard that is your GitHub issues. Agent six begins knowing what agents one through five already ruled out." />
   <meta name="twitter:image" content="https://solenta.app/assets/card.png" />
   <meta name="twitter:image:alt" content="Solenta. Your agents remember." />
-  <meta name="theme-color" content="#05070d" />
+  <meta name="theme-color" content="#050505" />
   <link rel="icon" href="assets/icon.svg" type="image/svg+xml" />
   <script>document.documentElement.classList.add("js");</script>
-  <link rel="stylesheet" href="style.css?v=4" />
+  <link rel="stylesheet" href="style.css?v=5" />
   <script src="https://unpkg.com/@phosphor-icons/web@2.1.1" defer></script>
 </head>
 <body>
@@ -54,24 +54,23 @@
 <header class="hero">
   <div class="hero-bg" aria-hidden="true">
     <div class="hero-grid"></div>
-    <i></i><i></i><i></i>
+    <i></i><i></i>
   </div>
   <div class="wrap hero-inner">
-    <p class="hero-pill reveal"><span class="dot"></span> Free &amp; open source &middot; MIT</p>
-    <h1 class="reveal">Every agent starts where the <span class="grad">last one stopped.</span></h1>
+    <p class="hero-pill reveal"><span class="dot"></span> Free &amp; open source, MIT</p>
+    <h1 class="reveal">Every agent starts where the <span class="em">last one stopped.</span></h1>
     <p class="sub reveal">
-      One shared memory across every agent, and a planboard that is your GitHub issues. Agent six begins knowing what agents one through five already ruled out. Free and open source.
+      One shared memory across every agent, and a planboard that is your GitHub issues.
     </p>
     <div class="hero-ctas reveal">
       <a class="btn btn-primary" href="https://github.com/currentbits/solenta/releases/latest">
-        Download for macOS, Windows &amp; Linux
+        Download Solenta
       </a>
       <a class="btn btn-ghost" href="https://github.com/currentbits/solenta">
-        <img src="https://cdn.simpleicons.org/github/e6e9f0" width="16" height="16" alt="" />
+        <img src="https://cdn.simpleicons.org/github/ededed" width="16" height="16" alt="" />
         Star on GitHub
       </a>
     </div>
-    <p class="hero-trust reveal">Your code never leaves your machine. &middot; Bring your own subscription, we don't resell tokens.</p>
     <div class="hero-shot">
       <div class="shot-wrap">
         <div class="shot">
@@ -81,21 +80,27 @@
       </div>
     </div>
   </div>
-  <div class="marquee" aria-hidden="true">
-    <div class="marquee-track">
-      <span>Claude Code</span><span>Codex</span><span>Kimi</span><span>Grok</span><span>OpenCode</span>
-      <span>Claude Code</span><span>Codex</span><span>Kimi</span><span>Grok</span><span>OpenCode</span>
-      <span>Claude Code</span><span>Codex</span><span>Kimi</span><span>Grok</span><span>OpenCode</span>
-      <span>Claude Code</span><span>Codex</span><span>Kimi</span><span>Grok</span><span>OpenCode</span>
+</header>
+
+<section id="agents">
+  <div class="wrap">
+    <h2 class="agents-title reveal">Bring your own agents.</h2>
+    <p class="agents-sub reveal">Your subscriptions, not ours. Solenta drives the CLIs you already installed and finds them on your PATH.</p>
+    <div class="agent-chips reveal">
+      <span class="agent-chip"><img src="https://cdn.simpleicons.org/claude/ededed" width="15" height="15" alt="" /> Claude Code</span>
+      <span class="agent-chip">Codex</span>
+      <span class="agent-chip"><img src="https://cdn.simpleicons.org/kimi/ededed" width="15" height="15" alt="" /> Kimi</span>
+      <span class="agent-chip">Grok</span>
+      <span class="agent-chip"><img src="https://cdn.simpleicons.org/opencode/ededed" width="15" height="15" alt="" /> OpenCode</span>
     </div>
   </div>
-</header>
+</section>
 
 <section id="memory">
   <div class="wrap">
     <div class="section-head reveal">
       <p class="eyebrow">Shared memory</p>
-      <h2>Your agents <span class="grad">remember.</span></h2>
+      <h2>Your agents <span class="em">remember.</span></h2>
       <p>
         What one thread learns, the next one knows. Solenta injects a local
         memory server into every agent session automatically, so decisions and
@@ -108,19 +113,19 @@
     <div class="memory-panel glow reveal">
       <div class="memory-search">
         <i class="ph ph-magnifying-glass"></i>
-        <span>Memory &middot; localhost &middot; SQLite</span>
+        <span>Memory server, localhost, SQLite</span>
         <span class="memory-search-hint">Search, read, store</span>
       </div>
       <div class="memory-entry">
-        <p class="memory-meta"><span class="pdot pdot-a"></span>Claude Code &middot; thread 1</p>
+        <p class="memory-meta">Claude Code <span class="mdot"></span> thread 1</p>
         <p>Ruled out a rewrite of auth. Cookie session stays; refresh lives in src/lib/auth.ts.</p>
       </div>
       <div class="memory-entry">
-        <p class="memory-meta"><span class="pdot pdot-b"></span>Codex &middot; thread 3</p>
+        <p class="memory-meta">Codex <span class="mdot"></span> thread 3</p>
         <p>The 401 retry is in src/lib/api.ts. Moving it breaks the refresh path.</p>
       </div>
       <div class="memory-entry">
-        <p class="memory-meta"><span class="pdot pdot-c"></span>Grok &middot; thread 6</p>
+        <p class="memory-meta">Grok <span class="mdot"></span> thread 6</p>
         <p>Starts knowing both. Adds the expiry skew and leaves the rest alone.</p>
       </div>
     </div>
@@ -135,8 +140,7 @@
 <section id="planboard">
   <div class="wrap">
     <div class="section-head reveal">
-      <p class="eyebrow">Planboard</p>
-      <h2>Your planboard is your <span class="grad">issue tracker.</span></h2>
+      <h2>Your planboard is your <span class="em">issue tracker.</span></h2>
       <p>
         The board is plain GitHub issues with labels, so nothing is trapped in
         a local database. Agents update it with <code>gh</code>. Your teammates
@@ -185,7 +189,6 @@
 <section id="features">
   <div class="wrap">
     <div class="section-head reveal">
-      <p class="eyebrow">The toolkit</p>
       <h2>Built for running agents,<br />not watching terminals.</h2>
       <p>Everything stays on your machine. Solenta drives the CLIs you already have installed.</p>
     </div>
@@ -225,7 +228,7 @@
       <div class="cell cell-e reveal">
         <div class="cell-icon"><i class="ph ph-list-checks"></i></div>
         <h3>Spec, then dispatch</h3>
-        <p>Requirements, design, tasks — each gated until you approve. Then Dispatch forks a worker per unblocked checkbox, and Converge fills in what the repo is still missing.</p>
+        <p>Requirements, design, tasks, each one gated until you approve. Then Dispatch forks a worker per unblocked checkbox, and Converge fills in what the repo is still missing.</p>
       </div>
       <div class="cell cell-e reveal">
         <div class="cell-icon"><i class="ph ph-path"></i></div>
@@ -240,7 +243,7 @@
       <div class="cell cell-e reveal">
         <div class="cell-icon"><i class="ph ph-chart-line-up"></i></div>
         <h3>Fleet analytics from ground truth</h3>
-        <p>Merge rate, review tax, rework and cost per merged PR — read off git and GitHub, not off what the agents say about themselves.</p>
+        <p>Merge rate, review tax, rework and cost per merged PR, read off git and GitHub, not off what the agents say about themselves.</p>
       </div>
       <div class="cell cell-e reveal">
         <div class="cell-icon"><i class="ph ph-wallet"></i></div>
@@ -275,7 +278,7 @@
     <div class="orch">
       <div class="reveal">
         <p class="eyebrow">Orchestration</p>
-        <h2 class="orch-title">Orchestration is a <span class="grad">sentence,</span> not a config.</h2>
+        <h2 class="orch-title">Orchestration is a <span class="em">sentence,</span> not a config.</h2>
         <p class="orch-sub">
           Every thread carries tools to drive the other threads. You describe
           the fan-out in plain language; the agent spawns, supervises and
@@ -283,7 +286,7 @@
         </p>
         <ul class="orch-points">
           <li><strong>Fork across providers.</strong> The same task on Grok, Kimi and Claude at once, each in its own worktree.</li>
-          <li><strong>Or delegate from the start.</strong> An orchestrator thread hands its first prompt to a worker and supervises from there — one setting away from being the default.</li>
+          <li><strong>Or delegate from the start.</strong> An orchestrator thread hands its first prompt to a worker and supervises from there, one setting away from being the default.</li>
           <li><strong>Async by design.</strong> Runs go off in the background; the orchestrator polls and summarizes.</li>
           <li><strong>Suggested work, one click.</strong> Out-of-scope findings land as chips under the transcript, not as a derail.</li>
           <li><strong>Or pick a fixed pipeline.</strong> The Build button runs a known template when the shape is repeatable.</li>
@@ -300,11 +303,102 @@
   </div>
 </section>
 
+<section id="compare">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <h2>More than terminal tabs.</h2>
+      <p>Tabs and wrappers give each agent a window. Solenta gives the fleet a memory, a board and a verdict.</p>
+    </div>
+    <div class="compare-wrap reveal">
+      <table class="compare">
+        <thead>
+          <tr>
+            <th scope="col">Capability</th>
+            <th scope="col">Solenta</th>
+            <th scope="col">Tabs &amp; wrappers</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Shared memory across every agent</td>
+            <td class="yes"><i class="ph ph-check"></i></td>
+            <td class="no"><i class="ph ph-minus"></i></td>
+          </tr>
+          <tr>
+            <td>Planboard backed by your GitHub issues</td>
+            <td class="yes"><i class="ph ph-check"></i></td>
+            <td class="no"><i class="ph ph-minus"></i></td>
+          </tr>
+          <tr>
+            <td>One git worktree per thread</td>
+            <td class="yes"><i class="ph ph-check"></i></td>
+            <td class="some">sometimes</td>
+          </tr>
+          <tr>
+            <td>Verify gate before a thread settles green</td>
+            <td class="yes"><i class="ph ph-check"></i></td>
+            <td class="no"><i class="ph ph-minus"></i></td>
+          </tr>
+          <tr>
+            <td>Spend caps and per-thread token burn</td>
+            <td class="yes"><i class="ph ph-check"></i></td>
+            <td class="no"><i class="ph ph-minus"></i></td>
+          </tr>
+          <tr>
+            <td>Five providers on your own subscriptions</td>
+            <td class="yes"><i class="ph ph-check"></i></td>
+            <td class="some">sometimes</td>
+          </tr>
+          <tr>
+            <td>MIT licensed, runs fully local</td>
+            <td class="yes"><i class="ph ph-check"></i></td>
+            <td class="some">sometimes</td>
+          </tr>
+          <tr>
+            <td>macOS, Windows and Linux</td>
+            <td class="yes"><i class="ph ph-check"></i></td>
+            <td class="yes yes-dim"><i class="ph ph-check"></i></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section id="faq">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <h2>Questions.</h2>
+    </div>
+    <div class="faq-list reveal">
+      <details>
+        <summary>Which agents can Solenta run?</summary>
+        <p>Claude Code, Codex, Kimi, Grok and OpenCode. Install the CLIs you want to drive and Solenta finds them on your PATH. Permission modes, model overrides and session resume are per provider.</p>
+      </details>
+      <details>
+        <summary>Does my code leave my machine?</summary>
+        <p>Only inside the prompts your chosen agent CLI sends to its provider, same as running that CLI yourself. Solenta adds nothing on top: memory is a local SQLite file, plans are your own GitHub issues, and there is no Solenta cloud.</p>
+      </details>
+      <details>
+        <summary>Do I pay Solenta for tokens?</summary>
+        <p>No. Bring your own subscription or API key per provider. Solenta never resells tokens and never sits in the billing path.</p>
+      </details>
+      <details>
+        <summary>What does the planboard need?</summary>
+        <p>The GitHub CLI signed in, and a project whose origin is on GitHub. Without those, threads, memory and everything else work exactly the same; the board simply stays off.</p>
+      </details>
+      <details>
+        <summary>Is it free?</summary>
+        <p>Yes. MIT licensed, with releases for macOS, Windows and Linux.</p>
+      </details>
+    </div>
+  </div>
+</section>
+
 <section id="trust">
   <div class="wrap">
     <div class="section-head reveal">
-      <p class="eyebrow eyebrow-center">Ownership</p>
-      <h2>You <span class="grad">own</span> the tools.</h2>
+      <h2>You <span class="em">own</span> the tools.</h2>
       <p>
         Solenta is MIT licensed and runs on your machine. It drives the agent
         CLIs you already installed. Plans live in GitHub issues. Memory lives
