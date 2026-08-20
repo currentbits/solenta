@@ -1459,6 +1459,8 @@ function buildDevCoder(): CoderApi {
   let defaultWorktree = false;
   /** Default new threads as orchestrators (Settings toggle). */
   let defaultOrchestrate = false;
+  /** First-run onboarding wizard finished or skipped. */
+  let onboardingSeen = false;
   /** Update channel override; null follows the (absent) dev stamp. */
   let updateChannel: "prod" | "nightly" | null = null;
   let notifications = true;
@@ -2070,6 +2072,7 @@ function buildDevCoder(): CoderApi {
           mcpServers: mcpServers.map((s) => ({ ...s })),
           defaultWorktree,
           defaultOrchestrate,
+          onboardingSeen,
           updateChannel,
           notifications,
           quotaWaitAutoResume,
@@ -2118,6 +2121,12 @@ function buildDevCoder(): CoderApi {
             throw new Error("defaultOrchestrate must be a boolean");
           }
           defaultOrchestrate = patch.defaultOrchestrate;
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, "onboardingSeen")) {
+          if (typeof patch.onboardingSeen !== "boolean") {
+            throw new Error("onboardingSeen must be a boolean");
+          }
+          onboardingSeen = patch.onboardingSeen;
         }
         if (Object.prototype.hasOwnProperty.call(patch, "updateChannel")) {
           const v = patch.updateChannel;
@@ -2184,6 +2193,7 @@ function buildDevCoder(): CoderApi {
           mcpServers: mcpServers.map((s) => ({ ...s })),
           defaultWorktree,
           defaultOrchestrate,
+          onboardingSeen,
           updateChannel,
           notifications,
           quotaWaitAutoResume,

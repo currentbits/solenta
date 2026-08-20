@@ -158,7 +158,7 @@ export interface FakeOptions {
   automations?: AutomationInfo[];
   details?: Record<string, ThreadDetail>;
   status?: AppStatus;
-  settings?: AppSettings;
+  settings?: Partial<AppSettings>;
   /**
    * Per-thread checkpoint lists (newest-first). listCheckpoints returns []
    * when the thread has no worktreePath regardless of this map.
@@ -223,6 +223,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     updateChannel: null,
     quotaWaitAutoResume: true,
     prDiffCapLines: 400,
+    onboardingSeen: true,
     ...(opts.settings ?? {}),
   };
   const ALL_SKILL_TARGETS: SkillTarget[] = [
@@ -406,6 +407,16 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
             );
           }
           next.defaultWorktree = v;
+        }
+        if (Object.prototype.hasOwnProperty.call(p, "onboardingSeen")) {
+          const v = p.onboardingSeen;
+          if (typeof v !== "boolean") {
+            calls.push({ channel: "settings.set", args: [patch] });
+            return Promise.reject(
+              new Error("onboardingSeen must be a boolean"),
+            );
+          }
+          next.onboardingSeen = v;
         }
         if (Object.prototype.hasOwnProperty.call(p, "updateChannel")) {
           const v = p.updateChannel;
