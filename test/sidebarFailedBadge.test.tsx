@@ -1,6 +1,6 @@
 /**
- * Failed status dot: lastError is the native title tooltip (issue #140,
- * flattened to the one-dot row contract in #566).
+ * Failed status label: lastError is the native title tooltip (issue #140,
+ * T3 text label instead of a status dot).
  *
  * Run: npm run test:renderer
  */
@@ -23,8 +23,8 @@ const providers: ProviderInfo[] = [
   },
 ];
 
-describe("failed dot lastError tooltip", () => {
-  it("renders lastError as the failed dot title", async () => {
+describe("failed label lastError tooltip", () => {
+  it("renders lastError as the failed label title", async () => {
     const t = thread({
       status: "failed",
       lastError: "Run error: exit 1",
@@ -39,10 +39,12 @@ describe("failed dot lastError tooltip", () => {
         onSelect={() => {}}
       />,
     );
-    const dot = m.query('[data-status-dot="failed"]');
-    assert.ok(dot, "failed dot must render");
-    assert.equal(dot!.getAttribute("title"), "Run error: exit 1");
-    assert.equal(dot!.getAttribute("data-failed"), t.id, "legacy failed flag");
+    const label = m.query("[data-status-label]");
+    assert.ok(label, "failed status label must render");
+    assert.match(label!.textContent || "", /^Failed$/);
+    assert.equal(label!.getAttribute("title"), "Run error: exit 1");
+    assert.equal(label!.getAttribute("data-failed"), t.id, "legacy failed flag");
+    assert.equal(m.query("[data-status-dot]"), null);
     assert.ok(
       m.query(`button[aria-label="Select thread: ${t.title}, failed"]`),
       "select button speaks the failed state",
@@ -50,7 +52,7 @@ describe("failed dot lastError tooltip", () => {
     m.unmount();
   });
 
-  it("renders an attention quota-wait dot instead of failed", async () => {
+  it("renders a Quota label instead of Failed", async () => {
     const now = Date.now();
     const until = now + 3 * 60 * 60 * 1000;
     const m = await mount(
@@ -67,18 +69,19 @@ describe("failed dot lastError tooltip", () => {
         onSelect={() => {}}
       />,
     );
-    const dot = m.query("[data-quota-wait]");
-    assert.ok(dot, "quota-wait dot must render");
-    assert.equal(dot!.getAttribute("data-status-dot"), "attention");
+    const label = m.query("[data-status-label]");
+    assert.ok(label, "quota-wait label must render");
+    assert.match(label!.textContent || "", /^Quota$/);
+    assert.ok(label!.hasAttribute("data-quota-wait") || m.query("[data-quota-wait]"));
     assert.equal(
-      dot!.getAttribute("title"),
+      label!.getAttribute("title"),
       "You've hit your limit · resets 3pm",
       "lastError wins the tooltip over the resume clock",
     );
     assert.equal(
-      m.query('[data-status-dot="failed"]'),
+      m.query('[data-failed]'),
       null,
-      "must not render a failed dot while parked",
+      "must not render a failed label while parked",
     );
     m.unmount();
   });

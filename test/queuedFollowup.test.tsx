@@ -236,13 +236,14 @@ describe("queued follow-up (issue #92 / #314)", () => {
       remounted.text().includes("then update the changelog"),
       "the queued follow-up must survive a remount from the thread record",
     );
-    const queuedDot = remounted.query('[data-queued-dot="t-busy"]');
-    assert.ok(queuedDot, "sidebar must hint a queue pending on this thread");
-    // #566: the queue rides along on the working dot's tooltip.
+    const queuedHint =
+      remounted.query('[data-queued-dot="t-busy"]') ||
+      remounted.query('[data-thread-card="t-busy"] [data-status-label]');
+    assert.ok(queuedHint, "sidebar must hint a queue pending on this thread");
     assert.match(
-      queuedDot.getAttribute("title") || "",
-      /Queued: then update the changelog$/,
-      "the sidebar dot tooltip must surface the queued text",
+      queuedHint.getAttribute("title") || "",
+      /Queued: then update the changelog/,
+      "the status-label tooltip must surface the queued text",
     );
     remounted.unmount();
   });

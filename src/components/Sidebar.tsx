@@ -6,6 +6,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from "react";
 import autoAnimate from "@formkit/auto-animate";
 import type {
@@ -27,13 +28,9 @@ import {
   formatWorkingLabel,
 } from "../format";
 import { formatQuotaWaitLabel } from "../quotaWait";
-import {
-  GROUP_ATTENTION_CAP,
-  buildSidebarGroups,
-  flattenLater,
-  partitionSidebar,
-  visibleAttentionCount,
-} from "../sidebarGroups";
+import { buildFlatSidebar } from "../sidebarGroups";
+import { showContextMenu } from "../contextMenu";
+import { buildThreadActionMenuItems } from "../threadActionMenu";
 import {
   AUTO_SETTLE_AFTER_DAYS,
   SETTLED_TAIL_INITIAL_COUNT,
@@ -47,7 +44,7 @@ import {
   resolveSnoozePresets,
   showWokePill,
 } from "../threadSnooze";
-import { countUnread, isUnread } from "../threadUnread";
+import { isUnread } from "../threadUnread";
 import {
   buildWaitStates,
   isDelegating,
@@ -57,7 +54,7 @@ import {
 } from "../waiting";
 import { useEscapeClose } from "../useEscapeClose";
 import {
-  buildVisibleThreadIds,
+  flatVisibleThreadIds,
   formatBatchSettleFeedback,
   isShortcutBlocked,
   planBatchSettle,
@@ -66,65 +63,73 @@ import {
   toggleIdInSet,
 } from "../sidebarSelection";
 import { KeyboardSheet } from "./KeyboardSheet";
-import { showContextMenu } from "../contextMenu";
-import { buildThreadActionMenuItems } from "../threadActionMenu";
 import styles from "./Sidebar.module.css";
 
 const TICK_MS = 5000;
 const SEARCH_DEBOUNCE_MS = 250;
 const MIN_SEARCH_LEN = 2;
-const COLLAPSED_KEY = "coder.sidebar.collapsedGroups";
-/** Settled tail collapse flag: stored "tail" = collapsed, absent = expanded. */
-const SETTLED_COLLAPSED_KEY = "coder.sidebar.settledCollapsed";
+const SCOPE_KEY = "sidebar:projectScope";
+const SNOOZED_OPEN_KEY = "sidebar:snoozedOpen";
+const SETTLED_OPEN_KEY = "sidebar:settledOpen";
 
 /**
- * t3 list animation (Sidebar.logic.ts): rows glide on lifecycle transitions
- * instead of the sidebar jumping. Attached per list container via ref
- * callback; no-ops where ResizeObserver is missing (jsdom).
+ * t3 list animation: rows glide on lifecycle transitions instead of the
+ * sidebar jumping. Attached per list container via ref callback; no-ops
+ * where ResizeObserver is missing (jsdom).
  */
 function attachListAnimation(node: HTMLElement | null): void {
   if (node) autoAnimate(node, { duration: 150, easing: "ease-out" });
 }
 
-/** localStorage set, defensive: private mode / quota / bad JSON all mean "empty". */
-function loadKeySet(key: string): Set<string> {
+function loadStored(key: string): string | null {
   try {
-    const raw = window.localStorage.getItem(key);
-    const parsed = raw ? JSON.parse(raw) : [];
-    return new Set(Array.isArray(parsed) ? parsed.map(String) : []);
+    return window.localStorage.getItem(key);
   } catch {
-    return new Set();
+    return null;
   }
 }
 
-function saveKeySet(key: string, set: Set<string>): void {
+function saveStored(key: string, value: string | null): void {
   try {
-    window.localStorage.setItem(key, JSON.stringify([...set]));
+    if (value == null) window.localStorage.removeItem(key);
+    else window.localStorage.setItem(key, value);
   } catch {
-    // Quota/private mode: collapse state just stops persisting.
+    // Quota/private mode: UI state just stops persisting.
   }
 }
 
-/**
- * Whether the ALL PROJECTS control should treat the tree as having any
- * expanded group. Used for BOTH aria/title render and the collapse-all click
- * — duplicating this with a searching term only on one side inverted
- * collapse-all during search into expand-all (B1).
- *
- * Search overrides per-group collapse for display, so searching counts as
- * expanded-any (click re-collapses; it must not clear the set).
- *
- * A project added after collapse-all is absent from the collapsed set, so it
- * renders expanded: new work must be visible.
- */
-export function anyGroupExpandedState(
-  groupKeys: readonly string[],
-  collapsed: ReadonlySet<string>,
-  searching: boolean,
-): boolean {
-  if (groupKeys.length === 0) return false;
-  if (searching) return true;
-  return groupKeys.some((k) => !collapsed.has(k));
+function loadFlag(key: string, fallback: boolean): boolean {
+  const raw = loadStored(key);
+  if (raw == null) return fallback;
+  return raw === "1" || raw === "true";
+}
+
+function saveFlag(key: string, value: boolean): void {
+  saveStored(key, value ? "1" : "0");
+}
+
+function Icon({
+  children,
+  size = 14,
+}: {
+  children: ReactNode;
+  size?: number;
+}) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {children}
+    </svg>
+  );
 }
 
 interface SidebarProps {
@@ -240,80 +245,8 @@ interface SidebarProps {
 export type SelectOpts = { meta?: boolean; shift?: boolean };
 
 /**
- * Live subagents (Agent tool, issue #21) nested under their thread card with
- * the same indent + elbow as fork/worker cards (issue #542). Running rows
- * only: the sidebar is the live overview (mirrors buildWaitStates), finished
- * rows stay on the Agents panel roster. Subagents are not threads, so a row
- * click just selects the parent thread.
- */
-function SubagentRows({
-  thread,
-  onSelect,
-}: {
-  thread: ThreadInfo;
-  onSelect: (id: string, opts?: SelectOpts) => void;
-}) {
-  const running = (thread.subagents ?? []).filter(
-    (s) => s.status === "running",
-  );
-  if (running.length === 0) return null;
-  return (
-    <ul className={styles.subagentList} data-subagent-list={thread.id}>
-      {running.map((s) => (
-        <li key={s.id}>
-          <button
-            type="button"
-            className={styles.subagentRow}
-            data-subagent-row=""
-            title={s.description}
-            aria-label={`Subagent: ${s.description}`}
-            onClick={(e) =>
-              onSelect(thread.id, {
-                meta: e.metaKey || e.ctrlKey,
-                shift: e.shiftKey,
-              })
-            }
-          >
-            <span className={styles.waitingDot} aria-hidden />
-            <span className={styles.subagentTitle}>{s.description}</span>
-          </button>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-function formatUsd(n: number): string {
-  return n.toFixed(2);
-}
-
-function spendMeterLabel(
-  spend: number,
-  budget: number | null | undefined,
-): string {
-  if (budget != null && budget > 0) {
-    return `Today: $${formatUsd(spend)} / $${formatUsd(budget)}`;
-  }
-  return `Today: $${formatUsd(spend)}`;
-}
-
-function spendMeterTone(
-  spend: number,
-  budget: number | null | undefined,
-): "ok" | "warn" | "over" {
-  if (budget == null || budget <= 0) return "ok";
-  const ratio = spend / budget;
-  if (ratio >= 1) return "over";
-  if (ratio >= 0.8) return "warn";
-  return "ok";
-}
-
-/**
- * t3 flatten (#566): the row's whole status vocabulary is one dot.
- * blue = running (working/delegating), amber = needs you (waiting/stalled/
- * quota/woke/blocked workers), red = failed, grey = queued follow-up,
- * absent = idle/done. Words live in the title tooltip and the select
- * button's accessible name; detail lives in the thread header and Activity.
+ * t3 flatten (#566): the row's whole status vocabulary is one label.
+ * Precedence lives in statusDotFor; the card maps that onto colored text.
  */
 export type StatusDotInfo = {
   tone: "working" | "attention" | "failed" | "queued";
@@ -325,6 +258,14 @@ export type StatusDotInfo = {
   flags: Record<string, string>;
 };
 
+export type StatusLabelInfo = {
+  text: string;
+  tone: "working" | "attention" | "failed" | "done";
+  title: string;
+  spoken: string;
+  flags: Record<string, string>;
+};
+
 export function statusDotFor(
   thread: ThreadInfo,
   now: number,
@@ -332,8 +273,8 @@ export function statusDotFor(
   active: boolean,
 ): StatusDotInfo | null {
   const base = baseStatusDot(thread, now, wait, active);
-  // Queued follow-up (#92) rides along on whatever dot is showing; it only
-  // owns the dot when the thread is otherwise idle.
+  // Queued follow-up (#92) rides along on whatever status is showing; it only
+  // owns the row when the thread is otherwise idle.
   if (!thread.queued) return base;
   if (base == null) {
     return {
@@ -439,15 +380,107 @@ function baseStatusDot(
   return null;
 }
 
-function StatusDot({ dot }: { dot: StatusDotInfo }) {
-  return (
-    <span
-      className={styles.statusDot}
-      data-status-dot={dot.tone}
-      title={dot.label}
-      {...dot.flags}
-    />
-  );
+/**
+ * Card status slot: colored TEXT (no dot, no pill). Precedence matches
+ * statusDotFor; unread done is the extra idle case the spec adds.
+ */
+export function statusLabelFor(
+  thread: ThreadInfo,
+  now: number,
+  wait: WaitState | null,
+  active: boolean,
+): StatusLabelInfo | null {
+  const dot = statusDotFor(thread, now, wait, active);
+  if (thread.status === "failed") {
+    return {
+      text: "Failed",
+      tone: "failed",
+      title: dot?.label ?? "Failed",
+      spoken: "failed",
+      flags: dot?.flags ?? { "data-failed": thread.id },
+    };
+  }
+  if (thread.status === "quota-wait") {
+    return {
+      text: "Quota",
+      tone: "attention",
+      title: dot?.label ?? "Quota",
+      spoken: "needs attention",
+      flags: dot?.flags ?? { "data-quota-wait": "" },
+    };
+  }
+  if (thread.status === "working" && thread.awaitingInput) {
+    return {
+      text: "Waiting",
+      tone: "attention",
+      title: dot?.label ?? "Waiting for input",
+      spoken: "needs attention",
+      flags: dot?.flags ?? { "data-waiting": "" },
+    };
+  }
+  if (thread.status === "working" && thread.stalledAt != null) {
+    return {
+      text: "Stalled",
+      tone: "attention",
+      title: dot?.label ?? "Stalled",
+      spoken: "needs attention",
+      flags: dot?.flags ?? { "data-stalled": "" },
+    };
+  }
+  if (wait && wait.blocked > 0) {
+    return {
+      text: "Waiting",
+      tone: "attention",
+      title: dot?.label ?? waitTooltip(wait),
+      spoken: "needs attention",
+      flags: dot?.flags ?? {},
+    };
+  }
+  if (thread.status === "working") {
+    const elapsed =
+      thread.runStartedAt != null
+        ? formatElapsed(thread.runStartedAt, now)
+        : "";
+    return {
+      text: elapsed ? `Working ${elapsed}` : "Working",
+      tone: "working",
+      title: dot?.label ?? "Working",
+      spoken: "working",
+      flags: dot?.flags ?? {},
+    };
+  }
+  if (isDelegating(thread.status, wait)) {
+    return {
+      text: "Working",
+      tone: "working",
+      title: dot?.label ?? "Delegating",
+      spoken: "delegating",
+      flags: dot?.flags ?? { "data-delegating": thread.id },
+    };
+  }
+  if (!active && showWokePill(thread, now)) {
+    return {
+      text: "Woke",
+      tone: "attention",
+      title: dot?.label ?? "Woke from snooze",
+      spoken: "needs attention",
+      flags: dot?.flags ?? { "data-woke": "" },
+    };
+  }
+  if (
+    !active &&
+    isUnread(thread) &&
+    (thread.status === "done" || thread.status === "idle")
+  ) {
+    return {
+      text: "Done",
+      tone: "done",
+      title: "Done",
+      spoken: "unread",
+      flags: {},
+    };
+  }
+  return null;
 }
 
 function ConflictForecastBadge({
@@ -470,7 +503,7 @@ function ConflictForecastBadge({
   return (
     <span className={styles.conflictWrap}>
       <span
-        className={`${styles.badge} ${loud ? styles.badgeConflict : styles.badgeOverlap}`}
+        className={styles.forecast}
         data-conflict-forecast={kind}
         tabIndex={0}
         aria-describedby={tipId}
@@ -502,8 +535,7 @@ function ConflictForecastBadge({
  * Memo'd: during a run main pushes thread updates every 700ms and the parent
  * list re-renders each tick — without memo every visible card re-renders too.
  * Unchanged threads keep row identity (patchThreadList), so a shallow compare
- * skips them. Exported for render tests that need a card without the
- * archived-collapse gate.
+ * skips them. Exported for Kanban and render tests.
  */
 export const ThreadCard = memo(function ThreadCard({
   thread,
@@ -522,7 +554,6 @@ export const ThreadCard = memo(function ThreadCard({
   onSetMuted,
   onRenameThread,
   onFork,
-  snoozeMenuOpen = false,
   onToggleSnoozeMenu,
   nested = false,
   wait = null,
@@ -547,56 +578,50 @@ export const ThreadCard = memo(function ThreadCard({
   ) => void | Promise<void>;
   onSetPinned?: (threadId: string, pinned: boolean) => void | Promise<void>;
   onSetSnoozed?: (threadId: string, until: number | null) => void | Promise<void>;
-  /** Mute/unmute desktop notifications for this thread (snooze menu item). */
   onSetMuted?: (threadId: string, muted: boolean) => void | Promise<void>;
-  /** Rename this thread (snooze menu item). */
   onRenameThread?: (threadId: string, title: string) => void | Promise<void>;
   onFork?: (
     threadId: string,
     opts?: { provider?: string },
   ) => void | Promise<void>;
-  /** Single row menu (snooze/fork/hand-off/rename/mute/settle). */
-  snoozeMenuOpen?: boolean;
+  /** Parent bookkeeping: which card has its (native/portal) menu open. */
   onToggleSnoozeMenu?: (threadId: string | null) => void;
-  /** Fork/worker rendered attached under its source thread (indent + elbow). */
   nested?: boolean;
-  /** Live delegated work this thread is blocked on (issue #42); null when none. */
   wait?: WaitState | null;
-  /**
-   * Render the project slug on the top row. False inside named project
-   * groups — the group header already carries the slug, repeating it per
-   * card is pure noise. True for orphan groups (no header) and standalone
-   * renders (tests).
-   */
   showSlug?: boolean;
-  /** Project forecast; omitted in tests that do not care about #249. */
   conflictForecast?: ConflictForecast | null;
-  /** Titles for the other side of each pair, used in the tooltip. */
   threadTitles?: ReadonlyMap<string, string>;
 }) {
   const working = thread.status === "working";
-  // Settled cards offer "keep active"; attention cards offer "settle".
   const settleOverride = isSettled ? ("active" as const) : ("settled" as const);
   const settleLabel = isSettled ? "Keep thread active" : "Settle thread";
-  // Selected never paints unread (you are looking at it) — render rule only.
   const showUnread = !active && isUnread(thread);
-  const dot = statusDotFor(thread, now, wait, active);
+  const label = statusLabelFor(thread, now, wait, active);
   const pinned = isPinned(thread);
-  // The dot is color-only, so the select button speaks the triage state.
+  const recede = working && !active && !multiSelected;
+  // Menus are native Menu.popup / a body portal (#592) — the card only
+  // tracks openness so the hover actions stay pinned underneath.
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuBusy = useRef(false);
+  const actionsOpen = menuOpen;
   const selectLabel = [
     `Select thread: ${thread.title}`,
     showUnread ? "unread" : null,
     pinned ? "pinned" : null,
-    dot ? dot.spoken : null,
+    label ? label.spoken : null,
   ]
     .filter(Boolean)
     .join(", ");
   const [renaming, setRenaming] = useState(false);
   const [renameDraft, setRenameDraft] = useState("");
   const renamingRef = useRef(false);
-  const moreBtnRef = useRef<HTMLButtonElement>(null);
-  const [menuOpen, setMenuOpen] = useState(false);
-  const menuBusy = useRef(false);
+  const forecastPairs = pairsForThread(conflictForecast, thread.id);
+  const providerId = thread.provider || "";
+  const hasLine3 =
+    Boolean(thread.branch) ||
+    (thread.prNumber != null && Boolean(thread.prUrl)) ||
+    forecastPairs.length > 0 ||
+    Boolean(providerId);
 
   const startRename = () => {
     setRenameDraft(thread.title);
@@ -614,14 +639,19 @@ export const ThreadCard = memo(function ThreadCard({
     void onRenameThread?.(thread.id, next);
   };
 
-  const applyMenuId = (id: string, presets: ReturnType<typeof resolveSnoozePresets>) => {
+  const applyMenuId = (
+    id: string,
+    presets: ReturnType<typeof resolveSnoozePresets>,
+  ) => {
     if (id === "settle") void onSetSettled?.(thread.id, "settled");
     else if (id === "unsettle") void onSetSettled?.(thread.id, "active");
     else if (id === "unsnooze") void onSetSnoozed?.(thread.id, null);
     else if (id.startsWith("snooze:")) {
       const preset = presets.find((p) => `snooze:${p.id}` === id);
       if (preset) void onSetSnoozed?.(thread.id, preset.until);
-    } else if (id === "fork") void onFork?.(thread.id);
+    } else if (id === "pin") void onSetPinned?.(thread.id, true);
+    else if (id === "unpin") void onSetPinned?.(thread.id, false);
+    else if (id === "fork") void onFork?.(thread.id);
     else if (id.startsWith("handoff:")) {
       void onFork?.(thread.id, { provider: id.slice("handoff:".length) });
     } else if (id === "rename") startRename();
@@ -639,6 +669,7 @@ export const ThreadCard = memo(function ThreadCard({
       isSettled,
       canSettle: !(working && !isSettled),
       showSnooze: Boolean(onSetSnoozed),
+      showPin: Boolean(onSetPinned),
       showFork: Boolean(onFork),
       showRename: Boolean(onRenameThread),
       showMute: Boolean(onSetMuted),
@@ -658,10 +689,13 @@ export const ThreadCard = memo(function ThreadCard({
     }
   };
 
-  // Card is a non-interactive shell. Stretch select + optional settle action
-  // are separate focusables. Content sits in a sibling with pointer-events:none
-  // so clicks fall through to select; PR <a> and settle re-enable pointer-events.
-  // Never nest interactive controls inside the select button.
+  const hasActions = Boolean(
+    onSetSettled || onSetPinned || onSetSnoozed || onFork || onRenameThread || onSetMuted,
+  );
+
+  // Card is a non-interactive shell. Stretch select + hover actions are
+  // separate focusables. Content sits in a sibling with pointer-events:none
+  // so clicks fall through to select; PR <a> and actions re-enable.
   return (
     <div
       className={styles.card}
@@ -673,7 +707,8 @@ export const ThreadCard = memo(function ThreadCard({
       data-unread={showUnread ? "true" : undefined}
       data-pinned={pinned ? "true" : undefined}
       data-nested={nested ? "true" : undefined}
-      data-menu-open={menuOpen || snoozeMenuOpen ? "true" : undefined}
+      data-recede={recede ? "true" : undefined}
+      data-actions-open={actionsOpen ? "true" : undefined}
       onContextMenu={(e) => {
         if (renaming) return;
         if ((e.target as HTMLElement).closest("input, a, textarea")) return;
@@ -696,256 +731,244 @@ export const ThreadCard = memo(function ThreadCard({
             shift: e.shiftKey,
           })
         }
+        onDoubleClick={(e) => {
+          if (!onRenameThread) return;
+          if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+          e.preventDefault();
+          startRename();
+        }}
         aria-label={selectLabel}
       />
-      {/* One line (#566): dot + title + age. Branch/PR/provider/worktree live
-          in the thread header; run detail lives in the dot tooltip. */}
       <div className={styles.cardBody}>
-        {dot && <StatusDot dot={dot} />}
-        {showUnread && <span className={styles.srOnly}>unread</span>}
-        {renaming ? (
-          <input
-            className={styles.titleInput}
-            data-thread-title-input={thread.id}
-            value={renameDraft}
-            maxLength={60}
-            aria-label="Thread title"
-            autoFocus
-            onFocus={(e) => e.currentTarget.select()}
-            onChange={(e) => setRenameDraft(e.target.value)}
-            onClick={(e) => e.stopPropagation()}
-            onMouseDown={(e) => e.stopPropagation()}
-            onBlur={() => finishRename(false)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                e.currentTarget.blur();
-              } else if (e.key === "Escape") {
-                e.preventDefault();
-                finishRename(true);
-              }
-            }}
-          />
-        ) : (
-          <div className={styles.cardTitle} title={thread.title}>
-            {thread.title}
+        <div className={styles.cardLine1}>
+          {showSlug && (
+            <span className={styles.cardSlug} data-card-slug="">
+              {slug}
+            </span>
+          )}
+          {pinned && (
+            <span className={styles.pinFlag} data-pin-flag="" title="Pinned" aria-hidden>
+              <Icon size={10}>
+                <path d="M12 17v5" />
+                <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1" />
+              </Icon>
+            </span>
+          )}
+          <span className={styles.cardSlot}>
+            <span className={styles.cardStatus}>
+              {label ? (
+                <span
+                  className={styles.statusLabel}
+                  data-status-label={label.text}
+                  data-tone={label.tone}
+                  data-dim={
+                    label.tone === "working" && !active ? "true" : undefined
+                  }
+                  title={label.title}
+                  {...label.flags}
+                >
+                  {label.text}
+                </span>
+              ) : (
+                <span className={styles.age}>
+                  {formatRelativeAge(thread.updatedAt, now)}
+                </span>
+              )}
+            </span>
+            {hasActions && (
+              <span className={styles.cardActions} data-card-actions="">
+                {onSetSnoozed && (
+                  <button
+                    type="button"
+                    className={styles.iconBtn}
+                    aria-label={
+                      thread.snoozedUntil != null
+                        ? "Wake thread now"
+                        : "Snooze thread"
+                    }
+                    title={thread.snoozedUntil != null ? "Wake" : "Snooze"}
+                    aria-haspopup={
+                      thread.snoozedUntil != null ? undefined : "menu"
+                    }
+                    data-snooze-btn={thread.id}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (thread.snoozedUntil != null) {
+                        void onSetSnoozed(thread.id, null);
+                        return;
+                      }
+                      if (menuBusy.current) return;
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      const presets = resolveSnoozePresets(Date.now());
+                      menuBusy.current = true;
+                      setMenuOpen(true);
+                      onToggleSnoozeMenu?.(thread.id);
+                      void showContextMenu(
+                        presets.map((p) => ({
+                          id: `snooze:${p.id}`,
+                          label: p.label,
+                          whenLabel: p.whenLabel,
+                          attrs: { "data-snooze-preset": p.id },
+                        })),
+                        { x: rect.right, y: rect.bottom },
+                      )
+                        .then((id) => {
+                          if (id) applyMenuId(id, presets);
+                        })
+                        .finally(() => {
+                          menuBusy.current = false;
+                          setMenuOpen(false);
+                          onToggleSnoozeMenu?.(null);
+                        });
+                    }}
+                  >
+                    <Icon size={13}>
+                      <circle cx="12" cy="12" r="10" />
+                      <path d="M12 6v6l4 2" />
+                    </Icon>
+                  </button>
+                )}
+                {onSetSettled && (
+                  <button
+                    type="button"
+                    className={styles.iconBtn}
+                    aria-label={settleLabel}
+                    title={
+                      working && !isSettled
+                        ? "Cannot settle while a run is active"
+                        : settleLabel
+                    }
+                    data-settle-btn={thread.id}
+                    disabled={working && !isSettled}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void onSetSettled(thread.id, settleOverride);
+                    }}
+                  >
+                    <Icon size={13}>
+                      <path d="M20 6 9 17l-5-5" />
+                    </Icon>
+                  </button>
+                )}
+                {(onSetSnoozed || onFork || onRenameThread || onSetMuted || onSetSettled || onSetPinned) && (
+                  <button
+                    type="button"
+                    className={styles.iconBtn}
+                    aria-label={`Thread actions: ${thread.title}`}
+                    title="Thread actions"
+                    aria-haspopup="menu"
+                    aria-expanded={menuOpen}
+                    data-more-btn={thread.id}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      void openThreadMenu({ x: rect.right, y: rect.bottom });
+                    }}
+                  >
+                    <svg
+                      width="13"
+                      height="13"
+                      viewBox="0 0 16 16"
+                      fill="currentColor"
+                      aria-hidden="true"
+                    >
+                      <circle cx="3.25" cy="8" r="1.25" />
+                      <circle cx="8" cy="8" r="1.25" />
+                      <circle cx="12.75" cy="8" r="1.25" />
+                    </svg>
+                  </button>
+                )}
+              </span>
+            )}
+          </span>
+        </div>
+        <div className={styles.cardLine2}>
+          {showUnread && <span className={styles.srOnly}>unread</span>}
+          {renaming ? (
+            <input
+              className={styles.titleInput}
+              data-thread-title-input={thread.id}
+              value={renameDraft}
+              maxLength={60}
+              aria-label="Thread title"
+              autoFocus
+              onFocus={(e) => e.currentTarget.select()}
+              onChange={(e) => setRenameDraft(e.target.value)}
+              onClick={(e) => e.stopPropagation()}
+              onMouseDown={(e) => e.stopPropagation()}
+              onDoubleClick={(e) => e.stopPropagation()}
+              onBlur={() => finishRename(false)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  e.currentTarget.blur();
+                } else if (e.key === "Escape") {
+                  e.preventDefault();
+                  finishRename(true);
+                }
+              }}
+            />
+          ) : (
+            <div className={styles.cardTitle} title={thread.title}>
+              {thread.title}
+            </div>
+          )}
+          {contentMatch && (
+            <span className={styles.inMessagesTag}>in messages</span>
+          )}
+        </div>
+        {hasLine3 && (
+          <div className={styles.cardLine3}>
+            {thread.branch ? (
+              <span className={styles.cardBranch} data-card-branch="">
+                {thread.branch}
+              </span>
+            ) : (
+              <span className={styles.cardBranchSpacer} />
+            )}
+            {thread.prNumber != null && thread.prUrl && (
+              <a
+                className={styles.prLink}
+                data-pr-badge=""
+                href={thread.prUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => e.stopPropagation()}
+              >
+                #{thread.prNumber}
+              </a>
+            )}
+            <ConflictForecastBadge
+              threadId={thread.id}
+              forecast={conflictForecast}
+              titles={threadTitles}
+            />
+            {providerId ? (
+              <span className={styles.cardProvider} data-card-provider="">
+                {providerId}
+              </span>
+            ) : null}
           </div>
         )}
-        {pinned && (
-          <span className={styles.pinFlag} data-pin-flag="" title="Pinned" aria-hidden>
-            <svg
-              width="10"
-              height="10"
-              viewBox="0 0 24 24"
-              fill="currentColor"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M12 17v5" />
-              <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 11 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1" />
-            </svg>
-          </span>
+        {wait && (
+          <div
+            className={styles.waitRow}
+            data-wait-row={thread.id}
+            data-attention={wait.blocked > 0 ? "true" : undefined}
+            title={waitTooltip(wait)}
+          >
+            {waitLabel(wait, now)}
+          </div>
         )}
-        {showSlug && <span className={styles.repo}>{slug}</span>}
-        {contentMatch && (
-          <span className={styles.inMessagesTag}>in messages</span>
-        )}
-        <ConflictForecastBadge
-          threadId={thread.id}
-          forecast={conflictForecast}
-          titles={threadTitles}
-        />
-        <span className={styles.age}>
-          {formatRelativeAge(thread.updatedAt, now)}
-        </span>
       </div>
-      {/* Live delegated work stays visible (issue #42, kept through the #566
-          flatten by request): the count is the point, and the line vanishes
-          on its own when the workers finish. */}
-      {wait && (
-        <div
-          className={styles.waitRow}
-          data-wait-row={thread.id}
-          data-attention={wait.blocked > 0 ? "true" : undefined}
-          title={waitTooltip(wait)}
-        >
-          {waitLabel(wait, now)}
-        </div>
-      )}
-      {(onSetSettled || onSetPinned || onSetSnoozed || onFork) && (
-        <div className={styles.cardActions} data-card-actions="">
-          {onSetPinned && (
-            <button
-              type="button"
-              className={styles.settleBtn}
-              aria-label={isPinned(thread) ? "Unpin thread" : "Pin thread"}
-              title={isPinned(thread) ? "Unpin thread" : "Pin thread"}
-              data-pin-btn={thread.id}
-              onClick={(e) => {
-                e.stopPropagation();
-                void onSetPinned(thread.id, !isPinned(thread));
-              }}
-            >
-              {isPinned(thread) ? (
-                <svg
-                  width="13"
-                  height="13"
-                  viewBox="0 0 24 24"
-                  fill="currentColor"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <path d="M12 17v5" />
-                  <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 11 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1" />
-                </svg>
-              ) : (
-                <svg
-                  width="13"
-                  height="13"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <path d="M12 17v5" />
-                  <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 11 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1" />
-                </svg>
-              )}
-            </button>
-          )}
-          {onSetSnoozed && (
-            <button
-              type="button"
-              className={styles.settleBtn}
-              aria-label={
-                thread.snoozedUntil != null ? "Wake thread now" : "Snooze thread"
-              }
-              title={thread.snoozedUntil != null ? "Wake" : "Snooze"}
-              data-snooze-btn={thread.id}
-              onClick={(e) => {
-                e.stopPropagation();
-                if (thread.snoozedUntil != null) {
-                  void onSetSnoozed(thread.id, null);
-                  return;
-                }
-                const rect = e.currentTarget.getBoundingClientRect();
-                const presets = resolveSnoozePresets(Date.now());
-                menuBusy.current = true;
-                setMenuOpen(true);
-                void showContextMenu(
-                  presets.map((p) => ({
-                    id: `snooze:${p.id}`,
-                    label: p.label,
-                    whenLabel: p.whenLabel,
-                    attrs: { "data-snooze-preset": p.id },
-                  })),
-                  { x: rect.right, y: rect.bottom },
-                )
-                  .then((id) => {
-                    if (id) applyMenuId(id, presets);
-                  })
-                  .finally(() => {
-                    menuBusy.current = false;
-                    setMenuOpen(false);
-                  });
-              }}
-            >
-              <svg
-                width="13"
-                height="13"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                <circle cx="12" cy="12" r="10" />
-                <path d="M12 6v6l4 2" />
-              </svg>
-            </button>
-          )}
-          {onSetSettled && (
-            <button
-              type="button"
-              className={styles.settleBtn}
-              aria-label={settleLabel}
-              title={
-                working && !isSettled
-                  ? "Cannot settle while a run is active"
-                  : settleLabel
-              }
-              data-settle-btn={thread.id}
-              disabled={working && !isSettled}
-              onClick={(e) => {
-                e.stopPropagation();
-                void onSetSettled(thread.id, settleOverride);
-              }}
-            >
-              <svg
-                width="13"
-                height="13"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                <path d="M20 6 9 17l-5-5" />
-              </svg>
-            </button>
-          )}
-          {(onSetSnoozed || onFork || onRenameThread || onSetMuted || onSetSettled) && (
-            <button
-              ref={moreBtnRef}
-              type="button"
-              className={styles.settleBtn}
-              aria-label={`Thread actions: ${thread.title}`}
-              title="Thread actions"
-              aria-haspopup="menu"
-              aria-expanded={menuOpen}
-              data-more-btn={thread.id}
-              onClick={(e) => {
-                e.stopPropagation();
-                const rect = e.currentTarget.getBoundingClientRect();
-                void openThreadMenu({ x: rect.right, y: rect.bottom });
-              }}
-            >
-              <svg
-                width="13"
-                height="13"
-                viewBox="0 0 16 16"
-                fill="currentColor"
-                aria-hidden="true"
-              >
-                <circle cx="3.25" cy="8" r="1.25" />
-                <circle cx="8" cy="8" r="1.25" />
-                <circle cx="12.75" cy="8" r="1.25" />
-              </svg>
-            </button>
-          )}
-        </div>
-      )}
     </div>
   );
 });
 
 /**
- * Slim Later-shelf row (t3-style): title + project slug + wrap-up age.
- * Dimmed at rest, restored on hover. Selectable; Keep-active hover pin only
- * (opening a settled thread does NOT un-settle). Archived rows dim further
- * and swap the hover action for "unarchive" (#567).
+ * Slim shelf row: title + slug + time. Dimmed at rest, restored on hover.
+ * Selectable; hover swaps time for the row's one action.
  */
 export function SettledRow({
   thread,
@@ -972,7 +995,6 @@ export function SettledRow({
   ) => void | Promise<void>;
   pinMode?: boolean;
   onSetPinned?: (threadId: string, pinned: boolean) => void | Promise<void>;
-  /** Archived Later row: dimmer, hover action = unarchive. */
   archived?: boolean;
   onSetArchived?: (threadId: string, archived: boolean) => void | Promise<void>;
   multiSelected?: boolean;
@@ -983,14 +1005,14 @@ export function SettledRow({
     : archived
       ? thread.updatedAt
       : resolveSettledTimestamp(thread);
-  // Settled can still be unread (activity after last visit, then auto-settled).
   const showUnread = !active && isUnread(thread);
   const selectLabel = showUnread
     ? `Select thread: ${thread.title}, unread`
     : `Select thread: ${thread.title}`;
   return (
     <div
-      className={styles.settledRow}
+      className={styles.slimRow}
+      data-slim-row={thread.id}
       data-thread-card={thread.id}
       data-settled={pinMode || archived ? undefined : "true"}
       data-pinned={pinMode ? "true" : undefined}
@@ -1015,99 +1037,64 @@ export function SettledRow({
         }
         aria-label={selectLabel}
       />
-      <div className={styles.settledBody}>
-        {showUnread && (
-          <span
-            className={styles.unreadDot}
-            data-unread-dot={thread.id}
-            aria-hidden="true"
-          />
-        )}
+      <div className={styles.slimBody}>
         {showUnread && <span className={styles.srOnly}>unread</span>}
-        <span className={styles.settledTitle}>{thread.title}</span>
-        <span className={styles.settledSlug}>{slug}</span>
-        <span className={styles.settledAge}>
-          {formatRelativeAge(wrapUpAt, now)}
+        <span className={styles.slimTitle}>{thread.title}</span>
+        <span className={styles.slimSlug}>{slug}</span>
+        <span className={styles.slimSlot}>
+          <span className={styles.slimAge}>
+            {formatRelativeAge(wrapUpAt, now)}
+          </span>
+          {archived && onSetArchived ? (
+            <button
+              type="button"
+              className={styles.slimAction}
+              aria-label="Unarchive thread"
+              title="Unarchive thread"
+              data-unarchive-btn={thread.id}
+              onClick={(e) => {
+                e.stopPropagation();
+                void onSetArchived(thread.id, false);
+              }}
+            >
+              unarchive
+            </button>
+          ) : pinMode && onSetPinned ? (
+            <button
+              type="button"
+              className={styles.slimAction}
+              aria-label="Unpin thread"
+              title="Unpin thread"
+              data-unpin-btn={thread.id}
+              onClick={(e) => {
+                e.stopPropagation();
+                void onSetPinned(thread.id, false);
+              }}
+            >
+              unpin
+            </button>
+          ) : onSetSettled ? (
+            <button
+              type="button"
+              className={styles.slimAction}
+              aria-label="Keep thread active"
+              title="Keep thread active"
+              data-unsettle-btn={thread.id}
+              onClick={(e) => {
+                e.stopPropagation();
+                void onSetSettled(thread.id, "active");
+              }}
+            >
+              keep
+            </button>
+          ) : null}
         </span>
       </div>
-      {archived && onSetArchived ? (
-        <div className={styles.cardActions}>
-          <button
-            type="button"
-            className={styles.settleBtn}
-            aria-label="Unarchive thread"
-            title="Unarchive thread"
-            data-unarchive-btn={thread.id}
-            onClick={(e) => {
-              e.stopPropagation();
-              void onSetArchived(thread.id, false);
-            }}
-          >
-            unarchive
-          </button>
-        </div>
-      ) : pinMode && onSetPinned ? (
-        <div className={styles.cardActions}>
-          <button
-            type="button"
-            className={styles.settleBtn}
-            aria-label="Unpin thread"
-            title="Unpin thread"
-            data-unpin-btn={thread.id}
-            onClick={(e) => {
-              e.stopPropagation();
-              void onSetPinned(thread.id, false);
-            }}
-          >
-            <svg
-              width="13"
-              height="13"
-              viewBox="0 0 24 24"
-              fill="currentColor"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <path d="M12 17v5" />
-              <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 11 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1" />
-            </svg>
-          </button>
-        </div>
-      ) : onSetSettled ? (
-        <div className={styles.cardActions}>
-          <button
-            type="button"
-            className={styles.settleBtn}
-            aria-label="Keep thread active"
-            title="Keep thread active"
-            onClick={(e) => {
-              e.stopPropagation();
-              void onSetSettled(thread.id, "active");
-            }}
-          >
-            <svg
-              width="13"
-              height="13"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <path d="M8 13.5v-10M4.5 6.5 8 3l3.5 3.5" />
-            </svg>
-          </button>
-        </div>
-      ) : null}
     </div>
   );
 }
 
-/** Slim snoozed shelf row: title + slug + wake label (shared formatter). */
+/** Slim snoozed shelf row: title + slug + wake countdown. */
 export function SnoozedRow({
   thread,
   slug,
@@ -1115,7 +1102,6 @@ export function SnoozedRow({
   now,
   onSelect,
   onSetSnoozed,
-  onSetSettled,
   multiSelected = false,
   indexHint = null,
 }: {
@@ -1139,7 +1125,8 @@ export function SnoozedRow({
     : `Select thread: ${thread.title}`;
   return (
     <div
-      className={styles.settledRow}
+      className={styles.slimRow}
+      data-slim-row={thread.id}
       data-thread-card={thread.id}
       data-snoozed="true"
       data-active={active}
@@ -1162,58 +1149,21 @@ export function SnoozedRow({
         }
         aria-label={selectLabel}
       />
-      <div className={styles.settledBody}>
-        {showUnread && (
-          <span
-            className={styles.unreadDot}
-            data-unread-dot={thread.id}
-            aria-hidden="true"
-          />
-        )}
+      <div className={styles.slimBody}>
         {showUnread && <span className={styles.srOnly}>unread</span>}
-        <span className={styles.settledTitle}>{thread.title}</span>
-        <span className={styles.settledSlug}>{slug}</span>
-        <span className={styles.settledAge} data-wake-label={thread.id}>
-          {wake}
-        </span>
-      </div>
-      {(onSetSnoozed || onSetSettled) && (
-        <div className={styles.cardActions}>
-          {onSetSettled && thread.status !== "working" && (
-            <button
-              type="button"
-              className={styles.settleBtn}
-              aria-label="Settle thread"
-              title="Settle thread"
-              data-snooze-settle-btn={thread.id}
-              onClick={(e) => {
-                e.stopPropagation();
-                void onSetSettled(thread.id, "settled");
-              }}
-            >
-              <svg
-                width="13"
-                height="13"
-                viewBox="0 0 16 16"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                <path d="M8 2.5v10M4.5 9.5 8 13l3.5-3.5" />
-              </svg>
-            </button>
-          )}
+        <span className={styles.slimTitle}>{thread.title}</span>
+        <span className={styles.slimSlug}>{slug}</span>
+        <span className={styles.slimSlot}>
+          <span className={styles.slimAge} data-wake-label={thread.id}>
+            {wake}
+          </span>
           {onSetSnoozed && (
             <button
               type="button"
-              className={styles.settleBtn}
-              aria-label="Clear snooze"
-              title="Clear snooze"
-              data-snooze-clear-btn={thread.id}
-              data-snooze-clear=""
+              className={styles.slimAction}
+              aria-label="Wake thread now"
+              title="Wake thread now"
+              data-wake-btn={thread.id}
               onClick={(e) => {
                 e.stopPropagation();
                 void onSetSnoozed(thread.id, null);
@@ -1222,8 +1172,8 @@ export function SnoozedRow({
               wake
             </button>
           )}
-        </div>
-      )}
+        </span>
+      </div>
     </div>
   );
 }
@@ -1238,7 +1188,6 @@ export const Sidebar = memo(function Sidebar({
   channel,
   updateState,
   searchPlaceholder,
-  projectsHeader,
   projects,
   threads,
   providers,
@@ -1251,8 +1200,6 @@ export const Sidebar = memo(function Sidebar({
   projectError = null,
   onDismissProjectError,
   onOpenSettings,
-  spendTodayUsd = null,
-  dailyBudgetUsd = null,
   autoSettleAfterDays,
   autoSettleOnMerge,
   searchThreads,
@@ -1275,39 +1222,12 @@ export const Sidebar = memo(function Sidebar({
 }: SidebarProps) {
   const [query, setQuery] = useState("");
   const [now, setNow] = useState(() => Date.now());
-  /** Which thread's snooze preset menu is open (one at a time). */
-  const [snoozeMenuFor, setSnoozeMenuFor] = useState<string | null>(null);
-  useEscapeClose(snoozeMenuFor != null, () => setSnoozeMenuFor(null));
-  /** Project id whose thread-create menu (plain vs worktree) is open. */
-  const [createMenuFor, setCreateMenuFor] = useState<string | null>(null);
-  useEscapeClose(createMenuFor != null, () => setCreateMenuFor(null));
-  useEffect(() => {
-    if (snoozeMenuFor == null && createMenuFor == null) return;
-    const onDoc = (e: MouseEvent) => {
-      const el = e.target;
-      if (!(el instanceof Element)) {
-        setSnoozeMenuFor(null);
-        setCreateMenuFor(null);
-        return;
-      }
-      if (
-        el.closest(
-          "[data-snooze-menu], [data-snooze-submenu], [data-more-btn], [data-create-menu], [data-create-menu-btn]",
-        )
-      ) {
-        return;
-      }
-      setSnoozeMenuFor(null);
-      setCreateMenuFor(null);
-    };
-    document.addEventListener("mousedown", onDoc);
-    document.addEventListener("click", onDoc);
-    return () => {
-      document.removeEventListener("mousedown", onDoc);
-      document.removeEventListener("click", onDoc);
-    };
-  }, [snoozeMenuFor, createMenuFor]);
-  /** Project id whose "from GitHub issue" form is open. */
+  const [createMenuOpen, setCreateMenuOpen] = useState(false);
+  const [scopeMenuOpen, setScopeMenuOpen] = useState(false);
+  useEscapeClose(createMenuOpen || scopeMenuOpen, () => {
+    setCreateMenuOpen(false);
+    setScopeMenuOpen(false);
+  });
   const [issueFormFor, setIssueFormFor] = useState<string | null>(null);
   const [issueRef, setIssueRef] = useState("");
   const [issueError, setIssueError] = useState<string | null>(null);
@@ -1319,48 +1239,27 @@ export const Sidebar = memo(function Sidebar({
     setIssueError(null);
   }, [issuePending]);
   useEscapeClose(issueFormFor != null && !issuePending, closeIssueForm);
-  /**
-   * Project pending the destructive remove confirm. Confirm is a dialog, not
-   * an archive-style undo toast: history deletion is irreversible.
-   */
   const [removeConfirmId, setRemoveConfirmId] = useState<string | null>(null);
-  /** True while projects.remove is in flight; disables the confirm button. */
   const [removePending, setRemovePending] = useState(false);
-  /**
-   * Group keys fully expanded past GROUP_ATTENTION_CAP (session-only, like
-   * session-only). Absent = capped at the newest 8 attention threads.
-   */
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
-    () => new Set(),
+  const [projectScope, setProjectScope] = useState<string | null>(() =>
+    loadStored(SCOPE_KEY),
   );
-  /** Group keys the user collapsed. Survives restarts: collapsing a noisy
-   *  project is a lasting choice, not a per-session whim. */
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() =>
-    loadKeySet(COLLAPSED_KEY),
+  const [snoozedOpen, setSnoozedOpen] = useState(() =>
+    loadFlag(SNOOZED_OPEN_KEY, false),
   );
-  /**
-   * Global settled tail open state. t3 default: EXPANDED — settled work stays
-   * visible and the settle transition is seen. A user collapse persists like
-   * group collapse (SETTLED_COLLAPSED_KEY holds "tail"; absent = expanded).
-   */
-  const [settledTailOpen, setSettledTailOpen] = useState(
-    () => !loadKeySet(SETTLED_COLLAPSED_KEY).has("tail"),
+  const [settledOpen, setSettledOpen] = useState(() =>
+    loadFlag(SETTLED_OPEN_KEY, false),
   );
-  /** How many settled rows to show when the tail is expanded. */
   const [settledVisibleCount, setSettledVisibleCount] = useState(
     SETTLED_TAIL_INITIAL_COUNT,
   );
-  /** Multi-select set (round 46). Distinct from activeThreadId. */
-  const [multiSelected, setMultiSelected] = useState<Set<string>>(() => new Set());
-  /** Anchor for shift-range (last plain select or meta toggle). */
+  const [multiSelected, setMultiSelected] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [selectAnchor, setSelectAnchor] = useState<string | null>(null);
   const [batchFeedback, setBatchFeedback] = useState<string | null>(null);
   const [cmdHeld, setCmdHeld] = useState(false);
   const [keyboardSheetOpen, setKeyboardSheetOpen] = useState(false);
-  /**
-   * Contract: null disables inactivity settle; while settings are still
-   * loading (prop undefined) fall back to AUTO_SETTLE_AFTER_DAYS (3).
-   */
   const settleOpts = useMemo(
     () => ({
       now,
@@ -1372,9 +1271,6 @@ export const Sidebar = memo(function Sidebar({
     }),
     [now, autoSettleAfterDays, autoSettleOnMerge],
   );
-  // Reuse the previous Map when the id→title mapping is unchanged: `threads`
-  // gets a new identity every 700ms stream tick, and a fresh Map here would
-  // bust ThreadCard's memo for every card on every tick.
   const threadTitlesRef = useRef<Map<string, string>>(new Map());
   const threadTitles = useMemo(() => {
     const prev = threadTitlesRef.current;
@@ -1393,7 +1289,6 @@ export const Sidebar = memo(function Sidebar({
     threadTitlesRef.current = titles;
     return titles;
   }, [threads]);
-  /** Full-content search results; null means not in active search mode. */
   const [searchResults, setSearchResults] = useState<ThreadInfo[] | null>(null);
   const [searchLoading, setSearchLoading] = useState(false);
 
@@ -1407,7 +1302,6 @@ export const Sidebar = memo(function Sidebar({
     };
   }, []);
 
-  // One shared interval for the whole list (age + working elapsed).
   useEffect(() => {
     const handle = window.setInterval(() => {
       setNow(Date.now());
@@ -1427,15 +1321,9 @@ export const Sidebar = memo(function Sidebar({
     return m;
   }, [threads]);
 
-  /**
-   * Live delegated work per parent thread (issue #42). Built from the FULL
-   * threads prop, never the filtered view: a worker hidden by search or by a
-   * collapsed group still has its orchestrator waiting on it.
-   */
   const waitStates = useMemo(() => buildWaitStates(threads), [threads]);
 
   const trimmedQuery = query.trim();
-  /** Active full-content search mode (2+ chars). */
   const searching = trimmedQuery.length >= MIN_SEARCH_LEN;
 
   const runSearch = useCallback(
@@ -1458,11 +1346,9 @@ export const Sidebar = memo(function Sidebar({
     [searchThreads],
   );
 
-  // Debounced full-content search for 2+ chars; 0–1 char restores local view.
   useEffect(() => {
     const q = query.trim();
     if (q.length < MIN_SEARCH_LEN) {
-      // Instant restore: bump gen so in-flight results are ignored.
       searchGen.current += 1;
       setSearchResults(null);
       setSearchLoading(false);
@@ -1475,71 +1361,34 @@ export const Sidebar = memo(function Sidebar({
     return () => window.clearTimeout(handle);
   }, [query, runSearch]);
 
-  /**
-   * Threads shown in the list: normal view uses full list; search mode uses
-   * server results with live status overlaid from the threads prop. While
-   * waiting for the first response, show nothing (loading hint covers it).
-   */
   const displayThreads = useMemo(() => {
     if (!searching) return threads;
     if (searchResults == null) return [];
     return searchResults.map((t) => liveById.get(t.id) ?? t);
   }, [searching, searchResults, threads, liveById]);
 
-  const { attentionThreads, later } = useMemo(
-    () => partitionSidebar(displayThreads, settleOpts),
-    [displayThreads, settleOpts],
-  );
-  /** Later shelf render order: snoozed, settled, archived (#567). */
-  const laterThreads = useMemo(() => flattenLater(later), [later]);
-  const snoozedIds = useMemo(
-    () => new Set(later.snoozed.map((t) => t.id)),
-    [later],
-  );
-
-  /**
-   * Project groups for the main list.
-   * Normal view: attention only (pinned sort first; snooze/settle/archive
-   * live on the Later shelf). Search: full hit list, so hits surface inline.
-   */
-  const groups = useMemo(() => {
-    if (searching) {
-      const projectsWithHits = projects.filter((p) =>
-        displayThreads.some((t) => t.projectId === p.id),
-      );
-      return buildSidebarGroups(projectsWithHits, displayThreads);
+  // Drop a stale scope if the project was removed.
+  useEffect(() => {
+    if (projectScope != null && !projectById.has(projectScope)) {
+      setProjectScope(null);
+      saveStored(SCOPE_KEY, null);
     }
-    return buildSidebarGroups(projects, attentionThreads);
-  }, [projects, displayThreads, searching, attentionThreads]);
+  }, [projectScope, projectById]);
 
-  const toggleCollapsed = (groupKey: string) => {
-    setCollapsedGroups((prev) => {
-      const next = new Set(prev);
-      if (next.has(groupKey)) next.delete(groupKey);
-      else next.add(groupKey);
-      saveKeySet(COLLAPSED_KEY, next);
-      return next;
-    });
-  };
+  useEffect(() => {
+    setSettledVisibleCount(SETTLED_TAIL_INITIAL_COUNT);
+  }, [projectScope]);
 
-  /**
-   * Reveal a freshly created thread (t3: new work must be visible). Expand
-   * its project group when collapsed, then next frame — once the expanded
-   * group has rendered the card — scroll it into view and flash a highlight.
-   * Runs on create only; it never touches selection or the carve-out logic.
-   */
+  const scopeFilter = searching ? null : projectScope;
+  const flat = useMemo(
+    () => buildFlatSidebar(displayThreads, settleOpts, scopeFilter),
+    [displayThreads, settleOpts, scopeFilter],
+  );
+
   useEffect(() => {
     if (!revealThreadId) return;
     const target = threads.find((t) => t.id === revealThreadId);
     if (target) {
-      setCollapsedGroups((prev) => {
-        if (!prev.has(target.projectId)) return prev;
-        const next = new Set(prev);
-        next.delete(target.projectId);
-        saveKeySet(COLLAPSED_KEY, next);
-        return next;
-      });
-      // No cleanup: the lookup is null-safe if the row left before the frame.
       window.requestAnimationFrame(() => {
         const el = document.querySelector(
           `[data-thread-card="${revealThreadId}"]`,
@@ -1549,80 +1398,18 @@ export const Sidebar = memo(function Sidebar({
       });
     }
     onRevealHandled?.();
-  }, [revealThreadId, threads, projects, onRevealHandled]);
-
-  /**
-   * Keys for every project group currently rendered. Collapse-all / expand-all
-   * and the ALL PROJECTS aria-expanded state are derived from this list.
-   */
-  const allGroupKeys = useMemo(
-    () =>
-      groups.map(
-        ({ project, threads: groupThreads }) =>
-          project?.id ?? groupThreads[0]?.projectId ?? "orphan",
-      ),
-    [groups],
-  );
-
-  /** Shared render + click predicate (see anyGroupExpandedState). */
-  const anyGroupExpanded = anyGroupExpandedState(
-    allGroupKeys,
-    collapsedGroups,
-    searching,
-  );
-
-  /**
-   * ALL PROJECTS header: if any group is expanded → collapse every group
-   * (persist all keys); if all are collapsed → expand all (clear the set).
-   * Replaces the old projectsOpen section-hide toggle.
-   */
-  const toggleCollapseAll = () => {
-    setCollapsedGroups((prev) => {
-      // Same predicate as aria-expanded / title — never branch on a second
-      // copy that omits `searching` (that cleared the set mid-search).
-      const anyExpanded = anyGroupExpandedState(
-        allGroupKeys,
-        prev,
-        searching,
-      );
-      const next = anyExpanded
-        ? (() => {
-            const s = new Set(prev);
-            for (const k of allGroupKeys) s.add(k);
-            return s;
-          })()
-        : new Set<string>();
-      saveKeySet(COLLAPSED_KEY, next);
-      return next;
-    });
-  };
-
-  const toggleSettledTail = () => {
-    setSettledTailOpen((open) => {
-      saveKeySet(SETTLED_COLLAPSED_KEY, open ? new Set(["tail"]) : new Set());
-      if (open) {
-        // Collapse: reset paging so the next open starts at the initial page.
-        setSettledVisibleCount(SETTLED_TAIL_INITIAL_COUNT);
-      }
-      return !open;
-    });
-  };
-
-  const toggleGroupExpanded = (groupKey: string) => {
-    setExpandedGroups((prev) => {
-      const next = new Set(prev);
-      if (next.has(groupKey)) next.delete(groupKey);
-      else next.add(groupKey);
-      return next;
-    });
-  };
+  }, [revealThreadId, threads, onRevealHandled]);
 
   const canCreate = projects.length > 0;
   /**
-   * Project the global + targets (mirrors useCoder's selectedProjectId):
-   * the selected thread's project, else the first project. Names the button.
+   * Create target: scoped project when a scope is set, else the open
+   * thread's project, else the first project.
    */
   const createTargetProject = (() => {
+    if (projectScope) {
+      const scoped = projectById.get(projectScope);
+      if (scoped) return scoped;
+    }
     if (activeThreadId) {
       const t = liveById.get(activeThreadId);
       if (t) return projectById.get(t.projectId) ?? null;
@@ -1633,92 +1420,41 @@ export const Sidebar = memo(function Sidebar({
     ? `New thread in ${createTargetProject.slug || createTargetProject.name}`
     : "New thread";
   const queryLower = trimmedQuery.toLowerCase();
-  const sectionCount = searching ? displayThreads.length : projects.length;
-  /** Debounce window or in-flight request: show subtle "Searching…" hint. */
   const searchInFlight = searching && (searchLoading || searchResults == null);
-  /** Search finished with zero hits (not still loading the first response). */
   const searchEmpty =
     searching &&
     !searchInFlight &&
     searchResults != null &&
     searchResults.length === 0;
 
-  // Carve-out: the open thread must never vanish behind a collapsed shelf.
-  const selectedLater =
-    !searching &&
-    !settledTailOpen &&
-    activeThreadId != null
-      ? laterThreads.find((t) => t.id === activeThreadId) ?? null
-      : null;
-
-  const visibleLater = settledTailOpen
-    ? laterThreads.slice(0, settledVisibleCount)
-    : [];
-  const laterHasMore =
-    settledTailOpen && laterThreads.length > settledVisibleCount;
-
   const slugFor = (t: ThreadInfo) =>
     projectById.get(t.projectId)?.slug ?? "unknown";
 
-  /** One Later row: snoozed → wake row, archived → dim unarchive row,
-   *  settled → keep-active row. Shared by the list and the carve-out. */
-  const renderLaterRow = (thread: ThreadInfo, activeOverride = false) =>
-    snoozedIds.has(thread.id) ? (
-      <SnoozedRow
-        key={`${thread.id}:slim`}
-        thread={thread}
-        slug={slugFor(thread)}
-        active={activeOverride || thread.id === activeThreadId}
-        multiSelected={multiSelected.has(thread.id)}
-        indexHint={indexHintFor(thread.id)}
-        now={now}
-        onSelect={handleSelect}
-        onSetSnoozed={onSetSnoozed}
-        onSetSettled={onSetSettled}
-      />
-    ) : (
-      <SettledRow
-        key={`${thread.id}:slim`}
-        thread={thread}
-        slug={slugFor(thread)}
-        active={activeOverride || thread.id === activeThreadId}
-        multiSelected={multiSelected.has(thread.id)}
-        indexHint={indexHintFor(thread.id)}
-        now={now}
-        onSelect={handleSelect}
-        onSetSettled={thread.archived ? undefined : onSetSettled}
-        archived={thread.archived === true}
-        onSetArchived={onSetArchived}
-      />
-    );
-
-  /** Ordered visible ids — matches render order (round 46). */
-  const visibleIds = useMemo(
-    () =>
-      buildVisibleThreadIds({
-        groups,
-        collapsedGroupKeys: searching ? new Set() : collapsedGroups,
-        expandedGroupKeys: searching ? new Set() : expandedGroups,
-        keepThreadIds: [activeThreadId, revealThreadId ?? null],
-        later: laterThreads,
-        laterOpen: settledTailOpen,
-        laterVisibleCount: settledVisibleCount,
-        selectedLaterId: selectedLater?.id ?? null,
-        searching,
-      }),
-    [
-      searching,
-      groups,
-      collapsedGroups,
-      expandedGroups,
-      activeThreadId,
-      revealThreadId,
-      laterThreads,
-      settledTailOpen,
-      settledVisibleCount,
-      selectedLater,
-    ],
+  const settledTail = useMemo(
+    () => [...flat.settled, ...flat.archived],
+    [flat.settled, flat.archived],
   );
+
+  const visibleIds = useMemo(() => {
+    if (searching) return displayThreads.map((t) => t.id);
+    return flatVisibleThreadIds({
+      flat,
+      snoozedOpen,
+      settledOpen,
+      settledVisibleCount,
+      selectedThreadId: activeThreadId,
+      keepThreadIds: [revealThreadId ?? null],
+    });
+  }, [
+    searching,
+    displayThreads,
+    flat,
+    snoozedOpen,
+    settledOpen,
+    settledVisibleCount,
+    activeThreadId,
+    revealThreadId,
+  ]);
 
   const visibleIndex = useMemo(() => {
     const m = new Map<string, number>();
@@ -1726,9 +1462,6 @@ export const Sidebar = memo(function Sidebar({
     return m;
   }, [visibleIds]);
 
-  // Refs so handleSelect stays identity-stable across stream ticks: visibleIds
-  // is rebuilt whenever `threads` changes (every 700ms during a run), and a
-  // fresh handleSelect would bust ThreadCard's memo for every card.
   const visibleIdsRef = useRef(visibleIds);
   const selectAnchorRef = useRef(selectAnchor);
   useEffect(() => {
@@ -1739,7 +1472,11 @@ export const Sidebar = memo(function Sidebar({
   const handleSelect = useCallback(
     (id: string, opts?: SelectOpts) => {
       if (opts?.shift) {
-        const range = rangeSelectIds(visibleIdsRef.current, selectAnchorRef.current, id);
+        const range = rangeSelectIds(
+          visibleIdsRef.current,
+          selectAnchorRef.current,
+          id,
+        );
         setMultiSelected(new Set(range));
         setBatchFeedback(null);
         return;
@@ -1769,9 +1506,7 @@ export const Sidebar = memo(function Sidebar({
     for (const id of ids) {
       await onSetArchived(id, true);
     }
-    setBatchFeedback(
-      ids.length === 1 ? "1 archived" : `${ids.length} archived`,
-    );
+    setBatchFeedback(ids.length === 1 ? "1 archived" : `${ids.length} archived`);
     setMultiSelected(new Set());
   }, [multiSelected, onSetArchived]);
 
@@ -1785,44 +1520,19 @@ export const Sidebar = memo(function Sidebar({
     for (const id of toSettle) {
       await onSetSettled(id, "settled");
     }
-    setBatchFeedback(
-      formatBatchSettleFeedback(toSettle.length, skippedWorking),
-    );
+    setBatchFeedback(formatBatchSettleFeedback(toSettle.length, skippedWorking));
     setMultiSelected(new Set());
   }, [multiSelected, onSetSettled, threads]);
 
-  /** Settle every attention thread (working ones skipped, same as batch settle). */
-  const runSettleAll = useCallback(async () => {
-    if (!onSetSettled || attentionThreads.length === 0) return;
-    // Pinned rows stay Active even with a settled override — skip them.
-    const settleable = attentionThreads.filter((t) => !isPinned(t));
-    const { toSettle, skippedWorking } = planBatchSettle(
-      settleable.map((t) => t.id),
-      new Map(settleable.map((t) => [t.id, t])),
-    );
-    for (const id of toSettle) {
-      await onSetSettled(id, "settled");
-    }
-    setBatchFeedback(
-      formatBatchSettleFeedback(toSettle.length, skippedWorking),
-    );
-  }, [attentionThreads, onSetSettled]);
-
-  /** Always the open thread's project, else the first project. */
   const createInTargetProject = useCallback(() => {
     if (!createTargetProject) return;
     onCreateThread(createTargetProject.id);
   }, [createTargetProject, onCreateThread]);
 
-  /**
-   * Brand-row + and ⌘N. Until #443's picker lands this is the same as
-   * createInTargetProject; after that, several projects open the picker.
-   */
   const handleBrandCreate = useCallback(() => {
     createInTargetProject();
   }, [createInTargetProject]);
 
-  // Jump shortcuts + new-thread chords + cmd index hints + keyboard sheet.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Meta" || e.key === "Control") {
@@ -1842,7 +1552,6 @@ export const Sidebar = memo(function Sidebar({
 
       if (!mod) return;
 
-      // cmd+1..9
       if (e.key >= "1" && e.key <= "9") {
         const n = Number(e.key);
         const id = visibleIds[n - 1];
@@ -1855,7 +1564,6 @@ export const Sidebar = memo(function Sidebar({
         return;
       }
 
-      // cmd+j / cmd+k — next / previous (wrap)
       const key = e.key.toLowerCase();
       if (key === "j" || key === "k") {
         e.preventDefault();
@@ -1869,7 +1577,6 @@ export const Sidebar = memo(function Sidebar({
         return;
       }
 
-      // cmd+n: same as brand-row +. cmd+shift+n: always createTargetProject.
       if (key === "n") {
         e.preventDefault();
         if (e.shiftKey) createInTargetProject();
@@ -1910,6 +1617,7 @@ export const Sidebar = memo(function Sidebar({
     setIssueFormFor(projectId);
     setIssueRef("");
     setIssueError(null);
+    setCreateMenuOpen(false);
   };
 
   const submitIssueForm = (project: ProjectInfo) => {
@@ -1940,216 +1648,128 @@ export const Sidebar = memo(function Sidebar({
       });
   };
 
-  const renderGroupCreateActions = (project: ProjectInfo) => {
-    const open = issueFormFor === project.id;
-    const createOpen = createMenuFor === project.id;
-    // Worktree threads are local-only (electron/worktrees.js); remote
-    // projects get the plain button without the caret.
-    const remote = Boolean(project.remoteHost);
-    return (
-      <div className={styles.groupThreadActions}>
-        <div className={styles.snoozeWrap}>
-          <button
-            type="button"
-            className={styles.groupNewThread}
-            onClick={() => onCreateThread(project.id)}
-          >
-            New thread
-          </button>
-          {!remote && (
-            <button
-              type="button"
-              className={styles.groupIssueBtn}
-              title="Thread options"
-              aria-label="Thread options"
-              aria-haspopup="menu"
-              aria-expanded={createOpen}
-              data-create-menu-btn={project.id}
-              onClick={() => setCreateMenuFor(createOpen ? null : project.id)}
-            >
-              <svg
-                width="10"
-                height="10"
-                viewBox="0 0 16 16"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden
-              >
-                <path d="M4 6.5 8 10.5 12 6.5" />
-              </svg>
-            </button>
-          )}
-          {createOpen && !remote && (
-            <div
-              className={`${styles.snoozeMenu} ${styles.snoozeMenuLeft}`}
-              role="menu"
-              data-create-menu={project.id}
-            >
-              <button
-                type="button"
-                className={styles.snoozeMenuItem}
-                role="menuitem"
-                data-create-worktree-thread={project.id}
-                title="New thread in an isolated git worktree + branch"
-                onClick={() => {
-                  setCreateMenuFor(null);
-                  onCreateThread(project.id, { worktree: true });
-                }}
-              >
-                New worktree thread
-              </button>
-              <button
-                type="button"
-                className={styles.snoozeMenuItem}
-                role="menuitem"
-                data-create-orchestrator-thread={project.id}
-                title="New thread that hands its first prompt to a worker in its own worktree"
-                onClick={() => {
-                  setCreateMenuFor(null);
-                  onCreateThread(project.id, { orchestrate: true });
-                }}
-              >
-                New orchestrator thread
-              </button>
-              <button
-                type="button"
-                className={styles.snoozeMenuItem}
-                role="menuitem"
-                data-create-plain-thread={project.id}
-                title="New thread directly in the project checkout (no worktree)"
-                onClick={() => {
-                  setCreateMenuFor(null);
-                  onCreateThread(project.id, { worktree: false });
-                }}
-              >
-                New plain thread
-              </button>
-              <button
-                type="button"
-                className={styles.snoozeMenuItem}
-                role="menuitem"
-                data-create-teach-thread={project.id}
-                title="New thread that teaches: hints, TODO(human) markers, reviews your code"
-                onClick={() => {
-                  setCreateMenuFor(null);
-                  onCreateThread(project.id, { worktree: true, teach: true });
-                }}
-              >
-                New teach thread
-              </button>
-              <button
-                type="button"
-                className={styles.snoozeMenuItem}
-                role="menuitem"
-                data-create-ask-thread={project.id}
-                title="New read-only Ask thread: repo Q&A from the index and memory, no worktree"
-                onClick={() => {
-                  setCreateMenuFor(null);
-                  onCreateThread(project.id, { ask: true });
-                }}
-              >
-                New ask thread
-              </button>
-            </div>
-          )}
-        </div>
-        {onCreateThreadFromIssue && (
-          <button
-            type="button"
-            className={styles.groupIssueBtn}
-            title="New thread from GitHub issue"
-            aria-label="New thread from GitHub issue"
-            data-issue-thread-btn={project.id}
-            onClick={() => {
-              if (open) closeIssueForm();
-              else openIssueForm(project.id);
-            }}
-          >
-            <svg
-              width="13"
-              height="13"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden
-            >
-              <circle cx="8" cy="8" r="6.25" />
-              <circle cx="8" cy="8" r="1.25" fill="currentColor" stroke="none" />
-            </svg>
-          </button>
-        )}
-      </div>
-    );
+  const setScope = (id: string | null) => {
+    setProjectScope(id);
+    saveStored(SCOPE_KEY, id);
+    setScopeMenuOpen(false);
   };
 
-  const renderGroupIssueForm = (project: ProjectInfo) => {
-    if (issueFormFor !== project.id || !onCreateThreadFromIssue) return null;
-    return (
-      <form
-        className={styles.groupIssueForm}
-        data-issue-form={project.id}
-        onSubmit={(e) => {
-          e.preventDefault();
-          submitIssueForm(project);
-        }}
-      >
-        <input
-          className={styles.groupIssueInput}
-          type="text"
-          value={issueRef}
-          onChange={(e) => setIssueRef(e.target.value)}
-          placeholder="https://github.com/owner/repo/issues/123"
-          aria-label="GitHub issue URL or reference"
-          data-issue-input={project.id}
-          disabled={issuePending}
-          autoComplete="off"
-          spellCheck={false}
-        />
-        {issueError && (
-          <p
-            className={styles.groupIssueError}
-            role="alert"
-            data-issue-error={project.id}
-          >
-            {issueError}
-          </p>
-        )}
-        <div className={styles.groupIssueActions}>
-          <button
-            type="submit"
-            className={styles.groupIssueCreate}
-            data-issue-create={project.id}
-            disabled={issuePending || issueRef.trim() === ""}
-            aria-busy={issuePending || undefined}
-          >
-            {issuePending ? (
-              <>
-                <span className={styles.spinner} aria-hidden />
-                Creating…
-              </>
-            ) : (
-              "Create"
-            )}
-          </button>
-          <button
-            type="button"
-            className={styles.groupIssueCancel}
-            data-issue-cancel={project.id}
-            disabled={issuePending}
-            onClick={closeIssueForm}
-          >
-            Cancel
-          </button>
-        </div>
-      </form>
-    );
+  const toggleSnoozed = () => {
+    setSnoozedOpen((open) => {
+      saveFlag(SNOOZED_OPEN_KEY, !open);
+      return !open;
+    });
   };
+
+  const toggleSettled = () => {
+    setSettledOpen((open) => {
+      saveFlag(SETTLED_OPEN_KEY, !open);
+      if (open) setSettledVisibleCount(SETTLED_TAIL_INITIAL_COUNT);
+      return !open;
+    });
+  };
+
+  const createProjectId = createTargetProject?.id;
+  const remoteTarget = Boolean(createTargetProject?.remoteHost);
+  const issueProject =
+    issueFormFor != null ? projectById.get(issueFormFor) ?? null : null;
+
+  const cardIds = searching
+    ? new Set(displayThreads.map((t) => t.id))
+    : new Set([...flat.pinned, ...flat.active].map((t) => t.id));
+
+  const renderCard = (thread: ThreadInfo) => (
+    <Fragment key={`${thread.id}:card`}>
+      <ThreadCard
+        thread={thread}
+        slug={slugFor(thread)}
+        providers={providers}
+        active={thread.id === activeThreadId}
+        multiSelected={multiSelected.has(thread.id)}
+        indexHint={indexHintFor(thread.id)}
+        now={now}
+        onSelect={handleSelect}
+        isSettled={searching ? effectiveSettled(thread, settleOpts) : false}
+        onSetSettled={onSetSettled}
+        onSetPinned={onSetPinned}
+        onSetSnoozed={onSetSnoozed}
+        onSetMuted={onSetMuted}
+        onRenameThread={onRenameThread}
+        onFork={onFork}
+        nested={
+          thread.handoffFrom != null && cardIds.has(thread.handoffFrom)
+        }
+        wait={waitStates.get(thread.id) ?? null}
+        contentMatch={
+          searching && !thread.title.toLowerCase().includes(queryLower)
+        }
+        conflictForecast={conflictForecast}
+        threadTitles={threadTitles}
+      />
+    </Fragment>
+  );
+
+  // The open thread never vanishes — and neither does a freshly revealed
+  // one (new-thread reveal can land on a collapsed shelf).
+  const keepIds = [activeThreadId, revealThreadId ?? null];
+  const visibleSnoozed = snoozedOpen ? flat.snoozed : [];
+  const snoozedCarve = snoozedOpen
+    ? null
+    : flat.snoozed.find((t) => keepIds.includes(t.id)) ?? null;
+
+  const visibleSettled = settledOpen
+    ? settledTail.slice(0, settledVisibleCount)
+    : [];
+  const settledCarve =
+    settledTail.find(
+      (t) =>
+        keepIds.includes(t.id) &&
+        !visibleSettled.some((v) => v.id === t.id),
+    ) ?? null;
+  const settledHidden = Math.max(0, settledTail.length - settledVisibleCount);
+
+  const renderSnoozed = (thread: ThreadInfo, activeOverride = false) => (
+    <SnoozedRow
+      key={`${thread.id}:slim`}
+      thread={thread}
+      slug={slugFor(thread)}
+      active={activeOverride || thread.id === activeThreadId}
+      multiSelected={multiSelected.has(thread.id)}
+      indexHint={indexHintFor(thread.id)}
+      now={now}
+      onSelect={handleSelect}
+      onSetSnoozed={onSetSnoozed}
+    />
+  );
+
+  const renderSettled = (thread: ThreadInfo, activeOverride = false) => (
+    <SettledRow
+      key={`${thread.id}:slim`}
+      thread={thread}
+      slug={slugFor(thread)}
+      active={activeOverride || thread.id === activeThreadId}
+      multiSelected={multiSelected.has(thread.id)}
+      indexHint={indexHintFor(thread.id)}
+      now={now}
+      onSelect={handleSelect}
+      onSetSettled={thread.archived ? undefined : onSetSettled}
+      archived={thread.archived === true}
+      onSetArchived={onSetArchived}
+    />
+  );
+
+  const scopedSlug =
+    projectScope != null
+      ? projectById.get(projectScope)?.slug ?? "All projects"
+      : "All projects";
+
+  const listEmpty =
+    !searching &&
+    flat.pinned.length +
+      flat.active.length +
+      flat.snoozed.length +
+      settledTail.length ===
+      0;
 
   return (
     <aside className={styles.sidebar}>
@@ -2176,173 +1796,358 @@ export const Sidebar = memo(function Sidebar({
             <span className={styles.brandChannel}>nightly</span>
           )}
         </div>
-        <button
-          type="button"
-          className={styles.headerAdd}
-          onClick={handleBrandCreate}
-          disabled={!canCreate}
-          title={
-            canCreate
-              ? createTargetLabel
-              : "Add a project before creating a thread"
-          }
-          aria-label={createTargetLabel}
-        >
-          <svg
-            width="15"
-            height="15"
-            viewBox="0 0 16 16"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            aria-hidden="true"
-          >
-            <path d="M8 3.25v9.5M3.25 8h9.5" />
-          </svg>
-        </button>
       </header>
 
       <div className={styles.searchRow}>
-        <span className={styles.searchIcon} aria-hidden>
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 16 16"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-          >
-            <circle cx="7" cy="7" r="4.25" />
-            <path d="m10.25 10.25 3 3" />
-          </svg>
+        <span className={styles.searchField}>
+          <span className={styles.searchIcon} aria-hidden>
+            <Icon size={14}>
+              <circle cx="11" cy="11" r="7" />
+              <path d="m20 20-3.5-3.5" />
+            </Icon>
+          </span>
+          <input
+            className={styles.searchInput}
+            type="search"
+            placeholder={searchPlaceholder}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            aria-label="Search threads"
+          />
         </span>
-        <input
-          className={styles.searchInput}
-          type="search"
-          placeholder={searchPlaceholder}
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          aria-label="Search threads"
-        />
+        <span className={styles.searchCreate}>
+          <button
+            type="button"
+            className={styles.iconBtn}
+            data-new-thread=""
+            onClick={handleBrandCreate}
+            disabled={!canCreate}
+            title={
+              canCreate
+                ? createTargetLabel
+                : "Add a project before creating a thread"
+            }
+            aria-label={createTargetLabel}
+          >
+            <Icon size={15}>
+              <path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+              <path d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z" />
+            </Icon>
+          </button>
+          {canCreate && createTargetProject && (
+            <span className={styles.menuWrap}>
+              <button
+                type="button"
+                className={styles.caretBtn}
+                data-new-thread-caret=""
+                title="Thread options"
+                aria-label="Thread options"
+                aria-haspopup="menu"
+                aria-expanded={createMenuOpen}
+                onClick={() => setCreateMenuOpen((open) => !open)}
+              >
+                <Icon size={10}>
+                  <path d="m6 9 6 6 6-6" />
+                </Icon>
+              </button>
+              {createMenuOpen && (
+                <div
+                  className={`${styles.menu} ${styles.menuLeft}`}
+                  role="menu"
+                  data-new-thread-menu=""
+                >
+                  {!remoteTarget && (
+                    <>
+                      <button
+                        type="button"
+                        className={styles.menuItem}
+                        role="menuitem"
+                        data-create-worktree-thread={createProjectId}
+                        title="New thread in an isolated git worktree + branch"
+                        onClick={() => {
+                          setCreateMenuOpen(false);
+                          onCreateThread(createProjectId, { worktree: true });
+                        }}
+                      >
+                        New worktree thread
+                      </button>
+                      <button
+                        type="button"
+                        className={styles.menuItem}
+                        role="menuitem"
+                        data-create-orchestrator-thread={createProjectId}
+                        title="New thread that hands its first prompt to a worker in its own worktree"
+                        onClick={() => {
+                          setCreateMenuOpen(false);
+                          onCreateThread(createProjectId, { orchestrate: true });
+                        }}
+                      >
+                        New orchestrator thread
+                      </button>
+                    </>
+                  )}
+                  <button
+                    type="button"
+                    className={styles.menuItem}
+                    role="menuitem"
+                    data-create-plain-thread={createProjectId}
+                    title="New thread directly in the project checkout (no worktree)"
+                    onClick={() => {
+                      setCreateMenuOpen(false);
+                      onCreateThread(createProjectId, { worktree: false });
+                    }}
+                  >
+                    New plain thread
+                  </button>
+                  {!remoteTarget && (
+                    <button
+                      type="button"
+                      className={styles.menuItem}
+                      role="menuitem"
+                      data-create-teach-thread={createProjectId}
+                      title="New thread that teaches: hints, TODO(human) markers, reviews your code"
+                      onClick={() => {
+                        setCreateMenuOpen(false);
+                        onCreateThread(createProjectId, {
+                          worktree: true,
+                          teach: true,
+                        });
+                      }}
+                    >
+                      New teach thread
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className={styles.menuItem}
+                    role="menuitem"
+                    data-create-ask-thread={createProjectId}
+                    title="New read-only Ask thread: repo Q&A from the index and memory, no worktree"
+                    onClick={() => {
+                      setCreateMenuOpen(false);
+                      onCreateThread(createProjectId, { ask: true });
+                    }}
+                  >
+                    New ask thread
+                  </button>
+                  {onCreateThreadFromIssue && createProjectId && (
+                    <button
+                      type="button"
+                      className={styles.menuItem}
+                      role="menuitem"
+                      data-create-from-issue={createProjectId}
+                      title="New thread from a GitHub issue"
+                      onClick={() => openIssueForm(createProjectId)}
+                    >
+                      From GitHub issue
+                    </button>
+                  )}
+                </div>
+              )}
+            </span>
+          )}
+        </span>
+      </div>
+
+      <div className={styles.scopeRow}>
+        <span className={styles.scopeMenuHost}>
+          <button
+            type="button"
+            className={styles.scopeTrigger}
+            data-scope-trigger=""
+            aria-haspopup="menu"
+            aria-expanded={scopeMenuOpen}
+            aria-label="Filter threads by project"
+            onClick={() => setScopeMenuOpen((open) => !open)}
+          >
+            <Icon size={14}>
+              <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+            </Icon>
+            <span className={styles.scopeLabel}>{scopedSlug}</span>
+            <Icon size={12}>
+              <path d="m6 9 6 6 6-6" />
+            </Icon>
+          </button>
+          {scopeMenuOpen && (
+            <div className={`${styles.menu} ${styles.menuLeft}`} role="menu" data-scope-menu="">
+              <button
+                type="button"
+                className={styles.scopeItem}
+                role="menuitem"
+                data-scope-item="all"
+                onClick={() => setScope(null)}
+              >
+                All projects
+              </button>
+              {projects.map((p) => (
+                <div key={p.id} className={styles.scopeItemRow}>
+                  <button
+                    type="button"
+                    className={styles.scopeItem}
+                    role="menuitem"
+                    data-scope-item={p.id}
+                    onClick={() => setScope(p.id)}
+                  >
+                    {p.slug || p.name}
+                  </button>
+                  {onEditProject && (
+                    <button
+                      type="button"
+                      className={styles.iconBtn}
+                      data-scope-edit={p.id}
+                      aria-label={`Edit project ${p.slug || p.name}`}
+                      title="Edit project"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setScopeMenuOpen(false);
+                        onEditProject(p.id);
+                      }}
+                    >
+                      <Icon size={12}>
+                        <path d="M12.3 6.7a1.4 1.4 0 0 1 2 2L8 15H6v-2l6.3-6.3Z" />
+                      </Icon>
+                    </button>
+                  )}
+                  {onRemoveProject && (
+                    <button
+                      type="button"
+                      className={styles.iconBtn}
+                      data-project-remove={p.id}
+                      aria-label={`Remove project ${p.slug || p.name}`}
+                      title="Remove project"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setScopeMenuOpen(false);
+                        setRemoveConfirmId(p.id);
+                      }}
+                    >
+                      <Icon size={12}>
+                        <path d="M18 6 6 18M6 6l12 12" />
+                      </Icon>
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </span>
+        <button
+          type="button"
+          className={styles.iconBtn}
+          data-new-project=""
+          title="New project"
+          aria-label="New project"
+          onClick={onAddProject}
+        >
+          <Icon size={15}>
+            <path d="M12 10v8" />
+            <path d="M8 14h8" />
+            <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+          </Icon>
+        </button>
       </div>
 
       <nav className={styles.viewNav} aria-label="Views">
         <button
           type="button"
-          className={styles.viewNavRow}
+          className={styles.viewNavBtn}
           data-view-nav="activity"
           data-active={activeView === "activity" ? "true" : undefined}
           title="Activity"
+          aria-label="Activity"
           onClick={() => onOpenActivity?.()}
         >
-          <span className={styles.viewNavIcon} aria-hidden>
-            <svg
-              width="15"
-              height="15"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M1.75 8h2.5l1.75-3.5 2.5 7 1.75-3.5h2.5" />
-            </svg>
-          </span>
-          Activity
+          <Icon size={15}>
+            <path d="M3 12h3l2-6 4 12 2-6h4" />
+          </Icon>
         </button>
         <button
           type="button"
-          className={styles.viewNavRow}
+          className={styles.viewNavBtn}
           data-view-nav="kanban"
           data-active={activeView === "kanban" ? "true" : undefined}
           title="Kanban"
+          aria-label="Kanban"
           onClick={() => onOpenKanban?.()}
         >
-          <span className={styles.viewNavIcon} aria-hidden>
-            <svg
-              width="15"
-              height="15"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <rect x="1.75" y="2.75" width="3.5" height="10.5" rx="1" />
-              <rect x="6.25" y="2.75" width="3.5" height="7" rx="1" />
-              <rect x="10.75" y="2.75" width="3.5" height="4.5" rx="1" />
-            </svg>
-          </span>
-          Kanban
+          <Icon size={15}>
+            <rect x="3" y="4" width="5" height="16" rx="1" />
+            <rect x="10" y="4" width="5" height="10" rx="1" />
+            <rect x="17" y="4" width="4" height="7" rx="1" />
+          </Icon>
         </button>
         <button
           type="button"
-          className={styles.viewNavRow}
+          className={styles.viewNavBtn}
           data-view-nav="planboard"
           data-active={activeView === "planboard" ? "true" : undefined}
           title="Planboard"
+          aria-label="Planboard"
           onClick={() => onOpenPlanboard?.()}
         >
-          <span className={styles.viewNavIcon} aria-hidden>
-            <svg
-              width="15"
-              height="15"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <rect x="1.75" y="1.75" width="12.5" height="12.5" rx="1.5" />
-              <path d="M4.75 5.25h6.5" />
-              <path d="M4.75 8h4.5" />
-              <path d="M4.75 10.75h2.5" />
-            </svg>
-          </span>
-          Planboard
+          <Icon size={15}>
+            <rect x="4" y="4" width="16" height="16" rx="2" />
+            <path d="M8 9h8" />
+            <path d="M8 13h6" />
+            <path d="M8 17h4" />
+          </Icon>
         </button>
       </nav>
 
-      <div className={styles.sectionHeaderRow}>
-        <button
-          type="button"
-          className={styles.sectionHeader}
-          onClick={toggleCollapseAll}
-          aria-expanded={anyGroupExpanded}
-          title={
-            anyGroupExpanded ? "Collapse all projects" : "Expand all projects"
-          }
-          data-projects-section=""
+      {issueProject && onCreateThreadFromIssue && (
+        <form
+          className={styles.issueForm}
+          data-issue-form={issueProject.id}
+          onSubmit={(e) => {
+            e.preventDefault();
+            submitIssueForm(issueProject);
+          }}
         >
-          <span
-            className={styles.chevron}
-            data-open={anyGroupExpanded}
-            aria-hidden="true"
-          >
-            <svg
-              width="12"
-              height="12"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
+          <input
+            className={styles.issueInput}
+            type="text"
+            value={issueRef}
+            onChange={(e) => setIssueRef(e.target.value)}
+            placeholder="https://github.com/owner/repo/issues/123"
+            aria-label="GitHub issue URL or reference"
+            data-issue-input={issueProject.id}
+            disabled={issuePending}
+            autoComplete="off"
+            spellCheck={false}
+          />
+          {issueError && (
+            <p
+              className={styles.issueError}
+              role="alert"
+              data-issue-error={issueProject.id}
             >
-              <path d="m6 3.5 4.5 4.5L6 12.5" />
-            </svg>
-          </span>
-          <span>{projectsHeader}</span>
-          <span className={styles.count}>{sectionCount}</span>
-        </button>
-      </div>
+              {issueError}
+            </p>
+          )}
+          <div className={styles.issueActions}>
+            <button
+              type="submit"
+              className={styles.issueCreate}
+              data-issue-create={issueProject.id}
+              disabled={issuePending || issueRef.trim() === ""}
+              aria-busy={issuePending || undefined}
+            >
+              {issuePending ? "Creating…" : "Create"}
+            </button>
+            <button
+              type="button"
+              className={styles.issueCancel}
+              data-issue-cancel={issueProject.id}
+              disabled={issuePending}
+              onClick={closeIssueForm}
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      )}
 
-      <div className={styles.list} data-sidebar-list="">
+      <div className={styles.list} data-sidebar-list="" ref={attachListAnimation}>
         {projects.length === 0 && (
           <button
             type="button"
@@ -2363,359 +2168,124 @@ export const Sidebar = memo(function Sidebar({
           <p className={styles.emptySearch}>No threads match</p>
         )}
 
-        {groups.map(({ project, threads: groupThreads }) => {
-                  const groupKey =
-                    project?.id ?? groupThreads[0]?.projectId ?? "orphan";
-                  const slug =
-                    project?.slug ??
-                    (groupThreads[0]
-                      ? projectById.get(groupThreads[0].projectId)?.slug
-                      : undefined) ??
-                    "unknown";
-                  // Attention only in normal view (Later is global); search shows all.
-                  const attentionThreads = groupThreads.filter((t) => !t.archived);
-                  // Search surfaces archived hits inline; normal view keeps
-                  // them on the Later shelf (#567).
-                  const archivedThreads = searching
-                    ? groupThreads.filter((t) => t.archived)
-                    : [];
-                  // A fork indents only when its source row renders in the same
-                  // sublist (buildSidebarGroups already placed it right below).
-                  const attentionIdSet = new Set(attentionThreads.map((t) => t.id));
-                  const archivedIdSet = new Set(archivedThreads.map((t) => t.id));
-                  const hasAnyThreads = groupThreads.length > 0;
-                  // A project whose every thread sits on the Later shelf has zero
-                  // rows here — "No threads yet" would be a lie.
-                  const projectIdHere =
-                    project?.id ?? groupThreads[0]?.projectId ?? "";
-                  const laterInProject = laterThreads.filter(
-                    (t) => t.projectId === projectIdHere,
-                  ).length;
-                  // A collapsed project shows only its header. Search overrides the
-                  // collapse: hiding hits inside a collapsed group makes results lie.
-                  const collapsed = !searching && collapsedGroups.has(groupKey);
-                  // Overflow cap (issue #70): a group renders its newest
-                  // GROUP_ATTENTION_CAP attention threads; the rest hide behind a
-                  // session-only "Show more". Search bypasses the cap like every
-                  // other collapse. The active/revealed thread never vanishes.
-                  const groupCapped = !searching && !expandedGroups.has(groupKey);
-                  const visibleCount = visibleAttentionCount(attentionThreads, {
-                    capped: groupCapped,
-                    keepIds: [activeThreadId, revealThreadId ?? null],
-                  });
-                  const visibleAttention = attentionThreads.slice(0, visibleCount);
-                  const showOverflowToggle =
-                    !searching && attentionThreads.length > GROUP_ATTENTION_CAP;
+        {searching
+          ? displayThreads.map((thread) => renderCard(thread))
+          : (
+            <>
+              {flat.pinned.map((thread) => renderCard(thread))}
+              {flat.pinned.length > 0 && (
+                <div className={styles.pinnedDivider} data-pinned-divider="" aria-hidden />
+              )}
+              {flat.active.map((thread) => renderCard(thread))}
 
-                  return (
-                    <div key={groupKey} className={styles.group} ref={attachListAnimation}>
-                      <div className={styles.groupHeaderRow}>
-                        <button
-                          type="button"
-                          className={styles.groupHeader}
-                          onClick={() => toggleCollapsed(groupKey)}
-                          aria-expanded={!collapsed}
-                          title={collapsed ? "Expand project" : "Collapse project"}
-                        >
-                          <span
-                            className={styles.chevron}
-                            data-open={!collapsed}
-                            data-group-chevron={groupKey}
-                            aria-hidden="true"
-                          >
-                            <svg
-                              width="12"
-                              height="12"
-                              viewBox="0 0 16 16"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="1.5"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                            >
-                              <path d="m6 3.5 4.5 4.5L6 12.5" />
-                            </svg>
-                          </span>
-                          <span className={styles.groupSlug}>{slug}</span>
-                          <span className={styles.groupCount}>
-                            {searching
-                              ? groupThreads.length
-                              : attentionThreads.length}
-                          </span>
-                        </button>
-                        {/*
-                          Remove is a sibling of the collapse control — separately
-                          focusable, not nested inside it — so keyboard users can
-                          reach it without toggling the group.
-                        */}
-                        {project && onEditProject && !searching && (
-                          <button
-                            type="button"
-                            className={styles.groupRemove}
-                            aria-label={`Edit project ${slug}`}
-                            title="Edit project"
-                            data-project-edit={project.id}
-                            onClick={() => onEditProject(project.id)}
-                          >
-                            <svg
-                              width="12"
-                              height="12"
-                              viewBox="0 0 16 16"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="1.5"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              aria-hidden="true"
-                            >
-                              <path d="M11.3 2.7a1.4 1.4 0 0 1 2 2L5 13H3v-2l8.3-8.3Z" />
-                            </svg>
-                          </button>
-                        )}
-                        {project && onRemoveProject && !searching && (
-                          <button
-                            type="button"
-                            className={styles.groupRemove}
-                            aria-label={`Remove project ${slug}`}
-                            title="Remove project"
-                            data-project-remove={project.id}
-                            onClick={() => setRemoveConfirmId(project.id)}
-                          >
-                            <svg
-                              width="12"
-                              height="12"
-                              viewBox="0 0 16 16"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="1.5"
-                              strokeLinecap="round"
-                              aria-hidden="true"
-                            >
-                              <path d="m4 4 8 8M12 4l-8 8" />
-                            </svg>
-                          </button>
-                        )}
-                      </div>
-
-                      {collapsed ? null : !hasAnyThreads ? (
-                        <>
-                          <div className={styles.emptyGroup}>
-                            <span className={styles.emptyThreads}>
-                              {laterInProject > 0 ? "Nothing active" : "No threads yet"}
-                            </span>
-                            {project && !searching && renderGroupCreateActions(project)}
-                          </div>
-                          {project && !searching && renderGroupIssueForm(project)}
-                        </>
-                      ) : (
-                        <>
-                          {/*
-                            t3 key rule: rows key by id + variant (:card in groups,
-                            :slim on shelves) so a settle/unsettle move unmounts and
-                            remounts — auto-animate cross-fades instead of sliding
-                            one element across lists.
-                          */}
-                          {visibleAttention.map((thread) => (
-                            <Fragment key={`${thread.id}:card`}>
-                              <ThreadCard
-                                thread={thread}
-                                slug={slug}
-                                showSlug={project == null}
-                                providers={providers}
-                                active={thread.id === activeThreadId}
-                                multiSelected={multiSelected.has(thread.id)}
-                                indexHint={indexHintFor(thread.id)}
-                                now={now}
-                                onSelect={handleSelect}
-                                isSettled={
-                                  searching
-                                    ? effectiveSettled(thread, settleOpts)
-                                    : false
-                                }
-                                onSetSettled={onSetSettled}
-                                onSetPinned={onSetPinned}
-                                onSetSnoozed={onSetSnoozed}
-                                onSetMuted={onSetMuted}
-                                onRenameThread={onRenameThread}
-                                onFork={onFork}
-                                snoozeMenuOpen={snoozeMenuFor === thread.id}
-                                onToggleSnoozeMenu={setSnoozeMenuFor}
-                                nested={
-                                  thread.handoffFrom != null &&
-                                  attentionIdSet.has(thread.handoffFrom)
-                                }
-                                wait={waitStates.get(thread.id) ?? null}
-                                contentMatch={
-                                  searching &&
-                                  !thread.title.toLowerCase().includes(queryLower)
-                                }
-                                conflictForecast={conflictForecast}
-                                threadTitles={threadTitles}
-                              />
-                              <SubagentRows
-                                thread={thread}
-                                onSelect={handleSelect}
-                              />
-                            </Fragment>
-                          ))}
-                          {showOverflowToggle && (
-                            <button
-                              type="button"
-                              className={styles.settledShowMore}
-                              data-group-overflow={groupKey}
-                              onClick={() => toggleGroupExpanded(groupKey)}
-                              aria-expanded={!groupCapped}
-                            >
-                              {groupCapped
-                                ? `Show ${attentionThreads.length - visibleCount} more`
-                                : "Show fewer"}
-                            </button>
-                          )}
-                          {searching &&
-                            archivedThreads.map((thread) => (
-                              <Fragment key={`${thread.id}:card`}>
-                                <ThreadCard
-                                  thread={thread}
-                                  slug={slug}
-                                  showSlug={project == null}
-                                  providers={providers}
-                                  active={thread.id === activeThreadId}
-                                  multiSelected={multiSelected.has(thread.id)}
-                                  indexHint={indexHintFor(thread.id)}
-                                  now={now}
-                                  onSelect={handleSelect}
-                                  isSettled={effectiveSettled(thread, settleOpts)}
-                                  onSetSettled={onSetSettled}
-                                  onFork={onFork}
-                                  snoozeMenuOpen={snoozeMenuFor === thread.id}
-                                  onToggleSnoozeMenu={setSnoozeMenuFor}
-                                  nested={
-                                    thread.handoffFrom != null &&
-                                    archivedIdSet.has(thread.handoffFrom)
-                                  }
-                                  wait={waitStates.get(thread.id) ?? null}
-                                  contentMatch={
-                                    searching &&
-                                    !thread.title.toLowerCase().includes(queryLower)
-                                  }
-                                  conflictForecast={conflictForecast}
-                                  threadTitles={threadTitles}
-                                />
-                                <SubagentRows
-                                  thread={thread}
-                                  onSelect={handleSelect}
-                                />
-                              </Fragment>
-                            ))}
-                          {project && !searching && (
-                            <>
-                              {renderGroupCreateActions(project)}
-                              {renderGroupIssueForm(project)}
-                            </>
-                          )}
-                        </>
-                      )}
-                    </div>
-                  );
-        })}
-
-        {/* Global LATER shelf (#567): the one "not now" zone — snoozed
-            (wake soonest), then settled, then archived. Independent of
-            per-project collapse — has its own toggle. */}
-        {!searching && laterThreads.length > 0 && (
-          <div
-            className={styles.settledTail}
-            data-later-shelf=""
-            ref={attachListAnimation}
-          >
-            {selectedLater && renderLaterRow(selectedLater, true)}
-            <div className={styles.settledTailBar}>
-              <button
-                type="button"
-                className={styles.settledTailHeader}
-                onClick={toggleSettledTail}
-                aria-expanded={settledTailOpen}
-              >
-                <span className={styles.chevron} data-open={settledTailOpen}>
-                  <svg
-                    width="12"
-                    height="12"
-                    viewBox="0 0 16 16"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
+              {flat.snoozed.length > 0 && (
+                <div className={styles.shelf}>
+                  <button
+                    type="button"
+                    className={styles.shelfToggle}
+                    data-snoozed-shelf-toggle=""
+                    aria-expanded={snoozedOpen}
+                    onClick={toggleSnoozed}
                   >
-                    <path d="m6 3.5 4.5 4.5L6 12.5" />
-                  </svg>
-                </span>
-                <span>
-                  Later · {laterThreads.length}
-                  {(() => {
-                    const n = countUnread(laterThreads);
-                    return n > 0 ? ` · ${n} unread` : "";
-                  })()}
-                </span>
-              </button>
-              {onSetSettled && attentionThreads.length > 0 && (
-                <button
-                  type="button"
-                  className={styles.settledClear}
-                  data-settle-all=""
-                  aria-label="Settle all threads"
-                  title="Settle every attention thread (running and pinned skipped)"
-                  onClick={() => void runSettleAll()}
-                >
-                  Settle all
-                </button>
+                    <span className={styles.shelfLabelSnoozed}>
+                      {snoozedOpen
+                        ? "Snoozed"
+                        : `Snoozed (${flat.snoozed.length})`}
+                    </span>
+                    <span className={styles.shelfRuleSnoozed} />
+                    <span
+                      className={styles.shelfChevron}
+                      data-open={snoozedOpen}
+                      aria-hidden
+                    >
+                      <Icon size={12}>
+                        <path d="m6 9 6 6 6-6" />
+                      </Icon>
+                    </span>
+                  </button>
+                  {snoozedCarve && renderSnoozed(snoozedCarve, true)}
+                  {visibleSnoozed.map((thread) => renderSnoozed(thread))}
+                </div>
               )}
-              {onClearSettled && later.settled.length > 0 && (
-                <button
-                  type="button"
-                  className={styles.settledClear}
-                  data-settled-clear-all=""
-                  aria-label="Clear settled threads"
-                  title="Archive all settled threads (undoable)"
-                  onClick={() =>
-                    void onClearSettled(later.settled.map((t) => t.id))
-                  }
-                >
-                  Clear
-                </button>
+
+              {settledTail.length > 0 && (
+                <div className={styles.shelf}>
+                  <div className={styles.shelfHeaderRow}>
+                    <button
+                      type="button"
+                      className={styles.shelfToggle}
+                      data-settled-shelf-toggle=""
+                      aria-expanded={settledOpen}
+                      onClick={toggleSettled}
+                    >
+                      <span className={styles.shelfLabelSettled}>
+                        {settledOpen
+                          ? "Settled"
+                          : `Settled (${settledTail.length})`}
+                      </span>
+                      <span className={styles.shelfRuleSettled} />
+                      <span
+                        className={styles.shelfChevron}
+                        data-open={settledOpen}
+                        aria-hidden
+                      >
+                        <Icon size={12}>
+                          <path d="m6 9 6 6 6-6" />
+                        </Icon>
+                      </span>
+                    </button>
+                    {settledOpen && onClearSettled && flat.settled.length > 0 && (
+                      <button
+                        type="button"
+                        className={styles.shelfClear}
+                        data-settled-clear-all=""
+                        title="Archive every settled thread"
+                        onClick={() =>
+                          onClearSettled(flat.settled.map((t) => t.id))
+                        }
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                  {settledCarve && renderSettled(settledCarve, true)}
+                  {visibleSettled.map((thread) => renderSettled(thread))}
+                  {settledOpen && settledHidden > 0 && (
+                    <button
+                      type="button"
+                      className={styles.showMore}
+                      data-settled-more=""
+                      onClick={() =>
+                        setSettledVisibleCount(
+                          (n) => n + SETTLED_TAIL_PAGE_COUNT,
+                        )
+                      }
+                    >
+                      Show {Math.min(settledHidden, SETTLED_TAIL_PAGE_COUNT)} more
+                    </button>
+                  )}
+                </div>
               )}
-            </div>
-            {settledTailOpen &&
-              visibleLater.map((thread) => renderLaterRow(thread))}
-            {laterHasMore && (
-              <button
-                type="button"
-                className={styles.settledShowMore}
-                onClick={() =>
-                  setSettledVisibleCount(
-                    (n) => n + SETTLED_TAIL_PAGE_COUNT,
-                  )
-                }
-              >
-                Show more
-              </button>
-            )}
-          </div>
-        )}
+
+              {listEmpty && projects.length > 0 && (
+                <p className={styles.emptySearch}>
+                  {projectScope
+                    ? `No threads in ${scopedSlug} yet`
+                    : "No threads yet"}
+                </p>
+              )}
+            </>
+          )}
       </div>
 
       {removeConfirmId &&
         (() => {
           const confirmProject = projectById.get(removeConfirmId);
           if (!confirmProject) return null;
-          // Real count: every thread the project owns (attention + archived +
-          // settled), not the attention-only header badge.
           const count = threads.filter(
             (t) => t.projectId === confirmProject.id,
           ).length;
           const threadWord = count === 1 ? "thread" : "threads";
-          // t3 LegacySidebar copy: title names project + count; body has path
-          // and the two load-bearing sentences about history vs entry-only.
           const title = `Remove project ${confirmProject.slug} and delete its ${count} ${threadWord}?`;
           const closeConfirm = () => {
             if (removePending) return;
@@ -2823,7 +2393,11 @@ export const Sidebar = memo(function Sidebar({
         </div>
       )}
       {batchFeedback && multiSelected.size < 2 && (
-        <div className={styles.batchBar} data-batch-bar="" data-batch-feedback-only="">
+        <div
+          className={styles.batchBar}
+          data-batch-bar=""
+          data-batch-feedback-only=""
+        >
           <span className={styles.batchFeedback} data-batch-feedback="">
             {batchFeedback}
           </span>
@@ -2849,28 +2423,10 @@ export const Sidebar = memo(function Sidebar({
               aria-label="Dismiss error"
               title="Dismiss error"
             >
-              <svg
-                width="12"
-                height="12"
-                viewBox="0 0 16 16"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                aria-hidden="true"
-              >
-                <path d="m4 4 8 8M12 4l-8 8" />
-              </svg>
+              <Icon size={12}>
+                <path d="M18 6 6 18M6 6l12 12" />
+              </Icon>
             </button>
-          </div>
-        )}
-        {spendTodayUsd != null && (
-          <div
-            className={styles.spendMeter}
-            data-tone={spendMeterTone(spendTodayUsd, dailyBudgetUsd)}
-            title="Spend today across all providers"
-          >
-            {spendMeterLabel(spendTodayUsd, dailyBudgetUsd)}
           </div>
         )}
         <div className={styles.footerRow}>
@@ -2894,19 +2450,10 @@ export const Sidebar = memo(function Sidebar({
             onClick={() => onOpenSettings?.()}
           >
             <span className={styles.settingsIcon} aria-hidden>
-              <svg
-                width="15"
-                height="15"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
+              <Icon size={15}>
                 <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
                 <circle cx="12" cy="12" r="3" />
-              </svg>
+              </Icon>
             </span>
             Settings
             {(updateState === "available" || updateState === "staged") && (
@@ -2921,18 +2468,10 @@ export const Sidebar = memo(function Sidebar({
               title="Add project"
               aria-label="Add project"
             >
-              <svg
-                width="15"
-                height="15"
-                viewBox="0 0 16 16"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                aria-hidden="true"
-              >
-                <path d="M8 3.25v9.5M3.25 8h9.5" />
-              </svg>
+              <Icon size={15}>
+                <path d="M12 5v14" />
+                <path d="M5 12h14" />
+              </Icon>
             </button>
           )}
         </div>

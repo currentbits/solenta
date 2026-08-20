@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   GROUP_ATTENTION_CAP,
+  buildFlatSidebar,
   buildSidebarGroups,
   flattenLater,
   partitionSidebar,
@@ -477,5 +478,80 @@ describe("GROUP_ATTENTION_CAP + visibleAttentionCount (issue #70)", () => {
       visibleAttentionCount(list, { capped: true, keepIds: [null, "nope"] }),
       8,
     );
+  });
+});
+
+describe("buildFlatSidebar (T3 flat sidebar)", () => {
+  it("partitions with archived > snoozed > pinned > settled > active", () => {
+    const flat = buildFlatSidebar(
+      [
+        thread({ id: "act", projectId: "p1", updatedAt: NOW }),
+        thread({ id: "pin", projectId: "p1", updatedAt: NOW, pinnedAt: NOW - 1 }),
+        thread({
+          id: "pin-snoozed",
+          projectId: "p1",
+          updatedAt: NOW,
+          pinnedAt: NOW - 2,
+          snoozedUntil: NOW + DAY_MS,
+        }),
+        thread({
+          id: "settled",
+          projectId: "p1",
+          updatedAt: NOW,
+          settledOverride: "settled",
+        }),
+        thread({ id: "gone", projectId: "p1", updatedAt: NOW, archived: true }),
+      ],
+      settleOpts,
+    );
+    assert.deepEqual(flat.pinned.map((t) => t.id), ["pin"]);
+    assert.deepEqual(flat.active.map((t) => t.id), ["act"]);
+    assert.deepEqual(flat.snoozed.map((t) => t.id), ["pin-snoozed"]);
+    assert.deepEqual(flat.settled.map((t) => t.id), ["settled"]);
+    assert.deepEqual(flat.archived.map((t) => t.id), ["gone"]);
+  });
+
+  it("active sorts createdAt desc and attaches forks under their source", () => {
+    const flat = buildFlatSidebar(
+      [
+        thread({ id: "old", projectId: "p1", updatedAt: NOW, createdAt: NOW - 3 }),
+        thread({ id: "src", projectId: "p1", updatedAt: NOW, createdAt: NOW - 2 }),
+        thread({
+          id: "fork",
+          projectId: "p1",
+          updatedAt: NOW,
+          createdAt: NOW - 1,
+          handoffFrom: "src",
+        }),
+      ],
+      settleOpts,
+    );
+    assert.deepEqual(flat.active.map((t) => t.id), ["src", "fork", "old"]);
+  });
+
+  it("scopeProjectId filters every section", () => {
+    const flat = buildFlatSidebar(
+      [
+        thread({ id: "a1", projectId: "p1", updatedAt: NOW }),
+        thread({ id: "b1", projectId: "p2", updatedAt: NOW }),
+        thread({ id: "b2", projectId: "p2", updatedAt: NOW, archived: true }),
+      ],
+      settleOpts,
+      "p2",
+    );
+    assert.deepEqual(flat.active.map((t) => t.id), ["b1"]);
+    assert.deepEqual(flat.archived.map((t) => t.id), ["b2"]);
+    assert.equal(flat.pinned.length + flat.snoozed.length + flat.settled.length, 0);
+  });
+
+  it("pinned sorts oldest pin first", () => {
+    const flat = buildFlatSidebar(
+      [
+        thread({ id: "p-new", projectId: "p1", updatedAt: NOW, pinnedAt: NOW - 1 }),
+        thread({ id: "p-old", projectId: "p1", updatedAt: NOW, pinnedAt: NOW - 9 }),
+      ],
+      settleOpts,
+    );
+    assert.deepEqual(flat.pinned.map((t) => t.id), ["p-old", "p-new"]);
   });
 });

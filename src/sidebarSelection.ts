@@ -2,6 +2,7 @@ import type { ThreadInfo } from "./shared/ipc";
 import {
   GROUP_ATTENTION_CAP,
   visibleAttentionCount,
+  type FlatSidebar,
   type SidebarGroup,
 } from "./sidebarGroups";
 
@@ -76,6 +77,60 @@ export function buildVisibleThreadIds(input: VisibleListInput): string[] {
     } else if (input.selectedLaterId) {
       push(input.selectedLaterId);
     }
+  }
+
+  return ids;
+}
+
+/**
+ * Ordered visible ids for the flat T3 sidebar — mirrors render order:
+ * pinned → active → snoozed shelf → settled shelf (settled then archived,
+ * paged by settledVisibleCount). A collapsed shelf contributes only the
+ * selected thread (carve-out: the open thread never vanishes); the same
+ * carve-out applies past the settled page cap. Search mode does not use
+ * this — search renders a flat hit list and its ids come straight from it.
+ */
+export function flatVisibleThreadIds(input: {
+  flat: FlatSidebar;
+  snoozedOpen: boolean;
+  settledOpen: boolean;
+  settledVisibleCount: number;
+  selectedThreadId?: string | null;
+  /** Extra ids the carve-outs keep visible (e.g. a revealed thread). */
+  keepThreadIds?: readonly (string | null | undefined)[];
+}): string[] {
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  const push = (id: string) => {
+    if (!seen.has(id)) {
+      seen.add(id);
+      ids.push(id);
+    }
+  };
+  const keep = [input.selectedThreadId, ...(input.keepThreadIds ?? [])];
+  const carveOut = (list: readonly ThreadInfo[]) => {
+    for (const t of list) {
+      if (keep.includes(t.id)) push(t.id);
+    }
+  };
+
+  for (const t of input.flat.pinned) push(t.id);
+  for (const t of input.flat.active) push(t.id);
+
+  if (input.snoozedOpen) {
+    for (const t of input.flat.snoozed) push(t.id);
+  } else {
+    carveOut(input.flat.snoozed);
+  }
+
+  const settledTail = [...input.flat.settled, ...input.flat.archived];
+  if (input.settledOpen) {
+    for (const t of settledTail.slice(0, input.settledVisibleCount)) {
+      push(t.id);
+    }
+    carveOut(settledTail.slice(input.settledVisibleCount));
+  } else {
+    carveOut(settledTail);
   }
 
   return ids;

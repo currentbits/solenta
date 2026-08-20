@@ -1,12 +1,10 @@
 /**
  * Sidebar thread-card structure, rendered from real components.
  *
- * The PR chip, branch text and status-badge assertions that used to live here
- * died with #566: rows are one line (dot + title + age) and sidebarPrBadge is
- * no longer wired into Sidebar. What survives is the card's interaction
- * contract: a stretch-select overlay under a pointer-events:none body, hover
- * actions as real sibling buttons (never nested interactives), and the shell
- * attribute hooks.
+ * T3 three-line card: slug + status label, title, branch/PR/provider.
+ * Interaction contract is unchanged: stretch-select overlay under a
+ * pointer-events:none body, hover actions as real sibling buttons (never
+ * nested interactives), shell attribute hooks.
  *
  * Run: node --import=./test/support/render.mjs --test test/prRender.test.tsx
  */
@@ -17,6 +15,7 @@ import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { Sidebar, ThreadCard } from "../src/components/Sidebar";
+import { buildThreadActionMenuItems } from "../src/threadActionMenu";
 import type { ProjectInfo, ThreadInfo, ProviderInfo } from "../src/shared/ipc";
 
 const project: ProjectInfo = {
@@ -170,15 +169,13 @@ describe("sidebar thread card: select + actions structure (#566)", () => {
         onFork={() => {}}
         onRenameThread={() => {}}
         onSetMuted={() => {}}
-        snoozeMenuOpen={true}
-        onToggleSnoozeMenu={() => {}}
       />,
     );
     const card = extractCard(html, "t1");
     assertNoNestedInteractive(card);
   });
 
-  it("has stretch-select plus hover actions: pin and one … menu", () => {
+  it("has stretch-select plus hover actions: snooze, settle, … menu", () => {
     const html = renderToStaticMarkup(
       <ThreadCard
         thread={thread({ status: "failed" })}
@@ -188,6 +185,7 @@ describe("sidebar thread card: select + actions structure (#566)", () => {
         now={1}
         onSelect={() => {}}
         onSetSettled={() => {}}
+        onSetSnoozed={() => {}}
       />,
     );
     const card = html;
@@ -198,23 +196,29 @@ describe("sidebar thread card: select + actions structure (#566)", () => {
       "single … actions button must be present",
     );
     assert.ok(
+      card.includes('data-snooze-btn="t1"'),
+      "hover snooze button is back (opens the existing presets)",
+    );
+    assert.ok(
       card.includes('data-settle-btn="t1"'),
-      "settle is a hover check like T3, not an in-card overlay",
+      "hover settle check lives next to snooze",
     );
-    // Only onSetSettled is wired: select + … + settle item. No pin without
-    // onSetPinned, no standalone settle arrow, no snooze/handoff buttons.
-    const buttons = card.match(/<button\b/g) ?? [];
-    assert.equal(
-      buttons.length,
-      3,
-      `expected 3 buttons (stretch-select + more + settle item), got ${buttons.length}`,
+    assert.ok(
+      !card.includes("data-snooze-menu"),
+      "#592: no in-card snooze menu — presets portal via showContextMenu",
     );
-    assert.ok(!card.includes("data-snooze-btn"), "old snooze button retired");
+    assert.ok(
+      !card.includes("data-more-menu"),
+      "#592: no in-card overflow menu — it portals via showContextMenu",
+    );
+    assert.ok(!card.includes("data-pin-btn"), "hover pin button is retired");
     assert.ok(!card.includes("data-handoff-btn"), "old handoff button retired");
-    assert.equal(card.match(/<a\b/g), null, "no anchors in a one-line row");
+    assert.ok(
+      card.includes("data-status-label"),
+      "status is a text label, not a dot",
+    );
+    assert.ok(!card.includes("data-status-dot"));
 
-    // Empty stretch button: select control must not wrap the row content.
-    // (The title appears in its aria-label; the element itself stays empty.)
     const buttonChunk = card.match(/<button\b[^>]*>([\s\S]*?)<\/button>/);
     assert.ok(buttonChunk, "select button present");
     assert.equal(
@@ -275,14 +279,19 @@ describe("sidebar thread card: select + actions structure (#566)", () => {
       1,
       "without action handlers only the stretch select button is present",
     );
-    // Failed state is a dot now, not a text badge.
     assert.ok(
-      card.includes('data-status-dot="failed"'),
-      "failed thread renders a failed status dot",
+      card.includes("data-status-label"),
+      "failed thread renders a Failed status label",
+    );
+    assert.ok(card.includes(">Failed<") || /Failed/.test(card));
+    assert.ok(!card.includes("data-status-dot"));
+    assert.ok(
+      card.includes("data-card-slug"),
+      "every card carries its project slug",
     );
     assert.ok(
-      card.includes('title="Failed"'),
-      "failed dot carries the tooltip",
+      card.includes("data-card-branch"),
+      "line 3 carries the branch",
     );
 
     const cssPath = path.join(
@@ -334,11 +343,51 @@ describe("sidebar thread card: select + actions structure (#566)", () => {
       "active styling hook must remain",
     );
     assert.ok(
-      card.includes('data-status-dot="failed"'),
-      "failed dot still shows on the shell",
+      card.includes("data-status-label"),
+      "failed label still shows on the shell",
     );
-    // One select button, no anchors on a one-line row.
+    assert.ok(!card.includes("data-status-dot"));
     assert.equal((card.match(/<button\b/g) ?? []).length, 1);
-    assert.equal(card.match(/<a\b/g), null);
+  });
+
+  it("PR badge is a real link and pin lives in the overflow", () => {
+    const html = renderToStaticMarkup(
+      <ThreadCard
+        thread={thread({
+          status: "idle",
+          prNumber: 42,
+          prUrl: "https://github.com/owner/repo/pull/42",
+        })}
+        slug="owner/repo"
+        providers={providers}
+        active={false}
+        now={1}
+        onSelect={() => {}}
+        onSetPinned={() => {}}
+      />,
+    );
+    assert.ok(html.includes("data-pr-badge"));
+    assert.match(html, /<a\b[^>]*data-pr-badge/);
+    assert.match(html, /#42/);
+    // Pin lives in the portal menu (#592), not the static card markup.
+    const items = buildThreadActionMenuItems({
+      thread: thread({ status: "idle" }),
+      providers,
+      snoozePresets: [],
+      isSettled: false,
+      canSettle: true,
+      showSnooze: false,
+      showPin: true,
+      showFork: false,
+      showRename: false,
+      showMute: false,
+      showSettle: false,
+    });
+    assert.ok(
+      items.some((i) => i.id === "pin" && i.attrs?.["data-pin-item"] === "t1"),
+      "pin lives in the thread-actions menu",
+    );
+    assert.ok(!html.includes("data-pin-btn"));
+    assert.ok(html.includes("data-card-provider"));
   });
 });

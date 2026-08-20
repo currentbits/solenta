@@ -8,7 +8,8 @@
  * Run: npm run test:renderer
  */
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { afterEach, describe, it } from "node:test";
+import { dismissContextMenu } from "../src/contextMenuFallback";
 import { mount } from "./support/dom.ts";
 import {
   createFakeCoder,
@@ -112,6 +113,8 @@ async function openCardMenu(
   assert.ok(more, `"…" menu button must exist on ${threadId}`);
   await m.click(more as HTMLElement);
   await m.flush();
+  // #592: the menu is a native/portal context menu on document.body,
+  // outside the mounted tree — m.query cannot see it.
   const menu = document.querySelector("[data-context-menu]");
   assert.ok(menu, "card menu must be open");
   return menu as HTMLElement;
@@ -474,4 +477,8 @@ describe("App fork / hand-off wiring (round 49)", () => {
     );
     m.unmount();
   });
+});
+
+afterEach(() => {
+  dismissContextMenu();
 });

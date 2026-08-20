@@ -88,40 +88,31 @@ describe("Sidebar auto-settle window (round 45)", () => {
     assert.equal(AUTO_SETTLE_AFTER_DAYS, 3);
     // undefined = loading → constant 3
     const m = await mount(<Host days={undefined} />);
-    // Later shelf (#567) should include quiet-4d as a settled row.
-    assert.ok(
-      m.query("[data-later-shelf]"),
-      "Later shelf present under default 3",
+    const header = m.query("[data-settled-shelf-toggle]");
+    assert.ok(header, "Settled shelf present under default 3");
+    assert.match(
+      header!.textContent || "",
+      /Settled \(1\)/,
+      `settled thread counts into Settled, got: ${header!.textContent}`,
     );
-    const header = m
-      .queryAll("button")
-      .find((b) => (b.textContent || "").includes("Later ·"));
-    assert.ok(header, "Later header");
-    assert.ok(
-      (header!.textContent || "").includes("Later · 1"),
-      `settled thread counts into Later, got: ${header!.textContent}`,
-    );
-    // Default is expanded (t3); click only if a stored collapse is in effect.
-    if (header!.getAttribute("aria-expanded") === "false") {
+    if (header!.getAttribute("aria-expanded") !== "true") {
       await m.click(header!);
       await m.flush();
     }
     assert.ok(
-      m.query(
-        '[data-later-shelf] [data-thread-card="quiet-4d"][data-settled="true"]',
-      ),
-      "quiet 4d is a settled Later row under window 3",
+      m.query('[data-thread-card="quiet-4d"][data-settled="true"]'),
+      "quiet 4d is a settled row under window 3",
     );
     m.unmount();
   });
 
   it("quiet 4-day thread stays in attention when setting is 7", async () => {
     const m = await mount(<Host days={7} />);
-    // No Later shelf (or empty of quiet-4d)
+    // No Settled shelf (or empty of quiet-4d)
     assert.equal(
-      m.query("[data-later-shelf]") != null,
+      m.query("[data-settled-shelf-toggle]") != null,
       false,
-      "no Later shelf when window is 7 days",
+      "no Settled shelf when window is 7 days",
     );
     assert.ok(
       m.query('[data-thread-card="quiet-4d"]'),
@@ -137,7 +128,7 @@ describe("Sidebar auto-settle window (round 45)", () => {
   it("quiet 4-day thread stays attention when setting is null (Never)", async () => {
     const m = await mount(<Host days={null} />);
     assert.equal(
-      m.query("[data-later-shelf]") != null,
+      m.query("[data-settled-shelf-toggle]") != null,
       false,
       "null disables inactivity settle — shelf empty",
     );
@@ -186,13 +177,10 @@ describe("App wires autoSettleAfterDays into Sidebar (round 45)", () => {
     await m.flush();
   }
 
-  async function expandLaterShelf(m: Awaited<ReturnType<typeof mount>>) {
-    const header = m
-      .queryAll("button")
-      .find((b) => (b.textContent || "").includes("Later ·"));
+  async function expandSettledShelf(m: Awaited<ReturnType<typeof mount>>) {
+    const header = m.query("[data-settled-shelf-toggle]");
     if (!header) return null;
-    // Default is expanded (t3); click only when actually collapsed.
-    if (header.getAttribute("aria-expanded") === "false") {
+    if (header.getAttribute("aria-expanded") !== "true") {
       await m.click(header);
       await m.flush();
     }
@@ -221,16 +209,14 @@ describe("App wires autoSettleAfterDays into Sidebar (round 45)", () => {
       });
       await m.flush();
 
-      // --- under default 3: quiet sits on the Later shelf ---
+      // --- under default 3: quiet sits on the Settled shelf ---
       assert.ok(
-        m.query("[data-later-shelf]"),
-        "Later shelf under App-wired default 3",
+        m.query("[data-settled-shelf-toggle]"),
+        "Settled shelf under App-wired default 3",
       );
-      await expandLaterShelf(m);
+      await expandSettledShelf(m);
       assert.ok(
-        m.query(
-          '[data-later-shelf] [data-thread-card="quiet-4d"][data-settled="true"]',
-        ),
+        m.query('[data-thread-card="quiet-4d"][data-settled="true"]'),
         "quiet-4d settled when App passes loaded setting 3",
       );
 
@@ -250,7 +236,7 @@ describe("App wires autoSettleAfterDays into Sidebar (round 45)", () => {
       }
 
       assert.equal(
-        m.query("[data-later-shelf]") != null,
+        m.query("[data-settled-shelf-toggle]") != null,
         false,
         "after App re-renders with 7, quiet leaves the shelf",
       );
@@ -276,9 +262,9 @@ describe("App wires autoSettleAfterDays into Sidebar (round 45)", () => {
         await m.flush();
       }
       assert.equal(
-        m.query("[data-later-shelf]") != null,
+        m.query("[data-settled-shelf-toggle]") != null,
         false,
-        "Never: no Later shelf",
+        "Never: no Settled shelf",
       );
       assert.ok(
         m.query('[data-thread-card="quiet-4d"]'),
@@ -296,10 +282,10 @@ describe("App wires autoSettleAfterDays into Sidebar (round 45)", () => {
         await m.flush();
       }
       assert.ok(
-        m.query("[data-later-shelf]"),
+        m.query("[data-settled-shelf-toggle]"),
         "precondition: settled under 3 before invalid save",
       );
-      const settledBefore = m.query("[data-later-shelf]") != null;
+      const settledBefore = m.query("[data-settled-shelf-toggle]") != null;
 
       await openSettings(m);
       await saveSettleDays(m, "0");
@@ -324,13 +310,13 @@ describe("App wires autoSettleAfterDays into Sidebar (round 45)", () => {
         await m.flush();
       }
       assert.equal(
-        m.query("[data-later-shelf]") != null,
+        m.query("[data-settled-shelf-toggle]") != null,
         settledBefore,
         "partition must not change after rejected save",
       );
       assert.ok(
-        m.query("[data-later-shelf]"),
-        "Later shelf still present after invalid 0 rejected",
+        m.query("[data-settled-shelf-toggle]"),
+        "Settled shelf still present after invalid 0 rejected",
       );
     } finally {
       m.unmount();

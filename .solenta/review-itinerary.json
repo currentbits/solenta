@@ -1,34 +1,38 @@
 {
   "version": 1,
-  "readOrder": ["critical", "tests", "impl"],
+  "readOrder": ["critical", "impl", "tests", "docs"],
   "chunks": [
     {
       "area": "critical",
-      "rationale": "T3 does not put the thread-actions list inside the sidebar scroll container. pingdotgg/t3code threadActionMenu.logic.ts + api.contextMenu.show → Electron Menu.popup with Snooze as children. Solenta now does the same: electron/contextMenu.js Menu.popup on Desktop, src/contextMenuFallback.ts position:fixed on document.body otherwise. The in-card nested HTML drill-in, z-index 8, and menuPlaceUp measurement are gone from ThreadCard.",
+      "rationale": "This merge joins two independent T3 ports: the flat sidebar (this branch, #587) and the native/portal thread-actions menu (main, #592). Resolution keeps the flat structure and moves ALL card menus onto the #592 path: ThreadCard's openThreadMenu/applyMenuId call showContextMenu (Electron Menu.popup on Desktop, position:fixed body portal elsewhere); the in-card snooze and overflow HTML dropdowns are gone. Pin was added to buildThreadActionMenuItems (showPin, data-pin-item) since the flat sidebar had put it in the now-deleted HTML overflow.",
       "risks": [
-        "The group-header create menu still uses the old .snoozeMenu position:absolute path and can still clip.",
-        "jsdom tests exercise the HTML fallback, not Menu.popup. A native-menu regression would not fail the renderer suite."
-      ]
-    },
-    {
-      "area": "tests",
-      "rationale": "test/sidebar.test.tsx #582/#583 now assert the portal is document.body + position:fixed, Snooze children are a sibling submenu, right-click opens the same menu, hover clock+settle exist. Portal queries use document.querySelector — m.query only sees the mount container. press() not pressFocused, because the portal is outside the mounted tree.",
-      "risks": [
-        "afterEach dismissContextMenu() is file-wide in sidebar.test.tsx. A later test that expected a leftover menu would fail; none should.",
-        "Pin/snooze App tests that still used m.query for menu items were retargeted in pinSnooze, forkHandoff, threadRename."
+        "The '…' render gate now includes onSetSnoozed (matches main) — a card with only snooze wiring still gets the menu.",
+        "menuBusy ref serializes menu opens; a second click while the native menu is up is a no-op, matching main's behavior.",
+        "jsdom tests exercise only the HTML fallback; a native Menu.popup regression would not fail the renderer suite (electron/test/contextMenu.test.js covers the main-process side, 2/2)."
       ]
     },
     {
       "area": "impl",
-      "rationale": "src/threadActionMenu.ts is the T3 item list (Snooze children, Wake when already snoozed, Solenta Fork/Hand off/Mute kept). Hover clock opens presets only; hover settle is the check; … and row contextmenu open the full list. CoderApi.contextMenu is optional so web/devCoder keep the fallback.",
+      "rationale": "src/components/Sidebar.tsx: ThreadCard lost snoozeMenuOpen/moreMenuOpen/onToggleMoreMenu props (Kanban unaffected — props were optional); right-click on a card opens the same menu; hover clock = presets portal or instant wake when snoozed; hover check = settle; data-sidebar-list added for the portal containment test. Parent dropped snoozeMenuFor/moreMenuFor state — the portal dismisses itself. Header scope/create menus keep the old HTML dropdown path (pre-existing clipping risk, unchanged by this merge).",
       "risks": [
-        "contextMenu:show is registered outside IPC_HANDLERS so the web bridge never Menu.popup on the server. A future catch-all IPC map must not swallow that channel.",
-        "This branch does not flatten the sidebar into T3's single list. Groups + Later remain."
+        "The header scope/create menus still render position:absolute inside the sidebar — same clipping class of bug #592 fixed for cards. Follow-up, not this diff."
       ]
+    },
+    {
+      "area": "tests",
+      "rationale": "Conflicted suites resolved onto flat selectors + portal queries: menu items are found via document.querySelector('[data-context-menu] …') because m.query only sees the mount container; afterEach dismissContextMenu() in sidebar/forkHandoff/pinSnooze prevents portal leakage between tests. Main's #582/#583 blocks (body portal, snooze flyout submenu, right-click, keyboard nav) were grafted into the flat suite; ArrowDown expectation updated for the Pin item between Snooze and Fork. 1257/1257.",
+      "risks": [
+        "prRender's pin assertion moved from static markup to buildThreadActionMenuItems — the render-level guarantee is now indirect (the click path is covered in sidebar.test.tsx)."
+      ]
+    },
+    {
+      "area": "docs",
+      "rationale": ".solenta/specs/t3-flat-sidebar.md still describes the in-card overflow menu; #592 superseded that section — the selector names survive but live in the portal.",
+      "risks": []
     }
   ],
   "risks": [
-    "Issue #592 tracks this. #582/#583 were plan:done on the overlay approach; the overlay was the wrong T3 copy.",
-    "A parallel T3-flat-sidebar rewrite already exists on thread 8dea3d17; do not merge both blindly."
+    "First launch remains the visual check for the combined result (no screenshot tooling in this session).",
+    "Electron suite baseline failures (#536) are unrelated; no electron/ files changed beyond what main brought in."
   ]
 }

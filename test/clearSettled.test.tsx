@@ -59,8 +59,13 @@ describe("settled tail Clear", () => {
         }}
       />,
     );
+    const toggle = m.query("[data-settled-shelf-toggle]");
+    assert.ok(toggle, "Settled shelf must render");
+    if (toggle.getAttribute("aria-expanded") !== "true") {
+      await m.click(toggle);
+    }
     const btn = m.query("[data-settled-clear-all]");
-    assert.ok(btn, "Clear button renders on settled tail");
+    assert.ok(btn, "Clear button renders on the settled shelf");
     await m.click(btn!);
     assert.deepEqual((cleared ?? []).sort(), ["old-a", "old-b"]);
     m.unmount();

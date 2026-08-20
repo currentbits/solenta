@@ -100,8 +100,12 @@ describe("Spaces retired (#568)", () => {
     assert.equal(m.query("[data-space-add]"), null);
     assert.equal(m.query("[data-space-header]"), null);
     assert.equal(m.query("[data-space-section]"), null);
-    assert.ok(m.query('[data-group-chevron="p1"]'), "project groups still render");
-    assert.ok(m.query('[data-group-chevron="p2"]'), "second project still renders");
+    assert.equal(m.query("[data-group-chevron]"), null, "project groups are gone");
+    assert.ok(m.query("[data-scope-trigger]"), "projects live in the scope dropdown");
+    assert.ok(
+      m.query('[data-thread-card="t1"] [data-card-slug]'),
+      "cards carry their own project slug",
+    );
     m.unmount();
   });
 
@@ -116,7 +120,8 @@ describe("Spaces retired (#568)", () => {
       details: { t1: detail({ thread: t1 }) },
     });
     const m = await boot(fake);
-    await m.click(m.query('[data-project-edit="p1"]'));
+    await m.click(m.query("[data-scope-trigger]"));
+    await m.click(m.query('[data-scope-edit="p1"]'));
     assert.ok(m.query("[data-edit-project]"), "edit modal opens");
     assert.equal(
       m.query("[data-edit-project-space]"),

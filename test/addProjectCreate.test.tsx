@@ -59,9 +59,10 @@ describe("Add project: create new", () => {
       null,
       "modal must close after a successful create",
     );
+    await m.click(m.query("[data-scope-trigger]"));
     assert.ok(
       m.byText("fresh-app"),
-      "created project must appear in the sidebar",
+      "created project must appear in the scope menu",
     );
     m.unmount();
   });

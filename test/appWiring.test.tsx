@@ -547,6 +547,7 @@ describe("App remove-project wiring (round 41)", () => {
     const m = await boot(fake);
 
     // Cancel path first — empty assertion is non-vacuous only if Confirm records.
+    await m.click(m.query("[data-scope-trigger]"));
     await m.click(m.query('[data-project-remove="p-drop"]'));
     await m.click(m.byText("Cancel"));
     await m.flush();
@@ -556,6 +557,7 @@ describe("App remove-project wiring (round 41)", () => {
       "Cancel must not call projects.remove",
     );
 
+    await m.click(m.query("[data-scope-trigger]"));
     await m.click(m.query('[data-project-remove="p-drop"]'));
     await m.click(m.query('[data-remove-confirm-submit="p-drop"]'));
     await m.flush();
@@ -603,6 +605,7 @@ describe("App remove-project wiring (round 41)", () => {
       "precondition: drop thread is the active selection",
     );
 
+    await m.click(m.query("[data-scope-trigger]"));
     await m.click(m.query('[data-project-remove="p-drop"]'));
     await m.click(m.query('[data-remove-confirm-submit="p-drop"]'));
     await m.flush();
@@ -658,6 +661,7 @@ describe("App remove-project wiring (round 41)", () => {
       },
     });
     const m = await boot(fake);
+    await m.click(m.query("[data-scope-trigger]"));
     await m.click(m.query('[data-project-remove="p-drop"]'));
     await m.click(m.query('[data-remove-confirm-submit="p-drop"]'));
     await m.flush();

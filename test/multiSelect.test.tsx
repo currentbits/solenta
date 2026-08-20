@@ -51,20 +51,27 @@ function th(
 /** Fixture: pinned + two projects + snoozed + settled; active = noise (not interesting). */
 function fullFixture(): ThreadInfo[] {
   return [
-    th("noise", { projectId: "p1", updatedAt: NOW + 100 }),
-    th("pin-mid", { projectId: "p2", pinnedAt: NOW - 5000, updatedAt: NOW + 50 }),
-    th("p1-mid", { projectId: "p1", updatedAt: NOW + 40 }),
-    th("p2-mid", { projectId: "p2", updatedAt: NOW + 30 }),
+    th("noise", { projectId: "p1", createdAt: NOW + 100, updatedAt: NOW + 100 }),
+    th("pin-mid", {
+      projectId: "p2",
+      pinnedAt: NOW - 5000,
+      createdAt: NOW + 50,
+      updatedAt: NOW + 50,
+    }),
+    th("p1-mid", { projectId: "p1", createdAt: NOW + 40, updatedAt: NOW + 40 }),
+    th("p2-mid", { projectId: "p2", createdAt: NOW + 30, updatedAt: NOW + 30 }),
     th("working-x", {
       projectId: "p1",
       status: "working",
       runStartedAt: NOW,
+      createdAt: NOW + 20,
       updatedAt: NOW + 20,
     }),
     th("snooze-mid", {
       projectId: "p2",
       snoozedUntil: NOW + 60_000,
       snoozedAt: NOW - 1000,
+      createdAt: NOW - 2000,
       updatedAt: NOW - 2000,
     }),
     th("settled-mid", {
@@ -72,6 +79,7 @@ function fullFixture(): ThreadInfo[] {
       status: "done",
       prState: "MERGED",
       settledAt: NOW - 100,
+      createdAt: NOW - 100,
       updatedAt: NOW - 100,
     }),
   ];
@@ -151,13 +159,17 @@ function Host({
 }
 
 async function openShelves(m: Awaited<ReturnType<typeof mount>>) {
-  // #567: one Later shelf (snoozed + settled + archived), expanded by default.
-  const laterH = m
-    .queryAll("button")
-    .find((b) => (b.textContent || "").includes("Later ·"));
-  if (laterH && laterH.getAttribute("aria-expanded") === "false") {
-    await m.click(laterH);
-    await m.flush();
+  // Flat T3: two shelves, default collapsed. Open both so keyboard order
+  // includes snoozed then settled.
+  for (const sel of [
+    "[data-snoozed-shelf-toggle]",
+    "[data-settled-shelf-toggle]",
+  ]) {
+    const btn = m.query(sel);
+    if (btn && btn.getAttribute("aria-expanded") !== "true") {
+      await m.click(btn);
+      await m.flush();
+    }
   }
 }
 
@@ -445,11 +457,10 @@ describe("Sidebar jump shortcuts (round 46)", () => {
       dispatchKey("keydown", "3", { metaKey: true });
     });
     await m.flush();
-    // #567 order: p1 group (noise, p1-mid, working-x), p2 group (pin-mid
-    // first — pinned sorts first, then p2-mid), Later (snooze-mid, settled-mid).
-    // cmd+3 → index 2 = working-x
+    // Flat order: pin-mid, noise, p1-mid, p2-mid, working-x, snooze-mid,
+    // settled-mid. cmd+3 → index 2 = p1-mid
     assert.equal(
-      m.query('[data-thread-card="working-x"]')?.getAttribute("data-active"),
+      m.query('[data-thread-card="p1-mid"]')?.getAttribute("data-active"),
       "true",
     );
 
@@ -482,10 +493,10 @@ describe("Sidebar jump shortcuts (round 46)", () => {
   it("cmd+j / cmd+k wrap through the list", async () => {
     const m = await mount(<Host />);
     await openShelves(m);
-    // #567 order: noise first, …, settled-mid last. Start at the first row;
-    // cmd+k wraps to the shelf's last row.
+    // Flat order: pin-mid first, settled-mid last. Start at the first row;
+    // cmd+k wraps to the settled shelf's last row.
     const firstBtn = m
-      .query('[data-thread-card="noise"]')!
+      .query('[data-thread-card="pin-mid"]')!
       .querySelector("button")!;
     await m.click(firstBtn);
     await m.flush();
@@ -493,7 +504,7 @@ describe("Sidebar jump shortcuts (round 46)", () => {
       m.query("[data-thread-card][data-active=true]")?.getAttribute(
         "data-thread-card",
       ),
-      "noise",
+      "pin-mid",
     );
 
     await inAct(async () => {
@@ -516,7 +527,7 @@ describe("Sidebar jump shortcuts (round 46)", () => {
       m.query("[data-thread-card][data-active=true]")?.getAttribute(
         "data-thread-card",
       ),
-      "noise",
+      "pin-mid",
       "cmd+j from last wraps to first",
     );
     m.unmount();
@@ -563,6 +574,7 @@ describe("Keyboard sheet (round 46)", () => {
     const m = await mount(<Host onRemoveProject={() => {}} />);
     await openShelves(m);
 
+    await m.click(m.query("[data-scope-trigger]"));
     const remove = m.query('[data-project-remove="p1"]');
     assert.ok(remove, "remove control requires onRemoveProject on Host");
     await m.click(remove!);

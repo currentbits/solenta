@@ -3,7 +3,8 @@
  * Run: npm run test:renderer
  */
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { afterEach, describe, it } from "node:test";
+import { dismissContextMenu } from "../src/contextMenuFallback";
 import * as React from "react";
 import { useState } from "react";
 import { inAct, mount } from "./support/dom";
@@ -136,11 +137,43 @@ async function boot(fake: ReturnType<typeof createFakeCoder>) {
   return mount(<App />);
 }
 
-/** The single Later-shelf header button ("Later · N[ · M unread]"). */
-function laterHeader(m: { queryAll(sel: string): Element[] }) {
-  return m
-    .queryAll("button")
-    .find((b) => (b.textContent || "").includes("Later ·"));
+function snoozedToggle(m: { query(sel: string): Element | null }) {
+  return m.query("[data-snoozed-shelf-toggle]");
+}
+
+function settledToggle(m: { query(sel: string): Element | null }) {
+  return m.query("[data-settled-shelf-toggle]");
+}
+
+async function openSnoozedShelf(m: Awaited<ReturnType<typeof mount>>) {
+  const btn = snoozedToggle(m);
+  if (btn && btn.getAttribute("aria-expanded") !== "true") {
+    await m.click(btn);
+    await m.flush();
+  }
+}
+
+async function openSettledShelf(m: Awaited<ReturnType<typeof mount>>) {
+  const btn = settledToggle(m);
+  if (btn && btn.getAttribute("aria-expanded") !== "true") {
+    await m.click(btn);
+    await m.flush();
+  }
+}
+
+async function clickPinItem(
+  m: Awaited<ReturnType<typeof mount>>,
+  id: string,
+) {
+  const more = m.query(`[data-more-btn="${id}"]`);
+  assert.ok(more, `data-more-btn=${id}`);
+  await m.click(more);
+  await m.flush();
+  // #592: the actions menu portals onto document.body.
+  const item = document.querySelector(`[data-pin-item="${id}"]`);
+  assert.ok(item, `data-pin-item=${id} in overflow`);
+  await m.click(item as HTMLElement);
+  await m.flush();
 }
 
 describe("Sidebar pin + snooze shelves (round 44)", () => {
@@ -149,6 +182,7 @@ describe("Sidebar pin + snooze shelves (round 44)", () => {
     id: "noise",
     projectId: "p1",
     title: "noise first",
+    createdAt: FRESH + 100,
     updatedAt: FRESH + 100,
   });
   // Pinned AND merged: without the pin this thread would auto-settle into
@@ -173,9 +207,9 @@ describe("Sidebar pin + snooze shelves (round 44)", () => {
     updatedAt: FRESH - 100,
   });
 
-  it("#567: no Pinned shelf; pinned renders first in its group, flagged, and beats settle", async () => {
-    // Newer creation than pin-mid: static order would put it first — the pin
-    // must override.
+  it("pinned block sits at the top (oldest-pin-first), flagged, and beats settle", async () => {
+    // Newer creation than pin-mid: static active order would put it first —
+    // the pin block must still sit above the inbox.
     const p2Fresh = th({
       id: "p2-fresh",
       projectId: "p2",
@@ -190,11 +224,9 @@ describe("Sidebar pin + snooze shelves (round 44)", () => {
       />,
     );
     try {
-      assert.equal(
-        m.query("[data-pinned-section]"),
-        null,
-        "the Pinned shelf is gone (#567)",
-      );
+      assert.equal(m.query("[data-pinned-section]"), null);
+      assert.equal(m.query("[data-later-shelf]"), null);
+      assert.equal(m.query("[data-pin-btn]"), null, "hover pin button retired");
       const card = m.query('[data-thread-card="pin-mid"][data-pinned="true"]');
       assert.ok(card, "pinned thread is a normal card with data-pinned");
       assert.ok(card!.querySelector("[data-pin-flag]"), "pin glyph on card");
@@ -205,34 +237,26 @@ describe("Sidebar pin + snooze shelves (round 44)", () => {
           ?.includes(", pinned"),
         "select aria-label announces pinned",
       );
-      assert.ok(
-        card!.querySelector('[data-pin-btn="pin-mid"]'),
-        "hover unpin control keeps its id",
-      );
+      assert.ok(m.query("[data-pinned-divider]"), "divider after the pin block");
       assert.equal(
         m.queryAll('[data-thread-card="pin-mid"]').length,
         1,
         "pinned thread renders exactly once",
       );
-      assert.equal(
-        m.query('[data-later-shelf] [data-thread-card="pin-mid"]'),
-        null,
-        "pin beats settle: MERGED+pinned never lands on Later",
-      );
-      // Sorted FIRST in its project group despite newer siblings.
       const order = m
         .queryAll("[data-thread-card]")
         .map((el) => el.getAttribute("data-thread-card"));
       assert.ok(
         order.indexOf("pin-mid") < order.indexOf("p2-fresh"),
-        `pinned sorts before newer group siblings, got ${order.join(",")}`,
+        `pinned block sits above active cards, got ${order.join(",")}`,
       );
+      assert.equal(order[0], "pin-mid", "oldest pin is first in the pin block");
     } finally {
       m.unmount();
     }
   });
 
-  it("Later shelf: snoozed rows on top, expanded by default, collapse persists, carve-out", async () => {
+  it("Snoozed shelf: own toggle, default collapsed, collapse persists, carve-out", async () => {
     const soon = th({
       id: "snooze-soon",
       projectId: "p2",
@@ -241,7 +265,7 @@ describe("Sidebar pin + snooze shelves (round 44)", () => {
       snoozedAt: FRESH,
       updatedAt: FRESH - 100,
     });
-    // Snoozed AND pinned: snooze wins — Later shelf row, not an Active card.
+    // Snoozed AND pinned: snooze wins — snoozed shelf row, not a pinned card.
     const late = th({
       id: "snooze-late",
       projectId: "p1",
@@ -254,51 +278,40 @@ describe("Sidebar pin + snooze shelves (round 44)", () => {
     const m = await mount(
       <Host initial={[noise, soon, late, settled]} activeThreadId="noise" />,
     );
-    assert.equal(m.query("[data-snoozed-shelf]"), null, "no Snoozed shelf");
-    assert.equal(m.query("[data-snoozed-header]"), null, "no Snoozed header");
-    assert.ok(m.query("[data-later-shelf]"), "single Later shelf");
-    const header = laterHeader(m);
-    assert.ok(header, "Later header button");
-    assert.ok(
-      (header!.textContent || "").includes("Later · 3"),
-      `header counts snoozed + settled, got: ${header!.textContent}`,
-    );
-    assert.ok(
-      !(header!.textContent || "").includes("unread"),
-      "no unread suffix when every later row is read",
-    );
-    assert.equal(header!.getAttribute("aria-expanded"), "true", "default expanded");
-    // Snoozed first (wake-soonest), then settled — no click needed.
-    const rows = m
-      .queryAll("[data-later-shelf] [data-thread-card]")
-      .map((el) => el.getAttribute("data-thread-card"));
-    assert.deepEqual(
-      rows,
-      ["snooze-soon", "snooze-late", "settled-row"],
-      "snoozed (wake-soonest) above settled",
-    );
+    assert.equal(m.query("[data-later-shelf]"), null, "Later shelf is gone");
+    const snoozed = snoozedToggle(m);
+    assert.ok(snoozed, "Snoozed shelf toggle");
+    assert.match(snoozed!.textContent || "", /Snoozed \(2\)/);
     assert.equal(
-      m.queryAll('[data-snoozed="true"]').length,
-      2,
-      "both snoozed rows render as SnoozedRows",
+      snoozed!.getAttribute("aria-expanded"),
+      "false",
+      "snoozed defaults collapsed",
     );
+    const settledH = settledToggle(m);
+    assert.ok(settledH, "Settled is a separate shelf");
+    assert.match(settledH!.textContent || "", /Settled \(1\)/);
+
+    await openSnoozedShelf(m);
+    const rows = m
+      .queryAll('[data-snoozed="true"]')
+      .map((el) => el.getAttribute("data-thread-card"));
+    assert.deepEqual(rows, ["snooze-soon", "snooze-late"]);
     assert.equal(
       m.queryAll('[data-thread-card="snooze-late"]').length,
       1,
-      "snoozed+pinned renders once, on the shelf (snooze beats pin)",
+      "snoozed+pinned renders once, on the snoozed shelf",
     );
     assert.ok(
       m
         .query('[data-wake-label="snooze-soon"]')
         ?.textContent?.includes("until"),
     );
-    // Collapse persists across mounts.
-    await m.click(header!);
+    await m.click(snoozedToggle(m)!);
     await m.flush();
     assert.equal(
-      m.queryAll("[data-later-shelf] [data-thread-card]").length,
+      m.queryAll('[data-snoozed="true"]').length,
       0,
-      "collapsed shelf hides rows",
+      "collapsed snoozed shelf hides rows",
     );
     m.unmount();
 
@@ -307,31 +320,27 @@ describe("Sidebar pin + snooze shelves (round 44)", () => {
     );
     try {
       assert.equal(
-        laterHeader(m2)!.getAttribute("aria-expanded"),
+        snoozedToggle(m2)!.getAttribute("aria-expanded"),
         "false",
         "collapse persisted across mount",
       );
-      // Carve-out: selected later thread renders above the bar as active.
       assert.ok(
         m2.query(
-          '[data-later-shelf] [data-thread-card="snooze-late"][data-snoozed="true"][data-active="true"]',
+          '[data-thread-card="snooze-late"][data-snoozed="true"][data-active="true"]',
         ),
         "selected snoozed carved out while shelf collapsed",
       );
       assert.equal(
-        m2.queryAll("[data-later-shelf] [data-thread-card]").length,
+        m2.queryAll('[data-snoozed="true"]').length,
         1,
         "only the carve-out row while collapsed",
       );
     } finally {
-      // Restore the persisted default for the rest of the file.
-      await m2.click(laterHeader(m2)!);
-      await m2.flush();
       m2.unmount();
     }
   });
 
-  it("pin keeps a card Active in-group; keep-active + pin pulls a settled row off Later; unpin restores order", async () => {
+  it("pin moves a card into the pin block; keep-active + pin pulls a settled row off Settled; unpin restores order", async () => {
     const settledOverride = th({
       id: "t-was-settled",
       projectId: "p2",
@@ -339,14 +348,15 @@ describe("Sidebar pin + snooze shelves (round 44)", () => {
       status: "done",
       settledOverride: "settled",
       settledAt: FRESH - 50,
+      createdAt: FRESH - 50,
       updatedAt: FRESH - 50,
       prState: "MERGED",
     });
-    // Attention card we can pin; mid-list, not selected.
     const pinTarget = th({
       id: "t-pin-target",
       projectId: "p1",
       title: "pin target",
+      createdAt: FRESH + 10,
       updatedAt: FRESH + 10,
     });
     const m = await mount(
@@ -356,90 +366,53 @@ describe("Sidebar pin + snooze shelves (round 44)", () => {
       />,
     );
     try {
-      // Later shelf defaults to expanded; click only if a stored collapse holds.
+      const header = settledToggle(m);
+      assert.ok(header, "Settled shelf present before pin");
+      assert.match(header!.textContent || "", /Settled \(1\)/);
+      await openSettledShelf(m);
       assert.ok(
-        m.query("[data-later-shelf]"),
-        "Later shelf present before pin",
-      );
-      const header = laterHeader(m);
-      assert.ok(header, "Later shelf header");
-      assert.ok(
-        (header!.textContent || "").includes("Later · 1"),
-        `settled-override counts into Later, got: ${header!.textContent}`,
-      );
-      if (header!.getAttribute("aria-expanded") === "false") {
-        await m.click(header!);
-        await m.flush();
-      }
-      assert.ok(
-        m.query(
-          '[data-later-shelf] [data-thread-card="t-was-settled"][data-settled="true"]',
-        ),
-        "settled-override row on the expanded Later shelf",
+        m.query('[data-thread-card="t-was-settled"][data-settled="true"]'),
+        "settled-override row on the expanded Settled shelf",
       );
 
-      // Pin the attention target: it stays a card in its group, sorted first.
-      const pinBtn = m.query('[data-pin-btn="t-pin-target"]');
-      assert.ok(pinBtn, "pin control on attention card");
-      await m.click(pinBtn!);
-      await m.flush();
+      await clickPinItem(m, "t-pin-target");
 
-      assert.equal(
-        m.query("[data-pinned-section]"),
-        null,
-        "no Pinned shelf after pin (#567)",
-      );
       const pinnedCard = m.query(
         '[data-thread-card="t-pin-target"][data-pinned="true"]',
       );
-      assert.ok(pinnedCard, "target card gains data-pinned in place");
+      assert.ok(pinnedCard, "target card gains data-pinned");
       assert.ok(pinnedCard!.querySelector("[data-pin-flag]"), "pin glyph");
-      assert.equal(
-        m.query('[data-later-shelf] [data-thread-card="t-pin-target"]'),
-        null,
-        "pinned card is not a Later row",
-      );
+      assert.ok(m.query("[data-pinned-divider]"));
       const order = m
         .queryAll("[data-thread-card]")
         .map((el) => el.getAttribute("data-thread-card"));
       assert.ok(
         order.indexOf("t-pin-target") < order.indexOf("noise"),
-        `pin reorders it first in the group, got ${order.join(",")}`,
+        `pin block sits above the inbox, got ${order.join(",")}`,
       );
 
-      // Keep-active the settled row, then pin: leaves Later for its group.
-      const keep = m
-        .queryAll("button")
-        .find((b) => b.getAttribute("aria-label") === "Keep thread active");
+      const keep =
+        m.query("[data-unsettle-btn]") ||
+        m
+          .queryAll("button")
+          .find((b) => b.getAttribute("aria-label") === "Keep thread active");
       assert.ok(keep, "keep-active on settled row");
       await m.click(keep!);
       await m.flush();
       assert.equal(
-        m.query("[data-later-shelf]"),
+        settledToggle(m),
         null,
-        "empty Later shelf unmounts after keep-active",
+        "empty Settled shelf unmounts after keep-active",
       );
 
-      const pinSettled = m.query('[data-pin-btn="t-was-settled"]');
-      assert.ok(pinSettled, "pin on formerly settled thread");
-      await m.click(pinSettled!);
-      await m.flush();
-
+      await clickPinItem(m, "t-was-settled");
       assert.ok(
         m.query('[data-thread-card="t-was-settled"][data-pinned="true"]'),
-        "formerly settled thread pinned in its group",
+        "formerly settled thread lands in the pin block",
       );
-      assert.equal(
-        m.queryAll('[data-thread-card="t-was-settled"]').length,
-        1,
-        "renders once, in the group",
-      );
+      assert.equal(m.queryAll('[data-thread-card="t-was-settled"]').length, 1);
 
-      // Unpin pin-target via the same hover control → back to normal order.
-      const unpin = m.query('[data-pin-btn="t-pin-target"]');
-      assert.equal(unpin?.getAttribute("aria-label"), "Unpin thread");
-      await m.click(unpin!);
-      await m.flush();
+      await clickPinItem(m, "t-pin-target");
       assert.equal(
         m
           .query('[data-thread-card="t-pin-target"]')
@@ -452,7 +425,7 @@ describe("Sidebar pin + snooze shelves (round 44)", () => {
         .map((el) => el.getAttribute("data-thread-card"));
       assert.ok(
         after.indexOf("noise") < after.indexOf("t-pin-target"),
-        `unpin restores static order, got ${after.join(",")}`,
+        `unpin restores createdAt-desc among active cards, got ${after.join(",")}`,
       );
     } finally {
       m.unmount();
@@ -523,32 +496,27 @@ describe("fakeCoder setPinned/setSnoozed honesty (round 44)", () => {
     const m = await boot(fake);
     try {
       await m.flush();
-      const pinBtn = m.query('[data-pin-btn="t-mid"]');
-      assert.ok(pinBtn, "pin button on mid thread");
-      await m.click(pinBtn!);
-      await m.flush();
+      await clickPinItem(m, "t-mid");
       await inAct(async () => {
         await Promise.resolve();
         await Promise.resolve();
       });
       await m.flush();
 
-      assert.equal(
-        m.query("[data-pinned-section]"),
-        null,
-        "no Pinned shelf ever (#567)",
-      );
+      assert.equal(m.query("[data-pinned-section]"), null);
+      assert.equal(m.query("[data-pin-btn]"), null);
       const pinnedCard = m.query(
         '[data-thread-card="t-mid"][data-pinned="true"]',
       );
-      assert.ok(pinnedCard, "card gains data-pinned in its group after pin");
+      assert.ok(pinnedCard, "card gains data-pinned after pin");
       assert.ok(pinnedCard!.querySelector("[data-pin-flag]"), "pin glyph");
+      assert.ok(m.query("[data-pinned-divider]"));
       const order = m
         .queryAll("[data-thread-card]")
         .map((el) => el.getAttribute("data-thread-card"));
       assert.ok(
         order.indexOf("t-mid") < order.indexOf("t-open"),
-        `pinned sorts first in group, got ${order.join(",")}`,
+        `pinned block sits above the inbox, got ${order.join(",")}`,
       );
       assert.ok(
         fake.of("threads.setPinned").some((c) => {
@@ -557,10 +525,11 @@ describe("fakeCoder setPinned/setSnoozed honesty (round 44)", () => {
         }),
       );
 
-      // Unpin via the same hover control (id unchanged).
-      const unpin = m.query('[data-pin-btn="t-mid"]');
-      assert.equal(unpin?.getAttribute("aria-label"), "Unpin thread");
-      await m.click(unpin!);
+      await clickPinItem(m, "t-mid");
+      await inAct(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
       await m.flush();
       await inAct(async () => {
         await Promise.resolve();
@@ -631,21 +600,18 @@ describe("fakeCoder setPinned/setSnoozed honesty (round 44)", () => {
       try {
         await m.flush();
 
-        // #566: snooze presets live in the single "…" menu now.
-        const moreBtn = m.query('[data-more-btn="t-snooze-mid"]');
-        assert.ok(moreBtn, "data-more-btn must be present");
-        await m.click(moreBtn!);
+        const snoozeBtn = m.query('[data-snooze-btn="t-snooze-mid"]');
+        assert.ok(snoozeBtn, "data-snooze-btn opens the existing presets");
+        await m.click(snoozeBtn!);
         await m.flush();
-        const menu = document.querySelector("[data-context-menu]");
-        assert.ok(menu, "card menu opens");
+        assert.ok(
+          document.querySelector("[data-context-menu]"),
+          "snooze menu opens",
+        );
 
-        const snoozeItem = menu.querySelector("[data-snooze-item]");
-        assert.ok(snoozeItem, "Snooze is one first-level item (#583)");
-        await m.click(snoozeItem);
-        await m.flush();
         const preset = document.querySelector('[data-snooze-preset="evening"]');
-        assert.ok(preset, "data-snooze-preset=evening must open in nested panel");
-        await m.click(preset!);
+        assert.ok(preset, "data-snooze-preset=evening must open in menu");
+        await m.click(preset as HTMLElement);
         await m.flush();
         await inAct(async () => {
           await Promise.resolve();
@@ -666,32 +632,19 @@ describe("fakeCoder setPinned/setSnoozed honesty (round 44)", () => {
           "must record THIS preset's until, not a rewired constant",
         );
 
+        const header = snoozedToggle(m);
+        assert.ok(header, "thread lands on the Snoozed shelf");
+        assert.match(header!.textContent || "", /Snoozed \(1\)/);
+        await openSnoozedShelf(m);
         assert.ok(
-          m.query("[data-later-shelf]"),
-          "thread lands on the Later shelf",
+          m.query('[data-thread-card="t-snooze-mid"][data-snoozed="true"]'),
+          "snoozed row on the Snoozed shelf",
         );
-        const header = laterHeader(m);
-        assert.ok(header, "Later header");
-        assert.ok(
-          (header!.textContent || "").includes("Later · 1"),
-          `snoozed counts into Later, got: ${header!.textContent}`,
-        );
-        // Default expanded; click only if a stored collapse is in effect.
-        if (header!.getAttribute("aria-expanded") === "false") {
-          await m.click(header!);
-          await m.flush();
-        }
-        assert.ok(
-          m.query(
-            '[data-later-shelf] [data-thread-card="t-snooze-mid"][data-snoozed="true"]',
-          ),
-          "snoozed row at the top of the Later shelf",
-        );
-        const clearBtn = m.query(
-          '[data-snooze-clear][data-snooze-clear-btn="t-snooze-mid"], [data-snooze-clear-btn="t-snooze-mid"]',
-        ) ?? m.query("[data-snooze-clear]");
-        assert.ok(clearBtn, "data-snooze-clear must be present on shelf row");
-        await m.click(clearBtn!);
+        const wake =
+          m.query('[data-wake-btn="t-snooze-mid"]') ||
+          m.query("[data-snooze-clear]");
+        assert.ok(wake, "slim snoozed row wakes via data-wake-btn");
+        await m.click(wake!);
         await m.flush();
         await inAct(async () => {
           await Promise.resolve();
@@ -713,13 +666,13 @@ describe("fakeCoder setPinned/setSnoozed honesty (round 44)", () => {
         assert.equal(mid?.snoozedAt ?? null, null);
 
         assert.equal(
-          m.query("[data-later-shelf]") != null,
-          false,
-          "empty Later shelf unmounts after clear",
+          snoozedToggle(m),
+          null,
+          "empty Snoozed shelf unmounts after wake",
         );
         assert.ok(
           m.query('[data-thread-card="t-snooze-mid"]'),
-          "woken thread back in its project group",
+          "woken thread back in the active list",
         );
       } finally {
         m.unmount();
@@ -753,17 +706,18 @@ describe("fakeCoder setPinned/setSnoozed honesty (round 44)", () => {
       />,
     );
     try {
-      // #566: the pill is now a status dot; the wording lives in its title.
-      const pill = m.query("[data-woke]");
-      assert.ok(pill, "Woke dot must render on a timer-woken unread row");
-      assert.equal(pill!.getAttribute("data-status-dot"), "attention");
+      const pill =
+        m.query("[data-woke]") ||
+        m.query('[data-thread-card="woke-mid"] [data-status-label]');
+      assert.ok(pill, "Woke status must render on a timer-woken unread row");
       assert.equal(pill!.getAttribute("title"), "Woke from snooze");
+      assert.equal(m.query("[data-status-dot]"), null);
     } finally {
       m.unmount();
     }
   });
 
-  it("Settle on a snoozed shelf row unsnoozes and folds the thread", async () => {
+  it("Wake on a snoozed shelf row unsnoozes the thread back to active", async () => {
     const frozen = Date.now();
     const tOpen = thread({
       id: "t-open",
@@ -791,17 +745,11 @@ describe("fakeCoder setPinned/setSnoozed honesty (round 44)", () => {
     const m = await boot(fake);
     try {
       await m.flush();
-      assert.ok(m.query("[data-later-shelf]"), "Later shelf present");
-      const header = laterHeader(m);
-      assert.ok(header, "Later header");
-      // Default expanded; click only if a stored collapse is in effect.
-      if (header!.getAttribute("aria-expanded") === "false") {
-        await m.click(header!);
-        await m.flush();
-      }
-      const settleBtn = m.query('[data-snooze-settle-btn="t-settle-snooze"]');
-      assert.ok(settleBtn, "snoozed row offers Settle");
-      await m.click(settleBtn!);
+      assert.ok(snoozedToggle(m), "Snoozed shelf present");
+      await openSnoozedShelf(m);
+      const wake = m.query('[data-wake-btn="t-settle-snooze"]');
+      assert.ok(wake, "snoozed slim row offers wake");
+      await m.click(wake!);
       await m.flush();
       await inAct(async () => {
         await Promise.resolve();
@@ -811,16 +759,16 @@ describe("fakeCoder setPinned/setSnoozed honesty (round 44)", () => {
 
       const listed = await fake.api.threads.list();
       const mid = listed.find((x) => x.id === "t-settle-snooze");
-      assert.equal(mid?.settledOverride, "settled");
       assert.equal(mid?.snoozedUntil ?? null, null);
       assert.equal(mid?.snoozedAt ?? null, null);
-      // Same shelf, different row kind: snoozed row becomes a settled row.
       assert.equal(m.queryAll('[data-snoozed="true"]').length, 0);
       assert.ok(
-        m.query(
-          '[data-later-shelf] [data-thread-card="t-settle-snooze"][data-settled="true"]',
-        ),
-        "thread stays on the Later shelf as a settled row",
+        m.query('[data-thread-card="t-settle-snooze"]'),
+        "woken thread is back in the active list",
+      );
+      assert.equal(
+        m.query('[data-thread-card="t-settle-snooze"]')?.getAttribute("data-settled"),
+        null,
       );
     } finally {
       m.unmount();
@@ -889,4 +837,8 @@ describe("fakeCoder setPinned/setSnoozed honesty (round 44)", () => {
       m.unmount();
     }
   });
+});
+
+afterEach(() => {
+  dismissContextMenu();
 });

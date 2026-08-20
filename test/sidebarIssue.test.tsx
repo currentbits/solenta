@@ -83,23 +83,20 @@ describe("Sidebar issue form", () => {
       />,
     );
 
-    const openBtn = m.query('[data-issue-thread-btn="p1"]');
-    assert.ok(openBtn, "icon button must render when the optional prop is set");
-    assert.equal(
-      openBtn!.getAttribute("title"),
-      "New thread from GitHub issue",
-    );
-    assert.equal(m.query('[data-issue-form="p1"]'), null);
+    await m.click(m.query("[data-new-thread-caret]"));
+    const openBtn = m.query("[data-create-from-issue]");
+    assert.ok(openBtn, "from-issue item renders when the optional prop is set");
+    assert.equal(m.query("[data-issue-form]"), null);
 
     await m.click(openBtn);
-    const form = m.query('[data-issue-form="p1"]');
-    assert.ok(form, "clicking the icon opens the inline form");
+    const form = m.query("[data-issue-form]");
+    assert.ok(form, "clicking the item opens the inline form under the header");
 
-    const input = m.query('[data-issue-input="p1"]') as HTMLInputElement | null;
+    const input = m.query("[data-issue-input]") as HTMLInputElement | null;
     assert.ok(input, "form has an issue ref input");
     await m.type(input, "https://github.com/acme/ledger/issues/99");
 
-    const create = m.query('[data-issue-create="p1"]');
+    const create = m.query("[data-issue-create]");
     assert.ok(create, "form has a Create button");
     await m.click(create);
 
@@ -110,16 +107,16 @@ describe("Sidebar issue form", () => {
       ref: "https://github.com/acme/ledger/issues/99",
     });
 
-    const error = m.query('[data-issue-error="p1"]');
+    const error = m.query("[data-issue-error]");
     assert.ok(error, "error line must render");
     assert.equal(error!.textContent, "issue not found");
     assert.ok(
-      m.query('[data-issue-form="p1"]'),
+      m.query("[data-issue-form]"),
       "form stays open on error so the user can retry",
     );
 
-    await m.click(m.query('[data-issue-cancel="p1"]'));
-    assert.equal(m.query('[data-issue-form="p1"]'), null);
+    await m.click(m.query("[data-issue-cancel]"));
+    assert.equal(m.query("[data-issue-form]"), null);
 
     m.unmount();
   });
@@ -140,8 +137,9 @@ describe("Sidebar issue form", () => {
         searchThreads={async () => []}
       />,
     );
-    assert.equal(m.query('[data-issue-thread-btn="p1"]'), null);
-    assert.ok(m.byText("New thread"), "existing New thread button remains");
+    await m.click(m.query("[data-new-thread-caret]"));
+    assert.equal(m.query("[data-create-from-issue]"), null);
+    assert.ok(m.query("[data-new-thread]"), "existing New thread button remains");
     m.unmount();
   });
 });

@@ -14,6 +14,8 @@ export type ThreadActionMenuId =
   | "snooze"
   | `snooze:${string}`
   | "unsnooze"
+  | "pin"
+  | "unpin"
   | "fork"
   | `handoff:${string}`
   | "rename"
@@ -27,6 +29,8 @@ export function buildThreadActionMenuItems(input: {
   isSettled: boolean;
   canSettle: boolean;
   showSnooze: boolean;
+  /** Pin lives in the menu since the flat sidebar retired the hover pin. */
+  showPin?: boolean;
   showFork: boolean;
   showRename: boolean;
   showMute: boolean;
@@ -55,6 +59,15 @@ export function buildThreadActionMenuItems(input: {
         })),
       });
     }
+  }
+
+  if (input.showPin) {
+    const pinned = thread.pinnedAt != null;
+    items.push({
+      id: pinned ? "unpin" : "pin",
+      label: pinned ? "Unpin thread" : "Pin thread",
+      attrs: { "data-pin-item": thread.id },
+    });
   }
 
   if (input.showFork) {

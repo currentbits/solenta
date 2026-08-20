@@ -39,8 +39,9 @@ describe("edit project", () => {
     const fake = seed();
     const m = await boot(fake);
 
-    const editBtn = m.query('[data-project-edit="p1"]');
-    assert.ok(editBtn, "project row must expose an edit control");
+    await m.click(m.query("[data-scope-trigger]"));
+    const editBtn = m.query('[data-scope-edit="p1"]');
+    assert.ok(editBtn, "scope menu must expose an edit control");
     await m.click(editBtn);
 
     assert.ok(m.query("[data-edit-project]"), "edit click must open the modal");
@@ -77,7 +78,8 @@ describe("edit project", () => {
     const fake = seed();
     const m = await boot(fake);
 
-    await m.click(m.query('[data-project-edit="p1"]'));
+    await m.click(m.query("[data-scope-trigger]"));
+    await m.click(m.query('[data-scope-edit="p1"]'));
     await m.type(m.query("[data-edit-project-remote-host]"), "dev@box");
     await m.type(m.query("[data-edit-project-remote-path]"), "srv/app");
     await m.click(m.query("[data-edit-project-submit]"));
@@ -110,7 +112,8 @@ describe("edit project", () => {
     });
     const m = await boot(fake);
 
-    await m.click(m.query('[data-project-edit="p1"]'));
+    await m.click(m.query("[data-scope-trigger]"));
+    await m.click(m.query('[data-scope-edit="p1"]'));
     const box = m.query(
       "[data-edit-project-auto-dispatch]",
     ) as HTMLInputElement | null;

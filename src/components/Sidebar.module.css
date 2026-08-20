@@ -4,7 +4,7 @@
   flex-direction: column;
   height: 100%;
   background: var(--bg-elevated);
-  border-right: 1px solid var(--border);
+  border-right: 1px solid var(--border-soft);
   min-width: 0;
 }
 
@@ -17,9 +17,7 @@
 .header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 4px 12px 12px 16px;
+  padding: 4px 12px 8px 16px;
   flex-shrink: 0;
 }
 
@@ -28,31 +26,6 @@
   align-items: center;
   gap: 8px;
   min-width: 0;
-}
-
-.headerAdd {
-  width: 28px;
-  height: 28px;
-  border-radius: var(--radius-sm);
-  border: 1px solid transparent;
-  display: grid;
-  place-items: center;
-  color: var(--text-muted);
-  flex-shrink: 0;
-  transition:
-    background 0.12s ease,
-    color 0.12s ease,
-    border-color 0.12s ease;
-}
-
-.headerAdd:hover:not(:disabled) {
-  background: var(--card);
-  border-color: var(--border);
-  color: var(--text);
-}
-
-.headerAdd:disabled {
-  opacity: 0.35;
 }
 
 .brandMark {
@@ -64,18 +37,18 @@
 }
 
 .brandName {
-  font-size: 15px;
-  font-weight: 650;
+  font-size: 13px;
+  font-weight: 600;
   letter-spacing: -0.02em;
 }
 
 .brandChannel {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   padding: 1px 5px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   border: 1px solid color-mix(in srgb, currentColor 35%, transparent);
   opacity: 0.75;
 }
@@ -83,19 +56,27 @@
 .searchRow {
   display: flex;
   align-items: center;
+  gap: 4px;
+  margin: 0 8px 6px;
+  flex-shrink: 0;
+}
+
+.searchField {
+  display: flex;
+  align-items: center;
   gap: 8px;
-  margin: 0 12px 12px;
+  flex: 1;
+  min-width: 0;
   padding: 7px 10px;
   border-radius: var(--radius-sm);
   background: var(--card);
   border: 1px solid var(--border-soft);
-  flex-shrink: 0;
   transition: border-color 0.12s ease;
 }
 
-.searchRow:focus-within {
-  border-color: var(--blue-border);
-  box-shadow: 0 0 0 2px var(--blue-soft);
+.searchField:focus-within {
+  border-color: color-mix(in srgb, var(--blue) 45%, transparent);
+  box-shadow: var(--focus-ring);
 }
 
 .searchIcon {
@@ -112,142 +93,107 @@
   outline: none;
   background: transparent;
   color: var(--text);
+  font-size: 13px;
 }
 
 .searchInput::placeholder {
   color: var(--text-dim);
 }
 
+.searchCreate {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.scopeRow {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin: 0 8px 6px;
+  flex-shrink: 0;
+}
+
+.scopeMenuHost {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+}
+
+.scopeTrigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+}
+
+.scopeTrigger:hover {
+  background: var(--card-hover);
+}
+
+.scopeLabel {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scopeItemRow {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.scopeItem {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+}
+
+.scopeItem:hover {
+  background: var(--card-hover);
+}
+
 .viewNav {
   display: flex;
-  flex-direction: column;
+  align-items: center;
   gap: 2px;
   margin: 0 8px 8px;
   flex-shrink: 0;
 }
 
-.viewNavRow {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  height: 32px;
-  padding: 0 10px;
-  border-radius: var(--radius-sm);
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--text-muted);
-  font-size: 13px;
-  font-weight: 550;
-  text-align: left;
-  cursor: pointer;
-  transition:
-    background 0.12s ease,
-    color 0.12s ease;
-}
-
-.viewNavRow:hover {
-  background: var(--card);
-  color: var(--text);
-}
-
-.viewNavRow[data-active="true"] {
-  background: var(--card);
-  color: var(--text);
-  /* Left accent bar marks the active view without a border jump. */
-  box-shadow: inset 2px 0 0 0 var(--blue);
-}
-
-.viewNavIcon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  color: var(--text-dim);
-  line-height: 1;
-  flex-shrink: 0;
-}
-
-.viewNavRow:hover .viewNavIcon {
-  color: var(--text-muted);
-}
-
-.viewNavRow[data-active="true"] .viewNavIcon {
-  color: var(--blue);
-}
-
-.sectionHeaderRow {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  width: calc(100% - 16px);
-  margin: 0 8px 6px;
-  min-width: 0;
-}
-
-.sectionHeader {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.viewNavBtn {
+  display: grid;
+  place-items: center;
   flex: 1;
-  min-width: 0;
-  margin: 0;
-  padding: 8px 10px;
+  height: 28px;
   border-radius: var(--radius-sm);
   color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  text-align: left;
-  border: 0;
-  background: transparent;
-  cursor: pointer;
 }
 
-.sectionHeader:hover {
+.viewNavBtn:hover {
+  background: var(--card-hover);
+  color: var(--text);
+}
+
+.viewNavBtn[data-active="true"] {
   background: var(--card);
-  color: var(--text);
-}
-
-.sectionHeader:hover .chevron {
-  color: var(--text);
-}
-
-/* Primary collapse affordance: larger than body text, rotates on open. */
-.chevron {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  font-size: 14px;
-  line-height: 1;
-  flex-shrink: 0;
-  transition: transform 0.15s ease, color 0.12s ease;
-  color: var(--text-muted);
-}
-
-.chevron[data-open="true"] {
-  transform: rotate(90deg);
-  color: var(--text);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .chevron {
-    transition: none;
-  }
-
-  .waitingDot {
-    animation: none;
-  }
-}
-
-.count {
-  margin-left: auto;
-  font-variant-numeric: tabular-nums;
-  color: var(--text-dim);
-  font-weight: 500;
+  color: var(--blue);
 }
 
 .list {
@@ -257,38 +203,39 @@
   padding: 0 8px 8px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
 }
 
-/* t3 flatten (#566): a thread row is one line — dot + title + age. */
 .card {
   position: relative;
   display: flex;
   flex-direction: column;
   width: 100%;
+  min-height: 64px;
   padding: 7px 10px;
-  border-radius: var(--radius);
+  border-radius: var(--radius-sm);
   border: 1px solid transparent;
   background: transparent;
   text-align: left;
   color: inherit;
   transition:
     background 0.12s ease,
-    border-color 0.12s ease;
+    opacity 0.12s ease;
 }
 
 .card:hover {
-  background: var(--card);
+  background: var(--card-hover);
 }
 
 .card[data-active="true"] {
   background: var(--card);
-  border-color: var(--border);
-  /* Subtle fill + blue left edge: selected reads at a glance. */
-  box-shadow: inset 2px 0 0 0 var(--blue);
 }
 
-/* Fork/worker rows attach under the thread that started them. */
+.card[data-multi="true"],
+.slimRow[data-multi="true"] {
+  background: var(--blue-soft);
+}
+
 .card[data-nested="true"] {
   width: calc(100% - 14px);
   margin-left: 14px;
@@ -301,79 +248,27 @@
   top: -6px;
   bottom: 50%;
   width: 8px;
-  border-left: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
-  border-bottom-left-radius: 6px;
+  border-left: 1px solid var(--border-soft);
+  border-bottom: 1px solid var(--border-soft);
+  border-bottom-left-radius: var(--radius-sm);
   pointer-events: none;
 }
 
-/* Live subagent rows attach under the thread that spawned them (issue #542),
-   mirroring the fork/worker nested-card indent + elbow above. */
-.subagentList {
-  list-style: none;
-  margin: 0 0 4px;
-  padding: 0;
+.card[data-recede="true"] {
+  opacity: 0.7;
 }
 
-.subagentRow {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: calc(100% - 14px);
-  margin-left: 14px;
-  padding: 2px 8px;
-  border: 0;
-  border-radius: 6px;
-  background: none;
-  font: inherit;
-  font-size: 11px;
-  color: var(--text-dim);
-  text-align: left;
-  cursor: pointer;
+.card[data-recede="true"]:hover {
+  opacity: 1;
 }
 
-.subagentRow::before {
-  content: "";
-  position: absolute;
-  left: -9px;
-  top: -4px;
-  bottom: 50%;
-  width: 8px;
-  border-left: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
-  border-bottom-left-radius: 6px;
-  pointer-events: none;
-}
-
-/* Continuous rail: every row but the last extends the vertical line past its
-   own elbow, so a run of subagents reads as one tree, not dashes. */
-.subagentList > li:not(:last-child) .subagentRow::after {
-  content: "";
-  position: absolute;
-  left: -9px;
-  top: 50%;
-  bottom: -4px;
-  border-left: 1px solid var(--border);
-  pointer-events: none;
-}
-
-.subagentRow:hover {
-  background: var(--card);
+.card[data-unread="true"] .cardTitle {
+  font-weight: 600;
   color: var(--text);
 }
 
-.subagentTitle {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-/* Multi-select highlight (distinct from active). */
-.card[data-multi="true"],
-.settledRow[data-multi="true"] {
-  background: rgba(59, 130, 246, 0.14);
-  border-color: rgba(59, 130, 246, 0.35);
+.card[data-archived="true"] {
+  opacity: 0.55;
 }
 
 .indexHint {
@@ -385,15 +280,716 @@
   min-width: 16px;
   height: 16px;
   padding: 0 4px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--blue);
-  color: #fff;
-  font-size: 10px;
-  font-weight: 650;
-  font-family: var(--mono);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
   display: grid;
   place-items: center;
   pointer-events: none;
+}
+
+.cardSelect {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  margin: 0;
+  border: none;
+  border-radius: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+
+.cardSelect:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
+.cardBody {
+  position: relative;
+  z-index: 1;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.cardLine1,
+.cardLine2,
+.cardLine3 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.cardSlug {
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.pinFlag {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-dim);
+  line-height: 1;
+}
+
+.cardSlot {
+  position: relative;
+  margin-left: auto;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-height: 18px;
+  min-width: 2rem;
+}
+
+.cardStatus {
+  font-size: 11px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--text-dim);
+  transition: opacity 0.12s ease;
+}
+
+.statusLabel {
+  font-size: 11px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.statusLabel[data-tone="working"] {
+  color: var(--blue);
+}
+
+.statusLabel[data-tone="attention"] {
+  color: var(--amber);
+}
+
+.statusLabel[data-tone="failed"] {
+  color: var(--danger);
+}
+
+.statusLabel[data-tone="done"] {
+  color: var(--green);
+}
+
+.statusLabel[data-dim="true"] {
+  opacity: 0.75;
+}
+
+.age {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.cardActions {
+  position: absolute;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+
+.card:hover:has(.cardActions) .cardStatus,
+.card:has(:focus-visible) .cardStatus,
+.card[data-actions-open="true"] .cardStatus {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.card:hover .cardActions,
+.card:has(:focus-visible) .cardActions,
+.card[data-actions-open="true"] .cardActions {
+  position: static;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.iconBtn {
+  pointer-events: auto;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+}
+
+.iconBtn:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--card-hover);
+}
+
+.iconBtn:disabled {
+  opacity: 0.4;
+}
+
+.caretBtn {
+  width: 16px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+}
+
+.caretBtn:hover {
+  color: var(--text);
+  background: var(--card-hover);
+}
+
+.menuWrap {
+  position: relative;
+  pointer-events: auto;
+  display: inline-flex;
+}
+
+.menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 8;
+  min-width: 176px;
+  margin-top: 4px;
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-soft);
+  background: var(--card);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.menuLeft {
+  right: auto;
+  left: 0;
+}
+
+.menuItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 13px;
+}
+
+.menuItem:hover {
+  background: var(--card-hover);
+}
+
+.menuItem:disabled {
+  opacity: 0.45;
+  color: var(--text-dim);
+}
+
+.menuItem:disabled:hover {
+  background: transparent;
+}
+
+.cardTitle {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.35;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1;
+}
+
+.titleInput {
+  pointer-events: auto;
+  position: relative;
+  z-index: 2;
+  width: 100%;
+  min-width: 0;
+  flex: 1;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.35;
+  color: var(--text);
+  background: var(--card);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  padding: 0 4px;
+  outline: none;
+}
+
+.inMessagesTag {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.cardBranch {
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1;
+}
+
+.cardBranchSpacer {
+  flex: 1;
+  min-width: 0;
+}
+
+.prLink {
+  pointer-events: auto;
+  flex-shrink: 0;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--blue);
+  text-decoration: none;
+}
+
+.prLink:hover {
+  text-decoration: underline;
+}
+
+.forecast {
+  pointer-events: auto;
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.forecast[data-conflict-forecast="conflict"] {
+  color: var(--danger);
+}
+
+.forecast[data-conflict-forecast="overlap"] {
+  color: var(--amber);
+}
+
+.cardProvider {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.waitRow {
+  position: relative;
+  z-index: 1;
+  pointer-events: none;
+  font-size: 11px;
+  color: var(--text-dim);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.waitRow[data-attention="true"] {
+  color: var(--amber);
+}
+
+.conflictWrap {
+  position: relative;
+  flex-shrink: 0;
+  pointer-events: auto;
+}
+
+.card:has(.conflictWrap:hover),
+.card:has(.conflictWrap:focus-within) {
+  z-index: 6;
+}
+
+.conflictTip {
+  display: none;
+  position: absolute;
+  right: 0;
+  top: calc(100% + 5px);
+  z-index: 8;
+  min-width: 160px;
+  max-width: 260px;
+  padding: 7px 9px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-soft);
+  background: var(--card);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.4;
+  white-space: normal;
+}
+
+.conflictWrap:hover .conflictTip,
+.conflictWrap:focus-within .conflictTip {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.conflictTipLine {
+  display: block;
+}
+
+.pinnedDivider {
+  height: 1px;
+  margin: 6px 10px;
+  background: var(--border-soft);
+  flex-shrink: 0;
+}
+
+.shelf {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 8px;
+}
+
+.shelfHeaderRow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.shelfToggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  flex: 1;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  text-align: left;
+}
+
+.shelfClear {
+  flex: none;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.shelfClear:hover {
+  color: var(--text);
+  background: var(--card-hover);
+}
+
+.shelfToggle:hover {
+  background: var(--card-hover);
+}
+
+.shelfLabelSnoozed {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--blue);
+  flex-shrink: 0;
+}
+
+.shelfLabelSettled {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.shelfRuleSnoozed,
+.shelfRuleSettled {
+  flex: 1;
+  height: 1px;
+}
+
+.shelfRuleSnoozed {
+  background: color-mix(in srgb, var(--blue) 20%, transparent);
+}
+
+.shelfRuleSettled {
+  background: var(--border-soft);
+}
+
+.shelfChevron {
+  display: inline-flex;
+  color: inherit;
+  transition: transform 0.15s ease;
+}
+
+.shelfToggle .shelfChevron {
+  color: var(--text-dim);
+}
+
+.shelfToggle[aria-expanded="true"] .shelfChevron,
+.shelfChevron[data-open="true"] {
+  transform: rotate(180deg);
+}
+
+.slimRow {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 32px;
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
+  opacity: 0.65;
+  color: var(--text-muted);
+  transition:
+    opacity 0.12s ease,
+    background 0.12s ease;
+}
+
+.slimRow:hover,
+.slimRow:focus-within {
+  opacity: 1;
+  background: var(--card-hover);
+}
+
+.slimRow[data-active="true"] {
+  opacity: 1;
+  background: var(--card);
+  color: var(--text);
+}
+
+.slimRow[data-archived="true"] {
+  opacity: 0.4;
+}
+
+.slimRow[data-archived="true"]:hover,
+.slimRow[data-archived="true"]:focus-within,
+.slimRow[data-archived="true"][data-active="true"] {
+  opacity: 1;
+}
+
+.slimBody {
+  position: relative;
+  z-index: 1;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.slimTitle {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1;
+}
+
+.slimRow[data-active="true"] .slimTitle {
+  color: var(--text);
+}
+
+.slimSlug {
+  font-size: 11px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+  max-width: 12ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.slimSlot {
+  position: relative;
+  margin-left: auto;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 2rem;
+}
+
+.slimAge {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  transition: opacity 0.12s ease;
+}
+
+.slimRow[data-snoozed="true"] .slimAge {
+  color: var(--blue);
+}
+
+.slimAction {
+  position: absolute;
+  right: 0;
+  pointer-events: auto;
+  font-size: 11px;
+  color: var(--text-muted);
+  opacity: 0;
+  padding: 2px 4px;
+  border-radius: var(--radius-sm);
+}
+
+.slimRow:hover .slimSlot:has(.slimAction) .slimAge,
+.slimRow:has(:focus-visible) .slimSlot:has(.slimAction) .slimAge {
+  opacity: 0;
+}
+
+.slimRow:hover .slimAction,
+.slimRow:has(:focus-visible) .slimAction {
+  opacity: 1;
+}
+
+.slimAction:hover {
+  color: var(--text);
+}
+
+.showMore {
+  align-self: flex-start;
+  margin: 2px 8px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 500;
+  text-align: left;
+}
+
+.showMore:hover {
+  color: var(--text-muted);
+  background: var(--card-hover);
+}
+
+.addProjectRow {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px dashed var(--border-soft);
+  color: var(--text-muted);
+  font-weight: 500;
+  font-size: 13px;
+  text-align: center;
+  background: transparent;
+}
+
+.addProjectRow:hover {
+  color: var(--text);
+  background: var(--card-hover);
+  border-style: solid;
+}
+
+.emptySearch,
+.searchHint {
+  margin: 12px 8px;
+  padding: 8px;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.searchHint {
+  margin: 8px;
+  font-size: 11px;
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.reveal {
+  animation: revealFlash 1.2s ease-out;
+}
+
+@keyframes revealFlash {
+  from {
+    background: color-mix(in srgb, var(--blue) 18%, transparent);
+  }
+  to {
+    background: transparent;
+  }
+}
+
+.issueForm {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 8px 8px;
+  padding: 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-soft);
+  background: var(--card);
+  flex-shrink: 0;
+}
+
+.issueInput {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 5px 7px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-soft);
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.issueError {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--danger);
+}
+
+.issueActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.issueCreate,
+.issueCancel {
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.issueCreate {
+  border: 1px solid var(--border-soft);
+  background: var(--card-hover);
+  color: var(--text);
+}
+
+.issueCancel {
+  color: var(--text-dim);
+}
+
+.issueCancel:hover:not(:disabled) {
+  color: var(--text);
 }
 
 .batchBar {
@@ -408,7 +1004,7 @@
 }
 
 .batchCount {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--text);
 }
@@ -426,739 +1022,10 @@
   border: 1px solid var(--border-soft);
   background: var(--card);
   color: var(--text);
-  cursor: pointer;
 }
 
 .batchBtn:hover {
-  border-color: var(--border);
-}
-
-/*
- * Full-card select overlay: primary tab stop for selecting the thread.
- * Content lives in .cardBody (pointer-events: none) so clicks on title,
- * meta, badge all hit this button. The PR <a> and card actions re-enable
- * pointer-events so they stay separately focusable without nesting.
- */
-.cardSelect {
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  width: 100%;
-  height: 100%;
-  padding: 0;
-  margin: 0;
-  border: none;
-  border-radius: inherit;
-  background: transparent;
-  cursor: pointer;
-}
-
-.cardSelect:focus-visible {
-  outline: 2px solid var(--blue);
-  outline-offset: -2px;
-}
-
-.cardBody {
-  position: relative;
-  z-index: 1;
-  pointer-events: none;
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  min-width: 0;
-}
-
-/*
- * The whole status vocabulary, one dot (#566). Words live in the title
- * tooltip (pointer-events re-enabled — cardBody is none) and in the select
- * button's aria-label.
- */
-.statusDot {
-  flex-shrink: 0;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  pointer-events: auto;
-}
-
-.statusDot[data-status-dot="working"] {
-  background: var(--blue);
-  animation: waitingPulse 2.4s ease-in-out infinite;
-}
-
-.statusDot[data-status-dot="attention"] {
-  background: var(--amber);
-}
-
-.statusDot[data-status-dot="failed"] {
-  background: var(--danger);
-}
-
-.statusDot[data-status-dot="queued"] {
-  background: var(--text-dim);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .statusDot[data-status-dot="working"] {
-    animation: none;
-  }
-}
-
-/* "Waiting on 2 workers · 3m" (issue #42): slim second line, present only
-   while delegation is live. Amber when a worker is blocked on the user. */
-.waitRow {
-  position: relative;
-  z-index: 1;
-  pointer-events: none;
-  margin: 2px 0 0 15px;
-  font-size: 10px;
-  font-weight: 550;
-  color: var(--text-dim);
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.waitRow[data-attention="true"] {
-  color: var(--amber);
-}
-
-/*
- * Hover/focus settle control (t3 settle-on-hover). Sibling of cardBody so it
- * is not nested in the select button; pointer-events auto like .prLink.
- */
-.cardActions {
-  position: absolute;
-  top: 50%;
-  transform: translateY(-50%);
-  right: 4px;
-  z-index: 2;
-  display: flex;
-  align-items: center;
-  gap: 1px;
-  padding: 2px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  background: var(--bg-elevated);
-  box-shadow: var(--shadow-pop);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.1s ease;
-}
-
-.card:hover .cardActions,
-.card:focus-within .cardActions,
-.card[data-menu-open="true"] .cardActions {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-/* The timestamp sits under the action pill; hide it while the pill is up. */
-.card:hover .age,
-.card:focus-within .age,
-.card[data-menu-open="true"] .age {
-  opacity: 0;
-}
-
-.settleBtn {
-  pointer-events: auto;
-  min-width: 22px;
-  width: auto;
-  height: 22px;
-  display: grid;
-  place-items: center;
-  border-radius: 4px;
-  border: none;
-  background: transparent;
-  color: var(--text-muted);
-  font-size: 11px;
-  line-height: 1;
-  cursor: pointer;
-  padding: 0;
-}
-
-.settleBtn:hover:not(:disabled) {
-  color: var(--text);
   background: var(--card-hover);
-}
-
-.settleBtn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.settleBtn:focus-visible {
-  outline: 2px solid var(--blue);
-  outline-offset: 1px;
-}
-
-.snoozeWrap {
-  position: relative;
-  pointer-events: auto;
-  /* Inside the card-action pill: keep the fork + hand-off pair on one line;
-     as a block flex item it shrank to one button wide and stacked them. */
-  display: inline-flex;
-  gap: 1px;
-  flex-shrink: 0;
-}
-
-/* No pill child may shrink: shrink-to-fit sizing of the absolute pill
-   otherwise squeezes the last items onto a second row. */
-.cardActions > * {
-  flex-shrink: 0;
-}
-
-.snoozeMenu {
-  position: absolute;
-  top: 100%;
-  right: 0;
-  z-index: 10;
-  min-width: 228px;
-  max-width: calc(var(--sidebar-width) - 24px);
-  margin-top: 4px;
-  padding: 4px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  /* --card is a step above the sidebar's --bg-elevated, so the panel
-     reads as a surface instead of a hole when it overlaps the list. */
-  background: var(--card);
-  box-shadow: var(--shadow-pop);
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  max-height: min(420px, calc(100vh - 80px));
-  overflow-y: auto;
-}
-
-.snoozeMenu[data-placement="up"] {
-  top: auto;
-  bottom: 100%;
-  margin-top: 0;
-  margin-bottom: 4px;
-}
-
-/* Left-anchored variant: the group-header create menu sits at the sidebar's
-   left edge, so the default right-aligned menu would extend past the window. */
-.snoozeMenuLeft {
-  right: auto;
-  left: 0;
-}
-
-/* #583: presets live in a drill-in panel, not a flyout. .list overflow-y
-   computes overflow-x to auto, so a left/right submenu would clip. */
-.snoozeSubmenu {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.snoozeBack {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.snoozeCaret {
-  color: var(--text-dim);
-  font-size: 13px;
-  line-height: 1;
-  flex-shrink: 0;
-}
-
-.snoozeMenuSep {
-  height: 1px;
-  margin: 4px 6px;
-  background: var(--border);
-}
-
-.snoozeMenuItem {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  width: 100%;
-  text-align: left;
-  padding: 6px 8px;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text);
-  font-size: 12px;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.snoozeWhen {
-  color: var(--text-dim);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  flex-shrink: 0;
-}
-
-.snoozeMenuItem:hover {
-  background: var(--card-hover);
-}
-
-.snoozeMenuItem:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-  color: var(--text-dim);
-}
-
-.snoozeMenuItem:disabled:hover {
-  background: transparent;
-}
-
-/* Global settled tail (round 40, t3-style): one shelf at the bottom. */
-.settledTail {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin-top: 8px;
-  padding-top: 6px;
-  border-top: 1px solid var(--border-soft);
-}
-
-.settledTailBar {
-  display: flex;
-  align-items: center;
-}
-
-.settledTailBar > .settledTailHeader {
-  flex: 1;
-  min-width: 0;
-}
-
-/* Hidden at rest like card hover actions; the bar reveals it. */
-.settledClear {
-  margin-right: 4px;
-  padding: 4px 8px;
-  border-radius: var(--radius-sm);
-  border: none;
-  background: transparent;
-  color: var(--text-dim);
-  font-size: 11px;
-  font-weight: 550;
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.1s ease;
-}
-
-.settledTailBar:hover .settledClear,
-.settledTailBar:focus-within .settledClear {
-  opacity: 1;
-}
-
-.settledClear:hover {
-  color: var(--text-muted);
-  background: var(--card);
-}
-
-.settledTailHeader {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  margin: 0;
-  padding: 6px 8px;
-  border-radius: var(--radius-sm);
-  border: none;
-  background: transparent;
-  color: var(--text-dim);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
-  text-align: left;
-  cursor: pointer;
-}
-
-.settledTailHeader:hover {
-  color: var(--text-muted);
-  background: var(--card);
-}
-
-/*
- * Slim settled row: title + slug + wrap-up age. Dimmed at rest so the
- * shelf recedes; hover restores contrast. No branch/status chrome.
- */
-.settledRow {
-  position: relative;
-  display: flex;
-  align-items: center;
-  width: 100%;
-  min-height: 28px;
-  padding: 3px 8px;
-  border-radius: var(--radius-sm);
-  border: 1px solid transparent;
-  opacity: 0.6;
-  color: var(--text-muted);
-  transition:
-    opacity 0.12s ease,
-    background 0.12s ease;
-}
-
-.settledRow:hover,
-.settledRow:focus-within,
-.settledRow[data-archived="true"] {
-  opacity: 0.55;
-}
-
-.pinFlag {
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  color: var(--text-dim);
-  line-height: 1;
-}
-
-.settledRow[data-active="true"] {
-  opacity: 1;
-  background: var(--card);
-  color: var(--text);
-}
-
-.settledRow[data-active="true"] {
-  border-color: var(--border);
-  box-shadow: inset 2px 0 0 0 var(--blue);
-}
-
-.settledBody {
-  position: relative;
-  z-index: 1;
-  pointer-events: none;
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  min-width: 0;
-  flex: 1;
-}
-
-.settledTitle {
-  font-size: 12px;
-  font-weight: 550;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
-  flex: 1 1 auto;
-}
-
-.settledSlug {
-  font-size: 10px;
-  font-family: var(--mono);
-  color: var(--text-dim);
-  flex-shrink: 0;
-  max-width: 12ch;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.settledAge {
-  font-size: 10px;
-  color: var(--text-dim);
-  flex-shrink: 0;
-  font-variant-numeric: tabular-nums;
-}
-
-.settledShowMore {
-  align-self: flex-start;
-  margin: 2px 8px;
-  padding: 4px 8px;
-  border-radius: var(--radius-sm);
-  border: none;
-  background: transparent;
-  color: var(--text-dim);
-  font-size: 11px;
-  font-weight: 550;
-  text-align: left;
-  cursor: pointer;
-}
-
-.settledShowMore:hover {
-  color: var(--text-muted);
-  background: var(--card);
-}
-
-.repo {
-  font-size: 11px;
-  color: var(--text-muted);
-  font-family: var(--mono);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.age {
-  font-size: 11px;
-  color: var(--text-dim);
-  flex-shrink: 0;
-  transition: opacity 0.1s ease;
-}
-
-/* Read = quiet, unread = bright + heavy (mail pattern; the old blue dot is
-   gone). Active always bright: you are looking at it. */
-.cardTitle {
-  font-size: 13px;
-  font-weight: 450;
-  line-height: 1.4;
-  color: var(--text-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  min-width: 0;
-  flex: 1;
-}
-
-.card[data-unread="true"] .cardTitle {
-  font-weight: 600;
-  color: var(--text);
-}
-
-.card[data-active="true"] .cardTitle {
-  color: var(--text);
-}
-
-.titleInput {
-  pointer-events: auto;
-  position: relative;
-  z-index: 2;
-  width: 100%;
-  min-width: 0;
-  flex: 1;
-  font: inherit;
-  font-size: 13px;
-  font-weight: 550;
-  line-height: 1.35;
-  color: var(--text);
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 0 4px;
-  outline: none;
-}
-
-/*
- * Unread indicator (round 43). Sits on the title row / settled body — clear of
- * the status badge (cardMeta right) and PR chip (branchRow). Color only is
- * never enough for a11y: pair with .srOnly "unread" and aria-label suffix.
- */
-.unreadDot {
-  flex-shrink: 0;
-  align-self: center;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--blue);
-  box-shadow: 0 0 0 1px var(--blue-soft);
-}
-
-.srOnly {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
-}
-
-.card[data-archived="true"] {
-  opacity: 0.55;
-}
-
-.card[data-archived="true"] .cardTitle {
-  color: var(--text-muted);
-}
-
-.badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  flex-shrink: 0;
-  padding: 2px 7px;
-  border-radius: var(--radius-pill);
-  font-size: 10px;
-  font-weight: 600;
-  line-height: 1.3;
-}
-
-.waitingDot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: currentColor;
-  animation: waitingPulse 1.2s ease-in-out infinite;
-}
-
-@keyframes waitingPulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.3;
-  }
-}
-
-.badgeConflict {
-  color: var(--danger);
-  background: rgba(248, 113, 113, 0.12);
-  border: 1px solid rgba(248, 113, 113, 0.35);
-}
-
-.badgeOverlap {
-  color: var(--amber);
-  background: rgba(251, 191, 36, 0.12);
-  border: 1px solid rgba(251, 191, 36, 0.35);
-}
-
-/*
- * #516: cardBody is pointer-events:none so a native title never fires.
- * Re-enable hover/focus on the wrap and paint a real tip (not title=).
- *
- * The tip hangs below the pill onto the next card. Cards are position:relative
- * with a transparent fill, and cardBody is its own stacking context (z-index 1),
- * so a z-index on the tip cannot escape the next sibling. Raise the open card.
- */
-.card:has(.conflictWrap:hover),
-.card:has(.conflictWrap:focus-within) {
-  z-index: 6;
-}
-
-.conflictWrap {
-  position: relative;
-  flex-shrink: 0;
-  pointer-events: auto;
-}
-
-.conflictWrap .badge:focus-visible {
-  outline: 2px solid var(--blue);
-  outline-offset: 1px;
-}
-
-.conflictTip {
-  display: none;
-  position: absolute;
-  right: 0;
-  top: calc(100% + 5px);
-  z-index: 8;
-  min-width: 160px;
-  max-width: 260px;
-  padding: 7px 9px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  background: var(--card);
-  box-shadow: var(--shadow-pop);
-  color: var(--text);
-  font-size: 11px;
-  font-weight: 550;
-  line-height: 1.4;
-  white-space: normal;
-}
-
-.conflictWrap:hover .conflictTip,
-.conflictWrap:focus-within .conflictTip {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.conflictTipLine {
-  display: block;
-}
-
-.group {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin-bottom: 6px;
-}
-
-/*
- * #582: the … menu hangs onto later rows. Sticky group headers are
- * z-index 2, and later cards paint after this one, so a z-index on the
- * menu cannot escape the next sibling — same trap as the conflict tip.
- * Raise the open card and its group while the menu is up.
- */
-.card[data-menu-open="true"],
-.group:has([data-snooze-menu]),
-.group:has([data-snooze-submenu]),
-.group:has([data-create-menu]) {
-  z-index: 8;
-}
-
-/* Collapse control + remove control as siblings (not nested).
-   Sticky: the project context stays visible while scrolling long groups. */
-.groupHeaderRow {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  min-width: 0;
-  padding-right: 4px;
-  background: var(--bg-elevated);
-}
-
-.groupHeader {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 6px 6px 8px;
-  min-width: 0;
-  flex: 1;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: none;
-  text-align: left;
-  cursor: pointer;
-}
-
-.groupHeader:hover {
-  background: var(--card);
-}
-
-.groupHeader:hover .groupSlug {
-  color: var(--text);
-}
-
-.groupHeader:hover .chevron {
-  color: var(--text);
-}
-
-.groupRemove {
-  flex-shrink: 0;
-  width: 22px;
-  height: 22px;
-  margin-top: 4px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-dim);
-  display: grid;
-  place-items: center;
-  line-height: 1;
-  cursor: pointer;
-  opacity: 0;
-}
-
-.groupHeaderRow:hover .groupRemove,
-.groupHeaderRow:focus-within .groupRemove,
-.groupRemove:focus-visible {
-  opacity: 1;
-}
-
-.groupRemove:hover,
-.groupRemove:focus-visible {
-  color: #fca5a5;
-  background: rgba(248, 113, 113, 0.12);
 }
 
 .removeConfirmOverlay {
@@ -1169,17 +1036,16 @@
   align-items: center;
   justify-content: center;
   padding: 16px;
-  background: rgba(0, 0, 0, 0.45);
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
 }
 
 .removeConfirm {
   width: 100%;
   max-width: 280px;
   padding: 14px 14px 12px;
-  border-radius: var(--radius);
-  border: 1px solid var(--border);
-  background: var(--panel);
-  box-shadow: var(--shadow-pop);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-soft);
+  background: var(--card);
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -1188,7 +1054,7 @@
 .removeConfirmTitle {
   margin: 0;
   font-size: 13px;
-  font-weight: 650;
+  font-weight: 600;
   color: var(--text);
   line-height: 1.35;
   word-break: break-word;
@@ -1197,7 +1063,6 @@
 .removeConfirmMeta {
   margin: 0;
   font-size: 11px;
-  font-family: var(--mono);
   color: var(--text-dim);
   line-height: 1.4;
   word-break: break-all;
@@ -1205,7 +1070,7 @@
 
 .removeConfirmBody {
   margin: 0;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.45;
   color: var(--text-muted);
 }
@@ -1221,23 +1086,21 @@
   flex: 1;
   padding: 7px 10px;
   border-radius: var(--radius-sm);
-  font-size: 12px;
-  font-weight: 550;
-  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
 }
 
 .removeConfirmDanger {
-  border: 1px solid rgba(248, 113, 113, 0.45);
-  background: rgba(248, 113, 113, 0.14);
-  color: #fca5a5;
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger);
 }
 
 .removeConfirmDanger:hover {
-  background: rgba(248, 113, 113, 0.22);
+  background: color-mix(in srgb, var(--danger) 22%, transparent);
 }
 
 .removeConfirmCancel {
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-soft);
   background: var(--card);
   color: var(--text-muted);
 }
@@ -1246,235 +1109,9 @@
   color: var(--text);
 }
 
-.groupSlug {
-  font-size: 11px;
-  font-weight: 600;
-  font-family: var(--mono);
-  color: var(--text-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
-}
-
-.groupCount {
-  margin-left: auto;
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  color: var(--text-dim);
-  font-weight: 500;
-  flex-shrink: 0;
-}
-
-.emptyGroup {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 6px 10px 8px;
-}
-
-.emptyThreads {
-  font-size: 12px;
-  color: var(--text-dim);
-}
-
-.groupThreadActions {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  align-self: flex-start;
-  margin: 0 8px 2px;
-}
-
-.emptyGroup .groupThreadActions {
-  margin: 0;
-  flex-shrink: 0;
-}
-
-.groupNewThread {
-  padding: 4px 8px;
-  border-radius: var(--radius-sm);
-  border: none;
-  background: transparent;
-  color: var(--text-dim);
-  font-size: 11px;
-  font-weight: 550;
-  text-align: left;
-}
-
-.groupNewThread:hover {
-  color: var(--text);
-  background: var(--card);
-}
-
-.groupIssueBtn {
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-dim);
-  cursor: pointer;
-}
-
-.groupIssueBtn:hover {
-  color: var(--text);
-  background: var(--card);
-}
-
-.groupIssueForm {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin: 2px 8px 8px;
-  padding: 8px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  background: var(--card);
-}
-
-.emptyGroup + .groupIssueForm,
-.emptyGroup .groupIssueForm {
-  margin-left: 10px;
-  margin-right: 10px;
-}
-
-.groupIssueInput {
-  width: 100%;
-  box-sizing: border-box;
-  padding: 5px 7px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  background: var(--panel);
-  color: var(--text);
-  font-size: 12px;
-}
-
-.groupIssueInput:disabled {
-  opacity: 0.7;
-}
-
-.groupIssueError {
-  margin: 0;
-  font-size: 11px;
-  line-height: 1.35;
-  color: #fca5a5;
-}
-
-.groupIssueActions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.groupIssueCreate,
-.groupIssueCancel {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 4px 8px;
-  border-radius: var(--radius-sm);
-  font-size: 11px;
-  font-weight: 550;
-  cursor: pointer;
-}
-
-.groupIssueCreate {
-  border: 1px solid var(--border);
-  background: var(--panel);
-  color: var(--text);
-}
-
-.groupIssueCreate:disabled {
-  opacity: 0.55;
-  cursor: default;
-}
-
-.groupIssueCancel {
-  border: none;
-  background: transparent;
-  color: var(--text-dim);
-}
-
-.groupIssueCancel:hover:not(:disabled) {
-  color: var(--text);
-}
-
-.groupIssueCancel:disabled {
-  opacity: 0.55;
-  cursor: default;
-}
-
-.addProjectRow {
-  width: 100%;
-  padding: 10px 12px;
-  border-radius: var(--radius);
-  border: 1px dashed var(--border);
-  color: var(--text-muted);
-  font-weight: 550;
-  text-align: center;
-  background: transparent;
-}
-
-.addProjectRow:hover {
-  color: var(--text);
-  background: var(--card);
-  border-style: solid;
-}
-
-.emptySearch {
-  margin: 12px 8px;
-  padding: 8px;
-  text-align: center;
-  color: var(--text-dim);
-  font-size: 13px;
-}
-
-.searchHint {
-  margin: 8px 8px 4px;
-  padding: 4px 8px;
-  text-align: center;
-  color: var(--text-dim);
-  font-size: 11px;
-}
-
-.inMessagesTag {
-  display: inline-flex;
-  align-items: center;
-  padding: 1px 5px;
-  border-radius: var(--radius-pill);
-  border: 1px solid var(--border-soft);
-  background: rgba(255, 255, 255, 0.03);
-  color: var(--text-muted);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.01em;
-}
-
-/* New-thread reveal (t3): one accent-tinted flash that fades out. The class
-   is added imperatively on the freshly created row; the animation ending
-   transparent is what makes it temporary. */
-.reveal {
-  animation: revealFlash 1.2s ease-out;
-}
-
-@keyframes revealFlash {
-  from {
-    background: rgba(59, 130, 246, 0.18);
-  }
-  to {
-    background: transparent;
-  }
-}
-
 .footer {
   flex-shrink: 0;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--border-soft);
   padding: 8px;
   display: flex;
   flex-direction: column;
@@ -1488,10 +1125,9 @@
   margin-bottom: 8px;
   padding: 8px 10px;
   border-radius: var(--radius-sm);
-  border: 1px solid rgba(248, 113, 113, 0.35);
-  background: rgba(248, 113, 113, 0.12);
-  color: #fca5a5;
-  font-size: 12px;
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--danger);
+  font-size: 13px;
   line-height: 1.4;
 }
 
@@ -1506,35 +1142,12 @@
   height: 20px;
   display: grid;
   place-items: center;
-  border-radius: 4px;
-  color: #fca5a5;
-  font-size: 14px;
-  line-height: 1;
-  opacity: 0.85;
+  border-radius: var(--radius-sm);
+  color: var(--danger);
 }
 
 .errorDismiss:hover {
-  opacity: 1;
-  background: rgba(248, 113, 113, 0.18);
-}
-
-.spendMeter {
-  margin-bottom: 4px;
-  padding: 4px 10px;
-  font-size: 11px;
-  font-weight: 550;
-  font-family: var(--mono);
-  font-variant-numeric: tabular-nums;
-  color: var(--text-muted);
-  letter-spacing: 0.01em;
-}
-
-.spendMeter[data-tone="warn"] {
-  color: var(--amber);
-}
-
-.spendMeter[data-tone="over"] {
-  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 18%, transparent);
 }
 
 .footerRow {
@@ -1553,15 +1166,13 @@
   padding: 0 10px;
   border-radius: var(--radius-sm);
   color: var(--text-muted);
+  font-size: 13px;
   font-weight: 500;
   text-align: left;
-  transition:
-    background 0.12s ease,
-    color 0.12s ease;
 }
 
 .settings:hover {
-  background: var(--card);
+  background: var(--card-hover);
   color: var(--text);
 }
 
@@ -1584,20 +1195,36 @@
   width: 32px;
   height: 32px;
   border-radius: var(--radius-sm);
-  border: 1px solid transparent;
   display: grid;
   place-items: center;
   color: var(--text-muted);
-  line-height: 1;
-  flex-shrink: 0;
-  transition:
-    background 0.12s ease,
-    color 0.12s ease,
-    border-color 0.12s ease;
 }
 
 .footerAdd:hover {
-  background: var(--card);
-  border-color: var(--border);
+  background: var(--card-hover);
   color: var(--text);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card,
+  .slimRow,
+  .cardStatus,
+  .cardActions,
+  .slimAge,
+  .slimAction,
+  .shelfChevron,
+  .reveal {
+    transition: none;
+    animation: none;
+  }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .iconBtn:active:not(:disabled),
+  .viewNavBtn:active,
+  .scopeTrigger:active,
+  .caretBtn:active,
+  .batchBtn:active {
+    transform: scale(0.97);
+  }
 }

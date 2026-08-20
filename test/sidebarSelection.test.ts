@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   buildVisibleThreadIds,
+  flatVisibleThreadIds,
   formatBatchSettleFeedback,
   isShortcutBlocked,
   planBatchSettle,
@@ -323,5 +324,69 @@ describe("buildVisibleThreadIds group overflow cap (issue #70)", () => {
   it("groups at the cap are untouched", () => {
     const ids = buildVisibleThreadIds({ ...baseInput, groups: [bigGroup(8)] });
     assert.equal(ids.length, 8);
+  });
+});
+
+describe("flatVisibleThreadIds (T3 flat sidebar)", () => {
+  const flat = {
+    pinned: [t("pin1")],
+    active: [t("a1"), t("a2")],
+    snoozed: [t("z1")],
+    settled: [t("s1"), t("s2")],
+    archived: [t("arc1")],
+  };
+
+  it("orders pinned, active, then open shelves with settled paging", () => {
+    const ids = flatVisibleThreadIds({
+      flat,
+      snoozedOpen: true,
+      settledOpen: true,
+      settledVisibleCount: 2,
+    });
+    assert.deepEqual(ids, ["pin1", "a1", "a2", "z1", "s1", "s2"]);
+  });
+
+  it("archived rows page in at the settled tail", () => {
+    const ids = flatVisibleThreadIds({
+      flat,
+      snoozedOpen: true,
+      settledOpen: true,
+      settledVisibleCount: 10,
+    });
+    assert.deepEqual(ids, ["pin1", "a1", "a2", "z1", "s1", "s2", "arc1"]);
+  });
+
+  it("collapsed shelves contribute only the selected thread", () => {
+    const ids = flatVisibleThreadIds({
+      flat,
+      snoozedOpen: false,
+      settledOpen: false,
+      settledVisibleCount: 10,
+      selectedThreadId: "s2",
+    });
+    assert.deepEqual(ids, ["pin1", "a1", "a2", "s2"]);
+  });
+
+  it("keepThreadIds carve out a revealed thread on a collapsed shelf", () => {
+    const ids = flatVisibleThreadIds({
+      flat,
+      snoozedOpen: false,
+      settledOpen: false,
+      settledVisibleCount: 10,
+      selectedThreadId: null,
+      keepThreadIds: ["z1"],
+    });
+    assert.deepEqual(ids, ["pin1", "a1", "a2", "z1"]);
+  });
+
+  it("selected thread past the page cap is carved out", () => {
+    const ids = flatVisibleThreadIds({
+      flat,
+      snoozedOpen: false,
+      settledOpen: true,
+      settledVisibleCount: 1,
+      selectedThreadId: "arc1",
+    });
+    assert.deepEqual(ids, ["pin1", "a1", "a2", "s1", "arc1"]);
   });
 });
