@@ -233,9 +233,12 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   const [archiveToastIds, setArchiveToastIds] = useState<string[] | null>(null);
   /**
    * Error toast after projects.remove rejects. Title is t3-shaped:
-   * Failed to remove "slug". Cleared on dismiss / timeout.
+   * Failed to remove "slug", plus the reason — swallowing it left the user
+   * with no idea what to fix. Cleared on dismiss / timeout.
    */
-  const [removeFailSlug, setRemoveFailSlug] = useState<string | null>(null);
+  const [removeFailMessage, setRemoveFailMessage] = useState<string | null>(
+    null,
+  );
   const [addPathOpen, setAddPathOpen] = useState(false);
   const [editProjectId, setEditProjectId] = useState<string | null>(null);
   const [view, setView] = useState<AppView>("thread");
@@ -575,7 +578,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         // Capture id before setArchived moves selection off the open thread.
         const id = selectedThreadId;
         if (!id) return;
-        setRemoveFailSlug(null);
+        setRemoveFailMessage(null);
         if (await setArchived(true, id)) setArchiveToastIds([id]);
       } else {
         setArchiveToastIds(null);
@@ -589,7 +592,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   const handleClearSettled = useCallback(
     async (ids: string[]) => {
       if (ids.length === 0) return;
-      setRemoveFailSlug(null);
+      setRemoveFailMessage(null);
       // Offer undo only for what actually archived: a mid-loop failure (its
       // message lands in the run-error banner) used to leave a partial
       // archive whose undo toast still claimed every id (issue #85).
@@ -624,17 +627,21 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       setArchiveToastIds(null);
       try {
         await removeProject(projectId);
-        setRemoveFailSlug(null);
-      } catch {
-        setRemoveFailSlug(slug);
-        throw new Error(`Failed to remove "${slug}"`);
+        setRemoveFailMessage(null);
+      } catch (err) {
+        const reason = err instanceof Error ? err.message.trim() : "";
+        const title = reason
+          ? `Failed to remove "${slug}": ${reason}`
+          : `Failed to remove "${slug}"`;
+        setRemoveFailMessage(title);
+        throw new Error(title);
       }
     },
     [projectById, projects, removeProject],
   );
 
   const dismissRemoveFail = useCallback(() => {
-    setRemoveFailSlug(null);
+    setRemoveFailMessage(null);
   }, []);
 
   // Close the center Changes panel when switching threads (old behavior).
@@ -1313,11 +1320,11 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             onDismiss={dismissArchiveToast}
           />
         )}
-        {removeFailSlug && (
+        {removeFailMessage && (
           <ArchiveToast
-            key={`remove-fail-${removeFailSlug}`}
+            key={`remove-fail-${removeFailMessage}`}
             variant="error"
-            title={`Failed to remove "${removeFailSlug}"`}
+            title={removeFailMessage}
             onDismiss={dismissRemoveFail}
           />
         )}

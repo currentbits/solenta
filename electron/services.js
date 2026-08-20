@@ -3205,8 +3205,9 @@ async function rewindThread(store, input, opts) {
 }
 
 /**
- * Shared with deleteThread and removeProject — one string so the two cannot
- * drift. Renderer and Git tab copy depend on this exact wording.
+ * deleteThread's worktree guard. Renderer and Git tab copy depend on this
+ * exact wording. removeProject no longer shares it — it reclaims worktrees
+ * instead of refusing.
  */
 const THREAD_STILL_HAS_WORKTREE =
   "Thread still has a worktree. Merge or delete it in the Git tab first.";
@@ -3248,14 +3249,21 @@ function deleteThread(store, input, opts) {
 /**
  * Remove the project ENTRY and delete its threads' conversation history
  * (t3-style). The repository on disk is never touched — no fs calls on the
- * project path. Same worktree guard string as deleteThread; active-run copy
- * is project-scoped. All guards run before any deletion so a reject cannot
- * leave a half-removed project.
+ * project path. Active-run copy is project-scoped. The guard runs before any
+ * deletion so a reject cannot leave a half-removed project.
+ *
+ * Worktrees are reclaimed here rather than blocking the removal: refusing on
+ * any attached worktree made removal impossible in practice (every real
+ * project accumulates archived threads that still carry a worktreePath, plus
+ * stale paths whose directory is long gone). Reclaim uses the GC primitive,
+ * so BRANCHES ARE NEVER DELETED and a tree with uncommitted work fails the
+ * non-force `worktree remove` and is left on disk for the GC panel instead of
+ * being force-deleted under the user.
  * @param {import('./store').Store} store
  * @param {{ projectId: string }} input
  * @param {{ isRunning?: (threadId: string) => boolean }} [opts]
  */
-function removeProject(store, input, opts) {
+async function removeProject(store, input, opts) {
   const projectId =
     input && input.projectId != null ? String(input.projectId) : "";
   const project = store.getProject(projectId);
@@ -3267,7 +3275,7 @@ function removeProject(store, input, opts) {
     .getThreads()
     .filter((t) => t && t.projectId === projectId);
 
-  // Guards first — every thread — before any purge.
+  // Guard first — every thread — before any purge.
   for (const thread of threads) {
     const activeRun =
       thread.status === "working" ||
@@ -3278,9 +3286,20 @@ function removeProject(store, input, opts) {
       throw new Error("Cannot remove a project while a run is active");
     }
   }
+
+  const { removeGcWorktree } = require("./worktrees.js");
   for (const thread of threads) {
-    if (thread.worktreePath) {
-      throw new Error(THREAD_STILL_HAS_WORKTREE);
+    if (!thread.worktreePath) continue;
+    const res = await removeGcWorktree(store, {
+      path: thread.worktreePath,
+      threadId: thread.id,
+    });
+    if (!res.ok) {
+      // Dirty or wedged tree: keep it on disk (nothing is lost) and carry on
+      // with the removal the user just confirmed.
+      console.warn(
+        `removeProject: left ${thread.worktreePath} in place: ${res.error}`,
+      );
     }
   }
 
