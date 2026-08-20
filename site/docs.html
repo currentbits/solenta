@@ -124,11 +124,17 @@
         ranks what comes back on a search. Facts can carry
         <strong>file:line, thread or commit citations</strong>; before a fact
         is injected, those file citations are checked against the current
-        worktree and contradicted entries are invalidated. The stored
-        embeddings are reused to fold near-duplicates together and to surface
-        entries that contradict each other, and the memory graph records
-        co-occurrence edges so related entries can be walked, not just matched
-        on text.
+        worktree and contradicted entries are invalidated. Assistant
+        replies in the transcript carry the same idea as
+        <strong>tier labels</strong>: a chip for repo paths the turn
+        read or cited, one for shared-memory tools, one for GitHub
+        issue or PR refs. A message long enough to make a claim
+        (240 characters) with none of those sources is tagged
+        <em>model prior knowledge</em>. Short chatter is left unlabeled.
+        The stored embeddings are reused to fold near-duplicates together
+        and to surface entries that contradict each other, and the memory
+        graph records co-occurrence edges so related entries can be walked,
+        not just matched on text.
       </p>
       <p>
         Above facts sit <strong>strategy</strong> entries: distilled
