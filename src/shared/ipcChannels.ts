@@ -1,64 +1,32 @@
-"use strict";
+/**
+ * One invoke-channel table for the two thin CoderApi clients.
+ *
+ * Channel name is always `${ns}:${method}`. Both `wireClient.ts` (runtime
+ * bind) and `electron/preload.js` (inlined copy — sandbox cannot require
+ * this file) iterate the table instead of restating each method. Handler
+ * bodies stay in `electron/ipc.js`. CoderApi in ipc.ts stays the documented
+ * type; IPC_CHANNEL_LOCK fails tsc when a name exists on one side only.
+ *
+ * Desktop-only extras that are NOT in this table:
+ *   attachments.droppedFilePath  (webUtils.getPathForFile, not IPC)
+ *   contextMenu.show             (needs event.sender; registerIpc wires it)
+ *
+ * After editing: `node --experimental-strip-types scripts/sync-ipc-preload.js`
+ * (`--check` is part of `npm run typecheck`).
+ *
+ * Do not generate devCoder.ts or fakeCoder.ts from this table (#623).
+ */
+import type { CoderApi } from "./ipc";
 
-const { contextBridge, ipcRenderer, webUtils } = require("electron");
-
-/* <ipc-push> */
-const PUSH_CHANNELS = new Set([
+export const PUSH_CHANNELS = [
   "threads:changed",
   "thread:updated",
   "thread:select",
-]);
-/* </ipc-push> */
+] as const;
 
-/**
- * Electron wraps every invoke rejection as
- * "Error invoking remote method 'chan': Error: <message>", which the UI then
- * shows verbatim — a main-process sentence reads like an internal crash
- * (issue #198). Markers (WORKTREE_DIRTY:, MERGE_CONFLICT:) sit after the
- * prefix, so stripping it leaves them intact.
- *
- * ponytail: inline and untested on purpose — this preload runs with
- * sandbox: true (main.js), which cannot require a local module to share or
- * unit-test the regex.
- */
-const INVOKE_WRAP = /^Error invoking remote method '[^']*':\s*(?:\w*Error:\s*)?/;
+export type PushChannel = (typeof PUSH_CHANNELS)[number];
 
-/**
- * @param {string} channel
- * @param  {...unknown} args
- */
-function invoke(channel, ...args) {
-  return ipcRenderer.invoke(channel, ...args).catch((err) => {
-    const message = err instanceof Error ? err.message : String(err);
-    throw new Error(message.replace(INVOKE_WRAP, "") || message);
-  });
-}
-
-/**
- * @param {string} channel
- * @param {(payload: unknown) => void} cb
- * @returns {() => void}
- */
-function on(channel, cb) {
-  if (!PUSH_CHANNELS.has(channel)) {
-    throw new Error(`Push channel not allowed: ${channel}`);
-  }
-  const listener = (_event, payload) => {
-    cb(payload);
-  };
-  ipcRenderer.on(channel, listener);
-  return () => {
-    ipcRenderer.removeListener(channel, listener);
-  };
-}
-
-/**
- * Inlined from src/shared/ipcChannels.ts (issue #623). Sandbox preload
- * cannot require that file; scripts/sync-ipc-preload.js copies it.
- * bindChannels is the JS twin of bindCoderApi — keep the loop body the same.
- */
-/* <ipc-channels> */
-const IPC_CHANNELS = Object.freeze([
+export const IPC_CHANNELS = [
   { ns: "app", method: "status" },
   { ns: "app", method: "checkUpdate" },
   { ns: "app", method: "downloadUpdate" },
@@ -203,28 +171,65 @@ const IPC_CHANNELS = Object.freeze([
   { ns: "vibeKanban", method: "import" },
   { ns: "vibeKanban", method: "pickDataDir" },
   { ns: "vibeKanban", method: "export" },
-]);
-/* </ipc-channels> */
+] as const;
 
-/**
- * @param {(channel: string, ...args: unknown[]) => Promise<unknown>} invokeFn
- * @param {ReadonlyArray<{ ns: string, method: string }>} channels
- */
-function bindChannels(invokeFn, channels) {
-  const api = Object.create(null);
-  for (const { ns, method } of channels) {
-    if (!api[ns]) api[ns] = Object.create(null);
-    api[ns][method] = (...args) => invokeFn(`${ns}:${method}`, ...args);
-  }
-  return api;
+export type IpcChannelRow = (typeof IPC_CHANNELS)[number];
+export type IpcChannelName = `${IpcChannelRow["ns"]}:${IpcChannelRow["method"]}`;
+
+export function ipcChannelName(row: {
+  ns: string;
+  method: string;
+}): string {
+  return `${row.ns}:${row.method}`;
 }
 
-/** @type {import('../src/shared/ipc').CoderApi} */
-const coder = bindChannels(invoke, IPC_CHANNELS);
-coder.attachments.droppedFilePath = (file) => webUtils.getPathForFile(file);
-coder.contextMenu = {
-  show: (items, position) => invoke("contextMenu:show", items, position),
-};
-coder.on = on;
+/** Namespaces on CoderApi that are not invoke-channel tables. */
+type ApiExtra = "on" | "contextMenu";
+/** Methods on CoderApi that are not invoke channels. */
+type ExtraMethod = { attachments: "droppedFilePath" };
 
-contextBridge.exposeInMainWorld("coder", coder);
+type InvokeNs = Exclude<keyof CoderApi, ApiExtra>;
+type TableNs = IpcChannelRow["ns"];
+type TableMethod<N extends string> = Extract<
+  IpcChannelRow,
+  { ns: N }
+>["method"];
+
+type ApiMethods<N extends InvokeNs> = N extends keyof ExtraMethod
+  ? Exclude<keyof CoderApi[N], ExtraMethod[N]>
+  : keyof CoderApi[N];
+
+type NsDrift = Exclude<InvokeNs, TableNs> | Exclude<TableNs, InvokeNs>;
+type MethodDrift = {
+  [N in InvokeNs & TableNs]:
+    | Exclude<TableMethod<N>, ApiMethods<N>>
+    | Exclude<ApiMethods<N>, TableMethod<N>>;
+}[InvokeNs & TableNs];
+
+/**
+ * Compile-time lock: every CoderApi invoke method is in IPC_CHANNELS and
+ * every table row exists on CoderApi. A missing name becomes a type
+ * error on this export instead of a shipped hole like #622.
+ */
+export const IPC_CHANNEL_LOCK: [NsDrift, MethodDrift] extends [never, never]
+  ? true
+  : { ns: NsDrift; method: MethodDrift } = true;
+
+export type BoundCoderApi = Omit<CoderApi, ApiExtra>;
+
+/**
+ * Build the invoke half of CoderApi from the table. Callers add `on`
+ * (and, in preload, the desktop-only extras) themselves.
+ */
+export function bindCoderApi(
+  invoke: (channel: string, ...args: unknown[]) => Promise<unknown>,
+): BoundCoderApi {
+  const api: Record<string, Record<string, (...args: unknown[]) => Promise<unknown>>> =
+    Object.create(null);
+  for (const { ns, method } of IPC_CHANNELS) {
+    if (!api[ns]) api[ns] = Object.create(null);
+    api[ns][method] = (...args: unknown[]) =>
+      invoke(`${ns}:${method}`, ...args);
+  }
+  return api as unknown as BoundCoderApi;
+}

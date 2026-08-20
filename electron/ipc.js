@@ -215,6 +215,11 @@ function threadDetailFor(ctx, id, markVisited) {
  *   ipcMain.handle(channel, (_, ...a) => IPC_HANDLERS[channel](ctx, ...a))
  *   webBridge dispatch: IPC_HANDLERS[channel](ctx, ...args)
  *
+ * Thin clients (preload, wireClient) iterate src/shared/ipcChannels.ts
+ * rather than restating these names. Adding a channel means: a row in
+ * that table, a handler here, CoderApi JSDoc, and (if the renderer
+ * needs a fixture) devCoder/fakeCoder. Run scripts/sync-ipc-preload.js.
+ *
  * First argument is always ctx. Bodies match the previous ipcMain closures
  * so throw strings and return shapes stay byte-identical.
  *
