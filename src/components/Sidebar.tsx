@@ -219,7 +219,7 @@ interface SidebarProps {
   /** Which main view is showing. Defaults to thread so existing callers stay idle. */
   activeView?: "thread" | "kanban" | "planboard" | "activity";
   onOpenKanban?: () => void;
-  onOpenPlanboard?: () => void;
+  onOpenPlanboard?: (scopedProjectId?: string | null) => void;
   /**
    * Paste a GitHub issue into this project. Omitted by existing tests so
    * the icon button stays hidden.
@@ -2083,7 +2083,7 @@ export const Sidebar = memo(function Sidebar({
           data-active={activeView === "planboard" ? "true" : undefined}
           title="Planboard"
           aria-label="Planboard"
-          onClick={() => onOpenPlanboard?.()}
+          onClick={() => onOpenPlanboard?.(projectScope)}
         >
           <Icon size={15}>
             <rect x="4" y="4" width="16" height="16" rx="2" />
