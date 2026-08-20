@@ -61,6 +61,7 @@
       <a href="#guardrails">Guardrails and verification</a>
       <a href="#spec">Spec mode</a>
       <a href="#teach">Teach mode</a>
+      <a href="#ask">Ask mode</a>
       <a href="#review">Review itinerary</a>
       <a href="#skills">Skills</a>
       <a href="#automations">Automations</a>
@@ -103,8 +104,11 @@
         <li><strong>OpenCode</strong> (<code>opencode</code>)</li>
       </ul>
       <p>
-        Add a project with the <strong>+</strong> button in the sidebar. A
-        project is any local git repository (or a remote one, see
+        Add a project with the <strong>+</strong> button in the sidebar. The
+        destination path is typeable and browsable; a folder that is not a git
+        repository yet is initialized on add. Remove a project from Settings
+        when you no longer want it in the list. A project is local (or a
+        remote one, see
         <a href="#ssh">SSH remote projects</a>). Create a thread, type a prompt,
         and the run streams in live.
       </p>
@@ -197,9 +201,9 @@
         ticket is the same act as queueing the work.
       </p>
       <p>
-        Projects themselves group into <strong>Spaces</strong> — named sections
-        in the sidebar — once you are running more repositories than fit
-        comfortably in one list.
+        The sidebar's project scope filter limits Kanban, Planboard and
+        Activity to the same repo, not only the thread list. Spaces are
+        gone; cards carry their project slug instead.
       </p>
 
       <h2 id="threads">Threads and providers</h2>
@@ -224,24 +228,30 @@
       </ul>
       <p>
         The sidebar is a flat list, not per-project groups. Each card
-        carries its project slug; a scope filter at the top of the list
-        limits every section to one repo. <strong>Pinned</strong> threads
-        sit in their own block at the top (oldest pin first) and never
-        auto-settle. Below that, active threads; then a
-        <strong>Snoozed</strong> shelf (wake-soonest first) and a
-        <strong>Settled</strong> shelf (newest wrap-up first, archived
-        threads at the tail). Right-click a card, or its overflow button,
-        for the thread-actions menu: snooze (a nested submenu of presets),
-        pin, fork or hand off, rename, mute, and settle. The menu is the
-        native Electron menu when the app can show one, otherwise a
-        keyboard-driven overlay (arrows, Home, End, Escape).
+        carries its project slug and, when the repo has one, its favicon
+        or app icon; a scope filter at the top of the list limits every
+        section to one repo. <strong>Pinned</strong> threads sit in their
+        own block at the top (oldest pin first) and never auto-settle.
+        Below that, active threads; then a <strong>Snoozed</strong> shelf
+        (wake-soonest first) and a <strong>Settled</strong> shelf (newest
+        wrap-up first, archived threads at the tail). Subagents nest under
+        the thread that spawned them; idle stopped fork workers drop off
+        the list. Delegating, Orchestrating and Working show on the card.
+        Right-click a card, or its overflow button, for the thread-actions
+        menu: snooze (a nested submenu of presets), pin, fork or hand off,
+        rename, mute, and settle. The menu is the native Electron menu
+        when the app can show one, otherwise a keyboard-driven overlay
+        (arrows, Home, End, Escape).
       </p>
       <p>
         <kbd>⌘N</kbd> starts a new thread, <kbd>⌘⇧N</kbd> starts one in a
         chosen project. Esc or Ctrl+C stops the live turn. Click the project
         slug in the header to start another thread there. The composer's
-        <code>/</code> palette lists both orchestration commands and the CLI
-        verbs.
+        <code>/</code> palette lists orchestration commands, the CLI verbs,
+        and the underlying CLI's own skills and custom commands.
+        <code>/btw</code> (or <kbd>⌥Enter</kbd> on a plain draft) asks a
+        side question on the same thread without interrupting the live run
+        — a card, not a new thread, not the follow-up queue.
       </p>
       <p>
         A thread that fails keeps its <strong>failure reason</strong> and shows
@@ -265,23 +275,12 @@
         <li><strong>New worktree thread</strong> — its own git worktree and branch, so the agent never touches your checkout.</li>
         <li><strong>New orchestrator thread</strong> — the thread hands its first prompt to a worker in a worktree and supervises instead of editing (see <a href="#orchestration">Orchestration</a>).</li>
         <li><strong>New plain thread</strong> — straight in the project checkout, no worktree.</li>
+        <li><strong>New ask thread</strong> — read-only repo Q&amp;A; no worktree (see <a href="#ask">Ask mode</a>).</li>
       </ul>
       <p>
         Plain <strong>+</strong> follows your defaults: <em>Isolate new threads
         in a git worktree</em> and <em>Delegate new threads to a worker</em> in
         Settings, the second winning over the first.
-      </p>
-      <p>
-        A thread can also run in <strong>Ask mode</strong>: read-only
-        questions about the repo, answered from the code index and shared
-        memory. It never spawns a worktree, never calls tools, and never
-        counts against the daily budget. The overflow menu turns it on
-        (and clears Teach, which conflicts); the composer then hides
-        permission, Build, Best of N, and attach. Answers prefer the
-        on-device <code>fm</code> CLI, then the provider in print mode,
-        then a retrieval-only pack if neither is available.
-        <em>Start work</em> turns Ask off and, when Isolate new threads
-        is on, arms a worktree for the next turn.
       </p>
 
       <h2 id="worktrees">Worktrees and pull requests</h2>
@@ -310,6 +309,10 @@
         disable it.
       </p>
       <p>
+        A permission prompt that is a shell command is an editable field;
+        approving sends the edited command, not the original.
+      </p>
+      <p>
         PR state is live: checks show as badges on the thread card, and merging
         is a button, not a terminal command. Worktree merge and delete are
         guarded, so you cannot drop unmerged work by accident. Automatic
@@ -329,8 +332,9 @@
       </p>
       <p>
         Finished worktrees are cleaned up rather than accumulating:
-        <strong>worktree GC</strong> gives each project a retention setting,
-        batch cleanup, and a visible disk-usage figure so you can see what the
+        <strong>worktree GC</strong> gives each project a retention setting
+        (a default applies when the project has not set its own), batch
+        cleanup, and a visible disk-usage figure so you can see what the
         branches are costing you.
       </p>
       <p>
@@ -399,7 +403,7 @@
       </p>
       <p>
         For ad-hoc fan-out you do not configure anything: you ask. Every agent
-        session gets four MCP tools from the built-in
+        session gets MCP tools from the built-in
         <code>coder-threads</code> server, so any thread can drive the others:
       </p>
       <table class="doc-table">
@@ -411,8 +415,20 @@
           <tr><td>thread_fork</td><td>Copies a thread into a new one, optionally on another provider, and starts it on a prompt.</td></tr>
           <tr><td>thread_send</td><td>Starts a run with a prompt on an existing thread.</td></tr>
           <tr><td>thread_status</td><td>Reports a thread's status and the first line of its last reply.</td></tr>
+          <tr><td>thread_archive</td><td>Archives a thread the same way the sidebar does.</td></tr>
+          <tr><td>thread_settle</td><td>Marks a thread settled, or clears the override.</td></tr>
+          <tr><td>thread_stop</td><td>Stops the live run on a thread.</td></tr>
+          <tr><td>thread_rename</td><td>Renames a thread.</td></tr>
+          <tr><td>thread_merge</td><td>Squash-merges a worker's branch into the working tree and deletes its worktree.</td></tr>
+          <tr><td>thread_pr</td><td>Pushes a worker's branch and opens a pull request, leaving the worktree in place.</td></tr>
+          <tr><td>work_suggest</td><td>Offers out-of-scope work as a one-click chip on the current thread.</td></tr>
         </tbody>
       </table>
+      <p>
+        Out-of-scope findings do not have to derail the current run.
+        <code>work_suggest</code> lands a chip under the transcript:
+        start a new thread, file it on the planboard, or dismiss it.
+      </p>
       <p>
         A prompt like <em>&ldquo;fan out three Grok workers to build this, have
         Opus review the diffs&rdquo;</em> is enough. Runs are asynchronous: the
@@ -477,6 +493,20 @@
         <em>Review</em> after enough passed reviews, then <em>Pair</em>, which
         unlocks full access. The point is a session you can learn from, not a
         silent patch.
+      </p>
+
+      <h2 id="ask">Ask mode</h2>
+      <p>
+        A thread can run in <strong>Ask mode</strong>: read-only questions
+        about the repo, answered from the code index and shared memory. It
+        never spawns a worktree, never calls tools, and never counts against
+        the daily budget. Create one from the sidebar caret, or turn it on
+        from the overflow menu (which clears Teach, which conflicts). The
+        composer then hides permission, Build, Best of N, and attach.
+        Answers prefer the on-device <code>fm</code> CLI, then the provider
+        in print mode, then a retrieval-only pack if neither is available.
+        <em>Start work</em> turns Ask off and, when Isolate new threads is
+        on, arms a worktree for the next turn.
       </p>
 
       <h2 id="review">Review itinerary</h2>
@@ -594,11 +624,14 @@
         Updates come from plain GitHub releases on two channels:
         <strong>prod</strong> follows the newest normal release,
         <strong>nightly</strong> the newest prerelease, and a nightly install
-        never migrates itself onto prod. Checking is automatic; installing is
-        not. Solenta downloads only when you click, verifies the archive
-        against the sha256 digest GitHub stamps on the asset, and then swaps
-        the bundle in place (macOS; Windows and Linux open the release page).
-        Builds from a dev tree carry no channel stamp and never self-update.
+        never migrates itself onto prod. Nightly ships as
+        <strong>Solenta Nightly</strong> with its own bundle identifier, so
+        both channels can sit side by side; they share one user-data
+        directory. Checking is automatic; installing is not. Solenta
+        downloads only when you click, verifies the archive against the
+        sha256 digest GitHub stamps on the asset, and then swaps the bundle
+        in place (macOS; Windows and Linux open the release page). Builds
+        from a dev tree carry no channel stamp and never self-update.
       </p>
 
       <h2 id="web-mode">Web mode</h2>
