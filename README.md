@@ -77,13 +77,18 @@ it.
 
 - **Five providers, one UI** — Claude Code, Codex, Kimi Code, Grok, and
   OpenCode, with model overrides, session resume, and quota-reset resume.
-- **Git in the loop** — fail-closed worktrees, next-git-action button, live CI
-  badges, review itinerary, conflict forecast. Oversized PRs (default 400
-  lines) are refused; the header offers a stacked split.
+- **Git in the loop** — fail-closed worktrees (setup failure never falls back
+  to the project checkout), Git as a center pane rather than an overlay, a
+  next-action button (commit → push → PR → checks → merge), live CI badges,
+  review itinerary, conflict forecast. Settings probes forge readiness
+  (`gh` auth) before the header offers Create PR. Oversized PRs (default
+  400 lines) are refused; the header offers a stacked split.
 - **Planboard** — a project's plan as its GitHub issues via `gh`, with auto-
   dispatch from `plan:todo` and a review-load meter on the open PR queue.
-- **Orchestration** — workers, crews, `/handoff`, `/advisor`, `/committee`, and
-  a subagent model pool.
+- **Orchestration** — workers nest under the thread that started them, crews,
+  `/handoff`, `/advisor`, `/committee`, a subagent model pool, and
+  coder-threads host tools so an agent can archive, settle, stop, rename,
+  merge, or open a PR.
 - **Verify means green** — a thread settles done only when its verify command
   exits 0. After merge the command re-runs 24h later; a failure starts a
   fix thread and reopens the planboard issue. Optional spend caps.
@@ -118,8 +123,9 @@ Grab an archive from the [latest release](https://github.com/currentbits/solenta
 
 Builds are stamped with a channel. **prod** follows the newest normal release;
 **nightly** follows the newest prerelease and never migrates itself onto prod.
-On macOS the app downloads and swaps itself in place. Builds from a dev tree
-carry no stamp and never self-update.
+On macOS the app downloads and swaps itself in place. A window that reloads
+into a new renderer against an old preload hard-blocks until you Restart.
+Builds from a dev tree carry no stamp and never self-update.
 
 Nightly ships as **Solenta Nightly.app** (`com.willem.solenta.nightly`,
 `solenta-nightly` on linux/win) so it is tellable apart from a prod install at
@@ -213,9 +219,17 @@ The root `package.json` already allows scripts for the pinned Electron version.
   steps from Hints to Review to Pair as reviews pass.
 - **Ask mode** — read-only Q&A from the code map and memory. No tools, no
   worktree, no agent credits.
-- **Snooze** until tonight or next week; settle-on-merge archives when the
-  PR lands. Pinned threads sit above the list; snoozed, settled, and
-  archived live in shelves. Right-click or ⋯ for rename, pin, snooze, settle.
+- **`/btw`** — a side question on the same thread that does not pause, steer,
+  or queue behind the live run.
+- **Sidebar** — T3-flat: no project group headers. A row is status + title +
+  age; pinned threads sit in a block at the top; snoozed and settled
+  (archived at the tail) live in shelves. Scope to one project from the
+  header. Right-click opens a native thread-actions menu. Project icons
+  auto-detect from the repo (favicon / app icon). Subagents nest under
+  their thread.
+- **Snooze** until tonight or next week; settle-on-merge when the PR lands.
+- **Suggested work** — out-of-scope findings become one-click chips that
+  start a new thread or file a planboard issue.
 - **Automations** — recurring prompts (hourly / daily / weekly) against any
   project, and repeat a finished thread on a schedule.
 - **Usage and fleet analytics** — cost and tokens per provider/model, merge
@@ -231,7 +245,11 @@ The root `package.json` already allows scripts for the pinned Electron version.
   Toggled from Environment (default on).
 - **Claim provenance** — assistant claims tagged repo, memory, issue, or
   model prior knowledge when ungrounded.
-- **Skills** — browse and edit the `SKILL.md` files your agents can reach.
+- **Skills and `/` commands** — browse and edit the `SKILL.md` files your
+  agents can reach. The composer `/` palette also runs the underlying CLI's
+  own skills and custom commands.
+- **Permission card** — edit the proposed shell command before you approve
+  it; the agent runs the edit, not the original.
 - **Dev servers** — start a project's `dev` script from the app and get the URL.
 - **Web mode** — `--serve-web` serves the same UI over HTTP + WebSocket.
 - **SSH remote projects** — register projects on other hosts and run agents
