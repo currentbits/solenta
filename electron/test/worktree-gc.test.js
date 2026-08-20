@@ -292,14 +292,14 @@ describe("gcScan / gcClean", { concurrency: 1 }, () => {
     assert.ok(scan.usage[0].bytes > 0);
   });
 
-  it("counts archived threads as settled for retention", async () => {
+  it("archived worktrees do not occupy the keep-N buffer (#624)", async () => {
     services.updateProject(fx.store, fx.project.id, { worktreeRetention: 1 });
-    const keep = addWorktree(fx, "Newest archived");
-    const drop = addWorktree(fx, "Older archived");
+    const older = addWorktree(fx, "Older archived");
+    const newer = addWorktree(fx, "Newest archived");
     // Archived threads never carry a settled override (the renderer filters
     // them before the settle split), so this is the #316 case.
-    fx.store.updateThread(keep.id, { archived: true, updatedAt: 2_000 });
-    fx.store.updateThread(drop.id, { archived: true, updatedAt: 1_000 });
+    fx.store.updateThread(newer.id, { archived: true, updatedAt: 2_000 });
+    fx.store.updateThread(older.id, { archived: true, updatedAt: 1_000 });
     fx.store.saveNow();
 
     const scan = await gcScan({
@@ -308,9 +308,105 @@ describe("gcScan / gcClean", { concurrency: 1 }, () => {
     });
     const retention = scan.candidates.filter((c) => c.reason === "retention");
     assert.deepEqual(
-      retention.map((c) => c.path),
-      [drop.worktreePath],
+      retention.map((c) => c.path).sort(),
+      [older.worktreePath, newer.worktreePath].sort(),
     );
+    assert.ok(retention.every((c) => c.transient === true));
+  });
+
+  it("a fork worktree is a candidate even inside the keep-N buffer (#624)", async () => {
+    const fork = addWorktree(fx, "Worker");
+    const plain = addWorktree(fx, "Mine");
+    fx.store.updateThread(fork.id, {
+      handoffFrom: plain.id,
+      settledOverride: "settled",
+      updatedAt: 1_000,
+    });
+    fx.store.updateThread(plain.id, {
+      settledOverride: "settled",
+      updatedAt: 1_000,
+    });
+    fx.store.saveNow();
+
+    const scan = await gcScan({
+      store: fx.store,
+      worktreeBase: fx.worktreeBase,
+    });
+    // Default retention of 10 keeps the plain one; the fork goes anyway.
+    assert.deepEqual(
+      scan.candidates.map((c) => c.path),
+      [fork.worktreePath],
+    );
+    assert.equal(scan.candidates[0].transient, true);
+  });
+
+  it("an unmerged fork worktree waits out the grace period, then is reclaimed (#624)", async () => {
+    const fork = addWorktree(fx, "Worker with commits");
+    fs.writeFileSync(path.join(fork.worktreePath, "work.txt"), "landed?\n");
+    git(fork.worktreePath, ["add", "work.txt"]);
+    git(fork.worktreePath, ["commit", "-m", "worker commit"]);
+    fx.store.updateThread(fork.id, {
+      handoffFrom: "someone-else",
+      archived: true,
+      updatedAt: Date.now(),
+    });
+    fx.store.saveNow();
+
+    const fresh = await gcScan({
+      store: fx.store,
+      worktreeBase: fx.worktreeBase,
+    });
+    assert.deepEqual(fresh.candidates, []);
+
+    fx.store.updateThread(fork.id, {
+      updatedAt: Date.now() - 4 * 24 * 60 * 60 * 1000,
+    });
+    fx.store.saveNow();
+    const quiet = await gcScan({
+      store: fx.store,
+      worktreeBase: fx.worktreeBase,
+    });
+    assert.deepEqual(
+      quiet.candidates.map((c) => c.path),
+      [fork.worktreePath],
+    );
+    assert.equal(quiet.candidates[0].unmerged, 1);
+
+    const branch = fork.branch;
+    const result = await enforceRetention({
+      store: fx.store,
+      worktreeBase: fx.worktreeBase,
+    });
+    assert.deepEqual(result.removed, [fork.worktreePath]);
+    assert.ok(!fs.existsSync(fork.worktreePath));
+    // The commit is not lost: GC only ever removes the directory.
+    assert.equal(branchExists(fx.repo, branch), true);
+    assert.equal(git(fx.repo, ["log", "-1", "--format=%s", branch]), "worker commit");
+  });
+
+  it("an unmerged non-fork worktree is still never auto-reclaimed (#601)", async () => {
+    services.updateProject(fx.store, fx.project.id, { worktreeRetention: 1 });
+    const keep = addWorktree(fx, "Keep");
+    const drop = addWorktree(fx, "Unmerged");
+    fs.writeFileSync(path.join(drop.worktreePath, "work.txt"), "mine\n");
+    git(drop.worktreePath, ["add", "work.txt"]);
+    git(drop.worktreePath, ["commit", "-m", "my commit"]);
+    fx.store.updateThread(keep.id, {
+      settledOverride: "settled",
+      updatedAt: 2_000,
+    });
+    fx.store.updateThread(drop.id, {
+      settledOverride: "settled",
+      updatedAt: 1_000,
+    });
+    fx.store.saveNow();
+
+    const result = await enforceRetention({
+      store: fx.store,
+      worktreeBase: fx.worktreeBase,
+    });
+    assert.deepEqual(result.removed, []);
+    assert.ok(fs.existsSync(drop.worktreePath));
   });
 
   it("gcClean never deletes the branch", async () => {

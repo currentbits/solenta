@@ -113,8 +113,10 @@ export function WorktreeGcSection({
   );
   // Unmerged rows stay tickable — the branch survives either way — but
   // reclaiming one is a deliberate per-row click, never part of "select all".
+  // Fork / archived worktrees are the exception: background retention takes
+  // those anyway (#624), so leaving them unticked here would just mislead.
   const defaultPick = useMemo(
-    () => unblocked.filter((c) => !c.unmerged),
+    () => unblocked.filter((c) => !c.unmerged || c.transient),
     [unblocked],
   );
   const reclaimableBytes = useMemo(

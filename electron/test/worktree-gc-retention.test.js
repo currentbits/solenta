@@ -1,12 +1,15 @@
 "use strict";
 
 /**
- * Reclaiming stranded worker worktrees (#601 / #559).
+ * Reclaiming stranded worker worktrees (#601 / #559 / #624).
  *
  *  - gcScan classifies with DEFAULT_WORKTREE_RETENTION (now persisted as
  *    10 on every project). An explicit 0 is keep-everything.
+ *  - The keep-N buffer holds the user's OWN settled threads. Fork and
+ *    archived worktrees are transient (#624): they never take a buffer slot,
+ *    and unmerged commits only buy them a grace period.
  *  - enforceRetention reclaims when the stored value is > 0 (the default)
- *    and never touches unmerged work or a 0-retention project.
+ *    and never touches a 0-retention project.
  */
 
 const { describe, it, beforeEach, afterEach } = require("node:test");
@@ -78,6 +81,26 @@ function addArchivedWorker(fx, title, updatedAt) {
   return setup;
 }
 
+/** A settled thread of the user's own — the kind the keep-N buffer holds. */
+function addSettledThread(fx, title, updatedAt) {
+  const thread = services.createThread(fx.store, {
+    projectId: fx.project.id,
+    title,
+  });
+  const setup = setupWorktree({
+    store: fx.store,
+    threadId: thread.id,
+    worktreeBase: fx.worktreeBase,
+  });
+  fx.store.updateThread(thread.id, {
+    settledOverride: "settled",
+    status: "done",
+    updatedAt,
+  });
+  fx.store.saveNow();
+  return setup;
+}
+
 /** Land a commit on the worker's branch that main does not have. */
 function commitInWorktree(setup, name) {
   fs.writeFileSync(path.join(setup.worktreePath, name), "work\n");
@@ -109,7 +132,7 @@ describe("default worktree retention (#601)", { concurrency: 1 }, () => {
     assert.equal(fx.project.worktreeRetention, DEFAULT_WORKTREE_RETENTION);
     const made = [];
     for (let i = 0; i < DEFAULT_WORKTREE_RETENTION + 2; i++) {
-      made.push(addArchivedWorker(fx, `Worker ${i}`, 1_000 + i));
+      made.push(addSettledThread(fx, `Settled ${i}`, 1_000 + i));
     }
 
     const scan = await gcScan({
@@ -126,10 +149,29 @@ describe("default worktree retention (#601)", { concurrency: 1 }, () => {
     assert.ok(retention.every((c) => c.bytes > 0));
   });
 
+  it("archived workers never take a keep-N slot (#624)", async () => {
+    const made = [];
+    for (let i = 0; i < DEFAULT_WORKTREE_RETENTION + 2; i++) {
+      made.push(addArchivedWorker(fx, `Worker ${i}`, 1_000 + i));
+    }
+
+    const scan = await gcScan({
+      store: fx.store,
+      worktreeBase: fx.worktreeBase,
+    });
+    // All twelve, not just the two past the buffer: nobody is coming back to
+    // an archived worker's checkout, and its branch is kept regardless.
+    assert.deepEqual(
+      scan.candidates.map((c) => c.path).sort(),
+      made.map((m) => m.worktreePath).sort(),
+    );
+    assert.ok(scan.candidates.every((c) => c.transient === true));
+  });
+
   it("an explicit project setting still overrides the default", async () => {
     services.updateProject(fx.store, fx.project.id, { worktreeRetention: 1 });
-    const older = addArchivedWorker(fx, "Older", 1_000);
-    const newest = addArchivedWorker(fx, "Newest", 2_000);
+    const older = addSettledThread(fx, "Older", 1_000);
+    const newest = addSettledThread(fx, "Newest", 2_000);
 
     const scan = await gcScan({
       store: fx.store,
@@ -143,7 +185,7 @@ describe("default worktree retention (#601)", { concurrency: 1 }, () => {
   });
 
   it("stays under the default: nothing to reclaim", async () => {
-    addArchivedWorker(fx, "Only worker", 1_000);
+    addSettledThread(fx, "Only one", 1_000);
     const scan = await gcScan({
       store: fx.store,
       worktreeBase: fx.worktreeBase,
@@ -197,7 +239,7 @@ describe("default worktree retention (#601)", { concurrency: 1 }, () => {
     );
   });
 
-  it("enforceRetention reclaims past the stored default of 10 (#559)", async () => {
+  it("enforceRetention reclaims archived workers, sparing working / pinned / dirty (#559)", async () => {
     const made = [];
     for (let i = 0; i < DEFAULT_WORKTREE_RETENTION + 2; i++) {
       made.push(addArchivedWorker(fx, `Worker ${i}`, 1_000 + i));
@@ -223,23 +265,19 @@ describe("default worktree retention (#601)", { concurrency: 1 }, () => {
     });
     assert.deepEqual(
       result.removed.slice().sort(),
-      [made[0].worktreePath, made[1].worktreePath].sort(),
+      made.map((m) => m.worktreePath).sort(),
     );
-    assert.ok(!fs.existsSync(made[0].worktreePath));
-    assert.ok(!fs.existsSync(made[1].worktreePath));
-    for (let i = 2; i < made.length; i++) {
-      assert.ok(fs.existsSync(made[i].worktreePath));
-    }
+    assert.ok(made.every((m) => !fs.existsSync(m.worktreePath)));
     assert.ok(fs.existsSync(working.worktreePath), "working is never a candidate");
     assert.ok(fs.existsSync(pinned.worktreePath), "pinned is never a candidate");
     assert.ok(fs.existsSync(dirty.worktreePath), "dirty is blocked");
   });
 
-  it("enforceRetention skips a configured project's unmerged worktree", async () => {
+  it("enforceRetention skips a settled thread's unmerged worktree (#601)", async () => {
     services.updateProject(fx.store, fx.project.id, { worktreeRetention: 1 });
-    const withWork = addArchivedWorker(fx, "Has commits", 1_000);
-    const deadWeight = addArchivedWorker(fx, "Dead weight", 1_500);
-    const newest = addArchivedWorker(fx, "Newest", 2_000);
+    const withWork = addSettledThread(fx, "Has commits", 1_000);
+    const deadWeight = addSettledThread(fx, "Dead weight", 1_500);
+    const newest = addSettledThread(fx, "Newest", 2_000);
     commitInWorktree(withWork, "unlanded.txt");
 
     const result = await enforceRetention({
@@ -251,11 +289,30 @@ describe("default worktree retention (#601)", { concurrency: 1 }, () => {
     assert.ok(fs.existsSync(newest.worktreePath));
   });
 
-  it("archiving a thread reclaims settled worktrees past the default (#559)", async () => {
-    const made = [];
-    for (let i = 0; i < DEFAULT_WORKTREE_RETENTION; i++) {
-      made.push(addArchivedWorker(fx, `Worker ${i}`, 1_000 + i));
-    }
+  it("an archived worker's unmerged work gets a grace period first (#624)", async () => {
+    const fresh = addArchivedWorker(fx, "Just archived", Date.now());
+    commitInWorktree(fresh, "unlanded.txt");
+
+    const held = await enforceRetention({
+      store: fx.store,
+      worktreeBase: fx.worktreeBase,
+    });
+    assert.deepEqual(held.removed, []);
+    assert.ok(fs.existsSync(fresh.worktreePath));
+
+    fx.store.updateThread(fresh.id, {
+      updatedAt: Date.now() - 4 * 24 * 60 * 60 * 1000,
+    });
+    fx.store.saveNow();
+    const taken = await enforceRetention({
+      store: fx.store,
+      worktreeBase: fx.worktreeBase,
+    });
+    assert.deepEqual(taken.removed, [fresh.worktreePath]);
+    assert.equal(branchExists(fx.repo, fresh.branch), true);
+  });
+
+  it("archiving a thread reclaims its own merged-out worktree (#559 / #624)", async () => {
     const live = addArchivedWorker(fx, "Live", 2_000);
     fx.store.updateThread(live.id, { archived: false, status: "done" });
     fx.store.saveNow();
@@ -271,11 +328,11 @@ describe("default worktree retention (#601)", { concurrency: 1 }, () => {
     );
 
     assert.ok(
-      !fs.existsSync(made[0].worktreePath),
-      "oldest past the default is gone",
+      !fs.existsSync(live.worktreePath),
+      "nothing to land, so archiving takes the checkout with it",
     );
-    assert.ok(fs.existsSync(live.worktreePath), "just-archived newest is kept");
-    assert.ok(fs.existsSync(made[1].worktreePath));
+    assert.equal(branchExists(fx.repo, live.branch), true);
+    assert.equal(fx.store.getThread(live.id).worktreePath, null);
   });
 
   it("an explicit 0 keeps everything even when another project is at 10 (#559)", async () => {

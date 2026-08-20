@@ -1,46 +1,47 @@
 {
   "version": 1,
-  "readOrder": ["critical", "impl", "tests"],
+  "readOrder": ["critical", "impl", "tests", "docs"],
   "chunks": [
     {
-      "area": "critical: electron/services.js removeProject",
-      "rationale": "The bug. The old guard rejected removal if ANY thread in the project still carried a worktreePath. Measured against the live store: all 5 projects have such threads (74 total, 30 of them pointing at directories that no longer exist), so 'Remove project' could never succeed for a real project. The guard is replaced with reclaim via removeGcWorktree — the GC primitive, which never deletes a branch and uses a non-force `git worktree remove`, so uncommitted work cannot be destroyed. A failed reclaim warns and leaves the directory on disk rather than blocking. Function became async; the active-run guard still runs before any deletion so partial removal is still impossible.",
+      "area": "electron/worktrees.js — isTransientWorktree + the transient split in gcScanInner",
+      "rationale": "The whole change is here. A worktree is transient when its thread is archived or was created by a fork (handoffFrom). Transient dirs are dropped straight into retentionDrop instead of competing for a keep-N slot, so the buffer now holds only the user's own settled threads. The unmerged grace lives in the same branch: a transient dir with commits the base branch lacks waits UNMERGED_GRACE_MS (3 days) from threadActivityAt before it becomes a candidate.",
       "risks": [
-        "Orphaned directories: a dirty worktree survives the removal with no thread row pointing at it. gcScan's git-common-dir fallback still classifies it, so the GC panel can reclaim it later.",
-        "Sync -> async: every caller had to be awaited. Only electron/ipc.js and this test file call it (grepped)."
+        "isTransientWorktree matches every handoffFrom thread, not only orchWorker forks — a provider handoff thread counts too. Deliberate (it is still a fork), but it means a user-facing thread's worktree loses the keep-N buffer once it settles.",
+        "isSettledForGc returns true for archived BEFORE the prState check, so an archived thread with an OPEN PR is transient. Safe only because a PR implies the branch is pushed.",
+        "inspections[i] is read inside the settled loop; it is the parallel array built above, not re-derived. An unreadable dir yields unmerged=0 and becomes a candidate, but gcClean still refuses it via `blocked`."
       ]
     },
     {
-      "area": "impl: electron/worktrees.js export + electron/ipc.js await",
-      "rationale": "removeGcWorktree was module-private; exported unchanged. ipc handler was already async, so only the await was missing.",
+      "area": "electron/worktrees.js — enforceRetention filter + candidate `transient` flag",
+      "rationale": "The scan decides; enforceRetention only has to stop vetoing. `c.transient === true || !(c.unmerged > 0)` keeps the #601 guard for everything else. The `configured` gate is untouched, so worktreeRetention: 0 is still a full opt-out.",
       "risks": [
-        "Missing the await would swallow the active-run rejection and report success to the renderer."
+        "The flag is set from transientDrop membership, so a transient dir that was held back by the grace period carries no flag — correct, but it means `transient` on a candidate reads as 'reclaimable now', not 'is a fork'."
       ]
     },
     {
-      "area": "impl: src/App.tsx toast message",
-      "rationale": "The catch discarded the real error, so every failure read 'Failed to remove \"slug\"' with no reason — which is why the cause stayed invisible for so long. Now appends err.message. State renamed removeFailSlug -> removeFailMessage since it no longer holds a slug.",
+      "area": "electron/test/worktree-gc-retention.test.js",
+      "rationale": "This file's whole fixture was addArchivedWorker, so it encoded the old policy and six tests failed on the new one. Added addSettledThread for the keep-N cases and re-pointed the buffer tests at it; the archived-worker cases now assert the opposite (all twelve drop). Read the diff for what the contract used to be.",
       "risks": [
-        "Two unrelated call sites (handleSetArchived, handleClearSettled) also cleared this state; a missed rename crashed 9 renderer tests at first and had to be fixed. Confirm no `removeFailSlug` remains."
+        "'archiving a thread reclaims its own merged-out worktree' is a behaviour change users will feel first: archiving a clean thread now deletes its checkout immediately, not once the project exceeds ten."
       ]
     },
     {
-      "area": "impl: src/components/Sidebar.tsx confirm copy",
-      "rationale": "Removal now deletes worktree folders, so the confirm dialog has to say so. Line only renders when the project actually has worktrees, and states what is kept (branches, repo) and what is skipped (dirty trees).",
+      "area": "electron/test/worktree-gc.test.js",
+      "rationale": "New cases for the fork path and the grace window, plus one that pins the #601 guard for non-transient unmerged worktrees so this change cannot quietly widen later.",
       "risks": [
-        "worktreeCount is derived from the same `threads` prop as the existing thread count, so both share whatever filtering the sidebar applies."
+        "The grace tests use real Date.now() offsets rather than an injected clock; they are direction-only (fresh vs 4 days old) so they cannot flake on timing, but they do rely on the constant staying at 3 days."
       ]
     },
     {
-      "area": "tests: electron/test/remove-project.test.js",
-      "rationale": "The old suite asserted the guard that was the bug. Replaced with the three cases that matter: clean worktree reclaimed + branch kept, stale path does not block, dirty tree survives while the project still removes. assert.throws -> assert.rejects on the three guard tests now that the function is async.",
+      "area": "src/shared/ipc.ts, WorktreeGcSection.tsx, EditProjectModal.tsx",
+      "rationale": "Type for the new flag, GC dialog pre-ticks transient rows (background retention takes them anyway, so leaving them unticked would misrepresent what happens), and the retention field's help text no longer implies forks occupy a slot.",
       "risks": [
-        "The dirty-worktree test is the data-loss canary; if a future change adds --force it fails."
+        "Pre-ticking an unmerged row in the batch dialog is a deliberate softening of #601's 'never part of select all' rule — it only applies to transient rows."
       ]
     }
   ],
   "risks": [
-    "Behaviour change on a destructive action: removing a project now deletes worktree directories it previously refused to touch. Mitigated by never deleting branches (every commit stays reachable), never force-removing, and saying so in the confirm dialog.",
-    "Verification: remove-project.test.js 10/10, full renderer suite 1338/1338, electron suite 1673 pass / 11 fail — all 11 in orch-server.test.js and identical on the stashed baseline, unrelated to this change."
+    "Policy change, not a bug fix: on the reporter's live store this reclaims 19.9 GB of 29 GB at the next boot sweep. Verified by a read-only gcScan against a copy of the real coder-store.json — 27 transient candidates, 2 blocked as dirty, no working or pinned thread touched.",
+    "GC removes directories only and never branches, so unmerged worker commits stay reachable by branch name. But gcClean nulls thread.worktreePath AND thread.branch, so the thread no longer points at its own work — recovery means finding coder/<slug>-<threadShortId> by hand. That is pre-existing behaviour, now reachable for unmerged forks."
   ]
 }
