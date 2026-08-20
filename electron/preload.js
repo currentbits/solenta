@@ -243,6 +243,9 @@ const coder = {
     stop: (input) => invoke("devserver:stop", input),
     status: (input) => invoke("devserver:status", input),
   },
+  contextMenu: {
+    show: (items, position) => invoke("contextMenu:show", items, position),
+  },
   on,
 };
 

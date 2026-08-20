@@ -2688,6 +2688,23 @@ export interface CoderApi {
     pickDataDir(): Promise<string | null>;
     export(): Promise<string | null>;
   };
+  /**
+   * Native OS context menu (T3 `api.contextMenu.show`). Resolves the clicked
+   * leaf id, or null if the user dismisses. Absent on web/dev — the renderer
+   * falls back to a position:fixed portal on document.body.
+   */
+  contextMenu?: {
+    show(
+      items: {
+        id: string;
+        label: string;
+        disabled?: boolean;
+        separatorBefore?: boolean;
+        children?: unknown[];
+      }[],
+      position?: { x: number; y: number },
+    ): Promise<string | null>;
+  };
   /** Returns an unsubscribe function. */
   on(channel: "threads:changed", cb: (threads: ThreadInfo[]) => void): () => void;
   on(channel: "thread:updated", cb: (patch: ThreadPatch) => void): () => void;

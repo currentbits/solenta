@@ -125,7 +125,7 @@ describe("thread rename (issue #139)", () => {
 
       await m.click(m.query('[data-more-btn="t-row"]'));
       await m.flush();
-      const item = m.query('[data-rename-thread="t-row"]');
+      const item = document.querySelector('[data-rename-thread="t-row"]');
       assert.ok(item, "Rename item must be in the row menu");
       assert.equal((item!.textContent || "").trim(), "Rename");
 

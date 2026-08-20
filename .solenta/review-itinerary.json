@@ -1,34 +1,34 @@
 {
   "version": 1,
-  "readOrder": ["tests", "critical", "impl"],
+  "readOrder": ["critical", "tests", "impl"],
   "chunks": [
     {
-      "area": "tests",
-      "rationale": "test/sidebar.test.tsx describe 'Sidebar snooze nested submenu (#583)'. New cases sit after the existing drill-in / ArrowUp-Down tests: click-open focuses first menuitem, keyboard-focused … then click does the same, ArrowDown works with no extra focus(), Escape / outside click / Fork restore …, Rename keeps the title input, switching cards does not bounce. pressFocused, not press(el). Identity is assert.ok(a === b); assert.equal on nodes hangs on circular fibers.",
+      "area": "critical",
+      "rationale": "T3 does not put the thread-actions list inside the sidebar scroll container. pingdotgg/t3code threadActionMenu.logic.ts + api.contextMenu.show → Electron Menu.popup with Snooze as children. Solenta now does the same: electron/contextMenu.js Menu.popup on Desktop, src/contextMenuFallback.ts position:fixed on document.body otherwise. The in-card nested HTML drill-in, z-index 8, and menuPlaceUp measurement are gone from ThreadCard.",
       "risks": [
-        "The two-card bounce test depends on menu-src rendering earlier in the tree than menu-noise (p1 then p2). A later sidebar reorder would make the naive restore look green and hide the steal.",
-        "keyboard-on-… uses click after more.focus(), not Enter/Space. jsdom does not synthesize a button click from Enter, so a real keydown-on-trigger hole would not be caught."
+        "The group-header create menu still uses the old .snoozeMenu position:absolute path and can still clip.",
+        "jsdom tests exercise the HTML fallback, not Menu.popup. A native-menu regression would not fail the renderer suite."
       ]
     },
     {
-      "area": "critical",
-      "rationale": "ThreadCard focus layout effect in src/components/Sidebar.tsx. On the false→true edge of snoozeMenuOpen, focusMenuEdge(menu, 'first') so arrows hit the menu's onKeyDown without Tab. pendingMenuFocus still wins for drill-in (preset) and back (snooze) so ArrowRight/Left do not get overwritten. On close, moreBtnRef.focus() unless renamingRef is set. Restore is skipped when activeElement is already a live node that is not this trigger — opening card B closes A, and A's later-in-tree effect must not yank focus off B's first item.",
+      "area": "tests",
+      "rationale": "test/sidebar.test.tsx #582/#583 now assert the portal is document.body + position:fixed, Snooze children are a sibling submenu, right-click opens the same menu, hover clock+settle exist. Portal queries use document.querySelector — m.query only sees the mount container. press() not pressFocused, because the portal is outside the mounted tree.",
       "risks": [
-        "justOpened is a ref, not a render bit, so a 700ms thread patch while the menu is open cannot re-steal focus. Clearing menuWasOpen anywhere else would re-trigger first-item focus on the next panel toggle.",
-        "Outside-click restore runs even when the click target is the search field. In the real app that target may already have been focused by mousedown; we steal it back. That matches the requested contract but is unlike native <select>."
+        "afterEach dismissContextMenu() is file-wide in sidebar.test.tsx. A later test that expected a leftover menu would fail; none should.",
+        "Pin/snooze App tests that still used m.query for menu items were retargeted in pinSnooze, forkHandoff, threadRename."
       ]
     },
     {
       "area": "impl",
-      "rationale": "moreBtnRef on [data-more-btn]. No change to click contract, nested keys, data-snooze-preset / data-snooze-clear, or #582 stacking (data-menu-open, .group:has([data-snooze-menu]) z-index 8). first enabled item is usually [data-snooze-item]; without onSetSnoozed it is Fork.",
+      "rationale": "src/threadActionMenu.ts is the T3 item list (Snooze children, Wake when already snoozed, Solenta Fork/Hand off/Mute kept). Hover clock opens presets only; hover settle is the check; … and row contextmenu open the full list. CoderApi.contextMenu is optional so web/devCoder keep the fallback.",
       "risks": [
-        "Tab still walks every native menuitem. This is open-focus, not a tabindex=-1 roving set.",
-        "ArrowDown on the closed … trigger still does nothing — the menu is not mounted, so its onKeyDown is not listening. Enter/Space/click are the only openers."
+        "contextMenu:show is registered outside IPC_HANDLERS so the web bridge never Menu.popup on the server. A future catch-all IPC map must not swallow that channel.",
+        "This branch does not flatten the sidebar into T3's single list. Groups + Later remain."
       ]
     }
   ],
   "risks": [
-    "This branch still carries the #583 nested markup plus ArrowUp/Down from the parent worktree. Reviewers landing stacked PRs will conflict on Sidebar.tsx.",
-    "data-snooze-preset / data-snooze-clear and #582 stacking were not edited this turn."
+    "Issue #592 tracks this. #582/#583 were plan:done on the overlay approach; the overlay was the wrong T3 copy.",
+    "A parallel T3-flat-sidebar rewrite already exists on thread 8dea3d17; do not merge both blindly."
   ]
 }

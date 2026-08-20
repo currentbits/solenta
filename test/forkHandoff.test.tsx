@@ -112,7 +112,7 @@ async function openCardMenu(
   assert.ok(more, `"…" menu button must exist on ${threadId}`);
   await m.click(more as HTMLElement);
   await m.flush();
-  const menu = m.query(`[data-snooze-menu="${threadId}"]`);
+  const menu = document.querySelector("[data-context-menu]");
   assert.ok(menu, "card menu must be open");
   return menu as HTMLElement;
 }
@@ -140,7 +140,7 @@ describe("App fork / hand-off wiring (round 49)", () => {
     await selectThread(m, "source handoff thread");
 
     await openCardMenu(m, "t-source-fork");
-    const forkBtn = m.query('[data-fork-btn="t-source-fork"]');
+    const forkBtn = document.querySelector('[data-fork-btn="t-source-fork"]');
     assert.ok(forkBtn, "card Fork menu item must exist on the source");
     await m.click(forkBtn as HTMLElement);
     await m.flush();
@@ -210,7 +210,7 @@ describe("App fork / hand-off wiring (round 49)", () => {
       "other providers must still be listed (positive control)",
     );
 
-    const grok = m.query('[data-handoff-provider="grok"]');
+    const grok = document.querySelector('[data-handoff-provider="grok"]');
     assert.ok(grok, "Grok (not current provider) must be listed");
     assert.equal(
       (grok as HTMLButtonElement).disabled,
@@ -295,7 +295,7 @@ describe("App fork / hand-off wiring (round 49)", () => {
 
     await openCardMenu(m, "t-source-fork");
 
-    const kimi = m.query('[data-handoff-provider="kimi"]');
+    const kimi = document.querySelector('[data-handoff-provider="kimi"]');
     assert.ok(kimi, "unavailable Kimi must still be listed");
     assert.equal(
       (kimi as HTMLButtonElement).disabled,
@@ -311,7 +311,7 @@ describe("App fork / hand-off wiring (round 49)", () => {
     );
 
     // Positive control: available Grok still works in the same suite/menu.
-    const grok = m.query('[data-handoff-provider="grok"]');
+    const grok = document.querySelector('[data-handoff-provider="grok"]');
     assert.ok(grok);
     await m.click(grok as HTMLElement);
     await m.flush();
@@ -421,7 +421,7 @@ describe("App fork / hand-off wiring (round 49)", () => {
     await selectThread(m, "source handoff thread");
 
     await openCardMenu(m, "t-source-fork");
-    await m.click(m.query('[data-fork-btn="t-source-fork"]') as HTMLElement);
+    await m.click(document.querySelector('[data-fork-btn="t-source-fork"]') as HTMLElement);
     await m.flush();
 
     assert.equal(fake.of("threads.fork").length, 1);

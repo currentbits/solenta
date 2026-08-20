@@ -636,16 +636,14 @@ describe("fakeCoder setPinned/setSnoozed honesty (round 44)", () => {
         assert.ok(moreBtn, "data-more-btn must be present");
         await m.click(moreBtn!);
         await m.flush();
-        assert.ok(
-          m.query('[data-snooze-menu="t-snooze-mid"]'),
-          "card menu opens",
-        );
+        const menu = document.querySelector("[data-context-menu]");
+        assert.ok(menu, "card menu opens");
 
-        const snoozeItem = m.query("[data-snooze-item]");
+        const snoozeItem = menu.querySelector("[data-snooze-item]");
         assert.ok(snoozeItem, "Snooze is one first-level item (#583)");
         await m.click(snoozeItem);
         await m.flush();
-        const preset = m.query('[data-snooze-preset="evening"]');
+        const preset = document.querySelector('[data-snooze-preset="evening"]');
         assert.ok(preset, "data-snooze-preset=evening must open in nested panel");
         await m.click(preset!);
         await m.flush();
@@ -856,7 +854,7 @@ describe("fakeCoder setPinned/setSnoozed honesty (round 44)", () => {
 
       await m.click(m.query('[data-more-btn="t-mute-mid"]'));
       await m.flush();
-      const item = m.query('[data-mute-toggle="t-mute-mid"]');
+      const item = document.querySelector('[data-mute-toggle="t-mute-mid"]');
       assert.ok(item, "mute item must be in the card menu");
       assert.equal(item!.textContent, "Mute notifications");
 
@@ -884,7 +882,7 @@ describe("fakeCoder setPinned/setSnoozed honesty (round 44)", () => {
       await m.click(m.query('[data-more-btn="t-mute-mid"]'));
       await m.flush();
       assert.equal(
-        m.query('[data-mute-toggle="t-mute-mid"]')?.textContent,
+        document.querySelector('[data-mute-toggle="t-mute-mid"]')?.textContent,
         "Unmute notifications",
       );
     } finally {
