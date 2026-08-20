@@ -17,6 +17,8 @@
   --green: #34d399;
   --green-soft: rgba(52, 211, 153, 0.14);
   --amber: #fbbf24;
+  /* Delegating (orchestrator waiting on workers) — its own colour, not blue. */
+  --violet: #a78bfa;
   --danger: #f87171;
   /* Shared button + overlay primitives (restyle pass). */
   --btn-primary-bg: #2563eb;

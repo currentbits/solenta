@@ -1,14 +1,23 @@
 {
   "version": 1,
-  "readOrder": ["impl"],
+  "readOrder": ["critical", "impl"],
   "chunks": [
     {
-      "area": "src/components/Sidebar.module.css",
-      "rationale": "Restores the blue left edge on the selected thread. It was `box-shadow: inset 2px 0 0 0 var(--blue)` on .card[data-active] until the sidebar restyle in 011a629 dropped it; same rule is added to .slimRow[data-active] so Later-shelf rows read the same.",
+      "area": "src/components/Sidebar.tsx — statusLabelFor tone",
+      "rationale": "The T3 flat-sidebar rewrite folded Delegating into the working tone, so it painted blue like Working. Restore a distinct 'delegating' tone on StatusLabelInfo and return it from the isDelegating branch. statusDotFor's tone is untouched: it is no longer used for colour, only for label/flags.",
       "risks": [
-        ".card[data-multi=true] (blue-soft fill) has no box-shadow of its own, so a selected+multi card shows both the fill and the bar — that is the pre-011a629 behaviour."
+        "data-dim previously keyed off tone === 'working'; delegating rows would have stopped dimming when unselected, so the check now covers both tones."
+      ]
+    },
+    {
+      "area": "src/index.css + Sidebar.module.css — violet",
+      "rationale": "Adds --violet (#a78bfa, the pre-rewrite .badgeDelegating hue) and a .statusLabel[data-tone=\"delegating\"] rule. Waiting/Stalled/Quota/Woke stay amber because they shared amber before the rewrite too.",
+      "risks": [
+        "Violet on --card is ~5.4:1, in line with the other tones; no other consumer of --violet yet."
       ]
     }
   ],
-  "risks": []
+  "risks": [
+    "No test asserts data-tone anywhere, so the colour split is only covered by the existing 'Delegating' text assertions."
+  ]
 }

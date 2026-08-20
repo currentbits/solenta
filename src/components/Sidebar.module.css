@@ -390,6 +390,10 @@
   color: var(--blue);
 }
 
+.statusLabel[data-tone="delegating"] {
+  color: var(--violet);
+}
+
 .statusLabel[data-tone="attention"] {
   color: var(--amber);
 }

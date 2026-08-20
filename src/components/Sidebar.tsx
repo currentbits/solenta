@@ -261,7 +261,7 @@ export type StatusDotInfo = {
 
 export type StatusLabelInfo = {
   text: string;
-  tone: "working" | "attention" | "failed" | "done" | "queued";
+  tone: "working" | "delegating" | "attention" | "failed" | "done" | "queued";
   title: string;
   spoken: string;
   flags: Record<string, string>;
@@ -453,7 +453,7 @@ export function statusLabelFor(
   if (isDelegating(thread.status, wait)) {
     return {
       text: "Delegating",
-      tone: "working",
+      tone: "delegating",
       title: dot?.label ?? "Delegating",
       spoken: "delegating",
       flags: dot?.flags ?? { "data-delegating": thread.id },
@@ -775,7 +775,10 @@ export const ThreadCard = memo(function ThreadCard({
                   data-status-label={label.text}
                   data-tone={label.tone}
                   data-dim={
-                    label.tone === "working" && !active ? "true" : undefined
+                    (label.tone === "working" || label.tone === "delegating") &&
+                    !active
+                      ? "true"
+                      : undefined
                   }
                   title={label.title}
                   {...label.flags}
