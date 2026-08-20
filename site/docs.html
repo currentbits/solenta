@@ -211,6 +211,15 @@
         what went wrong without being opened.
       </p>
       <p>
+        When a provider returns a usage-limit error with a reset clock, the
+        thread parks as <strong>quota-wait</strong> instead of failing. A
+        banner names the resume time; the same prompt is sent again when
+        the quota resets, or immediately with Resume now. Exhausted
+        balance with no clock is still a hard fail. Solenta's own daily
+        and orchestration spend caps are a separate gate and do not park
+        this way.
+      </p>
+      <p>
         The caret next to <strong>+</strong> in the sidebar creates a thread in
         one of three modes:
       </p>
