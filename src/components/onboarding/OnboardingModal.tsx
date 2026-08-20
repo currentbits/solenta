@@ -5,9 +5,9 @@ import type {
   ProjectInfo,
   ProviderInfo,
 } from "../../shared/ipc";
-import { CliStep } from "./CliStep";
-import { SetupStep } from "./SetupStep";
-import { TourStep } from "./TourStep";
+import CliStep from "./CliStep";
+import SetupStep from "./SetupStep";
+import TourStep from "./TourStep";
 import styles from "./OnboardingModal.module.css";
 
 /** Shared contract for every onboarding step. Follow-up workers fill the bodies. */
