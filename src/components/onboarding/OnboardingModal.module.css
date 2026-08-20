@@ -143,3 +143,50 @@
   filter: brightness(1.08);
   color: #dbeafe;
 }
+
+/* TourStep */
+.tourGrid {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.tourCard {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--card);
+}
+
+.tourCardTitle {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.tourCardBody {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+
+.tourCardLink {
+  margin-top: auto;
+  align-self: flex-start;
+  font-size: 11px;
+  color: var(--blue);
+  text-decoration: none;
+}
+
+.tourCardLink:hover {
+  text-decoration: underline;
+}
