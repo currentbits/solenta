@@ -143,6 +143,18 @@
         that layer instead of leaving a pile of one-off observations.
       </p>
       <p>
+        The Memory tab's <strong>config doctor</strong> lints the repo's
+        <code>AGENTS.md</code>, <code>CLAUDE.md</code>, and sibling
+        instruction files against a six-axis rubric (commands,
+        architecture, patterns, conciseness, currency, actionability)
+        and against shared-memory conventions, strategies, and verified
+        decisions. Preview generates those files from memory without
+        writing; Write from memory confirms, then writes
+        <code>AGENTS.md</code> / <code>CLAUDE.md</code> /
+        <code>GEMINI.md</code>. Scoring and generation are
+        deterministic &mdash; no model in the loop.
+      </p>
+      <p>
         Alongside it, a <strong>hypothesis ledger</strong> records what an agent
         tried and ruled out. The next thread on the same problem is handed that
         list, so it does not spend its first ten minutes re-walking dead ends.
