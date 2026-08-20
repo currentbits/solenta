@@ -961,3 +961,56 @@ describe("SettingsModal worker model pool (issue #467)", () => {
     m.unmount();
   });
 });
+
+describe("SettingsModal two-pane chrome", () => {
+  it("lists sections and opens on Threads", async () => {
+    const m = await mount(modal());
+    const nav = m.query('[aria-label="Settings sections"]');
+    assert.ok(nav, "section nav");
+    const items = m.queryAll("[data-settings-nav]");
+    assert.deepEqual(
+      items.map((el) => el.getAttribute("data-settings-nav")),
+      [
+        "threads",
+        "spend",
+        "git",
+        "agents",
+        "telemetry",
+        "memory",
+        "about",
+      ],
+    );
+    const threads = m.query('[data-settings-nav="threads"]');
+    assert.equal(threads?.getAttribute("data-active"), "true");
+    assert.equal(threads?.getAttribute("aria-current"), "true");
+    assert.equal(
+      m.query('[data-settings-pane="threads"]')?.hasAttribute("hidden"),
+      false,
+    );
+    assert.equal(
+      m.query('[data-settings-pane="spend"]')?.hasAttribute("hidden"),
+      true,
+    );
+    m.unmount();
+  });
+
+  it("switches the visible pane without dropping other sections from the DOM", async () => {
+    const m = await mount(modal());
+    await m.click(m.query('[data-settings-nav="spend"]'));
+    assert.equal(
+      m.query('[data-settings-nav="spend"]')?.getAttribute("data-active"),
+      "true",
+    );
+    assert.equal(
+      m.query('[data-settings-pane="spend"]')?.hasAttribute("hidden"),
+      false,
+    );
+    assert.equal(
+      m.query('[data-settings-pane="threads"]')?.hasAttribute("hidden"),
+      true,
+    );
+    assert.ok(m.query("#daily-budget"), "spend fields stay mounted");
+    assert.ok(m.query("[data-otel-settings]"), "telemetry stays mounted");
+    m.unmount();
+  });
+});

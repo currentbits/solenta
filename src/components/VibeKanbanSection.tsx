@@ -197,7 +197,7 @@ export function VibeKanbanSection({ active }: VibeKanbanSectionProps) {
       <div className={styles.fieldRow}>
         <button
           type="button"
-          className={styles.btnPrimary}
+          className={`${styles.btn} ${styles.btnPrimary}`}
           data-vk-import=""
           disabled={busy != null || !preview?.found}
           onClick={() => void runImport()}

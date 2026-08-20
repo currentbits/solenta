@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type ReactNode,
+} from "react";
 import {
   PERMISSION_MODE_LABELS,
   PERMISSION_MODES,
@@ -118,6 +125,48 @@ const EMPTY_POOL: SubagentPool = {
   entries: [],
 };
 
+const SETTINGS_PANES = [
+  { id: "threads", label: "Threads" },
+  { id: "spend", label: "Spend" },
+  { id: "git", label: "Git" },
+  { id: "agents", label: "Agents" },
+  { id: "telemetry", label: "Telemetry" },
+  { id: "memory", label: "Memory" },
+  { id: "about", label: "About" },
+] as const;
+
+type SettingsPaneId = (typeof SETTINGS_PANES)[number]["id"];
+
+function PrefRow({
+  htmlFor,
+  label,
+  hint,
+  stacked,
+  control,
+}: {
+  htmlFor?: string;
+  label: string;
+  hint?: ReactNode;
+  stacked?: boolean;
+  control: ReactNode;
+}) {
+  return (
+    <div className={`${styles.pref}${stacked ? ` ${styles.prefStack}` : ""}`}>
+      <div className={styles.prefCopy}>
+        {htmlFor ? (
+          <label className={styles.prefLabel} htmlFor={htmlFor}>
+            {label}
+          </label>
+        ) : (
+          <div className={styles.prefLabel}>{label}</div>
+        )}
+        {hint ? <p className={styles.prefHint}>{hint}</p> : null}
+      </div>
+      <div className={styles.prefControl}>{control}</div>
+    </div>
+  );
+}
+
 interface PoolDraft {
   originalAlias: string | null;
   alias: string;
@@ -216,6 +265,7 @@ export function SettingsModal({
   const [saving, setSaving] = useState(false);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [downloadingUpdate, setDownloadingUpdate] = useState(false);
+  const [pane, setPane] = useState<SettingsPaneId>("threads");
   const wasOpen = useRef(false);
   /** Sync guard: blur then Save-click can both fire before setSaving lands. */
   const savingRef = useRef(false);
@@ -241,6 +291,7 @@ export function SettingsModal({
     setPoolDraft(null);
     setError(null);
     setSaving(false);
+    setPane("threads");
     savingRef.current = false;
   }, [open, settings?.dailyBudgetUsd, settings?.orchestrationBudgetUsd, settings?.autoSettleAfterDays, settings?.prDiffCapLines, settings?.otel]);
 
@@ -536,6 +587,22 @@ export function SettingsModal({
         }`
       : "Memory server: not running";
 
+  const onNavKeyDown = (e: KeyboardEvent<HTMLElement>) => {
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+    e.preventDefault();
+    const i = SETTINGS_PANES.findIndex((p) => p.id === pane);
+    const next =
+      e.key === "ArrowDown"
+        ? SETTINGS_PANES[(i + 1) % SETTINGS_PANES.length]
+        : SETTINGS_PANES[(i - 1 + SETTINGS_PANES.length) % SETTINGS_PANES.length];
+    if (!next) return;
+    setPane(next.id);
+    const btn = e.currentTarget.querySelector<HTMLButtonElement>(
+      `[data-settings-nav="${next.id}"]`,
+    );
+    btn?.focus();
+  };
+
   return (
     <div
       className={styles.backdrop}
@@ -545,7 +612,7 @@ export function SettingsModal({
       }}
     >
       <div
-        className={styles.modal}
+        className={styles.settingsModal}
         role="dialog"
         aria-modal="true"
         aria-label="Settings"
@@ -564,229 +631,207 @@ export function SettingsModal({
           </button>
         </header>
 
-        <div className={styles.body}>
-          <section className={styles.section}>
-            <h3 className={styles.sectionLabel}>Budget</h3>
-            <div className={styles.field}>
-              <label className={styles.fieldLabel} htmlFor="daily-budget">
-                Daily budget (USD)
-              </label>
-              <div className={styles.fieldRow}>
-                <input
-                  id="daily-budget"
-                  className={styles.input}
-                  type="number"
-                  inputMode="decimal"
-                  min="0"
-                  step="any"
-                  placeholder="No cap"
-                  value={budgetText}
-                  disabled={saving}
-                  onChange={(e) => {
-                    setBudgetText(e.target.value);
-                    setError(null);
-                  }}
-                  onBlur={() => onBlurBudget()}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      void save();
-                    }
-                  }}
-                />
-                <button
-                  type="button"
-                  className={`${styles.btn} ${styles.btnPrimary}`}
-                  disabled={saving}
-                  onClick={() => void save()}
-                >
-                  {saving ? "Saving…" : "Save"}
-                </button>
-              </div>
-              {error && (
-                <p className={styles.fieldError} role="alert">
-                  {error}
-                </p>
-              )}
-            </div>
-            <div className={styles.field}>
-              <label className={styles.fieldLabel} htmlFor="orch-budget">
-                Per-orchestration budget (USD)
-              </label>
-              <div className={styles.fieldRow}>
-                <input
-                  id="orch-budget"
-                  className={styles.input}
-                  type="number"
-                  inputMode="decimal"
-                  min="0"
-                  step="any"
-                  placeholder="No cap"
-                  value={orchBudgetText}
-                  disabled={saving}
-                  data-orch-budget=""
-                  onChange={(e) => {
-                    setOrchBudgetText(e.target.value);
-                    setError(null);
-                  }}
-                  onBlur={() => onBlurOrchBudget()}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      void save();
-                    }
-                  }}
-                />
-                <button
-                  type="button"
-                  className={`${styles.btn} ${styles.btnPrimary}`}
-                  disabled={saving}
-                  onClick={() => void save()}
-                >
-                  {saving ? "Saving…" : "Save"}
-                </button>
-              </div>
-              <p className={styles.note}>
-                Caps the combined spend of one orchestrator thread and its
-                fan-out workers. When a crew reaches it, the next worker
-                wake-up is refused and the thread lands failed with the
-                reason — raise or clear the cap, then Retry turn.
-              </p>
-            </div>
-          </section>
+        <div className={styles.settingsBody}>
+          <nav
+            className={styles.nav}
+            aria-label="Settings sections"
+            onKeyDown={onNavKeyDown}
+          >
+            {SETTINGS_PANES.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className={styles.navItem}
+                data-settings-nav={item.id}
+                data-active={pane === item.id ? "true" : undefined}
+                aria-current={pane === item.id ? "true" : undefined}
+                onClick={() => setPane(item.id)}
+              >
+                {item.label}
+              </button>
+            ))}
+          </nav>
 
-          <SourceControlSection
-            active={open}
-            onDiscover={onDiscoverSourceControl}
-          />
+          <div className={styles.editor}>
+            {error && (
+              <p className={styles.paneError} role="alert">
+                {error}
+              </p>
+            )}
+            <div className={styles.editorScroll}>
+          <div
+            className={styles.pane}
+            data-settings-pane="spend"
+            hidden={pane !== "spend"}
+          >
+            <h3 className={styles.paneTitle}>Spend</h3>
+            <p className={styles.paneLead}>
+              Caps apply the next time a thread starts a turn.
+            </p>
+            <PrefRow
+              htmlFor="daily-budget"
+              label="Daily budget (USD)"
+              hint="Empty means no cap."
+              control={
+                <div className={styles.fieldRow}>
+                  <input
+                    id="daily-budget"
+                    className={styles.input}
+                    type="number"
+                    inputMode="decimal"
+                    min="0"
+                    step="any"
+                    placeholder="No cap"
+                    value={budgetText}
+                    disabled={saving}
+                    onChange={(e) => {
+                      setBudgetText(e.target.value);
+                      setError(null);
+                    }}
+                    onBlur={() => onBlurBudget()}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        void save();
+                      }
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className={`${styles.btn} ${styles.btnPrimary}`}
+                    disabled={saving}
+                    onClick={() => void save()}
+                  >
+                    {saving ? "Saving…" : "Save"}
+                  </button>
+                </div>
+              }
+            />
+            <PrefRow
+              htmlFor="orch-budget"
+              label="Per-orchestration budget (USD)"
+              hint="Caps the combined spend of one orchestrator thread and its fan-out workers. When a crew reaches it, the next worker wake-up is refused and the thread lands failed — raise or clear the cap, then Retry turn."
+              control={
+                <div className={styles.fieldRow}>
+                  <input
+                    id="orch-budget"
+                    className={styles.input}
+                    type="number"
+                    inputMode="decimal"
+                    min="0"
+                    step="any"
+                    placeholder="No cap"
+                    value={orchBudgetText}
+                    disabled={saving}
+                    data-orch-budget=""
+                    onChange={(e) => {
+                      setOrchBudgetText(e.target.value);
+                      setError(null);
+                    }}
+                    onBlur={() => onBlurOrchBudget()}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        void save();
+                      }
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className={`${styles.btn} ${styles.btnPrimary}`}
+                    disabled={saving}
+                    onClick={() => void save()}
+                  >
+                    {saving ? "Saving…" : "Save"}
+                  </button>
+                </div>
+              }
+            />
+          </div>
+
+          <div
+            className={styles.pane}
+            data-settings-pane="git"
+            hidden={pane !== "git"}
+          >
+            <h3 className={styles.paneTitle}>Git</h3>
+            <SourceControlSection
+              active={open}
+              onDiscover={onDiscoverSourceControl}
+            />
 
           <section className={styles.section}>
             <h3 className={styles.sectionLabel}>Pull requests</h3>
-            <div className={styles.field}>
-              <label className={styles.fieldLabel} htmlFor="pr-diff-cap">
-                PR size cap (lines changed)
-              </label>
-              <div className={styles.fieldRow}>
-                <input
-                  id="pr-diff-cap"
-                  className={styles.input}
-                  type="number"
-                  inputMode="numeric"
-                  min="1"
-                  step="1"
-                  placeholder="No cap"
-                  value={prCapText}
-                  disabled={saving}
-                  data-pr-diff-cap=""
-                  onChange={(e) => {
-                    setPrCapText(e.target.value);
-                    setError(null);
-                  }}
-                  onBlur={() => onBlurPrCap()}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      void save();
-                    }
-                  }}
-                />
-                <span className={styles.note}>lines</span>
-                <button
-                  type="button"
-                  className={`${styles.btn} ${styles.btnPrimary}`}
-                  disabled={saving}
-                  onClick={() => void save()}
-                >
-                  {saving ? "Saving…" : "Save"}
-                </button>
-              </div>
-              <p className={styles.note}>
-                PRs created from the app larger than this are refused with an
-                offer to split them into stacked PRs — small batches keep
-                human review affordable. Default 400; empty means no cap.
-              </p>
-            </div>
+            <PrefRow
+              htmlFor="pr-diff-cap"
+              label="PR size cap (lines changed)"
+              hint="PRs created from the app larger than this are refused with an offer to split them into stacked PRs. Default 400; empty means no cap."
+              control={
+                <div className={styles.fieldRow}>
+                  <input
+                    id="pr-diff-cap"
+                    className={styles.input}
+                    type="number"
+                    inputMode="numeric"
+                    min="1"
+                    step="1"
+                    placeholder="No cap"
+                    value={prCapText}
+                    disabled={saving}
+                    data-pr-diff-cap=""
+                    onChange={(e) => {
+                      setPrCapText(e.target.value);
+                      setError(null);
+                    }}
+                    onBlur={() => onBlurPrCap()}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        void save();
+                      }
+                    }}
+                  />
+                  <span className={styles.note}>lines</span>
+                  <button
+                    type="button"
+                    className={`${styles.btn} ${styles.btnPrimary}`}
+                    disabled={saving}
+                    onClick={() => void save()}
+                  >
+                    {saving ? "Saving…" : "Save"}
+                  </button>
+                </div>
+              }
+            />
           </section>
+            <WorktreeGcSection
+              active={open}
+              projects={projects}
+              onGcScan={onGcScan}
+              onGcClean={onGcClean}
+            />
+            <VibeKanbanSection active={open} />
+          </div>
 
-          <section className={styles.section}>
-            <h3 className={styles.sectionLabel}>Sidebar</h3>
-            <div className={styles.field}>
-              <label className={styles.fieldLabel} htmlFor="auto-settle-days">
-                Auto-settle quiet threads after
-              </label>
-              <div className={styles.fieldRow}>
+          <div
+            className={styles.pane}
+            data-settings-pane="threads"
+            hidden={pane !== "threads"}
+          >
+            <h3 className={styles.paneTitle}>Threads</h3>
+            <p className={styles.paneLead}>
+              Defaults for new threads, and how quiet ones leave the attention
+              list.
+            </p>
+            <PrefRow
+              htmlFor="default-worktree"
+              label="Isolate new threads in a git worktree"
+              hint="New threads get their own branch and working directory, so parallel agents never touch your checkout. Local projects only."
+              control={
                 <input
-                  id="auto-settle-days"
-                  className={styles.input}
-                  type="number"
-                  inputMode="numeric"
-                  min="1"
-                  step="1"
-                  placeholder="Never"
-                  value={settleDaysText}
-                  disabled={saving}
-                  data-auto-settle-days=""
-                  onChange={(e) => {
-                    setSettleDaysText(e.target.value);
-                    setError(null);
-                  }}
-                  onBlur={() => onBlurSettleDays()}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      void save();
-                    }
-                  }}
-                />
-                <span className={styles.note}>days</span>
-                <button
-                  type="button"
-                  className={`${styles.btn} ${styles.btnPrimary}`}
-                  disabled={saving}
-                  onClick={() => void save()}
-                >
-                  {saving ? "Saving…" : "Save"}
-                </button>
-              </div>
-              <p className={styles.note}>
-                Empty means Never — quiet threads only settle via PR state or
-                an explicit settle.
-              </p>
-              <label className={styles.fieldRow}>
-                <input
+                  id="default-worktree"
                   type="checkbox"
-                  data-auto-settle-on-merge=""
-                  checked={settings?.autoSettleOnMerge !== false}
-                  disabled={saving || settings == null}
-                  onChange={(e) => {
-                    setError(null);
-                    void onSaveSettings({
-                      autoSettleOnMerge: e.target.checked,
-                    }).catch((err) => {
-                      setError(
-                        err instanceof Error && err.message
-                          ? err.message
-                          : "Failed to save settings",
-                      );
-                    });
-                  }}
-                />
-                <span>Settle a thread when its pull request merges</span>
-              </label>
-              <p className={styles.note}>
-                Closed pull requests still settle automatically. Turn this
-                off to keep a merged thread in the attention list until you
-                settle it yourself.
-              </p>
-            </div>
-          </section>
-
-          <section className={styles.section}>
-            <h3 className={styles.sectionLabel}>Threads</h3>
-            <div className={styles.field}>
-              <label className={styles.fieldRow}>
-                <input
-                  type="checkbox"
+                  className={styles.switch}
                   data-default-worktree=""
                   checked={settings?.defaultWorktree ?? false}
                   disabled={saving || settings == null}
@@ -803,16 +848,17 @@ export function SettingsModal({
                     });
                   }}
                 />
-                <span>Isolate new threads in a git worktree</span>
-              </label>
-              <p className={styles.note}>
-                New threads get their own branch and working directory, so
-                parallel agents never touch your checkout. Local projects
-                only.
-              </p>
-              <label className={styles.fieldRow}>
+              }
+            />
+            <PrefRow
+              htmlFor="default-orchestrate"
+              label="Delegate new threads to a worker"
+              hint="The thread's first prompt is handed to a worker thread in its own worktree; the thread itself supervises. Wins over the worktree option above."
+              control={
                 <input
+                  id="default-orchestrate"
                   type="checkbox"
+                  className={styles.switch}
                   data-default-orchestrate=""
                   checked={settings?.defaultOrchestrate ?? false}
                   disabled={saving || settings == null}
@@ -829,18 +875,17 @@ export function SettingsModal({
                     });
                   }}
                 />
-                <span>Delegate new threads to a worker</span>
-              </label>
-              <p className={styles.note}>
-                The thread&apos;s first prompt is handed to a worker thread in
-                its own worktree; the thread itself supervises. Wins over the
-                worktree option above.
-              </p>
-            </div>
-            <div className={styles.field}>
-              <label className={styles.fieldRow}>
+              }
+            />
+            <PrefRow
+              htmlFor="notifications"
+              label="Desktop notification when a thread finishes"
+              hint="Only fires while the window is in the background. Mute a single noisy thread from its snooze menu in the sidebar."
+              control={
                 <input
+                  id="notifications"
                   type="checkbox"
+                  className={styles.switch}
                   data-notifications=""
                   checked={settings?.notifications ?? true}
                   disabled={saving || settings == null}
@@ -857,17 +902,17 @@ export function SettingsModal({
                     });
                   }}
                 />
-                <span>Desktop notification when a thread finishes</span>
-              </label>
-              <p className={styles.note}>
-                Only fires while the window is in the background. Mute a
-                single noisy thread from its snooze menu in the sidebar.
-              </p>
-            </div>
-            <div className={styles.field}>
-              <label className={styles.fieldRow}>
+              }
+            />
+            <PrefRow
+              htmlFor="quota-wait-auto-resume"
+              label="Continue automatically when usage limit resets"
+              hint="Parks a thread until the provider's reset time, then sends the same prompt once. Off = fail the turn. Distinct from the daily budget cap."
+              control={
                 <input
+                  id="quota-wait-auto-resume"
                   type="checkbox"
+                  className={styles.switch}
                   data-quota-wait-auto-resume=""
                   checked={settings?.quotaWaitAutoResume !== false}
                   disabled={saving || settings == null}
@@ -884,86 +929,162 @@ export function SettingsModal({
                     });
                   }}
                 />
-                <span>Continue automatically when usage limit resets</span>
-              </label>
-              <p className={styles.note}>
-                Parks a thread until the provider&apos;s reset time, then
-                sends the same prompt once. Off = fail the turn. Distinct
-                from the daily budget cap above.
-              </p>
-            </div>
-          </section>
-
-          <section className={styles.section} data-otel-settings="">
-            <h3 className={styles.sectionLabel}>OpenTelemetry</h3>
-            {error && (
-              <p className={styles.fieldError} role="alert">
-                {error}
-              </p>
-            )}
-            <div className={styles.field}>
-              <label className={styles.fieldLabel} htmlFor="otel-endpoint">
-                OTLP endpoint
-              </label>
-              <input
-                id="otel-endpoint"
-                className={styles.input}
-                type="url"
-                inputMode="url"
-                autoComplete="off"
-                spellCheck={false}
-                placeholder="http://127.0.0.1:4318"
-                value={otelEndpoint}
-                disabled={saving || settings == null}
-                data-otel-endpoint=""
-                onChange={(e) => {
-                  setOtelEndpoint(e.target.value);
-                  setError(null);
-                }}
-                onBlur={() => onBlurOtelEndpoint()}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    void persistOtel(otelFromDrafts());
-                  }
-                }}
-              />
-              <p className={styles.note}>
-                Empty turns export off entirely. Spans POST to
-                {" "}
-                <span className={styles.monoNote}>&lt;endpoint&gt;/v1/traces</span>
-                .
-              </p>
-            </div>
-            <div className={styles.field}>
-              <label className={styles.fieldLabel} htmlFor="otel-headers">
-                Export headers
-              </label>
-              <textarea
-                id="otel-headers"
-                className={styles.textarea}
-                rows={3}
-                spellCheck={false}
-                placeholder="Authorization: Bearer ..."
-                value={otelHeadersText}
-                disabled={saving || settings == null}
-                data-otel-headers=""
-                onChange={(e) => {
-                  setOtelHeadersText(e.target.value);
-                  setError(null);
-                }}
-                onBlur={() => onBlurOtelHeaders()}
-              />
-              <p className={styles.note}>
-                One <span className={styles.monoNote}>key: value</span> per
-                line. Used as extra headers on every OTLP POST (collector
-                auth).
-              </p>
-            </div>
-            <div className={styles.field}>
-              <label className={styles.fieldRow}>
+              }
+            />
+            <PrefRow
+              htmlFor="auto-settle-days"
+              label="Auto-settle quiet threads after"
+              hint="Empty means Never — quiet threads only settle via PR state or an explicit settle."
+              control={
+                <div className={styles.fieldRow}>
+                  <input
+                    id="auto-settle-days"
+                    className={styles.input}
+                    type="number"
+                    inputMode="numeric"
+                    min="1"
+                    step="1"
+                    placeholder="Never"
+                    value={settleDaysText}
+                    disabled={saving}
+                    data-auto-settle-days=""
+                    onChange={(e) => {
+                      setSettleDaysText(e.target.value);
+                      setError(null);
+                    }}
+                    onBlur={() => onBlurSettleDays()}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        void save();
+                      }
+                    }}
+                  />
+                  <span className={styles.note}>days</span>
+                  <button
+                    type="button"
+                    className={`${styles.btn} ${styles.btnPrimary}`}
+                    disabled={saving}
+                    onClick={() => void save()}
+                  >
+                    {saving ? "Saving…" : "Save"}
+                  </button>
+                </div>
+              }
+            />
+            <PrefRow
+              htmlFor="auto-settle-on-merge"
+              label="Settle a thread when its pull request merges"
+              hint="Closed pull requests still settle automatically. Turn this off to keep a merged thread in the attention list until you settle it yourself."
+              control={
                 <input
+                  id="auto-settle-on-merge"
                   type="checkbox"
+                  className={styles.switch}
+                  data-auto-settle-on-merge=""
+                  checked={settings?.autoSettleOnMerge !== false}
+                  disabled={saving || settings == null}
+                  onChange={(e) => {
+                    setError(null);
+                    void onSaveSettings({
+                      autoSettleOnMerge: e.target.checked,
+                    }).catch((err) => {
+                      setError(
+                        err instanceof Error && err.message
+                          ? err.message
+                          : "Failed to save settings",
+                      );
+                    });
+                  }}
+                />
+              }
+            />
+          </div>
+
+          <div
+            className={styles.pane}
+            data-settings-pane="telemetry"
+            hidden={pane !== "telemetry"}
+          >
+            <h3 className={styles.paneTitle}>Telemetry</h3>
+            <section className={styles.section} data-otel-settings="">
+            <PrefRow
+              stacked
+              htmlFor="otel-endpoint"
+              label="OTLP endpoint"
+              hint={
+                <>
+                  Empty turns export off entirely. Spans POST to{" "}
+                  <span className={styles.monoNote}>
+                    &lt;endpoint&gt;/v1/traces
+                  </span>
+                  .
+                </>
+              }
+              control={
+                <input
+                  id="otel-endpoint"
+                  className={styles.input}
+                  type="url"
+                  inputMode="url"
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder="http://127.0.0.1:4318"
+                  value={otelEndpoint}
+                  disabled={saving || settings == null}
+                  data-otel-endpoint=""
+                  onChange={(e) => {
+                    setOtelEndpoint(e.target.value);
+                    setError(null);
+                  }}
+                  onBlur={() => onBlurOtelEndpoint()}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      void persistOtel(otelFromDrafts());
+                    }
+                  }}
+                />
+              }
+            />
+            <PrefRow
+              stacked
+              htmlFor="otel-headers"
+              label="Export headers"
+              hint={
+                <>
+                  One <span className={styles.monoNote}>key: value</span> per
+                  line. Used as extra headers on every OTLP POST (collector
+                  auth).
+                </>
+              }
+              control={
+                <textarea
+                  id="otel-headers"
+                  className={styles.textarea}
+                  rows={3}
+                  spellCheck={false}
+                  placeholder="Authorization: Bearer ..."
+                  value={otelHeadersText}
+                  disabled={saving || settings == null}
+                  data-otel-headers=""
+                  onChange={(e) => {
+                    setOtelHeadersText(e.target.value);
+                    setError(null);
+                  }}
+                  onBlur={() => onBlurOtelHeaders()}
+                />
+              }
+            />
+            <PrefRow
+              htmlFor="otel-claude-metrics"
+              label="Also export Claude Code's native metrics"
+              hint="Does nothing unless an endpoint is set. Points Claude Code at the same collector so its native metrics land beside our spans."
+              control={
+                <input
+                  id="otel-claude-metrics"
+                  type="checkbox"
+                  className={styles.switch}
                   data-otel-claude-metrics=""
                   checked={otelClaudeMetrics}
                   disabled={saving || settings == null}
@@ -977,16 +1098,17 @@ export function SettingsModal({
                     });
                   }}
                 />
-                <span>Also export Claude Code&apos;s native metrics</span>
-              </label>
-              <p className={styles.note}>
-                Does nothing unless an endpoint is set. Points Claude Code
-                at the same collector so its native metrics land beside our
-                spans.
-              </p>
-            </div>
+              }
+            />
           </section>
+          </div>
 
+          <div
+            className={styles.pane}
+            data-settings-pane="agents"
+            hidden={pane !== "agents"}
+          >
+            <h3 className={styles.paneTitle}>Agents</h3>
           <section className={styles.section} data-agent-profiles="">
             <h3 className={styles.sectionLabel}>Agent profiles</h3>
             <p className={styles.note}>
@@ -1097,11 +1219,6 @@ export function SettingsModal({
 
           <section className={styles.section} data-subagent-pool="">
             <h3 className={styles.sectionLabel}>Worker model pool</h3>
-            {error && (
-              <p className={styles.fieldError} role="alert">
-                {error}
-              </p>
-            )}
             <p className={styles.note}>
               Described candidates the lead picks per spawn. Workers default
               to the cheap alias. Does not route the thread you are talking
@@ -1257,18 +1374,18 @@ export function SettingsModal({
               </div>
             )}
           </section>
+          </div>
 
-          <WorktreeGcSection
-            active={open}
-            projects={projects}
-            onGcScan={onGcScan}
-            onGcClean={onGcClean}
-          />
-
-          <VibeKanbanSection active={open} />
-
-          <section className={styles.section}>
-            <h3 className={styles.sectionLabel}>Memory</h3>
+          <div
+            className={styles.pane}
+            data-settings-pane="memory"
+            hidden={pane !== "memory"}
+          >
+            <h3 className={styles.paneTitle}>Memory</h3>
+            <p className={styles.paneLead}>
+              Shared memory is project-scoped and injected into agents
+              automatically.
+            </p>
             <div className={styles.memoryRow}>
               <span
                 className={styles.memoryDot}
@@ -1288,16 +1405,16 @@ export function SettingsModal({
                 Janitor error: {memory.lastError}
               </p>
             )}
-            <p className={styles.note}>
-              Shared memory is project-scoped and injected into agents
-              automatically.
-            </p>
-          </section>
+          </div>
 
-          <section className={styles.section}>
-            <h3 className={styles.sectionLabel}>Build</h3>
+          <div
+            className={styles.pane}
+            data-settings-pane="about"
+            hidden={pane !== "about"}
+          >
+            <h3 className={styles.paneTitle}>About</h3>
             {/* A stale packaged bundle behaves like a broken app; name the build. */}
-            <p className={styles.note}>
+            <p className={styles.buildLine}>
               {status?.build
                 ? `${status.build.version}${
                     status.build.sha ? ` · ${status.build.sha}` : " · dev tree"
@@ -1306,46 +1423,53 @@ export function SettingsModal({
                   }`
                 : "unknown"}
             </p>
-            <div className={styles.fieldRow}>
-              <label className={styles.note} htmlFor="update-channel">
-                Update channel
-              </label>
-              <select
-                id="update-channel"
-                className={styles.input}
-                data-update-channel=""
-                value={settings?.updateChannel ?? status?.build.channel ?? "prod"}
-                disabled={saving || settings == null}
-                onChange={(e) => {
-                  setError(null);
-                  const updateChannel = e.target.value as "prod" | "nightly";
-                  void onSaveSettings({ updateChannel })
-                    .then(() => onCheckUpdate?.())
-                    .catch((err) => {
-                      setError(
-                        err instanceof Error && err.message
-                          ? err.message
-                          : "Failed to save settings",
+            <PrefRow
+              htmlFor="update-channel"
+              label="Update channel"
+              control={
+                <div className={styles.fieldRow}>
+                  <select
+                    id="update-channel"
+                    className={styles.input}
+                    data-update-channel=""
+                    value={
+                      settings?.updateChannel ?? status?.build.channel ?? "prod"
+                    }
+                    disabled={saving || settings == null}
+                    onChange={(e) => {
+                      setError(null);
+                      const updateChannel = e.target.value as "prod" | "nightly";
+                      void onSaveSettings({ updateChannel })
+                        .then(() => onCheckUpdate?.())
+                        .catch((err) => {
+                          setError(
+                            err instanceof Error && err.message
+                              ? err.message
+                              : "Failed to save settings",
+                          );
+                        });
+                    }}
+                  >
+                    <option value="prod">Prod</option>
+                    <option value="nightly">Nightly</option>
+                  </select>
+                  <button
+                    type="button"
+                    className={styles.btn}
+                    data-check-update=""
+                    disabled={checkingUpdate || onCheckUpdate == null}
+                    onClick={() => {
+                      setCheckingUpdate(true);
+                      void onCheckUpdate?.().finally(() =>
+                        setCheckingUpdate(false),
                       );
-                    });
-                }}
-              >
-                <option value="prod">Prod</option>
-                <option value="nightly">Nightly</option>
-              </select>
-              <button
-                type="button"
-                className={styles.btn}
-                data-check-update=""
-                disabled={checkingUpdate || onCheckUpdate == null}
-                onClick={() => {
-                  setCheckingUpdate(true);
-                  void onCheckUpdate?.().finally(() => setCheckingUpdate(false));
-                }}
-              >
-                {checkingUpdate ? "Checking…" : "Check for updates"}
-              </button>
-            </div>
+                    }}
+                  >
+                    {checkingUpdate ? "Checking…" : "Check for updates"}
+                  </button>
+                </div>
+              }
+            />
             {update?.state === "none" && (
               <p className={styles.note}>Up to date.</p>
             )}
@@ -1401,7 +1525,9 @@ export function SettingsModal({
                 Update failed: {update.error}
               </p>
             )}
-          </section>
+          </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
