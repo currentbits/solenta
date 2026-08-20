@@ -48,6 +48,7 @@ import { isUnread } from "../threadUnread";
 import {
   buildWaitStates,
   isDelegating,
+  subagentNames,
   waitLabel,
   waitTooltip,
   type WaitState,
@@ -599,6 +600,7 @@ export const ThreadCard = memo(function ThreadCard({
   const label = statusLabelFor(thread, now, wait, active);
   const pinned = isPinned(thread);
   const recede = working && !active && !multiSelected;
+  const subagentLines = wait ? subagentNames(wait) : [];
   // Menus are native Menu.popup / a body portal (#592) — the card only
   // tracks openness so the hover actions stay pinned underneath.
   const [menuOpen, setMenuOpen] = useState(false);
@@ -959,6 +961,30 @@ export const ThreadCard = memo(function ThreadCard({
             title={waitTooltip(wait)}
           >
             {waitLabel(wait, now)}
+          </div>
+        )}
+        {/*
+          Issue #542: name the running in-agent subagents under the wait row.
+          Plain 11px lines inside cardBody — no elbow, no dot, no interactive
+          child; cardBody is pointer-events:none, so a click falls through to
+          the stretch-select button and picks the parent thread, same as the
+          old nested rows did explicitly.
+          ponytail: 3 lines then a "+N more" tail; if fan-outs routinely run
+          wider, cap by card height instead of a count.
+        */}
+        {subagentLines.slice(0, 3).map((name, i) => (
+          <div
+            key={i}
+            className={styles.subagentRow}
+            data-subagent-row={thread.id}
+            title={name}
+          >
+            {name}
+          </div>
+        ))}
+        {subagentLines.length > 3 && (
+          <div className={styles.subagentRow} data-subagent-row={thread.id}>
+            +{subagentLines.length - 3} more
           </div>
         )}
       </div>

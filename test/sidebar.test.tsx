@@ -1402,9 +1402,111 @@ describe("Sidebar status label + wait row", () => {
     const label = m.query('[data-thread-card="solo"] [data-status-label]');
     assert.ok(label);
     const title = label!.getAttribute("title") || "";
-    assert.match(title, /Waiting on 1 worker:/);
+    assert.match(title, /Waiting on 1 subagent:/);
     assert.match(title, /Background research/);
-    assert.ok(!/Waiting on 1 worker · \d/.test(title));
+    assert.ok(!/Waiting on 1 subagent · \d/.test(title));
+    m.unmount();
+  });
+});
+
+describe("Sidebar subagent rows (#542)", () => {
+  const withSubagents = (subagents: ThreadInfo["subagents"]) =>
+    thread({ id: "solo", status: "working", runStartedAt: FRESH, subagents });
+
+  it("names each running subagent under the wait row", async () => {
+    await clearSidebarStorage();
+    const m = await mount(
+      sidebar([
+        withSubagents([
+          {
+            id: "toolu_1",
+            description: "Background research",
+            agentType: "general-purpose",
+            status: "running",
+          },
+        ]),
+      ]),
+    );
+    const rows = m.queryAll('[data-thread-card="solo"] [data-subagent-row]');
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0]!.textContent, "Background research");
+    // The count noun distinguishes it from a forked worker thread.
+    const wait = m.query('[data-wait-row="solo"]');
+    assert.match(wait!.textContent || "", /Waiting on 1 subagent/);
+    m.unmount();
+  });
+
+  it("a finished subagent renders no row", async () => {
+    await clearSidebarStorage();
+    const m = await mount(
+      sidebar([
+        withSubagents([
+          {
+            id: "toolu_1",
+            description: "Background research",
+            agentType: "general-purpose",
+            status: "done",
+          },
+        ]),
+      ]),
+    );
+    assert.ok(!m.query('[data-thread-card="solo"] [data-subagent-row]'));
+    assert.ok(!m.query('[data-wait-row="solo"]'));
+    m.unmount();
+  });
+
+  it("rows are not interactive: a click reaches the card select", async () => {
+    await clearSidebarStorage();
+    const picked: string[] = [];
+    const m = await mount(
+      sidebar(
+        [
+          withSubagents([
+            {
+              id: "toolu_1",
+              description: "Background research",
+              agentType: "general-purpose",
+              status: "running",
+            },
+          ]),
+        ],
+        { onSelectThread: (id: string) => picked.push(id) },
+      ),
+    );
+    const row = m.query('[data-thread-card="solo"] [data-subagent-row]');
+    assert.ok(row);
+    assert.ok(
+      !row!.querySelector("button, a, input"),
+      "no interactive child inside the card's stretch-select area",
+    );
+    // The row itself is inert (pointer-events:none in CSS, which jsdom does
+    // not model) — selection comes from the card's own stretch button.
+    const select = m.query('button[aria-label^="Select thread: solo"]');
+    assert.ok(select);
+    await m.click(select!);
+    assert.deepEqual(picked, ["solo"]);
+    m.unmount();
+  });
+
+  it("caps at three named rows plus a +N more tail", async () => {
+    await clearSidebarStorage();
+    const m = await mount(
+      sidebar([
+        withSubagents(
+          ["one", "two", "three", "four", "five"].map((d, i) => ({
+            id: `toolu_${i}`,
+            description: d,
+            agentType: null,
+            status: "running" as const,
+          })),
+        ),
+      ]),
+    );
+    const rows = m.queryAll('[data-thread-card="solo"] [data-subagent-row]');
+    assert.deepEqual(
+      rows.map((r) => r.textContent),
+      ["one", "two", "three", "+2 more"],
+    );
     m.unmount();
   });
 });

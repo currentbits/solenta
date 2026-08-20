@@ -211,6 +211,10 @@
   display: flex;
   flex-direction: column;
   width: 100%;
+  /* min-height is a floor: .list is a scrolling flex column, so without
+     flex-shrink:0 a card taller than 64px (wait row, subagent rows) gets
+     squashed back to 64px and its last line paints over the next card. */
+  flex-shrink: 0;
   min-height: 64px;
   padding: 7px 10px;
   border-radius: var(--radius-sm);
@@ -594,7 +598,8 @@
   color: var(--text-dim);
 }
 
-.waitRow {
+.waitRow,
+.subagentRow {
   position: relative;
   z-index: 1;
   pointer-events: none;
@@ -603,6 +608,11 @@
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+/* Subagent names read as children of the wait row: inset only, no elbow. */
+.subagentRow {
+  padding-left: 10px;
 }
 
 .waitRow[data-attention="true"] {

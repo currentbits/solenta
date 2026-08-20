@@ -1,6 +1,8 @@
 {
   "version": 1,
-  "readOrder": ["docs"],
+  "readOrder": [
+    "docs"
+  ],
   "chunks": [
     {
       "area": "site/docs.html — Worktrees and PRs: the Environment-panel correction",
@@ -37,11 +39,45 @@
       "risks": [
         "Numbers here age: the 400-line PR cap and the 24h post-merge delay are defaults (src/prUi.ts:57, electron/postmerge.js:23) and are stated as defaults. If either becomes configurable-by-default the README is the copy most likely to be forgotten."
       ]
+    },
+    {
+      "area": "src/waiting.ts — childPhrase + subagentNames (critical)",
+      "rationale": "The root of the reported problem: buildWaitStates already distinguished an in-agent subagent (WaitChild.id === null) from a forked worker thread, but waitLabel/waitTooltip flattened both into 'worker'. childPhrase now counts them separately ('Waiting on 1 worker · 1 subagent · 3m'); subagentNames exports the id===null convention so the Sidebar does not re-derive it. Read this first — waitLabel feeds the sidebar wait row, KanbanView and AgentsPanel, so the wording change is the widest-blast-radius edit in the diff.",
+      "risks": [
+        "waitLabel is asserted verbatim in test/waiting.test.ts and test/teamView.test.tsx; worker-only phrasing is byte-identical to before, subagent phrasing deliberately changed (both tests updated/verified).",
+        "childPhrase returns '' for an empty children array → 'Waiting on '. buildWaitStates never emits an empty state (it only creates one via add()), so unreachable; the old code had the same implicit precondition ('Waiting on 0 workers')."
+      ]
+    },
+    {
+      "area": "src/components/Sidebar.tsx — subagentLines rows under the wait row (impl)",
+      "rationale": "Restores issue #542 visibility without the retired vocabulary. Chose flat 11px text lines inside cardBody over the old nested <ul> of buttons: cardBody is pointer-events:none, so a click falls through to the cardSelect stretch button and selects the parent thread — the exact behaviour the old row's onClick implemented explicitly, with zero nested interactive controls (a T3 spec invariant). No elbow connector, no waitingDot, one auto-animated list preserved.",
+      "risks": [
+        "The card grows a line per running subagent. Capped at 3 named rows + a '+N more' tail so a wide fan-out cannot eat the viewport; the cap is visible, not silent.",
+        "subagentLines is derived from `wait`, so the rows only exist when a wait row exists — consistent by construction, but it means a subagent can never render without its count line.",
+        "aria: the names were already in the cardSelect aria-label via waitTooltip, so a screen reader now hears them twice. Same pre-existing duplication as the wait row itself; not aria-hidden, to match."
+      ]
+    },
+    {
+      "area": "src/components/Sidebar.module.css — .subagentRow + .card flex-shrink (impl)",
+      "rationale": ".subagentRow shares the .waitRow rule (11px, --text-dim, truncate, tokens only) plus a 10px left inset for hierarchy. The .card flex-shrink:0 is not cosmetic: .list is a scrolling flex column and .card sets min-height:64px, which replaces the automatic content minimum — a card taller than 64px gets squashed and its last line paints over the next card. Adding lines to the card makes that latent overlap reproducible, so the guard ships with it.",
+      "risks": [
+        "The flex-shrink:0 fix may collide with the same fix landing from the sibling sidebar-status thread; it is one property on .card, trivial to resolve either way.",
+        "No jsdom layout engine — the CSS is reasoned, not measured. Confirm the card growth and the absence of overlap in a real build."
+      ]
+    },
+    {
+      "area": "test/sidebar.test.tsx + test/waiting.test.ts (tests)",
+      "rationale": "Four new sidebar cases (one running subagent renders and names itself; a done subagent renders nothing at all, not even a wait row; the row contains no button/a/input and selection still comes from the card's stretch button; the 3 + '+N more' cap) and one new waiting case for a mixed worker+subagent fan-out. The updated assertion at the old 'in-agent subagents count too' test is the intended wording change, not a regression.",
+      "risks": [
+        "The click test proves the absence of interactive children and that the card select works; it cannot prove pointer-events:none routes a click on the row itself, because jsdom does not model pointer-events. That half is CSS-reasoned."
+      ]
     }
   ],
   "risks": [
     "Documentation-only change: no test covers whether any sentence is true, so the only gate is that each claim was traced to source. Every claim in this diff was checked against the file it names before merge.",
     "site/docs.html is hand-written static HTML with a hand-maintained nav. A new h2 without its nav link, or an unbalanced tag, breaks the published page silently — there is no build step or validator in CI for site/.",
-    "The three chunks were written by parallel workers that could not see each other. README, site/docs.html and docs/ARCHITECTURE.md may now describe the same feature in three slightly different vocabularies; the risk is drift in naming, not contradiction."
+    "The three chunks were written by parallel workers that could not see each other. README, site/docs.html and docs/ARCHITECTURE.md may now describe the same feature in three slightly different vocabularies; the risk is drift in naming, not contradiction.",
+    "Visual verification is outstanding: renderer tests have no layout engine, so card height growth, the 10px inset and the overlap guard are unproven in pixels.",
+    "waitLabel wording now differs for subagents in three surfaces (sidebar wait row, KanbanView, AgentsPanel roster header) — intended, but it is a user-visible copy change beyond the sidebar."
   ]
 }
