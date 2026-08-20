@@ -24,10 +24,10 @@
   <meta name="twitter:description" content="How Solenta works: shared memory across agents, a GitHub-native planboard, threads and worktrees, Build workflows, orchestration, skills, automations, spend caps, web mode and SSH remotes." />
   <meta name="twitter:image" content="https://solenta.app/assets/card.png" />
   <meta name="twitter:image:alt" content="Solenta. Your agents remember." />
-  <meta name="theme-color" content="#0b0e14" />
+  <meta name="theme-color" content="#f5f5f2" />
   <link rel="icon" href="assets/icon.svg" type="image/svg+xml" />
   <script>document.documentElement.classList.add("js");</script>
-  <link rel="stylesheet" href="style.css?v=6" />
+  <link rel="stylesheet" href="style.css?v=8" />
 </head>
 <body>
 
@@ -123,7 +123,7 @@
         localhost-only and bearer-token gated.
       </p>
       <p>
-        Entries carry <strong>provenance</strong> — which agent wrote them —
+        Entries carry <strong>provenance</strong> (which agent wrote them),
         and each agent builds a trust score from how its entries hold up, which
         ranks what comes back on a search. Facts can carry
         <strong>file:line, thread or commit citations</strong>; before a fact
@@ -173,11 +173,11 @@
         right panel's <strong>Pulse</strong> tab holds the rest:
       </p>
       <ul>
-        <li><strong>Kanban</strong> groups every thread by status — working, waiting on you, done, failed — so a pile of parallel runs stays readable.</li>
-        <li><strong>Planboard</strong> shows one project's plan as its GitHub issues in Todo / In progress / Done. Cards open the issue on GitHub, and <strong>Start task</strong> on a Todo card opens a thread on it — in worktree, orchestrator or plain mode.</li>
+        <li><strong>Kanban</strong> groups every thread by status (working, waiting on you, done, failed) so a pile of parallel runs stays readable.</li>
+        <li><strong>Planboard</strong> shows one project's plan as its GitHub issues in Todo / In progress / Done. Cards open the issue on GitHub, and <strong>Start task</strong> on a Todo card opens a thread on it, in worktree, orchestrator or plain mode.</li>
         <li><strong>Pull requests</strong> lists the open PRs per project with their checks, and jumps to the thread that opened one.</li>
         <li><strong>Activity</strong> is a chronological feed, grouped by day, of everything your agents did.</li>
-        <li><strong>Pulse</strong> is Automations, Usage, Fleet, Insights and the morning digest — the overflow that used to compete with threads on the left.</li>
+        <li><strong>Pulse</strong> is Automations, Usage, Fleet, Insights and the morning digest: the overflow that used to compete with threads on the left.</li>
       </ul>
       <p>
         Planboard reads the board from labels, so agents can write to it with
@@ -250,8 +250,8 @@
         <code>/</code> palette lists orchestration commands, the CLI verbs,
         and the underlying CLI's own skills and custom commands.
         <code>/btw</code> (or <kbd>⌥Enter</kbd> on a plain draft) asks a
-        side question on the same thread without interrupting the live run
-        — a card, not a new thread, not the follow-up queue.
+        side question on the same thread without interrupting the live run.
+        A card, not a new thread, not the follow-up queue.
       </p>
       <p>
         A thread that fails keeps its <strong>failure reason</strong> and shows
@@ -272,10 +272,10 @@
         one of three modes:
       </p>
       <ul>
-        <li><strong>New worktree thread</strong> — its own git worktree and branch, so the agent never touches your checkout.</li>
-        <li><strong>New orchestrator thread</strong> — the thread hands its first prompt to a worker in a worktree and supervises instead of editing (see <a href="#orchestration">Orchestration</a>).</li>
-        <li><strong>New plain thread</strong> — straight in the project checkout, no worktree.</li>
-        <li><strong>New ask thread</strong> — read-only repo Q&amp;A; no worktree (see <a href="#ask">Ask mode</a>).</li>
+        <li><strong>New worktree thread</strong>: its own git worktree and branch, so the agent never touches your checkout.</li>
+        <li><strong>New orchestrator thread</strong>: the thread hands its first prompt to a worker in a worktree and supervises instead of editing (see <a href="#orchestration">Orchestration</a>).</li>
+        <li><strong>New plain thread</strong>: straight in the project checkout, no worktree.</li>
+        <li><strong>New ask thread</strong>: read-only repo Q&amp;A; no worktree (see <a href="#ask">Ask mode</a>).</li>
       </ul>
       <p>
         Plain <strong>+</strong> follows your defaults: <em>Isolate new threads
@@ -298,7 +298,7 @@
       </p>
       <p>
         The header carries one <strong>next-action</strong> button that names
-        the next git step — commit, push, open a PR, watch checks, or merge —
+        the next git step (commit, push, open a PR, watch checks, or merge)
         instead of a row of always-visible controls. Create PR works on an
         unpublished worktree without a prior Push. File paths in the
         transcript open the file in that worktree. Create PR refuses a
@@ -326,7 +326,7 @@
       <p>
         When several worktrees run in parallel, <strong>conflict forecast</strong>
         compares what they are touching and warns that two branches are heading
-        for the same lines while both are still cheap to redirect — rather than
+        for the same lines while both are still cheap to redirect, rather than
         at the merge, when one of them has to be redone. Hover the pill to see
         the other thread and the colliding files.
       </p>
@@ -441,7 +441,7 @@
       <h2 id="guardrails">Guardrails and verification</h2>
       <p>
         An orchestrator owns the rules its workers run under. It can mark
-        <strong>protected config</strong> — files a worker is not allowed to
+        <strong>protected config</strong>: files a worker is not allowed to
         edit, so an agent cannot quietly loosen the settings it is working
         inside. <strong>Hook packs</strong> are installed into a worker at spawn
         time, so the checks apply from its first tool call rather than being
@@ -465,7 +465,7 @@
         For work where the plan matters more than the first patch, a thread can
         run in <strong>spec mode</strong>: it produces
         <strong>requirements</strong>, then <strong>design</strong>, then
-        <strong>tasks</strong> as separate artifacts, and each one is gated —
+        <strong>tasks</strong> as separate artifacts, and each one is gated:
         the next stage does not unlock until you approve the previous one. The
         artifacts live with the thread, so the tasks that come out the end are
         traceable back to the requirement that asked for them. You can leave
@@ -515,7 +515,7 @@
         The <strong>review itinerary</strong> builds an ordered, risk-ranked
         plan from the working-tree diff: CI and config first (a hard stop if
         those moved), then a scan for duplicated utilities, the critical path,
-        tests, and the rest — chunked by functional area, never alphabetically.
+        tests, and the rest, chunked by functional area, never alphabetically.
         Tests can be pulled to the front when that is the review you are
         actually doing.
       </p>
@@ -558,7 +558,7 @@
         <code>start</code> or <code>serve</code> script, keeps the log, and
         picks the URL out of the output (the usual
         <code>Local: http://localhost:5173/</code> banner) so it is one click
-        away. Stopping the server is a button too — no orphaned process on a
+        away. Stopping the server is a button too: no orphaned process on a
         port you have to hunt down later.
       </p>
 
@@ -571,7 +571,7 @@
       </p>
       <p>
         A second cap, <strong>per-orchestration budget</strong>, bounds what one
-        fan-out can spend across all the workers it spawns — the case where a
+        fan-out can spend across all the workers it spawns: the case where a
         runaway loop gets expensive fastest. Leave it empty for no ceiling; when
         a wake-up is held back by it, the thread says so instead of stalling
         silently.
@@ -586,7 +586,7 @@
       <p>
         <strong>Fleet analytics</strong> asks the harder question: is the work
         any good. It is computed from git and GitHub ground truth rather than
-        from what the agents report about themselves — merge rate, review tax
+        from what the agents report about themselves: merge rate, review tax
         (how much human review each PR pulls in), rework (work that had to be
         redone), and cost per merged PR. Failure modes are clustered across
         threads, so a mistake several agents keep making shows up as one
@@ -610,7 +610,7 @@
       <h2 id="updates">Notifications and updates</h2>
       <p>
         A desktop notification fires when a thread finishes or needs a
-        decision from you — never while the window is focused, so parallel
+        decision from you, never while the window is focused, so parallel
         runs do not turn into a stream of pings while you watch them.
       </p>
       <p>
@@ -671,7 +671,7 @@ solenta --serve-web --serve-host 0.0.0.0   # LAN, your call</code></pre>
         The Windows build is a first-class agent host, not a zip of the macOS
         tree. Adding a project on Windows runs a <strong>doctor</strong>: long
         paths, Git Bash, Node 22, and whether the repo sits across a WSL
-        boundary. Failed checks are advisory — they do not block add — but they
+        boundary. Failed checks are advisory (they do not block add), but they
         name the fix. Agent CLIs stay attached to the app so Stop stops them,
         and a sandbox badge shows how the run is isolated.
       </p>
@@ -681,8 +681,8 @@ solenta --serve-web --serve-host 0.0.0.0   # LAN, your call</code></pre>
         Electron main owns the agent processes, the store, the memory
         supervisor and scheduled automations. The renderer is a React app that
         talks to main over a typed IPC contract. Providers are data-driven
-        adapters around each CLI's stream format. Housekeeping work — titles,
-        summaries, small classifications — is handed to Apple's built-in
+        adapters around each CLI's stream format. Housekeeping work (titles,
+        summaries, small classifications) is handed to Apple's built-in
         <code>fm</code> CLI on macOS 27 when it is present, so the chores run
         locally and free instead of billing a frontier model. The full
         breakdown lives in

@@ -24,10 +24,10 @@
   <meta name="twitter:description" content="What's new in Solenta: every notable change since the first release." />
   <meta name="twitter:image" content="https://solenta.app/assets/card.png" />
   <meta name="twitter:image:alt" content="Solenta. Every coding agent. One window." />
-  <meta name="theme-color" content="#0b0e14" />
+  <meta name="theme-color" content="#f5f5f2" />
   <link rel="icon" href="assets/icon.svg" type="image/svg+xml" />
   <script>document.documentElement.classList.add("js");</script>
-  <link rel="stylesheet" href="style.css?v=6" />
+  <link rel="stylesheet" href="style.css?v=8" />
 </head>
 <body>
 
@@ -59,7 +59,7 @@
       <h2 id="v0-8-0">0.8.0 <small>2026-08-20</small></h2>
       <h3>Added</h3>
       <ul>
-        <li><strong>Flat sidebar.</strong> Thread rows are a status dot, a title and an age — no project group headers. Cards carry their project slug; a scope filter still limits the list to one repo. Pinned threads sit in their own block at the top; snoozed and settled have their own shelves; archived sit at the settled tail. Spaces are gone.</li>
+        <li><strong>Flat sidebar.</strong> Thread rows are a status dot, a title and an age; no project group headers. Cards carry their project slug; a scope filter still limits the list to one repo. Pinned threads sit in their own block at the top; snoozed and settled have their own shelves; archived sit at the settled tail. Spaces are gone.</li>
         <li><strong>Sidebar polish.</strong> Right-click a card for the native thread-actions menu. Subagents nest under the thread that spawned them, idle stopped fork workers drop off the list, and Delegating / Orchestrating / Working statuses are back. Project icons are picked up from the repo's favicon or app icon.</li>
         <li><strong>Git in the thread.</strong> The worktree diff is a full-height Git tab in the thread header, not a card in the right-hand panel. Environment's Open Git, the next-action Commit, and <code>/review</code> all open it there.</li>
         <li><strong>Ask mode.</strong> Read-only questions about the repo, answered from the code index and shared memory. No worktree, no tools, and no spend against the daily budget. <em>Start work</em> turns it into a normal thread.</li>
@@ -67,12 +67,12 @@
         <li><strong>Divergence compare.</strong> When two runs of the same task exist, Environment can pair their tool steps and name the first mismatch. Opt-in per thread.</li>
         <li><strong><code>/btw</code>.</strong> Ask a side question on the same thread without interrupting the live run. <kbd>⌥Enter</kbd> on a plain draft does the same.</li>
         <li><strong>Slash palette extras.</strong> The <code>/</code> menu lists the underlying CLI's own skills and custom commands alongside Solenta's verbs.</li>
-        <li><strong>Suggested-work chips.</strong> Out-of-scope findings become one-click new threads — or a planboard issue — instead of derailing the current run.</li>
+        <li><strong>Suggested-work chips.</strong> Out-of-scope findings become one-click new threads (or a planboard issue) instead of derailing the current run.</li>
         <li><strong>Host thread tools.</strong> Agents can archive, settle, stop, rename, merge and open a PR on threads, not just list, fork, send and poll.</li>
         <li><strong>Quota-wait.</strong> A provider usage-limit with a reset clock parks the thread and resumes the same prompt when the quota comes back, instead of failing.</li>
         <li><strong>Review bottleneck.</strong> Create PR refuses a diff larger than the PR size cap (default 400 lines) and offers to split the branch into a stack. Planboard shows review load.</li>
         <li><strong>Perception gap.</strong> After a thread finishes, a one-tap card asks how much time it felt like it saved; fleet analytics compares that to wall-clock.</li>
-        <li><strong>Provenance chips.</strong> Assistant claims in the transcript are labelled by what they actually cited — repo paths, shared memory, GitHub — or tagged <em>model prior knowledge</em>.</li>
+        <li><strong>Provenance chips.</strong> Assistant claims in the transcript are labelled by what they actually cited (repo paths, shared memory, GitHub) or tagged <em>model prior knowledge</em>.</li>
         <li><strong>Config doctor.</strong> The Memory tab lints <code>AGENTS.md</code> / <code>CLAUDE.md</code> against shared memory, and can write those files from it.</li>
         <li><strong>Vibe Kanban import.</strong> Settings → <em>Your data</em> reads a local VK database and turns cards into threads.</li>
         <li><strong>Edit before approve.</strong> A permission prompt that is a shell command is an editable field; approving sends the edited command, not the original.</li>
@@ -96,9 +96,9 @@
       <h2 id="v0-7-0">0.7.0 <small>2026-08-18</small></h2>
       <h3>Added</h3>
       <ul>
-        <li><strong>Teach mode.</strong> A thread can run as a tutor: hints, not solutions, across all five providers. Autonomy steps up as reviews pass — Hints, then Review, then Pair — and permission modes stay gated to the current rung.</li>
+        <li><strong>Teach mode.</strong> A thread can run as a tutor: hints, not solutions, across all five providers. Autonomy steps up as reviews pass (Hints, then Review, then Pair) and permission modes stay gated to the current rung.</li>
         <li><strong>Review itinerary.</strong> Every agent diff gets a risk-ranked read order: CI and config first, then reuse, the critical path, tests, and the rest, chunked by area instead of alphabetically.</li>
-        <li><strong>Thread snooze.</strong> Hide a thread until this evening, tomorrow, next week, or a custom time. A thread that raises its hand — blocked on you, or a fresh failure — wakes early. Settle-on-merge can archive a thread the moment its PR lands. A <em>Woke</em> pill marks what came back.</li>
+        <li><strong>Thread snooze.</strong> Hide a thread until this evening, tomorrow, next week, or a custom time. A thread that raises its hand (blocked on you, or a fresh failure) wakes early. Settle-on-merge can archive a thread the moment its PR lands. A <em>Woke</em> pill marks what came back.</li>
         <li><strong>Next git action.</strong> One header button that always names the next step: commit, push, open a PR, watch checks, or merge. Create PR is available on an unpublished worktree without a prior Push.</li>
         <li><strong>Subagent model pool.</strong> Describe candidate models once in Settings; the lead picks per spawn instead of every worker inheriting the same default.</li>
         <li><strong>Orchestration commands.</strong> Type <code>/handoff</code>, <code>/advisor</code> or <code>/committee</code> in the composer to plan here and implement elsewhere, get a second opinion, or have two contrasting models converge on a root cause. The <code>/</code> palette now lists the CLI verbs too, not only the orchestration ones.</li>
@@ -112,7 +112,7 @@
       </ul>
       <h3>Fixed</h3>
       <ul>
-        <li>A thread configured to run in a worktree never falls back to the project checkout if setup fails — it errors instead of silently editing your working copy.</li>
+        <li>A thread configured to run in a worktree never falls back to the project checkout if setup fails: it errors instead of silently editing your working copy.</li>
         <li>A turn that dies mid-delivery no longer leaves the thread stuck on <em>Working</em>.</li>
         <li>Hovering a conflict pill names the other thread and the colliding files.</li>
         <li>Start Dev, Fork and Handoff moved off the thread header into the Environment panel, so the header stays the next action.</li>
@@ -189,7 +189,7 @@
       <h3>Fixed</h3>
       <ul>
         <li>The main process survives an unhandled rejection instead of taking the app down with it.</li>
-        <li>Merging a worktree no longer refuses on a dirty project checkout — it auto-stashes — and untracked files stopped blocking merges outright.</li>
+        <li>Merging a worktree no longer refuses on a dirty project checkout (it auto-stashes), and untracked files stopped blocking merges outright.</li>
         <li><strong>Run now</strong> failures on an automation surface on the row instead of vanishing.</li>
       </ul>
 
@@ -202,7 +202,7 @@
         <li><strong>Type-ahead during a run.</strong> The composer stays live while an agent works and queues your next message instead of dropping it.</li>
         <li><strong>Desktop notification controls.</strong> A global toggle in Settings and a per-thread mute.</li>
         <li><strong>Cascade stop.</strong> Stopping an orchestrator stops its crew, and workers run in their own git worktree so they never collide.</li>
-        <li><strong>Better hand-offs.</strong> A fork now carries a tail digest of the source thread rather than one truncated reply, and a thread shows what it is waiting on — including workers blocked on a permission prompt, and orchestrator wake-ups held back by the budget.</li>
+        <li><strong>Better hand-offs.</strong> A fork now carries a tail digest of the source thread rather than one truncated reply, and a thread shows what it is waiting on, including workers blocked on a permission prompt, and orchestrator wake-ups held back by the budget.</li>
         <li><strong>Question prompts as a picker.</strong> An agent asking you to choose renders as options with keyboard shortcuts, and Agent-tool subagents appear in the Agents panel.</li>
         <li><strong>Denser sidebar.</strong> Smaller thread cards, sticky group headers, and a per-group overflow cap so a busy day stays readable.</li>
         <li><strong>Safer auto-update.</strong> Installing is gated behind a click and the downloaded asset's digest is verified first.</li>
