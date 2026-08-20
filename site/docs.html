@@ -351,6 +351,17 @@
         per spawn instead of every worker inheriting the same default.
       </p>
       <p>
+        When two runs of the same task exist &mdash; a Best of N sibling,
+        a fork, or an earlier completed run on this thread &mdash;
+        Environment can show a <strong>divergence</strong> compare. It
+        pairs tool steps (name, input, output, decision) and names the
+        first mismatch. Assistant prose is ignored, so two models
+        answering in different words do not count as a split. A length
+        gap is not a verdict while the shorter run is still going. The
+        toggle is <em>Show divergence compare on threads</em>; it
+        defaults on and persists in local storage.
+      </p>
+      <p>
         Three composer commands cover the common shapes without a workflow
         template: <code>/handoff</code> plans here and implements on a fresh
         model, <code>/advisor</code> asks one contrasting model for a second
