@@ -456,6 +456,17 @@
         spec mode without approving the remaining stages if the work has
         moved on.
       </p>
+      <p>
+        Once <code>tasks.md</code> is approved, the checkboxes are a
+        dispatch DAG: each line is an id, a title, and optional
+        <code>needs:</code> dependencies. <strong>Dispatch</strong>
+        forks a worker per currently unblocked task; a second click
+        only starts work that is still open.
+        <strong>Converge</strong> has the spec thread re-read the
+        artifacts and the repo and append missing checkboxes. A cycle
+        or a dangling <code>needs:</code> id is a parse error, not a
+        silent skip.
+      </p>
 
       <h2 id="teach">Teach mode</h2>
       <p>
