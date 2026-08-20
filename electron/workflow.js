@@ -17,6 +17,8 @@ const {
   getClaudeMcpArgs,
   getCodexMcpArgs,
   getCodexMcpEnv,
+  looksGrokConfigCorrupt,
+  grokConfigCorruptMessage,
 } = require("./memory-sup.js");
 const {
   runOpencode,
@@ -1065,9 +1067,11 @@ async function startWorkflowRun(deps) {
       .filter(Boolean)
       .slice(-8)
       .join("\n");
-    const errText = tail
-      ? `Run error (${agentId}):\n${tail}`
-      : `Run error (${agentId})`;
+    const errText = looksGrokConfigCorrupt(tail)
+      ? grokConfigCorruptMessage()
+      : tail
+        ? `Run error (${agentId}):\n${tail}`
+        : `Run error (${agentId})`;
     appendMessage(threadId, "event", errText, runId);
     appendDoneWorkLog(threadId, runId, "Run error");
     store.updateThread(

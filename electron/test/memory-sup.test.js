@@ -13,11 +13,14 @@ const {
   getCodexMcpEnv,
   ensureKimiMcpConfig,
   ensureGrokMcpConfig,
+  removeGrokMcpEntries,
   registerMcpServer,
   unregisterMcpServer,
   resolveKimiMcpPath,
   resetMemorySupForTests,
   resolveNodeBinary,
+  grokTomlLooksValid,
+  whenGrokMcpIdle,
 } = require("../memory-sup.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
 
@@ -37,6 +40,70 @@ function waitFor(predicate, { timeoutMs = 10000, intervalMs = 30 } = {}) {
     };
     tick();
   });
+}
+
+/** Fake grok that holds the process ~80ms so overlapping spawns are observable. */
+function slowGrokMcpBody() {
+  return `#!/usr/bin/env node
+"use strict";
+const fs = require("fs");
+const log = process.env.CODER_FAKE_GROK_MCP_LOG;
+function rec(ev) {
+  fs.appendFileSync(
+    log,
+    JSON.stringify({
+      ev,
+      t: Date.now(),
+      pid: process.pid,
+      args: process.argv.slice(2),
+    }) + "\\n",
+  );
+}
+rec("start");
+Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 80);
+rec("end");
+process.exit(0);
+`;
+}
+
+function grokMcpLog(logFile) {
+  return fs
+    .readFileSync(logFile, "utf8")
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => JSON.parse(l));
+}
+
+function assertSerialGrokMcp(logFile, n) {
+  const events = grokMcpLog(logFile);
+  const byPid = new Map();
+  for (const e of events) {
+    if (!byPid.has(e.pid)) byPid.set(e.pid, {});
+    byPid.get(e.pid)[e.ev] = e.t;
+  }
+  const intervals = [...byPid.values()];
+  assert.equal(
+    intervals.length,
+    n,
+    `expected ${n} grok mcp invocations, got ${intervals.length}: ${JSON.stringify(events)}`,
+  );
+  for (const iv of intervals) {
+    assert.equal(typeof iv.start, "number");
+    assert.equal(typeof iv.end, "number");
+    assert.ok(iv.end >= iv.start);
+  }
+  for (let i = 0; i < intervals.length; i++) {
+    for (let j = i + 1; j < intervals.length; j++) {
+      const a = intervals[i];
+      const b = intervals[j];
+      assert.equal(
+        a.start < b.end && b.start < a.end,
+        false,
+        `overlapping grok mcp CLIs: ${JSON.stringify({ a, b })}`,
+      );
+    }
+  }
 }
 
 /** Answer /health; HMAC-prove `token` when ?nonce= is present. */
@@ -856,7 +923,8 @@ process.exit(0);
     resetMemorySupForTests();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await whenGrokMcpIdle();
     resetMemorySupForTests();
     for (const [k, v] of Object.entries(prevEnv)) {
       if (v === undefined) delete process.env[k];
@@ -1010,6 +1078,112 @@ process.exit(0);
       await new Promise((r) => server.close(r));
     }
   });
+
+  it("serializes two mcp add invocations (#626)", async () => {
+    const port = await freePort();
+    const token = "serial-tok";
+    const { sup, server } = await markHealthyViaAdopt(port, token);
+    try {
+      registerMcpServer({
+        name: "coder-threads",
+        port: 45999,
+        token: "orch-token",
+        userDataPath: tmpDir,
+        log: (m) => logs.push(m),
+        env: { ...process.env, CODER_GROK_MCP_DISABLE: "1" },
+      });
+      const logFile = path.join(tmpDir, "grok-mcp-log.jsonl");
+      const slow = writeFakeBin(
+        path.join(tmpDir, "fake-grok-slow"),
+        slowGrokMcpBody(),
+      );
+      const ok = ensureGrokMcpConfig({
+        log: (m) => logs.push(m),
+        env: enableGrokMcpEnv({
+          CODER_GROK_BIN: slow,
+          CODER_FAKE_GROK_MCP_LOG: logFile,
+        }),
+      });
+      assert.equal(ok, true);
+      await whenGrokMcpIdle();
+      assertSerialGrokMcp(logFile, 2);
+      const names = grokMcpLog(logFile)
+        .filter((e) => e.ev === "start")
+        .map((e) => e.args[2])
+        .sort();
+      assert.deepEqual(names, ["coder-memory", "coder-threads"]);
+    } finally {
+      sup.stop();
+      await new Promise((r) => server.close(r));
+    }
+  });
+
+  it("restores config.toml from the pre-write copy when the batch leaves it unparseable (#626)", async () => {
+    const port = await freePort();
+    const token = "restore-tok";
+    const { sup, server } = await markHealthyViaAdopt(port, token);
+    try {
+      const configPath = process.env.CODER_GROK_CONFIG_PATH;
+      const original =
+        '[mcp_servers.keep]\ntransport = "http"\nurl = "http://example.test/mcp"\n';
+      fs.writeFileSync(configPath, original);
+      const corrupt = writeFakeBin(
+        path.join(tmpDir, "fake-grok-corrupt"),
+        `#!/usr/bin/env node
+"use strict";
+const fs = require("fs");
+fs.writeFileSync(
+  process.env.CODER_GROK_CONFIG_PATH,
+  "[mcp_servers.torn\\ntransport\\n",
+);
+process.exit(0);
+`,
+      );
+      const ok = ensureGrokMcpConfig({
+        log: (m) => logs.push(m),
+        env: enableGrokMcpEnv({ CODER_GROK_BIN: corrupt }),
+      });
+      assert.equal(ok, true);
+      await whenGrokMcpIdle();
+      assert.equal(fs.readFileSync(configPath, "utf8"), original);
+      assert.ok(
+        logs.some((l) => /restored the pre-write copy/.test(l)),
+        `expected restore log, got ${JSON.stringify(logs)}`,
+      );
+    } finally {
+      sup.stop();
+      await new Promise((r) => server.close(r));
+    }
+  });
+});
+
+describe("grokTomlLooksValid (#626)", () => {
+  it("accepts a typical grok mcp_servers block", () => {
+    assert.equal(
+      grokTomlLooksValid(`[mcp_servers.coder-memory]
+transport = "http"
+url = "http://127.0.0.1:9/mcp"
+headers = { Authorization = "Bearer abc" }
+`),
+      true,
+    );
+  });
+
+  it("rejects a truncated key (the live failure)", () => {
+    assert.equal(
+      grokTomlLooksValid(`[mcp_servers.coder-memory]
+transport = "http"
+
+[mcp_servers.coder-threads]
+transpor
+`),
+      false,
+    );
+  });
+
+  it("rejects an incomplete table header", () => {
+    assert.equal(grokTomlLooksValid("[mcp_servers.coder-th"), false);
+  });
 });
 
 describe("MCP registration cleanup (issue #125)", () => {
@@ -1041,7 +1215,8 @@ describe("MCP registration cleanup (issue #125)", () => {
     resetMemorySupForTests();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await whenGrokMcpIdle();
     resetMemorySupForTests();
     for (const [k, v] of Object.entries(prevEnv)) {
       if (v === undefined) delete process.env[k];
@@ -1155,6 +1330,28 @@ process.exit(0);
       "-s",
       "user",
     ]);
+  });
+
+  it("serializes two mcp remove invocations (#626)", async () => {
+    const logFile = path.join(tmpDir, "grok-mcp-remove-log.jsonl");
+    const slow = writeFakeBin(
+      path.join(tmpDir, "fake-grok-slow-remove"),
+      slowGrokMcpBody(),
+    );
+    const env = { ...process.env, CODER_GROK_BIN: slow, CODER_FAKE_GROK_MCP_LOG: logFile };
+    delete env.CODER_GROK_MCP_DISABLE;
+    const kicked = removeGrokMcpEntries(["coder-memory", "coder-threads"], {
+      log: (m) => logs.push(m),
+      env,
+    });
+    assert.equal(kicked, true);
+    await whenGrokMcpIdle();
+    assertSerialGrokMcp(logFile, 2);
+    const names = grokMcpLog(logFile)
+      .filter((e) => e.ev === "start")
+      .map((e) => e.args[2])
+      .sort();
+    assert.deepEqual(names, ["coder-memory", "coder-threads"]);
   });
 });
 
