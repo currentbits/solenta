@@ -57,6 +57,20 @@ describe("forgeReadiness", () => {
     assert.equal(ready.hint, null);
   });
 
+  it("does not block on an unparseable or timed-out auth check", () => {
+    const unknown = forgeReadiness(
+      discovery([
+        provider({
+          kind: "github",
+          auth: { status: "unknown", detail: "Timed out checking sign-in." },
+        }),
+      ]),
+      "github",
+    );
+    assert.equal(unknown.ready, true);
+    assert.equal(unknown.hint, null);
+  });
+
   it("uses the install hint when the CLI is missing", () => {
     const next = forgeReadiness(
       discovery([

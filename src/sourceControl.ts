@@ -84,6 +84,12 @@ export function forgeReadiness(
   if (!discovery) return { ready: false, hint: UNAVAILABLE_HINT };
   const provider = discovery.sourceControlProviders.find((p) => p.kind === kind);
   if (providerReady(provider)) return { ready: true, hint: null };
+  // "unknown" = the probe timed out or the CLI printed something we cannot
+  // parse. Never block the action on that — a stale regex must not disable a
+  // working gh. Settings still shows it amber via providerReady.
+  if (provider && provider.status === "available" && provider.auth.status === "unknown") {
+    return { ready: true, hint: null };
+  }
   return { ready: false, hint: providerHint(provider) };
 }
 
