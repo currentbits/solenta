@@ -21,6 +21,7 @@ import { FleetView } from "./components/FleetView";
 import { DigestView } from "./components/DigestView";
 import { AgentsPanel } from "./components/AgentsPanel";
 import { SettingsModal } from "./components/SettingsModal";
+import { OnboardingModal } from "./components/onboarding/OnboardingModal";
 import { ArchiveToast } from "./components/ArchiveToast";
 import { AddProjectPathModal } from "./components/AddProjectPathModal";
 import { EditProjectModal } from "./components/EditProjectModal";
@@ -229,6 +230,10 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   const [changesOpen, setChangesOpen] = useState(false);
   const [changesNonce, setChangesNonce] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  /** Mid-session latch so finishing the tour does not wait on settings.set. */
+  const [onboardingDismissed, setOnboardingDismissed] = useState(false);
+  /** Relaunch from Settings even after onboardingSeen is true. */
+  const [onboardingForceOpen, setOnboardingForceOpen] = useState(false);
   /** Synara-style undo toast after an immediate archive (single or bulk clear). */
   const [archiveToastIds, setArchiveToastIds] = useState<string[] | null>(null);
   /**
@@ -868,6 +873,23 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     setAddPathOpen(true);
   }, []);
 
+  const finishOnboarding = useCallback(() => {
+    setOnboardingDismissed(true);
+    setOnboardingForceOpen(false);
+    void saveSettings({ onboardingSeen: true });
+  }, [saveSettings]);
+
+  const showOnboarding = useCallback(() => {
+    setSettingsOpen(false);
+    setOnboardingForceOpen(true);
+  }, []);
+
+  const onboardingOpen =
+    onboardingForceOpen ||
+    (settings !== null &&
+      settings.onboardingSeen !== true &&
+      !onboardingDismissed);
+
   const submitAddPath = useCallback(
     async (
       path: string,
@@ -1307,6 +1329,18 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           onDownloadUpdate={downloadUpdate}
           onApplyUpdate={applyUpdate}
           onSaveSettings={(patch) => saveSettings(patch)}
+          onShowOnboarding={showOnboarding}
+        />
+        <OnboardingModal
+          open={onboardingOpen}
+          onClose={finishOnboarding}
+          onFinish={finishOnboarding}
+          providers={providers}
+          refreshProviders={refreshProviders}
+          projects={projects}
+          onAddProject={handleAddProject}
+          settings={settings}
+          onSaveSettings={saveSettings}
         />
         {archiveToastIds && (
           <ArchiveToast

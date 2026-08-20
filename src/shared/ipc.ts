@@ -1734,6 +1734,12 @@ export interface AppSettings {
    */
   defaultOrchestrate: boolean;
   /**
+   * First-run onboarding wizard has been finished or skipped (#628).
+   * Absent/undefined/false means it has not been seen yet. Store-persisted
+   * (not localStorage) so web mode and tests share the same flag.
+   */
+  onboardingSeen?: boolean;
+  /**
    * Global desktop-notification switch. False silences every thread; true
    * (the default) leaves per-thread mute in charge. Only an explicit false
    * on disk turns it off, so upgrades keep notifying.
