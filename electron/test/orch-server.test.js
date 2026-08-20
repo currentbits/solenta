@@ -105,6 +105,7 @@ function makeFakeStore() {
     getThreads: () => threads,
     getThread: (id) => threads.find((t) => t.id === id) || null,
     getProject: (id) => projects[id] || null,
+    getProjects: () => Object.values(projects),
     getMessages: (id) => messagesByThread[id] || [],
     updateThread: (id, patch) => {
       const t = threads.find((x) => x.id === id);
@@ -122,12 +123,22 @@ function makeFakeStore() {
 function makeDeps() {
   const runs = [];
   const forks = [];
+  const stopped = [];
+  const retired = [];
+  const broadcasts = [];
   const deps = {
     store: makeFakeStore(),
     runner: {
       startRun: async (input) => {
         runs.push(input);
         return { runId: "r" + runs.length };
+      },
+      stopRun: async (input) => {
+        stopped.push(input);
+        return { stopped: 1 };
+      },
+      disposeClaudeSession: (id) => {
+        retired.push(id);
       },
     },
     forkThread: (store, input) => {
@@ -140,8 +151,14 @@ function makeDeps() {
       ["claude", "codex", "kimi", "grok", "opencode"].includes(id)
         ? { id }
         : null,
+    broadcast: (channel, payload) => {
+      broadcasts.push({ channel, payload });
+    },
     runs,
     forks,
+    stopped,
+    retired,
+    broadcasts,
   };
   return deps;
 }
@@ -158,10 +175,14 @@ describe("orch-server tool handlers", () => {
     assert.match(INSTRUCTIONS, /git show/);
     assert.match(INSTRUCTIONS, /Pass pool=<alias>/);
     assert.match(INSTRUCTIONS, /Do not pass a raw model id/);
+    assert.match(INSTRUCTIONS, /thread_archive/);
+    assert.match(INSTRUCTIONS, /thread_settle/);
+    assert.match(INSTRUCTIONS, /thread_stop/);
+    assert.match(INSTRUCTIONS, /thread_rename/);
     assert.doesNotMatch(INSTRUCTIONS, /poll thread_status until/);
   });
 
-  it("threads_list maps id, title, provider, status, handoffFrom, project", async () => {
+  it("threads_list maps id, title, provider, status, handoffFrom, project, later fields", async () => {
     const deps = makeDeps();
     const h = createToolHandlers(deps);
     const list = await h.threads_list();
@@ -174,6 +195,9 @@ describe("orch-server tool handlers", () => {
         handoffFrom: null,
         projectId: "p1",
         projectName: "Alpha",
+        archived: false,
+        settledOverride: null,
+        snoozedUntil: null,
       },
       {
         id: "t2",
@@ -183,6 +207,9 @@ describe("orch-server tool handlers", () => {
         handoffFrom: "t1",
         projectId: "p1",
         projectName: "Alpha",
+        archived: false,
+        settledOverride: null,
+        snoozedUntil: null,
       },
       {
         id: "t3",
@@ -192,8 +219,25 @@ describe("orch-server tool handlers", () => {
         handoffFrom: null,
         projectId: "p2",
         projectName: "Beta",
+        archived: false,
+        settledOverride: null,
+        snoozedUntil: null,
       },
     ]);
+  });
+
+  it("threads_list surfaces archived, settledOverride, and snoozedUntil", async () => {
+    const deps = makeDeps();
+    Object.assign(deps.store.getThread("t1"), {
+      archived: true,
+      settledOverride: "settled",
+      snoozedUntil: 1_800_000_000_000,
+    });
+    const h = createToolHandlers(deps);
+    const row = (await h.threads_list()).find((t) => t.id === "t1");
+    assert.equal(row.archived, true);
+    assert.equal(row.settledOverride, "settled");
+    assert.equal(row.snoozedUntil, 1_800_000_000_000);
   });
 
   it("thread_fork forks then starts a run on the new thread", async () => {
@@ -387,6 +431,216 @@ describe("orch-server tool handlers", () => {
     assert.equal(deps.runs.length, 1);
   });
 
+  it("thread_archive archives via setArchived, retires the CLI, and broadcasts", async () => {
+    const deps = makeDeps();
+    const h = createToolHandlers(deps);
+    const out = await h.thread_archive({
+      threadId: "t1",
+      projectId: "p1",
+      archived: true,
+    });
+    assert.deepEqual(out, { threadId: "t1", archived: true });
+    assert.equal(deps.store.getThread("t1").archived, true);
+    assert.deepEqual(deps.retired, ["t1"]);
+    assert.equal(deps.broadcasts.length, 1);
+    assert.equal(deps.broadcasts[0].channel, "threads:changed");
+    assert.ok(Array.isArray(deps.broadcasts[0].payload));
+    assert.equal(
+      deps.broadcasts[0].payload.find((t) => t.id === "t1").archived,
+      true,
+    );
+  });
+
+  it("thread_archive still mutates when broadcast is omitted", async () => {
+    const deps = makeDeps();
+    delete deps.broadcast;
+    const h = createToolHandlers(deps);
+    await h.thread_archive({
+      threadId: "t1",
+      projectId: "p1",
+      archived: true,
+    });
+    assert.equal(deps.store.getThread("t1").archived, true);
+    assert.deepEqual(deps.retired, ["t1"]);
+  });
+
+  it("thread_archive unarchives without retiring the CLI", async () => {
+    const deps = makeDeps();
+    deps.store.getThread("t1").archived = true;
+    const h = createToolHandlers(deps);
+    const out = await h.thread_archive({
+      threadId: "t1",
+      projectId: "p1",
+      archived: false,
+    });
+    assert.deepEqual(out, { threadId: "t1", archived: false });
+    assert.equal(deps.store.getThread("t1").archived, false);
+    assert.deepEqual(deps.retired, []);
+    assert.equal(deps.broadcasts.length, 1);
+  });
+
+  it("thread_archive of a working thread matches IPC (retire, no extra policy)", async () => {
+    const deps = makeDeps();
+    const h = createToolHandlers(deps);
+    const out = await h.thread_archive({
+      threadId: "t2",
+      projectId: "p1",
+      archived: true,
+    });
+    assert.equal(out.archived, true);
+    assert.equal(deps.store.getThread("t2").archived, true);
+    assert.equal(deps.store.getThread("t2").status, "working");
+    assert.deepEqual(deps.retired, ["t2"]);
+    assert.equal(deps.stopped.length, 0);
+  });
+
+  it("thread_archive rejects unknown and other-project threads", async () => {
+    const deps = makeDeps();
+    const h = createToolHandlers(deps);
+    await assert.rejects(
+      () =>
+        h.thread_archive({
+          threadId: "ghost",
+          projectId: "p1",
+          archived: true,
+        }),
+      /Unknown thread: ghost/,
+    );
+    await assert.rejects(
+      () =>
+        h.thread_archive({
+          threadId: "t3",
+          projectId: "p1",
+          archived: true,
+        }),
+      /belongs to "Beta".*not to "Alpha"/s,
+    );
+    assert.equal(deps.store.getThread("t3").archived, undefined);
+    assert.equal(deps.retired.length, 0);
+    assert.equal(deps.broadcasts.length, 0);
+  });
+
+  it("thread_settle settles via setSettled, retires, and broadcasts", async () => {
+    const deps = makeDeps();
+    const h = createToolHandlers(deps);
+    const out = await h.thread_settle({
+      threadId: "t1",
+      projectId: "p1",
+      override: "settled",
+    });
+    assert.equal(out.threadId, "t1");
+    assert.equal(out.settledOverride, "settled");
+    assert.equal(deps.store.getThread("t1").settledOverride, "settled");
+    assert.deepEqual(deps.retired, ["t1"]);
+    assert.equal(deps.broadcasts[0].channel, "threads:changed");
+  });
+
+  it("thread_settle('active') does not retire; working threads are rejected", async () => {
+    const deps = makeDeps();
+    const h = createToolHandlers(deps);
+    const out = await h.thread_settle({
+      threadId: "t1",
+      projectId: "p1",
+      override: "active",
+    });
+    assert.equal(out.settledOverride, "active");
+    assert.deepEqual(deps.retired, []);
+    const cleared = await h.thread_settle({
+      threadId: "t1",
+      projectId: "p1",
+      override: null,
+    });
+    assert.equal(cleared.settledOverride, null);
+    assert.equal(deps.store.getThread("t1").settledOverride, null);
+    await assert.rejects(
+      () =>
+        h.thread_settle({
+          threadId: "t2",
+          projectId: "p1",
+          override: "settled",
+        }),
+      /Cannot settle a thread while a run is active/,
+    );
+    assert.equal(deps.store.getThread("t2").settledOverride, undefined);
+  });
+
+  it("thread_settle rejects unknown and other-project threads", async () => {
+    const deps = makeDeps();
+    const h = createToolHandlers(deps);
+    await assert.rejects(
+      () =>
+        h.thread_settle({
+          threadId: "ghost",
+          projectId: "p1",
+          override: "settled",
+        }),
+      /Unknown thread: ghost/,
+    );
+    await assert.rejects(
+      () =>
+        h.thread_settle({
+          threadId: "t3",
+          projectId: "p1",
+          override: "settled",
+        }),
+      /belongs to "Beta".*not to "Alpha"/s,
+    );
+    assert.equal(deps.broadcasts.length, 0);
+  });
+
+  it("thread_stop stops a run; rejects unknown and other-project threads", async () => {
+    const deps = makeDeps();
+    const h = createToolHandlers(deps);
+    const out = await h.thread_stop({ threadId: "t2", projectId: "p1" });
+    assert.deepEqual(out, { threadId: "t2" });
+    assert.deepEqual(deps.stopped, [{ threadId: "t2" }]);
+    await assert.rejects(
+      () => h.thread_stop({ threadId: "ghost", projectId: "p1" }),
+      /Unknown thread: ghost/,
+    );
+    await assert.rejects(
+      () => h.thread_stop({ threadId: "t3", projectId: "p1" }),
+      /belongs to "Beta".*not to "Alpha"/s,
+    );
+    assert.equal(deps.stopped.length, 1);
+  });
+
+  it("thread_rename persists the title and broadcasts", async () => {
+    const deps = makeDeps();
+    const h = createToolHandlers(deps);
+    const out = await h.thread_rename({
+      threadId: "t1",
+      projectId: "p1",
+      title: "  Ship checklist  ",
+    });
+    assert.deepEqual(out, { threadId: "t1", title: "Ship checklist" });
+    assert.equal(deps.store.getThread("t1").title, "Ship checklist");
+    assert.equal(deps.broadcasts[0].channel, "threads:changed");
+  });
+
+  it("thread_rename rejects empty, unknown, and other-project threads", async () => {
+    const deps = makeDeps();
+    const h = createToolHandlers(deps);
+    await assert.rejects(
+      () =>
+        h.thread_rename({ threadId: "t1", projectId: "p1", title: "   " }),
+      /Thread title cannot be empty/,
+    );
+    await assert.rejects(
+      () =>
+        h.thread_rename({ threadId: "ghost", projectId: "p1", title: "x" }),
+      /Unknown thread: ghost/,
+    );
+    await assert.rejects(
+      () =>
+        h.thread_rename({ threadId: "t3", projectId: "p1", title: "x" }),
+      /belongs to "Beta".*not to "Alpha"/s,
+    );
+    assert.equal(deps.store.getThread("t1").title, "First");
+    assert.equal(deps.store.getThread("t3").title, "Broken");
+    assert.equal(deps.broadcasts.length, 0);
+  });
+
   it("thread_status returns first line of last assistant text", async () => {
     const deps = makeDeps();
     const h = createToolHandlers(deps);
@@ -538,6 +792,7 @@ describe("orch-server HTTP", () => {
       log: (m) => logs.push(m),
       forkThread: deps.forkThread,
       getProvider: deps.getProvider,
+      broadcast: deps.broadcast,
       ...overrides,
     });
     servers.push(orch);
@@ -652,9 +907,13 @@ describe("orch-server HTTP", () => {
       "task_list",
       "task_release",
       "teach_review",
+      "thread_archive",
       "thread_fork",
+      "thread_rename",
       "thread_send",
+      "thread_settle",
       "thread_status",
+      "thread_stop",
       "threads_list",
       "work_suggest",
     ]);
@@ -676,6 +935,29 @@ describe("orch-server HTTP", () => {
     const payload = JSON.parse(res.body.result.content[0].text);
     assert.equal(payload.length, 3);
     assert.equal(payload[0].id, "t1");
+    assert.equal(payload[0].archived, false);
+  });
+
+  it("tools/call thread_archive archives over HTTP", async () => {
+    const { orch, deps } = await startOrch();
+    const st = orch.getStatus();
+    const cfg = JSON.parse(
+      fs.readFileSync(path.join(tmpDir, "orch-server.json"), "utf8"),
+    );
+    const res = await mcpPost(st.port, cfg.token, {
+      jsonrpc: "2.0",
+      id: 4,
+      method: "tools/call",
+      params: {
+        name: "thread_archive",
+        arguments: { threadId: "t1", projectId: "p1", archived: true },
+      },
+    });
+    assert.equal(res.status, 200);
+    const payload = JSON.parse(res.body.result.content[0].text);
+    assert.deepEqual(payload, { threadId: "t1", archived: true });
+    assert.equal(deps.store.getThread("t1").archived, true);
+    assert.deepEqual(deps.retired, ["t1"]);
   });
 
   it("fails soft on a corrupt config: logs once, stays down", async () => {
