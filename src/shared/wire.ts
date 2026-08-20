@@ -1,3 +1,5 @@
+import { PUSH_CHANNELS } from "./ipcChannels";
+
 /**
  * Wire protocol for Solenta Web (Tier 3): the SAME CoderApi channel map that
  * preload.js exposes over Electron IPC, carried over one WebSocket.
@@ -36,12 +38,8 @@ export type WireServerMessage =
   | { kind: "reply"; id: number; result?: unknown; error?: string }
   | { kind: "push"; channel: string; payload: unknown };
 
-/** Push channels mirrored from preload.js — keep the two in lockstep. */
-export const WIRE_PUSH_CHANNELS = [
-  "threads:changed",
-  "thread:updated",
-  "thread:select",
-] as const;
+/** Push channels from the IPC table — same set preload allows. */
+export const WIRE_PUSH_CHANNELS = PUSH_CHANNELS;
 
 /**
  * True when the renderer is served over HTTP (no Electron preload bridge).

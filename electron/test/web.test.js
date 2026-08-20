@@ -440,37 +440,34 @@ describe("one map, two transports + packaging", () => {
     assert.match(bridgeSrc, /fn\(ctx, \.\.\.args\)/);
   });
 
-  it("covers every channel preload invokes", async () => {
+  it("covers every channel the table names, plus desktop-only contextMenu", async () => {
+    const { pathToFileURL } = require("node:url");
+    const { IPC_CHANNELS, ipcChannelName } = await import(
+      pathToFileURL(path.join(__dirname, "../../src/shared/ipcChannels.ts")).href
+    );
     await withStubbedElectron(() => {
       delete require.cache[require.resolve("../ipc.js")];
       const { IPC_HANDLERS } = require("../ipc.js");
-      const preload = fs.readFileSync(
-        path.join(__dirname, "../preload.js"),
-        "utf8",
-      );
       const ipcSrc = fs.readFileSync(path.join(__dirname, "../ipc.js"), "utf8");
-      const channels = [...preload.matchAll(/invoke\("([^"]+)"/g)].map(
-        (m) => m[1],
-      );
-      // Native Menu.popup needs the sender window, so registerIpc wires
-      // these outside IPC_HANDLERS — the web bridge must never pop a menu.
-      const desktopOnly = new Set(["contextMenu:show"]);
-      assert.ok(channels.length > 20);
-      for (const ch of new Set(channels)) {
-        if (desktopOnly.has(ch)) {
-          assert.match(
-            ipcSrc,
-            new RegExp(`ipcMain\\.handle\\("${ch}"`),
-            `registerIpc must still handle desktop-only ${ch}`,
-          );
-          continue;
-        }
+      assert.ok(IPC_CHANNELS.length > 20);
+      for (const row of IPC_CHANNELS) {
+        const ch = ipcChannelName(row);
         assert.equal(
           typeof IPC_HANDLERS[ch],
           "function",
           `IPC_HANDLERS must own ${ch}`,
         );
       }
+      assert.match(
+        ipcSrc,
+        /ipcMain\.handle\("contextMenu:show"/,
+        "registerIpc must still handle desktop-only contextMenu:show",
+      );
+      assert.equal(
+        typeof IPC_HANDLERS["contextMenu:show"],
+        "undefined",
+        "web bridge must never pop a native menu",
+      );
     });
   });
 

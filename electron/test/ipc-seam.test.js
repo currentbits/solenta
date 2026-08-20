@@ -1,16 +1,19 @@
 /**
- * IPC seam: every channel the preload invokes must have a handler registered,
- * and the arguments must survive the crossing.
+ * IPC seam: the channel table, preload, and IPC_HANDLERS stay in lockstep,
+ * and arguments survive the crossing.
  *
  * tsc cannot check channel-name strings, so renaming "git:createPr" on one side
  * only ships an app whose button throws "No handler registered". Four such
- * mutations passed the whole suite before this test existed.
+ * mutations passed the whole suite before this test existed. The table
+ * (src/shared/ipcChannels.ts) is the other direction: a method in wireClient
+ * / CoderApi but missing from preload is #622.
  */
 const { describe, it, before, after } = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { pathToFileURL } = require("node:url");
 const Module = require("node:module");
 const cp = require("node:child_process");
 
@@ -146,7 +149,10 @@ exit 1`,
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
-  it("registers a handler for every channel preload exposes", async () => {
+  it("registers a handler for every table channel, and preload exposes each", async () => {
+    const { IPC_CHANNELS, ipcChannelName } = await import(
+      pathToFileURL(path.join(__dirname, "../../src/shared/ipcChannels.ts")).href
+    );
     await withStubbedElectron(({ handlers, bridge }) => {
       delete require.cache[require.resolve("../ipc.js")];
       delete require.cache[require.resolve("../preload.js")];
@@ -166,177 +172,62 @@ exit 1`,
 
       const api = bridge.coder;
       assert.ok(api, "preload must expose window.coder");
-      assert.ok(api.git, "preload must expose coder.git");
 
-      // The two this round adds, named explicitly so a rename cannot slip by.
-      for (const name of [
-        "createPr",
-        "prStatus",
-        "prChecks",
-        "prMerge",
-        "listPrs",
-      ]) {
+      const table = new Set(IPC_CHANNELS.map(ipcChannelName));
+      for (const row of IPC_CHANNELS) {
+        const ch = ipcChannelName(row);
         assert.equal(
-          typeof api.git[name],
+          typeof api[row.ns]?.[row.method],
           "function",
-          `preload must expose git.${name}`,
+          `preload must expose ${row.ns}.${row.method}`,
         );
-      }
-      assert.ok(
-        handlers.has("git:createPr"),
-        "main must handle git:createPr",
-      );
-      assert.ok(
-        handlers.has("git:prStatus"),
-        "main must handle git:prStatus",
-      );
-      assert.ok(
-        handlers.has("git:prChecks"),
-        "main must handle git:prChecks",
-      );
-      assert.ok(
-        handlers.has("git:prMerge"),
-        "main must handle git:prMerge",
-      );
-      assert.ok(
-        handlers.has("git:listPrs"),
-        "main must handle git:listPrs",
-      );
-
-      assert.equal(
-        typeof api.servers.list,
-        "function",
-        "preload must expose servers.list",
-      );
-      assert.ok(
-        handlers.has("servers:list"),
-        "main must handle servers:list",
-      );
-
-      assert.equal(
-        typeof api.files.resolve,
-        "function",
-        "preload must expose files.resolve",
-      );
-      assert.ok(
-        handlers.has("files:resolve"),
-        "main must handle files:resolve",
-      );
-      assert.equal(
-        typeof api.fs.browse,
-        "function",
-        "preload must expose fs.browse",
-      );
-      assert.ok(
-        handlers.has("fs:browse"),
-        "main must handle fs:browse",
-      );
-      assert.equal(
-        typeof api.sourceControl.discover,
-        "function",
-        "preload must expose sourceControl.discover",
-      );
-      assert.ok(
-        handlers.has("sourceControl:discover"),
-        "main must handle sourceControl:discover",
-      );
-
-      for (const name of ["scripts", "start", "stop", "status"]) {
-        assert.equal(
-          typeof api.devserver[name],
-          "function",
-          `preload must expose devserver.${name}`,
-        );
-      }
-      for (const ch of [
-        "devserver:scripts",
-        "devserver:start",
-        "devserver:stop",
-        "devserver:status",
-      ]) {
         assert.ok(handlers.has(ch), `main must handle ${ch}`);
       }
+      for (const ch of handlers.keys()) {
+        if (ch === "contextMenu:show") continue;
+        assert.ok(table.has(ch), `IPC_CHANNELS missing handler ${ch}`);
+      }
 
-      // Round 44 pin + snooze (mirror setSettled seam).
-      for (const name of ["setPinned", "setSnoozed", "setQueued", "setNotes", "setFeltEstimate", "setQuotaWaitAutoResume", "peek"]) {
-        assert.equal(
-          typeof api.threads[name],
-          "function",
-          `preload must expose threads.${name}`,
-        );
-      }
-      assert.ok(
-        handlers.has("threads:peek"),
-        "main must handle threads:peek",
-      );
-      assert.ok(
-        handlers.has("threads:setPinned"),
-        "main must handle threads:setPinned",
-      );
-      assert.ok(
-        handlers.has("threads:setSnoozed"),
-        "main must handle threads:setSnoozed",
-      );
-      assert.ok(
-        handlers.has("threads:setQueued"),
-        "main must handle threads:setQueued",
-      );
-      assert.ok(
-        handlers.has("threads:setNotes"),
-        "main must handle threads:setNotes",
+      assert.equal(
+        typeof api.attachments.droppedFilePath,
+        "function",
+        "preload must expose attachments.droppedFilePath (not a channel)",
       );
       assert.equal(
-        typeof api.threads.resolveSuggestion,
+        typeof api.contextMenu.show,
         "function",
-        "preload must expose threads.resolveSuggestion",
+        "preload must expose contextMenu.show",
       );
       assert.ok(
-        handlers.has("threads:resolveSuggestion"),
-        "main must handle threads:resolveSuggestion",
+        handlers.has("contextMenu:show"),
+        "registerIpc must still handle desktop-only contextMenu:show",
+      );
+      // #622 canary: these lived on wireClient and CoderApi but not preload.
+      assert.equal(
+        typeof api.threads.setVerifyCommand,
+        "function",
+        "preload must expose threads.setVerifyCommand",
       );
       assert.equal(
-        typeof api.issues.create,
+        typeof api.threads.runVerify,
         "function",
-        "preload must expose issues.create",
-      );
-      assert.ok(
-        handlers.has("issues:create"),
-        "main must handle issues:create",
-      );
-      assert.ok(
-        handlers.has("threads:setFeltEstimate"),
-        "main must handle threads:setFeltEstimate",
-      );
-      assert.ok(
-        handlers.has("threads:setQuotaWaitAutoResume"),
-        "main must handle threads:setQuotaWaitAutoResume",
-      );
-      for (const name of ["btw", "dismissBtw", "promoteBtw"]) {
-        assert.equal(
-          typeof api.threads[name],
-          "function",
-          `preload must expose threads.${name}`,
-        );
-      }
-      assert.ok(handlers.has("threads:btw"), "main must handle threads:btw");
-      assert.ok(
-        handlers.has("threads:dismissBtw"),
-        "main must handle threads:dismissBtw",
-      );
-      assert.ok(
-        handlers.has("threads:promoteBtw"),
-        "main must handle threads:promoteBtw",
-      );
-      assert.equal(
-        typeof api.runs.resumeQuotaWait,
-        "function",
-        "preload must expose runs.resumeQuotaWait",
-      );
-      assert.ok(
-        handlers.has("runs:resumeQuotaWait"),
-        "main must handle runs:resumeQuotaWait",
+        "preload must expose threads.runVerify",
       );
     });
+  });
+
+  it("preload inlined table matches src/shared/ipcChannels.ts", () => {
+    const { spawnSync } = require("node:child_process");
+    const r = spawnSync(
+      process.execPath,
+      [
+        "--experimental-strip-types",
+        path.join(__dirname, "../../scripts/sync-ipc-preload.js"),
+        "--check",
+      ],
+      { encoding: "utf8" },
+    );
+    assert.equal(r.status, 0, r.stderr || r.stdout);
   });
 
   it("carries createPr arguments across the bridge and back", async () => {

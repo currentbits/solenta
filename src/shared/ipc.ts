@@ -1,9 +1,9 @@
 // Typed IPC contract between the Electron main process and the React renderer.
 // The preload script exposes `window.coder` implementing CoderApi.
-// Invoke channel names mirror the method paths: "projects:list", "projects:add",
-// "projects:addViaDialog", "threads:list", "threads:create", "threads:get",
-// "runs:start", "runs:stop", "git:status".
-// Push channels: "threads:changed", "thread:updated", "thread:select".
+// Invoke channel names are `${namespace}:${method}` and live in
+// src/shared/ipcChannels.ts — preload and wireClient iterate that table
+// (issue #623). Push channels: "threads:changed", "thread:updated",
+// "thread:select".
 
 /**
  * Retired (#568). The IPC type stays so old callers still typecheck;
@@ -2001,6 +2001,10 @@ export interface MemoryEntryInfo {
   citations?: MemoryCitation[];
 }
 
+/**
+ * Renderer-facing API. Invoke method names are locked to
+ * `src/shared/ipcChannels.ts` (IPC_CHANNEL_LOCK); keep JSDoc here.
+ */
 export interface CoderApi {
   app: {
     status(): Promise<AppStatus>;

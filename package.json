@@ -8,8 +8,8 @@
   "scripts": {
     "dev": "node scripts/dev.js",
     "dev:browser": "vite",
-    "build": "tsc --noEmit && vite build",
-    "typecheck": "tsc --noEmit",
+    "build": "npm run typecheck && vite build",
+    "typecheck": "tsc --noEmit && node --experimental-strip-types scripts/sync-ipc-preload.js --check",
     "preview": "vite preview",
     "electron": "electron .",
     "package": "bash scripts/package-app.sh",
