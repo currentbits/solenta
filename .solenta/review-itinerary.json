@@ -47,11 +47,56 @@
         "The scope menu at Sidebar.tsx:1972 keeps menuLeft on purpose — its trigger is on the left side.",
         "No test asserts anchor direction; verified by CSS inspection plus the full sidebar suite (58/58)."
       ]
+    },
+    {
+      "area": "critical: enforceRetention stays opt-in (electron/worktrees.js, enforceRetention)",
+      "rationale": "Read this before anything else. enforceRetention is the ONLY path in this diff that deletes with no human watching (boot, main.js:396). Everything else in the change widens what gcScan classifies, and gcScan feeds enforceRetention — so if this filter is wrong, shipping DEFAULT_WORKTREE_RETENTION silently deletes 114 directories on the reporter's machine at next launch. The old `anyRetention` boolean guard was replaced by a `configured` Set of project ids, because a boolean is exactly wrong once gcScan defaults: one project opting in used to be enough to let the scan's candidates through, and those candidates now include every other project's. Verify both clauses: `configured.has(c.projectId)` and `!(c.unmerged > 0)`.",
+      "risks": [
+        "If `c.projectId` were ever null for a retention candidate the Set lookup silently drops it — safe direction (keeps the dir), but worth knowing it is fail-closed by accident rather than by design.",
+        "`!(c.unmerged > 0)` rather than `!c.unmerged` so an undefined count reads as 0 without a truthiness surprise."
+      ]
+    },
+    {
+      "area": "impl: DEFAULT_WORKTREE_RETENTION + retentionFor/explicitRetention (electron/worktrees.js)",
+      "rationale": "The actual bug fix, and it is three lines. The retention bucket was gated on a setting that is undefined on all five real projects, so 191 settled worker worktrees were never classified and the GC dialog — which has shipped since #316 — had nothing to show. retentionFor() applies the default; explicitRetention() deliberately keeps the raw setting readable so the boot path above can tell a configured project from one riding the default. Do not collapse the two helpers into one; the distinction IS the safety property.",
+      "risks": [
+        "Default of 10 is a judgement call, not a measurement. Too low and a user loses recent context to a click; too high and the affordance under-delivers. 10 leaves 142 of 186 dirs reclaimable on the live store."
+      ]
+    },
+    {
+      "area": "impl: unmerged probe (electron/worktrees.js, unmergedCount + baseBranchOf + inspectWorktreeDir)",
+      "rationale": "The 'is this dead weight or work someone wants' signal. Deliberately NOT a `blocked` reason: GC removes directories and never branches (#316's rule), so the commits survive removal and blocking would make 9 GB permanently unreclaimable for no gain. It is a warning that suppresses pre-selection instead. baseBranchOf memoizes per repo so 135 worktrees of one repo cost one extra git call, not 135. Every git failure counts as 0 unmerged — check that you agree that biasing toward reclaimable is right here (it is, because the branch ref outlives the directory).",
+      "risks": [
+        "Base is the repo's currently-checked-out branch (the codebase's existing defaultBranch convention). If the user leaves the main checkout on a feature branch, counts are measured against that branch and can over-report. Over-reporting only holds MORE worktrees back, so it degrades toward caution.",
+        "A worker whose lead merged it into the lead's own branch (#600 thread_merge) reads as unmerged against main. Also the safe direction, and #600 removes that worktree at merge time anyway.",
+        "Adds one `git rev-list` per candidate dir to every scan. Measured on the live 186-dir / 107 GB base: still dominated by `du`, and the boot path passes skipSizes so it never pays for du at all."
+      ]
+    },
+    {
+      "area": "impl: UI pre-selection split (src/components/WorktreeGcSection.tsx)",
+      "rationale": "`unblocked` (can be ticked) and `defaultPick` (ticked for you) are now different sets — that split is the whole point of the file's diff. Unmerged rows stay enabled so the user CAN reclaim them, but neither the initial selection nor 'Select all' ever includes one. Check the toggleAll/allSelected pair moved to defaultPick together; if only one had, 'Select all' would render as already-checked and do nothing.",
+      "risks": [
+        "The confirm button counts whatever is selected, so a hand-ticked unmerged row is correctly included in 'Delete N worktrees' — verify that reads as intended and not as the safety being bypassed."
+      ]
+    },
+    {
+      "area": "tests: electron/test/worktree-gc-retention.test.js + test/worktreeGc.test.tsx",
+      "rationale": "Read last, as verification of the claims above. The two load-bearing cases are 'enforceRetention ignores projects riding the default' (asserts gcScan offers candidates in the same breath that enforceRetention removes none — the exact seam a future refactor would weld shut) and 'a second project's setting does not license reclaiming the first' (the cross-project bug the Set replaced the boolean to prevent). The renderer pair asserts unmerged is never auto-selected but is still reachable by hand.",
+      "risks": [
+        "The electron fixture builds DEFAULT_WORKTREE_RETENTION + 2 real git worktrees per case, so the file is slower than its neighbours; it is still under the suite timeout but do not add many more cases in this shape."
+      ]
+    },
+    {
+      "area": "docs: GcCandidate.unmerged (src/shared/ipc.ts)",
+      "rationale": "The doc comment carries the reasoning a future reader needs to not 'fix' unmerged into a blocked reason. Confirm the comment still matches the behaviour if the behaviour changed in review."
     }
   ],
   "risks": [
     "No second archive implementation was added; setArchived remains the only writer. A review that only diffs orchServer.js and misses the services import can still think mutation lives here.",
     "Pin and snooze are intentionally absent (issue #595 v1.1 lists settle/stop/rename only).",
-    "Do not teach agents to patch coder-store.json; that path is still overwritten by the in-RAM Store on save/_flushOnExit."
+    "Do not teach agents to patch coder-store.json; that path is still overwritten by the in-RAM Store on save/_flushOnExit.",
+    "Behaviour change on existing installs: the GC dialog goes from empty to 142 candidates the first time it opens after this ships. That is the intent, but it is a large jump and the confirm dialog is the only thing standing between the user and 67 GB.",
+    "Nothing here deletes anything on its own. Verified on the live store: enforceRetention still removes 0 with no project configured.",
+    "The 5 remaining electron suite failures (orch-server x2, runner auto-checkpoint, runner verification gate, one map/two transports) are byte-identical before and after this change — confirmed by stashing the diff and re-running (#536 baseline)."
   ]
 }

@@ -229,6 +229,90 @@ describe("worktree GC batch cleanup", () => {
   });
 });
 
+describe("worktree GC unmerged candidates (#601)", () => {
+  const seed = scanResult({
+    usage: [{ projectId: "p1", worktrees: 2, bytes: 8 * MB }],
+    totalBytes: 8 * MB,
+    candidates: [
+      candidate({
+        path: "/tmp/wt/dead",
+        title: "dead weight",
+        reason: "retention",
+        bytes: 5 * MB,
+        branch: "solenta/dead",
+      }),
+      candidate({
+        path: "/tmp/wt/unlanded",
+        title: "worker nobody merged",
+        reason: "retention",
+        bytes: 3 * MB,
+        branch: "solenta/unlanded",
+        unmerged: 4,
+      }),
+    ],
+  });
+
+  it("never pre-selects an unmerged candidate but leaves it tickable", async () => {
+    const m = await mount(modal({ scan: seed }));
+    const open = m.query("[data-gc-open]") as HTMLButtonElement;
+    assert.ok(
+      (open.textContent || "").includes("Reclaim 5.0 MB"),
+      `button offers only the clean bytes, got: ${open.textContent}`,
+    );
+    await m.click(open);
+
+    const row = m.query(
+      '[data-gc-candidate="/tmp/wt/unlanded"]',
+    ) as HTMLElement | null;
+    assert.ok(row, "unmerged row renders");
+    const box = row.querySelector("input") as HTMLInputElement;
+    assert.equal(box.disabled, false, "unmerged stays tickable by hand");
+    assert.equal(box.checked, false, "unmerged is not pre-selected");
+    assert.ok(m.query('[data-gc-unmerged="/tmp/wt/unlanded"]'), "warning row");
+    assert.ok(
+      m.text().includes("4 unmerged commits · branch kept"),
+      `unmerged warning is visible, got: ${m.text().slice(-200)}`,
+    );
+
+    const confirm = m.query("[data-gc-confirm]") as HTMLButtonElement;
+    assert.ok(
+      (confirm.textContent || "").includes("Delete 1 worktree (5.0 MB)"),
+      `confirm covers the clean candidate only, got: ${confirm.textContent}`,
+    );
+    m.unmount();
+  });
+
+  it("select all skips unmerged; ticking one by hand includes it", async () => {
+    const cleans: GcCleanInput[] = [];
+    const m = await mount(
+      modal({
+        scan: seed,
+        onClean: async (input) => {
+          cleans.push(input);
+          return { removed: input.paths, failed: [], bytes: 8 * MB };
+        },
+      }),
+    );
+    await m.click(m.query("[data-gc-open]"));
+    // Toggle off, then on: "select all" must still exclude the unmerged row.
+    await m.click(m.query("[data-gc-select-all]"));
+    await m.click(m.query("[data-gc-select-all]"));
+    const row = m.query('[data-gc-candidate="/tmp/wt/unlanded"]') as HTMLElement;
+    const box = row.querySelector("input") as HTMLInputElement;
+    assert.equal(box.checked, false, "select all leaves unmerged alone");
+
+    await m.click(box);
+    await m.click(m.query("[data-gc-confirm]"));
+    await m.flush();
+    assert.equal(cleans.length, 1);
+    assert.deepEqual(cleans[0]!.paths.slice().sort(), [
+      "/tmp/wt/dead",
+      "/tmp/wt/unlanded",
+    ]);
+    m.unmount();
+  });
+});
+
 describe("worktree retention", () => {
   it("round-trips the retention input through projects.update", async () => {
     const p1 = project({ id: "p1", name: "ledger", path: "/tmp/ledger" });

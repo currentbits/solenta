@@ -177,6 +177,14 @@ export interface GcCandidate {
   title: string | null;
   projectId: string | null;
   branch: string | null;
+  /**
+   * Commits on this branch the project's branch does not have (#601). Absent
+   * when there are none. NOT a `blocked` reason — GC removes directories and
+   * never branches, so the commits survive — but work nobody landed must not
+   * be reclaimed by accident, so these rows are never pre-selected and boot
+   * retention skips them entirely.
+   */
+  unmerged?: number;
   blocked?: string;
 }
 

@@ -124,6 +124,18 @@ const PR_REFRESH_TIMEOUT_MS = 8_000;
 const TERMINAL_PR_STATES = new Set(["MERGED", "CLOSED"]);
 
 /**
+ * Settled worktrees per project the GC scan leaves alone when the project has
+ * no explicit `worktreeRetention` (#601). Before this, the retention bucket was
+ * gated on the setting being present — unset on every real project — so a
+ * settled thread's worktree was never classified and the GC dialog showed
+ * nothing to reclaim (191 finished orchestrator workers / 100 GB on the
+ * reporter's machine). Classification only: `enforceRetention` still reclaims
+ * for explicitly-configured projects only, because it is the one path that
+ * deletes with no human in the loop.
+ */
+const DEFAULT_WORKTREE_RETENTION = 10;
+
+/**
  * @param {string} cwd
  * @param {string[]} args
  * @param {{ raw?: boolean }} [opts] - raw skips trimming (porcelain output
@@ -3757,6 +3769,28 @@ function threadActivityAt(thread) {
 }
 
 /**
+ * A project's settled-worktree keep count, falling back to the default (#601).
+ * `explicitRetention` is the opt-in subset `enforceRetention` may delete from.
+ * @param {object} project
+ * @returns {number}
+ */
+function retentionFor(project) {
+  const n = explicitRetention(project);
+  return n > 0 ? n : DEFAULT_WORKTREE_RETENTION;
+}
+
+/**
+ * The per-project setting only — 0 when unset, so callers can tell a
+ * configured project from one riding the default.
+ * @param {object} project
+ * @returns {number}
+ */
+function explicitRetention(project) {
+  const n = Math.floor(Number(project && project.worktreeRetention));
+  return n > 0 ? n : 0;
+}
+
+/**
  * Conservative settle check, mirrored from src/threadSettle.ts.
  * working / pinned never settle. Explicit "active" override wins over PR.
  * @param {object} thread
@@ -3803,10 +3837,35 @@ function realpathOrResolve(p) {
 }
 
 /**
- * @param {string} dir
- * @returns {Promise<{ repoPath: string | null, readable: boolean, dirty: boolean, branch: string | null }>}
+ * Branch checked out in the owning repo, memoized per repo across one scan.
+ * Same convention as the sync `defaultBranch` the merge paths use, but it
+ * never throws — a detached-HEAD repo just yields null and the unmerged probe
+ * is skipped.
+ *
+ * @param {string | null} repoPath
+ * @param {Map<string, Promise<string | null>>} cache
+ * @returns {Promise<string | null>}
  */
-async function inspectWorktreeDir(dir) {
+function baseBranchOf(repoPath, cache) {
+  if (!repoPath) return Promise.resolve(null);
+  const key = path.resolve(repoPath);
+  let pending = cache.get(key);
+  if (!pending) {
+    pending = gitTryAsync(repoPath, ["branch", "--show-current"]).then((res) =>
+      res.ok && res.stdout.trim() ? res.stdout.trim() : null,
+    );
+    cache.set(key, pending);
+  }
+  return pending;
+}
+
+/**
+ * @param {string} dir
+ * @param {Map<string, Promise<string | null>>} [baseCache] memo for the owning
+ *   repo's branch, so N worktrees of one repo cost one extra git call.
+ * @returns {Promise<{ repoPath: string | null, readable: boolean, dirty: boolean, branch: string | null, unmerged: number }>}
+ */
+async function inspectWorktreeDir(dir, baseCache) {
   const common = await gitTryAsync(dir, [
     "rev-parse",
     "--path-format=absolute",
@@ -3825,7 +3884,41 @@ async function inspectWorktreeDir(dir) {
   const dirty = readable && Boolean(String(status.stdout || "").trim());
   const br = await gitTryAsync(dir, ["branch", "--show-current"]);
   const branch = br.ok && br.stdout.trim() ? br.stdout.trim() : null;
-  return { repoPath, readable, dirty, branch };
+  const unmerged = readable
+    ? await unmergedCount(dir, branch, repoPath, baseCache || new Map())
+    : 0;
+  return { repoPath, readable, dirty, branch, unmerged };
+}
+
+/**
+ * Commits on this worktree's HEAD that the owning repo's branch does not have
+ * (#601) — the line between "work nobody landed" and dead weight. Removing the
+ * directory never loses them (GC keeps every branch), but a candidate carrying
+ * commits must never be reclaimed by accident, so the count is surfaced and
+ * `enforceRetention` skips it.
+ *
+ * Best-effort: any git failure counts as 0 rather than blocking a scan. That
+ * biases toward reclaimable, which is safe precisely because the branch ref
+ * outlives the directory.
+ *
+ * @param {string} dir
+ * @param {string | null} branch
+ * @param {string | null} repoPath
+ * @param {Map<string, Promise<string | null>>} baseCache
+ * @returns {Promise<number>}
+ */
+async function unmergedCount(dir, branch, repoPath, baseCache) {
+  const base = await baseBranchOf(repoPath, baseCache);
+  if (!base || (branch && branch === base)) return 0;
+  const res = await gitTryAsync(dir, [
+    "rev-list",
+    "--count",
+    "HEAD",
+    `^${base}`,
+  ]);
+  if (!res.ok) return 0;
+  const n = parseInt(res.stdout.trim(), 10);
+  return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
 /**
@@ -3896,7 +3989,11 @@ async function gcScanInner(opts) {
   const sizes = skipSizes
     ? dirs.map(() => 0)
     : await Promise.all(dirs.map((d) => duBytes(d)));
-  const inspections = await Promise.all(dirs.map((d) => inspectWorktreeDir(d)));
+  /** @type {Map<string, Promise<string | null>>} */
+  const baseCache = new Map();
+  const inspections = await Promise.all(
+    dirs.map((d) => inspectWorktreeDir(d, baseCache)),
+  );
 
   /** @type {Map<string, Array<{ thread: object, dir: string }>>} */
   const settledByProject = new Map();
@@ -3912,7 +4009,7 @@ async function gcScanInner(opts) {
   const retentionDrop = new Set();
   for (const [projectId, list] of settledByProject) {
     const project = store.getProject(projectId);
-    const n = Math.floor(Number(project && project.worktreeRetention));
+    const n = retentionFor(project);
     if (!(n > 0)) continue;
     list.sort((a, b) => threadActivityAt(b.thread) - threadActivityAt(a.thread));
     for (const item of list.slice(n)) {
@@ -3982,6 +4079,7 @@ async function gcScanInner(opts) {
       title: thread ? thread.title || null : null,
       projectId,
       branch: thread ? thread.branch || null : insp.branch,
+      ...(insp.unmerged > 0 ? { unmerged: insp.unmerged } : {}),
       ...(blocked ? { blocked } : {}),
     });
   }
@@ -4140,16 +4238,25 @@ async function enforceRetention(opts) {
     store && typeof store.getProjects === "function"
       ? store.getProjects() || []
       : [];
-  const anyRetention = projects.some((p) => {
-    const n = Math.floor(Number(p && p.worktreeRetention));
-    return n > 0;
-  });
+  const configured = new Set(
+    projects.filter((p) => explicitRetention(p) > 0).map((p) => p.id),
+  );
   // Unset on every project → nothing to reclaim; don't walk the disk.
-  if (!anyRetention) return { removed: [], failed: [], bytes: 0 };
+  if (configured.size === 0) return { removed: [], failed: [], bytes: 0 };
 
   const scan = await gcScan({ store, worktreeBase, skipSizes: true });
   const paths = scan.candidates
-    .filter((c) => c.reason === "retention" && !c.blocked)
+    .filter(
+      (c) =>
+        c.reason === "retention" &&
+        !c.blocked &&
+        // gcScan classifies with DEFAULT_WORKTREE_RETENTION so the GC dialog
+        // can offer everything; boot GC deletes with nobody watching, so it
+        // only ever touches projects the user opted in (#601)...
+        configured.has(c.projectId) &&
+        // ...and never a worktree holding commits nobody landed.
+        !(c.unmerged > 0),
+    )
     .map((c) => c.path);
   if (paths.length === 0) return { removed: [], failed: [], bytes: 0 };
   return gcClean({ store, worktreeBase, paths, broadcast, skipSizes: true });
@@ -4279,6 +4386,7 @@ module.exports = {
   gcScan,
   gcClean,
   enforceRetention,
+  DEFAULT_WORKTREE_RETENTION,
   ensureWorktree,
   isPrRefreshCandidate,
   isGitHubRemote,

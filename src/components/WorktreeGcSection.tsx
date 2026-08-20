@@ -111,9 +111,19 @@ export function WorktreeGcSection({
     () => candidates.filter((c) => !c.blocked),
     [candidates],
   );
+  // Unmerged rows stay tickable — the branch survives either way — but
+  // reclaiming one is a deliberate per-row click, never part of "select all".
+  const defaultPick = useMemo(
+    () => unblocked.filter((c) => !c.unmerged),
+    [unblocked],
+  );
+  const reclaimableBytes = useMemo(
+    () => defaultPick.reduce((sum, c) => sum + c.bytes, 0),
+    [defaultPick],
+  );
 
   const openCleanup = () => {
-    setSelected(new Set(unblocked.map((c) => c.path)));
+    setSelected(new Set(defaultPick.map((c) => c.path)));
     setCleanupOpen(true);
     setReport(null);
     setFailed([]);
@@ -129,10 +139,12 @@ export function WorktreeGcSection({
   };
 
   const allSelected =
-    unblocked.length > 0 && unblocked.every((c) => selected.has(c.path));
+    defaultPick.length > 0 && defaultPick.every((c) => selected.has(c.path));
 
   const toggleAll = () => {
-    setSelected(allSelected ? new Set() : new Set(unblocked.map((c) => c.path)));
+    setSelected(
+      allSelected ? new Set() : new Set(defaultPick.map((c) => c.path)),
+    );
   };
 
   const selectedBytes = candidates.reduce(
@@ -248,7 +260,9 @@ export function WorktreeGcSection({
             data-gc-open=""
             onClick={openCleanup}
           >
-            Clean up
+            {reclaimableBytes > 0
+              ? `Reclaim ${formatBytes(reclaimableBytes)}`
+              : "Clean up"}
           </button>
         </div>
       )}
@@ -263,7 +277,7 @@ export function WorktreeGcSection({
               type="button"
               className={styles.btn}
               data-gc-select-all=""
-              disabled={cleaning || unblocked.length === 0}
+              disabled={cleaning || defaultPick.length === 0}
               onClick={toggleAll}
             >
               {allSelected ? "Select none" : "Select all"}
@@ -294,6 +308,12 @@ export function WorktreeGcSection({
                     {" · "}
                     {formatBytes(c.bytes)}
                   </p>
+                  {c.unmerged ? (
+                    <p className={styles.note} data-gc-unmerged={c.path}>
+                      {c.unmerged} unmerged{" "}
+                      {c.unmerged === 1 ? "commit" : "commits"} · branch kept
+                    </p>
+                  ) : null}
                   {c.blocked && (
                     <p className={styles.fieldError}>{c.blocked}</p>
                   )}
