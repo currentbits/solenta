@@ -356,6 +356,31 @@ A worker that fails to start is dropped as an orphan; peers that already
 started keep running, and the lead's event message says which never went out.
 Only an empty fan-out throws.
 
+## Ask mode
+
+Read-only repo Q&A (issue #392). Prompt + completion live in
+`electron/ask.js`; `services.startAsk` / `stopAsk` own the thread flag;
+the runner owns the turn. Same split as `orchcommands.js`.
+
+`startRun` intercepts `thread.ask === true` **before** orchestration
+commands, `assertUnderDailyBudget`, and worktree materialization, so a
+`/advisor` on an Ask thread is just a question and a leftover
+`pendingWorktree` cannot touch the disk. `startAsk` is idempotent, drops
+`pendingWorktree`, and clears teach (the personas conflict); an already-
+created worktree stays on disk unused. A fork of an Ask thread stays Ask
+(`forkThread` refuses to arm a worktree). `startAskRun` also stamps
+`pendingWorktree: false` and skips `notifyRunTerminal` (no checkpoint,
+no spend).
+
+The turn never starts a CLI tool loop. `completeAsk` tries `fm` first
+(free, on-device, `ASK_TIMEOUT_MS` 90s), then the thread's provider in
+print-mode (`buildAskArgs`: Claude `-p --max-turns 1` so a missed "no
+tools" instruction cannot start a loop; no MCP, no session), then
+`retrievalFallback` from the code map + memory. Print-mode spawn uses
+`cwd: undefined`. Caps: `ASK_PROMPT_LIMIT` 80_000, `ASK_MAX_OUTPUT`
+256 KiB, `MEMORY_HITS` 8. `askNoteFor` is the standing note if the
+intercept is missed — empty when Ask is off.
+
 ## Spec mode
 
 Optional per-thread gate (issue #269): the agent writes `requirements.md`,
