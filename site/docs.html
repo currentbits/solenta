@@ -224,6 +224,18 @@
         in a git worktree</em> and <em>Delegate new threads to a worker</em> in
         Settings, the second winning over the first.
       </p>
+      <p>
+        A thread can also run in <strong>Ask mode</strong>: read-only
+        questions about the repo, answered from the code index and shared
+        memory. It never spawns a worktree, never calls tools, and never
+        counts against the daily budget. The overflow menu turns it on
+        (and clears Teach, which conflicts); the composer then hides
+        permission, Build, Best of N, and attach. Answers prefer the
+        on-device <code>fm</code> CLI, then the provider in print mode,
+        then a retrieval-only pack if neither is available.
+        <em>Start work</em> turns Ask off and, when Isolate new threads
+        is on, arms a worktree for the next turn.
+      </p>
 
       <h2 id="worktrees">Worktrees and pull requests</h2>
       <p>
