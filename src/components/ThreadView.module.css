@@ -1909,6 +1909,43 @@ a.btn {
   max-width: 38ch;
 }
 
+.emptyStarters {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.emptyStartersLabel {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.emptyStarterList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  max-width: 42ch;
+}
+
+.emptyStarterChip {
+  padding: 5px 10px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: var(--card);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
 /* Inline permission prompt: agent is blocked until the user answers. */
 .permissionCard {
   display: flex;

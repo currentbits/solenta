@@ -4181,6 +4181,20 @@ export const ThreadView = memo(function ThreadView({
           <p className={styles.emptyHint}>
             Choose a thread from the sidebar, or create a new one.
           </p>
+          <div className={styles.emptyStarters} data-empty-starters="">
+            <p className={styles.emptyStartersLabel}>Try asking</p>
+            <ul className={styles.emptyStarterList}>
+              <li className={styles.emptyStarterChip}>
+                Fix the failing test
+              </li>
+              <li className={styles.emptyStarterChip}>
+                Add dark mode to the settings page
+              </li>
+              <li className={styles.emptyStarterChip}>
+                Explain how auth works in this repo
+              </li>
+            </ul>
+          </div>
         </div>
       </main>
     );
