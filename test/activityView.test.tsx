@@ -109,6 +109,62 @@ describe("ActivityView", () => {
     m.unmount();
   });
 
+  it("projectScope filters rows to that project's activity (#598)", async () => {
+    const now = Date.now();
+    const listActivity = async (): Promise<ActivityItem[]> => [
+      item({
+        id: "t1:done:1",
+        threadId: "t1",
+        kind: "done",
+        threadTitle: "Ship ledger",
+        at: now,
+      }),
+      item({
+        id: "t2:created:1",
+        threadId: "t2",
+        projectId: "p2",
+        kind: "created",
+        threadTitle: "New billing thread",
+        at: now,
+      }),
+    ];
+    const m = await mount(
+      <ActivityView
+        projects={[p1, p2]}
+        projectScope="p2"
+        listActivity={listActivity}
+        onSelectThread={() => {}}
+      />,
+    );
+    await m.flush();
+    assert.ok(m.text().includes("New billing thread"));
+    assert.ok(!m.text().includes("Ship ledger"));
+    m.unmount();
+  });
+
+  it("shows the empty state when the scope filters everything out (#598)", async () => {
+    const listActivity = async (): Promise<ActivityItem[]> => [
+      item({
+        id: "t1:done:1",
+        threadId: "t1",
+        kind: "done",
+        threadTitle: "Ship ledger",
+      }),
+    ];
+    const m = await mount(
+      <ActivityView
+        projects={[p1, p2]}
+        projectScope="p2"
+        listActivity={listActivity}
+        onSelectThread={() => {}}
+      />,
+    );
+    await m.flush();
+    assert.ok(m.text().includes("No activity yet"));
+    assert.equal(m.query("[data-activity-row]"), null);
+    m.unmount();
+  });
+
   it("renders the empty state when there is no activity", async () => {
     const m = await mount(
       <ActivityView

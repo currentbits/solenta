@@ -110,6 +110,35 @@ describe("KanbanView", () => {
     m.unmount();
   });
 
+  it("projectScope filters the board to that project's threads (#598)", async () => {
+    const p2: ProjectInfo = {
+      id: "p2",
+      slug: "acme/billing",
+      name: "billing",
+      path: "/tmp/billing",
+    };
+    const m = await mount(
+      <KanbanView
+        threads={[
+          thread({ id: "in", title: "in scope", status: "idle" }),
+          thread({
+            id: "out",
+            title: "out of scope",
+            status: "idle",
+            projectId: "p2",
+          }),
+        ]}
+        projects={[project, p2]}
+        projectScope="p1"
+        providers={providers}
+        onSelectThread={() => {}}
+      />,
+    );
+    assert.ok(m.text().includes("in scope"));
+    assert.ok(!m.text().includes("out of scope"));
+    m.unmount();
+  });
+
   it("points an empty board at New thread", async () => {
     const m = await mount(
       <KanbanView

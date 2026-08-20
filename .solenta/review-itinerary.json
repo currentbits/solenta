@@ -92,6 +92,31 @@
       "area": "test/sidebar.test.tsx",
       "rationale": "Two assertions that fail if either word regresses: the orchestrator card's label text, and a new idle+queued case.",
       "risks": []
+    },
+    {
+      "area": "src/components/Sidebar.tsx",
+      "rationale": "Start here: same two-line change as #597, twice — onOpenKanban/onOpenActivity widen to take the scoped project id and the nav buttons pass projectScope.",
+      "risks": []
+    },
+    {
+      "area": "src/App.tsx",
+      "rationale": "openKanban/openActivity store the scoped id (kanbanProjectId/activityProjectId) and pass it as projectScope to the views. Mirrors planboardProjectId.",
+      "risks": [
+        "Scope is sticky per view until the nav button is clicked again — matches planboard behaviour, but re-scoping requires a nav click, not a sidebar scope change alone."
+      ]
+    },
+    {
+      "area": "src/components/KanbanView.tsx + src/components/ActivityView.tsx",
+      "rationale": "Neither view has a project selector (unlike Planboard), so instead of seeding a selection the scope is a filter prop: Kanban filters threads before kanbanColumns, Activity filters items before grouping. Null/omitted = all projects, so every existing caller is unchanged.",
+      "risks": [
+        "KanbanView deliberately builds waitStates/threadTitles from ALL threads so cross-project wait references still resolve titles; only the column input is filtered.",
+        "Kanban's scoped empty state reuses the generic 'No threads on the board' copy — it does not say the scope hid them."
+      ]
+    },
+    {
+      "area": "tests",
+      "rationale": "sidebar.test.tsx mirrors the four #597 nav cases for kanban+activity; kanbanView/activityView tests assert the filter in and out of scope, plus the scoped-empty state.",
+      "risks": []
     }
   ],
   "risks": [
@@ -101,6 +126,7 @@
     "Visual verification is outstanding: renderer tests have no layout engine, so card height growth, the 10px inset and the overlap guard are unproven in pixels.",
     "waitLabel wording now differs for subagents in three surfaces (sidebar wait row, KanbanView, AgentsPanel roster header) — intended, but it is a user-visible copy change beyond the sidebar.",
     "SubagentRows (#542) were deleted by the same T3 rewrite and are NOT restored here — the wait row still reports 'Waiting on N workers' for them, but the nested per-subagent rows are gone.",
-    "The layout fix is reasoning + CSS, unverified against pixels: confirm in a running build."
+    "The layout fix is reasoning + CSS, unverified against pixels: confirm in a running build.",
+    "No in-view way to clear the scope in Kanban/Activity — user clears the sidebar scope and re-clicks the nav. Adding an in-view selector like Planboard's is the upgrade path if that grates."
   ]
 }

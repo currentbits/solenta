@@ -137,6 +137,9 @@ function sidebar(
     onSetMuted?: (threadId: string, muted: boolean) => void;
     onRenameThread?: (threadId: string, title: string) => void;
     onFork?: (threadId: string, opts?: { provider?: string }) => void;
+    onOpenPlanboard?: (scopedProjectId?: string | null) => void;
+    onOpenKanban?: (scopedProjectId?: string | null) => void;
+    onOpenActivity?: (scopedProjectId?: string | null) => void;
     revealThreadId?: string | null;
     onRevealHandled?: () => void;
     updateState?: UpdateStatus["state"] | null;
@@ -165,6 +168,9 @@ function sidebar(
       onSetMuted={over.onSetMuted}
       onRenameThread={over.onRenameThread}
       onFork={over.onFork}
+      onOpenPlanboard={over.onOpenPlanboard}
+      onOpenKanban={over.onOpenKanban}
+      onOpenActivity={over.onOpenActivity}
       onCreateThreadFromIssue={over.onCreateThreadFromIssue}
       revealThreadId={over.revealThreadId ?? null}
       onRevealHandled={over.onRevealHandled}
@@ -829,6 +835,129 @@ describe("Sidebar project scope", () => {
     assert.ok(m.query('[data-view-nav="activity"]'));
     assert.ok(m.query('[data-view-nav="kanban"]'));
     assert.ok(m.query('[data-view-nav="planboard"]'));
+    m.unmount();
+  });
+
+  it("planboard nav passes the scoped project id (#597)", async () => {
+    await clearSidebarStorage();
+    const opened: Array<string | null | undefined> = [];
+    const m = await mount(
+      sidebar(THREADS, {
+        projects: [p1, p2],
+        onOpenPlanboard: (pid) => {
+          opened.push(pid);
+        },
+      }),
+    );
+    await openScopeMenu(m);
+    await m.click(m.query('[data-scope-item="p2"]')!);
+    await m.flush();
+    const btn = m.query('[data-view-nav="planboard"]') as HTMLButtonElement | null;
+    assert.ok(btn, "planboard nav button");
+    await m.click(btn);
+    await m.flush();
+    assert.deepEqual(opened, ["p2"]);
+    m.unmount();
+  });
+
+  it("planboard nav passes null when unscoped (#597)", async () => {
+    await clearSidebarStorage();
+    const opened: Array<string | null | undefined> = [];
+    const m = await mount(
+      sidebar(THREADS, {
+        projects: [p1, p2],
+        onOpenPlanboard: (pid) => {
+          opened.push(pid);
+        },
+      }),
+    );
+    const btn = m.query('[data-view-nav="planboard"]') as HTMLButtonElement | null;
+    assert.ok(btn, "planboard nav button");
+    await m.click(btn);
+    await m.flush();
+    assert.deepEqual(opened, [null]);
+    m.unmount();
+  });
+
+  it("kanban nav passes the scoped project id (#598)", async () => {
+    await clearSidebarStorage();
+    const opened: Array<string | null | undefined> = [];
+    const m = await mount(
+      sidebar(THREADS, {
+        projects: [p1, p2],
+        onOpenKanban: (pid) => {
+          opened.push(pid);
+        },
+      }),
+    );
+    await openScopeMenu(m);
+    await m.click(m.query('[data-scope-item="p2"]')!);
+    await m.flush();
+    const btn = m.query('[data-view-nav="kanban"]') as HTMLButtonElement | null;
+    assert.ok(btn, "kanban nav button");
+    await m.click(btn);
+    await m.flush();
+    assert.deepEqual(opened, ["p2"]);
+    m.unmount();
+  });
+
+  it("kanban nav passes null when unscoped (#598)", async () => {
+    await clearSidebarStorage();
+    const opened: Array<string | null | undefined> = [];
+    const m = await mount(
+      sidebar(THREADS, {
+        projects: [p1, p2],
+        onOpenKanban: (pid) => {
+          opened.push(pid);
+        },
+      }),
+    );
+    const btn = m.query('[data-view-nav="kanban"]') as HTMLButtonElement | null;
+    assert.ok(btn, "kanban nav button");
+    await m.click(btn);
+    await m.flush();
+    assert.deepEqual(opened, [null]);
+    m.unmount();
+  });
+
+  it("activity nav passes the scoped project id (#598)", async () => {
+    await clearSidebarStorage();
+    const opened: Array<string | null | undefined> = [];
+    const m = await mount(
+      sidebar(THREADS, {
+        projects: [p1, p2],
+        onOpenActivity: (pid) => {
+          opened.push(pid);
+        },
+      }),
+    );
+    await openScopeMenu(m);
+    await m.click(m.query('[data-scope-item="p2"]')!);
+    await m.flush();
+    const btn = m.query('[data-view-nav="activity"]') as HTMLButtonElement | null;
+    assert.ok(btn, "activity nav button");
+    await m.click(btn);
+    await m.flush();
+    assert.deepEqual(opened, ["p2"]);
+    m.unmount();
+  });
+
+  it("activity nav passes null when unscoped (#598)", async () => {
+    await clearSidebarStorage();
+    const opened: Array<string | null | undefined> = [];
+    const m = await mount(
+      sidebar(THREADS, {
+        projects: [p1, p2],
+        onOpenActivity: (pid) => {
+          opened.push(pid);
+        },
+      }),
+    );
+    const btn = m.query('[data-view-nav="activity"]') as HTMLButtonElement | null;
+    assert.ok(btn, "activity nav button");
+    await m.click(btn);
+    await m.flush();
+    assert.deepEqual(opened, [null]);
     m.unmount();
   });
 });

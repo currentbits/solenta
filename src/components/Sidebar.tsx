@@ -219,8 +219,8 @@ interface SidebarProps {
   ) => void | Promise<void>;
   /** Which main view is showing. Defaults to thread so existing callers stay idle. */
   activeView?: "thread" | "kanban" | "planboard" | "activity";
-  onOpenKanban?: () => void;
-  onOpenPlanboard?: () => void;
+  onOpenKanban?: (scopedProjectId?: string | null) => void;
+  onOpenPlanboard?: (scopedProjectId?: string | null) => void;
   /**
    * Paste a GitHub issue into this project. Omitted by existing tests so
    * the icon button stays hidden.
@@ -230,7 +230,7 @@ interface SidebarProps {
     projectPath: string;
     ref: string;
   }) => Promise<{ ok: true } | { ok: false; reason: string }>;
-  onOpenActivity?: () => void;
+  onOpenActivity?: (scopedProjectId?: string | null) => void;
   /**
    * Freshly created thread to reveal (t3: new work must be visible): the
    * sidebar expands its project group, scrolls the card into view and flashes
@@ -2092,7 +2092,7 @@ export const Sidebar = memo(function Sidebar({
           data-active={activeView === "activity" ? "true" : undefined}
           title="Activity"
           aria-label="Activity"
-          onClick={() => onOpenActivity?.()}
+          onClick={() => onOpenActivity?.(projectScope)}
         >
           <Icon size={15}>
             <path d="M3 12h3l2-6 4 12 2-6h4" />
@@ -2105,7 +2105,7 @@ export const Sidebar = memo(function Sidebar({
           data-active={activeView === "kanban" ? "true" : undefined}
           title="Kanban"
           aria-label="Kanban"
-          onClick={() => onOpenKanban?.()}
+          onClick={() => onOpenKanban?.(projectScope)}
         >
           <Icon size={15}>
             <rect x="3" y="4" width="5" height="16" rx="1" />
@@ -2120,7 +2120,7 @@ export const Sidebar = memo(function Sidebar({
           data-active={activeView === "planboard" ? "true" : undefined}
           title="Planboard"
           aria-label="Planboard"
-          onClick={() => onOpenPlanboard?.()}
+          onClick={() => onOpenPlanboard?.(projectScope)}
         >
           <Icon size={15}>
             <rect x="4" y="4" width="16" height="16" rx="2" />
