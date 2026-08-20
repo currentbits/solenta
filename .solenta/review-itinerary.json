@@ -1,38 +1,20 @@
 {
   "version": 1,
-  "readOrder": ["critical", "impl", "tests", "docs"],
+  "readOrder": ["docs"],
   "chunks": [
     {
-      "area": "critical",
-      "rationale": "This merge joins two independent T3 ports: the flat sidebar (this branch, #587) and the native/portal thread-actions menu (main, #592). Resolution keeps the flat structure and moves ALL card menus onto the #592 path: ThreadCard's openThreadMenu/applyMenuId call showContextMenu (Electron Menu.popup on Desktop, position:fixed body portal elsewhere); the in-card snooze and overflow HTML dropdowns are gone. Pin was added to buildThreadActionMenuItems (showPin, data-pin-item) since the flat sidebar had put it in the now-deleted HTML overflow.",
-      "risks": [
-        "The '…' render gate now includes onSetSnoozed (matches main) — a card with only snooze wiring still gets the menu.",
-        "menuBusy ref serializes menu opens; a second click while the native menu is up is a no-op, matching main's behavior.",
-        "jsdom tests exercise only the HTML fallback; a native Menu.popup regression would not fail the renderer suite (electron/test/contextMenu.test.js covers the main-process side, 2/2)."
-      ]
-    },
-    {
-      "area": "impl",
-      "rationale": "src/components/Sidebar.tsx: ThreadCard lost snoozeMenuOpen/moreMenuOpen/onToggleMoreMenu props (Kanban unaffected — props were optional); right-click on a card opens the same menu; hover clock = presets portal or instant wake when snoozed; hover check = settle; data-sidebar-list added for the portal containment test. Parent dropped snoozeMenuFor/moreMenuFor state — the portal dismisses itself. Header scope/create menus keep the old HTML dropdown path (pre-existing clipping risk, unchanged by this merge).",
-      "risks": [
-        "The header scope/create menus still render position:absolute inside the sidebar — same clipping class of bug #592 fixed for cards. Follow-up, not this diff."
-      ]
-    },
-    {
-      "area": "tests",
-      "rationale": "Conflicted suites resolved onto flat selectors + portal queries: menu items are found via document.querySelector('[data-context-menu] …') because m.query only sees the mount container; afterEach dismissContextMenu() in sidebar/forkHandoff/pinSnooze prevents portal leakage between tests. Main's #582/#583 blocks (body portal, snooze flyout submenu, right-click, keyboard nav) were grafted into the flat suite; ArrowDown expectation updated for the Pin item between Snooze and Fork. 1257/1257.",
-      "risks": [
-        "prRender's pin assertion moved from static markup to buildThreadActionMenuItems — the render-level guarantee is now indirect (the click path is covered in sidebar.test.tsx)."
-      ]
-    },
-    {
       "area": "docs",
-      "rationale": ".solenta/specs/t3-flat-sidebar.md still describes the in-card overflow menu; #592 superseded that section — the selector names survive but live in the portal.",
-      "risks": []
+      "rationale": "README.md only. Start at The rest of the desk (quota-reset resume, PR size cap + stacked split, planboard review-load, post-merge verify), then What Solenta remembers (config doctor on the Memory tab), then Also in the box (Ask, sidebar shelves + thread-actions menu, fleet felt-vs-wall, spec DAG, divergence toggle, claim provenance chips). Existing bullets were extended in place; no new top-level sections.",
+      "risks": [
+        "Sidebar copy describes the rendered T3 flat shelves (pinned block, Snoozed, Settled with archived at the tail), not partitionSidebar's Later shelf or per-project groups. Standing Agents.md still describes Later; this tree's Sidebar.tsx uses buildFlatSidebar.",
+        "Post-merge copy says a failure starts a fix thread and reopens the planboard issue — it does not reopen the original thread (electron/postmerge.js spawnFixThread + reopenIssue).",
+        "Config doctor writeables also include GEMINI.md; the bullet names CLAUDE.md / AGENTS.md to match the Memory tab copy.",
+        "Ask mode's 'no agent credits' is the AskCard/ASK_NOTE claim; print-mode fallback still talks to the provider CLI."
+      ]
     }
   ],
   "risks": [
-    "First launch remains the visual check for the combined result (no screenshot tooling in this session).",
-    "Electron suite baseline failures (#536) are unrelated; no electron/ files changed beyond what main brought in."
+    "Net +11 lines vs origin/main, under the ~15-line cap.",
+    "Review itinerary is local for this turn; the README-only task did not commit it."
   ]
 }
