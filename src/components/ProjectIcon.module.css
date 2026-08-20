@@ -1,0 +1,8 @@
+.icon {
+  flex-shrink: 0;
+  display: block;
+  border-radius: 3px;
+  object-fit: contain;
+  background: var(--card);
+  pointer-events: none;
+}

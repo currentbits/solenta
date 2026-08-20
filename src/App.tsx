@@ -1358,6 +1358,18 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             project={editProject}
             onClose={() => setEditProjectId(null)}
             onSubmit={submitEditProject}
+            onPickIcon={
+              isWebMode()
+                ? undefined
+                : () => api.projects.pickIcon({ projectId: editProject.id })
+            }
+            onPreviewIcon={async (iconPath) => {
+              const r = await api.projects.resolveIcon({
+                projectId: editProject.id,
+                iconPath,
+              });
+              return r.iconUrl;
+            }}
           />
         )}
       </div>

@@ -46,6 +46,7 @@ import {
   showWokePill,
 } from "../threadSnooze";
 import { isUnread } from "../threadUnread";
+import { ProjectIcon } from "./ProjectIcon";
 import {
   buildWaitStates,
   isDelegating,
@@ -553,6 +554,7 @@ function ConflictForecastBadge({
 export const ThreadCard = memo(function ThreadCard({
   thread,
   slug,
+  iconUrl = null,
   providers,
   active,
   now,
@@ -576,6 +578,7 @@ export const ThreadCard = memo(function ThreadCard({
 }: {
   thread: ThreadInfo;
   slug: string;
+  iconUrl?: string | null;
   providers: ProviderInfo[];
   active: boolean;
   now: number;
@@ -755,6 +758,7 @@ export const ThreadCard = memo(function ThreadCard({
       />
       <div className={styles.cardBody}>
         <div className={styles.cardLine1}>
+          <ProjectIcon url={iconUrl} size={14} />
           {showSlug && (
             <span className={styles.cardSlug} data-card-slug="">
               {slug}
@@ -1014,6 +1018,7 @@ export const ThreadCard = memo(function ThreadCard({
 export function SettledRow({
   thread,
   slug,
+  iconUrl = null,
   active,
   now,
   onSelect,
@@ -1027,6 +1032,7 @@ export function SettledRow({
 }: {
   thread: ThreadInfo;
   slug: string;
+  iconUrl?: string | null;
   active: boolean;
   now: number;
   onSelect: (id: string, opts?: SelectOpts) => void;
@@ -1081,6 +1087,7 @@ export function SettledRow({
       <div className={styles.slimBody}>
         {showUnread && <span className={styles.srOnly}>unread</span>}
         <span className={styles.slimTitle}>{thread.title}</span>
+        <ProjectIcon url={iconUrl} size={12} />
         <span className={styles.slimSlug}>{slug}</span>
         <span className={styles.slimSlot}>
           <span className={styles.slimAge}>
@@ -1139,6 +1146,7 @@ export function SettledRow({
 export function SnoozedRow({
   thread,
   slug,
+  iconUrl = null,
   active,
   now,
   onSelect,
@@ -1148,6 +1156,7 @@ export function SnoozedRow({
 }: {
   thread: ThreadInfo;
   slug: string;
+  iconUrl?: string | null;
   active: boolean;
   now: number;
   onSelect: (id: string, opts?: SelectOpts) => void;
@@ -1193,6 +1202,7 @@ export function SnoozedRow({
       <div className={styles.slimBody}>
         {showUnread && <span className={styles.srOnly}>unread</span>}
         <span className={styles.slimTitle}>{thread.title}</span>
+        <ProjectIcon url={iconUrl} size={12} />
         <span className={styles.slimSlug}>{slug}</span>
         <span className={styles.slimSlot}>
           <span className={styles.slimAge} data-wake-label={thread.id}>
@@ -1470,6 +1480,8 @@ export const Sidebar = memo(function Sidebar({
 
   const slugFor = (t: ThreadInfo) =>
     projectById.get(t.projectId)?.slug ?? "unknown";
+  const iconUrlFor = (t: ThreadInfo) =>
+    projectById.get(t.projectId)?.iconUrl ?? null;
 
   const settledTail = useMemo(
     () => [...flat.settled, ...flat.archived],
@@ -1724,6 +1736,7 @@ export const Sidebar = memo(function Sidebar({
       <ThreadCard
         thread={thread}
         slug={slugFor(thread)}
+        iconUrl={iconUrlFor(thread)}
         providers={providers}
         active={thread.id === activeThreadId}
         multiSelected={multiSelected.has(thread.id)}
@@ -1774,6 +1787,7 @@ export const Sidebar = memo(function Sidebar({
       key={`${thread.id}:slim`}
       thread={thread}
       slug={slugFor(thread)}
+      iconUrl={iconUrlFor(thread)}
       active={activeOverride || thread.id === activeThreadId}
       multiSelected={multiSelected.has(thread.id)}
       indexHint={indexHintFor(thread.id)}
@@ -1788,6 +1802,7 @@ export const Sidebar = memo(function Sidebar({
       key={`${thread.id}:slim`}
       thread={thread}
       slug={slugFor(thread)}
+      iconUrl={iconUrlFor(thread)}
       active={activeOverride || thread.id === activeThreadId}
       multiSelected={multiSelected.has(thread.id)}
       indexHint={indexHintFor(thread.id)}
@@ -1799,10 +1814,11 @@ export const Sidebar = memo(function Sidebar({
     />
   );
 
-  const scopedSlug =
-    projectScope != null
-      ? projectById.get(projectScope)?.slug ?? "All projects"
-      : "All projects";
+  const scopedProject =
+    projectScope != null ? projectById.get(projectScope) ?? null : null;
+  const scopedSlug = scopedProject
+    ? scopedProject.slug || scopedProject.name
+    : "All projects";
 
   const worktreeCount = useMemo(() => {
     let n = 0;
@@ -2011,9 +2027,13 @@ export const Sidebar = memo(function Sidebar({
             aria-label="Filter threads by project"
             onClick={() => setScopeMenuOpen((open) => !open)}
           >
-            <Icon size={14}>
-              <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-            </Icon>
+            {scopedProject?.iconUrl ? (
+              <ProjectIcon url={scopedProject.iconUrl} size={16} />
+            ) : (
+              <Icon size={14}>
+                <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+              </Icon>
+            )}
             <span className={styles.scopeLabel}>{scopedSlug}</span>
             <Icon size={12}>
               <path d="m6 9 6 6 6-6" />
@@ -2039,6 +2059,7 @@ export const Sidebar = memo(function Sidebar({
                     data-scope-item={p.id}
                     onClick={() => setScope(p.id)}
                   >
+                    <ProjectIcon url={p.iconUrl} size={16} />
                     {p.slug || p.name}
                   </button>
                   {onEditProject && (

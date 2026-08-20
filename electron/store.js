@@ -837,6 +837,13 @@ function migrateProject(p) {
   } else {
     next.worktreeRetention = DEFAULT_WORKTREE_RETENTION;
   }
+  // Derived at list time (#610). Never persist a data URL.
+  delete next.iconUrl;
+  if (typeof next.iconPath === "string" && next.iconPath.trim()) {
+    next.iconPath = next.iconPath.trim().replace(/\\/g, "/");
+  } else {
+    delete next.iconPath;
+  }
   return next;
 }
 

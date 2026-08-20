@@ -2562,6 +2562,22 @@ function buildDevCoder(): CoderApi {
         // No native dialog in the browser dev mock; cancel like the real one.
         return null;
       },
+      async pickIcon() {
+        return null;
+      },
+      async resolveIcon(input: {
+        projectId: string;
+        iconPath?: string | null;
+      }) {
+        const project = projects.find((p) => p.id === input.projectId);
+        if (!project) throw new Error(`Unknown project: ${input.projectId}`);
+        const override =
+          input.iconPath === undefined ? project.iconPath : input.iconPath;
+        return {
+          iconUrl:
+            override === null ? null : project.iconUrl ?? null,
+        };
+      },
       /** Empty host clears the remote fields. */
       async update(input: {
         projectId: string;
@@ -2569,6 +2585,7 @@ function buildDevCoder(): CoderApi {
         remoteHost?: string;
         remotePath?: string;
         spaceId?: string;
+        iconPath?: string | null;
       }) {
         const project = projects.find((p) => p.id === input.projectId);
         if (!project) {
@@ -2607,6 +2624,13 @@ function buildDevCoder(): CoderApi {
           } else {
             delete project.remoteHost;
             delete project.remotePath;
+          }
+        }
+        if (Object.prototype.hasOwnProperty.call(input, "iconPath")) {
+          if (input.iconPath) project.iconPath = input.iconPath;
+          else {
+            delete project.iconPath;
+            delete project.iconUrl;
           }
         }
         return { ...project };

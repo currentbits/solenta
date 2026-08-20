@@ -93,6 +93,34 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
+}
+
+.iconPreview {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  overflow: hidden;
+}
+
+.iconPreviewFallback {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  border-radius: 6px;
+  border: 1px dashed var(--border);
+  color: var(--text-dim);
+  font-size: 9px;
+  line-height: 1.1;
+  text-align: center;
+  padding: 2px;
 }
 
 .pathInput {

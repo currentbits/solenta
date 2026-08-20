@@ -16,6 +16,11 @@ import {
   type FakeCoder,
 } from "./support/fakeCoder.ts";
 import App from "../src/App";
+import { EditProjectModal } from "../src/components/EditProjectModal";
+import type { ProjectUpdateInput } from "../src/shared/ipc";
+
+const TINY_PNG =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 
 async function boot(fake: FakeCoder) {
   const shell = await mount(<div />);
@@ -131,6 +136,114 @@ describe("edit project", () => {
       true,
       "submit sends autoDispatch",
     );
+    m.unmount();
+  });
+
+  it("opens the appearance controls from the sidebar pencil (#610)", async () => {
+    const fake = seed();
+    const m = await boot(fake);
+    await m.click(m.query("[data-scope-trigger]"));
+    await m.click(m.query('[data-scope-edit="p1"]'));
+    assert.ok(m.query("[data-edit-project-pick-icon]"), "choose-file control");
+    assert.ok(m.query("[data-edit-project-icon-auto]"), "Automatic control");
+    assert.ok(
+      m.query("[data-edit-project-icon-fallback]"),
+      "no-icon fallback when the project has none",
+    );
+    m.unmount();
+  });
+});
+
+describe("edit project icon (#610)", () => {
+  it("saves a picked iconPath and leaves it off a name-only save", async () => {
+    const calls: ProjectUpdateInput[] = [];
+    const p1 = project({ id: "p1", name: "ledger", path: "/tmp/ledger" });
+    const m = await mount(
+      <EditProjectModal
+        project={p1}
+        onClose={() => {}}
+        onSubmit={async (input) => {
+          calls.push(input);
+          return input;
+        }}
+        onPickIcon={async () => ({
+          iconPath: "brand/logo.svg",
+          iconUrl: TINY_PNG,
+        })}
+      />,
+    );
+
+    await m.click(m.query("[data-edit-project-submit]"));
+    await m.flush();
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(calls[0], "iconPath"),
+      false,
+      "unchanged icon is omitted",
+    );
+
+    const m2 = await mount(
+      <EditProjectModal
+        project={p1}
+        onClose={() => {}}
+        onSubmit={async (input) => {
+          calls.push(input);
+          return input;
+        }}
+        onPickIcon={async () => ({
+          iconPath: "brand/logo.svg",
+          iconUrl: TINY_PNG,
+        })}
+      />,
+    );
+    await m2.click(m2.query("[data-edit-project-pick-icon]"));
+    await m2.flush();
+    assert.ok(m2.query("[data-edit-project-icon]"), "preview after pick");
+    assert.match(
+      m2.query("[data-edit-project-icon-path]")?.textContent || "",
+      /brand\/logo\.svg/,
+    );
+    await m2.click(m2.query("[data-edit-project-submit]"));
+    await m2.flush();
+    assert.equal(calls[1]!.iconPath, "brand/logo.svg");
+    m.unmount();
+    m2.unmount();
+  });
+
+  it("Automatic sends iconPath null and previews the detected icon", async () => {
+    const calls: ProjectUpdateInput[] = [];
+    let previewed: Array<string | null> = [];
+    const p1 = project({
+      id: "p1",
+      name: "ledger",
+      path: "/tmp/ledger",
+      iconPath: "custom/pick.svg",
+      iconUrl: TINY_PNG,
+    });
+    const m = await mount(
+      <EditProjectModal
+        project={p1}
+        onClose={() => {}}
+        onSubmit={async (input) => {
+          calls.push(input);
+          return input;
+        }}
+        onPreviewIcon={async (iconPath) => {
+          previewed.push(iconPath);
+          return TINY_PNG;
+        }}
+      />,
+    );
+    const auto = m.query(
+      "[data-edit-project-icon-auto]",
+    ) as HTMLButtonElement | null;
+    assert.ok(auto);
+    assert.equal(auto!.disabled, false);
+    await m.click(auto!);
+    await m.flush();
+    assert.deepEqual(previewed, [null]);
+    await m.click(m.query("[data-edit-project-submit]"));
+    await m.flush();
+    assert.equal(calls[0]!.iconPath, null);
     m.unmount();
   });
 });

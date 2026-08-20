@@ -665,12 +665,31 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       },
       pickDirectory: () =>
         rec("projects.pickDirectory", [], null as string | null),
+      pickIcon: (input: { projectId: string }) =>
+        rec(
+          "projects.pickIcon",
+          [input],
+          null as { iconPath: string; iconUrl: string | null } | null,
+        ),
+      resolveIcon: (input: { projectId: string; iconPath?: string | null }) => {
+        const found = projects.find((p) => p.id === input.projectId);
+        const override =
+          input.iconPath === undefined ? found?.iconPath : input.iconPath;
+        const iconUrl =
+          override && found?.iconUrl && override === found.iconPath
+            ? found.iconUrl
+            : found?.iconUrl ?? null;
+        return rec("projects.resolveIcon", [input], {
+          iconUrl: override === null ? null : iconUrl,
+        });
+      },
       update: (input: {
         projectId: string;
         name?: string;
         remoteHost?: string;
         remotePath?: string;
         spaceId?: string;
+        iconPath?: string | null;
       }) => {
         const found = projects.find((p) => p.id === input.projectId);
         const updated = found ? { ...found } : project();
@@ -692,6 +711,14 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         ) {
           delete updated.remoteHost;
           delete updated.remotePath;
+        }
+        if (Object.prototype.hasOwnProperty.call(input, "iconPath")) {
+          if (input.iconPath) {
+            updated.iconPath = input.iconPath;
+          } else {
+            delete updated.iconPath;
+            delete updated.iconUrl;
+          }
         }
         return rec("projects.update", [input], updated).then((v) => {
           if (found) {

@@ -1,24 +1,32 @@
 import { useCallback, useState } from "react";
 import { useEscapeClose } from "../useEscapeClose";
 import type { ProjectInfo, ProjectUpdateInput } from "../shared/ipc";
+import { ProjectIcon } from "./ProjectIcon";
 import styles from "./SettingsModal.module.css";
 
 interface EditProjectModalProps {
   project: ProjectInfo;
   onClose: () => void;
   onSubmit: (input: ProjectUpdateInput) => Promise<unknown>;
+  onPickIcon?: () => Promise<{
+    iconPath: string;
+    iconUrl: string | null;
+  } | null>;
+  onPreviewIcon?: (iconPath: string | null) => Promise<string | null>;
 }
 
 /**
- * Edit an existing project: display name and the SSH remote fields. The local
- * checkout path is shown read-only (it is the project's identity on disk).
- * Clearing the host turns the project local again. Reuses the Settings modal
- * chrome, same as AddProjectPathModal.
+ * Edit an existing project: display name, appearance (#610), and SSH remote
+ * fields. The local checkout path is shown read-only (it is the project's
+ * identity on disk). Clearing the host turns the project local again. Reuses
+ * the Settings modal chrome, same as AddProjectPathModal.
  */
 export function EditProjectModal({
   project,
   onClose,
   onSubmit,
+  onPickIcon,
+  onPreviewIcon,
 }: EditProjectModalProps) {
   const [name, setName] = useState(project.name);
   const [remoteHost, setRemoteHost] = useState(project.remoteHost ?? "");
@@ -33,6 +41,9 @@ export function EditProjectModal({
         : 10,
     ),
   );
+  const [iconPath, setIconPath] = useState(project.iconPath ?? null);
+  const [iconUrl, setIconUrl] = useState(project.iconUrl ?? null);
+  const [iconDirty, setIconDirty] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -69,14 +80,16 @@ export function EditProjectModal({
     setPending(true);
     setError(null);
     try {
-      const updated = await onSubmit({
+      const payload: ProjectUpdateInput = {
         projectId: project.id,
         name: name.trim(),
         remoteHost: host,
         remotePath: rpath,
         worktreeRetention,
         autoDispatch,
-      });
+      };
+      if (iconDirty) payload.iconPath = iconPath;
+      const updated = await onSubmit(payload);
       if (!updated) {
         setError("Could not save the project.");
       }
@@ -141,6 +154,95 @@ export function EditProjectModal({
               disabled={pending}
               onKeyDown={enterToSubmit}
             />
+          </div>
+          <div className={styles.field}>
+            <span className={styles.fieldLabel} id="edit-project-icon-label">
+              Appearance
+            </span>
+            <div
+              className={styles.fieldRow}
+              role="group"
+              aria-labelledby="edit-project-icon-label"
+            >
+              {iconUrl ? (
+                <span className={styles.iconPreview} data-edit-project-icon="">
+                  <ProjectIcon url={iconUrl} size={28} />
+                </span>
+              ) : (
+                <span
+                  className={styles.iconPreviewFallback}
+                  data-edit-project-icon-fallback=""
+                >
+                  No icon
+                </span>
+              )}
+              {onPickIcon && (
+                <button
+                  type="button"
+                  className={styles.btn}
+                  data-edit-project-pick-icon=""
+                  disabled={pending}
+                  onClick={() => {
+                    void (async () => {
+                      try {
+                        const picked = await onPickIcon();
+                        if (!picked) return;
+                        setIconPath(picked.iconPath);
+                        setIconUrl(picked.iconUrl);
+                        setIconDirty(true);
+                        setError(null);
+                      } catch (err) {
+                        setError(
+                          err instanceof Error && err.message
+                            ? err.message
+                            : "Could not choose an icon.",
+                        );
+                      }
+                    })();
+                  }}
+                >
+                  Choose a project file
+                </button>
+              )}
+              <button
+                type="button"
+                className={styles.btn}
+                data-edit-project-icon-auto=""
+                disabled={pending || (!iconDirty && !project.iconPath)}
+                onClick={() => {
+                  void (async () => {
+                    setIconPath(null);
+                    setIconDirty(true);
+                    if (!onPreviewIcon) {
+                      setIconUrl(null);
+                      return;
+                    }
+                    try {
+                      setIconUrl(await onPreviewIcon(null));
+                      setError(null);
+                    } catch (err) {
+                      setIconUrl(null);
+                      setError(
+                        err instanceof Error && err.message
+                          ? err.message
+                          : "Could not restore automatic icon.",
+                      );
+                    }
+                  })();
+                }}
+              >
+                Automatic
+              </button>
+            </div>
+            {iconPath ? (
+              <p className={styles.note} data-edit-project-icon-path="">
+                Using {iconPath}
+              </p>
+            ) : (
+              <p className={styles.note}>
+                Detected from the repo, or the project name if none is found.
+              </p>
+            )}
           </div>
           <div className={styles.field}>
             <label className={styles.fieldLabel} htmlFor="edit-project-path">

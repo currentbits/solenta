@@ -36,6 +36,17 @@ export interface ProjectInfo {
    */
   worktreeRetention?: number;
   /**
+   * User override (#610): a path relative to the project checkout. Absent
+   * means Automatic (detect from favicon / t3.json / HTML). Never an
+   * absolute path.
+   */
+  iconPath?: string;
+  /**
+   * Derived data URL for the resolved icon. Main process only; never
+   * persisted. Absent when the repo has no icon.
+   */
+  iconUrl?: string;
+  /**
    * Windows doctor (#435). Only on the add/create return value when the
    * host is win32. Never persisted. Failed checks do not reject the add.
    */
@@ -180,6 +191,11 @@ export interface ProjectUpdateInput {
   autoDispatch?: boolean;
   /** Worktree retention (#316 / #559): 0 keeps everything, N > 0 sets the keep count. Default 10. */
   worktreeRetention?: number;
+  /**
+   * Relative project file to use as the icon, or null to restore
+   * Automatic detection (#610).
+   */
+  iconPath?: string | null;
 }
 
 /**
@@ -2066,6 +2082,24 @@ export interface CoderApi {
     create(input: CreateProjectInput): Promise<ProjectInfo>;
     /** Patch name and/or SSH remote fields of an existing project. */
     update(input: ProjectUpdateInput): Promise<ProjectInfo>;
+    /**
+     * Native file picker constrained to the project checkout. Resolves
+     * `{ iconPath, iconUrl }` or null on cancel. Does not save — pass
+     * iconPath to update() on submit. Rejects a file outside the project.
+     */
+    pickIcon(input: { projectId: string }): Promise<{
+      iconPath: string;
+      iconUrl: string | null;
+    } | null>;
+    /**
+     * Preview a resolved icon without saving. `iconPath: null` is
+     * Automatic (ignore a stored override). Omit iconPath to use the
+     * stored override or auto-detect.
+     */
+    resolveIcon(input: {
+      projectId: string;
+      iconPath?: string | null;
+    }): Promise<{ iconUrl: string | null }>;
     /** Opens a native folder picker; resolves null if the user cancels. */
     addViaDialog(): Promise<ProjectInfo | null>;
     /**

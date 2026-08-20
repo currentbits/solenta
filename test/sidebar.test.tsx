@@ -777,6 +777,7 @@ describe("Sidebar project scope", () => {
     assert.match(scopeTrigger(m1).textContent || "", /acme\/billing/);
     m1.unmount();
 
+
     const m2 = await mount(sidebar(THREADS, { projects: [p1, p2] }));
     assert.match(
       scopeTrigger(m2).textContent || "",
@@ -958,6 +959,38 @@ describe("Sidebar project scope", () => {
     await m.click(btn);
     await m.flush();
     assert.deepEqual(opened, [null]);
+    m.unmount();
+  });
+
+  it("shows a project icon on the scope item and thread card (#610)", async () => {
+    await clearSidebarStorage();
+    const iconUrl =
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+    const m = await mount(
+      sidebar(THREADS, {
+        projects: [
+          { ...p1, iconUrl },
+          p2,
+        ],
+      }),
+    );
+    await openScopeMenu(m);
+    const item = m.query('[data-scope-item="p1"]');
+    assert.ok(item?.querySelector("[data-project-icon]"), "scope row glyph");
+    const card = m.query('[data-thread-card="busy"]');
+    assert.ok(card?.querySelector("[data-project-icon]"), "thread card glyph");
+    assert.ok(
+      !m.query('[data-scope-item="p2"]')?.querySelector("[data-project-icon]"),
+      "a project without iconUrl stays text-only",
+    );
+    m.unmount();
+  });
+
+  it("keeps text-only scope rows and cards when no icon is resolved", async () => {
+    await clearSidebarStorage();
+    const m = await mount(sidebar(THREADS, { projects: [p1, p2] }));
+    await openScopeMenu(m);
+    assert.equal(m.queryAll("[data-project-icon]").length, 0);
     m.unmount();
   });
 });

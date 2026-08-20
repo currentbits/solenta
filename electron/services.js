@@ -17,6 +17,14 @@ const { normalizeCommand, runVerifyCommand } = require("./verify.js");
 const { resolveSandbox } = require("./sandbox.js");
 const btw = require("./btw.js");
 const { DEFAULT_WORKTREE_RETENTION } = require("./store.js");
+const {
+  presentProject,
+  normalizeIconPath,
+  relativeIconPath,
+  iconDataUrlFor,
+  ICON_FILTERS,
+  mainWorkTree,
+} = require("./projectIcon.js");
 
 const PERMISSION_MODES = new Set([
   "default",
@@ -187,7 +195,7 @@ async function addProject(store, projectPath, opts) {
       remoteHost,
       remotePath,
     });
-    if (existingRemote) return attachWindowsDoctor(existingRemote);
+    if (existingRemote) return presentAdded(existingRemote);
     const folderName = path.posix.basename(remotePath) || "remote";
     const localPath =
       typeof projectPath === "string" && projectPath.trim()
@@ -206,7 +214,7 @@ async function addProject(store, projectPath, opts) {
     projects.push(project);
     store.setProjects(projects);
     store.save();
-    return attachWindowsDoctor(project);
+    return presentAdded(project);
   }
 
   const raw = typeof projectPath === "string" ? projectPath.trim() : "";
@@ -220,7 +228,7 @@ async function addProject(store, projectPath, opts) {
   }
   const resolved = path.resolve(expandUserPath(raw));
   const existing = findExistingProject(store, { path: resolved });
-  if (existing) return attachWindowsDoctor(existing);
+  if (existing) return presentAdded(existing);
 
   let stat;
   let created = false;
@@ -274,7 +282,7 @@ async function addProject(store, projectPath, opts) {
   projects.push(project);
   store.setProjects(projects);
   store.save();
-  return attachWindowsDoctor(project);
+  return presentAdded(project);
 }
 
 /**
@@ -286,6 +294,10 @@ async function addProject(store, projectPath, opts) {
 async function attachWindowsDoctor(project) {
   const report = await runWindowsDoctor(project);
   return report ? { ...project, windowsDoctor: report } : project;
+}
+
+async function presentAdded(project) {
+  return presentProject(await attachWindowsDoctor(project));
 }
 
 /**
@@ -338,14 +350,14 @@ async function createProject(store, input) {
 
 /**
  * Patch an existing project. Today: display name, SSH remote fields,
- * space membership (issue #159), the autoDispatch opt-in (issue #165), and
- * worktree retention (#316). Remote validation mirrors addProject: a
- * non-empty host requires an absolute remotePath; an empty host clears both
- * keys, turning the project local again. The local checkout path is never
- * edited here.
+ * space membership (issue #159), the autoDispatch opt-in (issue #165),
+ * worktree retention (#316), and a per-project iconPath override (#610).
+ * Remote validation mirrors addProject: a non-empty host requires an
+ * absolute remotePath; an empty host clears both keys, turning the
+ * project local again. The local checkout path is never edited here.
  * @param {import('./store').Store} store
  * @param {string} projectId
- * @param {{ name?: string, remoteHost?: string, remotePath?: string, spaceId?: string, autoDispatch?: boolean, worktreeRetention?: number }} patch
+ * @param {{ name?: string, remoteHost?: string, remotePath?: string, spaceId?: string, autoDispatch?: boolean, worktreeRetention?: number, iconPath?: string | null }} patch
  */
 function updateProject(store, projectId, patch) {
   const projects = store.getProjects().slice();
@@ -411,10 +423,16 @@ function updateProject(store, projectId, patch) {
     }
   }
 
+  if (Object.prototype.hasOwnProperty.call(input, "iconPath")) {
+    const normalized = normalizeIconPath(input.iconPath);
+    if (normalized) next.iconPath = normalized;
+    else delete next.iconPath;
+  }
+
   projects[idx] = next;
   store.setProjects(projects);
   store.save();
-  return next;
+  return presentProject(next);
 }
 
 /**
@@ -3655,11 +3673,73 @@ async function gitPull(cwd) {
 }
 
 /**
- * List all projects.
+ * List all projects, attaching a derived iconUrl (#610). The store row
+ * is never mutated — iconUrl is computed from iconPath / auto-detect.
  * @param {import('./store').Store} store
  */
 function listProjects(store) {
-  return store.getProjects().slice();
+  return store.getProjects().map(presentProject);
+}
+
+function requireProject(store, projectId) {
+  const project = store.getProjects().find((p) => p.id === projectId);
+  if (!project) throw new Error(`Unknown project: ${projectId}`);
+  return project;
+}
+
+/**
+ * Native file picker for a project icon override. The chosen file must
+ * sit inside the project's checkout (or the repo's main work tree).
+ * @param {import('./store').Store} store
+ * @param {string} projectId
+ * @param {{ showOpenDialog: (opts: object) => Promise<{ canceled: boolean, filePaths?: string[] }> }} dialog
+ * @returns {Promise<{ iconPath: string, iconUrl: string | null } | null>}
+ */
+async function pickProjectIcon(store, projectId, dialog) {
+  const project = requireProject(store, projectId);
+  if (!dialog || typeof dialog.showOpenDialog !== "function") {
+    throw new Error("File picker is not available in this mode");
+  }
+  const defaultPath =
+    typeof project.path === "string" && project.path ? project.path : undefined;
+  const result = await dialog.showOpenDialog({
+    title: "Choose a project icon",
+    defaultPath,
+    properties: ["openFile"],
+    filters: ICON_FILTERS,
+  });
+  if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
+    return null;
+  }
+  const chosen = result.filePaths[0];
+  const scanRoot = (() => {
+    try {
+      return mainWorkTree(project.path);
+    } catch {
+      return project.path;
+    }
+  })();
+  const rel =
+    relativeIconPath(scanRoot, chosen) ||
+    relativeIconPath(project.path, chosen);
+  if (!rel) {
+    throw new Error("Choose a file inside the project folder.");
+  }
+  return { iconPath: rel, iconUrl: iconDataUrlFor(project.path, rel) };
+}
+
+/**
+ * Preview an icon without saving. `iconPath: null` is Automatic (ignore
+ * a stored override). Omit iconPath to use whatever is stored.
+ * @param {import('./store').Store} store
+ * @param {string} projectId
+ * @param {string | null} [iconPath]
+ */
+function resolveProjectIcon(store, projectId, iconPath) {
+  const project = requireProject(store, projectId);
+  const override =
+    iconPath === undefined ? project.iconPath : iconPath;
+  return { iconUrl: iconDataUrlFor(project.path, override) };
 }
 
 /**
@@ -4282,6 +4362,8 @@ module.exports = {
   createProject,
   removeProject,
   updateProject,
+  pickProjectIcon,
+  resolveProjectIcon,
   lintAgentConfig,
   previewAgentConfig,
   writeAgentConfig,

@@ -357,6 +357,13 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
       update: (input) => call<ProjectInfo>("projects:update", input),
       addViaDialog: () => call<ProjectInfo | null>("projects:addViaDialog"),
       pickDirectory: () => call<string | null>("projects:pickDirectory"),
+      pickIcon: (input) =>
+        call<{ iconPath: string; iconUrl: string | null } | null>(
+          "projects:pickIcon",
+          input,
+        ),
+      resolveIcon: (input) =>
+        call<{ iconUrl: string | null }>("projects:resolveIcon", input),
       remove: (input) => call<void>("projects:remove", input),
       lintAgentConfig: (input) =>
         call<AgentConfigDoctorReport>("projects:lintAgentConfig", input),

@@ -249,6 +249,22 @@ const IPC_HANDLERS = {
       input || {},
     );
   },
+  "projects:pickIcon": async (ctx, input) => {
+    return services.pickProjectIcon(
+      ctx.store,
+      input && input.projectId,
+      ctx.dialog,
+    );
+  },
+  "projects:resolveIcon": async (ctx, input) => {
+    const payload = input && typeof input === "object" ? input : {};
+    const hasPath = Object.prototype.hasOwnProperty.call(payload, "iconPath");
+    return services.resolveProjectIcon(
+      ctx.store,
+      payload.projectId,
+      hasPath ? payload.iconPath : undefined,
+    );
+  },
   "projects:addViaDialog": async (ctx) => {
     const result = await ctx.dialog.showOpenDialog({
       properties: ["openDirectory"],
