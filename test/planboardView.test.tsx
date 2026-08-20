@@ -87,6 +87,49 @@ describe("PlanboardView", () => {
     m.unmount();
   });
 
+  it("opens on initialProjectId instead of projects[0] (#597)", async () => {
+    const asked: string[] = [];
+    const m = await mount(
+      <PlanboardView
+        projects={projects}
+        initialProjectId="p2"
+        listIssues={async (path) => {
+          asked.push(path);
+          return okResult;
+        }}
+      />,
+    );
+    assert.deepEqual(asked, ["/tmp/site"]);
+    const select = m.query("select") as HTMLSelectElement | null;
+    assert.ok(select, "project selector");
+    assert.equal(select.value, "p2");
+    m.unmount();
+  });
+
+  it("in-view project select still wins after initialProjectId (#597)", async () => {
+    const asked: string[] = [];
+    const m = await mount(
+      <PlanboardView
+        projects={projects}
+        initialProjectId="p2"
+        listIssues={async (path) => {
+          asked.push(path);
+          return okResult;
+        }}
+      />,
+    );
+    assert.deepEqual(asked, ["/tmp/site"]);
+    const select = m.query("select") as HTMLSelectElement | null;
+    assert.ok(select, "project selector");
+    await inAct(() => {
+      select.value = "p1";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    assert.deepEqual(asked, ["/tmp/site", "/tmp/ledger"]);
+    assert.equal(select.value, "p1");
+    m.unmount();
+  });
+
   it("shows the failure reason with a retry", async () => {
     const m = await mount(
       <PlanboardView
