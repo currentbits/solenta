@@ -243,6 +243,8 @@
 
 .card[data-active="true"] {
   background: var(--card);
+  /* Blue left edge: selected reads at a glance (restored, was dropped in 011a629). */
+  box-shadow: inset 2px 0 0 0 var(--blue);
 }
 
 .card[data-multi="true"],
@@ -790,6 +792,7 @@
   opacity: 1;
   background: var(--card);
   color: var(--text);
+  box-shadow: inset 2px 0 0 0 var(--blue);
 }
 
 .slimRow[data-archived="true"] {

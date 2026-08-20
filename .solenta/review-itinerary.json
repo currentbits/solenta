@@ -1,136 +1,14 @@
 {
   "version": 1,
-  "readOrder": [
-    "critical",
-    "impl",
-    "tests"
-  ],
+  "readOrder": ["impl"],
   "chunks": [
     {
-      "area": "electron/worktrees.js — mergeWorktree/mergeInto intoPath",
-      "rationale": "Read this first: it is the only change to code that already ran in production. mergeWorktree gained an optional intoPath (merge target checkout) and every project.path use on the TARGET side became `target`. The worker side (wtPath) and cleanupWorktree (repo-level worktree remove / branch -D) deliberately still use project.path — worktree removal works from any checkout of the repo, and doing it there keeps the existing behaviour. Verify the split is right: target = where the squash lands, project.path = repo bookkeeping.",
+      "area": "src/components/Sidebar.module.css",
+      "rationale": "Restores the blue left edge on the selected thread. It was `box-shadow: inset 2px 0 0 0 var(--blue)` on .card[data-active] until the sidebar restyle in 011a629 dropped it; same rule is added to .slimRow[data-active] so Later-shelf rows read the same.",
       "risks": [
-        "If any target-side call had been left on project.path, a lead's merge would half-land: squash into main, commit into the lead's worktree (or vice versa). Grep mergeInto for `project` — the only remaining hit should be an error string.",
-        "defaultBranch(target) now runs on a worktree. A worktree is never detached in normal use, but a detached lead worktree now fails with 'check out a branch before merging' pointing at the worktree, not the checkout.",
-        "The stash/pop dance now runs in the lead's OWN worktree, while the lead agent is live in it. A pop conflict leaves its uncommitted edits in `git stash` — the existing error message says so, but it is a new place for that to happen."
+        ".card[data-multi=true] (blue-soft fill) has no box-shadow of its own, so a selected+multi card shows both the fill and the bar — that is the pre-011a629 behaviour."
       ]
-    },
-    {
-      "area": "electron/orchServer.js — thread_merge handler + tool registration + INSTRUCTIONS",
-      "rationale": "The new surface. Check the guard order in the handler: unknown thread -> same project -> must be a worker YOU forked (handoffFrom === self.id) -> not running -> no worktree returns merged:false rather than throwing. The ownership guard is what stops an agent merging an unrelated thread's worktree into its tree; the running guard is what stops it deleting a live worker's cwd (and, incidentally, its own, since a caller's own thread is always running).",
-      "risks": [
-        "runner.isRunning is the authoritative check; thread.status can be stale after a crash. Both are checked — dropping either reopens a hole.",
-        "broadcast is newly threaded createOrchServer -> createToolHandlers -> mergeWorktree. It is optional everywhere, so an omission degrades to a stale sidebar, not a crash — but existing tests construct createToolHandlers without it, which is why it must stay optional."
-      ]
-    },
-    {
-      "area": "electron/runner.js — queueOrchNotice merge hint",
-      "rationale": "Behaviour change with no code risk but real product impact: the done-worker wake-up now names the branch and the tool. Gated on status === 'done' && worktreePath, so failed workers and checkout workers get the old text. This is the line that actually changes what leads do — the tool alone would have been ignored the same way the old 'merge a worker's branch' instruction was.",
-      "risks": [
-        "The notice is fed back as a prompt. Longer text is fine, but it must stay one line: noticePrompt joins on newline and prefixes only the first line."
-      ]
-    },
-    {
-      "area": "electron/test/orch-merge.test.js + orch-server.test.js tools/list",
-      "rationale": "Read last. The load-bearing assertion is in the first case: after merging, worker.txt exists in the LEAD's worktree and does NOT exist in the project checkout. That single pair is what fails if intoPath regresses to project.path.",
-      "risks": [
-        "The suite needs core/dist and node_modules in the worktree; without them the whole electron directory fails with ERR_MODULE_NOT_FOUND and reads as unrelated breakage."
-      ]
-    },
-    {
-      "area": "electron/test/orch-server.test.js — host-tool contract",
-      "rationale": "Read this first: it is the spec. New cases pin archive/unarchive, retire-on-archive, no-retire-on-unarchive, working-thread archive (IPC policy, no extra stopRun), settle/active/null, settle-while-working reject, stop, rename, the #109 projectId guard on every new tool, threads_list later-fields, tools/list names, and an HTTP tools/call for thread_archive. If a handler drifts from IPC, these fail before the MCP schema does.",
-      "risks": [
-        "Fake store now implements getProjects so listThreads can decorate the broadcast payload. A future fake that omits getProjects will throw after a successful mutation if broadcast is wired.",
-        "HTTP startOrch now forwards deps.broadcast; an override that sets broadcast:undefined still works because the handler no-ops a missing function."
-      ]
-    },
-    {
-      "area": "electron/orchServer.js — createToolHandlers host actions (critical)",
-      "rationale": "The product path. thread_archive / thread_settle / thread_stop / thread_rename are thin wrappers: requireOwnThread (unknown + #109), then services.setArchived / setSettled / renameThread or runner.stopRun, then the same retireAgent + threads:changed fan-out as ipc.js. Do not re-read services.js for the mutation itself — the point of this chunk is that orch does not grow a second archive implementation.",
-      "risks": [
-        "retireAgent is copied (3 lines) rather than imported from ipc.js, because ipc.js requires electron. If IPC later stops the run on archive, this copy will not follow.",
-        "Archiving a working thread only disposeClaudeSession's the kept-alive CLI; it does not call stopRun. That matches threads:setArchived. A reviewer expecting 'archive = stop' will read this as a bug; it is the existing host policy.",
-        "thread_stop does not extra-broadcast: runner.stopRun already pushThreadsChanged in production. A stub stopRun in tests records the call and does not broadcast, which is what the test asserts.",
-        "broadcastThreadsChanged calls services.listThreads(store). The real Store always has getProjects; the fake used by these tests now does too."
-      ]
-    },
-    {
-      "area": "electron/orchServer.js — MCP registerTool + INSTRUCTIONS + threads_list fields",
-      "rationale": "What agents actually see. threads_list now returns archived / settledOverride / snoozedUntil so a caller can tell Active from Later without guessing. Four new tools are registered next to thread_send (same projectId+threadId shape). INSTRUCTIONS name the four tools so a model that only reads the system prompt still knows they exist.",
-      "risks": [
-        "Live Nightly injects coder-threads from the running app, not this worktree. Until this branch is running in the host, agents still see the old 14-tool list.",
-        "thread_settle's override schema is z.enum(['settled','active']).nullable(). Handler tests pass null directly; the HTTP path is covered for archive but not for override:null. If a client omits override instead of sending null, zod will reject.",
-        "thread_status still has no projectId guard (pre-existing). The new tools do. Do not 'fix' thread_status in this diff."
-      ]
-    },
-    {
-      "area": "electron/main.js — pass broadcast into createOrchServer",
-      "rationale": "Without this, archive/settle/rename would mutate RAM and retire the CLI, but the sidebar would stay stale until the next unrelated threads:changed. Same broadcast function the IPC handlers already close over.",
-      "risks": [
-        "orchServer is constructed after registerIpc; broadcast is in scope. A future move of createOrchServer above the broadcast function would be a ReferenceError at boot."
-      ]
-    },
-    {
-      "area": "src/components/Sidebar.tsx new-thread menu anchor",
-      "rationale": "One-class fix: the new-thread dropdown used styles.menuLeft (left: 0), opening rightward from a caret that sits at the sidebar's far-right edge, so the 176px menu spilled past the sidebar and was clipped. Dropping menuLeft falls back to .menu's right: 0, opening leftward inside the sidebar.",
-      "risks": [
-        "The scope menu at Sidebar.tsx:1972 keeps menuLeft on purpose — its trigger is on the left side.",
-        "No test asserts anchor direction; verified by CSS inspection plus the full sidebar suite (58/58)."
-      ]
-    },
-    {
-      "area": "critical: enforceRetention stays opt-in (electron/worktrees.js, enforceRetention)",
-      "rationale": "Read this before anything else. enforceRetention is the ONLY path in this diff that deletes with no human watching (boot, main.js:396). Everything else in the change widens what gcScan classifies, and gcScan feeds enforceRetention — so if this filter is wrong, shipping DEFAULT_WORKTREE_RETENTION silently deletes 114 directories on the reporter's machine at next launch. The old `anyRetention` boolean guard was replaced by a `configured` Set of project ids, because a boolean is exactly wrong once gcScan defaults: one project opting in used to be enough to let the scan's candidates through, and those candidates now include every other project's. Verify both clauses: `configured.has(c.projectId)` and `!(c.unmerged > 0)`.",
-      "risks": [
-        "If `c.projectId` were ever null for a retention candidate the Set lookup silently drops it — safe direction (keeps the dir), but worth knowing it is fail-closed by accident rather than by design.",
-        "`!(c.unmerged > 0)` rather than `!c.unmerged` so an undefined count reads as 0 without a truthiness surprise."
-      ]
-    },
-    {
-      "area": "impl: DEFAULT_WORKTREE_RETENTION + retentionFor/explicitRetention (electron/worktrees.js)",
-      "rationale": "The actual bug fix, and it is three lines. The retention bucket was gated on a setting that is undefined on all five real projects, so 191 settled worker worktrees were never classified and the GC dialog — which has shipped since #316 — had nothing to show. retentionFor() applies the default; explicitRetention() deliberately keeps the raw setting readable so the boot path above can tell a configured project from one riding the default. Do not collapse the two helpers into one; the distinction IS the safety property.",
-      "risks": [
-        "Default of 10 is a judgement call, not a measurement. Too low and a user loses recent context to a click; too high and the affordance under-delivers. 10 leaves 142 of 186 dirs reclaimable on the live store."
-      ]
-    },
-    {
-      "area": "impl: unmerged probe (electron/worktrees.js, unmergedCount + baseBranchOf + inspectWorktreeDir)",
-      "rationale": "The 'is this dead weight or work someone wants' signal. Deliberately NOT a `blocked` reason: GC removes directories and never branches (#316's rule), so the commits survive removal and blocking would make 9 GB permanently unreclaimable for no gain. It is a warning that suppresses pre-selection instead. baseBranchOf memoizes per repo so 135 worktrees of one repo cost one extra git call, not 135. Every git failure counts as 0 unmerged — check that you agree that biasing toward reclaimable is right here (it is, because the branch ref outlives the directory).",
-      "risks": [
-        "Base is the repo's currently-checked-out branch (the codebase's existing defaultBranch convention). If the user leaves the main checkout on a feature branch, counts are measured against that branch and can over-report. Over-reporting only holds MORE worktrees back, so it degrades toward caution.",
-        "A worker whose lead merged it into the lead's own branch (#600 thread_merge) reads as unmerged against main. Also the safe direction, and #600 removes that worktree at merge time anyway.",
-        "Adds one `git rev-list` per candidate dir to every scan. Measured on the live 186-dir / 107 GB base: still dominated by `du`, and the boot path passes skipSizes so it never pays for du at all."
-      ]
-    },
-    {
-      "area": "impl: UI pre-selection split (src/components/WorktreeGcSection.tsx)",
-      "rationale": "`unblocked` (can be ticked) and `defaultPick` (ticked for you) are now different sets — that split is the whole point of the file's diff. Unmerged rows stay enabled so the user CAN reclaim them, but neither the initial selection nor 'Select all' ever includes one. Check the toggleAll/allSelected pair moved to defaultPick together; if only one had, 'Select all' would render as already-checked and do nothing.",
-      "risks": [
-        "The confirm button counts whatever is selected, so a hand-ticked unmerged row is correctly included in 'Delete N worktrees' — verify that reads as intended and not as the safety being bypassed."
-      ]
-    },
-    {
-      "area": "tests: electron/test/worktree-gc-retention.test.js + test/worktreeGc.test.tsx",
-      "rationale": "Read last, as verification of the claims above. The two load-bearing cases are 'enforceRetention ignores projects riding the default' (asserts gcScan offers candidates in the same breath that enforceRetention removes none — the exact seam a future refactor would weld shut) and 'a second project's setting does not license reclaiming the first' (the cross-project bug the Set replaced the boolean to prevent). The renderer pair asserts unmerged is never auto-selected but is still reachable by hand.",
-      "risks": [
-        "The electron fixture builds DEFAULT_WORKTREE_RETENTION + 2 real git worktrees per case, so the file is slower than its neighbours; it is still under the suite timeout but do not add many more cases in this shape."
-      ]
-    },
-    {
-      "area": "docs: GcCandidate.unmerged (src/shared/ipc.ts)",
-      "rationale": "The doc comment carries the reasoning a future reader needs to not 'fix' unmerged into a blocked reason. Confirm the comment still matches the behaviour if the behaviour changed in review."
     }
   ],
-  "risks": [
-    "Two orchestrators merging into the SAME target checkout concurrently would race on that checkout's index. Pre-existing for the project checkout (the Git tab has the same exposure); the intoPath change actually reduces it, since leads in worktrees now merge into their own tree instead of all contending on project.path.",
-    "thread_merge squashes. A worker's individual commits are collapsed into one 'Merge worktree <branch>: <title>' commit, same as the Git tab — intentional, but it means per-worker history is not preserved on the lead's branch.",
-    "Nothing reclaims the ~190 worktrees already stranded by the old behaviour; this fix only stops new ones accumulating.",
-    "No second archive implementation was added; setArchived remains the only writer. A review that only diffs orchServer.js and misses the services import can still think mutation lives here.",
-    "Pin and snooze are intentionally absent (issue #595 v1.1 lists settle/stop/rename only).",
-    "Do not teach agents to patch coder-store.json; that path is still overwritten by the in-RAM Store on save/_flushOnExit.",
-    "Behaviour change on existing installs: the GC dialog goes from empty to 142 candidates the first time it opens after this ships. That is the intent, but it is a large jump and the confirm dialog is the only thing standing between the user and 67 GB.",
-    "Nothing here deletes anything on its own. Verified on the live store: enforceRetention still removes 0 with no project configured.",
-    "The 5 remaining electron suite failures (orch-server x2, runner auto-checkpoint, runner verification gate, one map/two transports) are byte-identical before and after this change — confirmed by stashing the diff and re-running (#536 baseline)."
-  ]
+  "risks": []
 }
