@@ -188,8 +188,6 @@ describe("sidebar thread card: select + actions structure (#566)", () => {
         now={1}
         onSelect={() => {}}
         onSetSettled={() => {}}
-        snoozeMenuOpen={true}
-        onToggleSnoozeMenu={() => {}}
       />,
     );
     const card = html;
@@ -200,16 +198,8 @@ describe("sidebar thread card: select + actions structure (#566)", () => {
       "single … actions button must be present",
     );
     assert.ok(
-      card.includes('data-snooze-menu="t1"'),
-      "open menu container must be present",
-    );
-    assert.ok(
-      card.includes('data-settle-item="t1"'),
-      "settle lives in the menu now",
-    );
-    assert.ok(
-      card.includes("Settle thread"),
-      "settle item keeps its Settle thread label",
+      card.includes('data-settle-btn="t1"'),
+      "settle is a hover check like T3, not an in-card overlay",
     );
     // Only onSetSettled is wired: select + … + settle item. No pin without
     // onSetPinned, no standalone settle arrow, no snooze/handoff buttons.

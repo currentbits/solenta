@@ -547,14 +547,16 @@
 }
 
 .card:hover .cardActions,
-.card:focus-within .cardActions {
+.card:focus-within .cardActions,
+.card[data-menu-open="true"] .cardActions {
   opacity: 1;
   pointer-events: auto;
 }
 
 /* The timestamp sits under the action pill; hide it while the pill is up. */
 .card:hover .age,
-.card:focus-within .age {
+.card:focus-within .age,
+.card[data-menu-open="true"] .age {
   opacity: 0;
 }
 
@@ -610,17 +612,29 @@
   position: absolute;
   top: 100%;
   right: 0;
-  z-index: 5;
-  min-width: 176px;
+  z-index: 10;
+  min-width: 228px;
+  max-width: calc(var(--sidebar-width) - 24px);
   margin-top: 4px;
   padding: 4px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
-  background: var(--bg-elevated);
+  /* --card is a step above the sidebar's --bg-elevated, so the panel
+     reads as a surface instead of a hole when it overlaps the list. */
+  background: var(--card);
   box-shadow: var(--shadow-pop);
   display: flex;
   flex-direction: column;
   gap: 1px;
+  max-height: min(420px, calc(100vh - 80px));
+  overflow-y: auto;
+}
+
+.snoozeMenu[data-placement="up"] {
+  top: auto;
+  bottom: 100%;
+  margin-top: 0;
+  margin-bottom: 4px;
 }
 
 /* Left-anchored variant: the group-header create menu sits at the sidebar's
@@ -628,6 +642,33 @@
 .snoozeMenuLeft {
   right: auto;
   left: 0;
+}
+
+/* #583: presets live in a drill-in panel, not a flyout. .list overflow-y
+   computes overflow-x to auto, so a left/right submenu would clip. */
+.snoozeSubmenu {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.snoozeBack {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.snoozeCaret {
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.snoozeMenuSep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
 }
 
 .snoozeMenuItem {
@@ -644,6 +685,7 @@
   color: var(--text);
   font-size: 12px;
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .snoozeWhen {
@@ -654,7 +696,7 @@
 }
 
 .snoozeMenuItem:hover {
-  background: var(--card);
+  background: var(--card-hover);
 }
 
 .snoozeMenuItem:disabled {
@@ -1030,10 +1072,24 @@
 }
 
 .group {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 4px;
   margin-bottom: 6px;
+}
+
+/*
+ * #582: the … menu hangs onto later rows. Sticky group headers are
+ * z-index 2, and later cards paint after this one, so a z-index on the
+ * menu cannot escape the next sibling — same trap as the conflict tip.
+ * Raise the open card and its group while the menu is up.
+ */
+.card[data-menu-open="true"],
+.group:has([data-snooze-menu]),
+.group:has([data-snooze-submenu]),
+.group:has([data-create-menu]) {
+  z-index: 8;
 }
 
 /* Collapse control + remove control as siblings (not nested).

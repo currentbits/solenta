@@ -8,10 +8,11 @@
  * Run: npm run test:renderer
  */
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { afterEach, describe, it } from "node:test";
 import * as React from "react";
 import { inAct, mount } from "./support/dom";
-import { Sidebar, SettledRow } from "../src/components/Sidebar";
+import { dismissContextMenu } from "../src/contextMenuFallback";
+import { Sidebar, SettledRow, ThreadCard } from "../src/components/Sidebar";
 import {
   SETTLED_TAIL_INITIAL_COUNT,
   SETTLED_TAIL_PAGE_COUNT,
@@ -92,6 +93,12 @@ function sidebar(
     onSetArchived?: (id: string, archived: boolean) => void;
     onSelectThread?: (id: string) => void;
     onRemoveProject?: (projectId: string) => void;
+    onSetSnoozed?: (id: string, until: number | null) => void;
+    onSetPinned?: (id: string, pinned: boolean) => void;
+    onSetMuted?: (id: string, muted: boolean) => void;
+    onRenameThread?: (id: string, title: string) => void;
+    onFork?: (id: string) => void;
+    providers?: ProviderInfo[];
     projectError?: string | null;
     revealThreadId?: string | null;
     onRevealHandled?: () => void;
@@ -106,7 +113,7 @@ function sidebar(
       projectsHeader="All projects"
       projects={projects}
       threads={threads}
-      providers={providers}
+      providers={over.providers ?? providers}
       activeThreadId={over.activeThreadId ?? null}
       onSelectThread={over.onSelectThread ?? (() => {})}
       onCreateThread={() => {}}
@@ -115,6 +122,11 @@ function sidebar(
       projectError={over.projectError ?? null}
       onSetSettled={over.onSetSettled}
       onSetArchived={over.onSetArchived}
+      onSetSnoozed={over.onSetSnoozed}
+      onSetPinned={over.onSetPinned}
+      onSetMuted={over.onSetMuted}
+      onRenameThread={over.onRenameThread}
+      onFork={over.onFork}
       revealThreadId={over.revealThreadId ?? null}
       onRevealHandled={over.onRevealHandled}
       updateState={over.updateState}
@@ -722,7 +734,7 @@ describe("Sidebar global settled tail (round 40)", () => {
     );
     // "finished" is a non-working attention card, so its settle item is enabled.
     await m.click(m.query('[data-more-btn="finished"]'));
-    const item = m.query(
+    const item = document.querySelector(
       '[data-settle-item="finished"]',
     ) as HTMLButtonElement | null;
     assert.ok(item, "actions menu offers Settle thread");
@@ -736,7 +748,7 @@ describe("Sidebar global settled tail (round 40)", () => {
     );
     // Working cards keep the item but disabled.
     await m.click(m.query('[data-more-btn="busy"]'));
-    const busyItem = m.query(
+    const busyItem = document.querySelector(
       '[data-settle-item="busy"]',
     ) as HTMLButtonElement | null;
     assert.ok(busyItem, "working card still lists the settle item");
@@ -1938,6 +1950,283 @@ describe("Sidebar subagent rows (issue #542)", () => {
       null,
       "done/failed subagents leave no sidebar rows",
     );
+    m.unmount();
+  });
+});
+
+function portalMenu(): HTMLElement | null {
+  return document.querySelector("[data-context-menu]");
+}
+
+afterEach(() => {
+  dismissContextMenu();
+});
+
+describe("Sidebar thread-actions menu chrome (#582)", () => {
+  const MENU_THREAD = [
+    thread({
+      id: "menu-src",
+      title: "menu source",
+      status: "idle",
+      updatedAt: FRESH + 80,
+      projectId: "p1",
+    }),
+    thread({
+      id: "menu-noise",
+      title: "other project decoy",
+      status: "idle",
+      updatedAt: FRESH + 10,
+      projectId: "p2",
+    }),
+  ];
+
+  async function openMenu() {
+    const m = await mount(
+      sidebar(MENU_THREAD, {
+        projects: [p1, p2],
+        onSetSnoozed: () => {},
+        onSetPinned: () => {},
+        onSetMuted: () => {},
+        onRenameThread: () => {},
+        onSetSettled: () => {},
+        onFork: () => {},
+      }),
+    );
+    await m.click(m.query('[data-more-btn="menu-src"]'));
+    const menu = portalMenu();
+    assert.ok(menu, "… menu must open");
+    return { m, menu };
+  }
+
+  it("portals the menu onto document.body so sticky headers cannot paint through it", async () => {
+    const { m, menu } = await openMenu();
+    assert.equal(menu.parentElement, document.body);
+    assert.equal(menu.style.position, "fixed");
+    const list = m.query("[data-sidebar-list]");
+    assert.ok(list, "sidebar list");
+    assert.ok(
+      !list.contains(menu),
+      "a menu inside the scroll container is what sticky group headers painted through",
+    );
+    m.unmount();
+  });
+
+  it("snooze rows use the preset label, not a wrapping Snooze · prefix", async () => {
+    const { m, menu } = await openMenu();
+    const trigger = menu.querySelector("[data-snooze-item]") as HTMLElement | null;
+    assert.ok(trigger, "Snooze is one first-level item");
+    await m.click(trigger);
+    const hour = document.querySelector('[data-snooze-preset="hour"]') as HTMLElement | null;
+    assert.ok(hour, "hour preset is listed after opening Snooze");
+    const text = (hour!.textContent || "").replace(/\s+/g, " ").trim();
+    assert.match(text, /In 1 hour/, "preset label stays");
+    assert.equal(text.includes("Snooze ·"), false);
+    m.unmount();
+  });
+
+  it("mousedown outside the menu closes it", async () => {
+    const { m } = await openMenu();
+    const search = m.query("input") as HTMLElement | null;
+    assert.ok(search, "search field is outside the menu");
+    await inAct(() => {
+      search.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    });
+    await m.flush();
+    assert.ok(!portalMenu(), "outside pointerdown dismisses the portal");
+    m.unmount();
+  });
+});
+
+const extraProviders: ProviderInfo[] = [
+  ...providers,
+  {
+    id: "grok",
+    name: "Grok",
+    available: true,
+    supportsResume: true,
+    models: [],
+    modelInfo: [],
+    efforts: [],
+  },
+];
+
+describe("Sidebar snooze nested submenu (#583)", () => {
+  const MENU_THREAD = [
+    thread({
+      id: "menu-src",
+      title: "menu source",
+      status: "idle",
+      updatedAt: FRESH + 80,
+      projectId: "p1",
+    }),
+    thread({
+      id: "menu-noise",
+      title: "other project decoy",
+      status: "idle",
+      updatedAt: FRESH + 10,
+      projectId: "p2",
+    }),
+  ];
+
+  async function openMenu() {
+    const m = await mount(
+      sidebar(MENU_THREAD, {
+        projects: [p1, p2],
+        providers: extraProviders,
+        onSetSnoozed: () => {},
+        onSetPinned: () => {},
+        onSetMuted: () => {},
+        onRenameThread: () => {},
+        onSetSettled: () => {},
+        onFork: () => {},
+      }),
+    );
+    await m.click(m.query('[data-more-btn="menu-src"]'));
+    const menu = portalMenu();
+    assert.ok(menu, "… menu must open");
+    return { m, menu };
+  }
+
+  it("first-level menu has one Snooze item; presets stay nested", async () => {
+    const { m, menu } = await openMenu();
+    const snooze = menu.querySelector("[data-snooze-item]") as HTMLElement | null;
+    assert.ok(snooze, "single Snooze item on the first level");
+    assert.ok(!menu.querySelector("[data-snooze-preset]"), "presets are children");
+    assert.ok(menu.querySelector("[data-fork-btn]"), "Fork stays first-level");
+    await m.click(snooze);
+    const sub = document.querySelector("[data-context-submenu]");
+    assert.ok(sub, "Snooze opens a flyout submenu (T3 children), not a drill-in");
+    assert.ok(portalMenu(), "parent menu stays mounted");
+    assert.ok(sub!.querySelector('[data-snooze-preset="hour"]'));
+    m.unmount();
+  });
+
+  it("already-snoozed card offers Wake instead of a Snooze submenu", async () => {
+    const frozen = FRESH;
+    const m = await mount(
+      <ThreadCard
+        thread={thread({
+          id: "t-snoozed",
+          title: "already snoozed",
+          snoozedUntil: frozen + 60 * 60 * 1000,
+          snoozedAt: frozen,
+        })}
+        slug="acme/ledger"
+        providers={providers}
+        active={false}
+        now={frozen}
+        onSelect={() => {}}
+        onSetSnoozed={() => {}}
+      />,
+    );
+    await m.click(m.query('[data-more-btn="t-snoozed"]'));
+    const menu = portalMenu();
+    assert.ok(menu);
+    assert.ok(!menu.querySelector("[data-snooze-item]"), "no Snooze parent");
+    assert.ok(menu.querySelector("[data-snooze-clear]"), "Wake / clear hook");
+    m.unmount();
+  });
+
+  it("keeps the menu on document.body while the snooze submenu is open", async () => {
+    const { m, menu } = await openMenu();
+    await m.click(menu.querySelector("[data-snooze-item]"));
+    assert.ok(document.querySelector("[data-context-submenu]"));
+    assert.equal(portalMenu()?.parentElement, document.body);
+    m.unmount();
+  });
+
+  it("ArrowRight on Snooze drills into the submenu and keeps focus inside", async () => {
+    const { m, menu } = await openMenu();
+    const snooze = menu.querySelector("[data-snooze-item]") as HTMLElement;
+    snooze.focus();
+    // Portal lives on document.body, outside the mount container, so
+    // pressFocused would reject. press() still hits the focused item.
+    await m.press(snooze, "ArrowRight");
+    const sub = document.querySelector("[data-context-submenu]");
+    assert.ok(sub, "ArrowRight opens the submenu");
+    assert.ok(menu.contains(document.activeElement) || sub!.contains(document.activeElement));
+    m.unmount();
+  });
+
+  it("ArrowDown from Snooze moves to Fork and does not open the submenu", async () => {
+    const { m, menu } = await openMenu();
+    const snooze = menu.querySelector("[data-snooze-item]") as HTMLElement;
+    snooze.focus();
+    await m.press(snooze, "ArrowDown");
+    assert.equal(
+      (document.activeElement as HTMLElement | null)?.getAttribute("data-fork-btn"),
+      "menu-src",
+    );
+    assert.ok(!document.querySelector("[data-context-submenu]"));
+    m.unmount();
+  });
+
+  it("Escape closes the whole menu", async () => {
+    const { m, menu } = await openMenu();
+    const snooze = menu.querySelector("[data-snooze-item]") as HTMLElement;
+    await m.click(snooze);
+    const focused = document.activeElement as HTMLElement;
+    await m.press(focused, "Escape");
+    assert.ok(!portalMenu());
+    m.unmount();
+  });
+
+  it("clicking Fork still works without keyboard", async () => {
+    let forked: string | null = null;
+    const m = await mount(
+      sidebar(MENU_THREAD, {
+        projects: [p1, p2],
+        providers: extraProviders,
+        onSetSnoozed: () => {},
+        onSetPinned: () => {},
+        onFork: (id) => {
+          forked = id;
+        },
+      }),
+    );
+    await m.click(m.query('[data-more-btn="menu-src"]'));
+    const fork = portalMenu()?.querySelector("[data-fork-btn]") as HTMLElement | null;
+    assert.ok(fork);
+    await m.click(fork);
+    assert.equal(forked, "menu-src");
+    assert.ok(!portalMenu());
+    m.unmount();
+  });
+
+  it("right-click on the card opens the same portal menu", async () => {
+    const m = await mount(
+      sidebar(MENU_THREAD, {
+        projects: [p1, p2],
+        onSetSnoozed: () => {},
+        onFork: () => {},
+      }),
+    );
+    const card = m.query('[data-thread-card="menu-src"]') as HTMLElement;
+    await inAct(() => {
+      card.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          clientX: 20,
+          clientY: 20,
+        }),
+      );
+    });
+    await m.flush();
+    assert.ok(portalMenu(), "contextmenu on the row is how T3 opens this menu");
+    m.unmount();
+  });
+
+  it("hover slot still has a snooze clock and a settle check", async () => {
+    const m = await mount(
+      sidebar(MENU_THREAD, {
+        projects: [p1, p2],
+        onSetSnoozed: () => {},
+        onSetSettled: () => {},
+      }),
+    );
+    assert.ok(m.query('[data-snooze-btn="menu-src"]'), "T3 hover snooze");
+    assert.ok(m.query('[data-settle-btn="menu-src"]'), "T3 hover settle");
     m.unmount();
   });
 });

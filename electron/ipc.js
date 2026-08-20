@@ -1141,6 +1141,14 @@ function registerIpc(deps) {
   for (const [channel, fn] of Object.entries(IPC_HANDLERS)) {
     ipcMain.handle(channel, async (_event, ...args) => fn(ctx, ...args));
   }
+  // Native Menu.popup needs the sender window. Keep this out of
+  // IPC_HANDLERS so the web bridge never tries to pop a menu on the server.
+  ipcMain.handle("contextMenu:show", async (event, items, position) => {
+    const { BrowserWindow } = require("electron");
+    const { showNativeContextMenu } = require("./contextMenu.js");
+    const win = BrowserWindow.fromWebContents(event.sender);
+    return showNativeContextMenu(win, items, position);
+  });
   return { broadcast: ctx.broadcast, handlers: createHandlers(ctx), ctx };
 }
 
