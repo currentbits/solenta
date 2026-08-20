@@ -6,8 +6,8 @@ no guard rail. The user's ruling: a run must never write to a second repo.
 
 ## The incident
 
-Shipnest-v2 thread, 2026-08-16 12:48–13:10. An agent working in
-`/Users/willem/code/Shipnest-v2` called `thread_fork({threadId: "260be2c1"})`
+A thread in another project, 2026-08-16 12:48–13:10. An agent working in
+that second checkout called `thread_fork({threadId: "260be2c1"})`
 — a thread belonging to **Solenta**. Two grok workers spawned on git worktrees
 of the wrong repo. Told off, it repeated the mistake four minutes later with
 `9fafc689`, guessing from the title "changelog and website". Cleanup cost two

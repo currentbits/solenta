@@ -1216,7 +1216,7 @@ describe("worktrees", () => {
           mergeable: "CONFLICTING",
           baseRefName: "main",
         }),
-        "feat/huskyscout",
+        "feat/demo",
         false,
       );
       assert.equal(info.mergeable, "CONFLICTING");

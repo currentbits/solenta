@@ -174,11 +174,11 @@ describe("services", () => {
   });
 
   it("addProject git-init leaves existing files in place", async () => {
-    const dir = path.join(tmpDir, "Shipnest-pivot");
+    const dir = path.join(tmpDir, "acme-pivot");
     fs.mkdirSync(dir);
     fs.writeFileSync(path.join(dir, "README.md"), "hello\n");
     const project = await services.addProject(store, dir);
-    assert.equal(project.name, "Shipnest-pivot");
+    assert.equal(project.name, "acme-pivot");
     assert.equal(project.path, path.resolve(dir));
     assert.equal(fs.readFileSync(path.join(dir, "README.md"), "utf8"), "hello\n");
     const inside = String(

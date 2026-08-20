@@ -18,12 +18,13 @@
 const { app, BrowserWindow, screen } = require("electron");
 const { spawn } = require("node:child_process");
 const readline = require("node:readline");
+const os = require("node:os");
 const path = require("node:path");
 
 const URL = process.env.DEMO_URL || "http://localhost:5173";
 const MCP =
   process.env.APPVIDEO_MCP ||
-  "/Users/willem/code/AppVideo/target/release/appvideo-mcp";
+  path.join(os.homedir(), "code/AppVideo/target/release/appvideo-mcp");
 const WIDTH = 1440;
 const HEIGHT = 840;
 // Walk the tour with synthetic clicks and no recorder, to check the selectors

@@ -8,7 +8,7 @@ Standing instructions generated from Solenta shared memory — conventions, stra
 
 ### Solenta release tweets: 0.4.0 shape, never a changelog dump
 
-Willem posts Solenta updates as himself (@currentbitsNET), not as a product blog. The tweet that matches his voice is the 0.4.0 one (2026-08-16): one casual first-person line, then New/Perf/Fixed bullets, then a short closer. The 0.6.0 Desktop file was a press release plus a WHAT WE SHIPPED appendix; he pasted that whole thing and later called the same shape for 0.7.0 a terrible tweet.
+Willem posts Solenta updates as himself (@currentbitsNET), not as a product blog. The tweet that matches his voice is the 0.4.0 one (2026-08-16): one casual first-person line, then New/Perf/Fixed bullets, then a short closer. The 0.6.0 draft was a press release plus a WHAT WE SHIPPED appendix; he pasted that whole thing and later called the same shape for 0.7.0 a terrible tweet.
 
 Do:
 - casual opener, lowercase ok
@@ -16,7 +16,7 @@ Do:
 - one 'also:' leftover line
 - changelog URL, no appendix, no ALL CAPS section headers, no MIT/local-first closer, no '29 PRs'
 
-Do not recreate ~/Desktop/solenta-0.6.0-release-tweet.txt.
+Do not recreate the 0.6.0 press-release shape.
 
 ### Solenta release checklist: worktree build, curated notes, girder graft
 
@@ -38,7 +38,7 @@ Two rules for anything walking skill dirs:
 
 ### Memory scoping: always pass the project PATH, never the display slug
 
-The memory server canonicalizes project keys to the basename of the MAIN repo root (memory-server/src/project-key.js): a path like /Users/willem/code/coder -> "coder", and worktrees resolve to the same key via git-common-dir. A display slug like "currentbits/solenta" canonicalizes to "solenta" — a scope no agent ever writes to. This is exactly why the solenta project's Memory tab showed empty while other projects (slug == dir basename) worked. Fixed 2026-08-14 (commit 87af397): AgentsPanel now passes project.path to MemoryTab. Rule for any new memory call site in the app: send the raw repo path and let the server canonicalize; never send project.slug or project.name.
+The memory server canonicalizes project keys to the basename of the MAIN repo root (memory-server/src/project-key.js): a path like ~/code/coder -> "coder", and worktrees resolve to the same key via git-common-dir. A display slug like "currentbits/solenta" canonicalizes to "solenta" — a scope no agent ever writes to. This is exactly why the solenta project's Memory tab showed empty while other projects (slug == dir basename) worked. Fixed 2026-08-14 (commit 87af397): AgentsPanel now passes project.path to MemoryTab. Rule for any new memory call site in the app: send the raw repo path and let the server canonicalize; never send project.slug or project.name.
 
 ### Renderer tests: drainConsoleErrors() for deliberate component crashes
 
@@ -70,7 +70,7 @@ MEASURED:
 Round 29. After 28 competitor rounds the external vein is dry; the empirical vein is not. Method that worked: read-only scan of ~/Library/Application Support/Solenta (coder-store.json + worktrees/) and compare against what shipped.
 
 MEASURED ON THE LIVE MACHINE (2026-08-19, 445 threads, 5 projects):
-- worktrees/ = 96.0 GB across 166 dirs, median 709 MB, 161 belong to archived threads, only 4 working, 0 pinned. worktreeRetention is undefined on ALL FIVE projects, so enforceRetention (worktrees.js:3789 `if (!(n > 0)) continue`) has never done anything. Default of 10/project reclaims 64.0 GB. Per project: solenta 119 dirs/57.3GB, huskyscout 25/16.0, AppVideo 9/12.3, Shipnest-v2 12/9.6, digitalnomads 1/0.6.
+- worktrees/ = 96.0 GB across 166 dirs, median 709 MB, 161 belong to archived threads, only 4 working, 0 pinned. worktreeRetention is undefined on every project, so enforceRetention (worktrees.js:3789 `if (!(n > 0)) continue`) has never done anything. Default of 10/project reclaims 64.0 GB; the largest project alone held 119 dirs / 57.3 GB.
 - coder-store.json = 143.2 MB + a 139.5 MB .bak. messagesByThread is 134.35 MB = 99.5%
 …
 

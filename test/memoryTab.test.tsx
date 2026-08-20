@@ -179,11 +179,11 @@ describe("MemoryTab list", () => {
     // exactly how the solenta project's memory tab went permanently empty.
     const calls = newCalls();
     const m = await mount(
-      tab({}, calls, [entry()], "/Users/willem/code/coder"),
+      tab({}, calls, [entry()], "/Users/dev/code/coder"),
     );
     assert.equal(
       (calls.recent[0] as { project?: string }).project,
-      "/Users/willem/code/coder",
+      "/Users/dev/code/coder",
       "the path must reach the server untouched for canonicalization",
     );
     assert.ok(

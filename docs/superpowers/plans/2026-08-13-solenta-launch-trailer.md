@@ -91,7 +91,7 @@ Expected: FAIL, cannot find `./beats.ts`
 - [ ] **Step 3: Scaffold and implement constants**
 
 ```bash
-cd /Users/willem/code/coder
+cd "$(git rev-parse --show-toplevel)"
 npx create-video@latest --yes --blank --no-tailwind trailer
 ```
 
