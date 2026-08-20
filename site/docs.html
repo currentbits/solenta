@@ -563,6 +563,16 @@
         pattern instead of ten separate red threads.
       </p>
       <p>
+        When a thread finishes, a one-tap card asks how much time it felt
+        like it saved (15 min through 4 h+, or Skip). Fleet analytics
+        sums those estimates against wall-clock and agent-active time
+        for the same threads and reports the
+        <strong>perception gap</strong> as felt divided by wall-clock.
+        Skip records a decline so the card does not ask twice. Threads
+        with no estimate are left out of the ratio rather than treated
+        as zero.
+      </p>
+      <p>
         Under it, the orchestrator emits <strong>OpenTelemetry GenAI spans</strong>,
         so runs can be sent to whatever tracing backend you already have.
       </p>
