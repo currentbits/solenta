@@ -833,10 +833,20 @@ function createRunner(opts) {
       }
     }
     const title = thread.title ? ` ("${thread.title}")` : "";
+    // Its commits are on its own branch and nowhere else until the lead lands
+    // them, and nothing else ever will — say so at the one moment the lead is
+    // awake and looking at this worker.
+    const merge =
+      status === "done" && thread.worktreePath
+        ? ` Its work is still only on branch ${thread.branch || "(its own)"}:` +
+          ` check it, then call thread_merge with workerThreadId ${threadId}` +
+          ` to land it and clean up its worktree.`
+        : "";
     enqueueNotice(
       parentId,
       `Worker thread ${threadId}${title} finished with status ${status}.` +
-        (line ? ` Last reply: ${line}` : ""),
+        (line ? ` Last reply: ${line}` : "") +
+        merge,
     );
     flushOrchNotices(parentId);
   }

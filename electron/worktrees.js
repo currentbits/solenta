@@ -542,14 +542,20 @@ function tryResolveItineraryOnly(cwd) {
  * Squash-merge the thread worktree into the project default branch, then remove
  * the worktree and branch. Commits any uncommitted worktree changes first.
  *
+ * intoPath retargets the merge at another checkout of the SAME repo — an
+ * orchestrator merging a worker wants the work on its own branch in its own
+ * worktree, not on main behind the user's back (thread_merge). Default stays
+ * the project checkout, which is what the Git tab does.
+ *
  * @param {object} opts
  * @param {import('./store').Store} opts.store
  * @param {string} opts.threadId
+ * @param {string} [opts.intoPath] - merge target checkout; defaults to project.path
  * @param {(channel: string, payload: unknown) => void} [opts.broadcast]
  * @returns {object} updated ThreadInfo
  */
 function mergeWorktree(opts) {
-  const { store, threadId, broadcast } = opts;
+  const { store, threadId, intoPath, broadcast } = opts;
 
   const thread = store.getThread(threadId);
   if (!thread) {
@@ -571,6 +577,10 @@ function mergeWorktree(opts) {
 
   const wtPath = thread.worktreePath;
   const branch = thread.branch;
+  const target = intoPath || project.path;
+  if (path.resolve(target) === path.resolve(wtPath)) {
+    throw new Error(`Cannot merge thread ${threadId} into its own worktree`);
+  }
 
   // (a) Commit any uncommitted worktree changes. Refuse while conflicts are
   // unresolved: `add -A` would happily commit the markers.
@@ -599,8 +609,8 @@ function mergeWorktree(opts) {
     }
   }
 
-  // (b) Project default branch (must not be detached)
-  const baseBranch = defaultBranch(project.path);
+  // (b) Target checkout's current branch (must not be detached)
+  const baseBranch = defaultBranch(target);
 
   // (c) A dirty project checkout used to be a hard refusal — TRACKED changes
   // only, since a stray untracked scratch file blocked every merge forever
@@ -610,13 +620,13 @@ function mergeWorktree(opts) {
   // `merge --autostash` is no use: `--squash` leaves the merge uncommitted, so
   // the pop would land in a half-merged index before our commit.)
   const mainStatus = gitOut(
-    project.path,
+    target,
     ["status", "--porcelain", "--untracked-files=no"],
     { raw: true },
   ).trim();
   let stashed = false;
   if (mainStatus) {
-    const push = gitTry(project.path, [
+    const push = gitTry(target, [
       "stash",
       "push",
       "-m",
@@ -633,12 +643,12 @@ function mergeWorktree(opts) {
   // Everything from here can throw, and the stash must come back either way.
   let mergeError = null;
   try {
-    mergeInto(project, branch, baseBranch, wtPath, thread);
+    mergeInto(target, branch, baseBranch, wtPath, thread);
   } catch (err) {
     mergeError = err;
   }
   if (stashed) {
-    const popped = gitTry(project.path, ["stash", "pop"]);
+    const popped = gitTry(target, ["stash", "pop"]);
     if (!popped.ok && !mergeError) {
       // The entry stays in the stash list when a pop fails, so nothing is
       // lost — but say where it is instead of leaving a silently empty tree.
@@ -660,21 +670,21 @@ function mergeWorktree(opts) {
 }
 
 /**
- * Squash `branch` into the project checkout's default branch and commit it.
- * Split out of mergeWorktree so every throw in here unwinds through the one
+ * Squash `branch` into the current branch of the `target` checkout and commit
+ * it. Split out of mergeWorktree so every throw in here unwinds through the one
  * stash-restore step there.
  */
-function mergeInto(project, branch, baseBranch, wtPath, thread) {
+function mergeInto(target, branch, baseBranch, wtPath, thread) {
   // Untracked files the merge WOULD write over: git refuses these too, but
   // only mid-merge, reported as a conflict against files nobody edited.
   const incoming = gitTry(
-    project.path,
+    target,
     ["diff", "--name-only", `${baseBranch}...${branch}`],
     { raw: true },
   );
   if (incoming.ok) {
     const untracked = new Set(splitLines(
-      gitOut(project.path, ["ls-files", "--others", "--exclude-standard"], {
+      gitOut(target, ["ls-files", "--others", "--exclude-standard"], {
         raw: true,
       }),
     ));
@@ -690,14 +700,14 @@ function mergeInto(project, branch, baseBranch, wtPath, thread) {
     }
   }
 
-  // Squash into the project checkout, always restoring it on failure.
+  // Squash into the target checkout, always restoring it on failure.
   const squash = () => {
-    const res = gitTry(project.path, ["merge", "--squash", branch]);
+    const res = gitTry(target, ["merge", "--squash", branch]);
     if (res.ok) return null;
-    if (tryResolveItineraryOnly(project.path)) return null;
-    const files = unmergedFiles(project.path);
-    gitTry(project.path, ["merge", "--abort"]);
-    gitTry(project.path, ["reset", "--hard", "HEAD"]);
+    if (tryResolveItineraryOnly(target)) return null;
+    const files = unmergedFiles(target);
+    gitTry(target, ["merge", "--abort"]);
+    gitTry(target, ["reset", "--hard", "HEAD"]);
     return { files, combined: res.combined };
   };
 
@@ -731,7 +741,7 @@ function mergeInto(project, branch, baseBranch, wtPath, thread) {
   }
 
   const commitMsg = `Merge worktree ${branch}: ${thread.title}`;
-  const commitResult = gitTry(project.path, ["commit", "-m", commitMsg]);
+  const commitResult = gitTry(target, ["commit", "-m", commitMsg]);
   if (!commitResult.ok) {
     const nothing =
       /nothing to commit|no changes added to commit/i.test(
@@ -739,14 +749,14 @@ function mergeInto(project, branch, baseBranch, wtPath, thread) {
       );
     if (!nothing) {
       // Unexpected commit failure: restore and report
-      gitTry(project.path, ["merge", "--abort"]);
-      gitTry(project.path, ["reset", "--hard", "HEAD"]);
+      gitTry(target, ["merge", "--abort"]);
+      gitTry(target, ["reset", "--hard", "HEAD"]);
       throw new Error(
         `Failed to commit merge: ${commitResult.combined.split("\n")[0]}`,
       );
     }
     // Empty squash (no net changes): still clean up worktree
-    gitTry(project.path, ["reset", "--hard", "HEAD"]);
+    gitTry(target, ["reset", "--hard", "HEAD"]);
   }
 }
 

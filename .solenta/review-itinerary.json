@@ -1,11 +1,42 @@
 {
   "version": 1,
   "readOrder": [
-    "tests",
     "critical",
-    "impl"
+    "impl",
+    "tests"
   ],
   "chunks": [
+    {
+      "area": "electron/worktrees.js — mergeWorktree/mergeInto intoPath",
+      "rationale": "Read this first: it is the only change to code that already ran in production. mergeWorktree gained an optional intoPath (merge target checkout) and every project.path use on the TARGET side became `target`. The worker side (wtPath) and cleanupWorktree (repo-level worktree remove / branch -D) deliberately still use project.path — worktree removal works from any checkout of the repo, and doing it there keeps the existing behaviour. Verify the split is right: target = where the squash lands, project.path = repo bookkeeping.",
+      "risks": [
+        "If any target-side call had been left on project.path, a lead's merge would half-land: squash into main, commit into the lead's worktree (or vice versa). Grep mergeInto for `project` — the only remaining hit should be an error string.",
+        "defaultBranch(target) now runs on a worktree. A worktree is never detached in normal use, but a detached lead worktree now fails with 'check out a branch before merging' pointing at the worktree, not the checkout.",
+        "The stash/pop dance now runs in the lead's OWN worktree, while the lead agent is live in it. A pop conflict leaves its uncommitted edits in `git stash` — the existing error message says so, but it is a new place for that to happen."
+      ]
+    },
+    {
+      "area": "electron/orchServer.js — thread_merge handler + tool registration + INSTRUCTIONS",
+      "rationale": "The new surface. Check the guard order in the handler: unknown thread -> same project -> must be a worker YOU forked (handoffFrom === self.id) -> not running -> no worktree returns merged:false rather than throwing. The ownership guard is what stops an agent merging an unrelated thread's worktree into its tree; the running guard is what stops it deleting a live worker's cwd (and, incidentally, its own, since a caller's own thread is always running).",
+      "risks": [
+        "runner.isRunning is the authoritative check; thread.status can be stale after a crash. Both are checked — dropping either reopens a hole.",
+        "broadcast is newly threaded createOrchServer -> createToolHandlers -> mergeWorktree. It is optional everywhere, so an omission degrades to a stale sidebar, not a crash — but existing tests construct createToolHandlers without it, which is why it must stay optional."
+      ]
+    },
+    {
+      "area": "electron/runner.js — queueOrchNotice merge hint",
+      "rationale": "Behaviour change with no code risk but real product impact: the done-worker wake-up now names the branch and the tool. Gated on status === 'done' && worktreePath, so failed workers and checkout workers get the old text. This is the line that actually changes what leads do — the tool alone would have been ignored the same way the old 'merge a worker's branch' instruction was.",
+      "risks": [
+        "The notice is fed back as a prompt. Longer text is fine, but it must stay one line: noticePrompt joins on newline and prefixes only the first line."
+      ]
+    },
+    {
+      "area": "electron/test/orch-merge.test.js + orch-server.test.js tools/list",
+      "rationale": "Read last. The load-bearing assertion is in the first case: after merging, worker.txt exists in the LEAD's worktree and does NOT exist in the project checkout. That single pair is what fails if intoPath regresses to project.path.",
+      "risks": [
+        "The suite needs core/dist and node_modules in the worktree; without them the whole electron directory fails with ERR_MODULE_NOT_FOUND and reads as unrelated breakage."
+      ]
+    },
     {
       "area": "electron/test/orch-server.test.js — host-tool contract",
       "rationale": "Read this first: it is the spec. New cases pin archive/unarchive, retire-on-archive, no-retire-on-unarchive, working-thread archive (IPC policy, no extra stopRun), settle/active/null, settle-while-working reject, stop, rename, the #109 projectId guard on every new tool, threads_list later-fields, tools/list names, and an HTTP tools/call for thread_archive. If a handler drifts from IPC, these fail before the MCP schema does.",
@@ -92,6 +123,9 @@
     }
   ],
   "risks": [
+    "Two orchestrators merging into the SAME target checkout concurrently would race on that checkout's index. Pre-existing for the project checkout (the Git tab has the same exposure); the intoPath change actually reduces it, since leads in worktrees now merge into their own tree instead of all contending on project.path.",
+    "thread_merge squashes. A worker's individual commits are collapsed into one 'Merge worktree <branch>: <title>' commit, same as the Git tab — intentional, but it means per-worker history is not preserved on the lead's branch.",
+    "Nothing reclaims the ~190 worktrees already stranded by the old behaviour; this fix only stops new ones accumulating.",
     "No second archive implementation was added; setArchived remains the only writer. A review that only diffs orchServer.js and misses the services import can still think mutation lives here.",
     "Pin and snooze are intentionally absent (issue #595 v1.1 lists settle/stop/rename only).",
     "Do not teach agents to patch coder-store.json; that path is still overwritten by the in-RAM Store on save/_flushOnExit.",

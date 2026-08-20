@@ -417,6 +417,7 @@ app.whenReady().then(async () => {
     runner,
     userDataPath: userData,
     appPath,
+    broadcast,
     log: (msg) => console.warn(msg),
     broadcast,
   });

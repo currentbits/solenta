@@ -54,7 +54,11 @@ const INSTRUCTIONS =
   "of its last messages, so write a self-contained prompt with every fact the worker " +
   "needs. The worker runs in its own git worktree and branch " +
   "so parallel workers never edit the same files (pass worktree:false to share the " +
-  "project checkout, and merge a worker's branch when its work lands). " +
+  "project checkout). " +
+  "A worker's commits live ONLY on its own branch until you land them: when one " +
+  "finishes, check its result and call thread_merge to squash its branch into your " +
+  "working tree and delete its worktree. A crew you never merge produced nothing " +
+  "the user can see, and leaves a worktree behind per worker. " +
   "thread_send starts a run with your prompt on an " +
   "existing thread. thread_status reports a thread's status and the first line of " +
   "its last assistant reply. Runs are asynchronous: send work, then continue. " +
@@ -335,6 +339,67 @@ function createToolHandlers(deps) {
     return { threadId: fork.id };
   }
 
+  /**
+   * Land a finished worker's branch on the CALLER's working tree, then delete
+   * the worker's worktree and branch. Without this the crew's work never left
+   * its worktree: 190 of 195 finished workers on the live store still held an
+   * unmerged worktree, because the orchestrator had no tool to land one.
+   *
+   * Merges into the caller's own worktree when it has one — a lead working on
+   * a branch wants the worker's commits on THAT branch, not squashed onto main
+   * behind the user's back.
+   */
+  async function thread_merge(args) {
+    const self = store.getThread(args.threadId);
+    if (!self) {
+      throw new Error(`Unknown thread: ${args.threadId}`);
+    }
+    assertSameProject(self, args.projectId);
+    const worker = store.getThread(args.workerThreadId);
+    if (!worker) {
+      throw new Error(`Unknown thread: ${args.workerThreadId}`);
+    }
+    assertSameProject(worker, args.projectId);
+    if (String(worker.handoffFrom || "") !== String(self.id)) {
+      throw new Error(
+        `Thread ${worker.id} is not one of your workers (handoffFrom is ` +
+          `${worker.handoffFrom ?? "unset"}, not ${self.id}). You can only ` +
+          `merge workers you forked.`,
+      );
+    }
+    // Removing the worktree out from under a live run would delete the cwd
+    // the worker is still writing in. Status can be stale, so ask the runner.
+    const running =
+      typeof runner.isRunning === "function" && runner.isRunning(worker.id);
+    if (running || worker.status === "working") {
+      throw new Error(
+        `Worker ${worker.id} is still running; wait for its finish notice ` +
+          `before merging.`,
+      );
+    }
+    if (!worker.worktreePath) {
+      return {
+        merged: false,
+        reason:
+          "Worker ran in the project checkout (worktree:false), so its " +
+          "changes are already there; nothing to merge.",
+      };
+    }
+    const branch = worker.branch ?? null;
+    const { mergeWorktree } = require("./worktrees.js");
+    mergeWorktree({
+      store,
+      threadId: worker.id,
+      intoPath: self.worktreePath || undefined,
+      broadcast,
+    });
+    return {
+      merged: true,
+      branch,
+      into: self.worktreePath ? self.branch ?? null : "project checkout",
+    };
+  }
+
   async function thread_send(args) {
     const thread = store.getThread(args.threadId);
     if (!thread) {
@@ -607,6 +672,7 @@ function createToolHandlers(deps) {
   return {
     threads_list,
     thread_fork,
+    thread_merge,
     thread_send,
     thread_status,
     thread_archive,
@@ -677,6 +743,30 @@ function buildMcpServer(sdk, handlers) {
       },
     },
     async (args) => json(await handlers.thread_fork(args)),
+  );
+
+  server.registerTool(
+    "thread_merge",
+    {
+      description:
+        "Land a finished worker's work and clean up after it: squash-merges " +
+        "workerThreadId's branch into YOUR working tree, commits it, then " +
+        "removes the worker's worktree and branch. threadId and projectId are " +
+        "YOUR OWN (stated at the end of your prompt); the worker must be one " +
+        "you forked. Call this once you have checked a worker's result — " +
+        "until you do, its commits exist only on its own branch and nothing " +
+        "else can see them. When you are working in a worktree the merge " +
+        "lands on YOUR branch, not on main. Refuses while the worker is still " +
+        "running. On a conflict it merges your branch into the worker's " +
+        "worktree and tells you which files clash: thread_send the worker to " +
+        "resolve them there, then call thread_merge again.",
+      inputSchema: {
+        threadId: z.string().min(1),
+        projectId: z.string().min(1),
+        workerThreadId: z.string().min(1),
+      },
+    },
+    async (args) => json(await handlers.thread_merge(args)),
   );
 
   server.registerTool(
@@ -995,9 +1085,9 @@ function createOrchServer(opts) {
     runner,
     userDataPath,
     appPath,
+    broadcast,
     log = (msg) => console.warn(msg),
     env = process.env,
-    broadcast,
   } = opts;
   // Lazy requires: only touched when a tool actually runs.
   const forkThread =

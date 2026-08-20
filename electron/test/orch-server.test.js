@@ -909,6 +909,7 @@ describe("orch-server HTTP", () => {
       "teach_review",
       "thread_archive",
       "thread_fork",
+      "thread_merge",
       "thread_rename",
       "thread_send",
       "thread_settle",
