@@ -274,9 +274,9 @@ is a hard fail — do not retry-storm. Solenta's own messages
 (`OWN_BUDGET_RE`: daily budget / orchestration budget / crew auto-turn
 cap / spend cap) never park. Waits longer than `MAX_WAIT_MS` (8 days)
 are treated as a parse bug. Wake-once: `quotaWaitResumed` blocks a
-second park; a human turn (not `fromNotice` / `fromQuotaWait`) clears
-the auto-turn counter and the next `startRun` stamps
-`quotaWaitResumed: fromQuotaWait`.
+second park. `startRun` stamps that flag from
+`input.fromQuotaWait === true`, so a human send re-arms parking; only
+the auto-resume (and banner `resumeQuotaWait`) consume the one-shot.
 
 Default on: `settings.quotaWaitAutoResume` is true unless an explicit
 false is on disk; per-thread `quotaWaitAutoResume` true/false/null
@@ -565,9 +565,9 @@ or reorder, do not `spec_submit`. Also build-stage only.
 
 ## Divergence
 
-Opt-in compare of two runs of the same task (`src/divergence.ts`, issue
-#531 / #565). The header card (`data-divergence-card` in
-`ThreadView.tsx`) is hidden unless `useDivergenceCardEnabled()` is on.
+Opt-in compare of two runs of the same task (`src/divergence.ts`).
+The header card (`data-divergence-card` in `ThreadView.tsx`) is
+hidden unless `useDivergenceCardEnabled()` is on.
 The toggle lives on the Environment tab (`DivergenceCardToggle` in
 `AgentsPanel.tsx`). Module state is the source of truth; localStorage
 `coder.divergenceCard` (`"on"` / `"off"`) carries it across launches.
