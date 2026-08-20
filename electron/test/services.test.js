@@ -37,13 +37,21 @@ describe("services", () => {
     );
   });
 
-  it("addProject rejects a directory that is not a git repo", async () => {
+  it("addProject git-inits a directory that is not a git repo", async () => {
     const dir = path.join(tmpDir, "plain");
     fs.mkdirSync(dir);
-    await assert.rejects(
-      () => services.addProject(store, dir),
-      /git|repo|work.tree|not a git/i,
-    );
+    const project = await services.addProject(store, dir);
+    assert.equal(project.slug, "plain");
+    assert.equal(project.name, "plain");
+    assert.equal(project.path, path.resolve(dir));
+    const inside = String(
+      execFileSync("git", ["rev-parse", "--is-inside-work-tree"], {
+        cwd: dir,
+        encoding: "utf8",
+      }),
+    ).trim();
+    assert.equal(inside, "true", "plain folder must become a git work tree");
+    assert.equal(store.getProjects().length, 1);
   });
 
   it("addProject accepts a git repo and uses folder name when no remote", async () => {
@@ -140,13 +148,38 @@ describe("services", () => {
     );
   });
 
-  it("addProject without remotes still requires a local git repo", async () => {
+  it("addProject git-init leaves existing files in place", async () => {
+    const dir = path.join(tmpDir, "Shipnest-pivot");
+    fs.mkdirSync(dir);
+    fs.writeFileSync(path.join(dir, "README.md"), "hello\n");
+    const project = await services.addProject(store, dir);
+    assert.equal(project.name, "Shipnest-pivot");
+    assert.equal(project.path, path.resolve(dir));
+    assert.equal(fs.readFileSync(path.join(dir, "README.md"), "utf8"), "hello\n");
+    const inside = String(
+      execFileSync("git", ["rev-parse", "--is-inside-work-tree"], {
+        cwd: dir,
+        encoding: "utf8",
+      }),
+    ).trim();
+    assert.equal(inside, "true");
+  });
+
+  it("addProject surfaces git-init failure instead of claiming the path is not a repo", async () => {
     const dir = path.join(tmpDir, "still-local");
     fs.mkdirSync(dir);
+    ssh.setExecFile((bin, args, opts, cb) => {
+      if (bin === "git" && args[0] === "init") {
+        const err = new Error("git: not found");
+        return cb(err);
+      }
+      execFile(bin, args, opts, cb);
+    });
     await assert.rejects(
       () => services.addProject(store, dir),
-      /git|repo|work.tree|not a git/i,
+      /could not initialize a git repository/i,
     );
+    assert.equal(store.getProjects().length, 0, "failed init must not add the project");
   });
 
   it("addProject derives slug from ssh origin", async () => {

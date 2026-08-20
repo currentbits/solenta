@@ -60,6 +60,10 @@ describe("Add project: native vs web", () => {
 
     const input = m.query("[data-add-project-path-input]");
     assert.ok(input, "path modal must expose a text input");
+    assert.ok(
+      m.query("[data-add-project-git-init-note]"),
+      "existing-folder mode must say we git-init if needed",
+    );
     await m.type(input, "/Users/demo/native-added-repo");
     const submit = m.query("[data-add-project-path-submit]");
     assert.ok(submit, "path modal must expose a submit control");

@@ -27,9 +27,10 @@ interface AddProjectPathModalProps {
 
 /**
  * Add-project dialog in both modes. "Add existing" takes a path (web) or a
- * picked folder (native), with optional SSH remotes. "Create new" mkdirs and
- * git-inits a fresh folder via projects.create. Reuses the Settings modal
- * chrome so we do not invent a second dialog system.
+ * picked folder (native), with optional SSH remotes; a folder that is not
+ * yet a git repo is initialized on add. "Create new" mkdirs a fresh folder
+ * via projects.create (git-init happens in addProject). Reuses the Settings
+ * modal chrome so we do not invent a second dialog system.
  */
 export function AddProjectPathModal({
   onClose,
@@ -299,7 +300,7 @@ export function AddProjectPathModal({
                   data-add-project-path-input=""
                   value={path}
                   onChange={(e) => setPath(e.target.value)}
-                  placeholder="/absolute/path/to/repo"
+                  placeholder="/absolute/path/to/folder"
                   autoComplete="off"
                   spellCheck={false}
                   disabled={pending}
@@ -318,6 +319,10 @@ export function AddProjectPathModal({
                     </button>
                   </div>
                 )}
+                <p className={styles.fieldNote} data-add-project-git-init-note="">
+                  If the folder is not a git repository yet, Solenta will
+                  initialize one.
+                </p>
               </div>
               <div className={styles.field}>
                 <label

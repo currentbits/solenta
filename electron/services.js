@@ -81,8 +81,44 @@ function slugFromRemoteUrl(url) {
 }
 
 /**
- * Validate remotes (when set) or a local git work tree; add ProjectInfo.
- * Empty remotes keep today's local path behavior byte-for-byte.
+ * True when cwd is a git work tree. A missing git binary, a non-repo, or a
+ * bare repo all return false — callers then decide whether to init.
+ * @param {string} cwd
+ * @returns {Promise<boolean>}
+ */
+async function isInsideWorkTree(cwd) {
+  try {
+    const inside = await gitOutAsync(cwd, ["rev-parse", "--is-inside-work-tree"]);
+    return inside === "true";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * `git init -q` a local directory that is not already a work tree. Existing
+ * repos are left untouched. Init failure is a real error, not "not a repo".
+ * @param {string} resolved
+ */
+async function ensureGitWorkTree(resolved) {
+  if (await isInsideWorkTree(resolved)) return;
+  try {
+    await gitOutAsync(resolved, ["init", "-q"]);
+  } catch (err) {
+    const msg = err && err.message ? String(err.message) : String(err);
+    throw new Error(`Could not initialize a git repository: ${msg}`);
+  }
+  if (!(await isInsideWorkTree(resolved))) {
+    throw new Error(
+      `Not a git repository: ${resolved}. Choose a directory inside a git work tree.`,
+    );
+  }
+}
+
+/**
+ * Validate remotes (when set) or a local directory; add ProjectInfo.
+ * A local folder that is not yet a git work tree is initialized with
+ * `git init -q` (same as createProject). SSH remotes skip the local check.
  * @param {import('./store').Store} store
  * @param {string} projectPath
  * @param {{ remoteHost?: string, remotePath?: string } | null} [opts]
@@ -133,22 +169,7 @@ async function addProject(store, projectPath, opts) {
     throw new Error(`Path is not a directory: ${resolved}`);
   }
 
-  try {
-    const inside = await gitOutAsync(resolved, ["rev-parse", "--is-inside-work-tree"]);
-    if (inside !== "true") {
-      throw new Error("not a git repository");
-    }
-  } catch (err) {
-    const msg = err && err.message ? String(err.message) : String(err);
-    if (/not a git repository/i.test(msg) || /not a git/i.test(msg)) {
-      throw new Error(
-        `Not a git repository: ${resolved}. Choose a directory inside a git work tree.`,
-      );
-    }
-    throw new Error(
-      `Not a git repository: ${resolved}. Choose a directory inside a git work tree.`,
-    );
-  }
+  await ensureGitWorkTree(resolved);
 
   const folderName = path.basename(resolved);
   let slug = folderName;
@@ -192,9 +213,9 @@ async function attachWindowsDoctor(project) {
 }
 
 /**
- * Create a brand-new project folder: mkdir + git init, then add it through
- * the normal addProject validation. The name must be a plain folder name
- * (no separators) and the parent directory must already exist.
+ * Create a brand-new project folder: mkdir, then addProject (which git-inits).
+ * The name must be a plain folder name (no separators) and the parent
+ * directory must already exist. A failed add rolls the new folder back.
  * @param {import('./store').Store} store
  * @param {{ name?: string, parentDir?: string }} input
  */
@@ -232,14 +253,11 @@ async function createProject(store, input) {
 
   fs.mkdirSync(target);
   try {
-    await gitOutAsync(target, ["init", "-q"]);
+    return await addProject(store, target);
   } catch (err) {
     fs.rmSync(target, { recursive: true, force: true });
-    const msg = err && err.message ? String(err.message) : String(err);
-    throw new Error(`Could not initialize a git repository: ${msg}`);
+    throw err;
   }
-
-  return addProject(store, target);
 }
 
 /**

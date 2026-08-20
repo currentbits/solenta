@@ -185,6 +185,13 @@
   cursor: not-allowed;
 }
 
+.fieldNote {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--text-muted);
+}
+
 .fieldError {
   margin: 0;
   font-size: 12px;

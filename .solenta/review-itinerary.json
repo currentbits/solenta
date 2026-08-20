@@ -4,30 +4,34 @@
   "chunks": [
     {
       "area": "tests",
-      "rationale": "test/threadView.test.tsx #607 cases are the contract: (1) A→null→B remount plus a late scroll at scrollTop=0 must still pin; (2) a permission card that grows after the first pin, then a late scroll, must pin to the new scrollHeight. The older #408 cases still prove ResizeObserver follows growth while stuck and does not yank a user who scrolled up.",
+      "rationale": "electron/test/services.test.js is the contract: addProject git-inits a plain directory, leaves existing files, and surfaces `Could not initialize a git repository` instead of the old 'Not a git repository' toast. The two former reject-non-git tests were the bug the screenshot hit. projects-create.test.js still proves Create new mkdir + work tree via the shared addProject init. webDegrade checks the existing-mode note.",
       "risks": [
-        "jsdom has no layout, so the tests fake clientHeight/scrollHeight/scrollTop. They cannot prove Chrome overflow-anchoring; that is why .body also sets overflow-anchor: none.",
-        "forceStick is only armed on a real thread recovery/switch or a new pendingPermission.requestId — the #408 'scrolled up' case is initial mount and must keep unsticking."
+        "The init-failure test stubs only `git init` and lets real `git rev-parse` run. A full git-missing stub would skip the init branch if isInsideWorkTree treated every git error as 'not a repo' (it does) and then fail init — that path is covered. A stub that makes rev-parse succeed on a non-repo would skip init entirely; we do not fake that.",
+        "Renderer tests use fakeCoder and never actually git-init."
       ]
     },
     {
       "area": "critical",
-      "rationale": "src/components/ThreadView.tsx pinIfStuck + useLayoutEffect + onBodyScroll. Stick used to clear when Chrome fired a delayed scroll after the #83 loading-gap remount or after a tall permission/plan/question card landed. forceStick re-pins those events until a pin actually moves scrollTop onto the bottom; pinning.current ignores the scroll event we ourselves caused.",
+      "rationale": "electron/services.js ensureGitWorkTree: if the local folder is not already a work tree, `git init -q` then re-check. addProject calls it after the directory exists check. createProject is now mkdir + addProject with rm -rf rollback on any add failure, so there is one init path.",
       "risks": [
-        "If pinIfStuck never moves scrollTop (flex unconstrained, distance always 0) forceStick stays true and a later user scroll-up would be treated as layout noise and re-pinned. ResizeObserver on the body viewport is the intended release when real overflow appears.",
-        "A new permission requestId force-sticks even if the user had scrolled up to copy something. That is the product intent for a blocking prompt; a question/plan prompt shares the same requestId path."
+        "Picking a parent like ~/code that is not itself a repo will git-init that parent. Same class of mistake as adding the wrong folder; we do not scan for nested repos.",
+        "A folder already inside another git work tree (`rev-parse --is-inside-work-tree` true) is added as-is and is NOT inited. That is existing behavior.",
+        "Bare repos still fail the post-init work-tree check. Nested .git file (submodule gitfile) is treated as already a work tree if rev-parse says so.",
+        "No initial commit. Worktree threads on a freshly inited repo still need a HEAD; default + thread is checkout-bound so first-run is OK.",
+        "createProject rollback now deletes the new folder on ANY addProject failure, not just init. That is stricter than before and correct for a folder we just created."
       ]
     },
     {
       "area": "impl",
-      "rationale": "ThreadView.module.css .body overflow-anchor: none stops Chrome from adjusting scrollTop when a card is inserted at the bottom. ResizeObserver now also re-attaches when pendingPermission or isWorking change so the new sibling (card / working strip) is observed.",
+      "rationale": "AddProjectPathModal existing-mode copy: placeholder is a folder path, plus a one-line note that we will git-init if needed. CSS fieldNote is muted 12px, matching fieldError metrics. SSH remotes are unchanged and skip ensureGitWorkTree.",
       "risks": [
-        "overflow-anchor: none is global for the transcript. That is what we want for chat pinning; it does not affect nested scrollers (plan body, code blocks)."
+        "addViaDialog still goes through addProject, so the native leftover picker also inits. Fine.",
+        "The toast in the screenshot came from useCoder.addProject catch (setError) because addProject threw. After this, a successful init returns the project and clears the error."
       ]
     }
   ],
   "risks": [
-    "Not verified in a live Electron window — renderer tests plus tsc only. The race is Chromium-specific (async scroll + overflow anchoring + flex remount).",
-    "This is the center transcript (.body), not AgentsPanel's right-rail .scroll. If the report was about the Environment/Agents tab keeping scroll across threads, that is still open."
+    "Not verified in a live Electron window — electron + renderer tests only. Re-adding /Users/willem/code/Shipnest-pivot in the running app is the real check.",
+    "git init does not create a commit or set user.name; origin is unset. Publish/clone remain #459."
   ]
 }
