@@ -80,6 +80,21 @@
         "Web/devCoder extras are only the fake Skills-tab rows, not real plugins.",
         "ThreadView refetches the full list on every thread switch; no cache."
       ]
+    },
+    {
+      "area": "electron/test/checkpoints.test.js + electron/test/verify-gate.test.js — userDataPath on createRunner",
+      "rationale": "Both fixtures already call setupWorktree into tmpDir/worktrees, then startRun. After #511, materializePendingWorktree rematerializes any thread with worktreePath and throws 'worktreeBase is not configured' when userDataPath is empty. Passing userDataPath: fx.tmpDir matches the fixture layout (runner uses path.join(userDataPath, 'worktrees')). Production code is unchanged.",
+      "risks": [
+        "If makeWorktreeFixture ever points worktreeBase somewhere other than tmpDir/worktrees, rematerialize would create a second tree instead of reusing the fixture one."
+      ]
+    },
+    {
+      "area": "electron/test/web.test.js — desktop-only IPC + packaging regex",
+      "rationale": "Two drifted assertions, not product bugs. contextMenu:show is registered in registerIpc outside IPC_HANDLERS on purpose (native Menu.popup needs the sender window; the web bridge must not pop a menu). The test now skips that channel in the IPC_HANDLERS map and still asserts ipcMain.handle(\"contextMenu:show\") exists. package-app.sh copies ws via ROOT_NM_PKGS + node_modules/$pkg; the literal node_modules/ws string lives in verify-package.sh, which the test already checked.",
+      "risks": [
+        "desktopOnly is a skip list. A new desktop-only channel that is NOT registered in registerIpc would still fail the ipcMain.handle regex; a new shared channel dumped into the set would hide a real missing handler.",
+        "ROOT_NM_PKGS=(ws  is order-sensitive. Moving ws off the front of the array would fail the test even if ws is still copied."
+      ]
     }
   ],
   "risks": [
@@ -87,6 +102,8 @@
     "#601 taught that enforceRetention must stay opt-in so one project's setting cannot license reclaiming another's. That split remains (configured Set + explicit 0), but the default is now persisted so boot GC actually runs. Do not collapse retentionFor and explicitRetention.",
     "A user who opens Edit project and clears Keep worktrees to empty/0 opts out of GC for that project.",
     "Grok TUI chrome (/skills, /plugins, /memory, /flush) is still not implemented — only skills and custom command markdown.",
-    "Claude custom commands with $0/$1 and YAML argument hints are not substituted; only $ARGUMENTS."
+    "Claude custom commands with $0/$1 and YAML argument hints are not substituted; only $ARGUMENTS.",
+    "store.test.js reviewAcceptedHunks mismatch from the original #536 report is already gone on this tree (fixture includes the field plus worktreeRetention: 10 from #559). No store.js change.",
+    "Full electron suite still has environmental reds when memory-server/node_modules is missing (orch-server HTTP + provider injection, MCP SDK). Those are not #536."
   ]
 }

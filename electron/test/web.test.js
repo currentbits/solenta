@@ -448,11 +448,23 @@ describe("one map, two transports + packaging", () => {
         path.join(__dirname, "../preload.js"),
         "utf8",
       );
+      const ipcSrc = fs.readFileSync(path.join(__dirname, "../ipc.js"), "utf8");
       const channels = [...preload.matchAll(/invoke\("([^"]+)"/g)].map(
         (m) => m[1],
       );
+      // Native Menu.popup needs the sender window, so registerIpc wires
+      // these outside IPC_HANDLERS — the web bridge must never pop a menu.
+      const desktopOnly = new Set(["contextMenu:show"]);
       assert.ok(channels.length > 20);
       for (const ch of new Set(channels)) {
+        if (desktopOnly.has(ch)) {
+          assert.match(
+            ipcSrc,
+            new RegExp(`ipcMain\\.handle\\("${ch}"`),
+            `registerIpc must still handle desktop-only ${ch}`,
+          );
+          continue;
+        }
         assert.equal(
           typeof IPC_HANDLERS[ch],
           "function",
@@ -468,7 +480,10 @@ describe("one map, two transports + packaging", () => {
       "utf8",
     );
     assert.match(sh, /electron\/\*\.js/);
-    assert.match(sh, /node_modules\/ws/);
+    // ws ships via ROOT_NM_PKGS + `cp node_modules/$pkg`, not a hardcoded
+    // `node_modules/ws` path (that string lives in verify-package.sh).
+    assert.match(sh, /ROOT_NM_PKGS=\(ws /);
+    assert.match(sh, /node_modules\/\$pkg/);
     assert.match(sh, /cross-spawn/);
     assert.ok(fs.existsSync(path.join(__dirname, "../webBridge.js")));
     assert.ok(fs.existsSync(path.join(__dirname, "../webServer.js")));

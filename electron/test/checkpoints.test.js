@@ -515,6 +515,9 @@ describe("runner auto-checkpoint on successful turn", () => {
       core,
       pushFn: () => {},
       tickMs: 15,
+      // #511 fail-closed: a bound worktree rematerializes via
+      // path.join(userDataPath, "worktrees"), matching makeWorktreeFixture.
+      userDataPath: fx.tmpDir,
     });
   });
 
