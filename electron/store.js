@@ -391,6 +391,9 @@ const DEFAULT_PR_DIFF_CAP_LINES = 400;
  * defaultOrchestrate: absent/junk → false (plain "New thread" is not an
  * orchestrator unless the user opts in).
  *
+ * onboardingSeen: absent/junk → false (first-run wizard still shows).
+ * Only an explicit true marks the tour as finished or skipped.
+ *
  * updateChannel: absent/junk → null (follow the channel stamped at package
  * time); "prod"/"nightly" override the stamp.
  *
@@ -418,6 +421,7 @@ function normalizeSettings(raw) {
     mcpServers: [],
     defaultWorktree: false,
     defaultOrchestrate: false,
+    onboardingSeen: false,
     updateChannel: null,
     notifications: true,
     quotaWaitAutoResume: true,
@@ -494,6 +498,8 @@ function normalizeSettings(raw) {
   settings.defaultOrchestrate =
     /** @type {{ defaultOrchestrate?: unknown }} */ (obj).defaultOrchestrate ===
     true;
+  settings.onboardingSeen =
+    /** @type {{ onboardingSeen?: unknown }} */ (obj).onboardingSeen === true;
   const ch = /** @type {{ updateChannel?: unknown }} */ (obj).updateChannel;
   settings.updateChannel = ch === "prod" || ch === "nightly" ? ch : null;
   settings.notifications =
@@ -1652,6 +1658,7 @@ class Store {
       mcpServers: n.mcpServers,
       defaultWorktree: n.defaultWorktree,
       defaultOrchestrate: n.defaultOrchestrate,
+      onboardingSeen: n.onboardingSeen,
       updateChannel: n.updateChannel,
       notifications: n.notifications,
       quotaWaitAutoResume: n.quotaWaitAutoResume,
@@ -1772,6 +1779,13 @@ class Store {
         throw new Error("defaultOrchestrate must be a boolean");
       }
       this.data.settings.defaultOrchestrate = v;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "onboardingSeen")) {
+      const v = patch.onboardingSeen;
+      if (typeof v !== "boolean") {
+        throw new Error("onboardingSeen must be a boolean");
+      }
+      this.data.settings.onboardingSeen = v;
     }
     if (Object.prototype.hasOwnProperty.call(patch, "updateChannel")) {
       const v = patch.updateChannel;
