@@ -124,11 +124,17 @@
         ranks what comes back on a search. Facts can carry
         <strong>file:line, thread or commit citations</strong>; before a fact
         is injected, those file citations are checked against the current
-        worktree and contradicted entries are invalidated. The stored
-        embeddings are reused to fold near-duplicates together and to surface
-        entries that contradict each other, and the memory graph records
-        co-occurrence edges so related entries can be walked, not just matched
-        on text.
+        worktree and contradicted entries are invalidated. Assistant
+        replies in the transcript carry the same idea as
+        <strong>tier labels</strong>: a chip for repo paths the turn
+        read or cited, one for shared-memory tools, one for GitHub
+        issue or PR refs. A message long enough to make a claim
+        (240 characters) with none of those sources is tagged
+        <em>model prior knowledge</em>. Short chatter is left unlabeled.
+        The stored embeddings are reused to fold near-duplicates together
+        and to surface entries that contradict each other, and the memory
+        graph records co-occurrence edges so related entries can be walked,
+        not just matched on text.
       </p>
       <p>
         Above facts sit <strong>strategy</strong> entries: distilled
@@ -137,7 +143,19 @@
         that layer instead of leaving a pile of one-off observations.
       </p>
       <p>
-        Alongside it, a <strong>hypothesis ledger</strong> records what an agent
+        The Memory tab's <strong>config doctor</strong> lints the repo's
+        <code>AGENTS.md</code>, <code>CLAUDE.md</code>, and sibling
+        instruction files against a six-axis rubric (commands,
+        architecture, patterns, conciseness, currency, actionability)
+        and against shared-memory conventions, strategies, and verified
+        decisions. Preview generates those files from memory without
+        writing; Write from memory confirms, then writes
+        <code>AGENTS.md</code> / <code>CLAUDE.md</code> /
+        <code>GEMINI.md</code>. Scoring and generation are
+        deterministic &mdash; no model in the loop.
+      </p>
+      <p>
+        A <strong>hypothesis ledger</strong> records what an agent
         tried and ruled out. The next thread on the same problem is handed that
         list, so it does not spend its first ten minutes re-walking dead ends.
         A per-repo <strong>code index</strong> of symbols is built once and
@@ -165,7 +183,13 @@
         card. Agent sessions are told this convention, so &ldquo;keep the plan
         on the board&rdquo; is enough to have multi-step work tracked as
         issues. The view needs the GitHub CLI installed and authenticated, and
-        a project whose <code>origin</code> is on GitHub.
+        a project whose <code>origin</code> is on GitHub. The header also
+        shows <strong>review load</strong>: how many open, non-draft PRs
+        are waiting and their combined line count. Thresholds follow the
+        400-line cap &mdash; four PRs or 1,200 lines is busy; seven or
+        2,400 is overloaded &mdash; because an orchestrator that
+        parallelizes agents manufactures review bottleneck, not agent
+        bottleneck.
       </p>
       <p>
         The board can also dispatch for you: turn on auto-dispatch and an issue
@@ -199,6 +223,20 @@
         <li><strong>Drop</strong> images and folders anywhere on the transcript, not only on the composer strip.</li>
       </ul>
       <p>
+        The sidebar is a flat list, not per-project groups. Each card
+        carries its project slug; a scope filter at the top of the list
+        limits every section to one repo. <strong>Pinned</strong> threads
+        sit in their own block at the top (oldest pin first) and never
+        auto-settle. Below that, active threads; then a
+        <strong>Snoozed</strong> shelf (wake-soonest first) and a
+        <strong>Settled</strong> shelf (newest wrap-up first, archived
+        threads at the tail). Right-click a card, or its overflow button,
+        for the thread-actions menu: snooze (a nested submenu of presets),
+        pin, fork or hand off, rename, mute, and settle. The menu is the
+        native Electron menu when the app can show one, otherwise a
+        keyboard-driven overlay (arrows, Home, End, Escape).
+      </p>
+      <p>
         <kbd>⌘N</kbd> starts a new thread, <kbd>⌘⇧N</kbd> starts one in a
         chosen project. Esc or Ctrl+C stops the live turn. Click the project
         slug in the header to start another thread there. The composer's
@@ -209,6 +247,15 @@
         A thread that fails keeps its <strong>failure reason</strong> and shows
         it on the sidebar card and in the Agents panel, so a red thread says
         what went wrong without being opened.
+      </p>
+      <p>
+        When a provider returns a usage-limit error with a reset clock, the
+        thread parks as <strong>quota-wait</strong> instead of failing. A
+        banner names the resume time; the same prompt is sent again when
+        the quota resets, or immediately with Resume now. Exhausted
+        balance with no clock is still a hard fail. Solenta's own daily
+        and orchestration spend caps are a separate gate and do not park
+        this way.
       </p>
       <p>
         The caret next to <strong>+</strong> in the sidebar creates a thread in
@@ -224,29 +271,50 @@
         in a git worktree</em> and <em>Delegate new threads to a worker</em> in
         Settings, the second winning over the first.
       </p>
+      <p>
+        A thread can also run in <strong>Ask mode</strong>: read-only
+        questions about the repo, answered from the code index and shared
+        memory. It never spawns a worktree, never calls tools, and never
+        counts against the daily budget. The overflow menu turns it on
+        (and clears Teach, which conflicts); the composer then hides
+        permission, Build, Best of N, and attach. Answers prefer the
+        on-device <code>fm</code> CLI, then the provider in print mode,
+        then a retrieval-only pack if neither is available.
+        <em>Start work</em> turns Ask off and, when Isolate new threads
+        is on, arms a worktree for the next turn.
+      </p>
 
       <h2 id="worktrees">Worktrees and pull requests</h2>
       <p>
         Each thread can get its own <strong>git worktree</strong>, so agents
         work on an isolated branch and never touch your checkout. Setup is
         fail-closed: if the worktree cannot be created, the thread errors
-        instead of silently running in your working copy. The Environment
-        panel shows the diff, runs <code>git pull</code>, starts the project
-        dev server, and holds Fork and Handoff.
+        instead of silently running in your working copy. The worktree
+        diff is a full-height <strong>Git</strong> pane in the thread
+        center &mdash; Environment's Open Git, the next-action Commit, and
+        <code>/review</code> all open it there, not as a card in the
+        right-hand panel. The Environment tab still runs
+        <code>git pull --ff-only</code>, starts the project dev server, and
+        holds Fork and Handoff.
       </p>
       <p>
         The header carries one <strong>next-action</strong> button that names
         the next git step — commit, push, open a PR, watch checks, or merge —
         instead of a row of always-visible controls. Create PR works on an
         unpublished worktree without a prior Push. File paths in the
-        transcript open the file in that worktree.
+        transcript open the file in that worktree. Create PR refuses a
+        diff larger than the configured <strong>PR size cap</strong>
+        (default 400 changed lines) before anything is pushed. The
+        header then offers to split the branch into a stack of smaller
+        PRs, or to create this one anyway. Empty the cap in Settings to
+        disable it.
       </p>
       <p>
         PR state is live: checks show as badges on the thread card, and merging
         is a button, not a terminal command. Worktree merge and delete are
         guarded, so you cannot drop unmerged work by accident. Automatic
         checkpoints are committed as the agent works, and you can restore to
-        any checkpoint from the Changes panel.
+        any checkpoint from the Environment tab.
       </p>
       <p>
         Work can also start from an issue: paste a GitHub issue reference and
@@ -310,6 +378,17 @@
         handing the same question back and forth. A <strong>subagent model
         pool</strong> in Settings lists described candidates; the lead picks
         per spawn instead of every worker inheriting the same default.
+      </p>
+      <p>
+        When two runs of the same task exist &mdash; a Best of N sibling,
+        a fork, or an earlier completed run on this thread &mdash;
+        Environment can show a <strong>divergence</strong> compare. It
+        pairs tool steps (name, input, output, decision) and names the
+        first mismatch. Assistant prose is ignored, so two models
+        answering in different words do not count as a split. A length
+        gap is not a verdict while the shorter run is still going. The
+        toggle is <em>Show divergence compare on threads</em>; it
+        defaults on and persists in local storage.
       </p>
       <p>
         Three composer commands cover the common shapes without a workflow
@@ -376,6 +455,17 @@
         traceable back to the requirement that asked for them. You can leave
         spec mode without approving the remaining stages if the work has
         moved on.
+      </p>
+      <p>
+        Once <code>tasks.md</code> is approved, the checkboxes are a
+        dispatch DAG: each line is an id, a title, and optional
+        <code>needs:</code> dependencies. <strong>Dispatch</strong>
+        forks a worker per currently unblocked task; a second click
+        only starts work that is still open.
+        <strong>Converge</strong> has the spec thread re-read the
+        artifacts and the repo and append missing checkboxes. A cycle
+        or a dangling <code>needs:</code> id is a parse error, not a
+        silent skip.
       </p>
 
       <h2 id="teach">Teach mode</h2>
@@ -473,7 +563,17 @@
         pattern instead of ten separate red threads.
       </p>
       <p>
-        Under it, the orchestrator emits <strong>OpenTelemetry GenAI spans</strong>,
+        When a thread finishes, a one-tap card asks how much time it felt
+        like it saved (15 min through 4 h+, or Skip). Fleet analytics
+        sums those estimates against wall-clock and agent-active time
+        for the same threads and reports the
+        <strong>perception gap</strong> as felt divided by wall-clock.
+        Skip records a decline so the card does not ask twice. Threads
+        with no estimate are left out of the ratio rather than treated
+        as zero.
+      </p>
+      <p>
+        The orchestrator also emits <strong>OpenTelemetry GenAI spans</strong>,
         so runs can be sent to whatever tracing backend you already have.
       </p>
 

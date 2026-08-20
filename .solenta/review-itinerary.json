@@ -1,38 +1,47 @@
 {
   "version": 1,
-  "readOrder": ["critical", "impl", "tests", "docs"],
+  "readOrder": ["docs"],
   "chunks": [
     {
-      "area": "critical",
-      "rationale": "This merge joins two independent T3 ports: the flat sidebar (this branch, #587) and the native/portal thread-actions menu (main, #592). Resolution keeps the flat structure and moves ALL card menus onto the #592 path: ThreadCard's openThreadMenu/applyMenuId call showContextMenu (Electron Menu.popup on Desktop, position:fixed body portal elsewhere); the in-card snooze and overflow HTML dropdowns are gone. Pin was added to buildThreadActionMenuItems (showPin, data-pin-item) since the flat sidebar had put it in the now-deleted HTML overflow.",
+      "area": "site/docs.html — Worktrees and PRs: the Environment-panel correction",
+      "rationale": "Read this first: it is the only hunk that fixes a statement that was actively WRONG on the public site, rather than adding something missing. Since #569 the worktree diff is a center pane behind Thread | Git tabs (changesOpen in src/App.tsx), not a card in the right-hand Environment panel. Check that the rewritten sentence also gets the residual Environment-panel controls right, because #512 moved Start Dev / Fork / Handoff off the thread header.",
       "risks": [
-        "The '…' render gate now includes onSetSnoozed (matches main) — a card with only snooze wiring still gets the menu.",
-        "menuBusy ref serializes menu opens; a second click while the native menu is up is a no-op, matching main's behavior.",
-        "jsdom tests exercise only the HTML fallback; a native Menu.popup regression would not fail the renderer suite (electron/test/contextMenu.test.js covers the main-process side, 2/2)."
+        "If the sentence still implies the diff lives in the right rail, the page is wrong in a way a reader cannot detect without opening the app."
       ]
     },
     {
-      "area": "impl",
-      "rationale": "src/components/Sidebar.tsx: ThreadCard lost snoozeMenuOpen/moreMenuOpen/onToggleMoreMenu props (Kanban unaffected — props were optional); right-click on a card opens the same menu; hover clock = presets portal or instant wake when snoozed; hover check = settle; data-sidebar-list added for the portal containment test. Parent dropped snoozeMenuFor/moreMenuFor state — the portal dismisses itself. Header scope/create menus keep the old HTML dropdown path (pre-existing clipping risk, unchanged by this merge).",
+      "area": "docs/ARCHITECTURE.md — Sidebar ordering and settle model (rewritten section)",
+      "rationale": "Second, because it corrects the same class of error one layer down and was the trap in this change. The section previously documented partitionSidebar's precedence (snoozed > pinned > settled > attention) and a global settled tail. Sidebar.tsx line 31 imports only buildFlatSidebar: a T3-flat list where pinned is its own top block and there are no project group headers. partitionSidebar survives only as a test-referenced shadow. Verify the rewrite names buildFlatSidebar, and that the data attributes and localStorage keys it cites (sidebar:snoozedOpen, sidebar:settledOpen, sidebar:projectScope, data-pinned-divider) are the live ones.",
       "risks": [
-        "The header scope/create menus still render position:absolute inside the sidebar — same clipping class of bug #592 fixed for cards. Follow-up, not this diff."
+        "The retired selectors (data-later-shelf, data-pinned-section, coder.sidebar.settledCollapsed) must be described as retired, not current — a reader writing a test off a retired selector gets a silently-passing no-op.",
+        "The worker was briefed with the stale #567 model and corrected it from source; the correction is the part most worth re-reading."
       ]
     },
     {
-      "area": "tests",
-      "rationale": "Conflicted suites resolved onto flat selectors + portal queries: menu items are found via document.querySelector('[data-context-menu] …') because m.query only sees the mount container; afterEach dismissContextMenu() in sidebar/forkHandoff/pinSnooze prevents portal leakage between tests. Main's #582/#583 blocks (body portal, snooze flyout submenu, right-click, keyboard nav) were grafted into the flat suite; ArrowDown expectation updated for the Pin item between Snooze and Fork. 1257/1257.",
+      "area": "docs/ARCHITECTURE.md — new subsystem sections (Ask mode, Post-merge verification, Quota wait, Code index, Divergence)",
+      "rationale": "Third: pure additions, no prior text to contradict. These are engineering-reference prose, so the failure mode is a plausible-sounding invented symbol rather than a wrong sentence. All 214 backticked identifiers in the diff were grepped back to a real symbol or file before merge; re-check any you change.",
       "risks": [
-        "prRender's pin assertion moved from static markup to buildThreadActionMenuItems — the render-level guarantee is now indirect (the click path is covered in sidebar.test.tsx)."
+        "Ask mode's guarantee is ordering-dependent: startRun must intercept thread.ask === true BEFORE assertUnderDailyBudget and worktree materialization. If that ordering claim is ever wrong the section reads as a safety promise the code does not keep."
       ]
     },
     {
-      "area": "docs",
-      "rationale": ".solenta/specs/t3-flat-sidebar.md still describes the in-card overflow menu; #592 superseded that section — the selector names survive but live in the portal.",
-      "risks": []
+      "area": "docs/ARCHITECTURE.md + site/docs.html — Memory and Spec mode extensions",
+      "rationale": "Fourth: edits folded into existing sections rather than new ones, so read them in place to confirm they inherit the surrounding register and do not repeat what the paragraph above already said. Covers provenance tiers (src/provenance.ts), the config doctor (electron/configDoctor.js), and the tasks.md dispatch DAG (needs: syntax, electron/specTasks.js).",
+      "risks": [
+        "Provenance has exactly four surfaced tiers (repo, memory, issues, and the ungrounded 'model prior knowledge' tag above PRIOR_MIN_CHARS). Adding a fifth from the internal collector would describe a badge the UI never renders."
+      ]
+    },
+    {
+      "area": "README.md",
+      "rationale": "Last, and deliberately: it is the shortest chunk (+11 net) and the one with the least room to be wrong, because each addition is a clause folded into an existing bullet. Read it as a stranger arriving from GitHub search and ask whether the added clauses earn their line in a file that is intentionally tight.",
+      "risks": [
+        "Numbers here age: the 400-line PR cap and the 24h post-merge delay are defaults (src/prUi.ts:57, electron/postmerge.js:23) and are stated as defaults. If either becomes configurable-by-default the README is the copy most likely to be forgotten."
+      ]
     }
   ],
   "risks": [
-    "First launch remains the visual check for the combined result (no screenshot tooling in this session).",
-    "Electron suite baseline failures (#536) are unrelated; no electron/ files changed beyond what main brought in."
+    "Documentation-only change: no test covers whether any sentence is true, so the only gate is that each claim was traced to source. Every claim in this diff was checked against the file it names before merge.",
+    "site/docs.html is hand-written static HTML with a hand-maintained nav. A new h2 without its nav link, or an unbalanced tag, breaks the published page silently — there is no build step or validator in CI for site/.",
+    "The three chunks were written by parallel workers that could not see each other. README, site/docs.html and docs/ARCHITECTURE.md may now describe the same feature in three slightly different vocabularies; the risk is drift in naming, not contradiction."
   ]
 }
