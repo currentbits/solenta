@@ -1352,6 +1352,11 @@ describe("Sidebar status label + wait row", () => {
     assert.match(row!.textContent || "", /Waiting on 2 workers/);
     const label = m.query('[data-thread-card="orch"] [data-status-label]');
     assert.ok(label, "delegating parent still has a status label");
+    assert.equal(
+      label!.textContent,
+      "Delegating",
+      "a parent waiting on workers reads Delegating, not Working",
+    );
     assert.match(label!.getAttribute("title") || "", /Waiting on 2 workers/);
     assert.match(label!.getAttribute("title") || "", /w1/);
     m.unmount();
@@ -1377,6 +1382,25 @@ describe("Sidebar status label + wait row", () => {
       sidebar([ORCH, worker({ id: "w1", status: "done", runStartedAt: null })]),
     );
     assert.equal(m.query('[data-wait-row="orch"]'), null);
+    m.unmount();
+  });
+
+  it("an idle thread with a queued follow-up says so", async () => {
+    await clearSidebarStorage();
+    const m = await mount(
+      sidebar([
+        thread({
+          id: "q",
+          status: "idle",
+          updatedAt: FRESH,
+          queued: { prompt: "then update the changelog" },
+        }),
+      ]),
+    );
+    const label = m.query('[data-thread-card="q"] [data-status-label]');
+    assert.ok(label, "a queued follow-up must still show in the sidebar");
+    assert.equal(label!.textContent, "Queued");
+    assert.match(label!.getAttribute("title") || "", /then update the changelog/);
     m.unmount();
   });
 

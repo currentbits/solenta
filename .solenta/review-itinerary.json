@@ -71,6 +71,27 @@
       "risks": [
         "The click test proves the absence of interactive children and that the card select works; it cannot prove pointer-events:none routes a click on the row itself, because jsdom does not model pointer-events. That half is CSS-reasoned."
       ]
+    },
+    {
+      "area": "src/components/Sidebar.module.css — .list > * / .shelf > * { flex-shrink: 0 }",
+      "rationale": "The overlap in the screenshot. .list is `flex:1; min-height:0; overflow-y:auto; display:flex; flex-direction:column` — its rows are flex items, so once content exceeds the viewport every row shrinks. .card sets `min-height:64px`, which REPLACES the automatic content minimum, so a 4-line card (slug/title/branch/wait row ≈ 80px) is squashed to 64px and its last line paints over the next card. .pinnedDivider already carried a lone `flex-shrink:0` — the symptom patched one row at a time; this hoists it to every child and drops the now-redundant line.",
+      "risks": [
+        "Universal child selector also covers searchHint/emptySearch/addProjectRow/showMore — all rows that should never shrink either, but it is a wider blast radius than naming .card + .slimRow.",
+        "Not verifiable in jsdom (no layout engine); renderer tests cannot catch a regression here."
+      ]
+    },
+    {
+      "area": "src/components/Sidebar.tsx — statusLabelFor: Delegating + Queued",
+      "rationale": "The T3 rewrite (011a629, spec .solenta/specs/t3-flat-sidebar.md) mapped every dot tone onto a word but dropped two: delegating rendered the word 'Working', and the queued tone had no place in StatusLabelInfo at all, so an idle thread with a queued follow-up showed only its age. Precedence is unchanged — Queued sits after woke and before the unread-done case, matching the old dot rule that queued only owns the slot when nothing louder does.",
+      "risks": [
+        "A delegating card now reads 'Delegating' where tests/muscle memory expected 'Working'; the aria spoken word was already 'delegating' so a11y is consistent.",
+        "queued tone renders in --text-dim, same colour as the age it replaces — deliberate (it is not attention), but it is a quiet signal."
+      ]
+    },
+    {
+      "area": "test/sidebar.test.tsx",
+      "rationale": "Two assertions that fail if either word regresses: the orchestrator card's label text, and a new idle+queued case.",
+      "risks": []
     }
   ],
   "risks": [
@@ -78,6 +99,8 @@
     "site/docs.html is hand-written static HTML with a hand-maintained nav. A new h2 without its nav link, or an unbalanced tag, breaks the published page silently — there is no build step or validator in CI for site/.",
     "The three chunks were written by parallel workers that could not see each other. README, site/docs.html and docs/ARCHITECTURE.md may now describe the same feature in three slightly different vocabularies; the risk is drift in naming, not contradiction.",
     "Visual verification is outstanding: renderer tests have no layout engine, so card height growth, the 10px inset and the overlap guard are unproven in pixels.",
-    "waitLabel wording now differs for subagents in three surfaces (sidebar wait row, KanbanView, AgentsPanel roster header) — intended, but it is a user-visible copy change beyond the sidebar."
+    "waitLabel wording now differs for subagents in three surfaces (sidebar wait row, KanbanView, AgentsPanel roster header) — intended, but it is a user-visible copy change beyond the sidebar.",
+    "SubagentRows (#542) were deleted by the same T3 rewrite and are NOT restored here — the wait row still reports 'Waiting on N workers' for them, but the nested per-subagent rows are gone.",
+    "The layout fix is reasoning + CSS, unverified against pixels: confirm in a running build."
   ]
 }

@@ -206,6 +206,16 @@
   gap: 2px;
 }
 
+/*
+ * The list scrolls but is still a flex COLUMN, so its rows are flex items and
+ * shrink to fit the viewport unless told not to — a 4-line card (wait row)
+ * squashed to its 64px min-height and its text spilled over the next card.
+ */
+.list > *,
+.shelf > * {
+  flex-shrink: 0;
+}
+
 .card {
   position: relative;
   display: flex;
@@ -388,6 +398,10 @@
 
 .statusLabel[data-tone="done"] {
   color: var(--green);
+}
+
+.statusLabel[data-tone="queued"] {
+  color: var(--text-dim);
 }
 
 .statusLabel[data-dim="true"] {
@@ -664,7 +678,6 @@
   height: 1px;
   margin: 6px 10px;
   background: var(--border-soft);
-  flex-shrink: 0;
 }
 
 .shelf {

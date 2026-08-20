@@ -261,7 +261,7 @@ export type StatusDotInfo = {
 
 export type StatusLabelInfo = {
   text: string;
-  tone: "working" | "attention" | "failed" | "done";
+  tone: "working" | "attention" | "failed" | "done" | "queued";
   title: string;
   spoken: string;
   flags: Record<string, string>;
@@ -452,7 +452,7 @@ export function statusLabelFor(
   }
   if (isDelegating(thread.status, wait)) {
     return {
-      text: "Working",
+      text: "Delegating",
       tone: "working",
       title: dot?.label ?? "Delegating",
       spoken: "delegating",
@@ -466,6 +466,17 @@ export function statusLabelFor(
       title: dot?.label ?? "Woke from snooze",
       spoken: "needs attention",
       flags: dot?.flags ?? { "data-woke": "" },
+    };
+  }
+  // Queued follow-up (#92) owns the slot only when nothing louder does;
+  // on a busy card it rides along in the tooltip via statusDotFor.
+  if (thread.queued) {
+    return {
+      text: "Queued",
+      tone: "queued",
+      title: dot?.label ?? `Queued: ${thread.queued.prompt}`,
+      spoken: "queued follow-up",
+      flags: dot?.flags ?? { "data-queued-dot": thread.id },
     };
   }
   if (
