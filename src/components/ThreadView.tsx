@@ -28,6 +28,7 @@ import {
 import type {
   AttachmentInfo,
   ChatMessage,
+  CoderApi,
   DiffResult,
   FileChange,
   GitSyncInfo,
@@ -42,6 +43,7 @@ import type {
   ProviderInfo,
   ReasoningEffort,
   RunStatInfo,
+  SourceControlDiscovery,
   SpecArtifact,
   SpecStage,
   ThreadDetail,
@@ -96,6 +98,7 @@ import type { SlashAction, SlashCommand } from "../slashCommands";
 import { buildBestOfNEntries } from "../bestOfN";
 import { createPrPrompt, isPrTooLargeMessage, splitPrPrompt } from "../prUi";
 import { suggestNextGitAction } from "../nextGitAction";
+import { forgeReadiness } from "../sourceControl";
 import { formatQuotaWaitLabel } from "../quotaWait";
 import {
   buildReviewItinerary,
@@ -1349,9 +1352,27 @@ function NextGitActionButton({
   const [flash, setFlash] = useState<string | null>(null);
   /** Size-cap refusal message while the split/override choice is showing. */
   const [oversizeMsg, setOversizeMsg] = useState<string | null>(null);
+  const [github, setGithub] = useState<{
+    ready: boolean;
+    hint: string | null;
+  } | null>(null);
   const threadRef = useRef(thread.id);
   threadRef.current = thread.id;
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const loadForge = useCallback(async (rescan = false) => {
+    try {
+      const existing = (window as unknown as { coder?: CoderApi }).coder;
+      const discover = existing?.sourceControl?.discover;
+      if (typeof discover !== "function") return;
+      const next: SourceControlDiscovery = await discover(
+        rescan ? { rescan: true } : undefined,
+      );
+      setGithub(forgeReadiness(next, "github"));
+    } catch {
+      // Probe failed: leave the button on the click-and-fail path.
+    }
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -1416,8 +1437,10 @@ function NextGitActionButton({
 
   useEffect(() => {
     void loadGit();
+    void loadForge(false);
   }, [
     loadGit,
+    loadForge,
     changesNonce,
     changesOpen,
     thread.status,
@@ -1440,6 +1463,7 @@ function NextGitActionButton({
     prState: thread.prState,
     mergeable: thread.prMergeable,
     checks,
+    github,
   });
   const action =
     decided.kind === "merge" && !onPrMerge
@@ -1480,6 +1504,7 @@ function NextGitActionButton({
         await loadGit();
       } catch {
         // Parent surfaces rejections via the runError banner.
+        void loadForge(true);
       } finally {
         setPending(false);
       }
@@ -1499,6 +1524,7 @@ function NextGitActionButton({
           // rejections surface via the parent's runError banner.
           const msg = err instanceof Error ? err.message : String(err);
           if (isPrTooLargeMessage(msg)) setOversizeMsg(msg);
+          else void loadForge(true);
         } finally {
           setPending(false);
         }
@@ -1520,6 +1546,7 @@ function NextGitActionButton({
         await loadChecks();
       } catch {
         // Parent surfaces rejections via the runError banner.
+        void loadForge(true);
       } finally {
         setPending(false);
       }
@@ -1574,6 +1601,11 @@ function NextGitActionButton({
       <a
         className={className}
         data-next-git-action={action.kind}
+        data-forge-blocked={
+          github != null && !github.ready && !action.actionable
+            ? ""
+            : undefined
+        }
         href={href}
         target="_blank"
         rel="noreferrer"
@@ -1596,6 +1628,11 @@ function NextGitActionButton({
         className={className}
         data-next-git-action={action.kind}
         data-create-pr={dataCreatePr}
+        data-forge-blocked={
+          github != null && !github.ready && !action.actionable
+            ? ""
+            : undefined
+        }
         disabled={disabled}
         aria-disabled={disabled ? "true" : undefined}
         aria-busy={pending || undefined}

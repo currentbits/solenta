@@ -45,6 +45,7 @@ const { distillThread } = require("./distill.js");
 const updater = require("./updater.js");
 const vibeKanban = require("./vibeKanban.js");
 const { browseFilesystem, expandUserPath } = require("./fsBrowse.js");
+const { discoverSourceControl } = require("./sourceControl.js");
 
 /**
  * Default window fan-out (desktop transport). main.js replaces this with a
@@ -723,6 +724,11 @@ const IPC_HANDLERS = {
   },
   "providers:list": async (ctx) => {
     return services.listProvidersForApi(ctx.store);
+  },
+  "sourceControl:discover": async (_ctx, input) => {
+    return discoverSourceControl({
+      rescan: Boolean(input && input.rescan),
+    });
   },
   "workflows:list": async (ctx) => {
     return services.listTemplates(ctx.store);

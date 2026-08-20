@@ -231,6 +231,15 @@ exit 1`,
         handlers.has("fs:browse"),
         "main must handle fs:browse",
       );
+      assert.equal(
+        typeof api.sourceControl.discover,
+        "function",
+        "preload must expose sourceControl.discover",
+      );
+      assert.ok(
+        handlers.has("sourceControl:discover"),
+        "main must handle sourceControl:discover",
+      );
 
       for (const name of ["scripts", "start", "stop", "status"]) {
         assert.equal(

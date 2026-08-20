@@ -80,6 +80,9 @@ const coder = {
   providers: {
     list: () => invoke("providers:list"),
   },
+  sourceControl: {
+    discover: (input) => invoke("sourceControl:discover", input),
+  },
   workflows: {
     list: () => invoke("workflows:list"),
     save: (template) => invoke("workflows:save", template),

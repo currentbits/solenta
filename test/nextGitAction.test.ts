@@ -291,6 +291,54 @@ describe("suggestNextGitAction", () => {
     );
     assert.equal(action.href, null);
   });
+
+  it("disables Create PR / merge / checks when GitHub is not ready (#608)", () => {
+    const github = { ready: false, hint: "gh auth login" };
+    const create = suggestNextGitAction(input({ github }));
+    assert.equal(create.kind, "create-pr");
+    assert.equal(create.actionable, false);
+    assert.equal(create.primary, false);
+    assert.equal(create.title, "gh auth login");
+
+    const merge = suggestNextGitAction(
+      input({
+        github,
+        prNumber: 11,
+        prState: "OPEN",
+        checks: { ok: true, checks: [] },
+      }),
+    );
+    assert.equal(merge.kind, "merge");
+    assert.equal(merge.actionable, false);
+    assert.equal(merge.title, "gh auth login");
+  });
+
+  it("does not block Push or Commit on GitHub readiness", () => {
+    const github = { ready: false, hint: "gh auth login" };
+    const commit = suggestNextGitAction(
+      input({ github, dirty: true, fileCount: 1 }),
+    );
+    assert.equal(commit.kind, "commit");
+    assert.equal(commit.actionable, true);
+
+    const push = suggestNextGitAction(
+      input({
+        github,
+        sync: ahead1,
+        prNumber: 4,
+        prState: "OPEN",
+        checks: { ok: true, checks: [] },
+      }),
+    );
+    assert.equal(push.kind, "push");
+    assert.equal(push.actionable, true);
+  });
+
+  it("leaves gh actions enabled while the probe has not loaded", () => {
+    const action = suggestNextGitAction(input({ github: null }));
+    assert.equal(action.kind, "create-pr");
+    assert.equal(action.actionable, true);
+  });
 });
 
 describe("summarizeChecks", () => {

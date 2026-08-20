@@ -51,6 +51,7 @@ import type {
   PrInfo,
   ProjectInfo,
   ProviderInfo,
+  SourceControlDiscovery,
   ReasoningEffort,
   SessionUsage,
   CliSlashCommand,
@@ -2278,6 +2279,58 @@ function buildDevCoder(): CoderApi {
           ...p,
           models: [...p.models],
         }));
+      },
+    },
+    sourceControl: {
+      async discover(): Promise<SourceControlDiscovery> {
+        return {
+          sourceControlProviders: [
+            {
+              kind: "github",
+              label: "GitHub",
+              status: "available",
+              installHint: "gh auth login",
+              version: "2.97.0",
+              auth: { status: "authenticated", detail: "dev" },
+            },
+            {
+              kind: "gitlab",
+              label: "GitLab",
+              status: "missing",
+              installHint: "brew install glab",
+              version: null,
+              auth: {
+                status: "unauthenticated",
+                detail: "GitLab CLI (glab) is not installed.",
+              },
+            },
+            {
+              kind: "bitbucket",
+              label: "Bitbucket",
+              status: "available",
+              installHint:
+                'export SOLENTA_BITBUCKET_ACCESS_TOKEN="your-access-token"',
+              version: null,
+              auth: {
+                status: "unauthenticated",
+                detail:
+                  "Set SOLENTA_BITBUCKET_ACCESS_TOKEN, or SOLENTA_BITBUCKET_EMAIL plus SOLENTA_BITBUCKET_API_TOKEN.",
+              },
+            },
+            {
+              kind: "azure-devops",
+              label: "Azure DevOps",
+              status: "missing",
+              installHint: "brew install azure-cli",
+              version: null,
+              auth: {
+                status: "unauthenticated",
+                detail: "Azure CLI (az) is not installed.",
+              },
+            },
+          ],
+          probedAt: Date.now(),
+        };
       },
     },
     workflows: {

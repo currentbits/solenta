@@ -39,6 +39,7 @@ import type {
   ProjectInfo,
   FsBrowseResult,
   ProviderInfo,
+  SourceControlDiscovery,
   CliSlashCommand,
   SkillInfo,
   SkillTarget,
@@ -525,6 +526,56 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       },
     },
     providers: { list: () => rec("providers.list", [], providers) },
+    sourceControl: {
+      discover: (input?: { rescan?: boolean }) =>
+        rec("sourceControl.discover", [input], {
+          sourceControlProviders: [
+            {
+              kind: "github",
+              label: "GitHub",
+              status: "available",
+              installHint: "gh auth login",
+              version: "2.97.0",
+              auth: { status: "authenticated", detail: "dev" },
+            },
+            {
+              kind: "gitlab",
+              label: "GitLab",
+              status: "missing",
+              installHint: "brew install glab",
+              version: null,
+              auth: {
+                status: "unauthenticated",
+                detail: "GitLab CLI (glab) is not installed.",
+              },
+            },
+            {
+              kind: "bitbucket",
+              label: "Bitbucket",
+              status: "available",
+              installHint:
+                'export SOLENTA_BITBUCKET_ACCESS_TOKEN="your-access-token"',
+              version: null,
+              auth: {
+                status: "unauthenticated",
+                detail: "Set SOLENTA_BITBUCKET_ACCESS_TOKEN.",
+              },
+            },
+            {
+              kind: "azure-devops",
+              label: "Azure DevOps",
+              status: "missing",
+              installHint: "brew install azure-cli",
+              version: null,
+              auth: {
+                status: "unauthenticated",
+                detail: "Azure CLI (az) is not installed.",
+              },
+            },
+          ],
+          probedAt: 1,
+        } satisfies SourceControlDiscovery),
+    },
     workflows: {
       list: () => rec("workflows.list", [], workflows),
       save: (t: unknown) =>

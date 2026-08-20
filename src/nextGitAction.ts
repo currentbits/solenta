@@ -41,6 +41,12 @@ export interface NextGitActionInput {
   mergeable?: "MERGEABLE" | "CONFLICTING" | "UNKNOWN" | null;
   /** null until fetched, or when there is no open PR. */
   checks: PrChecksResult | null;
+  /**
+   * GitHub forge probe (#608). null/absent = not loaded yet, so the
+   * button keeps its old click-and-fail path. When ready is false, gh
+   * actions (Create PR / checks / merge) disable with the hint as title.
+   */
+  github?: { ready: boolean; hint: string | null } | null;
 }
 
 const IDLE: NextGitAction = {
@@ -119,6 +125,30 @@ function needsPushForOpenPr(
   return hasWorktree;
 }
 
+const GH_ACTION_KINDS = new Set<NextGitActionKind>([
+  "create-pr",
+  "watch-checks",
+  "checks-failed",
+  "merge",
+]);
+
+function gateGithubForge(
+  action: NextGitAction,
+  github: NextGitActionInput["github"],
+): NextGitAction {
+  if (github == null || github.ready || !GH_ACTION_KINDS.has(action.kind)) {
+    return action;
+  }
+  return {
+    ...action,
+    actionable: false,
+    primary: false,
+    title:
+      github.hint ??
+      "GitHub is not set up. Open Settings → Source Control.",
+  };
+}
+
 /**
  * Next git step for the thread header.
  *
@@ -128,6 +158,10 @@ function needsPushForOpenPr(
  * Create PR so a failed or pending sync does not blank the header.
  */
 export function suggestNextGitAction(input: NextGitActionInput): NextGitAction {
+  return gateGithubForge(suggestNextGitActionUngated(input), input.github);
+}
+
+function suggestNextGitActionUngated(input: NextGitActionInput): NextGitAction {
   if (input.remoteProject) return IDLE;
 
   if (input.dirty) {

@@ -20,6 +20,7 @@ import type {
   ProjectInfo,
   ProviderInfo,
   ReasoningEffort,
+  SourceControlDiscovery,
   SubagentPool,
   SubagentPoolEntry,
   UpdateStatus,
@@ -28,6 +29,7 @@ import { useEscapeClose } from "../useEscapeClose";
 import styles from "./SettingsModal.module.css";
 import { WorktreeGcSection } from "./WorktreeGcSection";
 import { VibeKanbanSection } from "./VibeKanbanSection";
+import { SourceControlSection } from "./SourceControlSection";
 
 interface SettingsModalProps {
   open: boolean;
@@ -51,6 +53,10 @@ interface SettingsModalProps {
   projects?: ProjectInfo[];
   onGcScan?: () => Promise<GcScanResult>;
   onGcClean?: (input: GcCleanInput) => Promise<GcCleanResult>;
+  /** Optional forge probe (#608). When omitted the section reads window.coder. */
+  onDiscoverSourceControl?: (input?: {
+    rescan?: boolean;
+  }) => Promise<SourceControlDiscovery>;
 }
 
 function budgetToInput(value: number | null | undefined): string {
@@ -195,6 +201,7 @@ export function SettingsModal({
   projects,
   onGcScan,
   onGcClean,
+  onDiscoverSourceControl,
 }: SettingsModalProps) {
   const [budgetText, setBudgetText] = useState("");
   const [orchBudgetText, setOrchBudgetText] = useState("");
@@ -647,6 +654,11 @@ export function SettingsModal({
               </p>
             </div>
           </section>
+
+          <SourceControlSection
+            active={open}
+            onDiscover={onDiscoverSourceControl}
+          />
 
           <section className={styles.section}>
             <h3 className={styles.sectionLabel}>Pull requests</h3>

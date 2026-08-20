@@ -8,58 +8,38 @@
   "chunks": [
     {
       "area": "tests",
-      "rationale": "electron/test/services.test.js is the contract: addProject git-inits a plain directory, leaves existing files, and surfaces `Could not initialize a git repository` instead of the old 'Not a git repository' toast. The two former reject-non-git tests were the bug the screenshot hit. projects-create.test.js still proves Create new mkdir + work tree via the shared addProject init. webDegrade checks the existing-mode note.",
+      "rationale": "electron/test/source-control.test.js is the probe contract: missing CLI, JSON auth (gh >= 2.81), text auth on older gh, upgrade-not-auth-failed when old gh cannot report sign-in, Bitbucket env token, cache until Rescan, and isGhAuthFailure busting that cache. test/sourceControl.test.ts is the T3-shaped readiness helper #459 will consume. Settings and next-git button tests prove the UI copy and the disable path.",
       "risks": [
-        "The init-failure test stubs only `git init` and lets real `git rev-parse` run. A full git-missing stub would skip the init branch if isInsideWorkTree treated every git error as 'not a repo' (it does) and then fail init — that path is covered. A stub that makes rev-parse succeed on a non-repo would skip init entirely; we do not fake that.",
-        "Renderer tests use fakeCoder and never actually git-init."
+        "Probe tests inject bins and must not clobber PATH — #!/usr/bin/env node needs node on PATH. A future test that sets PATH: tmpdir will look like 'gh is installed but auth unknown'.",
+        "gh spawn tests stay POSIX-oriented (execFile + shebang), same as the rest of the gh suite. Win32 az.cmd is still execFile, not cross-spawn.",
+        "Renderer tests inject onDiscover / window.coder; they never run the real probe."
       ]
     },
     {
       "area": "critical",
-      "rationale": "electron/services.js ensureGitWorkTree: if the local folder is not already a work tree, `git init -q` then re-check. addProject calls it after the directory exists check. createProject is now mkdir + addProject with rm -rf rollback on any add failure, so there is one init path.",
+      "rationale": "electron/sourceControl.js is the new probe. One sourceControl:discover IPC, in-memory cache, explicit rescan. GitHub uses gh --version then gh auth status --json hosts when >= 2.81, else text. Outdated is ONLY when we cannot parse auth AND the binary is below 2.81 — a working older gh stays available so Create PR does not lie. GitLab/Azure are CLI probes; Bitbucket is env tokens (SOLENTA_BITBUCKET_*), ready for #456. Timeouts are 8s and never Sync.",
       "risks": [
-        "Picking a parent like ~/code that is not itself a repo will git-init that parent. Same class of mistake as adding the wrong folder; we do not scan for nested repos.",
-        "A folder already inside another git work tree (`rev-parse --is-inside-work-tree` true) is added as-is and is NOT inited. That is existing behavior.",
-        "Bare repos still fail the post-init work-tree check. Nested .git file (submodule gitfile) is treated as already a work tree if rev-parse says so.",
-        "No initial commit. Worktree threads on a freshly inited repo still need a HEAD; default + thread is checkout-bound so first-run is OK.",
-        "createProject rollback now deletes the new folder on ANY addProject failure, not just init. That is stricter than before and correct for a folder we just created."
+        "az account show can be slow on a cold Azure CLI; we treat timeout as unknown, not missing, so we do not tell a signed-in user to brew install azure-cli.",
+        "gh auth status --json always exits 0; readiness is state===success on the active account. Empty hosts => unauthenticated.",
+        "CODER_GH_BIN / CODER_GLAB_BIN / CODER_AZ_BIN override bins for tests. Production uses PATH names gh/glab/az.",
+        "isGhAuthFailure in worktrees.js lazy-requires sourceControl.invalidateDiscoveryCache. A circular load would silently skip invalidation (try/catch); sourceControl.js must not import worktrees.js."
       ]
     },
     {
       "area": "impl",
-      "rationale": "AddProjectPathModal existing-mode copy: placeholder is a folder path, plus a one-line note that we will git-init if needed. CSS fieldNote is muted 12px, matching fieldError metrics. SSH remotes are unchanged and skip ensureGitWorkTree.",
+      "rationale": "Settings → Source Control lists each forge with signed-in-as / what's missing / a copy-pasteable fix and Rescan. nextGitAction gates create-pr, checks, and merge (not Push or Commit) when github.ready is false; null still means 'probe not loaded, keep the old click-and-fail path'. src/sourceControl.ts exports buildAddProjectRemoteSourceReadiness / sortAddProjectProviderSources for #459 — Add Project itself is unchanged.",
       "risks": [
-        "addViaDialog still goes through addProject, so the native leftover picker also inits. Fine.",
-        "The toast in the screenshot came from useCoder.addProject catch (setError) because addProject threw. After this, a successful init returns the project and clears the error."
+        "Header button state can lag a Settings Rescan until the next git refresh (thread update, changes, or a failed gh action). Cache is already fresh; only React state is stale.",
+        "Add-project clone source list is NOT wired. The helper is there so #459 does not grow a second probe.",
+        "Planboard still reports auth after a failed gh call. Same regex now also busts the Settings cache.",
+        "Copy uses navigator.clipboard; jsdom has none so the button is inert in tests, same as Markdown."
       ]
-    },
-    {
-      "area": "electron/worktrees.js — autoResolveMergeArtifacts",
-      "rationale": "The reported failure: merge blocked on '.solenta/review-itinerary.json + AGENTS.md'. tryResolveItineraryOnly only fired when the itinerary was the SOLE unmerged path, so any second app-generated file (config-doctor AGENTS.md/CLAUDE.md/GEMINI.md) sent the user to hand-resolve in the worktree. Now each unmerged path is classified: itinerary -> combine both sides (unchanged logic), config-doctor output -> checkout --ours, anything else -> bail, exactly as before.",
-      "risks": [
-        "Auto-taking ours on a generated doc drops the other side's regeneration; safe because the file is a projection of shared memory and the next doctor run rewrites it whole.",
-        "Gate is the GENERATED_MARKER present in BOTH stages :2 and :3 — a hand-authored AGENTS.md still conflicts (second test covers this)."
-      ]
-    },
-    {
-      "area": "electron/worktrees.js — call sites (5) + configDoctor require",
-      "rationale": "Same helper is used by mergeWorktree, mergeInto's squash and replay, updatePrBranchFromBase and the PR-update path; renaming in place keeps one shared resolution policy instead of per-caller guards. New require of ./configDoctor.js is leaf-only (fs/path), no cycle.",
-      "risks": [
-        "mergeInto squash site runs in the project checkout, where --ours = the target branch — intended."
-      ]
-    },
-    {
-      "area": "electron/test/worktrees.test.js",
-      "rationale": "Two cases: generated AGENTS.md + itinerary conflicting together now merges clean; hand-authored AGENTS.md still throws MERGE_CONFLICT.",
-      "risks": []
     }
   ],
   "risks": [
-    "Not verified in a live Electron window — electron + renderer tests only. Re-adding /Users/willem/code/Shipnest-pivot in the running app is the real check.",
-    "git init does not create a commit or set user.name; origin is unset. Publish/clone remain #459.",
-    "Delete/modify or binary conflicts on a generated doc: stage :2 or :3 is missing, isGeneratedDocConflict returns false, so the merge still refuses — no silent side-taking.",
-    "Did not drop the git requirement for existing directories. T3 projects are just folders; Solenta still errors on an existing non-git dir. Only missing paths get git init.",
-    "Native showOpenDialog remains as Browse… on local; web/headless already had no dialog and now get the same in-app list via the web bridge's IPC_HANDLERS.",
-    "No UI verification in the running desktop app this turn — coverage is unit/component/electron tests."
+    "Not verified in a live Electron window this turn — electron + renderer tests only. Open Settings → Source Control on the running app is the real check (gh is signed in as currentbits on this machine).",
+    "Windows az.cmd / glab.cmd still go through execFile, which cannot run .cmd (EINVAL). Same standing limitation as gh. Discovery will report those as missing on win32 until those call sites switch to cross-spawn.",
+    "Bitbucket env names are SOLENTA_BITBUCKET_* — nothing else reads them yet (#456).",
+    "Did not implement clone-from-GitHub / publish (#459). Readiness data is the feed; the source list UI is a separate issue."
   ]
 }

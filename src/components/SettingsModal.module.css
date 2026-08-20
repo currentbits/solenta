@@ -310,6 +310,46 @@
   box-shadow: 0 0 0 3px var(--green-soft);
 }
 
+.memoryDot[data-state="ready"] {
+  background: var(--green);
+  box-shadow: 0 0 0 3px var(--green-soft);
+}
+
+.memoryDot[data-state="warn"] {
+  background: var(--amber);
+}
+
+.memoryDot[data-state="missing"] {
+  background: var(--text-dim);
+}
+
+.scHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.scMeta {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.scHintRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.scHintRow .doctorFix {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .note {
   margin: 0;
   font-size: 11.5px;

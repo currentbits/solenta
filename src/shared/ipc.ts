@@ -1539,6 +1539,49 @@ export interface ModelInfo {
   contextTokens?: number;
 }
 
+/**
+ * Forge provider id (issue #608). Matches T3's SourceControlProviderKind so
+ * add-project (#459) and later GitLab/Bitbucket/Azure issues share one list.
+ */
+export type SourceControlProviderKind =
+  | "github"
+  | "gitlab"
+  | "bitbucket"
+  | "azure-devops";
+
+/** Binary present and new enough / missing / too old to report auth. */
+export type SourceControlProviderStatus = "available" | "missing" | "outdated";
+
+export type SourceControlAuthStatus =
+  | "authenticated"
+  | "unauthenticated"
+  | "unknown";
+
+export interface SourceControlAuth {
+  status: SourceControlAuthStatus;
+  /** Login, email, or a one-line reason when not authenticated. */
+  detail: string | null;
+}
+
+/**
+ * One forge as Settings → Source Control renders it.
+ * `installHint` is a copy-pasteable command (install, upgrade, or login).
+ */
+export interface SourceControlProvider {
+  kind: SourceControlProviderKind;
+  label: string;
+  status: SourceControlProviderStatus;
+  installHint: string;
+  version: string | null;
+  auth: SourceControlAuth;
+}
+
+/** Result of `sourceControl:discover` (cached until Rescan or an auth miss). */
+export interface SourceControlDiscovery {
+  sourceControlProviders: SourceControlProvider[];
+  probedAt: number;
+}
+
 export interface ProviderInfo {
   id: string;
   /** Display name, e.g. "Claude Code". */
@@ -1992,6 +2035,13 @@ export interface CoderApi {
   };
   providers: {
     list(): Promise<ProviderInfo[]>;
+  };
+  /**
+   * Forge CLI probe (issue #608). Cached until `{ rescan: true }` or a
+   * mid-session auth failure (the gh stderr regex) invalidates it.
+   */
+  sourceControl: {
+    discover(input?: { rescan?: boolean }): Promise<SourceControlDiscovery>;
   };
   workflows: {
     list(): Promise<WorkflowTemplateInfo[]>;

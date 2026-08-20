@@ -1800,9 +1800,20 @@ function isUnknownJsonField(text) {
  * @returns {boolean}
  */
 function isGhAuthFailure(text) {
-  return /gh auth login|GH_TOKEN|not logged into|authentication required|HTTP 401|Bad credentials/i.test(
-    String(text || ""),
-  );
+  const hit =
+    /gh auth login|GH_TOKEN|not logged into|authentication required|HTTP 401|Bad credentials/i.test(
+      String(text || ""),
+    );
+  // Mid-session expiry: drop the forge probe so Settings / next-git rescan
+  // instead of serving a stale "signed in as …" (#608).
+  if (hit) {
+    try {
+      require("./sourceControl.js").invalidateDiscoveryCache();
+    } catch {
+      // Probe module is optional for isolated unit tests.
+    }
+  }
+  return hit;
 }
 
 /**

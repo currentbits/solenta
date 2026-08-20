@@ -143,6 +143,45 @@ function view(props: {
 afterEach(unmountAll);
 
 describe("next-git-action button", () => {
+  it("disables Create PR when GitHub is not ready (#608)", async () => {
+    // jsdom (and window.coder) only exist after the first mount.
+    const shell = await mount(<div />);
+    const prev = (window as unknown as { coder?: unknown }).coder;
+    (window as unknown as { coder: unknown }).coder = {
+      sourceControl: {
+        discover: async () => ({
+          probedAt: 1,
+          sourceControlProviders: [
+            {
+              kind: "github",
+              label: "GitHub",
+              status: "missing",
+              installHint: "brew install gh",
+              version: null,
+              auth: {
+                status: "unauthenticated",
+                detail: "GitHub CLI (gh) is not installed.",
+              },
+            },
+          ],
+        }),
+      },
+    };
+    shell.unmount();
+    try {
+      const m = await mount(view({}));
+      await m.flush();
+      const btn = m.query('[data-next-git-action="create-pr"]') as HTMLButtonElement | null;
+      assert.ok(btn, "create-pr action");
+      assert.equal(btn!.disabled, true);
+      assert.equal(btn!.getAttribute("data-forge-blocked"), "");
+      assert.equal(btn!.getAttribute("title"), "brew install gh");
+      m.unmount();
+    } finally {
+      (window as unknown as { coder?: unknown }).coder = prev;
+    }
+  });
+
   it("offers Create PR on a worktree when sync has not loaded", async () => {
     const m = await mount(view({}));
     await m.flush();

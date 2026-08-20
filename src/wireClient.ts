@@ -39,6 +39,7 @@ import type {
   PrInfo,
   ProjectInfo,
   ProviderInfo,
+  SourceControlDiscovery,
   RewindResult,
   CliSlashCommand,
   SkillInfo,
@@ -330,6 +331,10 @@ export function createWireCoder(opts: CreateWireCoderOptions): CoderApi {
     },
     providers: {
       list: () => call<ProviderInfo[]>("providers:list"),
+    },
+    sourceControl: {
+      discover: (input) =>
+        call<SourceControlDiscovery>("sourceControl:discover", input),
     },
     workflows: {
       list: () => call<WorkflowTemplateInfo[]>("workflows:list"),
