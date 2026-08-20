@@ -401,6 +401,27 @@ stages (issue #500). The gate is procedural, not sandboxed.
 - setProvider validation lives in `electron/services.js` only. `src/devCoder.ts`
   assigns what the picker sends: it is a fixture, not a second contract.
 
+## Divergence
+
+Opt-in compare of two runs of the same task (`src/divergence.ts`, issue
+#531 / #565). The header card (`data-divergence-card` in
+`ThreadView.tsx`) is hidden unless `useDivergenceCardEnabled()` is on.
+The toggle lives on the Environment tab (`DivergenceCardToggle` in
+`AgentsPanel.tsx`). Module state is the source of truth; localStorage
+`coder.divergenceCard` (`"on"` / `"off"`) carries it across launches.
+Default on (`getItem !== "off"`). The toggle still works when
+localStorage does not persist.
+
+Comparison is tool steps only (`extractSteps`): assistant prose always
+differs across models, so including it would make every Claude-vs-Codex
+pair "diverge at step 1". Fields in report order:
+`DIVERGENCE_FIELDS` = type, name, input, output, decision. A length gap
+is a verdict only when the shorter run has finished (`pending: true`
+otherwise). Peers (`sameTaskPeers`): a fork compares with its source
+and sibling forks (same `handoffFrom`); a source compares with its
+children. Same-thread completed runs that called a tool are labeled
+Run 1….
+
 ## Sidebar ordering and settle model
 
 The sidebar follows the t3code (pingdotgg/t3code, MIT) sidebar behavior as a
