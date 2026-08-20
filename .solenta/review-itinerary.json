@@ -3,32 +3,44 @@
   "readOrder": ["critical", "impl", "tests"],
   "chunks": [
     {
-      "area": "critical",
-      "rationale": "electron/orchServer.js is the whole fix. Read assertUserApproved first (the new gate), then its one call site inside thread_merge — the gate fires ONLY when the lead has no worktree of its own, because that is the case where mergeWorktree commits to the project's default branch. A lead that has a worktree keeps merging workers onto its own branch unasked; that is staging, and the user still gates the lead's branch from the thread header. requireLandableWorker is a pure extraction of thread_merge's old preflight so thread_pr shares it — diff it against the old body and check nothing was dropped. thread_pr is new and delegates to the existing createPr; it deliberately does NOT clean up the worker's worktree.",
+      "area": "critical: electron/services.js removeProject",
+      "rationale": "The bug. The old guard rejected removal if ANY thread in the project still carried a worktreePath. Measured against the live store: all 5 projects have such threads (74 total, 30 of them pointing at directories that no longer exist), so 'Remove project' could never succeed for a real project. The guard is replaced with reclaim via removeGcWorktree — the GC primitive, which never deletes a branch and uses a non-force `git worktree remove`, so uncommitted work cannot be destroyed. A failed reclaim warns and leaves the directory on disk rather than blocking. Function became async; the active-run guard still runs before any deletion so partial removal is still impossible.",
       "risks": [
-        "approved:true is the agent's own claim. The real lock is the turn check; if isAutoTurn is missing from a runner (test fakes, any future createToolHandlers caller) the gate falls open to the claim alone.",
-        "A lead that forks a worker and polls it to done inside its own human turn can still merge without asking — the turn genuinely is human-started, just not an answer to a question. The notice path (the common case, and the one that put 13 branches on main) is covered.",
-        "requireLandableWorker throws for a missing worker worktree nowhere — thread_merge still returns merged:false for a worktree:false worker, thread_pr throws. Confirm the two callers handle that case differently on purpose."
+        "Orphaned directories: a dirty worktree survives the removal with no thread row pointing at it. gcScan's git-common-dir fallback still classifies it, so the GC panel can reclaim it later.",
+        "Sync -> async: every caller had to be awaited. Only electron/ipc.js and this test file call it (grepped)."
       ]
     },
     {
-      "area": "impl",
-      "rationale": "electron/runner.js has two small changes. isAutoTurn exposes the existing autoTurns map (already the codebase's own definition of 'human in the loop', see the comment at startRun) — no new state. The worker-finished notice text is the behavioural half: it used to say 'call thread_merge', which is what the lead obeyed. It now says report and ask. Verify the notice and the tool description agree, since the agent reads both.",
+      "area": "impl: electron/worktrees.js export + electron/ipc.js await",
+      "rationale": "removeGcWorktree was module-private; exported unchanged. ipc handler was already async, so only the await was missing.",
       "risks": [
-        "autoTurns resets to 0 on any startRun without fromNotice, which includes machine-ish paths (verify auto-fix). Those would read as human turns; merge still needs approved:true so the blast radius is one gate, not both.",
-        "Instruction/notice wording is the only thing steering a lead that has NOT yet hit the gate. If the wording and the refusal text disagree the agent will loop."
+        "Missing the await would swallow the active-run rejection and report success to the renderer."
       ]
     },
     {
-      "area": "tests",
-      "rationale": "orch-merge.test.js replaces the old 'merges into the project checkout when the lead has no worktree' case — that test asserted exactly the behaviour being removed, so read the replacement pair (refuses / approved) together. The isAutoTurn case builds its own handlers with a fake that returns true. thread_pr coverage is gate-and-guards only: the push/gh half belongs to createPr and would need a CODER_GH_BIN fake (POSIX-only, per the fakeBin split).",
+      "area": "impl: src/App.tsx toast message",
+      "rationale": "The catch discarded the real error, so every failure read 'Failed to remove \"slug\"' with no reason — which is why the cause stayed invisible for so long. Now appends err.message. State renamed removeFailSlug -> removeFailMessage since it no longer holds a slug.",
       "risks": [
-        "thread_pr's happy path is untested here — a typo in the createPr argument shape would not be caught by this suite."
+        "Two unrelated call sites (handleSetArchived, handleClearSettled) also cleared this state; a missed rename crashed 9 renderer tests at first and had to be fixed. Confirm no `removeFailSlug` remains."
+      ]
+    },
+    {
+      "area": "impl: src/components/Sidebar.tsx confirm copy",
+      "rationale": "Removal now deletes worktree folders, so the confirm dialog has to say so. Line only renders when the project actually has worktrees, and states what is kept (branches, repo) and what is skipped (dirty trees).",
+      "risks": [
+        "worktreeCount is derived from the same `threads` prop as the existing thread count, so both share whatever filtering the sidebar applies."
+      ]
+    },
+    {
+      "area": "tests: electron/test/remove-project.test.js",
+      "rationale": "The old suite asserted the guard that was the bug. Replaced with the three cases that matter: clean worktree reclaimed + branch kept, stale path does not block, dirty tree survives while the project still removes. assert.throws -> assert.rejects on the three guard tests now that the function is async.",
+      "risks": [
+        "The dirty-worktree test is the data-loss canary; if a future change adds --force it fails."
       ]
     }
   ],
   "risks": [
-    "Behaviour change for crews already running: their next worker-finished notice will refuse the merge they were told to do. Intended, but it will look like a regression to an in-flight orchestration.",
-    "Full electron suite run green (1682 pass) after building core/dist; a second run showed the known flaky 'wireClient x webBridge over a real socket'. Renderer suite not run — no renderer files changed."
+    "Behaviour change on a destructive action: removing a project now deletes worktree directories it previously refused to touch. Mitigated by never deleting branches (every commit stays reachable), never force-removing, and saying so in the confirm dialog.",
+    "Verification: remove-project.test.js 10/10, full renderer suite 1338/1338, electron suite 1673 pass / 11 fail — all 11 in orch-server.test.js and identical on the stashed baseline, unrelated to this change."
   ]
 }

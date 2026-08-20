@@ -2366,8 +2366,12 @@ export const Sidebar = memo(function Sidebar({
         (() => {
           const confirmProject = projectById.get(removeConfirmId);
           if (!confirmProject) return null;
-          const count = threads.filter(
+          const projectThreads = threads.filter(
             (t) => t.projectId === confirmProject.id,
+          );
+          const count = projectThreads.length;
+          const worktreeCount = projectThreads.filter(
+            (t) => t.worktreePath,
           ).length;
           const threadWord = count === 1 ? "thread" : "threads";
           const title = `Remove project ${confirmProject.slug} and delete its ${count} ${threadWord}?`;
@@ -2403,6 +2407,18 @@ export const Sidebar = memo(function Sidebar({
                 <p className={styles.removeConfirmBody}>
                   This removes only this project entry.
                 </p>
+                {worktreeCount > 0 && (
+                  <p
+                    className={styles.removeConfirmBody}
+                    data-remove-worktree-note
+                  >
+                    {worktreeCount === 1
+                      ? "Its 1 worktree folder is deleted too."
+                      : `Its ${worktreeCount} worktree folders are deleted too.`}{" "}
+                    Branches and the repository are kept; a worktree with
+                    uncommitted changes is left alone.
+                  </p>
+                )}
                 <div className={styles.removeConfirmActions}>
                   <button
                     type="button"

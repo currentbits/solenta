@@ -288,7 +288,7 @@ const IPC_HANDLERS = {
     });
   },
   "projects:remove": async (ctx, input) => {
-    services.removeProject(ctx.store, input, {
+    await services.removeProject(ctx.store, input, {
       isRunning: (id) => ctx.runner.isRunning(id),
     });
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));

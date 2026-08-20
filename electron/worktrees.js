@@ -4443,6 +4443,7 @@ module.exports = {
   sweepOrphanWorktrees,
   gcScan,
   gcClean,
+  removeGcWorktree,
   enforceRetention,
   scheduleRetention,
   DEFAULT_WORKTREE_RETENTION,
