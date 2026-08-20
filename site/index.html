@@ -27,7 +27,7 @@
   <meta name="theme-color" content="#050505" />
   <link rel="icon" href="assets/icon.svg" type="image/svg+xml" />
   <script>document.documentElement.classList.add("js");</script>
-  <link rel="stylesheet" href="style.css?v=5" />
+  <link rel="stylesheet" href="style.css?v=6" />
   <script src="https://unpkg.com/@phosphor-icons/web@2.1.1" defer></script>
 </head>
 <body>
@@ -54,10 +54,9 @@
 <header class="hero">
   <div class="hero-bg" aria-hidden="true">
     <div class="hero-grid"></div>
-    <i></i><i></i>
   </div>
   <div class="wrap hero-inner">
-    <p class="hero-pill reveal"><span class="dot"></span> Free &amp; open source, MIT</p>
+    <p class="hero-pill reveal">Free &amp; open source, MIT</p>
     <h1 class="reveal">Every agent starts where the <span class="em">last one stopped.</span></h1>
     <p class="sub reveal">
       One shared memory across every agent, and a planboard that is your GitHub issues.
@@ -74,7 +73,6 @@
     <div class="hero-shot">
       <div class="shot-wrap">
         <div class="shot">
-          <div class="shot-bar"><i></i><i></i><i></i></div>
           <img src="assets/screen-main.png" alt="Solenta running a thread: work log, agent messages, and the environment panel with PR checks" />
         </div>
       </div>
@@ -98,42 +96,43 @@
 
 <section id="memory">
   <div class="wrap">
-    <div class="section-head reveal">
-      <p class="eyebrow">Shared memory</p>
-      <h2>Your agents <span class="em">remember.</span></h2>
-      <p>
-        What one thread learns, the next one knows. Solenta injects a local
-        memory server into every agent session automatically, so decisions and
-        gotchas persist across Claude Code, Codex, Kimi, Grok and OpenCode.
-        It is SQLite on your machine, with full-text and vector search, and a
-        Memory tab so you can search, read and store entries yourself. The
-        tenth session on a project is better informed than the first.
-      </p>
+    <div class="memory-grid">
+      <div class="section-head reveal">
+        <p class="eyebrow">Shared memory</p>
+        <h2>Your agents <span class="em">remember.</span></h2>
+        <p>
+          What one thread learns, the next one knows. Solenta injects a local
+          memory server into every agent session automatically, so decisions
+          and gotchas persist across Claude Code, Codex, Kimi, Grok and
+          OpenCode. The tenth session on a project is better informed than
+          the first.
+        </p>
+        <ul class="orch-points">
+          <li><strong>Injected automatically.</strong> When the local server is healthy, every new session gets it. You do not wire it up per agent.</li>
+          <li><strong>Local, and yours to search.</strong> HTTP + MCP, localhost-only, bearer-token gated. The Memory tab reads the same SQLite file the agents write, with full-text and vector search.</li>
+          <li><strong>It compounds.</strong> Session ten does not re-learn what session one already ruled out.</li>
+        </ul>
+      </div>
+      <div class="memory-panel reveal">
+        <div class="memory-search">
+          <i class="ph ph-magnifying-glass"></i>
+          <span>Memory server, localhost, SQLite</span>
+          <span class="memory-search-hint">Search, read, store</span>
+        </div>
+        <div class="memory-entry">
+          <p class="memory-meta">Claude Code <span class="mdot"></span> thread 1</p>
+          <p>Ruled out a rewrite of auth. Cookie session stays; refresh lives in src/lib/auth.ts.</p>
+        </div>
+        <div class="memory-entry">
+          <p class="memory-meta">Codex <span class="mdot"></span> thread 3</p>
+          <p>The 401 retry is in src/lib/api.ts. Moving it breaks the refresh path.</p>
+        </div>
+        <div class="memory-entry">
+          <p class="memory-meta">Grok <span class="mdot"></span> thread 6</p>
+          <p>Starts knowing both. Adds the expiry skew and leaves the rest alone.</p>
+        </div>
+      </div>
     </div>
-    <div class="memory-panel glow reveal">
-      <div class="memory-search">
-        <i class="ph ph-magnifying-glass"></i>
-        <span>Memory server, localhost, SQLite</span>
-        <span class="memory-search-hint">Search, read, store</span>
-      </div>
-      <div class="memory-entry">
-        <p class="memory-meta">Claude Code <span class="mdot"></span> thread 1</p>
-        <p>Ruled out a rewrite of auth. Cookie session stays; refresh lives in src/lib/auth.ts.</p>
-      </div>
-      <div class="memory-entry">
-        <p class="memory-meta">Codex <span class="mdot"></span> thread 3</p>
-        <p>The 401 retry is in src/lib/api.ts. Moving it breaks the refresh path.</p>
-      </div>
-      <div class="memory-entry">
-        <p class="memory-meta">Grok <span class="mdot"></span> thread 6</p>
-        <p>Starts knowing both. Adds the expiry skew and leaves the rest alone.</p>
-      </div>
-    </div>
-    <ul class="orch-points reveal">
-      <li><strong>Injected automatically.</strong> When the local server is healthy, every new session gets it. You do not wire it up per agent.</li>
-      <li><strong>Local, and yours to search.</strong> HTTP + MCP, localhost-only, bearer-token gated. The Memory tab reads the same SQLite file the agents write.</li>
-      <li><strong>It compounds.</strong> Session ten does not re-learn what session one already ruled out.</li>
-    </ul>
   </div>
 </section>
 
@@ -150,7 +149,7 @@
       </p>
       <p class="board-claim">No local-only planner can copy this.</p>
     </div>
-    <div class="board glow reveal">
+    <div class="board reveal">
       <div>
         <h3><span class="col-dot col-todo"></span>Todo</h3>
         <article>
@@ -210,7 +209,7 @@
         <h3>A flat sidebar</h3>
         <p>Dot, title, age. No project group headers. Pin what matters; snooze and settle have their own shelves.</p>
       </div>
-      <div class="cell cell-e reveal">
+      <div class="cell cell-e cell-tint reveal">
         <div class="cell-icon"><i class="ph ph-users-three"></i></div>
         <h3>Agent teams, not just fan-out</h3>
         <p>Workers share a crew task list and message each other directly. A shared per-repo code index goes into every dispatched prompt, so a fresh worker starts knowing where things live.</p>
@@ -235,7 +234,7 @@
         <h3>A review itinerary, not a file list</h3>
         <p>Every agent diff gets a risk-ranked read order: CI and config first, then reuse, the critical path, tests, and the rest. Git is a tab in the thread, not a card in the rail.</p>
       </div>
-      <div class="cell cell-e reveal">
+      <div class="cell cell-e cell-tint reveal">
         <div class="cell-icon"><i class="ph ph-seal-check"></i></div>
         <h3>Green means verified</h3>
         <p>A thread only settles green once its verify command exits 0. Guardrails protect the config a worker may not touch, and scan what it brings back for injection and secrets.</p>
@@ -250,7 +249,7 @@
         <h3>Spend caps</h3>
         <p>Set a daily budget. A run that would cross it never starts. Token burn is visible per thread.</p>
       </div>
-      <div class="cell cell-e reveal">
+      <div class="cell cell-e cell-tint reveal">
         <div class="cell-icon"><i class="ph ph-globe"></i></div>
         <h3>Web mode and SSH</h3>
         <p><code>--serve-web</code> puts the UI in a browser behind a token. Register projects on remote hosts and agents run there over SSH.</p>
@@ -262,7 +261,7 @@
           <img src="assets/screen-kanban.png" alt="The Kanban view grouping threads by status" />
         </div>
       </div>
-      <div class="cell cell-f reveal">
+      <div class="cell cell-e reveal">
         <h3>Automations on a schedule</h3>
         <p>Recurring prompts against any project: hourly, daily, weekly, with the provider and model you pick.</p>
         <div class="cell-img">
@@ -277,7 +276,6 @@
   <div class="wrap">
     <div class="orch">
       <div class="reveal">
-        <p class="eyebrow">Orchestration</p>
         <h2 class="orch-title">Orchestration is a <span class="em">sentence,</span> not a config.</h2>
         <p class="orch-sub">
           Every thread carries tools to drive the other threads. You describe
@@ -292,7 +290,7 @@
           <li><strong>Or pick a fixed pipeline.</strong> The Build button runs a known template when the shape is repeatable.</li>
         </ul>
       </div>
-      <div class="prompt-card glow reveal">
+      <div class="prompt-card reveal">
         <div class="prompt-label">You, in any thread</div>
         <div class="prompt-line">
           &ldquo;Fan out three Grok workers to build the settings migration,
@@ -371,23 +369,23 @@
       <h2>Questions.</h2>
     </div>
     <div class="faq-list reveal">
-      <details>
+      <details name="faq">
         <summary>Which agents can Solenta run?</summary>
         <p>Claude Code, Codex, Kimi, Grok and OpenCode. Install the CLIs you want to drive and Solenta finds them on your PATH. Permission modes, model overrides and session resume are per provider.</p>
       </details>
-      <details>
+      <details name="faq">
         <summary>Does my code leave my machine?</summary>
         <p>Only inside the prompts your chosen agent CLI sends to its provider, same as running that CLI yourself. Solenta adds nothing on top: memory is a local SQLite file, plans are your own GitHub issues, and there is no Solenta cloud.</p>
       </details>
-      <details>
+      <details name="faq">
         <summary>Do I pay Solenta for tokens?</summary>
         <p>No. Bring your own subscription or API key per provider. Solenta never resells tokens and never sits in the billing path.</p>
       </details>
-      <details>
+      <details name="faq">
         <summary>What does the planboard need?</summary>
         <p>The GitHub CLI signed in, and a project whose origin is on GitHub. Without those, threads, memory and everything else work exactly the same; the board simply stays off.</p>
       </details>
-      <details>
+      <details name="faq">
         <summary>Is it free?</summary>
         <p>Yes. MIT licensed, with releases for macOS, Windows and Linux.</p>
       </details>
@@ -412,26 +410,25 @@
 <section id="install">
   <div class="wrap">
     <div class="section-head reveal">
-      <p class="eyebrow">Get started</p>
       <h2>Install in a minute.</h2>
       <p>Grab an archive from the latest release, then install whichever agent CLIs you want to drive. Solenta finds them on your PATH.</p>
     </div>
     <div class="install-grid">
-      <div class="install-card glow reveal">
+      <div class="install-card reveal">
         <h3>macOS</h3>
         <p class="os-note">Apple Silicon</p>
         <pre><b>Solenta-v0.8.0-macos-arm64.zip</b>
 unzip, move to /Applications
 first launch: right-click &gt; Open</pre>
       </div>
-      <div class="install-card glow reveal">
+      <div class="install-card reveal">
         <h3>Windows</h3>
         <p class="os-note">x64</p>
         <pre><b>Solenta-v0.8.0-win32-x64.zip</b>
 unzip anywhere
 run solenta.exe (SmartScreen asks once)</pre>
       </div>
-      <div class="install-card glow reveal">
+      <div class="install-card reveal">
         <h3>Linux</h3>
         <p class="os-note">x64</p>
         <pre><b>Solenta-v0.8.0-linux-x64.tar.gz</b>
@@ -466,6 +463,6 @@ tar xzf Solenta-*.tar.gz
   </div>
 </footer>
 
-<script src="main.js?v=3"></script>
+<script src="main.js?v=4"></script>
 </body>
 </html>

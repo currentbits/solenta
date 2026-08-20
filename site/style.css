@@ -3,9 +3,15 @@
    One accent: high-vis yellow on near-black. No gradient text, no
    multi-hue glow soup. Shape scale: cards 14px, controls 9px, chips pill.
    Modern CSS throughout: scroll-driven animations (animation-timeline),
-   registered @property glow tracking, color-mix() in oklch, mask-image
-   fades, fluid clamp() type. Progressive enhancement: the page is complete
-   without JS and without animation-timeline; motion layers only ever add. */
+   cross-document view transitions, animated ::details-content with
+   interpolate-size, text-box leading trim, color-mix() in oklch,
+   mask-image fades, fluid clamp() type. Progressive enhancement: the page
+   is complete without JS and without any of these; motion only ever adds. */
+
+/* Cross-document view transitions: same-origin page navs cross-fade. */
+@view-transition {
+  navigation: auto;
+}
 
 @font-face {
   font-family: "Geist";
@@ -20,20 +26,10 @@
   font-display: swap;
 }
 
-/* Glow coordinates, registered so they interpolate smoothly when JS
-   tracks the pointer across cards. */
-@property --mx {
-  syntax: "<length-percentage>";
-  initial-value: 50%;
-  inherits: false;
-}
-@property --my {
-  syntax: "<length-percentage>";
-  initial-value: 50%;
-  inherits: false;
-}
-
 :root {
+  /* Lets block-size animate to auto, for the FAQ accordion. */
+  interpolate-size: allow-keywords;
+
   --bg: #050505;
   --bg-2: #0a0a0a;
   --surface: rgba(255, 255, 255, 0.03);
@@ -213,50 +209,30 @@ code, pre, .mono { font-family: var(--font-mono); }
     linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
     linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
   background-size: 72px 72px;
-  mask-image: radial-gradient(ellipse 90% 62% at 50% 0%, #000 25%, transparent 78%);
-  -webkit-mask-image: radial-gradient(ellipse 90% 62% at 50% 0%, #000 25%, transparent 78%);
+  mask-image: radial-gradient(ellipse 90% 62% at 32% 0%, #000 25%, transparent 78%);
+  -webkit-mask-image: radial-gradient(ellipse 90% 62% at 32% 0%, #000 25%, transparent 78%);
 }
 
-/* Two blurred fields: warm key light, neutral fill. Transform only. */
-.hero-bg i {
+/* One static key light from above. No drifting lava-lamp blobs. */
+.hero-bg::before {
+  content: "";
   position: absolute;
-  border-radius: 50%;
-  filter: blur(110px);
-  will-change: transform;
-}
-.hero-bg i:nth-of-type(1) {
-  width: 680px;
-  height: 680px;
-  left: 50%;
-  top: -400px;
-  translate: -50% 0;
-  background: radial-gradient(
-    closest-side,
-    color-mix(in oklch, var(--accent) 13%, transparent),
-    transparent
-  );
-  animation: drift-a 28s ease-in-out infinite alternate;
-}
-.hero-bg i:nth-of-type(2) {
-  width: 520px;
-  height: 520px;
-  right: -180px;
-  top: 40px;
-  background: radial-gradient(
-    closest-side,
-    rgba(255, 255, 255, 0.05),
-    transparent
-  );
-  animation: drift-b 34s ease-in-out infinite alternate;
-}
-@keyframes drift-a {
-  to { transform: translate(80px, 60px) scale(1.1); }
-}
-@keyframes drift-b {
-  to { transform: translate(-90px, 70px) scale(0.94); }
+  inset: 0 0 auto;
+  height: 75%;
+  background:
+    radial-gradient(
+      ellipse 48% 55% at 24% 0%,
+      color-mix(in oklch, var(--accent) 7%, transparent),
+      transparent 72%
+    ),
+    radial-gradient(
+      ellipse 60% 45% at 82% 8%,
+      rgba(255, 255, 255, 0.04),
+      transparent 70%
+    );
 }
 
-.hero-inner { position: relative; text-align: center; }
+.hero-inner { position: relative; }
 
 .hero-pill {
   display: inline-flex;
@@ -273,39 +249,29 @@ code, pre, .mono { font-family: var(--font-mono); }
   letter-spacing: 0.06em;
   color: var(--text-muted);
 }
-.hero-pill .dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--accent);
-  animation: pulse 2.6s ease-in-out infinite;
-}
-@keyframes pulse {
-  50% { opacity: 0.45; }
-}
 
 .hero h1 {
-  font-size: clamp(44px, 7vw, 88px);
+  font-size: clamp(38px, 7.4vw, 92px);
   line-height: 1.02;
   letter-spacing: -0.045em;
   font-weight: 700;
-  margin: 0 auto 24px;
-  max-width: 17ch;
+  margin: 0 0 26px;
+  max-width: 15ch;
   text-wrap: balance;
+  text-box: trim-both cap alphabetic;
 }
 .hero .sub {
   color: var(--text-muted);
   font-size: clamp(16px, 1.6vw, 18.5px);
   line-height: 1.65;
-  max-width: 52ch;
-  margin: 0 auto 34px;
+  max-width: 46ch;
+  margin: 0 0 34px;
   text-wrap: pretty;
 }
 .hero-ctas {
   display: flex;
   gap: 14px;
   flex-wrap: wrap;
-  justify-content: center;
 }
 
 .btn {
@@ -393,20 +359,6 @@ code, pre, .mono { font-family: var(--font-mono); }
     }
   }
 }
-.shot-bar {
-  display: flex;
-  gap: 6px;
-  padding: 11px 14px;
-  border-bottom: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.02);
-}
-.shot-bar i {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-}
 .shot img { width: 100%; }
 
 /* ---------------- agents wall ---------------- */
@@ -470,6 +422,7 @@ section#agents { padding: clamp(56px, 7vw, 88px) 0; }
   font-weight: 680;
   margin: 0 0 18px;
   text-wrap: balance;
+  text-box: trim-both cap alphabetic;
 }
 .section-head p {
   color: var(--text-muted);
@@ -498,64 +451,24 @@ section#agents { padding: clamp(56px, 7vw, 88px) 0; }
   background: linear-gradient(90deg, var(--accent), transparent);
 }
 
-section#memory .section-head { max-width: 760px; }
-section#memory .section-head h2 { font-size: clamp(34px, 4.4vw, 58px); }
-section#memory .orch-points { max-width: 760px; }
 
-/* ---------------- glow cards ----------------
-   Pointer-tracked radial highlight + gradient border. --mx/--my are
-   registered custom properties; JS writes them on pointermove. Without
-   JS the cards sit at their static, fully-legible state. */
-.glow, .cell {
-  position: relative;
+/* ---------------- memory ---------------- */
+/* Split composition, panel on the left: DOM keeps the heading first for
+   readers; the grid swaps the visual order on desktop only. */
+.memory-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.02fr) minmax(0, 0.98fr);
+  gap: clamp(40px, 5vw, 72px);
+  align-items: center;
 }
-.glow::before, .cell::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background: radial-gradient(
-    260px circle at var(--mx) var(--my),
-    color-mix(in oklch, var(--accent) 8%, transparent),
-    transparent 72%
-  );
-  opacity: 0;
-  transition: opacity 0.45s;
-  pointer-events: none;
-}
-.glow::after, .cell::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  padding: 1px;
-  background: radial-gradient(
-    220px circle at var(--mx) var(--my),
-    color-mix(in oklch, var(--accent) 50%, transparent),
-    transparent 65%
-  );
-  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-  mask-composite: exclude;
-  opacity: 0;
-  transition: opacity 0.45s;
-  pointer-events: none;
-}
-@media (hover: hover) {
-  .glow:hover::before, .cell:hover::before,
-  .glow:hover::after, .cell:hover::after {
-    opacity: 1;
-  }
-}
+.memory-grid .memory-panel { order: -1; }
+.memory-grid .section-head { margin-bottom: 0; }
 
-/* ---------------- memory panel ---------------- */
 .memory-panel {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.015));
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
   overflow: hidden;
-  margin-bottom: 8px;
   box-shadow: 0 24px 70px rgba(0, 0, 0, 0.35);
 }
 .memory-search {
@@ -678,14 +591,31 @@ section#memory .orch-points { max-width: 760px; }
   margin: 20px -26px -26px;
   border-top: 1px solid var(--border);
 }
-.cell .cell-img img { width: 100%; }
+/* Cap screenshot height so an image cell does not stretch its whole row. */
+.cell .cell-img img {
+  width: 100%;
+  max-height: 400px;
+  object-fit: cover;
+  object-position: left top;
+}
+/* A few cells carry the accent so the grid is not a wall of one gray. */
+.cell-tint {
+  background: linear-gradient(
+    180deg,
+    color-mix(in oklch, var(--accent) 8%, transparent),
+    color-mix(in oklch, var(--accent) 2.5%, transparent)
+  );
+  border-color: color-mix(in oklch, var(--accent) 24%, transparent);
+}
 .cell-a { grid-column: span 4; }
-.cell-b { grid-column: span 2; }
-.cell-c { grid-column: span 2; }
-.cell-d { grid-column: span 2; }
+.cell-b {
+  grid-column: span 2;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+/* Twelve span-3 cells after the opening 4+2 row: every row closes full. */
 .cell-e { grid-column: span 3; }
-/* Automations closes the grid full-width so no row ends half-empty. */
-.cell-f { grid-column: span 6; }
 .cell-icon {
   width: 36px;
   height: 36px;
@@ -830,6 +760,21 @@ section#memory .orch-points { max-width: 760px; }
   color: var(--accent);
 }
 .faq-list summary:hover { color: var(--accent); }
+/* Animated open/close: block-size interpolates to auto (interpolate-size
+   on :root). Engines without it just snap open, which is the old behavior. */
+.faq-list details::details-content {
+  opacity: 0;
+  block-size: 0;
+  overflow-y: clip;
+  transition:
+    content-visibility 0.4s allow-discrete,
+    opacity 0.4s var(--ease),
+    block-size 0.4s var(--ease);
+}
+.faq-list details[open]::details-content {
+  opacity: 1;
+  block-size: auto;
+}
 .faq-list details p {
   margin: -4px 4px 0;
   padding: 0 0 22px;
@@ -1029,7 +974,7 @@ html.js .reveal.in {
 @media (prefers-reduced-motion: reduce) {
   html.js .reveal { opacity: 1; transform: none; filter: none; transition: none; }
   html { scroll-behavior: auto; }
-  .hero-bg i, .hero-pill .dot { animation: none; }
+  .faq-list details::details-content { transition: none; }
   @supports (animation-timeline: view()) {
     .shot { animation: none; }
   }
@@ -1042,11 +987,12 @@ html.js .reveal.in {
 @media (max-width: 900px) {
   .hero { padding-top: 60px; }
   .hero h1 { letter-spacing: -0.035em; }
-  .orch, .board { grid-template-columns: 1fr; gap: 36px; }
+  .orch, .board, .memory-grid { grid-template-columns: 1fr; gap: 36px; }
+  .memory-grid .memory-panel { order: 0; }
   .board { gap: 0; }
   .board > div + div { border-left: none; border-top: 1px solid var(--border); }
   .bento { grid-template-columns: 1fr; }
-  .cell-a, .cell-b, .cell-c, .cell-d, .cell-e, .cell-f { grid-column: span 1; }
+  .cell-a, .cell-b, .cell-e { grid-column: span 1; }
   .install-grid { grid-template-columns: 1fr; }
   section { padding: 72px 0; }
   section#agents { padding: 56px 0; }
@@ -1060,13 +1006,15 @@ html.js .reveal.in {
   }
   .docs-nav a { border-left: none; border: 1px solid var(--border); }
   .nav-links { gap: 16px; }
-  .hero-bg i { filter: blur(70px); }
 }
 
 @media (max-width: 560px) {
-  /* Nav must stay on one line: GitHub is in the hero CTA and the footer. */
-  .nav-inner { gap: 16px; }
-  .nav-links { gap: 14px; }
+  /* Nav must stay on one line AND inside the viewport: GitHub is in the
+     hero CTA and the footer, and everything else tightens up. */
+  .nav-inner { padding: 0 16px; gap: 12px; }
+  .nav-links { gap: 12px; }
+  .nav-cta { padding: 6px 12px; }
+  .hero h1 { font-size: clamp(34px, 10.4vw, 46px); }
   .nav-links a[href="https://github.com/currentbits/solenta"] { display: none; }
   /* Compare table fits the viewport instead of scrolling sideways. */
   .compare { min-width: 0; font-size: 13px; }

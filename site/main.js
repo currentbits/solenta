@@ -1,8 +1,6 @@
-// Solenta site: scroll reveals, pointer glow tracking, nav state,
-// docs scroll-spy. No dependencies.
+// Solenta site: scroll reveals, nav state, docs scroll-spy. No dependencies.
 (() => {
   const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const canHover = window.matchMedia("(hover: hover)").matches;
 
   // Reveal on scroll, with a light stagger between siblings that share
   // a parent (bento grids, install cards, hero stack).
@@ -29,20 +27,6 @@
       { threshold: 0.12 },
     );
     revealEls.forEach((el) => io.observe(el));
-  }
-
-  // Pointer-tracked glow: writes registered custom properties --mx/--my
-  // so cards light up under the cursor. Pointer Events cover mouse and
-  // pen; touch never fires move without pressure, and hover:none skips it.
-  if (canHover && !reduce) {
-    const glowEls = document.querySelectorAll(".glow, .cell");
-    for (const el of glowEls) {
-      el.addEventListener("pointermove", (ev) => {
-        const r = el.getBoundingClientRect();
-        el.style.setProperty("--mx", `${ev.clientX - r.left}px`);
-        el.style.setProperty("--my", `${ev.clientY - r.top}px`);
-      });
-    }
   }
 
   // Nav picks up a border and stronger blur once the page scrolls.
