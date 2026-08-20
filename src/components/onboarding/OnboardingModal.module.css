@@ -143,3 +143,106 @@
   filter: brightness(1.08);
   color: #dbeafe;
 }
+
+/* SetupStep */
+.setupSection {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 12px 0 0;
+  border: none;
+  min-width: 0;
+}
+
+.setupSection + .setupSection {
+  border-top: 1px solid var(--border-soft);
+}
+
+fieldset.setupSection:disabled {
+  opacity: 0.55;
+}
+
+.setupSectionLabel {
+  padding: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.setupProjectList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.setupProjectMore {
+  color: var(--text-muted);
+}
+
+.setupToggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text);
+}
+
+.setupToggle input {
+  margin-top: 3px;
+  flex-shrink: 0;
+}
+
+.setupBudget {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.setupBudgetLabel {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.setupBudgetRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.setupInput {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--text);
+  font-size: 13px;
+}
+
+.setupInput:focus {
+  outline: none;
+  border-color: var(--blue-border);
+  box-shadow: 0 0 0 2px var(--blue-soft);
+}
+
+.setupInput:disabled {
+  opacity: 0.6;
+}
+
+.setupError {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.35;
+  color: #fca5a5;
+}
