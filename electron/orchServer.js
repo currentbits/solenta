@@ -18,6 +18,10 @@ const {
   claimCrewTask,
   completeCrewTask,
   releaseCrewTasks,
+  setArchived,
+  setSettled,
+  renameThread,
+  listThreads,
 } = require("./services.js");
 
 const SERVER_NAME = "coder-threads";
@@ -40,8 +44,11 @@ const INSTRUCTIONS =
   "TODO(human) markers, give hints not solutions, review the human's fills, and " +
   "call teach_review with passed true or false. " +
   "threads_list shows every thread with id, title, provider, status, handoffFrom, " +
-  "projectId and projectName — filter it by your own projectId first. " +
+  "projectId, projectName, archived, settledOverride and snoozedUntil — filter " +
+  "it by your own projectId first. " +
   "thread_fork and thread_send reject a thread outside the projectId you pass. " +
+  "thread_archive, thread_settle, thread_stop and thread_rename wrap the same " +
+  "host actions as the sidebar and take the same projectId guard. " +
   "thread_fork starts a new thread (optionally on a different provider) on your " +
   "prompt; the worker does NOT inherit the source session, only a truncated digest " +
   "of its last messages, so write a self-contained prompt with every fact the worker " +
@@ -212,9 +219,10 @@ async function loadOrCreateConfig(file) {
  * @param {{ startRun: (input: { threadId: string, prompt: string }) => Promise<unknown> }} deps.runner
  * @param {(store: unknown, input: { threadId: string, provider?: string }) => { id: string }} deps.forkThread
  * @param {(id: string) => unknown} deps.getProvider
+ * @param {(channel: string, payload: unknown) => void} [deps.broadcast]
  */
 function createToolHandlers(deps) {
-  const { store, runner, forkThread, getProvider } = deps;
+  const { store, runner, forkThread, getProvider, broadcast } = deps;
 
   /**
    * The project a thread belongs to, or null when it has been deleted.
@@ -256,6 +264,34 @@ function createToolHandlers(deps) {
     );
   }
 
+  /**
+   * Unknown-thread + same-project guard shared by the host-action tools.
+   * @param {{ threadId?: string, projectId?: string }} args
+   */
+  function requireOwnThread(args) {
+    const thread = store.getThread(args.threadId);
+    if (!thread) {
+      throw new Error(`Unknown thread: ${args.threadId}`);
+    }
+    assertSameProject(thread, args.projectId);
+    return thread;
+  }
+
+  /**
+   * Kill a kept-alive CLI the way ipc.retireAgent does on archive/settle.
+   * @param {string} threadId
+   */
+  function retireAgent(threadId) {
+    if (typeof runner.disposeClaudeSession === "function") {
+      runner.disposeClaudeSession(threadId);
+    }
+  }
+
+  function broadcastThreadsChanged() {
+    if (typeof broadcast !== "function") return;
+    broadcast("threads:changed", listThreads(store));
+  }
+
   async function threads_list() {
     return store.getThreads().map((t) => {
       const project = projectOf(t);
@@ -269,6 +305,9 @@ function createToolHandlers(deps) {
         // one project's agent spawned workers on another project's repo.
         projectId: t.projectId ?? null,
         projectName: project ? (project.name ?? null) : null,
+        archived: Boolean(t.archived),
+        settledOverride: t.settledOverride ?? null,
+        snoozedUntil: t.snoozedUntil ?? null,
       };
     });
   }
@@ -519,11 +558,61 @@ function createToolHandlers(deps) {
     return { delivered: true, toThreadId: to.id };
   }
 
+  async function thread_archive(args) {
+    requireOwnThread(args);
+    const updated = setArchived(store, {
+      threadId: args.threadId,
+      archived: args.archived,
+    });
+    if (updated && updated.archived) retireAgent(updated.id);
+    broadcastThreadsChanged();
+    return {
+      threadId: args.threadId,
+      archived: Boolean(updated && updated.archived),
+    };
+  }
+
+  async function thread_settle(args) {
+    requireOwnThread(args);
+    const updated = setSettled(store, {
+      threadId: args.threadId,
+      override: args.override,
+    });
+    if (updated && updated.settledOverride === "settled") {
+      retireAgent(updated.id);
+    }
+    broadcastThreadsChanged();
+    return {
+      threadId: args.threadId,
+      settledOverride: updated ? updated.settledOverride : args.override,
+    };
+  }
+
+  async function thread_stop(args) {
+    requireOwnThread(args);
+    await runner.stopRun({ threadId: args.threadId });
+    return { threadId: args.threadId };
+  }
+
+  async function thread_rename(args) {
+    requireOwnThread(args);
+    const updated = renameThread(store, {
+      threadId: args.threadId,
+      title: args.title,
+    });
+    broadcastThreadsChanged();
+    return { threadId: args.threadId, title: updated.title };
+  }
+
   return {
     threads_list,
     thread_fork,
     thread_send,
     thread_status,
+    thread_archive,
+    thread_settle,
+    thread_stop,
+    thread_rename,
     hypothesis_record,
     work_suggest,
     spec_submit,
@@ -554,8 +643,9 @@ function buildMcpServer(sdk, handlers) {
     {
       description:
         "List every thread: id, title, provider, status, handoffFrom, " +
-        "projectId, projectName. Threads from EVERY project are listed — " +
-        "match projectId against your own before touching one.",
+        "projectId, projectName, archived, settledOverride, snoozedUntil. " +
+        "Threads from EVERY project are listed — match projectId against " +
+        "your own before touching one.",
       inputSchema: {},
     },
     async () => json(await handlers.threads_list()),
@@ -603,6 +693,75 @@ function buildMcpServer(sdk, handlers) {
       },
     },
     async (args) => json(await handlers.thread_send(args)),
+  );
+
+  server.registerTool(
+    "thread_archive",
+    {
+      description:
+        "Archive or unarchive a thread in your project. archived:true folds " +
+        "it out of Active (and retires a kept-alive CLI, matching the " +
+        "sidebar). projectId is YOUR OWN project id (stated at the end of " +
+        "your prompt); the thread must belong to it. Rejects unknown threads " +
+        "and threads in another project.",
+      inputSchema: {
+        threadId: z.string().min(1),
+        projectId: z.string().min(1),
+        archived: z.boolean(),
+      },
+    },
+    async (args) => json(await handlers.thread_archive(args)),
+  );
+
+  server.registerTool(
+    "thread_settle",
+    {
+      description:
+        "Set or clear the settle override on a thread in your project. " +
+        'override is "settled", "active", or null (clear). Settling a ' +
+        "working thread is rejected, same as the sidebar. projectId is YOUR " +
+        "OWN project id (stated at the end of your prompt); the thread must " +
+        "belong to it.",
+      inputSchema: {
+        threadId: z.string().min(1),
+        projectId: z.string().min(1),
+        override: z.enum(["settled", "active"]).nullable(),
+      },
+    },
+    async (args) => json(await handlers.thread_settle(args)),
+  );
+
+  server.registerTool(
+    "thread_stop",
+    {
+      description:
+        "Stop the run on an existing thread (same as the UI stop). " +
+        "projectId is YOUR OWN project id (stated at the end of your " +
+        "prompt); the thread must belong to it. Rejects unknown threads and " +
+        "threads in another project.",
+      inputSchema: {
+        threadId: z.string().min(1),
+        projectId: z.string().min(1),
+      },
+    },
+    async (args) => json(await handlers.thread_stop(args)),
+  );
+
+  server.registerTool(
+    "thread_rename",
+    {
+      description:
+        "Rename a thread. Metadata only — does not bump updatedAt. " +
+        "projectId is YOUR OWN project id (stated at the end of your " +
+        "prompt); the thread must belong to it. Rejects unknown threads and " +
+        "threads in another project.",
+      inputSchema: {
+        threadId: z.string().min(1),
+        projectId: z.string().min(1),
+        title: z.string().min(1),
+      },
+    },
+    async (args) => json(await handlers.thread_rename(args)),
   );
 
   server.registerTool(
@@ -828,6 +987,7 @@ function buildMcpServer(sdk, handlers) {
  * @param {NodeJS.ProcessEnv} [opts.env]
  * @param {(store: unknown, input: { threadId: string, provider?: string }) => { id: string }} [opts.forkThread] - inject for tests
  * @param {(id: string) => unknown} [opts.getProvider] - inject for tests
+ * @param {(channel: string, payload: unknown) => void} [opts.broadcast] - same fan-out as IPC
  */
 function createOrchServer(opts) {
   const {
@@ -837,6 +997,7 @@ function createOrchServer(opts) {
     appPath,
     log = (msg) => console.warn(msg),
     env = process.env,
+    broadcast,
   } = opts;
   // Lazy requires: only touched when a tool actually runs.
   const forkThread =
@@ -881,6 +1042,7 @@ function createOrchServer(opts) {
       runner,
       forkThread,
       getProvider,
+      broadcast,
     });
 
     server = http.createServer(async (req, res) => {

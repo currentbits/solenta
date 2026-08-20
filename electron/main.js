@@ -418,6 +418,7 @@ app.whenReady().then(async () => {
     userDataPath: userData,
     appPath,
     log: (msg) => console.warn(msg),
+    broadcast,
   });
   try {
     await orchServer.start();

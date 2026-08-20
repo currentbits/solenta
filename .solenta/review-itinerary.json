@@ -1,132 +1,45 @@
 {
   "version": 1,
-  "readOrder": [
-    "docs"
-  ],
+  "readOrder": ["tests", "critical", "impl"],
   "chunks": [
     {
-      "area": "site/docs.html — Worktrees and PRs: the Environment-panel correction",
-      "rationale": "Read this first: it is the only hunk that fixes a statement that was actively WRONG on the public site, rather than adding something missing. Since #569 the worktree diff is a center pane behind Thread | Git tabs (changesOpen in src/App.tsx), not a card in the right-hand Environment panel. Check that the rewritten sentence also gets the residual Environment-panel controls right, because #512 moved Start Dev / Fork / Handoff off the thread header.",
+      "area": "electron/test/orch-server.test.js — host-tool contract",
+      "rationale": "Read this first: it is the spec. New cases pin archive/unarchive, retire-on-archive, no-retire-on-unarchive, working-thread archive (IPC policy, no extra stopRun), settle/active/null, settle-while-working reject, stop, rename, the #109 projectId guard on every new tool, threads_list later-fields, tools/list names, and an HTTP tools/call for thread_archive. If a handler drifts from IPC, these fail before the MCP schema does.",
       "risks": [
-        "If the sentence still implies the diff lives in the right rail, the page is wrong in a way a reader cannot detect without opening the app."
+        "Fake store now implements getProjects so listThreads can decorate the broadcast payload. A future fake that omits getProjects will throw after a successful mutation if broadcast is wired.",
+        "HTTP startOrch now forwards deps.broadcast; an override that sets broadcast:undefined still works because the handler no-ops a missing function."
       ]
     },
     {
-      "area": "docs/ARCHITECTURE.md — Sidebar ordering and settle model (rewritten section)",
-      "rationale": "Second, because it corrects the same class of error one layer down and was the trap in this change. The section previously documented partitionSidebar's precedence (snoozed > pinned > settled > attention) and a global settled tail. Sidebar.tsx line 31 imports only buildFlatSidebar: a T3-flat list where pinned is its own top block and there are no project group headers. partitionSidebar survives only as a test-referenced shadow. Verify the rewrite names buildFlatSidebar, and that the data attributes and localStorage keys it cites (sidebar:snoozedOpen, sidebar:settledOpen, sidebar:projectScope, data-pinned-divider) are the live ones.",
+      "area": "electron/orchServer.js — createToolHandlers host actions (critical)",
+      "rationale": "The product path. thread_archive / thread_settle / thread_stop / thread_rename are thin wrappers: requireOwnThread (unknown + #109), then services.setArchived / setSettled / renameThread or runner.stopRun, then the same retireAgent + threads:changed fan-out as ipc.js. Do not re-read services.js for the mutation itself — the point of this chunk is that orch does not grow a second archive implementation.",
       "risks": [
-        "The retired selectors (data-later-shelf, data-pinned-section, coder.sidebar.settledCollapsed) must be described as retired, not current — a reader writing a test off a retired selector gets a silently-passing no-op.",
-        "The worker was briefed with the stale #567 model and corrected it from source; the correction is the part most worth re-reading."
+        "retireAgent is copied (3 lines) rather than imported from ipc.js, because ipc.js requires electron. If IPC later stops the run on archive, this copy will not follow.",
+        "Archiving a working thread only disposeClaudeSession's the kept-alive CLI; it does not call stopRun. That matches threads:setArchived. A reviewer expecting 'archive = stop' will read this as a bug; it is the existing host policy.",
+        "thread_stop does not extra-broadcast: runner.stopRun already pushThreadsChanged in production. A stub stopRun in tests records the call and does not broadcast, which is what the test asserts.",
+        "broadcastThreadsChanged calls services.listThreads(store). The real Store always has getProjects; the fake used by these tests now does too."
       ]
     },
     {
-      "area": "docs/ARCHITECTURE.md — new subsystem sections (Ask mode, Post-merge verification, Quota wait, Code index, Divergence)",
-      "rationale": "Third: pure additions, no prior text to contradict. These are engineering-reference prose, so the failure mode is a plausible-sounding invented symbol rather than a wrong sentence. All 214 backticked identifiers in the diff were grepped back to a real symbol or file before merge; re-check any you change.",
+      "area": "electron/orchServer.js — MCP registerTool + INSTRUCTIONS + threads_list fields",
+      "rationale": "What agents actually see. threads_list now returns archived / settledOverride / snoozedUntil so a caller can tell Active from Later without guessing. Four new tools are registered next to thread_send (same projectId+threadId shape). INSTRUCTIONS name the four tools so a model that only reads the system prompt still knows they exist.",
       "risks": [
-        "Ask mode's guarantee is ordering-dependent: startRun must intercept thread.ask === true BEFORE assertUnderDailyBudget and worktree materialization. If that ordering claim is ever wrong the section reads as a safety promise the code does not keep."
+        "Live Nightly injects coder-threads from the running app, not this worktree. Until this branch is running in the host, agents still see the old 14-tool list.",
+        "thread_settle's override schema is z.enum(['settled','active']).nullable(). Handler tests pass null directly; the HTTP path is covered for archive but not for override:null. If a client omits override instead of sending null, zod will reject.",
+        "thread_status still has no projectId guard (pre-existing). The new tools do. Do not 'fix' thread_status in this diff."
       ]
     },
     {
-      "area": "docs/ARCHITECTURE.md + site/docs.html — Memory and Spec mode extensions",
-      "rationale": "Fourth: edits folded into existing sections rather than new ones, so read them in place to confirm they inherit the surrounding register and do not repeat what the paragraph above already said. Covers provenance tiers (src/provenance.ts), the config doctor (electron/configDoctor.js), and the tasks.md dispatch DAG (needs: syntax, electron/specTasks.js).",
+      "area": "electron/main.js — pass broadcast into createOrchServer",
+      "rationale": "Without this, archive/settle/rename would mutate RAM and retire the CLI, but the sidebar would stay stale until the next unrelated threads:changed. Same broadcast function the IPC handlers already close over.",
       "risks": [
-        "Provenance has exactly four surfaced tiers (repo, memory, issues, and the ungrounded 'model prior knowledge' tag above PRIOR_MIN_CHARS). Adding a fifth from the internal collector would describe a badge the UI never renders."
+        "orchServer is constructed after registerIpc; broadcast is in scope. A future move of createOrchServer above the broadcast function would be a ReferenceError at boot."
       ]
-    },
-    {
-      "area": "README.md",
-      "rationale": "Last, and deliberately: it is the shortest chunk (+11 net) and the one with the least room to be wrong, because each addition is a clause folded into an existing bullet. Read it as a stranger arriving from GitHub search and ask whether the added clauses earn their line in a file that is intentionally tight.",
-      "risks": [
-        "Numbers here age: the 400-line PR cap and the 24h post-merge delay are defaults (src/prUi.ts:57, electron/postmerge.js:23) and are stated as defaults. If either becomes configurable-by-default the README is the copy most likely to be forgotten."
-      ]
-    },
-    {
-      "area": "src/waiting.ts — childPhrase + subagentNames (critical)",
-      "rationale": "The root of the reported problem: buildWaitStates already distinguished an in-agent subagent (WaitChild.id === null) from a forked worker thread, but waitLabel/waitTooltip flattened both into 'worker'. childPhrase now counts them separately ('Waiting on 1 worker · 1 subagent · 3m'); subagentNames exports the id===null convention so the Sidebar does not re-derive it. Read this first — waitLabel feeds the sidebar wait row, KanbanView and AgentsPanel, so the wording change is the widest-blast-radius edit in the diff.",
-      "risks": [
-        "waitLabel is asserted verbatim in test/waiting.test.ts and test/teamView.test.tsx; worker-only phrasing is byte-identical to before, subagent phrasing deliberately changed (both tests updated/verified).",
-        "childPhrase returns '' for an empty children array → 'Waiting on '. buildWaitStates never emits an empty state (it only creates one via add()), so unreachable; the old code had the same implicit precondition ('Waiting on 0 workers')."
-      ]
-    },
-    {
-      "area": "src/components/Sidebar.tsx — subagentLines rows under the wait row (impl)",
-      "rationale": "Restores issue #542 visibility without the retired vocabulary. Chose flat 11px text lines inside cardBody over the old nested <ul> of buttons: cardBody is pointer-events:none, so a click falls through to the cardSelect stretch button and selects the parent thread — the exact behaviour the old row's onClick implemented explicitly, with zero nested interactive controls (a T3 spec invariant). No elbow connector, no waitingDot, one auto-animated list preserved.",
-      "risks": [
-        "The card grows a line per running subagent. Capped at 3 named rows + a '+N more' tail so a wide fan-out cannot eat the viewport; the cap is visible, not silent.",
-        "subagentLines is derived from `wait`, so the rows only exist when a wait row exists — consistent by construction, but it means a subagent can never render without its count line.",
-        "aria: the names were already in the cardSelect aria-label via waitTooltip, so a screen reader now hears them twice. Same pre-existing duplication as the wait row itself; not aria-hidden, to match."
-      ]
-    },
-    {
-      "area": "src/components/Sidebar.module.css — .subagentRow + .card flex-shrink (impl)",
-      "rationale": ".subagentRow shares the .waitRow rule (11px, --text-dim, truncate, tokens only) plus a 10px left inset for hierarchy. The .card flex-shrink:0 is not cosmetic: .list is a scrolling flex column and .card sets min-height:64px, which replaces the automatic content minimum — a card taller than 64px gets squashed and its last line paints over the next card. Adding lines to the card makes that latent overlap reproducible, so the guard ships with it.",
-      "risks": [
-        "The flex-shrink:0 fix may collide with the same fix landing from the sibling sidebar-status thread; it is one property on .card, trivial to resolve either way.",
-        "No jsdom layout engine — the CSS is reasoned, not measured. Confirm the card growth and the absence of overlap in a real build."
-      ]
-    },
-    {
-      "area": "test/sidebar.test.tsx + test/waiting.test.ts (tests)",
-      "rationale": "Four new sidebar cases (one running subagent renders and names itself; a done subagent renders nothing at all, not even a wait row; the row contains no button/a/input and selection still comes from the card's stretch button; the 3 + '+N more' cap) and one new waiting case for a mixed worker+subagent fan-out. The updated assertion at the old 'in-agent subagents count too' test is the intended wording change, not a regression.",
-      "risks": [
-        "The click test proves the absence of interactive children and that the card select works; it cannot prove pointer-events:none routes a click on the row itself, because jsdom does not model pointer-events. That half is CSS-reasoned."
-      ]
-    },
-    {
-      "area": "src/components/Sidebar.module.css — .list > * / .shelf > * { flex-shrink: 0 }",
-      "rationale": "The overlap in the screenshot. .list is `flex:1; min-height:0; overflow-y:auto; display:flex; flex-direction:column` — its rows are flex items, so once content exceeds the viewport every row shrinks. .card sets `min-height:64px`, which REPLACES the automatic content minimum, so a 4-line card (slug/title/branch/wait row ≈ 80px) is squashed to 64px and its last line paints over the next card. .pinnedDivider already carried a lone `flex-shrink:0` — the symptom patched one row at a time; this hoists it to every child and drops the now-redundant line.",
-      "risks": [
-        "Universal child selector also covers searchHint/emptySearch/addProjectRow/showMore — all rows that should never shrink either, but it is a wider blast radius than naming .card + .slimRow.",
-        "Not verifiable in jsdom (no layout engine); renderer tests cannot catch a regression here."
-      ]
-    },
-    {
-      "area": "src/components/Sidebar.tsx — statusLabelFor: Delegating + Queued",
-      "rationale": "The T3 rewrite (011a629, spec .solenta/specs/t3-flat-sidebar.md) mapped every dot tone onto a word but dropped two: delegating rendered the word 'Working', and the queued tone had no place in StatusLabelInfo at all, so an idle thread with a queued follow-up showed only its age. Precedence is unchanged — Queued sits after woke and before the unread-done case, matching the old dot rule that queued only owns the slot when nothing louder does.",
-      "risks": [
-        "A delegating card now reads 'Delegating' where tests/muscle memory expected 'Working'; the aria spoken word was already 'delegating' so a11y is consistent.",
-        "queued tone renders in --text-dim, same colour as the age it replaces — deliberate (it is not attention), but it is a quiet signal."
-      ]
-    },
-    {
-      "area": "test/sidebar.test.tsx",
-      "rationale": "Two assertions that fail if either word regresses: the orchestrator card's label text, and a new idle+queued case.",
-      "risks": []
-    },
-    {
-      "area": "src/components/Sidebar.tsx",
-      "rationale": "Start here: same two-line change as #597, twice — onOpenKanban/onOpenActivity widen to take the scoped project id and the nav buttons pass projectScope.",
-      "risks": []
-    },
-    {
-      "area": "src/App.tsx",
-      "rationale": "openKanban/openActivity store the scoped id (kanbanProjectId/activityProjectId) and pass it as projectScope to the views. Mirrors planboardProjectId.",
-      "risks": [
-        "Scope is sticky per view until the nav button is clicked again — matches planboard behaviour, but re-scoping requires a nav click, not a sidebar scope change alone."
-      ]
-    },
-    {
-      "area": "src/components/KanbanView.tsx + src/components/ActivityView.tsx",
-      "rationale": "Neither view has a project selector (unlike Planboard), so instead of seeding a selection the scope is a filter prop: Kanban filters threads before kanbanColumns, Activity filters items before grouping. Null/omitted = all projects, so every existing caller is unchanged.",
-      "risks": [
-        "KanbanView deliberately builds waitStates/threadTitles from ALL threads so cross-project wait references still resolve titles; only the column input is filtered.",
-        "Kanban's scoped empty state reuses the generic 'No threads on the board' copy — it does not say the scope hid them."
-      ]
-    },
-    {
-      "area": "tests",
-      "rationale": "sidebar.test.tsx mirrors the four #597 nav cases for kanban+activity; kanbanView/activityView tests assert the filter in and out of scope, plus the scoped-empty state.",
-      "risks": []
     }
   ],
   "risks": [
-    "Documentation-only change: no test covers whether any sentence is true, so the only gate is that each claim was traced to source. Every claim in this diff was checked against the file it names before merge.",
-    "site/docs.html is hand-written static HTML with a hand-maintained nav. A new h2 without its nav link, or an unbalanced tag, breaks the published page silently — there is no build step or validator in CI for site/.",
-    "The three chunks were written by parallel workers that could not see each other. README, site/docs.html and docs/ARCHITECTURE.md may now describe the same feature in three slightly different vocabularies; the risk is drift in naming, not contradiction.",
-    "Visual verification is outstanding: renderer tests have no layout engine, so card height growth, the 10px inset and the overlap guard are unproven in pixels.",
-    "waitLabel wording now differs for subagents in three surfaces (sidebar wait row, KanbanView, AgentsPanel roster header) — intended, but it is a user-visible copy change beyond the sidebar.",
-    "SubagentRows (#542) were deleted by the same T3 rewrite and are NOT restored here — the wait row still reports 'Waiting on N workers' for them, but the nested per-subagent rows are gone.",
-    "The layout fix is reasoning + CSS, unverified against pixels: confirm in a running build.",
-    "No in-view way to clear the scope in Kanban/Activity — user clears the sidebar scope and re-clicks the nav. Adding an in-view selector like Planboard's is the upgrade path if that grates."
+    "No second archive implementation was added; setArchived remains the only writer. A review that only diffs orchServer.js and misses the services import can still think mutation lives here.",
+    "Pin and snooze are intentionally absent (issue #595 v1.1 lists settle/stop/rename only).",
+    "Do not teach agents to patch coder-store.json; that path is still overwritten by the in-RAM Store on save/_flushOnExit."
   ]
 }
