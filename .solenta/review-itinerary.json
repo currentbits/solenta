@@ -1,43 +1,42 @@
 {
   "version": 1,
   "readOrder": [
-    "tests",
     "critical",
+    "tests",
     "impl"
   ],
   "chunks": [
     {
-      "area": "tests",
-      "rationale": "Start with test/appWiring.test.tsx 'failure path shows Failed to remove toast' — that is the measured bug. The fake still rejects with 'Cannot remove a project while a run is active'; the toast at [data-toast=error] must now include that reason after the slug prefix. Then test/sidebar.test.tsx: the existing confirm test now asserts the checkout is not deleted and that 'worktree' is absent when no thread has worktreePath; the new tests pin plural (2, ignoring another project's worktree) and singular wording.",
+      "area": "critical",
+      "rationale": "electron/services.js removeProject is the whole bug. The old code threw THREAD_STILL_HAS_WORKTREE if ANY thread in the project still had a worktreePath — on the live store that is 150/413 threads for solenta (148 of them archived), 24/48 AppVideo, 29/59 huskyscout, 12/14 Shipnest-v2, so every project was unremovable. Read the active-run guard first (unchanged, still runs over every thread before anything is deleted), then the new teardown loop: git worktree remove --force, git branch -D per thread, one git worktree prune, all via lazily-required gitTry so no require cycle with worktrees.js. Failures are deliberately ignored — gitTry catches execFileSync throws (including ENOENT on a missing cwd) and returns {ok:false}, which is what makes a deleted dir / gone branch / gone checkout non-blocking. cleanupWorktree was deliberately NOT reused: it does store.updateThread + store.save() per thread, and the live store is 143 MB, so 150 threads would mean 150 full-file rewrites.",
       "risks": [
-        "appWiring boots the real App; a leftover setRemoveFailSlug call crashed the whole file via ErrorBoundary on the first pass. Grep the rename both ways before merging.",
-        "Confirm copy is matched as a substring of textContent. JSX wrapping of the worktree sentence must keep a single space between 'including' and 'any' or the plural/singular tests fail."
+        "--force discards uncommitted work in those worktrees. That is why the Sidebar confirm now names the count; the guard used to be the protection and is gone.",
+        "Removing a project deletes the worktrees of ALL its threads, including the one you are reading this in if it belongs to that project. The active-run guard only covers threads that are currently running.",
+        "Teardown runs before the purge, so a thread row still exists while its worktree is deleted. If the process dies mid-loop, some worktrees are gone but the project remains — recoverable (rerun Remove), unlike the reverse order.",
+        "150 sequential sync git spawns block the main process for a few seconds on the solenta project. Acceptable for a one-shot destructive action; do not make it async without re-checking the active-run guard's read of thread.status."
       ]
     },
     {
-      "area": "critical",
-      "rationale": "src/App.tsx handleRemoveProject is the swallow. catch now reads err.message, stores Failed to remove \"slug\": <reason> (prefix alone if the message is empty), and still rethrows so Sidebar's confirm finally-closes. State is removeFailMessage, not a slug; archive/clear-settled still clear it so the two toasts cannot stack. The error variant of ArchiveToast is reused — title is the whole string.",
+      "area": "tests",
+      "rationale": "electron/test/remove-project.test.js: the two tests that asserted the OLD guard are rewritten — removeProject now SUCCEEDS with a worktree present, and the shared-string test keeps asserting deleteThread's guard only (THREAD_STILL_HAS_WORKTREE is still exported and still used there). The new cases build a real repo + real git worktree add and assert the dir and branch are actually gone afterwards, plus a stale-path case where worktreePath points at a directory that no longer exists. test/appWiring.test.tsx pins that a rejected projects.remove puts the real reason on [data-toast=error]; test/sidebar.test.tsx pins the worktree copy (plural, singular, and absent when no thread has a path).",
       "risks": [
-        "A main-process message that already starts with Failed to remove would double-prefix. useCoder rethrows the IPC Error as-is, so today's reasons (active run, leftover worktree) do not.",
-        "Long git stderr from the parallel electron worker will dump into a single toast line. No truncation here; do not invent a body slot on ArchiveToast.",
-        "Renderer-only: this does not make remove succeed. Without the electron worker, the toast now tells the user why instead of a bare slug."
+        "The teardown tests shell out to real git. They pass here; a sandbox without git on PATH would fail them differently from the rest of the suite.",
+        "npm run test:electron needs node_modules, core/node_modules, core/dist and memory-server/node_modules symlinked from the main checkout or it reports hundreds of unrelated MODULE_NOT_FOUND failures — that is what the worker first mistook for regressions."
       ]
     },
     {
       "area": "impl",
-      "rationale": "src/components/Sidebar.tsx confirm counts threads with worktreePath in the same project as the dialog. Non-zero adds 'Deletes N worktree(s) from disk, including any uncommitted changes in them.' The old 'This removes only this project entry.' line is replaced with 'The repository checkout itself is not deleted.' — worktrees go, the checkout does not.",
+      "rationale": "Renderer half. src/App.tsx handleRemoveProject no longer swallows the error: catch reads err.message and stores 'Failed to remove \"slug\": <reason>' (prefix alone when the message is empty) in removeFailMessage — renamed from removeFailSlug because it now holds a full sentence — and still rethrows so the Sidebar confirm closes. The existing ArchiveToast error variant is reused. src/components/Sidebar.tsx counts threads in that project with a worktreePath and, when non-zero, adds 'Deletes N worktree(s) from disk, including any uncommitted changes in them.'; the now-false 'This removes only this project entry.' becomes 'The repository checkout itself is not deleted.'",
       "risks": [
-        "Count is the live ThreadInfo.worktreePath list, not a disk scan. pendingWorktree threads (no path yet) are omitted, which is correct: nothing is on disk. Stale paths still count; the electron worker force-removes those.",
-        "Copy promises worktree deletion. If this renderer lands before the electron half of #613, the confirm would over-claim and the toast would then show THREAD_STILL_HAS_WORKTREE. Merge both halves together.",
-        "worktreePath on a thread in another project is ignored; the tests pin that."
+        "A main-process message that itself started with 'Failed to remove' would double-prefix. Neither current reason does.",
+        "Long git stderr would render as one long toast line; there is no truncation and no body slot on ArchiveToast.",
+        "The count comes from live ThreadInfo.worktreePath, not a disk scan: pendingWorktree threads are excluded (nothing on disk yet) and stale paths still count (harmless — the backend force-removes and tolerates failure)."
       ]
     }
   ],
   "risks": [
-    "Did not verify in a live Electron window — renderer tests + tsc only. The live failure is an IPC reject; the toast path is covered by appWiring with fail: projects.remove.",
-    "electron/ is owned by a parallel worker. Do not expect this branch to make Remove project succeed on the live store.",
-    "Issue #613 stays open (plan:doing) until the electron half lands.",
-    "Not verified in a live Electron window — electron tests only. Removing a project with archived worktrees on the running app is the real check.",
-    "npm run test:electron in this worktree is 1645/1645 pass once core/dist and memory-server/node_modules are symlinked from the main checkout. Without those links the suite reports hundreds of MODULE_NOT_FOUND / orch-server port-null failures that are not this change."
+    "Not verified in a live Electron window. Doing so means actually removing a real project and deleting its worktrees off disk, which is destructive on this machine — left for Willem to trigger deliberately.",
+    "Verified on the merged tree, not just per worker: node --test electron/test/remove-project.test.js 10/10; npm run test:renderer 1335/1335; npm run typecheck clean; npm run test:electron 1644/1645 on the first run and 1645/1645 on a rerun (the one failure is the known flaky web-integration reconnect test, not this change).",
+    "Solenta's ~96 GB of worktrees are still only reclaimed by removing a project or by worktreeRetention, which remains unset on every project (separate concern, not touched here)."
   ]
 }
