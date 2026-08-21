@@ -72,6 +72,33 @@ describe("lastVisitedAt (round 43)", () => {
     assert.equal(store.getThread(thread.id).lastVisitedAt, thread.createdAt);
   });
 
+  it("getThreadDetail (threads:get) does not schedule a flush (#636)", () => {
+    const thread = services.createThread(store, {
+      projectId: project.id,
+      title: "Idle click",
+    });
+    store.updateThread(thread.id, { lastVisitedAt: 1 });
+    store.saveNow();
+    assert.equal(store._timer, null, "precondition: no flush armed");
+
+    const detail = services.getThreadDetail(store, thread.id);
+
+    assert.ok(
+      detail.thread.lastVisitedAt > 1,
+      "selection still stamps lastVisitedAt in memory",
+    );
+    assert.equal(
+      store._timer,
+      null,
+      "visit stamp must not arm a whole-store rewrite",
+    );
+    assert.equal(
+      store._dirty,
+      true,
+      "stamp must stay dirty so the exit hook / next real flush persist it",
+    );
+  });
+
   it("getThreadDetail stamps lastVisitedAt and does NOT bump updatedAt", async () => {
     const thread = services.createThread(store, {
       projectId: project.id,

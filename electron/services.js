@@ -3413,8 +3413,11 @@ function searchThreads(store, input) {
  * Full thread detail for the renderer.
  *
  * Selecting a thread is visiting it: when markVisited is true (default), stamp
- * lastVisitedAt = Date.now() and persist WITHOUT bumping updatedAt (visiting is
- * not activity; bumping would re-unread the thread and re-sort the sidebar).
+ * lastVisitedAt = Date.now() WITHOUT bumping updatedAt (visiting is not
+ * activity; bumping would re-unread the thread and re-sort the sidebar).
+ * Do not store.save() here: a visit stamp must not schedule a whole-store
+ * rewrite (#636). markDirty lets the field ride the next real flush; the
+ * exit hook covers quit. Hard crash: unread-dot is a click stale.
  *
  * Callers (audit before changing stamp rules):
  * - electron/ipc.js threads:get — user selection; markVisited true (default)
@@ -3436,7 +3439,7 @@ function getThreadDetail(store, threadId, workflow = null, opts) {
   if (markVisited) {
     // No touch: visiting must not bump updatedAt.
     store.updateThread(threadId, { lastVisitedAt: Date.now() });
-    store.save();
+    store.markDirty();
   }
   const current = store.getThread(threadId) || thread;
   return {
