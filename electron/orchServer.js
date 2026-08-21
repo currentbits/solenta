@@ -417,7 +417,9 @@ function createToolHandlers(deps) {
         `answer starts.` +
         (auto
           ? " This turn was machine-delivered (nobody has answered yet), so" +
-            " approved:true is not true here however you set it."
+            " approved:true is not true here however you set it. An" +
+            " AskUserQuestion answer counts: once they pick an option, retry" +
+            " with approved:true in this same turn."
           : ""),
     );
   }

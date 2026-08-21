@@ -1770,6 +1770,12 @@ function createRunner(opts) {
       };
     }
     e.handle.respond(pending.id, response);
+    // Answering a question card is the human speaking: the turn chain is no
+    // longer machine-only, so the auto-turn guard (thread_merge/thread_pr
+    // approval, crew cap) must stop counting it as one.
+    if (answerMap && decision !== "deny") {
+      autoTurns.set(threadId, 0);
+    }
     if (isPlan && decision !== "deny") {
       const t = store.getThread(threadId);
       const patch = {};

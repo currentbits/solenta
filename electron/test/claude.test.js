@@ -1566,6 +1566,30 @@ describe("runner claude provider", () => {
     }
   });
 
+  it("a question answer resets the auto-turn guard so an approved merge can land", async () => {
+    process.env.CODER_FAKE_CLAUDE_SCENARIO = "question";
+    const thread = store.getThreads()[0];
+    // Machine-delivered turn (worker-finished notice): isAutoTurn is what
+    // orchServer's assertUserApproved reads to refuse thread_merge/thread_pr.
+    runner.deliverNotice({
+      threadId: thread.id,
+      line: `[orchestration] Worker w1 ("t") finished with status done.`,
+    });
+    await waitFor(() => runner.getPendingPermission(thread.id) != null);
+    assert.equal(runner.isAutoTurn(thread.id), true);
+
+    // The user answering the AskUserQuestion card IS the human speaking:
+    // the same turn must count as theirs so approved:true works in it.
+    runner.respondPermission({
+      threadId: thread.id,
+      requestId: runner.getPendingPermission(thread.id).requestId,
+      decision: "allow",
+      answers: { "Which database?": "Postgres" },
+    });
+    assert.equal(runner.isAutoTurn(thread.id), false);
+    await waitFor(() => store.getThread(thread.id).status === "done");
+  });
+
   it("surfaces an ExitPlanMode plan and leaves plan mode on approval", async () => {
     process.env.CODER_FAKE_CLAUDE_SCENARIO = "plan";
     const thread = store.getThreads()[0];
