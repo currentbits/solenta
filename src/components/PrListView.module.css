@@ -197,9 +197,53 @@
   font-variant-numeric: tabular-nums;
 }
 
-.prLink {
+.rowActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   flex-shrink: 0;
   margin-left: auto;
+}
+
+.checkout {
+  flex-shrink: 0;
+  pointer-events: auto;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 550;
+  cursor: pointer;
+}
+
+.checkout:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--card-hover);
+  border-color: var(--border);
+}
+
+.checkout:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.checkout:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 1px;
+}
+
+.checkoutError {
+  margin: 2px 0 0;
+  pointer-events: auto;
+  font-size: 11px;
+  color: #fca5a5;
+}
+
+.prLink {
+  flex-shrink: 0;
   pointer-events: auto;
   color: #93c5fd;
   text-decoration: none;

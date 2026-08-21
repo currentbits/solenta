@@ -7,7 +7,15 @@ import {
   matchThreadForPr,
   prUpdatedMs,
 } from "../prList";
-import type { ListPrsResult, ProjectInfo, ThreadInfo } from "../shared/ipc";
+import { forgeReadiness } from "../sourceControl";
+import type {
+  CheckoutPrResult,
+  CoderApi,
+  ListPrsResult,
+  ProjectInfo,
+  SourceControlDiscovery,
+  ThreadInfo,
+} from "../shared/ipc";
 import styles from "./PrListView.module.css";
 
 export interface PrListViewProps {
@@ -15,6 +23,12 @@ export interface PrListViewProps {
   threads: ThreadInfo[];
   listPrs: (projectPath: string) => Promise<ListPrsResult>;
   onSelectThread: (id: string) => void;
+  onCheckoutPr?: (input: {
+    projectId: string;
+    prNumber: number;
+  }) => Promise<CheckoutPrResult>;
+  /** Optional forge probe (#608). When omitted, the view discovers itself. */
+  github?: { ready: boolean; hint: string | null } | null;
 }
 
 export function PrListView({
@@ -22,13 +36,24 @@ export function PrListView({
   threads,
   listPrs,
   onSelectThread,
+  onCheckoutPr,
+  github: githubProp,
 }: PrListViewProps) {
   const [results, setResults] = useState<Map<string, ListPrsResult>>(
     () => new Map(),
   );
   const [loading, setLoading] = useState(false);
   const [now, setNow] = useState(() => Date.now());
+  const [discoveredGithub, setDiscoveredGithub] = useState<{
+    ready: boolean;
+    hint: string | null;
+  } | null>(null);
+  const [checkingOut, setCheckingOut] = useState<string | null>(null);
+  const [checkoutErrors, setCheckoutErrors] = useState<Map<string, string>>(
+    () => new Map(),
+  );
   const loadGen = useRef(0);
+  const github = githubProp !== undefined ? githubProp : discoveredGithub;
 
   const loadAll = useCallback(async () => {
     const gen = ++loadGen.current;
@@ -51,6 +76,52 @@ export function PrListView({
       loadGen.current += 1;
     };
   }, [loadAll]);
+
+  useEffect(() => {
+    if (githubProp !== undefined) return;
+    let cancelled = false;
+    const existing = (window as unknown as { coder?: CoderApi }).coder;
+    const discover = existing?.sourceControl?.discover;
+    if (typeof discover !== "function") return;
+    void discover()
+      .then((next: SourceControlDiscovery) => {
+        if (!cancelled) setDiscoveredGithub(forgeReadiness(next, "github"));
+      })
+      .catch(() => {
+        /* leave Check out on the click-and-fail path */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [githubProp]);
+
+  const handleCheckout = useCallback(
+    async (projectId: string, prNumber: number) => {
+      if (!onCheckoutPr) return;
+      const key = `${projectId}:${prNumber}`;
+      if (checkingOut) return;
+      setCheckingOut(key);
+      setCheckoutErrors((prev) => {
+        if (!prev.has(key)) return prev;
+        const next = new Map(prev);
+        next.delete(key);
+        return next;
+      });
+      try {
+        const result = await onCheckoutPr({ projectId, prNumber });
+        if (!result.ok) {
+          setCheckoutErrors((prev) => {
+            const next = new Map(prev);
+            next.set(key, result.reason);
+            return next;
+          });
+        }
+      } finally {
+        setCheckingOut(null);
+      }
+    },
+    [onCheckoutPr, checkingOut],
+  );
 
   const retryProject = useCallback(
     async (project: ProjectInfo) => {
@@ -130,6 +201,11 @@ export function PrListView({
                   );
                   const diff = formatPrDiff(pr);
                   const updatedMs = prUpdatedMs(pr);
+                  const checkoutKey = `${group.project.id}:${pr.number}`;
+                  const checkoutBusy = checkingOut === checkoutKey;
+                  const checkoutErr = checkoutErrors.get(checkoutKey);
+                  const githubBlocked = github != null && github.ready === false;
+                  const showCheckout = Boolean(onCheckoutPr) && !matched;
                   return (
                     <div
                       key={`${group.project.id}-${pr.number}`}
@@ -167,16 +243,49 @@ export function PrListView({
                               {formatRelativeAge(updatedMs, now)}
                             </span>
                           ) : null}
-                          <a
-                            className={styles.prLink}
-                            href={pr.url}
-                            target="_blank"
-                            rel="noreferrer"
-                            title={pr.url}
-                          >
-                            Open
-                          </a>
+                          <div className={styles.rowActions}>
+                            {showCheckout ? (
+                              <button
+                                type="button"
+                                className={styles.checkout}
+                                data-pr-checkout-btn=""
+                                disabled={checkoutBusy || githubBlocked}
+                                title={
+                                  githubBlocked
+                                    ? (github?.hint ?? "GitHub is not ready")
+                                    : "Check out this pull request into a worktree thread"
+                                }
+                                onClick={(event) => {
+                                  event.preventDefault();
+                                  event.stopPropagation();
+                                  void handleCheckout(
+                                    group.project.id,
+                                    pr.number,
+                                  );
+                                }}
+                              >
+                                {checkoutBusy ? "Checking out…" : "Check out"}
+                              </button>
+                            ) : null}
+                            <a
+                              className={styles.prLink}
+                              href={pr.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              title={pr.url}
+                            >
+                              Open
+                            </a>
+                          </div>
                         </div>
+                        {checkoutErr ? (
+                          <p
+                            className={styles.checkoutError}
+                            data-pr-checkout-error=""
+                          >
+                            {checkoutErr}
+                          </p>
+                        ) : null}
                       </div>
                     </div>
                   );

@@ -22,18 +22,18 @@ export interface PrGroupErr {
 
 export type PrGroup = PrGroupOk | PrGroupErr;
 
-/** Match a listed PR to a thread in the same project by head branch. */
+/** Match a listed PR to a thread in the same project by number, then branch. */
 export function matchThreadForPr(
-  pr: Pick<PrListItem, "headRefName">,
+  pr: Pick<PrListItem, "number" | "headRefName">,
   threads: readonly ThreadInfo[],
   projectId: string,
 ): ThreadInfo | null {
+  const inProject = threads.filter((t) => t.projectId === projectId);
+  const byNumber = inProject.find((t) => t.prNumber === pr.number);
+  if (byNumber) return byNumber;
   const branch = pr.headRefName;
   if (!branch) return null;
-  return (
-    threads.find((t) => t.projectId === projectId && t.branch === branch) ??
-    null
-  );
+  return inProject.find((t) => t.branch === branch) ?? null;
 }
 
 /** One section per project, in project list order. Missing results are errors. */

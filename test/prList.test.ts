@@ -128,6 +128,32 @@ describe("matchThreadForPr", () => {
     assert.equal(hit?.id, "hit");
   });
 
+  it("matches prNumber even when the thread is detached (fork checkout)", () => {
+    const threads = [
+      thread({ id: "miss", projectId: "p1", branch: "feat/other", prNumber: 2 }),
+      thread({ id: "hit", projectId: "p1", branch: null, prNumber: 9 }),
+    ];
+    const hit = matchThreadForPr(
+      pr({ number: 9, headRefName: "feat/9" }),
+      threads,
+      "p1",
+    );
+    assert.equal(hit?.id, "hit");
+  });
+
+  it("prefers prNumber over a colliding branch name", () => {
+    const threads = [
+      thread({ id: "branch-only", projectId: "p1", branch: "feat/1" }),
+      thread({ id: "numbered", projectId: "p1", branch: "review/pr-1", prNumber: 1 }),
+    ];
+    const hit = matchThreadForPr(
+      pr({ number: 1, headRefName: "feat/1" }),
+      threads,
+      "p1",
+    );
+    assert.equal(hit?.id, "numbered");
+  });
+
   it("returns null when the branch belongs to another project or is empty", () => {
     const threads = [thread({ id: "t", projectId: "p1", branch: "feat/1" })];
     assert.equal(

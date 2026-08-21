@@ -138,6 +138,7 @@ export const IPC_CHANNELS = [
   { ns: "git", method: "prChecks" },
   { ns: "git", method: "prMerge" },
   { ns: "git", method: "listPrs" },
+  { ns: "git", method: "checkoutPr" },
   { ns: "git", method: "listCheckpoints" },
   { ns: "git", method: "restoreCheckpoint" },
   { ns: "git", method: "syncInfo" },

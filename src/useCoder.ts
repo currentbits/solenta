@@ -33,6 +33,7 @@ import type {
   SetPlanStatusResult,
   ListIssuesResult,
   ListPrsResult,
+  CheckoutPrResult,
   PrChecksResult,
   PrInfo,
   ProjectInfo,
@@ -417,6 +418,11 @@ export interface UseCoderResult {
   prMerge: () => Promise<PrInfo>;
   /** Open PRs for a project checkout (`gh pr list`). Failures are in-band. */
   listPrs: (projectPath: string) => Promise<ListPrsResult>;
+  /** Check out a PR into a worktree thread. Failures are in-band. */
+  checkoutPr: (input: {
+    projectId: string;
+    prNumber: number;
+  }) => Promise<CheckoutPrResult>;
   /** Issues for a project checkout (`gh issue list`). Failures are in-band. */
   listIssues: (projectPath: string) => Promise<ListIssuesResult>;
   /** Move an issue's plan:* label (Planboard). Failures are in-band. */
@@ -2284,6 +2290,22 @@ export function useCoder(): UseCoderResult {
     [api],
   );
 
+  const checkoutPr = useCallback(
+    async (input: { projectId: string; prNumber: number }) => {
+      const result = await api.git.checkoutPr(input);
+      if (!result.ok) return result;
+      const t = result.thread;
+      const next = threadsRef.current.some((x) => x.id === t.id)
+        ? threadsRef.current.map((x) => (x.id === t.id ? t : x))
+        : [t, ...threadsRef.current];
+      applyThreads(next);
+      selectedRef.current = t.id;
+      setSelectedThreadId(t.id);
+      return result;
+    },
+    [api, applyThreads],
+  );
+
   const listIssues = useCallback(
     async (projectPath: string) => {
       return api.issues.list(projectPath);
@@ -2752,6 +2774,7 @@ export function useCoder(): UseCoderResult {
     prChecks,
     prMerge,
     listPrs,
+    checkoutPr,
     listIssues,
     setIssuePlanStatus,
     createIssue,

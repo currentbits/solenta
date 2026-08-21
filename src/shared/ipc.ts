@@ -1476,6 +1476,20 @@ export type ListPrsResult =
   | { ok: true; prs: PrListItem[] }
   | { ok: false; reason: string };
 
+/**
+ * Check out a teammate's PR into a worktree thread (issue #611).
+ * Failures stay in-band so the PR row can show them.
+ */
+export type CheckoutPrResult =
+  | {
+      ok: true;
+      thread: ThreadInfo;
+      prompt: string;
+      readOnly: boolean;
+      created: boolean;
+    }
+  | { ok: false; reason: string };
+
 /** A GitHub issue fetched via `gh issue view`. */
 export interface IssueInfo {
   number: number;
@@ -2686,6 +2700,16 @@ export interface CoderApi {
      * `{ ok: false, reason }`.
      */
     listPrs(projectPath: string): Promise<ListPrsResult>;
+    /**
+     * Check out a GitHub PR into a new worktree thread, or return the
+     * existing one when this project already has that PR bound. Never
+     * rejects for missing gh / auth / non-GitHub remotes: those come back
+     * as `{ ok: false, reason }`.
+     */
+    checkoutPr(input: {
+      projectId: string;
+      prNumber: number;
+    }): Promise<CheckoutPrResult>;
     /**
      * Checkpoints: after each successful turn that changed files, the runner
      * auto-commits in the thread's WORKTREE ("coder-checkpoint: turn N").
