@@ -34,6 +34,7 @@ const {
   HOST_FLAG_HELP,
 } = require("./webServer.js");
 const { migrateLegacyUserData } = require("./legacy-migration.js");
+const { configureDefaultSecrets } = require("./secrets.js");
 const { installCrashGuard } = require("./crash-guard.js");
 const { start: startLoopLag } = require("./looplag.js");
 const { installShutdown } = require("./shutdown.js");
@@ -290,6 +291,9 @@ app.whenReady().then(async () => {
   }
 
   const storePath = path.join(userData, "coder-store.json");
+  configureDefaultSecrets({
+    auditPath: path.join(userData, "secrets-audit.jsonl"),
+  });
   const store = new Store(storePath);
 
   const lastStatus = new Map();

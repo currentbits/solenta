@@ -41,6 +41,7 @@ const WIN32_FILES = [
   "electron/test/reasoning-effort.test.js",
   "electron/test/rewind.test.js",
   "electron/test/session-record.test.js",
+  "electron/test/secrets.test.js",
 ];
 if (process.platform === "win32") {
   args.push(...WIN32_FILES);

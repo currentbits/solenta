@@ -24,6 +24,7 @@
 
 const crypto = require("node:crypto");
 const { version: SERVICE_VERSION } = require("../package.json");
+const { recordSecretUse: defaultRecordSecretUse } = require("./secrets.js");
 const CAP = 500;
 
 /** Derived span/trace id. All-zero is invalid in OTLP, so nudge it. */
@@ -56,6 +57,7 @@ function unixNano(ms) {
  * @property {number} [flushMs] - batch window; default 2000
  * @property {number} [batchSize] - flush at this many spans; default 32
  * @property {number} [timeoutMs] - per-request timeout; default 5000
+ * @property {(evt: { purpose: string, key: string }) => void} [recordSecretUse]
  */
 
 /**
@@ -67,10 +69,28 @@ function createOtel(deps) {
   const batchSize = deps.batchSize != null ? Number(deps.batchSize) : 32;
   const timeoutMs = deps.timeoutMs != null ? Number(deps.timeoutMs) : 5000;
   const doFetch = deps.fetchImpl || globalThis.fetch;
+  const recordUse = deps.recordSecretUse || defaultRecordSecretUse;
+  const headerUseSeen = new Set();
   const runs = new Map();
   let buffer = [];
   let timer = null;
   let sending = null;
+
+  /** Audit custom OTEL headers once per purpose+key for this exporter. */
+  function noteHeaders(purpose, headers) {
+    if (!headers || typeof headers !== "object") return;
+    for (const [k, v] of Object.entries(headers)) {
+      if (!k || !v) continue;
+      const flag = `${purpose}:${k}`;
+      if (headerUseSeen.has(flag)) continue;
+      headerUseSeen.add(flag);
+      try {
+        recordUse({ purpose, key: `otel:${k}` });
+      } catch {
+        /* never throw into the run path */
+      }
+    }
+  }
 
   function cfg() { try { return deps.getSettings() || {}; } catch { return {}; } }
 
@@ -237,9 +257,11 @@ function createOtel(deps) {
     clearTimer();
     sending = (async () => {
       try {
+        const headers = cfg().headers || {};
+        noteHeaders("otel-export", headers);
         await doFetch(`${url}/v1/traces`, {
           method: "POST",
-          headers: { "content-type": "application/json", ...(cfg().headers || {}) },
+          headers: { "content-type": "application/json", ...headers },
           body: JSON.stringify({ resourceSpans: [{
             resource: { attributes: [
               { key: "service.name", value: { stringValue: "solenta" } },
@@ -276,7 +298,10 @@ function createOtel(deps) {
         OTEL_EXPORTER_OTLP_ENDPOINT: String(s.endpoint).replace(/\/+$/, ""),
       };
       const pairs = Object.entries(s.headers || {}).filter(([k, v]) => k && v);
-      if (pairs.length) env.OTEL_EXPORTER_OTLP_HEADERS = pairs.map(([k, v]) => `${k}=${v}`).join(",");
+      if (pairs.length) {
+        noteHeaders("otel-env", s.headers);
+        env.OTEL_EXPORTER_OTLP_HEADERS = pairs.map(([k, v]) => `${k}=${v}`).join(",");
+      }
       return env;
     } catch { return {}; }
   }
