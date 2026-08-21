@@ -117,6 +117,7 @@ const IPC_CHANNELS = Object.freeze([
   { ns: "threads", method: "setQueued" },
   { ns: "threads", method: "setSnoozed" },
   { ns: "threads", method: "setMuted" },
+  { ns: "threads", method: "setCrossThreadInbound" },
   { ns: "threads", method: "setQuotaWaitAutoResume" },
   { ns: "threads", method: "setNotes" },
   { ns: "threads", method: "setFeltEstimate" },

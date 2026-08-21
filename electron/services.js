@@ -1335,7 +1335,14 @@ function setPinned(store, input) {
  * queueing is not activity, same rule as setPinned.
  *
  * @param {import('./store').Store} store
- * @param {{ threadId: string, prompt: string | null, attachments?: object[] }} input
+ * @param {{
+ *   threadId: string,
+ *   prompt: string | null,
+ *   attachments?: object[],
+ *   fromThread?: { id: string, title: string } | null,
+ *   inbound?: boolean,
+ *   posted?: boolean,
+ * }} input
  */
 function setQueued(store, input) {
   const { threadId, prompt, attachments } = input;
@@ -1352,6 +1359,21 @@ function setQueued(store, input) {
       attachments: files.length ? files : undefined,
       // A new/appended prompt drops any previous delivery error (#314).
     };
+    const fromThread = input.fromThread || (prev && prev.fromThread);
+    if (fromThread && fromThread.id) {
+      queued.fromThread = {
+        id: String(fromThread.id),
+        title: fromThread.title != null ? String(fromThread.title) : "",
+      };
+    }
+    // inbound stays true only when every line in the blob is inbound
+    // (a user follow-up mixed in must still drain at idle).
+    if (prev ? prev.inbound === true && input.inbound === true : input.inbound === true) {
+      queued.inbound = true;
+    }
+    if (prev ? prev.posted === true && input.posted === true : input.posted === true) {
+      queued.posted = true;
+    }
   }
   const updated = store.updateThread(threadId, { queued });
   store.save();
@@ -1566,6 +1588,37 @@ function setMuted(store, input) {
   const updated = store.updateThread(threadId, patch);
   store.save();
   return updated ? { ...updated } : { ...thread, ...patch };
+}
+
+/**
+ * Per-thread inbound policy for cross-thread messages (issue #551).
+ * accept (default, stored as absent) / queue-only / refuse.
+ * Never bumps updatedAt.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, policy: unknown }} input
+ */
+function setCrossThreadInbound(store, input) {
+  const { INBOUND_POLICIES } = require("./crossThread.js");
+  const raw = String(input.policy || "")
+    .trim()
+    .toLowerCase();
+  if (!INBOUND_POLICIES.includes(raw)) {
+    throw new Error(
+      `Invalid inbound policy: ${input.policy}. Expected one of: ${INBOUND_POLICIES.join(", ")}`,
+    );
+  }
+  const { threadId } = input;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  const patch = { crossThreadInbound: raw === "accept" ? null : raw };
+  const updated = store.updateThread(threadId, patch);
+  store.save();
+  const row = updated ? { ...updated } : { ...thread, ...patch };
+  if (raw === "accept") delete row.crossThreadInbound;
+  return row;
 }
 
 /**
@@ -4475,6 +4528,7 @@ module.exports = {
   promoteBtw,
   setSnoozed,
   setMuted,
+  setCrossThreadInbound,
   setQuotaWaitAutoResume,
   setNotes,
   setFeltEstimate,

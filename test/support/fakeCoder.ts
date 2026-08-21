@@ -1100,6 +1100,27 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           : [next, ...threads];
         return Promise.resolve(next);
       },
+      setCrossThreadInbound: (input: unknown) => {
+        const i = input as {
+          threadId: string;
+          policy: ThreadInfo["crossThreadInbound"];
+        };
+        calls.push({ channel: "threads.setCrossThreadInbound", args: [input] });
+        const existing = threads.find((t) => t.id === i.threadId);
+        if (!existing) {
+          return Promise.reject(new Error(`Unknown thread: ${i.threadId}`));
+        }
+        const next: ThreadInfo = {
+          ...existing,
+          crossThreadInbound:
+            i.policy === "queue-only" || i.policy === "refuse"
+              ? i.policy
+              : undefined,
+        };
+        if (next.crossThreadInbound == null) delete next.crossThreadInbound;
+        threads = threads.map((t) => (t.id === i.threadId ? next : t));
+        return Promise.resolve(next);
+      },
       startTeach: (input: unknown) => {
         const i = input as { threadId: string };
         calls.push({ channel: "threads.startTeach", args: [input] });

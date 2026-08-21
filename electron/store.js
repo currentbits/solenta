@@ -954,6 +954,14 @@ function migrateThread(t) {
   const cards = normalizeBtwCards(t.btw);
   if (cards) next.btw = cards;
   else delete next.btw;
+  if (
+    t.crossThreadInbound === "queue-only" ||
+    t.crossThreadInbound === "refuse"
+  ) {
+    next.crossThreadInbound = t.crossThreadInbound;
+  } else {
+    delete next.crossThreadInbound;
+  }
   return next;
 }
 

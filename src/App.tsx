@@ -126,6 +126,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     setPinned,
     setSnoozed,
     setMuted,
+    setCrossThreadInbound,
     setQuotaWaitAutoResume,
     resumeQuotaWait,
     renameThread,
@@ -1181,6 +1182,11 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onSetProvider={setProvider}
         onSetReasoningEffort={setReasoningEffort}
         onSetArchived={handleSetArchived}
+        onSetCrossThreadInbound={
+          selectedThreadId
+            ? (policy) => setCrossThreadInbound(selectedThreadId, policy)
+            : undefined
+        }
         onRenameThread={handleRenameOpenThread}
         onRepeatSchedule={handleRepeatSchedule}
         onDistillWorkflow={handleDistillWorkflow}

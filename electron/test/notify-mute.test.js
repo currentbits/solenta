@@ -81,3 +81,55 @@ describe("mute", () => {
     );
   });
 });
+
+describe("cross-thread inbound policy (issue #551)", () => {
+  let tmpDir;
+  let store;
+  let threadId;
+
+  beforeEach(async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-inbound-policy-"));
+    store = new Store(path.join(tmpDir, "store.json"));
+    const repo = path.join(tmpDir, "repo");
+    fs.mkdirSync(repo);
+    execFileSync("git", ["init"], { cwd: repo, stdio: "ignore" });
+    const project = await services.addProject(store, repo);
+    threadId = services.createThread(store, {
+      projectId: project.id,
+      title: "Lead",
+    }).id;
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("setCrossThreadInbound round-trips refuse without bumping updatedAt", () => {
+    const before = store.getThread(threadId).updatedAt;
+    const next = services.setCrossThreadInbound(store, {
+      threadId,
+      policy: "refuse",
+    });
+    assert.equal(next.crossThreadInbound, "refuse");
+    assert.equal(next.updatedAt, before);
+    store.saveNow();
+    const reloaded = new Store(path.join(tmpDir, "store.json"));
+    assert.equal(reloaded.getThread(threadId).crossThreadInbound, "refuse");
+    const cleared = services.setCrossThreadInbound(store, {
+      threadId,
+      policy: "accept",
+    });
+    assert.equal(cleared.crossThreadInbound, undefined);
+  });
+
+  it("setCrossThreadInbound rejects junk", () => {
+    assert.throws(
+      () =>
+        services.setCrossThreadInbound(store, {
+          threadId,
+          policy: "hold-please",
+        }),
+      /Invalid inbound policy/,
+    );
+  });
+});

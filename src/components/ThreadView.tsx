@@ -389,6 +389,10 @@ interface ThreadViewProps {
   ) => void | Promise<void>;
   /** Archive or unarchive the open thread. */
   onSetArchived: (archived: boolean) => void | Promise<void>;
+  /** Per-thread inbound policy for messages from other threads (issue #551). */
+  onSetCrossThreadInbound?: (
+    policy: "accept" | "queue-only" | "refuse",
+  ) => void | Promise<void>;
   /** Rename the open thread (header overflow). */
   onRenameThread?: (title: string) => void | Promise<void>;
   /**
@@ -782,6 +786,7 @@ const UserMessageBlock = memo(function UserMessageBlock({
   onRequestResubmit,
   onCancelConfirm,
   onLoadAttachmentImage,
+  onSelectThread,
 }: {
   message: ChatMessage;
   canEdit: boolean;
@@ -789,6 +794,7 @@ const UserMessageBlock = memo(function UserMessageBlock({
   onRequestResubmit?: (messageId: string, prompt: string) => void;
   onCancelConfirm?: () => void;
   onLoadAttachmentImage?: (path: string) => Promise<string | null>;
+  onSelectThread?: (id: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(message.text);
@@ -805,6 +811,7 @@ const UserMessageBlock = memo(function UserMessageBlock({
     }
   }, [canEdit, editing, message.text]);
 
+  const fromThread = message.fromThread;
   const cancelEdit = () => {
     if (confirming) onCancelConfirm?.();
     setEditing(false);
@@ -862,6 +869,36 @@ const UserMessageBlock = memo(function UserMessageBlock({
               Cancel
             </button>
           </div>
+        </div>
+      </article>
+    );
+  }
+
+  if (fromThread) {
+    const label = fromThread.title || fromThread.id;
+    return (
+      <article
+        className={`${styles.message} ${styles.messageInbound}`}
+        data-inbound-card=""
+        data-inbound-from={fromThread.id}
+      >
+        <div className={styles.inboundCard}>
+          <div className={styles.inboundFrom}>
+            From{" "}
+            {onSelectThread ? (
+              <button
+                type="button"
+                className={styles.handoffLink}
+                data-inbound-source={fromThread.id}
+                onClick={() => onSelectThread(fromThread.id)}
+              >
+                {label}
+              </button>
+            ) : (
+              <span>{label}</span>
+            )}
+          </div>
+          <div className={styles.inboundBody}>{message.text}</div>
         </div>
       </article>
     );
@@ -985,6 +1022,7 @@ const MessageBlock = memo(function MessageBlock({
   provenance = null,
   onLoadImage,
   onLoadAttachmentImage,
+  onSelectThread,
 }: {
   message: ChatMessage;
   autoExpandTool: boolean;
@@ -1003,6 +1041,7 @@ const MessageBlock = memo(function MessageBlock({
   metaDuration?: string | null;
   /** Provenance tiers for assistant messages; null hides the strip. */
   provenance?: MessageProvenance | null;
+  onSelectThread?: (id: string) => void;
 }) {
   if (message.role === "tool") {
     return (
@@ -1023,6 +1062,7 @@ const MessageBlock = memo(function MessageBlock({
         onRequestResubmit={onRequestResubmit}
         onCancelConfirm={onCancelConfirm}
         onLoadAttachmentImage={onLoadAttachmentImage}
+        onSelectThread={onSelectThread}
       />
     );
   }
@@ -3276,6 +3316,7 @@ export const ThreadView = memo(function ThreadView({
   onSetProvider,
   onSetReasoningEffort,
   onSetArchived,
+  onSetCrossThreadInbound,
   onRenameThread,
   onCreateThread,
   onRepeatSchedule,
@@ -4536,6 +4577,46 @@ export const ThreadView = memo(function ThreadView({
                         Rename thread
                       </button>
                     )}
+                    {onSetCrossThreadInbound && (
+                      <div
+                        className={styles.menuInbound}
+                        data-inbound-policy-menu=""
+                      >
+                        <div className={styles.menuInboundLabel}>
+                          Messages from other threads
+                        </div>
+                        {(
+                          [
+                            ["accept", "Accept"],
+                            ["queue-only", "Queue only"],
+                            ["refuse", "Refuse"],
+                          ] as const
+                        ).map(([value, label]) => {
+                          const current =
+                            thread.crossThreadInbound === "queue-only" ||
+                            thread.crossThreadInbound === "refuse"
+                              ? thread.crossThreadInbound
+                              : "accept";
+                          return (
+                            <button
+                              key={value}
+                              type="button"
+                              className={styles.menuItem}
+                              role="menuitemradio"
+                              aria-checked={current === value}
+                              data-inbound-policy={value}
+                              data-active={current === value ? "true" : undefined}
+                              onClick={() => {
+                                setMenuOpen(false);
+                                void onSetCrossThreadInbound(value);
+                              }}
+                            >
+                              {label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
                     {!isWorking && onRepeatSchedule && (
                       <button
                         type="button"
@@ -4761,6 +4842,7 @@ export const ThreadView = memo(function ThreadView({
                       autoExpandTool={entry.message.id === latestRunningToolId}
                       onLoadImage={onLoadImage}
                       onLoadAttachmentImage={onLoadAttachmentImage}
+                      onSelectThread={onSelectThread}
                       showRetry={isRetrySurface}
                       retryTitle={isRetrySurface ? retryTitle : undefined}
                       onRetry={isRetrySurface ? handleRetry : undefined}

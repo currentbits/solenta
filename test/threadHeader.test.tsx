@@ -112,6 +112,9 @@ function view(props: {
     opts?: { worktree?: boolean; orchestrate?: boolean },
   ) => void;
   onRenameThread?: (title: string) => void | Promise<void>;
+  onSetCrossThreadInbound?: (
+    policy: "accept" | "queue-only" | "refuse",
+  ) => void | Promise<void>;
   changesOpen?: boolean;
   onViewChanges?: () => void;
   onCloseChanges?: () => void;
@@ -135,6 +138,7 @@ function view(props: {
       onSetProvider={() => {}}
       onSetReasoningEffort={() => {}}
       onSetArchived={() => {}}
+      onSetCrossThreadInbound={props.onSetCrossThreadInbound}
       onRepeatSchedule={props.onRepeatSchedule}
       onDistillWorkflow={props.onDistillWorkflow}
       onDeleteThread={() => {}}
@@ -529,6 +533,27 @@ describe("repeat-thread overflow items", () => {
     await m.click(m.query("[aria-label='Thread actions']"));
     assert.equal(m.query("[data-repeat-schedule]"), null);
     assert.equal(m.query("[data-distill-workflow]"), null);
+    m.unmount();
+  });
+});
+
+describe("inbound policy overflow (issue #551)", () => {
+  it("lets the receiver pick accept / queue-only / refuse", async () => {
+    const picked: string[] = [];
+    const m = await mount(
+      view({
+        onSetCrossThreadInbound: (policy) => {
+          picked.push(policy);
+        },
+      }),
+    );
+    await m.flush();
+    await m.click(m.query("[aria-label='Thread actions']"));
+    assert.ok(m.query("[data-inbound-policy-menu]"));
+    const refuse = m.query("[data-inbound-policy='refuse']");
+    assert.ok(refuse);
+    await m.click(refuse);
+    assert.deepEqual(picked, ["refuse"]);
     m.unmount();
   });
 });
