@@ -1123,6 +1123,22 @@ class Store {
   }
 
   /**
+   * Remember in-memory mutations without scheduling a flush. The next
+   * save() coalesces them; the exit hook writes if we quit first. Use for
+   * cheap bookkeeping (lastVisitedAt) that must not rewrite the whole
+   * store on every call (#636). Not `touch`: that already means bump
+   * updatedAt on updateThread.
+   */
+  markDirty() {
+    this._dirty = true;
+    // At most one exit hook no matter how often markDirty()/save() run.
+    if (!this._exitHookArmed) {
+      this._exitHookArmed = true;
+      process.once("exit", this._flushOnExit);
+    }
+  }
+
+  /**
    * Mark dirty and coalesce writes: the whole store is one JSON blob, so a
    * per-stream-event save would re-stringify everything every time. The
    * debounced flush stringifies once per burst (bounded by the per-thread
@@ -1130,13 +1146,8 @@ class Store {
    * Callers that need the bytes on disk right now use saveNow().
    */
   save() {
-    this._dirty = true;
+    this.markDirty();
     this._scheduleFlush();
-    // At most one exit hook no matter how often save() is called.
-    if (!this._exitHookArmed) {
-      this._exitHookArmed = true;
-      process.once("exit", this._flushOnExit);
-    }
   }
 
   _scheduleFlush() {

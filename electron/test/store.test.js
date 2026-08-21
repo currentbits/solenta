@@ -361,6 +361,16 @@ describe("Store", () => {
     assert.ok(SAVE_DEBOUNCE_MAX_MS >= SAVE_DEBOUNCE_MS * 2);
   });
 
+  it("markDirty remembers mutations without scheduling a flush (#636)", () => {
+    const store = new Store(filePath);
+    store.setProjects([{ id: "p", slug: "a/b", name: "b", path: "/x" }]);
+    store.markDirty();
+    assert.equal(store._dirty, true);
+    assert.equal(store._timer, null, "must not arm the debounce timer");
+    store.saveNow();
+    assert.equal(new Store(filePath).getProjects()[0].id, "p");
+  });
+
   it("saveNow() flushes a pending debounced save immediately", () => {
     const store = new Store(filePath);
     store.setProjects([{ id: "p", slug: "a/b", name: "b", path: "/x" }]);
