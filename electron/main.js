@@ -38,6 +38,7 @@ const { installCrashGuard } = require("./crash-guard.js");
 const { start: startLoopLag } = require("./looplag.js");
 const { installShutdown } = require("./shutdown.js");
 const { installAppMenu } = require("./menu.js");
+const { bootFirstPaint } = require("./boot.js");
 
 // Before anything else can throw: the app is full of fire-and-forget `void`
 // calls, and one unhandled rejection would otherwise kill the process with
@@ -217,36 +218,11 @@ app.whenReady().then(async () => {
   // Edit menu and Cmd+C/X/V/A silently die in inputs (issue #353).
   installAppMenu();
 
-  // Which build is this? A stale packaged bundle missing recent fixes looks
-  // exactly like a broken feature, so say it out loud once at boot.
-  try {
-    const pkg = require("../package.json");
-    console.warn(
-      `solenta: ${pkg.version || "?"} ${pkg.buildSha ? `build ${pkg.buildSha} (${pkg.buildTime})` : "(dev tree)"}`,
-    );
-  } catch {
-    // non-fatal
-  }
-
-  // Remove the bundle the last auto-update swapped aside (Solenta.app.old).
-  require("./updater.js").cleanupOldBundle();
-
-  // Dev dock icon; the packaged app gets its icon from CFBundleIconFile.
-  if (process.platform === "darwin" && app.dock) {
-    try {
-      const dockIcon = path.join(__dirname, "../assets/icon-512.png");
-      if (fs.existsSync(dockIcon)) {
-        app.dock.setIcon(dockIcon);
-      }
-    } catch {
-      // cosmetic only
-    }
-  }
-
-  const coreIndex = assertCoreBuilt();
-  const core = await import(pathToFileURL(coreIndex).href);
-
   const userData = app.getPath("userData");
+  // App root: packaged app path, or repo root in dev (parent of electron/).
+  const appPath = app.isPackaged
+    ? app.getAppPath()
+    : path.join(__dirname, "..");
   // One-time rename Coder -> Solenta: pull the app's own files out of the
   // legacy directory so existing installs keep store, worktrees, and memory.
   // NEVER in throwaway boots: verify/smoke/acceptance probes run with a temp
@@ -256,41 +232,80 @@ app.whenReady().then(async () => {
   const canMigrate =
     path.resolve(userData) === path.resolve(defaultUserData) &&
     process.env.SOLENTA_SKIP_USERDATA_MIGRATION !== "1";
-  try {
-    if (
-      canMigrate &&
-      migrateLegacyUserData(app.getPath("appData"), userData)
-    ) {
-      console.warn("solenta: migrated userData from legacy coder directory");
-    }
-  } catch (err) {
-    console.warn(
-      "solenta: legacy userData migration failed; starting fresh:",
-      err && err.message ? err.message : err,
-    );
-  }
-  // App root: packaged app path, or repo root in dev (parent of electron/).
-  const appPath = app.isPackaged
-    ? app.getAppPath()
-    : path.join(__dirname, "..");
 
-  memorySupervisor = createMemorySupervisor({
-    userDataPath: userData,
-    appPath,
-    log: (msg) => console.warn(msg),
+  /** @type {object | null} */
+  let core = null;
+
+  // #618: paint the empty window before store load / memory supervision.
+  const store = await bootFirstPaint({
+    createWindow,
+    async beforeStore() {
+      // Which build is this? A stale packaged bundle missing recent fixes looks
+      // exactly like a broken feature, so say it out loud once at boot.
+      try {
+        const pkg = require("../package.json");
+        console.warn(
+          `solenta: ${pkg.version || "?"} ${pkg.buildSha ? `build ${pkg.buildSha} (${pkg.buildTime})` : "(dev tree)"}`,
+        );
+      } catch {
+        // non-fatal
+      }
+
+      // Remove the bundle the last auto-update swapped aside (Solenta.app.old).
+      require("./updater.js").cleanupOldBundle();
+
+      // Dev dock icon; the packaged app gets its icon from CFBundleIconFile.
+      if (process.platform === "darwin" && app.dock) {
+        try {
+          const dockIcon = path.join(__dirname, "../assets/icon-512.png");
+          if (fs.existsSync(dockIcon)) {
+            app.dock.setIcon(dockIcon);
+          }
+        } catch {
+          // cosmetic only
+        }
+      }
+
+      const coreIndex = assertCoreBuilt();
+      core = await import(pathToFileURL(coreIndex).href);
+
+      try {
+        if (
+          canMigrate &&
+          migrateLegacyUserData(app.getPath("appData"), userData)
+        ) {
+          console.warn("solenta: migrated userData from legacy coder directory");
+        }
+      } catch (err) {
+        console.warn(
+          "solenta: legacy userData migration failed; starting fresh:",
+          err && err.message ? err.message : err,
+        );
+      }
+
+      memorySupervisor = createMemorySupervisor({
+        userDataPath: userData,
+        appPath,
+        log: (msg) => console.warn(msg),
+      });
+    },
+    // Never block or fail app start on memory supervision.
+    startMemory: () =>
+      memorySupervisor ? memorySupervisor.start() : undefined,
+    onMemoryError: (err) => {
+      console.warn(
+        "memory-server: supervisor start error; continuing without memory:",
+        err && err.message ? err.message : err,
+      );
+    },
+    loadStore: () => new Store(path.join(userData, "coder-store.json")),
   });
-  // Never block or fail app start on memory supervision.
-  try {
-    await memorySupervisor.start();
-  } catch (err) {
-    console.warn(
-      "memory-server: supervisor start error; continuing without memory:",
-      err && err.message ? err.message : err,
-    );
-  }
 
-  const storePath = path.join(userData, "coder-store.json");
-  const store = new Store(storePath);
+  app.on("activate", () => {
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createWindow();
+    }
+  });
 
   const lastStatus = new Map();
   for (const t of store.getThreads()) {
@@ -331,6 +346,9 @@ app.whenReady().then(async () => {
     worktreeBase: path.join(userData, "worktrees"),
     userDataPath: userData,
   });
+  // Renderer may already have mounted against empty state; this is the
+  // signal that invoke channels will answer (#618).
+  broadcast("boot:ready");
 
   if (serveOpts.enabled) {
     const token = loadOrCreateToken(userData);
@@ -341,8 +359,9 @@ app.whenReady().then(async () => {
     }
     const staticDir = path.join(__dirname, "../dist");
     // The port is fixed, so EADDRINUSE is routine (a previous instance still
-    // holds it). Never let that reject out of whenReady: createWindow() below
-    // would be skipped and the app would boot with no window and no error.
+    // holds it). Never let that reject out of whenReady: the rest of boot
+    // (IPC ready push, schedulers) would be skipped even though the window
+    // is already up.
     try {
       webServer = await startWebServer({
         host: serveOpts.host,
@@ -445,14 +464,6 @@ app.whenReady().then(async () => {
       err && err.message ? err.message : err,
     );
   }
-
-  createWindow();
-
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
-    }
-  });
 });
 
 installShutdown({

@@ -1013,6 +1013,8 @@ class Store {
     };
     // Not persisted — last-assistant lookup for threads:summaries (#136).
     this._lastAssistantByThread = new Map();
+    // Rolling .bak is off the constructor's sync path (#618). Tests may await it.
+    this._bakCopy = Promise.resolve();
     this.data = this._load();
     if (this._recoveredOnLoad) {
       this.save();
@@ -1087,12 +1089,22 @@ class Store {
     if (mainExists) {
       try {
         const data = this._readFile(this.filePath);
-        // Last-known-good snapshot from this successful start. Best-effort.
-        try {
-          fs.copyFileSync(this.filePath, bakPath);
-        } catch {
-          // Never fail a load over the rolling backup.
-        }
+        // Last-known-good snapshot from this successful start. Off the
+        // constructor's sync path so first paint is not blocked (#618).
+        // setImmediate + copyFileSync: the copy finishes in one turn after
+        // we yield, and a missing source (test tmpdir already gone) is a
+        // no-op instead of recreating files under rmdir.
+        const src = this.filePath;
+        this._bakCopy = new Promise((resolve) => {
+          setImmediate(() => {
+            try {
+              if (fs.existsSync(src)) fs.copyFileSync(src, bakPath);
+            } catch {
+              // Never fail a load over the rolling backup.
+            }
+            resolve();
+          });
+        });
         return data;
       } catch {
         const corruptPath = `${this.filePath}.corrupt-${Date.now()}`;

@@ -76,6 +76,8 @@ export interface FakeCoder {
   emitThreads(threads: ThreadInfo[]): void;
   /** Push a thread:updated event (a full detail is a valid ThreadPatch). */
   emitThread(detail: ThreadPatch): void;
+  /** Push boot:ready so useCoder refetches lists (#618). */
+  emitBootReady(): void;
   /** Subscriptions that have not been torn down. */
   liveSubscriptions(): number;
 }
@@ -270,6 +272,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
 
   const threadSubs: Array<(t: ThreadInfo[]) => void> = [];
   const detailSubs: Array<(d: ThreadPatch) => void> = [];
+  const bootReadySubs: Array<() => void> = [];
 
   /** Record the call, then either reject (if configured) or resolve. */
   function rec<T>(channel: string, args: unknown[], value: T): Promise<T> {
@@ -1897,6 +1900,13 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       if (channel === "thread:select") {
         return () => {};
       }
+      if (channel === "boot:ready") {
+        bootReadySubs.push(cb as () => void);
+        return () => {
+          const i = bootReadySubs.indexOf(cb as () => void);
+          if (i >= 0) bootReadySubs.splice(i, 1);
+        };
+      }
       detailSubs.push(cb as (d: ThreadPatch) => void);
       return () => {
         const i = detailSubs.indexOf(cb as (d: ThreadPatch) => void);
@@ -1923,7 +1933,9 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     },
     emitThreads: (next) => threadSubs.forEach((cb) => cb(next)),
     emitThread: (d) => detailSubs.forEach((cb) => cb(d)),
-    liveSubscriptions: () => threadSubs.length + detailSubs.length,
+    emitBootReady: () => bootReadySubs.forEach((cb) => cb()),
+    liveSubscriptions: () =>
+      threadSubs.length + detailSubs.length + bootReadySubs.length,
   };
 }
 

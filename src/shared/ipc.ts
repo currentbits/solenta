@@ -3,7 +3,7 @@
 // Invoke channel names are `${namespace}:${method}` and live in
 // src/shared/ipcChannels.ts — preload and wireClient iterate that table
 // (issue #623). Push channels: "threads:changed", "thread:updated",
-// "thread:select".
+// "thread:select", "boot:ready".
 
 /**
  * Retired (#568). The IPC type stays so old callers still typecheck;
@@ -2904,6 +2904,8 @@ export interface CoderApi {
   on(channel: "thread:updated", cb: (patch: ThreadPatch) => void): () => void;
   /** Desktop notification click: select this thread. */
   on(channel: "thread:select", cb: (threadId: string) => void): () => void;
+  /** Main-process store + IPC handlers are up; refetch boot lists (#618). */
+  on(channel: "boot:ready", cb: () => void): () => void;
 }
 
 declare global {

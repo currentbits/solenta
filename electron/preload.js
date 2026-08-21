@@ -7,6 +7,7 @@ const PUSH_CHANNELS = new Set([
   "threads:changed",
   "thread:updated",
   "thread:select",
+  "boot:ready",
 ]);
 /* </ipc-push> */
 

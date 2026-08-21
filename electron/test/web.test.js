@@ -507,15 +507,18 @@ describe("one map, two transports + packaging", () => {
 
   it("main.js survives a web-server bind failure and still opens a window", async () => {
     const main = fs.readFileSync(path.join(__dirname, "../main.js"), "utf8");
-    // EADDRINUSE on the fixed port must not reject out of whenReady, or
-    // createWindow() never runs: app up, no window, no error anywhere.
+    // #618: createWindow is first-paint (via bootFirstPaint), so a bind
+    // failure can no longer skip the window. The try/catch still matters:
+    // without it whenReady rejects and IPC-ready / schedulers never run.
     assert.match(main, /try \{\s*webServer = await startWebServer\(/);
-    const guard = main.slice(
-      main.indexOf("webServer = await startWebServer("),
-      main.indexOf("createWindow();"),
-    );
+    const start = main.indexOf("webServer = await startWebServer(");
+    const guard = main.slice(start, start + 900);
     assert.match(guard, /\} catch \(err\) \{/);
     assert.match(guard, /serveOpts\.enabled = false/);
+    assert.ok(
+      main.indexOf("bootFirstPaint") < start,
+      "window boot must precede the web server",
+    );
   });
 
   it("ws is a pinned production dependency", () => {

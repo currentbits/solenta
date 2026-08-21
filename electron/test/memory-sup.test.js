@@ -1177,3 +1177,11 @@ describe("resolveNodeBinary", () => {
     assert.ok(hit === null || typeof hit === "string");
   });
 });
+
+describe("waitForHealth (#618)", () => {
+  it("is gone: spawn polls inline because the port can move", () => {
+    const src = fs.readFileSync(path.join(__dirname, "../memory-sup.js"), "utf8");
+    assert.doesNotMatch(src, /async function waitForHealth\b/);
+    assert.doesNotMatch(src, /exports\.waitForHealth/);
+  });
+});
