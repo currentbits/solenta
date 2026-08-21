@@ -880,6 +880,62 @@ function normalizeFeltEstimate(value) {
   return null;
 }
 
+/**
+ * Envelope last-assistant preview for threads:summaries (#639).
+ * `{ text, at }` or null. Absent (undefined) on a row means not yet
+ * migrated — peek once, then persist so boot stays envelope-only.
+ * @param {unknown} value
+ * @returns {{ text: string, at: number } | null}
+ */
+function normalizeLastAssistantPreview(value) {
+  if (value == null || typeof value !== "object") return null;
+  const raw = typeof value.text === "string" ? value.text : "";
+  const text = raw.split(/\r?\n/, 1)[0].trim();
+  if (!text) return null;
+  const at = Number(value.at);
+  return { text, at: Number.isFinite(at) ? at : 0 };
+}
+
+/**
+ * Last assistant message with non-empty text, scanning from the tail.
+ * @param {unknown} msgs
+ * @returns {object | null}
+ */
+function lastAssistantFromMessages(msgs) {
+  if (!Array.isArray(msgs)) return null;
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const m = msgs[i];
+    if (
+      m &&
+      m.role === "assistant" &&
+      typeof m.text === "string" &&
+      m.text.trim() !== ""
+    ) {
+      return m;
+    }
+  }
+  return null;
+}
+
+/**
+ * First line of `last` plus a timestamp, or null when there is no text.
+ * Missing/zero createdAt falls through to fallbackAt (thread.updatedAt).
+ * @param {object | null | undefined} last
+ * @param {unknown} fallbackAt
+ * @returns {{ text: string, at: number } | null}
+ */
+function lastAssistantPreviewFromMessage(last, fallbackAt) {
+  if (!last || typeof last.text !== "string") return null;
+  const text = String(last.text).split(/\r?\n/, 1)[0].trim();
+  if (!text) return null;
+  const at = Number(last.createdAt);
+  const fallback = Number(fallbackAt);
+  return {
+    text,
+    at: Number.isFinite(at) && at ? at : Number.isFinite(fallback) ? fallback : 0,
+  };
+}
+
 function migrateThread(t) {
   if (!t || typeof t !== "object") return t;
   const next = {
@@ -955,6 +1011,15 @@ function migrateThread(t) {
           ? false
           : null,
   };
+  // Agents-tab last-assistant preview (#639). Absent = not migrated (fill
+  // by peeking once at load). Present null = no non-empty assistant.
+  if (Object.prototype.hasOwnProperty.call(t, "lastAssistantPreview")) {
+    next.lastAssistantPreview = normalizeLastAssistantPreview(
+      t.lastAssistantPreview,
+    );
+  } else {
+    delete next.lastAssistantPreview;
+  }
   // Side questions (issue #471). Running cards become errors on load:
   // the completeAsk process is gone. Omit the field on old rows so
   // fixtures without `btw` still deepEqual.
@@ -1078,8 +1143,8 @@ class Store {
   }
 
   /**
-   * Seed the last-assistant memo from the skip-scan so threads:summaries
-   * does not hydrate every transcript.
+   * Seed the last-assistant memo from a skip-scan. summaries no longer
+   * reads this (thread.lastAssistantPreview); kept for getLastAssistantMessage.
    * @param {object} data
    * @param {Map<string, object | null> | null | undefined} lastAssistants
    */
@@ -1115,6 +1180,7 @@ class Store {
         store._lastAssistantByThread.delete(prop);
         store._invalidateLazy(prop);
         t[prop] = value;
+        store._stampLastAssistantPreview(prop);
         return true;
       },
       deleteProperty(t, prop) {
@@ -1307,11 +1373,17 @@ class Store {
     };
     ensureWorkflowTemplates(data);
     this._adoptMessages(data, useLazy ? split : null);
+    // getThread / stamp look at this.data; recoverInterruptedRuns may assign
+    // through the messages proxy before _load returns.
+    this.data = data;
     this._recoveredOnLoad = recoverInterruptedRuns(data) || hadSpaces;
     this._seedLastAssistants(
       data,
       useLazy && split ? split.lastAssistants : null,
     );
+    if (this._migrateLastAssistantPreviews(data)) {
+      this._recoveredOnLoad = true;
+    }
     return data;
   }
 
@@ -1547,7 +1619,8 @@ class Store {
 
   /**
    * Last assistant message with non-empty text. Memoized until the thread's
-   * message list changes. Not persisted.
+   * message list changes. Peeks lazy JSON; does not hydrate.
+   * threads:summaries reads thread.lastAssistantPreview, not this.
    * @param {string} threadId
    * @returns {object | null}
    */
@@ -1555,36 +1628,65 @@ class Store {
     if (this._lastAssistantByThread.has(threadId)) {
       return this._lastAssistantByThread.get(threadId);
     }
+    const last = this._peekLastAssistantMessage(threadId);
+    this._lastAssistantByThread.set(threadId, last);
+    return last;
+  }
+
+  /**
+   * Peek the last non-empty assistant without hydrating the transcript.
+   * @param {string} threadId
+   * @returns {object | null}
+   */
+  _peekLastAssistantMessage(threadId) {
     if (Object.prototype.hasOwnProperty.call(this._messagesHydrated, threadId)) {
-      const msgs = this._messagesHydrated[threadId] || [];
-      let last = null;
-      for (let i = msgs.length - 1; i >= 0; i--) {
-        const m = msgs[i];
-        if (
-          m &&
-          m.role === "assistant" &&
-          typeof m.text === "string" &&
-          m.text.trim() !== ""
-        ) {
-          last = m;
-          break;
-        }
-      }
-      this._lastAssistantByThread.set(threadId, last);
-      return last;
+      return lastAssistantFromMessages(this._messagesHydrated[threadId]);
     }
     const r = this._threadRange(threadId);
     if (r && this._messagesLazy) {
-      const last = peekLastAssistantValue(
-        this._messagesLazy.raw,
-        r.start,
-        r.end,
-      );
-      this._lastAssistantByThread.set(threadId, last);
-      return last;
+      return peekLastAssistantValue(this._messagesLazy.raw, r.start, r.end);
     }
-    this._lastAssistantByThread.set(threadId, null);
     return null;
+  }
+
+  /**
+   * Persist {text, at} (or null) on the thread row so threads:summaries
+   * never walks messagesByThread. No-op when the thread does not exist yet.
+   * @param {string} threadId
+   */
+  _stampLastAssistantPreview(threadId) {
+    if (!this.data || !Array.isArray(this.data.threads)) return;
+    const thread = this.getThread(threadId);
+    if (!thread) return;
+    thread.lastAssistantPreview = lastAssistantPreviewFromMessage(
+      this._peekLastAssistantMessage(threadId),
+      thread.updatedAt,
+    );
+  }
+
+  /**
+   * One-time fill of lastAssistantPreview for rows that predate the field.
+   * Peeks (does not hydrate). Indexes the raw blob once when more than one
+   * thread is missing, so we do not indexOf-scan 180 MB per thread.
+   * @param {object} data
+   * @returns {boolean} true if any row was written (caller should persist)
+   */
+  _migrateLastAssistantPreviews(data) {
+    const missing = (data.threads || []).filter(
+      (t) => t && t.lastAssistantPreview === undefined,
+    );
+    if (missing.length === 0) return false;
+    // Index once so we do not findThreadValue-scan the blob per thread.
+    // lastAssistants from that walk seed the memo; do not peek again.
+    if (missing.length > 1) this._ensureMessagesIndexed();
+    for (const t of missing) {
+      const last = this.getLastAssistantMessage(t.id);
+      t.lastAssistantPreview = lastAssistantPreviewFromMessage(
+        last,
+        t.updatedAt,
+      );
+    }
+    return true;
   }
 
   setMessages(threadId, messages) {
@@ -1596,6 +1698,7 @@ class Store {
       MESSAGE_OVERFLOW_SLACK,
       `Older messages were dropped to cap this transcript at ${MAX_MESSAGES_PER_THREAD}.`,
     );
+    this._stampLastAssistantPreview(threadId);
   }
 
   /**

@@ -161,4 +161,92 @@ describe("threads summaries", () => {
     const [after] = services.threadSummaries(store);
     assert.deepEqual(after.lastActivity, { text: "kept", at: 10 });
   });
+
+  it("appendMessage stamps lastAssistantPreview on the thread row", () => {
+    store.setThreads([makeThread({ id: "a" })]);
+    store.setMessages("a", [
+      { id: "m1", role: "assistant", text: "first", createdAt: 10 },
+    ]);
+    assert.deepEqual(store.getThread("a").lastAssistantPreview, {
+      text: "first",
+      at: 10,
+    });
+    store.appendMessage("a", {
+      id: "m2",
+      role: "assistant",
+      text: "second\nmore",
+      createdAt: 20,
+    });
+    assert.deepEqual(store.getThread("a").lastAssistantPreview, {
+      text: "second",
+      at: 20,
+    });
+  });
+
+  it("summaries after reload do not call getMessages", () => {
+    store.setThreads([makeThread({ id: "a" })]);
+    store.setMessages("a", [
+      { id: "m1", role: "user", text: "question", createdAt: 10 },
+      {
+        id: "m2",
+        role: "assistant",
+        text: "LAST\nsecond line",
+        createdAt: 30,
+      },
+    ]);
+    store.saveNow();
+    const reloaded = new Store(filePath);
+    let calls = 0;
+    const orig = reloaded.getMessages.bind(reloaded);
+    reloaded.getMessages = (...args) => {
+      calls += 1;
+      return orig(...args);
+    };
+    const [row] = services.threadSummaries(reloaded);
+    assert.deepEqual(row.lastActivity, { text: "LAST", at: 30 });
+    assert.equal(calls, 0);
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(reloaded._messagesHydrated, "a"),
+      false,
+    );
+  });
+
+  it("migrates lastAssistantPreview by peeking once without hydrating", () => {
+    fs.writeFileSync(
+      filePath,
+      JSON.stringify({
+        threads: [makeThread({ id: "a", updatedAt: 555 })],
+        messagesByThread: {
+          a: [
+            { id: "m1", role: "assistant", text: "real answer", createdAt: 10 },
+            { id: "m2", role: "assistant", text: "   ", createdAt: 20 },
+            { id: "m3", role: "assistant", text: "no timestamp" },
+          ],
+        },
+      }),
+      "utf8",
+    );
+    const reloaded = new Store(filePath);
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(reloaded._messagesHydrated, "a"),
+      false,
+    );
+    assert.deepEqual(reloaded.getThread("a").lastAssistantPreview, {
+      text: "no timestamp",
+      at: 555,
+    });
+    let calls = 0;
+    const orig = reloaded.getMessages.bind(reloaded);
+    reloaded.getMessages = (...args) => {
+      calls += 1;
+      return orig(...args);
+    };
+    const [row] = services.threadSummaries(reloaded);
+    assert.deepEqual(row.lastActivity, { text: "no timestamp", at: 555 });
+    assert.equal(calls, 0);
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(reloaded._messagesHydrated, "a"),
+      false,
+    );
+  });
 });
