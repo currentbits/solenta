@@ -1338,4 +1338,162 @@ describe("Store", () => {
       /Unknown template/,
     );
   });
+
+  describe("lazy messagesByThread (#639)", () => {
+    const CANARY = "CANARY_" + "x".repeat(8000);
+
+    function writeLazyFixture() {
+      const payload = {
+        projects: [],
+        threads: [
+          {
+            id: "t-big",
+            projectId: "p1",
+            title: "Big",
+            status: "idle",
+            createdAt: 1,
+            updatedAt: 2,
+          },
+          {
+            id: "t-small",
+            projectId: "p1",
+            title: "Small",
+            status: "idle",
+            createdAt: 1,
+            updatedAt: 3,
+          },
+        ],
+        messagesByThread: {
+          "t-big": [
+            {
+              id: "tool-1",
+              role: "tool",
+              tool: { name: "bash", input: CANARY },
+              createdAt: 10,
+            },
+            {
+              id: "asst-1",
+              role: "assistant",
+              text: "all done",
+              createdAt: 11,
+            },
+          ],
+          "t-small": [
+            { id: "u1", role: "user", text: "ping", createdAt: 20 },
+            { id: "a1", role: "assistant", text: "pong", createdAt: 21 },
+          ],
+        },
+        workLogByThread: {},
+        usageByThread: {},
+      };
+      fs.writeFileSync(filePath, JSON.stringify(payload), "utf8");
+    }
+
+    it("does not JSON.parse transcript blobs at construct time", () => {
+      writeLazyFixture();
+      const orig = JSON.parse;
+      const parsedCanary = [];
+      JSON.parse = (text, ...rest) => {
+        if (typeof text === "string" && text.includes("CANARY_")) {
+          parsedCanary.push(text.length);
+        }
+        return orig(text, ...rest);
+      };
+      let store;
+      try {
+        store = new Store(filePath);
+        assert.deepEqual(parsedCanary, [], "boot parse must skip tool payloads");
+        assert.equal(
+          Object.prototype.hasOwnProperty.call(store._messagesHydrated, "t-big"),
+          false,
+        );
+        assert.equal(store.getLastAssistantMessage("t-big").text, "all done");
+        assert.deepEqual(
+          parsedCanary,
+          [],
+          "last-assistant peek must not parse the tool payload",
+        );
+        assert.equal(
+          Object.prototype.hasOwnProperty.call(store._messagesHydrated, "t-big"),
+          false,
+        );
+        const msgs = store.getMessages("t-big");
+        assert.equal(msgs[0].tool.input, CANARY);
+        assert.equal(parsedCanary.length, 1);
+        assert.equal(
+          Object.prototype.hasOwnProperty.call(store._messagesHydrated, "t-small"),
+          false,
+        );
+      } finally {
+        JSON.parse = orig;
+      }
+    });
+
+    it("save without opening a thread preserves unhydrated transcripts", () => {
+      writeLazyFixture();
+      const store = new Store(filePath);
+      assert.equal(
+        Object.prototype.hasOwnProperty.call(store._messagesHydrated, "t-big"),
+        false,
+      );
+      store.setProjects([
+        { id: "p1", slug: "a/b", name: "b", path: "/x" },
+      ]);
+      store.saveNow();
+      const onDisk = fs.readFileSync(filePath, "utf8");
+      assert.ok(onDisk.includes(CANARY));
+      const reloaded = new Store(filePath);
+      assert.equal(reloaded.getProjects()[0].id, "p1");
+      assert.equal(reloaded.getMessages("t-big")[0].tool.input, CANARY);
+      assert.equal(reloaded.getLastAssistantMessage("t-small").text, "pong");
+    });
+
+    it("mutating one thread does not rewrite the other's raw JSON", () => {
+      writeLazyFixture();
+      const store = new Store(filePath);
+      store.appendMessage("t-small", {
+        id: "a2",
+        role: "assistant",
+        text: "again",
+        createdAt: 22,
+      });
+      store.saveNow();
+      assert.equal(
+        Object.prototype.hasOwnProperty.call(store._messagesHydrated, "t-big"),
+        false,
+      );
+      const reloaded = new Store(filePath);
+      assert.equal(reloaded.getMessages("t-small").at(-1).text, "again");
+      assert.equal(reloaded.getMessages("t-big")[0].tool.input, CANARY);
+    });
+
+    it("removeThread drops a lazy range so reload does not resurrect it", () => {
+      writeLazyFixture();
+      const store = new Store(filePath);
+      store.setThreads(store.getThreads().filter((t) => t.id !== "t-big"));
+      store.removeThread("t-big");
+      store.saveNow();
+      const reloaded = new Store(filePath);
+      assert.equal(reloaded.getThread("t-big"), null);
+      assert.deepEqual(reloaded.getMessages("t-big"), []);
+      assert.equal(
+        Object.prototype.hasOwnProperty.call(reloaded.data.messagesByThread, "t-big"),
+        false,
+      );
+      assert.ok(reloaded.getMessages("t-small").length > 0);
+    });
+
+    it("hasOwnProperty on messagesByThread is true for still-lazy ids", () => {
+      writeLazyFixture();
+      const store = new Store(filePath);
+      assert.equal(
+        Object.prototype.hasOwnProperty.call(store.data.messagesByThread, "t-big"),
+        true,
+      );
+      assert.equal(
+        Object.prototype.hasOwnProperty.call(store._messagesHydrated, "t-big"),
+        false,
+      );
+    });
+  });
 });
