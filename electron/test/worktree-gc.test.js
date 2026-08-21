@@ -513,6 +513,121 @@ describe("gcScan / gcClean", { concurrency: 1 }, () => {
     });
     assert.deepEqual(scan, { candidates: [], usage: [], totalBytes: 0 });
   });
+
+  it("does not block an archived worktree whose .git is gone (#642)", async () => {
+    const wt = addWorktree(fx, "Corrupt archived");
+    fs.rmSync(path.join(wt.worktreePath, ".git"), {
+      recursive: true,
+      force: true,
+    });
+    fx.store.updateThread(wt.id, {
+      archived: true,
+      status: "done",
+      updatedAt: 1_000,
+    });
+    fx.store.saveNow();
+
+    const scan = await gcScan({
+      store: fx.store,
+      worktreeBase: fx.worktreeBase,
+    });
+    assert.equal(scan.candidates.length, 1);
+    assert.equal(scan.candidates[0].path, wt.worktreePath);
+    assert.equal(scan.candidates[0].reason, "retention");
+    assert.equal(scan.candidates[0].transient, true);
+    assert.equal(scan.candidates[0].corrupt, true);
+    assert.equal(scan.candidates[0].blocked, undefined);
+  });
+
+  it("enforceRetention force-removes a corrupt archived worktree and keeps the branch (#642)", async () => {
+    const wt = addWorktree(fx, "Corrupt archived");
+    const branch = wt.branch;
+    fs.writeFileSync(path.join(wt.worktreePath, "stranded.txt"), "bytes\n");
+    fs.rmSync(path.join(wt.worktreePath, ".git"), {
+      recursive: true,
+      force: true,
+    });
+    fx.store.updateThread(wt.id, {
+      archived: true,
+      status: "done",
+      updatedAt: 1_000,
+    });
+    fx.store.saveNow();
+
+    const result = await enforceRetention({
+      store: fx.store,
+      worktreeBase: fx.worktreeBase,
+    });
+    assert.deepEqual(result.removed, [wt.worktreePath]);
+    assert.ok(!fs.existsSync(wt.worktreePath));
+    assert.equal(branchExists(fx.repo, branch), true);
+    const thread = fx.store.getThread(wt.id);
+    assert.equal(thread.worktreePath, null);
+    assert.equal(thread.branch, null);
+  });
+
+  it("gcClean force-removes a corrupt orphan and keeps the branch (#642)", async () => {
+    const orphanThread = services.createThread(fx.store, {
+      projectId: fx.project.id,
+      title: "Corrupt orphan",
+    });
+    const orphan = setupWorktree({
+      store: fx.store,
+      threadId: orphanThread.id,
+      worktreeBase: fx.worktreeBase,
+    });
+    const branch = orphan.branch;
+    fs.rmSync(path.join(orphan.worktreePath, ".git"), {
+      recursive: true,
+      force: true,
+    });
+    fx.store.removeThread(orphanThread.id);
+    fx.store.saveNow();
+
+    const result = await gcClean({
+      store: fx.store,
+      worktreeBase: fx.worktreeBase,
+      paths: [orphan.worktreePath],
+    });
+    assert.deepEqual(result.removed, [orphan.worktreePath]);
+    assert.ok(!fs.existsSync(orphan.worktreePath));
+    assert.equal(branchExists(fx.repo, branch), true);
+  });
+
+  it("a corrupt settled (non-transient) worktree stays blocked (#642)", async () => {
+    services.updateProject(fx.store, fx.project.id, { worktreeRetention: 1 });
+    const keep = addWorktree(fx, "Keep");
+    const drop = addWorktree(fx, "Corrupt settled");
+    fs.rmSync(path.join(drop.worktreePath, ".git"), {
+      recursive: true,
+      force: true,
+    });
+    fx.store.updateThread(keep.id, {
+      settledOverride: "settled",
+      updatedAt: 2_000,
+    });
+    fx.store.updateThread(drop.id, {
+      settledOverride: "settled",
+      updatedAt: 1_000,
+    });
+    fx.store.saveNow();
+
+    const scan = await gcScan({
+      store: fx.store,
+      worktreeBase: fx.worktreeBase,
+    });
+    const row = scan.candidates.find((c) => c.path === drop.worktreePath);
+    assert.ok(row, "past-limit settled worktree is a candidate");
+    assert.equal(row.corrupt, undefined);
+    assert.match(row.blocked, /git could not read/i);
+
+    const result = await enforceRetention({
+      store: fx.store,
+      worktreeBase: fx.worktreeBase,
+    });
+    assert.ok(!result.removed.includes(drop.worktreePath));
+    assert.ok(fs.existsSync(drop.worktreePath));
+  });
 });
 
 describe("collision-safe branch names", () => {

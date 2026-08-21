@@ -313,6 +313,11 @@ export function WorktreeGcSection({
                       {c.unmerged === 1 ? "commit" : "commits"} · branch kept
                     </p>
                   ) : null}
+                  {c.corrupt ? (
+                    <p className={styles.note} data-gc-corrupt={c.path}>
+                      git could not read the directory · force-delete
+                    </p>
+                  ) : null}
                   {c.blocked && (
                     <p className={styles.fieldError}>{c.blocked}</p>
                   )}
