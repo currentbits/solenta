@@ -29,6 +29,12 @@ const STATUSES = new Set([
   "skipped",
 ]);
 const ISSUE_PROMPT_RE = /GitHub issue #(\d+)\s*:/i;
+// Looser form for the close path only (#632): a fork prompt writes "issue
+// #12", not the Planboard start-prompt shape. Requires the word "issue" — a
+// bare `#12` is as often a PR or a cross-reference. On the live store 297 of
+// 436 thread prompts match this; 173 match ISSUE_PROMPT_RE. Never used for
+// the #420 reopen, which must not act on a guessed number.
+const LOOSE_ISSUE_RE = /(?:^|[^\w])issues?\s*#(\d+)/i;
 /** A "running" check older than this is treated as interrupted. */
 const STALE_RUNNING_MS = 15 * 60_000;
 const FETCH_TIMEOUT_MS = 60_000;
@@ -120,6 +126,23 @@ function issueNumberFromThread(store, thread) {
 }
 
 /**
+ * Loose `issue #N` in the thread's FIRST user message (#632). Only the first
+ * message: a later "see issue #83" is context, not what this thread is.
+ *
+ * @param {import("./store").Store} store
+ * @param {object} thread
+ * @returns {number | null}
+ */
+function firstPromptIssueNumber(store, thread) {
+  const first = (store.getMessages(thread.id) || []).find(
+    (m) => m && m.role === "user",
+  );
+  if (!first) return null;
+  const m = String(first.text || "").match(LOOSE_ISSUE_RE);
+  return m ? normalizeIssueNumber(m[1]) : null;
+}
+
+/**
  * @param {object | null | undefined} thread
  * @returns {boolean}
  */
@@ -174,7 +197,60 @@ function schedulePostMergeVerify(store, threadId, now, opts) {
  */
 function onThreadPrState(store, threadId, prState, now) {
   if (String(prState || "").toUpperCase() !== "MERGED") return null;
+  void completeThreadIssue(store, threadId).catch(() => {});
   return schedulePostMergeVerify(store, threadId, now == null ? Date.now() : now);
+}
+
+/**
+ * Issues completed in this process. completeIssue already no-ops on a closed
+ * issue, so this only spares a burst of gh calls when the interactive
+ * prStatus path re-reports the same MERGED pr.
+ * ponytail: in-memory only; a restart re-checks each issue once.
+ */
+const completedIssues = new Set();
+
+/**
+ * Move a landed thread's planboard issue to plan:done and close it (#632).
+ *
+ * The board only ever moved forward: "Start task" and autodispatch set
+ * plan:doing, and nothing wrote the done edge — so finished work sat in
+ * Doing until a human noticed. Called fire-and-forget from the two places
+ * work actually lands (local merge, PR → MERGED). No linked issue, or an
+ * issue that is not plan:doing, means no action.
+ *
+ * @param {import("./store").Store} store
+ * @param {string} threadId
+ * @param {{ completeIssue?: Function }} [deps]
+ * @returns {Promise<object | null>}
+ */
+async function completeThreadIssue(store, threadId, deps) {
+  const thread = store.getThread(threadId);
+  if (!thread) return null;
+  const issueNumber =
+    issueNumberFromThread(store, thread) ||
+    firstPromptIssueNumber(store, thread);
+  if (!issueNumber) return null;
+  const project = store.getProject(thread.projectId);
+  if (!project || !project.path || project.remoteHost) return null;
+
+  const key = `${thread.projectId}:${issueNumber}`;
+  if (completedIssues.has(key)) return null;
+  completedIssues.add(key);
+
+  const complete =
+    (deps && deps.completeIssue) || require("./issues.js").completeIssue;
+  const pr = thread.prNumber ? ` (PR #${thread.prNumber})` : "";
+  const res = await complete(project.path, issueNumber, {
+    comment: `Landed from Solenta thread "${thread.title}"${pr}. Closed on merge.`,
+  });
+  if (!res || !res.ok) {
+    completedIssues.delete(key);
+    return res || null;
+  }
+  if (res.skipped) return res;
+  appendEvent(store, thread.id, `Planboard: #${issueNumber} moved to Done.`);
+  store.save();
+  return res;
 }
 
 /**
@@ -581,9 +657,11 @@ module.exports = {
   parseIssueNumberFromText,
   normalizePostMerge,
   issueNumberFromThread,
+  firstPromptIssueNumber,
   shouldSchedule,
   schedulePostMergeVerify,
   onThreadPrState,
+  completeThreadIssue,
   duePostMergeChecks,
   resolveMergedRef,
   prepareMergedCheckout,

@@ -25,6 +25,7 @@ const {
   buildReopenComment,
   runPostMergeCheck,
   startPostMergeScheduler,
+  completeThreadIssue,
   DEFAULT_DELAY_MS,
 } = require("../postmerge.js");
 
@@ -457,5 +458,85 @@ describe("buildReopenComment", () => {
     assert.match(text, /Merged PR: #9/);
     assert.match(text, /Fix thread started in Solenta: Regression: Ship it/);
     assert.match(text, /boom/);
+  });
+});
+
+describe("completeThreadIssue (#632)", () => {
+  let tmpDir;
+  let store;
+  let project;
+
+  function thread(title, issueNumber) {
+    return services.createThread(store, {
+      projectId: project.id,
+      title,
+      issueNumber,
+    }).id;
+  }
+
+  /** Records what would have been closed. */
+  function spy() {
+    const seen = [];
+    return {
+      seen,
+      completeIssue: async (projectPath, number, opts) => {
+        seen.push({ projectPath, number, comment: opts && opts.comment });
+        return { ok: true };
+      },
+    };
+  }
+
+  beforeEach(async () => {
+    const fx = await makeStore();
+    tmpDir = fx.tmpDir;
+    store = fx.store;
+    project = fx.project;
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("closes the linked issue once and notes it on the thread", async () => {
+    const id = thread("Ship it", 901);
+    const deps = spy();
+    assert.deepEqual(await completeThreadIssue(store, id, deps), { ok: true });
+    assert.equal(deps.seen.length, 1);
+    assert.equal(deps.seen[0].number, 901);
+    assert.equal(deps.seen[0].projectPath, project.path);
+    assert.match(deps.seen[0].comment, /Ship it/);
+    assert.ok(
+      (store.getMessages(id) || []).some(
+        (m) => m.role === "event" && /#901 moved to Done/.test(m.text),
+      ),
+    );
+    // A second landing signal (interactive prStatus re-reporting MERGED)
+    // must not spawn another round of gh calls.
+    assert.equal(await completeThreadIssue(store, id, deps), null);
+    assert.equal(deps.seen.length, 1);
+  });
+
+  it("falls back to `issue #N` in the first prompt, not a later mention", async () => {
+    const id = thread("Fork worker", null);
+    store.setMessages(id, [
+      { id: "m1", role: "user", text: "Fix issue #902 on this branch", createdAt: 1 },
+      { id: "m2", role: "user", text: "see issue #903 for context", createdAt: 2 },
+    ]);
+    const deps = spy();
+    await completeThreadIssue(store, id, deps);
+    assert.deepEqual(
+      deps.seen.map((c) => c.number),
+      [902],
+    );
+  });
+
+  it("does nothing when no prompt names an issue", async () => {
+    const id = thread("No issue here", null);
+    store.setMessages(id, [
+      { id: "m1", role: "user", text: "just make the button blue", createdAt: 1 },
+    ]);
+    const deps = spy();
+    assert.equal(await completeThreadIssue(store, id, deps), null);
+    assert.deepEqual(deps.seen, []);
   });
 });

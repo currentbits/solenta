@@ -445,6 +445,75 @@ async function reopenIssue(projectPath, number, opts) {
 }
 
 /**
+ * Close a planboard issue whose work just landed (issue #632) — the inverse
+ * of reopenIssue, and the edge the board was missing: nothing ever moved an
+ * issue to plan:done, so every started task sat in Doing forever.
+ *
+ * Gated on plan:doing: the thread→issue link is partly parsed out of a
+ * prompt, and a stray `#N` must never close an issue nobody started.
+ * Already-closed is success. Never throws.
+ *
+ * @param {string} projectPath
+ * @param {unknown} number
+ * @param {{ comment?: string }} [opts]
+ * @returns {Promise<{ ok: true, skipped?: string } | { ok: false, reason: string }>}
+ */
+async function completeIssue(projectPath, number, opts) {
+  const cwd = String(projectPath || "");
+  const issueNumber = Number(number);
+  if (!cwd) return { ok: false, reason: "not a GitHub repo" };
+  if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
+    return { ok: false, reason: "invalid issue reference" };
+  }
+
+  const remote = gitTry(cwd, ["remote", "get-url", "origin"]);
+  if (!remote.ok || !isGitHubRemote(String(remote.stdout || "").trim())) {
+    return { ok: false, reason: "not a GitHub repo" };
+  }
+
+  const viewed = await ghTryAsync(
+    cwd,
+    ["issue", "view", String(issueNumber), "--json", "state,labels"],
+    GH_USER,
+  );
+  const viewErr = viewed.stderr || viewed.combined || viewed.stdout || "";
+  if (!viewed.ok) {
+    if (viewed.enoent) return { ok: false, reason: "gh missing" };
+    if (isGhAuthFailure(viewErr)) return { ok: false, reason: "auth" };
+    if (isIssueNotFound(viewErr)) return { ok: false, reason: "issue not found" };
+    return { ok: false, reason: tailErr(viewErr, "gh issue view failed") };
+  }
+  let row;
+  try {
+    const trimmed = String(viewed.stdout || "").trim();
+    row = JSON.parse(trimmed === "" ? "{}" : trimmed);
+  } catch {
+    return { ok: false, reason: "gh returned unparseable issue JSON" };
+  }
+  if (String(row.state || "").toUpperCase() === "CLOSED") {
+    return { ok: true, skipped: "already closed" };
+  }
+  const labels = Array.isArray(row.labels)
+    ? row.labels.map((l) => (l && l.name != null ? String(l.name) : ""))
+    : [];
+  if (!labels.includes("plan:doing")) {
+    return { ok: true, skipped: "not in progress" };
+  }
+
+  const moved = await setPlanStatus(cwd, issueNumber, "done");
+  const comment = opts && typeof opts.comment === "string" ? opts.comment : "";
+  const args = ["issue", "close", String(issueNumber)];
+  if (comment) args.push("--comment", comment);
+  const closed = await ghTryAsync(cwd, args, GH_USER);
+  if (closed.ok) return { ok: true };
+  if (!moved.ok) return moved;
+  const closeErr = closed.stderr || closed.combined || closed.stdout || "";
+  if (closed.enoent) return { ok: false, reason: "gh missing" };
+  if (isGhAuthFailure(closeErr)) return { ok: false, reason: "auth" };
+  return { ok: false, reason: tailErr(closeErr, "gh issue close failed") };
+}
+
+/**
  * File an issue via `gh issue create` and label it plan:todo (issue #550
  * "File on planboard" chip). Never throws; failures come back as
  * `{ ok: false, reason }`. The label ride-along is best-effort: creation
@@ -499,6 +568,7 @@ module.exports = {
   listIssues,
   setPlanStatus,
   reopenIssue,
+  completeIssue,
   createIssue,
   parseIssueListJson,
   ownerRepoFromRemote,

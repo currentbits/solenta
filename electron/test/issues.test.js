@@ -15,6 +15,7 @@ const {
   fetchIssue,
   setPlanStatus,
   reopenIssue,
+  completeIssue,
   createIssue,
 } = require("../issues.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
@@ -295,6 +296,90 @@ process.exit(1);
       reason: "invalid issue reference",
     });
     assert.deepEqual(calls(), []);
+  });
+});
+
+describe("completeIssue", () => {
+  let tmp;
+  let repo;
+  let prevGh;
+  let callsPath;
+
+  /** Fake gh: `issue view --json state,labels` answers with `row`. */
+  function writeFakeGh(row) {
+    const bin = writeFakeBin(
+      path.join(tmp, "fake-gh"),
+      `#!/usr/bin/env node
+"use strict";
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+const file = ${JSON.stringify(callsPath)};
+const prev = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : [];
+prev.push(args);
+fs.writeFileSync(file, JSON.stringify(prev));
+if (args[1] === "view") process.stdout.write(${JSON.stringify(JSON.stringify(row))});
+process.exit(0);
+`,
+    );
+    process.env.CODER_GH_BIN = bin;
+  }
+
+  function calls() {
+    return fs.existsSync(callsPath)
+      ? JSON.parse(fs.readFileSync(callsPath, "utf8"))
+      : [];
+  }
+
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "coder-complete-"));
+    repo = path.join(tmp, "repo");
+    fs.mkdirSync(repo);
+    git(repo, ["init", "-q", "-b", "main"]);
+    git(repo, ["remote", "add", "origin", "https://github.com/acme/demo.git"]);
+    callsPath = path.join(tmp, "gh-calls.json");
+    prevGh = process.env.CODER_GH_BIN;
+  });
+
+  afterEach(() => {
+    if (prevGh == null) delete process.env.CODER_GH_BIN;
+    else process.env.CODER_GH_BIN = prevGh;
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("labels plan:done and closes an in-progress issue", async () => {
+    writeFakeGh({ state: "OPEN", labels: [{ name: "plan:doing" }] });
+    assert.deepEqual(await completeIssue(repo, 7, { comment: "landed" }), {
+      ok: true,
+    });
+    const seen = calls();
+    assert.deepEqual(seen[1], [
+      "issue",
+      "edit",
+      "7",
+      "--add-label",
+      "plan:done",
+      "--remove-label",
+      "plan:todo,plan:doing",
+    ]);
+    assert.deepEqual(seen[2], ["issue", "close", "7", "--comment", "landed"]);
+  });
+
+  it("leaves an issue nobody started alone", async () => {
+    writeFakeGh({ state: "OPEN", labels: [{ name: "plan:todo" }] });
+    assert.deepEqual(await completeIssue(repo, 7, {}), {
+      ok: true,
+      skipped: "not in progress",
+    });
+    assert.equal(calls().length, 1);
+  });
+
+  it("is a no-op on an already closed issue", async () => {
+    writeFakeGh({ state: "CLOSED", labels: [{ name: "plan:doing" }] });
+    assert.deepEqual(await completeIssue(repo, 7, {}), {
+      ok: true,
+      skipped: "already closed",
+    });
+    assert.equal(calls().length, 1);
   });
 });
 
