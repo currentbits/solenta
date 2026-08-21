@@ -1129,6 +1129,34 @@ describe("Sidebar remove + edit project (scope menu)", () => {
     m.unmount();
   });
 
+  it("badges a jj project in the scope menu (#521)", async () => {
+    await clearSidebarStorage();
+    const jjProject: ProjectInfo = {
+      ...p1,
+      scm: {
+        kind: "jj",
+        colocated: true,
+        support: "unsupported",
+        detail: "Jujutsu colocated repo.",
+      },
+    };
+    const m = await mount(
+      sidebar(removeThreads, {
+        projects: [jjProject, p2],
+        onEditProject: () => {},
+      }),
+    );
+    await openScopeMenu(m);
+    const item = m.query('[data-scope-item="p1"]');
+    assert.ok(item, "jj project row");
+    const badge = item!.querySelector("[data-scm-badge]");
+    assert.ok(badge, "jj chip");
+    assert.equal(badge!.getAttribute("data-scm-badge"), "unsupported");
+    assert.equal((badge!.textContent || "").trim(), "jj");
+    assert.equal(m.query('[data-scope-item="p2"]')?.querySelector("[data-scm-badge]"), null);
+    m.unmount();
+  });
+
   it("confirm shows REAL thread count, path, and both t3 sentences", async () => {
     await clearSidebarStorage();
     const m = await mount(

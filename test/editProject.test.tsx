@@ -152,6 +152,33 @@ describe("edit project", () => {
     );
     m.unmount();
   });
+
+  it("shows a jj unsupported note on the local path field (#521)", async () => {
+    const p1 = project({
+      id: "p1",
+      name: "ledger",
+      path: "/tmp/ledger",
+      scm: {
+        kind: "jj",
+        colocated: true,
+        support: "unsupported",
+        detail: "Jujutsu colocated repo. Worktrees and diffs use git.",
+      },
+    });
+    const t1 = thread({ id: "t1", projectId: "p1" });
+    const fake = createFakeCoder({
+      projects: [p1],
+      threads: [t1],
+      details: { t1: detail({ thread: t1 }) },
+    });
+    const m = await boot(fake);
+    await m.click(m.query("[data-scope-trigger]"));
+    await m.click(m.query('[data-scope-edit="p1"]'));
+    const note = m.query("[data-scm-detail]");
+    assert.ok(note, "jj note under the path");
+    assert.match(note!.textContent || "", /Jujutsu colocated/);
+    m.unmount();
+  });
 });
 
 describe("edit project icon (#610)", () => {

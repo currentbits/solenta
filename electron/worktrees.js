@@ -9,6 +9,7 @@ const { scanSecrets } = require("./guardrails.js");
 const { GENERATED_MARKER } = require("./configDoctor.js");
 // #559 persists this default (10) on every project; 0 is keep-everything.
 const { DEFAULT_WORKTREE_RETENTION } = require("./store.js");
+const { detectScm, JJ_DETACHED_HEAD_ERROR } = require("./scm.js");
 
 /** @type {typeof execFile} */
 let execFileImpl = execFile;
@@ -297,6 +298,10 @@ function gitExecThrowAsync(project, cwd, args, opts) {
 function defaultBranch(projectPath) {
   const branch = gitOut(projectPath, ["branch", "--show-current"]);
   if (!branch) {
+    const scm = detectScm(projectPath);
+    if (scm && scm.kind === "jj") {
+      throw new Error(JJ_DETACHED_HEAD_ERROR);
+    }
     throw new Error(
       "Project checkout is detached HEAD; check out a branch before merging",
     );
@@ -313,6 +318,10 @@ function defaultBranch(projectPath) {
 async function defaultBranchAsync(projectPath) {
   const branch = await gitOutAsync(projectPath, ["branch", "--show-current"]);
   if (!branch) {
+    const scm = detectScm(projectPath);
+    if (scm && scm.kind === "jj") {
+      throw new Error(JJ_DETACHED_HEAD_ERROR);
+    }
     throw new Error(
       "Project checkout is detached HEAD; check out a branch before merging",
     );

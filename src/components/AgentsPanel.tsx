@@ -1318,6 +1318,38 @@ export function LocalServersCard({
 }
 
 /**
+ * Per-project source-control badge (issue #521). Hidden for plain git —
+ * that's the assumed default. Jujutsu (colocated or not) is unsupported.
+ */
+function ScmCard({ project }: { project: ProjectInfo | null }) {
+  const scm = project?.scm;
+  if (!scm || scm.kind !== "jj") return null;
+  return (
+    <section className={styles.gitCard} data-scm-card="">
+      <div className={styles.gitCardLabel}>
+        <svg {...LABEL_ICON_PROPS} className={styles.labelIcon}>
+          <path d="M3 4.5A1.5 1.5 0 0 1 4.5 3H13v10H4.5A1.5 1.5 0 0 0 3 14.5v-10Z" />
+          <path d="M3 14.5A1.5 1.5 0 0 1 4.5 13H13" />
+        </svg>
+        Source control
+      </div>
+      <span
+        className={styles.scmBadge}
+        data-scm-badge={scm.support}
+        title={scm.detail}
+      >
+        jj · unsupported
+      </span>
+      {scm.detail ? (
+        <p className={styles.gitHint} data-scm-detail="">
+          {scm.detail}
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
+/**
  * Repository row: the thread root's git origin as owner/repo with an
  * external link to the host. Hidden when there is no origin (or no thread).
  */
@@ -1903,6 +1935,7 @@ export function GitTab({
   return (
     <>
       <div className={styles.scroll}>
+        <ScmCard project={project} />
         <RepositoryCard threadId={thread?.id ?? null} gitRepoInfo={gitRepoInfo} />
         {onOpenPrs && (
           <PullRequestsCard active={Boolean(prsActive)} onOpen={onOpenPrs} />
