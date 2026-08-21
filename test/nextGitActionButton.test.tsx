@@ -102,7 +102,7 @@ function view(props: {
     allowOversize?: boolean;
   }) => Promise<PrInfo>;
   onPrChecks?: () => Promise<PrChecksResult>;
-  onPrMerge?: () => Promise<PrInfo>;
+  onPrMerge?: (opts?: { ciWorkflowApproved?: boolean }) => Promise<PrInfo>;
   onStartRun?: (prompt: string) => void;
 }) {
   return (
@@ -527,6 +527,94 @@ describe("next-git-action button", () => {
     const el = m.query('[data-next-git-action="checks-failed"]');
     assert.ok(el, "checks-failed action");
     assert.equal((el!.textContent || "").trim(), "Checks failed");
+    m.unmount();
+  });
+
+  it("shows a blast-radius badge and requires sign-off before merge (#510)", async () => {
+    const merges: Array<{ ciWorkflowApproved?: boolean } | undefined> = [];
+    const m = await mount(
+      view({
+        detail: detail({
+          thread: thread({
+            prNumber: 9,
+            prUrl: "https://github.com/acme/repo/pull/9",
+            prState: "OPEN",
+          }),
+        }),
+        onFetchDiff: async () => ({
+          files: [],
+          patch: "",
+          truncated: false,
+          blastRadius: {
+            kind: "ci-workflow",
+            files: [".github/workflows/jira_issue.yml"],
+            findings: [],
+          },
+        }),
+        gitSyncInfo: async () => ({ hasUpstream: true, ahead: 0, behind: 0 }),
+        onPrChecks: async () => ({
+          ok: true,
+          checks: [{ name: "ci", bucket: "pass" }],
+        }),
+        onPrMerge: async (opts) => {
+          merges.push(opts);
+          return {
+            number: 9,
+            url: "https://github.com/acme/repo/pull/9",
+            state: "MERGED",
+            branch: "coder/next-action-abc123",
+            created: false,
+          };
+        },
+      }),
+    );
+    await m.flush();
+    const badge = m.query("[data-blast-radius]");
+    assert.ok(badge, "blast-radius badge");
+    assert.equal(badge.getAttribute("data-blast-radius"), "ci-workflow");
+    assert.match(badge.textContent || "", /CI workflow/);
+
+    const btn = m.query('[data-next-git-action="merge"]');
+    assert.ok(btn, "merge action");
+    await m.click(btn);
+    await m.flush();
+    assert.deepEqual(merges, [], "first click must not merge");
+    const bar = m.query("[data-ci-signoff]");
+    assert.ok(bar, "sign-off bar");
+    assert.match(bar.textContent || "", /privilege-escalation/i);
+
+    await m.click(m.query("[data-ci-signoff-approve]")!);
+    await m.flush();
+    assert.equal(merges.length, 1);
+    assert.equal(merges[0]?.ciWorkflowApproved, true);
+    m.unmount();
+  });
+
+  it("shows the blast-radius badge on Commit when the working tree edits a workflow", async () => {
+    const m = await mount(
+      view({
+        onFetchDiff: async () => ({
+          files: [
+            {
+              path: ".github/workflows/ci.yml",
+              status: "M",
+              additions: 4,
+              deletions: 1,
+            },
+          ],
+          patch: "",
+          truncated: false,
+          blastRadius: {
+            kind: "ci-workflow",
+            files: [".github/workflows/ci.yml"],
+            findings: [],
+          },
+        }),
+      }),
+    );
+    await m.flush();
+    assert.ok(m.query("[data-blast-radius]"));
+    assert.ok(m.query('[data-next-git-action="commit"]'));
     m.unmount();
   });
 });

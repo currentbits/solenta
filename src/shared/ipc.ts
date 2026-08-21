@@ -923,11 +923,34 @@ export interface FileChange {
   deletions: number;
 }
 
+/** One mechanically-detected CI-workflow interpolation (issue #510). */
+export interface WorkflowLintFinding {
+  path: string;
+  excerpt: string;
+  reason: string;
+}
+
+/**
+ * Privilege-escalation classification of a thread diff (issue #510).
+ * Present when the working tree or the branch-vs-base range touches a
+ * CI/workflow file. `findings` are optional Snowflake-pattern hits.
+ */
+export interface BlastRadiusInfo {
+  kind: "ci-workflow";
+  files: string[];
+  findings: WorkflowLintFinding[];
+}
+
 export interface DiffResult {
   files: FileChange[];
   /** Unified diff text, truncated by main to ~100k chars. */
   patch: string;
   truncated: boolean;
+  /**
+   * CI/workflow files in the working tree or the branch vs base (issue
+   * #510). Null/absent when the change set does not touch a pipeline file.
+   */
+  blastRadius?: BlastRadiusInfo | null;
 }
 
 /**
@@ -1137,6 +1160,12 @@ export interface DigestRun {
   commits: number;
   prNumber: number | null;
   prState: "OPEN" | "CLOSED" | "MERGED" | null;
+  /**
+   * True when the thread's change set (working tree or branch vs base)
+   * touches a CI/workflow file (issue #510). Digest ranks these as
+   * needs-you; they are never merge-ready unattended.
+   */
+  ciWorkflow?: boolean;
   /**
    * Execution evidence scraped from the run's tool calls: did a test/build
    * command actually run in the window, did the last one fail, and its label
@@ -2629,7 +2658,15 @@ export interface CoderApi {
      * the worktree and branch. Rejects with a descriptive Error on conflicts
      * or a dirty project checkout; nothing is force-removed on failure.
      */
-    mergeWorktree(input: { threadId: string }): Promise<ThreadInfo>;
+    mergeWorktree(input: {
+      threadId: string;
+      /**
+       * Explicit human sign-off for a CI/workflow diff (issue #510).
+       * Absent/false: merge refuses when the change set touches a
+       * pipeline file. Not a permission preset.
+       */
+      ciWorkflowApproved?: boolean;
+    }): Promise<ThreadInfo>;
     /**
      * Deletes the thread's worktree and branch WITHOUT merging. Rejects when
      * the worktree has uncommitted changes or unmerged commits unless force
@@ -2679,7 +2716,15 @@ export interface CoderApi {
      * throw MERGE_CONFLICT: and leave the worktree conflicted. An empty
      * unique tree vs base tells the caller to close the PR.
      */
-    prMerge(input: { threadId: string }): Promise<PrInfo>;
+    prMerge(input: {
+      threadId: string;
+      /**
+       * Explicit human sign-off for a CI/workflow diff (issue #510).
+       * Absent/false: squash-merge refuses when the PR touches a
+       * pipeline file. Automations and the merge queue must not pass this.
+       */
+      ciWorkflowApproved?: boolean;
+    }): Promise<PrInfo>;
     /**
      * Open PRs for a project checkout via `gh pr list`. Never rejects for
      * missing gh / non-GitHub remotes / auth: those come back as

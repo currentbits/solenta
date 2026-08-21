@@ -37,6 +37,37 @@
   color: var(--text);
 }
 
+.blastRadius {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(248, 113, 113, 0.4);
+  background: rgba(248, 113, 113, 0.1);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.blastRadius strong {
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--red, #f87171);
+}
+
+.findings {
+  margin: 4px 0 0;
+  padding-left: 16px;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.findings code {
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
 .hardStop {
   display: flex;
   flex-direction: column;

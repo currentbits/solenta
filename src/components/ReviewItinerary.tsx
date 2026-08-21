@@ -20,6 +20,7 @@ export function ReviewItineraryView({
 }) {
   const annotation = itinerary.annotation;
   const show =
+    itinerary.blastRadius ||
     itinerary.hardStop ||
     itinerary.reuseHits.length > 0 ||
     itinerary.mismatches.length > 0 ||
@@ -42,6 +43,32 @@ export function ReviewItineraryView({
           Tests first
         </button>
       </div>
+
+      {itinerary.blastRadius && (
+        <div
+          className={styles.blastRadius}
+          role="alert"
+          data-blast-radius="ci-workflow"
+        >
+          <strong>Blast radius — CI workflow</strong>
+          <span>
+            Privilege-escalation — a human must sign off before merge.
+          </span>
+          <span className={styles.paths}>
+            {itinerary.blastRadius.files.join(" · ")}
+          </span>
+          {itinerary.blastRadius.findings.length > 0 ? (
+            <ul className={styles.findings} data-blast-radius-findings="">
+              {itinerary.blastRadius.findings.map((f, i) => (
+                <li key={`${f.path}:${i}`}>
+                  <code>{f.path}</code> {f.reason}
+                  {f.excerpt ? ` — ${f.excerpt}` : ""}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      )}
 
       {itinerary.hardStop && (
         <div

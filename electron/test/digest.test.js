@@ -247,5 +247,24 @@ describe("collectDigest", () => {
     assert.equal(result.runs[0].additions, 0);
     assert.equal(result.runs[0].deletions, 0);
     assert.equal(result.runs[0].commits, 0);
+    assert.equal(result.runs[0].ciWorkflow, false);
+  });
+
+  it("passes ciWorkflow through from gitStats (issue #510)", async () => {
+    const result = await collectDigest({
+      store: makeStore({
+        threads: [thread({ id: "t1", updatedAt: NOW })],
+      }),
+      sinceMs: NOW - HOUR,
+      nowMs: NOW,
+      gitStats: async () => ({
+        filesChanged: 1,
+        additions: 4,
+        deletions: 0,
+        commits: 1,
+        ciWorkflow: true,
+      }),
+    });
+    assert.equal(result.runs[0].ciWorkflow, true);
   });
 });

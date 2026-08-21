@@ -72,6 +72,26 @@ describe("summarizeDigest", () => {
     assert.deepEqual(entry.risks, []);
   });
 
+  it("CI workflow diffs need a human even with a green PR (issue #510)", () => {
+    const summary = summarizeDigest([
+      run({
+        threadId: "ci",
+        filesChanged: 2,
+        commits: 1,
+        prNumber: 12,
+        prState: "OPEN",
+        ciWorkflow: true,
+        checks: { ran: true, failed: false, label: "npm test" },
+      }),
+    ]);
+    assert.equal(bucketOf(summary, "ci"), "needs-you");
+    const entry = summary.groups
+      .find((g) => g.bucket === "needs-you")!
+      .entries[0];
+    assert.match(entry.reason, /CI workflow/);
+    assert.ok(entry.risks.includes("CI workflow"));
+  });
+
   it("a stalled prompt, a failure and failed checks all need you", () => {
     const summary = summarizeDigest([
       run({ threadId: "stalled", awaitingInput: true, filesChanged: 2 }),

@@ -217,7 +217,7 @@ describe("buildReviewItinerary", () => {
     );
   });
 
-  it("puts a hard-stop on CI/config and lists reuse + mismatch as steps", () => {
+  it("puts a blast-radius on workflow files and lists reuse + mismatch as steps", () => {
     const plan = buildReviewItinerary({
       files,
       patch,
@@ -225,13 +225,44 @@ describe("buildReviewItinerary", () => {
       threadTitle: "Review itinerary",
       symbols: [{ name: "formatUsd", path: "src/format.ts" }],
     });
-    assert.ok(plan.hardStop);
-    assert.deepEqual(plan.hardStop?.files, [".github/workflows/ci.yml"]);
+    assert.equal(plan.hardStop, null);
+    assert.ok(plan.blastRadius);
+    assert.deepEqual(plan.blastRadius?.files, [".github/workflows/ci.yml"]);
     assert.equal(plan.reuseHits[0]?.name, "formatUsd");
     assert.ok(plan.mismatches[0]?.label.includes("issue says"));
-    assert.equal(plan.steps[0]?.kind, "hard-stop");
+    assert.equal(plan.steps[0]?.kind, "blast-radius");
     assert.ok(plan.steps.some((s) => s.kind === "reuse"));
     assert.ok(plan.steps.some((s) => s.kind === "mismatch"));
+  });
+
+  it("lints github.event interpolation on a workflow run: line", () => {
+    const plan = buildReviewItinerary({
+      files: [file(".github/workflows/jira_issue.yml")],
+      patch: [
+        "diff --git a/.github/workflows/jira_issue.yml b/.github/workflows/jira_issue.yml",
+        "--- a/.github/workflows/jira_issue.yml",
+        "+++ b/.github/workflows/jira_issue.yml",
+        "@@ -1,1 +1,2 @@",
+        " name: jira",
+        '+  run: echo "${{ github.event.issue.title }}"',
+      ].join("\n"),
+    });
+    assert.equal(plan.blastRadius?.findings.length, 1);
+    assert.match(
+      plan.blastRadius?.findings[0]?.reason || "",
+      /github\.event/,
+    );
+  });
+
+  it("keeps a hard-stop for non-workflow config and a blast-radius for workflows", () => {
+    const plan = buildReviewItinerary({
+      files: [file("package.json"), file(".github/workflows/ci.yml")],
+      patch: "",
+    });
+    assert.deepEqual(plan.blastRadius?.files, [".github/workflows/ci.yml"]);
+    assert.deepEqual(plan.hardStop?.files, ["package.json"]);
+    assert.equal(plan.steps[0]?.kind, "blast-radius");
+    assert.equal(plan.steps[1]?.kind, "hard-stop");
   });
 
   it("tests-first moves tests ahead of critical, still after CI", () => {
