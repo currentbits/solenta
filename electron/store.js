@@ -274,7 +274,10 @@ const SPEND_RETENTION_DAYS = 90;
 const SAVE_DEBOUNCE_MS = 250;
 // Under sustained save() (N streaming threads), double the delay each
 // dirty flush up to this cap so we do not stringify the whole store at 4 Hz.
-const SAVE_DEBOUNCE_MAX_MS = 2000;
+// 15s, not 2s (#225 interim): each flush stringifies + rewrites the whole
+// ~180MB store, and the crash-loss window is only the transcript tail, which
+// the provider CLIs' own session logs restore on resume.
+const SAVE_DEBOUNCE_MAX_MS = 15_000;
 
 /**
  * Per-thread transcript retention (issue #89). Threads never shrank, so a few
@@ -1089,7 +1092,13 @@ class Store {
         const data = this._readFile(this.filePath);
         // Last-known-good snapshot from this successful start. Best-effort.
         try {
-          fs.copyFileSync(this.filePath, bakPath);
+          // FICLONE: instant CoW clone on APFS instead of a byte copy of the
+          // whole store at boot; silently falls back to a real copy elsewhere.
+          fs.copyFileSync(
+            this.filePath,
+            bakPath,
+            fs.constants.COPYFILE_FICLONE,
+          );
         } catch {
           // Never fail a load over the rolling backup.
         }
@@ -1182,7 +1191,7 @@ class Store {
     const tmp = `${this.filePath}.${process.pid}.${Date.now()}.tmp`;
     // Compact JSON: the file is machine-read, and pretty-printing roughly
     // doubles both the stringify CPU and the bytes written on every flush
-    // (which fires up to every 2s under sustained streaming).
+    // (which fires up to every 15s under sustained streaming).
     const payload = JSON.stringify(this.data);
     this._flushPromise = (async () => {
       try {
@@ -1214,7 +1223,7 @@ class Store {
         this._flushPromise = null;
         if (this._dirty) {
           // ponytail: backoff under sustained save() so N streaming threads
-          // cannot force a whole-store stringify every 250ms. Cap 2s; reset
+          // cannot force a whole-store stringify every 250ms. Cap 15s; reset
           // on a quiet flush. Per-thread files if the store stays >50MB.
           this._flushDelayMs = Math.min(
             this._flushDelayMs * 2,

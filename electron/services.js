@@ -3437,7 +3437,7 @@ function getThreadDetail(store, threadId, workflow = null, opts) {
     throw new Error(`Unknown thread: ${threadId}`);
   }
   if (markVisited) {
-    // No touch: visiting must not bump updatedAt.
+    // No updatedAt bump: visiting must not re-unread or re-sort the thread.
     store.updateThread(threadId, { lastVisitedAt: Date.now() });
     store.markDirty();
   }
