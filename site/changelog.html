@@ -56,6 +56,20 @@
         Every notable change to Solenta, newest first.
       </p>
 
+      <h2 id="v0-9-0">0.9.0 <small>2026-08-21</small></h2>
+      <h3>Added</h3>
+      <ul>
+        <li><strong>First-run onboarding.</strong> A welcome wizard on first launch: check which agent CLIs are installed and how to get the missing ones, add a project and set the defaults, then a short tour of the app. Replay it any time from Settings → <em>Show welcome tour</em>.</li>
+        <li><strong>Worktrees clean themselves up.</strong> Checkouts created by a fork or handoff, and worktrees belonging to archived threads, no longer take up the per-project keep-N buffer. Ten abandoned worker checkouts was several gigabytes nobody would ever open again. They are collected once the thread goes quiet, with a three-day grace period if they still hold unlanded commits. The branch always survives; only the directory goes.</li>
+        <li><strong>Planboard issues close themselves.</strong> When a thread's work lands, the issue it was tracking moves to done and closes, instead of sitting open behind a merged branch.</li>
+      </ul>
+      <h3>Fixed</h3>
+      <ul>
+        <li>Removing a project works again. Removal reclaims the attached worktrees rather than refusing because archived threads still point at them, a tree with uncommitted work is left on disk for the GC panel instead of being force-deleted under you, and a removal that does fail now says why.</li>
+        <li>Clicking through threads no longer rewrites the whole store. Selecting a thread stamped a timestamp that scheduled a full rewrite of the entire store file; the stamp now rides the next real write. Boot's backup snapshot is a copy-on-write clone instead of a byte copy, and the write cadence under sustained streaming is far less aggressive.</li>
+        <li>IPC channels are generated from a single list, so a channel can no longer be wired up in the app but missing from the packaged build.</li>
+      </ul>
+
       <h2 id="v0-8-0">0.8.0 <small>2026-08-20</small></h2>
       <h3>Added</h3>
       <ul>

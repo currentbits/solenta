@@ -82,9 +82,11 @@ it.
   next-action button (commit → push → PR → checks → merge), live CI badges,
   review itinerary, conflict forecast. Settings probes forge readiness
   (`gh` auth) before the header offers Create PR. Oversized PRs (default
-  400 lines) are refused; the header offers a stacked split.
+  400 lines) are refused; the header offers a stacked split. Fork and archived
+  worktrees are garbage-collected on their own; the branch always survives.
 - **Planboard** — a project's plan as its GitHub issues via `gh`, with auto-
-  dispatch from `plan:todo` and a review-load meter on the open PR queue.
+  dispatch from `plan:todo`, a review-load meter on the open PR queue, and
+  issues that close themselves when the thread's work lands.
 - **Orchestration** — workers nest under the thread that started them, crews,
   `/handoff`, `/advisor`, `/committee`, a subagent model pool, and
   coder-threads host tools so an agent can archive, settle, stop, rename,
