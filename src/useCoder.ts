@@ -57,7 +57,11 @@ import type {
 import { resolveCoderApi } from "./coderApi";
 import { isWebMode } from "./shared/wire";
 import { nextVisibleThreadId } from "./threadSelection";
-import { mergeThreadPatch, patchThreadList } from "./threadPatch";
+import {
+  mergeThreadPatch,
+  patchThreadList,
+  reconcileThreadList,
+} from "./threadPatch";
 import { parseBtwCommand } from "./btw";
 
 const STATUS_POLL_MS = 60_000;
@@ -616,8 +620,10 @@ export function useCoder(): UseCoderResult {
   );
 
   const applyThreads = useCallback((next: ThreadInfo[]) => {
-    threadsRef.current = next;
-    setThreads(next);
+    const reconciled = reconcileThreadList(threadsRef.current, next);
+    if (reconciled === threadsRef.current) return;
+    threadsRef.current = reconciled;
+    setThreads(reconciled);
   }, []);
 
   const cancelQueued = useCallback(

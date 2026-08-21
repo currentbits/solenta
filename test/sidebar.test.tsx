@@ -13,7 +13,12 @@ import { afterEach, describe, it } from "node:test";
 import { dismissContextMenu } from "../src/contextMenuFallback";
 import * as React from "react";
 import { inAct, mount } from "./support/dom";
+import App from "../src/App";
 import { Sidebar, SettledRow, ThreadCard } from "../src/components/Sidebar";
+import {
+  createFakeCoder,
+  installFakeCoder,
+} from "./support/fakeCoder";
 import {
   SETTLED_TAIL_INITIAL_COUNT,
   SETTLED_TAIL_PAGE_COUNT,
@@ -2193,5 +2198,65 @@ describe("Sidebar snooze nested submenu (#583)", () => {
     assert.ok(m.query('[data-snooze-btn="menu-src"]'), "T3 hover snooze");
     assert.ok(m.query('[data-settle-btn="menu-src"]'), "T3 hover settle");
     m.unmount();
+  });
+});
+
+/**
+ * React.memo(ThreadCard) stores the inner function on `.type`. Wrap it so a
+ * no-op threads:changed can assert cards did not re-render (issue #617).
+ */
+function countThreadCardRenders(): { count: () => number; restore: () => void } {
+  const memo = ThreadCard as unknown as { type: (props: unknown) => unknown };
+  const inner = memo.type;
+  let n = 0;
+  memo.type = ((props: unknown) => {
+    n += 1;
+    return inner(props);
+  }) as typeof inner;
+  return {
+    count: () => n,
+    restore: () => {
+      memo.type = inner;
+    },
+  };
+}
+
+describe("threads:changed does not rebuild unchanged cards (#617)", () => {
+  it("a clone of the current list does not re-render ThreadCard", async () => {
+    const probe = countThreadCardRenders();
+    try {
+      const rows = [
+        thread({ id: "keep-a", title: "keep a", projectId: "p1" }),
+        thread({ id: "keep-b", title: "keep b", projectId: "p1" }),
+      ];
+      const fake = createFakeCoder({
+        projects: [p1],
+        threads: rows,
+      });
+      const shell = await mount(<div />);
+      installFakeCoder(fake);
+      shell.unmount();
+      const m = await mount(<App />);
+      // threads.get stamps lastVisitedAt on the selected row; clone THAT
+      // list, not the fixtures, or the selected card would correctly re-render.
+      const live = await fake.api.threads.list();
+      await m.flush();
+      const before = probe.count();
+      assert.ok(before > 0, "cards must have rendered on boot");
+
+      await inAct(() =>
+        fake.emitThreads(JSON.parse(JSON.stringify(live)) as ThreadInfo[]),
+      );
+      await m.flush();
+
+      assert.equal(
+        probe.count(),
+        before,
+        "no-op threads:changed must not re-render memo'd cards",
+      );
+      m.unmount();
+    } finally {
+      probe.restore();
+    }
   });
 });

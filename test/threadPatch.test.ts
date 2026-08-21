@@ -4,7 +4,11 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { mergeThreadPatch, patchThreadList } from "../src/threadPatch.ts";
+import {
+  mergeThreadPatch,
+  patchThreadList,
+  reconcileThreadList,
+} from "../src/threadPatch.ts";
 import type {
   ChatMessage,
   ThreadDetail,
@@ -105,5 +109,86 @@ describe("patchThreadList", () => {
     assert.notEqual(next, list);
     assert.equal(next[0].updatedAt, 6);
     assert.equal(next[1], list[1], "untouched rows keep their identity");
+  });
+});
+
+/**
+ * threads:changed lands as a full list of brand-new objects (IPC clone).
+ * Reconcile by value so unchanged rows keep the identity memo'd cards key on
+ * (issue #617). clone() is the structuredClone/JSON.parse stand-in.
+ */
+function cloneRows(rows: ThreadInfo[]): ThreadInfo[] {
+  return JSON.parse(JSON.stringify(rows)) as ThreadInfo[];
+}
+
+describe("reconcileThreadList", () => {
+  const row = (over: Partial<ThreadInfo> = {}): ThreadInfo =>
+    ({ id: "t1", status: "idle", updatedAt: 5, title: over.id ?? "t1", ...over }) as ThreadInfo;
+
+  it("returns the previous array when every row matches by value", () => {
+    const prev = [row(), row({ id: "t2" }), row({ id: "t3" })];
+    const next = cloneRows(prev);
+    const out = reconcileThreadList(prev, next);
+    assert.equal(out, prev, "identical payload must keep the array identity");
+    assert.equal(out[0], prev[0]);
+    assert.equal(out[1], prev[1]);
+    assert.equal(out[2], prev[2]);
+  });
+
+  it("replaces only the moved row and reuses the rest", () => {
+    const prev = [row(), row({ id: "t2" }), row({ id: "t3" }), row({ id: "t4" })];
+    const next = cloneRows(prev);
+    next[1] = { ...next[1], title: "moved" };
+    const out = reconcileThreadList(prev, next);
+    assert.notEqual(out, prev);
+    assert.equal(out[0], prev[0]);
+    assert.notEqual(out[1], prev[1]);
+    assert.equal(out[1].title, "moved");
+    assert.equal(out[2], prev[2]);
+    assert.equal(out[3], prev[3]);
+  });
+
+  it("reuses a row whose nested queued payload matches by value", () => {
+    const prev = [row({ queued: { prompt: "hi" } })];
+    const next = [{ ...cloneRows(prev)[0], queued: { prompt: "hi" } }];
+    const out = reconcileThreadList(prev, next);
+    assert.equal(out[0], prev[0]);
+  });
+
+  it("appends a new row without churning the existing ones", () => {
+    const prev = [row(), row({ id: "t2" })];
+    const added = row({ id: "t3" });
+    const next = [...cloneRows(prev), added];
+    const out = reconcileThreadList(prev, next);
+    assert.equal(out.length, 3);
+    assert.equal(out[0], prev[0]);
+    assert.equal(out[1], prev[1]);
+    assert.equal(out[2], added);
+  });
+
+  it("drops a removed row and reuses the survivors", () => {
+    const prev = [row(), row({ id: "t2" }), row({ id: "t3" })];
+    const next = [cloneRows(prev)[0], cloneRows(prev)[2]];
+    const out = reconcileThreadList(prev, next);
+    assert.equal(out.length, 2);
+    assert.equal(out[0], prev[0]);
+    assert.equal(out[1], prev[2]);
+  });
+
+  it("reorders by identity without allocating new row objects", () => {
+    const prev = [row(), row({ id: "t2" }), row({ id: "t3" })];
+    const cloned = cloneRows(prev);
+    const next = [cloned[2], cloned[0], cloned[1]];
+    const out = reconcileThreadList(prev, next);
+    assert.notEqual(out, prev, "order changed so the array is new");
+    assert.deepEqual(out.map((t) => t.id), ["t3", "t1", "t2"]);
+    assert.equal(out[0], prev[2]);
+    assert.equal(out[1], prev[0]);
+    assert.equal(out[2], prev[1]);
+  });
+
+  it("returns the previous empty array when both sides are empty", () => {
+    const prev: ThreadInfo[] = [];
+    assert.equal(reconcileThreadList(prev, []), prev);
   });
 });

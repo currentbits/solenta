@@ -3347,8 +3347,8 @@ function listThreads(store) {
   // replaced (never mutated in place) on any real change. Key the cache on
   // those identities so no-op ticks skip the whole decorate+serialize, and
   // reuse decorated rows keyed on the thread object so an updateThread that
-  // only patched one row keeps every other row's identity (the renderer's
-  // patchThreadList and memo'd cards key on that).
+  // only patched one row skips re-decorating the rest. Row identity does
+  // not survive IPC; the renderer restores it in reconcileThreadList.
   const cache = listThreadsCache.get(store);
   if (cache && cache.threads === threads && cache.projects === projects) {
     return cache.value;
