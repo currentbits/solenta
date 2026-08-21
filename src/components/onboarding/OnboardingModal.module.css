@@ -228,6 +228,8 @@
   font-size: 12px;
   line-height: 1.4;
   color: var(--danger);
+}
+
 /* SetupStep */
 .setupSection {
   display: flex;
