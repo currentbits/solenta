@@ -192,6 +192,8 @@ interface AgentsPanelProps {
   onFork?: (
     opts?: { provider?: string; model?: string | null },
   ) => void | Promise<void | ThreadInfo | null>;
+  /** Wide-window Hide control. Absent on the narrow drawer (issue #645). */
+  onCollapse?: () => void;
 }
 
 type PhaseChipStatus = "done" | "active" | "pending" | "failed";
@@ -2887,6 +2889,7 @@ export const AgentsPanel = memo(function AgentsPanel({
   onOpenInsights,
   onOpenDigest,
   onFork,
+  onCollapse,
 }: AgentsPanelProps) {
   const [tab, setTab] = useState<PanelTab>(() =>
     isPulseView(activeView) ? "pulse" : "git",
@@ -2900,47 +2903,75 @@ export const AgentsPanel = memo(function AgentsPanel({
   return (
     <aside className={styles.panel}>
       <header className={styles.tabs}>
-        <button
-          type="button"
-          className={styles.tab}
-          data-active={tab === "git"}
-          onClick={() => setTab("git")}
-        >
-          Environment
-        </button>
-        <button
-          type="button"
-          className={styles.tab}
-          data-active={tab === "agents"}
-          onClick={() => setTab("agents")}
-        >
-          Agents
-        </button>
-        <button
-          type="button"
-          className={styles.tab}
-          data-active={tab === "memory"}
-          onClick={() => setTab("memory")}
-        >
-          Memory
-        </button>
-        <button
-          type="button"
-          className={styles.tab}
-          data-active={tab === "skills"}
-          onClick={() => setTab("skills")}
-        >
-          Skills
-        </button>
-        <button
-          type="button"
-          className={styles.tab}
-          data-panel-tab="pulse"
-          data-active={tab === "pulse"}
-          onClick={() => setTab("pulse")}
-        >
-          Pulse
-        </button>
+        <div className={styles.tabList}>
+          <button
+            type="button"
+            className={styles.tab}
+            data-active={tab === "git"}
+            onClick={() => setTab("git")}
+          >
+            Environment
+          </button>
+          <button
+            type="button"
+            className={styles.tab}
+            data-active={tab === "agents"}
+            onClick={() => setTab("agents")}
+          >
+            Agents
+          </button>
+          <button
+            type="button"
+            className={styles.tab}
+            data-active={tab === "memory"}
+            onClick={() => setTab("memory")}
+          >
+            Memory
+          </button>
+          <button
+            type="button"
+            className={styles.tab}
+            data-active={tab === "skills"}
+            onClick={() => setTab("skills")}
+          >
+            Skills
+          </button>
+          <button
+            type="button"
+            className={styles.tab}
+            data-panel-tab="pulse"
+            data-active={tab === "pulse"}
+            onClick={() => setTab("pulse")}
+          >
+            Pulse
+          </button>
+        </div>
+        {onCollapse ? (
+          <button
+            type="button"
+            className={styles.collapseBtn}
+            data-agents-collapse=""
+            aria-expanded="true"
+            aria-controls="pane-agents"
+            title="Hide agents panel (⌘.)"
+            aria-label="Hide agents panel"
+            onClick={onCollapse}
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M6.5 3.5 11 8 6.5 12.5" />
+            </svg>
+          </button>
+        ) : null}
       </header>
 
       {tab === "agents" ? (

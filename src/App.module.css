@@ -20,6 +20,62 @@
   position: relative;
 }
 
+.app[data-agents-collapsed="true"] {
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr)
+    var(--agents-rail-width);
+}
+
+.agentsRail {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  height: 100%;
+  padding-top: 13px;
+  background: var(--bg-elevated);
+  border-left: 1px solid var(--border);
+}
+
+.agentsToggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease,
+    transform 0.16s cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.agentsToggle:hover {
+  color: var(--text);
+  background: var(--card-hover);
+}
+
+.agentsToggle:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.agentsToggle:active {
+  transform: scale(0.97);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agentsToggle {
+    transition: none;
+  }
+  .agentsToggle:active {
+    transform: none;
+  }
+}
+
 .narrowBar,
 .scrim {
   display: none;

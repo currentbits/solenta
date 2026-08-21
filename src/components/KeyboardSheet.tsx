@@ -22,6 +22,7 @@ const APP_SHORTCUTS: readonly ShortcutRow[] = [
   { keys: "Ctrl + C", action: "Stop the live turn" },
   { keys: "?", action: "Show this keyboard reference" },
   { keys: "⌘ + \\", action: "Close the focused pane" },
+  { keys: "⌘ + .", action: "Toggle agents panel" },
 ];
 
 interface KeyboardSheetProps {
