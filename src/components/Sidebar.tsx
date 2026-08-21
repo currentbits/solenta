@@ -30,6 +30,25 @@ import {
 } from "../format";
 import { formatQuotaWaitLabel } from "../quotaWait";
 import { buildFlatSidebar } from "../sidebarGroups";
+import {
+  GROUP_BY_KEY,
+  GROUP_BY_OPTIONS,
+  PROVIDER_FILTER_KEY,
+  STATUS_FILTER_KEY,
+  STATUS_FILTERS,
+  filterThreads,
+  groupByLabel,
+  groupThreadsByProject,
+  groupThreadsByStatus,
+  parseGroupBy,
+  parseProviderFilter,
+  parseStatusFilter,
+  providerFilterLabel,
+  serializeProviderFilter,
+  statusFilterLabel,
+  type GroupBy,
+  type StatusFilter,
+} from "../sidebarFilters";
 import { showContextMenu } from "../contextMenu";
 import { buildThreadActionMenuItems } from "../threadActionMenu";
 import {
@@ -74,6 +93,7 @@ const MIN_SEARCH_LEN = 2;
 const SCOPE_KEY = "sidebar:projectScope";
 const SNOOZED_OPEN_KEY = "sidebar:snoozedOpen";
 const SETTLED_OPEN_KEY = "sidebar:settledOpen";
+type FilterMenu = "status" | "provider" | "group";
 
 /**
  * t3 list animation: rows glide on lifecycle transitions instead of the
@@ -1275,10 +1295,24 @@ export const Sidebar = memo(function Sidebar({
   const [now, setNow] = useState(() => Date.now());
   const [createMenuOpen, setCreateMenuOpen] = useState(false);
   const [scopeMenuOpen, setScopeMenuOpen] = useState(false);
-  useEscapeClose(createMenuOpen || scopeMenuOpen, () => {
-    setCreateMenuOpen(false);
-    setScopeMenuOpen(false);
-  });
+  const [filterMenu, setFilterMenu] = useState<FilterMenu | null>(null);
+  const [statusFilter, setStatusFilter] = useState<StatusFilter | null>(() =>
+    parseStatusFilter(loadStored(STATUS_FILTER_KEY)),
+  );
+  const [providerFilter, setProviderFilter] = useState<string[]>(() =>
+    parseProviderFilter(loadStored(PROVIDER_FILTER_KEY)),
+  );
+  const [groupBy, setGroupBy] = useState<GroupBy>(() =>
+    parseGroupBy(loadStored(GROUP_BY_KEY)),
+  );
+  useEscapeClose(
+    createMenuOpen || scopeMenuOpen || filterMenu != null,
+    () => {
+      setCreateMenuOpen(false);
+      setScopeMenuOpen(false);
+      setFilterMenu(null);
+    },
+  );
   const [issueFormFor, setIssueFormFor] = useState<string | null>(null);
   const [issueRef, setIssueRef] = useState("");
   const [issueError, setIssueError] = useState<string | null>(null);
@@ -1413,10 +1447,36 @@ export const Sidebar = memo(function Sidebar({
   }, [query, runSearch]);
 
   const displayThreads = useMemo(() => {
-    if (!searching) return threads;
-    if (searchResults == null) return [];
-    return searchResults.map((t) => liveById.get(t.id) ?? t);
-  }, [searching, searchResults, threads, liveById]);
+    const source =
+      searching
+        ? searchResults == null
+          ? []
+          : searchResults.map((t) => liveById.get(t.id) ?? t)
+        : threads;
+    return filterThreads(
+      source,
+      {
+        status: statusFilter,
+        providers: providerFilter,
+        projectId: projectScope,
+      },
+      {
+        waits: waitStates,
+        keepIds: [activeThreadId, revealThreadId],
+      },
+    );
+  }, [
+    searching,
+    searchResults,
+    threads,
+    liveById,
+    statusFilter,
+    providerFilter,
+    projectScope,
+    waitStates,
+    activeThreadId,
+    revealThreadId,
+  ]);
 
   // Drop a stale scope if the project was removed.
   useEffect(() => {
@@ -1428,13 +1488,40 @@ export const Sidebar = memo(function Sidebar({
 
   useEffect(() => {
     setSettledVisibleCount(SETTLED_TAIL_INITIAL_COUNT);
-  }, [projectScope]);
+  }, [projectScope, statusFilter, providerFilter]);
 
-  const scopeFilter = searching ? null : projectScope;
   const flat = useMemo(
-    () => buildFlatSidebar(displayThreads, settleOpts, scopeFilter),
-    [displayThreads, settleOpts, scopeFilter],
+    () => buildFlatSidebar(displayThreads, settleOpts),
+    [displayThreads, settleOpts],
   );
+
+  const attentionThreads = useMemo(
+    () => [...flat.pinned, ...flat.active],
+    [flat.pinned, flat.active],
+  );
+  const projectGroups = useMemo(
+    () =>
+      groupBy === "project"
+        ? groupThreadsByProject(projects, attentionThreads)
+        : [],
+    [groupBy, projects, attentionThreads],
+  );
+  const statusGroups = useMemo(
+    () =>
+      groupBy === "status"
+        ? groupThreadsByStatus(attentionThreads, waitStates)
+        : [],
+    [groupBy, attentionThreads, waitStates],
+  );
+  const groupedAttention = useMemo(() => {
+    if (groupBy === "project") {
+      return projectGroups.flatMap((g) => g.threads);
+    }
+    if (groupBy === "status") {
+      return statusGroups.flatMap((g) => g.threads);
+    }
+    return null;
+  }, [groupBy, projectGroups, statusGroups]);
 
   useEffect(() => {
     if (!revealThreadId) return;
@@ -1475,8 +1562,7 @@ export const Sidebar = memo(function Sidebar({
   const searchEmpty =
     searching &&
     !searchInFlight &&
-    searchResults != null &&
-    searchResults.length === 0;
+    displayThreads.length === 0;
 
   const slugFor = (t: ThreadInfo) =>
     projectById.get(t.projectId)?.slug ?? "unknown";
@@ -1488,12 +1574,20 @@ export const Sidebar = memo(function Sidebar({
     [flat.settled, flat.archived],
   );
 
+  const filtersOn = statusFilter != null || providerFilter.length > 0;
+  const snoozedExpanded = snoozedOpen || filtersOn;
+  const settledExpanded = settledOpen || filtersOn;
+
   const visibleIds = useMemo(() => {
     if (searching) return displayThreads.map((t) => t.id);
+    const navFlat =
+      groupedAttention != null
+        ? { ...flat, pinned: [], active: groupedAttention }
+        : flat;
     return flatVisibleThreadIds({
-      flat,
-      snoozedOpen,
-      settledOpen,
+      flat: navFlat,
+      snoozedOpen: snoozedExpanded,
+      settledOpen: settledExpanded,
       settledVisibleCount,
       selectedThreadId: activeThreadId,
       keepThreadIds: [revealThreadId ?? null],
@@ -1502,8 +1596,9 @@ export const Sidebar = memo(function Sidebar({
     searching,
     displayThreads,
     flat,
-    snoozedOpen,
-    settledOpen,
+    groupedAttention,
+    snoozedExpanded,
+    settledExpanded,
     settledVisibleCount,
     activeThreadId,
     revealThreadId,
@@ -1705,6 +1800,39 @@ export const Sidebar = memo(function Sidebar({
     setProjectScope(id);
     saveStored(SCOPE_KEY, id);
     setScopeMenuOpen(false);
+    setFilterMenu(null);
+  };
+
+  const applyStatusFilter = (id: StatusFilter | null) => {
+    setStatusFilter(id);
+    saveStored(STATUS_FILTER_KEY, id);
+    setFilterMenu(null);
+    if (id === "archived") {
+      setSettledOpen(true);
+      saveFlag(SETTLED_OPEN_KEY, true);
+    }
+  };
+
+  const applyGroupBy = (id: GroupBy) => {
+    setGroupBy(id);
+    saveStored(GROUP_BY_KEY, id === "none" ? null : id);
+    setFilterMenu(null);
+  };
+
+  const toggleProviderFilter = (id: string) => {
+    setProviderFilter((prev) => {
+      const next = prev.includes(id)
+        ? prev.filter((p) => p !== id)
+        : [...prev, id];
+      saveStored(PROVIDER_FILTER_KEY, serializeProviderFilter(next));
+      return next;
+    });
+  };
+
+  const toggleFilterMenu = (menu: FilterMenu) => {
+    setCreateMenuOpen(false);
+    setScopeMenuOpen(false);
+    setFilterMenu((open) => (open === menu ? null : menu));
   };
 
   const toggleSnoozed = () => {
@@ -1729,7 +1857,7 @@ export const Sidebar = memo(function Sidebar({
 
   const cardIds = searching
     ? new Set(displayThreads.map((t) => t.id))
-    : new Set([...flat.pinned, ...flat.active].map((t) => t.id));
+    : new Set(attentionThreads.map((t) => t.id));
 
   const renderCard = (thread: ThreadInfo) => (
     <Fragment key={`${thread.id}:card`}>
@@ -1766,12 +1894,12 @@ export const Sidebar = memo(function Sidebar({
   // The open thread never vanishes — and neither does a freshly revealed
   // one (new-thread reveal can land on a collapsed shelf).
   const keepIds = [activeThreadId, revealThreadId ?? null];
-  const visibleSnoozed = snoozedOpen ? flat.snoozed : [];
-  const snoozedCarve = snoozedOpen
+  const visibleSnoozed = snoozedExpanded ? flat.snoozed : [];
+  const snoozedCarve = snoozedExpanded
     ? null
     : flat.snoozed.find((t) => keepIds.includes(t.id)) ?? null;
 
-  const visibleSettled = settledOpen
+  const visibleSettled = settledExpanded
     ? settledTail.slice(0, settledVisibleCount)
     : [];
   const settledCarve =
@@ -1819,6 +1947,37 @@ export const Sidebar = memo(function Sidebar({
   const scopedSlug = scopedProject
     ? scopedProject.slug || scopedProject.name
     : "All projects";
+
+  const providerOptions = useMemo(() => {
+    const seen = new Set<string>();
+    const out: { id: string; name: string }[] = [];
+    const rank = ["claude", "codex", "grok", "kimi", "opencode"];
+    for (const p of providers) {
+      if (seen.has(p.id)) continue;
+      seen.add(p.id);
+      out.push({ id: p.id, name: p.name });
+    }
+    for (const t of threads) {
+      const id = t.provider;
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      out.push({ id, name: id });
+    }
+    out.sort((a, b) => {
+      const ia = rank.indexOf(a.id);
+      const ib = rank.indexOf(b.id);
+      return (
+        (ia === -1 ? rank.length : ia) - (ib === -1 ? rank.length : ib) ||
+        a.id.localeCompare(b.id)
+      );
+    });
+    return out;
+  }, [providers, threads]);
+  const providerNames = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const p of providerOptions) m.set(p.id, p.name);
+    return m;
+  }, [providerOptions]);
 
   const worktreeCount = useMemo(() => {
     let n = 0;
@@ -1911,7 +2070,11 @@ export const Sidebar = memo(function Sidebar({
                 aria-label="Thread options"
                 aria-haspopup="menu"
                 aria-expanded={createMenuOpen}
-                onClick={() => setCreateMenuOpen((open) => !open)}
+                onClick={() => {
+                  setScopeMenuOpen(false);
+                  setFilterMenu(null);
+                  setCreateMenuOpen((open) => !open);
+                }}
               >
                 <Icon size={10}>
                   <path d="m6 9 6 6 6-6" />
@@ -2025,7 +2188,11 @@ export const Sidebar = memo(function Sidebar({
             aria-haspopup="menu"
             aria-expanded={scopeMenuOpen}
             aria-label="Filter threads by project"
-            onClick={() => setScopeMenuOpen((open) => !open)}
+            onClick={() => {
+              setCreateMenuOpen(false);
+              setFilterMenu(null);
+              setScopeMenuOpen((open) => !open);
+            }}
           >
             {scopedProject?.iconUrl ? (
               <ProjectIcon url={scopedProject.iconUrl} size={16} />
@@ -2129,6 +2296,185 @@ export const Sidebar = memo(function Sidebar({
             <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
           </Icon>
         </button>
+      </div>
+
+      <div className={styles.filterRow} data-filter-row="">
+        <span className={styles.filterMenuHost}>
+          <button
+            type="button"
+            className={styles.filterTrigger}
+            data-status-filter-trigger=""
+            data-active={statusFilter != null ? "true" : undefined}
+            aria-haspopup="menu"
+            aria-expanded={filterMenu === "status"}
+            aria-label="Filter threads by status"
+            onClick={() => toggleFilterMenu("status")}
+          >
+            <span className={styles.filterTriggerLabel}>
+              {statusFilterLabel(statusFilter)}
+            </span>
+            <Icon size={12}>
+              <path d="m6 9 6 6 6-6" />
+            </Icon>
+          </button>
+          {filterMenu === "status" && (
+            <div
+              className={`${styles.menu} ${styles.menuLeft} ${styles.filterMenu}`}
+              role="menu"
+              data-status-filter-menu=""
+            >
+              <button
+                type="button"
+                className={styles.menuItem}
+                role="menuitem"
+                data-status-filter="all"
+                data-selected={statusFilter == null ? "true" : undefined}
+                onClick={() => applyStatusFilter(null)}
+              >
+                All statuses
+                {statusFilter == null && (
+                  <span className={styles.filterCheck}>
+                    <Icon size={12}>
+                      <path d="M5 12.5 9 16.5 19 7.5" />
+                    </Icon>
+                  </span>
+                )}
+              </button>
+              {STATUS_FILTERS.map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  className={styles.menuItem}
+                  role="menuitem"
+                  data-status-filter={opt.id}
+                  data-selected={statusFilter === opt.id ? "true" : undefined}
+                  onClick={() => applyStatusFilter(opt.id)}
+                >
+                  {opt.label}
+                  {statusFilter === opt.id && (
+                    <span className={styles.filterCheck}>
+                      <Icon size={12}>
+                        <path d="M5 12.5 9 16.5 19 7.5" />
+                      </Icon>
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+        </span>
+        <span className={styles.filterMenuHost}>
+          <button
+            type="button"
+            className={styles.filterTrigger}
+            data-provider-filter-trigger=""
+            data-active={providerFilter.length > 0 ? "true" : undefined}
+            aria-haspopup="menu"
+            aria-expanded={filterMenu === "provider"}
+            aria-label="Filter threads by provider"
+            onClick={() => toggleFilterMenu("provider")}
+          >
+            <span className={styles.filterTriggerLabel}>
+              {providerFilterLabel(providerFilter, providerNames)}
+            </span>
+            <Icon size={12}>
+              <path d="m6 9 6 6 6-6" />
+            </Icon>
+          </button>
+          {filterMenu === "provider" && (
+            <div
+              className={`${styles.menu} ${styles.menuLeft} ${styles.filterMenu}`}
+              role="menu"
+              data-provider-filter-menu=""
+            >
+              <button
+                type="button"
+                className={styles.menuItem}
+                role="menuitem"
+                data-provider-filter="all"
+                data-selected={providerFilter.length === 0 ? "true" : undefined}
+                onClick={() => {
+                  setProviderFilter([]);
+                  saveStored(PROVIDER_FILTER_KEY, null);
+                }}
+              >
+                All providers
+                {providerFilter.length === 0 && (
+                  <span className={styles.filterCheck}>
+                    <Icon size={12}>
+                      <path d="M5 12.5 9 16.5 19 7.5" />
+                    </Icon>
+                  </span>
+                )}
+              </button>
+              <div className={styles.filterChipRow} data-provider-chips="">
+                {providerOptions.map((p) => {
+                  const on = providerFilter.includes(p.id);
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      className={styles.filterChip}
+                      data-provider-filter={p.id}
+                      data-on={on ? "true" : undefined}
+                      aria-pressed={on}
+                      onClick={() => toggleProviderFilter(p.id)}
+                    >
+                      {p.name}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </span>
+        <span className={styles.filterMenuHost}>
+          <button
+            type="button"
+            className={styles.filterTrigger}
+            data-group-by-trigger=""
+            data-active={groupBy !== "none" ? "true" : undefined}
+            aria-haspopup="menu"
+            aria-expanded={filterMenu === "group"}
+            aria-label="Group threads"
+            onClick={() => toggleFilterMenu("group")}
+          >
+            <span className={styles.filterTriggerLabel}>
+              {groupByLabel(groupBy)}
+            </span>
+            <Icon size={12}>
+              <path d="m6 9 6 6 6-6" />
+            </Icon>
+          </button>
+          {filterMenu === "group" && (
+            <div
+              className={`${styles.menu} ${styles.menuLeft} ${styles.filterMenu}`}
+              role="menu"
+              data-group-by-menu=""
+            >
+              {GROUP_BY_OPTIONS.map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  className={styles.menuItem}
+                  role="menuitem"
+                  data-group-by={opt.id}
+                  data-selected={groupBy === opt.id ? "true" : undefined}
+                  onClick={() => applyGroupBy(opt.id)}
+                >
+                  {opt.label}
+                  {groupBy === opt.id && (
+                    <span className={styles.filterCheck}>
+                      <Icon size={12}>
+                        <path d="M5 12.5 9 16.5 19 7.5" />
+                      </Icon>
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+        </span>
       </div>
 
       <nav className={styles.viewNav} aria-label="Views">
@@ -2256,11 +2602,59 @@ export const Sidebar = memo(function Sidebar({
           ? displayThreads.map((thread) => renderCard(thread))
           : (
             <>
-              {flat.pinned.map((thread) => renderCard(thread))}
-              {flat.pinned.length > 0 && (
-                <div className={styles.pinnedDivider} data-pinned-divider="" aria-hidden />
-              )}
-              {flat.active.map((thread) => renderCard(thread))}
+              {groupBy === "project"
+                ? projectGroups.map((g) => {
+                    const key = g.project?.id ?? "orphan";
+                    const title =
+                      g.project?.slug || g.project?.name || "Unknown project";
+                    return (
+                      <div
+                        key={key}
+                        className={styles.filterGroup}
+                        data-filter-group={key}
+                      >
+                        <div className={styles.filterGroupHeader}>
+                          {g.project?.iconUrl ? (
+                            <ProjectIcon url={g.project.iconUrl} size={14} />
+                          ) : null}
+                          <span className={styles.filterGroupTitle}>{title}</span>
+                          <span className={styles.filterGroupCount}>
+                            {g.threads.length}
+                          </span>
+                        </div>
+                        {g.threads.map((thread) => renderCard(thread))}
+                      </div>
+                    );
+                  })
+                : groupBy === "status"
+                  ? statusGroups.map((g) => (
+                      <div
+                        key={g.id}
+                        className={styles.filterGroup}
+                        data-filter-group={g.id}
+                      >
+                        <div className={styles.filterGroupHeader}>
+                          <span className={styles.filterGroupTitle}>{g.label}</span>
+                          <span className={styles.filterGroupCount}>
+                            {g.threads.length}
+                          </span>
+                        </div>
+                        {g.threads.map((thread) => renderCard(thread))}
+                      </div>
+                    ))
+                  : (
+                    <>
+                      {flat.pinned.map((thread) => renderCard(thread))}
+                      {flat.pinned.length > 0 && (
+                        <div
+                          className={styles.pinnedDivider}
+                          data-pinned-divider=""
+                          aria-hidden
+                        />
+                      )}
+                      {flat.active.map((thread) => renderCard(thread))}
+                    </>
+                  )}
 
               {flat.snoozed.length > 0 && (
                 <div className={styles.shelf}>
@@ -2268,18 +2662,18 @@ export const Sidebar = memo(function Sidebar({
                     type="button"
                     className={styles.shelfToggle}
                     data-snoozed-shelf-toggle=""
-                    aria-expanded={snoozedOpen}
+                    aria-expanded={snoozedExpanded}
                     onClick={toggleSnoozed}
                   >
                     <span className={styles.shelfLabelSnoozed}>
-                      {snoozedOpen
+                      {snoozedExpanded
                         ? "Snoozed"
                         : `Snoozed (${flat.snoozed.length})`}
                     </span>
                     <span className={styles.shelfRuleSnoozed} />
                     <span
                       className={styles.shelfChevron}
-                      data-open={snoozedOpen}
+                      data-open={snoozedExpanded}
                       aria-hidden
                     >
                       <Icon size={12}>
@@ -2299,18 +2693,18 @@ export const Sidebar = memo(function Sidebar({
                       type="button"
                       className={styles.shelfToggle}
                       data-settled-shelf-toggle=""
-                      aria-expanded={settledOpen}
+                      aria-expanded={settledExpanded}
                       onClick={toggleSettled}
                     >
                       <span className={styles.shelfLabelSettled}>
-                        {settledOpen
+                        {settledExpanded
                           ? "Settled"
                           : `Settled (${settledTail.length})`}
                       </span>
                       <span className={styles.shelfRuleSettled} />
                       <span
                         className={styles.shelfChevron}
-                        data-open={settledOpen}
+                        data-open={settledExpanded}
                         aria-hidden
                       >
                         <Icon size={12}>
@@ -2318,7 +2712,7 @@ export const Sidebar = memo(function Sidebar({
                         </Icon>
                       </span>
                     </button>
-                    {settledOpen && onClearSettled && flat.settled.length > 0 && (
+                    {settledExpanded && onClearSettled && flat.settled.length > 0 && (
                       <button
                         type="button"
                         className={styles.shelfClear}
@@ -2334,7 +2728,7 @@ export const Sidebar = memo(function Sidebar({
                   </div>
                   {settledCarve && renderSettled(settledCarve, true)}
                   {visibleSettled.map((thread) => renderSettled(thread))}
-                  {settledOpen && settledHidden > 0 && (
+                  {settledExpanded && settledHidden > 0 && (
                     <button
                       type="button"
                       className={styles.showMore}
@@ -2353,9 +2747,11 @@ export const Sidebar = memo(function Sidebar({
 
               {listEmpty && projects.length > 0 && (
                 <p className={styles.emptySearch}>
-                  {projectScope
-                    ? `No threads in ${scopedSlug} yet`
-                    : "No threads yet"}
+                  {filtersOn
+                    ? "No threads match these filters"
+                    : projectScope
+                      ? `No threads in ${scopedSlug} yet`
+                      : "No threads yet"}
                 </p>
               )}
             </>
