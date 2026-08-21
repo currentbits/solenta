@@ -169,17 +169,21 @@ describe("wireClient × webBridge over a real socket", () => {
     return `ws://127.0.0.1:${server.port}${WS_PATH}`;
   }
 
+  // One injected clock serves reconnect backoff (~1s) and invoke()'s 120s
+  // abort. Collapse only the backoff; firing the abort at 0ms races the
+  // socket reply and rejects a live call as "Timed out after 120000ms".
+  function scheduleTestTimer(fn, ms) {
+    if (!allowReconnect) return { unref() {} };
+    if (ms >= 60_000) return setTimeout(fn, ms);
+    return setTimeout(fn, 0);
+  }
+
   function makeClient(token = "secret-token", extra = {}) {
     return createWireCoder({
       url: wsUrl(),
       token,
       // Do not pass WebSocket: the client must use the global we installed.
-      setTimeout:
-        extra.setTimeout ??
-        ((fn, ms) => {
-          if (!allowReconnect) return { unref() {} };
-          return setTimeout(fn, 0);
-        }),
+      setTimeout: extra.setTimeout ?? scheduleTestTimer,
     });
   }
 
@@ -300,10 +304,7 @@ describe("wireClient × webBridge over a real socket", () => {
     const api = makeClient("secret-token", {
       setTimeout: (fn, ms) => {
         delays.push(ms);
-        if (!allowReconnect) return { unref() {} };
-        // Fire immediately; do not change production MIN_BACKOFF_MS (1000).
-        const t = setTimeout(fn, 0);
-        return t;
+        return scheduleTestTimer(fn, ms);
       },
     });
 
