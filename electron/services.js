@@ -520,6 +520,7 @@ function createThread(store, input) {
     automationId: input.automationId || null,
     queued: null,
     ask: input.ask === true,
+    lastAssistantPreview: null,
   };
 
   const threads = store.getThreads().slice();
@@ -3373,12 +3374,18 @@ function listThreads(store) {
 /**
  * Per-thread summaries for the Agents tab team view (threads:summaries).
  * lastActivity is the first line of the thread's last assistant message
- * (null when the thread has none). Cheap: reads the store only.
+ * (null when the thread has none). Envelope only: reads lastAssistantPreview
+ * stamped at appendMessage/setMessages (or one-time peek migrate on this
+ * first poll — not at Store construct, #644). Must not hydrate
+ * messagesByThread — that is the Agents-tab poll on a 180 MB store.
  * @param {import('./store').Store} store
  */
 function threadSummaries(store) {
+  store.ensureLastAssistantPreviews();
   return store.getThreads().map((t) => {
-    const last = store.getLastAssistantMessage(t.id);
+    const preview = t.lastAssistantPreview;
+    const text =
+      preview && typeof preview.text === "string" ? preview.text : "";
     return {
       id: t.id,
       title: t.title,
@@ -3388,10 +3395,10 @@ function threadSummaries(store) {
       runStartedAt: t.runStartedAt ?? null,
       awaitingInput: t.awaitingInput === true,
       stalledAt: t.stalledAt ?? null,
-      lastActivity: last
+      lastActivity: text
         ? {
-            text: String(last.text).split(/\r?\n/, 1)[0].trim(),
-            at: Number(last.createdAt) || t.updatedAt,
+            text,
+            at: Number(preview.at) || t.updatedAt,
           }
         : null,
     };

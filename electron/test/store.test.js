@@ -153,6 +153,7 @@ describe("Store", () => {
       issueNumber: null,
       postMergeVerify: null,
       reviewAcceptedHunks: [],
+      lastAssistantPreview: null,
     };
     const msg = {
       id: "m1",
