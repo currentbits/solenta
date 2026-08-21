@@ -1495,5 +1495,215 @@ describe("Store", () => {
         false,
       );
     });
+
+    it("crash recovery does not JSON.parse a working thread's tool payload (#643)", () => {
+      const canaryA = "CANARY_A_" + "x".repeat(8000);
+      const canaryB = "CANARY_B_" + "y".repeat(8000);
+      const canaryIdle = "CANARY_IDLE_" + "z".repeat(8000);
+      const payload = {
+        projects: [],
+        threads: [
+          {
+            id: "t-work-a",
+            projectId: "p1",
+            title: "Working A",
+            status: "working",
+            createdAt: 1,
+            updatedAt: 2,
+            runStartedAt: 3,
+          },
+          {
+            id: "t-work-b",
+            projectId: "p1",
+            title: "Working B",
+            status: "working",
+            createdAt: 1,
+            updatedAt: 4,
+            runStartedAt: 5,
+          },
+          {
+            id: "t-idle",
+            projectId: "p1",
+            title: "Idle",
+            status: "idle",
+            createdAt: 1,
+            updatedAt: 6,
+          },
+        ],
+        messagesByThread: {
+          "t-work-a": [
+            {
+              id: "tool-a",
+              role: "tool",
+              tool: { name: "bash", input: canaryA },
+              createdAt: 10,
+            },
+            {
+              id: "asst-a",
+              role: "assistant",
+              text: "still going",
+              createdAt: 11,
+            },
+          ],
+          "t-work-b": [
+            {
+              id: "tool-b",
+              role: "tool",
+              tool: { name: "bash", input: canaryB },
+              createdAt: 20,
+            },
+          ],
+          "t-idle": [
+            {
+              id: "tool-idle",
+              role: "tool",
+              tool: { name: "bash", input: canaryIdle },
+              createdAt: 30,
+            },
+          ],
+        },
+        workLogByThread: {},
+        usageByThread: {},
+      };
+      fs.writeFileSync(filePath, JSON.stringify(payload), "utf8");
+
+      const orig = JSON.parse;
+      const parsedCanary = [];
+      JSON.parse = (text, ...rest) => {
+        if (typeof text === "string" && /CANARY_/.test(text)) {
+          parsedCanary.push(text.includes("CANARY_A_") ? "A" : text.includes("CANARY_B_") ? "B" : "IDLE");
+        }
+        return orig(text, ...rest);
+      };
+      let store;
+      try {
+        store = new Store(filePath);
+        assert.deepEqual(
+          parsedCanary,
+          [],
+          "boot recover must not JSON.parse working-thread tool payloads",
+        );
+        assert.equal(
+          Object.prototype.hasOwnProperty.call(store._messagesHydrated, "t-work-a"),
+          false,
+        );
+        assert.equal(
+          Object.prototype.hasOwnProperty.call(store._messagesHydrated, "t-work-b"),
+          false,
+        );
+        assert.equal(
+          Object.prototype.hasOwnProperty.call(store._messagesHydrated, "t-idle"),
+          false,
+        );
+        assert.equal(store.getThread("t-work-a").status, "failed");
+        assert.equal(store.getThread("t-work-b").status, "failed");
+        assert.equal(store.getThread("t-idle").status, "idle");
+        assert.equal(
+          store.getThread("t-work-a").lastError,
+          "Run error: app quit while the run was in flight",
+        );
+      } finally {
+        JSON.parse = orig;
+      }
+
+      const msgsA = store.getMessages("t-work-a");
+      assert.equal(msgsA[0].tool.input, canaryA);
+      assert.equal(msgsA.at(-1).role, "event");
+      assert.equal(
+        msgsA.at(-1).text,
+        "Run interrupted: the app crashed or was force-quit mid-run",
+      );
+      assert.equal(
+        Object.prototype.hasOwnProperty.call(store._messagesHydrated, "t-work-b"),
+        false,
+        "hydrating A must not hydrate B",
+      );
+      assert.equal(
+        Object.prototype.hasOwnProperty.call(store._messagesHydrated, "t-idle"),
+        false,
+      );
+
+      store.saveNow();
+      const reloaded = new Store(filePath);
+      assert.equal(
+        Object.prototype.hasOwnProperty.call(reloaded._messagesHydrated, "t-work-a"),
+        false,
+      );
+      const again = reloaded.getMessages("t-work-a");
+      assert.equal(again.at(-1).role, "event");
+      assert.equal(again[0].tool.input, canaryA);
+      const msgsB = reloaded.getMessages("t-work-b");
+      assert.equal(msgsB[0].tool.input, canaryB);
+      assert.equal(msgsB.at(-1).role, "event");
+      assert.equal(reloaded.getMessages("t-idle")[0].tool.input, canaryIdle);
+      assert.equal(reloaded.getMessages("t-idle").at(-1).role, "tool");
+    });
+
+    it("crash recovery on a working thread with no messages is a tiny hydrated tail", () => {
+      fs.writeFileSync(
+        filePath,
+        JSON.stringify({
+          projects: [],
+          threads: [
+            {
+              id: "t-empty",
+              projectId: "p1",
+              title: "Empty",
+              status: "working",
+              createdAt: 1,
+              updatedAt: 2,
+            },
+            {
+              id: "t-big",
+              projectId: "p1",
+              title: "Big",
+              status: "idle",
+              createdAt: 1,
+              updatedAt: 3,
+            },
+          ],
+          messagesByThread: {
+            "t-big": [
+              {
+                id: "tool-1",
+                role: "tool",
+                tool: { name: "bash", input: CANARY },
+                createdAt: 10,
+              },
+            ],
+          },
+          workLogByThread: {},
+          usageByThread: {},
+        }),
+        "utf8",
+      );
+      const orig = JSON.parse;
+      const parsedCanary = [];
+      JSON.parse = (text, ...rest) => {
+        if (typeof text === "string" && text.includes("CANARY_")) {
+          parsedCanary.push(text.length);
+        }
+        return orig(text, ...rest);
+      };
+      let store;
+      try {
+        store = new Store(filePath);
+        assert.deepEqual(parsedCanary, []);
+        assert.equal(store.getThread("t-empty").status, "failed");
+        assert.equal(
+          Object.prototype.hasOwnProperty.call(store._messagesHydrated, "t-big"),
+          false,
+        );
+      } finally {
+        JSON.parse = orig;
+      }
+      const msgs = store.getMessages("t-empty");
+      assert.equal(msgs.length, 1);
+      assert.equal(msgs[0].role, "event");
+      store.saveNow();
+      const reloaded = new Store(filePath);
+      assert.equal(reloaded.getMessages("t-empty").at(-1).role, "event");
+      assert.equal(reloaded.getMessages("t-big")[0].tool.input, CANARY);
+    });
   });
 });

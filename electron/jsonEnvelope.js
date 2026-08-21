@@ -571,6 +571,59 @@ function peekLastAssistantValue(raw, start, end) {
 }
 
 /**
+ * Insert `item` as the last element of a JSON array slice in `raw`.
+ * Does not JSON.parse the array. Mutates `range.end` by the inserted length.
+ * Returns null if the slice is not an array.
+ *
+ * @param {string} raw
+ * @param {{ start: number, end: number }} range
+ * @param {unknown} item
+ * @returns {{ raw: string, at: number, delta: number } | null}
+ */
+function appendJsonArrayItem(raw, range, item) {
+  if (!raw || !range) return null;
+  const start = range.start;
+  const end = range.end;
+  if (
+    !Number.isInteger(start) ||
+    !Number.isInteger(end) ||
+    start < 0 ||
+    end > raw.length ||
+    start >= end
+  ) {
+    return null;
+  }
+  if (raw.charCodeAt(start) !== 91) return null;
+  let close = end - 1;
+  while (close >= start) {
+    const c = raw.charCodeAt(close);
+    if (c === 32 || c === 10 || c === 13 || c === 9) {
+      close -= 1;
+      continue;
+    }
+    break;
+  }
+  if (close < start || raw.charCodeAt(close) !== 93) return null;
+  let inner = close - 1;
+  while (inner >= start) {
+    const c = raw.charCodeAt(inner);
+    if (c === 32 || c === 10 || c === 13 || c === 9) {
+      inner -= 1;
+      continue;
+    }
+    break;
+  }
+  const empty = inner >= start && raw.charCodeAt(inner) === 91;
+  const insert = empty ? JSON.stringify(item) : "," + JSON.stringify(item);
+  range.end += insert.length;
+  return {
+    raw: raw.slice(0, close) + insert + raw.slice(close),
+    at: close,
+    delta: insert.length,
+  };
+}
+
+/**
  * Rebuild the messagesByThread JSON object from hydrated arrays plus
  * still-raw ranges. When nothing has been touched, returns the original
  * slice (no copy of per-thread values).
@@ -651,5 +704,6 @@ module.exports = {
   indexMessagesObject,
   findThreadValue,
   peekLastAssistantValue,
+  appendJsonArrayItem,
   MESSAGES_SENTINEL,
 };

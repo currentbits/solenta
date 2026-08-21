@@ -19,6 +19,7 @@ const {
   indexMessagesObject,
   findThreadValue,
   peekLastAssistantValue,
+  appendJsonArrayItem,
 } = require("./jsonEnvelope.js");
 
 /** Builtin "Plan and Verify" workflow template (seeded on every store). */
@@ -969,10 +970,15 @@ function migrateThread(t) {
  * process loads mean the previous process died mid-run (clean quits mark idle
  * via runner.stopAll first). A crash IS a failure of the run — stamp failed.
  * Status change is real activity, so updatedAt is bumped.
+ *
+ * The crash event is spliced onto the lazy JSON range so a force-quit with
+ * N in-flight runs does not JSON.parse those N transcripts at boot (#643).
+ *
+ * @param {Store} store
  * @param {object} data
  * @returns {boolean} true if any thread was recovered
  */
-function recoverInterruptedRuns(data) {
+function recoverInterruptedRuns(store, data) {
   let recovered = false;
   for (const t of data.threads) {
     if (t.status !== "working") continue;
@@ -980,16 +986,12 @@ function recoverInterruptedRuns(data) {
     t.runStartedAt = null;
     t.lastError = "Run error: app quit while the run was in flight";
     t.updatedAt = Date.now();
-    const list = Array.isArray(data.messagesByThread[t.id])
-      ? data.messagesByThread[t.id].slice()
-      : [];
-    list.push({
+    store._appendLazyMessage(t.id, {
       id: randomUUID(),
       role: "event",
       text: "Run interrupted: the app crashed or was force-quit mid-run",
       createdAt: Date.now(),
     });
-    data.messagesByThread[t.id] = list;
     recovered = true;
   }
   return recovered;
@@ -1214,6 +1216,56 @@ class Store {
   }
 
   /**
+   * After splicing bytes into lazy.raw, shift cached ranges that start at or
+   * after the insertion point. `exceptId` is already updated by
+   * appendJsonArrayItem.
+   * @param {number} at
+   * @param {number} delta
+   * @param {string} exceptId
+   */
+  _shiftLazyRanges(at, delta, exceptId) {
+    const lazy = this._messagesLazy;
+    if (!lazy || !lazy.ranges || !delta) return;
+    for (const [id, r] of lazy.ranges) {
+      if (id === exceptId) continue;
+      if (r.start >= at) {
+        r.start += delta;
+        r.end += delta;
+      }
+    }
+  }
+
+  /**
+   * Append one message without hydrating a still-lazy transcript. Crash
+   * recovery uses this so a force-quit does not JSON.parse in-flight runs.
+   * @param {string} threadId
+   * @param {object} message
+   */
+  _appendLazyMessage(threadId, message) {
+    if (Object.prototype.hasOwnProperty.call(this._messagesHydrated, threadId)) {
+      const list = this._messagesHydrated[threadId];
+      if (Array.isArray(list)) list.push(message);
+      else this._messagesHydrated[threadId] = [message];
+      return;
+    }
+    const lazy = this._messagesLazy;
+    if (lazy && lazy.raw) {
+      const r = this._threadRange(threadId);
+      if (r) {
+        const patched = appendJsonArrayItem(lazy.raw, r, message);
+        if (patched) {
+          lazy.raw = patched.raw;
+          this._shiftLazyRanges(patched.at, patched.delta, threadId);
+          return;
+        }
+      }
+    }
+    // Missing key or not an array: tiny hydrated tail, not the original blob.
+    this._messagesHydrated[threadId] = [message];
+    this._invalidateLazy(threadId);
+  }
+
+  /**
    * Parse one thread's message array from the raw JSON slice, if still lazy.
    * @param {string} threadId
    * @returns {object[] | undefined}
@@ -1307,7 +1359,7 @@ class Store {
     };
     ensureWorkflowTemplates(data);
     this._adoptMessages(data, useLazy ? split : null);
-    this._recoveredOnLoad = recoverInterruptedRuns(data) || hadSpaces;
+    this._recoveredOnLoad = recoverInterruptedRuns(this, data) || hadSpaces;
     this._seedLastAssistants(
       data,
       useLazy && split ? split.lastAssistants : null,

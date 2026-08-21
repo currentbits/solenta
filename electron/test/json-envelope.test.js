@@ -7,6 +7,7 @@ const {
   findThreadValue,
   peekLastAssistantValue,
   indexMessagesObject,
+  appendJsonArrayItem,
 } = require("../jsonEnvelope.js");
 
 describe("splitMessagesByThread", () => {
@@ -165,5 +166,57 @@ describe("serializeMessages / stringifyStore", () => {
     assert.equal("gone" in parsed, false);
     assert.deepEqual(parsed.fresh, []);
     assert.equal(parsed.stay[0].text, "y");
+  });
+});
+
+describe("appendJsonArrayItem", () => {
+  it("appends to empty, compact, and pretty-printed arrays without parsing siblings", () => {
+    const emptyRange = { start: 0, end: 2 };
+    const empty = appendJsonArrayItem("[]", emptyRange, { id: "e" });
+    assert.equal(empty.raw, '[{"id":"e"}]');
+    assert.equal(emptyRange.end, empty.raw.length);
+
+    const compactSrc = '[{"a":1}]';
+    const compactRange = { start: 0, end: compactSrc.length };
+    const compact = appendJsonArrayItem(compactSrc, compactRange, { id: "x" });
+    assert.equal(compact.raw, '[{"a":1},{"id":"x"}]');
+    assert.deepEqual(JSON.parse(compact.raw).map((m) => m.id || m.a), [1, "x"]);
+
+    const pretty = `[\n  { "id": "m0" }\n]`;
+    const prettyRange = { start: 0, end: pretty.length };
+    const out = appendJsonArrayItem(pretty, prettyRange, { id: "evt", role: "event" });
+    const parsed = JSON.parse(out.raw);
+    assert.equal(parsed[0].id, "m0");
+    assert.equal(parsed[1].role, "event");
+  });
+
+  it("splices one thread and leaves a later thread's range shift-correct", () => {
+    const canary = "CANARY_" + "z".repeat(200);
+    const doc = JSON.stringify({
+      messagesByThread: {
+        t1: [{ id: "a", role: "user", text: "hi" }],
+        t2: [{ id: "b", role: "tool", tool: { input: canary } }],
+      },
+    });
+    const split = splitMessagesByThread(doc);
+    const r1 = findThreadValue(split.raw, "t1");
+    const r2 = findThreadValue(split.raw, "t2");
+    const patched = appendJsonArrayItem(split.raw, r1, {
+      id: "evt",
+      role: "event",
+      text: "crash",
+    });
+    r2.start += patched.delta;
+    r2.end += patched.delta;
+    const t1 = JSON.parse(patched.raw.slice(r1.start, r1.end));
+    const t2 = JSON.parse(patched.raw.slice(r2.start, r2.end));
+    assert.equal(t1.at(-1).text, "crash");
+    assert.equal(t2[0].tool.input, canary);
+    assert.equal(patched.raw.slice(r2.start, r2.end).includes("CANARY_"), true);
+  });
+
+  it("returns null for a non-array slice", () => {
+    const range = { start: 0, end: 7 };
+    assert.equal(appendJsonArrayItem('{"a":1}', range, { id: "x" }), null);
   });
 });
