@@ -20,7 +20,10 @@ import { UsageView } from "./components/UsageView";
 import { FleetView } from "./components/FleetView";
 import { DigestView } from "./components/DigestView";
 import { AgentsPanel } from "./components/AgentsPanel";
-import { SettingsModal } from "./components/SettingsModal";
+import {
+  SettingsModal,
+  type SettingsPane,
+} from "./components/SettingsModal";
 import { OnboardingModal } from "./components/onboarding/OnboardingModal";
 import { ArchiveToast } from "./components/ArchiveToast";
 import { AddProjectPathModal } from "./components/AddProjectPathModal";
@@ -230,6 +233,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   const [changesOpen, setChangesOpen] = useState(false);
   const [changesNonce, setChangesNonce] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsPane, setSettingsPane] = useState<SettingsPane | null>(null);
   /** Mid-session latch so finishing the tour does not wait on settings.set. */
   const [onboardingDismissed, setOnboardingDismissed] = useState(false);
   /** Relaunch from Settings even after onboardingSeen is true. */
@@ -328,7 +332,10 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     setView("digest");
     setDrawer(null);
   }, []);
-  const openSettings = useCallback(() => setSettingsOpen(true), []);
+  const openSettings = useCallback((pane?: SettingsPane) => {
+    setSettingsPane(pane ?? "general");
+    setSettingsOpen(true);
+  }, []);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
   const closeChanges = useCallback(() => setChangesOpen(false), []);
   const openChanges = useCallback(() => {
@@ -1321,6 +1328,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         <SettingsModal
           open={settingsOpen}
           onClose={closeSettings}
+          initialPane={settingsPane}
           settings={settings}
           providers={providers}
           status={appStatus}

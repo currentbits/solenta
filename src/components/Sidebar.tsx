@@ -30,6 +30,7 @@ import {
 } from "../format";
 import { formatQuotaWaitLabel } from "../quotaWait";
 import { buildFlatSidebar } from "../sidebarGroups";
+import type { SettingsPane } from "./SettingsModal";
 import { showContextMenu } from "../contextMenu";
 import { buildThreadActionMenuItems } from "../threadActionMenu";
 import {
@@ -171,8 +172,8 @@ interface SidebarProps {
   onEditProject?: (projectId: string) => void;
   projectError?: string | null;
   onDismissProjectError?: () => void;
-  /** Opens the Settings modal. */
-  onOpenSettings?: () => void;
+  /** Opens Settings. Pass a pane to land on it (worktree usage → Git). */
+  onOpenSettings?: (pane?: SettingsPane) => void;
   /** Aggregated spend today (USD); null while loading. */
   spendTodayUsd?: number | null;
   /** Daily budget cap; null = no cap. */
@@ -2110,7 +2111,7 @@ export const Sidebar = memo(function Sidebar({
             data-worktree-usage=""
             title="Worktree disk usage — open Settings to clean up"
             aria-label={`${worktreeCount} worktrees. Open Settings to clean up.`}
-            onClick={() => onOpenSettings?.()}
+            onClick={() => onOpenSettings?.("git")}
           >
             {formatWorktreeUsage(worktreeCount)}
           </button>

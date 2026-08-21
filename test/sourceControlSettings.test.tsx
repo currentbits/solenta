@@ -87,6 +87,7 @@ describe("Settings Source Control (#608)", () => {
     const m = await mount(
       <SettingsModal
         open
+        initialPane="git"
         onClose={() => {}}
         settings={{ dailyBudgetUsd: 5, autoSettleAfterDays: 3 } as AppSettings}
         status={status()}
@@ -127,6 +128,7 @@ describe("Settings Source Control (#608)", () => {
     const m = await mount(
       <SettingsModal
         open
+        initialPane="git"
         onClose={() => {}}
         settings={{ dailyBudgetUsd: 5, autoSettleAfterDays: 3 } as AppSettings}
         status={status()}
