@@ -671,6 +671,16 @@ function mergeWorktree(opts) {
   }
   if (mergeError) throw mergeError;
 
+  // The work is on the default branch now: close its planboard issue (#632).
+  // Fire-and-forget — a gh hiccup must not fail a merge that succeeded.
+  try {
+    void require("./postmerge.js")
+      .completeThreadIssue(store, threadId)
+      .catch(() => {});
+  } catch {
+    // ignore
+  }
+
   // (d) Remove worktree + branch, clear thread fields
   return cleanupWorktree({
     store,
