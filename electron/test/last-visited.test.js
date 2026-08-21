@@ -101,6 +101,32 @@ describe("lastVisitedAt (round 43)", () => {
     assert.equal(after.lastVisitedAt, detail.thread.lastVisitedAt);
   });
 
+  it("marking visited does not schedule a flush, only dirties (#636)", async () => {
+    const thread = services.createThread(store, {
+      projectId: project.id,
+      title: "Cheap visit",
+    });
+    store.saveNow();
+    await store.flushPending();
+    assert.equal(store._timer, null, "precondition: no pending flush");
+
+    services.getThreadDetail(store, thread.id);
+
+    assert.equal(
+      store._timer,
+      null,
+      "a sidebar click must not schedule a whole-store rewrite",
+    );
+    assert.equal(store._dirty, true, "stamp must ride the next real flush");
+    // The stamp still reaches disk with the next save().
+    store.saveNow();
+    const reloaded = new Store(store.filePath);
+    assert.equal(
+      reloaded.getThread(thread.id).lastVisitedAt,
+      store.getThread(thread.id).lastVisitedAt,
+    );
+  });
+
   it("getThreadDetail({ markVisited: false }) does not stamp (threads.peek)", () => {
     const thread = services.createThread(store, {
       projectId: project.id,

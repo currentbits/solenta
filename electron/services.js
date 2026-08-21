@@ -3434,9 +3434,11 @@ function getThreadDetail(store, threadId, workflow = null, opts) {
     throw new Error(`Unknown thread: ${threadId}`);
   }
   if (markVisited) {
-    // No touch: visiting must not bump updatedAt.
+    // No updatedAt bump: visiting must not re-unread or re-sort the thread.
     store.updateThread(threadId, { lastVisitedAt: Date.now() });
-    store.save();
+    // touch(), not save(): a save() here scheduled a whole-store rewrite per
+    // sidebar click (#636). The stamp rides the next real flush or exit hook.
+    store.touch();
   }
   const current = store.getThread(threadId) || thread;
   return {
