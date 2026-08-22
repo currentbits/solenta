@@ -95,25 +95,25 @@
 
 .badgeBuiltin {
   color: var(--text-muted);
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--overlay-soft);
   border-color: var(--border);
 }
 
 .badgeClaude {
-  color: #93c5fd;
+  color: var(--info-fg);
   background: var(--blue-soft);
   border-color: var(--blue-border);
 }
 
 .badgeAgents {
-  color: #fcd34d;
-  background: rgba(251, 191, 36, 0.12);
-  border-color: rgba(251, 191, 36, 0.3);
+  color: var(--amber);
+  background: var(--amber-soft);
+  border-color: var(--amber-border);
 }
 
 .badgeProject {
   color: var(--text-muted);
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--overlay-soft);
   border-color: var(--border);
 }
 
@@ -141,9 +141,9 @@
   font-size: 10px;
   font-weight: 650;
   letter-spacing: 0.03em;
-  color: #fcd34d;
-  background: rgba(251, 191, 36, 0.12);
-  border: 1px solid rgba(251, 191, 36, 0.3);
+  color: var(--amber);
+  background: var(--amber-soft);
+  border: 1px solid var(--amber-border);
 }
 
 .confirmHint {
@@ -259,7 +259,7 @@
 .formError {
   margin: 0;
   font-size: 12px;
-  color: #fca5a5;
+  color: var(--danger-fg);
 }
 
 .primaryBtn {
@@ -270,23 +270,23 @@
   padding: 0 14px;
   border-radius: var(--radius-sm);
   border: 1px solid transparent;
-  background: var(--btn-primary-bg, #3b82f6);
-  color: #fff;
+  background: var(--btn-primary-bg);
+  color: var(--text-on-accent);
   font-size: 12px;
   font-weight: 550;
   transition: background-color 0.12s ease;
 }
 
 .primaryBtn:hover:not(:disabled) {
-  background: var(--btn-primary-hover, #2563eb);
-  color: #fff;
+  background: var(--btn-primary-hover);
+  color: var(--text-on-accent);
 }
 
 .primaryBtn:focus-visible {
   outline: none;
   box-shadow:
     0 0 0 2px var(--bg-elevated),
-    0 0 0 4px var(--focus-ring, rgba(59, 130, 246, 0.55));
+    0 0 0 4px var(--focus-ring-color);
 }
 
 .primaryBtn:disabled {
@@ -327,15 +327,15 @@
   height: 26px;
   padding: 0 10px;
   border-radius: var(--radius-sm);
-  border: 1px solid rgba(248, 113, 113, 0.35);
-  background: rgba(248, 113, 113, 0.12);
-  color: #fca5a5;
+  border: 1px solid var(--danger-border);
+  background: var(--danger-soft);
+  color: var(--danger-fg);
   font-size: 12px;
   font-weight: 600;
 }
 
 .dangerBtn:hover:not(:disabled) {
-  background: rgba(248, 113, 113, 0.2);
+  background: var(--danger-soft);
 }
 
 .dangerBtn:disabled {

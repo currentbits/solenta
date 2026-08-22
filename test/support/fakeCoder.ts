@@ -224,6 +224,8 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     mcpServers: [],
     defaultWorktree: false,
     updateChannel: null,
+    notifications: true,
+    theme: "dark",
     quotaWaitAutoResume: true,
     prDiffCapLines: 400,
     onboardingSeen: true,
@@ -432,6 +434,16 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
             );
           }
           next.updateChannel = v ?? null;
+        }
+        if (Object.prototype.hasOwnProperty.call(p, "theme")) {
+          const v = p.theme;
+          if (v !== "system" && v !== "light" && v !== "dark") {
+            calls.push({ channel: "settings.set", args: [patch] });
+            return Promise.reject(
+              new Error('theme must be "system", "light", or "dark"'),
+            );
+          }
+          next.theme = v;
         }
         if (Object.prototype.hasOwnProperty.call(p, "quotaWaitAutoResume")) {
           const v = p.quotaWaitAutoResume;

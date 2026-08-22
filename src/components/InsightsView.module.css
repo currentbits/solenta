@@ -226,14 +226,14 @@
 
 .kind[data-kind="failed"] {
   color: var(--danger);
-  border-color: rgba(248, 113, 113, 0.35);
-  background: rgba(248, 113, 113, 0.1);
+  border-color: var(--danger-border);
+  background: var(--danger-soft);
 }
 
 .kind[data-kind="stalled"] {
   color: var(--amber);
-  border-color: rgba(251, 191, 36, 0.35);
-  background: rgba(251, 191, 36, 0.1);
+  border-color: var(--amber-border);
+  background: var(--amber-soft);
 }
 
 .kind[data-kind="retried"] {

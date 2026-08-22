@@ -11,18 +11,18 @@
   border-radius: var(--radius);
   border: 1px solid var(--border);
   background: var(--bg-elevated);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 8px 24px var(--shadow-color);
   color: var(--text);
   font-size: 13px;
 }
 
 .toastError {
-  border-color: rgba(248, 113, 113, 0.45);
-  background: rgba(30, 20, 22, 0.98);
+  border-color: var(--danger-border);
+  background: var(--bg-elevated);
 }
 
 .toastError .message {
-  color: #fca5a5;
+  color: var(--danger-fg);
 }
 
 .message {
@@ -33,7 +33,7 @@
   padding: 4px 10px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-soft);
-  background: rgba(59, 130, 246, 0.12);
+  background: var(--blue-soft);
   color: var(--blue);
   font-size: 12px;
   font-weight: 600;
@@ -41,7 +41,7 @@
 }
 
 .undo:hover {
-  background: rgba(59, 130, 246, 0.2);
+  background: var(--blue-soft);
 }
 
 .dismiss {

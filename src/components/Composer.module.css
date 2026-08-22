@@ -26,9 +26,9 @@
   margin-bottom: 8px;
   padding: 8px 10px;
   border-radius: var(--radius-sm);
-  border: 1px solid rgba(248, 113, 113, 0.35);
-  background: rgba(248, 113, 113, 0.12);
-  color: #fca5a5;
+  border: 1px solid var(--danger-border);
+  background: var(--danger-soft);
+  color: var(--danger-fg);
   font-size: 12px;
   line-height: 1.4;
 }
@@ -45,7 +45,7 @@
   display: grid;
   place-items: center;
   border-radius: 4px;
-  color: #fca5a5;
+  color: var(--danger-fg);
   font-size: 14px;
   line-height: 1;
   opacity: 0.85;
@@ -53,7 +53,7 @@
 
 .errorDismiss:hover {
   opacity: 1;
-  background: rgba(248, 113, 113, 0.18);
+  background: var(--danger-soft);
 }
 
 .card {
@@ -62,7 +62,7 @@
   border: 1px solid var(--border);
   border-radius: 14px;
   padding: 12px 12px 10px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+  box-shadow: 0 8px 24px var(--shadow-color);
   transition: border-color 0.15s ease;
 }
 
@@ -131,7 +131,7 @@
   outline: none;
   box-shadow:
     0 0 0 2px var(--card),
-    0 0 0 4px var(--focus-ring, rgba(59, 130, 246, 0.55));
+    0 0 0 4px var(--focus-ring-color);
 }
 
 .pill:disabled {
@@ -140,14 +140,14 @@
 }
 
 .pillAccent {
-  color: #dbeafe;
+  color: var(--info-fg-strong);
   border-color: var(--blue-border);
   background: var(--blue-soft);
 }
 
 .pillAccent:hover:not(:disabled) {
-  background: rgba(59, 130, 246, 0.24);
-  color: #fff;
+  background: var(--blue-soft);
+  color: var(--text-on-accent);
 }
 
 .buildSplit {
@@ -196,7 +196,7 @@
   border-radius: 12px;
   border: 1px solid var(--border);
   background: var(--bg-elevated);
-  box-shadow: var(--shadow-pop, 0 8px 24px rgba(0, 0, 0, 0.45));
+  box-shadow: var(--shadow-pop);
   transform-origin: bottom left;
   animation: popoverIn 180ms cubic-bezier(0.2, 0.9, 0.25, 1);
 }
@@ -227,7 +227,7 @@
 }
 
 .bestOfNRow:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--overlay-hover);
 }
 
 .bestOfNRow:has(input:disabled) {
@@ -255,14 +255,14 @@
   padding: 0 14px;
   border-radius: var(--radius-pill);
   border: 1px solid transparent;
-  background: var(--btn-primary-bg, #3b82f6);
-  color: #fff;
+  background: var(--btn-primary-bg);
+  color: var(--text-on-accent);
   font-size: 12px;
   font-weight: 550;
 }
 
 .bestOfNRun:hover:not(:disabled) {
-  background: var(--btn-primary-hover, #2563eb);
+  background: var(--btn-primary-hover);
 }
 
 .bestOfNRun:disabled {
@@ -275,7 +275,7 @@
   width: 1em;
   margin-right: 6px;
   text-align: center;
-  color: #bfdbfe;
+  color: var(--info-fg-strong);
 }
 
 .menuDivider {
@@ -301,7 +301,7 @@
   border-radius: 8px;
   border: 1px solid var(--border);
   background: var(--bg-elevated);
-  box-shadow: var(--shadow-pop, 0 8px 24px rgba(0, 0, 0, 0.45));
+  box-shadow: var(--shadow-pop);
 }
 
 .modeMenuList {
@@ -321,7 +321,7 @@
   padding: 7px 10px;
   border-radius: 6px;
   border: 1px solid var(--border);
-  background: rgba(0, 0, 0, 0.25);
+  background: var(--input-fill);
   color: var(--text);
   font-size: 12px;
   font-weight: 500;
@@ -352,12 +352,12 @@
 }
 
 .modeOption:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--overlay-hover);
   color: var(--text);
 }
 
 .modeOption[data-active="true"] {
-  color: #bfdbfe;
+  color: var(--info-fg-strong);
   background: var(--blue-soft);
 }
 
@@ -431,7 +431,7 @@
   border-radius: 12px;
   border: 1px solid var(--border);
   background: var(--bg-elevated);
-  box-shadow: var(--shadow-pop, 0 8px 24px rgba(0, 0, 0, 0.45));
+  box-shadow: var(--shadow-pop);
   overflow: hidden;
   transform-origin: bottom left;
   animation: popoverIn 180ms cubic-bezier(0.2, 0.9, 0.25, 1);
@@ -593,7 +593,7 @@
   left: 0;
   right: 0;
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.07);
+  background: var(--overlay-hover);
   pointer-events: none;
   transition:
     transform 150ms cubic-bezier(0.2, 0.9, 0.25, 1),
@@ -671,7 +671,7 @@
 }
 
 .modelRow[data-selected="true"] .modelRowVendor {
-  color: rgba(52, 211, 153, 0.75);
+  color: var(--green);
 }
 
 .modelRow[data-selected="true"][data-highlighted="true"] {
@@ -747,6 +747,7 @@
 
 .effortSegment {
   flex: 1 1 0;
+  height: 10px;
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -760,7 +761,7 @@
 .effortBar {
   height: 8px;
   border-radius: 3px;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--track);
   border: 1px solid transparent;
   transition:
     background-color 120ms ease,
@@ -771,6 +772,8 @@
 
 .effortSegment:hover:not(:disabled) .effortBar {
   background: rgba(255, 255, 255, 0.14);
+.effortSegment:hover:not(:disabled) {
+  background: var(--overlay-strong);
 }
 
 .effortSegment:active:not(:disabled) .effortBar {
@@ -779,7 +782,7 @@
 
 .effortSegment[data-filled="true"] .effortBar {
   background: var(--green);
-  border-color: rgba(52, 211, 153, 0.4);
+  border-color: var(--green-border);
   /* --i is the segment index: the fill sweeps left-to-right instead of
      lighting every segment on the same frame. Only set in the filled state,
      so hover and un-fill stay immediate. */
@@ -806,12 +809,12 @@
   width: 32px;
   height: 32px;
   border-radius: 50%;
-  background: var(--btn-primary-bg, #3b82f6);
-  color: #fff;
+  background: var(--btn-primary-bg);
+  color: var(--text-on-accent);
   display: grid;
   place-items: center;
   flex-shrink: 0;
-  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.35);
+  box-shadow: 0 2px 8px var(--blue-border);
   transition:
     background-color 0.12s ease,
     transform 0.12s ease,
@@ -819,7 +822,7 @@
 }
 
 .send:hover:not(:disabled) {
-  background: var(--btn-primary-hover, #2563eb);
+  background: var(--btn-primary-hover);
 }
 
 .send:active:not(:disabled) {
@@ -830,7 +833,7 @@
   outline: none;
   box-shadow:
     0 0 0 2px var(--card),
-    0 0 0 4px var(--focus-ring, rgba(59, 130, 246, 0.55));
+    0 0 0 4px var(--focus-ring-color);
 }
 
 .send:disabled {
@@ -955,7 +958,7 @@
   padding: 6px 8px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
-  background: var(--input-bg, rgba(255, 255, 255, 0.04));
+  background: var(--overlay-soft);
   color: var(--text);
   font-family: var(--mono);
   font-size: 12px;
@@ -1072,7 +1075,7 @@
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  box-shadow: var(--shadow-pop, 0 8px 24px rgba(0, 0, 0, 0.45));
+  box-shadow: var(--shadow-pop);
 }
 
 .mentionRow {

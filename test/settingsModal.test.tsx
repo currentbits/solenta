@@ -1063,3 +1063,48 @@ describe("SettingsModal panes", () => {
     m.unmount();
   });
 });
+
+describe("SettingsModal Appearance (#651)", () => {
+  it("puts the theme control on General and saves the pick", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const m = await mount(
+      modal({
+        settings: {
+          dailyBudgetUsd: null,
+          autoSettleAfterDays: 3,
+          theme: "dark",
+        } as AppSettings,
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return {
+            dailyBudgetUsd: null,
+            autoSettleAfterDays: 3,
+            theme: "light",
+          } as AppSettings;
+        },
+      }),
+    );
+    // The redesigned modal panes settings, so Appearance and Budget no longer
+    // share a scroll column: assert the pane, not the vertical order.
+    assert.equal(
+      m.query("[data-settings-pane]")?.getAttribute("data-settings-pane"),
+      "general",
+    );
+    const select = m.query("[data-theme-setting]") as HTMLSelectElement;
+    assert.ok(select, "theme select must render");
+    assert.equal(select.value, "dark");
+    await m.change(select, "light");
+    assert.deepEqual(patches, [{ theme: "light" }]);
+    m.unmount();
+  });
+
+  it("defaults the control to dark when settings.theme is absent", async () => {
+    const m = await mount(
+      modal({ settings: { dailyBudgetUsd: 5, autoSettleAfterDays: 3 } }),
+    );
+    const select = m.query("[data-theme-setting]") as HTMLSelectElement;
+    assert.ok(select, "theme select must render");
+    assert.equal(select.value, "dark");
+    m.unmount();
+  });
+});

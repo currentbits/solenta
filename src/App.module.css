@@ -139,7 +139,7 @@
     inset: 0;
     z-index: 30;
     margin: 0;
-    background: rgba(0, 0, 0, 0.45);
+    background: var(--scrim);
     cursor: pointer;
   }
 
@@ -163,14 +163,14 @@
     left: 0;
     width: min(300px, 88vw);
     transform: translateX(-105%);
-    box-shadow: 8px 0 32px rgba(0, 0, 0, 0.35);
+    box-shadow: 8px 0 32px var(--shadow-color);
   }
 
   .agentsSlot {
     right: 0;
     width: min(380px, 92vw);
     transform: translateX(105%);
-    box-shadow: -8px 0 32px rgba(0, 0, 0, 0.35);
+    box-shadow: -8px 0 32px var(--shadow-color);
   }
 
   .app[data-drawer="sidebar"] .sidebarSlot {
@@ -203,7 +203,7 @@
     inset: 0;
     z-index: 30;
     margin: 0;
-    background: rgba(0, 0, 0, 0.45);
+    background: var(--scrim);
     cursor: pointer;
   }
 
@@ -227,14 +227,14 @@
     left: 0;
     width: min(300px, 88vw);
     transform: translateX(-105%);
-    box-shadow: 8px 0 32px rgba(0, 0, 0, 0.35);
+    box-shadow: 8px 0 32px var(--shadow-color);
   }
 
   .agentsSlot {
     right: 0;
     width: min(380px, 92vw);
     transform: translateX(105%);
-    box-shadow: -8px 0 32px rgba(0, 0, 0, 0.35);
+    box-shadow: -8px 0 32px var(--shadow-color);
   }
 
   .app[data-drawer="sidebar"] .sidebarSlot {

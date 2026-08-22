@@ -161,7 +161,7 @@
   padding: 1px 6px;
   border-radius: var(--radius-pill);
   border: 1px solid var(--border-soft);
-  background: rgba(251, 191, 36, 0.12);
+  background: var(--amber-soft);
   color: var(--amber);
   font-size: 10px;
   font-weight: 650;
@@ -245,14 +245,14 @@
 .prLink {
   flex-shrink: 0;
   pointer-events: auto;
-  color: #93c5fd;
+  color: var(--info-fg);
   text-decoration: none;
   font-family: var(--mono);
   font-size: 11px;
 }
 
 .prLink:hover {
-  color: #bfdbfe;
+  color: var(--info-fg-strong);
   text-decoration: underline;
 }
 
@@ -269,9 +269,9 @@
   gap: 12px;
   padding: 10px 12px;
   border-radius: var(--radius);
-  border: 1px solid rgba(248, 113, 113, 0.28);
-  background: rgba(248, 113, 113, 0.08);
-  color: #fca5a5;
+  border: 1px solid var(--danger-border);
+  background: var(--diff-del-bg);
+  color: var(--danger-fg);
   font-size: 12.5px;
 }
 

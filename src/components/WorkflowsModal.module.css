@@ -5,7 +5,7 @@
   display: grid;
   place-items: center;
   padding: 24px;
-  background: rgba(0, 0, 0, 0.55);
+  background: var(--scrim);
 }
 
 .modal {
@@ -16,7 +16,7 @@
   border-radius: 14px;
   border: 1px solid var(--border);
   background: var(--bg-elevated);
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+  box-shadow: var(--shadow-modal);
   overflow: hidden;
 }
 
@@ -49,7 +49,7 @@
 }
 
 .close:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--overlay-hover);
   color: var(--text);
 }
 
@@ -65,7 +65,7 @@
   flex-direction: column;
   min-height: 0;
   border-right: 1px solid var(--border);
-  background: rgba(0, 0, 0, 0.15);
+  background: var(--input-fill);
 }
 
 .listScroll {
@@ -90,13 +90,13 @@
 }
 
 .listItem:hover {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--overlay-hover);
   color: var(--text);
 }
 
 .listItem[data-active="true"] {
   background: var(--blue-soft);
-  color: #bfdbfe;
+  color: var(--info-fg-strong);
 }
 
 .listName {
@@ -134,7 +134,7 @@
   padding: 7px 10px;
   border-radius: 8px;
   border: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--overlay-soft);
   color: var(--text-muted);
   font-size: 12px;
   font-weight: 500;
@@ -142,7 +142,7 @@
 
 .deleteBtn:hover:not(:disabled),
 .newBtn:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.07);
+  background: var(--overlay-hover);
   color: var(--text);
 }
 
@@ -152,9 +152,9 @@
 }
 
 .deleteBtn[data-confirm="true"] {
-  border-color: rgba(248, 113, 113, 0.45);
-  background: rgba(248, 113, 113, 0.12);
-  color: #fca5a5;
+  border-color: var(--danger-border);
+  background: var(--danger-soft);
+  color: var(--danger-fg);
 }
 
 .editor {
@@ -258,14 +258,14 @@
   place-items: center;
   border-radius: 6px;
   border: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--overlay-soft);
   color: var(--text-muted);
   font-size: 12px;
   line-height: 1;
 }
 
 .iconBtn:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.07);
+  background: var(--overlay-hover);
   color: var(--text);
 }
 
@@ -274,9 +274,9 @@
 }
 
 .iconBtnDanger:hover:not(:disabled) {
-  border-color: rgba(248, 113, 113, 0.4);
-  color: #fca5a5;
-  background: rgba(248, 113, 113, 0.1);
+  border-color: var(--danger-border);
+  color: var(--danger-fg);
+  background: var(--danger-soft);
 }
 
 .row2 {
@@ -319,7 +319,7 @@
 .errorInline {
   flex: 1;
   min-width: 0;
-  color: #fca5a5;
+  color: var(--danger-fg);
   font-size: 12px;
   line-height: 1.4;
 }
@@ -335,26 +335,26 @@
   padding: 7px 12px;
   border-radius: 8px;
   border: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--overlay-soft);
   color: var(--text-muted);
   font-size: 12px;
   font-weight: 500;
 }
 
 .btn:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.07);
+  background: var(--overlay-hover);
   color: var(--text);
 }
 
 .btnPrimary {
   border-color: var(--blue-border);
   background: var(--blue-soft);
-  color: #bfdbfe;
+  color: var(--info-fg-strong);
 }
 
 .btnPrimary:hover:not(:disabled) {
   filter: brightness(1.08);
-  color: #dbeafe;
+  color: var(--info-fg-strong);
 }
 
 .btn:disabled,

@@ -1,6 +1,7 @@
 "use strict";
 
-const { BrowserWindow, shell } = require("electron");
+const { BrowserWindow, shell, nativeTheme } = require("electron");
+const { windowBackgroundColor, nativeThemeSource } = require("./theme.js");
 const fs = require("node:fs");
 const path = require("node:path");
 const services = require("./services.js");
@@ -720,6 +721,22 @@ const IPC_HANDLERS = {
   },
   "settings:set": async (ctx, patch) => {
     const next = services.setSettings(ctx.store, patch);
+    if (patch && Object.prototype.hasOwnProperty.call(patch, "theme") && nativeTheme) {
+      nativeTheme.themeSource = nativeThemeSource(next.theme);
+      const bg = windowBackgroundColor(
+        next.theme,
+        nativeTheme.shouldUseDarkColors,
+      );
+      const windows =
+        typeof BrowserWindow.getAllWindows === "function"
+          ? BrowserWindow.getAllWindows()
+          : [];
+      for (const w of windows) {
+        if (w && typeof w.setBackgroundColor === "function") {
+          w.setBackgroundColor(bg);
+        }
+      }
+    }
     // Re-register user MCP servers so provider hooks pick the change up on
     // the next turn. Best-effort: never fail a settings save on it.
     try {

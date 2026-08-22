@@ -74,8 +74,8 @@
   gap: 2px;
   padding: 8px 10px;
   border-radius: var(--radius-sm);
-  border: 1px solid rgba(251, 191, 36, 0.35);
-  background: rgba(251, 191, 36, 0.1);
+  border: 1px solid var(--amber-border);
+  background: var(--amber-soft);
   color: var(--text);
   font-size: 12px;
 }

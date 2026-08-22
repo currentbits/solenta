@@ -416,6 +416,8 @@ const DEFAULT_PR_DIFF_CAP_LINES = 400;
  *
  * uiScale: Electron webContents zoom factor (issue #652). Absent/junk → 1;
  * otherwise snapped to 0.1 between 0.8 and 1.6.
+ * theme: absent/junk → "dark" (the app was dark-only; upgrades must not
+ * flip to light because the OS is light). "system" | "light" | "dark".
  *
  * quotaWaitAutoResume: only an explicit false turns auto-resume off, so
  * absent/junk keeps Claude's default (continue when the usage limit resets).
@@ -442,6 +444,7 @@ function normalizeSettings(raw) {
     updateChannel: null,
     notifications: true,
     uiScale: UI_SCALE_DEFAULT,
+    theme: "dark",
     quotaWaitAutoResume: true,
     prDiffCapLines: DEFAULT_PR_DIFF_CAP_LINES,
     agentProfiles: [],
@@ -525,6 +528,9 @@ function normalizeSettings(raw) {
   settings.uiScale = clampUiScale(
     /** @type {{ uiScale?: unknown }} */ (obj).uiScale,
   );
+  const theme = /** @type {{ theme?: unknown }} */ (obj).theme;
+  settings.theme =
+    theme === "system" || theme === "light" || theme === "dark" ? theme : "dark";
   settings.quotaWaitAutoResume =
     /** @type {{ quotaWaitAutoResume?: unknown }} */ (obj)
       .quotaWaitAutoResume !== false;
@@ -2043,6 +2049,7 @@ class Store {
       updateChannel: n.updateChannel,
       notifications: n.notifications,
       uiScale: n.uiScale,
+      theme: n.theme,
       quotaWaitAutoResume: n.quotaWaitAutoResume,
       prDiffCapLines: n.prDiffCapLines,
       agentProfiles: n.agentProfiles,
@@ -2202,6 +2209,13 @@ class Store {
         throw new Error("uiScale must be a number");
       }
       this.data.settings.uiScale = clampUiScale(v);
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "theme")) {
+      const v = patch.theme;
+      if (v !== "system" && v !== "light" && v !== "dark") {
+        throw new Error('theme must be "system", "light", or "dark"');
+      }
+      this.data.settings.theme = v;
     }
     if (Object.prototype.hasOwnProperty.call(patch, "quotaWaitAutoResume")) {
       const v = patch.quotaWaitAutoResume;

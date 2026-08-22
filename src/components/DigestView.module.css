@@ -253,12 +253,12 @@
 
 .check[data-digest-check="passed"] {
   color: var(--green);
-  border-color: rgba(52, 211, 153, 0.35);
+  border-color: var(--green-border);
 }
 
 .check[data-digest-check="failed"] {
   color: var(--danger);
-  border-color: rgba(248, 113, 113, 0.45);
+  border-color: var(--danger-border);
 }
 
 .risks {

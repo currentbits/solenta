@@ -26,6 +26,7 @@ import type {
   SubagentPoolEntry,
   UpdateStatus,
 } from "../shared/ipc";
+import { syncTheme, type ThemePreference } from "../theme";
 import { useEscapeClose } from "../useEscapeClose";
 import styles from "./SettingsModal.module.css";
 import { WorktreeGcSection } from "./WorktreeGcSection";
@@ -1473,6 +1474,37 @@ export function SettingsModal({
 
           {pane === "general" && (
           <section className={styles.section}>
+            <div className={styles.field}>
+              <label className={styles.fieldLabel} htmlFor="theme">
+                Theme
+              </label>
+              <select
+                id="theme"
+                className={styles.input}
+                data-theme-setting=""
+                value={settings?.theme ?? "dark"}
+                disabled={saving || settings == null}
+                onChange={(e) => {
+                  const theme = e.target.value as ThemePreference;
+                  setError(null);
+                  syncTheme(theme);
+                  void onSaveSettings({ theme }).catch((err) => {
+                    setError(
+                      err instanceof Error && err.message
+                        ? err.message
+                        : "Failed to save settings",
+                    );
+                  });
+                }}
+              >
+                <option value="system">System</option>
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+              </select>
+              <p className={styles.note}>
+                System follows the OS. Light and Dark stay put.
+              </p>
+            </div>
             <div className={styles.field}>
               <label className={styles.fieldLabel} htmlFor="ui-scale">
                 UI scale

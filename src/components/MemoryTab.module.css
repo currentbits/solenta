@@ -132,26 +132,26 @@
 }
 
 .badgeConvention {
-  color: #fcd34d;
-  background: rgba(251, 191, 36, 0.12);
-  border-color: rgba(251, 191, 36, 0.3);
+  color: var(--amber);
+  background: var(--amber-soft);
+  border-color: var(--amber-border);
 }
 
 .badgeStrategy {
-  color: #c4b5fd;
-  background: rgba(167, 139, 250, 0.12);
-  border-color: rgba(167, 139, 250, 0.3);
+  color: var(--violet);
+  background: var(--violet-soft);
+  border-color: var(--violet-border);
 }
 
 .badgeKnowledge {
-  color: #93c5fd;
+  color: var(--info-fg);
   background: var(--blue-soft);
   border-color: var(--blue-border);
 }
 
 .badgeTask {
   color: var(--text-muted);
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--overlay-soft);
   border-color: var(--border);
 }
 
@@ -196,7 +196,7 @@
   margin-top: 2px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-soft);
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--input-fill);
 }
 
 .fullBody {
@@ -222,7 +222,7 @@
   margin: 0;
   padding: 8px 10px;
   font-size: 12px;
-  color: #fca5a5;
+  color: var(--danger-fg);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -240,7 +240,7 @@
   color: var(--text-dim);
   padding: 1px 6px;
   border-radius: var(--radius-sm);
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--overlay-soft);
   border: 1px solid var(--border-soft);
   max-width: 100%;
   overflow: hidden;
@@ -255,7 +255,7 @@
   color: var(--text-dim);
   padding: 2px 6px;
   border-radius: var(--radius-sm);
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--overlay-soft);
   border: 1px solid var(--border-soft);
   max-width: 100%;
   overflow: hidden;
@@ -360,7 +360,7 @@
 .formError {
   margin: 0;
   font-size: 12px;
-  color: #fca5a5;
+  color: var(--danger-fg);
 }
 
 .saveBtn {
@@ -371,23 +371,23 @@
   padding: 0 14px;
   border-radius: var(--radius-sm);
   border: 1px solid transparent;
-  background: var(--btn-primary-bg, #3b82f6);
-  color: #fff;
+  background: var(--btn-primary-bg);
+  color: var(--text-on-accent);
   font-size: 12px;
   font-weight: 550;
   transition: background-color 0.12s ease;
 }
 
 .saveBtn:hover:not(:disabled) {
-  background: var(--btn-primary-hover, #2563eb);
-  color: #fff;
+  background: var(--btn-primary-hover);
+  color: var(--text-on-accent);
 }
 
 .saveBtn:focus-visible {
   outline: none;
   box-shadow:
     0 0 0 2px var(--bg-elevated),
-    0 0 0 4px var(--focus-ring, rgba(59, 130, 246, 0.55));
+    0 0 0 4px var(--focus-ring-color);
 }
 
 .saveBtn:disabled {
@@ -461,15 +461,15 @@
 .dangerBtn {
   padding: 4px 10px;
   border-radius: var(--radius-sm);
-  border: 1px solid rgba(248, 113, 113, 0.35);
-  background: rgba(248, 113, 113, 0.12);
-  color: #fca5a5;
+  border: 1px solid var(--danger-border);
+  background: var(--danger-soft);
+  color: var(--danger-fg);
   font-size: 12px;
   font-weight: 600;
 }
 
 .dangerBtn:hover:not(:disabled) {
-  background: rgba(248, 113, 113, 0.2);
+  background: var(--danger-soft);
 }
 
 .doctor {
@@ -512,19 +512,19 @@
 .gradeGood {
   color: var(--green);
   background: var(--green-soft);
-  border-color: rgba(52, 211, 153, 0.3);
+  border-color: var(--green-border);
 }
 
 .gradeMid {
   color: var(--amber);
-  background: rgba(251, 191, 36, 0.12);
-  border-color: rgba(251, 191, 36, 0.3);
+  background: var(--amber-soft);
+  border-color: var(--amber-border);
 }
 
 .gradeBad {
-  color: #fca5a5;
-  background: rgba(248, 113, 113, 0.12);
-  border-color: rgba(248, 113, 113, 0.3);
+  color: var(--danger-fg);
+  background: var(--danger-soft);
+  border-color: var(--danger-border);
 }
 
 .doctorMeta,
@@ -580,7 +580,7 @@
   padding: 8px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-soft);
-  background: rgba(0, 0, 0, 0.25);
+  background: var(--input-fill);
   color: var(--text-muted);
   font-size: 11px;
   line-height: 1.4;
