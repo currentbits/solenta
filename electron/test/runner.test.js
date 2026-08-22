@@ -1388,3 +1388,160 @@ describe("runner real agent mode", () => {
     assert.equal(store.getThread(thread.id), null);
   });
 });
+
+describe("generic onChunk throttle (#640)", () => {
+  const CHUNK_COUNT = 20;
+  const FULL = "x".repeat(CHUNK_COUNT);
+
+  let tmpDir;
+  let store;
+  let runner;
+  let pushes;
+  let core;
+  let prevSimulate;
+  let prevAgentCmd;
+  let updateCount;
+
+  beforeEach(async () => {
+    prevSimulate = process.env.CODER_SIMULATE;
+    prevAgentCmd = process.env.CODER_AGENT_CMD;
+    delete process.env.CODER_SIMULATE;
+    // Force the generic path; the injected runAgentFn never spawns this.
+    process.env.CODER_AGENT_CMD = `${process.execPath} -e process.exit(0)`;
+
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-generic-throttle-"));
+    store = new Store(path.join(tmpDir, "store.json"));
+    pushes = [];
+    updateCount = 0;
+    const origUpdate = store.updateMessage.bind(store);
+    store.updateMessage = function (threadId, messageId, patch) {
+      updateCount += 1;
+      return origUpdate(threadId, messageId, patch);
+    };
+    core = await loadCore();
+
+    const repo = path.join(tmpDir, "app");
+    fs.mkdirSync(repo);
+    git(repo, ["init"]);
+    const project = await services.addProject(store, repo);
+    services.createThread(store, {
+      projectId: project.id,
+      title: "New Thread",
+    });
+  });
+
+  afterEach(() => {
+    if (runner) runner.stopAll();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    if (prevSimulate === undefined) delete process.env.CODER_SIMULATE;
+    else process.env.CODER_SIMULATE = prevSimulate;
+    if (prevAgentCmd === undefined) delete process.env.CODER_AGENT_CMD;
+    else process.env.CODER_AGENT_CMD = prevAgentCmd;
+  });
+
+  function burstAgent(onDoneAfterBurst) {
+    return ({ onChunk, onDone }) => {
+      setImmediate(() => {
+        let text = "";
+        for (let i = 0; i < CHUNK_COUNT; i++) {
+          text += "x";
+          onChunk(text);
+        }
+        if (onDoneAfterBurst) onDone(0, text, "");
+      });
+      return { kill() {} };
+    };
+  }
+
+  function assistantPushTexts(runId) {
+    return pushes
+      .filter((p) => p.channel === "thread:updated")
+      .map((p) =>
+        (p.payload.messages || []).find(
+          (m) => m.role === "assistant" && m.runId === runId,
+        ),
+      )
+      .filter(Boolean)
+      .map((m) => m.text);
+  }
+
+  it("batches store writes and thread:updated across a burst of onChunk", async () => {
+    runner = createRunner({
+      store,
+      core,
+      pushFn: (channel, payload) => {
+        pushes.push({ channel, payload });
+      },
+      tickMs: 15,
+      runAgentFn: burstAgent(true),
+    });
+
+    const thread = store.getThreads()[0];
+    const { runId } = await runner.startRun({
+      threadId: thread.id,
+      prompt: "stream burst",
+    });
+
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    const assistants = store
+      .getMessages(thread.id)
+      .filter((m) => m.role === "assistant" && m.runId === runId);
+    assert.equal(assistants.length, 1);
+    assert.equal(assistants[0].text, FULL);
+
+    const texts = assistantPushTexts(runId);
+    assert.ok(texts.length >= 1, "expected at least one streamed push");
+    assert.equal(texts[texts.length - 1], FULL);
+    assert.ok(
+      texts.length <= 3,
+      `thread:updated should not track raw chunks (${texts.length} assistant pushes for ${CHUNK_COUNT} onChunk)`,
+    );
+    assert.ok(
+      updateCount <= 2,
+      `updateMessage should not track raw chunks (${updateCount} writes for ${CHUNK_COUNT} onChunk)`,
+    );
+  });
+
+  it("flushes coalesced stream text when the run is stopped", async () => {
+    /** @type {((text: string) => void) | null} */
+    let onChunkRef = null;
+    runner = createRunner({
+      store,
+      core,
+      pushFn: (channel, payload) => {
+        pushes.push({ channel, payload });
+      },
+      tickMs: 15,
+      runAgentFn: ({ onChunk }) => {
+        onChunkRef = onChunk;
+        return { kill() {} };
+      },
+    });
+
+    const thread = store.getThreads()[0];
+    const { runId } = await runner.startRun({
+      threadId: thread.id,
+      prompt: "stop mid-stream",
+    });
+    await waitFor(() => typeof onChunkRef === "function");
+
+    let text = "";
+    for (let i = 0; i < CHUNK_COUNT; i++) {
+      text += "x";
+      onChunkRef(text);
+    }
+
+    await runner.stopRun({ threadId: thread.id });
+
+    const assistants = store
+      .getMessages(thread.id)
+      .filter((m) => m.role === "assistant" && m.runId === runId);
+    assert.equal(assistants.length, 1);
+    assert.equal(assistants[0].text, FULL);
+    assert.ok(
+      updateCount <= 2,
+      `stop should flush once, not per chunk (${updateCount} updateMessage)`,
+    );
+  });
+});

@@ -65,7 +65,7 @@ const {
   quotaWaitEnabled,
 } = require("./quotaWait.js");
 
-const KIMI_PUSH_THROTTLE_MS = 250;
+const PUSH_THROTTLE_MS = 250;
 
 /** Plan markdown shown in the approval panel; long enough for a real plan. */
 const PLAN_TRUNCATE = 20000;
@@ -477,6 +477,7 @@ function createRunner(opts) {
     getMemoryStatus: getMemStatus = getMemoryStatus,
     askComplete = ask.completeAsk,
     searchMemory = null,
+    runAgentFn = runAgent,
   } = opts;
 
   /**
@@ -2151,6 +2152,9 @@ function createRunner(opts) {
   function clearRun(threadId) {
     const entry = active.get(threadId);
     if (!entry) return;
+    if (typeof entry.flushStream === "function") {
+      entry.flushStream();
+    }
     if (entry.timer) {
       clearIntervalFn(entry.timer);
     }
@@ -2300,6 +2304,11 @@ function createRunner(opts) {
 
     /** @type {string | null} */
     let assistantMsgId = null;
+    /** Latest streamed text not yet written to the store. */
+    let pendingText = null;
+    let lastPushAt = 0;
+    /** @type {ReturnType<typeof setTimeout> | null} */
+    let pushTimer = null;
 
     const localCwd = thread.worktreePath || project.path;
 
@@ -2320,54 +2329,91 @@ function createRunner(opts) {
     });
     active.set(threadId, entry);
 
+    function guard() {
+      const e = active.get(threadId);
+      if (!e || e.stopping || e.runId !== runId) return null;
+      if (e.kind !== "generic") return null;
+      return e;
+    }
+
+    function applyPendingText() {
+      if (pendingText == null) return;
+      const text = pendingText;
+      pendingText = null;
+      realState.charCount = text.length;
+      if (!assistantMsgId) {
+        assistantMsgId = appendMessage(threadId, "assistant", text, runId);
+      } else {
+        store.updateMessage(threadId, assistantMsgId, { text });
+      }
+    }
+
+    function cancelPushTimer() {
+      if (pushTimer) {
+        clearTimeout(pushTimer);
+        pushTimer = null;
+      }
+    }
+
+    function flushPush() {
+      pushTimer = null;
+      lastPushAt = Date.now();
+      applyPendingText();
+      if (!guard()) return;
+      store.save();
+      pushDetail(threadId, realState);
+    }
+
+    function throttledPush() {
+      const now = Date.now();
+      const elapsed = now - lastPushAt;
+      if (elapsed >= PUSH_THROTTLE_MS) {
+        cancelPushTimer();
+        flushPush();
+        return;
+      }
+      if (!pushTimer) {
+        pushTimer = setTimeout(flushPush, PUSH_THROTTLE_MS - elapsed);
+      }
+    }
+
+    // Stop/error/clearRun must land pending text before the terminal push.
+    entry.flushStream = () => {
+      cancelPushTimer();
+      applyPendingText();
+    };
+
     const crossing = crossesBoundary(project);
     const spawn = crossing
       ? resolveSpawn(project, command, [...args, String(prompt ?? "")], localCwd)
       : { binary: command, args, cwd: localCwd };
-    const handle = runAgent({
+    const handle = runAgentFn({
       command: spawn.binary,
       args: spawn.args,
       prompt,
       appendPrompt: !crossing,
       cwd: spawn.cwd,
       onChunk: (text) => {
-        const e = active.get(threadId);
-        if (!e || e.stopping || e.runId !== runId) return;
-
+        if (!guard()) return;
         realState.charCount = text.length;
-
-        if (!assistantMsgId) {
-          assistantMsgId = appendMessage(threadId, "assistant", text, runId);
-        } else {
-          store.updateMessage(threadId, assistantMsgId, { text });
-        }
-
-        store.save();
-        pushDetail(threadId, realState);
+        pendingText = text;
+        throttledPush();
       },
       onDone: (exitCode, fullText, stderrText) => {
+        cancelPushTimer();
         const e = active.get(threadId);
         if (!e || e.stopping || e.runId !== runId) return;
         if (e.kind !== "generic") return;
+
+        if (fullText && fullText.length > 0) {
+          pendingText = fullText;
+        }
+        applyPendingText();
 
         clearRun(threadId);
 
         completeWorkLogStep(threadId, e.startingId);
         completeWorkLogStep(threadId, e.respondingId);
-
-        if (fullText && fullText.length > 0) {
-          if (!assistantMsgId) {
-            assistantMsgId = appendMessage(
-              threadId,
-              "assistant",
-              fullText,
-              runId,
-            );
-          } else {
-            store.updateMessage(threadId, assistantMsgId, { text: fullText });
-          }
-          realState.charCount = fullText.length;
-        }
 
         if (exitCode === 0) {
           realState.agentStatus = "settled";
@@ -2405,10 +2451,12 @@ function createRunner(opts) {
         notifyRunTerminal(threadId, "failed", errText);
       },
       onError: (err) => {
+        cancelPushTimer();
         const e = active.get(threadId);
         if (!e || e.stopping || e.runId !== runId) return;
         if (e.kind !== "generic") return;
 
+        applyPendingText();
         clearRun(threadId);
         completeWorkLogStep(threadId, e.startingId);
         completeWorkLogStep(threadId, e.respondingId);
@@ -3762,7 +3810,7 @@ function createRunner(opts) {
     function throttledPush() {
       const now = Date.now();
       const elapsed = now - lastPushAt;
-      if (elapsed >= KIMI_PUSH_THROTTLE_MS) {
+      if (elapsed >= PUSH_THROTTLE_MS) {
         if (pushTimer) {
           clearTimeout(pushTimer);
           pushTimer = null;
@@ -3771,7 +3819,7 @@ function createRunner(opts) {
         return;
       }
       if (!pushTimer) {
-        pushTimer = setTimeout(flushPush, KIMI_PUSH_THROTTLE_MS - elapsed);
+        pushTimer = setTimeout(flushPush, PUSH_THROTTLE_MS - elapsed);
       }
     }
 
@@ -4142,7 +4190,7 @@ function createRunner(opts) {
     function throttledPush() {
       const now = Date.now();
       const elapsed = now - lastPushAt;
-      if (elapsed >= KIMI_PUSH_THROTTLE_MS) {
+      if (elapsed >= PUSH_THROTTLE_MS) {
         if (pushTimer) {
           clearTimeout(pushTimer);
           pushTimer = null;
@@ -4151,7 +4199,7 @@ function createRunner(opts) {
         return;
       }
       if (!pushTimer) {
-        pushTimer = setTimeout(flushPush, KIMI_PUSH_THROTTLE_MS - elapsed);
+        pushTimer = setTimeout(flushPush, PUSH_THROTTLE_MS - elapsed);
       }
     }
 
