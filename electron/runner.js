@@ -15,7 +15,7 @@ const {
 const codexParse = require("./codex.js");
 const { runCodex } = codexParse;
 const kimiParse = require("./kimi.js");
-const { runKimi } = kimiParse;
+const { runKimi, materializeKimiHome } = kimiParse;
 const {
   getProvider,
   resolveBin,
@@ -33,6 +33,7 @@ const {
   getMemoryStatus,
   looksGrokConfigCorrupt,
   grokConfigCorruptMessage,
+  kimiMcpServersForRun,
 } = require("./memory-sup.js");
 const opencodeParse = require("./opencode.js");
 const { runOpencode } = opencodeParse;
@@ -4006,10 +4007,37 @@ function createRunner(opts) {
 
     completeWorkLogStep(threadId, startingId);
 
+    // Isolated KIMI_CODE_HOME so this turn cannot inherit other projects'
+    // MCP servers or workspaces (issue #671). Skipped for ssh/WSL (the
+    // overlay lives on this host) and when userDataPath is unset (tests).
+    /** @type {NodeJS.ProcessEnv | undefined} */
+    let kimiEnv;
+    if (userDataPath && !crossesBoundary(project)) {
+      try {
+        const os = require("node:os");
+        const dest = path.join(userDataPath, "kimi-homes", threadId);
+        const sourceHome =
+          process.env.KIMI_CODE_HOME || path.join(os.homedir(), ".kimi-code");
+        materializeKimiHome({
+          dest,
+          sourceHome,
+          cwd: localCwd,
+          mcpServers: kimiMcpServersForRun({
+            projectId: thread.projectId,
+            projectPath: localCwd || project.path,
+          }),
+        });
+        kimiEnv = { KIMI_CODE_HOME: dest };
+      } catch {
+        // Overlay is best-effort; a failed isolate must not block the turn.
+      }
+    }
+
     const handle = runKimi({
       binary: spawn.binary,
       args: spawn.args,
       cwd: spawn.cwd,
+      env: kimiEnv,
       // No argv route for kimi effort; runKimi flips config.toml (effortVia).
       reasoningEffort: thread.reasoningEffort || null,
       onEvent: (ev) => {

@@ -8,6 +8,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { z } from 'zod'
 import { Memory } from './memory.js'
+import { canonicalProject } from './project-key.js'
 import { parseCitations } from './citations.js'
 import { runJanitor, readJanitorSnapshot } from './janitor.js'
 import { createRealEmbedder, semanticEnabled } from './embedder.js'
@@ -143,8 +144,45 @@ const reviewResolution = z.enum(['update', 'invalidate', 'noop'])
 
 /**
  * @param {Memory} memory
+ * @param {{ bindProject?: string | null }} [opts] - when set (MCP URL
+ *   ?project=), every tool is forced to that project and a claimed other
+ *   project is rejected (issue #671).
  */
-export function buildServer(memory) {
+export function buildServer(memory, opts = {}) {
+  const bindProject = opts.bindProject ? String(opts.bindProject) : ''
+
+  function scoped(args = {}) {
+    if (!bindProject) return args
+    const claimed = args.project
+    if (claimed != null && String(claimed).trim() !== '') {
+      const want = canonicalProject(bindProject)
+      const got = canonicalProject(claimed)
+      if (want && got && want !== got) {
+        throw new Error(
+          `This session is bound to project "${want}"; cannot access "${got}".`,
+        )
+      }
+    }
+    return { ...args, project: bindProject }
+  }
+
+  function assertEntryInScope(id) {
+    if (!bindProject) return
+    const row = memory.get(id)
+    if (!row) return
+    const want = canonicalProject(bindProject)
+    const got = row.project ? canonicalProject(row.project) : null
+    if (row.invalidated || row.superseded_by) {
+      if (got && want && got !== want) {
+        throw new Error(`Unknown entry: ${id}`)
+      }
+      return
+    }
+    if (!got || got !== want) {
+      throw new Error(`Unknown entry: ${id}`)
+    }
+  }
+
   const server = new McpServer(
     { name: 'coder-memory', version: '0.1.0' },
     { instructions: INSTRUCTIONS },
@@ -170,7 +208,7 @@ export function buildServer(memory) {
     // #409: source is set here, not by the caller. An agent that could label
     // its own write 'app' would walk straight past the injection scan in
     // Memory.store, which is keyed on source === 'mcp'.
-    async (args) => json(memory.store({ ...args, source: 'mcp' })),
+    async (args) => json(memory.store({ ...scoped(args), source: 'mcp' })),
   )
 
   server.registerTool(
@@ -183,7 +221,11 @@ export function buildServer(memory) {
         project: z.string().optional(),
       },
     },
-    async (args) => json(memory.get(args.id, { project: args.project })),
+    async (args) => {
+      const a = scoped(args)
+      assertEntryInScope(a.id)
+      return json(memory.get(a.id, { project: a.project }))
+    },
   )
 
   server.registerTool(
@@ -198,7 +240,7 @@ export function buildServer(memory) {
         limit: z.number().int().positive().max(100).optional(),
       },
     },
-    async (args) => json(await memory.search(args)),
+    async (args) => json(await memory.search(scoped(args))),
   )
 
   server.registerTool(
@@ -211,6 +253,7 @@ export function buildServer(memory) {
       },
     },
     async ({ id }) => {
+      assertEntryInScope(id)
       const removed = memory.deleteEntry(id)
       if (!removed) throw new Error(`Unknown entry: ${id}`)
       return json({ deleted: id })
@@ -234,7 +277,9 @@ export function buildServer(memory) {
       },
     },
     async (args) => {
-      const { id, ...fields } = args
+      const a = scoped(args)
+      const { id, ...fields } = a
+      assertEntryInScope(id)
       return json(memory.supersede(id, { ...fields, source: 'mcp' }))
     },
   )
@@ -248,7 +293,7 @@ export function buildServer(memory) {
         project: z.string().optional(),
       },
     },
-    async (args) => json(memory.bootstrap(args)),
+    async (args) => json(memory.bootstrap(scoped(args))),
   )
 
   server.registerTool(
@@ -261,7 +306,7 @@ export function buildServer(memory) {
         type: entryType.optional(),
       },
     },
-    async (args) => json(memory.recent(args)),
+    async (args) => json(memory.recent(scoped(args))),
   )
 
   server.registerTool(
@@ -275,7 +320,10 @@ export function buildServer(memory) {
         note: z.string().optional(),
       },
     },
-    async (args) => json(memory.feedback(args)),
+    async (args) => {
+      assertEntryInScope(args.id)
+      return json(memory.feedback(args))
+    },
   )
 
   server.registerTool(
@@ -300,7 +348,7 @@ export function buildServer(memory) {
         project: z.string().optional(),
       },
     },
-    async (args) => json(memory.maintenance(args)),
+    async (args) => json(memory.maintenance(scoped(args))),
   )
 
   server.registerTool(
@@ -312,7 +360,7 @@ export function buildServer(memory) {
         project: z.string().optional(),
       },
     },
-    async (args) => json(memory.distill(args)),
+    async (args) => json(memory.distill(scoped(args))),
   )
 
   server.registerTool(
@@ -329,7 +377,7 @@ export function buildServer(memory) {
         content: z.string().min(1),
       },
     },
-    async (args) => json(memory.recordSession(args)),
+    async (args) => json(memory.recordSession(scoped(args))),
   )
 
   server.registerTool(
@@ -343,7 +391,7 @@ export function buildServer(memory) {
         limit: z.number().int().positive().max(20).optional(),
       },
     },
-    async (args) => json(memory.sessionSearch(args)),
+    async (args) => json(memory.sessionSearch(scoped(args))),
   )
 
   return server
@@ -660,7 +708,8 @@ export function startServer(memory, config, host = '127.0.0.1', configFile) {
         return
       }
 
-      const mcp = buildServer(memory)
+      const bindProject = url.searchParams.get('project') || ''
+      const mcp = buildServer(memory, { bindProject: bindProject || undefined })
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined })
       try {
         await mcp.connect(transport)

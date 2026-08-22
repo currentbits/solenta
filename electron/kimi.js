@@ -25,11 +25,135 @@ function truncate(s, max) {
   return str.length <= max ? str : str.slice(0, max);
 }
 
-/** Kimi home dir; KIMI_CODE_HOME is kimi's own override, which tests also use. */
-function kimiConfigPath() {
-  const home =
-    process.env.KIMI_CODE_HOME || path.join(os.homedir(), ".kimi-code");
+/**
+ * Kimi home dir. KIMI_CODE_HOME is kimi's own override (tests, and Solenta's
+ * per-run overlay so one project cannot inherit another's MCP/workspaces).
+ * @param {NodeJS.ProcessEnv} [env]
+ */
+function kimiConfigPath(env = process.env) {
+  const home = env.KIMI_CODE_HOME || path.join(os.homedir(), ".kimi-code");
   return path.join(home, "config.toml");
+}
+
+/**
+ * Auth/session files that a per-run home must share with the user's real
+ * kimi home so `-S` resume and login still work. mcp.json, workspaces.json,
+ * AGENTS.md and workspace-trust stay OUT — those are the contamination.
+ * @type {string[]}
+ */
+const KIMI_HOME_LINKS = [
+  "credentials",
+  "oauth",
+  "sessions",
+  "cache",
+  "plugins",
+  "updates",
+  "device_id",
+  "session_index.jsonl",
+];
+
+/**
+ * Stable-enough workspace id for an isolated workspaces.json. Kimi's own
+ * ids look like `wd_<name>_<12 hex>`; we only need uniqueness per cwd.
+ * @param {string} root
+ */
+function workspaceId(root) {
+  const base =
+    path
+      .basename(root)
+      .replace(/[^a-zA-Z0-9_-]/g, "")
+      .slice(0, 24) || "ws";
+  let h = 0;
+  const s = String(root);
+  for (let i = 0; i < s.length; i++) {
+    h = (Math.imul(31, h) + s.charCodeAt(i)) | 0;
+  }
+  return `wd_${base}_${(h >>> 0).toString(16).padStart(8, "0")}`;
+}
+
+function linkOrSkip(src, dst) {
+  if (!fs.existsSync(src) || fs.existsSync(dst)) return;
+  try {
+    fs.symlinkSync(src, dst);
+  } catch {
+    // Windows without symlink privilege: isolation still holds; resume/auth
+    // just will not share with the user's real home.
+  }
+}
+
+/**
+ * Per-run KIMI_CODE_HOME overlay (issue #671).
+ *
+ * Kimi has no `--mcp-config`. User-global `~/.kimi-code/mcp.json` and
+ * `workspaces.json` mix every MCP server and every directory the CLI has
+ * ever opened, so a Solenta kimi turn in project A can call another
+ * project's tools and read its tree. Overlay: copy config.toml (effort
+ * flip stays local), symlink credentials/sessions, write a fresh mcp.json
+ * and a workspaces.json that contains ONLY this cwd. Never copy AGENTS.md.
+ *
+ * @param {object} opts
+ * @param {string} opts.dest
+ * @param {string} opts.sourceHome
+ * @param {string} [opts.cwd]
+ * @param {Record<string, unknown>} [opts.mcpServers]
+ * @returns {string} dest
+ */
+function materializeKimiHome(opts) {
+  const dest = String(opts.dest || "");
+  const sourceHome = String(opts.sourceHome || "");
+  if (!dest) throw new Error("materializeKimiHome: dest required");
+  fs.mkdirSync(dest, { recursive: true });
+
+  if (sourceHome && fs.existsSync(sourceHome)) {
+    for (const name of KIMI_HOME_LINKS) {
+      linkOrSkip(path.join(sourceHome, name), path.join(dest, name));
+    }
+    const cfgSrc = path.join(sourceHome, "config.toml");
+    if (fs.existsSync(cfgSrc)) {
+      fs.copyFileSync(cfgSrc, path.join(dest, "config.toml"));
+    }
+  }
+
+  const mcpPath = path.join(dest, "mcp.json");
+  fs.writeFileSync(
+    mcpPath,
+    JSON.stringify({ mcpServers: opts.mcpServers || {} }, null, 2) + "\n",
+    { mode: 0o600, encoding: "utf8" },
+  );
+  try {
+    fs.chmodSync(mcpPath, 0o600);
+  } catch {
+    // ignore
+  }
+
+  /** @type {Record<string, { root: string, name: string, created_at: string, last_opened_at: string }>} */
+  const workspaces = {};
+  const cwd = opts.cwd ? String(opts.cwd) : "";
+  if (cwd) {
+    const now = new Date().toISOString();
+    workspaces[workspaceId(cwd)] = {
+      root: cwd,
+      name: path.basename(cwd),
+      created_at: now,
+      last_opened_at: now,
+    };
+  }
+  fs.writeFileSync(
+    path.join(dest, "workspaces.json"),
+    JSON.stringify(
+      { version: 1, workspaces, deleted_workspace_ids: [] },
+      null,
+      2,
+    ) + "\n",
+  );
+
+  const leftoverAgents = path.join(dest, "AGENTS.md");
+  try {
+    if (fs.existsSync(leftoverAgents)) fs.unlinkSync(leftoverAgents);
+  } catch {
+    // ignore
+  }
+  return dest;
 }
 
 /**
@@ -48,15 +172,17 @@ function kimiConfigPath() {
  * turn runs on the user's default rather than Solenta inventing a section in a
  * file it does not own.
  *
- * ponytail: concurrent kimi turns race the flip window (last writer wins for
- * a few ms); serialize flips or use a per-invocation flag when kimi ships one.
+ * ponytail: concurrent kimi turns that share one config.toml race the flip
+ * window. Solenta-spawned turns use a per-run KIMI_CODE_HOME (#671) so the
+ * flip is local to that overlay; this path is the no-isolation fallback.
  *
  * @param {string | null | undefined} effort
+ * @param {NodeJS.ProcessEnv} [env]
  * @returns {() => void} restore
  */
-function flipKimiEffort(effort) {
+function flipKimiEffort(effort, env = process.env) {
   const noop = () => {};
-  const configPath = kimiConfigPath();
+  const configPath = kimiConfigPath(env);
   const backupPath = `${configPath}.coder-effort-backup`;
   try {
     // Crash recovery runs on EVERY kimi turn, including effortless ones: a
@@ -407,6 +533,8 @@ function extractUsage(obj) {
  * @param {string} [opts.binary]
  * @param {string[]} opts.args
  * @param {string} opts.cwd
+ * @param {NodeJS.ProcessEnv} [opts.env] - merged over process.env; used for
+ *   KIMI_CODE_HOME overlays (#671)
  * @param {(ev: object) => void} opts.onEvent - raw parsed NDJSON object
  * @param {(info: { code: number | null, stderr: string, fullStdout: string, gotJson: boolean }) => void} opts.onExit
  * @param {(err: Error) => void} [opts.onError]
@@ -418,10 +546,14 @@ function runKimi(opts) {
     args = [],
     cwd,
     reasoningEffort = null,
+    env: envOverride,
     onEvent,
     onExit,
     onError,
   } = opts;
+  const childEnv = envOverride
+    ? { ...process.env, ...envOverride }
+    : undefined;
 
   let stderrText = "";
   let fullStdout = "";
@@ -475,7 +607,7 @@ function runKimi(opts) {
 
   // Kimi reads config.toml once at startup; the flip holds until first
   // output (proof the child is past startup), with finish() as the backstop.
-  const restoreEffort = flipKimiEffort(reasoningEffort);
+  const restoreEffort = flipKimiEffort(reasoningEffort, childEnv || process.env);
 
   let child;
   try {
@@ -484,6 +616,7 @@ function runKimi(opts) {
       args,
       agentSpawnOptions({
         cwd,
+        env: childEnv,
         stdio: ["ignore", "pipe", "pipe"],
       }),
     );
@@ -563,6 +696,8 @@ module.exports = {
   runKimi,
   flipKimiEffort,
   kimiConfigPath,
+  materializeKimiHome,
+  workspaceId,
   extractAssistantText,
   extractToolEvent,
   extractToolEvents,

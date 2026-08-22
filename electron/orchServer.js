@@ -36,10 +36,10 @@ const CONFIG_NAME = "orch-server.json";
 const MAX_BODY_BYTES = 1024 * 1024;
 
 const INSTRUCTIONS =
-  "Solenta thread orchestrator: drive other agent threads in this Solenta workspace. " +
-  "The workspace holds SEVERAL projects and this server sees all of them, but you may " +
-  "only drive threads in your own. Your thread id and project id are stated at the end " +
-  "of your prompt; pass them, never guess an id from a title. " +
+  "Solenta thread orchestrator: drive other agent threads in THIS project only. " +
+  "Your thread id and project id are stated at the end of your prompt; pass them, " +
+  "never guess an id from a title. Threads in other projects are not listed and " +
+  "cannot be forked, sent to, or otherwise driven. " +
   "Keep the hypothesis ledger current as you work: call hypothesis_record for each " +
   "distinct approach as soon as you know how it turned out. " +
   "When you notice work worth doing that is out of scope, call work_suggest with a " +
@@ -54,9 +54,8 @@ const INSTRUCTIONS =
   "When a thread is in teach mode the prompt carries a [Teach mode] note; leave " +
   "TODO(human) markers, give hints not solutions, review the human's fills, and " +
   "call teach_review with passed true or false. " +
-  "threads_list shows every thread with id, title, provider, status, handoffFrom, " +
-  "projectId, projectName, archived, settledOverride and snoozedUntil — filter " +
-  "it by your own projectId first. " +
+  "threads_list returns only threads in the projectId you pass (or the project " +
+  "this session is bound to) — other projects are not listed. " +
   "thread_fork and thread_send reject a thread outside the projectId you pass. " +
   "thread_archive, thread_settle, thread_stop and thread_rename wrap the same " +
   "host actions as the sidebar and take the same projectId guard. " +
@@ -249,10 +248,16 @@ async function loadOrCreateConfig(file) {
  * @param {(store: unknown, input: { threadId: string, provider?: string }) => { id: string }} deps.forkThread
  * @param {(id: string) => unknown} deps.getProvider
  * @param {(channel: string, payload: unknown) => void} [deps.broadcast]
+ * @param {string | null} [deps.boundProjectId] - caller identity from the MCP
+ *   URL (?projectId=). When set, it wins over a claimed args.projectId so a
+ *   kimi/grok session cannot name another project (issue #671).
  */
 function createToolHandlers(deps) {
   const { store, runner, forkThread, getProvider, broadcast, userDataPath } =
     deps;
+  const boundProjectId = deps.boundProjectId
+    ? String(deps.boundProjectId)
+    : "";
 
   /**
    * The project a thread belongs to, or null when it has been deleted.
@@ -265,20 +270,18 @@ function createToolHandlers(deps) {
   }
 
   /**
-   * Guard against driving a thread in ANOTHER project (issue #109). The
-   * server has no caller identity, so the caller must STATE the project it
-   * believes it is acting in and we reject a mismatch.
+   * Guard against driving a thread in ANOTHER project (issue #109 / #671).
    *
-   * ponytail: a self-declared claim, not proof — it catches a confused
-   * caller, not a malicious one. Upgrade to per-run bearer tokens mapped to
-   * threadIds if forgery ever matters (costly: grok/kimi register MCP
-   * globally at user scope, so a per-run token cannot reach them).
+   * A bound session (?projectId= on the MCP URL) is proof of caller identity
+   * and wins over whatever the tool args claim. Unbound callers still STATE
+   * a projectId; a mismatch is rejected. threads_list no longer returns
+   * other projects, so a confused unbound caller cannot pick one by title.
    *
    * @param {{ id: string, projectId?: string }} thread - the target thread
    * @param {unknown} claimed - projectId the caller says it is working in
    */
   function assertSameProject(thread, claimed) {
-    const want = String(claimed || "");
+    const want = boundProjectId || String(claimed || "");
     const got = String(thread.projectId || "");
     if (want === got) return;
     const name = (p) => (p && p.name ? `"${p.name}"` : "unknown project");
@@ -322,24 +325,32 @@ function createToolHandlers(deps) {
     broadcast("threads:changed", listThreads(store));
   }
 
-  async function threads_list() {
-    return store.getThreads().map((t) => {
-      const project = projectOf(t);
-      return {
-        id: t.id,
-        title: t.title ?? null,
-        provider: t.provider ?? null,
-        status: t.status ?? null,
-        handoffFrom: t.handoffFrom ?? null,
-        // Without these, picking a thread is a guess — which is exactly how
-        // one project's agent spawned workers on another project's repo.
-        projectId: t.projectId ?? null,
-        projectName: project ? (project.name ?? null) : null,
-        archived: Boolean(t.archived),
-        settledOverride: t.settledOverride ?? null,
-        snoozedUntil: t.snoozedUntil ?? null,
-      };
-    });
+  async function threads_list(args = {}) {
+    const pid = boundProjectId || String(args.projectId || "");
+    if (!pid) {
+      throw new Error(
+        "projectId is required. List only your own project's threads; pass " +
+          "the projectId stated at the end of your prompt.",
+      );
+    }
+    return store
+      .getThreads()
+      .filter((t) => String(t.projectId || "") === pid)
+      .map((t) => {
+        const project = projectOf(t);
+        return {
+          id: t.id,
+          title: t.title ?? null,
+          provider: t.provider ?? null,
+          status: t.status ?? null,
+          handoffFrom: t.handoffFrom ?? null,
+          projectId: t.projectId ?? null,
+          projectName: project ? (project.name ?? null) : null,
+          archived: Boolean(t.archived),
+          settledOverride: t.settledOverride ?? null,
+          snoozedUntil: t.snoozedUntil ?? null,
+        };
+      });
   }
 
   async function thread_fork(args) {
@@ -656,6 +667,8 @@ function createToolHandlers(deps) {
     if (!thread) {
       throw new Error(`Unknown thread: ${args.threadId}`);
     }
+    const claimed = boundProjectId || args.projectId;
+    if (claimed) assertSameProject(thread, claimed);
     let lastAssistantText = null;
     const msgs = store.getMessages(args.threadId) || [];
     for (let i = msgs.length - 1; i >= 0; i--) {
@@ -981,13 +994,15 @@ function buildMcpServer(sdk, handlers) {
     "threads_list",
     {
       description:
-        "List every thread: id, title, provider, status, handoffFrom, " +
+        "List threads in one project: id, title, provider, status, handoffFrom, " +
         "projectId, projectName, archived, settledOverride, snoozedUntil. " +
-        "Threads from EVERY project are listed — match projectId against " +
-        "your own before touching one.",
-      inputSchema: {},
+        "Pass your own projectId (stated at the end of your prompt). Threads " +
+        "in other projects are not returned.",
+      inputSchema: {
+        projectId: z.string().min(1).optional(),
+      },
     },
-    async () => json(await handlers.threads_list()),
+    async (args) => json(await handlers.threads_list(args || {})),
   );
 
   server.registerTool(
@@ -1487,14 +1502,14 @@ function createOrchServer(opts) {
       return;
     }
 
-    const handlers = createToolHandlers({
+    const handlerDeps = {
       store,
       runner,
       forkThread,
       getProvider,
       broadcast,
       userDataPath,
-    });
+    };
 
     server = http.createServer(async (req, res) => {
       const url = new URL(req.url ?? "/", "http://127.0.0.1");
@@ -1526,6 +1541,11 @@ function createOrchServer(opts) {
           return;
         }
 
+        const boundProjectId = url.searchParams.get("projectId") || "";
+        const handlers = createToolHandlers({
+          ...handlerDeps,
+          boundProjectId: boundProjectId || null,
+        });
         const mcp = buildMcpServer(sdk, handlers);
         const transport = new sdk.StreamableHTTPServerTransport({
           sessionIdGenerator: undefined,

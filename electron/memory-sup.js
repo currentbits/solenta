@@ -329,20 +329,59 @@ function resolveKimiMcpPath(env = process.env) {
 }
 
 /**
+ * Append query params to an MCP URL. Used to bind a kimi run to one
+ * project so the server, not the model, owns the scope (issue #671).
+ * @param {string} url
+ * @param {Record<string, string | null | undefined>} [query]
+ */
+function withQuery(url, query) {
+  if (!query) return url;
+  const u = new URL(url);
+  for (const [k, v] of Object.entries(query)) {
+    if (v == null || v === "") continue;
+    u.searchParams.set(k, String(v));
+  }
+  return u.toString();
+}
+
+/**
  * Desired kimi mcp.json entry for one of our servers.
  * @param {string} url
  * @param {string} token
+ * @param {Record<string, string | null | undefined>} [query]
  */
-function kimiHttpEntry(url, token) {
+function kimiHttpEntry(url, token, query) {
   const entry = {
     type: "http",
-    url,
+    url: withQuery(url, query),
     headers: {},
   };
   if (token) {
     entry.headers.Authorization = `Bearer ${token}`;
   }
   return entry;
+}
+
+/**
+ * Solenta MCP servers for one kimi run, URLs bound to that project.
+ * Does not read the user's ~/.kimi-code/mcp.json — foreign servers stay out.
+ *
+ * @param {{ projectId?: string, projectPath?: string }} [opts]
+ * @returns {Record<string, { type: string, url: string, headers: { Authorization?: string } }>}
+ */
+function kimiMcpServersForRun(opts = {}) {
+  const projectId = opts.projectId ? String(opts.projectId) : "";
+  const projectPath = opts.projectPath ? String(opts.projectPath) : "";
+  /** @type {Record<string, { type: string, url: string, headers: { Authorization?: string } }>} */
+  const mcpServers = {};
+  for (const s of activeServers()) {
+    /** @type {Record<string, string>} */
+    const query = {};
+    if (s.name === "coder-memory" && projectPath) query.project = projectPath;
+    if (s.name === "coder-threads" && projectId) query.projectId = projectId;
+    mcpServers[s.name] = kimiHttpEntry(s.url, s.token, query);
+  }
+  return mcpServers;
 }
 
 /**
@@ -1329,6 +1368,8 @@ module.exports = {
   getCodexMcpArgs,
   getCodexMcpEnv,
   ensureKimiMcpConfig,
+  kimiMcpServersForRun,
+  withQuery,
   ensureGrokMcpConfig,
   removeKimiMcpEntries,
   removeGrokMcpEntries,
