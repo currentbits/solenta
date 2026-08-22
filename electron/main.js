@@ -22,7 +22,7 @@ const {
   syncUserMcpServers,
 } = require("./memory-sup.js");
 const { createOrchServer } = require("./orchServer.js");
-const { createPrStateRefresher } = require("./worktrees.js");
+const { createPrStateRefresher, createRetentionSweeper } = require("./worktrees.js");
 const { killAll: killAllDevServers } = require("./devservers.js");
 const { startScheduler } = require("./automations.js");
 const { startAutoDispatch } = require("./autodispatch.js");
@@ -82,6 +82,9 @@ let orchServer = null;
 
 /** @type {ReturnType<typeof createPrStateRefresher> | null} */
 let prStateRefresher = null;
+
+/** @type {ReturnType<typeof createRetentionSweeper> | null} */
+let retentionSweeper = null;
 
 /** @type {ReturnType<typeof startScheduler> | null} */
 let automationScheduler = null;
@@ -458,33 +461,32 @@ app.whenReady().then(async () => {
   // (crash/store-drift orphans). Conservative by design — dirty trees and
   // unmerged branches are never touched. Delayed + unref'd like the PR
   // refresher so startup stays fast and a short-lived process can exit.
+  // Retention is owned by the periodic sweeper below (#641), not this timer.
+  const worktreeBase = path.join(userData, "worktrees");
   const sweepTimer = setTimeout(() => {
-    const {
-      sweepOrphanWorktrees,
-      enforceRetention,
-    } = require("./worktrees.js");
-    const worktreeBase = path.join(userData, "worktrees");
-    void sweepOrphanWorktrees({ store, worktreeBase })
-      .then((result) => {
-        if (result.removed.length > 0) {
-          console.warn(
-            `worktree sweep: removed ${result.removed.length} orphan(s)`,
-          );
-        }
-        // Per-project retention (#316 / #559): default 10 settled
-        // worktrees per project. Directories only — branches always
-        // survive, so this can never lose a commit. 0 opts out.
-        return enforceRetention({ store, worktreeBase, broadcast });
-      })
-      .then((result) => {
-        if (result.removed.length > 0) {
-          console.warn(
-            `worktree retention: reclaimed ${result.removed.length} worktree(s)`,
-          );
-        }
-      });
+    const { sweepOrphanWorktrees } = require("./worktrees.js");
+    void sweepOrphanWorktrees({ store, worktreeBase }).then((result) => {
+      if (result.removed.length > 0) {
+        console.warn(
+          `worktree sweep: removed ${result.removed.length} orphan(s)`,
+        );
+      }
+    });
   }, 15_000);
   sweepTimer.unref();
+
+  // Periodic retention (#641): grace-period crossings during a multi-day
+  // uptime used to wait until the next launch or archive. Startup pass at
+  // 15s (same delay as the orphan sweep); then every 6h. Cheap no-op when
+  // no project sets a limit. Unref'd so a short-lived process can exit.
+  retentionSweeper = createRetentionSweeper({
+    store,
+    worktreeBase,
+    broadcast,
+    intervalMs: 6 * 60 * 60 * 1000,
+    startupDelayMs: 15_000,
+  });
+  retentionSweeper.start();
 
   automationScheduler = startScheduler({ store, runner, broadcast });
   autoDispatch = startAutoDispatch({ store, runner, broadcast });
@@ -560,6 +562,14 @@ installShutdown({
         // ignore
       }
       prStateRefresher = null;
+    }
+    if (retentionSweeper) {
+      try {
+        retentionSweeper.stop();
+      } catch {
+        // ignore
+      }
+      retentionSweeper = null;
     }
     if (automationScheduler) {
       try {
