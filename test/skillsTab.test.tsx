@@ -25,6 +25,7 @@ const ALL_TARGETS: SkillTarget[] = [
   "grok",
   "opencode",
   "kimi",
+  "cursor",
 ];
 
 const SKILLS: SkillInfo[] = [
@@ -227,7 +228,7 @@ describe("SkillsTab lists", () => {
     const synced = m.query('[data-skill="claude:review-pr"]');
     assert.ok(synced, "synced skill row must render");
     const syncedCoverage = synced.querySelector("[data-coverage]");
-    assert.equal(syncedCoverage?.textContent, "6/6");
+    assert.equal(syncedCoverage?.textContent, "7/7");
     assert.ok(
       syncedCoverage?.getAttribute("title")?.includes("Claude"),
       "coverage title lists installed targets",

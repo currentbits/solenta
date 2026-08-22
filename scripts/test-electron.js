@@ -28,6 +28,8 @@ const WIN32_FILES = [
   "electron/test/claude-spawn.test.js", // .cmd + runClaude/runCodex parse (#480)
   "electron/test/budget-spend.test.js",
   "electron/test/codex.test.js",
+  "electron/test/cursor-parse.test.js",
+  "electron/test/cursor.test.js",
   "electron/test/context-usage.test.js",
   "electron/test/fork-handoff.test.js",
   "electron/test/grok.test.js",
