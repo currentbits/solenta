@@ -15,6 +15,14 @@ const { normalizeAcceptedHunks } = require("./reviewItinerary.js");
 const { normalizeBtwCards } = require("./btw.js");
 const { normalizePendingQuestion } = require("./questions.js");
 const { getDefaultSecrets } = require("./secrets.js");
+const {
+  splitMessagesByThread,
+  stringifyStore,
+  indexMessagesObject,
+  findThreadValue,
+  peekLastAssistantValue,
+  appendJsonArrayItem,
+} = require("./jsonEnvelope.js");
 
 /** Builtin "Plan and Verify" workflow template (seeded on every store). */
 const STANDARD_TEMPLATE = {
@@ -980,10 +988,15 @@ function migrateThread(t) {
  * process loads mean the previous process died mid-run (clean quits mark idle
  * via runner.stopAll first). A crash IS a failure of the run — stamp failed.
  * Status change is real activity, so updatedAt is bumped.
+ *
+ * The crash event is spliced onto the lazy JSON range so a force-quit with
+ * N in-flight runs does not JSON.parse those N transcripts at boot (#643).
+ *
+ * @param {Store} store
  * @param {object} data
  * @returns {boolean} true if any thread was recovered
  */
-function recoverInterruptedRuns(data) {
+function recoverInterruptedRuns(store, data) {
   let recovered = false;
   for (const t of data.threads) {
     if (t.status !== "working") continue;
@@ -991,16 +1004,12 @@ function recoverInterruptedRuns(data) {
     t.runStartedAt = null;
     t.lastError = "Run error: app quit while the run was in flight";
     t.updatedAt = Date.now();
-    const list = Array.isArray(data.messagesByThread[t.id])
-      ? data.messagesByThread[t.id].slice()
-      : [];
-    list.push({
+    store._appendLazyMessage(t.id, {
       id: randomUUID(),
       role: "event",
       text: "Run interrupted: the app crashed or was force-quit mid-run",
       createdAt: Date.now(),
     });
-    data.messagesByThread[t.id] = list;
     recovered = true;
   }
   return recovered;
@@ -1039,6 +1048,10 @@ class Store {
     this._lastAssistantByThread = new Map();
     // Rolling .bak is off the constructor's sync path (#618). Tests may await it.
     this._bakCopy = Promise.resolve();
+    // #639: messagesByThread stays raw until a thread is opened. Hydrated
+    // arrays live on _messagesHydrated; unparsed JSON ranges on _messagesLazy.
+    this._messagesHydrated = {};
+    this._messagesLazy = null;
     this.data = this._load();
     if (this._secretsMigrated > 0) {
       this._secrets.emit(
@@ -1051,13 +1064,273 @@ class Store {
   }
 
   /**
-   * Stringify the live store with secret fields sealed. In-memory settings
-   * stay plaintext; only the JSON payload is encrypted (issue #543).
+   * Parse a store JSON string: envelope only, with messagesByThread indexed
+   * for lazy hydrate. Falls back to a full JSON.parse if the skip-scan fails.
+   * @param {string} raw
+   * @returns {{ parsed: object, split: ReturnType<typeof splitMessagesByThread> | null }}
    */
-  _payloadJson() {
+  _parseStoreJson(raw) {
+    try {
+      const split = splitMessagesByThread(raw);
+      const parsed = JSON.parse(split.envelopeJson);
+      return { parsed, split };
+    } catch {
+      return { parsed: JSON.parse(raw), split: null };
+    }
+  }
+
+  /**
+   * Point data.messagesByThread at a proxy that hydrates a thread's array
+   * on first read so existing `store.data.messagesByThread[id]` call sites
+   * keep working without parsing every transcript at boot.
+   * @param {object} data
+   * @param {{ raw: string, ranges: Map<string, {start:number, end:number}>, lastAssistants?: Map<string, object | null> } | null} split
+   */
+  _adoptMessages(data, split) {
+    const lazy =
+      split && split.raw
+        ? {
+            raw: split.raw,
+            ranges: split.ranges || new Map(),
+            intact: true,
+            indexed: split.indexed === true,
+          }
+        : null;
+    const hydrated =
+      data.messagesByThread &&
+      typeof data.messagesByThread === "object" &&
+      !Array.isArray(data.messagesByThread)
+        ? data.messagesByThread
+        : {};
+    this._messagesHydrated = hydrated;
+    this._messagesLazy = lazy;
+    this._attachMessagesProxy(data);
+  }
+
+  /**
+   * Seed the last-assistant memo from the skip-scan so threads:summaries
+   * does not hydrate every transcript.
+   * @param {object} data
+   * @param {Map<string, object | null> | null | undefined} lastAssistants
+   */
+  _seedLastAssistants(data, lastAssistants) {
+    this._lastAssistantByThread.clear();
+    if (!lastAssistants || lastAssistants.size === 0) return;
+    for (const t of data.threads || []) {
+      if (!t || t.id == null) continue;
+      this._lastAssistantByThread.set(
+        t.id,
+        lastAssistants.has(t.id) ? lastAssistants.get(t.id) : null,
+      );
+    }
+  }
+
+  /**
+   * @param {object} data
+   */
+  _attachMessagesProxy(data) {
+    const store = this;
+    const target = this._messagesHydrated;
+    data.messagesByThread = new Proxy(target, {
+      get(t, prop, recv) {
+        if (typeof prop !== "string") return Reflect.get(t, prop, recv);
+        if (prop === "constructor" || prop === "__proto__" || prop === "toJSON") {
+          return Reflect.get(t, prop, recv);
+        }
+        if (Object.prototype.hasOwnProperty.call(t, prop)) return t[prop];
+        return store._hydrateMessages(prop);
+      },
+      set(t, prop, value) {
+        if (typeof prop !== "string") return Reflect.set(t, prop, value);
+        store._lastAssistantByThread.delete(prop);
+        store._invalidateLazy(prop);
+        t[prop] = value;
+        return true;
+      },
+      deleteProperty(t, prop) {
+        if (typeof prop !== "string") return Reflect.deleteProperty(t, prop);
+        store._ensureMessagesIndexed();
+        delete t[prop];
+        store._invalidateLazy(prop);
+        store._lastAssistantByThread.delete(prop);
+        return true;
+      },
+      has(t, prop) {
+        if (typeof prop !== "string") return prop in t;
+        return store._hasLazyThread(prop);
+      },
+      ownKeys(t) {
+        const keys = new Set(Object.keys(t));
+        if (store._messagesLazy) {
+          for (const k of store._messagesLazy.ranges.keys()) keys.add(k);
+        }
+        return [...keys];
+      },
+      getOwnPropertyDescriptor(t, prop) {
+        if (typeof prop !== "string") {
+          return Reflect.getOwnPropertyDescriptor(t, prop);
+        }
+        const present = store._hasLazyThread(prop);
+        if (!present) return undefined;
+        return {
+          enumerable: true,
+          configurable: true,
+          writable: true,
+          // Do not hydrate: Object.keys / hasOwnProperty must stay cheap.
+          value: Object.prototype.hasOwnProperty.call(t, prop)
+            ? t[prop]
+            : undefined,
+        };
+      },
+    });
+  }
+
+  /**
+   * @param {string} threadId
+   * @returns {boolean}
+   */
+  _hasLazyThread(threadId) {
+    if (Object.prototype.hasOwnProperty.call(this._messagesHydrated, threadId)) {
+      return true;
+    }
+    const lazy = this._messagesLazy;
+    if (!lazy || !lazy.raw) return false;
+    if (lazy.ranges.has(threadId)) return true;
+    if (lazy.indexed) return false;
+    const r = findThreadValue(lazy.raw, threadId);
+    if (!r) return false;
+    lazy.ranges.set(threadId, r);
+    return true;
+  }
+
+  /**
+   * Index every thread range from the raw slice. First mutating save only.
+   */
+  _ensureMessagesIndexed() {
+    const lazy = this._messagesLazy;
+    if (!lazy || lazy.indexed || !lazy.raw) return;
+    const indexed = indexMessagesObject(lazy.raw);
+    lazy.ranges = indexed.ranges;
+    lazy.indexed = true;
+    for (const [id, last] of indexed.lastAssistants) {
+      if (!this._lastAssistantByThread.has(id)) {
+        this._lastAssistantByThread.set(id, last);
+      }
+    }
+  }
+
+  /**
+   * @param {string} [threadId]
+   */
+  _invalidateLazy(threadId) {
+    const lazy = this._messagesLazy;
+    if (!lazy) return;
+    if (threadId != null) lazy.ranges.delete(threadId);
+    lazy.intact = false;
+    if (lazy.indexed && lazy.ranges.size === 0) this._messagesLazy = null;
+  }
+
+  /**
+   * @param {string} threadId
+   * @returns {{ start: number, end: number } | null}
+   */
+  _threadRange(threadId) {
+    const lazy = this._messagesLazy;
+    if (!lazy || !lazy.raw) return null;
+    if (lazy.ranges.has(threadId)) return lazy.ranges.get(threadId);
+    const r = findThreadValue(lazy.raw, threadId);
+    if (r) lazy.ranges.set(threadId, r);
+    return r;
+  }
+
+  /**
+   * After splicing bytes into lazy.raw, shift cached ranges that start at or
+   * after the insertion point. `exceptId` is already updated by
+   * appendJsonArrayItem.
+   * @param {number} at
+   * @param {number} delta
+   * @param {string} exceptId
+   */
+  _shiftLazyRanges(at, delta, exceptId) {
+    const lazy = this._messagesLazy;
+    if (!lazy || !lazy.ranges || !delta) return;
+    for (const [id, r] of lazy.ranges) {
+      if (id === exceptId) continue;
+      if (r.start >= at) {
+        r.start += delta;
+        r.end += delta;
+      }
+    }
+  }
+
+  /**
+   * Append one message without hydrating a still-lazy transcript. Crash
+   * recovery uses this so a force-quit does not JSON.parse in-flight runs.
+   * @param {string} threadId
+   * @param {object} message
+   */
+  _appendLazyMessage(threadId, message) {
+    if (Object.prototype.hasOwnProperty.call(this._messagesHydrated, threadId)) {
+      const list = this._messagesHydrated[threadId];
+      if (Array.isArray(list)) list.push(message);
+      else this._messagesHydrated[threadId] = [message];
+      return;
+    }
+    const lazy = this._messagesLazy;
+    if (lazy && lazy.raw) {
+      const r = this._threadRange(threadId);
+      if (r) {
+        const patched = appendJsonArrayItem(lazy.raw, r, message);
+        if (patched) {
+          lazy.raw = patched.raw;
+          this._shiftLazyRanges(patched.at, patched.delta, threadId);
+          return;
+        }
+      }
+    }
+    // Missing key or not an array: tiny hydrated tail, not the original blob.
+    this._messagesHydrated[threadId] = [message];
+    this._invalidateLazy(threadId);
+  }
+
+  /**
+   * Parse one thread's message array from the raw JSON slice, if still lazy.
+   * @param {string} threadId
+   * @returns {object[] | undefined}
+   */
+  _hydrateMessages(threadId) {
+    if (Object.prototype.hasOwnProperty.call(this._messagesHydrated, threadId)) {
+      return this._messagesHydrated[threadId];
+    }
+    const r = this._threadRange(threadId);
+    if (!r) return undefined;
+    const lazy = this._messagesLazy;
+    let val;
+    try {
+      val = JSON.parse(lazy.raw.slice(r.start, r.end));
+    } catch {
+      val = [];
+    }
+    if (!Array.isArray(val)) val = [];
+    this._messagesHydrated[threadId] = val;
+    return val;
+  }
+
+  /**
+   * Stringify without forcing a parse of still-lazy transcripts.
+   * @returns {string}
+   */
+  _serialize() {
+    if (this._messagesLazy && !this._messagesLazy.intact) {
+      this._ensureMessagesIndexed();
+    }
+    // Secret fields are sealed in the JSON payload only; in-memory settings
+    // stay plaintext (#543). stringifyStore skips data.messagesByThread, so
+    // the shallow copy never touches the lazy proxy.
     const settings = this._secrets.concealSettings(this.data.settings);
-    if (settings === this.data.settings) return JSON.stringify(this.data);
-    return JSON.stringify({ ...this.data, settings });
+    const data =
+      settings === this.data.settings ? this.data : { ...this.data, settings };
+    return stringifyStore(data, this._messagesHydrated, this._messagesLazy);
   }
 
   /**
@@ -1067,8 +1340,9 @@ class Store {
    * @returns {object}
    */
   _readFile(filePath) {
+    this._messagesLazy = null;
     const raw = fs.readFileSync(filePath, "utf8");
-    const parsed = JSON.parse(raw);
+    const { parsed, split } = this._parseStoreJson(raw);
     const threads = Array.isArray(parsed.threads)
       ? parsed.threads.map(migrateThread)
       : [];
@@ -1082,13 +1356,15 @@ class Store {
           typeof p.spaceId === "string" &&
           p.spaceId.trim() !== "",
       );
+    const useLazy = !!(split && split.raw);
     const data = {
       projects: rawProjects.map(migrateProject),
       // #568: Spaces retired. Keep the key so old files still parse; never load rows.
       spaces: [],
       threads,
-      messagesByThread:
-        parsed.messagesByThread && typeof parsed.messagesByThread === "object"
+      messagesByThread: useLazy
+        ? {}
+        : parsed.messagesByThread && typeof parsed.messagesByThread === "object"
           ? parsed.messagesByThread
           : {},
       workLogByThread:
@@ -1116,14 +1392,18 @@ class Store {
       settings: normalizeSettings(parsed.settings),
     };
     ensureWorkflowTemplates(data);
-    this._recoveredOnLoad = recoverInterruptedRuns(data) || hadSpaces;
+    this._adoptMessages(data, useLazy ? split : null);
+    this._recoveredOnLoad = recoverInterruptedRuns(this, data) || hadSpaces;
     const revealed = this._secrets.revealSettings(data.settings);
     data.settings = revealed.settings;
     if (revealed.migrated > 0) {
       this._secretsMigrated = revealed.migrated;
       this._recoveredOnLoad = true;
     }
-    this._lastAssistantByThread.clear();
+    this._seedLastAssistants(
+      data,
+      useLazy && split ? split.lastAssistants : null,
+    );
     return data;
   }
 
@@ -1181,7 +1461,11 @@ class Store {
     }
 
     this._lastAssistantByThread.clear();
-    return cloneEmpty();
+    this._messagesLazy = null;
+    const data = cloneEmpty();
+    this._messagesHydrated = data.messagesByThread;
+    this._attachMessagesProxy(data);
+    return data;
   }
 
   /**
@@ -1245,7 +1529,7 @@ class Store {
     // Compact JSON: the file is machine-read, and pretty-printing roughly
     // doubles both the stringify CPU and the bytes written on every flush
     // (which fires up to every 15s under sustained streaming).
-    const payload = this._payloadJson();
+    const payload = this._serialize();
     this._flushPromise = (async () => {
       try {
         await fs.promises.mkdir(dir, { recursive: true });
@@ -1320,7 +1604,7 @@ class Store {
     const dir = path.dirname(this.filePath);
     fs.mkdirSync(dir, { recursive: true });
     const tmp = `${this.filePath}.${process.pid}.${Date.now()}.tmp`;
-    const payload = this._payloadJson();
+    const payload = this._serialize();
     fs.writeFileSync(tmp, payload, "utf8");
     try {
       const fd = fs.openSync(tmp, "r+");
@@ -1360,7 +1644,8 @@ class Store {
   }
 
   getMessages(threadId) {
-    return this.data.messagesByThread[threadId] || [];
+    const list = this._hydrateMessages(threadId);
+    return list || [];
   }
 
   /**
@@ -1373,27 +1658,42 @@ class Store {
     if (this._lastAssistantByThread.has(threadId)) {
       return this._lastAssistantByThread.get(threadId);
     }
-    const msgs = this.getMessages(threadId);
-    let last = null;
-    for (let i = msgs.length - 1; i >= 0; i--) {
-      const m = msgs[i];
-      if (
-        m &&
-        m.role === "assistant" &&
-        typeof m.text === "string" &&
-        m.text.trim() !== ""
-      ) {
-        last = m;
-        break;
+    if (Object.prototype.hasOwnProperty.call(this._messagesHydrated, threadId)) {
+      const msgs = this._messagesHydrated[threadId] || [];
+      let last = null;
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        const m = msgs[i];
+        if (
+          m &&
+          m.role === "assistant" &&
+          typeof m.text === "string" &&
+          m.text.trim() !== ""
+        ) {
+          last = m;
+          break;
+        }
       }
+      this._lastAssistantByThread.set(threadId, last);
+      return last;
     }
-    this._lastAssistantByThread.set(threadId, last);
-    return last;
+    const r = this._threadRange(threadId);
+    if (r && this._messagesLazy) {
+      const last = peekLastAssistantValue(
+        this._messagesLazy.raw,
+        r.start,
+        r.end,
+      );
+      this._lastAssistantByThread.set(threadId, last);
+      return last;
+    }
+    this._lastAssistantByThread.set(threadId, null);
+    return null;
   }
 
   setMessages(threadId, messages) {
     this._lastAssistantByThread.delete(threadId);
-    this.data.messagesByThread[threadId] = capList(
+    this._invalidateLazy(threadId);
+    this._messagesHydrated[threadId] = capList(
       messages,
       MAX_MESSAGES_PER_THREAD,
       MESSAGE_OVERFLOW_SLACK,
@@ -2005,17 +2305,15 @@ class Store {
         match = true;
       }
       if (!match) {
-        const msgs = this.data.messagesByThread[thread.id];
-        if (Array.isArray(msgs)) {
-          for (const m of msgs) {
-            if (
-              m &&
-              m.text != null &&
-              String(m.text).toLowerCase().includes(needle)
-            ) {
-              match = true;
-              break;
-            }
+        const msgs = this.getMessages(thread.id);
+        for (const m of msgs) {
+          if (
+            m &&
+            m.text != null &&
+            String(m.text).toLowerCase().includes(needle)
+          ) {
+            match = true;
+            break;
           }
         }
       }
