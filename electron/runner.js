@@ -857,7 +857,10 @@ function createRunner(opts) {
         ? ` Its work is still only on branch ${thread.branch || "(its own)"}:` +
           ` check it, then tell the user what it built and ask whether to merge` +
           ` it (thread_merge) or open a pull request (thread_pr) with` +
-          ` workerThreadId ${threadId}. Do not land it before they answer.`
+          ` workerThreadId ${threadId}. Do not land it before they answer —` +
+          ` not even onto your own branch. If other workers have finished too,` +
+          ` ask about all of them in one question and name the order you would` +
+          ` land them in.`
         : "";
     enqueueNotice(
       parentId,

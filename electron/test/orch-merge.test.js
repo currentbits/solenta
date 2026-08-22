@@ -81,6 +81,7 @@ describe("thread_merge", () => {
       threadId: lead.id,
       projectId: project.id,
       workerThreadId: worker.id,
+      approved: true,
     });
 
     assert.equal(res.merged, true);
@@ -157,21 +158,69 @@ describe("thread_merge", () => {
     assert.ok(!fs.existsSync(path.join(project.path, "worker.txt")));
   });
 
-  it("still stages onto the lead's own branch unasked", async () => {
-    // A lead working in a worktree is assembling the crew's work on ITS
-    // branch; the user still gates that branch from the thread header.
+  it("refuses to stage onto the lead's own branch unasked", async () => {
+    // Every lead thread runs in a worktree, so the old "merging onto my own
+    // branch is just staging" exemption meant the gate never once fired: the
+    // user watched worktrees fold into their tree with nobody asking.
     const leadWt = workOn(lead, "lead.txt", "lead\n");
     workOn(worker, "worker.txt", "worker\n");
     store.updateThread(worker.id, { status: "done" });
 
+    await assert.rejects(
+      () =>
+        handlers.thread_merge({
+          threadId: lead.id,
+          projectId: project.id,
+          workerThreadId: worker.id,
+        }),
+      /the user's decision/,
+    );
+    assert.ok(!fs.existsSync(path.join(leadWt.worktreePath, "worker.txt")));
+    assert.ok(store.getThread(worker.id).worktreePath);
+  });
+
+  it("still lets a sub-lead fold its own crew onto its branch", async () => {
+    // The exemption that survives: `worker` is itself a lead here, so folding
+    // its sub-worker in is not landing anything — the user is asked when the
+    // main thread merges `worker`.
+    const subLeadWt = workOn(worker, "mid.txt", "mid\n");
+    const sub = services.forkWorkerThread(store, { threadId: worker.id });
+    workOn(sub, "sub.txt", "sub\n");
+    store.updateThread(sub.id, { status: "done" });
+
     const res = await handlers.thread_merge({
-      threadId: lead.id,
+      threadId: worker.id,
       projectId: project.id,
-      workerThreadId: worker.id,
+      workerThreadId: sub.id,
     });
 
     assert.equal(res.merged, true);
+    assert.ok(fs.existsSync(path.join(subLeadWt.worktreePath, "sub.txt")));
+    assert.ok(!fs.existsSync(path.join(project.path, "sub.txt")));
+  });
+
+  it("lands a whole crew in the order given, on one answer", async () => {
+    // One question covers the crew: the user's answer holds for every merge in
+    // the turn it starts, so the lead can sequence them itself.
+    const leadWt = workOn(lead, "lead.txt", "lead\n");
+    const second = services.forkWorkerThread(store, { threadId: lead.id });
+    workOn(worker, "worker.txt", "worker\n");
+    workOn(second, "second.txt", "second\n");
+    store.updateThread(worker.id, { status: "done" });
+    store.updateThread(second.id, { status: "done" });
+
+    for (const id of [worker.id, second.id]) {
+      const res = await handlers.thread_merge({
+        threadId: lead.id,
+        projectId: project.id,
+        workerThreadId: id,
+        approved: true,
+      });
+      assert.equal(res.merged, true);
+    }
+
     assert.ok(fs.existsSync(path.join(leadWt.worktreePath, "worker.txt")));
+    assert.ok(fs.existsSync(path.join(leadWt.worktreePath, "second.txt")));
   });
 
   it("refuses a running worker, a foreign thread and a non-worker", async () => {

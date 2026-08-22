@@ -66,11 +66,12 @@ const INSTRUCTIONS =
   "it or open a pull request. Do not land it on your own initiative. " +
   "thread_merge squashes the branch into your working tree and deletes its worktree; " +
   "thread_pr pushes the branch and opens a PR instead, leaving the worktree alone so " +
-  "the worker can address review. When you are working in a worktree of your own, " +
-  "thread_merge lands on YOUR branch and needs no approval — that is staging, and " +
-  "the user still gates your branch. Otherwise it commits to the project's default " +
-  "branch, and both tools then require approved:true in a turn the user started; " +
-  "asking on the machine-delivered turn that woke you IS the job, not a detour. " +
+  "the worker can address review. Both require approved:true in a turn the user " +
+  "started — merging is never yours to decide, whether the target is your own " +
+  "worktree or the default branch. Asking on the machine-delivered turn that woke " +
+  "you IS the job, not a detour. When several workers are finished, ask ONCE: list " +
+  "them with what each built and the order you would land them in, then land them " +
+  "in that order in the turn their answer starts. " +
   "A crew whose work is never landed produced nothing the user can see, and leaves " +
   "a worktree behind per worker — so always close the loop by asking. " +
   "thread_send starts a run with your prompt on an " +
@@ -391,9 +392,9 @@ function createToolHandlers(deps) {
   }
 
   /**
-   * Gate the two ways a crew's work escapes its branch for good: a commit on
-   * the project's default branch, and a push to the forge. Neither is the
-   * agent's call.
+   * Gate every way a crew's work leaves its worker's branch: a commit on the
+   * lead's own branch, a commit on the project's default branch, and a push to
+   * the forge. None of them is the agent's call.
    *
    * Without this the orchestrator instructions told the lead to merge the
    * moment a worker finished, and it did — 13 worker branches were committed
@@ -419,7 +420,8 @@ function createToolHandlers(deps) {
         `${args.workerThreadId} built — its branch and what changed — then ask ` +
         `whether to merge it, open a pull request (thread_pr), or leave the ` +
         `branch alone, and call this again with approved:true in the turn their ` +
-        `answer starts.` +
+        `answer starts. If other workers are finished too, ask about all of ` +
+        `them in that one question and name the order you would land them in.` +
         (auto
           ? " This turn was machine-delivered (nobody has answered yet), so" +
             " approved:true is not true here however you set it."
@@ -435,8 +437,14 @@ function createToolHandlers(deps) {
    *
    * Merges into the caller's own worktree when it has one — a lead working on
    * a branch wants the worker's commits on THAT branch, not squashed onto main
-   * behind the user's back. With no worktree of its own the target IS main, so
-   * the user has to have said yes (assertUserApproved).
+   * behind the user's back.
+   *
+   * Either way the user has to have said yes (assertUserApproved). A lead's
+   * own worktree is not a private staging area: it is the tree the user is
+   * looking at, and "it only went onto my branch" is still a merge nobody
+   * asked for. The one exemption is a worker that is itself a lead, folding
+   * its sub-crew onto its own branch — that branch is still gated upstream,
+   * when the main thread asks about landing IT.
    */
   async function thread_merge(args) {
     const { self, worker } = requireLandableWorker(args);
@@ -448,10 +456,16 @@ function createToolHandlers(deps) {
           "changes are already there; nothing to merge.",
       };
     }
-    // No worktree of your own = the merge target is the project checkout, and
-    // mergeWorktree COMMITS there, on the default branch.
-    if (!self.worktreePath) {
-      assertUserApproved(self, args, "Merging a worker onto the project's default branch");
+    // A sub-lead consolidating its own crew is the only unasked merge left.
+    const staging = self.orchWorker === true && !!self.worktreePath;
+    if (!staging) {
+      assertUserApproved(
+        self,
+        args,
+        self.worktreePath
+          ? "Merging a worker onto your branch"
+          : "Merging a worker onto the project's default branch",
+      );
     }
     const branch = worker.branch ?? null;
     const { mergeWorktree } = require("./worktrees.js");
@@ -895,11 +909,13 @@ function buildMcpServer(sdk, handlers) {
         "you forked. Call this once you have checked a worker's result — " +
         "until you do, its commits exist only on its own branch and nothing " +
         "else can see them. When you are working in a worktree the merge " +
-        "lands on YOUR branch, not on main, and needs no approval. With no " +
-        "worktree of your own it COMMITS TO THE DEFAULT BRANCH, so the user " +
-        "decides: report the worker's branch and what it changed, ask whether " +
-        "to merge or open a PR (thread_pr), and pass approved:true only in the " +
-        "turn their answer starts. Refuses while the worker is still " +
+        "lands on YOUR branch; with no worktree of your own it COMMITS TO THE " +
+        "DEFAULT BRANCH. Both are the user's decision: report the worker's " +
+        "branch and what it changed, ask whether to merge or open a PR " +
+        "(thread_pr), and pass approved:true only in the turn their answer " +
+        "starts. Several workers finished? Ask once, naming the order you " +
+        "would land them in, then call this per worker in that order. " +
+        "Refuses while the worker is still " +
         "running. On a conflict it merges your branch into the worker's " +
         "worktree and tells you which files clash: thread_send the worker to " +
         "resolve them there, then call thread_merge again.",

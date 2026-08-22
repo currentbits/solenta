@@ -494,12 +494,16 @@ Host tools wrap the same actions as the sidebar / header:
 | `hypothesis_record` / `spec_submit` / `teach_review` | mode-specific |
 | `task_*` / `peer_send` | crew task list and peer messaging (above) |
 
-`thread_merge` onto the project's default branch, and `thread_pr`, need
-`approved:true` on a user-started turn (`assertUserApproved`). A
-machine-delivered worker-finished notice cannot self-approve. A lead
-that already has a worktree may merge onto *its own* branch without
-that gate — that is staging, and the user still gates the lead's
-branch. `work_suggest` never starts the work; the chip is Start a
+`thread_merge` and `thread_pr` need `approved:true` on a user-started
+turn (`assertUserApproved`), whether the target is the project's
+default branch or the lead's own worktree — landing a worker is always
+the user's call, and the question comes from the thread they are
+talking to. A machine-delivered worker-finished notice cannot
+self-approve. With several workers finished the lead asks once, names
+the order, and merges in that order inside the answering turn. The one
+unasked merge left is a *worker* that is itself a lead folding its
+sub-crew onto its own branch; that branch is still gated upstream.
+`work_suggest` never starts the work; the chip is Start a
 thread / File on the planboard / Dismiss (`SuggestedWorkStrip` in
 `ThreadView.tsx`).
 
