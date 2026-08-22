@@ -6,7 +6,7 @@
 // support buys nothing — turn it off for the whole main process.
 process.noAsar = true;
 
-const { app, BrowserWindow, ipcMain, dialog, shell, Notification, nativeTheme } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, shell, Notification, nativeTheme, protocol, net } = require("electron");
 const { windowBackgroundColor, nativeThemeSource } = require("./theme.js");
 const path = require("node:path");
 const fs = require("node:fs");
@@ -50,6 +50,11 @@ const { installShutdown } = require("./shutdown.js");
 const { installAppMenu } = require("./menu.js");
 const { bootFirstPaint } = require("./boot.js");
 const { applyZoom, clampUiScale } = require("./zoom.js");
+const mediaProtocol = require("./media-protocol.js");
+
+// Custom img protocol (issue #145): registerSchemesAsPrivileged MUST run
+// before app.ready or Electron ignores it.
+mediaProtocol.registerPrivileged(protocol);
 
 // Before anything else can throw: the app is full of fire-and-forget `void`
 // calls, and one unhandled rejection would otherwise kill the process with
@@ -273,6 +278,7 @@ app.whenReady().then(async () => {
   });
 
   const userData = app.getPath("userData");
+  mediaProtocol.installHandler({ protocol, net, userDataPath: userData });
   // App root: packaged app path, or repo root in dev (parent of electron/).
   const appPath = app.isPackaged
     ? app.getAppPath()
@@ -486,13 +492,21 @@ app.whenReady().then(async () => {
   const worktreeBase = path.join(userData, "worktrees");
   const sweepTimer = setTimeout(() => {
     const { sweepOrphanWorktrees } = require("./worktrees.js");
-    void sweepOrphanWorktrees({ store, worktreeBase }).then((result) => {
-      if (result.removed.length > 0) {
-        console.warn(
-          `worktree sweep: removed ${result.removed.length} orphan(s)`,
-        );
-      }
-    });
+    void sweepOrphanWorktrees({ store, worktreeBase })
+      .then((result) => {
+        if (result.removed.length > 0) {
+          console.warn(
+            `worktree sweep: removed ${result.removed.length} orphan(s)`,
+          );
+        }
+        const { scheduleImagePrune } = require("./image-store.js");
+        return scheduleImagePrune({ store, userDataPath: userData });
+      })
+      .then((result) => {
+        if (result && result.removed > 0) {
+          console.warn(`image prune: removed ${result.removed} item(s)`);
+        }
+      });
   }, 15_000);
   sweepTimer.unref();
 

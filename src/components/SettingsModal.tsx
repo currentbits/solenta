@@ -18,6 +18,7 @@ import type {
   GcScanResult,
   OtelSettings,
   WebhookSettings,
+  WebhookTestResult,
   PermissionMode,
   ProjectInfo,
   ProviderInfo,
@@ -117,6 +118,8 @@ interface SettingsModalProps {
   /** Relaunch into a staged update. */
   onApplyUpdate?: () => Promise<void>;
   onSaveSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>;
+  /** "Send test": POST to the saved webhook URL now (issue #167). */
+  onTestWebhook?: () => Promise<WebhookTestResult>;
   /** Optional GC seam. When omitted the section reads window.coder. */
   projects?: ProjectInfo[];
   onGcScan?: () => Promise<GcScanResult>;
@@ -284,6 +287,7 @@ export function SettingsModal({
   onDownloadUpdate,
   onApplyUpdate,
   onSaveSettings,
+  onTestWebhook,
   projects,
   onGcScan,
   onGcClean,
@@ -305,6 +309,9 @@ export function SettingsModal({
   const [webhookOnDone, setWebhookOnDone] = useState(true);
   const [webhookOnFailed, setWebhookOnFailed] = useState(true);
   const [webhookOnWaiting, setWebhookOnWaiting] = useState(true);
+  const [webhookTest, setWebhookTest] = useState<
+    "idle" | "sending" | WebhookTestResult
+  >("idle");
   const [draft, setDraft] = useState<ProfileDraft | null>(null);
   const [poolDraft, setPoolDraft] = useState<PoolDraft | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -341,6 +348,7 @@ export function SettingsModal({
     setWebhookOnDone(webhook.onDone !== false);
     setWebhookOnFailed(webhook.onFailed !== false);
     setWebhookOnWaiting(webhook.onWaiting !== false);
+    setWebhookTest("idle");
     setDraft(null);
     setPoolDraft(null);
     setError(null);
@@ -605,6 +613,29 @@ export function SettingsModal({
     const next = webhookUrl.trim() === "" ? null : webhookUrl.trim();
     if (next === current && error == null) return;
     void persistWebhook(webhookFromDrafts());
+  };
+
+  /**
+   * The main process POSTs to the *saved* URL, so a freshly typed one is
+   * persisted first. The button suppresses the input's blur (onMouseDown)
+   * so that save happens here once, not in a race with this handler.
+   */
+  const sendWebhookTest = async () => {
+    if (!onTestWebhook) return;
+    const drafted = webhookFromDrafts();
+    if (drafted.url !== (settings?.webhook?.url ?? null)) {
+      if (!(await persistWebhook(drafted))) return;
+    }
+    setWebhookTest("sending");
+    try {
+      setWebhookTest(await onTestWebhook());
+    } catch (err) {
+      setWebhookTest({
+        ok: false,
+        error:
+          err instanceof Error && err.message ? err.message : "Test failed",
+      });
+    }
   };
 
   const persistPool = async (next: SubagentPool): Promise<boolean> => {
@@ -1738,6 +1769,40 @@ export function SettingsModal({
                 Fires even while this window is focused, unlike desktop
                 notifications.
               </p>
+              {onTestWebhook && (
+                <div className={styles.fieldRow}>
+                  <button
+                    type="button"
+                    className={styles.btn}
+                    data-webhook-test=""
+                    disabled={
+                      saving ||
+                      settings == null ||
+                      webhookTest === "sending" ||
+                      webhookUrl.trim() === ""
+                    }
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => void sendWebhookTest()}
+                  >
+                    {webhookTest === "sending" ? "Sending…" : "Send test"}
+                  </button>
+                  {typeof webhookTest === "object" && (
+                    <span
+                      className={
+                        webhookTest.ok ? styles.note : styles.fieldError
+                      }
+                      role="status"
+                      data-webhook-test-result={webhookTest.ok ? "ok" : "fail"}
+                    >
+                      {webhookTest.ok
+                        ? webhookTest.status != null
+                          ? `Sent (HTTP ${webhookTest.status})`
+                          : "Sent"
+                        : webhookTest.error || "Test failed"}
+                    </span>
+                  )}
+                </div>
+              )}
               <label className={styles.fieldRow}>
                 <input
                   type="checkbox"

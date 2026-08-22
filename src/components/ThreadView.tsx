@@ -616,8 +616,8 @@ function ToolCallCard({
   const [manual, setManual] = useState<boolean | null>(null);
   const open = manual ?? autoExpand;
   const [imageUrls, setImageUrls] = useState<string[]>([]);
-  // Bytes live under userData, not in the message: fetch them as data URLs the
-  // first time the card is open.
+  // Bytes live under userData, not in the message: fetch an img src (protocol
+  // URL on desktop, data URL on web) the first time the card is open.
   const imageKey = (tool?.images ?? []).join("\n");
   useEffect(() => {
     if (!open || !imageKey || !onLoadImage) return;
@@ -717,7 +717,8 @@ function ToolCallCard({
 
 /**
  * Attachments on a user transcript message: image thumbnails load lazily as
- * data URLs (the CSP allows data:, not file:), files/folders render as icon + name.
+ * img src (solenta-media:// on desktop, data URL on web); files/folders
+ * render as icon + name.
  */
 function TranscriptAttachments({
   attachments,

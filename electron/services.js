@@ -22,6 +22,7 @@ const {
 const { resolveSandbox } = require("./sandbox.js");
 const btw = require("./btw.js");
 const { DEFAULT_WORKTREE_RETENTION } = require("./store.js");
+const { scheduleImagePruneFromStore } = require("./image-store.js");
 const { detectScm, JJ_NON_COLOCATED_ADD_ERROR } = require("./scm.js");
 const {
   presentProject,
@@ -1252,6 +1253,9 @@ function setArchived(store, input) {
     archived: Boolean(archived),
   });
   store.save();
+  if (Boolean(archived)) {
+    void scheduleImagePruneFromStore(store);
+  }
   return updated ? { ...updated } : { ...thread, archived: Boolean(archived) };
 }
 
@@ -3330,6 +3334,7 @@ function deleteThread(store, input, opts) {
   }
   purgeThread(store, threadId);
   store.save();
+  void scheduleImagePruneFromStore(store);
 }
 
 /**
@@ -3394,6 +3399,7 @@ async function removeProject(store, input, opts) {
   }
   store.setProjects(store.getProjects().filter((p) => p.id !== projectId));
   store.save();
+  void scheduleImagePruneFromStore(store);
 }
 
 /**

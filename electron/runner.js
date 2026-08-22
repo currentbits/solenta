@@ -3052,6 +3052,7 @@ function createRunner(opts) {
             const images = saveToolImages(
               userDataPath,
               extractImages(block.content),
+              threadId,
             );
             store.updateMessage(threadId, existing.id, {
               tool: {

@@ -34,8 +34,12 @@ const { suggestCommitMessage } = require("./commitmsg.js");
 const { listLocalServers } = require("./servers.js");
 const devservers = require("./devservers.js");
 const { createMemoryProxy } = require("./memory-proxy.js");
-const { readToolImage } = require("./tool-images.js");
+const {
+  readToolImage,
+  toolImageExists,
+} = require("./tool-images.js");
 const attachments = require("./attachments.js");
+const mediaProtocol = require("./media-protocol.js");
 const { syncUserMcpServers } = require("./memory-sup.js");
 const skills = require("./skills.js");
 const cliCommands = require("./cliCommands.js");
@@ -93,7 +97,9 @@ function runRetention(ctx) {
 
 /**
  * Bind store/runner/dialog into a ctx the shared handler map closes over
- * via its first argument. One ctx per process boot.
+ * via its first argument. One ctx per process boot. The web bridge clones
+ * this ctx with `serveDataUrls: true` so image handlers reply with async
+ * data URLs instead of solenta-media:// (issue #145).
  *
  * @param {object} deps
  */
@@ -759,6 +765,17 @@ const IPC_HANDLERS = {
     }
     return next;
   },
+  // "Send test" in Settings (issue #167). The renderer cannot POST these
+  // itself — Slack/Discord/ntfy answer no CORS preflight — and a typo'd or
+  // revoked URL is otherwise only discoverable by finishing a real run.
+  "settings:testWebhook": async (ctx) => {
+    const { testWebhook } = require("./notify.js");
+    const { recordSecretUse } = require("./secrets.js");
+    return testWebhook({
+      webhook: services.getSettings(ctx.store).webhook,
+      recordSecretUse,
+    });
+  },
   "skills:list": async (ctx, input) => {
     const projectPath =
       input && typeof input.projectPath === "string"
@@ -907,9 +924,14 @@ const IPC_HANDLERS = {
     };
   },
   "files:image": async (ctx, input) => {
-    return {
-      dataUrl: readToolImage(ctx.userDataPath, input && input.name),
-    };
+    const name = input && input.name;
+    if (!(await toolImageExists(ctx.userDataPath, name))) {
+      return { dataUrl: null };
+    }
+    if (ctx.serveDataUrls) {
+      return { dataUrl: await readToolImage(ctx.userDataPath, name) };
+    }
+    return { dataUrl: mediaProtocol.toolImageUrl(name) };
   },
   "attachments:pick": async (ctx) => {
     if (!ctx.dialog || typeof ctx.dialog.showOpenDialog !== "function") {
@@ -932,7 +954,13 @@ const IPC_HANDLERS = {
     };
   },
   "attachments:readImage": async (ctx, input) => {
-    return { dataUrl: attachments.readImage(input && input.path) };
+    const filePath = input && input.path;
+    const resolved = await attachments.resolveImageFile(filePath);
+    if (!resolved) return { dataUrl: null };
+    if (ctx.serveDataUrls) {
+      return { dataUrl: await attachments.readImage(filePath) };
+    }
+    return { dataUrl: mediaProtocol.localImageUrl(resolved.path) };
   },
   "git:mergeWorktree": async (ctx, input) => {
     const merged = mergeWorktree({

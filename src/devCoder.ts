@@ -2274,6 +2274,12 @@ function buildDevCoder(): CoderApi {
           webhook: { ...webhook },
         };
       },
+      async testWebhook() {
+        // ponytail: dev browser has no main process to POST from; report the
+        // shape the real handler returns so the Settings row stays exercisable.
+        if (!webhook.url) return { ok: false, error: "Save an http(s) webhook URL first" };
+        return { ok: true, status: 200 };
+      },
     },
     skills: {
       async list(input?: { projectPath?: string }): Promise<SkillInfo[]> {

@@ -437,7 +437,7 @@ describe("one map, two transports + packaging", () => {
     assert.match(ipcSrc, /Object\.entries\(IPC_HANDLERS\)/);
     assert.match(bridgeSrc, /require\("\.\/ipc\.js"\)/);
     assert.match(bridgeSrc, /IPC_HANDLERS/);
-    assert.match(bridgeSrc, /fn\(ctx, \.\.\.args\)/);
+    assert.match(bridgeSrc, /fn\([^)]*ctx[^)]*\.\.\.args\)/);
   });
 
   it("covers every channel the table names, plus desktop-only contextMenu", async () => {

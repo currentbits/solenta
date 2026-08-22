@@ -145,7 +145,9 @@ function attachWebBridge(httpServer, opts) {
         if (typeof fn !== "function") {
           throw new Error(`No handler registered for '${channel}'`);
         }
-        const result = await fn(ctx, ...args);
+        // Web has no solenta-media protocol; image handlers reply with
+        // async data URLs instead of a custom-scheme src (issue #145).
+        const result = await fn({ ...ctx, serveDataUrls: true }, ...args);
         sendJson(ws, { kind: "reply", id, result });
       } catch (err) {
         const error = err && err.message ? String(err.message) : String(err);

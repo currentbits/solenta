@@ -17,6 +17,7 @@ import type {
   AppStatus,
   ProviderInfo,
   SubagentPool,
+  WebhookTestResult,
 } from "../src/shared/ipc";
 
 function status(over: {
@@ -68,6 +69,7 @@ interface Stubs {
   initialPane?: SettingsPane;
   onSaveSettings?: (patch: Partial<AppSettings>) => Promise<AppSettings>;
   onCheckUpdate?: () => Promise<void>;
+  onTestWebhook?: () => Promise<WebhookTestResult>;
   onClose?: () => void;
 }
 
@@ -81,6 +83,7 @@ function modal(stubs: Stubs = {}) {
       providers={stubs.providers}
       status={stubs.status === undefined ? status() : stubs.status}
       onCheckUpdate={stubs.onCheckUpdate}
+      onTestWebhook={stubs.onTestWebhook}
       onSaveSettings={
         stubs.onSaveSettings ??
         (async (patch) => ({
@@ -963,6 +966,97 @@ describe("SettingsModal webhook (issue #167)", () => {
     assert.equal(patches.length, 1);
     assert.equal(patches[0].webhook?.onWaiting, false);
     assert.equal(patches[0].webhook?.url, "https://example.com/hook");
+    m.unmount();
+  });
+
+  it("Send test reports the HTTP status, and the failure reason on a bad URL", async () => {
+    let calls = 0;
+    const results: WebhookTestResult[] = [
+      { ok: true, status: 204 },
+      { ok: false, status: 404, error: "HTTP 404" },
+    ];
+    const m = await mount(
+      modal({
+        settings: {
+          dailyBudgetUsd: null,
+          autoSettleAfterDays: 3,
+          webhook: {
+            url: "https://example.com/hook",
+            onDone: true,
+            onFailed: true,
+            onWaiting: true,
+          },
+        } as AppSettings,
+        onTestWebhook: async () => results[calls++],
+      }),
+    );
+    const button = m.query("[data-webhook-test]") as HTMLButtonElement;
+    assert.ok(button, "Send test button");
+
+    await m.click(button);
+    assert.equal(calls, 1);
+    assert.equal(
+      m.query("[data-webhook-test-result]")?.getAttribute(
+        "data-webhook-test-result",
+      ),
+      "ok",
+    );
+    assert.ok(m.text().includes("Sent (HTTP 204)"), m.text());
+
+    // A revoked URL is the whole point of the button: the reason must show.
+    await m.click(button);
+    assert.equal(calls, 2);
+    assert.equal(
+      m.query("[data-webhook-test-result]")?.getAttribute(
+        "data-webhook-test-result",
+      ),
+      "fail",
+    );
+    assert.ok(m.text().includes("HTTP 404"), m.text());
+    m.unmount();
+  });
+
+  it("saves a freshly typed URL before testing it", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    let tested = 0;
+    const m = await mount(
+      modal({
+        settings: {
+          dailyBudgetUsd: null,
+          autoSettleAfterDays: 3,
+          webhook: {
+            url: null,
+            onDone: true,
+            onFailed: true,
+            onWaiting: true,
+          },
+        } as AppSettings,
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return {
+            dailyBudgetUsd: null,
+            autoSettleAfterDays: 3,
+            webhook: patch.webhook ?? {
+              url: null,
+              onDone: true,
+              onFailed: true,
+              onWaiting: true,
+            },
+          } as AppSettings;
+        },
+        onTestWebhook: async () => {
+          // The main process POSTs to the SAVED url; testing before the save
+          // lands would probe the old (here: absent) one.
+          assert.equal(patches.length, 1, "URL must be saved before the POST");
+          tested += 1;
+          return { ok: true, status: 200 };
+        },
+      }),
+    );
+    await m.type(m.query("[data-webhook-url]"), "https://ntfy.sh/solenta");
+    await m.click(m.query("[data-webhook-test]"));
+    assert.equal(tested, 1);
+    assert.equal(patches[0].webhook?.url, "https://ntfy.sh/solenta");
     m.unmount();
   });
 

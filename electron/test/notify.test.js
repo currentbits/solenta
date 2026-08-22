@@ -8,6 +8,7 @@ const {
   buildWebhookPayload,
   shapeWebhookRequest,
   dispatchWebhook,
+  testWebhook,
 } = require("../notify.js");
 
 describe("shouldNotify", () => {
@@ -324,5 +325,109 @@ describe("dispatchWebhook", () => {
       fetchImpl,
     });
     assert.equal(n, 0);
+  });
+
+  it("logs a non-2xx response, not just a thrown fetch", async () => {
+    /** @type {unknown[]} */
+    const logged = [];
+    await dispatchWebhook({
+      thread: { id: "t1", title: "Ship it" },
+      prevStatus: "working",
+      nextStatus: "done",
+      webhook: WEBHOOK_ON,
+      fetchImpl: async () => ({ ok: false, status: 404 }),
+      log: (err) => logged.push(err),
+    });
+    assert.equal(logged.length, 1);
+    assert.match(String(logged[0]), /404/);
+  });
+});
+
+describe("testWebhook", () => {
+  it("POSTs a done payload through the same shaper and reports the status", async () => {
+    /** @type {{ url: string, init: RequestInit }[]} */
+    const calls = [];
+    const result = await testWebhook({
+      webhook: { url: "https://ntfy.sh/solenta" },
+      fetchImpl: async (url, init) => {
+        calls.push({ url, init });
+        return { ok: true, status: 204 };
+      },
+    });
+    assert.deepEqual(result, { ok: true, status: 204 });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url, "https://ntfy.sh/solenta");
+    // ntfy shaping is shapeWebhookRequest's job, and the test must use it.
+    assert.match(calls[0].init.headers["Content-Type"], /text\/plain/);
+    assert.equal(calls[0].init.headers.Title, "Solenta test");
+    assert.equal(calls[0].init.body, "Solenta test: done");
+  });
+
+  it("fires regardless of the per-event toggles, mute, or snooze", async () => {
+    let n = 0;
+    const result = await testWebhook({
+      webhook: {
+        url: "https://example.com/hook",
+        onDone: false,
+        onFailed: false,
+        onWaiting: false,
+      },
+      muted: true,
+      snoozed: true,
+      fetchImpl: async () => {
+        n += 1;
+        return { ok: true, status: 200 };
+      },
+    });
+    assert.equal(n, 1);
+    assert.equal(result.ok, true);
+  });
+
+  it("reports a bad URL, a non-2xx status, and a transport error", async () => {
+    assert.deepEqual(await testWebhook({ webhook: { url: "" } }), {
+      ok: false,
+      error: "Save an http(s) webhook URL first",
+    });
+    assert.deepEqual(
+      await testWebhook({ webhook: { url: "file:///etc/passwd" } }),
+      { ok: false, error: "Save an http(s) webhook URL first" },
+    );
+    assert.deepEqual(
+      await testWebhook({
+        webhook: { url: "https://example.com/hook" },
+        fetchImpl: async () => ({ ok: false, status: 404 }),
+      }),
+      { ok: false, status: 404, error: "HTTP 404" },
+    );
+    assert.deepEqual(
+      await testWebhook({
+        webhook: { url: "https://example.com/hook" },
+        fetchImpl: async () => {
+          throw new Error("getaddrinfo ENOTFOUND");
+        },
+      }),
+      { ok: false, error: "getaddrinfo ENOTFOUND" },
+    );
+  });
+
+  it("records the URL as a secret use, and a throwing audit never blocks", async () => {
+    /** @type {{ purpose: string, key: string }[]} */
+    const uses = [];
+    const ok = await testWebhook({
+      webhook: { url: "https://example.com/hook" },
+      recordSecretUse: (evt) => uses.push(evt),
+      fetchImpl: async () => ({ ok: true, status: 200 }),
+    });
+    assert.deepEqual(uses, [{ purpose: "webhook-post", key: "webhook:url" }]);
+    assert.equal(ok.ok, true);
+
+    const still = await testWebhook({
+      webhook: { url: "https://example.com/hook" },
+      recordSecretUse: () => {
+        throw new Error("audit down");
+      },
+      fetchImpl: async () => ({ ok: true, status: 200 }),
+    });
+    assert.equal(still.ok, true);
   });
 });

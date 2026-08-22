@@ -4,10 +4,11 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { randomUUID } = require("node:crypto");
 
-/** Under userData; one flat directory, filenames are random. */
-// ponytail: files are never pruned — a screenshot is ~200KB and nothing else
-// in userData is pruned either. Add an age sweep on boot if it ever grows.
+/** Under userData; per-thread subdirs, plus leftover flat files from older builds. */
 const DIR_NAME = "tool-images";
+
+/** Thread ids are UUIDs; anything else is a path-escape attempt. */
+const SAFE_ID_RE = /^[A-Za-z0-9_-]+$/;
 
 const EXT_BY_MEDIA = {
   "image/png": "png",
@@ -48,15 +49,49 @@ function extractImages(content) {
 }
 
 /**
+ * `name` is either a legacy basename (`uuid.png`) or `threadId/uuid.png`.
+ * Never a traversal: each segment is a SAFE_ID / basename with a known ext.
+ * @param {string} userDataPath
+ * @param {unknown} name
+ * @returns {string | null}
+ */
+function resolveToolImagePath(userDataPath, name) {
+  if (!userDataPath) return null;
+  const raw = String(name || "").replace(/\\/g, "/");
+  if (!raw || raw.includes("\0")) return null;
+  const parts = raw.split("/").filter(Boolean);
+  if (parts.length < 1 || parts.length > 2) return null;
+  const file = parts[parts.length - 1];
+  if (file !== path.basename(file)) return null;
+  const ext = path.extname(file).slice(1).toLowerCase();
+  if (!MEDIA_BY_EXT[ext]) return null;
+  if (parts.length === 2) {
+    const tid = parts[0];
+    if (!SAFE_ID_RE.test(tid) || tid !== path.basename(tid)) return null;
+  }
+  const root = path.resolve(path.join(userDataPath, DIR_NAME));
+  const full = path.resolve(path.join(root, ...parts));
+  if (full !== root && !full.startsWith(root + path.sep)) return null;
+  return full;
+}
+
+/**
  * Write images beside the store instead of into it: the store is one JSON file
  * rewritten in full on every event, and a screenshot is megabytes.
+ * When `threadId` is a safe id, files land in tool-images/<threadId>/ and the
+ * returned names are `threadId/<file>` so prune can drop a whole thread.
  * @param {string} userDataPath
  * @param {{ mediaType: string, data: string }[]} images
- * @returns {string[]} bare filenames for ToolCallInfo.images
+ * @param {unknown} [threadId]
+ * @returns {string[]} names for ToolCallInfo.images
  */
-function saveToolImages(userDataPath, images) {
+function saveToolImages(userDataPath, images, threadId) {
   if (!userDataPath || !images || !images.length) return [];
-  const dir = path.join(userDataPath, DIR_NAME);
+  const tid = String(threadId || "");
+  const scoped = SAFE_ID_RE.test(tid);
+  const dir = scoped
+    ? path.join(userDataPath, DIR_NAME, tid)
+    : path.join(userDataPath, DIR_NAME);
   try {
     fs.mkdirSync(dir, { recursive: true });
   } catch {
@@ -64,10 +99,10 @@ function saveToolImages(userDataPath, images) {
   }
   const names = [];
   for (const img of images) {
-    const name = `${randomUUID()}.${EXT_BY_MEDIA[img.mediaType] || "png"}`;
+    const file = `${randomUUID()}.${EXT_BY_MEDIA[img.mediaType] || "png"}`;
     try {
-      fs.writeFileSync(path.join(dir, name), Buffer.from(img.data, "base64"));
-      names.push(name);
+      fs.writeFileSync(path.join(dir, file), Buffer.from(img.data, "base64"));
+      names.push(scoped ? `${tid}/${file}` : file);
     } catch {
       // a screenshot is never worth failing the turn over
     }
@@ -76,23 +111,50 @@ function saveToolImages(userDataPath, images) {
 }
 
 /**
- * Read one back as a data URL (the CSP allows data:, not file:).
- * `name` comes from the renderer → basename only, never a traversal.
+ * Read one back as a data URL. Used by the web bridge (no custom protocol).
+ * Desktop IPC returns a solenta-media:// URL instead; see media-protocol.js.
  * @param {string} userDataPath
  * @param {string} name
- * @returns {string | null}
+ * @returns {Promise<string | null>}
  */
-function readToolImage(userDataPath, name) {
-  const base = path.basename(String(name || ""));
-  const ext = path.extname(base).slice(1).toLowerCase();
+async function readToolImage(userDataPath, name) {
+  const full = resolveToolImagePath(userDataPath, name);
+  const ext = path.extname(String(name || "")).slice(1).toLowerCase();
   const mediaType = MEDIA_BY_EXT[ext];
-  if (!userDataPath || !mediaType) return null;
+  if (!full || !mediaType) return null;
   try {
-    const buf = fs.readFileSync(path.join(userDataPath, DIR_NAME, base));
+    const buf = await fs.promises.readFile(full);
     return `data:${mediaType};base64,${buf.toString("base64")}`;
   } catch {
     return null;
   }
 }
 
-module.exports = { extractImages, saveToolImages, readToolImage, DIR_NAME };
+/**
+ * True when the file exists on disk (cheap; no bytes). Desktop IPC uses this
+ * before returning a protocol URL so a missing image is null, not a broken img.
+ * @param {string} userDataPath
+ * @param {unknown} name
+ * @returns {Promise<boolean>}
+ */
+async function toolImageExists(userDataPath, name) {
+  const full = resolveToolImagePath(userDataPath, name);
+  if (!full) return false;
+  try {
+    await fs.promises.access(full);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+module.exports = {
+  extractImages,
+  saveToolImages,
+  readToolImage,
+  resolveToolImagePath,
+  toolImageExists,
+  DIR_NAME,
+  SAFE_ID_RE,
+  MEDIA_BY_EXT,
+};

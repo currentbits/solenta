@@ -168,6 +168,8 @@ async function runAutomation(ctx, auto, now, opts) {
   try {
     pruneAutomationThreads(ctx.store, auto.id);
     ctx.store.save();
+    const { scheduleImagePruneFromStore } = require("./image-store.js");
+    void scheduleImagePruneFromStore(ctx.store);
   } catch {
     // ignore
   }

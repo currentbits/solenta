@@ -81,7 +81,7 @@ describe("attachments module", () => {
     ]);
   });
 
-  it("saves a pasted image under userData and reads it back as a data URL", () => {
+  it("saves a pasted image under userData and reads it back as a data URL", async () => {
     const bytes = Buffer.from("fake-png-bytes");
     const dataUrl = `data:image/png;base64,${bytes.toString("base64")}`;
 
@@ -91,7 +91,7 @@ describe("attachments module", () => {
     assert.ok(saved.path.startsWith(path.join(tmpDir, "attachments", "t1")));
     assert.equal(fs.readFileSync(saved.path).toString(), "fake-png-bytes");
 
-    const read = attachments.readImage(saved.path);
+    const read = await attachments.readImage(saved.path);
     assert.equal(read, dataUrl);
 
     // Thread isolation: another thread id lands in its own directory.
@@ -124,7 +124,7 @@ describe("attachments module", () => {
     );
   });
 
-  it("rejects non-image payloads and paths", () => {
+  it("rejects non-image payloads and paths", async () => {
     assert.equal(
       attachments.saveImage(tmpDir, "t1", "data:text/plain;base64,aGk="),
       null,
@@ -134,14 +134,18 @@ describe("attachments module", () => {
 
     const txt = path.join(tmpDir, "notes.txt");
     fs.writeFileSync(txt, "hello");
-    assert.equal(attachments.readImage(txt), null, "text files must not read");
     assert.equal(
-      attachments.readImage(path.join(tmpDir, "missing.png")),
+      await attachments.readImage(txt),
+      null,
+      "text files must not read",
+    );
+    assert.equal(
+      await attachments.readImage(path.join(tmpDir, "missing.png")),
       null,
       "missing files must not read",
     );
     assert.equal(
-      attachments.readImage("relative.png"),
+      await attachments.readImage("relative.png"),
       null,
       "relative paths must not read",
     );

@@ -205,6 +205,66 @@ function shapeWebhookRequest(url, payload) {
 }
 
 /**
+ * The one POST. Never throws: the outcome comes back as a value so the
+ * run path can ignore it and "Send test" (issue #167) can show it.
+ *
+ * @param {string} url
+ * @param {ReturnType<typeof buildWebhookPayload>} payload
+ * @param {{
+ *   fetchImpl?: (input: string, init?: object) => Promise<unknown>,
+ *   timeoutMs?: number,
+ *   recordSecretUse?: (evt: { purpose: string, key: string }) => void,
+ * }} [opts]
+ * @returns {Promise<{ ok: boolean, status?: number, error?: string }>}
+ */
+async function postWebhook(url, payload, opts = {}) {
+  if (typeof opts.recordSecretUse === "function") {
+    try {
+      opts.recordSecretUse({ purpose: "webhook-post", key: "webhook:url" });
+    } catch {
+      // audit must never block the post
+    }
+  }
+  const doFetch = opts.fetchImpl || globalThis.fetch;
+  if (typeof doFetch !== "function") {
+    return { ok: false, error: "fetch is unavailable" };
+  }
+  const request = shapeWebhookRequest(url, payload);
+  const timeoutMs =
+    opts.timeoutMs != null && Number.isFinite(Number(opts.timeoutMs))
+      ? Number(opts.timeoutMs)
+      : 5000;
+  /** @type {RequestInit} */
+  const init = {
+    method: "POST",
+    headers: request.headers,
+    body: request.body,
+    redirect: "error",
+  };
+  if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
+    init.signal = AbortSignal.timeout(timeoutMs);
+  }
+  try {
+    const res = /** @type {{ ok?: unknown, status?: unknown } | null} */ (
+      await doFetch(url, init)
+    );
+    const status =
+      res && typeof res.status === "number" ? res.status : undefined;
+    const ok =
+      res && typeof res.ok === "boolean"
+        ? res.ok
+        : status == null || (status >= 200 && status < 300);
+    if (ok) return status == null ? { ok: true } : { ok: true, status };
+    return { ok: false, status, error: `HTTP ${status ?? "error"}` };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err && err.message ? String(err.message) : String(err),
+    };
+  }
+}
+
+/**
  * Fire-and-forget POST. Never throws into the run path.
  *
  * @param {{
@@ -221,46 +281,47 @@ function shapeWebhookRequest(url, payload) {
  * }} opts
  */
 async function dispatchWebhook(opts) {
-  try {
-    if (!shouldPostWebhook(opts)) return;
-    const url = opts.webhook && opts.webhook.url;
-    if (!url) return;
-    const event = notifyEvent(opts.nextStatus);
-    const payload = buildWebhookPayload(opts.thread, event);
-    const request = shapeWebhookRequest(url, payload);
-    if (typeof opts.recordSecretUse === "function") {
-      try {
-        opts.recordSecretUse({ purpose: "webhook-post", key: "webhook:url" });
-      } catch {
-        // audit must never block the post
-      }
-    }
-    const doFetch = opts.fetchImpl || globalThis.fetch;
-    if (typeof doFetch !== "function") return;
-    const timeoutMs =
-      opts.timeoutMs != null && Number.isFinite(Number(opts.timeoutMs))
-        ? Number(opts.timeoutMs)
-        : 5000;
-    /** @type {RequestInit} */
-    const init = {
-      method: "POST",
-      headers: request.headers,
-      body: request.body,
-      redirect: "error",
-    };
-    if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
-      init.signal = AbortSignal.timeout(timeoutMs);
-    }
-    await doFetch(url, init);
-  } catch (err) {
-    if (typeof opts.log === "function") {
-      try {
-        opts.log(err);
-      } catch {
-        // never throw
-      }
+  if (!shouldPostWebhook(opts)) return;
+  const url = opts.webhook && opts.webhook.url;
+  if (!url) return;
+  const event = notifyEvent(opts.nextStatus);
+  const result = await postWebhook(
+    url,
+    buildWebhookPayload(opts.thread, event),
+    opts,
+  );
+  if (!result.ok && typeof opts.log === "function") {
+    try {
+      opts.log(new Error(result.error || "webhook POST failed"));
+    } catch {
+      // never throw
     }
   }
+}
+
+/**
+ * "Send test" in Settings: POST a synthetic done payload to the saved URL
+ * and report what came back. Deliberately ignores mute, snooze and the
+ * per-event toggles — the user asked for this one, right now.
+ *
+ * @param {{
+ *   webhook?: { url?: string | null } | null,
+ *   fetchImpl?: (input: string, init?: object) => Promise<unknown>,
+ *   timeoutMs?: number,
+ *   recordSecretUse?: (evt: { purpose: string, key: string }) => void,
+ * }} opts
+ * @returns {Promise<{ ok: boolean, status?: number, error?: string }>}
+ */
+async function testWebhook(opts) {
+  const url = opts && opts.webhook && opts.webhook.url;
+  if (!isHttpUrl(url)) {
+    return { ok: false, error: "Save an http(s) webhook URL first" };
+  }
+  const payload = buildWebhookPayload(
+    { id: "webhook-test", title: "Solenta test" },
+    "done",
+  );
+  return postWebhook(url, payload, opts);
 }
 
 module.exports = {
@@ -272,5 +333,7 @@ module.exports = {
   shouldPostWebhook,
   buildWebhookPayload,
   shapeWebhookRequest,
+  postWebhook,
   dispatchWebhook,
+  testWebhook,
 };

@@ -242,6 +242,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     applyUpdate,
     settings,
     saveSettings,
+    testWebhook,
     refreshProviders,
     projectById,
     searchMemory,
@@ -1488,6 +1489,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           onDownloadUpdate={downloadUpdate}
           onApplyUpdate={applyUpdate}
           onSaveSettings={(patch) => saveSettings(patch)}
+          onTestWebhook={testWebhook}
           onShowOnboarding={showOnboarding}
         />
         <OnboardingModal

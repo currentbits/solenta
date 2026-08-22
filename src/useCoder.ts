@@ -3,6 +3,7 @@ import { isCiWorkflowBlockMessage } from "./blastRadius";
 import type {
   ActivityItem,
   AppSettings,
+  WebhookTestResult,
   AppStatus,
   AttachmentInfo,
   AutomationInfo,
@@ -507,6 +508,8 @@ export interface UseCoderResult {
   settings: AppSettings | null;
   /** Patch settings; updates local state from the returned value. */
   saveSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>;
+  /** POST a test payload to the saved webhook URL (issue #167). */
+  testWebhook: () => Promise<WebhookTestResult>;
   /** Re-fetch app.status() (e.g. after a run settles). */
   refreshStatus: () => Promise<void>;
   /** Auto-update check result; null until the boot check settles. */
@@ -2653,6 +2656,8 @@ export function useCoder(): UseCoderResult {
     [api, refreshStatus],
   );
 
+  const testWebhook = useCallback(() => api.settings.testWebhook(), [api]);
+
   const searchMemory = useCallback(
     async (input: { query: string; project?: string }) => {
       return api.memory.search(input);
@@ -2907,6 +2912,7 @@ export function useCoder(): UseCoderResult {
     appStatus,
     settings,
     saveSettings,
+    testWebhook,
     refreshStatus,
     updateStatus,
     checkUpdate,

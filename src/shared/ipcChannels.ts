@@ -40,6 +40,7 @@ export const IPC_CHANNELS = [
   { ns: "memory", method: "remove" },
   { ns: "settings", method: "get" },
   { ns: "settings", method: "set" },
+  { ns: "settings", method: "testWebhook" },
   { ns: "skills", method: "list" },
   { ns: "skills", method: "add" },
   { ns: "skills", method: "remove" },
