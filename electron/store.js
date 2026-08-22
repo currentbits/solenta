@@ -28,6 +28,11 @@ const {
   normalizeSetupCommand,
   normalizeQuickActions,
 } = require("./projectCommands.js");
+const installScan = require("./installScan.js");
+
+/** How agent package installs are gated (#305). */
+const PACKAGE_INSTALL_SCANS = new Set(["off", "blocklist", "ask"]);
+const DEFAULT_PACKAGE_INSTALL_SCAN = "blocklist";
 
 /** Builtin "Plan and Verify" workflow template (seeded on every store). */
 const STANDARD_TEMPLATE = {
@@ -440,8 +445,12 @@ const DEFAULT_PR_DIFF_CAP_LINES = 400;
  * cannot POST somewhere unexpected. Only an explicit false turns an event
  * off, so a pasted URL fires all three until the user unchecks.
  *
+ * packageInstallScan: absent/junk → "blocklist" (deny known-malicious
+ * names, allow the rest). "off" disables the intercept; "ask" prompts on
+ * every package install and still denies the blocklist.
+ *
  * @param {unknown} raw
- * @returns {{ dailyBudgetUsd: number | null, orchestrationBudgetUsd: number | null, autoSettleAfterDays: number | null, autoSettleOnMerge: boolean, prDiffCapLines: number | null, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }>, defaultWorktree: boolean, defaultOrchestrate: boolean, updateChannel: "prod" | "nightly" | null, notifications: boolean, agentProfiles: Array<{ id: string, name: string, provider: string, model: string | null, reasoningEffort: string | null, permissionMode: string }> }}
+ * @returns {{ dailyBudgetUsd: number | null, orchestrationBudgetUsd: number | null, autoSettleAfterDays: number | null, autoSettleOnMerge: boolean, prDiffCapLines: number | null, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }>, defaultWorktree: boolean, defaultOrchestrate: boolean, updateChannel: "prod" | "nightly" | null, notifications: boolean, packageInstallScan: "off" | "blocklist" | "ask", agentProfiles: Array<{ id: string, name: string, provider: string, model: string | null, reasoningEffort: string | null, permissionMode: string }> }}
  */
 function normalizeSettings(raw) {
   const settings = {
@@ -450,6 +459,7 @@ function normalizeSettings(raw) {
     autoSettleAfterDays: DEFAULT_AUTO_SETTLE_AFTER_DAYS,
     autoSettleOnMerge: true,
     mcpServers: [],
+    packageInstallScan: DEFAULT_PACKAGE_INSTALL_SCAN,
     defaultWorktree: false,
     defaultOrchestrate: false,
     onboardingSeen: false,
@@ -555,6 +565,11 @@ function normalizeSettings(raw) {
   settings.autoSettleOnMerge =
     /** @type {{ autoSettleOnMerge?: unknown }} */ (obj).autoSettleOnMerge !==
     false;
+  const pkgScan =
+    /** @type {{ packageInstallScan?: unknown }} */ (obj).packageInstallScan;
+  settings.packageInstallScan = PACKAGE_INSTALL_SCANS.has(pkgScan)
+    ? /** @type {"off" | "blocklist" | "ask"} */ (pkgScan)
+    : DEFAULT_PACKAGE_INSTALL_SCAN;
   settings.otel = normalizeOtel(/** @type {{ otel?: unknown }} */ (obj).otel);
   const linearKey = /** @type {{ linearApiKey?: unknown }} */ (obj).linearApiKey;
   if (typeof linearKey === "string" && linearKey.trim()) {
@@ -2097,7 +2112,11 @@ class Store {
       orchestrationBudgetUsd: n.orchestrationBudgetUsd,
       autoSettleAfterDays: n.autoSettleAfterDays,
       autoSettleOnMerge: n.autoSettleOnMerge,
-      mcpServers: n.mcpServers,
+      mcpServers: n.mcpServers.map((s) => ({
+        ...s,
+        trust: installScan.scanMcpServer(s),
+      })),
+      packageInstallScan: n.packageInstallScan,
       defaultWorktree: n.defaultWorktree,
       defaultOrchestrate: n.defaultOrchestrate,
       onboardingSeen: n.onboardingSeen,
@@ -2201,7 +2220,34 @@ class Store {
       this.data.settings.autoSettleOnMerge = v;
     }
     if (Object.prototype.hasOwnProperty.call(patch, "mcpServers")) {
-      this.data.settings.mcpServers = validateMcpServers(patch.mcpServers);
+      const next = validateMcpServers(patch.mcpServers);
+      const prev = Array.isArray(this.data.settings.mcpServers)
+        ? this.data.settings.mcpServers
+        : [];
+      const prevByName = new Map(prev.map((s) => [s.name, s]));
+      for (const s of next) {
+        if (!s.enabled) continue;
+        const was = prevByName.get(s.name);
+        const newlyEnabled = !was || was.enabled === false;
+        if (!newlyEnabled) continue;
+        const trust = installScan.scanMcpServer(s);
+        if (trust.level === "blocked") {
+          throw installScan.blockedError(
+            trust,
+            "Disable the server or pick a safer URL.",
+          );
+        }
+      }
+      this.data.settings.mcpServers = next;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "packageInstallScan")) {
+      const v = patch.packageInstallScan;
+      if (!PACKAGE_INSTALL_SCANS.has(v)) {
+        throw new Error(
+          'packageInstallScan must be "off", "blocklist", or "ask"',
+        );
+      }
+      this.data.settings.packageInstallScan = v;
     }
     if (Object.prototype.hasOwnProperty.call(patch, "agentProfiles")) {
       this.data.settings.agentProfiles = validateAgentProfiles(
@@ -2667,6 +2713,8 @@ module.exports = {
   normalizeSettings,
   normalizeMcpServers,
   validateMcpServers,
+  PACKAGE_INSTALL_SCANS,
+  DEFAULT_PACKAGE_INSTALL_SCAN,
   RESERVED_MCP_NAMES,
   DEFAULT_AUTO_SETTLE_AFTER_DAYS,
   normalizeSpendByDay,

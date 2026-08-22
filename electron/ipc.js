@@ -799,6 +799,12 @@ const IPC_HANDLERS = {
         : null;
     return cliCommands.listPaletteCommands({ projectPath });
   },
+  "skills:scanSkill": async (_ctx, input) => {
+    return skills.scanSkill(input || {});
+  },
+  "skills:scanMcp": async (_ctx, input) => {
+    return skills.scanMcp(input || {});
+  },
   "providers:list": async (ctx) => {
     return services.listProvidersForApi(ctx.store);
   },

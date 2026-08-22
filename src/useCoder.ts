@@ -47,6 +47,7 @@ import type {
   SkillInfo,
   SkillTarget,
   SkillWrite,
+  TrustReport,
   SpecArtifact,
   ThreadDetail,
   ThreadInfo,
@@ -567,6 +568,8 @@ export interface UseCoderResult {
   ) => Promise<{ name: string; installedIn: SkillTarget[] }>;
   removeSkill: (input: { name: string }) => Promise<void>;
   syncSkills: () => Promise<{ copied: number; skills: string[] }>;
+  scanSkill: (input: SkillWrite) => Promise<TrustReport>;
+  scanMcp: (input: { name: string; url: string }) => Promise<TrustReport>;
   listCliCommands: (input?: {
     projectPath?: string;
   }) => Promise<CliSlashCommand[]>;
@@ -2768,6 +2771,20 @@ export function useCoder(): UseCoderResult {
     return api.skills.sync();
   }, [api]);
 
+  const scanSkill = useCallback(
+    async (input: SkillWrite) => {
+      return api.skills.scanSkill(input);
+    },
+    [api],
+  );
+
+  const scanMcp = useCallback(
+    async (input: { name: string; url: string }) => {
+      return api.skills.scanMcp(input);
+    },
+    [api],
+  );
+
   const listCliCommands = useCallback(
     async (input?: { projectPath?: string }) => {
       return api.skills.commands(input);
@@ -2933,6 +2950,8 @@ export function useCoder(): UseCoderResult {
     addSkill,
     removeSkill,
     syncSkills,
+    scanSkill,
+    scanMcp,
     listCliCommands,
     searchThreads,
     peekThread,

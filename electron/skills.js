@@ -10,6 +10,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
+const installScan = require("./installScan.js");
 
 const SKILL_NAME_RE = /^[a-z0-9-]+$/;
 
@@ -147,10 +148,10 @@ function parseSkillMarkdown(content) {
  * real content over every link.
  *
  * @param {string} baseDir
- * @returns {Array<{ name: string, description: string, bytes: number }>}
+ * @returns {Array<{ name: string, description: string, bytes: number, trust: ReturnType<typeof installScan.scanSkillText> }>}
  */
 function scanSkillDir(baseDir) {
-  /** @type {Array<{ name: string, description: string, bytes: number }>} */
+  /** @type {Array<{ name: string, description: string, bytes: number, trust: ReturnType<typeof installScan.scanSkillText> }>} */
   const out = [];
   let dirents;
   try {
@@ -173,7 +174,12 @@ function scanSkillDir(baseDir) {
       continue;
     }
     const parsed = parseSkillMarkdown(content);
-    out.push({ name: d.name, description: parsed.description, bytes });
+    out.push({
+      name: d.name,
+      description: parsed.description,
+      bytes,
+      trust: installScan.scanSkillText(content),
+    });
   }
   return out;
 }
@@ -192,6 +198,7 @@ function scanSkillDir(baseDir) {
  *   installedIn: SkillTarget[],
  *   missingFrom: SkillTarget[],
  *   bytes: number,
+ *   trust: { level: string, findings: object[] },
  * }>}
  */
 function listSkills(projectPath, env = process.env) {
@@ -206,6 +213,7 @@ function listSkills(projectPath, env = process.env) {
    *   installedIn: SkillTarget[],
    *   missingFrom: SkillTarget[],
    *   bytes: number,
+   *   trust: { level: string, findings: object[] },
    * }>}
    */
   const byName = new Map();
@@ -220,9 +228,11 @@ function listSkills(projectPath, env = process.env) {
           installedIn: [target],
           missingFrom: [],
           bytes: skill.bytes,
+          trust: skill.trust || installScan.trusted(),
         });
       } else {
         existing.installedIn.push(target);
+        existing.trust = installScan.worseTrust(existing.trust, skill.trust);
       }
     }
   }
@@ -254,6 +264,7 @@ function listSkills(projectPath, env = process.env) {
         installedIn: [],
         missingFrom: [],
         bytes: skill.bytes,
+        trust: skill.trust || installScan.trusted(),
       });
     }
     projectRows.sort((a, b) => a.name.localeCompare(b.name));
@@ -287,9 +298,9 @@ function resolveSkillDir(target, name, env = process.env) {
 
 /**
  * Write <dir>/<name>/SKILL.md into every active target.
- * @param {{ name: unknown, description: unknown, body: unknown }} input
+ * @param {{ name: unknown, description: unknown, body: unknown, force?: unknown }} input
  * @param {NodeJS.ProcessEnv} [env]
- * @returns {{ name: string, installedIn: SkillTarget[] }}
+ * @returns {{ name: string, installedIn: SkillTarget[], trust: ReturnType<typeof installScan.scanSkillText> }}
  */
 function addSkill(input, env = process.env) {
   // Validate name + confinement against a known target before any write.
@@ -309,6 +320,10 @@ function addSkill(input, env = process.env) {
     throw new Error("Skill body is required");
   }
   const content = `---\nname: ${name}\ndescription: ${description}\n---\n\n${body}\n`;
+  const trust = installScan.scanSkillText(content);
+  if (trust.level === "blocked" && !(input && input.force === true)) {
+    throw installScan.blockedError(trust, "Pass force: true to add anyway.");
+  }
   /** @type {SkillTarget[]} */
   const installedIn = [];
   for (const target of activeSkillTargets(env)) {
@@ -317,7 +332,7 @@ function addSkill(input, env = process.env) {
     fs.writeFileSync(path.join(dir, "SKILL.md"), content, "utf8");
     installedIn.push(target);
   }
-  return { name, installedIn };
+  return { name, installedIn, trust };
 }
 
 /**
@@ -397,6 +412,14 @@ function syncSkills(env = process.env) {
   return { copied, skills: needed };
 }
 
+function scanSkill(input) {
+  return installScan.scanSkill(input || {});
+}
+
+function scanMcp(input) {
+  return installScan.scanMcpServer(input || {});
+}
+
 module.exports = {
   SKILL_NAME_RE,
   SKILL_DIRS,
@@ -406,6 +429,8 @@ module.exports = {
   addSkill,
   removeSkill,
   syncSkills,
+  scanSkill,
+  scanMcp,
   activeSkillTargets,
   skillBaseDir,
 };

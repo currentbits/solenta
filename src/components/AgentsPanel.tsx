@@ -29,6 +29,7 @@ import type {
   SkillInfo,
   SkillTarget,
   SkillWrite,
+  TrustReport,
   ThreadInfo,
   ThreadSummaryInfo,
   CrewTaskView,
@@ -191,6 +192,8 @@ interface AgentsPanelProps {
   ) => Promise<{ name: string; installedIn: SkillTarget[] }>;
   removeSkill: (input: { name: string }) => Promise<void>;
   syncSkills: () => Promise<{ copied: number; skills: string[] }>;
+  scanSkill?: (input: SkillWrite) => Promise<TrustReport>;
+  scanMcp?: (input: { name: string; url: string }) => Promise<TrustReport>;
   /** Center-pane view, so Pulse/Environment can mark the active destination. */
   activeView?: string;
   onOpenPrs?: () => void;
@@ -3125,6 +3128,8 @@ export const AgentsPanel = memo(function AgentsPanel({
   addSkill,
   removeSkill,
   syncSkills,
+  scanSkill,
+  scanMcp,
   activeView,
   onOpenPrs,
   onOpenAutomations,
@@ -3283,6 +3288,8 @@ export const AgentsPanel = memo(function AgentsPanel({
           addSkill={addSkill}
           removeSkill={removeSkill}
           syncSkills={syncSkills}
+          scanSkill={scanSkill}
+          scanMcp={scanMcp}
         />
       ) : (
         <PulseTab

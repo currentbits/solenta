@@ -477,6 +477,7 @@ describe("one map, two transports + packaging", () => {
       "utf8",
     );
     assert.match(sh, /electron\/\*\.js/);
+    assert.match(sh, /malware-packages\.json/);
     // ws ships via ROOT_NM_PKGS + `cp node_modules/$pkg`, not a hardcoded
     // `node_modules/ws` path (that string lives in verify-package.sh).
     assert.match(sh, /ROOT_NM_PKGS=\(ws /);
