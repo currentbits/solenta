@@ -12,6 +12,7 @@ const {
   revertFile,
   listFiles,
   mergeWorktree,
+  conflictContext,
   removeWorktree,
   push,
   createPr,
@@ -676,6 +677,12 @@ const IPC_HANDLERS = {
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     return result;
   },
+  "threads:runCommand": async (ctx, input) => {
+    return services.runCommand(ctx.store, input, {
+      runner: ctx.runner,
+      broadcast: ctx.broadcast,
+    });
+  },
   "app:status": async (ctx) => {
     return services.appStatus(ctx.store);
   },
@@ -936,6 +943,12 @@ const IPC_HANDLERS = {
     });
     await runRetention(ctx);
     return merged;
+  },
+  "git:conflictContext": async (ctx, input) => {
+    return conflictContext({
+      store: ctx.store,
+      threadId: input && input.threadId,
+    });
   },
   "git:removeWorktree": async (ctx, input) => {
     return removeWorktree({

@@ -11,6 +11,7 @@ import type {
   AgentStatus,
   AppSettings,
   CheckpointInfo,
+  ConflictContext,
   GitSyncInfo,
   GitRepoInfo,
   GitPullResult,
@@ -42,6 +43,11 @@ import {
   providerDisplayName,
   shortSessionId,
 } from "../format";
+import {
+  buildConflictResolvePrompt,
+  parseConflictFiles,
+  type ConflictResolveInput,
+} from "../conflictResolve";
 import { contextRing, threadContextWindow } from "../contextRing";
 import { buildWaitStates, waitLabel, type WaitState } from "../waiting";
 import { MemoryTab } from "./MemoryTab";
@@ -119,6 +125,10 @@ interface AgentsPanelProps {
   onMergeWorktree: (opts?: {
     ciWorkflowApproved?: boolean;
   }) => Promise<unknown>;
+  /** Start a turn (issue #163 conflict resolve). */
+  onStartRun?: (prompt: string, threadId?: string) => Promise<void>;
+  /** Unmerged worktree files plus capped conflict-marker snippets. */
+  conflictContext?: (threadId: string) => Promise<ConflictContext>;
   onRemoveWorktree: (force?: boolean) => Promise<unknown>;
   /** Opens the Git pane (fresh load). */
   onViewChanges: () => void;
@@ -349,6 +359,9 @@ function WorktreeCard({
   onCancelDirty,
   onDismissConflict,
   onOpenWorktree,
+  onResolve,
+  resolving,
+  resolveLabel,
   onDismissError,
 }: {
   thread: ThreadInfo | null;
@@ -367,6 +380,9 @@ function WorktreeCard({
   onCancelDirty: () => void;
   onDismissConflict: () => void;
   onOpenWorktree: (() => void) | null;
+  onResolve: (() => void) | null;
+  resolving: boolean;
+  resolveLabel: string;
   onDismissError: () => void;
 }) {
   const hasWorktree = Boolean(thread?.worktreePath);
@@ -526,6 +542,24 @@ function WorktreeCard({
         <div className={styles.dirtyBlock} role="alert">
           <pre className={styles.dirtyMessage}>{conflictMessage}</pre>
           <div className={styles.gitActions}>
+            {onResolve && (
+              <button
+                type="button"
+                className={`${styles.gitBtn} ${styles.gitBtnPrimary}`}
+                data-conflict-resolve=""
+                onClick={onResolve}
+                disabled={busy}
+              >
+                {resolving ? (
+                  <>
+                    <span className={styles.btnSpinner} aria-hidden />
+                    {resolveLabel}
+                  </>
+                ) : (
+                  "Let the agent resolve"
+                )}
+              </button>
+            )}
             {onOpenWorktree && (
               <button
                 type="button"
@@ -537,7 +571,11 @@ function WorktreeCard({
             )}
             <button
               type="button"
-              className={`${styles.gitBtn} ${styles.gitBtnPrimary}`}
+              className={
+                onResolve
+                  ? styles.gitBtn
+                  : `${styles.gitBtn} ${styles.gitBtnPrimary}`
+              }
               onClick={onMerge}
               disabled={busy}
             >
@@ -1803,6 +1841,8 @@ export function GitTab({
   prsActive,
   providers = [],
   onFork,
+  onStartRun,
+  conflictContext,
 }: {
   thread: ThreadInfo | null;
   project: ProjectInfo | null;
@@ -1810,6 +1850,8 @@ export function GitTab({
   onMergeWorktree: (opts?: {
     ciWorkflowApproved?: boolean;
   }) => Promise<unknown>;
+  onStartRun?: (prompt: string, threadId?: string) => Promise<void>;
+  conflictContext?: (threadId: string) => Promise<ConflictContext>;
   onRemoveWorktree: (force?: boolean) => Promise<unknown>;
   onViewChanges: () => void;
   listCheckpoints: (threadId: string) => Promise<CheckpointInfo[]>;
@@ -1856,9 +1898,14 @@ export function GitTab({
   const [now, setNow] = useState(() => Date.now());
   const [sync, setSync] = useState<GitSyncInfo | null>(null);
   const [syncing, setSyncing] = useState(false);
+  const [resolving, setResolving] = useState(false);
+  const [pendingMergeRetry, setPendingMergeRetry] = useState(false);
+  const sawWorkingRef = useRef(false);
+  const onMergeRef = useRef(onMergeWorktree);
+  onMergeRef.current = onMergeWorktree;
 
   const isWorking = thread?.status === "working";
-  const busy = isWorking || gitAction != null;
+  const busy = isWorking || gitAction != null || resolving;
 
   // Clear per-thread state when the selected thread changes so a stale
   // error from row A never shows on row B.
@@ -1874,6 +1921,9 @@ export function GitTab({
     setRestorePending(false);
     setSync(null);
     setSyncing(false);
+    setResolving(false);
+    setPendingMergeRetry(false);
+    sawWorkingRef.current = false;
   }, [thread?.id]);
 
   // Relative ages tick (same 60s cadence as the sidebar).
@@ -1978,6 +2028,65 @@ export function GitTab({
     }
   };
 
+  const handleResolve = async () => {
+    if (!thread || !onStartRun || busy) return;
+    setResolving(true);
+    setCardError(null);
+    try {
+      let input: ConflictResolveInput = {
+        files: parseConflictFiles(conflictMessage || "").map((path) => ({
+          path,
+          content: "",
+          truncated: false,
+          binary: false,
+        })),
+        branch: thread.branch,
+      };
+      if (conflictContext) {
+        try {
+          const ctx = await conflictContext(thread.id);
+          if (ctx.files.length) {
+            input = ctx;
+          } else {
+            input = {
+              ...input,
+              branch: ctx.branch ?? input.branch,
+              baseBranch: ctx.baseBranch,
+              omitted: ctx.omitted,
+            };
+          }
+        } catch {
+          // Prompt still lists files from the MERGE_CONFLICT body.
+        }
+      }
+      await onStartRun(buildConflictResolvePrompt(input), thread.id);
+      setPendingMergeRetry(true);
+    } catch (err) {
+      const msg =
+        err instanceof Error && err.message
+          ? err.message
+          : "Could not start resolve turn";
+      setCardError(msg);
+    } finally {
+      setResolving(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!pendingMergeRetry) {
+      sawWorkingRef.current = false;
+      return;
+    }
+    if (thread?.status === "working") {
+      sawWorkingRef.current = true;
+      return;
+    }
+    if (!sawWorkingRef.current) return;
+    sawWorkingRef.current = false;
+    setPendingMergeRetry(false);
+    void runAction("merge", () => onMergeRef.current());
+  }, [pendingMergeRetry, thread?.status]);
+
   const statusLine = (() => {
     if (!thread) return "No thread selected";
     const provider = thread.provider;
@@ -2060,7 +2169,16 @@ export function GitTab({
               ? () => void openInEditor()
               : null
           }
-          onDismissConflict={() => setConflictMessage(null)}
+          onDismissConflict={() => {
+            setConflictMessage(null);
+            setPendingMergeRetry(false);
+            sawWorkingRef.current = false;
+          }}
+          onResolve={onStartRun ? () => void handleResolve() : null}
+          resolving={resolving || (pendingMergeRetry && isWorking)}
+          resolveLabel={
+            pendingMergeRetry && isWorking ? "Resolving…" : "Starting…"
+          }
           onSetup={() => void runAction("setup", () => onSetupWorktree())}
           onMerge={() => void runAction("merge", () => onMergeWorktree())}
           onSignOffMerge={() =>
@@ -2973,6 +3091,8 @@ export const AgentsPanel = memo(function AgentsPanel({
   onSelectThread,
   onSetupWorktree,
   onMergeWorktree,
+  onStartRun,
+  conflictContext,
   onRemoveWorktree,
   onViewChanges,
   listCheckpoints,
@@ -3115,6 +3235,8 @@ export const AgentsPanel = memo(function AgentsPanel({
           project={project}
           onSetupWorktree={onSetupWorktree}
           onMergeWorktree={onMergeWorktree}
+          onStartRun={onStartRun}
+          conflictContext={conflictContext}
           onRemoveWorktree={onRemoveWorktree}
           onViewChanges={onViewChanges}
           listCheckpoints={listCheckpoints}

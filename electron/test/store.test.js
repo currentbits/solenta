@@ -498,6 +498,46 @@ describe("Store", () => {
     assert.equal(junk.worktreeRetention, 10);
   });
 
+  it("keeps a valid setupCommand / quickActions and drops junk (#153)", () => {
+    const old = {
+      projects: [
+        {
+          id: "p-ok",
+          slug: "app",
+          name: "app",
+          path: "/tmp/app",
+          setupCommand: "  npm i  ",
+          quickActions: [
+            { id: "lint", name: "Lint", command: "npm run lint" },
+            { name: "", command: "echo skip" },
+            { id: "setup", name: "Install", command: "npm i" },
+          ],
+        },
+        {
+          id: "p-junk",
+          slug: "j",
+          name: "j",
+          path: "/tmp/j",
+          setupCommand: 12,
+          quickActions: "nope",
+        },
+      ],
+      threads: [],
+      messagesByThread: {},
+      workLogByThread: {},
+    };
+    fs.writeFileSync(filePath, JSON.stringify(old), "utf8");
+    const store = new Store(filePath);
+    const ok = store.getProjects().find((p) => p.id === "p-ok");
+    const junk = store.getProjects().find((p) => p.id === "p-junk");
+    assert.equal(ok.setupCommand, "npm i");
+    assert.equal(ok.quickActions.length, 2);
+    assert.equal(ok.quickActions[0].id, "lint");
+    assert.notEqual(ok.quickActions[1].id, "setup");
+    assert.equal("setupCommand" in junk, false);
+    assert.equal("quickActions" in junk, false);
+  });
+
   it("migrates old-shape threads missing session fields on load", () => {
     const old = {
       projects: [],
