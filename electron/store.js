@@ -962,6 +962,14 @@ function migrateThread(t) {
   const question = normalizePendingQuestion(t.pendingQuestion);
   if (question) next.pendingQuestion = question;
   else delete next.pendingQuestion;
+  if (
+    t.crossThreadInbound === "queue-only" ||
+    t.crossThreadInbound === "refuse"
+  ) {
+    next.crossThreadInbound = t.crossThreadInbound;
+  } else {
+    delete next.crossThreadInbound;
+  }
   return next;
 }
 

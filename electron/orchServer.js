@@ -20,9 +20,15 @@ const {
   releaseCrewTasks,
   setArchived,
   setSettled,
+  setQueued,
   renameThread,
   listThreads,
 } = require("./services.js");
+const {
+  decideCrossThreadSend,
+  attributedPrompt,
+  fromThreadMeta,
+} = require("./crossThread.js");
 
 const SERVER_NAME = "coder-threads";
 const CONFIG_NAME = "orch-server.json";
@@ -74,8 +80,12 @@ const INSTRUCTIONS =
   "in that order in the turn their answer starts. " +
   "A crew whose work is never landed produced nothing the user can see, and leaves " +
   "a worktree behind per worker — so always close the loop by asking. " +
-  "thread_send starts a run with your prompt on an " +
-  "existing thread. thread_status reports a thread's status and the first line of " +
+  "thread_send delivers a prompt to an existing thread and returns an outcome: " +
+  "delivered (started a turn), queued (held until that thread is idle), refused " +
+  "(the receiver's inbound policy is refuse), or undeliverable (archived, " +
+  "unattended/scheduled, unknown). Pass fromThreadId as YOUR OWN thread id so " +
+  "the receiver sees a card attributed to you. Mid-run sends are held, not " +
+  "injected. thread_status reports a thread's status and the first line of " +
   "its last assistant reply. Runs are asynchronous: send work, then continue. " +
   "When a worker you forked finishes (done or failed) you are woken on a new turn " +
   "with a notice; do not sit idle waiting for the user to relay that. " +
@@ -430,6 +440,37 @@ function createToolHandlers(deps) {
   }
 
   /**
+   * Cross-thread archive/stop stay human-gated in every permission mode
+   * (issue #551 / #322). Self-archive (no fromThreadId, or from === target)
+   * keeps the existing ungated path so a thread can still fold itself.
+   *
+   * @param {{ fromThreadId?: unknown, threadId?: unknown, projectId?: unknown, approved?: unknown }} args
+   * @param {string} action
+   */
+  function assertCrossThreadApproved(args, action) {
+    const fromId = args.fromThreadId != null ? String(args.fromThreadId) : "";
+    const targetId = String(args.threadId || "");
+    if (!fromId || fromId === targetId) return;
+    const self = store.getThread(fromId);
+    if (!self) {
+      throw new Error(`Unknown thread: ${fromId}`);
+    }
+    assertSameProject(self, args.projectId);
+    const auto =
+      typeof runner.isAutoTurn === "function" && runner.isAutoTurn(self.id);
+    if (args.approved === true && !auto) return;
+    throw new Error(
+      `${action} is the user's decision in every permission mode, including ` +
+        `Auto and Bypass. Ask first, then call again with approved:true in ` +
+        `the turn their answer starts.` +
+        (auto
+          ? " This turn was machine-delivered (nobody has answered yet), so" +
+            " approved:true is not true here however you set it."
+          : ""),
+    );
+  }
+
+  /**
    * Land a finished worker's branch on the CALLER's working tree, then delete
    * the worker's worktree and branch. Without this the crew's work never left
    * its worktree: 190 of 195 finished workers on the live store still held an
@@ -526,13 +567,88 @@ function createToolHandlers(deps) {
       throw new Error(`Unknown thread: ${args.threadId}`);
     }
     assertSameProject(thread, args.projectId);
-    // Re-dispatched worker: unarchive so the new run is visible again.
-    if (thread.orchWorker && thread.archived) {
+
+    let from = null;
+    if (args.fromThreadId) {
+      from = store.getThread(args.fromThreadId);
+      if (!from) {
+        throw new Error(`Unknown thread: ${args.fromThreadId}`);
+      }
+      assertSameProject(from, args.projectId);
+      if (String(from.id) === String(thread.id)) {
+        throw new Error("Cannot thread_send to yourself.");
+      }
+    }
+
+    const running =
+      (typeof runner.isRunning === "function" &&
+        runner.isRunning(thread.id)) ||
+      thread.status === "working";
+    const decision = decideCrossThreadSend({
+      target: thread,
+      from,
+      running,
+    });
+
+    if (
+      decision.outcome === "undeliverable" ||
+      decision.outcome === "refused"
+    ) {
+      return {
+        outcome: decision.outcome,
+        threadId: thread.id,
+        reason: decision.reason || decision.outcome,
+      };
+    }
+
+    if (decision.unarchive) {
       store.updateThread(args.threadId, { archived: false });
       store.save();
     }
-    await runner.startRun({ threadId: args.threadId, prompt: args.prompt });
-    return { threadId: args.threadId };
+
+    const fromMeta = fromThreadMeta(from);
+    const display = String(args.prompt);
+    const cliPrompt = attributedPrompt(fromMeta, display);
+
+    function holdInbound() {
+      setQueued(store, {
+        threadId: args.threadId,
+        prompt: display,
+        fromThread: fromMeta || undefined,
+        inbound: true,
+        posted: true,
+      });
+      if (typeof runner.appendInbound === "function") {
+        runner.appendInbound(args.threadId, {
+          text: display,
+          fromThread: fromMeta,
+        });
+      }
+      broadcastThreadsChanged();
+    }
+
+    if (decision.queue) {
+      holdInbound();
+      return { outcome: "queued", threadId: thread.id };
+    }
+
+    try {
+      await runner.startRun({
+        threadId: args.threadId,
+        prompt: cliPrompt,
+        displayPrompt: display,
+        fromThread: fromMeta,
+        fromInbound: true,
+      });
+    } catch (err) {
+      const msg = err && err.message ? String(err.message) : String(err);
+      if (/already active/i.test(msg)) {
+        holdInbound();
+        return { outcome: "queued", threadId: thread.id };
+      }
+      throw err;
+    }
+    return { outcome: "delivered", threadId: thread.id };
   }
 
   async function thread_status(args) {
@@ -768,6 +884,9 @@ function createToolHandlers(deps) {
 
   async function thread_archive(args) {
     requireOwnThread(args);
+    if (args.archived) {
+      assertCrossThreadApproved(args, "Archiving another thread");
+    }
     const updated = setArchived(store, {
       threadId: args.threadId,
       archived: args.archived,
@@ -806,6 +925,7 @@ function createToolHandlers(deps) {
 
   async function thread_stop(args) {
     requireOwnThread(args);
+    assertCrossThreadApproved(args, "Stopping another thread");
     await runner.stopRun({ threadId: args.threadId });
     return { threadId: args.threadId };
   }
@@ -961,13 +1081,18 @@ function buildMcpServer(sdk, handlers) {
     "thread_send",
     {
       description:
-        "Start a run with prompt on an existing thread. projectId is YOUR OWN project id " +
-        "(stated at the end of your prompt); the thread must belong to it. Rejects unknown " +
-        "threads and threads in another project.",
+        "Deliver a prompt to an existing thread. Returns { outcome, threadId, reason? } " +
+        "where outcome is delivered (a turn started), queued (held until that thread is " +
+        "idle), refused (its inbound policy is refuse), or undeliverable (archived " +
+        "non-worker, unattended/scheduled). Pass fromThreadId as YOUR OWN thread id so " +
+        "the receiver sees a card attributed to you with a link back. Mid-run sends " +
+        "are held, not injected into the live turn. projectId is YOUR OWN; the target " +
+        "must belong to it.",
       inputSchema: {
         threadId: z.string().min(1),
         projectId: z.string().min(1),
         prompt: z.string().min(1),
+        fromThreadId: z.string().min(1).optional(),
       },
     },
     async (args) => json(await handlers.thread_send(args)),
@@ -979,13 +1104,17 @@ function buildMcpServer(sdk, handlers) {
       description:
         "Archive or unarchive a thread in your project. archived:true folds " +
         "it out of Active (and retires a kept-alive CLI, matching the " +
-        "sidebar). projectId is YOUR OWN project id (stated at the end of " +
-        "your prompt); the thread must belong to it. Rejects unknown threads " +
-        "and threads in another project.",
+        "sidebar). Archiving ANOTHER thread (fromThreadId !== threadId) is " +
+        "the user's decision in every permission mode: ask, then pass " +
+        "approved:true. projectId is YOUR OWN project id (stated at the end " +
+        "of your prompt); the thread must belong to it. Rejects unknown " +
+        "threads and threads in another project.",
       inputSchema: {
         threadId: z.string().min(1),
         projectId: z.string().min(1),
         archived: z.boolean(),
+        fromThreadId: z.string().min(1).optional(),
+        approved: z.boolean().optional(),
       },
     },
     async (args) => json(await handlers.thread_archive(args)),
@@ -1014,12 +1143,16 @@ function buildMcpServer(sdk, handlers) {
     {
       description:
         "Stop the run on an existing thread (same as the UI stop). " +
+        "Stopping ANOTHER thread (fromThreadId !== threadId) is the user's " +
+        "decision in every permission mode: ask, then pass approved:true. " +
         "projectId is YOUR OWN project id (stated at the end of your " +
         "prompt); the thread must belong to it. Rejects unknown threads and " +
         "threads in another project.",
       inputSchema: {
         threadId: z.string().min(1),
         projectId: z.string().min(1),
+        fromThreadId: z.string().min(1).optional(),
+        approved: z.boolean().optional(),
       },
     },
     async (args) => json(await handlers.thread_stop(args)),

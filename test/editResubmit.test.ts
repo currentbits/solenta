@@ -47,6 +47,19 @@ describe("isEditableUserMessage", () => {
       false,
     );
   });
+
+  it("is false for a cross-thread inbound card", () => {
+    assert.equal(
+      isEditableUserMessage(
+        {
+          ...m({ id: "in1", role: "user", text: "from lead" }),
+          fromThread: { id: "lead", title: "Lead" },
+        },
+        "idle",
+      ),
+      false,
+    );
+  });
 });
 
 describe("rewindDroppedCount", () => {

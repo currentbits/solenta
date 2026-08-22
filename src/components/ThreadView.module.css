@@ -469,6 +469,24 @@ button.project:focus-visible {
   color: var(--danger);
 }
 
+.menuInbound {
+  padding-top: 6px;
+  margin-top: 4px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.menuInboundLabel {
+  padding: 6px 12px 2px;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.menuItem[data-active="true"] {
+  font-weight: 600;
+}
+
 .menuItemDanger:hover {
   background: rgba(248, 113, 113, 0.12);
 }
@@ -1789,6 +1807,33 @@ a.btn {
   display: flex;
   justify-content: flex-end;
   padding: 2px 0;
+}
+
+.messageInbound {
+  display: flex;
+  justify-content: flex-start;
+  padding: 2px 0;
+}
+
+.inboundCard {
+  max-width: min(72ch, 85%);
+  padding: 10px 14px;
+  border-radius: 4px 14px 14px 14px;
+  background: var(--card);
+  border: 1px solid var(--border-soft);
+}
+
+.inboundFrom {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.inboundBody {
+  white-space: pre-wrap;
+  font-size: 13.5px;
+  line-height: 1.55;
+  user-select: text;
 }
 
 .userBubbleWrap {

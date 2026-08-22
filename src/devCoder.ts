@@ -3014,6 +3014,17 @@ function buildDevCoder(): CoderApi {
       async setMuted(input: { threadId: string; muted: boolean }) {
         return patchThread(input.threadId, { muted: input.muted });
       },
+      async setCrossThreadInbound(input: {
+        threadId: string;
+        policy: "accept" | "queue-only" | "refuse";
+      }) {
+        return patchThread(input.threadId, {
+          crossThreadInbound:
+            input.policy === "queue-only" || input.policy === "refuse"
+              ? input.policy
+              : undefined,
+        });
+      },
       async setQuotaWaitAutoResume(input: {
         threadId: string;
         enabled: boolean | null;

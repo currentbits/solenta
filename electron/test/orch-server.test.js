@@ -127,8 +127,10 @@ function makeDeps() {
   const retired = [];
   const asked = [];
   const broadcasts = [];
+  const inbounds = [];
+  const store = makeFakeStore();
   const deps = {
-    store: makeFakeStore(),
+    store,
     runner: {
       startRun: async (input) => {
         runs.push(input);
@@ -144,6 +146,13 @@ function makeDeps() {
       askUser: (input) => {
         asked.push(input);
         return { asked: true, questions: input.questions.length };
+      },
+      isRunning: (id) => {
+        const t = store.getThread(id);
+        return Boolean(t && t.status === "working");
+      },
+      appendInbound: (id, payload) => {
+        inbounds.push({ threadId: id, ...payload });
       },
     },
     forkThread: (store, input) => {
@@ -165,6 +174,7 @@ function makeDeps() {
     retired,
     asked,
     broadcasts,
+    inbounds,
   };
   return deps;
 }
@@ -185,6 +195,8 @@ describe("orch-server tool handlers", () => {
     assert.match(INSTRUCTIONS, /thread_settle/);
     assert.match(INSTRUCTIONS, /thread_stop/);
     assert.match(INSTRUCTIONS, /thread_rename/);
+    assert.match(INSTRUCTIONS, /fromThreadId/);
+    assert.match(INSTRUCTIONS, /delivered \(started a turn\)/);
     assert.doesNotMatch(INSTRUCTIONS, /poll thread_status until/);
   });
 
@@ -402,13 +414,179 @@ describe("orch-server tool handlers", () => {
   it("thread_send starts a run; rejects unknown thread", async () => {
     const deps = makeDeps();
     const h = createToolHandlers(deps);
-    const out = await h.thread_send({ threadId: "t2", projectId: "p1", prompt: "ping" });
-    assert.deepEqual(out, { threadId: "t2" });
-    assert.deepEqual(deps.runs, [{ threadId: "t2", prompt: "ping" }]);
+    const out = await h.thread_send({ threadId: "t1", projectId: "p1", prompt: "ping" });
+    assert.equal(out.outcome, "delivered");
+    assert.equal(out.threadId, "t1");
+    assert.equal(deps.runs.length, 1);
+    assert.equal(deps.runs[0].threadId, "t1");
+    assert.equal(deps.runs[0].prompt, "ping");
     await assert.rejects(
       () => h.thread_send({ threadId: "ghost", projectId: "p1", prompt: "x" }),
       /Unknown thread: ghost/,
     );
+  });
+
+  it("thread_send queues on a running thread instead of starting (issue #551)", async () => {
+    const deps = makeDeps();
+    const h = createToolHandlers(deps);
+    const out = await h.thread_send({
+      threadId: "t2",
+      projectId: "p1",
+      fromThreadId: "t1",
+      prompt: "steer left",
+    });
+    assert.deepEqual(out, { outcome: "queued", threadId: "t2" });
+    assert.equal(deps.runs.length, 0);
+    assert.equal(deps.store.getThread("t2").queued.prompt, "steer left");
+    assert.equal(deps.store.getThread("t2").queued.inbound, true);
+    assert.deepEqual(deps.inbounds, [
+      {
+        threadId: "t2",
+        text: "steer left",
+        fromThread: { id: "t1", title: "First" },
+      },
+    ]);
+  });
+
+  it("thread_send queue-only holds on an idle thread without starting", async () => {
+    const deps = makeDeps();
+    deps.store.getThread("t1").crossThreadInbound = "queue-only";
+    const h = createToolHandlers(deps);
+    const out = await h.thread_send({
+      threadId: "t1",
+      projectId: "p1",
+      fromThreadId: "t2",
+      prompt: "later",
+    });
+    assert.equal(out.outcome, "queued");
+    assert.equal(deps.runs.length, 0);
+    assert.equal(deps.store.getThread("t1").queued.inbound, true);
+  });
+
+  it("thread_send refuses when the receiver's inbound policy is refuse", async () => {
+    const deps = makeDeps();
+    deps.store.getThread("t1").crossThreadInbound = "refuse";
+    const h = createToolHandlers(deps);
+    const out = await h.thread_send({
+      threadId: "t1",
+      projectId: "p1",
+      fromThreadId: "t2",
+      prompt: "hi",
+    });
+    assert.deepEqual(out, {
+      outcome: "refused",
+      threadId: "t1",
+      reason: "inbound refuse",
+    });
+    assert.equal(deps.runs.length, 0);
+  });
+
+  it("thread_send reports archived non-workers as undeliverable", async () => {
+    const deps = makeDeps();
+    deps.store.threads.push({
+      id: "a1",
+      archived: true,
+      projectId: "p1",
+      title: "Old",
+    });
+    const h = createToolHandlers(deps);
+    const out = await h.thread_send({
+      threadId: "a1",
+      projectId: "p1",
+      fromThreadId: "t1",
+      prompt: "x",
+    });
+    assert.equal(out.outcome, "undeliverable");
+    assert.equal(out.reason, "archived");
+    assert.equal(deps.runs.length, 0);
+    assert.equal(deps.store.getThread("a1").archived, true);
+  });
+
+  it("thread_send attributes the delivered prompt to the sender", async () => {
+    const deps = makeDeps();
+    const h = createToolHandlers(deps);
+    const out = await h.thread_send({
+      threadId: "t1",
+      projectId: "p1",
+      fromThreadId: "t2",
+      prompt: "the schema landed",
+    });
+    assert.equal(out.outcome, "delivered");
+    assert.equal(
+      deps.runs[0].prompt,
+      '[from thread t2 ("Second")]\nthe schema landed',
+    );
+    assert.equal(deps.runs[0].displayPrompt, "the schema landed");
+    assert.deepEqual(deps.runs[0].fromThread, { id: "t2", title: "Second" });
+  });
+
+  it("thread_send does not deliver to or from an unattended thread", async () => {
+    const deps = makeDeps();
+    deps.store.getThread("t1").automationId = "auto-1";
+    const h = createToolHandlers(deps);
+    const asReceiver = await h.thread_send({
+      threadId: "t1",
+      projectId: "p1",
+      fromThreadId: "t2",
+      prompt: "x",
+    });
+    assert.equal(asReceiver.outcome, "undeliverable");
+    deps.store.getThread("t1").automationId = null;
+    deps.store.getThread("t2").automationId = "auto-1";
+    const asSender = await h.thread_send({
+      threadId: "t1",
+      projectId: "p1",
+      fromThreadId: "t2",
+      prompt: "x",
+    });
+    assert.equal(asSender.reason, "unattended sender");
+    assert.equal(deps.runs.length, 0);
+  });
+
+  it("thread_archive of another thread requires approved:true", async () => {
+    const deps = makeDeps();
+    const h = createToolHandlers(deps);
+    await assert.rejects(
+      () =>
+        h.thread_archive({
+          threadId: "t2",
+          projectId: "p1",
+          archived: true,
+          fromThreadId: "t1",
+        }),
+      /user's decision/,
+    );
+    assert.equal(deps.store.getThread("t2").archived, undefined);
+    const out = await h.thread_archive({
+      threadId: "t2",
+      projectId: "p1",
+      archived: true,
+      fromThreadId: "t1",
+      approved: true,
+    });
+    assert.equal(out.archived, true);
+  });
+
+  it("thread_stop of another thread requires approved:true", async () => {
+    const deps = makeDeps();
+    const h = createToolHandlers(deps);
+    await assert.rejects(
+      () =>
+        h.thread_stop({
+          threadId: "t2",
+          projectId: "p1",
+          fromThreadId: "t1",
+        }),
+      /user's decision/,
+    );
+    assert.equal(deps.stopped.length, 0);
+    await h.thread_stop({
+      threadId: "t2",
+      projectId: "p1",
+      fromThreadId: "t1",
+      approved: true,
+    });
+    assert.deepEqual(deps.stopped, [{ threadId: "t2" }]);
   });
 
   // Issue #109: an agent in one project forked a thread it picked off

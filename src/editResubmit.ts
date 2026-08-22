@@ -13,10 +13,12 @@ import type { ChatMessage, ThreadStatus } from "./shared/ipc";
 
 /** True when this bubble can open the edit-and-resubmit editor. */
 export function isEditableUserMessage(
-  message: Pick<ChatMessage, "role">,
+  message: Pick<ChatMessage, "role" | "fromThread">,
   status: ThreadStatus,
 ): boolean {
-  return message.role === "user" && status !== "working";
+  return (
+    message.role === "user" && status !== "working" && !message.fromThread
+  );
 }
 
 /**

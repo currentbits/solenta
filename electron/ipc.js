@@ -514,6 +514,11 @@ const IPC_HANDLERS = {
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     return updated;
   },
+  "threads:setCrossThreadInbound": async (ctx, input) => {
+    const updated = services.setCrossThreadInbound(ctx.store, input);
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    return updated;
+  },
   "threads:setQuotaWaitAutoResume": async (ctx, input) => {
     const updated = services.setQuotaWaitAutoResume(ctx.store, input);
     if (ctx.runner && typeof ctx.runner.refreshQuotaWait === "function") {

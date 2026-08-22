@@ -1514,6 +1514,14 @@ function createRunner(opts) {
    * (issue #314). take-and-clear so the same prompt cannot fire twice.
    * On throw, put it back with error so the renderer can Retry.
    */
+  function formatQueuedPrompt(queued) {
+    if (queued && queued.fromThread && queued.fromThread.id) {
+      const { attributedPrompt } = require("./crossThread.js");
+      return attributedPrompt(queued.fromThread, queued.prompt);
+    }
+    return queued && queued.prompt != null ? String(queued.prompt) : "";
+  }
+
   async function drainQueued(threadId) {
     let taken;
     try {
@@ -1525,8 +1533,13 @@ function createRunner(opts) {
     try {
       await startRun({
         threadId,
-        prompt: taken.prompt,
+        prompt: formatQueuedPrompt(taken),
+        displayPrompt: taken.prompt,
         attachments: taken.attachments,
+        fromThread: taken.fromThread || null,
+        skipUserAppend: taken.posted === true,
+        fromInbound: taken.inbound === true,
+        fromQueue: true,
       });
     } catch (err) {
       store.updateThread(threadId, {
@@ -1544,7 +1557,44 @@ function createRunner(opts) {
   function maybeDrainQueued(threadId) {
     const thread = store.getThread(threadId);
     if (!thread || thread.status === "working") return;
+    const queued = thread.queued;
+    if (queued && queued.inbound) {
+      const { normalizeInboundPolicy } = require("./crossThread.js");
+      const policy = normalizeInboundPolicy(thread.crossThreadInbound);
+      if (policy === "queue-only") return;
+      if (policy === "refuse") {
+        try {
+          services.setQueued(store, { threadId, prompt: null });
+        } catch {
+          /* ignore */
+        }
+        return;
+      }
+    }
     void drainQueued(threadId);
+  }
+
+  /**
+   * Persist an inbound cross-thread card in the transcript now (issue #551),
+   * so the receiver sees it while the current turn is still running.
+   * @param {string} threadId
+   * @param {{ text: string, fromThread?: { id: string, title?: string } | null }} payload
+   */
+  function appendInbound(threadId, payload) {
+    if (!store.getThread(threadId)) return;
+    appendMessage(
+      threadId,
+      "user",
+      String(payload && payload.text ? payload.text : ""),
+      null,
+      null,
+      null,
+      payload && payload.fromThread
+        ? { fromThread: payload.fromThread }
+        : null,
+    );
+    pushDetail(threadId);
+    pushThreadsChanged();
   }
 
   /**
@@ -1972,6 +2022,7 @@ function createRunner(opts) {
    * @param {string | null} [runId]
    * @param {object | null} [tool]
    * @param {{ kind: string, path: string, name: string }[] | null} [attachments]
+   * @param {{ fromThread?: { id: string, title?: string } | null }} [extra]
    */
   function appendMessage(
     threadId,
@@ -1980,8 +2031,9 @@ function createRunner(opts) {
     runId = null,
     tool = null,
     attachments = null,
+    extra = null,
   ) {
-    /** @type {{ id: string, role: string, text: string, createdAt: number, runId?: string, tool?: object, attachments?: object[] }} */
+    /** @type {{ id: string, role: string, text: string, createdAt: number, runId?: string, tool?: object, attachments?: object[], fromThread?: { id: string, title: string } }} */
     const msg = {
       id: randomUUID(),
       role,
@@ -1991,6 +2043,13 @@ function createRunner(opts) {
     if (runId) msg.runId = runId;
     if (tool) msg.tool = tool;
     if (attachments && attachments.length) msg.attachments = attachments;
+    if (extra && extra.fromThread && extra.fromThread.id) {
+      msg.fromThread = {
+        id: String(extra.fromThread.id),
+        title:
+          extra.fromThread.title != null ? String(extra.fromThread.title) : "",
+      };
+    }
     store.appendMessage(threadId, msg);
     // Every adapter mints its tool messages here, so this is the one place
     // that sees a tool call begin. Kimi/opencode also emit already-complete
@@ -5078,13 +5137,19 @@ function createRunner(opts) {
   }
 
   async function startRun(input) {
-    const { threadId, prompt } = input;
-    const attachments = sanitizeAttachments(input.attachments);
+    const { threadId } = input;
+    let prompt = input.prompt;
+    let attachments = sanitizeAttachments(input.attachments);
+    let displayPrompt =
+      input.displayPrompt != null ? input.displayPrompt : input.prompt;
+    let fromThread = input.fromThread || null;
+    const skipUserAppend = input.skipUserAppend === true;
     // Side question (issue #471): intercept BEFORE the "already active"
     // throw so a `/btw` typed during a run is not bounced and is not
     // queued as the next prompt. fromNotice is skipped so a worker
-    // quoting `/btw` cannot open a card on itself.
-    if (!input.fromNotice) {
+    // quoting `/btw` cannot open a card on itself. fromInbound is skipped
+    // so a cross-thread body that happens to start with `/btw` is data.
+    if (!input.fromNotice && !input.fromInbound) {
       const question = btw.parseBtwCommand(prompt);
       if (question) {
         const thread = await startBtw({ threadId, question });
@@ -5119,7 +5184,11 @@ function createRunner(opts) {
     // on a machine-delivered turn — a worker quoting the command back would
     // otherwise fan out again — and the cheap `/` test keeps the provider
     // probe (`which`) off the ordinary send path.
-    if (!input.fromNotice && String(prompt).trimStart().startsWith("/")) {
+    if (
+      !input.fromNotice &&
+      !input.fromInbound &&
+      String(prompt).trimStart().startsWith("/")
+    ) {
       const cmd = orchcommands.parseOrchCommand(prompt, {
         installed: listProviders()
           .filter((p) => p.available)
@@ -5134,6 +5203,26 @@ function createRunner(opts) {
           prompt,
           attachments,
         );
+      }
+    }
+
+    // Fold a held inbound (or leftover follow-up) into this turn so a
+    // queue-only message sitting on an idle thread is actually read.
+    // After intercepts: /btw, ask, and /handoff must not consume the queue.
+    if (!input.fromQueue && !input.fromNotice && !input.fromQuotaWait) {
+      let taken = null;
+      try {
+        taken = services.takeQueued(store, { threadId });
+      } catch {
+        taken = null;
+      }
+      if (taken && taken.prompt) {
+        const takenCli = formatQueuedPrompt(taken);
+        prompt = prompt ? `${takenCli}\n\n${prompt}` : takenCli;
+        attachments = [
+          ...(taken.attachments || []),
+          ...attachments,
+        ];
       }
     }
 
@@ -5256,13 +5345,25 @@ function createRunner(opts) {
     // Transcript stores the RAW user prompt. The hand-off / rewind context
     // block (if any) is CLI-only — applied once below when no sessionId
     // exists yet. A quota-wait resume is the SAME turn: do not append again.
-    if (!input.fromQuotaWait) {
-      appendMessage(threadId, "user", prompt, runId, null, attachments);
+    // skipUserAppend: inbound card was already posted while the previous
+    // turn was running (issue #551).
+    if (!input.fromQuotaWait && !skipUserAppend) {
+      appendMessage(
+        threadId,
+        "user",
+        displayPrompt != null ? displayPrompt : prompt,
+        runId,
+        null,
+        attachments,
+        fromThread ? { fromThread } : null,
+      );
     }
 
     let title = thread.title;
     if (title === "New Thread") {
-      const firstLine = String(prompt).split(/\r?\n/)[0].trim();
+      const firstLine = String(displayPrompt || prompt)
+        .split(/\r?\n/)[0]
+        .trim();
       const max = services.THREAD_TITLE_MAX || 60;
       title = firstLine.slice(0, max) || "New Thread";
     }
@@ -5809,6 +5910,7 @@ function createRunner(opts) {
     clearQuestion,
     disposeClaudeSession,
     deliverNotice,
+    appendInbound,
     checkStalls,
     drainQueued,
     refreshDetail,

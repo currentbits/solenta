@@ -447,7 +447,18 @@ export interface ThreadInfo {
      * Cleared on the next attempt.
      */
     error?: string | null;
+    /** Set when the queued blob came from another thread (issue #551). */
+    fromThread?: { id: string; title: string };
+    /** True when every line in the blob is inbound (no user follow-up mixed in). */
+    inbound?: boolean;
+    /** True when the inbound card is already in the transcript. */
+    posted?: boolean;
   } | null;
+  /**
+   * What this thread does with messages from other threads (issue #551).
+   * Absent / unset = accept. Consent is the receiver's.
+   */
+  crossThreadInbound?: CrossThreadInbound;
   /**
    * Epoch ms of the last time the user LOOKED at this thread. Stamped by the
    * main process inside threads.get — selecting a thread IS visiting it; no
@@ -887,6 +898,9 @@ export interface AttachmentInfo {
   name: string;
 }
 
+/** Per-thread inbound policy for cross-thread messages (issue #551). */
+export type CrossThreadInbound = "accept" | "queue-only" | "refuse";
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant" | "event" | "tool";
@@ -899,6 +913,12 @@ export interface ChatMessage {
   tool?: ToolCallInfo;
   /** Images/folders the user attached (role "user" only). */
   attachments?: AttachmentInfo[];
+  /**
+   * Cross-thread inbound (issue #551). Present when this user row was
+   * delivered by another thread's thread_send, not typed here. The
+   * transcript renders it as a from-thread card with a link back.
+   */
+  fromThread?: { id: string; title: string };
 }
 
 /** Cumulative session usage across turns of a thread. */
@@ -2347,6 +2367,14 @@ export interface CoderApi {
     setSnoozed(input: { threadId: string; until: number | null }): Promise<ThreadInfo>;
     /** Mute/unmute desktop notifications for one thread. Never bumps updatedAt. */
     setMuted(input: { threadId: string; muted: boolean }): Promise<ThreadInfo>;
+    /**
+     * Per-thread inbound policy for messages from other threads (issue #551).
+     * accept / queue-only / refuse. Never bumps updatedAt.
+     */
+    setCrossThreadInbound(input: {
+      threadId: string;
+      policy: CrossThreadInbound;
+    }): Promise<ThreadInfo>;
     /**
      * Per-thread quota-wait auto-resume override (#462). true/false pins
      * the thread; null inherits the global settings.quotaWaitAutoResume.

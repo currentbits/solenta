@@ -95,6 +95,7 @@ function msg(over: Partial<ChatMessage> & Pick<ChatMessage, "role" | "text">): C
     createdAt: over.createdAt ?? 1,
     runId: over.runId ?? null,
     tool: over.tool,
+    fromThread: over.fromThread,
   };
 }
 
@@ -163,6 +164,7 @@ function view(props: {
   onFileSuggestion?: (s: WorkSuggestion) => void | Promise<void>;
   onDismissSuggestion?: (s: WorkSuggestion) => void | Promise<void>;
   revealMessageId?: string | null;
+  onSelectThread?: (id: string) => void;
 }) {
   return (
     <ThreadView
@@ -208,6 +210,7 @@ function view(props: {
       onFileSuggestion={props.onFileSuggestion}
       onDismissSuggestion={props.onDismissSuggestion}
       revealMessageId={props.revealMessageId}
+      onSelectThread={props.onSelectThread}
     />
   );
 }
@@ -415,6 +418,28 @@ describe("ThreadView message roles", () => {
     assert.ok(html.includes("Bash"), "tool name must show");
     assert.ok(html.includes("Bash: npm test"), "tool summary must show");
     assert.ok(html.includes("toolCard") || html.includes("toolHeader"), "tool card chrome");
+  });
+
+  it("renders a cross-thread inbound as a from-thread card, not a user bubble (issue #551)", () => {
+    const html = render({
+      onSelectThread: () => {},
+      detail: detail({
+        messages: [
+          msg({
+            id: "in1",
+            role: "user",
+            text: "the schema landed",
+            createdAt: 10,
+            fromThread: { id: "lead-1", title: "Lead" },
+          }),
+        ],
+      }),
+    });
+    assert.ok(html.includes("data-inbound-card"), "inbound card attr");
+    assert.ok(html.includes("data-inbound-from=\"lead-1\""), "sender id");
+    assert.ok(html.includes("the schema landed"), "body");
+    assert.ok(html.includes("Lead"), "sender title");
+    assert.ok(!html.includes("userBubble"), "must not look like a typed user turn");
   });
 
   it("opens a worktree path from a Read tool-card header", async () => {

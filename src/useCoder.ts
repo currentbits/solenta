@@ -295,6 +295,10 @@ export interface UseCoderResult {
    */
   setSnoozed: (threadId: string, until: number | null) => Promise<void>;
   setMuted: (threadId: string, muted: boolean) => Promise<void>;
+  setCrossThreadInbound: (
+    threadId: string,
+    policy: "accept" | "queue-only" | "refuse",
+  ) => Promise<void>;
   setQuotaWaitAutoResume: (
     threadId: string,
     enabled: boolean | null,
@@ -1609,6 +1613,30 @@ export function useCoder(): UseCoderResult {
     [api, applyThreads],
   );
 
+  const setCrossThreadInbound = useCallback(
+    async (
+      threadId: string,
+      policy: "accept" | "queue-only" | "refuse",
+    ) => {
+      try {
+        const thread = await api.threads.setCrossThreadInbound({
+          threadId,
+          policy,
+        });
+        applyThreads(
+          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
+        );
+        setDetail((prev) =>
+          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
+        );
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+      }
+    },
+    [api, applyThreads],
+  );
+
   const setQuotaWaitAutoResume = useCallback(
     async (threadId: string, enabled: boolean | null) => {
       try {
@@ -2781,6 +2809,7 @@ export function useCoder(): UseCoderResult {
     setPinned,
     setSnoozed,
     setMuted,
+    setCrossThreadInbound,
     setQuotaWaitAutoResume,
     resumeQuotaWait,
     renameThread,
