@@ -256,6 +256,12 @@ export function EditProjectModal({
               readOnly
               disabled
             />
+            {project.scm?.kind === "jj" ? (
+              <p className={styles.note} data-scm-detail="">
+                {project.scm.detail ||
+                  "Jujutsu is unsupported. Worktrees and diffs still use git."}
+              </p>
+            ) : null}
           </div>
           <div className={styles.field}>
             <label

@@ -676,6 +676,20 @@
   line-height: 1.45;
 }
 
+.scmBadge {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  padding: 1px 7px;
+  border-radius: var(--radius-pill);
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.03em;
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.12);
+}
+
 .checkboxLabel {
   display: flex;
   align-items: center;

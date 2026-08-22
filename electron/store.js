@@ -848,8 +848,9 @@ function migrateProject(p) {
   } else {
     next.worktreeRetention = DEFAULT_WORKTREE_RETENTION;
   }
-  // Derived at list time (#610). Never persist a data URL.
+  // Derived at list time (#610 / #521). Never persist a data URL or scm probe.
   delete next.iconUrl;
+  delete next.scm;
   if (typeof next.iconPath === "string" && next.iconPath.trim()) {
     next.iconPath = next.iconPath.trim().replace(/\\/g, "/");
   } else {

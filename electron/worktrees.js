@@ -18,6 +18,7 @@ const { DEFAULT_WORKTREE_RETENTION } = require("./store.js");
 // Legacy shared annotation. New threads write `.solenta/review-itinerary/<threadId>.json`
 // (#621); this path only conflicts for in-flight branches still using it.
 const { REVIEW_ITINERARY_FILE } = require("./reviewItinerary.js");
+const { detectScm, JJ_DETACHED_HEAD_ERROR } = require("./scm.js");
 
 /** @type {typeof execFile} */
 let execFileImpl = execFile;
@@ -306,6 +307,10 @@ function gitExecThrowAsync(project, cwd, args, opts) {
 function defaultBranch(projectPath) {
   const branch = gitOut(projectPath, ["branch", "--show-current"]);
   if (!branch) {
+    const scm = detectScm(projectPath);
+    if (scm && scm.kind === "jj") {
+      throw new Error(JJ_DETACHED_HEAD_ERROR);
+    }
     throw new Error(
       "Project checkout is detached HEAD; check out a branch before merging",
     );
@@ -322,6 +327,10 @@ function defaultBranch(projectPath) {
 async function defaultBranchAsync(projectPath) {
   const branch = await gitOutAsync(projectPath, ["branch", "--show-current"]);
   if (!branch) {
+    const scm = detectScm(projectPath);
+    if (scm && scm.kind === "jj") {
+      throw new Error(JJ_DETACHED_HEAD_ERROR);
+    }
     throw new Error(
       "Project checkout is detached HEAD; check out a branch before merging",
     );

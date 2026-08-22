@@ -14,6 +14,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
+const { attachScm } = require("./scm.js");
 
 const ICON_EXTENSIONS = [
   "svg",
@@ -474,20 +475,22 @@ function iconDataUrlFor(root, iconPath) {
 }
 
 /**
- * Clone a stored project with a derived iconUrl. Never mutates the store
- * row and never writes iconUrl onto it.
+ * Clone a stored project with derived iconUrl + scm. Never mutates the
+ * store row and never writes those fields onto it.
  * @param {object} project
  */
 function presentProject(project) {
   if (!project || typeof project !== "object") return project;
   const iconUrl = iconDataUrlFor(project.path, project.iconPath);
-  if (!iconUrl) {
-    if (!project.iconUrl) return project;
-    const next = { ...project };
+  /** @type {object} */
+  let next = project;
+  if (iconUrl) {
+    next = { ...next, iconUrl };
+  } else if (next.iconUrl) {
+    next = { ...next };
     delete next.iconUrl;
-    return next;
   }
-  return { ...project, iconUrl };
+  return attachScm(next);
 }
 
 module.exports = {

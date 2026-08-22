@@ -17,6 +17,7 @@ const { normalizeCommand, runVerifyCommand } = require("./verify.js");
 const { resolveSandbox } = require("./sandbox.js");
 const btw = require("./btw.js");
 const { DEFAULT_WORKTREE_RETENTION } = require("./store.js");
+const { detectScm, JJ_NON_COLOCATED_ADD_ERROR } = require("./scm.js");
 const {
   presentProject,
   normalizeIconPath,
@@ -155,6 +156,12 @@ async function isInsideWorkTree(cwd) {
  */
 async function ensureGitWorkTree(resolved) {
   if (await isInsideWorkTree(resolved)) return;
+  // Non-colocated jj has no Git work tree. `git init` next to `.jj` would
+  // create a second, empty git repo and look colocated (#521).
+  const scm = detectScm(resolved);
+  if (scm && scm.kind === "jj" && scm.colocated === false) {
+    throw new Error(JJ_NON_COLOCATED_ADD_ERROR);
+  }
   try {
     await gitOutAsync(resolved, ["init", "-q"]);
   } catch (err) {

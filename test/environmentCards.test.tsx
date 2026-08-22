@@ -67,6 +67,7 @@ function summary(over: Partial<ThreadSummaryInfo> = {}): ThreadSummaryInfo {
 
 function tab(opts: {
   thread?: ThreadInfo | null;
+  project?: ProjectInfo;
   repoInfo?: GitRepoInfo;
   onRepoInfo?: (id: string) => Promise<GitRepoInfo>;
   onPull?: (id: string) => Promise<GitPullResult>;
@@ -81,7 +82,7 @@ function tab(opts: {
   return (
     <GitTab
       thread={opts.thread === undefined ? thread() : opts.thread}
-      project={project}
+      project={opts.project ?? project}
       onSetupWorktree={async () => {}}
       onMergeWorktree={async () => {}}
       onRemoveWorktree={async () => {}}
@@ -101,6 +102,38 @@ function tab(opts: {
     />
   );
 }
+
+describe("scm card (#521)", () => {
+  const jjProject: ProjectInfo = {
+    ...project,
+    scm: {
+      kind: "jj",
+      colocated: true,
+      support: "unsupported",
+      detail: "Jujutsu colocated repo. Worktrees and diffs use git.",
+    },
+  };
+
+  it("badges a jj project as unsupported", async () => {
+    const m = await mount(tab({ project: jjProject }));
+    await m.flush();
+    const badge = m.query("[data-scm-badge]");
+    assert.ok(badge, "scm badge");
+    assert.equal(badge!.getAttribute("data-scm-badge"), "unsupported");
+    assert.equal((badge!.textContent || "").trim(), "jj · unsupported");
+    const detail = m.query("[data-scm-detail]");
+    assert.ok(detail, "detail line");
+    assert.match(detail!.textContent || "", /Jujutsu colocated/);
+    m.unmount();
+  });
+
+  it("is hidden on a plain git project", async () => {
+    const m = await mount(tab({}));
+    await m.flush();
+    assert.equal(m.query("[data-scm-card]"), null);
+    m.unmount();
+  });
+});
 
 describe("repository card", () => {
   it("links owner/repo to the origin web URL", async () => {

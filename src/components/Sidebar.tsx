@@ -2228,6 +2228,15 @@ export const Sidebar = memo(function Sidebar({
                   >
                     <ProjectIcon url={p.iconUrl} size={16} />
                     {p.slug || p.name}
+                    {p.scm?.kind === "jj" ? (
+                      <span
+                        className={styles.scmChip}
+                        data-scm-badge={p.scm.support}
+                        title={p.scm.detail || "Jujutsu"}
+                      >
+                        jj
+                      </span>
+                    ) : null}
                   </button>
                   {onEditProject && (
                     <button

@@ -51,6 +51,25 @@ export interface ProjectInfo {
    * host is win32. Never persisted. Failed checks do not reject the add.
    */
   windowsDoctor?: WindowsDoctorReport;
+  /**
+   * Derived at list time (#521). Never persisted. Absent on remotes, on
+   * plain git checkouts (the assumed default), and when the path cannot
+   * be probed. Present only for Jujutsu so the UI can badge unsupported.
+   */
+  scm?: ProjectScmInfo;
+}
+
+/** Source-control probe for a local project checkout (issue #521). */
+export type ProjectScmKind = "git" | "jj";
+export type ProjectScmSupport = "supported" | "unsupported";
+
+export interface ProjectScmInfo {
+  kind: ProjectScmKind;
+  support: ProjectScmSupport;
+  /** True when `.jj` and `.git` share the working copy. Only for kind === "jj". */
+  colocated?: boolean;
+  /** One-line reason when unsupported. */
+  detail?: string;
 }
 
 /** One Windows doctor probe (#435). Advisory — never blocks add. */
