@@ -197,12 +197,14 @@ describe("orch-server tool handlers", () => {
     assert.match(INSTRUCTIONS, /fromThreadId/);
     assert.match(INSTRUCTIONS, /delivered \(started a turn\)/);
     assert.doesNotMatch(INSTRUCTIONS, /poll thread_status until/);
+    assert.match(INSTRUCTIONS, /THIS project only/);
+    assert.doesNotMatch(INSTRUCTIONS, /this server sees all of them/);
   });
 
   it("threads_list maps id, title, provider, status, handoffFrom, project, later fields", async () => {
     const deps = makeDeps();
     const h = createToolHandlers(deps);
-    const list = await h.threads_list();
+    const list = await h.threads_list({ projectId: "p1" });
     assert.deepEqual(list, [
       {
         id: "t1",
@@ -228,19 +230,42 @@ describe("orch-server tool handlers", () => {
         settledOverride: null,
         snoozedUntil: null,
       },
-      {
-        id: "t3",
-        title: "Broken",
-        provider: "grok",
-        status: "failed",
-        handoffFrom: null,
-        projectId: "p2",
-        projectName: "Beta",
-        archived: false,
-        settledOverride: null,
-        snoozedUntil: null,
-      },
     ]);
+  });
+
+  it("threads_list requires projectId and never returns another project", async () => {
+    const deps = makeDeps();
+    const h = createToolHandlers(deps);
+    await assert.rejects(() => h.threads_list(), /projectId is required/);
+    await assert.rejects(() => h.threads_list({}), /projectId is required/);
+    const p2 = await h.threads_list({ projectId: "p2" });
+    assert.deepEqual(
+      p2.map((t) => t.id),
+      ["t3"],
+    );
+    const p1 = await h.threads_list({ projectId: "p1" });
+    assert.ok(!p1.some((t) => t.id === "t3"));
+  });
+
+  it("bound projectId wins over a claimed foreign projectId (issue #671)", async () => {
+    const deps = makeDeps();
+    deps.boundProjectId = "p1";
+    const h = createToolHandlers(deps);
+    const list = await h.threads_list({ projectId: "p2" });
+    assert.deepEqual(
+      list.map((t) => t.id),
+      ["t1", "t2"],
+      "URL-bound p1 must not list p2 even when args claim p2",
+    );
+    await assert.rejects(
+      () => h.thread_fork({ threadId: "t3", projectId: "p2", prompt: "x" }),
+      /belongs to "Beta".*not to "Alpha"/s,
+    );
+    assert.equal(deps.forks.length, 0);
+    await assert.rejects(
+      () => h.thread_status({ threadId: "t3", projectId: "p2" }),
+      /belongs to "Beta"/,
+    );
   });
 
   it("threads_list surfaces archived, settledOverride, and snoozedUntil", async () => {
@@ -251,7 +276,9 @@ describe("orch-server tool handlers", () => {
       snoozedUntil: 1_800_000_000_000,
     });
     const h = createToolHandlers(deps);
-    const row = (await h.threads_list()).find((t) => t.id === "t1");
+    const row = (await h.threads_list({ projectId: "p1" })).find(
+      (t) => t.id === "t1",
+    );
     assert.equal(row.archived, true);
     assert.equal(row.settledOverride, "settled");
     assert.equal(row.snoozedUntil, 1_800_000_000_000);
@@ -933,11 +960,17 @@ describe("orch-server tool handlers", () => {
  * POST a JSON-RPC message to /mcp and parse the SSE response payload.
  * @returns {Promise<{ status: number, body: unknown }>}
  */
-async function mcpPost(port, token, message, { auth = "bearer" } = {}) {
+async function mcpPost(
+  port,
+  token,
+  message,
+  { auth = "bearer", query = "" } = {},
+) {
+  const qs = query ? (query.startsWith("?") ? query : `?${query}`) : "";
   const url =
     auth === "query"
-      ? `http://127.0.0.1:${port}/mcp?token=${token}`
-      : `http://127.0.0.1:${port}/mcp`;
+      ? `http://127.0.0.1:${port}/mcp?token=${token}${qs ? `&${qs.slice(1)}` : ""}`
+      : `http://127.0.0.1:${port}/mcp${qs}`;
   const headers = {
     "content-type": "application/json",
     accept: "application/json, text/event-stream",
@@ -1160,13 +1193,57 @@ describe("orch-server HTTP", () => {
       jsonrpc: "2.0",
       id: 3,
       method: "tools/call",
-      params: { name: "threads_list", arguments: {} },
+      params: { name: "threads_list", arguments: { projectId: "p1" } },
     });
     assert.equal(res.status, 200);
     const payload = JSON.parse(res.body.result.content[0].text);
-    assert.equal(payload.length, 3);
+    assert.equal(payload.length, 2);
     assert.equal(payload[0].id, "t1");
     assert.equal(payload[0].archived, false);
+    assert.ok(!payload.some((t) => t.id === "t3"));
+  });
+
+  it("tools/call threads_list bound via ?projectId= ignores a claimed foreign project", async () => {
+    const { orch } = await startOrch();
+    const st = orch.getStatus();
+    const cfg = JSON.parse(
+      fs.readFileSync(path.join(tmpDir, "orch-server.json"), "utf8"),
+    );
+    const res = await mcpPost(
+      st.port,
+      cfg.token,
+      {
+        jsonrpc: "2.0",
+        id: 31,
+        method: "tools/call",
+        params: { name: "threads_list", arguments: { projectId: "p2" } },
+      },
+      { query: "projectId=p1" },
+    );
+    assert.equal(res.status, 200);
+    const payload = JSON.parse(res.body.result.content[0].text);
+    assert.deepEqual(
+      payload.map((t) => t.id),
+      ["t1", "t2"],
+    );
+
+    const fork = await mcpPost(
+      st.port,
+      cfg.token,
+      {
+        jsonrpc: "2.0",
+        id: 32,
+        method: "tools/call",
+        params: {
+          name: "thread_fork",
+          arguments: { threadId: "t3", projectId: "p2", prompt: "x" },
+        },
+      },
+      { query: "projectId=p1" },
+    );
+    assert.equal(fork.status, 200);
+    assert.equal(fork.body.result.isError, true);
+    assert.match(JSON.stringify(fork.body.result), /belongs to/);
   });
 
   it("tools/call thread_archive archives over HTTP", async () => {

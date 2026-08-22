@@ -194,6 +194,48 @@ describe('HTTP auth and health', () => {
 
     await mcp.close()
   })
+
+  it('?project= bind scopes search and rejects a foreign project (issue #671)', async () => {
+    memory.store({
+      type: 'knowledge',
+      title: 'Alpha only fact',
+      body: 'alphawalrus lives here',
+      project: 'alpha',
+    })
+    memory.store({
+      type: 'knowledge',
+      title: 'Beta only fact',
+      body: 'betanarwhal lives here',
+      project: 'beta',
+    })
+
+    const transport = new StreamableHTTPClientTransport(
+      new URL(`${baseURL}/mcp?project=${encodeURIComponent('alpha')}`),
+      { requestInit: { headers: { Authorization: `Bearer ${TOKEN}` } } },
+    )
+    const mcp = new Client({ name: 'test-bind', version: '0.0.0' })
+    await mcp.connect(transport)
+
+    const found = await mcp.callTool({
+      name: 'memory_search',
+      arguments: { query: 'lives here' },
+    })
+    const hits = JSON.parse(found.content[0].text)
+    assert.ok(
+      hits.some((h) => h.title === 'Alpha only fact'),
+      `expected alpha hit, got ${JSON.stringify(hits)}`,
+    )
+    assert.ok(!hits.some((h) => h.title === 'Beta only fact'))
+
+    const foreign = await mcp.callTool({
+      name: 'memory_search',
+      arguments: { query: 'lives here', project: 'beta' },
+    })
+    assert.equal(foreign.isError, true)
+    assert.match(JSON.stringify(foreign), /bound to project/)
+
+    await mcp.close()
+  })
 })
 
 describe('config validation', () => {
