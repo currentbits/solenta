@@ -183,9 +183,10 @@ function rmTargets(command) {
 /**
  * @param {string} command
  * @param {string | null | undefined} worktreePath
+ * @param {{ packageInstallScan?: "off" | "blocklist" | "ask" }} [opts]
  * @returns {Verdict}
  */
-function classifyCommand(command, worktreePath) {
+function classifyCommand(command, worktreePath, opts) {
   const cmd = String(command || "");
 
   for (const [re, rule, reason] of SHELL_DENY) {
@@ -224,6 +225,36 @@ function classifyCommand(command, worktreePath) {
     }
   }
 
+  const mode =
+    opts && opts.packageInstallScan === "off"
+      ? "off"
+      : opts && opts.packageInstallScan === "ask"
+        ? "ask"
+        : "blocklist";
+  if (mode !== "off") {
+    try {
+      const installScan = require("./installScan.js");
+      const pkg = installScan.scanPackageInstall(cmd);
+      if (pkg.level === "blocked") {
+        const first = installScan.primaryFinding(pkg);
+        return {
+          decision: "deny",
+          rule: (first && first.rule) || "install.malware",
+          reason: (first && first.reason) || "known-malicious package",
+        };
+      }
+      if (mode === "ask" && installScan.isPackageInstallCommand(cmd)) {
+        return {
+          decision: "ask",
+          rule: "install.package",
+          reason: "package install in agent shell",
+        };
+      }
+    } catch {
+      // fail open: a feed/parse bug must not brick every shell call
+    }
+  }
+
   if (SHELL_EGRESS.test(cmd) && !LOCAL_HOST.test(cmd)) {
     return {
       decision: "ask",
@@ -248,7 +279,13 @@ const WRITE_TOOLS = new Set([
   "apply_patch",
 ]);
 const READ_TOOLS = new Set(["Read", "NotebookRead", "view", "Glob", "Grep"]);
-const SHELL_TOOLS = new Set(["Bash", "BashOutput", "shell", "run_command"]);
+const SHELL_TOOLS = new Set([
+  "Bash",
+  "BashOutput",
+  "shell",
+  "run_command",
+  "run_terminal_command",
+]);
 
 /** First string field that looks like a path. */
 function toolPath(input) {
@@ -280,16 +317,19 @@ function toolCommand(input) {
  * @param {string} opts.toolName
  * @param {unknown} [opts.input]
  * @param {string | null} [opts.worktreePath]
+ * @param {"off" | "blocklist" | "ask"} [opts.packageInstallScan]
  * @returns {Verdict}
  */
-function classifyTool({ toolName, input, worktreePath }) {
+function classifyTool({ toolName, input, worktreePath, packageInstallScan }) {
   if (!guardrailsEnabled()) return ALLOW;
   try {
     const name = String(toolName || "");
     const inp = input && typeof input === "object" ? input : {};
 
     if (SHELL_TOOLS.has(name)) {
-      return classifyCommand(toolCommand(inp), worktreePath);
+      return classifyCommand(toolCommand(inp), worktreePath, {
+        packageInstallScan,
+      });
     }
 
     const raw = toolPath(inp);

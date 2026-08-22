@@ -5,6 +5,7 @@ import type {
   SkillInfo,
   SkillTarget,
   SkillWrite,
+  TrustReport,
 } from "../shared/ipc";
 import styles from "./SkillsTab.module.css";
 
@@ -40,6 +41,37 @@ export interface SkillsTabProps {
   ) => Promise<{ name: string; installedIn: SkillTarget[] }>;
   removeSkill: (input: { name: string }) => Promise<void>;
   syncSkills: () => Promise<{ copied: number; skills: string[] }>;
+  scanSkill?: (input: SkillWrite) => Promise<TrustReport>;
+  scanMcp?: (input: { name: string; url: string }) => Promise<TrustReport>;
+}
+
+function trustLabel(trust: TrustReport): string {
+  if (trust.level === "blocked") return "Blocked";
+  if (trust.level === "caution") return "Caution";
+  return "Trusted";
+}
+
+function trustTitle(trust: TrustReport): string {
+  if (!trust.findings.length) return "No findings";
+  return trust.findings.map((f) => f.reason).join(". ");
+}
+
+function TrustBadge({ trust }: { trust: TrustReport }) {
+  const cls =
+    trust.level === "blocked"
+      ? styles.badgeBlocked
+      : trust.level === "caution"
+        ? styles.badgeCaution
+        : styles.badgeTrusted;
+  return (
+    <span
+      className={`${styles.badge} ${cls}`}
+      data-trust={trust.level}
+      title={trustTitle(trust)}
+    >
+      {trustLabel(trust)}
+    </span>
+  );
 }
 
 function errorMessage(err: unknown): string {
@@ -98,6 +130,8 @@ export function SkillsTab({
   addSkill,
   removeSkill,
   syncSkills,
+  scanSkill,
+  scanMcp,
 }: SkillsTabProps) {
   const mcpServers = settings?.mcpServers ?? [];
 
@@ -119,6 +153,18 @@ export function SkillsTab({
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   /** Inline remove confirm: row key of the skill asking. */
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
+  const [mcpPending, setMcpPending] = useState<{
+    name: string;
+    url: string;
+    token: string;
+    trust: TrustReport;
+  } | null>(null);
+  const [skillPending, setSkillPending] = useState<{
+    name: string;
+    description: string;
+    body: string;
+    trust: TrustReport;
+  } | null>(null);
 
   const mountedRef = useRef(true);
   useEffect(() => {
@@ -162,11 +208,23 @@ export function SkillsTab({
     }
   };
 
-  const handleAddMcp = async () => {
+  const commitMcp = async (name: string, url: string, token: string) => {
+    const entry: McpServerInfo = { name, url, enabled: true };
+    if (token) entry.token = token;
+    await saveMcpServers([...mcpServers, entry]);
+    if (!mountedRef.current) return;
+    setMcpName("");
+    setMcpUrl("");
+    setMcpToken("");
+    setMcpPending(null);
+  };
+
+  const handleAddMcp = async (opts?: { acceptRisk?: boolean }) => {
     setMcpError(null);
-    const name = mcpName.trim();
-    const url = mcpUrl.trim();
-    const token = mcpToken.trim();
+    const pending = opts?.acceptRisk ? mcpPending : null;
+    const name = (pending?.name ?? mcpName).trim();
+    const url = (pending?.url ?? mcpUrl).trim();
+    const token = (pending?.token ?? mcpToken).trim();
     if (!MCP_NAME_RE.test(name)) {
       setMcpError("Name must be lowercase letters, digits, dashes");
       return;
@@ -183,13 +241,24 @@ export function SkillsTab({
       setMcpError("URL must start with http:// or https://");
       return;
     }
-    const entry: McpServerInfo = { name, url, enabled: true };
-    if (token) entry.token = token;
-    await saveMcpServers([...mcpServers, entry]);
-    if (!mountedRef.current) return;
-    setMcpName("");
-    setMcpUrl("");
-    setMcpToken("");
+    if (!opts?.acceptRisk && scanMcp) {
+      try {
+        const trust = await scanMcp({ name, url });
+        if (!mountedRef.current) return;
+        if (trust.level !== "trusted") {
+          setMcpPending({ name, url, token, trust });
+          return;
+        }
+      } catch (err) {
+        if (mountedRef.current) setMcpError(errorMessage(err));
+        return;
+      }
+    }
+    if (opts?.acceptRisk && mcpPending && mcpPending.trust.level === "blocked") {
+      setMcpError(trustTitle(mcpPending.trust));
+      return;
+    }
+    await commitMcp(name, url, token);
   };
 
   const handleToggleMcp = async (name: string, enabled: boolean) => {
@@ -202,11 +271,12 @@ export function SkillsTab({
     await saveMcpServers(mcpServers.filter((s) => s.name !== name));
   };
 
-  const handleAddSkill = async () => {
+  const handleAddSkill = async (opts?: { acceptRisk?: boolean }) => {
     setSkillFormError(null);
-    const name = skillName.trim();
-    const description = skillDescription.trim();
-    const body = skillBody.trim();
+    const pending = opts?.acceptRisk ? skillPending : null;
+    const name = (pending?.name ?? skillName).trim();
+    const description = (pending?.description ?? skillDescription).trim();
+    const body = (pending?.body ?? skillBody).trim();
     if (!MCP_NAME_RE.test(name)) {
       setSkillFormError("Name must be lowercase letters, digits, dashes");
       return;
@@ -219,13 +289,35 @@ export function SkillsTab({
       setSkillFormError("Body is required");
       return;
     }
+    if (!opts?.acceptRisk && scanSkill) {
+      setSkillBusy(true);
+      try {
+        const trust = await scanSkill({ name, description, body });
+        if (!mountedRef.current) return;
+        if (trust.level !== "trusted") {
+          setSkillPending({ name, description, body, trust });
+          return;
+        }
+      } catch (err) {
+        if (mountedRef.current) setSkillFormError(errorMessage(err));
+        return;
+      } finally {
+        if (mountedRef.current) setSkillBusy(false);
+      }
+    }
     setSkillBusy(true);
     try {
-      await addSkill({ name, description, body });
+      const force = Boolean(
+        opts?.acceptRisk && skillPending && skillPending.trust.level === "blocked",
+      );
+      const input: SkillWrite = { name, description, body };
+      if (force) input.force = true;
+      await addSkill(input);
       if (!mountedRef.current) return;
       setSkillName("");
       setSkillDescription("");
       setSkillBody("");
+      setSkillPending(null);
       setSyncMessage(null);
       await reloadSkills();
     } catch (err) {
@@ -295,6 +387,7 @@ export function SkillsTab({
                     {s.url}
                   </span>
                 </div>
+                {s.trust && <TrustBadge trust={s.trust} />}
                 <label
                   className={styles.toggle}
                   title={s.enabled ? "Disable server" : "Enable server"}
@@ -360,10 +453,36 @@ export function SkillsTab({
                 {mcpError}
               </p>
             )}
+            {mcpPending && (
+              <div className={styles.trustConfirm} role="status" data-mcp-scan="">
+                <TrustBadge trust={mcpPending.trust} />
+                <p className={styles.trustReasons}>
+                  {trustTitle(mcpPending.trust)}
+                </p>
+                {mcpPending.trust.level !== "blocked" && (
+                  <button
+                    type="button"
+                    className={styles.primaryBtn}
+                    disabled={mcpBusy}
+                    onClick={() => void handleAddMcp({ acceptRisk: true })}
+                  >
+                    Add anyway
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className={styles.ghostBtn}
+                  disabled={mcpBusy}
+                  onClick={() => setMcpPending(null)}
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
             <button
               type="submit"
               className={styles.primaryBtn}
-              disabled={mcpBusy}
+              disabled={mcpBusy || Boolean(mcpPending)}
             >
               {mcpBusy ? "Saving…" : "Add server"}
             </button>
@@ -414,6 +533,7 @@ export function SkillsTab({
                         </span>
                       )}
                     </div>
+                    {skill.trust && <TrustBadge trust={skill.trust} />}
                     {removable ? (
                       <span
                         className={styles.coverage}
@@ -513,10 +633,34 @@ export function SkillsTab({
                 {skillFormError}
               </p>
             )}
+            {skillPending && (
+              <div className={styles.trustConfirm} role="status" data-skill-scan="">
+                <TrustBadge trust={skillPending.trust} />
+                <p className={styles.trustReasons}>
+                  {trustTitle(skillPending.trust)}
+                </p>
+                <button
+                  type="button"
+                  className={styles.primaryBtn}
+                  disabled={skillBusy}
+                  onClick={() => void handleAddSkill({ acceptRisk: true })}
+                >
+                  Add anyway
+                </button>
+                <button
+                  type="button"
+                  className={styles.ghostBtn}
+                  disabled={skillBusy}
+                  onClick={() => setSkillPending(null)}
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
             <button
               type="submit"
               className={styles.primaryBtn}
-              disabled={skillBusy}
+              disabled={skillBusy || Boolean(skillPending)}
             >
               {skillBusy ? "Saving…" : "Add skill"}
             </button>

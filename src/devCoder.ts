@@ -61,6 +61,8 @@ import type {
   SkillInfo,
   SkillTarget,
   SkillWrite,
+  PackageInstallScan,
+  TrustReport,
   SpaceInfo,
   SpecArtifact,
   ThreadDetail,
@@ -1464,6 +1466,7 @@ function buildDevCoder(): CoderApi {
   let prDiffCapLines: number | null = 400;
   /** User MCP servers (Skills tab), in-memory. */
   let mcpServers: McpServerInfo[] = [];
+  let packageInstallScan: PackageInstallScan = "blocklist";
   /** Default new threads into a fake worktree (Settings toggle). */
   let defaultWorktree = false;
   /** Default new threads as orchestrators (Settings toggle). */
@@ -2089,6 +2092,7 @@ function buildDevCoder(): CoderApi {
           autoSettleOnMerge,
           prDiffCapLines,
           mcpServers: mcpServers.map((s) => ({ ...s })),
+          packageInstallScan,
           defaultWorktree,
           defaultOrchestrate,
           onboardingSeen,
@@ -2132,6 +2136,15 @@ function buildDevCoder(): CoderApi {
             throw new Error("mcpServers must be an array");
           }
           mcpServers = patch.mcpServers.map((s) => ({ ...s }));
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, "packageInstallScan")) {
+          const v = patch.packageInstallScan;
+          if (v !== "off" && v !== "blocklist" && v !== "ask") {
+            throw new Error(
+              'packageInstallScan must be "off", "blocklist", or "ask"',
+            );
+          }
+          packageInstallScan = v;
         }
         if (Object.prototype.hasOwnProperty.call(patch, "defaultWorktree")) {
           if (typeof patch.defaultWorktree !== "boolean") {
@@ -2256,6 +2269,7 @@ function buildDevCoder(): CoderApi {
           autoSettleOnMerge,
           prDiffCapLines,
           mcpServers: mcpServers.map((s) => ({ ...s })),
+          packageInstallScan,
           defaultWorktree,
           defaultOrchestrate,
           onboardingSeen,
@@ -2356,6 +2370,41 @@ function buildDevCoder(): CoderApi {
             hint: s.description,
             kind: "insert" as const,
           }));
+      },
+      async scanSkill(): Promise<TrustReport> {
+        return { level: "trusted", findings: [] };
+      },
+      async scanMcp(input: { name: string; url: string }): Promise<TrustReport> {
+        try {
+          const parsed = new URL(input.url);
+          const local =
+            parsed.hostname === "localhost" ||
+            parsed.hostname === "127.0.0.1";
+          if (parsed.protocol === "https:" && !local) {
+            return {
+              level: "caution",
+              findings: [
+                {
+                  severity: "caution",
+                  rule: "mcp.remote",
+                  reason: "remote server sees agent context",
+                },
+              ],
+            };
+          }
+        } catch {
+          return {
+            level: "blocked",
+            findings: [
+              {
+                severity: "blocked",
+                rule: "mcp.url",
+                reason: "URL is not a valid http(s) address",
+              },
+            ],
+          };
+        }
+        return { level: "trusted", findings: [] };
       },
     },
     providers: {

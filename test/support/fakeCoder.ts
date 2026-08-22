@@ -44,6 +44,7 @@ import type {
   CliSlashCommand,
   SkillInfo,
   SkillTarget,
+  TrustReport,
   SpaceInfo,
   ThreadDetail,
   ThreadPatch,
@@ -225,6 +226,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     autoSettleAfterDays: 3,
     autoSettleOnMerge: true,
     mcpServers: [],
+    packageInstallScan: "blocklist",
     defaultWorktree: false,
     updateChannel: null,
     notifications: true,
@@ -472,6 +474,18 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           }
           next.prDiffCapLines = v;
         }
+        if (Object.prototype.hasOwnProperty.call(p, "packageInstallScan")) {
+          const v = p.packageInstallScan;
+          if (v !== "off" && v !== "blocklist" && v !== "ask") {
+            calls.push({ channel: "settings.set", args: [patch] });
+            return Promise.reject(
+              new Error(
+                'packageInstallScan must be "off", "blocklist", or "ask"',
+              ),
+            );
+          }
+          next.packageInstallScan = v;
+        }
         if (Object.prototype.hasOwnProperty.call(p, "uiScale")) {
           const v = p.uiScale;
           if (typeof v !== "number" || !Number.isFinite(v)) {
@@ -571,6 +585,16 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           }));
         return rec("skills.commands", [input], rows);
       },
+      scanSkill: (input: unknown) =>
+        rec("skills.scanSkill", [input], {
+          level: "trusted",
+          findings: [],
+        } as TrustReport),
+      scanMcp: (input: unknown) =>
+        rec("skills.scanMcp", [input], {
+          level: "trusted",
+          findings: [],
+        } as TrustReport),
     },
     providers: { list: () => rec("providers.list", [], providers) },
     sourceControl: {

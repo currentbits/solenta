@@ -104,10 +104,39 @@ describe("guardrails: shell tiers", () => {
       "allow",
     );
     assert.equal(verdict("Bash", { command: "npm test" }).decision, "allow");
+    assert.equal(verdict("Bash", { command: "npm install lodash" }).decision, "allow");
     assert.equal(
       verdict("Bash", { command: `rm -rf ${WT}/dist` }).decision,
       "allow",
     );
+  });
+
+  it("denies known-malicious package installs", () => {
+    const v = verdict("Bash", { command: "npm install crossenv" });
+    assert.equal(v.decision, "deny");
+    assert.equal(v.rule, "install.malware");
+    assert.equal(
+      verdict("run_terminal_command", { command: "npx -y crossenv" }).decision,
+      "deny",
+    );
+  });
+
+  it("asks on every package install when packageInstallScan is ask", () => {
+    const v = classifyTool({
+      toolName: "Bash",
+      input: { command: "npm install lodash" },
+      worktreePath: WT,
+      packageInstallScan: "ask",
+    });
+    assert.equal(v.decision, "ask");
+    assert.equal(v.rule, "install.package");
+    const off = classifyTool({
+      toolName: "Bash",
+      input: { command: "npm install crossenv" },
+      worktreePath: WT,
+      packageInstallScan: "off",
+    });
+    assert.equal(off.decision, "allow");
   });
 });
 

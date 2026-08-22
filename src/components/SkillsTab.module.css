@@ -117,6 +117,48 @@
   border-color: var(--border);
 }
 
+.badgeTrusted {
+  color: var(--success-fg);
+  background: var(--green-soft);
+  border-color: var(--green-border);
+}
+
+.badgeCaution {
+  color: var(--amber);
+  background: var(--amber-soft);
+  border-color: var(--amber-border);
+}
+
+.badgeBlocked {
+  color: var(--danger-fg);
+  background: var(--danger-soft);
+  border-color: var(--danger-border);
+}
+
+.trustConfirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--amber-border);
+  background: var(--amber-soft);
+}
+
+.trustConfirm:has([data-trust="blocked"]) {
+  border-color: var(--danger-border);
+  background: var(--danger-soft);
+}
+
+.trustReasons {
+  flex: 1 1 160px;
+  margin: 0;
+  font-size: 12px;
+  color: var(--text);
+  line-height: 1.35;
+}
+
 .coverage {
   flex-shrink: 0;
   font-size: 10.5px;

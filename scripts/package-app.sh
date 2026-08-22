@@ -147,6 +147,8 @@ mkdir -p "$APP_DIR/electron"
 for f in electron/*.js; do
   cp "$f" "$APP_DIR/electron/"
 done
+# Bundled malware-package seed (#305). installScan.js reads it next to itself.
+cp electron/malware-packages.json "$APP_DIR/electron/"
 
 # Root node_modules is NOT copied into the bundle (only memory-server's is).
 # electron/webBridge.js `require("ws")` and the provider spawn path

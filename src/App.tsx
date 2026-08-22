@@ -258,6 +258,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     addSkill,
     removeSkill,
     syncSkills,
+    scanSkill,
+    scanMcp,
     listCliCommands,
     searchThreads,
     peekThread,
@@ -1456,6 +1458,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         addSkill={addSkill}
         removeSkill={removeSkill}
         syncSkills={syncSkills}
+        scanSkill={scanSkill}
+        scanMcp={scanMcp}
         activeView={view}
         onOpenPrs={openPrs}
         onOpenAutomations={openAutomations}

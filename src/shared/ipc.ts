@@ -1903,6 +1903,12 @@ export interface AppSettings {
    */
   mcpServers: McpServerInfo[];
   /**
+   * How agent package installs are gated (#305). Default "blocklist":
+   * deny known-malicious names, allow the rest. "ask" prompts on every
+   * package install (and still denies the blocklist). "off" disables it.
+   */
+  packageInstallScan: PackageInstallScan;
+  /**
    * When true, plain "New thread" creates an isolated worktree thread by
    * default (local projects only; remote projects always get plain threads).
    * The caret's "New worktree thread" stays an explicit opt-in either way.
@@ -2114,6 +2120,23 @@ export interface SubagentPool {
   entries: SubagentPoolEntry[];
 }
 
+/** Install-time trust grade (#305). Derived, never persisted. */
+export type TrustLevel = "trusted" | "caution" | "blocked";
+
+/** How agent package installs are gated (#305). */
+export type PackageInstallScan = "off" | "blocklist" | "ask";
+
+export interface TrustFinding {
+  severity: "caution" | "blocked";
+  rule: string;
+  reason: string;
+}
+
+export interface TrustReport {
+  level: TrustLevel;
+  findings: TrustFinding[];
+}
+
 /** A user-registered MCP server entry (settings slice). */
 export interface McpServerInfo {
   /** Lowercase slug: /^[a-z0-9-]+$/; coder-memory/coder-threads are reserved. */
@@ -2123,6 +2146,8 @@ export interface McpServerInfo {
   /** Optional bearer token; never echoed back by the UI once stored. */
   token?: string;
   enabled: boolean;
+  /** Derived at read time; stripped on write. */
+  trust?: TrustReport;
 }
 
 /**
@@ -2154,6 +2179,8 @@ export interface SkillInfo {
   missingFrom: SkillTarget[];
   /** SKILL.md size in bytes: the context this skill costs once invoked. */
   bytes: number;
+  /** Derived at list time from SKILL.md contents (#305). */
+  trust?: TrustReport;
 }
 
 /** Payload for skills:add; the skill fans out to every active target. */
@@ -2161,6 +2188,8 @@ export interface SkillWrite {
   name: string;
   description: string;
   body: string;
+  /** Add even when the scan is blocked. Caution writes without this. */
+  force?: boolean;
 }
 
 /**
@@ -2293,13 +2322,21 @@ export interface CoderApi {
    */
   skills: {
     list(input?: { projectPath?: string }): Promise<SkillInfo[]>;
-    add(input: SkillWrite): Promise<{ name: string; installedIn: SkillTarget[] }>;
+    add(input: SkillWrite): Promise<{
+      name: string;
+      installedIn: SkillTarget[];
+      trust?: TrustReport;
+    }>;
     /** Removes the skill from every writable target it is installed in. */
     remove(input: { name: string }): Promise<void>;
     /** Copies every skill into the targets it is missing from. */
     sync(): Promise<{ copied: number; skills: string[] }>;
     /** CLI `/` extras: invocable skills and custom commands (#606). */
     commands(input?: { projectPath?: string }): Promise<CliSlashCommand[]>;
+    /** Scan a skill draft before writing (#305). */
+    scanSkill(input: SkillWrite): Promise<TrustReport>;
+    /** Scan an MCP server draft before enabling (#305). */
+    scanMcp(input: { name: string; url: string }): Promise<TrustReport>;
   };
   providers: {
     list(): Promise<ProviderInfo[]>;

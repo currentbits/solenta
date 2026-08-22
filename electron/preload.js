@@ -78,6 +78,8 @@ const IPC_CHANNELS = Object.freeze([
   { ns: "skills", method: "remove" },
   { ns: "skills", method: "sync" },
   { ns: "skills", method: "commands" },
+  { ns: "skills", method: "scanSkill" },
+  { ns: "skills", method: "scanMcp" },
   { ns: "providers", method: "list" },
   { ns: "sourceControl", method: "discover" },
   { ns: "workflows", method: "list" },

@@ -17,6 +17,7 @@ import type {
   GcCleanResult,
   GcScanResult,
   OtelSettings,
+  PackageInstallScan,
   WebhookSettings,
   WebhookTestResult,
   PermissionMode,
@@ -55,7 +56,7 @@ const PANE_META: Record<
     label: "General",
     hint: "Notifications, the welcome tour, and this build.",
     keywords:
-      "notifications tour welcome update version build channel nightly prod felt estimate time saved webhook slack discord ntfy push phone",
+      "notifications tour welcome update version build channel nightly prod felt estimate time saved webhook slack discord ntfy push phone malware package install scan trust skill mcp",
   },
   threads: {
     label: "Threads",
@@ -1874,6 +1875,39 @@ export function SettingsModal({
               <p className={styles.note}>
                 One tap on the finished thread. Feeds the felt-vs-actual
                 section of the Fleet view. Off by default.
+              </p>
+            </div>
+            <div className={styles.field}>
+              <label className={styles.fieldLabel} htmlFor="package-install-scan">
+                Package installs
+              </label>
+              <select
+                id="package-install-scan"
+                className={styles.input}
+                data-package-install-scan=""
+                value={settings?.packageInstallScan ?? "blocklist"}
+                disabled={saving || settings == null}
+                onChange={(e) => {
+                  const packageInstallScan = e.target
+                    .value as PackageInstallScan;
+                  setError(null);
+                  void onSaveSettings({ packageInstallScan }).catch((err) => {
+                    setError(
+                      err instanceof Error && err.message
+                        ? err.message
+                        : "Failed to save settings",
+                    );
+                  });
+                }}
+              >
+                <option value="blocklist">Block known-malicious packages</option>
+                <option value="ask">Ask on every package install</option>
+                <option value="off">Allow all package installs</option>
+              </select>
+              <p className={styles.note}>
+                Intercepts npm, pip, cargo and friends in agent shells
+                before the package lands. The default is a local blocklist;
+                drop extra names in malware-packages.json under user data.
               </p>
             </div>
             {onShowOnboarding && (

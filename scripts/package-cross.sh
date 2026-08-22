@@ -106,6 +106,7 @@ mkdir -p "$PAYLOAD/electron"
 for f in electron/*.js; do
   cp "$f" "$PAYLOAD/electron/"
 done
+cp electron/malware-packages.json "$PAYLOAD/electron/"
 
 # Same explicit root deps as package-app.sh (ws + cross-spawn tree).
 ROOT_NM_PKGS=(ws cross-spawn path-key shebang-command shebang-regex which isexe)

@@ -510,6 +510,16 @@ function createRunner(opts) {
     runAgentFn = runAgent,
   } = opts;
 
+  try {
+    if (userDataPath) {
+      require("./installScan.js").setMalwareOverlayPath(
+        path.join(userDataPath, "malware-packages.json"),
+      );
+    }
+  } catch {
+    // overlay is optional; a path join failure must not brick the runner
+  }
+
   /**
    * @type {Map<string, object>}
    */
@@ -2840,10 +2850,12 @@ function createRunner(opts) {
                 (live && live.worktreePath) ||
                 (thread && thread.worktreePath) ||
                 null;
+              const settings = store.getSettings();
               verdict = classifyTool({
                 toolName,
                 input: rawInput,
                 worktreePath,
+                packageInstallScan: settings && settings.packageInstallScan,
               });
             } catch {
               verdict = null;

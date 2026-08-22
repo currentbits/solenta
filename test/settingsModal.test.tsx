@@ -1358,4 +1358,29 @@ describe("SettingsModal Appearance (#651)", () => {
     assert.equal(select.value, "dark");
     m.unmount();
   });
+
+  it("saves packageInstallScan from the General pane", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const m = await mount(
+      modal({
+        settings: {
+          dailyBudgetUsd: 5,
+          autoSettleAfterDays: 3,
+          packageInstallScan: "blocklist",
+        } as AppSettings,
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return patch as AppSettings;
+        },
+      }),
+    );
+    const select = m.query(
+      "[data-package-install-scan]",
+    ) as HTMLSelectElement;
+    assert.ok(select, "package install select must render");
+    assert.equal(select.value, "blocklist");
+    await m.change(select, "ask");
+    assert.deepEqual(patches, [{ packageInstallScan: "ask" }]);
+    m.unmount();
+  });
 });
