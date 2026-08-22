@@ -224,6 +224,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     quotaWaitAutoResume: true,
     prDiffCapLines: 400,
     onboardingSeen: true,
+    uiScale: 1,
     ...(opts.settings ?? {}),
   };
   const ALL_SKILL_TARGETS: SkillTarget[] = [
@@ -450,6 +451,15 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
             );
           }
           next.prDiffCapLines = v;
+        }
+        if (Object.prototype.hasOwnProperty.call(p, "uiScale")) {
+          const v = p.uiScale;
+          if (typeof v !== "number" || !Number.isFinite(v)) {
+            calls.push({ channel: "settings.set", args: [patch] });
+            return Promise.reject(new Error("uiScale must be a number"));
+          }
+          const stepped = Math.round(v * 10) / 10;
+          next.uiScale = Math.min(1.6, Math.max(0.8, stepped));
         }
         settingsState = next;
         return rec("settings.set", [patch], { ...settingsState });

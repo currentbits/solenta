@@ -61,6 +61,14 @@ interface SettingsModalProps {
   onShowOnboarding?: () => void;
 }
 
+const UI_SCALE_MIN = 0.8;
+const UI_SCALE_MAX = 1.6;
+const UI_SCALE_STEP = 0.1;
+
+function formatUiScale(scale: number): string {
+  return `${Math.round(scale * 100)}%`;
+}
+
 function budgetToInput(value: number | null | undefined): string {
   if (value == null) return "";
   return String(value);
@@ -207,6 +215,7 @@ export function SettingsModal({
   onShowOnboarding,
 }: SettingsModalProps) {
   const [budgetText, setBudgetText] = useState("");
+  const [uiScale, setUiScale] = useState(1);
   const [orchBudgetText, setOrchBudgetText] = useState("");
   const [settleDaysText, setSettleDaysText] = useState("");
   const [prCapText, setPrCapText] = useState("");
@@ -231,6 +240,7 @@ export function SettingsModal({
     if (wasOpen.current) return;
     wasOpen.current = true;
     setBudgetText(budgetToInput(settings?.dailyBudgetUsd ?? null));
+    setUiScale(settings?.uiScale ?? 1);
     setOrchBudgetText(
       budgetToInput(settings?.orchestrationBudgetUsd ?? null),
     );
@@ -245,7 +255,7 @@ export function SettingsModal({
     setError(null);
     setSaving(false);
     savingRef.current = false;
-  }, [open, settings?.dailyBudgetUsd, settings?.orchestrationBudgetUsd, settings?.autoSettleAfterDays, settings?.prDiffCapLines, settings?.otel]);
+  }, [open, settings?.dailyBudgetUsd, settings?.orchestrationBudgetUsd, settings?.autoSettleAfterDays, settings?.prDiffCapLines, settings?.otel, settings?.uiScale]);
 
   const handleClose = useCallback(() => {
     onClose();
@@ -568,6 +578,49 @@ export function SettingsModal({
         </header>
 
         <div className={styles.body}>
+          <section className={styles.section} data-appearance="">
+            <h3 className={styles.sectionLabel}>Appearance</h3>
+            <div className={styles.field}>
+              <label className={styles.fieldLabel} htmlFor="ui-scale">
+                UI scale
+              </label>
+              <div className={styles.fieldRow}>
+                <input
+                  id="ui-scale"
+                  className={styles.range}
+                  data-ui-scale=""
+                  type="range"
+                  min={UI_SCALE_MIN}
+                  max={UI_SCALE_MAX}
+                  step={UI_SCALE_STEP}
+                  value={uiScale}
+                  disabled={saving || settings == null}
+                  aria-valuetext={formatUiScale(uiScale)}
+                  onChange={(e) => {
+                    const next = Number(e.target.value);
+                    setUiScale(next);
+                    setError(null);
+                    void onSaveSettings({ uiScale: next }).catch((err) => {
+                      setError(
+                        err instanceof Error && err.message
+                          ? err.message
+                          : "Failed to save settings",
+                      );
+                    });
+                  }}
+                />
+                <span className={styles.rangeValue} data-ui-scale-value="">
+                  {formatUiScale(uiScale)}
+                </span>
+              </div>
+              <p className={styles.note}>
+                Scales the whole window, including text, icons, and chrome.
+                Same control as View → Zoom In / Zoom Out, or the zoom
+                shortcuts.
+              </p>
+            </div>
+          </section>
+
           <section className={styles.section}>
             <h3 className={styles.sectionLabel}>Budget</h3>
             <div className={styles.field}>

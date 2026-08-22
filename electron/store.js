@@ -14,6 +14,7 @@ const {
 const { normalizeAcceptedHunks } = require("./reviewItinerary.js");
 const { normalizeBtwCards } = require("./btw.js");
 const { normalizePendingQuestion } = require("./questions.js");
+const { clampUiScale, UI_SCALE_DEFAULT } = require("./zoom.js");
 
 /** Builtin "Plan and Verify" workflow template (seeded on every store). */
 const STANDARD_TEMPLATE = {
@@ -404,6 +405,9 @@ const DEFAULT_PR_DIFF_CAP_LINES = 400;
  * notifications: only an explicit false turns desktop notifications off, so
  * absent/junk keeps the pre-setting behaviour (notify).
  *
+ * uiScale: Electron webContents zoom factor (issue #652). Absent/junk → 1;
+ * otherwise snapped to 0.1 between 0.8 and 1.6.
+ *
  * quotaWaitAutoResume: only an explicit false turns auto-resume off, so
  * absent/junk keeps Claude's default (continue when the usage limit resets).
  *
@@ -428,6 +432,7 @@ function normalizeSettings(raw) {
     onboardingSeen: false,
     updateChannel: null,
     notifications: true,
+    uiScale: UI_SCALE_DEFAULT,
     quotaWaitAutoResume: true,
     prDiffCapLines: DEFAULT_PR_DIFF_CAP_LINES,
     agentProfiles: [],
@@ -508,6 +513,9 @@ function normalizeSettings(raw) {
   settings.updateChannel = ch === "prod" || ch === "nightly" ? ch : null;
   settings.notifications =
     /** @type {{ notifications?: unknown }} */ (obj).notifications !== false;
+  settings.uiScale = clampUiScale(
+    /** @type {{ uiScale?: unknown }} */ (obj).uiScale,
+  );
   settings.quotaWaitAutoResume =
     /** @type {{ quotaWaitAutoResume?: unknown }} */ (obj)
       .quotaWaitAutoResume !== false;
@@ -1689,6 +1697,7 @@ class Store {
       onboardingSeen: n.onboardingSeen,
       updateChannel: n.updateChannel,
       notifications: n.notifications,
+      uiScale: n.uiScale,
       quotaWaitAutoResume: n.quotaWaitAutoResume,
       prDiffCapLines: n.prDiffCapLines,
       agentProfiles: n.agentProfiles,
@@ -1841,6 +1850,13 @@ class Store {
         throw new Error("notifications must be a boolean");
       }
       this.data.settings.notifications = v;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "uiScale")) {
+      const v = patch.uiScale;
+      if (typeof v !== "number" || !Number.isFinite(v)) {
+        throw new Error("uiScale must be a number");
+      }
+      this.data.settings.uiScale = clampUiScale(v);
     }
     if (Object.prototype.hasOwnProperty.call(patch, "quotaWaitAutoResume")) {
       const v = patch.quotaWaitAutoResume;

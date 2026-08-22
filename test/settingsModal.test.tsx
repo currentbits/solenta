@@ -826,6 +826,49 @@ describe("SettingsModal OpenTelemetry (issue #280)", () => {
   });
 });
 
+describe("SettingsModal Appearance (#652)", () => {
+  it("renders UI scale above Budget and saves on change", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const m = await mount(
+      modal({
+        settings: {
+          dailyBudgetUsd: null,
+          autoSettleAfterDays: 3,
+          uiScale: 1,
+        } as AppSettings,
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return {
+            dailyBudgetUsd: null,
+            autoSettleAfterDays: 3,
+            uiScale: patch.uiScale ?? 1,
+          } as AppSettings;
+        },
+      }),
+    );
+    const appearance = m.query("[data-appearance]");
+    assert.ok(appearance, "Appearance section");
+    const headings = m.queryAll("h3").map((h) => h.textContent);
+    const appearanceAt = headings.indexOf("Appearance");
+    const budgetAt = headings.indexOf("Budget");
+    assert.ok(appearanceAt >= 0, "Appearance heading");
+    assert.ok(budgetAt >= 0, "Budget heading");
+    assert.ok(
+      appearanceAt < budgetAt,
+      "Appearance must sit above Budget so #651 can share the section",
+    );
+    const slider = m.query("[data-ui-scale]") as HTMLInputElement;
+    assert.ok(slider, "UI scale slider");
+    assert.equal(slider.value, "1");
+    assert.equal(m.query("[data-ui-scale-value]")!.textContent, "100%");
+    await m.type(slider, "1.3");
+    assert.ok(patches.length >= 1, "changing the slider saves immediately");
+    assert.equal(patches[0].uiScale, 1.3);
+    assert.equal(m.query("[data-ui-scale-value]")!.textContent, "130%");
+    m.unmount();
+  });
+});
+
 describe("SettingsModal quota-wait auto-resume (#462)", () => {
   it("saves the continue-at-usage-limit toggle", async () => {
     const patches: Partial<AppSettings>[] = [];

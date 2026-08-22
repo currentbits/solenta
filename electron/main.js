@@ -38,6 +38,7 @@ const { installCrashGuard } = require("./crash-guard.js");
 const { start: startLoopLag } = require("./looplag.js");
 const { installShutdown } = require("./shutdown.js");
 const { installAppMenu } = require("./menu.js");
+const { applyZoom, clampUiScale } = require("./zoom.js");
 
 // Before anything else can throw: the app is full of fire-and-forget `void`
 // calls, and one unhandled rejection would otherwise kill the process with
@@ -91,6 +92,22 @@ let postMergeScheduler = null;
 /** @type {Awaited<ReturnType<typeof startWebServer>> | null} */
 let webServer = null;
 
+/** @type {InstanceType<typeof Store> | null} */
+let store = null;
+
+function currentUiScale() {
+  return store ? store.getSettings().uiScale : 1;
+}
+
+function applyUiScale(win, factor) {
+  if (!store) {
+    const next = clampUiScale(factor);
+    if (win && !win.isDestroyed()) win.webContents.setZoomFactor(next);
+    return next;
+  }
+  return applyZoom(win, factor, store);
+}
+
 /**
  * Ensure @coder/core is built; throw a helpful error if missing.
  */
@@ -139,6 +156,15 @@ function createWindow() {
     if (decision.allow) return;
     event.preventDefault();
     if (decision.external) void shell.openExternal(url);
+  });
+
+  // Zoom before this is reset on load; persist settings.uiScale (#652).
+  win.webContents.on("did-finish-load", () => {
+    try {
+      win.webContents.setZoomFactor(clampUiScale(currentUiScale()));
+    } catch {
+      // contents may already be gone
+    }
   });
 
   if (isDev) {
@@ -215,7 +241,10 @@ function notifyThreadComplete(thread) {
 app.whenReady().then(async () => {
   // Before any window: without an installed menu a packaged build has no
   // Edit menu and Cmd+C/X/V/A silently die in inputs (issue #353).
-  installAppMenu();
+  installAppMenu({
+    applyZoom: applyUiScale,
+    getUiScale: currentUiScale,
+  });
 
   // Which build is this? A stale packaged bundle missing recent fixes looks
   // exactly like a broken feature, so say it out loud once at boot.
@@ -290,7 +319,7 @@ app.whenReady().then(async () => {
   }
 
   const storePath = path.join(userData, "coder-store.json");
-  const store = new Store(storePath);
+  store = new Store(storePath);
 
   const lastStatus = new Map();
   for (const t of store.getThreads()) {

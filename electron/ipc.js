@@ -46,6 +46,7 @@ const updater = require("./updater.js");
 const vibeKanban = require("./vibeKanban.js");
 const { browseFilesystem, expandUserPath } = require("./fsBrowse.js");
 const { discoverSourceControl } = require("./sourceControl.js");
+const { applyZoom } = require("./zoom.js");
 
 /**
  * Default window fan-out (desktop transport). main.js replaces this with a
@@ -722,6 +723,9 @@ const IPC_HANDLERS = {
     }
     if (ctx.runner && typeof ctx.runner.refreshAllQuotaWaits === "function") {
       ctx.runner.refreshAllQuotaWaits();
+    }
+    if (patch && Object.prototype.hasOwnProperty.call(patch, "uiScale")) {
+      applyZoom(null, next.uiScale, ctx.store);
     }
     return next;
   },

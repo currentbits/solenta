@@ -1464,6 +1464,7 @@ function buildDevCoder(): CoderApi {
   /** Update channel override; null follows the (absent) dev stamp. */
   let updateChannel: "prod" | "nightly" | null = null;
   let notifications = true;
+  let uiScale = 1;
   let quotaWaitAutoResume = true;
   let otel: OtelSettings = { endpoint: null, headers: {}, claudeMetrics: false };
   /** Saved agent profiles (Settings tab), in-memory. */
@@ -2075,6 +2076,7 @@ function buildDevCoder(): CoderApi {
           onboardingSeen,
           updateChannel,
           notifications,
+          uiScale,
           quotaWaitAutoResume,
           agentProfiles: agentProfiles.map((p) => ({ ...p })),
           subagentPool: {
@@ -2141,6 +2143,14 @@ function buildDevCoder(): CoderApi {
           }
           notifications = patch.notifications;
         }
+        if (Object.prototype.hasOwnProperty.call(patch, "uiScale")) {
+          const v = patch.uiScale;
+          if (typeof v !== "number" || !Number.isFinite(v)) {
+            throw new Error("uiScale must be a number");
+          }
+          const stepped = Math.round(v * 10) / 10;
+          uiScale = Math.min(1.6, Math.max(0.8, stepped));
+        }
         if (Object.prototype.hasOwnProperty.call(patch, "quotaWaitAutoResume")) {
           if (typeof patch.quotaWaitAutoResume !== "boolean") {
             throw new Error("quotaWaitAutoResume must be a boolean");
@@ -2196,6 +2206,7 @@ function buildDevCoder(): CoderApi {
           onboardingSeen,
           updateChannel,
           notifications,
+          uiScale,
           quotaWaitAutoResume,
           agentProfiles: agentProfiles.map((p) => ({ ...p })),
           subagentPool: {
