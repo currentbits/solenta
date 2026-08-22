@@ -126,6 +126,7 @@ import {
   type ComparePeer,
   type DivergenceField,
 } from "../divergence";
+import { DROP_OVERLAY_MESSAGE } from "../dropFiles";
 import { Composer } from "./Composer";
 import { Markdown } from "./Markdown";
 import { PathLinkProvider, PathText } from "./PathLinks";
@@ -502,7 +503,7 @@ interface ThreadViewProps {
   ) => void | Promise<void>;
   /** Loads an image a tool returned (ToolCallInfo.images) as a data URL. */
   onLoadImage?: (name: string) => Promise<string | null>;
-  /** Native image/folder picker for composer attachments (Electron only). */
+  /** Native file/image/folder picker for composer attachments (Electron only). */
   onPickAttachments?: () => Promise<AttachmentInfo[]>;
   /** Persist a pasted image; returns its attachment or null when rejected. */
   onSaveAttachmentImage?: (dataUrl: string) => Promise<AttachmentInfo | null>;
@@ -688,7 +689,7 @@ function ToolCallCard({
 
 /**
  * Attachments on a user transcript message: image thumbnails load lazily as
- * data URLs (the CSP allows data:, not file:), folders render as icon + name.
+ * data URLs (the CSP allows data:, not file:), files/folders render as icon + name.
  */
 function TranscriptAttachments({
   attachments,
@@ -758,6 +759,11 @@ function TranscriptAttachmentChip({
         >
           {attachment.kind === "folder" ? (
             <path d="M2.5 4A1.5 1.5 0 0 1 4 2.5h2.2a1.5 1.5 0 0 1 1.1.5l.8 1a1.5 1.5 0 0 0 1.1.5H12A1.5 1.5 0 0 1 13.5 6v5A1.5 1.5 0 0 1 12 12.5H4A1.5 1.5 0 0 1 2.5 11V4Z" />
+          ) : attachment.kind === "file" ? (
+            <>
+              <path d="M4.5 2.5h5l4 4v7A1.5 1.5 0 0 1 12 15H4.5A1.5 1.5 0 0 1 3 13.5v-10A1.5 1.5 0 0 1 4.5 2.5Z" />
+              <path d="M9.5 2.5V7h4" />
+            </>
           ) : (
             <>
               <rect x="2.5" y="2.5" width="11" height="11" rx="1.5" />
@@ -4302,7 +4308,7 @@ export const ThreadView = memo(function ThreadView({
     >
       {fileDrag && onDropAttachmentFiles ? (
         <div className={styles.dropOverlay} data-drop-overlay="" aria-hidden>
-          Drop images or folders
+          {DROP_OVERLAY_MESSAGE}
         </div>
       ) : null}
       <header className={styles.header}>

@@ -6,6 +6,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  DROP_OVERLAY_MESSAGE,
   DROP_REJECT_MESSAGE,
   filesFromDataTransfer,
   isFileDrag,
@@ -114,6 +115,13 @@ describe("isFileDrag", () => {
 describe("DROP_REJECT_MESSAGE", () => {
   it("is a single line the banner can show", () => {
     assert.equal(DROP_REJECT_MESSAGE.includes("\n"), false);
-    assert.match(DROP_REJECT_MESSAGE, /images or folders/i);
+    assert.match(DROP_REJECT_MESSAGE, /files or folders/i);
+  });
+});
+
+describe("DROP_OVERLAY_MESSAGE", () => {
+  it("names files, not only images", () => {
+    assert.match(DROP_OVERLAY_MESSAGE, /files or folders/i);
+    assert.equal(DROP_OVERLAY_MESSAGE.includes("\n"), false);
   });
 });

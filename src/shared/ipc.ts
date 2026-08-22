@@ -876,12 +876,12 @@ export interface ToolCallInfo {
 }
 
 /**
- * An image or folder the user attached to a chat message (composer chips).
+ * A file, image, or folder the user attached to a chat message (composer chips).
  * `path` is absolute: agents run on this machine and read it with their
  * normal file tools, so nothing is copied or embedded.
  */
 export interface AttachmentInfo {
-  kind: "image" | "folder";
+  kind: "image" | "folder" | "file";
   path: string;
   /** Display name (basename of path). */
   name: string;
@@ -897,7 +897,7 @@ export interface ChatMessage {
   runId?: string | null;
   /** Present exactly when role === "tool". */
   tool?: ToolCallInfo;
-  /** Images/folders the user attached (role "user" only). */
+  /** Files/images/folders the user attached (role "user" only). */
   attachments?: AttachmentInfo[];
 }
 
@@ -2837,20 +2837,19 @@ export interface CoderApi {
     browse(input: FsBrowseInput): Promise<FsBrowseResult>;
   };
   /**
-   * Composer attachments: images and folders the user pins to a message.
-   * Only absolute paths travel; the agent reads them with its file tools.
-   * pick needs a native dialog, so it rejects in web mode (the renderer
-   * hides the attach button when no Electron bridge is present).
+   * Composer attachments: files, images, and folders the user pins to a
+   * message. Only absolute paths travel; the agent reads them with its
+   * file tools. pick needs a native dialog, so it rejects in web mode
+   * (the renderer hides the attach button when no Electron bridge is present).
    */
   attachments: {
     /**
-     * Native picker for images and folders (multi-select). Non-image files
-     * are skipped: those belong to the @-mention flow instead.
+     * Native picker for files, images, and folders (multi-select).
      */
     pick(): Promise<{ attachments: AttachmentInfo[] }>;
     /**
-     * Classify absolute paths (e.g. resolved from a drag-drop) as image or
-     * folder via statSync; anything else is skipped.
+     * Classify absolute paths (e.g. resolved from a drag-drop) as image,
+     * file, or folder via statSync; missing / relative / non-file paths skip.
      */
     fromPaths(input: { paths: string[] }): Promise<{ attachments: AttachmentInfo[] }>;
     /**

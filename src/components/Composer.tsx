@@ -60,7 +60,7 @@ import {
   type SlashCommand,
 } from "../slashCommands";
 import { WorkflowsModal } from "./WorkflowsModal";
-import { DROP_REJECT_MESSAGE } from "../dropFiles";
+import { DROP_OVERLAY_MESSAGE, DROP_REJECT_MESSAGE } from "../dropFiles";
 import { teachPermissionAllowed } from "../teach";
 import type { ThreadTeach } from "../shared/ipc";
 import { useFileDrop } from "../useFileDrop";
@@ -136,7 +136,7 @@ interface ComposerProps {
    */
   onListFiles?: (query: string) => Promise<string[]>;
   /**
-   * Image/folder picker for attachments. Absent hides the attach button
+   * File/image/folder picker for attachments. Absent hides the attach button
    * (tests / shells that do not wire one).
    */
   onPickAttachments?: () => Promise<AttachmentInfo[]>;
@@ -211,7 +211,7 @@ function escapeConsumedByChrome(
   return typing && target !== composerField;
 }
 
-/** One pending attachment: thumbnail for images, folder glyph for folders. */
+/** One pending attachment: thumbnail for images, glyph for files/folders. */
 function AttachmentChip({
   attachment,
   onRemove,
@@ -261,6 +261,11 @@ function AttachmentChip({
         >
           {attachment.kind === "folder" ? (
             <path d="M2.5 4A1.5 1.5 0 0 1 4 2.5h2.2a1.5 1.5 0 0 1 1.1.5l.8 1a1.5 1.5 0 0 0 1.1.5H12A1.5 1.5 0 0 1 13.5 6v5A1.5 1.5 0 0 1 12 12.5H4A1.5 1.5 0 0 1 2.5 11V4Z" />
+          ) : attachment.kind === "file" ? (
+            <>
+              <path d="M4.5 2.5h5l4 4v7A1.5 1.5 0 0 1 12 15H4.5A1.5 1.5 0 0 1 3 13.5v-10A1.5 1.5 0 0 1 4.5 2.5Z" />
+              <path d="M9.5 2.5V7h4" />
+            </>
           ) : (
             <>
               <rect x="2.5" y="2.5" width="11" height="11" rx="1.5" />
@@ -1254,7 +1259,7 @@ export function Composer({
     <div className={styles.composer} ref={composerRef}>
       {fileDrag && !dropHostRef && (
         <div className={styles.dropOverlay} data-drop-overlay="" aria-hidden>
-          Drop images or folders
+          {DROP_OVERLAY_MESSAGE}
         </div>
       )}
       {shownError && (
@@ -1373,8 +1378,8 @@ export function Composer({
                 className={styles.pill}
                 disabled={disabled || sending}
                 aria-disabled={disabled || sending ? "true" : undefined}
-                aria-label="Attach image or folder"
-                title="Attach image or folder"
+                aria-label="Attach files or folders"
+                title="Attach files or folders"
                 onClick={pickAttachments}
               >
                 <svg

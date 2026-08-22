@@ -5,14 +5,14 @@ const path = require("node:path");
 const { randomUUID } = require("node:crypto");
 
 /**
- * Outbound counterpart to tool-images.js: images/folders the USER attaches
- * to a chat message. Only absolute paths travel to the agent; pasted images
- * are persisted under userData so the path stays valid after the clipboard
- * is gone.
+ * Outbound counterpart to tool-images.js: files/images/folders the USER
+ * attaches to a chat message. Only absolute paths travel to the agent;
+ * pasted images are persisted under userData so the path stays valid after
+ * the clipboard is gone.
  */
 const DIR_NAME = "attachments";
 
-/** Extensions treated as image attachments; anything else file-like is skipped. */
+/** Extensions treated as image attachments (thumbnails); other files stay kind "file". */
 const IMAGE_EXTS = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"];
 const IMAGE_EXT_SET = new Set(IMAGE_EXTS);
 
@@ -38,10 +38,11 @@ const EXT_BY_MEDIA = {
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 
 /**
- * Classify absolute paths as image or folder. Non-image files are skipped:
- * they belong to the composer's @-mention flow, not attachments.
+ * Classify absolute paths as image, file, or folder. Images keep their
+ * kind so the composer can thumbnail them; every other regular file is
+ * `kind: "file"` (issue #653). Missing / relative / non-file paths skip.
  * @param {unknown} paths
- * @returns {{ kind: "image" | "folder", path: string, name: string }[]}
+ * @returns {{ kind: "image" | "folder" | "file", path: string, name: string }[]}
  */
 function classifyPaths(paths) {
   if (!Array.isArray(paths)) return [];
@@ -62,22 +63,25 @@ function classifyPaths(paths) {
     }
     if (!st.isFile()) continue;
     const ext = path.extname(p).slice(1).toLowerCase();
-    if (!IMAGE_EXT_SET.has(ext)) continue;
-    out.push({ kind: "image", path: p, name });
+    out.push({
+      kind: IMAGE_EXT_SET.has(ext) ? "image" : "file",
+      path: p,
+      name,
+    });
   }
   return out;
 }
 
 /**
- * Native picker (images + folders, multi-select). Returns classified picks.
+ * Native picker (files + images + folders, multi-select). Returns classified picks.
  * @param {{ showOpenDialog: (opts: object) => Promise<{ canceled: boolean, filePaths?: string[] }> }} dialog
  */
 async function pickAttachments(dialog) {
   const result = await dialog.showOpenDialog({
     properties: ["openFile", "openDirectory", "multiSelections"],
     filters: [
-      { name: "Images", extensions: IMAGE_EXTS.slice() },
       { name: "All Files", extensions: ["*"] },
+      { name: "Images", extensions: IMAGE_EXTS.slice() },
     ],
   });
   if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
