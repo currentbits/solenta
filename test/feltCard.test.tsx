@@ -7,6 +7,13 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { mount } from "./support/dom.ts";
+import {
+  createFakeCoder,
+  installFakeCoder,
+  thread as fakeThread,
+  detail as fakeDetail,
+} from "./support/fakeCoder.ts";
+import App from "../src/App";
 import { ThreadView } from "../src/components/ThreadView";
 import type {
   ProjectInfo,
@@ -195,5 +202,40 @@ describe("FeltEstimateCard", () => {
     const view = await mountView(detail());
     assert.equal(view.query("[data-felt-card]"), null);
     view.unmount();
+  });
+});
+
+/**
+ * The card is opt-in: App only hands ThreadView the callback when
+ * settings.feltEstimatePrompt is on, so a default install never asks.
+ */
+describe("felt-estimate opt-in", () => {
+  const done = fakeThread({ id: "t1", title: "alpha thread", status: "done" });
+
+  async function bootApp(feltEstimatePrompt: boolean) {
+    const fake = createFakeCoder({
+      threads: [done],
+      details: { t1: fakeDetail({ thread: done }) },
+      settings: { feltEstimatePrompt },
+    });
+    const shell = await mount(<div />);
+    installFakeCoder(fake);
+    shell.unmount();
+    const m = await mount(<App />);
+    await m.click(m.query('button[aria-label="Select thread: alpha thread"]'));
+    await m.flush();
+    return m;
+  }
+
+  it("stays hidden with the setting off (the default)", async () => {
+    const m = await bootApp(false);
+    assert.equal(m.query("[data-felt-card]"), null);
+    m.unmount();
+  });
+
+  it("appears once the setting is on", async () => {
+    const m = await bootApp(true);
+    assert.ok(m.query("[data-felt-card]"), "card shown when opted in");
+    m.unmount();
   });
 });

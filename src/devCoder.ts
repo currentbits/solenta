@@ -1471,6 +1471,7 @@ function buildDevCoder(): CoderApi {
   /** Update channel override; null follows the (absent) dev stamp. */
   let updateChannel: "prod" | "nightly" | null = null;
   let notifications = true;
+  let feltEstimatePrompt = false;
   let uiScale = 1;
   let theme: AppSettings["theme"] = "dark";
   let quotaWaitAutoResume = true;
@@ -2085,6 +2086,7 @@ function buildDevCoder(): CoderApi {
           onboardingSeen,
           updateChannel,
           notifications,
+          feltEstimatePrompt,
           uiScale,
           theme,
           quotaWaitAutoResume,
@@ -2152,6 +2154,14 @@ function buildDevCoder(): CoderApi {
             throw new Error("notifications must be a boolean");
           }
           notifications = patch.notifications;
+        }
+        if (
+          Object.prototype.hasOwnProperty.call(patch, "feltEstimatePrompt")
+        ) {
+          if (typeof patch.feltEstimatePrompt !== "boolean") {
+            throw new Error("feltEstimatePrompt must be a boolean");
+          }
+          feltEstimatePrompt = patch.feltEstimatePrompt;
         }
         if (Object.prototype.hasOwnProperty.call(patch, "uiScale")) {
           const v = patch.uiScale;
@@ -2223,6 +2233,7 @@ function buildDevCoder(): CoderApi {
           onboardingSeen,
           updateChannel,
           notifications,
+          feltEstimatePrompt,
           uiScale,
           theme,
           quotaWaitAutoResume,

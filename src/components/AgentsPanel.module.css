@@ -1599,6 +1599,16 @@
   white-space: nowrap;
 }
 
+.recapPrLink {
+  color: var(--info-fg);
+  text-decoration: none;
+}
+
+.recapPrLink:hover {
+  text-decoration: underline;
+  color: var(--info-fg-strong);
+}
+
 .hypothesisSummary {
   margin: 0;
   font-size: 11.5px;

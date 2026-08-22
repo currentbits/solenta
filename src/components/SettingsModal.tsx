@@ -53,7 +53,7 @@ const PANE_META: Record<
     label: "General",
     hint: "Notifications, the welcome tour, and this build.",
     keywords:
-      "notifications tour welcome update version build channel nightly prod",
+      "notifications tour welcome update version build channel nightly prod felt estimate time saved",
   },
   threads: {
     label: "Threads",
@@ -1569,6 +1569,33 @@ export function SettingsModal({
               <p className={styles.note}>
                 Only fires while the window is in the background. Mute a
                 single noisy thread from its snooze menu in the sidebar.
+              </p>
+            </div>
+            <div className={styles.field}>
+              <label className={styles.fieldRow}>
+                <input
+                  type="checkbox"
+                  data-felt-estimate-prompt=""
+                  checked={settings?.feltEstimatePrompt ?? false}
+                  disabled={saving || settings == null}
+                  onChange={(e) => {
+                    setError(null);
+                    void onSaveSettings({
+                      feltEstimatePrompt: e.target.checked,
+                    }).catch((err) => {
+                      setError(
+                        err instanceof Error && err.message
+                          ? err.message
+                          : "Failed to save settings",
+                      );
+                    });
+                  }}
+                />
+                <span>Ask how much time a finished thread saved you</span>
+              </label>
+              <p className={styles.note}>
+                One tap on the finished thread. Feeds the felt-vs-actual
+                section of the Fleet view. Off by default.
               </p>
             </div>
             {onShowOnboarding && (

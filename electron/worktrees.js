@@ -136,6 +136,11 @@ const GIT_MAX_BUFFER = 32 * 1024 * 1024;
 /** Per-thread background PR refresh timeout. Hard kill; never block the main process. */
 const PR_REFRESH_TIMEOUT_MS = 8_000;
 
+/** Periodic retention sweep (#641): grace crossings during a long uptime. */
+const RETENTION_SWEEP_INTERVAL_MS = 6 * 60 * 60 * 1000;
+/** Same delay as the boot orphan sweep so startup stays fast. */
+const RETENTION_SWEEP_STARTUP_MS = 15_000;
+
 /** MERGED/CLOSED are terminal — never re-query. */
 const TERMINAL_PR_STATES = new Set(["MERGED", "CLOSED"]);
 
@@ -5046,6 +5051,105 @@ async function scheduleRetention(opts) {
 }
 
 /**
+ * Schedule + latch for background worktree retention (#641).
+ * - Boolean latch: a tick during a running pass is a no-op (not queued).
+ * - Startup pass after startupDelayMs; then every intervalMs.
+ * - Timers are unref'd so they do not keep a short-lived process alive.
+ * - Default sweep is scheduleRetention (failure-silent). Cheap when no
+ *   project sets a limit: enforceRetention returns before any disk walk.
+ *
+ * @param {object} opts
+ * @param {import('./store').Store} opts.store
+ * @param {string} opts.worktreeBase
+ * @param {(channel: string, payload: unknown) => void} [opts.broadcast]
+ * @param {number} [opts.intervalMs] default 6 h
+ * @param {number} [opts.startupDelayMs] default 15 s
+ * @param {typeof setTimeout} [opts.setTimeoutFn]
+ * @param {typeof setInterval} [opts.setIntervalFn]
+ * @param {typeof clearTimeout} [opts.clearTimeoutFn]
+ * @param {typeof clearInterval} [opts.clearIntervalFn]
+ * @param {typeof scheduleRetention} [opts.sweepFn]
+ */
+function createRetentionSweeper(opts) {
+  const store = opts.store;
+  const worktreeBase = opts.worktreeBase;
+  const broadcast = opts.broadcast;
+  const intervalMs =
+    opts.intervalMs != null ? opts.intervalMs : RETENTION_SWEEP_INTERVAL_MS;
+  const startupDelayMs =
+    opts.startupDelayMs != null
+      ? opts.startupDelayMs
+      : RETENTION_SWEEP_STARTUP_MS;
+  const setTimeoutFn = opts.setTimeoutFn || setTimeout;
+  const setIntervalFn = opts.setIntervalFn || setInterval;
+  const clearTimeoutFn = opts.clearTimeoutFn || clearTimeout;
+  const clearIntervalFn = opts.clearIntervalFn || clearInterval;
+  const sweepFn = opts.sweepFn || scheduleRetention;
+
+  let running = false;
+  /** @type {ReturnType<typeof setTimeout> | null} */
+  let startupTimer = null;
+  /** @type {ReturnType<typeof setInterval> | null} */
+  let intervalTimer = null;
+
+  /**
+   * @returns {Promise<{ ran: boolean, result?: { removed: string[], failed: Array<{path: string, error: string}>, bytes: number } | null }>}
+   */
+  async function trigger() {
+    if (running) return { ran: false };
+    running = true;
+    try {
+      const result = await sweepFn({ store, worktreeBase, broadcast });
+      if (result && result.removed && result.removed.length > 0) {
+        console.warn(
+          `worktree retention: reclaimed ${result.removed.length} worktree(s)`,
+        );
+      }
+      return { ran: true, result };
+    } catch {
+      return { ran: true, result: null };
+    } finally {
+      running = false;
+    }
+  }
+
+  function start() {
+    if (startupTimer != null || intervalTimer != null) return;
+    startupTimer = setTimeoutFn(() => {
+      startupTimer = null;
+      void trigger();
+    }, startupDelayMs);
+    if (startupTimer && typeof startupTimer.unref === "function") {
+      startupTimer.unref();
+    }
+    intervalTimer = setIntervalFn(() => {
+      void trigger();
+    }, intervalMs);
+    if (intervalTimer && typeof intervalTimer.unref === "function") {
+      intervalTimer.unref();
+    }
+  }
+
+  function stop() {
+    if (startupTimer != null) {
+      clearTimeoutFn(startupTimer);
+      startupTimer = null;
+    }
+    if (intervalTimer != null) {
+      clearIntervalFn(intervalTimer);
+      intervalTimer = null;
+    }
+  }
+
+  return {
+    trigger,
+    start,
+    stop,
+    isRunning: () => running,
+  };
+}
+
+/**
  * Materialize the worktree for a pendingWorktree thread (lazy, t3-style:
  * a thread that never runs leaves nothing on disk). No-op for plain threads
  * and threads that already have one; a stale flag is cleared either way.
@@ -5170,6 +5274,7 @@ module.exports = {
   PR_LIST_FIELDS_FALLBACK,
   refreshPrStates,
   createPrStateRefresher,
+  createRetentionSweeper,
   maybeCleanupMergedWorktree,
   sweepOrphanWorktrees,
   gcScan,
@@ -5197,6 +5302,8 @@ module.exports = {
   slugify,
   PATCH_TRUNCATE,
   PR_REFRESH_TIMEOUT_MS,
+  RETENTION_SWEEP_INTERVAL_MS,
+  RETENTION_SWEEP_STARTUP_MS,
   maybeCreateCheckpoint,
   listCheckpoints,
   restoreCheckpoint,

@@ -94,6 +94,22 @@ describe("setFeltEstimate", () => {
     );
   });
 
+  it("the prompt is opt-in: off by default, only an explicit true asks", () => {
+    assert.equal(store.getSettings().feltEstimatePrompt, false);
+    assert.equal(
+      store.setSettings({ feltEstimatePrompt: true }).feltEstimatePrompt,
+      true,
+    );
+    assert.throws(
+      () => store.setSettings({ feltEstimatePrompt: "yes" }),
+      /must be a boolean/,
+    );
+    store.data.settings.feltEstimatePrompt = "yes";
+    store.saveNow();
+    const reloaded = new Store(path.join(tmpDir, "store.json"));
+    assert.equal(reloaded.getSettings().feltEstimatePrompt, false);
+  });
+
   it("migration heals a junk estimate to null and keeps a good one", () => {
     services.setFeltEstimate(store, { threadId, savedMs: 60_000 });
     store.data.threads = store.data.threads.map((t) =>

@@ -414,6 +414,9 @@ const DEFAULT_PR_DIFF_CAP_LINES = 400;
  * notifications: only an explicit false turns desktop notifications off, so
  * absent/junk keeps the pre-setting behaviour (notify).
  *
+ * feltEstimatePrompt: absent/junk → false. The "how much time did this save
+ * you?" card is opt-in; only an explicit true asks.
+ *
  * uiScale: Electron webContents zoom factor (issue #652). Absent/junk → 1;
  * otherwise snapped to 0.1 between 0.8 and 1.6.
  * theme: absent/junk → "dark" (the app was dark-only; upgrades must not
@@ -443,6 +446,7 @@ function normalizeSettings(raw) {
     onboardingSeen: false,
     updateChannel: null,
     notifications: true,
+    feltEstimatePrompt: false,
     uiScale: UI_SCALE_DEFAULT,
     theme: "dark",
     quotaWaitAutoResume: true,
@@ -525,6 +529,9 @@ function normalizeSettings(raw) {
   settings.updateChannel = ch === "prod" || ch === "nightly" ? ch : null;
   settings.notifications =
     /** @type {{ notifications?: unknown }} */ (obj).notifications !== false;
+  settings.feltEstimatePrompt =
+    /** @type {{ feltEstimatePrompt?: unknown }} */ (obj).feltEstimatePrompt ===
+    true;
   settings.uiScale = clampUiScale(
     /** @type {{ uiScale?: unknown }} */ (obj).uiScale,
   );
@@ -2048,6 +2055,7 @@ class Store {
       onboardingSeen: n.onboardingSeen,
       updateChannel: n.updateChannel,
       notifications: n.notifications,
+      feltEstimatePrompt: n.feltEstimatePrompt,
       uiScale: n.uiScale,
       theme: n.theme,
       quotaWaitAutoResume: n.quotaWaitAutoResume,
@@ -2202,6 +2210,13 @@ class Store {
         throw new Error("notifications must be a boolean");
       }
       this.data.settings.notifications = v;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "feltEstimatePrompt")) {
+      const v = patch.feltEstimatePrompt;
+      if (typeof v !== "boolean") {
+        throw new Error("feltEstimatePrompt must be a boolean");
+      }
+      this.data.settings.feltEstimatePrompt = v;
     }
     if (Object.prototype.hasOwnProperty.call(patch, "uiScale")) {
       const v = patch.uiScale;
