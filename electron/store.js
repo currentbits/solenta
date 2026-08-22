@@ -404,6 +404,9 @@ const DEFAULT_PR_DIFF_CAP_LINES = 400;
  * notifications: only an explicit false turns desktop notifications off, so
  * absent/junk keeps the pre-setting behaviour (notify).
  *
+ * theme: absent/junk → "dark" (the app was dark-only; upgrades must not
+ * flip to light because the OS is light). "system" | "light" | "dark".
+ *
  * quotaWaitAutoResume: only an explicit false turns auto-resume off, so
  * absent/junk keeps Claude's default (continue when the usage limit resets).
  *
@@ -428,6 +431,7 @@ function normalizeSettings(raw) {
     onboardingSeen: false,
     updateChannel: null,
     notifications: true,
+    theme: "dark",
     quotaWaitAutoResume: true,
     prDiffCapLines: DEFAULT_PR_DIFF_CAP_LINES,
     agentProfiles: [],
@@ -508,6 +512,9 @@ function normalizeSettings(raw) {
   settings.updateChannel = ch === "prod" || ch === "nightly" ? ch : null;
   settings.notifications =
     /** @type {{ notifications?: unknown }} */ (obj).notifications !== false;
+  const theme = /** @type {{ theme?: unknown }} */ (obj).theme;
+  settings.theme =
+    theme === "system" || theme === "light" || theme === "dark" ? theme : "dark";
   settings.quotaWaitAutoResume =
     /** @type {{ quotaWaitAutoResume?: unknown }} */ (obj)
       .quotaWaitAutoResume !== false;
@@ -1689,6 +1696,7 @@ class Store {
       onboardingSeen: n.onboardingSeen,
       updateChannel: n.updateChannel,
       notifications: n.notifications,
+      theme: n.theme,
       quotaWaitAutoResume: n.quotaWaitAutoResume,
       prDiffCapLines: n.prDiffCapLines,
       agentProfiles: n.agentProfiles,
@@ -1841,6 +1849,13 @@ class Store {
         throw new Error("notifications must be a boolean");
       }
       this.data.settings.notifications = v;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "theme")) {
+      const v = patch.theme;
+      if (v !== "system" && v !== "light" && v !== "dark") {
+        throw new Error('theme must be "system", "light", or "dark"');
+      }
+      this.data.settings.theme = v;
     }
     if (Object.prototype.hasOwnProperty.call(patch, "quotaWaitAutoResume")) {
       const v = patch.quotaWaitAutoResume;

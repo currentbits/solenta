@@ -6,7 +6,8 @@
 // support buys nothing — turn it off for the whole main process.
 process.noAsar = true;
 
-const { app, BrowserWindow, ipcMain, dialog, shell, Notification } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, shell, Notification, nativeTheme } = require("electron");
+const { windowBackgroundColor, nativeThemeSource } = require("./theme.js");
 const path = require("node:path");
 const fs = require("node:fs");
 const { pathToFileURL } = require("node:url");
@@ -105,13 +106,32 @@ function assertCoreBuilt() {
   return coreIndex;
 }
 
+/** @type {InstanceType<typeof Store> | null} */
+let storeRef = null;
+
+function currentThemePreference() {
+  return storeRef ? storeRef.getSettings().theme : "dark";
+}
+
+function applyNativeAndWindowTheme(win) {
+  const theme = currentThemePreference();
+  nativeTheme.themeSource = nativeThemeSource(theme);
+  const backgroundColor = windowBackgroundColor(
+    theme,
+    nativeTheme.shouldUseDarkColors,
+  );
+  if (win) win.setBackgroundColor(backgroundColor);
+  return backgroundColor;
+}
+
 function createWindow() {
+  const backgroundColor = applyNativeAndWindowTheme(null);
   const win = new BrowserWindow({
     width: 1440,
     height: 900,
     minWidth: 1100,
     minHeight: 700,
-    backgroundColor: "#0b0e14",
+    backgroundColor,
     titleBarStyle: "hiddenInset",
     trafficLightPosition: { x: 16, y: 16 },
     webPreferences: {
@@ -291,6 +311,12 @@ app.whenReady().then(async () => {
 
   const storePath = path.join(userData, "coder-store.json");
   const store = new Store(storePath);
+  storeRef = store;
+  nativeTheme.on("updated", () => {
+    for (const w of BrowserWindow.getAllWindows()) {
+      applyNativeAndWindowTheme(w);
+    }
+  });
 
   const lastStatus = new Map();
   for (const t of store.getThreads()) {

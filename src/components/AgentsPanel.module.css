@@ -45,13 +45,13 @@
 
 .tab:focus-visible {
   outline: none;
-  box-shadow: inset 0 0 0 2px var(--focus-ring, rgba(59, 130, 246, 0.55));
+  box-shadow: inset 0 0 0 2px var(--focus-ring-color);
   border-radius: var(--radius-sm) var(--radius-sm) 0 0;
 }
 
 .tab[data-active="true"] {
   color: var(--text);
-  border-bottom-color: var(--btn-primary-bg, #3b82f6);
+  border-bottom-color: var(--btn-primary-bg);
 }
 
 .scroll {
@@ -177,7 +177,7 @@
 }
 
 .teamRow:hover {
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--overlay-soft);
 }
 
 .teamRow .roleChip {
@@ -221,23 +221,23 @@
 }
 
 .waitLine[data-attention="true"] {
-  color: #fbbf24;
+  color: var(--amber);
 }
 
 .teamStatus[data-status="waiting"],
 .teamStatus[data-status="stalled"] {
-  color: #fbbf24;
-  border-color: rgba(251, 191, 36, 0.45);
+  color: var(--amber);
+  border-color: var(--amber-border);
 }
 
 .teamStatus[data-status="working"] {
   color: var(--blue);
-  border-color: rgba(59, 130, 246, 0.4);
+  border-color: var(--blue-border);
 }
 
 .teamStatus[data-status="done"] {
   color: var(--green);
-  border-color: rgba(52, 211, 153, 0.35);
+  border-color: var(--green-border);
 }
 
 .teamStatus[data-status="failed"] {
@@ -270,12 +270,12 @@
 
 .teamStatus[data-status="claimed"] {
   color: var(--blue);
-  border-color: rgba(59, 130, 246, 0.4);
+  border-color: var(--blue-border);
 }
 
 .teamStatus[data-status="blocked"] {
-  color: #fbbf24;
-  border-color: rgba(251, 191, 36, 0.45);
+  color: var(--amber);
+  border-color: var(--amber-border);
 }
 
 .sessionMeta,
@@ -398,18 +398,18 @@
   font-weight: 600;
   border: 1px solid var(--border);
   color: var(--text-dim);
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--overlay-soft);
   white-space: nowrap;
 }
 
 .phaseDone {
   color: var(--green);
   background: var(--green-soft);
-  border-color: rgba(52, 211, 153, 0.3);
+  border-color: var(--green-border);
 }
 
 .phaseActive {
-  color: #93c5fd;
+  color: var(--info-fg);
   background: var(--blue-soft);
   border-color: var(--blue-border);
 }
@@ -419,9 +419,9 @@
 }
 
 .phaseFailed {
-  color: #fca5a5;
-  background: rgba(248, 113, 113, 0.12);
-  border-color: rgba(248, 113, 113, 0.35);
+  color: var(--danger-fg);
+  background: var(--danger-soft);
+  border-color: var(--danger-border);
 }
 
 .phaseCheck {
@@ -445,7 +445,7 @@
   width: 3px;
   height: 3px;
   border-radius: 50%;
-  background: #93c5fd;
+  background: var(--info-fg);
   display: block;
   animation: blink 1.1s ease-in-out infinite;
 }
@@ -492,7 +492,7 @@
 }
 
 .groupHeader:hover {
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--overlay-soft);
   color: var(--text);
 }
 
@@ -553,7 +553,7 @@
 
 .dotActive {
   background: var(--blue);
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18);
+  box-shadow: 0 0 0 3px var(--blue-soft);
 }
 
 .dotDone {
@@ -561,7 +561,7 @@
 }
 
 .dotPending {
-  background: #3a4458;
+  background: var(--track);
 }
 
 .dotError {
@@ -609,7 +609,7 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+  box-shadow: var(--shadow-sm);
 }
 
 .gitCardLabel {
@@ -703,7 +703,7 @@
   outline: none;
   box-shadow:
     0 0 0 2px var(--card),
-    0 0 0 4px var(--focus-ring, rgba(59, 130, 246, 0.55));
+    0 0 0 4px var(--focus-ring-color);
 }
 
 .gitBtn:disabled {
@@ -712,30 +712,30 @@
 }
 
 .gitBtnPrimary {
-  background: var(--btn-primary-bg, #3b82f6);
+  background: var(--btn-primary-bg);
   border-color: transparent;
-  color: #fff;
+  color: var(--text-on-accent);
 }
 
 .gitBtnPrimary:hover:not(:disabled) {
-  background: var(--btn-primary-hover, #2563eb);
-  color: #fff;
+  background: var(--btn-primary-hover);
+  color: var(--text-on-accent);
 }
 
 .gitBtnPrimary .btnSpinner {
-  border-color: rgba(255, 255, 255, 0.4);
-  border-top-color: #fff;
+  border-color: var(--spinner-track);
+  border-top-color: var(--text-on-accent);
 }
 
 .gitBtnDanger {
-  background: rgba(248, 113, 113, 0.12);
-  border-color: rgba(248, 113, 113, 0.35);
-  color: #fca5a5;
+  background: var(--danger-soft);
+  border-color: var(--danger-border);
+  color: var(--danger-fg);
 }
 
 .gitBtnDanger:hover:not(:disabled) {
-  background: rgba(248, 113, 113, 0.2);
-  color: #fecaca;
+  background: var(--danger-soft);
+  color: var(--danger-fg);
 }
 
 .menuWrap {
@@ -752,7 +752,7 @@
   border-radius: 8px;
   border: 1px solid var(--border);
   background: var(--bg-elevated);
-  box-shadow: var(--shadow-pop, 0 8px 24px rgba(0, 0, 0, 0.45));
+  box-shadow: var(--shadow-pop);
 }
 
 .menuItem {
@@ -835,7 +835,7 @@
   align-items: center;
   justify-content: center;
   padding: 16px;
-  background: rgba(0, 0, 0, 0.45);
+  background: var(--scrim);
 }
 
 .confirmDialog {
@@ -845,7 +845,7 @@
   border-radius: var(--radius);
   border: 1px solid var(--border);
   background: var(--bg-elevated);
-  box-shadow: var(--shadow-pop, 0 12px 40px rgba(0, 0, 0, 0.45));
+  box-shadow: var(--shadow-pop);
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -884,13 +884,13 @@
 }
 
 .confirmDanger {
-  border: 1px solid rgba(248, 113, 113, 0.45);
-  background: rgba(248, 113, 113, 0.14);
-  color: #fca5a5;
+  border: 1px solid var(--danger-border);
+  background: var(--danger-soft);
+  color: var(--danger-fg);
 }
 
 .confirmDanger:hover:not(:disabled) {
-  background: rgba(248, 113, 113, 0.22);
+  background: var(--danger-soft);
 }
 
 .confirmDanger:disabled,
@@ -913,7 +913,7 @@
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  border: 1.5px solid rgba(148, 163, 184, 0.3);
+  border: 1.5px solid var(--border);
   border-top-color: var(--text-muted);
   animation: gitSpin 0.7s linear infinite;
 }
@@ -930,8 +930,8 @@
   gap: 10px;
   padding: 10px;
   border-radius: var(--radius-sm);
-  border: 1px solid rgba(248, 113, 113, 0.35);
-  background: rgba(248, 113, 113, 0.1);
+  border: 1px solid var(--danger-border);
+  background: var(--danger-soft);
 }
 
 .dirtyMessage {
@@ -939,7 +939,7 @@
   font-family: var(--mono);
   font-size: 11.5px;
   line-height: 1.45;
-  color: #fca5a5;
+  color: var(--danger-fg);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -950,9 +950,9 @@
   gap: 8px;
   padding: 8px 10px;
   border-radius: var(--radius-sm);
-  border: 1px solid rgba(248, 113, 113, 0.35);
-  background: rgba(248, 113, 113, 0.12);
-  color: #fca5a5;
+  border: 1px solid var(--danger-border);
+  background: var(--danger-soft);
+  color: var(--danger-fg);
   font-size: 12px;
   line-height: 1.4;
 }
@@ -969,7 +969,7 @@
   display: grid;
   place-items: center;
   border-radius: 4px;
-  color: #fca5a5;
+  color: var(--danger-fg);
   font-size: 14px;
   line-height: 1;
   opacity: 0.85;
@@ -977,7 +977,7 @@
 
 .cardErrorDismiss:hover {
   opacity: 1;
-  background: rgba(248, 113, 113, 0.18);
+  background: var(--danger-soft);
 }
 
 /* Local servers */
@@ -1067,7 +1067,7 @@
 .devServerUrl {
   font-family: var(--mono);
   font-size: 11.5px;
-  color: #93c5fd;
+  color: var(--info-fg);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1076,14 +1076,14 @@
 
 .devServerUrl:hover {
   text-decoration: underline;
-  color: #bfdbfe;
+  color: var(--info-fg-strong);
 }
 
 .devServerError {
   margin: 0;
   font-family: var(--mono);
   font-size: 11.5px;
-  color: #fca5a5;
+  color: var(--danger-fg);
   line-height: 1.4;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1134,7 +1134,7 @@
 }
 
 .verifySummary[data-ok="false"] {
-  color: #fca5a5;
+  color: var(--danger-fg);
 }
 
 .verifyLogWrap summary {
@@ -1363,7 +1363,7 @@
   align-items: center;
   gap: 8px;
   font-size: 12px;
-  color: #fca5a5;
+  color: var(--danger-fg);
 }
 
 .prLoadErrorText {
@@ -1381,11 +1381,11 @@
   letter-spacing: 0.03em;
   border: 1px solid var(--border);
   color: var(--text-dim);
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--overlay-soft);
 }
 
 .prState[data-state="open"] {
-  color: #93c5fd;
+  color: var(--info-fg);
   background: var(--blue-soft);
   border-color: var(--blue-border);
 }
@@ -1393,13 +1393,13 @@
 .prState[data-state="merged"] {
   color: var(--green);
   background: var(--green-soft);
-  border-color: rgba(52, 211, 153, 0.28);
+  border-color: var(--green-border);
 }
 
 .prState[data-state="closed"] {
-  color: #fca5a5;
-  background: rgba(248, 113, 113, 0.12);
-  border-color: rgba(248, 113, 113, 0.35);
+  color: var(--danger-fg);
+  background: var(--danger-soft);
+  border-color: var(--danger-border);
 }
 
 .prBranch {
@@ -1414,7 +1414,7 @@
 .prUrl {
   font-family: var(--mono);
   font-size: 11.5px;
-  color: #93c5fd;
+  color: var(--info-fg);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1423,7 +1423,7 @@
 
 .prUrl:hover {
   text-decoration: underline;
-  color: #bfdbfe;
+  color: var(--info-fg-strong);
 }
 
 /* ── Repository / Pull / Recap cards (Environment tab) ────── */
@@ -1467,7 +1467,7 @@
 
 .pullError {
   margin: 0;
-  color: #fca5a5;
+  color: var(--danger-fg);
   font-size: 12.5px;
   line-height: 1.45;
 }
@@ -1596,18 +1596,18 @@
 
 .pulseRow[data-active="true"] {
   background: var(--card);
-  box-shadow: inset 2px 0 0 0 var(--btn-primary-bg, #3b82f6);
+  box-shadow: inset 2px 0 0 0 var(--btn-primary-bg);
 }
 
 .pulseRow:focus-visible {
   outline: none;
-  box-shadow: inset 0 0 0 2px var(--focus-ring, rgba(59, 130, 246, 0.55));
+  box-shadow: inset 0 0 0 2px var(--focus-ring-color);
 }
 
 .pulseRow[data-active="true"]:focus-visible {
   box-shadow:
-    inset 2px 0 0 0 var(--btn-primary-bg, #3b82f6),
-    inset 0 0 0 2px var(--focus-ring, rgba(59, 130, 246, 0.55));
+    inset 2px 0 0 0 var(--btn-primary-bg),
+    inset 0 0 0 2px var(--focus-ring-color);
 }
 
 .pulseIcon {

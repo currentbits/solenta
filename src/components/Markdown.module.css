@@ -173,5 +173,5 @@
   font-size: 12px;
   line-height: 1.55;
   color: var(--text);
-  background: rgba(0, 0, 0, 0.16);
+  background: var(--input-fill);
 }

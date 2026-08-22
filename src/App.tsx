@@ -42,6 +42,7 @@ import type {
   WorkSuggestion,
 } from "./shared/ipc";
 import styles from "./App.module.css";
+import { syncTheme } from "./theme";
 
 const EMPTY_FORECAST: ConflictForecast = { pairs: [], computedAt: 0 };
 
@@ -227,6 +228,11 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     removeAutomation,
     runAutomationNow,
   } = useCoder();
+
+  useEffect(() => {
+    if (!settings?.theme) return;
+    return syncTheme(settings.theme);
+  }, [settings?.theme]);
 
   const [changesOpen, setChangesOpen] = useState(false);
   const [changesNonce, setChangesNonce] = useState(0);

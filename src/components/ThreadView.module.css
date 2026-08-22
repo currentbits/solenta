@@ -136,7 +136,7 @@
 }
 
 .iconBtn[data-active="true"] {
-  color: #bfdbfe;
+  color: var(--info-fg-strong);
   border-color: var(--blue-border);
   background: var(--blue-soft);
 }
@@ -173,7 +173,7 @@
   border: none;
   background: none;
   padding: 0;
-  color: #93c5fd;
+  color: var(--info-fg);
   font: inherit;
   font-weight: 600;
   cursor: pointer;
@@ -182,7 +182,7 @@
 }
 
 .handoffLink:hover {
-  color: #bfdbfe;
+  color: var(--info-fg-strong);
 }
 
 .handoffDismiss {
@@ -270,7 +270,7 @@
   border: none;
   background: none;
   padding: 0;
-  color: #93c5fd;
+  color: var(--info-fg);
   font: inherit;
   font-size: 12px;
   font-weight: 600;
@@ -278,7 +278,7 @@
 }
 
 .divergenceToggle:hover {
-  color: #bfdbfe;
+  color: var(--info-fg-strong);
 }
 
 .divergenceFields {
@@ -353,7 +353,7 @@ button.project:focus-visible {
   outline: none;
   box-shadow:
     0 0 0 2px var(--bg),
-    0 0 0 4px var(--focus-ring, rgba(59, 130, 246, 0.55));
+    0 0 0 4px var(--focus-ring-color);
 }
 
 .sep {
@@ -417,7 +417,7 @@ button.project:focus-visible {
   outline: none;
   box-shadow:
     0 0 0 2px var(--bg),
-    0 0 0 4px var(--focus-ring, rgba(59, 130, 246, 0.55));
+    0 0 0 4px var(--focus-ring-color);
 }
 
 .menuBtn:disabled {
@@ -435,7 +435,7 @@ button.project:focus-visible {
   border-radius: 8px;
   border: 1px solid var(--border);
   background: var(--bg-elevated);
-  box-shadow: var(--shadow-pop, 0 8px 24px rgba(0, 0, 0, 0.45));
+  box-shadow: var(--shadow-pop);
 }
 
 .menuItem {
@@ -470,7 +470,7 @@ button.project:focus-visible {
 }
 
 .menuItemDanger:hover {
-  background: rgba(248, 113, 113, 0.12);
+  background: var(--danger-soft);
 }
 
 .menuConfirm {
@@ -534,7 +534,7 @@ a.btn {
   outline: none;
   box-shadow:
     0 0 0 2px var(--bg),
-    0 0 0 4px var(--focus-ring, rgba(59, 130, 246, 0.55));
+    0 0 0 4px var(--focus-ring-color);
 }
 
 .btn:disabled {
@@ -543,7 +543,7 @@ a.btn {
 }
 
 .btn[data-active="true"] {
-  color: #bfdbfe;
+  color: var(--info-fg-strong);
   border-color: var(--blue-border);
   background: var(--blue-soft);
 }
@@ -589,18 +589,18 @@ a.btn {
 }
 
 .notesInput:focus {
-  border-color: var(--focus-ring, rgba(59, 130, 246, 0.55));
+  border-color: var(--focus-ring-color);
 }
 
 .btnPrimary {
-  background: var(--btn-primary-bg, #3b82f6);
+  background: var(--btn-primary-bg);
   border-color: transparent;
-  color: #fff;
+  color: var(--text-on-accent);
 }
 
 .btnPrimary:hover:not(:disabled) {
-  background: var(--btn-primary-hover, #2563eb);
-  color: #fff;
+  background: var(--btn-primary-hover);
+  color: var(--text-on-accent);
 }
 
 .pushBtn {
@@ -660,8 +660,8 @@ a.btn {
   width: 12px;
   height: 12px;
   border-radius: 50%;
-  border: 1.5px solid rgba(255, 255, 255, 0.35);
-  border-top-color: #fff;
+  border: 1.5px solid var(--spinner-track);
+  border-top-color: var(--text);
   animation: pushSpin 0.7s linear infinite;
   flex-shrink: 0;
 }
@@ -693,7 +693,7 @@ a.btn {
 }
 
 .toolHeader:hover {
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--overlay-soft);
 }
 
 .toolToggle {
@@ -720,8 +720,8 @@ a.btn {
 
 .toolDot[data-status="running"] {
   background: transparent;
-  border: 1.5px solid rgba(147, 197, 253, 0.3);
-  border-top-color: #93c5fd;
+  border: 1.5px solid var(--blue-border);
+  border-top-color: var(--info-fg);
   animation: spin 0.7s linear infinite;
 }
 
@@ -888,7 +888,7 @@ a.btn {
 }
 
 .inlineError {
-  color: #fca5a5;
+  color: var(--danger-fg);
   font-size: 12px;
 }
 
@@ -967,7 +967,7 @@ a.btn {
 }
 
 .dels {
-  color: #fca5a5;
+  color: var(--danger-fg);
 }
 
 .changesScroll {
@@ -983,7 +983,7 @@ a.btn {
   min-height: 0;
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-sm);
-  background: rgba(0, 0, 0, 0.18);
+  background: var(--input-fill);
   padding: 8px 10px;
   font-family: var(--mono);
   font-size: 11.5px;
@@ -997,13 +997,13 @@ a.btn {
 }
 
 .diffLine[data-kind="add"] {
-  color: #6ee7b7;
-  background: rgba(52, 211, 153, 0.08);
+  color: var(--success-fg);
+  background: var(--diff-add-bg);
 }
 
 .diffLine[data-kind="del"] {
-  color: #fca5a5;
-  background: rgba(248, 113, 113, 0.08);
+  color: var(--danger-fg);
+  background: var(--diff-del-bg);
 }
 
 .diffLine[data-kind="hunk"] {
@@ -1159,7 +1159,7 @@ a.btn {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 12px 14px;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+  box-shadow: var(--shadow-sm);
 }
 
 .cardHeader {
@@ -1221,7 +1221,7 @@ a.btn {
 
 .checkbox[data-done="true"] {
   background: var(--green-soft);
-  border-color: rgba(52, 211, 153, 0.4);
+  border-color: var(--green-border);
 }
 
 .stepLabel {
@@ -1376,7 +1376,7 @@ a.btn {
   border: 1px solid var(--border);
   border-left: 2px solid var(--blue-border);
   background: var(--card);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+  box-shadow: var(--shadow-sm);
   font-size: 12px;
   color: var(--text-muted);
 }
@@ -1457,7 +1457,7 @@ a.btn {
   margin: 0;
   padding: 8px 20px;
   font-size: 12px;
-  color: #fca5a5;
+  color: var(--danger-fg);
   border-top: 1px solid var(--border);
 }
 
@@ -1468,7 +1468,7 @@ a.btn {
   display: flex;
   overflow: auto;
   padding: 24px;
-  background: rgba(0, 0, 0, 0.78);
+  background: var(--scrim-heavy);
 }
 
 /* margin auto, not justify/align: centring a zoomed image with those clips
@@ -1511,7 +1511,7 @@ a.btn {
   align-items: center;
   justify-content: center;
   padding: 16px;
-  background: rgba(0, 0, 0, 0.45);
+  background: var(--scrim);
 }
 
 .confirmDialog {
@@ -1521,7 +1521,7 @@ a.btn {
   border-radius: var(--radius);
   border: 1px solid var(--border);
   background: var(--bg-elevated);
-  box-shadow: var(--shadow-pop, 0 12px 40px rgba(0, 0, 0, 0.45));
+  box-shadow: var(--shadow-pop);
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -1560,13 +1560,13 @@ a.btn {
 }
 
 .confirmDanger {
-  border: 1px solid rgba(248, 113, 113, 0.45);
-  background: rgba(248, 113, 113, 0.14);
-  color: #fca5a5;
+  border: 1px solid var(--danger-border);
+  background: var(--danger-soft);
+  color: var(--danger-fg);
 }
 
 .confirmDanger:hover:not(:disabled) {
-  background: rgba(248, 113, 113, 0.22);
+  background: var(--danger-soft);
 }
 
 .confirmDanger:disabled,
@@ -1619,7 +1619,7 @@ a.btn {
   outline: none;
   box-shadow:
     0 0 0 2px var(--bg),
-    0 0 0 4px var(--focus-ring, rgba(59, 130, 246, 0.55));
+    0 0 0 4px var(--focus-ring-color);
   border-radius: var(--radius-sm);
 }
 
@@ -1743,7 +1743,7 @@ a.btn {
   border-radius: 14px 14px 4px 14px;
   background: var(--blue-soft);
   border: 1px solid var(--blue-border);
-  color: #e0ecff;
+  color: var(--info-fg-strong);
   line-height: 1.55;
   font-size: 13.5px;
   white-space: pre-wrap;
@@ -1782,7 +1782,7 @@ a.btn {
   border-radius: 14px 14px 4px 14px;
   background: var(--blue-soft);
   border: 1px solid var(--blue-border);
-  color: #e0ecff;
+  color: var(--info-fg-strong);
   line-height: 1.55;
   font-size: 13.5px;
   font-family: inherit;
@@ -1824,9 +1824,9 @@ a.btn {
   gap: 6px;
   padding: 3px 8px 3px 4px;
   border-radius: var(--radius-pill);
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--overlay-hover);
   border: 1px solid var(--blue-border);
-  color: #e0ecff;
+  color: var(--info-fg-strong);
   font-size: 11.5px;
   max-width: 240px;
 }
@@ -1872,7 +1872,7 @@ a.btn {
   background: var(--card);
   border: 1px solid var(--border);
   color: var(--text-dim);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  box-shadow: 0 8px 24px var(--shadow-color);
   margin-bottom: 2px;
 }
 
@@ -1953,9 +1953,9 @@ a.btn {
   gap: 8px;
   padding: 12px;
   border-radius: var(--radius);
-  background: rgba(251, 191, 36, 0.08);
-  border: 1px solid rgba(251, 191, 36, 0.35);
-  color: #fde68a;
+  background: var(--amber-soft);
+  border: 1px solid var(--amber-border);
+  color: var(--warning-fg);
   font-size: 12.5px;
 }
 
@@ -1966,7 +1966,7 @@ a.btn {
 /* Guardrail warning on an ask-tier prompt (#409): louder than the card it
    sits in, because the card is already amber. */
 .permissionGuardrail {
-  color: #fca5a5;
+  color: var(--danger-fg);
   font-weight: 500;
 }
 
@@ -1974,8 +1974,8 @@ a.btn {
   margin: 0;
   padding: 8px;
   border-radius: var(--radius-sm);
-  background: rgba(0, 0, 0, 0.25);
-  color: #e5e7eb;
+  background: var(--input-fill);
+  color: var(--text);
   font-size: 11.5px;
   max-height: 160px;
   overflow: auto;
@@ -1997,25 +1997,25 @@ a.btn {
 }
 
 .permissionCommand:hover {
-  border-color: rgba(251, 191, 36, 0.35);
+  border-color: var(--amber-border);
 }
 
 .permissionCommand:focus {
   outline: none;
-  border-color: rgba(251, 191, 36, 0.7);
-  background: rgba(0, 0, 0, 0.35);
+  border-color: var(--amber-border);
+  background: var(--input-fill);
 }
 
 .permissionEdited {
   margin-left: 8px;
   padding: 1px 7px;
   border-radius: 999px;
-  border: 1px solid rgba(251, 191, 36, 0.35);
+  border: 1px solid var(--amber-border);
   font-size: 10.5px;
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: #fbbf24;
+  color: var(--amber);
 }
 
 .permissionWas {
@@ -2036,7 +2036,7 @@ a.btn {
   padding: 0;
   border: 0;
   background: none;
-  color: #fde68a;
+  color: var(--warning-fg);
   font-size: 11px;
   cursor: pointer;
 }
@@ -2049,7 +2049,7 @@ a.btn {
 .planBody {
   padding: 10px 12px;
   border-radius: var(--radius-sm);
-  background: rgba(0, 0, 0, 0.25);
+  background: var(--input-fill);
   color: var(--text);
   max-height: 420px;
   overflow: auto;
@@ -2148,29 +2148,29 @@ a.btn {
 .permissionAllow {
   padding: 4px 10px;
   border-radius: var(--radius-sm);
-  border: 1px solid rgba(74, 222, 128, 0.35);
-  background: rgba(74, 222, 128, 0.12);
-  color: #86efac;
+  border: 1px solid var(--green-border);
+  background: var(--diff-add-bg);
+  color: var(--success-fg);
   font-size: 12px;
   font-weight: 600;
 }
 
 .permissionAllow:hover {
-  background: rgba(74, 222, 128, 0.2);
+  background: var(--green-soft);
 }
 
 .permissionDeny {
   padding: 4px 10px;
   border-radius: var(--radius-sm);
-  border: 1px solid rgba(248, 113, 113, 0.35);
-  background: rgba(248, 113, 113, 0.12);
-  color: #fca5a5;
+  border: 1px solid var(--danger-border);
+  background: var(--danger-soft);
+  color: var(--danger-fg);
   font-size: 12px;
   font-weight: 600;
 }
 
 .permissionDeny:hover {
-  background: rgba(248, 113, 113, 0.2);
+  background: var(--danger-soft);
 }
 
 /* Agent question (AskUserQuestion): options rendered as a numbered picker. */
@@ -2185,12 +2185,12 @@ a.btn {
   margin-right: 8px;
   padding: 1px 7px;
   border-radius: 999px;
-  border: 1px solid rgba(251, 191, 36, 0.35);
+  border: 1px solid var(--amber-border);
   font-size: 10.5px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: #fbbf24;
+  color: var(--amber);
 }
 
 .questionOptions {
@@ -2206,7 +2206,7 @@ a.btn {
   padding: 8px 10px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
-  background: rgba(0, 0, 0, 0.25);
+  background: var(--input-fill);
   color: var(--text);
   font-size: 12.5px;
   text-align: left;
@@ -2214,12 +2214,12 @@ a.btn {
 }
 
 .questionOption:hover {
-  border-color: rgba(251, 191, 36, 0.45);
+  border-color: var(--amber-border);
 }
 
 .questionOption[data-picked] {
-  border-color: rgba(74, 222, 128, 0.55);
-  background: rgba(74, 222, 128, 0.1);
+  border-color: var(--green-border);
+  background: var(--diff-add-bg);
 }
 
 .questionKey {
@@ -2254,7 +2254,7 @@ a.btn {
   padding: 7px 10px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
-  background: rgba(0, 0, 0, 0.25);
+  background: var(--input-fill);
   color: var(--text);
   font-size: 12.5px;
 }
@@ -2278,32 +2278,32 @@ a.btn {
   border-radius: var(--radius);
   background: var(--blue-soft);
   border: 1px solid var(--blue-border);
-  color: #bfdbfe;
+  color: var(--info-fg-strong);
   font-size: 12.5px;
   font-weight: 500;
 }
 
 .statusStripStalled {
-  background: rgba(251, 191, 36, 0.08);
-  border-color: rgba(251, 191, 36, 0.35);
-  color: #fde68a;
+  background: var(--amber-soft);
+  border-color: var(--amber-border);
+  color: var(--warning-fg);
 }
 
 .statusStripStalled .statusDot {
-  background: #fbbf24;
-  box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.2);
+  background: var(--amber);
+  box-shadow: 0 0 0 3px var(--amber-soft);
   animation: none;
 }
 
 .statusStripQuotaWait {
-  background: rgba(251, 191, 36, 0.08);
-  border-color: rgba(251, 191, 36, 0.35);
-  color: #fde68a;
+  background: var(--amber-soft);
+  border-color: var(--amber-border);
+  color: var(--warning-fg);
 }
 
 .statusStripQuotaWait .statusDot {
-  background: #fbbf24;
-  box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.2);
+  background: var(--amber);
+  box-shadow: 0 0 0 3px var(--amber-soft);
   animation: none;
 }
 
@@ -2349,7 +2349,7 @@ a.btn {
   height: 8px;
   border-radius: 50%;
   background: var(--blue);
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+  box-shadow: 0 0 0 3px var(--blue-soft);
   animation: pulse 1.4s ease-in-out infinite;
   flex-shrink: 0;
 }
@@ -2357,16 +2357,16 @@ a.btn {
 .stopBtn {
   padding: 4px 10px;
   border-radius: var(--radius-sm);
-  border: 1px solid rgba(248, 113, 113, 0.35);
-  background: rgba(248, 113, 113, 0.12);
-  color: #fca5a5;
+  border: 1px solid var(--danger-border);
+  background: var(--danger-soft);
+  color: var(--danger-fg);
   font-size: 12px;
   font-weight: 600;
   flex-shrink: 0;
 }
 
 .stopBtn:hover {
-  background: rgba(248, 113, 113, 0.2);
+  background: var(--danger-soft);
 }
 
 @keyframes pulse {

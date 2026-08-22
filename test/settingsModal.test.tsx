@@ -961,3 +961,45 @@ describe("SettingsModal worker model pool (issue #467)", () => {
     m.unmount();
   });
 });
+
+describe("SettingsModal Appearance (#651)", () => {
+  it("renders above Budget and saves the picked theme", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const m = await mount(
+      modal({
+        settings: {
+          dailyBudgetUsd: null,
+          autoSettleAfterDays: 3,
+          theme: "dark",
+        } as AppSettings,
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return { dailyBudgetUsd: null, autoSettleAfterDays: 3, theme: "light" } as AppSettings;
+        },
+      }),
+    );
+    const body = m.text();
+    const appearanceAt = body.indexOf("Appearance");
+    const budgetAt = body.indexOf("Budget");
+    assert.ok(appearanceAt >= 0, `Appearance heading missing, got: ${body.slice(0, 200)}`);
+    assert.ok(budgetAt >= 0, "Budget heading missing");
+    assert.ok(
+      appearanceAt < budgetAt,
+      "Appearance must sit above Budget",
+    );
+    const select = m.query("[data-theme-setting]") as HTMLSelectElement;
+    assert.ok(select, "theme select must render");
+    assert.equal(select.value, "dark");
+    await m.change(select, "light");
+    assert.deepEqual(patches, [{ theme: "light" }]);
+    m.unmount();
+  });
+
+  it("defaults the control to dark when settings.theme is absent", async () => {
+    const m = await mount(modal({ settings: { dailyBudgetUsd: 5, autoSettleAfterDays: 3 } }));
+    const select = m.query("[data-theme-setting]") as HTMLSelectElement;
+    assert.ok(select, "theme select must render");
+    assert.equal(select.value, "dark");
+    m.unmount();
+  });
+});

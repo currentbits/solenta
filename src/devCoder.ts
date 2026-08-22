@@ -1464,6 +1464,7 @@ function buildDevCoder(): CoderApi {
   /** Update channel override; null follows the (absent) dev stamp. */
   let updateChannel: "prod" | "nightly" | null = null;
   let notifications = true;
+  let theme: AppSettings["theme"] = "dark";
   let quotaWaitAutoResume = true;
   let otel: OtelSettings = { endpoint: null, headers: {}, claudeMetrics: false };
   /** Saved agent profiles (Settings tab), in-memory. */
@@ -2075,6 +2076,7 @@ function buildDevCoder(): CoderApi {
           onboardingSeen,
           updateChannel,
           notifications,
+          theme,
           quotaWaitAutoResume,
           agentProfiles: agentProfiles.map((p) => ({ ...p })),
           subagentPool: {
@@ -2141,6 +2143,13 @@ function buildDevCoder(): CoderApi {
           }
           notifications = patch.notifications;
         }
+        if (Object.prototype.hasOwnProperty.call(patch, "theme")) {
+          const v = patch.theme;
+          if (v !== "system" && v !== "light" && v !== "dark") {
+            throw new Error('theme must be "system", "light", or "dark"');
+          }
+          theme = v;
+        }
         if (Object.prototype.hasOwnProperty.call(patch, "quotaWaitAutoResume")) {
           if (typeof patch.quotaWaitAutoResume !== "boolean") {
             throw new Error("quotaWaitAutoResume must be a boolean");
@@ -2196,6 +2205,7 @@ function buildDevCoder(): CoderApi {
           onboardingSeen,
           updateChannel,
           notifications,
+          theme,
           quotaWaitAutoResume,
           agentProfiles: agentProfiles.map((p) => ({ ...p })),
           subagentPool: {

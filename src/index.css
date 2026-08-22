@@ -8,24 +8,57 @@
   --border: #2a3242;
   --border-soft: #202838;
   --text: #e8ecf4;
-  --text-muted: #8b95a8;
-  /* ~4.7:1 on --card / ~5:1 on --bg-elevated: sidebar metadata stays readable. */
-  --text-dim: #7d8798;
+  /* ~8.5:1 on --card (AAA at ≤12px). Was #8b95a8 ~5.6:1. */
+  --text-muted: #b0b8c6;
+  /* ~7.4:1 on --card (AAA at ≤12px). Was #7d8798 ~4.7:1. */
+  --text-dim: #a4adb8;
+  --text-on-accent: #fff;
   --blue: #3b82f6;
   --blue-soft: rgba(59, 130, 246, 0.15);
   --blue-border: rgba(59, 130, 246, 0.35);
   --green: #34d399;
   --green-soft: rgba(52, 211, 153, 0.14);
+  --green-border: rgba(52, 211, 153, 0.4);
   --amber: #fbbf24;
+  --amber-soft: rgba(251, 191, 36, 0.08);
+  --amber-border: rgba(251, 191, 36, 0.35);
   /* Delegating (orchestrator waiting on workers) — its own colour, not blue. */
   --violet: #a78bfa;
+  --violet-soft: rgba(167, 139, 250, 0.12);
+  --violet-border: rgba(167, 139, 250, 0.3);
   --danger: #f87171;
+  --danger-soft: rgba(248, 113, 113, 0.12);
+  --danger-border: rgba(248, 113, 113, 0.35);
+  --danger-fg: #fca5a5;
+  --success-fg: #6ee7b7;
+  --warning-fg: #fde68a;
+  --info-fg: #93c5fd;
+  --info-fg-strong: #bfdbfe;
+  --diff-add-fg: #6ee7b7;
+  --diff-add-bg: rgba(52, 211, 153, 0.08);
+  --diff-del-fg: #fca5a5;
+  --diff-del-bg: rgba(248, 113, 113, 0.08);
+  /* Overlay washes: white-on-dark. Light theme swaps to ink-on-paper. */
+  --overlay-soft: rgba(255, 255, 255, 0.04);
+  --overlay-hover: rgba(255, 255, 255, 0.07);
+  --overlay-strong: rgba(255, 255, 255, 0.14);
+  --track: #2a3344;
+  --scrim: rgba(0, 0, 0, 0.55);
+  --scrim-heavy: rgba(0, 0, 0, 0.78);
+  --input-fill: rgba(0, 0, 0, 0.25);
+  --spinner-track: rgba(255, 255, 255, 0.35);
+  --scrollbar-thumb: #2a3344;
+  --scrollbar-thumb-hover: #364155;
   /* Shared button + overlay primitives (restyle pass). */
   --btn-primary-bg: #2563eb;
   --btn-primary-hover: #3b82f6;
-  --focus-ring: 0 0 0 2px rgba(59, 130, 246, 0.45);
+  --focus-ring-color: rgba(59, 130, 246, 0.45);
+  --focus-ring: 0 0 0 2px var(--focus-ring-color);
+  --shadow-color: rgba(0, 0, 0, 0.35);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.18);
   --shadow-pop:
     0 12px 32px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.35);
+  --shadow-modal: 0 24px 64px rgba(0, 0, 0, 0.55);
   --radius: 10px;
   --radius-sm: 6px;
   --radius-pill: 999px;
@@ -34,6 +67,67 @@
   --font: "Inter", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI",
     system-ui, sans-serif;
   --mono: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+
+/* Same token names. No per-component branching (issue #651). */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f3f5f8;
+  --bg-elevated: #ffffff;
+  --panel: #ffffff;
+  --card: #ffffff;
+  --card-hover: #ebeef3;
+  --border: #cfd6e1;
+  --border-soft: #e2e7ee;
+  --text: #12161e;
+  /* ~7.5:1 on --card (AAA at ≤12px). */
+  --text-muted: #4b5568;
+  /* ~9.0:1 on --card (AAA at ≤12px). */
+  --text-dim: #3f4a5a;
+  --text-on-accent: #fff;
+  --blue: #1e40af;
+  --blue-soft: rgba(30, 64, 175, 0.1);
+  --blue-border: rgba(30, 64, 175, 0.35);
+  --green: #065f46;
+  --green-soft: rgba(6, 95, 70, 0.1);
+  --green-border: rgba(6, 95, 70, 0.35);
+  --amber: #78350f;
+  --amber-soft: rgba(120, 53, 15, 0.1);
+  --amber-border: rgba(120, 53, 15, 0.35);
+  --violet: #5b21b6;
+  --violet-soft: rgba(91, 33, 182, 0.1);
+  --violet-border: rgba(91, 33, 182, 0.3);
+  --danger: #991b1b;
+  --danger-soft: rgba(153, 27, 27, 0.1);
+  --danger-border: rgba(153, 27, 27, 0.35);
+  --danger-fg: #991b1b;
+  --success-fg: #065f46;
+  --warning-fg: #78350f;
+  --info-fg: #1e40af;
+  --info-fg-strong: #1e3a8a;
+  --diff-add-fg: #065f46;
+  --diff-add-bg: rgba(6, 95, 70, 0.1);
+  --diff-del-fg: #991b1b;
+  --diff-del-bg: rgba(153, 27, 27, 0.1);
+  --overlay-soft: rgba(15, 23, 42, 0.04);
+  --overlay-hover: rgba(15, 23, 42, 0.07);
+  --overlay-strong: rgba(15, 23, 42, 0.1);
+  --track: #d5dbe6;
+  --scrim: rgba(15, 23, 42, 0.4);
+  --scrim-heavy: rgba(15, 23, 42, 0.6);
+  --input-fill: rgba(15, 23, 42, 0.04);
+  --spinner-track: rgba(15, 23, 42, 0.25);
+  --scrollbar-thumb: #c5cdd8;
+  --scrollbar-thumb-hover: #a8b3c2;
+  --btn-primary-bg: #1e40af;
+  --btn-primary-hover: #1e3a8a;
+  --focus-ring-color: rgba(30, 64, 175, 0.45);
+  --focus-ring: 0 0 0 2px var(--focus-ring-color);
+  --shadow-color: rgba(15, 23, 42, 0.12);
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.08);
+  --shadow-pop:
+    0 12px 32px rgba(15, 23, 42, 0.12), 0 2px 8px rgba(15, 23, 42, 0.06);
+  --shadow-modal: 0 24px 64px rgba(15, 23, 42, 0.16);
 }
 
 *,
@@ -99,10 +193,10 @@ select:focus-visible {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #2a3344;
+  background: var(--scrollbar-thumb);
   border-radius: 8px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #364155;
+  background: var(--scrollbar-thumb-hover);
 }

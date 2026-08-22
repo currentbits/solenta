@@ -1767,6 +1767,12 @@ export interface AppSettings {
    */
   notifications: boolean;
   /**
+   * Appearance (issue #651). "system" follows the OS via prefers-color-scheme;
+   * "light" and "dark" stay put. Absent/junk on disk heals to "dark" so
+   * upgrades of the previously-dark-only app do not flip overnight.
+   */
+  theme: "system" | "light" | "dark";
+  /**
    * Continue automatically when a provider usage limit resets (#462).
    * Default on; only an explicit false opts out (Claude's /config row).
    * Per-thread quotaWaitAutoResume overrides this.

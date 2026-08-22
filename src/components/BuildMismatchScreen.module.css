@@ -31,7 +31,7 @@
   padding: 6px 14px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-soft);
-  background: rgba(59, 130, 246, 0.12);
+  background: var(--blue-soft);
   color: var(--blue);
   font-size: 12px;
   font-weight: 600;
@@ -39,7 +39,7 @@
 }
 
 .restart:hover {
-  background: rgba(59, 130, 246, 0.2);
+  background: var(--blue-soft);
 }
 
 .restart:focus-visible {
