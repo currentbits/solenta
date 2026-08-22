@@ -6,6 +6,7 @@ const http = require("node:http");
 const crypto = require("node:crypto");
 const { spawn, execFile } = require("node:child_process");
 const { defaultWhich } = require("./providers.js");
+const { recordSecretUse } = require("./secrets.js");
 
 const CONFIG_NAME = "memory-server.json";
 const MCP_CONFIG_NAME = "mcp-coder-memory.json";
@@ -1013,6 +1014,11 @@ function writeMcpConfig(userDataPath) {
     };
     if (s.token) {
       entry.headers.Authorization = `Bearer ${s.token}`;
+      try {
+        recordSecretUse({ purpose: "mcp-inject", key: `mcp:${s.name}` });
+      } catch {
+        // Audit must never block writing the CLI config.
+      }
     }
     mcpServers[s.name] = entry;
   }

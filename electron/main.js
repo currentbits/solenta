@@ -34,6 +34,7 @@ const {
   HOST_FLAG_HELP,
 } = require("./webServer.js");
 const { migrateLegacyUserData } = require("./legacy-migration.js");
+const { configureDefaultSecrets } = require("./secrets.js");
 const { installCrashGuard } = require("./crash-guard.js");
 const { start: startLoopLag } = require("./looplag.js");
 const { installShutdown } = require("./shutdown.js");
@@ -298,7 +299,13 @@ app.whenReady().then(async () => {
         err && err.message ? err.message : err,
       );
     },
-    loadStore: () => new Store(path.join(userData, "coder-store.json")),
+    loadStore: () => {
+      // Before the store reads: decryption needs the audit sink armed (#649).
+      configureDefaultSecrets({
+        auditPath: path.join(userData, "secrets-audit.jsonl"),
+      });
+      return new Store(path.join(userData, "coder-store.json"));
+    },
   });
 
   app.on("activate", () => {

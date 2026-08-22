@@ -14,6 +14,7 @@ const {
 const { normalizeAcceptedHunks } = require("./reviewItinerary.js");
 const { normalizeBtwCards } = require("./btw.js");
 const { normalizePendingQuestion } = require("./questions.js");
+const { getDefaultSecrets } = require("./secrets.js");
 
 /** Builtin "Plan and Verify" workflow template (seeded on every store). */
 const STANDARD_TEMPLATE = {
@@ -1016,9 +1017,12 @@ function recoverInterruptedRuns(data) {
 class Store {
   /**
    * @param {string} filePath
+   * @param {{ secrets?: import("./secrets.js").Secrets }} [opts]
    */
-  constructor(filePath) {
+  constructor(filePath, opts = {}) {
     this.filePath = filePath;
+    this._secrets = (opts && opts.secrets) || getDefaultSecrets();
+    this._secretsMigrated = 0;
     this._dirty = false;
     this._timer = null;
     this._flushing = false;
@@ -1035,9 +1039,24 @@ class Store {
     // Rolling .bak is off the constructor's sync path (#618). Tests may await it.
     this._bakCopy = Promise.resolve();
     this.data = this._load();
+    if (this._secretsMigrated > 0) {
+      this._secrets.emit(
+        `[store] encrypted ${this._secretsMigrated} plaintext credential(s) at rest`,
+      );
+    }
     if (this._recoveredOnLoad) {
       this.save();
     }
+  }
+
+  /**
+   * Stringify the live store with secret fields sealed. In-memory settings
+   * stay plaintext; only the JSON payload is encrypted (issue #543).
+   */
+  _payloadJson() {
+    const settings = this._secrets.concealSettings(this.data.settings);
+    if (settings === this.data.settings) return JSON.stringify(this.data);
+    return JSON.stringify({ ...this.data, settings });
   }
 
   /**
@@ -1097,12 +1116,19 @@ class Store {
     };
     ensureWorkflowTemplates(data);
     this._recoveredOnLoad = recoverInterruptedRuns(data) || hadSpaces;
+    const revealed = this._secrets.revealSettings(data.settings);
+    data.settings = revealed.settings;
+    if (revealed.migrated > 0) {
+      this._secretsMigrated = revealed.migrated;
+      this._recoveredOnLoad = true;
+    }
     this._lastAssistantByThread.clear();
     return data;
   }
 
   _load() {
     this._recoveredOnLoad = false;
+    this._secretsMigrated = 0;
     const bakPath = `${this.filePath}.bak`;
     const mainExists = fs.existsSync(this.filePath);
     if (mainExists) {
@@ -1218,7 +1244,7 @@ class Store {
     // Compact JSON: the file is machine-read, and pretty-printing roughly
     // doubles both the stringify CPU and the bytes written on every flush
     // (which fires up to every 15s under sustained streaming).
-    const payload = JSON.stringify(this.data);
+    const payload = this._payloadJson();
     this._flushPromise = (async () => {
       try {
         await fs.promises.mkdir(dir, { recursive: true });
@@ -1293,7 +1319,7 @@ class Store {
     const dir = path.dirname(this.filePath);
     fs.mkdirSync(dir, { recursive: true });
     const tmp = `${this.filePath}.${process.pid}.${Date.now()}.tmp`;
-    const payload = JSON.stringify(this.data);
+    const payload = this._payloadJson();
     fs.writeFileSync(tmp, payload, "utf8");
     try {
       const fd = fs.openSync(tmp, "r+");
