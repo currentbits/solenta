@@ -5260,6 +5260,7 @@ module.exports = {
   commit,
   revertFile,
   listFiles,
+  listChangedPaths,
   mergeWorktree,
   conflictContext,
   removeWorktree,
