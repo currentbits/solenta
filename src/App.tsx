@@ -1120,6 +1120,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           <ErrorBoundary pane="Sidebar">
             <Sidebar
         appName="Solenta"
+        appVersion={appStatus?.build.version ?? null}
         channel={appStatus?.build.channel ?? null}
         updateState={updateStatus?.state ?? null}
         searchPlaceholder="Search threads…"

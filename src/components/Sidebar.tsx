@@ -158,9 +158,11 @@ function Icon({
 
 interface SidebarProps {
   appName: string;
+  /** Running package version; rendered next to the wordmark. */
+  appVersion?: string | null;
   /** Update channel of the running build; "nightly" tags the wordmark. */
   channel?: "prod" | "nightly" | null;
-  /** Update check result; a dot on Settings when an update is waiting. */
+  /** Update check result; a label next to Settings when an update is waiting. */
   updateState?: UpdateStatus["state"] | null;
   searchPlaceholder: string;
   projectsHeader: string;
@@ -1257,6 +1259,7 @@ export function SnoozedRow({
  */
 export const Sidebar = memo(function Sidebar({
   appName,
+  appVersion,
   channel,
   updateState,
   searchPlaceholder,
@@ -2019,6 +2022,11 @@ export const Sidebar = memo(function Sidebar({
             </svg>
           </span>
           <span className={styles.brandName}>{appName}</span>
+          {appVersion ? (
+            <span className={styles.brandVersion} data-app-version="">
+              {appVersion}
+            </span>
+          ) : null}
           {channel === "nightly" && (
             <span className={styles.brandChannel}>nightly</span>
           )}
@@ -2963,7 +2971,13 @@ export const Sidebar = memo(function Sidebar({
             </span>
             Settings
             {(updateState === "available" || updateState === "staged") && (
-              <span className={styles.settingsDot} aria-hidden />
+              <span
+                className={styles.settingsUpdate}
+                data-settings-update=""
+                aria-hidden
+              >
+                {updateState === "staged" ? "Restart" : "Update"}
+              </span>
             )}
           </button>
           {projects.length > 0 && (

@@ -125,6 +125,38 @@ describe("App boot wiring", () => {
     );
     m.unmount();
   });
+
+  it("paints the build version and an Update label from boot IPC", async () => {
+    const fake = createFakeCoder({
+      status: {
+        spendTodayUsd: 0,
+        memory: {
+          running: false,
+          adopted: false,
+          port: null,
+          entries: null,
+          vectors: null,
+          lastError: null,
+        },
+        build: { version: "0.10.0", sha: null, time: null, channel: "prod" },
+      },
+      update: {
+        state: "available",
+        channel: "prod",
+        tag: "v0.11.0",
+        url: "https://github.com/currentbits/solenta/releases/tag/v0.11.0",
+        error: null,
+      },
+    });
+    const m = await boot(fake);
+    assert.ok(
+      fake.of("app.checkUpdate").length >= 1,
+      "boot must poll GitHub for an update",
+    );
+    assert.equal(m.query("[data-app-version]")?.textContent, "0.10.0");
+    assert.equal(m.query("[data-settings-update]")?.textContent, "Update");
+    m.unmount();
+  });
 });
 
 describe("App thread selection wiring", () => {

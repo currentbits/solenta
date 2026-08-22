@@ -9,6 +9,7 @@
  * Run: npm run test:renderer
  */
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import { afterEach, describe, it } from "node:test";
 import { dismissContextMenu } from "../src/contextMenuFallback";
 import * as React from "react";
@@ -151,6 +152,8 @@ function sidebar(
     revealThreadId?: string | null;
     onRevealHandled?: () => void;
     updateState?: UpdateStatus["state"] | null;
+    appVersion?: string | null;
+    channel?: "prod" | "nightly" | null;
     searchThreads?: (input: { query: string }) => Promise<ThreadInfo[]>;
   } = {},
 ) {
@@ -158,6 +161,8 @@ function sidebar(
   return (
     <Sidebar
       appName="Solenta"
+      appVersion={over.appVersion}
+      channel={over.channel}
       searchPlaceholder="Search threads..."
       projectsHeader="All projects"
       projects={projects}
@@ -1950,34 +1955,87 @@ function settingsButton(
   return el as HTMLButtonElement;
 }
 
-describe("Sidebar update indicator (issue #138)", () => {
-  it("dots Settings when an update is waiting, not otherwise", async () => {
+describe("Sidebar update indicator (issue #138 / #673)", () => {
+  it("labels Settings when an update is waiting, not otherwise", async () => {
     const available = await mount(
       sidebar(THREADS, { updateState: "available" }),
     );
     const availableBtn = settingsButton(available);
-    assert.ok(
-      availableBtn.querySelector(".settingsDot"),
-      "dot present when updateState=available",
+    assert.equal(
+      availableBtn.querySelector("[data-settings-update]")?.textContent,
+      "Update",
+      "Update label present when updateState=available",
     );
     assert.equal(availableBtn.title, "Update available");
     available.unmount();
 
+    const staged = await mount(sidebar(THREADS, { updateState: "staged" }));
+    assert.equal(
+      settingsButton(staged).querySelector("[data-settings-update]")?.textContent,
+      "Restart",
+      "Restart label present when updateState=staged",
+    );
+    staged.unmount();
+
     const none = await mount(sidebar(THREADS, { updateState: "none" }));
     assert.equal(
-      settingsButton(none).querySelector(".settingsDot"),
+      settingsButton(none).querySelector("[data-settings-update]"),
       null,
-      "dot absent when updateState=none",
+      "label absent when updateState=none",
     );
     none.unmount();
 
     const unset = await mount(sidebar(THREADS));
     assert.equal(
-      settingsButton(unset).querySelector(".settingsDot"),
+      settingsButton(unset).querySelector("[data-settings-update]"),
       null,
-      "dot absent when updateState is unset",
+      "label absent when updateState is unset",
     );
     unset.unmount();
+  });
+
+  it("sits next to Settings, not a far-right dot", () => {
+    const css = fs.readFileSync("src/components/Sidebar.module.css", "utf8");
+    assert.match(css, /\.settingsUpdate\s*\{/, "Update label has a class");
+    assert.doesNotMatch(
+      css,
+      /\.settingsDot\s*\{/,
+      "the #138 far-right 6px dot must not come back",
+    );
+    const body = css
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .match(/\.settingsUpdate(?![\w-])\s*\{([^}]*)\}/)?.[1] ?? "";
+    assert.doesNotMatch(
+      body,
+      /margin-left:\s*auto/,
+      "margin-left:auto parked the old dot at the far end of a flex:1 button",
+    );
+  });
+});
+
+describe("Sidebar wordmark version (issue #673)", () => {
+  it("renders the running version next to the app name", async () => {
+    const m = await mount(sidebar(THREADS, { appVersion: "0.10.0" }));
+    assert.equal(m.query("[data-app-version]")?.textContent, "0.10.0");
+    assert.ok(
+      m.text().includes("Solenta"),
+      "wordmark still shows the app name",
+    );
+    m.unmount();
+  });
+
+  it("omits the version node when unset, and keeps the nightly pill", async () => {
+    const unset = await mount(sidebar(THREADS));
+    assert.equal(unset.query("[data-app-version]"), null);
+    assert.equal(unset.query(".brandChannel"), null);
+    unset.unmount();
+
+    const nightly = await mount(
+      sidebar(THREADS, { appVersion: "0.10.0", channel: "nightly" }),
+    );
+    assert.equal(nightly.query("[data-app-version]")?.textContent, "0.10.0");
+    assert.equal(nightly.query(".brandChannel")?.textContent, "nightly");
+    nightly.unmount();
   });
 });
 

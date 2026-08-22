@@ -162,6 +162,8 @@ export interface FakeOptions {
   automations?: AutomationInfo[];
   details?: Record<string, ThreadDetail>;
   status?: AppStatus;
+  /** Override app.checkUpdate result (default: disabled / unstamped). */
+  update?: UpdateStatus;
   settings?: Partial<AppSettings>;
   /**
    * Per-thread checkpoint lists (newest-first). listCheckpoints returns []
@@ -312,13 +314,18 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
             } as AppStatus),
         ),
       checkUpdate: () =>
-        rec("app.checkUpdate", [], {
-          state: "disabled",
-          channel: null,
-          tag: null,
-          url: null,
-          error: null,
-        } as UpdateStatus),
+        rec(
+          "app.checkUpdate",
+          [],
+          opts.update ??
+            ({
+              state: "disabled",
+              channel: null,
+              tag: null,
+              url: null,
+              error: null,
+            } as UpdateStatus),
+        ),
       downloadUpdate: () =>
         rec("app.downloadUpdate", [], {
           state: "disabled",

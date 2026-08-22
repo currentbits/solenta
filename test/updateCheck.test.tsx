@@ -8,10 +8,11 @@
  * Run: node --import=./test/support/render.mjs --test test/updateCheck.test.tsx
  */
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import { describe, it } from "node:test";
 import { mount } from "./support/dom.ts";
 import { createFakeCoder, installFakeCoder, type FakeCoder } from "./support/fakeCoder.ts";
-import { useCoder } from "../src/useCoder";
+import { UPDATE_CHECK_INTERVAL_MS, useCoder } from "../src/useCoder";
 
 /** Minimal host for the hook: the update state and a way to fire each action. */
 function Probe() {
@@ -53,4 +54,21 @@ describe("update actions never reject silently", () => {
       m.unmount();
     });
   }
+});
+
+describe("update check cadence (issue #673)", () => {
+  it("polls GitHub hourly, not every 6h", () => {
+    assert.equal(UPDATE_CHECK_INTERVAL_MS, 60 * 60 * 1000);
+    const src = fs.readFileSync("src/useCoder.ts", "utf8");
+    assert.match(
+      src,
+      /setInterval\(check, UPDATE_CHECK_INTERVAL_MS\)/,
+      "the boot effect must actually use the exported interval",
+    );
+    assert.doesNotMatch(
+      src,
+      /6 \* 60 \* 60 \* 1000/,
+      "the old 6h interval must not linger as a literal",
+    );
+  });
 });

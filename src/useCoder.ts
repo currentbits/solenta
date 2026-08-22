@@ -70,6 +70,8 @@ import {
 import { parseBtwCommand } from "./btw";
 
 const STATUS_POLL_MS = 60_000;
+/** Renderer-side GitHub releases poll. One GET; 60 unauth req/hour is plenty. */
+export const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 
 function readFileAsDataUrl(file: File): Promise<string | null> {
   return new Promise((resolve) => {
@@ -769,8 +771,8 @@ export function useCoder(): UseCoderResult {
     }
   }, [api, failUpdate]);
 
-  // Auto-update: check on boot, then every 6h. The check only asks the release
-  // API — downloading and swapping the bundle waits for a user click.
+  // Auto-update: check on boot, then every hour. The check only asks the
+  // release API — downloading and swapping the bundle waits for a user click.
   // Missing handler (old backend) leaves status null.
   useEffect(() => {
     let cancelled = false;
@@ -789,7 +791,7 @@ export function useCoder(): UseCoderResult {
       }
     };
     check();
-    const timer = setInterval(check, 6 * 60 * 60 * 1000);
+    const timer = setInterval(check, UPDATE_CHECK_INTERVAL_MS);
     return () => {
       cancelled = true;
       clearInterval(timer);
