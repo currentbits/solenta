@@ -144,6 +144,7 @@ describe("SettingsModal hosts the import section", () => {
     const m = await mount(
       <SettingsModal
         open
+        initialPane="advanced"
         onClose={() => {}}
         settings={settings}
         status={status()}

@@ -155,6 +155,10 @@ describe("App wires autoSettleAfterDays into Sidebar (round 45)", () => {
     assert.ok(gear, "settings control must exist");
     await m.click(gear!);
     await m.flush();
+    const nav = m.query('[data-settings-nav="threads"]');
+    assert.ok(nav, "Threads pane");
+    await m.click(nav);
+    await m.flush();
   }
 
   async function saveSettleDays(

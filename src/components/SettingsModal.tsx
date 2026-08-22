@@ -3,6 +3,7 @@ import {
   PERMISSION_MODE_LABELS,
   PERMISSION_MODES,
 } from "../format";
+import { formatUsd } from "../digest";
 import {
   CUSTOM_MODEL_ID,
   effortDisplayLabel,
@@ -31,9 +32,74 @@ import { WorktreeGcSection } from "./WorktreeGcSection";
 import { VibeKanbanSection } from "./VibeKanbanSection";
 import { SourceControlSection } from "./SourceControlSection";
 
+export const SETTINGS_PANES = [
+  "general",
+  "threads",
+  "spending",
+  "git",
+  "agents",
+  "memory",
+  "advanced",
+] as const;
+
+export type SettingsPane = (typeof SETTINGS_PANES)[number];
+
+const PANE_META: Record<
+  SettingsPane,
+  { label: string; hint: string; keywords: string }
+> = {
+  general: {
+    label: "General",
+    hint: "Notifications, the welcome tour, and this build.",
+    keywords:
+      "notifications tour welcome update version build channel nightly prod",
+  },
+  threads: {
+    label: "Threads",
+    hint: "How new threads start, and when quiet ones leave the attention list.",
+    keywords:
+      "worktree isolate orchestrate delegate settle sidebar quota resume",
+  },
+  spending: {
+    label: "Spending",
+    hint: "Caps that stop a runaway day or a runaway crew.",
+    keywords: "budget daily orchestration spend usd cap money cost",
+  },
+  git: {
+    label: "Git",
+    hint: "Source control, PR size, and worktree disk.",
+    keywords:
+      "github gitlab bitbucket azure source control pr pull request worktree gc disk cleanup",
+  },
+  agents: {
+    label: "Agents",
+    hint: "Named profiles for the composer, and the worker pool.",
+    keywords:
+      "profile provider model effort permission pool worker alias candidate",
+  },
+  memory: {
+    label: "Memory",
+    hint: "The local memory server injected into every session.",
+    keywords: "memory entries vectors janitor server port embed",
+  },
+  advanced: {
+    label: "Advanced",
+    hint: "Telemetry export and importing Vibe Kanban boards.",
+    keywords: "otel opentelemetry otlp traces headers vibe kanban import",
+  },
+};
+
+function isSettingsPane(value: string | null | undefined): value is SettingsPane {
+  return (
+    value != null && (SETTINGS_PANES as readonly string[]).includes(value)
+  );
+}
+
 interface SettingsModalProps {
   open: boolean;
   onClose: () => void;
+  /** Open onto a specific pane (sidebar worktree usage deep-links to Git). */
+  initialPane?: SettingsPane | null;
   /** Current settings (budget + auto-settle window). */
   settings: AppSettings | null;
   /** Provider catalogue for the profiles form. Unavailable CLIs stay listed. */
@@ -192,6 +258,7 @@ function draftFromProfile(
 export function SettingsModal({
   open,
   onClose,
+  initialPane = null,
   settings,
   providers = [],
   status,
@@ -206,6 +273,8 @@ export function SettingsModal({
   onDiscoverSourceControl,
   onShowOnboarding,
 }: SettingsModalProps) {
+  const [pane, setPane] = useState<SettingsPane>("general");
+  const [navQuery, setNavQuery] = useState("");
   const [budgetText, setBudgetText] = useState("");
   const [orchBudgetText, setOrchBudgetText] = useState("");
   const [settleDaysText, setSettleDaysText] = useState("");
@@ -230,6 +299,8 @@ export function SettingsModal({
     }
     if (wasOpen.current) return;
     wasOpen.current = true;
+    setPane(isSettingsPane(initialPane) ? initialPane : "general");
+    setNavQuery("");
     setBudgetText(budgetToInput(settings?.dailyBudgetUsd ?? null));
     setOrchBudgetText(
       budgetToInput(settings?.orchestrationBudgetUsd ?? null),
@@ -253,7 +324,41 @@ export function SettingsModal({
 
   useEscapeClose(open, handleClose);
 
+  useEffect(() => {
+    if (!open || !isSettingsPane(initialPane)) return;
+    setPane(initialPane);
+  }, [open, initialPane]);
+
   if (!open) return null;
+
+  const navFilter = navQuery.trim().toLowerCase();
+  const visiblePanes = SETTINGS_PANES.filter((id) => {
+    if (!navFilter) return true;
+    const meta = PANE_META[id];
+    return (
+      meta.label.toLowerCase().includes(navFilter) ||
+      meta.hint.toLowerCase().includes(navFilter) ||
+      meta.keywords.includes(navFilter)
+    );
+  });
+  const paneMeta = PANE_META[pane];
+  const spent = status?.spendTodayUsd;
+  const spendCopy =
+    spent == null
+      ? null
+      : settings?.dailyBudgetUsd != null
+        ? `Spent ${formatUsd(spent)} of ${formatUsd(settings.dailyBudgetUsd)} today`
+        : spent === 0
+          ? "No spend today"
+          : `Spent ${formatUsd(spent)} today`;
+  const spendRatio =
+    spent != null &&
+    settings?.dailyBudgetUsd != null &&
+    settings.dailyBudgetUsd > 0
+      ? Math.min(1, Math.max(0, spent / settings.dailyBudgetUsd))
+      : null;
+  const updateWaiting =
+    update?.state === "available" || update?.state === "staged";
 
   const save = async () => {
     if (savingRef.current) return;
@@ -548,10 +653,11 @@ export function SettingsModal({
       }}
     >
       <div
-        className={styles.modal}
+        className={styles.settingsModal}
         role="dialog"
         aria-modal="true"
         aria-label="Settings"
+        data-settings=""
         onMouseDown={(e) => e.stopPropagation()}
       >
         <header className={styles.header}>
@@ -567,9 +673,89 @@ export function SettingsModal({
           </button>
         </header>
 
-        <div className={styles.body}>
+        <div className={styles.shell}>
+          <nav className={styles.nav} aria-label="Settings sections">
+            <input
+              className={styles.navSearch}
+              type="search"
+              data-settings-search=""
+              placeholder="Find a setting"
+              value={navQuery}
+              onChange={(e) => setNavQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key !== "Enter") return;
+                const first = visiblePanes[0];
+                if (!first) return;
+                e.preventDefault();
+                setPane(first);
+                setError(null);
+              }}
+              aria-label="Find a setting"
+            />
+            <div className={styles.navList}>
+              {visiblePanes.map((id) => (
+                <button
+                  key={id}
+                  type="button"
+                  data-settings-nav={id}
+                  data-active={pane === id ? "true" : undefined}
+                  className={styles.navItem}
+                  aria-current={pane === id ? "page" : undefined}
+                  onClick={() => {
+                    setPane(id);
+                    setError(null);
+                  }}
+                >
+                  <PaneIcon id={id} />
+                  <span className={styles.navLabel}>{PANE_META[id].label}</span>
+                  {id === "general" && updateWaiting ? (
+                    <span className={styles.navDot} data-update="" aria-hidden />
+                  ) : null}
+                  {id === "memory" ? (
+                    <span
+                      className={styles.navDot}
+                      data-on={memory?.running ? "true" : undefined}
+                      aria-hidden
+                    />
+                  ) : null}
+                </button>
+              ))}
+            </div>
+            {navFilter && visiblePanes.length === 0 ? (
+              <p className={styles.navEmpty}>No matching settings</p>
+            ) : null}
+          </nav>
+
+          <div className={styles.content}>
+            <div className={styles.paneHead}>
+              <h3 className={styles.paneTitle}>{paneMeta.label}</h3>
+              <p className={styles.paneHint}>{paneMeta.hint}</p>
+            </div>
+            {error ? (
+              <p className={styles.fieldError} role="alert">
+                {error}
+              </p>
+            ) : null}
+            <div className={styles.paneBody} data-settings-pane={pane}>
+          {pane === "spending" && (
           <section className={styles.section}>
-            <h3 className={styles.sectionLabel}>Budget</h3>
+            {spendCopy ? (
+              <div className={styles.spendBlock} data-spend-today="">
+                <p className={styles.spendLine}>{spendCopy}</p>
+                {spendRatio != null ? (
+                  <div
+                    className={styles.spendTrack}
+                    aria-hidden
+                  >
+                    <span
+                      className={styles.spendFill}
+                      data-hot={spendRatio >= 1 ? "true" : undefined}
+                      style={{ width: `${Math.round(spendRatio * 100)}%` }}
+                    />
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
             <div className={styles.field}>
               <label className={styles.fieldLabel} htmlFor="daily-budget">
                 Daily budget (USD)
@@ -606,11 +792,6 @@ export function SettingsModal({
                   {saving ? "Saving…" : "Save"}
                 </button>
               </div>
-              {error && (
-                <p className={styles.fieldError} role="alert">
-                  {error}
-                </p>
-              )}
             </div>
             <div className={styles.field}>
               <label className={styles.fieldLabel} htmlFor="orch-budget">
@@ -657,12 +838,16 @@ export function SettingsModal({
               </p>
             </div>
           </section>
+          )}
 
+          {pane === "git" && (
           <SourceControlSection
-            active={open}
+            active={open && pane === "git"}
             onDiscover={onDiscoverSourceControl}
           />
+          )}
 
+          {pane === "git" && (
           <section className={styles.section}>
             <h3 className={styles.sectionLabel}>Pull requests</h3>
             <div className={styles.field}>
@@ -710,7 +895,9 @@ export function SettingsModal({
               </p>
             </div>
           </section>
+          )}
 
+          {pane === "threads" && (
           <section className={styles.section}>
             <h3 className={styles.sectionLabel}>Sidebar</h3>
             <div className={styles.field}>
@@ -783,7 +970,9 @@ export function SettingsModal({
               </p>
             </div>
           </section>
+          )}
 
+          {pane === "threads" && (
           <section className={styles.section}>
             <h3 className={styles.sectionLabel}>Threads</h3>
             <div className={styles.field}>
@@ -844,33 +1033,6 @@ export function SettingsModal({
               <label className={styles.fieldRow}>
                 <input
                   type="checkbox"
-                  data-notifications=""
-                  checked={settings?.notifications ?? true}
-                  disabled={saving || settings == null}
-                  onChange={(e) => {
-                    setError(null);
-                    void onSaveSettings({
-                      notifications: e.target.checked,
-                    }).catch((err) => {
-                      setError(
-                        err instanceof Error && err.message
-                          ? err.message
-                          : "Failed to save settings",
-                      );
-                    });
-                  }}
-                />
-                <span>Desktop notification when a thread finishes</span>
-              </label>
-              <p className={styles.note}>
-                Only fires while the window is in the background. Mute a
-                single noisy thread from its snooze menu in the sidebar.
-              </p>
-            </div>
-            <div className={styles.field}>
-              <label className={styles.fieldRow}>
-                <input
-                  type="checkbox"
                   data-quota-wait-auto-resume=""
                   checked={settings?.quotaWaitAutoResume !== false}
                   disabled={saving || settings == null}
@@ -896,14 +1058,11 @@ export function SettingsModal({
               </p>
             </div>
           </section>
+          )}
 
+          {pane === "advanced" && (
           <section className={styles.section} data-otel-settings="">
             <h3 className={styles.sectionLabel}>OpenTelemetry</h3>
-            {error && (
-              <p className={styles.fieldError} role="alert">
-                {error}
-              </p>
-            )}
             <div className={styles.field}>
               <label className={styles.fieldLabel} htmlFor="otel-endpoint">
                 OTLP endpoint
@@ -989,7 +1148,9 @@ export function SettingsModal({
               </p>
             </div>
           </section>
+          )}
 
+          {pane === "agents" && (
           <section className={styles.section} data-agent-profiles="">
             <h3 className={styles.sectionLabel}>Agent profiles</h3>
             <p className={styles.note}>
@@ -1097,14 +1258,11 @@ export function SettingsModal({
               </div>
             )}
           </section>
+          )}
 
+          {pane === "agents" && (
           <section className={styles.section} data-subagent-pool="">
             <h3 className={styles.sectionLabel}>Worker model pool</h3>
-            {error && (
-              <p className={styles.fieldError} role="alert">
-                {error}
-              </p>
-            )}
             <p className={styles.note}>
               Described candidates the lead picks per spawn. Workers default
               to the cheap alias. Does not route the thread you are talking
@@ -1260,18 +1418,23 @@ export function SettingsModal({
               </div>
             )}
           </section>
+          )}
 
+          {pane === "git" && (
           <WorktreeGcSection
-            active={open}
+            active={open && pane === "git"}
             projects={projects}
             onGcScan={onGcScan}
             onGcClean={onGcClean}
           />
+          )}
 
-          <VibeKanbanSection active={open} />
+          {pane === "advanced" && (
+          <VibeKanbanSection active={open && pane === "advanced"} />
+          )}
 
+          {pane === "memory" && (
           <section className={styles.section}>
-            <h3 className={styles.sectionLabel}>Memory</h3>
             <div className={styles.memoryRow}>
               <span
                 className={styles.memoryDot}
@@ -1296,9 +1459,37 @@ export function SettingsModal({
               automatically.
             </p>
           </section>
+          )}
 
+          {pane === "general" && (
           <section className={styles.section}>
-            <h3 className={styles.sectionLabel}>Build</h3>
+            <div className={styles.field}>
+              <label className={styles.fieldRow}>
+                <input
+                  type="checkbox"
+                  data-notifications=""
+                  checked={settings?.notifications ?? true}
+                  disabled={saving || settings == null}
+                  onChange={(e) => {
+                    setError(null);
+                    void onSaveSettings({
+                      notifications: e.target.checked,
+                    }).catch((err) => {
+                      setError(
+                        err instanceof Error && err.message
+                          ? err.message
+                          : "Failed to save settings",
+                      );
+                    });
+                  }}
+                />
+                <span>Desktop notification when a thread finishes</span>
+              </label>
+              <p className={styles.note}>
+                Only fires while the window is in the background. Mute a
+                single noisy thread from its snooze menu in the sidebar.
+              </p>
+            </div>
             {onShowOnboarding && (
               <div className={styles.fieldRow}>
                 <p className={styles.note}>Replay the first-run tour.</p>
@@ -1418,9 +1609,70 @@ export function SettingsModal({
               </p>
             )}
           </section>
+          )}
+            </div>
+          </div>
         </div>
       </div>
     </div>
+  );
+}
+
+function PaneIcon({ id }: { id: SettingsPane }) {
+  return (
+    <svg
+      className={styles.navIcon}
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      {id === "general" ? (
+        <>
+          <circle cx="12" cy="12" r="3" />
+          <path d="M12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1 7 17M17 7l2.1-2.1" />
+        </>
+      ) : id === "threads" ? (
+        <>
+          <path d="M8 6h13M8 12h13M8 18h13" />
+          <path d="M3 6h.01M3 12h.01M3 18h.01" />
+        </>
+      ) : id === "spending" ? (
+        <>
+          <circle cx="12" cy="12" r="9" />
+          <path d="M14.5 9.5a2.5 2.5 0 0 0-5 0c0 3.5 5 1.5 5 5a2.5 2.5 0 0 1-5 0M12 7v1.5M12 15.5V17" />
+        </>
+      ) : id === "git" ? (
+        <>
+          <circle cx="6" cy="6" r="2.2" />
+          <circle cx="18" cy="6" r="2.2" />
+          <circle cx="12" cy="18" r="2.2" />
+          <path d="M8 7.5v3.2A6 6 0 0 0 12 16M16 7.5v3.2A6 6 0 0 1 12 16" />
+        </>
+      ) : id === "agents" ? (
+        <>
+          <circle cx="8" cy="9" r="2.4" />
+          <circle cx="16" cy="9" r="2.4" />
+          <path d="M4 18c.4-2.4 2.4-4 4-4s3.6 1.6 4 4M12 18c.4-2.4 2.4-4 4-4s3.6 1.6 4 4" />
+        </>
+      ) : id === "memory" ? (
+        <>
+          <rect x="4" y="5" width="16" height="14" rx="2" />
+          <path d="M8 9h8M8 13h5" />
+        </>
+      ) : (
+        <>
+          <circle cx="12" cy="12" r="3" />
+          <path d="M4.5 12H8M16 12h3.5M12 4.5V8M12 16v3.5" />
+          <path d="m7 7 2.2 2.2M14.8 14.8 17 17M17 7l-2.2 2.2M9.2 14.8 7 17" />
+        </>
+      )}
+    </svg>
   );
 }
 

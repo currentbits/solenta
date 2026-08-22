@@ -11,7 +11,7 @@
 import assert from "node:assert/strict";
 import { describe, it, afterEach } from "node:test";
 import { mount, unmountAll } from "./support/dom.ts";
-import { SettingsModal } from "../src/components/SettingsModal";
+import { SettingsModal, type SettingsPane } from "../src/components/SettingsModal";
 import type {
   AppSettings,
   AppStatus,
@@ -65,6 +65,7 @@ interface Stubs {
   settings?: AppSettings | null;
   status?: AppStatus | null;
   providers?: ProviderInfo[];
+  initialPane?: SettingsPane;
   onSaveSettings?: (patch: Partial<AppSettings>) => Promise<AppSettings>;
   onCheckUpdate?: () => Promise<void>;
   onClose?: () => void;
@@ -74,6 +75,7 @@ function modal(stubs: Stubs = {}) {
   return (
     <SettingsModal
       open
+      initialPane={stubs.initialPane}
       onClose={stubs.onClose ?? (() => {})}
       settings={stubs.settings ?? { dailyBudgetUsd: 5, autoSettleAfterDays: 3 }}
       providers={stubs.providers}
@@ -98,7 +100,10 @@ afterEach(unmountAll);
 describe("SettingsModal memory section", () => {
   it("shows the entry and vector counts it was given", async () => {
     const m = await mount(
-      modal({ status: status({ memory: { entries: 42, vectors: 17 } }) }),
+      modal({
+        initialPane: "memory",
+        status: status({ memory: { entries: 42, vectors: 17 } }),
+      }),
     );
     assert.ok(
       m.text().includes("42 entries"),
@@ -115,6 +120,7 @@ describe("SettingsModal memory section", () => {
     // "0 entries" when the server is unreachable is a lie the user would act on.
     const m = await mount(
       modal({
+        initialPane: "memory",
         status: status({
           memory: { entries: null, vectors: null, adopted: true },
         }),
@@ -135,6 +141,7 @@ describe("SettingsModal memory section", () => {
   it("surfaces a janitor error when present", async () => {
     const m = await mount(
       modal({
+        initialPane: "memory",
         status: status({
           memory: {
             entries: 1,
@@ -244,6 +251,7 @@ describe("SettingsModal PR size cap (#402)", () => {
     const patches: Partial<AppSettings>[] = [];
     const m = await mount(
       modal({
+        initialPane: "git",
         settings: { dailyBudgetUsd: null, autoSettleAfterDays: 3, prDiffCapLines: 400 },
         onSaveSettings: async (patch) => {
           patches.push(patch);
@@ -268,6 +276,7 @@ describe("SettingsModal PR size cap (#402)", () => {
     const patches: Partial<AppSettings>[] = [];
     const m = await mount(
       modal({
+        initialPane: "git",
         settings: { dailyBudgetUsd: null, autoSettleAfterDays: 3, prDiffCapLines: 400 },
         onSaveSettings: async (patch) => {
           patches.push(patch);
@@ -293,6 +302,7 @@ describe("SettingsModal daily budget", () => {
     const patches: Partial<AppSettings>[] = [];
     const m = await mount(
       modal({
+        initialPane: "spending",
         settings: { dailyBudgetUsd: null , autoSettleAfterDays: 3 },
         onSaveSettings: async (patch) => {
           patches.push(patch);
@@ -320,6 +330,7 @@ describe("SettingsModal daily budget", () => {
     async function assertRejected(value: string, label: string) {
       const m = await mount(
         modal({
+          initialPane: "spending",
           settings: { dailyBudgetUsd: 5 , autoSettleAfterDays: 3 },
           onSaveSettings: async (patch) => {
             const n = patch.dailyBudgetUsd;
@@ -354,6 +365,7 @@ describe("SettingsModal daily budget", () => {
     {
       const m = await mount(
         modal({
+          initialPane: "spending",
           settings: { dailyBudgetUsd: 5 , autoSettleAfterDays: 3 },
           onSaveSettings: async () => {
             throw new Error(
@@ -381,6 +393,7 @@ describe("SettingsModal daily budget", () => {
     let closes = 0;
     const m = await mount(
       modal({
+        initialPane: "spending",
         settings: { dailyBudgetUsd: 5 , autoSettleAfterDays: 3 },
         onSaveSettings: async (patch) => {
           saves += 1;
@@ -405,7 +418,7 @@ describe("SettingsModal daily budget", () => {
 
 
 describe("SettingsModal per-orchestration budget (issue #67)", () => {
-  /** Save buttons in DOM order: daily budget, orchestration budget, settle. */
+  /** Save buttons in DOM order on the Spending pane: daily, then orchestration. */
   function saveButtons(m: any) {
     return m
       .queryAll("button")
@@ -416,6 +429,7 @@ describe("SettingsModal per-orchestration budget (issue #67)", () => {
     const patches: Partial<AppSettings>[] = [];
     const m = await mount(
       modal({
+        initialPane: "spending",
         settings: { dailyBudgetUsd: null, autoSettleAfterDays: 3 },
         onSaveSettings: async (patch) => {
           patches.push(patch);
@@ -435,7 +449,7 @@ describe("SettingsModal per-orchestration budget (issue #67)", () => {
     );
     await m.type(input, "4.5");
     const saves = saveButtons(m);
-    assert.ok(saves.length >= 3, "budget + orchestration + settle Save buttons");
+    assert.ok(saves.length >= 2, "daily + orchestration Save buttons");
     await m.click(saves[1]);
     assert.equal(patches.length, 1, "save must call onSaveSettings once");
     assert.equal(patches[0].orchestrationBudgetUsd, 4.5);
@@ -446,6 +460,7 @@ describe("SettingsModal per-orchestration budget (issue #67)", () => {
     const patches: Partial<AppSettings>[] = [];
     const m = await mount(
       modal({
+        initialPane: "spending",
         settings: {
           dailyBudgetUsd: null,
           orchestrationBudgetUsd: 7,
@@ -475,6 +490,7 @@ describe("SettingsModal per-orchestration budget (issue #67)", () => {
   it("surfaces the backend rejection with role=alert", async () => {
     const m = await mount(
       modal({
+        initialPane: "spending",
         settings: { dailyBudgetUsd: null, autoSettleAfterDays: 3 },
         onSaveSettings: async (patch) => {
           const n = patch.orchestrationBudgetUsd;
@@ -507,6 +523,7 @@ describe("SettingsModal auto-settle window", () => {
     const patches: Partial<AppSettings>[] = [];
     const m = await mount(
       modal({
+        initialPane: "threads",
         settings: { dailyBudgetUsd: null, autoSettleAfterDays: 3 },
         onSaveSettings: async (patch) => {
           patches.push(patch);
@@ -527,11 +544,10 @@ describe("SettingsModal auto-settle window", () => {
       "label must match the brief",
     );
     await m.type(input, "7");
-    // Second Save is the settle row's (order: budget Save, settle Save).
     const saves = m
       .queryAll("button")
       .filter((b) => (b.textContent || "").includes("Save"));
-    assert.ok(saves.length >= 2, "budget + settle each have Save");
+    assert.ok(saves.length >= 1, "settle row has Save");
     await m.click(saves[saves.length - 1]!);
     assert.equal(patches.length, 1);
     assert.equal(patches[0].autoSettleAfterDays, 7);
@@ -542,6 +558,7 @@ describe("SettingsModal auto-settle window", () => {
     const patches: Partial<AppSettings>[] = [];
     const m = await mount(
       modal({
+        initialPane: "threads",
         settings: { dailyBudgetUsd: null, autoSettleAfterDays: 3 },
         onSaveSettings: async (patch) => {
           patches.push(patch);
@@ -569,6 +586,7 @@ describe("SettingsModal auto-settle window", () => {
     const patches: Partial<AppSettings>[] = [];
     const m = await mount(
       modal({
+        initialPane: "threads",
         settings: {
           dailyBudgetUsd: null,
           autoSettleAfterDays: 3,
@@ -599,6 +617,7 @@ describe("SettingsModal auto-settle window", () => {
   it("rejects invalid settle days with role=alert (mirrors budget)", async () => {
     const m = await mount(
       modal({
+        initialPane: "threads",
         settings: { dailyBudgetUsd: null, autoSettleAfterDays: 3 },
         onSaveSettings: async (patch) => {
           const n = patch.autoSettleAfterDays;
@@ -673,6 +692,7 @@ describe("SettingsModal OpenTelemetry (issue #280)", () => {
   it("renders the export fields and says empty means off", async () => {
     const m = await mount(
       modal({
+        initialPane: "advanced",
         settings: {
           dailyBudgetUsd: null,
           autoSettleAfterDays: 3,
@@ -699,6 +719,7 @@ describe("SettingsModal OpenTelemetry (issue #280)", () => {
     const patches: Partial<AppSettings>[] = [];
     const m = await mount(
       modal({
+        initialPane: "advanced",
         settings: {
           dailyBudgetUsd: null,
           autoSettleAfterDays: 3,
@@ -735,6 +756,7 @@ describe("SettingsModal OpenTelemetry (issue #280)", () => {
   it("surfaces a rejected endpoint with role=alert", async () => {
     const m = await mount(
       modal({
+        initialPane: "advanced",
         settings: {
           dailyBudgetUsd: null,
           autoSettleAfterDays: 3,
@@ -760,6 +782,7 @@ describe("SettingsModal OpenTelemetry (issue #280)", () => {
     const patches: Partial<AppSettings>[] = [];
     const m = await mount(
       modal({
+        initialPane: "advanced",
         settings: {
           dailyBudgetUsd: null,
           autoSettleAfterDays: 3,
@@ -796,6 +819,7 @@ describe("SettingsModal OpenTelemetry (issue #280)", () => {
     const patches: Partial<AppSettings>[] = [];
     const m = await mount(
       modal({
+        initialPane: "advanced",
         settings: {
           dailyBudgetUsd: null,
           autoSettleAfterDays: 3,
@@ -831,6 +855,7 @@ describe("SettingsModal quota-wait auto-resume (#462)", () => {
     const patches: Partial<AppSettings>[] = [];
     const m = await mount(
       modal({
+        initialPane: "threads",
         settings: {
           dailyBudgetUsd: null,
           autoSettleAfterDays: 3,
@@ -871,7 +896,7 @@ describe("SettingsModal worker model pool (issue #467)", () => {
   };
 
   it("shows the empty state and the add control", async () => {
-    const m = await mount(modal({ providers: [KIMI] }));
+    const m = await mount(modal({ initialPane: "agents", providers: [KIMI] }));
     assert.ok(m.query("[data-subagent-pool]"), "pool section must render");
     assert.ok(
       m.text().includes("Workers inherit the lead"),
@@ -885,6 +910,7 @@ describe("SettingsModal worker model pool (issue #467)", () => {
     const patches: Partial<AppSettings>[] = [];
     const m = await mount(
       modal({
+        initialPane: "agents",
         providers: [KIMI],
         settings: {
           dailyBudgetUsd: null,
@@ -918,6 +944,7 @@ describe("SettingsModal worker model pool (issue #467)", () => {
     const patches: Partial<AppSettings>[] = [];
     const m = await mount(
       modal({
+        initialPane: "agents",
         providers: [KIMI],
         settings: {
           dailyBudgetUsd: null,
@@ -958,6 +985,38 @@ describe("SettingsModal worker model pool (issue #467)", () => {
         },
       ],
     });
+    m.unmount();
+  });
+});
+
+describe("SettingsModal panes", () => {
+  it("opens on General and switches when a nav item is clicked", async () => {
+    const m = await mount(modal());
+    assert.equal(
+      m.query("[data-settings-pane]")?.getAttribute("data-settings-pane"),
+      "general",
+    );
+    assert.ok(m.text().includes("0.1.0"), "build version on General");
+    assert.equal(m.query("#daily-budget"), null, "budget is not on General");
+
+    await m.click(m.query('[data-settings-nav="spending"]'));
+    assert.ok(m.query("#daily-budget"), "Spending shows the daily budget");
+    assert.ok(m.query("[data-spend-today]"), "spend today is on Spending");
+    assert.equal(m.query("[data-otel-settings]"), null);
+    m.unmount();
+  });
+
+  it("filters the sidebar from Find a setting", async () => {
+    const m = await mount(modal());
+    const search = m.query("[data-settings-search]") as HTMLInputElement;
+    assert.ok(search, "search field");
+    await m.type(search, "otel");
+    assert.ok(m.query('[data-settings-nav="advanced"]'), "Advanced matches otel");
+    assert.equal(
+      m.query('[data-settings-nav="spending"]'),
+      null,
+      "Spending is hidden for an otel query",
+    );
     m.unmount();
   });
 });

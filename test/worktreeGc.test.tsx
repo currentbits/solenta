@@ -80,6 +80,7 @@ function modal(stubs: GcStubs = {}) {
   return (
     <SettingsModal
       open
+      initialPane="git"
       onClose={() => {}}
       settings={settings}
       status={status()}

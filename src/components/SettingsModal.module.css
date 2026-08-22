@@ -437,3 +437,229 @@
   margin: 0;
   padding-left: 18px;
 }
+
+/* Settings window — two-pane, same chrome as Workflows. Other consumers
+   of this module keep .modal at the compact 480px size. */
+.settingsModal {
+  display: flex;
+  flex-direction: column;
+  width: min(860px, 100%);
+  height: min(640px, 100%);
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+
+.shell {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  min-height: 0;
+  flex: 1;
+}
+
+.nav {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.15);
+}
+
+.navSearch {
+  margin: 10px 10px 6px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.navSearch::placeholder {
+  color: var(--text-dim);
+}
+
+.navSearch:focus {
+  outline: none;
+  border-color: var(--blue-border);
+  box-shadow: 0 0 0 2px var(--blue-soft);
+}
+
+.navList {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.navItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  padding: 7px 8px;
+  border-radius: 8px;
+  color: var(--text-muted);
+  font-size: 12.5px;
+  font-weight: 500;
+  background: transparent;
+  transition: background 150ms ease, color 150ms ease;
+}
+
+.navItem:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+}
+
+.navItem[data-active="true"] {
+  background: var(--blue-soft);
+  color: #bfdbfe;
+}
+
+.navIcon {
+  flex-shrink: 0;
+  opacity: 0.85;
+}
+
+.navLabel {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.navDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--text-dim);
+}
+
+.navDot[data-on="true"],
+.navDot[data-update] {
+  background: var(--green);
+  box-shadow: 0 0 0 3px var(--green-soft);
+}
+
+.navDot[data-update] {
+  background: var(--amber);
+  box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.18);
+}
+
+.navEmpty {
+  margin: 0 12px 12px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.content {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+.paneHead {
+  padding: 16px 20px 0;
+  flex-shrink: 0;
+}
+
+.paneTitle {
+  margin: 0 0 4px;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+
+.paneHint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-dim);
+}
+
+.paneBody {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px 20px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.content > .fieldError {
+  margin: 8px 20px 0;
+}
+
+.spendBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.spendLine {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.spendTrack {
+  height: 4px;
+  border-radius: var(--radius-pill);
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.spendFill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--blue);
+}
+
+.spendFill[data-hot="true"] {
+  background: var(--danger);
+}
+
+@media (max-width: 640px) {
+  .settingsModal {
+    width: 100%;
+    height: 100%;
+    max-height: 100%;
+    border-radius: 0;
+  }
+
+  .shell {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .nav {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    max-height: 168px;
+  }
+
+  .navList {
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 0 8px 8px;
+  }
+
+  .navItem {
+    width: auto;
+    flex-shrink: 0;
+  }
+}
