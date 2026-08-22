@@ -285,23 +285,23 @@ function validateAgentProfiles(raw) {
 
 const SPEND_RETENTION_DAYS = 90;
 
-// Longest a save() may sit in memory before it hits disk, when idle.
+// Longest a save() may sit in memory before it hits disk.
+// #225: per-thread shards make a flush cheap (one transcript, not the whole
+// store), so the #124/#225-interim backoff cap is gone — flat 250ms.
 const SAVE_DEBOUNCE_MS = 250;
-// Under sustained save() (N streaming threads), double the delay each
-// dirty flush up to this cap so we do not stringify the whole store at 4 Hz.
-// 15s, not 2s (#225 interim): each flush stringifies + rewrites the whole
-// ~180MB store, and the crash-loss window is only the transcript tail, which
-// the provider CLIs' own session logs restore on resume.
-const SAVE_DEBOUNCE_MAX_MS = 15_000;
+const SAVE_DEBOUNCE_MAX_MS = SAVE_DEBOUNCE_MS;
+
+/** Per-thread transcript files live next to coder-store.json (#225). */
+const MESSAGES_DIR = "messages";
+const THREAD_ID_FILE_RE = /^[A-Za-z0-9._-]+$/;
 
 /**
- * Per-thread transcript retention (issue #89). Threads never shrank, so a few
- * heavy long-lived threads grew the one-JSON-blob store to megabytes and every
- * debounced flush re-stringified all of it on the main process. Appends may
- * overshoot the cap by the slack; crossing cap + slack drops the oldest
- * entries back to the cap. The slack keeps the drop (which shifts every index,
- * invalidates the runner's prefix diff and forces one full transcript push)
- * amortized over ~slack appends instead of every append.
+ * Per-thread transcript retention (issue #89). Caps still bound RAM and the
+ * per-shard file; they cannot bound total disk across thread count (#225).
+ * Appends may overshoot the cap by the slack; crossing cap + slack drops the
+ * oldest entries back to the cap. The slack keeps the drop (which shifts every
+ * index, invalidates the runner's prefix diff and forces one full transcript
+ * push) amortized over ~slack appends instead of every append.
  */
 const MAX_MESSAGES_PER_THREAD = 1000;
 const MESSAGE_OVERFLOW_SLACK = 100;
@@ -1085,13 +1085,56 @@ function recoverInterruptedRuns(store, data) {
 }
 
 /**
+ * @param {unknown} id
+ * @returns {id is string}
+ */
+function isSafeThreadId(id) {
+  return (
+    typeof id === "string" &&
+    id.length > 0 &&
+    id.length < 200 &&
+    THREAD_ID_FILE_RE.test(id) &&
+    id !== "." &&
+    id !== ".."
+  );
+}
+
+/**
+ * Write `contents` to `filePath` via tmp + fsync + rename. `seq` must be
+ * unique among concurrent writes to the same path (Date.now collides when
+ * a flush writes N shards in one turn).
+ * @param {string} filePath
+ * @param {string} contents
+ * @param {number} seq
+ */
+function writeAtomicSync(filePath, contents, seq) {
+  const dir = path.dirname(filePath);
+  fs.mkdirSync(dir, { recursive: true });
+  const tmp = `${filePath}.${process.pid}.${seq}.tmp`;
+  fs.writeFileSync(tmp, contents, "utf8");
+  try {
+    const fd = fs.openSync(tmp, "r+");
+    try {
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    // fsync is best-effort; still rename so the write is not lost.
+  }
+  fs.renameSync(tmp, filePath);
+}
+
+/**
  * JSON persistence for Solenta main-process state.
  * Constructor takes a file path; load on start; tolerate missing/corrupt.
  * An unreadable main file is renamed to *.corrupt-<ts> (never discarded)
  * and a sibling *.bak (last good snapshot from a prior successful load)
- * is tried before falling back to empty. Atomic save: write tmp, fsync,
- * then rename. Debounced flushes (save()) write off the event loop;
- * saveNow() is the synchronous exit/shutdown/test path.
+ * is tried before falling back to empty. Transcripts live in
+ * messages/<threadId>.json and a flush writes only dirty shards plus the
+ * small envelope. Atomic save: write tmp, fsync, then rename. Debounced
+ * flushes (save()) write off the event loop; saveNow() is the synchronous
+ * exit/shutdown/test path.
  */
 class Store {
   /**
@@ -1117,10 +1160,19 @@ class Store {
     this._lastAssistantByThread = new Map();
     // Rolling .bak is off the constructor's sync path (#618). Tests may await it.
     this._bakCopy = Promise.resolve();
-    // #639: messagesByThread stays raw until a thread is opened. Hydrated
-    // arrays live on _messagesHydrated; unparsed JSON ranges on _messagesLazy.
+    // #639/#225: transcripts stay unparsed until a thread is opened.
+    // Hydrated arrays live on _messagesHydrated; unparsed JSON strings on
+    // _messagesRaw; still-lazy blob slices on _messagesLazy (legacy envelope
+    // only, dropped after the shard split).
     this._messagesHydrated = {};
     this._messagesLazy = null;
+    this._messagesRaw = new Map();
+    this._messageShards = new Set();
+    this._dirtyMessageIds = new Set();
+    this._deletedMessageIds = new Set();
+    this._inflightShardIds = null;
+    this._inflightDeletedIds = null;
+    this._atomicSeq = 0;
     this.data = this._load();
     if (this._secretsMigrated > 0) {
       this._secrets.emit(
@@ -1213,6 +1265,8 @@ class Store {
         if (typeof prop !== "string") return Reflect.set(t, prop, value);
         store._lastAssistantByThread.delete(prop);
         store._invalidateLazy(prop);
+        store._messagesRaw.delete(prop);
+        store._markMessagesDirty(prop);
         t[prop] = value;
         return true;
       },
@@ -1221,6 +1275,8 @@ class Store {
         store._ensureMessagesIndexed();
         delete t[prop];
         store._invalidateLazy(prop);
+        store._messagesRaw.delete(prop);
+        store._markMessagesDeleted(prop);
         store._lastAssistantByThread.delete(prop);
         return true;
       },
@@ -1233,6 +1289,8 @@ class Store {
         if (store._messagesLazy) {
           for (const k of store._messagesLazy.ranges.keys()) keys.add(k);
         }
+        for (const k of store._messagesRaw.keys()) keys.add(k);
+        for (const k of store._messageShards) keys.add(k);
         return [...keys];
       },
       getOwnPropertyDescriptor(t, prop) {
@@ -1260,6 +1318,9 @@ class Store {
    */
   _hasLazyThread(threadId) {
     if (Object.prototype.hasOwnProperty.call(this._messagesHydrated, threadId)) {
+      return true;
+    }
+    if (this._messagesRaw.has(threadId) || this._messageShards.has(threadId)) {
       return true;
     }
     const lazy = this._messagesLazy;
@@ -1333,6 +1394,165 @@ class Store {
   }
 
   /**
+   * @returns {string}
+   */
+  _messagesDir() {
+    return path.join(path.dirname(this.filePath), MESSAGES_DIR);
+  }
+
+  /**
+   * @param {string} threadId
+   * @returns {string}
+   */
+  _messagePath(threadId) {
+    return path.join(this._messagesDir(), `${threadId}.json`);
+  }
+
+  _scanMessageShards() {
+    this._messageShards = new Set();
+    let names;
+    try {
+      names = fs.readdirSync(this._messagesDir());
+    } catch {
+      return;
+    }
+    for (const name of names) {
+      if (!name.endsWith(".json")) continue;
+      const id = name.slice(0, -".json".length);
+      if (isSafeThreadId(id)) this._messageShards.add(id);
+    }
+  }
+
+  /**
+   * @param {string} threadId
+   */
+  _markMessagesDirty(threadId) {
+    if (!isSafeThreadId(threadId)) return;
+    this._dirtyMessageIds.add(threadId);
+    this._deletedMessageIds.delete(threadId);
+    this._messageShards.add(threadId);
+  }
+
+  /**
+   * @param {string} threadId
+   */
+  _markMessagesDeleted(threadId) {
+    if (!isSafeThreadId(threadId)) return;
+    this._deletedMessageIds.add(threadId);
+    this._dirtyMessageIds.delete(threadId);
+    this._messageShards.delete(threadId);
+    this._messagesRaw.delete(threadId);
+  }
+
+  /**
+   * @param {string} threadId
+   * @returns {string | null}
+   */
+  _readShardFile(threadId) {
+    if (!this._messageShards.has(threadId) || !isSafeThreadId(threadId)) {
+      return null;
+    }
+    try {
+      return fs.readFileSync(this._messagePath(threadId), "utf8");
+    } catch {
+      this._messageShards.delete(threadId);
+      return null;
+    }
+  }
+
+  /**
+   * @param {string} threadId
+   * @returns {string | null}
+   */
+  _readMessageRaw(threadId) {
+    if (this._messagesRaw.has(threadId)) return this._messagesRaw.get(threadId);
+    const raw = this._readShardFile(threadId);
+    if (raw == null) return null;
+    this._messagesRaw.set(threadId, raw);
+    return raw;
+  }
+
+  /**
+   * Snapshot dirty shards for one flush. Clears the dirty sets so later
+   * mutations land in a follow-up write.
+   * @returns {{ writes: Array<{ id: string, json: string }>, deleted: string[] }}
+   */
+  _snapshotDirtyShards() {
+    const writes = [];
+    for (const id of this._dirtyMessageIds) {
+      if (this._deletedMessageIds.has(id) || !isSafeThreadId(id)) continue;
+      let json = null;
+      if (Object.prototype.hasOwnProperty.call(this._messagesHydrated, id)) {
+        json = JSON.stringify(this._messagesHydrated[id] || []);
+      } else if (this._messagesRaw.has(id)) {
+        json = this._messagesRaw.get(id);
+      } else {
+        const r = this._threadRange(id);
+        if (r && this._messagesLazy) {
+          json = this._messagesLazy.raw.slice(r.start, r.end);
+        }
+      }
+      if (json != null) writes.push({ id, json });
+    }
+    const deleted = [...this._deletedMessageIds].filter(isSafeThreadId);
+    this._dirtyMessageIds.clear();
+    this._deletedMessageIds.clear();
+    return { writes, deleted };
+  }
+
+  /**
+   * Split inline messagesByThread onto messages/<id>.json. Existing shard
+   * files win unless that id was mutated this load (crash-recovery splice).
+   * Safe to run twice.
+   * @param {object} data
+   * @returns {boolean} true if the envelope still had inline transcripts
+   */
+  _migrateInlineMessages(data) {
+    const lazy = this._messagesLazy;
+    const ids = new Set();
+    for (const id of Object.keys(this._messagesHydrated)) ids.add(id);
+    if (lazy && lazy.raw) {
+      if (!lazy.indexed) {
+        const indexed = indexMessagesObject(lazy.raw, { peekAssistants: false });
+        lazy.ranges = indexed.ranges;
+        lazy.indexed = true;
+      }
+      for (const id of lazy.ranges.keys()) ids.add(id);
+    }
+    if (ids.size === 0) return false;
+    for (const id of ids) {
+      if (!isSafeThreadId(id)) continue;
+      const dest = this._messagePath(id);
+      const dirty = this._dirtyMessageIds.has(id);
+      if (fs.existsSync(dest) && !dirty) {
+        this._messageShards.add(id);
+        delete this._messagesHydrated[id];
+        this._messagesRaw.delete(id);
+        continue;
+      }
+      let json = null;
+      if (Object.prototype.hasOwnProperty.call(this._messagesHydrated, id)) {
+        json = JSON.stringify(this._messagesHydrated[id] || []);
+      } else if (this._messagesRaw.has(id)) {
+        json = this._messagesRaw.get(id);
+      } else if (lazy && lazy.raw) {
+        const r = lazy.ranges.get(id);
+        if (r) json = lazy.raw.slice(r.start, r.end);
+      }
+      if (json == null) continue;
+      writeAtomicSync(dest, json, ++this._atomicSeq);
+      this._messageShards.add(id);
+      delete this._messagesHydrated[id];
+      this._messagesRaw.delete(id);
+      this._dirtyMessageIds.delete(id);
+    }
+    // Drop the blob so a later flush cannot put 180MB back in the envelope.
+    this._messagesLazy = null;
+    this._attachMessagesProxy(data);
+    return true;
+  }
+
+  /**
    * Append one message without hydrating a still-lazy transcript. Crash
    * recovery uses this so a force-quit does not JSON.parse in-flight runs.
    * @param {string} threadId
@@ -1343,7 +1563,19 @@ class Store {
       const list = this._messagesHydrated[threadId];
       if (Array.isArray(list)) list.push(message);
       else this._messagesHydrated[threadId] = [message];
+      this._markMessagesDirty(threadId);
       return;
+    }
+    // Prefer an existing shard over the legacy blob (interrupted migrate).
+    const fileRaw = this._readMessageRaw(threadId);
+    if (fileRaw) {
+      const range = { start: 0, end: fileRaw.length };
+      const patched = appendJsonArrayItem(fileRaw, range, message);
+      if (patched) {
+        this._messagesRaw.set(threadId, patched.raw);
+        this._markMessagesDirty(threadId);
+        return;
+      }
     }
     const lazy = this._messagesLazy;
     if (lazy && lazy.raw) {
@@ -1353,6 +1585,7 @@ class Store {
         if (patched) {
           lazy.raw = patched.raw;
           this._shiftLazyRanges(patched.at, patched.delta, threadId);
+          this._markMessagesDirty(threadId);
           return;
         }
       }
@@ -1360,10 +1593,11 @@ class Store {
     // Missing key or not an array: tiny hydrated tail, not the original blob.
     this._messagesHydrated[threadId] = [message];
     this._invalidateLazy(threadId);
+    this._markMessagesDirty(threadId);
   }
 
   /**
-   * Parse one thread's message array from the raw JSON slice, if still lazy.
+   * Parse one thread's message array from a shard or the leftover blob slice.
    * @param {string} threadId
    * @returns {object[] | undefined}
    */
@@ -1371,35 +1605,45 @@ class Store {
     if (Object.prototype.hasOwnProperty.call(this._messagesHydrated, threadId)) {
       return this._messagesHydrated[threadId];
     }
-    const r = this._threadRange(threadId);
-    if (!r) return undefined;
-    const lazy = this._messagesLazy;
+    let json = null;
+    if (this._messagesRaw.has(threadId)) {
+      json = this._messagesRaw.get(threadId);
+    } else {
+      const fileRaw = this._readMessageRaw(threadId);
+      if (fileRaw) json = fileRaw;
+    }
+    if (json == null) {
+      const r = this._threadRange(threadId);
+      if (r && this._messagesLazy) {
+        json = this._messagesLazy.raw.slice(r.start, r.end);
+      }
+    }
+    if (json == null) return undefined;
     let val;
     try {
-      val = JSON.parse(lazy.raw.slice(r.start, r.end));
+      val = JSON.parse(json);
     } catch {
       val = [];
     }
     if (!Array.isArray(val)) val = [];
     this._messagesHydrated[threadId] = val;
+    this._messagesRaw.delete(threadId);
     return val;
   }
 
   /**
-   * Stringify without forcing a parse of still-lazy transcripts.
+   * Envelope only: transcripts live in messages/<id>.json.
+   * @param {object} [data]
    * @returns {string}
    */
-  _serialize() {
-    if (this._messagesLazy && !this._messagesLazy.intact) {
-      this._ensureMessagesIndexed();
-    }
+  _serialize(data) {
+    const src = data || this.data;
     // Secret fields are sealed in the JSON payload only; in-memory settings
     // stay plaintext (#543). stringifyStore skips data.messagesByThread, so
     // the shallow copy never touches the lazy proxy.
-    const settings = this._secrets.concealSettings(this.data.settings);
-    const data =
-      settings === this.data.settings ? this.data : { ...this.data, settings };
-    return stringifyStore(data, this._messagesHydrated, this._messagesLazy);
+    const settings = this._secrets.concealSettings(src.settings);
+    const payload = settings === src.settings ? src : { ...src, settings };
+    return stringifyStore(payload, {}, null);
   }
 
   /**
@@ -1461,12 +1705,21 @@ class Store {
       settings: normalizeSettings(parsed.settings),
     };
     ensureWorkflowTemplates(data);
+    this._scanMessageShards();
     this._adoptMessages(data, useLazy ? split : null);
     this._recoveredOnLoad = recoverInterruptedRuns(this, data) || hadSpaces;
     const revealed = this._secrets.revealSettings(data.settings);
     data.settings = revealed.settings;
     if (revealed.migrated > 0) {
       this._secretsMigrated = revealed.migrated;
+      this._recoveredOnLoad = true;
+    }
+    if (this._migrateInlineMessages(data)) {
+      try {
+        writeAtomicSync(this.filePath, this._serialize(data), ++this._atomicSeq);
+      } catch {
+        // Shards are on disk; next boot retries the envelope strip.
+      }
       this._recoveredOnLoad = true;
     }
     this._seedLastAssistants(
@@ -1531,6 +1784,7 @@ class Store {
 
     this._lastAssistantByThread.clear();
     this._messagesLazy = null;
+    this._scanMessageShards();
     const data = cloneEmpty();
     this._messagesHydrated = data.messagesByThread;
     this._attachMessagesProxy(data);
@@ -1554,11 +1808,10 @@ class Store {
   }
 
   /**
-   * Mark dirty and coalesce writes: the whole store is one JSON blob, so a
-   * per-stream-event save would re-stringify everything every time. The
-   * debounced flush stringifies once per burst (bounded by the per-thread
-   * transcript caps) and writes tmp-then-rename off the event loop.
-   * Callers that need the bytes on disk right now use saveNow().
+   * Mark dirty and coalesce writes. The envelope is small; each flush
+   * stringifies only dirty message shards plus the envelope and writes
+   * tmp-then-rename off the event loop. Callers that need the bytes on
+   * disk right now use saveNow().
    */
   save() {
     this.markDirty();
@@ -1576,10 +1829,10 @@ class Store {
   }
 
   /**
-   * Debounced flush: stringify (bounded by the transcript caps), then write
+   * Debounced flush: stringify the envelope plus dirty shards, then write
    * tmp + rename via fs.promises so the disk IO stays off the event loop.
    * A flush that turns stale mid-flight (newer mutations pending their own
-   * flush, or a synchronous saveNow) drops its tmp file instead of renaming
+   * flush, or a synchronous saveNow) drops its tmp files instead of renaming
    * over newer data. Never throws: failures re-mark dirty so the next
    * save()/exit hook retries.
    */
@@ -1593,52 +1846,70 @@ class Store {
     this._flushing = true;
     this._dirty = false;
     const gen = this._writeGen;
-    const dir = path.dirname(this.filePath);
-    const tmp = `${this.filePath}.${process.pid}.${Date.now()}.tmp`;
-    // Compact JSON: the file is machine-read, and pretty-printing roughly
-    // doubles both the stringify CPU and the bytes written on every flush
-    // (which fires up to every 15s under sustained streaming).
+    const snapshot = this._snapshotDirtyShards();
+    this._inflightShardIds = new Set(snapshot.writes.map((w) => w.id));
+    this._inflightDeletedIds = new Set(snapshot.deleted);
     const payload = this._serialize();
+    const envelopeTmp = `${this.filePath}.${process.pid}.${++this._atomicSeq}.tmp`;
+    const shardTmps = snapshot.writes.map((w) => ({
+      id: w.id,
+      dest: this._messagePath(w.id),
+      tmp: `${this._messagePath(w.id)}.${process.pid}.${++this._atomicSeq}.tmp`,
+      json: w.json,
+    }));
     this._flushPromise = (async () => {
       try {
-        await fs.promises.mkdir(dir, { recursive: true });
-        const handle = await fs.promises.open(tmp, "w");
-        try {
-          await handle.writeFile(payload, "utf8");
+        await fs.promises.mkdir(path.dirname(this.filePath), {
+          recursive: true,
+        });
+        if (shardTmps.length > 0) {
+          await fs.promises.mkdir(this._messagesDir(), { recursive: true });
+        }
+        const writeTmp = async (tmp, contents) => {
+          const handle = await fs.promises.open(tmp, "w");
           try {
-            await handle.sync();
-          } catch {
-            // fsync is best-effort; still rename so the write is not lost.
+            await handle.writeFile(contents, "utf8");
+            try {
+              await handle.sync();
+            } catch {
+              // fsync is best-effort; still rename so the write is not lost.
+            }
+          } finally {
+            await handle.close();
           }
-        } finally {
-          await handle.close();
-        }
+        };
+        await writeTmp(envelopeTmp, payload);
+        for (const s of shardTmps) await writeTmp(s.tmp, s.json);
         if (this._writeGen === gen && !this._dirty) {
-          await fs.promises.rename(tmp, this.filePath);
+          for (const id of snapshot.deleted) {
+            await fs.promises.unlink(this._messagePath(id)).catch(() => {});
+          }
+          for (const s of shardTmps) {
+            await fs.promises.rename(s.tmp, s.dest);
+            this._messageShards.add(s.id);
+          }
+          await fs.promises.rename(envelopeTmp, this.filePath);
         }
-        // else: stale payload; the tmp unlink below discards it.
+        // else: stale payload; the tmp unlinks below discard it.
       } catch (err) {
-        this._dirty = true;
+        if (this._writeGen === gen) {
+          this._dirty = true;
+          for (const w of snapshot.writes) this._dirtyMessageIds.add(w.id);
+          for (const id of snapshot.deleted) this._deletedMessageIds.add(id);
+        }
         console.error(
           `[store] async flush failed (will retry): ${err && err.message}`,
         );
       } finally {
-        // No-op after a successful rename (tmp path is gone).
-        await fs.promises.unlink(tmp).catch(() => {});
+        await fs.promises.unlink(envelopeTmp).catch(() => {});
+        for (const s of shardTmps) {
+          await fs.promises.unlink(s.tmp).catch(() => {});
+        }
+        this._inflightShardIds = null;
+        this._inflightDeletedIds = null;
         this._flushing = false;
         this._flushPromise = null;
-        if (this._dirty) {
-          // ponytail: backoff under sustained save() so N streaming threads
-          // cannot force a whole-store stringify every 250ms. Cap 15s; reset
-          // on a quiet flush. Per-thread files if the store stays >50MB.
-          this._flushDelayMs = Math.min(
-            this._flushDelayMs * 2,
-            SAVE_DEBOUNCE_MAX_MS,
-          );
-          this._scheduleFlush();
-        } else {
-          this._flushDelayMs = SAVE_DEBOUNCE_MS;
-        }
+        if (this._dirty) this._scheduleFlush();
       }
     })();
   }
@@ -1658,7 +1929,8 @@ class Store {
    */
   saveNow() {
     // ponytail: stays sync because process.on('exit') cannot await. Do not
-    // "fix" this into async; the debounce path is the hot one.
+    // "fix" this into async; the debounce path is the hot one. Writes the
+    // envelope plus dirty shards only — not every transcript.
     if (this._timer) {
       clearTimeout(this._timer);
       this._timer = null;
@@ -1670,22 +1942,28 @@ class Store {
     }
     this._dirty = false;
     this._writeGen += 1;
-    const dir = path.dirname(this.filePath);
-    fs.mkdirSync(dir, { recursive: true });
-    const tmp = `${this.filePath}.${process.pid}.${Date.now()}.tmp`;
-    const payload = this._serialize();
-    fs.writeFileSync(tmp, payload, "utf8");
-    try {
-      const fd = fs.openSync(tmp, "r+");
-      try {
-        fs.fsyncSync(fd);
-      } finally {
-        fs.closeSync(fd);
-      }
-    } catch {
-      // fsync is best-effort; still rename so the write is not lost.
+    // The in-flight flush already snapped these ids and will drop its tmps
+    // because writeGen moved. Take them back so this sync write still
+    // persists the current in-memory transcripts.
+    if (this._inflightShardIds) {
+      for (const id of this._inflightShardIds) this._dirtyMessageIds.add(id);
     }
-    fs.renameSync(tmp, this.filePath);
+    if (this._inflightDeletedIds) {
+      for (const id of this._inflightDeletedIds) this._deletedMessageIds.add(id);
+    }
+    const snapshot = this._snapshotDirtyShards();
+    for (const id of snapshot.deleted) {
+      try {
+        fs.unlinkSync(this._messagePath(id));
+      } catch {
+        // already gone
+      }
+    }
+    for (const w of snapshot.writes) {
+      writeAtomicSync(this._messagePath(w.id), w.json, ++this._atomicSeq);
+      this._messageShards.add(w.id);
+    }
+    writeAtomicSync(this.filePath, this._serialize(), ++this._atomicSeq);
   }
 
   getProjects() {
@@ -1745,6 +2023,18 @@ class Store {
       this._lastAssistantByThread.set(threadId, last);
       return last;
     }
+    if (this._messagesRaw.has(threadId)) {
+      const raw = this._messagesRaw.get(threadId);
+      const last = peekLastAssistantValue(raw, 0, raw.length);
+      this._lastAssistantByThread.set(threadId, last);
+      return last;
+    }
+    const fileRaw = this._readShardFile(threadId);
+    if (fileRaw) {
+      const last = peekLastAssistantValue(fileRaw, 0, fileRaw.length);
+      this._lastAssistantByThread.set(threadId, last);
+      return last;
+    }
     const r = this._threadRange(threadId);
     if (r && this._messagesLazy) {
       const last = peekLastAssistantValue(
@@ -1762,12 +2052,14 @@ class Store {
   setMessages(threadId, messages) {
     this._lastAssistantByThread.delete(threadId);
     this._invalidateLazy(threadId);
+    this._messagesRaw.delete(threadId);
     this._messagesHydrated[threadId] = capList(
       messages,
       MAX_MESSAGES_PER_THREAD,
       MESSAGE_OVERFLOW_SLACK,
       `Older messages were dropped to cap this transcript at ${MAX_MESSAGES_PER_THREAD}.`,
     );
+    this._markMessagesDirty(threadId);
   }
 
   /**
