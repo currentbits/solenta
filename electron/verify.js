@@ -5,13 +5,15 @@
  * failure into a structured bundle the fixer can act on.
  *
  * The engine only. Persistence lives in store/services, the gate that calls
- * it at a run terminal lives in runner.js.
+ * it at a run terminal lives in runner.js. Issue #390 injects a shared
+ * build-cache env here.
  */
 
 const { spawn } = require("node:child_process");
 const { killTree } = require("./proc.js");
 const { wrapCommand } = require("./ssh.js");
 const { wslTarget } = require("./wsl.js");
+const { mergeCacheEnv } = require("./verifyEfficiency.js");
 
 /**
  * Shell that runs the user's verify command string.
@@ -119,7 +121,9 @@ function runVerifyCommand(input) {
       child = spawnFn(wrapped.bin, wrapped.args, {
         cwd: wsl ? undefined : input.cwd,
         detached: true,
-        env: input.env || process.env,
+        env: mergeCacheEnv(input.cwd, input.env, {
+          repoRoot: project && project.path,
+        }),
         stdio: ["ignore", "pipe", "pipe"],
         // Hide the console window Git Bash would otherwise flash on win32.
         windowsHide: platform === "win32",
