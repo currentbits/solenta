@@ -1910,6 +1910,24 @@ export interface AppSettings {
   subagentPool: SubagentPool;
   /** OpenTelemetry export (issue #280). */
   otel: OtelSettings;
+  /**
+   * Outbound webhook (issue #167). POSTs a small JSON payload when a thread
+   * finishes or waits for permission. Independent of the desktop-notification
+   * switch and of window focus. null URL (the default) sends nothing.
+   */
+  webhook: WebhookSettings;
+}
+
+/**
+ * Generic outbound webhook for Slack, Discord, ntfy, or any POST URL.
+ * Event toggles default true so a pasted URL fires immediately.
+ */
+export interface WebhookSettings {
+  /** http(s) POST URL. null (the default) sends nothing. */
+  url: string | null;
+  onDone: boolean;
+  onFailed: boolean;
+  onWaiting: boolean;
 }
 
 /**

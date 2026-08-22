@@ -14,7 +14,15 @@ const { pathToFileURL } = require("node:url");
 const { Store } = require("./store.js");
 const { createRunner } = require("./runner.js");
 const { registerIpc } = require("./ipc.js");
-const { shouldNotify, isEffectivelySnoozed } = require("./notify.js");
+const {
+  shouldNotify,
+  isNotifyTransition,
+  isEffectivelySnoozed,
+  notifyEvent,
+  notifyBody,
+  dispatchWebhook,
+} = require("./notify.js");
+const { recordSecretUse } = require("./secrets.js");
 const { windowOpenAction, navigateAction } = require("./links.js");
 const {
   createMemorySupervisor,
@@ -242,11 +250,7 @@ function notifyThreadComplete(thread) {
   if (Notification.isSupported && !Notification.isSupported()) return;
   const n = new Notification({
     title: thread.title || "Thread",
-    body: threadNotifyState(thread) === "waiting"
-      ? "needs permission"
-      : thread.status === "failed"
-        ? "failed"
-        : "done",
+    body: notifyBody(notifyEvent(threadNotifyState(thread))),
   });
   n.on("click", () => {
     const win = focusMainWindow();
@@ -381,15 +385,32 @@ app.whenReady().then(async () => {
       if (channel === "thread:updated" && payload && payload.thread) {
         const prev = lastStatus.get(payload.thread.id);
         const next = threadNotifyState(payload.thread);
-        // Mute checks come after shouldNotify: this runs on every stream
-        // chunk, and getSettings() re-normalizes the whole settings blob.
+        // Mute checks come after the transition test: this runs on every
+        // stream chunk, and getSettings() re-normalizes the whole blob.
         if (
-          shouldNotify(prev, next, isAnyWindowFocused()) &&
+          isNotifyTransition(prev, next) &&
           !payload.thread.muted &&
-          !isEffectivelySnoozed(payload.thread, Date.now()) &&
-          store.getSettings().notifications
+          !isEffectivelySnoozed(payload.thread, Date.now())
         ) {
-          notifyThreadComplete(payload.thread);
+          const settings = store.getSettings();
+          if (
+            shouldNotify(prev, next, isAnyWindowFocused()) &&
+            settings.notifications
+          ) {
+            notifyThreadComplete(payload.thread);
+          }
+          void dispatchWebhook({
+            thread: payload.thread,
+            prevStatus: prev,
+            nextStatus: next,
+            webhook: settings.webhook,
+            recordSecretUse,
+            log: (err) =>
+              console.warn(
+                "solenta: webhook POST failed:",
+                err && err.message ? err.message : err,
+              ),
+          });
         }
         lastStatus.set(payload.thread.id, next);
       }
