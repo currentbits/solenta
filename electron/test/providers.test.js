@@ -44,9 +44,16 @@ describe("providers registry", () => {
     else process.env.CODER_OPENCODE_BIN = prevOpencode;
   });
 
-  it("registers claude, codex, grok, opencode, kimi with expected kinds and models", () => {
+  it("registers claude, codex, grok, opencode, kimi, cursor with expected kinds and models", () => {
     const ids = PROVIDERS.map((p) => p.id);
-    assert.deepEqual(ids, ["claude", "codex", "grok", "opencode", "kimi"]);
+    assert.deepEqual(ids, [
+      "claude",
+      "codex",
+      "grok",
+      "opencode",
+      "kimi",
+      "cursor",
+    ]);
 
     const claude = getProvider("claude");
     assert.equal(claude.kind, "claude-stream");
@@ -89,6 +96,15 @@ describe("providers registry", () => {
       "kimi-code/kimi-for-coding",
       "kimi-code/kimi-for-coding-highspeed",
     ]);
+
+    const cursor = getProvider("cursor");
+    assert.equal(cursor.kind, "cursor-stream");
+    assert.equal(cursor.supportsResume, true);
+    assert.equal(cursor.name, "Cursor");
+    assert.ok(cursor.models.includes("auto"));
+    assert.ok(cursor.models.includes("composer-2.5"));
+    assert.equal(cursor.models.length, 204);
+    assert.equal(cursor.modelInfo[0].id, cursor.models[0]);
   });
 
   it("every provider model has matching modelInfo in the same order with non-empty fields", () => {
@@ -97,7 +113,7 @@ describe("providers registry", () => {
     // Empty lists are honest when unverified; a non-empty list that mislabels
     // is not. Cardinality is asserted before the loop so deleting the whole
     // registry cannot pass silently.
-    assert.ok(PROVIDERS.length >= 5, "expected five public providers");
+    assert.ok(PROVIDERS.length >= 6, "expected six public providers");
     for (const entry of PROVIDERS) {
       assert.ok(Array.isArray(entry.models), `${entry.id}: models array`);
       assert.ok(Array.isArray(entry.modelInfo), `${entry.id}: modelInfo array`);
@@ -268,6 +284,43 @@ describe("providers registry", () => {
     assert.equal(resume[resume.length - 1], "again");
   });
 
+  it("buildArgs: cursor stream-json, prompt last, plan drops --force", () => {
+    const args = getProvider("cursor").buildArgs({
+      prompt: "hi cursor",
+      model: "composer-2.5",
+      sessionId: "sess-cursor-1",
+      permissionMode: "default",
+      reasoningEffort: "high",
+    });
+    assert.ok(args.includes("-p"));
+    assert.ok(args.includes("stream-json"));
+    assert.ok(args.includes("--stream-partial-output"));
+    assert.ok(args.includes("--trust"));
+    assert.ok(args.includes("--force"));
+    assert.ok(args.includes("--approve-mcps"));
+    assert.equal(args[args.length - 1], "hi cursor");
+    const modelIdx = args.indexOf("--model");
+    assert.ok(modelIdx >= 0);
+    assert.equal(args[modelIdx + 1], "composer-2.5");
+    const resumeIdx = args.indexOf("--resume");
+    assert.ok(resumeIdx >= 0);
+    assert.equal(args[resumeIdx + 1], "sess-cursor-1");
+    assert.ok(!args.includes("--worktree"));
+    assert.ok(!args.includes("--effort"));
+    assert.ok(!args.includes("--reasoning-effort"));
+
+    const plan = getProvider("cursor").buildArgs({
+      prompt: "plan it",
+      permissionMode: "plan",
+    });
+    assert.ok(plan.includes("--mode"));
+    assert.equal(plan[plan.indexOf("--mode") + 1], "plan");
+    assert.ok(!plan.includes("--force"));
+    assert.equal(plan[plan.length - 1], "plan it");
+    assert.ok(!plan.includes("--worktree"));
+    assert.ok(!plan.includes("--effort"));
+  });
+
   it("resolveBin uses env overrides", () => {
     const claude = getProvider("claude");
     assert.equal(resolveBin(claude, {}), "claude");
@@ -284,12 +337,13 @@ describe("providers registry", () => {
   it("listProviders availability via injected which (PATH-less)", () => {
     const which = (bin) => (bin === "claude" || bin === "grok" ? bin : null);
     const list = listProviders({ which, env: {}, includeSimulate: false });
-    assert.equal(list.length, 5);
+    assert.equal(list.length, 6);
     assert.equal(list.find((p) => p.id === "claude").available, true);
     assert.equal(list.find((p) => p.id === "codex").available, false);
     assert.equal(list.find((p) => p.id === "grok").available, true);
     assert.equal(list.find((p) => p.id === "opencode").available, false);
     assert.equal(list.find((p) => p.id === "kimi").available, false);
+    assert.equal(list.find((p) => p.id === "cursor").available, false);
     assert.ok(!list.some((p) => p.id === "simulate"));
   });
 

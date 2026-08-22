@@ -16,6 +16,8 @@ const codexParse = require("./codex.js");
 const { runCodex } = codexParse;
 const kimiParse = require("./kimi.js");
 const { runKimi } = kimiParse;
+const cursorParse = require("./cursor.js");
+const { runCursor } = cursorParse;
 const {
   getProvider,
   resolveBin,
@@ -1677,7 +1679,8 @@ function createRunner(opts) {
         workflow.__claude ||
         workflow.__codex ||
         workflow.__kimi ||
-        workflow.__opencode
+        workflow.__opencode ||
+        workflow.__cursor
       ) {
         view = null;
       } else {
@@ -4607,6 +4610,369 @@ function createRunner(opts) {
   }
 
   /**
+   * Start a Cursor stream-json session turn. Session id comes from
+   * extractSessionId (system init and result).
+   * @param {string} threadId
+   * @param {string} prompt
+   * @param {string} runId
+   * @param {import('./providers').ProviderEntry} providerEntry
+   */
+  function startCursorRun(threadId, prompt, runId, providerEntry) {
+    const thread = store.getThread(threadId);
+    const project = store.getProject(thread.projectId);
+    if (!project) {
+      throw new Error(`Unknown project for thread: ${threadId}`);
+    }
+
+    assertProviderBinary(providerEntry, project);
+
+    const cursorState = {
+      __cursor: true,
+      runId,
+    };
+
+    const startingId = beginWorkLogStep(threadId, runId, "Starting agent");
+    const workingId = beginWorkLogStep(threadId, runId, "Agent working");
+
+    store.save();
+    pushThreadsChanged();
+    pushDetail(threadId, cursorState);
+
+    /** @type {string | null} */
+    let assistantMsgId = null;
+    /** @type {string} */
+    let assistantText = "";
+    /** @type {Map<string, string>} */
+    const toolMsgById = new Map();
+    let sawUsage = false;
+    let lastPushAt = 0;
+    /** @type {ReturnType<typeof setTimeout> | null} */
+    let pushTimer = null;
+    /** Run-local usage for memory footers (not cumulative store totals). */
+    const runUsage = { tokensIn: 0, tokensOut: 0, costUsd: 0 };
+    /** @type {string | null} */
+    let capturedCursorSessionId = null;
+
+    const localCwd = thread.worktreePath || project.path;
+    const binary = resolveBin(providerEntry);
+    const args = providerEntry.buildArgs({
+      prompt,
+      sessionId: thread.sessionId || null,
+      permissionMode: thread.permissionMode || "default",
+      model: thread.model || null,
+      reasoningEffort: thread.reasoningEffort || null,
+    });
+    const spawn = resolveSpawn(project, binary, args, localCwd);
+
+    const entry = {
+      kind: "cursor",
+      runId,
+      stopping: false,
+      handle: null,
+      startingId,
+      workingId,
+      cursorState,
+      runUsage,
+    };
+    Object.defineProperty(entry, "workflow", {
+      get() {
+        return cursorState;
+      },
+      enumerable: true,
+    });
+    active.set(threadId, entry);
+
+    function guard() {
+      const e = active.get(threadId);
+      if (!e || e.stopping || e.runId !== runId) return null;
+      if (e.kind !== "cursor") return null;
+      return e;
+    }
+
+    function flushPush() {
+      pushTimer = null;
+      lastPushAt = Date.now();
+      if (!guard()) return;
+      store.save();
+      pushDetail(threadId, cursorState);
+    }
+
+    function throttledPush() {
+      const now = Date.now();
+      const elapsed = now - lastPushAt;
+      if (elapsed >= PUSH_THROTTLE_MS) {
+        if (pushTimer) {
+          clearTimeout(pushTimer);
+          pushTimer = null;
+        }
+        flushPush();
+        return;
+      }
+      if (!pushTimer) {
+        pushTimer = setTimeout(flushPush, PUSH_THROTTLE_MS - elapsed);
+      }
+    }
+
+    function ensureAssistant(text) {
+      if (!assistantMsgId) {
+        assistantMsgId = appendMessage(threadId, "assistant", text, runId);
+      } else {
+        store.updateMessage(threadId, assistantMsgId, { text });
+      }
+    }
+
+    function applyUsage(usageInfo) {
+      if (!usageInfo) return;
+      const prev = store.getUsage(threadId) || {
+        model: null,
+        inputTokens: 0,
+        outputTokens: 0,
+        costUsd: 0,
+        turns: 0,
+      };
+      const costDelta = Number(usageInfo.costUsd) || 0;
+      const inDelta = Number(usageInfo.inputTokens) || 0;
+      const outDelta = Number(usageInfo.outputTokens) || 0;
+      runUsage.tokensIn += inDelta;
+      runUsage.tokensOut += outDelta;
+      runUsage.costUsd += costDelta;
+      const nextUsage = {
+        model: prev.model || thread.model || null,
+        inputTokens: prev.inputTokens + inDelta,
+        outputTokens: prev.outputTokens + outDelta,
+        costUsd: prev.costUsd + costDelta,
+        turns: prev.turns + 1,
+      };
+      assignContextUsage(nextUsage, prev, undefined, undefined);
+      store.setUsage(threadId, nextUsage);
+      if (costDelta > 0) {
+        store.recordSpend(costDelta);
+      }
+      store.recordUsage({
+        provider: thread.provider,
+        model: prev.model || thread.model || null,
+        costUsd: costDelta,
+        inputTokens: inDelta,
+        outputTokens: outDelta,
+        threadId,
+        projectId: thread.projectId,
+        projectName: store.getProject(thread.projectId)?.name,
+        title: thread.title,
+      });
+      sawUsage = true;
+    }
+
+    completeWorkLogStep(threadId, startingId);
+
+    const handle = runCursor({
+      binary: spawn.binary,
+      args: spawn.args,
+      cwd: spawn.cwd,
+      onEvent: (ev) => {
+        if (!guard()) return;
+
+        const sid = cursorParse.extractSessionId(ev);
+        if (sid) {
+          capturedCursorSessionId = sid;
+        }
+
+        const text = cursorParse.extractAssistantText(ev);
+        if (text != null) {
+          // Deltas carry timestamp_ms. A no-timestamp assistant line is
+          // either a complete non-streamed message or the end-of-turn
+          // flush of already-accumulated deltas. Skip the flush.
+          if (ev.timestamp_ms != null) {
+            assistantText += text;
+            ensureAssistant(assistantText);
+            throttledPush();
+          } else if (!assistantText) {
+            assistantText = text;
+            ensureAssistant(assistantText);
+            throttledPush();
+          }
+        }
+
+        for (const tool of cursorParse.extractToolEvents(ev)) {
+          if (tool.phase === "start") {
+            const toolMeta = {
+              id: tool.id,
+              name: tool.name,
+              input: tool.input,
+              output: null,
+              isError: false,
+              done: false,
+            };
+            const summary = tool.input
+              ? `${tool.name}: ${tool.input.length > 80 ? `${tool.input.slice(0, 80)}…` : tool.input}`
+              : tool.name;
+            const msgId = appendMessage(
+              threadId,
+              "tool",
+              summary,
+              runId,
+              toolMeta,
+            );
+            toolMsgById.set(tool.id, msgId);
+            // Post-tool text starts a fresh message below the tool call.
+            assistantMsgId = null;
+            assistantText = "";
+          } else if (tool.phase === "end") {
+            let msgId = toolMsgById.get(tool.id);
+            if (!msgId) {
+              const toolMeta = {
+                id: tool.id,
+                name: tool.name,
+                input: tool.input,
+                output: null,
+                isError: false,
+                done: false,
+              };
+              msgId = appendMessage(
+                threadId,
+                "tool",
+                tool.name,
+                runId,
+                toolMeta,
+              );
+              toolMsgById.set(tool.id, msgId);
+              assistantMsgId = null;
+              assistantText = "";
+            }
+            const existing = store
+              .getMessages(threadId)
+              .find((m) => m.id === msgId);
+            if (existing && existing.tool) {
+              store.updateMessage(threadId, msgId, {
+                tool: {
+                  ...existing.tool,
+                  input: tool.input || existing.tool.input,
+                  output: tool.output,
+                  isError: tool.isError,
+                  done: true,
+                },
+              });
+              noteToolSpan(threadId, runId, tool.id, tool.name, tool.isError);
+            }
+          } else {
+            const toolMeta = {
+              id: tool.id,
+              name: tool.name,
+              input: tool.input,
+              output: tool.output,
+              isError: tool.isError,
+              done: true,
+            };
+            appendMessage(threadId, "tool", tool.name, runId, toolMeta);
+            assistantMsgId = null;
+            assistantText = "";
+          }
+          throttledPush();
+        }
+
+        const usageInfo = cursorParse.extractUsage(ev);
+        if (usageInfo) {
+          applyUsage(usageInfo);
+          throttledPush();
+        }
+      },
+      onExit: ({ code, stderr, fullStdout, gotJson }) => {
+        if (pushTimer) {
+          clearTimeout(pushTimer);
+          pushTimer = null;
+        }
+        const e = active.get(threadId);
+        if (!e || e.stopping || e.runId !== runId) return;
+        if (e.kind !== "cursor") return;
+
+        clearRun(threadId);
+        completeWorkLogStep(threadId, e.startingId);
+        completeWorkLogStep(threadId, e.workingId);
+
+        if (!gotJson && fullStdout && fullStdout.length > 0) {
+          assistantText = fullStdout.replace(/\s+$/, "");
+          ensureAssistant(assistantText);
+        }
+
+        if (!sawUsage && code === 0) {
+          applyUsage({ inputTokens: 0, outputTokens: 0 });
+        }
+
+        if (code === 0) {
+          const prior = thread.sessionId || null;
+          store.updateThread(
+            threadId,
+            {
+              status: "done",
+              sessionId: capturedCursorSessionId || prior,
+              runStartedAt: null,
+            },
+            { touch: true },
+          );
+          store.save();
+          pushDetail(threadId, cursorState);
+          pushThreadsChanged();
+          notifyRunTerminal(
+            threadId,
+            "done",
+            assistantText || lastAssistantText(threadId, runId),
+            {
+              tokensIn: runUsage.tokensIn,
+              tokensOut: runUsage.tokensOut,
+              costUsd: runUsage.costUsd,
+            },
+          );
+          return;
+        }
+
+        const errText = formatRunExitError(code, stderr);
+        appendMessage(threadId, "event", errText, runId);
+        appendDoneWorkLog(threadId, runId, "Run error");
+        markRunFailed(threadId, errText);
+        store.save();
+        pushDetail(threadId, cursorState);
+        pushThreadsChanged();
+        notifyRunTerminal(threadId, "failed", errText, {
+          tokensIn: runUsage.tokensIn,
+          tokensOut: runUsage.tokensOut,
+          costUsd: runUsage.costUsd,
+        });
+      },
+      onError: (err) => {
+        if (pushTimer) {
+          clearTimeout(pushTimer);
+          pushTimer = null;
+        }
+        const e = active.get(threadId);
+        if (!e || e.stopping || e.runId !== runId) return;
+        if (e.kind !== "cursor") return;
+
+        clearRun(threadId);
+        completeWorkLogStep(threadId, e.startingId);
+        completeWorkLogStep(threadId, e.workingId);
+        const msg = err && err.message ? err.message : String(err);
+        const errText = `Run error: ${msg}`;
+        appendMessage(threadId, "event", errText, runId);
+        appendDoneWorkLog(threadId, runId, "Run error");
+        markRunFailed(threadId, errText);
+        store.save();
+        pushDetail(threadId, cursorState);
+        pushThreadsChanged();
+        notifyRunTerminal(threadId, "failed", errText, {
+          tokensIn: runUsage.tokensIn,
+          tokensOut: runUsage.tokensOut,
+          costUsd: runUsage.costUsd,
+        });
+      },
+    });
+
+    entry.handle = handle;
+    store.save();
+    pushDetail(threadId, cursorState);
+
+    return { runId };
+  }
+
+  /**
    * @param {{ threadId: string, prompt: string, attachments?: { kind: "image" | "folder" | "file", path: string, name: string }[] }} input
    * @returns {Promise<{ runId: string }>}
    */
@@ -5549,6 +5915,9 @@ function createRunner(opts) {
     if (entryDef.kind === "opencode-json") {
       return startOpencodeRun(threadId, dispatchPrompt, runId, entryDef);
     }
+    if (entryDef.kind === "cursor-stream") {
+      return startCursorRun(threadId, dispatchPrompt, runId, entryDef);
+    }
     return startClaudeRun(
       threadId,
       dispatchPrompt,
@@ -5671,6 +6040,7 @@ function createRunner(opts) {
         entry.kind === "codex" ||
         entry.kind === "kimi" ||
         entry.kind === "opencode" ||
+        entry.kind === "cursor" ||
         entry.kind === "real" ||
         entry.kind === "ask") &&
       entry.handle
@@ -5690,7 +6060,8 @@ function createRunner(opts) {
       entry.kind === "claude" ||
       entry.kind === "codex" ||
       entry.kind === "kimi" ||
-      entry.kind === "opencode"
+      entry.kind === "opencode" ||
+      entry.kind === "cursor"
     ) {
       completeWorkLogStep(threadId, entry.startingId);
       completeWorkLogStep(threadId, entry.workingId);
@@ -5813,6 +6184,7 @@ function createRunner(opts) {
           entry.kind === "codex" ||
           entry.kind === "kimi" ||
           entry.kind === "opencode" ||
+          entry.kind === "cursor" ||
           entry.kind === "real" ||
           entry.kind === "ask") &&
         entry.handle
@@ -5888,7 +6260,8 @@ function createRunner(opts) {
       workflow.__claude ||
       workflow.__codex ||
       workflow.__kimi ||
-      workflow.__opencode
+      workflow.__opencode ||
+      workflow.__cursor
     ) {
       if (workflow.__real) return buildRealWorkflowView(workflow);
       return null;

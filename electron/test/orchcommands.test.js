@@ -12,7 +12,7 @@ const {
   dispatchNote,
 } = require("../orchcommands.js");
 
-const INSTALLED = ["claude", "codex", "grok", "kimi"];
+const INSTALLED = ["claude", "codex", "grok", "kimi", "cursor"];
 const CTX = { installed: INSTALLED, current: "claude" };
 
 function parse(prompt, ctx) {

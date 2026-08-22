@@ -27,6 +27,7 @@ const TARGET_LABEL: Record<SkillTarget, string> = {
   grok: "Grok",
   opencode: "OpenCode",
   kimi: "Kimi",
+  cursor: "Cursor",
 };
 
 export interface SkillsTabProps {

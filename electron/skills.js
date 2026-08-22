@@ -13,7 +13,7 @@ const os = require("node:os");
 
 const SKILL_NAME_RE = /^[a-z0-9-]+$/;
 
-/** @typedef {"claude" | "agents" | "codex" | "grok" | "opencode" | "kimi"} SkillTarget */
+/** @typedef {"claude" | "agents" | "codex" | "grok" | "opencode" | "kimi" | "cursor"} SkillTarget */
 
 /**
  * Fan-out order and merge/source priority. Keep this list in lockstep with
@@ -27,6 +27,7 @@ const SKILL_TARGETS = Object.freeze([
   "grok",
   "opencode",
   "kimi",
+  "cursor",
 ]);
 
 /**
@@ -53,6 +54,7 @@ function SKILL_DIRS(env = process.env) {
     grok: path.join(home, ".grok", "skills"),
     opencode: path.join(home, ".config", "opencode", "skills"),
     kimi: path.join(home, ".kimi", "skills"),
+    cursor: path.join(home, ".cursor", "skills"),
   };
 }
 

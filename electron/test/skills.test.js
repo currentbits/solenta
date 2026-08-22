@@ -127,6 +127,7 @@ describe("SKILL_DIRS / activeSkillTargets", () => {
       "grok",
       "opencode",
       "kimi",
+      "cursor",
     ]);
     assert.equal(dirs.claude, path.join(tmp, ".claude", "skills"));
     assert.equal(dirs.agents, path.join(tmp, ".agents", "skills"));
@@ -137,8 +138,10 @@ describe("SKILL_DIRS / activeSkillTargets", () => {
       path.join(tmp, ".config", "opencode", "skills"),
     );
     assert.equal(dirs.kimi, path.join(tmp, ".kimi", "skills"));
+    assert.equal(dirs.cursor, path.join(tmp, ".cursor", "skills"));
     assert.equal(skillBaseDir("claude", env), dirs.claude);
     assert.equal(skillBaseDir("opencode", env), dirs.opencode);
+    assert.equal(skillBaseDir("cursor", env), dirs.cursor);
     assert.throws(() => skillBaseDir("project", env), /target/i);
   });
 
@@ -300,7 +303,7 @@ describe("addSkill / removeSkill", () => {
       );
       assert.ok(content.includes("1. Do it."));
     }
-    for (const target of ["grok", "opencode", "kimi"]) {
+    for (const target of ["grok", "opencode", "kimi", "cursor"]) {
       assert.equal(fs.existsSync(dirs[target]), false);
     }
     const list = listSkills(null, env);
