@@ -290,4 +290,65 @@ describe("native drop path resolution (issue #469)", () => {
     assert.ok(m.text().includes(folder.name));
     m.unmount();
   });
+
+  it("resolves a dropped markdown file via droppedFilePath and fromPaths", async () => {
+    const notes: AttachmentInfo = {
+      kind: "file",
+      path: "/tmp/repo/notes.md",
+      name: "notes.md",
+    };
+    const fake = createFakeCoder({
+      threads: [thread({ id: "t-native-md", title: "native md drop" })],
+      droppedFilePath: (file) => `/tmp/repo/${file.name}`,
+      fromPaths: (input) => {
+        const paths = (input as { paths?: string[] }).paths ?? [];
+        return {
+          attachments: paths.map((p) => ({
+            kind: "file" as const,
+            path: p,
+            name: p.split("/").pop() ?? p,
+          })),
+        };
+      },
+    });
+    const m = await boot(fake);
+    const host = m.query("[data-thread-drop]");
+    assert.ok(host, "open thread must be the drop target");
+
+    const file = new File(["# notes"], "notes.md", { type: "text/markdown" });
+    await inAct(() => {
+      const ev = new Event("drop", { bubbles: true, cancelable: true });
+      Object.defineProperty(ev, "dataTransfer", {
+        value: {
+          files: [file],
+          items: [
+            {
+              kind: "file",
+              type: "text/markdown",
+              getAsFile: () => file,
+              webkitGetAsEntry: () => ({
+                isDirectory: false,
+                isFile: true,
+                name: "notes.md",
+              }),
+            },
+          ],
+          types: ["Files"],
+        },
+      });
+      host.dispatchEvent(ev);
+    });
+    await m.flush();
+
+    const calls = fake.of("attachments.fromPaths");
+    assert.ok(calls.length > 0, "native drop must call attachments.fromPaths");
+    const input = calls[calls.length - 1].args[0] as { paths: string[] };
+    assert.deepEqual(input.paths, ["/tmp/repo/notes.md"]);
+    assert.ok(
+      m.query('[data-attachment-kind="file"]'),
+      "classified file must surface as a chip",
+    );
+    assert.ok(m.text().includes(notes.name));
+    m.unmount();
+  });
 });

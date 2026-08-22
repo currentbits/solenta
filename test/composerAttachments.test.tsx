@@ -47,6 +47,11 @@ const FOLDER: AttachmentInfo = {
   path: "/tmp/specs",
   name: "specs",
 };
+const FILE: AttachmentInfo = {
+  kind: "file",
+  path: "/tmp/notes.md",
+  name: "notes.md",
+};
 
 interface Harness {
   sends: { prompt: string; attachments?: AttachmentInfo[] }[];
@@ -142,7 +147,7 @@ describe("Composer attachments", () => {
     const h: Harness = { sends: [] };
     const m = await mount(composer(h, { withPicker: false }));
     assert.equal(
-      m.query('button[aria-label="Attach image or folder"]'),
+      m.query('button[aria-label="Attach files or folders"]'),
       null,
       "attach button must not render without onPickAttachments",
     );
@@ -153,7 +158,7 @@ describe("Composer attachments", () => {
     const h: Harness = { sends: [] };
     const m = await mount(composer(h, { picks: [IMAGE, FOLDER] }));
 
-    await m.click(m.query('button[aria-label="Attach image or folder"]'));
+    await m.click(m.query('button[aria-label="Attach files or folders"]'));
     assert.ok(
       m.query('[data-attachment-kind="image"]'),
       "image chip must render after pick",
@@ -202,7 +207,7 @@ describe("Composer attachments", () => {
   it("removes a chip via its remove button", async () => {
     const h: Harness = { sends: [] };
     const m = await mount(composer(h, { picks: [IMAGE, FOLDER] }));
-    await m.click(m.query('button[aria-label="Attach image or folder"]'));
+    await m.click(m.query('button[aria-label="Attach files or folders"]'));
 
     await m.click(m.query('button[aria-label="Remove pic.png"]'));
     assert.equal(
@@ -228,7 +233,7 @@ describe("Composer attachments", () => {
   it("does not add duplicate chips for the same path", async () => {
     const h: Harness = { sends: [] };
     const m = await mount(composer(h, { picks: [IMAGE] }));
-    const attach = () => m.query('button[aria-label="Attach image or folder"]');
+    const attach = () => m.query('button[aria-label="Attach files or folders"]');
     await m.click(attach());
     await m.click(attach());
     assert.equal(
@@ -314,6 +319,30 @@ describe("Composer attachments", () => {
     m.unmount();
   });
 
+  it("adds a dropped markdown file as a chip (issue #653)", async () => {
+    const h: Harness = { sends: [] };
+    const seen: File[] = [];
+    const m = await mount(
+      composer(h, {
+        onDrop: async (files) => {
+          seen.push(...files);
+          return [FILE];
+        },
+      }),
+    );
+    const file = new File(["# notes"], "notes.md", { type: "text/markdown" });
+    await dispatchDrop(m.query("textarea"), [file]);
+    await m.flush();
+    assert.equal(seen.length, 1, "drop must hand the File to the classifier");
+    assert.equal(seen[0].name, "notes.md");
+    assert.ok(
+      m.query('[data-attachment-kind="file"]'),
+      "dropped markdown must surface as a file chip",
+    );
+    assert.ok(m.text().includes("notes.md"));
+    m.unmount();
+  });
+
   it("shows a one-line error when the drop yields no attachments", async () => {
     const h: Harness = { sends: [] };
     const m = await mount(
@@ -321,16 +350,14 @@ describe("Composer attachments", () => {
         onDrop: async () => [],
       }),
     );
-    const pdf = new File([Uint8Array.from([1])], "notes.pdf", {
-      type: "application/pdf",
-    });
-    await dispatchDrop(m.query("textarea"), [pdf]);
+    const empty = new File([], "missing.bin", { type: "application/octet-stream" });
+    await dispatchDrop(m.query("textarea"), [empty]);
     await m.flush();
     const alert = m.query('[role="alert"]');
     assert.ok(alert, "empty drop must show the error banner");
     assert.match(
       alert.textContent ?? "",
-      /Couldn't attach that\. Drop images or folders/,
+      /Couldn't attach that\. Drop files or folders/,
     );
     assert.equal(
       m.query("[data-attachment-kind]"),

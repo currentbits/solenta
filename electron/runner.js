@@ -4606,7 +4606,7 @@ function createRunner(opts) {
   }
 
   /**
-   * @param {{ threadId: string, prompt: string, attachments?: { kind: "image" | "folder", path: string, name: string }[] }} input
+   * @param {{ threadId: string, prompt: string, attachments?: { kind: "image" | "folder" | "file", path: string, name: string }[] }} input
    * @returns {Promise<{ runId: string }>}
    */
   /**
@@ -4679,17 +4679,24 @@ function createRunner(opts) {
   }
 
   /**
-   * Keep only well-formed image/folder attachments (absolute paths). The web
-   * bridge is remote-controlled, so never trust the wire shape.
+   * Keep only well-formed image/folder/file attachments (absolute paths).
+   * The web bridge is remote-controlled, so never trust the wire shape.
    * @param {unknown} input
-   * @returns {{ kind: "image" | "folder", path: string, name: string }[]}
+   * @returns {{ kind: "image" | "folder" | "file", path: string, name: string }[]}
    */
   function sanitizeAttachments(input) {
     if (!Array.isArray(input)) return [];
     const out = [];
     for (const a of input) {
       if (!a || typeof a !== "object") continue;
-      const kind = a.kind === "folder" ? "folder" : a.kind === "image" ? "image" : null;
+      const kind =
+        a.kind === "folder"
+          ? "folder"
+          : a.kind === "image"
+            ? "image"
+            : a.kind === "file"
+              ? "file"
+              : null;
       const p = typeof a.path === "string" ? a.path : "";
       if (!kind || !p || !path.isAbsolute(p)) continue;
       out.push({
@@ -4709,9 +4716,11 @@ function createRunner(opts) {
    */
   function attachmentPromptSection(attachments) {
     if (!attachments.length) return "";
-    const lines = attachments.map(
-      (a) => `- ${a.kind === "folder" ? "Folder" : "Image"}: ${a.path}`,
-    );
+    const lines = attachments.map((a) => {
+      const label =
+        a.kind === "folder" ? "Folder" : a.kind === "file" ? "File" : "Image";
+      return `- ${label}: ${a.path}`;
+    });
     return (
       "\n\n[The user attached the following items. Inspect them with your " +
       "file tools as needed.\n" +

@@ -402,7 +402,7 @@ export interface UseCoderResult {
   ) => Promise<void>;
   /** Data URL for one image a tool returned; null when it is gone. */
   loadToolImage: (name: string) => Promise<string | null>;
-  /** Native image/folder picker, or a web <input type=file> for images. */
+  /** Native file/image/folder picker, or a web <input type=file> for images. */
   pickAttachments: () => Promise<AttachmentInfo[]>;
   /** Persist a pasted image for the selected thread; null when rejected. */
   saveAttachmentImage: (dataUrl: string) => Promise<AttachmentInfo | null>;

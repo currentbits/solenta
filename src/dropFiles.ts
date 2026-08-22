@@ -8,7 +8,9 @@
  */
 
 export const DROP_REJECT_MESSAGE =
-  "Couldn't attach that. Drop images or folders.";
+  "Couldn't attach that. Drop files or folders.";
+
+export const DROP_OVERLAY_MESSAGE = "Drop files or folders";
 
 type FileSystemEntryLike = {
   isDirectory: boolean;

@@ -53,17 +53,20 @@ describe("attachments module", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("classifies images and folders, skipping other files", () => {
+  it("classifies images, folders, and other files (issue #653)", () => {
     const png = path.join(tmpDir, "shot.PNG");
     const txt = path.join(tmpDir, "notes.txt");
+    const md = path.join(tmpDir, "spec.md");
     const dir = path.join(tmpDir, "specs");
     fs.writeFileSync(png, "x");
     fs.writeFileSync(txt, "x");
+    fs.writeFileSync(md, "# spec");
     fs.mkdirSync(dir);
 
     const out = attachments.classifyPaths([
       png,
       txt,
+      md,
       dir,
       path.join(tmpDir, "missing.png"),
       "relative/path.png",
@@ -72,6 +75,8 @@ describe("attachments module", () => {
 
     assert.deepEqual(out, [
       { kind: "image", path: png, name: "shot.PNG" },
+      { kind: "file", path: txt, name: "notes.txt" },
+      { kind: "file", path: md, name: "spec.md" },
       { kind: "folder", path: dir, name: "specs" },
     ]);
   });
@@ -186,7 +191,9 @@ describe("runner attachments", () => {
     const repo = path.join(tmpDir, "app");
     const image = path.join(tmpDir, "pic.png");
     const folder = path.join(tmpDir, "specs");
+    const notes = path.join(tmpDir, "notes.txt");
     fs.writeFileSync(image, "x");
+    fs.writeFileSync(notes, "hello");
     fs.mkdirSync(folder);
 
     await runner.startRun({
@@ -195,8 +202,9 @@ describe("runner attachments", () => {
       attachments: [
         { kind: "image", path: image, name: "pic.png" },
         { kind: "folder", path: folder, name: "specs" },
+        { kind: "file", path: notes, name: "notes.txt" },
         // Malformed entries must be dropped, never forwarded to the CLI.
-        { kind: "file", path: "/etc/passwd", name: "passwd" },
+        { kind: "blob", path: "/etc/passwd", name: "passwd" },
         { kind: "image", path: "relative.png", name: "relative.png" },
       ],
     });
@@ -214,6 +222,7 @@ describe("runner attachments", () => {
     assert.deepEqual(userMsg.attachments, [
       { kind: "image", path: image, name: "pic.png" },
       { kind: "folder", path: folder, name: "specs" },
+      { kind: "file", path: notes, name: "notes.txt" },
     ]);
 
     const argv = JSON.parse(
@@ -231,6 +240,10 @@ describe("runner attachments", () => {
     assert.ok(
       dispatchPrompt.includes(`- Folder: ${folder}`),
       "dispatch prompt lists the folder path",
+    );
+    assert.ok(
+      dispatchPrompt.includes(`- File: ${notes}`),
+      "dispatch prompt lists the file path",
     );
     assert.ok(
       !dispatchPrompt.includes("/etc/passwd"),

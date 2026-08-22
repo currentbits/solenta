@@ -96,6 +96,7 @@ function msg(over: Partial<ChatMessage> & Pick<ChatMessage, "role" | "text">): C
     runId: over.runId ?? null,
     tool: over.tool,
     fromThread: over.fromThread,
+    attachments: over.attachments,
   };
 }
 
@@ -1003,6 +1004,38 @@ async function dispatchOn(
   });
 }
 
+describe("ThreadView file attachments (issue #653)", () => {
+  it("renders a file chip on a user transcript message", async () => {
+    const m = await mount(
+      view({
+        detail: detail({
+          messages: [
+            msg({
+              id: "u1",
+              role: "user",
+              text: "see notes",
+              createdAt: 10,
+              attachments: [
+                {
+                  kind: "file",
+                  path: "/tmp/notes.md",
+                  name: "notes.md",
+                },
+              ],
+            }),
+          ],
+        }),
+      }),
+    );
+    assert.ok(
+      m.query('[data-attachment-kind="file"]'),
+      "user message must show a file chip",
+    );
+    assert.ok(m.text().includes("notes.md"));
+    m.unmount();
+  });
+});
+
 describe("ThreadView file drop (issue #469)", () => {
   it("attaches a file dropped on the transcript, not only the composer", async () => {
     const seen: File[] = [];
@@ -1075,8 +1108,8 @@ describe("ThreadView file drop (issue #469)", () => {
     });
     assert.ok(m.query("[data-drop-overlay]"), "overlay must paint");
     assert.ok(
-      m.text().includes("Drop images or folders"),
-      "overlay copy names images and folders",
+      m.text().includes("Drop files or folders"),
+      "overlay copy names files and folders",
     );
     m.unmount();
   });
