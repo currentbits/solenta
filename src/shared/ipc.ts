@@ -1862,7 +1862,7 @@ export interface FailureMode {
  * vs "deep worker" — selectable from the composer's model picker.
  *
  * Order matters when applying: setProvider resets reasoningEffort to null on a
- * provider switch, so effort must be set after it (see Composer.pickEffort).
+ * provider switch, so effort must be set after it (see Composer.pickProfile).
  */
 export interface AgentProfile {
   /** Stable id; generated at create time, never reused. */

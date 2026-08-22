@@ -499,6 +499,7 @@
   .modelRow,
   .providerRow,
   .effortSegment,
+  .effortBar,
   .modelRowChevron,
   .highlightGlider {
     transition: none;
@@ -744,8 +745,18 @@
 
 .effortSegment {
   flex: 1 1 0;
-  height: 8px;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  padding: 0;
+  background: transparent;
+  border: none;
+}
+
+.effortBar {
+  height: 8px;
   border-radius: 3px;
   background: rgba(255, 255, 255, 0.08);
   border: 1px solid transparent;
@@ -756,15 +767,15 @@
     transform 120ms ease;
 }
 
-.effortSegment:hover:not(:disabled) {
+.effortSegment:hover:not(:disabled) .effortBar {
   background: rgba(255, 255, 255, 0.14);
 }
 
-.effortSegment:active:not(:disabled) {
+.effortSegment:active:not(:disabled) .effortBar {
   transform: scaleY(1.5);
 }
 
-.effortSegment[data-filled="true"] {
+.effortSegment[data-filled="true"] .effortBar {
   background: var(--green);
   border-color: rgba(52, 211, 153, 0.4);
   /* --i is the segment index: the fill sweeps left-to-right instead of
@@ -773,8 +784,20 @@
   transition-delay: calc(var(--i, 0) * 25ms);
 }
 
-.effortSegment[data-filled="true"]:hover {
+.effortSegment[data-filled="true"]:hover .effortBar {
   filter: brightness(1.08);
+}
+
+.effortCaption {
+  font-size: 9px;
+  line-height: 1.2;
+  font-weight: 500;
+  color: var(--text-muted);
+  text-align: center;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 
 .send {

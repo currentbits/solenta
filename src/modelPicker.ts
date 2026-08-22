@@ -5,7 +5,8 @@
  * 1. One unified list: every provider's Default + models, grouped by provider.
  * 2. Always show ModelInfo.label (or the raw id when modelInfo is missing).
  * 3. Detail pane follows the highlighted row, falling back to the selected one.
- * 4. An empty efforts list means no reasoning control at all.
+ * 4. The reasoning meter follows the thread's current provider, not the highlight.
+ *    An empty efforts list on the current provider means no control at all.
  * 5. Reasoning segments fill left-to-right up to the current level (none when null).
  * 6. Unavailable providers are listed but not selectable.
  * 7. With a sessionId, other providers' rows are locked; current provider stays open.
@@ -28,8 +29,7 @@ export interface ModelRow {
   description: string;
   providerId: string;
   providerName: string;
-  /** Effort levels the row's provider advertises (for the detail meter). */
-  efforts: readonly ReasoningEffort[];
+  /** Effort levels the row's provider advertises. */
   /** Provider CLI is not installed. */
   unavailable: boolean;
   /** Row cannot be chosen (unavailable or session-locked other provider). */
@@ -210,18 +210,26 @@ function rowFromInfo(info: ModelInfo): Pick<
 /**
  * Label for the composer trigger pill. Never invents a label from thin air:
  * modelInfo.label when present, otherwise the raw id (or "Default" for null).
+ * A non-default reasoning level is appended so the effort is visible without
+ * opening the picker (issue #649).
  */
 export function modelTriggerLabel(
   model: string | null,
   provider: ProviderInfo | undefined | null,
+  reasoningEffort?: ReasoningEffort | null,
 ): string {
-  if (model == null || model === "") return "Default";
-  const infos = provider?.modelInfo;
-  if (Array.isArray(infos)) {
-    const hit = infos.find((m) => m.id === model);
-    if (hit) return hit.label;
+  let label: string;
+  if (model == null || model === "") {
+    label = "Default";
+  } else {
+    const infos = provider?.modelInfo;
+    const hit = Array.isArray(infos)
+      ? infos.find((m) => m.id === model)
+      : undefined;
+    label = hit ? hit.label : model;
   }
-  return model;
+  if (reasoningEffort == null) return label;
+  return `${label} · ${effortDisplayLabel(reasoningEffort)}`;
 }
 
 /**
@@ -366,7 +374,7 @@ export function effortSegments(
  * meter text is readable but still maps 1:1 onto ProviderInfo.efforts (never a
  * parallel scale like Brief/Balanced/Detailed).
  */
-const EFFORT_LABELS: Record<ReasoningEffort, string> = {
+export const EFFORT_LABELS: Record<ReasoningEffort, string> = {
   low: "Low",
   medium: "Medium",
   high: "High",
