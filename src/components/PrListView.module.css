@@ -239,7 +239,7 @@
   margin: 2px 0 0;
   pointer-events: auto;
   font-size: 11px;
-  color: #fca5a5;
+  color: var(--danger-fg);
 }
 
 .prLink {

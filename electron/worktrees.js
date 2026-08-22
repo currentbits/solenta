@@ -33,6 +33,9 @@ function setExecFile(fn) {
 }
 
 const PATCH_TRUNCATE = 100_000;
+const CONFLICT_MAX_FILES = 12;
+const CONFLICT_MAX_FILE_BYTES = 16_000;
+const CONFLICT_MAX_TOTAL_BYTES = 48_000;
 
 /**
  * The one git wrap for a path. A WSL UNC cwd means git must run *inside*
@@ -452,6 +455,96 @@ function conflictError(headline, files, footer) {
   const lines = [headline, ...files.map((f) => `  ${f}`)];
   if (footer) lines.push(footer);
   return new Error(`MERGE_CONFLICT:${lines.join("\n")}`);
+}
+
+/**
+ * Unmerged worktree files plus capped on-disk snippets for the resolve
+ * prompt (issue #163). The conflict is already replayed in the worktree;
+ * this just reads it so the agent turn does not have to.
+ *
+ * @param {object} opts
+ * @param {import('./store').Store} opts.store
+ * @param {string} opts.threadId
+ * @param {number} [opts.maxFiles]
+ * @param {number} [opts.maxFileBytes]
+ * @param {number} [opts.maxTotalBytes]
+ * @returns {{
+ *   files: Array<{ path: string, content: string, truncated: boolean, binary: boolean }>,
+ *   omitted: number,
+ *   branch: string | null,
+ *   baseBranch: string | null,
+ * }}
+ */
+function conflictContext(opts) {
+  const { store, threadId } = opts;
+  const maxFiles =
+    opts.maxFiles != null ? opts.maxFiles : CONFLICT_MAX_FILES;
+  const maxFileBytes =
+    opts.maxFileBytes != null ? opts.maxFileBytes : CONFLICT_MAX_FILE_BYTES;
+  const maxTotalBytes =
+    opts.maxTotalBytes != null ? opts.maxTotalBytes : CONFLICT_MAX_TOTAL_BYTES;
+
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  if (!thread.worktreePath) {
+    throw new Error(
+      `Thread ${threadId} has no worktree; call setupWorktree first`,
+    );
+  }
+  const project = store.getProject(thread.projectId);
+  if (!project) {
+    throw new Error(`Unknown project for thread: ${threadId}`);
+  }
+
+  const cwd = thread.worktreePath;
+  const all = unmergedFiles(cwd);
+  /** @type {Array<{ path: string, content: string, truncated: boolean, binary: boolean }>} */
+  const files = [];
+  let remaining = maxTotalBytes;
+  for (const file of all) {
+    if (files.length >= maxFiles || remaining <= 0) break;
+    const cap = Math.min(maxFileBytes, remaining);
+    const entry = readConflictFile(cwd, file, cap);
+    files.push(entry);
+    remaining -= entry.content.length;
+  }
+  let baseBranch = null;
+  try {
+    baseBranch = defaultBranch(project.path);
+  } catch {
+    baseBranch = null;
+  }
+  return {
+    files,
+    omitted: Math.max(0, all.length - files.length),
+    branch: thread.branch || null,
+    baseBranch,
+  };
+}
+
+/**
+ * @param {string} cwd
+ * @param {string} file
+ * @param {number} cap
+ */
+function readConflictFile(cwd, file, cap) {
+  try {
+    const raw = fs.readFileSync(path.join(cwd, file));
+    if (raw.includes(0)) {
+      return { path: file, content: "", truncated: false, binary: true };
+    }
+    let content = raw.toString("utf8");
+    let truncated = false;
+    if (cap >= 0 && content.length > cap) {
+      content = content.slice(0, cap);
+      truncated = true;
+    }
+    return { path: file, content, truncated, binary: false };
+  } catch {
+    return { path: file, content: "", truncated: false, binary: true };
+  }
 }
 
 function parseItineraryJson(raw) {
@@ -5050,6 +5143,7 @@ module.exports = {
   revertFile,
   listFiles,
   mergeWorktree,
+  conflictContext,
   removeWorktree,
   push,
   createPr,

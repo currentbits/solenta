@@ -635,9 +635,9 @@ a.btn {
   height: 22px;
   padding: 0 8px;
   border-radius: var(--radius-sm);
-  border: 1px solid rgba(248, 113, 113, 0.45);
-  background: rgba(248, 113, 113, 0.1);
-  color: var(--red, #f87171);
+  border: 1px solid var(--danger-border);
+  background: var(--danger-soft);
+  color: var(--danger);
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.02em;
@@ -651,8 +651,8 @@ a.btn {
   letter-spacing: 0.04em;
   padding: 0 5px;
   border-radius: var(--radius-sm);
-  border: 1px solid rgba(248, 113, 113, 0.4);
-  color: var(--red, #f87171);
+  border: 1px solid var(--danger-border);
+  color: var(--danger);
 }
 
 .committedBlast {
@@ -662,8 +662,8 @@ a.btn {
   margin: 8px 12px 0;
   padding: 8px 10px;
   border-radius: var(--radius-sm);
-  border: 1px solid rgba(248, 113, 113, 0.4);
-  background: rgba(248, 113, 113, 0.1);
+  border: 1px solid var(--danger-border);
+  background: var(--danger-soft);
   color: var(--text);
   font-size: 12px;
 }
@@ -672,7 +672,7 @@ a.btn {
   font-size: 11.5px;
   letter-spacing: 0.02em;
   text-transform: uppercase;
-  color: var(--red, #f87171);
+  color: var(--danger);
 }
 
 /* PR-size-cap refusal (issue #402): split / create-anyway choice. */
@@ -1032,15 +1032,6 @@ a.btn {
 
 .dels {
   color: var(--danger-fg);
-}
-
-.changesScroll {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
 }
 
 .patchScroll {

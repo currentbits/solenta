@@ -1548,16 +1548,64 @@ describe("ThreadView Changes panel commit box (issue #555)", () => {
     });
     assert.ok(commitBtn, "Commit button must be in the Changes panel");
 
-    // CSS modules resolve to identity class names in this harness
-    // (test/support/render-hooks.mjs). Walk ancestors so wrapping the
-    // commit box in .changesScroll fails even when the textarea still
-    // renders (jsdom has no layout, so clipping is invisible).
+    // The two-column split is what actually protects #555: the itinerary
+    // scrolls inside .changesFiles, and .commitBox is a flex-shrink: 0
+    // sibling of .changesSplit. jsdom has no layout, so clipping is
+    // invisible: assert the structure instead of a class nobody uses.
+    const split = panel.querySelector(`.${styles.changesSplit}`);
+    assert.ok(split, "file/diff split must render");
+    assert.ok(
+      !split.contains(textarea),
+      "commit textarea must sit outside .changesSplit, not inside a scrolling column",
+    );
+
+    const commitBox = textarea.closest(`.${styles.commitBox}`);
+    assert.ok(commitBox, "textarea must live in .commitBox");
+    assert.equal(
+      commitBox.parentElement,
+      split.parentElement,
+      ".commitBox must be a sibling of .changesSplit so a tall itinerary cannot push it out of the pane",
+    );
+    assert.equal(
+      split.nextElementSibling,
+      commitBox,
+      ".commitBox must follow .changesSplit as the next sibling",
+    );
+
+    const filesCol = panel.querySelector(`.${styles.changesFiles}`);
+    assert.ok(filesCol, "files column must render");
+    assert.ok(
+      filesCol.contains(panel.querySelector("[data-review-hard-stop]")!),
+      "tall itinerary must live inside the scrolling files column",
+    );
+
+    // Any ancestor of the textarea that carries overflow-y: auto would
+    // hide the box once the itinerary grew past the pane. Parse the
+    // module CSS so a new scroller class still fails this test.
+    const cssPath = path.join(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "../src/components/ThreadView.module.css",
+    );
+    const css = fs.readFileSync(cssPath, "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+    const overflowClasses = new Set<string>();
+    const ruleRe = /\.([A-Za-z][\w-]*)\s*\{([^}]*)\}/g;
+    let match: RegExpExecArray | null;
+    while ((match = ruleRe.exec(css))) {
+      if (
+        /overflow-y\s*:\s*auto/.test(match[2]) ||
+        /overflow\s*:\s*auto/.test(match[2])
+      ) {
+        overflowClasses.add(match[1]);
+      }
+    }
     let node: Element | null = textarea.parentElement;
     while (node && node !== panel) {
-      assert.ok(
-        !node.classList.contains(styles.changesScroll),
-        "commit box must sit outside .changesScroll, not inside the clipped itinerary scroller",
-      );
+      for (const cls of node.classList) {
+        assert.ok(
+          !overflowClasses.has(cls),
+          `commit box must not sit inside .${cls} (overflow-y: auto)`,
+        );
+      }
       node = node.parentElement;
     }
     m.unmount();
@@ -1623,6 +1671,78 @@ describe("ThreadView Changes panel commit box (issue #555)", () => {
       changesSplit,
       /min-height\s*:\s*0/,
       ".changesSplit must be allowed to shrink inside the pane",
+    );
+
+    // First .changesFiles match is the max-width: 720px override (border
+    // only). Collect every body so the scrolling rule still counts.
+    const allBodies = (className: string): string[] => {
+      const bodies: string[] = [];
+      const re = new RegExp(`\\.${className}(?![\\w-])\\s*\\{`, "g");
+      let match: RegExpExecArray | null;
+      while ((match = re.exec(clean))) {
+        const brace = match.index + match[0].length - 1;
+        const end = clean.indexOf("}", brace);
+        if (end < 0) break;
+        bodies.push(clean.slice(brace + 1, end));
+      }
+      return bodies;
+    };
+    const has = (bodies: string[], re: RegExp) =>
+      bodies.some((body) => re.test(body));
+
+    const filesBodies = allBodies("changesFiles");
+    assert.ok(filesBodies.length > 0, ".changesFiles rule must exist");
+    assert.ok(
+      has(filesBodies, /min-height\s*:\s*0/),
+      ".changesFiles must shrink inside the split so a tall itinerary scrolls",
+    );
+    assert.ok(
+      has(filesBodies, /overflow-y\s*:\s*auto/),
+      ".changesFiles is the itinerary scroller",
+    );
+
+    const diffBodies = allBodies("changesDiff");
+    assert.ok(diffBodies.length > 0, ".changesDiff rule must exist");
+    assert.ok(
+      has(diffBodies, /min-height\s*:\s*0/),
+      ".changesDiff must shrink inside the split",
+    );
+    assert.ok(
+      has(diffBodies, /overflow-y\s*:\s*auto/),
+      ".changesDiff is the patch scroller",
+    );
+
+    assert.equal(
+      ruleBody("changesScroll"),
+      "",
+      "dead .changesScroll wrapper must stay gone; the split columns scroll",
+    );
+
+    const mediaStart = clean.search(/@media\s*\(\s*max-width\s*:\s*720px\s*\)/);
+    assert.ok(mediaStart >= 0, "narrow stacked-split media query must exist");
+    const mediaOpen = clean.indexOf("{", mediaStart);
+    let depth = 0;
+    let mediaEnd = mediaOpen;
+    for (let i = mediaOpen; i < clean.length; i++) {
+      if (clean[i] === "{") depth++;
+      else if (clean[i] === "}") {
+        depth--;
+        if (depth === 0) {
+          mediaEnd = i;
+          break;
+        }
+      }
+    }
+    const media = clean.slice(mediaOpen, mediaEnd + 1);
+    assert.match(
+      media,
+      /grid-template-rows/,
+      "narrow path must stack the split into rows, not grow the pane",
+    );
+    assert.doesNotMatch(
+      media,
+      /commitBox/,
+      "narrow path must not restyle .commitBox into the scrolling split",
     );
   });
 });

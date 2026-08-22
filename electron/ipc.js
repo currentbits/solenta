@@ -12,6 +12,7 @@ const {
   revertFile,
   listFiles,
   mergeWorktree,
+  conflictContext,
   removeWorktree,
   push,
   createPr,
@@ -936,6 +937,12 @@ const IPC_HANDLERS = {
     });
     await runRetention(ctx);
     return merged;
+  },
+  "git:conflictContext": async (ctx, input) => {
+    return conflictContext({
+      store: ctx.store,
+      threadId: input && input.threadId,
+    });
   },
   "git:removeWorktree": async (ctx, input) => {
     return removeWorktree({

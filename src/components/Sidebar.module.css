@@ -175,9 +175,9 @@
   margin-left: 4px;
   padding: 0 5px;
   border-radius: var(--radius-pill);
-  border: 1px solid rgba(251, 191, 36, 0.35);
-  color: #fbbf24;
-  background: rgba(251, 191, 36, 0.12);
+  border: 1px solid var(--amber-border);
+  color: var(--amber);
+  background: var(--amber-soft);
   font-size: 10px;
   font-weight: 650;
   letter-spacing: 0.03em;

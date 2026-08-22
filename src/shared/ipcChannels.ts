@@ -134,6 +134,7 @@ export const IPC_CHANNELS = [
   { ns: "git", method: "revertFile" },
   { ns: "git", method: "suggestCommitMessage" },
   { ns: "git", method: "mergeWorktree" },
+  { ns: "git", method: "conflictContext" },
   { ns: "git", method: "removeWorktree" },
   { ns: "git", method: "push" },
   { ns: "git", method: "createPr" },
