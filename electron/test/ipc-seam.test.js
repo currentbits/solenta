@@ -213,6 +213,11 @@ exit 1`,
         "function",
         "preload must expose threads.runVerify",
       );
+      assert.equal(
+        typeof api.threads.runCommand,
+        "function",
+        "preload must expose threads.runCommand",
+      );
     });
   });
 

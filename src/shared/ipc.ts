@@ -57,6 +57,24 @@ export interface ProjectInfo {
    * be probed. Present only for Jujutsu so the UI can badge unsupported.
    */
   scm?: ProjectScmInfo;
+  /**
+   * Shell command run once after a new worktree is created (issue #153).
+   * Async, logged as `[setup]` transcript events. Absent/null = none.
+   * Cap 500 chars, same as verifyCommand.
+   */
+  setupCommand?: string | null;
+  /**
+   * Named shell commands shown as buttons in the thread header (issue #153).
+   * Absent/empty = none. Cap 8.
+   */
+  quickActions?: ProjectQuickAction[];
+}
+
+/** One named per-project shell command (issue #153). */
+export interface ProjectQuickAction {
+  id: string;
+  name: string;
+  command: string;
 }
 
 /** Source-control probe for a local project checkout (issue #521). */
@@ -215,6 +233,14 @@ export interface ProjectUpdateInput {
    * Automatic detection (#610).
    */
   iconPath?: string | null;
+  /**
+   * Worktree setup command (issue #153). Empty / null clears it.
+   */
+  setupCommand?: string | null;
+  /**
+   * Named header actions (issue #153). Empty array clears them.
+   */
+  quickActions?: ProjectQuickAction[];
 }
 
 /**
@@ -1488,6 +1514,21 @@ export interface VerifyResult {
 }
 
 /**
+ * Result of a per-project setup or named quick action (issue #153).
+ * Failure is a result, not a throw, matching runVerify.
+ */
+export interface CommandRunResult {
+  name: string;
+  command: string;
+  ok: boolean;
+  exitCode: number | null;
+  timedOut: boolean;
+  log: string;
+  durationMs: number;
+  at: number;
+}
+
+/**
  * One-shot delayed re-check after a thread's PR merges (issue #420).
  * Scheduled on the MERGED flip; the scheduler re-runs `verifyCommand`
  * against the merged default branch hours later.
@@ -2662,6 +2703,16 @@ export interface CoderApi {
      * is active. Manual counterpart to the automatic gate.
      */
     runVerify(input: { threadId: string }): Promise<VerifyResult>;
+    /**
+     * Run the project's setupCommand (`actionId: "setup"` or omitted) or a
+     * named quick action (issue #153). Rejects when no command is set, the
+     * action is unknown, a run is active, or another command is in flight.
+     * Command failure is a result, not a throw. Logged as transcript events.
+     */
+    runCommand(input: {
+      threadId: string;
+      actionId?: string;
+    }): Promise<CommandRunResult>;
     /**
      * Permanently deletes the thread with its messages and work log. Rejects
      * while a run is active, and rejects when the thread still has a worktree

@@ -1,6 +1,10 @@
 import { useCallback, useState } from "react";
 import { useEscapeClose } from "../useEscapeClose";
-import type { ProjectInfo, ProjectUpdateInput } from "../shared/ipc";
+import type {
+  ProjectInfo,
+  ProjectQuickAction,
+  ProjectUpdateInput,
+} from "../shared/ipc";
 import { ProjectIcon } from "./ProjectIcon";
 import styles from "./SettingsModal.module.css";
 
@@ -44,6 +48,10 @@ export function EditProjectModal({
   const [iconPath, setIconPath] = useState(project.iconPath ?? null);
   const [iconUrl, setIconUrl] = useState(project.iconUrl ?? null);
   const [iconDirty, setIconDirty] = useState(false);
+  const [setupCommand, setSetupCommand] = useState(project.setupCommand ?? "");
+  const [quickActions, setQuickActions] = useState<ProjectQuickAction[]>(
+    () => (project.quickActions ?? []).map((a) => ({ ...a })),
+  );
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -87,6 +95,14 @@ export function EditProjectModal({
         remotePath: rpath,
         worktreeRetention,
         autoDispatch,
+        setupCommand: setupCommand.trim() || null,
+        quickActions: quickActions
+          .map((a) => ({
+            id: a.id,
+            name: a.name.trim(),
+            command: a.command.trim(),
+          }))
+          .filter((a) => a.name && a.command),
       };
       if (iconDirty) payload.iconPath = iconPath;
       const updated = await onSubmit(payload);
@@ -324,6 +340,123 @@ export function EditProjectModal({
               disabled={pending}
               onKeyDown={enterToSubmit}
             />
+          </div>
+          <div className={styles.field}>
+            <label className={styles.fieldLabel} htmlFor="edit-project-setup">
+              Worktree setup
+            </label>
+            <input
+              id="edit-project-setup"
+              className={`${styles.input} ${styles.monoInput}`}
+              data-edit-project-setup=""
+              value={setupCommand}
+              onChange={(e) => setSetupCommand(e.target.value)}
+              placeholder="npm install"
+              autoComplete="off"
+              spellCheck={false}
+              disabled={pending}
+            />
+            <p className={styles.note}>
+              Runs once when a new worktree is created. Failure is logged on
+              the thread and does not remove the worktree.
+            </p>
+          </div>
+          <div className={styles.field}>
+            <span className={styles.fieldLabel} id="edit-project-actions-label">
+              Quick actions
+            </span>
+            <div
+              className={styles.actionList}
+              role="group"
+              aria-labelledby="edit-project-actions-label"
+              data-edit-project-actions=""
+            >
+              {quickActions.map((action, index) => (
+                <div
+                  key={action.id}
+                  className={styles.actionRow}
+                  data-edit-project-action=""
+                >
+                  <input
+                    className={styles.input}
+                    data-edit-project-action-name=""
+                    value={action.name}
+                    onChange={(e) => {
+                      const name = e.target.value;
+                      setQuickActions((rows) =>
+                        rows.map((row, i) =>
+                          i === index ? { ...row, name } : row,
+                        ),
+                      );
+                    }}
+                    placeholder="Lint"
+                    aria-label="Action name"
+                    autoComplete="off"
+                    spellCheck={false}
+                    disabled={pending}
+                  />
+                  <input
+                    className={`${styles.input} ${styles.monoInput}`}
+                    data-edit-project-action-command=""
+                    value={action.command}
+                    onChange={(e) => {
+                      const command = e.target.value;
+                      setQuickActions((rows) =>
+                        rows.map((row, i) =>
+                          i === index ? { ...row, command } : row,
+                        ),
+                      );
+                    }}
+                    placeholder="npm run lint"
+                    aria-label="Action command"
+                    autoComplete="off"
+                    spellCheck={false}
+                    disabled={pending}
+                  />
+                  <button
+                    type="button"
+                    className={styles.btn}
+                    data-edit-project-action-remove=""
+                    aria-label={`Remove ${action.name || "action"}`}
+                    disabled={pending}
+                    onClick={() => {
+                      setQuickActions((rows) =>
+                        rows.filter((_, i) => i !== index),
+                      );
+                    }}
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+              {quickActions.length < 8 ? (
+                <button
+                  type="button"
+                  className={styles.btn}
+                  data-edit-project-action-add=""
+                  disabled={pending}
+                  onClick={() => {
+                    setQuickActions((rows) => [
+                      ...rows,
+                      {
+                        id:
+                          typeof crypto !== "undefined" && crypto.randomUUID
+                            ? crypto.randomUUID()
+                            : `action-${Date.now()}-${rows.length}`,
+                        name: "",
+                        command: "",
+                      },
+                    ]);
+                  }}
+                >
+                  Add action
+                </button>
+              ) : null}
+            </div>
+            <p className={styles.note}>
+              Named buttons in the thread header. Run from the worktree when
+              one exists.
+            </p>
           </div>
           <div className={styles.field}>
             <label className={styles.fieldRow} htmlFor="edit-project-auto-dispatch">

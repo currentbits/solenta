@@ -388,6 +388,26 @@ button.project:focus-visible {
   align-items: center;
 }
 
+.quickActions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 1;
+  align-items: center;
+  min-width: 0;
+  max-width: min(42ch, 36vw);
+  overflow-x: auto;
+}
+
+.commandError {
+  color: var(--danger-fg);
+  font-size: 11px;
+  line-height: 1.2;
+  white-space: nowrap;
+  max-width: 22ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .menuWrap {
   position: relative;
 }
