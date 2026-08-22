@@ -18,6 +18,7 @@ import {
   type FakeCoder,
 } from "./support/fakeCoder.ts";
 import App from "../src/App";
+import { useCoder } from "../src/useCoder";
 import type { ChatMessage, ThreadInfo } from "../src/shared/ipc";
 
 const NOW = Date.now();
@@ -125,6 +126,82 @@ describe("thread:updated tail merge", () => {
       m.text().includes("first message kept"),
       "the un-mergeable tail must not blank the transcript",
     );
+    m.unmount();
+  });
+});
+
+/**
+ * threads:changed used to replace the whole list with cloned rows, so every
+ * memo keyed on `threads` and every memo'd card reran (issue #617). applyThreads
+ * now reconciles by value; these probes read the live list identity.
+ */
+function ThreadsProbe({ onThreads }: { onThreads: (rows: ThreadInfo[]) => void }) {
+  const { threads } = useCoder();
+  onThreads(threads);
+  return <div data-thread-count={threads.length} />;
+}
+
+async function bootProbe(fake: FakeCoder, onThreads: (rows: ThreadInfo[]) => void) {
+  const shell = await mount(<div />);
+  installFakeCoder(fake);
+  shell.unmount();
+  const m = await mount(<ThreadsProbe onThreads={onThreads} />);
+  await m.flush();
+  return m;
+}
+
+describe("applyThreads identity (#617)", () => {
+  it("keeps row (and array) identity when threads:changed is a clone", async () => {
+    const fake = createFakeCoder({
+      threads: [
+        thread({ id: "t1", title: "one" }),
+        thread({ id: "t2", title: "two" }),
+        thread({ id: "t3", title: "three" }),
+      ],
+    });
+    let latest: ThreadInfo[] = [];
+    const m = await bootProbe(fake, (rows) => {
+      latest = rows;
+    });
+    const first = latest;
+    assert.equal(first.length, 3);
+
+    await inAct(() =>
+      fake.emitThreads(JSON.parse(JSON.stringify(first)) as ThreadInfo[]),
+    );
+    await m.flush();
+
+    assert.equal(latest, first, "no-op push must not allocate a new list");
+    assert.equal(latest[0], first[0]);
+    assert.equal(latest[1], first[1]);
+    assert.equal(latest[2], first[2]);
+    m.unmount();
+  });
+
+  it("replaces only the moved row on threads:changed", async () => {
+    const fake = createFakeCoder({
+      threads: [
+        thread({ id: "t1", title: "one" }),
+        thread({ id: "t2", title: "two" }),
+        thread({ id: "t3", title: "three" }),
+      ],
+    });
+    let latest: ThreadInfo[] = [];
+    const m = await bootProbe(fake, (rows) => {
+      latest = rows;
+    });
+    const first = latest;
+
+    const cloned = JSON.parse(JSON.stringify(first)) as ThreadInfo[];
+    cloned[1] = { ...cloned[1], title: "two-moved" };
+    await inAct(() => fake.emitThreads(cloned));
+    await m.flush();
+
+    assert.notEqual(latest, first);
+    assert.equal(latest[0], first[0], "unchanged rows keep identity");
+    assert.notEqual(latest[1], first[1]);
+    assert.equal(latest[1].title, "two-moved");
+    assert.equal(latest[2], first[2]);
     m.unmount();
   });
 });
