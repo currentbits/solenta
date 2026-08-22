@@ -175,6 +175,7 @@ function composer(
     busy?: boolean;
     providers?: ProviderInfo[];
     agentProfiles?: AgentProfile[];
+    onListFiles?: (query: string) => Promise<string[]>;
   } = {},
 ) {
   // Seed the emulation from the thread this element renders with, so the
@@ -233,6 +234,7 @@ function composer(
       onBuild={(prompt, templateId) => {
         harness.builds.push({ prompt, templateId });
       }}
+      onListFiles={over.onListFiles}
     />
   );
 }
@@ -298,6 +300,55 @@ describe("Composer per-thread draft", () => {
       "draft for thread A",
       "switching back must restore thread A's draft",
     );
+    m.unmount();
+  });
+});
+
+describe("Composer typing lag (#654)", () => {
+  it("does not rebuild model-picker chrome after the first letter", async () => {
+    const h = makeHarness();
+    let modelInfoReads = 0;
+    const providers: ProviderInfo[] = [
+      {
+        ...CLAUDE_WITH_INFO,
+        get modelInfo() {
+          modelInfoReads += 1;
+          return CLAUDE_WITH_INFO.modelInfo;
+        },
+      },
+    ];
+    const m = await mount(composer(h, { providers }));
+    const ta = m.query("textarea") as HTMLTextAreaElement;
+    await m.type(ta, "a");
+    const afterFirst = modelInfoReads;
+    assert.ok(afterFirst > 0, "first letter may paint Send/Build as enabled");
+    await m.type(ta, "abcdefghi more letters");
+    assert.equal(
+      modelInfoReads,
+      afterFirst,
+      "further letters must not rebuild the model picker",
+    );
+    m.unmount();
+  });
+
+  it("plain typing does not query @-mention files", async () => {
+    const h = makeHarness();
+    let lists = 0;
+    const m = await mount(
+      composer(h, {
+        onListFiles: async () => {
+          lists += 1;
+          return [];
+        },
+      }),
+    );
+    const ta = m.query("textarea") as HTMLTextAreaElement;
+    await m.type(ta, "hello world this is a prompt");
+    assert.equal(lists, 0);
+    assert.equal(m.query('[aria-label="Commands"]'), null);
+    assert.equal(m.query('[aria-label="Mention a file"]'), null);
+    assert.equal(ta.getAttribute("spellcheck"), "false");
+    assert.equal(ta.getAttribute("autocomplete"), "off");
     m.unmount();
   });
 });
