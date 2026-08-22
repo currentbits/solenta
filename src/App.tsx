@@ -188,6 +188,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     prChecks,
     prMerge,
     listPrs,
+    checkoutPr,
     listIssues,
     setIssuePlanStatus,
     createIssue,
@@ -898,6 +899,24 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     [fetchIssue, createThread, startRun, setIssuePlanStatus],
   );
 
+  const handleCheckoutPr = useCallback(
+    async (input: { projectId: string; prNumber: number }) => {
+      const result = await checkoutPr(input);
+      if (!result.ok) return result;
+      setView("thread");
+      setRevealThreadId(result.thread.id);
+      if (result.created) {
+        try {
+          await startRun(result.prompt, result.thread.id);
+        } catch {
+          // Checkout landed; the run error is already in useCoder.error.
+        }
+      }
+      return result;
+    },
+    [checkoutPr, startRun],
+  );
+
   const handleAddProject = useCallback(() => {
     setAddPathOpen(true);
   }, []);
@@ -1119,6 +1138,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
               threads={threads}
               listPrs={listPrs}
               onSelectThread={handleSelectThread}
+              onCheckoutPr={handleCheckoutPr}
             />
           ) : view === "automations" ? (
             <AutomationsView

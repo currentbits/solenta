@@ -8,6 +8,7 @@ import * as React from "react";
 import { mount } from "./support/dom.ts";
 import { PrListView } from "../src/components/PrListView";
 import type {
+  CheckoutPrResult,
   ListPrsResult,
   PrListItem,
   ProjectInfo,
@@ -146,6 +147,97 @@ describe("PrListView", () => {
     assert.ok(m.text().includes("Recovered PR"));
     assert.ok(!m.text().includes("Couldn't load PR data"));
     assert.equal(calls, 2);
+    m.unmount();
+  });
+
+  it("offers Check out on unmatched rows and hides it when a thread matches", async () => {
+    let checkout: { projectId: string; prNumber: number } | null = null;
+    const listPrs = async (): Promise<ListPrsResult> => ({
+      ok: true,
+      prs: [
+        pr({ number: 5, headRefName: "feat/open" }),
+        pr({ number: 6, headRefName: "coder/hit" }),
+      ],
+    });
+    const m = await mount(
+      <PrListView
+        projects={[p1]}
+        threads={[thread({ id: "t-hit", branch: "coder/hit" })]}
+        listPrs={listPrs}
+        onSelectThread={() => {}}
+        onCheckoutPr={async (input) => {
+          checkout = input;
+          return {
+            ok: true,
+            created: true,
+            readOnly: false,
+            prompt: "review me",
+            thread: thread({ id: "t-new", branch: "feat/open", prNumber: 5 }),
+          } satisfies CheckoutPrResult;
+        }}
+      />,
+    );
+    await m.flush();
+    const openRow = m.query('[data-pr-row="5"]');
+    const hitRow = m.query('[data-pr-row="6"]');
+    assert.ok(openRow, "unmatched row");
+    assert.ok(hitRow, "matched row");
+    assert.ok(
+      openRow.querySelector("[data-pr-checkout-btn]"),
+      "Check out on unmatched",
+    );
+    assert.ok(
+      !hitRow.querySelector("[data-pr-checkout-btn]"),
+      "no Check out on matched",
+    );
+    const btn = openRow.querySelector("[data-pr-checkout-btn]");
+    await m.click(btn);
+    await m.flush();
+    assert.deepEqual(checkout, { projectId: "p1", prNumber: 5 });
+    m.unmount();
+  });
+
+  it("disables Check out when GitHub is not ready and surfaces the hint", async () => {
+    const m = await mount(
+      <PrListView
+        projects={[p1]}
+        threads={[]}
+        listPrs={async () => ({
+          ok: true,
+          prs: [pr({ number: 3 })],
+        })}
+        onSelectThread={() => {}}
+        onCheckoutPr={async () => ({ ok: false, reason: "should not fire" })}
+        github={{ ready: false, hint: "Run gh auth login." }}
+      />,
+    );
+    await m.flush();
+    const btn = m.query("[data-pr-checkout-btn]");
+    assert.ok(btn, "Check out still visible");
+    assert.equal((btn as HTMLButtonElement).disabled, true);
+    assert.equal((btn as HTMLElement).getAttribute("title"), "Run gh auth login.");
+    m.unmount();
+  });
+
+  it("shows an in-band checkout failure on the row", async () => {
+    const m = await mount(
+      <PrListView
+        projects={[p1]}
+        threads={[]}
+        listPrs={async () => ({
+          ok: true,
+          prs: [pr({ number: 8, title: "Inbound" })],
+        })}
+        onSelectThread={() => {}}
+        onCheckoutPr={async () => ({ ok: false, reason: "gh missing" })}
+      />,
+    );
+    await m.flush();
+    await m.click(m.query("[data-pr-checkout-btn]"));
+    await m.flush();
+    const err = m.query("[data-pr-checkout-error]");
+    assert.ok(err, "error on the row");
+    assert.ok(err.textContent?.includes("gh missing"));
     m.unmount();
   });
 

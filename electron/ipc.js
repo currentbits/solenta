@@ -19,6 +19,7 @@ const {
   mergePr,
   maybeCleanupMergedWorktree,
   listPrs,
+  checkoutPr,
   listCheckpoints,
   restoreCheckpoint,
   runStats,
@@ -965,6 +966,15 @@ const IPC_HANDLERS = {
   },
   "git:listPrs": async (_ctx, projectPath) => {
     return listPrs(projectPath);
+  },
+  "git:checkoutPr": async (ctx, input) => {
+    return checkoutPr({
+      store: ctx.store,
+      projectId: input && input.projectId,
+      prNumber: input && input.prNumber,
+      worktreeBase: ctx.worktreeBase,
+      broadcast: ctx.broadcast,
+    });
   },
   "issues:fetch": async (_ctx, input) => {
     const projectPath = input && input.projectPath;

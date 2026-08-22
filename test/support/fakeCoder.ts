@@ -32,6 +32,7 @@ import type {
   GitRepoInfo,
   GitPullResult,
   ListPrsResult,
+  CheckoutPrResult,
   LocalServerInfo,
   MemoryEntryInfo,
   PrChecksResult,
@@ -1645,6 +1646,26 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           ok: true,
           prs: [],
         } as ListPrsResult),
+      checkoutPr: (input: unknown) => {
+        const i = input as { projectId: string; prNumber: number };
+        const t = thread({
+          id: `t-pr-${i.prNumber}`,
+          projectId: i.projectId,
+          title: `PR #${i.prNumber}`,
+          prNumber: i.prNumber,
+          prUrl: `https://github.com/acme/demo/pull/${i.prNumber}`,
+          branch: `feat/${i.prNumber}`,
+          worktreePath: `/tmp/wt-pr-${i.prNumber}`,
+        });
+        threads = [t, ...threads];
+        return rec("git.checkoutPr", [input], {
+          ok: true as const,
+          created: true,
+          readOnly: false,
+          prompt: `GitHub pull request #${i.prNumber}: review`,
+          thread: t,
+        } satisfies CheckoutPrResult);
+      },
       /**
        * Round 50 contract: newest-first; empty without a worktree.
        * SOURCE list is never mutated by list.

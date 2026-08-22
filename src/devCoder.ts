@@ -34,6 +34,7 @@ import type {
   FleetEvidence,
   FetchIssueResult,
   ListIssuesResult,
+  CheckoutPrResult,
   LocalServerInfo,
   MemoryEntryInfo,
   AgentConfigDoctorReport,
@@ -4110,6 +4111,42 @@ function buildDevCoder(): CoderApi {
             headRefName: t.branch ?? "",
           }));
         return { ok: true, prs };
+      },
+      async checkoutPr(input: { projectId: string; prNumber: number }) {
+        const project = projects.find((p) => p.id === input.projectId);
+        if (!project) return { ok: false as const, reason: "Unknown project" };
+        const existing = threads.find(
+          (t) =>
+            t.projectId === input.projectId && t.prNumber === input.prNumber,
+        );
+        if (existing && existing.worktreePath) {
+          return {
+            ok: true as const,
+            created: false,
+            readOnly: !existing.branch,
+            prompt: `GitHub pull request #${input.prNumber}: ${existing.title}\n`,
+            thread: { ...existing },
+          } satisfies CheckoutPrResult;
+        }
+        const base = newThread({
+          projectId: input.projectId,
+          title: `PR #${input.prNumber}`,
+          prNumber: input.prNumber,
+          prUrl: `https://github.com/example/repo/pull/${input.prNumber}`,
+        });
+        const t = registerThread({
+          ...base,
+          ...fakeWorktree(base),
+          prNumber: input.prNumber,
+          prUrl: base.prUrl,
+        });
+        return {
+          ok: true as const,
+          created: true,
+          readOnly: false,
+          prompt: `GitHub pull request #${input.prNumber}: ${t.title}\n${t.prUrl}\n`,
+          thread: t,
+        } satisfies CheckoutPrResult;
       },
       async listCheckpoints(input: { threadId: string }) {
         const detail = details.get(input.threadId);
