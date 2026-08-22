@@ -4398,6 +4398,16 @@ function buildDevCoder(): CoderApi {
         if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
         return { message: "feat: update the centre pane" };
       },
+      async conflictContext(input) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
+        return {
+          files: [],
+          omitted: 0,
+          branch: detail.thread.branch ?? null,
+          baseBranch: "main",
+        };
+      },
       async mergeWorktree(input) {
         const detail = details.get(input.threadId);
         if (!detail) throw new Error(`Thread not found: ${input.threadId}`);

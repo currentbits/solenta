@@ -12,6 +12,7 @@ import type {
   DigestResult,
   CreateProjectInput,
   RunStatInfo,
+  ConflictContext,
   ConflictForecast,
   DevServerState,
   DiffResult,
@@ -379,6 +380,8 @@ export interface UseCoderResult {
   mergeWorktree: (opts?: {
     ciWorkflowApproved?: boolean;
   }) => Promise<ThreadInfo | null>;
+  /** Unmerged worktree files plus capped conflict-marker snippets (#163). */
+  conflictContext: (threadId: string) => Promise<ConflictContext>;
   removeWorktree: (force?: boolean) => Promise<ThreadInfo | null>;
   fetchDiff: () => Promise<DiffResult>;
   fetchReviewContext: () => Promise<ReviewContext>;
@@ -2090,6 +2093,10 @@ export function useCoder(): UseCoderResult {
     return thread;
   }, [api, selectedThreadId, applyThreadUpdate]);
 
+  const conflictContext = useCallback(async (threadId: string) => {
+    return api.git.conflictContext({ threadId });
+  }, [api]);
+
   const removeWorktree = useCallback(
     async (force = false) => {
       if (!selectedThreadId) return null;
@@ -2833,6 +2840,7 @@ export function useCoder(): UseCoderResult {
     removeProject,
     setupWorktree,
     mergeWorktree,
+    conflictContext,
     removeWorktree,
     fetchDiff,
     fetchReviewContext,

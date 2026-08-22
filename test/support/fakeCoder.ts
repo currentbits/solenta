@@ -1662,6 +1662,13 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           message: "feat: suggested message",
         }),
       mergeWorktree: (input: unknown) => rec("git.mergeWorktree", [input], thread()),
+      conflictContext: (input: unknown) =>
+        rec("git.conflictContext", [input], {
+          files: [],
+          omitted: 0,
+          branch: null,
+          baseBranch: "main",
+        }),
       removeWorktree: (input: unknown) => rec("git.removeWorktree", [input], thread()),
       push: (input: unknown) =>
         rec("git.push", [input], { remote: "origin", branch: "b" }),

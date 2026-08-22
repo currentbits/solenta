@@ -999,6 +999,26 @@ export interface BlastRadiusInfo {
   findings: WorkflowLintFinding[];
 }
 
+/** One unmerged path plus a capped on-disk snippet (issue #163). */
+export interface ConflictFileBody {
+  path: string;
+  content: string;
+  truncated: boolean;
+  binary: boolean;
+}
+
+/**
+ * Worktree merge-conflict snapshot for the "Let the agent resolve" prompt.
+ * Read-only; the merge is already replayed in the worktree.
+ */
+export interface ConflictContext {
+  files: ConflictFileBody[];
+  /** Conflicted paths beyond `files` that did not fit the snippet budget. */
+  omitted: number;
+  branch: string | null;
+  baseBranch: string | null;
+}
+
 export interface DiffResult {
   files: FileChange[];
   /** Unified diff text, truncated by main to ~100k chars. */
@@ -2777,6 +2797,11 @@ export interface CoderApi {
        */
       ciWorkflowApproved?: boolean;
     }): Promise<ThreadInfo>;
+    /**
+     * Unmerged files in the thread worktree plus capped conflict-marker
+     * snippets (issue #163). The merge is already replayed there.
+     */
+    conflictContext(input: { threadId: string }): Promise<ConflictContext>;
     /**
      * Deletes the thread's worktree and branch WITHOUT merging. Rejects when
      * the worktree has uncommitted changes or unmerged commits unless force

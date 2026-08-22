@@ -186,6 +186,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     removeProject,
     setupWorktree,
     mergeWorktree,
+    conflictContext,
     removeWorktree,
     fetchDiff,
     fetchReviewContext,
@@ -1405,6 +1406,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onSelectThread={handleSelectThread}
         onSetupWorktree={setupWorktree}
         onMergeWorktree={mergeWorktree}
+        onStartRun={startRun}
+        conflictContext={conflictContext}
         onRemoveWorktree={removeWorktree}
         onViewChanges={openChanges}
         listCheckpoints={listCheckpoints}
