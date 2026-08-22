@@ -27,6 +27,7 @@ import type {
   RunStatInfo,
   ConflictForecast,
   VerifyResult,
+  CommandRunResult,
   DiffResult,
   DevServerState,
   FailureKind,
@@ -2670,6 +2671,8 @@ function buildDevCoder(): CoderApi {
         remotePath?: string;
         spaceId?: string;
         iconPath?: string | null;
+        setupCommand?: string | null;
+        quickActions?: ProjectInfo["quickActions"];
       }) {
         const project = projects.find((p) => p.id === input.projectId);
         if (!project) {
@@ -2716,6 +2719,21 @@ function buildDevCoder(): CoderApi {
             delete project.iconPath;
             delete project.iconUrl;
           }
+        }
+        if (Object.prototype.hasOwnProperty.call(input, "setupCommand")) {
+          const cmd =
+            typeof input.setupCommand === "string"
+              ? input.setupCommand.trim()
+              : "";
+          if (cmd) project.setupCommand = cmd;
+          else delete project.setupCommand;
+        }
+        if (Object.prototype.hasOwnProperty.call(input, "quickActions")) {
+          const rows = Array.isArray(input.quickActions)
+            ? input.quickActions.filter((a) => a && a.name && a.command)
+            : [];
+          if (rows.length) project.quickActions = rows;
+          else delete project.quickActions;
         }
         return { ...project };
       },
@@ -3345,6 +3363,39 @@ function buildDevCoder(): CoderApi {
           attempt: (detail.thread.verify?.attempt ?? 0) + 1,
         };
         patchThread(input.threadId, { verify: result });
+        return result;
+      },
+      async runCommand(input: { threadId: string; actionId?: string }) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
+        const project = projects.find((p) => p.id === detail.thread.projectId);
+        const actionId = input.actionId || "setup";
+        let name = "setup";
+        let command = project?.setupCommand || "";
+        if (actionId !== "setup") {
+          const row = (project?.quickActions ?? []).find((a) => a.id === actionId);
+          if (!row) throw new Error("Unknown quick action");
+          name = row.name;
+          command = row.command;
+        } else if (!command) {
+          throw new Error("No setup command set for this project");
+        }
+        const result: CommandRunResult = {
+          name,
+          command,
+          ok: true,
+          exitCode: 0,
+          timedOut: false,
+          log: "ok",
+          durationMs: 12,
+          at: now(),
+        };
+        detail.messages.push({
+          id: id("evt"),
+          role: "event",
+          text: `[${name}] ok in 0.0s`,
+          createdAt: now(),
+        });
         return result;
       },
       async setProvider(input) {
@@ -4443,6 +4494,16 @@ function buildDevCoder(): CoderApi {
         if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
         return { message: "feat: update the centre pane" };
       },
+      async conflictContext(input) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
+        return {
+          files: [],
+          omitted: 0,
+          branch: detail.thread.branch ?? null,
+          baseBranch: "main",
+        };
+      },
       async mergeWorktree(input) {
         const detail = details.get(input.threadId);
         if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
@@ -4546,6 +4607,26 @@ function buildDevCoder(): CoderApi {
         ref: string;
       }): Promise<FetchIssueResult> {
         const raw = String(input.ref || "").trim();
+        const linearUrl = raw.match(
+          /^https?:\/\/(?:www\.)?linear\.app\/[^/]+\/issue\/([A-Za-z][A-Za-z0-9]*-\d+)/i,
+        );
+        const linearId = raw.match(/^([A-Za-z][A-Za-z0-9]*-\d+)$/);
+        const linear = (linearUrl && linearUrl[1]) || (linearId && linearId[1]);
+        if (linear) {
+          const identifier = linear.toUpperCase();
+          const num = Number(identifier.split("-")[1]);
+          return {
+            ok: true,
+            issue: {
+              number: num,
+              title: `Linear ${identifier}`,
+              body: `Dev stand-in for ${raw}`,
+              url: `https://linear.app/acme/issue/${identifier}`,
+              source: "linear",
+              identifier,
+            },
+          };
+        }
         const url = raw.match(/\/issues\/(\d+)/);
         const hashed = raw.match(/#(\d+)$/);
         const bare = /^\d+$/.test(raw) ? raw : "";

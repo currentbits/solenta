@@ -14,6 +14,11 @@ const { execCommandAsync } = require("./ssh.js");
 const { runWindowsDoctor } = require("./doctor.js");
 const configDoctor = require("./configDoctor.js");
 const { normalizeCommand, runVerifyCommand } = require("./verify.js");
+const {
+  normalizeSetupCommand,
+  normalizeQuickActions,
+  runCommand,
+} = require("./projectCommands.js");
 const { resolveSandbox } = require("./sandbox.js");
 const btw = require("./btw.js");
 const { DEFAULT_WORKTREE_RETENTION } = require("./store.js");
@@ -359,13 +364,14 @@ async function createProject(store, input) {
 /**
  * Patch an existing project. Today: display name, SSH remote fields,
  * space membership (issue #159), the autoDispatch opt-in (issue #165),
- * worktree retention (#316), and a per-project iconPath override (#610).
+ * worktree retention (#316), a per-project iconPath override (#610), and
+ * setupCommand / quickActions (issue #153).
  * Remote validation mirrors addProject: a non-empty host requires an
  * absolute remotePath; an empty host clears both keys, turning the
  * project local again. The local checkout path is never edited here.
  * @param {import('./store').Store} store
  * @param {string} projectId
- * @param {{ name?: string, remoteHost?: string, remotePath?: string, spaceId?: string, autoDispatch?: boolean, worktreeRetention?: number, iconPath?: string | null }} patch
+ * @param {{ name?: string, remoteHost?: string, remotePath?: string, spaceId?: string, autoDispatch?: boolean, worktreeRetention?: number, iconPath?: string | null, setupCommand?: string | null, quickActions?: Array<{ id?: string, name?: string, command?: string }> }} patch
  */
 function updateProject(store, projectId, patch) {
   const projects = store.getProjects().slice();
@@ -435,6 +441,18 @@ function updateProject(store, projectId, patch) {
     const normalized = normalizeIconPath(input.iconPath);
     if (normalized) next.iconPath = normalized;
     else delete next.iconPath;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(input, "setupCommand")) {
+    const setupCommand = normalizeSetupCommand(input.setupCommand);
+    if (setupCommand) next.setupCommand = setupCommand;
+    else delete next.setupCommand;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(input, "quickActions")) {
+    const quickActions = normalizeQuickActions(input.quickActions);
+    if (quickActions) next.quickActions = quickActions;
+    else delete next.quickActions;
   }
 
   projects[idx] = next;
@@ -4556,6 +4574,7 @@ module.exports = {
   setFeltEstimate,
   setVerifyCommand,
   runVerifyNow,
+  runCommand,
   renameThread,
   rewindThread,
   clearSettledOnActivity,

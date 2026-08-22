@@ -10,6 +10,7 @@ const {
   setupWorktree,
   diff,
   mergeWorktree,
+  conflictContext,
   removeWorktree,
   push,
   createPr,
@@ -832,6 +833,80 @@ describe("worktrees", () => {
         assert.match(err.message, /MERGE_CONFLICT:[\s\S]*AGENTS\.md/);
         return true;
       },
+    );
+  });
+
+  it("conflictContext returns unmerged files with marker snippets (#163)", async () => {
+    const setup = setupWorktree({
+      store,
+      threadId: thread.id,
+      worktreeBase,
+      broadcast: () => {},
+    });
+
+    fs.writeFileSync(path.join(repo, "README.md"), "project side\n");
+    git(repo, ["add", "README.md"]);
+    git(repo, ["commit", "-m", "project edit"]);
+
+    fs.writeFileSync(path.join(setup.worktreePath, "README.md"), "worktree side\n");
+    git(setup.worktreePath, ["add", "README.md"]);
+    git(setup.worktreePath, ["commit", "-m", "worktree edit"]);
+
+    assert.throws(() =>
+      mergeWorktree({ store, threadId: thread.id, broadcast: () => {} }),
+    );
+
+    const ctx = conflictContext({ store, threadId: thread.id });
+    assert.equal(ctx.branch, setup.branch);
+    assert.equal(ctx.baseBranch, "main");
+    assert.equal(ctx.omitted, 0);
+    assert.equal(ctx.files.length, 1);
+    assert.equal(ctx.files[0].path, "README.md");
+    assert.equal(ctx.files[0].binary, false);
+    assert.equal(ctx.files[0].truncated, false);
+    assert.match(ctx.files[0].content, /<<<<<<</);
+    assert.match(ctx.files[0].content, /project side|worktree side/);
+  });
+
+  it("conflictContext caps a huge conflicted file and notes omitted extras", async () => {
+    const setup = setupWorktree({
+      store,
+      threadId: thread.id,
+      worktreeBase,
+      broadcast: () => {},
+    });
+
+    const pad = "x".repeat(20_000);
+    fs.writeFileSync(path.join(repo, "README.md"), `project\n${pad}\n`);
+    fs.writeFileSync(path.join(repo, "extra.txt"), "project extra\n");
+    git(repo, ["add", "-A"]);
+    git(repo, ["commit", "-m", "project edit"]);
+
+    fs.writeFileSync(path.join(setup.worktreePath, "README.md"), `worktree\n${pad}\n`);
+    fs.writeFileSync(path.join(setup.worktreePath, "extra.txt"), "worktree extra\n");
+    git(setup.worktreePath, ["add", "-A"]);
+    git(setup.worktreePath, ["commit", "-m", "worktree edit"]);
+
+    assert.throws(() =>
+      mergeWorktree({ store, threadId: thread.id, broadcast: () => {} }),
+    );
+
+    const ctx = conflictContext({
+      store,
+      threadId: thread.id,
+      maxFileBytes: 64,
+      maxFiles: 1,
+    });
+    assert.equal(ctx.files.length, 1);
+    assert.ok(ctx.files[0].truncated);
+    assert.ok(ctx.files[0].content.length <= 64);
+    assert.equal(ctx.omitted, 1);
+  });
+
+  it("conflictContext rejects an unknown thread", () => {
+    assert.throws(
+      () => conflictContext({ store, threadId: "missing" }),
+      /Unknown thread/,
     );
   });
 

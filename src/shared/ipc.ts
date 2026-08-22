@@ -57,6 +57,24 @@ export interface ProjectInfo {
    * be probed. Present only for Jujutsu so the UI can badge unsupported.
    */
   scm?: ProjectScmInfo;
+  /**
+   * Shell command run once after a new worktree is created (issue #153).
+   * Async, logged as `[setup]` transcript events. Absent/null = none.
+   * Cap 500 chars, same as verifyCommand.
+   */
+  setupCommand?: string | null;
+  /**
+   * Named shell commands shown as buttons in the thread header (issue #153).
+   * Absent/empty = none. Cap 8.
+   */
+  quickActions?: ProjectQuickAction[];
+}
+
+/** One named per-project shell command (issue #153). */
+export interface ProjectQuickAction {
+  id: string;
+  name: string;
+  command: string;
 }
 
 /** Source-control probe for a local project checkout (issue #521). */
@@ -215,6 +233,14 @@ export interface ProjectUpdateInput {
    * Automatic detection (#610).
    */
   iconPath?: string | null;
+  /**
+   * Worktree setup command (issue #153). Empty / null clears it.
+   */
+  setupCommand?: string | null;
+  /**
+   * Named header actions (issue #153). Empty array clears them.
+   */
+  quickActions?: ProjectQuickAction[];
 }
 
 /**
@@ -1000,6 +1026,26 @@ export interface BlastRadiusInfo {
   findings: WorkflowLintFinding[];
 }
 
+/** One unmerged path plus a capped on-disk snippet (issue #163). */
+export interface ConflictFileBody {
+  path: string;
+  content: string;
+  truncated: boolean;
+  binary: boolean;
+}
+
+/**
+ * Worktree merge-conflict snapshot for the "Let the agent resolve" prompt.
+ * Read-only; the merge is already replayed in the worktree.
+ */
+export interface ConflictContext {
+  files: ConflictFileBody[];
+  /** Conflicted paths beyond `files` that did not fit the snippet budget. */
+  omitted: number;
+  branch: string | null;
+  baseBranch: string | null;
+}
+
 export interface DiffResult {
   files: FileChange[];
   /** Unified diff text, truncated by main to ~100k chars. */
@@ -1469,6 +1515,21 @@ export interface VerifyResult {
 }
 
 /**
+ * Result of a per-project setup or named quick action (issue #153).
+ * Failure is a result, not a throw, matching runVerify.
+ */
+export interface CommandRunResult {
+  name: string;
+  command: string;
+  ok: boolean;
+  exitCode: number | null;
+  timedOut: boolean;
+  log: string;
+  durationMs: number;
+  at: number;
+}
+
+/**
  * One-shot delayed re-check after a thread's PR merges (issue #420).
  * Scheduled on the MERGED flip; the scheduler re-runs `verifyCommand`
  * against the merged default branch hours later.
@@ -1590,12 +1651,19 @@ export type CheckoutPrResult =
     }
   | { ok: false; reason: string };
 
-/** A GitHub issue fetched via `gh issue view`. */
+/** A GitHub or Linear issue fetched for thread start. */
 export interface IssueInfo {
   number: number;
   title: string;
   body: string;
   url: string;
+  /**
+   * Ticket backend. Absent means GitHub, matching the original fetch shape
+   * so existing callers keep working.
+   */
+  source?: "github" | "linear";
+  /** Linear identifier (ENG-123). Absent for GitHub. */
+  identifier?: string;
 }
 
 /** Per-project issue fetch. Failures stay in-band so the UI can show them. */
@@ -1911,6 +1979,12 @@ export interface AppSettings {
   subagentPool: SubagentPool;
   /** OpenTelemetry export (issue #280). */
   otel: OtelSettings;
+  /**
+   * Linear personal API key for ticket ingestion (issue #169). Encrypted at
+   * rest like MCP tokens. null/empty means unset; LINEAR_API_KEY in the
+   * environment is the fallback. Never required for GitHub issues.
+   */
+  linearApiKey?: string | null;
   /**
    * Outbound webhook (issue #167). POSTs a small JSON payload when a thread
    * finishes or waits for permission. Independent of the desktop-notification
@@ -2675,6 +2749,16 @@ export interface CoderApi {
      */
     runVerify(input: { threadId: string }): Promise<VerifyResult>;
     /**
+     * Run the project's setupCommand (`actionId: "setup"` or omitted) or a
+     * named quick action (issue #153). Rejects when no command is set, the
+     * action is unknown, a run is active, or another command is in flight.
+     * Command failure is a result, not a throw. Logged as transcript events.
+     */
+    runCommand(input: {
+      threadId: string;
+      actionId?: string;
+    }): Promise<CommandRunResult>;
+    /**
      * Permanently deletes the thread with its messages and work log. Rejects
      * while a run is active, and rejects when the thread still has a worktree
      * (merge or delete the worktree in the Git tab first) so no work is lost.
@@ -2816,6 +2900,11 @@ export interface CoderApi {
       ciWorkflowApproved?: boolean;
     }): Promise<ThreadInfo>;
     /**
+     * Unmerged files in the thread worktree plus capped conflict-marker
+     * snippets (issue #163). The merge is already replayed there.
+     */
+    conflictContext(input: { threadId: string }): Promise<ConflictContext>;
+    /**
      * Deletes the thread's worktree and branch WITHOUT merging. Rejects when
      * the worktree has uncommitted changes or unmerged commits unless force
      * is true; the rejection message lists what would be lost.
@@ -2948,9 +3037,10 @@ export interface CoderApi {
   };
   issues: {
     /**
-     * Fetch a GitHub issue for a project checkout via `gh issue view`.
-     * Never rejects for missing gh / non-GitHub remotes / auth / missing
-     * issue: those come back as `{ ok: false, reason }`.
+     * Fetch a GitHub (`gh issue view`) or Linear (GraphQL) issue for a
+     * project checkout. Never rejects for missing gh / non-GitHub remotes /
+     * auth / missing issue / missing Linear key: those come back as
+     * `{ ok: false, reason }`.
      */
     fetch(input: { projectPath: string; ref: string }): Promise<FetchIssueResult>;
     /**

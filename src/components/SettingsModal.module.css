@@ -405,6 +405,24 @@
   color: var(--text-dim);
 }
 
+.monoInput {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.actionList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.actionRow {
+  display: grid;
+  grid-template-columns: minmax(7ch, 11ch) minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+}
+
 .profileMeta {
   flex: 1;
   min-width: 140px;

@@ -32,13 +32,9 @@ async function dispatchIssue(ctx, project, issue) {
   if (typeof ctx.broadcast === "function") {
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
   }
-  const n = fetched.issue.number;
-  const title = fetched.issue.title;
-  const url = fetched.issue.url;
-  const body = fetched.issue.body || "";
   await ctx.runner.startRun({
     threadId: thread.id,
-    prompt: `GitHub issue #${n}: ${title}\n${url}\n\n${body}`,
+    prompt: issues.issueStartPrompt(fetched.issue),
   });
   // Run is already live: a failed label move is not a failed dispatch.
   try {

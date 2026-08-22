@@ -13,6 +13,7 @@ import type {
   DigestResult,
   CreateProjectInput,
   RunStatInfo,
+  ConflictContext,
   ConflictForecast,
   DevServerState,
   DiffResult,
@@ -54,6 +55,7 @@ import type {
   UpdateStatus,
   UsageReport,
   VerifyResult,
+  CommandRunResult,
   WorkflowTemplateInfo,
   WorkSuggestionStatus,
 } from "./shared/ipc";
@@ -223,7 +225,7 @@ export interface UseCoderResult {
   cancelQueued: (threadId?: string) => void;
   /** Re-send a queued prompt after a delivery failure (issue #314). */
   retryQueued: (threadId?: string) => void;
-  /** Fetch a GitHub issue for a project checkout (`gh issue view`). */
+  /** Fetch a GitHub or Linear issue for a project checkout. */
   fetchIssue: (
     projectPath: string,
     ref: string,
@@ -380,6 +382,8 @@ export interface UseCoderResult {
   mergeWorktree: (opts?: {
     ciWorkflowApproved?: boolean;
   }) => Promise<ThreadInfo | null>;
+  /** Unmerged worktree files plus capped conflict-marker snippets (#163). */
+  conflictContext: (threadId: string) => Promise<ConflictContext>;
   removeWorktree: (force?: boolean) => Promise<ThreadInfo | null>;
   fetchDiff: () => Promise<DiffResult>;
   fetchReviewContext: () => Promise<ReviewContext>;
@@ -493,6 +497,11 @@ export interface UseCoderResult {
   setVerifyCommand: (threadId: string, command: string | null) => Promise<void>;
   /** Run the thread's verification command now. Rejects on an active run. */
   runVerify: (threadId: string) => Promise<VerifyResult>;
+  /** Run the project's setup command or a named quick action (issue #153). */
+  runCommand: (
+    threadId: string,
+    actionId?: string,
+  ) => Promise<CommandRunResult>;
   /** Live spend + memory server status. */
   appStatus: AppStatus | null;
   /** Persisted app settings (daily budget). */
@@ -2093,6 +2102,10 @@ export function useCoder(): UseCoderResult {
     return thread;
   }, [api, selectedThreadId, applyThreadUpdate]);
 
+  const conflictContext = useCallback(async (threadId: string) => {
+    return api.git.conflictContext({ threadId });
+  }, [api]);
+
   const removeWorktree = useCallback(
     async (force = false) => {
       if (!selectedThreadId) return null;
@@ -2625,6 +2638,13 @@ export function useCoder(): UseCoderResult {
     [api, applyThreads],
   );
 
+  const runCommand = useCallback(
+    async (threadId: string, actionId?: string) => {
+      return api.threads.runCommand({ threadId, actionId });
+    },
+    [api],
+  );
+
   const saveSettings = useCallback(
     async (patch: Partial<AppSettings>) => {
       const next = await api.settings.set(patch);
@@ -2838,6 +2858,7 @@ export function useCoder(): UseCoderResult {
     removeProject,
     setupWorktree,
     mergeWorktree,
+    conflictContext,
     removeWorktree,
     fetchDiff,
     fetchReviewContext,
@@ -2887,6 +2908,7 @@ export function useCoder(): UseCoderResult {
     devServerStatus,
     setVerifyCommand,
     runVerify,
+    runCommand,
     appStatus,
     settings,
     saveSettings,

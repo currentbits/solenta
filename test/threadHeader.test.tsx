@@ -102,6 +102,7 @@ const noopSave = async () =>
 
 function view(props: {
   detail?: ThreadDetail | null;
+  project?: ProjectInfo;
   gitSyncInfo?: (threadId: string) => Promise<GitSyncInfo>;
   gitFetch?: (threadId: string) => Promise<void>;
   onPush?: () => Promise<{ remote: string; branch: string }>;
@@ -119,11 +120,16 @@ function view(props: {
   changesOpen?: boolean;
   onViewChanges?: () => void;
   onCloseChanges?: () => void;
+  onRunCommand?: (
+    threadId: string,
+    actionId?: string,
+  ) => Promise<unknown>;
 }) {
   return (
     <ThreadView
       detail={props.detail === undefined ? detail() : props.detail}
-      project={project}
+      project={props.project ?? project}
+      onRunCommand={props.onRunCommand}
       providers={providers}
       workflows={[]}
       hasProjects={true}
@@ -702,6 +708,71 @@ describe("breadcrumb new thread (issue #445)", () => {
       null,
       "slug is the only breadcrumb control; title is not a create button",
     );
+    m.unmount();
+  });
+});
+
+describe("header quick actions (#153)", () => {
+  it("hides the command row when the project has none", async () => {
+    const m = await mount(view({ onRunCommand: async () => {} }));
+    await m.flush();
+    assert.equal(m.query("[data-thread-commands]"), null);
+    m.unmount();
+  });
+
+  it("renders Setup and named actions and records the click", async () => {
+    const calls: Array<{ threadId: string; actionId?: string }> = [];
+    const m = await mount(
+      view({
+        project: {
+          ...project,
+          setupCommand: "npm install",
+          quickActions: [
+            { id: "lint", name: "Lint", command: "npm run lint" },
+            { id: "db", name: "Reset db", command: "npm run db:reset" },
+          ],
+        },
+        onRunCommand: async (threadId, actionId) => {
+          calls.push({ threadId, actionId });
+        },
+      }),
+    );
+    await m.flush();
+    assert.ok(m.query("[data-thread-commands]"));
+    assert.ok(m.query('[data-thread-command="setup"]'));
+    assert.equal(
+      m.query('[data-thread-command="setup"]')?.textContent,
+      "Setup",
+    );
+    assert.equal(m.query('[data-thread-command="lint"]')?.textContent, "Lint");
+    assert.equal(
+      m.query('[data-thread-command="db"]')?.textContent,
+      "Reset db",
+    );
+    await m.click(m.query('[data-thread-command="lint"]'));
+    await m.flush();
+    assert.deepEqual(calls, [{ threadId: "t1", actionId: "lint" }]);
+    m.unmount();
+  });
+
+  it("shows a thrown error next to the buttons", async () => {
+    const m = await mount(
+      view({
+        project: {
+          ...project,
+          setupCommand: "npm install",
+        },
+        onRunCommand: async () => {
+          throw new Error("A run is already active on this thread");
+        },
+      }),
+    );
+    await m.flush();
+    await m.click(m.query('[data-thread-command="setup"]'));
+    await m.flush();
+    const err = m.query("[data-thread-command-error]");
+    assert.ok(err);
+    assert.match(err!.textContent || "", /already active/);
     m.unmount();
   });
 });

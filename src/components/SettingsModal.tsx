@@ -70,9 +70,9 @@ const PANE_META: Record<
   },
   git: {
     label: "Git",
-    hint: "Source control, PR size, and worktree disk.",
+    hint: "Source control, Linear tickets, PR size, and worktree disk.",
     keywords:
-      "github gitlab bitbucket azure source control pr pull request worktree gc disk cleanup",
+      "github gitlab bitbucket azure source control pr pull request worktree gc disk cleanup linear ticket api key",
   },
   agents: {
     label: "Agents",
@@ -301,6 +301,7 @@ export function SettingsModal({
   const [orchBudgetText, setOrchBudgetText] = useState("");
   const [settleDaysText, setSettleDaysText] = useState("");
   const [prCapText, setPrCapText] = useState("");
+  const [linearKeyText, setLinearKeyText] = useState("");
   const [otelEndpoint, setOtelEndpoint] = useState("");
   const [otelHeadersText, setOtelHeadersText] = useState("");
   const [otelClaudeMetrics, setOtelClaudeMetrics] = useState(false);
@@ -337,6 +338,7 @@ export function SettingsModal({
     );
     setSettleDaysText(settleDaysToInput(settings?.autoSettleAfterDays ?? null));
     setPrCapText(budgetToInput(settings?.prDiffCapLines ?? null));
+    setLinearKeyText(settings?.linearApiKey ?? "");
     const otel = settings?.otel ?? EMPTY_OTEL;
     setOtelEndpoint(otel.endpoint ?? "");
     setOtelHeadersText(formatOtelHeaders(otel.headers));
@@ -352,7 +354,7 @@ export function SettingsModal({
     setError(null);
     setSaving(false);
     savingRef.current = false;
-  }, [open, settings?.dailyBudgetUsd, settings?.orchestrationBudgetUsd, settings?.autoSettleAfterDays, settings?.prDiffCapLines, settings?.otel, settings?.webhook, settings?.uiScale]);
+  }, [open, settings?.dailyBudgetUsd, settings?.orchestrationBudgetUsd, settings?.autoSettleAfterDays, settings?.prDiffCapLines, settings?.otel, settings?.webhook, settings?.uiScale, settings?.linearApiKey]);
 
   const handleClose = useCallback(() => {
     onClose();
@@ -433,6 +435,30 @@ export function SettingsModal({
       setOrchBudgetText(budgetToInput(saved.orchestrationBudgetUsd));
       setSettleDaysText(settleDaysToInput(saved.autoSettleAfterDays));
       setPrCapText(budgetToInput(saved.prDiffCapLines));
+      if (saved.linearApiKey !== undefined) {
+        setLinearKeyText(saved.linearApiKey ?? "");
+      }
+    } catch (err) {
+      const msg =
+        err instanceof Error && err.message
+          ? err.message
+          : "Failed to save settings";
+      setError(msg);
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
+  };
+
+  const saveLinearKey = async () => {
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setSaving(true);
+    setError(null);
+    try {
+      const linearApiKey = linearKeyText.trim() || null;
+      const saved = await onSaveSettings({ linearApiKey });
+      setLinearKeyText(saved.linearApiKey ?? "");
     } catch (err) {
       const msg =
         err instanceof Error && err.message
@@ -994,6 +1020,54 @@ export function SettingsModal({
                 PRs created from the app larger than this are refused with an
                 offer to split them into stacked PRs — small batches keep
                 human review affordable. Default 400; empty means no cap.
+              </p>
+            </div>
+          </section>
+          )}
+
+          {pane === "git" && (
+          <section className={styles.section}>
+            <h3 className={styles.sectionLabel}>Linear</h3>
+            <div className={styles.field}>
+              <label className={styles.fieldLabel} htmlFor="linear-api-key">
+                API key
+              </label>
+              <div className={styles.fieldRow}>
+                <input
+                  id="linear-api-key"
+                  className={styles.input}
+                  type="password"
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder="lin_api_…"
+                  value={linearKeyText}
+                  disabled={saving}
+                  data-linear-api-key=""
+                  onChange={(e) => {
+                    setLinearKeyText(e.target.value);
+                    setError(null);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      void saveLinearKey();
+                    }
+                  }}
+                />
+                <button
+                  type="button"
+                  className={`${styles.btn} ${styles.btnPrimary}`}
+                  disabled={saving}
+                  data-linear-api-key-save=""
+                  onClick={() => void saveLinearKey()}
+                >
+                  {saving ? "Saving…" : "Save key"}
+                </button>
+              </div>
+              <p className={styles.note}>
+                Used to start threads from Linear issues. LINEAR_API_KEY in
+                the environment also works. Empty and Save key clears a
+                stored key.
               </p>
             </div>
           </section>

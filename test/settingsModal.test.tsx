@@ -1110,6 +1110,40 @@ describe("SettingsModal Appearance (#652)", () => {
   });
 });
 
+describe("SettingsModal Linear API key (issue #169)", () => {
+  it("saves the key from the Git pane without sending budget fields", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const m = await mount(
+      modal({
+        initialPane: "git",
+        settings: {
+          dailyBudgetUsd: null,
+          autoSettleAfterDays: 3,
+          linearApiKey: null,
+        } as AppSettings,
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return {
+            dailyBudgetUsd: null,
+            autoSettleAfterDays: 3,
+            linearApiKey: patch.linearApiKey ?? null,
+          } as AppSettings;
+        },
+      }),
+    );
+    const input = m.query("[data-linear-api-key]") as HTMLInputElement | null;
+    assert.ok(input, "Linear API key field on Git pane");
+    await m.type(input!, "lin_api_test");
+    const save = m.query("[data-linear-api-key-save]");
+    assert.ok(save, "Linear save button");
+    assert.equal(save!.textContent, "Save key");
+    await m.click(save!);
+    assert.equal(patches.length, 1);
+    assert.deepEqual(patches[0], { linearApiKey: "lin_api_test" });
+    m.unmount();
+  });
+});
+
 describe("SettingsModal quota-wait auto-resume (#462)", () => {
   it("saves the continue-at-usage-limit toggle", async () => {
     const patches: Partial<AppSettings>[] = [];
