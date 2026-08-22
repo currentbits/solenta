@@ -9,6 +9,11 @@ const {
   extractUsage: kimiExtractUsage,
 } = require("./kimi.js");
 const {
+  runCursor,
+  extractAssistantText: cursorExtractText,
+  extractUsage: cursorExtractUsage,
+} = require("./cursor.js");
+const {
   getProvider,
   resolveBin,
   isBinAvailable,
@@ -555,6 +560,97 @@ function spawnAgentKimi(opts) {
 }
 
 /**
+ * Spawn a one-shot Cursor stream-json agent (no resume).
+ * @param {object} opts
+ * @returns {{ handle: { kill: () => void }, done: Promise<object> }}
+ */
+function spawnAgentCursor(opts) {
+  const { prompt, cwd, model, binary, providerEntry, onText } = opts;
+
+  let text = "";
+  let usage = null;
+  let finished = false;
+  let fullStdout = "";
+  let gotJson = false;
+
+  /** @type {(value: object) => void} */
+  let resolveDone;
+  const done = new Promise((resolve) => {
+    resolveDone = resolve;
+  });
+
+  function finish(payload) {
+    if (finished) return;
+    finished = true;
+    resolveDone(payload);
+  }
+
+  const entry = providerEntry || getProvider("cursor");
+  const args = entry.buildArgs({
+    prompt,
+    sessionId: null,
+    model: model || null,
+  });
+
+  const handle = runCursor({
+    binary: binary || resolveBin(entry),
+    args,
+    cwd,
+    onEvent: (ev) => {
+      gotJson = true;
+      if (!ev || typeof ev !== "object") return;
+      const chunk = cursorExtractText(ev);
+      if (chunk != null) {
+        if (ev.timestamp_ms != null) {
+          text += chunk;
+          if (typeof onText === "function") onText(text);
+        } else if (!text) {
+          text = chunk;
+          if (typeof onText === "function") onText(text);
+        }
+      }
+      const u = cursorExtractUsage(ev);
+      if (u) {
+        usage = {
+          inputTokens: Number(u.inputTokens) || 0,
+          outputTokens: Number(u.outputTokens) || 0,
+          costUsd: 0,
+        };
+      }
+    },
+    onExit: ({ code, stderr, fullStdout: stdout, gotJson: parsed }) => {
+      fullStdout = stdout || "";
+      gotJson = gotJson || parsed;
+      let finalText = text;
+      if (!gotJson && fullStdout) {
+        finalText = fullStdout.replace(/\s+$/, "");
+        if (typeof onText === "function") onText(finalText);
+      }
+      finish({
+        ok: code === 0,
+        text: finalText,
+        usage,
+        code,
+        stderr: String(stderr || ""),
+      });
+    },
+    onError: (err) => {
+      const msg = err && err.message ? err.message : String(err);
+      finish({
+        ok: false,
+        text,
+        usage,
+        code: 1,
+        stderr: msg,
+        error: err,
+      });
+    },
+  });
+
+  return { handle, done };
+}
+
+/**
  * Spawn a one-shot OpenCode NDJSON agent (no resume).
  * @param {object} opts
  * @returns {{ handle: { kill: () => void }, done: Promise<object> }}
@@ -732,6 +828,16 @@ function spawnPhaseAgent(opts) {
   }
   if (entry.kind === "opencode-json") {
     return spawnAgentOpencode({
+      prompt,
+      cwd,
+      model,
+      binary,
+      providerEntry: entry,
+      onText,
+    });
+  }
+  if (entry.kind === "cursor-stream") {
+    return spawnAgentCursor({
       prompt,
       cwd,
       model,

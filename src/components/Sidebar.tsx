@@ -1952,7 +1952,7 @@ export const Sidebar = memo(function Sidebar({
   const providerOptions = useMemo(() => {
     const seen = new Set<string>();
     const out: { id: string; name: string }[] = [];
-    const rank = ["claude", "codex", "grok", "kimi", "opencode"];
+    const rank = ["claude", "codex", "grok", "kimi", "opencode", "cursor"];
     for (const p of providers) {
       if (seen.has(p.id)) continue;
       seen.add(p.id);

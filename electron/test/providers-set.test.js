@@ -200,7 +200,7 @@ describe("setProvider lock semantics", () => {
   it("accepts a custom model for every provider, and still guards the id", () => {
     // Suggestions, not anarchy: length and emptiness still protect argv.
     const thread = store.getThreads()[0];
-    for (const provider of ["claude", "codex", "grok", "opencode", "kimi"]) {
+    for (const provider of ["claude", "codex", "grok", "opencode", "kimi", "cursor"]) {
       services.setProvider(store, { threadId: thread.id, provider });
 
       const custom = services.setProvider(store, {

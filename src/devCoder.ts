@@ -1500,6 +1500,7 @@ function buildDevCoder(): CoderApi {
     "grok",
     "opencode",
     "kimi",
+    "cursor",
   ];
 
   function skillMdBytes(name: string, description: string, body: string): number {

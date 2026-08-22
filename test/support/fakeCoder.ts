@@ -243,6 +243,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     "grok",
     "opencode",
     "kimi",
+    "cursor",
   ];
 
   function skillMdBytes(name: string, description: string, body: string): number {

@@ -14,6 +14,7 @@ const { execCommandAsync } = require("./ssh.js");
 const { runWindowsDoctor } = require("./doctor.js");
 const configDoctor = require("./configDoctor.js");
 const { normalizeCommand, runVerifyCommand } = require("./verify.js");
+const { prepareVerifyRun } = require("./verifyEfficiency.js");
 const {
   normalizeSetupCommand,
   normalizeQuickActions,
@@ -3154,11 +3155,20 @@ async function runVerifyNow(store, input, deps) {
 
   const project = store.getProject(thread.projectId);
   const cwd = thread.worktreePath || (project && project.path) || process.cwd();
-  const ran = await runVerifyCommand({
+  const prepared = prepareVerifyRun({
     command: thread.verifyCommand,
     cwd,
     project,
   });
+  const ran = await runVerifyCommand({
+    command: prepared.command,
+    cwd,
+    project,
+    env: prepared.env,
+  });
+  if (prepared.reason && ran && ran.log != null) {
+    ran.log = `[verify] ${prepared.reason}\n${ran.log}`;
+  }
 
   // Worktree HEAD only; a project checkout is not a checkpoint. Best-effort:
   // a git failure yields null and never throws.
@@ -3179,7 +3189,7 @@ async function runVerifyNow(store, input, deps) {
   /** @type {import('../src/shared/ipc').VerifyResult} */
   const result = {
     runId: "manual",
-    command: thread.verifyCommand,
+    command: prepared.command,
     ok: ran.ok,
     exitCode: ran.exitCode,
     timedOut: ran.timedOut,

@@ -560,7 +560,7 @@ export interface ThreadInfo {
    * merges on a thread that has a verify command. 'Merged' is not 'worked'.
    */
   postMergeVerify?: PostMergeVerify | null;
-  /** Agent harness backing this thread: a ProviderInfo.id ("claude", "codex", "grok", "opencode", "simulate"). */
+  /** Agent harness backing this thread: a ProviderInfo.id ("claude", "codex", "grok", "opencode", "cursor", "simulate"). */
   provider: string;
   /** Model override passed to the provider CLI when set (e.g. claude --model). */
   model: string | null;
@@ -2135,7 +2135,8 @@ export type SkillTarget =
   | "codex"
   | "grok"
   | "opencode"
-  | "kimi";
+  | "kimi"
+  | "cursor";
 
 /** Where a skill was found on disk; "project" is the read-only project dir. */
 export type SkillSource = SkillTarget | "project";

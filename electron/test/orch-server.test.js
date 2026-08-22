@@ -11,6 +11,7 @@ const {
   createToolHandlers,
   INSTRUCTIONS,
 } = require("../orchServer.js");
+const { knownProviderIds } = require("../providers.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
 const {
   createMemorySupervisor,
@@ -162,9 +163,7 @@ function makeDeps() {
       return fork;
     },
     getProvider: (id) =>
-      ["claude", "codex", "kimi", "grok", "opencode"].includes(id)
-        ? { id }
-        : null,
+      knownProviderIds().includes(id) ? { id } : null,
     broadcast: (channel, payload) => {
       broadcasts.push({ channel, payload });
     },
