@@ -184,6 +184,71 @@ async function main() {
     return;
   }
 
+  // Verbatim shape of a live grok 1.0.x headless turn (issue #647): grok
+  // calls its own ask_user_question, the CLI answers it ITSELF because -p
+  // has no answer channel, and the turn finishes regardless.
+  if (scenario === "ask-question") {
+    emit({
+      type: "system",
+      subtype: "init",
+      session_id: "grok-sess-001",
+      model: "grok-4.5",
+    });
+    await delay(10);
+    emit({
+      type: "assistant",
+      message: {
+        content: [
+          {
+            type: "tool_use",
+            id: "call-ask-1",
+            name: "ask_user_question",
+            input: {
+              questions: [
+                {
+                  question: "Merge or open a PR?",
+                  header: "Landing",
+                  options: [
+                    { label: "Merge", description: "Squash onto main" },
+                    { label: "PR", description: "Open a pull request" },
+                  ],
+                },
+              ],
+            },
+          },
+        ],
+      },
+    });
+    await delay(10);
+    emit({
+      type: "user",
+      message: {
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "call-ask-1",
+            content:
+              '{"type":"AskUserQuestion","UserAnswered":{"message":"No user is available to answer questions in this non-interactive session."}}',
+            is_error: false,
+          },
+        ],
+      },
+    });
+    await delay(10);
+    emit({
+      type: "result",
+      subtype: "success",
+      is_error: false,
+      result: "Asked, but nobody answered.",
+      usage: { input_tokens: 10, output_tokens: 5 },
+      total_cost_usd: 0.001,
+      num_turns: 1,
+      session_id: "grok-sess-001",
+    });
+    process.exit(0);
+    return;
+  }
+
   if (scenario === "resume-turn") {
     emit({
       type: "system",
@@ -403,6 +468,64 @@ describe("runner grok provider (claude-stream path)", () => {
     assert.equal(usage.outputTokens, 40);
     assert.equal(usage.costUsd, 0.02);
     assert.equal(usage.turns, 1);
+  });
+
+  it("grok's ask_user_question leaves a question card behind (#647)", async () => {
+    process.env.CODER_FAKE_GROK_SCENARIO = "ask-question";
+    const thread = store.getThreads()[0];
+
+    await runner.startRun({ threadId: thread.id, prompt: "land the branch" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    // The turn ENDED — that is the whole difference from claude, whose
+    // permission prompt blocks the CLI. The card has to outlive it.
+    const card = store.getThread(thread.id).pendingQuestion;
+    assert.ok(card, "expected a pendingQuestion after the run finished");
+    assert.equal(card.questions.length, 1);
+    assert.equal(card.questions[0].question, "Merge or open a PR?");
+    assert.equal(card.questions[0].header, "Landing");
+    assert.equal(card.questions[0].multiSelect, false);
+    assert.deepEqual(
+      card.questions[0].options.map((o) => o.label),
+      ["Merge", "PR"],
+    );
+    assert.equal(store.getThread(thread.id).awaitingInput, true);
+
+    // It survives a reload: this is persisted state, not runner-ephemeral.
+    store.saveNow();
+    const reloaded = new Store(path.join(tmpDir, "store.json"));
+    assert.equal(
+      reloaded.getThread(thread.id).pendingQuestion.questions[0].question,
+      "Merge or open a PR?",
+    );
+
+    // Answering is the next turn, and starting it clears the card.
+    process.env.CODER_FAKE_GROK_SCENARIO = "success";
+    await runner.startRun({
+      threadId: thread.id,
+      prompt: "Answering your question:\n\nMerge or open a PR?\n→ Merge",
+    });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+    assert.equal(store.getThread(thread.id).pendingQuestion, null);
+    assert.equal(store.getThread(thread.id).awaitingInput, false);
+  });
+
+  it("clearQuestion dismisses the card without answering (#647)", async () => {
+    process.env.CODER_FAKE_GROK_SCENARIO = "ask-question";
+    const thread = store.getThreads()[0];
+
+    await runner.startRun({ threadId: thread.id, prompt: "land the branch" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+    assert.ok(store.getThread(thread.id).pendingQuestion);
+
+    runner.clearQuestion({ threadId: thread.id });
+    assert.equal(store.getThread(thread.id).pendingQuestion, null);
+    assert.equal(store.getThread(thread.id).awaitingInput, false);
+    // No message was sent, so no new run started.
+    const users = store
+      .getMessages(thread.id)
+      .filter((m) => m.role === "user");
+    assert.equal(users.length, 1);
   });
 
   it("second turn passes --resume with captured session id", async () => {

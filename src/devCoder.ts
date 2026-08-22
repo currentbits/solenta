@@ -2947,6 +2947,11 @@ function buildDevCoder(): CoderApi {
         // Dev threads never spawn a real CLI, so nothing is ever pending.
         throw new Error("No active agent run for this thread");
       },
+      async clearQuestion(input) {
+        // Persisted, unlike a permission prompt — so this one is real even
+        // in the dev provider (issue #647).
+        patchThread(input.threadId, { pendingQuestion: null });
+      },
       // Bookkeeping setters below leave updatedAt alone: visiting, pinning and
       // settling are not activity. The rules they used to mirror (invalid
       // override, settle-while-working, pin/settle mutual exclusion, past

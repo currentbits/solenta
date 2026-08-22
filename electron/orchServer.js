@@ -38,6 +38,11 @@ const INSTRUCTIONS =
   "distinct approach as soon as you know how it turned out. " +
   "When you notice work worth doing that is out of scope, call work_suggest with a " +
   "short title and a self-contained prompt; do not start the work yourself. " +
+  "ask_user puts a real multiple-choice question in front of the user on your own " +
+  "thread — it is the ONLY question channel that reaches them here, so use it " +
+  "instead of your CLI's own question tool and instead of guessing when a wrong " +
+  "assumption would waste the work. It does not block: call it, then end your turn. " +
+  "Their answer starts your next turn. " +
   "When a thread is in spec mode the prompt carries a [Spec mode] note; write only " +
   "that stage's artifact and call spec_submit. " +
   "When a thread is in teach mode the prompt carries a [Teach mode] note; leave " +
@@ -564,6 +569,29 @@ function createToolHandlers(deps) {
     };
   }
 
+  /**
+   * Ask the user a multiple-choice question (issue #647).
+   *
+   * Deliberately NON-BLOCKING. Blocking would hold an MCP request open for as
+   * long as the user takes to answer, against clients whose request timeout we
+   * do not control — and grok hides every MCP tool behind a search_tool
+   * indirection anyway, so it uses its own ask_user_question instead and never
+   * reaches here. The card outlives the run; the answer is the next turn.
+   */
+  async function ask_user(args) {
+    requireOwnThread(args);
+    const result = runner.askUser({
+      threadId: args.threadId,
+      questions: args.questions,
+    });
+    return {
+      ...result,
+      note:
+        "The question is now on screen. End your turn here — do NOT guess an " +
+        "answer and do not poll. The user's choice arrives as your next turn.",
+    };
+  }
+
   async function hypothesis_record(args) {
     const thread = store.getThread(args.threadId);
     if (!thread) {
@@ -789,6 +817,7 @@ function createToolHandlers(deps) {
     thread_settle,
     thread_stop,
     thread_rename,
+    ask_user,
     hypothesis_record,
     work_suggest,
     spec_submit,
@@ -1007,6 +1036,45 @@ function buildMcpServer(sdk, handlers) {
       },
     },
     async (args) => json(await handlers.thread_status(args)),
+  );
+
+  server.registerTool(
+    "ask_user",
+    {
+      description:
+        "Ask the user a multiple-choice question and show it as an option " +
+        "picker on YOUR OWN thread. threadId and projectId are your own " +
+        "(stated at the end of your prompt). Use this when a wrong assumption " +
+        "would waste the work — not for questions you can answer by reading " +
+        "the repo. Each question needs 2-4 labelled options; add a one-line " +
+        "description per option, and put the option you recommend first with " +
+        "\"(Recommended)\" in its label. " +
+        "This call RETURNS IMMEDIATELY and does not wait: finish your turn " +
+        "right after it, without guessing an answer and without polling. The " +
+        "user's choice starts your next turn.",
+      inputSchema: {
+        threadId: z.string().min(1),
+        projectId: z.string().min(1),
+        questions: z
+          .array(
+            z.object({
+              question: z.string().min(1),
+              header: z.string().optional(),
+              multiSelect: z.boolean().optional(),
+              options: z
+                .array(
+                  z.object({
+                    label: z.string().min(1),
+                    description: z.string().optional(),
+                  }),
+                )
+                .min(2),
+            }),
+          )
+          .min(1),
+      },
+    },
+    async (args) => json(await handlers.ask_user(args)),
   );
 
   server.registerTool(

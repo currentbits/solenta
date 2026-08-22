@@ -119,6 +119,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     stopRun,
     setPermissionMode,
     respondPermission,
+    clearQuestion,
     setProvider,
     setReasoningEffort,
     setArchived,
@@ -1178,6 +1179,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onRetryQueued={handleRetryQueued}
         onSetPermissionMode={setPermissionMode}
         onRespondPermission={respondPermission}
+        onClearQuestion={clearQuestion}
         onSetProvider={setProvider}
         onSetReasoningEffort={setReasoningEffort}
         onSetArchived={handleSetArchived}

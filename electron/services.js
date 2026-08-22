@@ -1353,7 +1353,11 @@ function setQueued(store, input) {
       // A new/appended prompt drops any previous delivery error (#314).
     };
   }
-  const updated = store.updateThread(threadId, { queued });
+  // Queueing a follow-up mid-run is still the user speaking, so it supersedes
+  // an open question card the same way startRun does (issue #647). Clearing
+  // the queue (prompt === null) is not: the card outlives a cancelled draft.
+  const patch = queued ? { queued, pendingQuestion: null } : { queued };
+  const updated = store.updateThread(threadId, patch);
   store.save();
   return updated ? { ...updated } : { ...thread, queued };
 }

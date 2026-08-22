@@ -13,6 +13,7 @@ const {
 } = require("./postmerge.js");
 const { normalizeAcceptedHunks } = require("./reviewItinerary.js");
 const { normalizeBtwCards } = require("./btw.js");
+const { normalizePendingQuestion } = require("./questions.js");
 
 /** Builtin "Plan and Verify" workflow template (seeded on every store). */
 const STANDARD_TEMPLATE = {
@@ -954,6 +955,13 @@ function migrateThread(t) {
   const cards = normalizeBtwCards(t.btw);
   if (cards) next.btw = cards;
   else delete next.btw;
+  // Agent question awaiting an answer (issue #647). Unlike a claude
+  // permission prompt this OUTLIVES the run — grok and kimi finish their turn
+  // after asking — so it is persisted, and healed on load like any other
+  // agent-supplied row. Omitted when absent so old fixtures still deepEqual.
+  const question = normalizePendingQuestion(t.pendingQuestion);
+  if (question) next.pendingQuestion = question;
+  else delete next.pendingQuestion;
   return next;
 }
 

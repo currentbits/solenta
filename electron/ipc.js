@@ -468,6 +468,11 @@ const IPC_HANDLERS = {
     // runner.respondPermission pushes the updated detail itself.
     ctx.runner.respondPermission(input);
   },
+  "threads:clearQuestion": async (ctx, input) => {
+    // Dismiss only (issue #647). Answering rides the normal send path, which
+    // clears the card in startRun / setQueued. Pushes its own detail.
+    ctx.runner.clearQuestion(input);
+  },
   "threads:setPermissionMode": async (ctx, input) => {
     const updated = services.setPermissionMode(ctx.store, input);
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));

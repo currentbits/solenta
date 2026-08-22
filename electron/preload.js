@@ -111,6 +111,7 @@ const IPC_CHANNELS = Object.freeze([
   { ns: "threads", method: "peek" },
   { ns: "threads", method: "setPermissionMode" },
   { ns: "threads", method: "respondPermission" },
+  { ns: "threads", method: "clearQuestion" },
   { ns: "threads", method: "setArchived" },
   { ns: "threads", method: "setSettled" },
   { ns: "threads", method: "setPinned" },

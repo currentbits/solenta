@@ -35,6 +35,7 @@ import type {
   PrChecksResult,
   PrInfo,
   PendingPermissionInfo,
+  PendingQuestion,
   PermissionDecision,
   PermissionMode,
   CliSlashCommand,
@@ -379,6 +380,11 @@ interface ThreadViewProps {
     answers?: Record<string, string>,
     updatedCommand?: string,
   ) => void | Promise<void>;
+  /**
+   * Dismiss the persisted question card (thread.pendingQuestion) without
+   * answering (issue #647). Answering goes through onStartRun instead.
+   */
+  onClearQuestion: () => void | Promise<void>;
   onSetProvider: (input: {
     provider?: string;
     model?: string | null;
@@ -1744,22 +1750,38 @@ function WorkLogCard({
 }
 
 /**
- * Option picker for an agent question (AskUserQuestion). Options answer with
- * a click or the 1-9 keys; a lone single-select question submits immediately,
- * everything else collects picks and submits together. Free text via "Other".
+ * Answer text for a persisted question card (issue #647). The agent's turn is
+ * already over, so this is an ordinary user message — and it repeats the
+ * question, because on a session that could not resume it is the only record
+ * of what was being answered.
+ */
+export function formatQuestionAnswer(answers: Record<string, string>): string {
+  const lines = Object.entries(answers)
+    .filter(([, picked]) => picked)
+    .map(([question, picked]) => `${question}\n→ ${picked}`);
+  return lines.length ? `Answering your question:\n\n${lines.join("\n\n")}` : "";
+}
+
+/**
+ * Option picker for an agent question. Options answer with a click or the 1-9
+ * keys; a lone single-select question submits immediately, everything else
+ * collects picks and submits together. Free text via "Other".
+ *
+ * Two sources feed the same card (issue #647): claude's blocking
+ * AskUserQuestion permission prompt, where answering resumes the live run, and
+ * the persisted thread.pendingQuestion left behind by grok/kimi, where
+ * answering is simply the next message. Hence callbacks rather than a
+ * pendingPermission — the picker does not care which one it is driving.
  */
 function QuestionPrompt({
-  pending,
-  onRespond,
+  questions,
+  onAnswer,
+  onDismiss,
 }: {
-  pending: PendingPermissionInfo;
-  onRespond: (
-    requestId: string,
-    decision: PermissionDecision,
-    answers?: Record<string, string>,
-  ) => void | Promise<void>;
+  questions: PendingQuestion[];
+  onAnswer: (answers: Record<string, string>) => void | Promise<void>;
+  onDismiss: () => void | Promise<void>;
 }) {
-  const questions = pending.questions ?? [];
   const [picked, setPicked] = useState<Record<number, string[]>>({});
   const [other, setOther] = useState<Record<number, string>>({});
   const [sent, setSent] = useState(false);
@@ -1786,9 +1808,9 @@ function QuestionPrompt({
           override && override.index === i ? override.label : answerFor(i);
       });
       setSent(true);
-      void onRespond(pending.requestId, "allow", answers);
+      void onAnswer(answers);
     },
-    [sent, questions, answerFor, onRespond, pending.requestId],
+    [sent, questions, answerFor, onAnswer],
   );
 
   const choose = useCallback(
@@ -1915,7 +1937,7 @@ function QuestionPrompt({
           disabled={sent}
           onClick={() => {
             setSent(true);
-            void onRespond(pending.requestId, "deny");
+            void onDismiss();
           }}
         >
           Dismiss
@@ -3273,6 +3295,7 @@ export const ThreadView = memo(function ThreadView({
   onRetryQueued,
   onSetPermissionMode,
   onRespondPermission,
+  onClearQuestion,
   onSetProvider,
   onSetReasoningEffort,
   onSetArchived,
@@ -4877,11 +4900,40 @@ export const ThreadView = memo(function ThreadView({
           <PlanCard thread={thread} />
         ) : null}
 
+        {/*
+          Persisted question (issue #647): grok/kimi ended their turn after
+          asking, so answering is the next message — not a permission answer.
+          A live permission prompt wins: that one is blocking a running CLI.
+        */}
+        {!detail.pendingPermission && thread.pendingQuestion ? (
+          <QuestionPrompt
+            key={thread.pendingQuestion.id}
+            questions={thread.pendingQuestion.questions}
+            onAnswer={(answers) => {
+              // The Answer button gates on every question being answered, so
+              // an empty text means nothing was picked — never start a turn
+              // with an empty prompt.
+              const text = formatQuestionAnswer(answers);
+              if (text) void onStartRun(text);
+            }}
+            onDismiss={() => onClearQuestion()}
+          />
+        ) : null}
+
         {detail.pendingPermission?.questions?.length ? (
           <QuestionPrompt
             key={detail.pendingPermission.requestId}
-            pending={detail.pendingPermission}
-            onRespond={onRespondPermission}
+            questions={detail.pendingPermission.questions}
+            onAnswer={(answers) =>
+              onRespondPermission(
+                detail.pendingPermission!.requestId,
+                "allow",
+                answers,
+              )
+            }
+            onDismiss={() =>
+              onRespondPermission(detail.pendingPermission!.requestId, "deny")
+            }
           />
         ) : detail.pendingPermission?.plan ? (
           <PlanPrompt

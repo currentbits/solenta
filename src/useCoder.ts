@@ -252,6 +252,8 @@ export interface UseCoderResult {
     answers?: Record<string, string>,
     updatedCommand?: string,
   ) => Promise<void>;
+  /** Dismiss the selected thread's persisted question card (issue #647). */
+  clearQuestion: () => Promise<void>;
   /** Set provider and/or model on the selected thread (selectedRef-guarded). */
   setProvider: (input: {
     provider?: string;
@@ -1397,6 +1399,20 @@ export function useCoder(): UseCoderResult {
     },
     [api, selectedThreadId],
   );
+
+  /**
+   * Dismiss the persisted question card (issue #647). Answering it is an
+   * ordinary send, which clears the card in the main process — only the
+   * "no answer" path needs its own call.
+   */
+  const clearQuestion = useCallback(async () => {
+    if (!selectedThreadId) return;
+    try {
+      await api.threads.clearQuestion({ threadId: selectedThreadId });
+    } catch (err) {
+      setError({ scope: "run", message: errorMessage(err) });
+    }
+  }, [api, selectedThreadId]);
 
   const setProvider = useCallback(
     async (input: { provider?: string; model?: string | null }) => {
@@ -2701,6 +2717,7 @@ export function useCoder(): UseCoderResult {
     stopRun,
     setPermissionMode,
     respondPermission,
+    clearQuestion,
     setProvider,
     setReasoningEffort,
     setArchived,

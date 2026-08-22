@@ -348,6 +348,15 @@ export interface ThreadInfo {
    */
   awaitingInput?: boolean;
   /**
+   * An agent question awaiting an answer, PERSISTED (issue #647). Unlike
+   * PendingPermissionInfo.questions — which is claude's blocking permission
+   * prompt and dies with the run — this outlives the turn, because grok and
+   * kimi finish their turn after asking. Answering it is just the next user
+   * message: sending anything on the thread clears it, and Dismiss calls
+   * threads.clearQuestion.
+   */
+  pendingQuestion?: PendingQuestionCard | null;
+  /**
    * Epoch ms of the last stream event the provider CLI produced on the active
    * run (issue #314). Absent/null until the run emits anything. Feeds the turn
    * watchdog; a run whose CLI hangs keeps runStartedAt but stops moving this.
@@ -1217,6 +1226,18 @@ export interface PendingPermissionInfo {
    * calls never reach here; they are answered without asking.
    */
   guardrail?: { rule: string | null; reason: string } | null;
+}
+
+/**
+ * A persisted question card on a thread (issue #647): what grok's native
+ * ask_user_question and the coder-threads `ask_user` tool put on screen.
+ */
+export interface PendingQuestionCard {
+  /** Card identity; remounts the picker when the agent asks again. */
+  id: string;
+  questions: PendingQuestion[];
+  /** Epoch ms the agent asked. */
+  askedAt: number;
 }
 
 /** One question of an AskUserQuestion prompt. */
@@ -2236,6 +2257,13 @@ export interface CoderApi {
        */
       updatedCommand?: string;
     }): Promise<void>;
+    /**
+     * Drop the persisted question card (ThreadInfo.pendingQuestion) without
+     * answering it — the Dismiss button (issue #647). ANSWERING does not come
+     * through here: it is an ordinary runs.start / threads.setQueued, which
+     * clear the card themselves. No-op when nothing is pending.
+     */
+    clearQuestion(input: { threadId: string }): Promise<void>;
     /** Archive or unarchive; archived threads are hidden by default but fully intact. */
     setArchived(input: { threadId: string; archived: boolean }): Promise<ThreadInfo>;
     /**

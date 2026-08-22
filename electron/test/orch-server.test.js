@@ -125,6 +125,7 @@ function makeDeps() {
   const forks = [];
   const stopped = [];
   const retired = [];
+  const asked = [];
   const broadcasts = [];
   const deps = {
     store: makeFakeStore(),
@@ -139,6 +140,10 @@ function makeDeps() {
       },
       disposeClaudeSession: (id) => {
         retired.push(id);
+      },
+      askUser: (input) => {
+        asked.push(input);
+        return { asked: true, questions: input.questions.length };
       },
     },
     forkThread: (store, input) => {
@@ -158,6 +163,7 @@ function makeDeps() {
     forks,
     stopped,
     retired,
+    asked,
     broadcasts,
   };
   return deps;
@@ -699,6 +705,51 @@ describe("orch-server tool handlers", () => {
     assert.equal(dead.awaitingInput, false);
     assert.equal(dead.awaitingPermission, null);
   });
+
+  it("ask_user posts the question and returns without waiting (#647)", async () => {
+    const deps = makeDeps();
+    const h = createToolHandlers(deps);
+    const questions = [
+      {
+        question: "Merge or PR?",
+        options: [{ label: "Merge" }, { label: "PR" }],
+      },
+    ];
+    const out = await h.ask_user({
+      threadId: "t1",
+      projectId: "p1",
+      questions,
+    });
+    assert.deepEqual(deps.asked, [{ threadId: "t1", questions }]);
+    assert.equal(out.asked, true);
+    // The whole contract: the agent must stop here rather than guess.
+    assert.match(out.note, /End your turn/);
+    assert.match(out.note, /next turn/);
+  });
+
+  it("ask_user rejects unknown and other-project threads (#647)", async () => {
+    const deps = makeDeps();
+    const h = createToolHandlers(deps);
+    const questions = [
+      { question: "Which?", options: [{ label: "A" }, { label: "B" }] },
+    ];
+    await assert.rejects(
+      () => h.ask_user({ threadId: "nope", projectId: "p1", questions }),
+      /Unknown thread/,
+    );
+    // t3 lives in p2: an agent must not open a card on another project.
+    await assert.rejects(
+      () => h.ask_user({ threadId: "t3", projectId: "p1", questions }),
+      /can only drive threads in its own project/,
+    );
+    assert.deepEqual(deps.asked, []);
+  });
+
+  it("instructions point every CLI at ask_user, not its own tool (#647)", () => {
+    assert.match(INSTRUCTIONS, /ask_user/);
+    assert.match(INSTRUCTIONS, /instead of your CLI's own question tool/);
+    assert.match(INSTRUCTIONS, /does not block/);
+  });
 });
 
 /**
@@ -898,6 +949,7 @@ describe("orch-server HTTP", () => {
     assert.equal(list.status, 200);
     const names = list.body.result.tools.map((t) => t.name).sort();
     assert.deepEqual(names, [
+      "ask_user",
       "hypothesis_record",
       "peer_send",
       "spec_submit",

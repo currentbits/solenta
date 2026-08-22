@@ -64,6 +64,7 @@ const {
   formatQuotaWaitClock,
   quotaWaitEnabled,
 } = require("./quotaWait.js");
+const { normalizeQuestions } = require("./questions.js");
 
 const KIMI_PUSH_THROTTLE_MS = 250;
 
@@ -1688,27 +1689,7 @@ function createRunner(opts) {
    */
   function questionInfo(toolName, rawInput) {
     if (toolName !== "AskUserQuestion") return null;
-    const qs = rawInput && Array.isArray(rawInput.questions) ? rawInput.questions : [];
-    const out = [];
-    for (const q of qs) {
-      if (!q || typeof q.question !== "string" || !Array.isArray(q.options)) {
-        continue;
-      }
-      const options = q.options
-        .filter((o) => o && typeof o.label === "string" && o.label)
-        .map((o) => ({
-          label: o.label,
-          description: typeof o.description === "string" ? o.description : "",
-        }));
-      if (options.length === 0) continue;
-      out.push({
-        question: q.question,
-        header: typeof q.header === "string" ? q.header : "",
-        multiSelect: q.multiSelect === true,
-        options,
-      });
-    }
-    return out.length > 0 ? out : null;
+    return normalizeQuestions(rawInput && rawInput.questions);
   }
 
   /**
@@ -1808,6 +1789,70 @@ function createRunner(opts) {
     store.save();
     pushDetail(threadId, e.claudeState);
     pushThreadsChanged();
+  }
+
+  /**
+   * Post an agent question that outlives the run (issue #647).
+   *
+   * claude asks over the permission channel and BLOCKS, so its questions ride
+   * on the ephemeral pendingPermissions list. No other CLI can do that:
+   * headless `grok -p` answers its own ask_user_question with "No user is
+   * available", and `kimi -p` forbids its question tool outright. Their turn
+   * therefore ENDS with the question unanswered, so it is persisted on the
+   * thread and the answer arrives as the next turn (sessions resume, so the
+   * agent still has its context). Cleared by startRun / setQueued: any user
+   * message supersedes the card.
+   *
+   * @param {{ threadId: string, questions: unknown }} input
+   * @returns {{ asked: true, questions: number }}
+   */
+  function askUser(input) {
+    const threadId = String((input && input.threadId) || "");
+    const thread = store.getThread(threadId);
+    if (!thread) {
+      throw new Error(`Unknown thread: ${threadId}`);
+    }
+    const questions = normalizeQuestions(input && input.questions);
+    if (!questions) {
+      throw new Error(
+        "questions must be a non-empty array of " +
+          "{ question, options: [{ label, description }] }",
+      );
+    }
+    store.updateThread(
+      threadId,
+      {
+        pendingQuestion: {
+          id: randomUUID(),
+          questions,
+          askedAt: Date.now(),
+        },
+        // Same badge as a permission prompt: the thread needs the user.
+        awaitingInput: true,
+      },
+      { touch: true },
+    );
+    store.save();
+    pushThreadsChanged();
+    refreshDetail(threadId);
+    return { asked: true, questions: questions.length };
+  }
+
+  /**
+   * Drop the question card without answering it (the Dismiss button).
+   * @param {{ threadId: string }} input
+   */
+  function clearQuestion(input) {
+    const threadId = String((input && input.threadId) || "");
+    const thread = store.getThread(threadId);
+    if (!thread || !thread.pendingQuestion) return;
+    store.updateThread(threadId, {
+      pendingQuestion: null,
+      awaitingInput: false,
+    });
+    store.save();
+    pushThreadsChanged();
+    refreshDetail(threadId);
   }
 
   function pushThreadsChanged() {
@@ -2794,6 +2839,20 @@ function createRunner(opts) {
               // filing GitHub issues for them (issue #76).
               if (toolName === "TodoWrite") {
                 savePlanSteps(threadId, inputObj.todos);
+              }
+              // grok's native question tool (issue #647). Headless grok has no
+              // permission channel, so the CLI answers this one itself ("No
+              // user is available...") and the turn runs on — the tool_use
+              // block in the stream is the only place the question ever
+              // surfaces. Claude never reaches here for its own questions:
+              // AskUserQuestion arrives as a blocking control_request first.
+              if (toolName === "ask_user_question") {
+                try {
+                  askUser({ threadId, questions: inputObj.questions });
+                } catch {
+                  // Unanswerable shape (no labelled options): the tool card
+                  // still shows what was asked. Never break the stream.
+                }
               }
               // "Task" is the Agent tool's name in older Claude Code CLIs.
               if (toolName === "Agent" || toolName === "Task") {
@@ -4721,6 +4780,9 @@ function createRunner(opts) {
         title,
         runStartedAt: Date.now(),
         awaitingInput: false,
+        // Any user turn supersedes an open question card (issue #647):
+        // answering it IS this message, and so is changing the subject.
+        pendingQuestion: null,
         lastEventAt: null,
         stalledAt: null,
         quotaWaitUntil: null,
@@ -5218,6 +5280,9 @@ function createRunner(opts) {
         title,
         runStartedAt: Date.now(),
         awaitingInput: false,
+        // Any user turn supersedes an open question card (issue #647):
+        // answering it IS this message, and so is changing the subject.
+        pendingQuestion: null,
         lastEventAt: null,
         stalledAt: null,
         quotaWaitUntil: null,
@@ -5743,6 +5808,8 @@ function createRunner(opts) {
     resolveProvider,
     getPendingPermission,
     respondPermission,
+    askUser,
+    clearQuestion,
     disposeClaudeSession,
     deliverNotice,
     checkStalls,

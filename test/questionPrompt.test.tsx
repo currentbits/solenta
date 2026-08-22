@@ -8,7 +8,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { mount, type Mounted } from "./support/dom.ts";
-import { ThreadView } from "../src/components/ThreadView";
+import {
+  ThreadView,
+  formatQuestionAnswer,
+} from "../src/components/ThreadView";
 import type {
   PendingPermissionInfo,
   PermissionDecision,
@@ -215,5 +218,121 @@ describe("QuestionPrompt", () => {
     assert.deepEqual(spy.calls, [
       { requestId: "req-1", decision: "deny", answers: undefined },
     ]);
+  });
+});
+
+/**
+ * The persisted card (issue #647): grok and kimi cannot block on an answer, so
+ * their question outlives the run and answering it is the NEXT MESSAGE, not a
+ * permission response.
+ */
+function mountPersisted(): {
+  m: Promise<Mounted>;
+  runs: string[];
+  cleared: number[];
+} {
+  const runs: string[] = [];
+  const cleared: number[] = [];
+  const t = thread();
+  t.status = "done";
+  t.runStartedAt = null;
+  t.pendingQuestion = {
+    id: "card-1",
+    askedAt: 1,
+    questions: [
+      {
+        question: "Merge or open a PR?",
+        header: "Landing",
+        multiSelect: false,
+        options: [
+          { label: "Merge", description: "Squash onto main" },
+          { label: "PR", description: "Open a pull request" },
+        ],
+      },
+    ],
+  };
+  const m = mount(
+    <ThreadView
+      detail={{
+        thread: t,
+        messages: [],
+        workLog: [],
+        workflow: null,
+        usage: null,
+        pendingPermission: null,
+      }}
+      project={project}
+      providers={providers}
+      workflows={[]}
+      hasProjects={true}
+      onAddProject={() => {}}
+      onStartRun={(prompt) => {
+        runs.push(prompt);
+      }}
+      onStartWorkflow={() => {}}
+      onSaveWorkflow={async () => ({ id: "w", name: "s", phases: [] })}
+      onRemoveWorkflow={async () => {}}
+      onStopRun={() => {}}
+      onSetPermissionMode={() => {}}
+      onRespondPermission={() => {}}
+      onClearQuestion={() => {
+        cleared.push(1);
+      }}
+      onSetProvider={() => {}}
+      onSetReasoningEffort={() => {}}
+      onSetArchived={() => {}}
+      onDeleteThread={() => {}}
+    />,
+  );
+  return { m, runs, cleared };
+}
+
+describe("persisted question card (#647)", () => {
+  it("renders after the run ended, with no permission prompt in flight", async () => {
+    const { m } = mountPersisted();
+    const view = await m;
+    assert.match(view.text(), /Merge or open a PR\?/);
+    assert.ok(view.byText("Squash onto main"));
+    assert.ok(view.byText("Dismiss"));
+  });
+
+  it("answering starts the next turn instead of answering a permission", async () => {
+    const { m, runs, cleared } = mountPersisted();
+    const view = await m;
+    await view.click(view.byText("Merge"));
+    assert.equal(cleared.length, 0);
+    assert.equal(runs.length, 1);
+    // The message repeats the question: on a session that could not resume,
+    // a bare "Merge" would be unreadable.
+    assert.match(runs[0], /Merge or open a PR\?/);
+    assert.match(runs[0], /→ Merge/);
+  });
+
+  it("Dismiss clears the card and sends nothing", async () => {
+    const { m, runs, cleared } = mountPersisted();
+    const view = await m;
+    await view.click(view.byText("Dismiss"));
+    assert.equal(cleared.length, 1);
+    assert.deepEqual(runs, []);
+  });
+});
+
+describe("formatQuestionAnswer", () => {
+  it("quotes every answered question and drops the unanswered", () => {
+    const text = formatQuestionAnswer({
+      "Which database?": "Postgres",
+      "Which cache?": "",
+      "Which features?": "Auth, Billing",
+    });
+    assert.equal(
+      text,
+      "Answering your question:\n\n" +
+        "Which database?\n→ Postgres\n\n" +
+        "Which features?\n→ Auth, Billing",
+    );
+  });
+
+  it("is empty when nothing was picked, so no turn is started", () => {
+    assert.equal(formatQuestionAnswer({ "Which?": "" }), "");
   });
 });
