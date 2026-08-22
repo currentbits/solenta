@@ -22,6 +22,7 @@ export const PUSH_CHANNELS = [
   "threads:changed",
   "thread:updated",
   "thread:select",
+  "boot:ready",
 ] as const;
 
 export type PushChannel = (typeof PUSH_CHANNELS)[number];

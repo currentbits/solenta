@@ -64,6 +64,25 @@ describe("App boot wiring", () => {
       fake.channels().includes("on:thread:updated"),
       "must subscribe to thread:updated",
     );
+    assert.ok(
+      fake.channels().includes("on:boot:ready"),
+      "must subscribe to boot:ready (#618)",
+    );
+    m.unmount();
+  });
+
+  it("refetches lists when boot:ready fires", async () => {
+    const fake = createFakeCoder({
+      threads: [thread({ id: "t-boot", title: "from boot ready" })],
+    });
+    const m = await boot(fake);
+    const listsBefore = fake.of("threads.list").length;
+    await inAct(() => fake.emitBootReady());
+    await m.flush();
+    assert.ok(
+      fake.of("threads.list").length > listsBefore,
+      "boot:ready must refetch threads.list",
+    );
     m.unmount();
   });
 

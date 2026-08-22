@@ -353,6 +353,7 @@ function normalizeTemplate(input: TemplateSaveInput): {
 type ListenerMap = {
   "threads:changed": Set<(threads: ThreadInfo[]) => void>;
   "thread:updated": Set<(detail: ThreadDetail) => void>;
+  "boot:ready": Set<() => void>;
 };
 
 /** Browser-dev fixture for the Agents-tab crew list (issue #277). */
@@ -1616,6 +1617,7 @@ function buildDevCoder(): CoderApi {
   const listeners: ListenerMap = {
     "threads:changed": new Set(),
     "thread:updated": new Set(),
+    "boot:ready": new Set(),
   };
 
   const emitThreads = () => {
@@ -4660,6 +4662,13 @@ function buildDevCoder(): CoderApi {
       }
       if (channel === "thread:select") {
         return () => {};
+      }
+      if (channel === "boot:ready") {
+        const fn = cb as () => void;
+        listeners["boot:ready"].add(fn);
+        return () => {
+          listeners["boot:ready"].delete(fn);
+        };
       }
       const fn = cb as (detail: ThreadDetail) => void;
       listeners["thread:updated"].add(fn);

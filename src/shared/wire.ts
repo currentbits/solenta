@@ -9,7 +9,7 @@ import { PUSH_CHANNELS } from "./ipcChannels";
  *   "threads:fork", ...). The server routes them to the same services the
  *   IPC handlers use — one behavior, two transports.
  * - Push channels are exactly preload's PUSH_CHANNELS ("threads:changed",
- *   "thread:updated", "thread:select"); the server fans every broadcast out to every
+ *   "thread:updated", "thread:select", "boot:ready"); the server fans every broadcast out to every
  *   authenticated socket. No subscription protocol: pushes are cheap and
  *   the renderer already tolerates redundant ones.
  * - Auth: the FIRST client message must be {kind:"auth", token}. The token

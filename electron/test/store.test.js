@@ -15,7 +15,8 @@ describe("Store", () => {
   });
 
   afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    // An in-flight bak copy (#618) can recreate the file during rmdir.
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 8, retryDelay: 10 });
   });
 
   it("starts empty when file is missing", () => {
@@ -222,7 +223,7 @@ describe("Store", () => {
     assert.equal(quarantined.length, 1);
   });
 
-  it("writes a .bak copy after a successful load", () => {
+  it("writes a .bak copy after a successful load, off the constructor's sync path", async () => {
     fs.writeFileSync(
       filePath,
       JSON.stringify({
@@ -235,6 +236,12 @@ describe("Store", () => {
     );
     const store = new Store(filePath);
     assert.equal(store.getProjects()[0].id, "p1");
+    assert.equal(
+      fs.existsSync(`${filePath}.bak`),
+      false,
+      "bak must not land during the synchronous constructor",
+    );
+    await store._bakCopy;
     assert.equal(fs.existsSync(`${filePath}.bak`), true);
     const bak = JSON.parse(fs.readFileSync(`${filePath}.bak`, "utf8"));
     assert.equal(bak.projects[0].id, "p1");

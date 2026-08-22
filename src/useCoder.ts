@@ -777,6 +777,55 @@ export function useCoder(): UseCoderResult {
     let unsubChanged: (() => void) | undefined;
     let unsubUpdated: (() => void) | undefined;
     let unsubSelect: (() => void) | undefined;
+    let unsubBoot: (() => void) | undefined;
+
+    const loadBootLists = () => {
+      const loadGen = threadsListGen.current;
+      return (async () => {
+        try {
+          // status/settings are best-effort: missing IPC handlers (merge before
+          // backend) must not blank the whole boot (no catch on this IIFE).
+          // projects/threads/providers/workflows may also reject when the
+          // window beat registerIpc (#618); boot:ready retries.
+          const [p, list, prov, wfs, autos, status, sett] = await Promise.all([
+            api.projects.list(),
+            api.threads.list(),
+            api.providers.list(),
+            api.workflows.list(),
+            api.automations.list().catch(() => [] as AutomationInfo[]),
+            api.app.status().catch(() => null),
+            api.settings.get().catch(() => null),
+          ]);
+          if (cancelled) return;
+          setProjects(p);
+          setProviders(prov);
+          setWorkflows(wfs);
+          setAutomations(autos);
+          if (status != null) setAppStatus(status);
+          if (sett != null) setSettings(sett);
+          for (const t of list) {
+            prevStatusRef.current.set(t.id, t.status);
+          }
+          if (threadsListGen.current === loadGen) {
+            applyThreads(list);
+          }
+          const source =
+            threadsListGen.current === loadGen ? list : threadsRef.current;
+          const preferred =
+            source.find((t) => !t.archived && t.status === "working")?.id ??
+            source.find((t) => !t.archived)?.id ??
+            null;
+          setSelectedThreadId((prev) => prev ?? preferred);
+          if (selectedRef.current == null && preferred) {
+            selectedRef.current = preferred;
+          }
+        } catch {
+          // IPC may not be registered yet (#618); boot:ready retries.
+        } finally {
+          if (!cancelled) setLoading(false);
+        }
+      })();
+    };
 
     unsubChanged = api.on("threads:changed", (next) => {
       threadsListGen.current += 1;
@@ -836,48 +885,10 @@ export function useCoder(): UseCoderResult {
       }
     });
 
-    const loadGen = threadsListGen.current;
-
-    (async () => {
-      try {
-        // status/settings are best-effort: missing IPC handlers (merge before
-        // backend) must not blank the whole boot (no catch on this IIFE).
-        const [p, list, prov, wfs, autos, status, sett] = await Promise.all([
-          api.projects.list(),
-          api.threads.list(),
-          api.providers.list(),
-          api.workflows.list(),
-          api.automations.list().catch(() => [] as AutomationInfo[]),
-          api.app.status().catch(() => null),
-          api.settings.get().catch(() => null),
-        ]);
-        if (cancelled) return;
-        setProjects(p);
-        setProviders(prov);
-        setWorkflows(wfs);
-        setAutomations(autos);
-        if (status != null) setAppStatus(status);
-        if (sett != null) setSettings(sett);
-        for (const t of list) {
-          prevStatusRef.current.set(t.id, t.status);
-        }
-        if (threadsListGen.current === loadGen) {
-          applyThreads(list);
-        }
-        const source =
-          threadsListGen.current === loadGen ? list : threadsRef.current;
-        const preferred =
-          source.find((t) => !t.archived && t.status === "working")?.id ??
-          source.find((t) => !t.archived)?.id ??
-          null;
-        setSelectedThreadId((prev) => prev ?? preferred);
-        if (selectedRef.current == null && preferred) {
-          selectedRef.current = preferred;
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
+    unsubBoot = api.on("boot:ready", () => {
+      void loadBootLists();
+    });
+    void loadBootLists();
 
     // Shared 60s interval for the spend meter (same pattern as sidebar age tick).
     const statusHandle = window.setInterval(() => {
@@ -889,6 +900,7 @@ export function useCoder(): UseCoderResult {
       unsubChanged?.();
       unsubUpdated?.();
       unsubSelect?.();
+      unsubBoot?.();
       window.clearInterval(statusHandle);
     };
   }, [api, applyThreads, refreshStatus, reloadDetail]);

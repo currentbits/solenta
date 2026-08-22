@@ -927,23 +927,6 @@ function probeHealth(port, timeoutMs = HEALTH_TIMEOUT_MS, token) {
 }
 
 /**
- * Wait until /health is ok (and token-proofed when given) or timeout.
- * @param {number} port
- * @param {number} maxMs
- * @param {string} [token]
- */
-async function waitForHealth(port, maxMs = SPAWN_WAIT_MS, token) {
-  const start = Date.now();
-  while (Date.now() - start < maxMs) {
-    if (await probeHealth(port, Math.min(HEALTH_TIMEOUT_MS, 400), token)) {
-      return true;
-    }
-    await new Promise((r) => setTimeout(r, HEALTH_POLL_MS));
-  }
-  return false;
-}
-
-/**
  * Resolve a node binary: CODER_NODE_BIN, PATH lookup, nvm newest, homebrew.
  * PATH lookup uses providers.defaultWhich so win32 gets `where`, not `which`.
  * @param {NodeJS.ProcessEnv} [env]
@@ -1221,6 +1204,7 @@ function createMemorySupervisor(opts) {
 
     // Port may move: the server rewrites memory-server.json on EADDRINUSE.
     // Re-read the file each tick and prove the current port knows our token.
+    // Inlined (not a shared waitForHealth) because the port is not stable.
     const deadline = Date.now() + SPAWN_WAIT_MS * 2;
     let sawConfig = Boolean(cfg);
     while (Date.now() < deadline) {
