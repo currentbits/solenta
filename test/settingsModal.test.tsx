@@ -851,7 +851,7 @@ describe("SettingsModal OpenTelemetry (issue #280)", () => {
 });
 
 describe("SettingsModal Appearance (#652)", () => {
-  it("renders UI scale above Budget and saves on change", async () => {
+  it("renders UI scale on General and saves on change", async () => {
     const patches: Partial<AppSettings>[] = [];
     const m = await mount(
       modal({
@@ -870,16 +870,11 @@ describe("SettingsModal Appearance (#652)", () => {
         },
       }),
     );
-    const appearance = m.query("[data-appearance]");
-    assert.ok(appearance, "Appearance section");
-    const headings = m.queryAll("h3").map((h) => h.textContent);
-    const appearanceAt = headings.indexOf("Appearance");
-    const budgetAt = headings.indexOf("Budget");
-    assert.ok(appearanceAt >= 0, "Appearance heading");
-    assert.ok(budgetAt >= 0, "Budget heading");
-    assert.ok(
-      appearanceAt < budgetAt,
-      "Appearance must sit above Budget so #651 can share the section",
+    // The redesigned modal panes settings, so Appearance and Budget no longer
+    // share a scroll column: assert the pane, not the vertical order.
+    assert.equal(
+      m.query("[data-settings-pane]")?.getAttribute("data-settings-pane"),
+      "general",
     );
     const slider = m.query("[data-ui-scale]") as HTMLInputElement;
     assert.ok(slider, "UI scale slider");
