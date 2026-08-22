@@ -304,6 +304,54 @@ function joinFiles(files) {
   return files.map((f) => (/\s/.test(f) ? `"${f}"` : f)).join(" ");
 }
 
+function scopeTurbo(command, base) {
+  if (!/\bturbo\b/.test(command)) return null;
+  const ref = String(base || "").trim();
+  if (!ref) return null;
+  return `${command} --filter=...[${ref}]`;
+}
+
+function nxTarget(command) {
+  const m =
+    command.match(/\s(?:-t|--target)\s+(\S+)/) ||
+    command.match(/\s--target=(\S+)/);
+  if (m) return m[1];
+  // `nx test` / `nx run app:test` — keep the conventional default.
+  return "test";
+}
+
+function scopeNx(command, base) {
+  if (!/(^|\s)nx\b/.test(command)) return null;
+  const ref = String(base || "").trim();
+  if (!ref) return null;
+  const prefix = command.match(/^(?:npx|pnpm|yarn|bunx|bun)\s+/) || [""];
+  return `${prefix[0]}nx affected -t ${nxTarget(command)} --base=${ref} --head=HEAD`;
+}
+
+function codeFiles(files) {
+  return files.filter(
+    (f) => JS_EXT_RE.test(f) || /\.(vue|svelte|json)$/.test(f),
+  );
+}
+
+function scopeJest(command, files) {
+  if (!/\bjest\b/.test(command)) return null;
+  const src = codeFiles(files);
+  if (!src.length) return null;
+  return `${command} --findRelatedTests ${joinFiles(src)}`;
+}
+
+function scopeVitest(command, files) {
+  if (!/\bvitest\b/.test(command)) return null;
+  const src = codeFiles(files);
+  if (!src.length) return null;
+  const parts = command.trim().split(/\s+/);
+  const idx = parts.findIndex((p) => p === "vitest");
+  if (idx < 0) return null;
+  const head = parts.slice(0, idx + 1);
+  return `${head.join(" ")} related ${joinFiles(src)} --run`;
+}
+
 function scopeNodeTest(command, files) {
   if (!/\bnode\b/.test(command) || !/(^|\s)--test(\s|$)/.test(command)) {
     return null;
@@ -317,6 +365,41 @@ function scopeNodeTest(command, files) {
     if (parts[i].startsWith("-")) kept.push(parts[i]);
   }
   return `${kept.join(" ")} ${joinFiles(files)}`;
+}
+
+function scopePytest(command, files) {
+  if (!/(^|\s)pytest\b/.test(command) && !/python[0-9.]*\s+-m\s+pytest/.test(command)) {
+    return null;
+  }
+  const py = files.filter((f) => /\.py$/.test(f));
+  if (!py.length) return null;
+  const parts = command.trim().split(/\s+/);
+  const idx = parts.findIndex((p) => p === "pytest" || p === "-m");
+  if (idx < 0) return null;
+  // `python -m pytest` keeps through pytest; bare pytest keeps the binary.
+  let keepUntil = idx;
+  if (parts[idx] === "-m" && parts[idx + 1] === "pytest") keepUntil = idx + 1;
+  if (parts[idx] === "pytest") keepUntil = idx;
+  const head = parts.slice(0, keepUntil + 1);
+  return `${head.join(" ")} ${joinFiles(py)}`;
+}
+
+function scopeGoTest(command, files) {
+  if (!/\bgo\s+test\b/.test(command)) return null;
+  const goFiles = files.filter((f) => /\.go$/.test(f));
+  if (!goFiles.length) return null;
+  const dirs = [];
+  const seen = new Set();
+  for (const f of goFiles) {
+    const n = posixRel(f);
+    const slash = n.lastIndexOf("/");
+    const dir = slash < 0 ? "." : `./${n.slice(0, slash)}`;
+    if (seen.has(dir)) continue;
+    seen.add(dir);
+    dirs.push(dir);
+  }
+  dirs.sort();
+  return `go test ${dirs.join(" ")}`;
 }
 
 /** Rewrite a verify command to the tests the diff touches. */
@@ -347,7 +430,17 @@ function scopeVerifyCommand(input) {
   }
 
   const related = relatedTestFiles(changed, exists);
-  const next = scopeNodeTest(command, related);
+  const files = changed.map(posixRel).filter(Boolean);
+  const base = input.base;
+
+  const next =
+    scopeTurbo(command, base) ||
+    scopeNx(command, base) ||
+    scopeJest(command, files) ||
+    scopeVitest(command, files) ||
+    scopeNodeTest(command, related) ||
+    scopePytest(command, files) ||
+    scopeGoTest(command, files);
 
   if (!next || next === original) return unchanged;
   return { command: next, scoped: true, reason: "affected scope" };
