@@ -468,7 +468,7 @@
   border-radius: 14px;
   border: 1px solid var(--border);
   background: var(--bg-elevated);
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+  box-shadow: var(--shadow-modal);
   overflow: hidden;
 }
 
@@ -484,7 +484,7 @@
   flex-direction: column;
   min-height: 0;
   border-right: 1px solid var(--border);
-  background: rgba(0, 0, 0, 0.15);
+  background: var(--input-fill);
 }
 
 .navSearch {
@@ -492,7 +492,7 @@
   padding: 7px 10px;
   border-radius: 8px;
   border: 1px solid var(--border);
-  background: rgba(0, 0, 0, 0.25);
+  background: var(--input-fill);
   color: var(--text);
   font-size: 12px;
 }
@@ -533,13 +533,13 @@
 }
 
 .navItem:hover {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--overlay-hover);
   color: var(--text);
 }
 
 .navItem[data-active="true"] {
   background: var(--blue-soft);
-  color: #bfdbfe;
+  color: var(--info-fg-strong);
 }
 
 .navIcon {
@@ -571,7 +571,7 @@
 
 .navDot[data-update] {
   background: var(--amber);
-  box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.18);
+  box-shadow: 0 0 0 3px var(--amber-soft);
 }
 
 .navEmpty {
@@ -637,7 +637,7 @@
 .spendTrack {
   height: 4px;
   border-radius: var(--radius-pill);
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--track);
   overflow: hidden;
 }
 

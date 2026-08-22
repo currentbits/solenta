@@ -758,7 +758,7 @@
 }
 
 .effortBar {
-  height: 8px;
+  height: 10px;
   border-radius: 3px;
   background: var(--track);
   border: 1px solid transparent;
