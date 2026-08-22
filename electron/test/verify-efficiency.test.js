@@ -11,7 +11,12 @@ const os = require("node:os");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 const { EventEmitter } = require("node:events");
-const { cacheEnv, repoCacheKey } = require("../verifyEfficiency.js");
+const {
+  cacheEnv,
+  repoCacheKey,
+  scopeVerifyCommand,
+  prepareVerifyRun,
+} = require("../verifyEfficiency.js");
 const { runVerifyCommand } = require("../verify.js");
 const { agentSpawnOptions } = require("../proc.js");
 
@@ -194,5 +199,192 @@ describe("agentSpawnOptions cache env", () => {
       platform: "linux",
     });
     assert.equal("env" in opts, false);
+  });
+});
+
+describe("scopeVerifyCommand", () => {
+  const exists = existsSet(["test/foo.test.ts"]);
+  const opts = { base: "main", exists };
+
+  it("scopes node --test and bails on docs, lockfiles, unknown, --all, compound npm", () => {
+    assert.equal(
+      scopeVerifyCommand({
+        command: "node --test",
+        changedPaths: ["src/foo.ts"],
+        ...opts,
+      }).command,
+      "node --test test/foo.test.ts",
+    );
+    assert.equal(
+      scopeVerifyCommand({
+        command: "npm test",
+        changedPaths: ["README.md"],
+        base: "main",
+      }).command,
+      "exit 0",
+    );
+    assert.equal(
+      scopeVerifyCommand({
+        command: "node --test",
+        changedPaths: ["src/foo.ts", "package-lock.json"],
+        ...opts,
+      }).scoped,
+      false,
+    );
+    assert.equal(
+      scopeVerifyCommand({ command: "node --test", changedPaths: null }).scoped,
+      false,
+    );
+    assert.equal(
+      scopeVerifyCommand({
+        command: "node --test --all",
+        changedPaths: ["src/foo.ts"],
+        ...opts,
+      }).scoped,
+      false,
+    );
+    assert.equal(
+      scopeVerifyCommand({
+        command: "npm test",
+        changedPaths: ["src/foo.ts"],
+        ...opts,
+        readFile: () => JSON.stringify({ scripts: { test: "a && b" } }),
+      }).command,
+      "npm test",
+    );
+  });
+});
+
+describe("scopeVerifyCommand extra runners", () => {
+  const base = "main";
+
+  it("adds turbo --filter for packages changed since base", () => {
+    const r = scopeVerifyCommand({
+      command: "turbo run test",
+      changedPaths: ["packages/ui/src/button.ts"],
+      base,
+    });
+    assert.equal(r.command, "turbo run test --filter=...[main]");
+  });
+
+  it("leaves an already-filtered turbo command alone", () => {
+    const r = scopeVerifyCommand({
+      command: "turbo run test --filter=ui",
+      changedPaths: ["packages/ui/src/button.ts"],
+      base,
+    });
+    assert.equal(r.scoped, false);
+  });
+
+  it("rewrites nx run-many to affected and keeps the target name", () => {
+    assert.equal(
+      scopeVerifyCommand({
+        command: "npx nx run-many -t test",
+        changedPaths: ["apps/web/src/a.ts"],
+        base,
+      }).command,
+      "npx nx affected -t test --base=main --head=HEAD",
+    );
+    assert.equal(
+      scopeVerifyCommand({
+        command: "nx run-many -t lint",
+        changedPaths: ["apps/web/src/a.ts"],
+        base,
+      }).command,
+      "nx affected -t lint --base=main --head=HEAD",
+    );
+  });
+
+  it("does not rewrite nx --all", () => {
+    assert.equal(
+      scopeVerifyCommand({
+        command: "nx run-many -t test --all",
+        changedPaths: ["apps/web/src/a.ts"],
+        base,
+      }).scoped,
+      false,
+    );
+  });
+
+  it("scopes jest, vitest, pytest, and go test", () => {
+    assert.equal(
+      scopeVerifyCommand({
+        command: "npx jest",
+        changedPaths: ["src/foo.ts", "src/foo.test.ts"],
+        base,
+      }).command,
+      "npx jest --findRelatedTests src/foo.ts src/foo.test.ts",
+    );
+    assert.equal(
+      scopeVerifyCommand({
+        command: "npx vitest run",
+        changedPaths: ["src/foo.ts"],
+        base,
+      }).command,
+      "npx vitest related src/foo.ts --run",
+    );
+    assert.equal(
+      scopeVerifyCommand({
+        command: "pytest",
+        changedPaths: ["pkg/foo.py", "pkg/test_foo.py"],
+        base,
+      }).command,
+      "pytest pkg/foo.py pkg/test_foo.py",
+    );
+    assert.equal(
+      scopeVerifyCommand({
+        command: "go test ./...",
+        changedPaths: ["internal/foo/foo.go", "internal/bar/bar.go"],
+        base,
+      }).command,
+      "go test ./internal/bar ./internal/foo",
+    );
+  });
+
+  it("unwraps npm test when the script is a single known runner", () => {
+    const r = scopeVerifyCommand({
+      command: "npm test",
+      changedPaths: ["packages/ui/src/a.ts"],
+      base,
+      readFile: () => JSON.stringify({ scripts: { test: "turbo run test" } }),
+    });
+    assert.equal(r.command, "turbo run test --filter=...[main]");
+  });
+
+  it("maps electron/foo.js to electron/test/foo.test.js when it exists", () => {
+    const r = scopeVerifyCommand({
+      command: "node --test",
+      changedPaths: ["electron/verifyEfficiency.js"],
+      base,
+      exists: existsSet(["electron/test/verify-efficiency.test.js"]),
+    });
+    assert.equal(
+      r.command,
+      "node --test electron/test/verify-efficiency.test.js",
+    );
+  });
+});
+
+describe("prepareVerifyRun", () => {
+  it("merges cache env and scopes node --test", () => {
+    const r = prepareVerifyRun({
+      command: "node --test",
+      cacheRoot: "/tmp/cache/app",
+      changedPaths: ["src/foo.ts"],
+      exists: existsSet(["turbo.json", "test/foo.test.ts"]),
+      env: {},
+    });
+    assert.equal(r.command, "node --test test/foo.test.ts");
+    assert.equal(r.env.TURBO_CACHE_DIR, path.join("/tmp/cache/app", "turbo"));
+    assert.equal(
+      prepareVerifyRun({
+        command: "node --test",
+        changedPaths: null,
+        cacheRoot: "/tmp/cache/app",
+        exists: existsSet(["turbo.json"]),
+        env: {},
+      }).scoped,
+      false,
+    );
   });
 });
