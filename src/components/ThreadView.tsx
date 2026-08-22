@@ -3949,6 +3949,12 @@ export const ThreadView = memo(function ThreadView({
     ],
   );
 
+  const handleComposerSend = useCallback(
+    (prompt: string, messageAttachments?: AttachmentInfo[]) =>
+      onStartRun(prompt, undefined, messageAttachments),
+    [onStartRun],
+  );
+
   /**
    * Fork one thread per selected provider or profile, then start the same
    * prompt on each new fork. Sequential: a run cannot start until its fork
@@ -5379,9 +5385,7 @@ export const ThreadView = memo(function ThreadView({
                 ? "Ask about this repo…"
                 : undefined
         }
-        onSend={(prompt, messageAttachments) =>
-          onStartRun(prompt, undefined, messageAttachments)
-        }
+        onSend={handleComposerSend}
         onBuild={onStartWorkflow}
         onBestOfN={onFork && !thread.ask ? runBestOfN : undefined}
         onDelegate={onFork && !thread.ask ? runDelegate : undefined}

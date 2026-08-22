@@ -1,4 +1,5 @@
 import {
+  memo,
   useCallback,
   useEffect,
   useId,
@@ -289,7 +290,7 @@ function AttachmentChip({
   );
 }
 
-export function Composer({
+export const Composer = memo(function Composer({
   threadId,
   branch,
   permissionMode,
@@ -331,20 +332,49 @@ export function Composer({
 }: ComposerProps) {
   /**
    * Unsent drafts keyed by thread: one Composer instance serves every thread
-   * (ThreadView swaps threadId), so plain state would carry text across a
+   * (ThreadView swaps threadId), so a single string would carry text across a
    * switch. Mirrors templateByThread below.
+   *
+   * Held in a ref, not useState: a controlled textarea re-renders this whole
+   * picker (model rows, pills, slash/mention refresh) on every letter, which
+   * is the lag after a few keystrokes. The field is uncontrolled; React only
+   * paints when hasPrompt flips or a popup needs to open.
    */
-  const [draftByThread, setDraftByThread] = useState<Record<string, string>>(
-    {},
+  const draftsRef = useRef<Record<string, string>>({});
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [hasPrompt, setHasPrompt] = useState(false);
+  const syncHasPrompt = useCallback((text: string) => {
+    const next = text.trim().length > 0;
+    setHasPrompt((prev) => (prev === next ? prev : next));
+  }, []);
+  const rememberDraft = useCallback(
+    (text: string) => {
+      draftsRef.current[threadId] = text;
+      syncHasPrompt(text);
+    },
+    [threadId, syncHasPrompt],
   );
-  const value = draftByThread[threadId] ?? "";
-  const setValue = useCallback(
-    (text: string) =>
-      setDraftByThread((drafts) => ({ ...drafts, [threadId]: text })),
+  const writeDraft = useCallback(
+    (text: string, caret?: number) => {
+      draftsRef.current[threadId] = text;
+      const el = textareaRef.current;
+      if (el) {
+        el.value = text;
+        if (caret != null) {
+          el.focus();
+          el.setSelectionRange(caret, caret);
+        }
+      }
+      syncHasPrompt(text);
+    },
+    [threadId, syncHasPrompt],
+  );
+  const readDraft = useCallback(
+    () => textareaRef.current?.value ?? draftsRef.current[threadId] ?? "",
     [threadId],
   );
   /**
-   * Pending attachments keyed by thread, mirroring draftByThread: chips must
+   * Pending attachments keyed by thread, mirroring draftsRef: chips must
    * not leak across a thread switch. Cleared together with the draft on a
    * successful action.
    */
@@ -418,12 +448,9 @@ export function Composer({
   const [mention, setMention] = useState<MentionQuery | null>(null);
   const [mentionFiles, setMentionFiles] = useState<string[]>([]);
   const [mentionIndex, setMentionIndex] = useState(0);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const mentionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Stale-response guard: only the latest lookup may paint the popup. */
   const mentionSeq = useRef(0);
-  /** Caret to restore after a mention insert re-renders the textarea. */
-  const pendingCaret = useRef<number | null>(null);
   const mentionOpen = mention != null && mentionFiles.length > 0;
 
   /** `/` command popup: `command` null means closed. */
@@ -467,19 +494,13 @@ export function Composer({
     (cmd: SlashCommand) => {
       if (cmd.kind === "insert") {
         const inserted = `${cmd.name} `;
-        const el = textareaRef.current;
-        if (el) el.value = inserted;
-        pendingCaret.current = inserted.length;
-        setValue(inserted);
+        writeDraft(inserted, inserted.length);
         closeCommand();
         return;
       }
       // Run verbs must not remain in the draft: sending `/compact` as a
       // prompt is the bug this palette exists to stop.
-      const el = textareaRef.current;
-      if (el) el.value = "";
-      pendingCaret.current = 0;
-      setValue("");
+      writeDraft("", 0);
       closeCommand();
       const action = cmd.action;
       if (!action) return;
@@ -502,22 +523,23 @@ export function Composer({
       }
       onSlashAction?.(action);
     },
-    [setValue, closeCommand, disabled, busy, onModelPickerOpen, onSlashAction],
+    [writeDraft, closeCommand, disabled, busy, onModelPickerOpen, onSlashAction],
   );
 
   useEffect(() => {
     commandDismissed.current = false;
     lastEscAt.current = 0;
-  }, [threadId]);
+    syncHasPrompt(draftsRef.current[threadId] ?? "");
+  }, [threadId, syncHasPrompt]);
 
   const closeMention = useCallback(() => {
-    setMention(null);
-    setMentionFiles([]);
-    setMentionIndex(0);
     if (mentionTimer.current) {
       clearTimeout(mentionTimer.current);
       mentionTimer.current = null;
     }
+    setMention((prev) => (prev == null ? prev : null));
+    setMentionFiles((prev) => (prev.length === 0 ? prev : []));
+    setMentionIndex((prev) => (prev === 0 ? prev : 0));
   }, []);
 
   /** Recompute the active @token from the live textarea and (re)fetch files. */
@@ -532,7 +554,9 @@ export function Composer({
       closeMention();
       return;
     }
-    setMention(q);
+    setMention((prev) =>
+      prev && prev.start === q.start && prev.query === q.query ? prev : q,
+    );
     if (mentionTimer.current) clearTimeout(mentionTimer.current);
     const seq = ++mentionSeq.current;
     mentionTimer.current = setTimeout(() => {
@@ -559,11 +583,10 @@ export function Composer({
         mention.start,
         path,
       );
-      pendingCaret.current = next.caret;
-      setValue(next.text);
+      writeDraft(next.text, next.caret);
       closeMention();
     },
-    [mention, closeMention],
+    [mention, closeMention, writeDraft],
   );
 
   /**
@@ -587,18 +610,6 @@ export function Composer({
     el.setSelectionRange(el.value.length, el.value.length);
   }, [threadId, disabled, sending]);
 
-  // Restore the caret after an accepted mention re-renders the textarea.
-  useEffect(() => {
-    if (pendingCaret.current != null && textareaRef.current) {
-      textareaRef.current.focus();
-      textareaRef.current.setSelectionRange(
-        pendingCaret.current,
-        pendingCaret.current,
-      );
-      pendingCaret.current = null;
-    }
-  }, [value]);
-
   // Dead ids (deleted templates) fall through like no stored selection.
   const storedTemplateId = templateByThread[threadId];
   const storedStillExists =
@@ -610,7 +621,6 @@ export function Composer({
       ? DEFAULT_TEMPLATE_ID
       : (workflows[0]?.id ?? DEFAULT_TEMPLATE_ID);
 
-  const hasPrompt = value.trim().length > 0;
   const canSend = !disabled && !sending && hasPrompt;
   /**
    * Everything that cannot be queued (workflow start, model, permission mode)
@@ -855,13 +865,13 @@ export function Composer({
     action: (prompt: string) => void | Promise<void>,
     failLabel: string,
   ) => {
-    if (!hasPrompt || disabled || sending) return;
-    const prompt = value.trim();
+    const prompt = readDraft().trim();
+    if (!prompt || disabled || sending) return;
     setSending(true);
     setLocalError(null);
     try {
       await action(prompt);
-      setValue("");
+      writeDraft("");
       clearAttachments();
       closeMention();
       closeCommand();
@@ -1337,14 +1347,19 @@ export function Composer({
           </div>
         )}
         <textarea
+          key={threadId}
           ref={textareaRef}
           className={styles.textarea}
           placeholder={placeholder}
           rows={3}
-          value={value}
+          defaultValue={draftsRef.current[threadId] ?? ""}
+          spellCheck={false}
+          autoComplete="off"
+          autoCorrect="off"
+          autoCapitalize="off"
           onChange={(e) => {
             commandDismissed.current = false;
-            setValue(e.target.value);
+            rememberDraft(e.target.value);
             refreshMention();
             refreshCommand();
           }}
@@ -2177,4 +2192,4 @@ export function Composer({
       />
     </div>
   );
-}
+});

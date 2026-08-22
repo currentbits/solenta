@@ -79,6 +79,8 @@
   color: var(--text);
   line-height: 1.5;
   min-height: 64px;
+  max-height: 12lh;
+  overflow-y: auto;
   field-sizing: content;
 }
 

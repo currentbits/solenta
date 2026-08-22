@@ -39,6 +39,7 @@ import {
 } from "./repeatThread";
 import { sameTaskPeers, toComparePeer } from "./divergence";
 import type {
+  AgentProfile,
   ConflictForecast,
   DistilledWorkflow,
   ProjectUpdateInput,
@@ -47,6 +48,7 @@ import type {
 import styles from "./App.module.css";
 
 const EMPTY_FORECAST: ConflictForecast = { pairs: [], computedAt: 0 };
+const EMPTY_AGENT_PROFILES: AgentProfile[] = [];
 
 export type AppView =
   | "thread"
@@ -1238,7 +1240,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onRetryDetail={retryDetail}
         project={project}
         providers={providers}
-        agentProfiles={settings?.agentProfiles ?? []}
+        agentProfiles={settings?.agentProfiles ?? EMPTY_AGENT_PROFILES}
         workflows={workflows}
         hasProjects={projects.length > 0}
         onAddProject={handleAddProject}
