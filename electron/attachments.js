@@ -93,7 +93,8 @@ async function pickAttachments(dialog) {
 /**
  * Persist a pasted image beside the store (same reasoning as tool-images:
  * the store is one JSON file rewritten in full on every event). Filenames
- * are timestamped + random; nothing here is pruned.
+ * are timestamped + random. image-store.js prunes archived/deleted thread
+ * dirs and enforces a global size cap (issue #145).
  * @param {string} userDataPath
  * @param {unknown} threadId
  * @param {unknown} dataUrl
@@ -125,21 +126,36 @@ function saveImage(userDataPath, threadId, dataUrl) {
 }
 
 /**
- * Read an attached image back as a data URL (the CSP allows data:, not
- * file:). `filePath` is an arbitrary absolute path by design: the user picks
- * images anywhere on disk. Refuses non-image extensions and huge files.
+ * Stat + type/size gate for an attached image. `filePath` is an arbitrary
+ * absolute path by design: the user picks images anywhere on disk.
  * @param {unknown} filePath
- * @returns {string | null}
+ * @returns {Promise<{ path: string, mediaType: string, size: number } | null>}
  */
-function readImage(filePath) {
+async function resolveImageFile(filePath) {
   const p = String(filePath || "");
   const mediaType = MEDIA_BY_EXT[path.extname(p).slice(1).toLowerCase()];
   if (!p || !path.isAbsolute(p) || !mediaType) return null;
   try {
-    const st = fs.statSync(p);
+    const st = await fs.promises.stat(p);
     if (!st.isFile() || st.size > MAX_IMAGE_BYTES) return null;
-    const buf = fs.readFileSync(p);
-    return `data:${mediaType};base64,${buf.toString("base64")}`;
+    return { path: p, mediaType, size: st.size };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Read an attached image back as a data URL. Used by the web bridge (no
+ * custom protocol). Desktop IPC returns a solenta-media:// URL instead.
+ * @param {unknown} filePath
+ * @returns {Promise<string | null>}
+ */
+async function readImage(filePath) {
+  const resolved = await resolveImageFile(filePath);
+  if (!resolved) return null;
+  try {
+    const buf = await fs.promises.readFile(resolved.path);
+    return `data:${resolved.mediaType};base64,${buf.toString("base64")}`;
   } catch {
     return null;
   }
@@ -150,6 +166,7 @@ module.exports = {
   pickAttachments,
   saveImage,
   readImage,
+  resolveImageFile,
   IMAGE_EXTS,
   MAX_IMAGE_BYTES,
   DIR_NAME,

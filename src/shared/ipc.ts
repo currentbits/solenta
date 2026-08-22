@@ -910,7 +910,8 @@ export interface ToolCallInfo {
   done: boolean;
   /**
    * Filenames of images the tool returned (screenshots, Read of a PNG), kept
-   * under userData/tool-images. Load one with files.image({ name }).
+   * under userData/tool-images. Scoped names are `threadId/file.png`; older
+   * builds stored a bare basename. Load one with files.image({ name }).
    */
   images?: string[];
 }
@@ -2958,8 +2959,9 @@ export interface CoderApi {
      */
     list(input: { threadId: string; query?: string }): Promise<{ files: string[] }>;
     /**
-     * One image a tool produced, as a data URL (ToolCallInfo.images holds the
-     * names). null when the file is gone or the name is not an image.
+     * One image a tool produced. Desktop replies with a solenta-media:// URL
+     * (no base64 on the main thread); web replies with a data URL. null when
+     * the file is gone or the name is not an image.
      */
     image(input: { name: string }): Promise<{ dataUrl: string | null }>;
     /**
@@ -3005,8 +3007,9 @@ export interface CoderApi {
       dataUrl: string;
     }): Promise<{ attachment: AttachmentInfo | null }>;
     /**
-     * One attached image as a data URL (the CSP allows data:, not file:).
-     * null when the path is missing, not an image, or too large.
+     * One attached image as an img src. Desktop replies with a solenta-media://
+     * URL; web replies with a data URL. null when the path is missing, not an
+     * image, or too large.
      */
     readImage(input: { path: string }): Promise<{ dataUrl: string | null }>;
     /**

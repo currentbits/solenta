@@ -1655,7 +1655,7 @@ describe("runner claude provider", () => {
     assert.equal(fs.readFileSync(file).toString("base64"), PNG_B64);
     const { readToolImage } = require("../tool-images.js");
     assert.equal(
-      readToolImage(tmpDir, tool.tool.images[0]),
+      await readToolImage(tmpDir, tool.tool.images[0]),
       `data:image/png;base64,${PNG_B64}`,
     );
   });

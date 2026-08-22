@@ -7,6 +7,8 @@ const {
   extractImages,
   saveToolImages,
   readToolImage,
+  resolveToolImagePath,
+  toolImageExists,
 } = require("../tool-images.js");
 const { flattenContent } = require("../claude.js");
 
@@ -47,16 +49,37 @@ describe("tool images", () => {
     assert.ok(!text.includes(PNG_B64));
   });
 
-  it("round-trips through disk as a data URL", () => {
-    const [name] = saveToolImages(dir, extractImages(IMAGE_RESULT));
-    assert.match(name, /\.png$/);
+  it("round-trips a scoped save through disk as a data URL", async () => {
+    const [name] = saveToolImages(dir, extractImages(IMAGE_RESULT), "thread-1");
+    assert.match(name, /^thread-1\/[0-9a-f-]+\.png$/);
     assert.ok(fs.existsSync(path.join(dir, "tool-images", name)));
-    assert.equal(readToolImage(dir, name), `data:image/png;base64,${PNG_B64}`);
+    assert.equal(
+      await readToolImage(dir, name),
+      `data:image/png;base64,${PNG_B64}`,
+    );
+    assert.equal(await toolImageExists(dir, name), true);
   });
 
-  it("refuses traversal and non-image names", () => {
-    assert.equal(readToolImage(dir, "../../etc/passwd"), null);
-    assert.equal(readToolImage(dir, "notes.txt"), null);
-    assert.equal(readToolImage(dir, ""), null);
+  it("still writes a flat file when threadId is missing (legacy)", async () => {
+    const [name] = saveToolImages(dir, extractImages(IMAGE_RESULT));
+    assert.match(name, /^[0-9a-f-]+\.png$/);
+    assert.ok(!name.includes("/"));
+    assert.ok(fs.existsSync(path.join(dir, "tool-images", name)));
+    assert.equal(
+      await readToolImage(dir, name),
+      `data:image/png;base64,${PNG_B64}`,
+    );
+  });
+
+  it("refuses traversal and non-image names", async () => {
+    assert.equal(resolveToolImagePath(dir, "../../etc/passwd"), null);
+    assert.equal(resolveToolImagePath(dir, "tid/../../etc/passwd.png"), null);
+    assert.equal(resolveToolImagePath(dir, "../uuid.png"), null);
+    assert.equal(resolveToolImagePath(dir, "notes.txt"), null);
+    assert.equal(resolveToolImagePath(dir, ""), null);
+    assert.equal(await readToolImage(dir, "../../etc/passwd"), null);
+    assert.equal(await readToolImage(dir, "notes.txt"), null);
+    assert.equal(await readToolImage(dir, ""), null);
+    assert.equal(await toolImageExists(dir, "../../etc/passwd"), false);
   });
 });
