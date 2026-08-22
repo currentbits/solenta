@@ -67,6 +67,9 @@ afterEach(() => {
       "sidebar:projectScope",
       "sidebar:snoozedOpen",
       "sidebar:settledOpen",
+      "sidebar:statusFilter",
+      "sidebar:providerFilter",
+      "sidebar:groupBy",
       "coder.sidebar.collapsedGroups",
       "coder.sidebar.settledCollapsed",
     ]) {
@@ -148,6 +151,7 @@ function sidebar(
     revealThreadId?: string | null;
     onRevealHandled?: () => void;
     updateState?: UpdateStatus["state"] | null;
+    searchThreads?: (input: { query: string }) => Promise<ThreadInfo[]>;
   } = {},
 ) {
   const projects = over.projects ?? [p1];
@@ -180,8 +184,10 @@ function sidebar(
       revealThreadId={over.revealThreadId ?? null}
       onRevealHandled={over.onRevealHandled}
       updateState={over.updateState}
-      searchThreads={async ({ query }) =>
-        threads.filter((t) => t.title.includes(query))
+      searchThreads={
+        over.searchThreads ??
+        (async ({ query }) =>
+          threads.filter((t) => t.title.includes(query)))
       }
     />
   );
@@ -793,7 +799,7 @@ describe("Sidebar project scope", () => {
     m2.unmount();
   });
 
-  it("search ignores scope and surfaces settled hits while the shelf is collapsed", async () => {
+  it("search ANDs with project scope (#553)", async () => {
     await clearSidebarStorage();
     const m = await mount(sidebar(THREADS, { projects: [p1, p2] }));
     await openScopeMenu(m);
@@ -808,10 +814,30 @@ describe("Sidebar project scope", () => {
     await m.flush();
     assert.deepEqual(
       cardTitles(m),
-      ["merged-p1"],
-      "search searches all projects and bypasses the collapsed settled shelf",
+      [],
+      "a p1 hit is dropped while scoped to p2",
     );
-    const hit = m.query('[data-thread-card="merged-p1"]');
+    m.unmount();
+  });
+
+  it("search still surfaces settled hits in the scoped project while the shelf is collapsed", async () => {
+    await clearSidebarStorage();
+    const m = await mount(sidebar(THREADS, { projects: [p1, p2] }));
+    await openScopeMenu(m);
+    await m.click(m.query('[data-scope-item="p2"]')!);
+    await m.flush();
+
+    await m.type(searchInput(m), "merged billing");
+    await inAct(async () => {
+      await new Promise((r) => setTimeout(r, 350));
+    });
+    await m.flush();
+    assert.deepEqual(
+      cardTitles(m),
+      ["merged-p2"],
+      "search bypasses the collapsed settled shelf inside the scoped project",
+    );
+    const hit = m.query('[data-thread-card="merged-p2"]');
     assert.ok(hit);
     assert.ok(
       hit!.querySelector("[data-card-slug]"),
@@ -2258,5 +2284,224 @@ describe("threads:changed does not rebuild unchanged cards (#617)", () => {
     } finally {
       probe.restore();
     }
+  });
+});
+
+describe("Sidebar filters (#553)", () => {
+  const moreProviders: ProviderInfo[] = [
+    ...providers,
+    {
+      id: "codex",
+      name: "Codex",
+      available: true,
+      supportsResume: true,
+      models: [],
+      modelInfo: [],
+      efforts: [],
+    },
+  ];
+
+  const filterThreadsList: ThreadInfo[] = [
+    ...THREADS,
+    thread({
+      id: "waiting-you",
+      title: "needs input",
+      status: "working",
+      awaitingInput: true,
+      runStartedAt: FRESH,
+      createdAt: FRESH + 60,
+      updatedAt: FRESH + 60,
+      projectId: "p1",
+    }),
+    thread({
+      id: "codex-idle",
+      title: "codex idle",
+      status: "idle",
+      provider: "codex",
+      createdAt: FRESH + 5,
+      updatedAt: FRESH + 5,
+      projectId: "p1",
+    }),
+    thread({
+      id: "archived-old",
+      title: "archived old",
+      status: "idle",
+      archived: true,
+      createdAt: FRESH - DAY_MS,
+      updatedAt: FRESH - DAY_MS,
+      projectId: "p1",
+    }),
+  ];
+
+  async function openStatusMenu(
+    m: Awaited<ReturnType<typeof mount>>,
+  ): Promise<void> {
+    if (!m.query("[data-status-filter-menu]")) {
+      const btn = m.query("[data-status-filter-trigger]");
+      assert.ok(btn, "status filter trigger");
+      await m.click(btn);
+      await m.flush();
+    }
+  }
+
+  async function openProviderMenu(
+    m: Awaited<ReturnType<typeof mount>>,
+  ): Promise<void> {
+    if (!m.query("[data-provider-filter-menu]")) {
+      const btn = m.query("[data-provider-filter-trigger]");
+      assert.ok(btn, "provider filter trigger");
+      await m.click(btn);
+      await m.flush();
+    }
+  }
+
+  async function openGroupMenu(
+    m: Awaited<ReturnType<typeof mount>>,
+  ): Promise<void> {
+    if (!m.query("[data-group-by-menu]")) {
+      const btn = m.query("[data-group-by-trigger]");
+      assert.ok(btn, "group-by trigger");
+      await m.click(btn);
+      await m.flush();
+    }
+  }
+
+  it("filters to waiting-on-you and keeps the open thread visible", async () => {
+    await clearSidebarStorage();
+    const m = await mount(
+      sidebar(filterThreadsList, {
+        projects: [p1, p2],
+        activeThreadId: "billing-idle",
+      }),
+    );
+    await openStatusMenu(m);
+    await m.click(m.query('[data-status-filter="waiting"]')!);
+    await m.flush();
+    const ids = cardTitles(m);
+    assert.ok(ids.includes("waiting-you"));
+    assert.ok(ids.includes("billing-idle"), "#70 carve-out keeps the open thread");
+    assert.ok(!ids.includes("busy"));
+    assert.ok(!ids.includes("broken"));
+    m.unmount();
+  });
+
+  it("filters to failed and persists the status", async () => {
+    await clearSidebarStorage();
+    const m1 = await mount(
+      sidebar(filterThreadsList, { projects: [p1, p2] }),
+    );
+    await openStatusMenu(m1);
+    await m1.click(m1.query('[data-status-filter="failed"]')!);
+    await m1.flush();
+    assert.deepEqual(cardTitles(m1), ["broken"]);
+    m1.unmount();
+
+    const m2 = await mount(
+      sidebar(filterThreadsList, { projects: [p1, p2] }),
+    );
+    assert.match(
+      m2.query("[data-status-filter-trigger]")!.textContent || "",
+      /Failed/,
+    );
+    assert.deepEqual(cardTitles(m2), ["broken"]);
+    m2.unmount();
+  });
+
+  it("provider chips are multi-select and AND with status", async () => {
+    await clearSidebarStorage();
+    const m = await mount(
+      sidebar(filterThreadsList, {
+        projects: [p1, p2],
+        providers: moreProviders,
+      }),
+    );
+    await openProviderMenu(m);
+    assert.ok(m.query('[data-provider-filter="claude"]'));
+    await m.click(m.query('[data-provider-filter="codex"]')!);
+    await m.flush();
+    const afterProvider = cardTitles(m);
+    assert.ok(afterProvider.includes("codex-idle"));
+    assert.ok(!afterProvider.includes("busy"));
+    await openStatusMenu(m);
+    await m.click(m.query('[data-status-filter="idle"]')!);
+    await m.flush();
+    assert.ok(cardTitles(m).includes("codex-idle"));
+    assert.ok(!cardTitles(m).includes("busy"));
+    m.unmount();
+  });
+
+  it("archived status expands the settled shelf", async () => {
+    await clearSidebarStorage();
+    const m = await mount(
+      sidebar(filterThreadsList, { projects: [p1, p2] }),
+    );
+    assert.equal(m.query('[data-thread-card="archived-old"]'), null);
+    await openStatusMenu(m);
+    await m.click(m.query('[data-status-filter="archived"]')!);
+    await m.flush();
+    assert.ok(m.query('[data-thread-card="archived-old"]'));
+    assert.equal(
+      settledToggle(m).getAttribute("aria-expanded"),
+      "true",
+    );
+    m.unmount();
+  });
+
+  it("group by project restores per-project headers", async () => {
+    await clearSidebarStorage();
+    const m = await mount(sidebar(THREADS, { projects: [p1, p2] }));
+    assert.equal(m.query("[data-filter-group]"), null);
+    await openGroupMenu(m);
+    await m.click(m.query('[data-group-by="project"]')!);
+    await m.flush();
+    assert.ok(m.query('[data-filter-group="p1"]'));
+    assert.ok(m.query('[data-filter-group="p2"]'));
+    assert.equal(m.query("[data-group-chevron]"), null, "retired selector stays gone");
+    assert.equal(m.query("[data-pinned-divider]"), null);
+    m.unmount();
+  });
+
+  it("group by status sections the active list", async () => {
+    await clearSidebarStorage();
+    const m = await mount(
+      sidebar(filterThreadsList, { projects: [p1, p2] }),
+    );
+    await openGroupMenu(m);
+    await m.click(m.query('[data-group-by="status"]')!);
+    await m.flush();
+    assert.ok(m.query('[data-filter-group="running"]'));
+    assert.ok(m.query('[data-filter-group="waiting"]'));
+    assert.ok(m.query('[data-filter-group="failed"]'));
+    assert.ok(m.query('[data-filter-group="idle"]'));
+    m.unmount();
+  });
+
+  it("search ANDs with status without a second message scan", async () => {
+    await clearSidebarStorage();
+    let calls = 0;
+    const m = await mount(
+      sidebar(filterThreadsList, {
+        projects: [p1, p2],
+        searchThreads: async ({ query }) => {
+          calls += 1;
+          return filterThreadsList.filter((t) => t.title.includes(query));
+        },
+      }),
+    );
+    await m.type(searchInput(m), "work");
+    await inAct(async () => {
+      await new Promise((r) => setTimeout(r, 350));
+    });
+    await m.flush();
+    const afterSearch = calls;
+    assert.ok(afterSearch >= 1, "search ran");
+    assert.ok(cardTitles(m).includes("busy"));
+    assert.ok(cardTitles(m).includes("broken"));
+    await openStatusMenu(m);
+    await m.click(m.query('[data-status-filter="failed"]')!);
+    await m.flush();
+    assert.equal(calls, afterSearch, "status filter does not re-scan messages");
+    assert.deepEqual(cardTitles(m), ["broken"]);
+    m.unmount();
   });
 });

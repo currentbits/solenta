@@ -186,6 +186,127 @@
   color: var(--text);
 }
 
+.filterRow {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin: 0 8px 6px;
+  flex-shrink: 0;
+}
+
+.filterMenuHost {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+}
+
+.filterTrigger {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  text-align: left;
+}
+
+.filterTrigger:hover {
+  background: var(--card-hover);
+  color: var(--text);
+}
+
+.filterTrigger[data-active="true"] {
+  color: var(--blue);
+}
+
+.filterTriggerLabel {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.filterMenu {
+  min-width: 168px;
+}
+
+.filterChipRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px;
+}
+
+.filterChip {
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border-soft);
+  background: transparent;
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.filterChip:hover {
+  background: var(--card-hover);
+}
+
+.filterChip[data-on="true"] {
+  background: var(--blue-soft);
+  color: var(--blue);
+  border-color: color-mix(in srgb, var(--blue) 35%, transparent);
+}
+
+.filterCheck {
+  flex-shrink: 0;
+  color: var(--blue);
+}
+
+.filterGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.filterGroupHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 8px 2px;
+  min-width: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+}
+
+.filterGroupHeader:first-child {
+  margin-top: 0;
+}
+
+.filterGroupTitle {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.filterGroupCount {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  color: var(--text-dim);
+}
+
 .viewNav {
   display: flex;
   align-items: center;
@@ -1270,6 +1391,7 @@
   .iconBtn:active:not(:disabled),
   .viewNavBtn:active,
   .scopeTrigger:active,
+  .filterTrigger:active,
   .caretBtn:active,
   .batchBtn:active {
     transform: scale(0.97);
