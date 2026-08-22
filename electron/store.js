@@ -454,6 +454,7 @@ function normalizeSettings(raw) {
     agentProfiles: [],
     subagentPool: { defaultAlias: null, force: false, entries: [] },
     otel: { endpoint: null, headers: {}, claudeMetrics: false },
+    linearApiKey: null,
   };
   if (!raw || typeof raw !== "object") return settings;
   const obj = /** @type {{ dailyBudgetUsd?: unknown, orchestrationBudgetUsd?: unknown, autoSettleAfterDays?: unknown, mcpServers?: unknown }} */ (
@@ -545,6 +546,12 @@ function normalizeSettings(raw) {
     /** @type {{ autoSettleOnMerge?: unknown }} */ (obj).autoSettleOnMerge !==
     false;
   settings.otel = normalizeOtel(/** @type {{ otel?: unknown }} */ (obj).otel);
+  const linearKey = /** @type {{ linearApiKey?: unknown }} */ (obj).linearApiKey;
+  if (typeof linearKey === "string" && linearKey.trim()) {
+    settings.linearApiKey = linearKey.trim();
+  } else {
+    settings.linearApiKey = null;
+  }
   return settings;
 }
 
@@ -2063,6 +2070,7 @@ class Store {
       agentProfiles: n.agentProfiles,
       subagentPool: n.subagentPool,
       otel: n.otel,
+      linearApiKey: n.linearApiKey,
     };
   }
 
@@ -2238,6 +2246,17 @@ class Store {
         throw new Error("quotaWaitAutoResume must be a boolean");
       }
       this.data.settings.quotaWaitAutoResume = v;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "linearApiKey")) {
+      const v = patch.linearApiKey;
+      if (v === null || v === "") {
+        this.data.settings.linearApiKey = null;
+      } else if (typeof v === "string") {
+        const t = v.trim();
+        this.data.settings.linearApiKey = t || null;
+      } else {
+        throw new Error("linearApiKey must be a string or null");
+      }
     }
     return this.getSettings();
   }

@@ -2167,10 +2167,10 @@ export const Sidebar = memo(function Sidebar({
                       className={styles.menuItem}
                       role="menuitem"
                       data-create-from-issue={createProjectId}
-                      title="New thread from a GitHub issue"
+                      title="New thread from a GitHub or Linear issue"
                       onClick={() => openIssueForm(createProjectId)}
                     >
-                      From GitHub issue
+                      From issue
                     </button>
                   )}
                 </div>
@@ -2548,8 +2548,8 @@ export const Sidebar = memo(function Sidebar({
             type="text"
             value={issueRef}
             onChange={(e) => setIssueRef(e.target.value)}
-            placeholder="https://github.com/owner/repo/issues/123"
-            aria-label="GitHub issue URL or reference"
+            placeholder="GitHub URL, Linear URL, or ENG-123"
+            aria-label="GitHub or Linear issue URL or reference"
             data-issue-input={issueProject.id}
             disabled={issuePending}
             autoComplete="off"

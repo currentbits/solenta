@@ -36,6 +36,7 @@ function installIssuesMock(impl) {
     listIssues: async () => ({ ok: true, issues: [] }),
     fetchIssue: async () => ({ ok: false, reason: "unmocked" }),
     setPlanStatus: async () => ({ ok: true }),
+    issueStartPrompt: realIssues.issueStartPrompt,
     ...impl,
   };
 }
