@@ -57,12 +57,63 @@
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
   height: 56px;
+}
+
+.tabList {
+  display: flex;
+  align-items: stretch;
+  flex: 1;
+  min-width: 0;
   overflow-x: auto;
   scrollbar-width: none;
 }
 
-.tabs::-webkit-scrollbar {
+.tabList::-webkit-scrollbar {
   display: none;
+}
+
+.collapseBtn {
+  align-self: center;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  margin-left: 4px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease,
+    transform 0.16s cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.collapseBtn:hover {
+  color: var(--text);
+  background: var(--card-hover);
+}
+
+.collapseBtn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.collapseBtn:active {
+  transform: scale(0.97);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .collapseBtn {
+    transition: none;
+  }
+  .collapseBtn:active {
+    transform: none;
+  }
 }
 
 .tab {

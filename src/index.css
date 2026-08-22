@@ -31,6 +31,7 @@
   --radius-pill: 999px;
   --sidebar-width: 300px;
   --agents-width: 380px;
+  --agents-rail-width: 32px;
   --font: "Inter", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI",
     system-ui, sans-serif;
   --mono: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;

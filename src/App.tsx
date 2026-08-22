@@ -78,11 +78,12 @@ function useNarrow(): boolean {
   return useSyncExternalStore(subscribeNarrow, getNarrow, () => false);
 }
 
-const AGENTS_COLLAPSED_KEY = "coder.agentsCollapsed";
+const AGENTS_COLLAPSED_KEY = "coder.agents.collapsed";
 
 function loadAgentsCollapsed(): boolean {
   try {
-    return window.localStorage.getItem(AGENTS_COLLAPSED_KEY) === "1";
+    const raw = window.localStorage.getItem(AGENTS_COLLAPSED_KEY);
+    return raw === "1" || raw === "true";
   } catch {
     return false;
   }
@@ -92,8 +93,15 @@ function saveAgentsCollapsed(value: boolean): void {
   try {
     window.localStorage.setItem(AGENTS_COLLAPSED_KEY, value ? "1" : "0");
   } catch {
-    // Quota/private mode: the pref just stops persisting.
+    // Quota/private mode: UI state just stops persisting.
   }
+}
+
+function dialogOpen(): boolean {
+  return (
+    typeof document !== "undefined" &&
+    document.querySelector('[role="dialog"]') != null
+  );
 }
 
 type AppProps = {
@@ -281,23 +289,18 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   /** Freshly created thread the Sidebar should reveal (expand/scroll/flash). */
   const [revealThreadId, setRevealThreadId] = useState<string | null>(null);
   const [drawer, setDrawer] = useState<DrawerId | null>(null);
+  const [agentsCollapsed, setAgentsCollapsed] = useState(loadAgentsCollapsed);
   const [forecast, setForecast] = useState<ConflictForecast>(EMPTY_FORECAST);
   const narrow = useNarrow();
   const [agentsCollapsed, setAgentsCollapsed] = useState(loadAgentsCollapsed);
-  const toggleAgentsCollapsed = useCallback(() => {
-    setAgentsCollapsed((v) => {
-      saveAgentsCollapsed(!v);
-      return !v;
-    });
-  }, []);
-  // Narrow layout already hides the panel behind a drawer; the rail would
-  // just eat the drawer.
-  const agentsRail = agentsCollapsed && !narrow;
   const sidebarPaneRef = useRef<HTMLDivElement>(null);
   const agentsPaneRef = useRef<HTMLDivElement>(null);
   const threadsBtnRef = useRef<HTMLButtonElement>(null);
   const agentsBtnRef = useRef<HTMLButtonElement>(null);
+  const agentsExpandRef = useRef<HTMLButtonElement>(null);
   const lastDrawerRef = useRef<DrawerId | null>(null);
+  const collapseSourceRef = useRef<"user" | null>(null);
+  const hideAgentsRail = agentsCollapsed && !narrow;
 
   const handleSelectThread = useCallback(
     (id: string) => {
@@ -729,6 +732,38 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     return () => window.removeEventListener("keydown", onKey);
   }, [drawer]);
 
+  useEffect(() => {
+    saveAgentsCollapsed(agentsCollapsed);
+  }, [agentsCollapsed]);
+
+  const collapseAgents = useCallback(() => {
+    collapseSourceRef.current = "user";
+    setAgentsCollapsed(true);
+  }, []);
+
+  useEffect(() => {
+    if (collapseSourceRef.current !== "user") return;
+    collapseSourceRef.current = null;
+    if (agentsCollapsed && !narrow) agentsExpandRef.current?.focus();
+  }, [agentsCollapsed, narrow]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.key !== ".") return;
+      if (e.altKey || e.shiftKey) return;
+      if (dialogOpen()) return;
+      e.preventDefault();
+      if (narrow) {
+        setDrawer((d) => (d === "agents" ? null : "agents"));
+        return;
+      }
+      collapseSourceRef.current = "user";
+      setAgentsCollapsed((c) => !c);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [narrow]);
+
   // ponytail: restore to the trigger, not a focus trap. Tab can leave the pane.
   useEffect(() => {
     if (drawer) {
@@ -1002,7 +1037,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         className={styles.app}
         data-layout="app"
         data-drawer={drawer ?? ""}
-        data-agents-rail={agentsRail ? "true" : ""}
+        data-agents-collapsed={hideAgentsRail ? "true" : undefined}
       >
         <div className={styles.narrowBar} data-narrow-chrome="">
           <button
@@ -1310,10 +1345,38 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           tabIndex={-1}
           inert={narrow && drawer !== "agents"}
         >
+          {hideAgentsRail ? (
+            <div className={styles.agentsRail}>
+              <button
+                ref={agentsExpandRef}
+                type="button"
+                className={styles.agentsToggle}
+                data-agents-expand=""
+                aria-expanded="false"
+                aria-controls="pane-agents"
+                title="Show agents panel (⌘.)"
+                aria-label="Show agents panel"
+                onClick={() => setAgentsCollapsed(false)}
+              >
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M9.5 3.5 5 8l4.5 4.5" />
+                </svg>
+              </button>
+            </div>
+          ) : (
           <ErrorBoundary pane="Agents panel">
             <AgentsPanel
-        collapsed={agentsRail}
-        onToggleCollapsed={toggleAgentsCollapsed}
+        onCollapse={narrow ? undefined : collapseAgents}
         workflow={visibleDetail?.workflow ?? null}
         thread={visibleDetail?.thread ?? null}
         usage={visibleDetail?.usage ?? null}
@@ -1367,6 +1430,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onFork={handleForkOpen}
           />
           </ErrorBoundary>
+          )}
         </div>
         <WorkflowsModal
           open={workflowsOpen}

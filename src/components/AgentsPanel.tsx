@@ -96,9 +96,6 @@ const LABEL_ICON_PROPS = {
 } as const;
 
 interface AgentsPanelProps {
-  /** Wide layout only: render the thin reopen rail instead of the panel. */
-  collapsed?: boolean;
-  onToggleCollapsed?: () => void;
   workflow: WorkflowView | null;
   thread: ThreadInfo | null;
   usage: SessionUsage | null;
@@ -199,6 +196,8 @@ interface AgentsPanelProps {
   onFork?: (
     opts?: { provider?: string; model?: string | null },
   ) => void | Promise<void | ThreadInfo | null>;
+  /** Wide-window Hide control. Absent on the narrow drawer (issue #645). */
+  onCollapse?: () => void;
 }
 
 type PhaseChipStatus = "done" | "active" | "pending" | "failed";
@@ -2941,8 +2940,6 @@ function PulseTab({
  * reason — the array's identity churns, the key only moves on a real change.
  */
 export const AgentsPanel = memo(function AgentsPanel({
-  collapsed = false,
-  onToggleCollapsed,
   workflow,
   thread,
   usage,
@@ -2994,6 +2991,7 @@ export const AgentsPanel = memo(function AgentsPanel({
   onOpenInsights,
   onOpenDigest,
   onFork,
+  onCollapse,
 }: AgentsPanelProps) {
   const [tab, setTab] = useState<PanelTab>(() =>
     isPulseView(activeView) ? "pulse" : "git",
@@ -3004,81 +3002,78 @@ export const AgentsPanel = memo(function AgentsPanel({
     else if (activeView === "prs") setTab("git");
   }, [activeView]);
 
-  if (collapsed) {
-    return (
-      <aside className={styles.rail} data-panel-collapsed="true">
-        <button
-          type="button"
-          className={styles.collapseBtn}
-          data-panel-collapse="expand"
-          aria-expanded={false}
-          aria-label="Show side panel"
-          title="Show side panel"
-          onClick={onToggleCollapsed}
-        >
-          ‹
-        </button>
-      </aside>
-    );
-  }
-
   return (
     <aside className={styles.panel}>
       <header className={styles.tabs}>
-        {onToggleCollapsed && (
+        <div className={styles.tabList}>
+          <button
+            type="button"
+            className={styles.tab}
+            data-active={tab === "git"}
+            onClick={() => setTab("git")}
+          >
+            Environment
+          </button>
+          <button
+            type="button"
+            className={styles.tab}
+            data-active={tab === "agents"}
+            onClick={() => setTab("agents")}
+          >
+            Agents
+          </button>
+          <button
+            type="button"
+            className={styles.tab}
+            data-active={tab === "memory"}
+            onClick={() => setTab("memory")}
+          >
+            Memory
+          </button>
+          <button
+            type="button"
+            className={styles.tab}
+            data-active={tab === "skills"}
+            onClick={() => setTab("skills")}
+          >
+            Skills
+          </button>
+          <button
+            type="button"
+            className={styles.tab}
+            data-panel-tab="pulse"
+            data-active={tab === "pulse"}
+            onClick={() => setTab("pulse")}
+          >
+            Pulse
+          </button>
+        </div>
+        {onCollapse ? (
           <button
             type="button"
             className={styles.collapseBtn}
-            data-panel-collapse="collapse"
-            aria-expanded
-            aria-label="Hide side panel"
-            title="Hide side panel"
-            onClick={onToggleCollapsed}
+            data-agents-collapse=""
+            aria-expanded="true"
+            aria-controls="pane-agents"
+            title="Hide agents panel (⌘.)"
+            aria-label="Hide agents panel"
+            onClick={onCollapse}
           >
-            ›
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M6.5 3.5 11 8 6.5 12.5" />
+            </svg>
           </button>
-        )}
-        <button
-          type="button"
-          className={styles.tab}
-          data-active={tab === "git"}
-          onClick={() => setTab("git")}
-        >
-          Environment
-        </button>
-        <button
-          type="button"
-          className={styles.tab}
-          data-active={tab === "agents"}
-          onClick={() => setTab("agents")}
-        >
-          Agents
-        </button>
-        <button
-          type="button"
-          className={styles.tab}
-          data-active={tab === "memory"}
-          onClick={() => setTab("memory")}
-        >
-          Memory
-        </button>
-        <button
-          type="button"
-          className={styles.tab}
-          data-active={tab === "skills"}
-          onClick={() => setTab("skills")}
-        >
-          Skills
-        </button>
-        <button
-          type="button"
-          className={styles.tab}
-          data-panel-tab="pulse"
-          data-active={tab === "pulse"}
-          onClick={() => setTab("pulse")}
-        >
-          Pulse
-        </button>
+        ) : null}
       </header>
 
       {tab === "agents" ? (
