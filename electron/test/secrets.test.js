@@ -206,6 +206,28 @@ describe("Store conceals secrets on disk", () => {
     assert.ok(parsed.settings.otel.headers.Authorization.startsWith(PREFIX));
   });
 
+  it("writes the webhook URL encrypted (Slack/Discord tokens live in the path)", () => {
+    const store = new Store(filePath, { secrets });
+    store.setSettings({
+      webhook: {
+        url: "https://hooks.slack.com/services/T00/B00/secret-hook-unique",
+        onDone: true,
+        onFailed: true,
+        onWaiting: false,
+      },
+    });
+    store.saveNow();
+    assert.equal(
+      store.getSettings().webhook.url,
+      "https://hooks.slack.com/services/T00/B00/secret-hook-unique",
+    );
+    const disk = fs.readFileSync(filePath, "utf8");
+    assert.ok(!disk.includes("secret-hook-unique"));
+    const parsed = JSON.parse(disk);
+    assert.ok(parsed.settings.webhook.url.startsWith(PREFIX));
+    assert.equal(parsed.settings.webhook.onWaiting, false);
+  });
+
   it("migrates plaintext credentials on load, encrypts in place, and logs the count", () => {
     fs.writeFileSync(
       filePath,

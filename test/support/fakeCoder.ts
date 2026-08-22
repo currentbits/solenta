@@ -56,6 +56,7 @@ import type {
   WorkLogItem,
   WorkflowTemplateInfo,
   GcScanResult,
+  WebhookTestResult,
 } from "../../src/shared/ipc";
 import { buildActivity } from "../../src/activity";
 
@@ -185,6 +186,8 @@ export interface FakeOptions {
   distill?: DistilledWorkflow;
   /** Override git.gcScan result (default: empty). */
   gcScan?: GcScanResult;
+  /** Override settings.testWebhook result (default: HTTP 200). */
+  testWebhook?: WebhookTestResult;
   /** Override fs.browse result (default: demo home directories). */
   browse?: (input: unknown) => FsBrowseResult;
 }
@@ -230,6 +233,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     prDiffCapLines: 400,
     onboardingSeen: true,
     uiScale: 1,
+    webhook: { url: null, onDone: true, onFailed: true, onWaiting: true },
     ...(opts.settings ?? {}),
   };
   const ALL_SKILL_TARGETS: SkillTarget[] = [
@@ -480,6 +484,12 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         settingsState = next;
         return rec("settings.set", [patch], { ...settingsState });
       },
+      testWebhook: () =>
+        rec(
+          "settings.testWebhook",
+          [],
+          opts.testWebhook ?? { ok: true, status: 200 },
+        ),
     },
     skills: {
       list: (input: unknown) =>

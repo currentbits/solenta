@@ -758,6 +758,17 @@ const IPC_HANDLERS = {
     }
     return next;
   },
+  // "Send test" in Settings (issue #167). The renderer cannot POST these
+  // itself — Slack/Discord/ntfy answer no CORS preflight — and a typo'd or
+  // revoked URL is otherwise only discoverable by finishing a real run.
+  "settings:testWebhook": async (ctx) => {
+    const { testWebhook } = require("./notify.js");
+    const { recordSecretUse } = require("./secrets.js");
+    return testWebhook({
+      webhook: services.getSettings(ctx.store).webhook,
+      recordSecretUse,
+    });
+  },
   "skills:list": async (ctx, input) => {
     const projectPath =
       input && typeof input.projectPath === "string"

@@ -1911,6 +1911,31 @@ export interface AppSettings {
   subagentPool: SubagentPool;
   /** OpenTelemetry export (issue #280). */
   otel: OtelSettings;
+  /**
+   * Outbound webhook (issue #167). POSTs a small JSON payload when a thread
+   * finishes or waits for permission. Independent of the desktop-notification
+   * switch and of window focus. null URL (the default) sends nothing.
+   */
+  webhook: WebhookSettings;
+}
+
+/**
+ * Generic outbound webhook for Slack, Discord, ntfy, or any POST URL.
+ * Event toggles default true so a pasted URL fires immediately.
+ */
+export interface WebhookSettings {
+  /** http(s) POST URL. null (the default) sends nothing. */
+  url: string | null;
+  onDone: boolean;
+  onFailed: boolean;
+  onWaiting: boolean;
+}
+
+/** Outcome of settings.testWebhook. `status` is absent on a transport error. */
+export interface WebhookTestResult {
+  ok: boolean;
+  status?: number;
+  error?: string;
 }
 
 /**
@@ -2179,6 +2204,12 @@ export interface CoderApi {
   settings: {
     get(): Promise<AppSettings>;
     set(patch: Partial<AppSettings>): Promise<AppSettings>;
+    /**
+     * POST a synthetic "done" payload to the saved webhook URL and report
+     * what came back (issue #167). Ignores mute, snooze and the per-event
+     * toggles. Never rejects — a bad URL is an `ok: false` result.
+     */
+    testWebhook(): Promise<WebhookTestResult>;
   };
   /**
    * Agent skills on disk (SKILL.md files). A skill is installed once and

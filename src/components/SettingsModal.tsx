@@ -17,6 +17,8 @@ import type {
   GcCleanResult,
   GcScanResult,
   OtelSettings,
+  WebhookSettings,
+  WebhookTestResult,
   PermissionMode,
   ProjectInfo,
   ProviderInfo,
@@ -53,7 +55,7 @@ const PANE_META: Record<
     label: "General",
     hint: "Notifications, the welcome tour, and this build.",
     keywords:
-      "notifications tour welcome update version build channel nightly prod felt estimate time saved",
+      "notifications tour welcome update version build channel nightly prod felt estimate time saved webhook slack discord ntfy push phone",
   },
   threads: {
     label: "Threads",
@@ -116,6 +118,8 @@ interface SettingsModalProps {
   /** Relaunch into a staged update. */
   onApplyUpdate?: () => Promise<void>;
   onSaveSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>;
+  /** "Send test": POST to the saved webhook URL now (issue #167). */
+  onTestWebhook?: () => Promise<WebhookTestResult>;
   /** Optional GC seam. When omitted the section reads window.coder. */
   projects?: ProjectInfo[];
   onGcScan?: () => Promise<GcScanResult>;
@@ -151,6 +155,13 @@ const EMPTY_OTEL: OtelSettings = {
   endpoint: null,
   headers: {},
   claudeMetrics: false,
+};
+
+const EMPTY_WEBHOOK: WebhookSettings = {
+  url: null,
+  onDone: true,
+  onFailed: true,
+  onWaiting: true,
 };
 
 /** ponytail: one `key: value` per line; a row editor if this grows past a handful of headers. */
@@ -276,6 +287,7 @@ export function SettingsModal({
   onDownloadUpdate,
   onApplyUpdate,
   onSaveSettings,
+  onTestWebhook,
   projects,
   onGcScan,
   onGcClean,
@@ -292,6 +304,13 @@ export function SettingsModal({
   const [otelEndpoint, setOtelEndpoint] = useState("");
   const [otelHeadersText, setOtelHeadersText] = useState("");
   const [otelClaudeMetrics, setOtelClaudeMetrics] = useState(false);
+  const [webhookUrl, setWebhookUrl] = useState("");
+  const [webhookOnDone, setWebhookOnDone] = useState(true);
+  const [webhookOnFailed, setWebhookOnFailed] = useState(true);
+  const [webhookOnWaiting, setWebhookOnWaiting] = useState(true);
+  const [webhookTest, setWebhookTest] = useState<
+    "idle" | "sending" | WebhookTestResult
+  >("idle");
   const [draft, setDraft] = useState<ProfileDraft | null>(null);
   const [poolDraft, setPoolDraft] = useState<PoolDraft | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -322,12 +341,18 @@ export function SettingsModal({
     setOtelEndpoint(otel.endpoint ?? "");
     setOtelHeadersText(formatOtelHeaders(otel.headers));
     setOtelClaudeMetrics(otel.claudeMetrics);
+    const webhook = settings?.webhook ?? EMPTY_WEBHOOK;
+    setWebhookUrl(webhook.url ?? "");
+    setWebhookOnDone(webhook.onDone !== false);
+    setWebhookOnFailed(webhook.onFailed !== false);
+    setWebhookOnWaiting(webhook.onWaiting !== false);
+    setWebhookTest("idle");
     setDraft(null);
     setPoolDraft(null);
     setError(null);
     setSaving(false);
     savingRef.current = false;
-  }, [open, settings?.dailyBudgetUsd, settings?.orchestrationBudgetUsd, settings?.autoSettleAfterDays, settings?.prDiffCapLines, settings?.otel, settings?.uiScale]);
+  }, [open, settings?.dailyBudgetUsd, settings?.orchestrationBudgetUsd, settings?.autoSettleAfterDays, settings?.prDiffCapLines, settings?.otel, settings?.webhook, settings?.uiScale]);
 
   const handleClose = useCallback(() => {
     onClose();
@@ -519,6 +544,72 @@ export function SettingsModal({
     const next = formatOtelHeaders(parseOtelHeaders(otelHeadersText));
     if (next === current && error == null) return;
     void persistOtel(otelFromDrafts());
+  };
+
+  const persistWebhook = async (next: WebhookSettings): Promise<boolean> => {
+    if (savingRef.current) return false;
+    savingRef.current = true;
+    setSaving(true);
+    setError(null);
+    try {
+      const saved = await onSaveSettings({ webhook: next });
+      const webhook = saved.webhook ?? next;
+      setWebhookUrl(webhook.url ?? "");
+      setWebhookOnDone(webhook.onDone !== false);
+      setWebhookOnFailed(webhook.onFailed !== false);
+      setWebhookOnWaiting(webhook.onWaiting !== false);
+      return true;
+    } catch (err) {
+      const msg =
+        err instanceof Error && err.message
+          ? err.message
+          : "Failed to save settings";
+      setError(msg);
+      return false;
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
+  };
+
+  const webhookFromDrafts = (
+    over: Partial<WebhookSettings> = {},
+  ): WebhookSettings => ({
+    url: webhookUrl.trim() === "" ? null : webhookUrl.trim(),
+    onDone: webhookOnDone,
+    onFailed: webhookOnFailed,
+    onWaiting: webhookOnWaiting,
+    ...over,
+  });
+
+  const onBlurWebhookUrl = () => {
+    const current = settings?.webhook?.url ?? null;
+    const next = webhookUrl.trim() === "" ? null : webhookUrl.trim();
+    if (next === current && error == null) return;
+    void persistWebhook(webhookFromDrafts());
+  };
+
+  /**
+   * The main process POSTs to the *saved* URL, so a freshly typed one is
+   * persisted first. The button suppresses the input's blur (onMouseDown)
+   * so that save happens here once, not in a race with this handler.
+   */
+  const sendWebhookTest = async () => {
+    if (!onTestWebhook) return;
+    const drafted = webhookFromDrafts();
+    if (drafted.url !== (settings?.webhook?.url ?? null)) {
+      if (!(await persistWebhook(drafted))) return;
+    }
+    setWebhookTest("sending");
+    try {
+      setWebhookTest(await onTestWebhook());
+    } catch (err) {
+      setWebhookTest({
+        ok: false,
+        error:
+          err instanceof Error && err.message ? err.message : "Test failed",
+      });
+    }
   };
 
   const persistPool = async (next: SubagentPool): Promise<boolean> => {
@@ -1570,6 +1661,119 @@ export function SettingsModal({
                 Only fires while the window is in the background. Mute a
                 single noisy thread from its snooze menu in the sidebar.
               </p>
+            </div>
+            <div className={styles.field} data-webhook-settings="">
+              <label className={styles.fieldLabel} htmlFor="webhook-url">
+                Webhook URL
+              </label>
+              <input
+                id="webhook-url"
+                className={styles.input}
+                type="url"
+                inputMode="url"
+                autoComplete="off"
+                spellCheck={false}
+                placeholder="https://ntfy.sh/my-topic"
+                value={webhookUrl}
+                disabled={saving || settings == null}
+                data-webhook-url=""
+                onChange={(e) => {
+                  setWebhookUrl(e.target.value);
+                  setError(null);
+                }}
+                onBlur={() => onBlurWebhookUrl()}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    void persistWebhook(webhookFromDrafts());
+                  }
+                }}
+              />
+              <p className={styles.note}>
+                POST a small JSON payload when a thread finishes or waits for
+                permission. Slack, Discord, and ntfy incoming URLs all work.
+                Fires even while this window is focused, unlike desktop
+                notifications.
+              </p>
+              {onTestWebhook && (
+                <div className={styles.fieldRow}>
+                  <button
+                    type="button"
+                    className={styles.btn}
+                    data-webhook-test=""
+                    disabled={
+                      saving ||
+                      settings == null ||
+                      webhookTest === "sending" ||
+                      webhookUrl.trim() === ""
+                    }
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => void sendWebhookTest()}
+                  >
+                    {webhookTest === "sending" ? "Sending…" : "Send test"}
+                  </button>
+                  {typeof webhookTest === "object" && (
+                    <span
+                      className={
+                        webhookTest.ok ? styles.note : styles.fieldError
+                      }
+                      role="status"
+                      data-webhook-test-result={webhookTest.ok ? "ok" : "fail"}
+                    >
+                      {webhookTest.ok
+                        ? webhookTest.status != null
+                          ? `Sent (HTTP ${webhookTest.status})`
+                          : "Sent"
+                        : webhookTest.error || "Test failed"}
+                    </span>
+                  )}
+                </div>
+              )}
+              <label className={styles.fieldRow}>
+                <input
+                  type="checkbox"
+                  data-webhook-on-done=""
+                  checked={webhookOnDone}
+                  disabled={saving || settings == null}
+                  onChange={(e) => {
+                    const onDone = e.target.checked;
+                    setWebhookOnDone(onDone);
+                    setError(null);
+                    void persistWebhook(webhookFromDrafts({ onDone }));
+                  }}
+                />
+                <span>Done</span>
+              </label>
+              <label className={styles.fieldRow}>
+                <input
+                  type="checkbox"
+                  data-webhook-on-failed=""
+                  checked={webhookOnFailed}
+                  disabled={saving || settings == null}
+                  onChange={(e) => {
+                    const onFailed = e.target.checked;
+                    setWebhookOnFailed(onFailed);
+                    setError(null);
+                    void persistWebhook(webhookFromDrafts({ onFailed }));
+                  }}
+                />
+                <span>Failed</span>
+              </label>
+              <label className={styles.fieldRow}>
+                <input
+                  type="checkbox"
+                  data-webhook-on-waiting=""
+                  checked={webhookOnWaiting}
+                  disabled={saving || settings == null}
+                  onChange={(e) => {
+                    const onWaiting = e.target.checked;
+                    setWebhookOnWaiting(onWaiting);
+                    setError(null);
+                    void persistWebhook(webhookFromDrafts({ onWaiting }));
+                  }}
+                />
+                <span>Waiting for permission</span>
+              </label>
             </div>
             <div className={styles.field}>
               <label className={styles.fieldRow}>
