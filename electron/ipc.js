@@ -12,6 +12,7 @@ const {
   revertFile,
   listFiles,
   mergeWorktree,
+  conflictContext,
   removeWorktree,
   push,
   createPr,
@@ -676,6 +677,12 @@ const IPC_HANDLERS = {
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     return result;
   },
+  "threads:runCommand": async (ctx, input) => {
+    return services.runCommand(ctx.store, input, {
+      runner: ctx.runner,
+      broadcast: ctx.broadcast,
+    });
+  },
   "app:status": async (ctx) => {
     return services.appStatus(ctx.store);
   },
@@ -937,6 +944,12 @@ const IPC_HANDLERS = {
     await runRetention(ctx);
     return merged;
   },
+  "git:conflictContext": async (ctx, input) => {
+    return conflictContext({
+      store: ctx.store,
+      threadId: input && input.threadId,
+    });
+  },
   "git:removeWorktree": async (ctx, input) => {
     return removeWorktree({
       store: ctx.store,
@@ -1004,10 +1017,16 @@ const IPC_HANDLERS = {
       broadcast: ctx.broadcast,
     });
   },
-  "issues:fetch": async (_ctx, input) => {
+  "issues:fetch": async (ctx, input) => {
     const projectPath = input && input.projectPath;
     const ref = input && input.ref;
-    return fetchIssue(projectPath, ref);
+    const settings =
+      ctx.store && typeof ctx.store.getSettings === "function"
+        ? ctx.store.getSettings()
+        : null;
+    return fetchIssue(projectPath, ref, {
+      linearApiKey: settings && settings.linearApiKey,
+    });
   },
   "issues:list": async (_ctx, projectPath) => {
     return listIssues(projectPath);

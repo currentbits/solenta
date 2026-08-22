@@ -33,6 +33,9 @@ function setExecFile(fn) {
 }
 
 const PATCH_TRUNCATE = 100_000;
+const CONFLICT_MAX_FILES = 12;
+const CONFLICT_MAX_FILE_BYTES = 16_000;
+const CONFLICT_MAX_TOTAL_BYTES = 48_000;
 
 /**
  * The one git wrap for a path. A WSL UNC cwd means git must run *inside*
@@ -132,6 +135,11 @@ const GIT_MAX_BUFFER = 32 * 1024 * 1024;
 
 /** Per-thread background PR refresh timeout. Hard kill; never block the main process. */
 const PR_REFRESH_TIMEOUT_MS = 8_000;
+
+/** Periodic retention sweep (#641): grace crossings during a long uptime. */
+const RETENTION_SWEEP_INTERVAL_MS = 6 * 60 * 60 * 1000;
+/** Same delay as the boot orphan sweep so startup stays fast. */
+const RETENTION_SWEEP_STARTUP_MS = 15_000;
 
 /** MERGED/CLOSED are terminal — never re-query. */
 const TERMINAL_PR_STATES = new Set(["MERGED", "CLOSED"]);
@@ -452,6 +460,96 @@ function conflictError(headline, files, footer) {
   const lines = [headline, ...files.map((f) => `  ${f}`)];
   if (footer) lines.push(footer);
   return new Error(`MERGE_CONFLICT:${lines.join("\n")}`);
+}
+
+/**
+ * Unmerged worktree files plus capped on-disk snippets for the resolve
+ * prompt (issue #163). The conflict is already replayed in the worktree;
+ * this just reads it so the agent turn does not have to.
+ *
+ * @param {object} opts
+ * @param {import('./store').Store} opts.store
+ * @param {string} opts.threadId
+ * @param {number} [opts.maxFiles]
+ * @param {number} [opts.maxFileBytes]
+ * @param {number} [opts.maxTotalBytes]
+ * @returns {{
+ *   files: Array<{ path: string, content: string, truncated: boolean, binary: boolean }>,
+ *   omitted: number,
+ *   branch: string | null,
+ *   baseBranch: string | null,
+ * }}
+ */
+function conflictContext(opts) {
+  const { store, threadId } = opts;
+  const maxFiles =
+    opts.maxFiles != null ? opts.maxFiles : CONFLICT_MAX_FILES;
+  const maxFileBytes =
+    opts.maxFileBytes != null ? opts.maxFileBytes : CONFLICT_MAX_FILE_BYTES;
+  const maxTotalBytes =
+    opts.maxTotalBytes != null ? opts.maxTotalBytes : CONFLICT_MAX_TOTAL_BYTES;
+
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  if (!thread.worktreePath) {
+    throw new Error(
+      `Thread ${threadId} has no worktree; call setupWorktree first`,
+    );
+  }
+  const project = store.getProject(thread.projectId);
+  if (!project) {
+    throw new Error(`Unknown project for thread: ${threadId}`);
+  }
+
+  const cwd = thread.worktreePath;
+  const all = unmergedFiles(cwd);
+  /** @type {Array<{ path: string, content: string, truncated: boolean, binary: boolean }>} */
+  const files = [];
+  let remaining = maxTotalBytes;
+  for (const file of all) {
+    if (files.length >= maxFiles || remaining <= 0) break;
+    const cap = Math.min(maxFileBytes, remaining);
+    const entry = readConflictFile(cwd, file, cap);
+    files.push(entry);
+    remaining -= entry.content.length;
+  }
+  let baseBranch = null;
+  try {
+    baseBranch = defaultBranch(project.path);
+  } catch {
+    baseBranch = null;
+  }
+  return {
+    files,
+    omitted: Math.max(0, all.length - files.length),
+    branch: thread.branch || null,
+    baseBranch,
+  };
+}
+
+/**
+ * @param {string} cwd
+ * @param {string} file
+ * @param {number} cap
+ */
+function readConflictFile(cwd, file, cap) {
+  try {
+    const raw = fs.readFileSync(path.join(cwd, file));
+    if (raw.includes(0)) {
+      return { path: file, content: "", truncated: false, binary: true };
+    }
+    let content = raw.toString("utf8");
+    let truncated = false;
+    if (cap >= 0 && content.length > cap) {
+      content = content.slice(0, cap);
+      truncated = true;
+    }
+    return { path: file, content, truncated, binary: false };
+  } catch {
+    return { path: file, content: "", truncated: false, binary: true };
+  }
 }
 
 function parseItineraryJson(raw) {
@@ -1060,6 +1158,20 @@ function setupWorktree(opts) {
   if (typeof broadcast === "function") {
     const { listThreads } = require("./services.js");
     broadcast("threads:changed", listThreads(store));
+  }
+
+  // Issue #153: fire-and-forget. A failed npm install must not undo the
+  // worktree, and setupWorktree stays sync for the existing call sites.
+  const { kickWorktreeSetup } = require("./projectCommands.js");
+  const setup = kickWorktreeSetup({
+    store,
+    threadId,
+    cwd: dir,
+    project,
+    broadcast,
+  });
+  if (setup && typeof setup.catch === "function") {
+    setup.catch(() => {});
   }
 
   return updated ? { ...updated } : { ...thread, worktreePath: dir, branch };
@@ -4953,6 +5065,105 @@ async function scheduleRetention(opts) {
 }
 
 /**
+ * Schedule + latch for background worktree retention (#641).
+ * - Boolean latch: a tick during a running pass is a no-op (not queued).
+ * - Startup pass after startupDelayMs; then every intervalMs.
+ * - Timers are unref'd so they do not keep a short-lived process alive.
+ * - Default sweep is scheduleRetention (failure-silent). Cheap when no
+ *   project sets a limit: enforceRetention returns before any disk walk.
+ *
+ * @param {object} opts
+ * @param {import('./store').Store} opts.store
+ * @param {string} opts.worktreeBase
+ * @param {(channel: string, payload: unknown) => void} [opts.broadcast]
+ * @param {number} [opts.intervalMs] default 6 h
+ * @param {number} [opts.startupDelayMs] default 15 s
+ * @param {typeof setTimeout} [opts.setTimeoutFn]
+ * @param {typeof setInterval} [opts.setIntervalFn]
+ * @param {typeof clearTimeout} [opts.clearTimeoutFn]
+ * @param {typeof clearInterval} [opts.clearIntervalFn]
+ * @param {typeof scheduleRetention} [opts.sweepFn]
+ */
+function createRetentionSweeper(opts) {
+  const store = opts.store;
+  const worktreeBase = opts.worktreeBase;
+  const broadcast = opts.broadcast;
+  const intervalMs =
+    opts.intervalMs != null ? opts.intervalMs : RETENTION_SWEEP_INTERVAL_MS;
+  const startupDelayMs =
+    opts.startupDelayMs != null
+      ? opts.startupDelayMs
+      : RETENTION_SWEEP_STARTUP_MS;
+  const setTimeoutFn = opts.setTimeoutFn || setTimeout;
+  const setIntervalFn = opts.setIntervalFn || setInterval;
+  const clearTimeoutFn = opts.clearTimeoutFn || clearTimeout;
+  const clearIntervalFn = opts.clearIntervalFn || clearInterval;
+  const sweepFn = opts.sweepFn || scheduleRetention;
+
+  let running = false;
+  /** @type {ReturnType<typeof setTimeout> | null} */
+  let startupTimer = null;
+  /** @type {ReturnType<typeof setInterval> | null} */
+  let intervalTimer = null;
+
+  /**
+   * @returns {Promise<{ ran: boolean, result?: { removed: string[], failed: Array<{path: string, error: string}>, bytes: number } | null }>}
+   */
+  async function trigger() {
+    if (running) return { ran: false };
+    running = true;
+    try {
+      const result = await sweepFn({ store, worktreeBase, broadcast });
+      if (result && result.removed && result.removed.length > 0) {
+        console.warn(
+          `worktree retention: reclaimed ${result.removed.length} worktree(s)`,
+        );
+      }
+      return { ran: true, result };
+    } catch {
+      return { ran: true, result: null };
+    } finally {
+      running = false;
+    }
+  }
+
+  function start() {
+    if (startupTimer != null || intervalTimer != null) return;
+    startupTimer = setTimeoutFn(() => {
+      startupTimer = null;
+      void trigger();
+    }, startupDelayMs);
+    if (startupTimer && typeof startupTimer.unref === "function") {
+      startupTimer.unref();
+    }
+    intervalTimer = setIntervalFn(() => {
+      void trigger();
+    }, intervalMs);
+    if (intervalTimer && typeof intervalTimer.unref === "function") {
+      intervalTimer.unref();
+    }
+  }
+
+  function stop() {
+    if (startupTimer != null) {
+      clearTimeoutFn(startupTimer);
+      startupTimer = null;
+    }
+    if (intervalTimer != null) {
+      clearIntervalFn(intervalTimer);
+      intervalTimer = null;
+    }
+  }
+
+  return {
+    trigger,
+    start,
+    stop,
+    isRunning: () => running,
+  };
+}
+
+/**
  * Materialize the worktree for a pendingWorktree thread (lazy, t3-style:
  * a thread that never runs leaves nothing on disk). No-op for plain threads
  * and threads that already have one; a stale flag is cleared either way.
@@ -5050,6 +5261,7 @@ module.exports = {
   revertFile,
   listFiles,
   mergeWorktree,
+  conflictContext,
   removeWorktree,
   push,
   createPr,
@@ -5076,6 +5288,7 @@ module.exports = {
   PR_LIST_FIELDS_FALLBACK,
   refreshPrStates,
   createPrStateRefresher,
+  createRetentionSweeper,
   maybeCleanupMergedWorktree,
   sweepOrphanWorktrees,
   gcScan,
@@ -5103,6 +5316,8 @@ module.exports = {
   slugify,
   PATCH_TRUNCATE,
   PR_REFRESH_TIMEOUT_MS,
+  RETENTION_SWEEP_INTERVAL_MS,
+  RETENTION_SWEEP_STARTUP_MS,
   maybeCreateCheckpoint,
   listCheckpoints,
   restoreCheckpoint,

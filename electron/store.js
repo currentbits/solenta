@@ -24,6 +24,10 @@ const {
   appendJsonArrayItem,
 } = require("./jsonEnvelope.js");
 const { clampUiScale, UI_SCALE_DEFAULT } = require("./zoom.js");
+const {
+  normalizeSetupCommand,
+  normalizeQuickActions,
+} = require("./projectCommands.js");
 
 /** Builtin "Plan and Verify" workflow template (seeded on every store). */
 const STANDARD_TEMPLATE = {
@@ -459,6 +463,7 @@ function normalizeSettings(raw) {
     agentProfiles: [],
     subagentPool: { defaultAlias: null, force: false, entries: [] },
     otel: { endpoint: null, headers: {}, claudeMetrics: false },
+    linearApiKey: null,
     webhook: { url: null, onDone: true, onFailed: true, onWaiting: true },
   };
   if (!raw || typeof raw !== "object") return settings;
@@ -551,6 +556,12 @@ function normalizeSettings(raw) {
     /** @type {{ autoSettleOnMerge?: unknown }} */ (obj).autoSettleOnMerge !==
     false;
   settings.otel = normalizeOtel(/** @type {{ otel?: unknown }} */ (obj).otel);
+  const linearKey = /** @type {{ linearApiKey?: unknown }} */ (obj).linearApiKey;
+  if (typeof linearKey === "string" && linearKey.trim()) {
+    settings.linearApiKey = linearKey.trim();
+  } else {
+    settings.linearApiKey = null;
+  }
   settings.webhook = normalizeWebhook(
     /** @type {{ webhook?: unknown }} */ (obj).webhook,
   );
@@ -916,6 +927,12 @@ function migrateProject(p) {
   } else {
     delete next.iconPath;
   }
+  const setupCommand = normalizeSetupCommand(next.setupCommand);
+  if (setupCommand) next.setupCommand = setupCommand;
+  else delete next.setupCommand;
+  const quickActions = normalizeQuickActions(next.quickActions);
+  if (quickActions) next.quickActions = quickActions;
+  else delete next.quickActions;
   return next;
 }
 
@@ -2094,6 +2111,7 @@ class Store {
       agentProfiles: n.agentProfiles,
       subagentPool: n.subagentPool,
       otel: n.otel,
+      linearApiKey: n.linearApiKey,
       webhook: n.webhook,
     };
   }
@@ -2270,6 +2288,17 @@ class Store {
         throw new Error("quotaWaitAutoResume must be a boolean");
       }
       this.data.settings.quotaWaitAutoResume = v;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "linearApiKey")) {
+      const v = patch.linearApiKey;
+      if (v === null || v === "") {
+        this.data.settings.linearApiKey = null;
+      } else if (typeof v === "string") {
+        const t = v.trim();
+        this.data.settings.linearApiKey = t || null;
+      } else {
+        throw new Error("linearApiKey must be a string or null");
+      }
     }
     if (Object.prototype.hasOwnProperty.call(patch, "webhook")) {
       const v = patch.webhook;

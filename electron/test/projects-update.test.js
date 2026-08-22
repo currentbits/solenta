@@ -141,4 +141,37 @@ describe("services.updateProject", () => {
       /worktreeRetention/i,
     );
   });
+
+  it("persists setupCommand and quickActions and clears them (#153)", () => {
+    const set = services.updateProject(store, project.id, {
+      setupCommand: "  npm install  ",
+      quickActions: [
+        { id: "lint", name: " Lint ", command: " npm run lint " },
+        { name: "", command: "echo skip" },
+      ],
+    });
+    assert.equal(set.setupCommand, "npm install");
+    assert.equal(set.quickActions.length, 1);
+    assert.equal(set.quickActions[0].name, "Lint");
+    assert.equal(set.quickActions[0].command, "npm run lint");
+    assert.equal(store.getProjects()[0].setupCommand, "npm install");
+
+    const cleared = services.updateProject(store, project.id, {
+      setupCommand: "",
+      quickActions: [],
+    });
+    assert.equal(cleared.setupCommand, undefined);
+    assert.equal(cleared.quickActions, undefined);
+    assert.equal("setupCommand" in store.getProjects()[0], false);
+    assert.equal("quickActions" in store.getProjects()[0], false);
+  });
+
+  it("leaves setupCommand alone on a name-only patch", () => {
+    services.updateProject(store, project.id, { setupCommand: "pnpm i" });
+    const updated = services.updateProject(store, project.id, {
+      name: "box app",
+    });
+    assert.equal(updated.name, "box app");
+    assert.equal(updated.setupCommand, "pnpm i");
+  });
 });

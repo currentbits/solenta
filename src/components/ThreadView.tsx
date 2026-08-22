@@ -555,6 +555,11 @@ interface ThreadViewProps {
   gitSyncInfo?: (threadId: string) => Promise<GitSyncInfo>;
   /** Fetch remotes before the sync pill re-reads state. */
   gitFetch?: (threadId: string) => Promise<void>;
+  /** Run the project's setup command or a named quick action (issue #153). */
+  onRunCommand?: (
+    threadId: string,
+    actionId?: string,
+  ) => Promise<unknown>;
   runError?: string | null;
   onDismissRunError?: () => void;
   /**
@@ -3521,6 +3526,7 @@ export const ThreadView = memo(function ThreadView({
   onPrMerge,
   gitSyncInfo,
   gitFetch,
+  onRunCommand,
   runError = null,
   onDismissRunError,
   onNewThread,
@@ -3587,6 +3593,9 @@ export const ThreadView = memo(function ThreadView({
   const [syncRefreshNonce, setSyncRefreshNonce] = useState(0);
   /** Brief inline confirmation after copying the thread id. */
   const [copiedThreadId, setCopiedThreadId] = useState(false);
+  /** Header quick action currently in flight (issue #153). */
+  const [commandRunningId, setCommandRunningId] = useState<string | null>(null);
+  const [commandError, setCommandError] = useState<string | null>(null);
   /** Image opened in the lightbox; null when closed. */
   const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(
     null,
@@ -3594,6 +3603,11 @@ export const ThreadView = memo(function ThreadView({
   const [cliCommands, setCliCommands] = useState<SlashCommand[]>([]);
   const copyFlashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const threadId = detail?.thread.id ?? null;
+
+  useEffect(() => {
+    setCommandRunningId(null);
+    setCommandError(null);
+  }, [threadId]);
 
   useEffect(() => {
     if (!onListCliCommands) {
@@ -4462,6 +4476,36 @@ export const ThreadView = memo(function ThreadView({
   const { thread } = detail;
   const projectSlug = project?.slug ?? "project";
   const newThreadLabel = `New thread in ${projectSlug}`;
+  const headerCommands: Array<{ id: string; name: string; command: string }> =
+    [];
+  if (onRunCommand) {
+    if (project?.setupCommand) {
+      headerCommands.push({
+        id: "setup",
+        name: "Setup",
+        command: project.setupCommand,
+      });
+    }
+    for (const action of project?.quickActions ?? []) {
+      if (action && action.id && action.name) headerCommands.push(action);
+    }
+  }
+
+  const runHeaderCommand = (actionId: string) => {
+    if (!onRunCommand || commandRunningId) return;
+    setCommandRunningId(actionId);
+    setCommandError(null);
+    void onRunCommand(thread.id, actionId === "setup" ? "setup" : actionId)
+      .then(() => {
+        setCommandRunningId(null);
+      })
+      .catch((err: unknown) => {
+        setCommandRunningId(null);
+        setCommandError(
+          err instanceof Error && err.message ? err.message : String(err),
+        );
+      });
+  };
 
   const startRename = () => {
     setMenuOpen(false);
@@ -4676,6 +4720,35 @@ export const ThreadView = memo(function ThreadView({
               refreshNonce={syncRefreshNonce}
             />
           )}
+          {headerCommands.length > 0 ? (
+            <div className={styles.quickActions} data-thread-commands="">
+              {headerCommands.map((action) => {
+                const running = commandRunningId === action.id;
+                return (
+                  <button
+                    key={action.id}
+                    type="button"
+                    className={styles.btn}
+                    data-thread-command={action.id}
+                    title={action.command}
+                    disabled={isWorking || Boolean(commandRunningId)}
+                    onClick={() => runHeaderCommand(action.id)}
+                  >
+                    {running ? `${action.name}…` : action.name}
+                  </button>
+                );
+              })}
+              {commandError ? (
+                <span
+                  className={styles.commandError}
+                  data-thread-command-error=""
+                  role="alert"
+                >
+                  {commandError}
+                </span>
+              ) : null}
+            </div>
+          ) : null}
           <div className={styles.menuWrap} ref={menuRef}>
             <button
               type="button"

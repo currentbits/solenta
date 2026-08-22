@@ -141,6 +141,16 @@ describe("createSecrets", () => {
     };
     assert.equal(s.concealSettings(settings), settings);
   });
+
+  it("seals and reveals a Linear API key", () => {
+    const s = createSecrets({ safeStorage: fakeSafeStorage() });
+    const sealed = s.concealSettings({ linearApiKey: "lin_api_secret" });
+    assert.notEqual(sealed, undefined);
+    assert.notEqual(sealed.linearApiKey, "lin_api_secret");
+    assert.ok(s.isSealed(sealed.linearApiKey));
+    const revealed = s.revealSettings(sealed);
+    assert.equal(revealed.settings.linearApiKey, "lin_api_secret");
+  });
 });
 
 describe("Store conceals secrets on disk", () => {
@@ -163,6 +173,25 @@ describe("Store conceals secrets on disk", () => {
 
   afterEach(() => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("writes a Linear API key encrypted, keeps memory plaintext", () => {
+    const store = new Store(filePath, { secrets });
+    store.setSettings({ linearApiKey: "lin_api_disk_unique" });
+    store.saveNow();
+    assert.equal(store.getSettings().linearApiKey, "lin_api_disk_unique");
+    assert.equal(
+      store.data.settings.linearApiKey,
+      "lin_api_disk_unique",
+      "in-memory store must stay plaintext",
+    );
+    const disk = fs.readFileSync(filePath, "utf8");
+    assert.ok(!disk.includes("lin_api_disk_unique"));
+    const parsed = JSON.parse(disk);
+    assert.ok(
+      String(parsed.settings.linearApiKey).startsWith("enc:v1:"),
+      "disk payload must be the enc:v1 envelope",
+    );
   });
 
   it("writes MCP tokens and OTEL header values encrypted, keeps memory plaintext", () => {

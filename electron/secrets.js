@@ -211,6 +211,14 @@ function createSecrets(opts = {}) {
       }
       if (changed) nextOtel = { ...settings.otel, headers: out };
     }
+    let nextLinearKey = settings.linearApiKey;
+    if (typeof settings.linearApiKey === "string" && settings.linearApiKey) {
+      const sealed = seal(settings.linearApiKey);
+      if (sealed !== settings.linearApiKey) {
+        changed = true;
+        nextLinearKey = sealed;
+      }
+    }
     let nextWebhook = settings.webhook;
     const webhookUrl =
       settings.webhook &&
@@ -230,6 +238,7 @@ function createSecrets(opts = {}) {
       ...settings,
       mcpServers: nextServers,
       otel: nextOtel,
+      linearApiKey: nextLinearKey,
       webhook: nextWebhook,
     };
   }
@@ -301,6 +310,18 @@ function createSecrets(opts = {}) {
       }
     }
 
+    let nextLinearKey = settings.linearApiKey;
+    if (typeof settings.linearApiKey === "string" && settings.linearApiKey) {
+      hasSecret = true;
+      if (isSealed(settings.linearApiKey)) {
+        const plain = open(settings.linearApiKey, { key: "linearApiKey" });
+        changed = true;
+        nextLinearKey = plain == null || plain === "" ? null : plain;
+      } else if (available) {
+        migrated += 1;
+      }
+    }
+
     let nextWebhook = settings.webhook;
     const webhookUrl =
       settings.webhook &&
@@ -329,6 +350,7 @@ function createSecrets(opts = {}) {
           ...settings,
           mcpServers: nextServers,
           otel: nextOtel,
+          linearApiKey: nextLinearKey,
           webhook: nextWebhook,
         }
       : settings;
