@@ -31,6 +31,8 @@ const {
   getCodexMcpArgs,
   getCodexMcpEnv,
   getMemoryStatus,
+  looksGrokConfigCorrupt,
+  grokConfigCorruptMessage,
 } = require("./memory-sup.js");
 const opencodeParse = require("./opencode.js");
 const { runOpencode } = opencodeParse;
@@ -221,13 +223,40 @@ function classifyClaudeResultError(input) {
   for (const line of stderr) pushUnique(line);
 
   let text;
-  if (!shown.length) text = "Run error";
+  if (
+    looksGrokConfigCorrupt(shown.join("\n")) ||
+    looksGrokConfigCorrupt(resultText)
+  ) {
+    text = grokConfigCorruptMessage();
+  } else if (!shown.length) text = "Run error";
   else if (shown.length === 1) text = `Run error: ${shown[0]}`;
   else text = `Run error\n${shown.join("\n")}`;
   if (sessionLost) {
     text += "\nSession reset; the next message starts fresh.";
   }
   return { kind: "fail", text, sessionLost: Boolean(sessionLost) };
+}
+
+/**
+ * Nonzero-exit copy. A grok config parse failure is a torn ~/.grok/config.toml,
+ * not a generic "Run error (exit 1)" (#626 / #549).
+ *
+ * @param {number | null | undefined} code
+ * @param {string} [stderr]
+ * @returns {string}
+ */
+function formatRunExitError(code, stderr) {
+  const stderrTail = String(stderr || "")
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .slice(-8)
+    .join("\n");
+  if (looksGrokConfigCorrupt(stderrTail)) {
+    return grokConfigCorruptMessage();
+  }
+  return stderrTail
+    ? `Run error (exit ${code == null ? "?" : code}):\n${stderrTail}`
+    : `Run error (exit ${code == null ? "?" : code})`;
 }
 
 /**
@@ -2436,14 +2465,7 @@ function createRunner(opts) {
         }
 
         realState.agentStatus = "failed";
-        const stderrTail = String(stderrText || "")
-          .split(/\r?\n/)
-          .filter(Boolean)
-          .slice(-8)
-          .join("\n");
-        const errText = stderrTail
-          ? `Run error (exit ${exitCode}):\n${stderrTail}`
-          : `Run error (exit ${exitCode == null ? "?" : exitCode})`;
+        const errText = formatRunExitError(exitCode, stderrText);
         appendMessage(threadId, "event", errText, runId);
         appendDoneWorkLog(threadId, runId, "Run error");
         markRunFailed(threadId, errText);
@@ -3160,14 +3182,7 @@ function createRunner(opts) {
         completeWorkLogStep(threadId, e.startingId);
         completeWorkLogStep(threadId, e.workingId);
 
-        const stderrTail = String(stderr || "")
-          .split(/\r?\n/)
-          .filter(Boolean)
-          .slice(-8)
-          .join("\n");
-        const errText = stderrTail
-          ? `Run error (exit ${code == null ? "?" : code}):\n${stderrTail}`
-          : `Run error (exit ${code == null ? "?" : code})`;
+        const errText = formatRunExitError(code, stderr);
         appendMessage(threadId, "event", errText, runId);
         appendDoneWorkLog(threadId, runId, "Run error");
         markRunFailed(threadId, errText);
@@ -3674,14 +3689,7 @@ function createRunner(opts) {
           return;
         }
 
-        const stderrTail = String(stderr || "")
-          .split(/\r?\n/)
-          .filter(Boolean)
-          .slice(-8)
-          .join("\n");
-        const errText = stderrTail
-          ? `Run error (exit ${code == null ? "?" : code}):\n${stderrTail}`
-          : `Run error (exit ${code == null ? "?" : code})`;
+        const errText = formatRunExitError(code, stderr);
         appendMessage(threadId, "event", errText, runId);
         appendDoneWorkLog(threadId, runId, "Run error");
         markRunFailed(threadId, errText);
@@ -4052,14 +4060,7 @@ function createRunner(opts) {
           return;
         }
 
-        const stderrTail = String(stderr || "")
-          .split(/\r?\n/)
-          .filter(Boolean)
-          .slice(-8)
-          .join("\n");
-        const errText = stderrTail
-          ? `Run error (exit ${code == null ? "?" : code}):\n${stderrTail}`
-          : `Run error (exit ${code == null ? "?" : code})`;
+        const errText = formatRunExitError(code, stderr);
         appendMessage(threadId, "event", errText, runId);
         appendDoneWorkLog(threadId, runId, "Run error");
         markRunFailed(threadId, errText);
@@ -4449,14 +4450,7 @@ function createRunner(opts) {
           return;
         }
 
-        const stderrTail = String(stderr || "")
-          .split(/\r?\n/)
-          .filter(Boolean)
-          .slice(-8)
-          .join("\n");
-        const errText = stderrTail
-          ? `Run error (exit ${code == null ? "?" : code}):\n${stderrTail}`
-          : `Run error (exit ${code == null ? "?" : code})`;
+        const errText = formatRunExitError(code, stderr);
         appendMessage(threadId, "event", errText, runId);
         appendDoneWorkLog(threadId, runId, "Run error");
         markRunFailed(threadId, errText);
@@ -5831,6 +5825,7 @@ module.exports = {
   ADJECTIVES,
   NOUNS,
   classifyClaudeResultError,
+  formatRunExitError,
   /** @internal test/diagnostics */
   liveClaudeChildren,
 };

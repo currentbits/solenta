@@ -2,7 +2,8 @@
 
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
-const { classifyClaudeResultError } = require("../runner.js");
+const { classifyClaudeResultError, formatRunExitError } = require("../runner.js");
+const { grokConfigCorruptMessage } = require("../memory-sup.js");
 
 describe("classifyClaudeResultError (#549)", () => {
   it("maps a bare cancelled errors[] to a stop, not a failure", () => {
@@ -86,5 +87,25 @@ describe("classifyClaudeResultError (#549)", () => {
     });
     assert.equal(out.kind, "fail");
     assert.equal(out.text, "Run error");
+  });
+
+  it("maps a grok config TOML parse failure to a repair message (#626)", () => {
+    const stderr =
+      "Failed to load config: TOML parse error at line 15, column 2: key with no value, expected `=`";
+    const out = classifyClaudeResultError({
+      errors: [],
+      stderr,
+    });
+    assert.equal(out.kind, "fail");
+    assert.equal(out.text, grokConfigCorruptMessage());
+    assert.match(out.text, /grok's config is corrupt — repair /);
+    assert.match(out.text, /config\.toml/);
+    assert.doesNotMatch(out.text, /Run error \(exit/);
+
+    assert.equal(formatRunExitError(1, stderr), grokConfigCorruptMessage());
+    assert.match(
+      formatRunExitError(1, "some other boom"),
+      /Run error \(exit 1\):\nsome other boom/,
+    );
   });
 });

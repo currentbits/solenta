@@ -480,6 +480,9 @@ function ensureKimiMcpConfig(opts = {}) {
 
 const GROK_MCP_TIMEOUT_MS = 10000;
 
+/** One grok CLI at a time against ~/.grok/config.toml (#626). */
+let grokMcpChain = Promise.resolve();
+
 /**
  * Drop our entries from kimi's mcp.json. Their bearer tokens must not outlive
  * the server they authenticate against: the file is user-global, so a stale
@@ -546,6 +549,153 @@ function resolveGrokConfigPath(env = process.env) {
 }
 
 /**
+ * Conservative TOML check for grok's config.toml. Catches torn writes
+ * (truncated keys, incomplete tables, unclosed quotes) without a parser.
+ * @param {string} text
+ * @returns {boolean}
+ */
+function grokTomlLooksValid(text) {
+  for (const raw of String(text).split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    if (line.startsWith("[")) {
+      if (!/^\[[^\]]+\][ \t]*(#.*)?$/.test(line)) return false;
+      continue;
+    }
+    if (!line.includes("=")) return false;
+    let quotes = 0;
+    let braces = 0;
+    for (const ch of line) {
+      if (ch === '"') quotes += 1;
+      else if (ch === "{") braces += 1;
+      else if (ch === "}") braces -= 1;
+      if (braces < 0) return false;
+    }
+    if (quotes % 2 !== 0 || braces !== 0) return false;
+  }
+  return true;
+}
+
+/**
+ * @param {string} text
+ * @returns {boolean}
+ */
+function looksGrokConfigCorrupt(text) {
+  return /Failed to load config:[\s\S]*TOML parse error/i.test(String(text || ""));
+}
+
+/**
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {string}
+ */
+function grokConfigCorruptMessage(env = process.env) {
+  return `grok's config is corrupt — repair ${resolveGrokConfigPath(env)}`;
+}
+
+/** @returns {Promise<void>} settles when every queued grok mcp CLI has finished */
+function whenGrokMcpIdle() {
+  return grokMcpChain;
+}
+
+/**
+ * @param {() => (void | Promise<void>)} task
+ * @returns {Promise<void>}
+ */
+function enqueueGrokMcp(task) {
+  const run = grokMcpChain.then(task, task);
+  grokMcpChain = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
+/**
+ * @param {string} bin
+ * @param {string[]} args
+ * @param {NodeJS.ProcessEnv} env
+ * @returns {Promise<Error | null>}
+ */
+function execGrokMcp(bin, args, env) {
+  return new Promise((resolve) => {
+    try {
+      execFile(
+        bin,
+        args,
+        { timeout: GROK_MCP_TIMEOUT_MS, encoding: "utf8", env },
+        (err) => resolve(err || null),
+      );
+    } catch (err) {
+      resolve(err instanceof Error ? err : new Error(String(err)));
+    }
+  });
+}
+
+/**
+ * @param {string} configPath
+ * @returns {{ exists: boolean, data: Buffer | null, skipRestore?: boolean }}
+ */
+function snapshotGrokConfig(configPath) {
+  try {
+    return { exists: true, data: fs.readFileSync(configPath) };
+  } catch (err) {
+    if (err && err.code === "ENOENT") return { exists: false, data: null };
+    return { exists: false, data: null, skipRestore: true };
+  }
+}
+
+/**
+ * @param {string} configPath
+ * @returns {boolean}
+ */
+function grokConfigParses(configPath) {
+  try {
+    if (!fs.existsSync(configPath)) return true;
+    return grokTomlLooksValid(fs.readFileSync(configPath, "utf8"));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * @param {string} configPath
+ * @param {{ exists: boolean, data: Buffer | null, skipRestore?: boolean }} snapshot
+ * @param {(msg: string) => void} log
+ */
+function restoreGrokConfigIfCorrupt(configPath, snapshot, log) {
+  if (grokConfigParses(configPath)) return;
+  if (snapshot.skipRestore) {
+    log(
+      "memory-server: grok config.toml is corrupt and could not be restored: " +
+        configPath,
+    );
+    return;
+  }
+  try {
+    if (snapshot.exists) {
+      fs.writeFileSync(configPath, snapshot.data || Buffer.alloc(0));
+      chmodSecret(configPath);
+    } else {
+      try {
+        fs.unlinkSync(configPath);
+      } catch (err) {
+        if (!err || err.code !== "ENOENT") throw err;
+      }
+    }
+    log(
+      "memory-server: grok config.toml was corrupt after mcp write; restored the pre-write copy (" +
+        configPath +
+        ")",
+    );
+  } catch (err) {
+    log(
+      "memory-server: grok config.toml is corrupt and restore failed: " +
+        (err && err.message ? err.message : String(err)),
+    );
+  }
+}
+
+/**
  * Grok binary path when grok is installed and the MCP integration is enabled,
  * else "". Shared by the add and remove paths.
  * @param {NodeJS.ProcessEnv} env
@@ -575,8 +725,9 @@ function resolveGrokBin(env, log) {
 
 /**
  * `grok mcp remove <name> -s user` for each name, so the bearer tokens grok
- * persisted in ~/.grok/config.toml die with the server. Fire-and-forget like
- * the add path; best-effort, never throws.
+ * persisted in ~/.grok/config.toml die with the server. Fire-and-forget as a
+ * batch (never block quit); members of the batch share the grok mcp queue
+ * with ensureGrokMcpConfig so they cannot tear the file (#626).
  *
  * @param {string[]} names
  * @param {object} [opts]
@@ -592,33 +743,24 @@ function removeGrokMcpEntries(names, opts = {}) {
   const bin = resolveGrokBin(env, log);
   if (!bin) return false;
 
-  let kicked = 0;
-  for (const name of names) {
-    try {
-      execFile(
-        bin,
-        ["mcp", "remove", name, "-s", "user"],
-        { timeout: GROK_MCP_TIMEOUT_MS, encoding: "utf8", env },
-        (err) => {
-          // grok exits 1 when the name was never registered, which is the
-          // common case on quit; the log line is informational, not an alarm.
-          if (err) {
-            log(
-              "memory-server: grok mcp remove failed: " +
-                (err && err.message ? err.message : String(err)),
-            );
-          }
-        },
-      );
-      kicked += 1;
-    } catch (err) {
-      log(
-        "memory-server: grok mcp remove failed: " +
-          (err && err.message ? err.message : String(err)),
-      );
+  const jobs = names.map((name) => ["mcp", "remove", name, "-s", "user"]);
+  enqueueGrokMcp(async () => {
+    const configPath = resolveGrokConfigPath(env);
+    const snapshot = snapshotGrokConfig(configPath);
+    for (const args of jobs) {
+      const err = await execGrokMcp(bin, args, env);
+      // grok exits 1 when the name was never registered, which is the
+      // common case on quit; the log line is informational, not an alarm.
+      if (err) {
+        log(
+          "memory-server: grok mcp remove failed: " +
+            (err && err.message ? err.message : String(err)),
+        );
+      }
     }
-  }
-  return kicked > 0;
+    restoreGrokConfigIfCorrupt(configPath, snapshot, log);
+  });
+  return true;
 }
 
 /**
@@ -649,8 +791,11 @@ function forgetExternalMcp(names, opts = {}) {
  * register each server via `grok mcp add ...` (idempotent into
  * ~/.grok/config.toml). Never throws; log-and-continue on any failure.
  *
- * Fire-and-forget async execFile (10s timeout) so a stalling grok binary
- * cannot freeze the Electron main process at boot / adopt.
+ * Fire-and-forget as a batch (10s timeout per CLI) so a stalling grok binary
+ * cannot freeze the Electron main process at boot / adopt. Members of the
+ * batch run one at a time on the shared grok mcp queue — concurrent grok
+ * processes tear config.toml (#626). After the batch, parse the file and
+ * restore the pre-write copy if it is syntactically broken.
  *
  * Kill switch: CODER_GROK_MCP_DISABLE=1 returns false immediately (tests use
  * this because -s user has no path override and would write ~/.grok/config.toml).
@@ -665,53 +810,40 @@ function ensureGrokMcpConfig(opts = {}) {
   const log = opts.log || ((msg) => console.warn(msg));
   const env = opts.env || process.env;
 
-  if (activeServers().length === 0) {
+  const servers = activeServers();
+  if (servers.length === 0) {
     return false;
   }
 
   const bin = resolveGrokBin(env, log);
   if (!bin) return false;
 
-  let kicked = 0;
-  for (const s of activeServers()) {
+  const jobs = servers.map((s) => {
     const args = ["mcp", "add", s.name, s.url, "-t", "http"];
     if (s.token) {
       args.push("-H", `Authorization: Bearer ${s.token}`);
     }
     args.push("-s", "user");
+    return args;
+  });
 
-    // Fire-and-forget: never block markHealthy / app boot on a slow CLI.
-    try {
-      execFile(
-        bin,
-        args,
-        {
-          timeout: GROK_MCP_TIMEOUT_MS,
-          encoding: "utf8",
-          env,
-        },
-        (err) => {
-          if (err) {
-            log(
-              "memory-server: grok mcp add failed: " +
-                (err && err.message ? err.message : String(err)),
-            );
-            return;
-          }
-          // grok writes config.toml 0644; it now holds our bearer token.
-          chmodSecret(resolveGrokConfigPath(env));
-        },
-      );
-      kicked += 1;
-    } catch (err) {
-      // Synchronous spawn failures only (callback handles async errors).
-      log(
-        "memory-server: grok mcp add failed: " +
-          (err && err.message ? err.message : String(err)),
-      );
+  enqueueGrokMcp(async () => {
+    const configPath = resolveGrokConfigPath(env);
+    const snapshot = snapshotGrokConfig(configPath);
+    for (const args of jobs) {
+      const err = await execGrokMcp(bin, args, env);
+      if (err) {
+        log(
+          "memory-server: grok mcp add failed: " +
+            (err && err.message ? err.message : String(err)),
+        );
+      }
     }
-  }
-  return kicked > 0;
+    // grok writes config.toml 0644; it now holds our bearer token.
+    chmodSecret(configPath);
+    restoreGrokConfigIfCorrupt(configPath, snapshot, log);
+  });
+  return true;
 }
 
 /**
@@ -1217,6 +1349,10 @@ module.exports = {
   activeServers,
   resolveKimiMcpPath,
   resolveGrokConfigPath,
+  grokTomlLooksValid,
+  looksGrokConfigCorrupt,
+  grokConfigCorruptMessage,
+  whenGrokMcpIdle,
   getMemoryStatus,
   resetMemorySupForTests,
   resolveNodeBinary,
