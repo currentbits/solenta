@@ -1,5 +1,7 @@
 "use strict";
 
+const { cacheEnv } = require("./verifyEfficiency.js");
+
 /**
  * Spawn options for agent CLIs (claude, codex, kimi, opencode, generic).
  *
@@ -27,7 +29,14 @@ function agentSpawnOptions(opts = {}) {
     windowsHide: platform === "win32",
     stdio: opts.stdio,
   };
-  if (opts.env) out.env = opts.env;
+  const extra = opts.cwd
+    ? cacheEnv({ cwd: opts.cwd, env: opts.env || process.env })
+    : {};
+  if (Object.keys(extra).length) {
+    out.env = { ...(opts.env || process.env), ...extra };
+  } else if (opts.env) {
+    out.env = opts.env;
+  }
   return out;
 }
 

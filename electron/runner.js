@@ -54,6 +54,7 @@ const {
   normalizeCommand,
   MAX_FIX_ATTEMPTS,
 } = require("./verify.js");
+const { prepareVerifyRun } = require("./verifyEfficiency.js");
 const { maybeApplyFmTitle } = require("./fm-title.js");
 const { classifyTool } = require("./guardrails.js");
 const {
@@ -1189,9 +1190,15 @@ function createRunner(opts) {
       thread.worktreePath || (project && project.path) || process.cwd();
     const attempt = nextVerifyAttempt(thread);
     const runId = lastRunIdFor(threadId);
+    const prepared = prepareVerifyRun({ command, cwd, project });
     let raw;
     try {
-      raw = await runVerifyCommand({ command, cwd, project });
+      raw = await runVerifyCommand({
+        command: prepared.command,
+        cwd,
+        project,
+        env: prepared.env,
+      });
     } catch (err) {
       raw = {
         ok: false,
@@ -1214,10 +1221,13 @@ function createRunner(opts) {
       }
       return;
     }
+    if (prepared.reason && raw && raw.log != null) {
+      raw.log = `[verify] ${prepared.reason}\n${raw.log}`;
+    }
     /** @type {import('../src/shared/ipc').VerifyResult} */
     const result = {
       runId,
-      command,
+      command: prepared.command,
       ok: Boolean(raw.ok),
       exitCode: raw.exitCode,
       timedOut: Boolean(raw.timedOut),
@@ -1233,7 +1243,7 @@ function createRunner(opts) {
       appendMessage(
         threadId,
         "event",
-        `Verified: ${command} passed in ${secs}s`,
+        `Verified: ${prepared.command} passed in ${secs}s`,
       );
       store.updateThread(
         threadId,
@@ -1251,7 +1261,7 @@ function createRunner(opts) {
     // out exactly MAX_FIX_ATTEMPTS of them — matching the "Fix attempt N
     // of M" line buildFixPrompt shows the agent.
     if (attempt < MAX_FIX_ATTEMPTS) {
-      appendMessage(threadId, "event", `Verification failed: ${command}`);
+      appendMessage(threadId, "event", `Verification failed: ${prepared.command}`);
       store.updateThread(threadId, { verify: result }, { touch: true });
       store.save();
       pushDetail(threadId);
@@ -1295,7 +1305,7 @@ function createRunner(opts) {
         verify: result,
         status: "failed",
         runStartedAt: null,
-        lastError: shortError(`Verification failed: ${command}`),
+        lastError: shortError(`Verification failed: ${prepared.command}`),
       },
       { touch: true },
     );
