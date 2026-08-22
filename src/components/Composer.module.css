@@ -747,7 +747,6 @@
 
 .effortSegment {
   flex: 1 1 0;
-  height: 10px;
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -771,8 +770,6 @@
 }
 
 .effortSegment:hover:not(:disabled) .effortBar {
-  background: rgba(255, 255, 255, 0.14);
-.effortSegment:hover:not(:disabled) {
   background: var(--overlay-strong);
 }
 
