@@ -11,7 +11,12 @@ const os = require("node:os");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 const { EventEmitter } = require("node:events");
-const { cacheEnv, repoCacheKey } = require("../verifyEfficiency.js");
+const {
+  cacheEnv,
+  repoCacheKey,
+  scopeVerifyCommand,
+  prepareVerifyRun,
+} = require("../verifyEfficiency.js");
 const { runVerifyCommand } = require("../verify.js");
 const { agentSpawnOptions } = require("../proc.js");
 
@@ -194,5 +199,82 @@ describe("agentSpawnOptions cache env", () => {
       platform: "linux",
     });
     assert.equal("env" in opts, false);
+  });
+});
+
+describe("scopeVerifyCommand", () => {
+  const exists = existsSet(["test/foo.test.ts"]);
+  const opts = { base: "main", exists };
+
+  it("scopes node --test and bails on docs, lockfiles, unknown, --all, compound npm", () => {
+    assert.equal(
+      scopeVerifyCommand({
+        command: "node --test",
+        changedPaths: ["src/foo.ts"],
+        ...opts,
+      }).command,
+      "node --test test/foo.test.ts",
+    );
+    assert.equal(
+      scopeVerifyCommand({
+        command: "npm test",
+        changedPaths: ["README.md"],
+        base: "main",
+      }).command,
+      "exit 0",
+    );
+    assert.equal(
+      scopeVerifyCommand({
+        command: "node --test",
+        changedPaths: ["src/foo.ts", "package-lock.json"],
+        ...opts,
+      }).scoped,
+      false,
+    );
+    assert.equal(
+      scopeVerifyCommand({ command: "node --test", changedPaths: null }).scoped,
+      false,
+    );
+    assert.equal(
+      scopeVerifyCommand({
+        command: "node --test --all",
+        changedPaths: ["src/foo.ts"],
+        ...opts,
+      }).scoped,
+      false,
+    );
+    assert.equal(
+      scopeVerifyCommand({
+        command: "npm test",
+        changedPaths: ["src/foo.ts"],
+        ...opts,
+        readFile: () => JSON.stringify({ scripts: { test: "a && b" } }),
+      }).command,
+      "npm test",
+    );
+  });
+});
+
+describe("prepareVerifyRun", () => {
+  it("merges cache env and scopes node --test", () => {
+    const r = prepareVerifyRun({
+      command: "node --test",
+      cacheRoot: "/tmp/cache/app",
+      changedPaths: ["src/foo.ts"],
+      exists: existsSet(["turbo.json", "test/foo.test.ts"]),
+      env: {},
+    });
+    assert.equal(r.command, "node --test test/foo.test.ts");
+    assert.equal(r.env.TURBO_CACHE_DIR, path.join("/tmp/cache/app", "turbo"));
+    assert.equal(
+      prepareVerifyRun({
+        command: "node --test",
+        changedPaths: null,
+        cacheRoot: "/tmp/cache/app",
+        exists: existsSet(["turbo.json"]),
+        env: {},
+      }).scoped,
+      false,
+    );
   });
 });

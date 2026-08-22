@@ -6,7 +6,8 @@
  *
  * The engine only. Persistence lives in store/services, the gate that calls
  * it at a run terminal lives in runner.js. Issue #390 injects a shared
- * build-cache env here.
+ * build-cache env here; affected-scope rewrites happen in prepareVerifyRun
+ * before this spawn (post-merge keeps the original command).
  */
 
 const { spawn } = require("node:child_process");
