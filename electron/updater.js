@@ -74,14 +74,23 @@ function pickAsset(release, platform, arch) {
   return assets.find((a) => a && a.name && a.name.includes(token)) || null;
 }
 
+/** Publish time of a release, 0 when GitHub sends neither stamp. */
+function releaseTime(r) {
+  return Date.parse(r.published_at || r.created_at || "") || 0;
+}
+
 /**
  * Latest release for a channel. prod trusts GitHub's "latest" (newest
- * non-prerelease); nightly takes the newest release of either kind — the
- * list endpoint is newest-first. Nightly means "newest code", so it has to
- * include prod releases: a prerelease-only feed freezes a nightly install
- * forever as soon as prod moves ahead and no newer nightly is cut. The
- * channel itself is kept by the settings pin in ipc.js, not by refusing
- * to see prod tags.
+ * non-prerelease); nightly takes the newest release of either kind. Nightly
+ * means "newest code", so it has to include prod releases: a prerelease-only
+ * feed freezes a nightly install forever as soon as prod moves ahead and no
+ * newer nightly is cut. The channel itself is kept by the settings pin in
+ * ipc.js, not by refusing to see prod tags.
+ *
+ * The list endpoint is NOT time-ordered: GitHub floats the "latest"
+ * (non-prerelease) release to the front, so a prod tag cut this morning
+ * outranks a nightly cut tonight and the nightly install is offered a
+ * downgrade it can never satisfy. Pick by publish time instead of position.
  */
 async function fetchLatest(channel, fetchImpl) {
   const doFetch = fetchImpl || fetch;
@@ -89,7 +98,12 @@ async function fetchLatest(channel, fetchImpl) {
     const res = await doFetch(`${API}?per_page=15`, { headers: HEADERS });
     if (!res.ok) throw new Error(`GitHub releases: HTTP ${res.status}`);
     const list = await res.json();
-    return list.find((r) => r && !r.draft) || null;
+    const live = (Array.isArray(list) ? list : []).filter((r) => r && !r.draft);
+    let best = null;
+    for (const r of live) {
+      if (!best || releaseTime(r) > releaseTime(best)) best = r;
+    }
+    return best;
   }
   const res = await doFetch(`${API}/latest`, { headers: HEADERS });
   if (res.status === 404) return null;

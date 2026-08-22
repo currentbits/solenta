@@ -93,20 +93,58 @@ describe("updater.checkUpdate", () => {
       bundlePath: null,
       fetch: fakeFetch({
         "/releases?": [
-          { tag_name: "v0.2.0", prerelease: false, draft: false, html_url: "y", assets: [] },
+          {
+            tag_name: "v0.2.0",
+            prerelease: false,
+            draft: false,
+            html_url: "y",
+            published_at: "2026-08-14T20:00:00Z",
+            assets: [],
+          },
           {
             tag_name: "nightly-202608140000-def456",
             prerelease: true,
             draft: false,
+            published_at: "2026-08-14T00:00:00Z",
             assets: [],
           },
         ],
       }),
     });
-    // Newest-first: a prod release cut after the last nightly wins, otherwise
-    // the install freezes as soon as nightlies stop being cut.
+    // A prod release cut after the last nightly wins, otherwise the install
+    // freezes as soon as nightlies stop being cut.
     assert.equal(res.state, "available");
     assert.equal(res.tag, "v0.2.0");
+  });
+
+  it("nightly: picks by publish time, not list position (GitHub floats 'latest' first)", async () => {
+    // Real /releases payload shape from 2026-08-22: v0.10.0 (published 14:43)
+    // sits at index 0, above a nightly published at 20:49. Trusting position
+    // offered the running nightly a permanent downgrade to v0.10.0.
+    const res = await updater.checkUpdate({
+      pkg: { channel: "nightly", releaseTag: "nightly-202608222047-20a1cc0" },
+      bundlePath: null,
+      fetch: fakeFetch({
+        "/releases?": [
+          {
+            tag_name: "v0.10.0",
+            prerelease: false,
+            draft: false,
+            html_url: "y",
+            published_at: "2026-08-22T14:43:22Z",
+            assets: [],
+          },
+          {
+            tag_name: "nightly-202608222047-20a1cc0",
+            prerelease: true,
+            draft: false,
+            published_at: "2026-08-22T20:49:07Z",
+            assets: [],
+          },
+        ],
+      }),
+    });
+    assert.equal(res.state, "none", "the running nightly IS the newest release");
   });
 
   it("nightly: skips drafts", async () => {
