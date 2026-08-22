@@ -10,6 +10,13 @@ import { blobToFloat, cosine } from './embedder.js'
 export const SEMANTIC_DUP = 0.9
 
 /**
+ * Cosine floor for a pair to be worth a human's attention at all. 02cf175
+ * dropped this as unused; the janitor's semanticNeighbors rewire (#310) is
+ * its consumer, so it is back. SEMANTIC_DUP stays at main's 0.9.
+ */
+export const SEMANTIC_RELATED = 0.6
+
+/**
  * Cosine neighbours of `vec` among live entries that already have a vector,
  * strongest first. Same-project only, matching every other scoped read.
  *
