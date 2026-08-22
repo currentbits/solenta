@@ -9,6 +9,9 @@ const { scanSecrets } = require("./guardrails.js");
 const { GENERATED_MARKER } = require("./configDoctor.js");
 // #559 persists this default (10) on every project; 0 is keep-everything.
 const { DEFAULT_WORKTREE_RETENTION } = require("./store.js");
+// Legacy shared annotation. New threads write `.solenta/review-itinerary/<threadId>.json`
+// (#621); this path only conflicts for in-flight branches still using it.
+const { REVIEW_ITINERARY_FILE } = require("./reviewItinerary.js");
 
 /** @type {typeof execFile} */
 let execFileImpl = execFile;
@@ -436,10 +439,6 @@ function conflictError(headline, files, footer) {
   return new Error(`MERGE_CONFLICT:${lines.join("\n")}`);
 }
 
-/** Per-thread annotation. Both sides rewrite it on every turn, so it is
- *  almost always the sole conflict when landing a worktree. */
-const REVIEW_ITINERARY_FILE = ".solenta/review-itinerary.json";
-
 function parseItineraryJson(raw) {
   try {
     const value = JSON.parse(String(raw || ""));
@@ -526,10 +525,12 @@ function isGeneratedDocConflict(cwd, file) {
 }
 
 /**
- * Resolve the conflicts in files the app itself writes: the review itinerary
- * gets both sides combined, a generated agent doc keeps ours (the next doctor
- * run rewrites it from memory anyway). Any other conflicted path is a real one
- * and bails out. Returns true when the index has no unmerged paths.
+ * Resolve the conflicts in files the app itself writes: the legacy shared
+ * review itinerary (in-flight branches) gets both sides combined, a generated
+ * agent doc keeps ours (the next doctor run rewrites it from memory anyway).
+ * Per-thread itineraries (#621) do not share a path, so they never land here.
+ * Any other conflicted path is a real one and bails out. Returns true when
+ * the index has no unmerged paths.
  *
  * @param {string} cwd
  * @returns {boolean}

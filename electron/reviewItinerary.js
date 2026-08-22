@@ -9,27 +9,64 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const REVIEW_ITINERARY_FILE = ".solenta/review-itinerary.json";
+const REVIEW_ITINERARY_DIR = ".solenta/review-itinerary";
 const REVIEW_ACCEPTED_MAX = 500;
 const SYMBOLS_MAX = 4000;
 
-const REVIEW_ITINERARY_NOTE =
-  "\n\n[Review itinerary] Before you finish a turn that changes files, write " +
-  "`.solenta/review-itinerary.json` annotating your own diff: the order a " +
-  "reviewer should read (never alphabetical), rationale per functional chunk, " +
-  "and risks you found while annotating. Authors catch their own bugs while " +
-  "annotating. Shape: {\"version\":1,\"readOrder\":[\"ci-config\"|\"tests\"|\"critical\"|\"impl\"|\"docs\"],\"chunks\":[{\"area\",\"rationale\",\"risks\":[]}],\"risks\":[]}.";
+/**
+ * @param {unknown} threadId
+ * @returns {string}
+ */
+function sanitizeThreadId(threadId) {
+  const id = String(threadId || "").trim();
+  if (!id || id !== path.basename(id)) return "";
+  if (id === "." || id === "..") return "";
+  if (!/^[A-Za-z0-9._-]{1,80}$/.test(id)) return "";
+  return id;
+}
+
+/**
+ * Per-thread annotation path (#621). Empty when the id is missing or unsafe.
+ * @param {unknown} threadId
+ * @returns {string}
+ */
+function reviewItineraryPathFor(threadId) {
+  const id = sanitizeThreadId(threadId);
+  if (!id) return "";
+  return `${REVIEW_ITINERARY_DIR}/${id}.json`;
+}
+
+/**
+ * @param {string} relPath
+ * @returns {string}
+ */
+function reviewItineraryNoteText(relPath) {
+  return (
+    "\n\n[Review itinerary] Before you finish a turn that changes files, write " +
+    "`" +
+    relPath +
+    "` annotating your own diff: the order a " +
+    "reviewer should read (never alphabetical), rationale per functional chunk, " +
+    "and risks you found while annotating. Authors catch their own bugs while " +
+    "annotating. Shape: {\"version\":1,\"readOrder\":[\"ci-config\"|\"tests\"|\"critical\"|\"impl\"|\"docs\"],\"chunks\":[{\"area\",\"rationale\",\"risks\":[]}],\"risks\":[]}."
+  );
+}
+
+const REVIEW_ITINERARY_NOTE = reviewItineraryNoteText;
 
 /**
  * Standing note on coding threads. Empty when the thread has no worktree
- * (nothing to annotate).
+ * (nothing to annotate) or no id (nowhere to write).
  *
- * @param {{ worktreePath?: string | null, pendingWorktree?: boolean } | null | undefined} thread
+ * @param {{ id?: string, worktreePath?: string | null, pendingWorktree?: boolean } | null | undefined} thread
  * @returns {string}
  */
 function reviewItineraryNoteFor(thread) {
   if (!thread) return "";
   if (!thread.worktreePath && !thread.pendingWorktree) return "";
-  return REVIEW_ITINERARY_NOTE;
+  const rel = reviewItineraryPathFor(thread.id);
+  if (!rel) return "";
+  return reviewItineraryNoteText(rel);
 }
 
 /**
@@ -51,19 +88,102 @@ function normalizeAcceptedHunks(value) {
 }
 
 /**
- * @param {string | null | undefined} cwd
+ * @param {string} file
  * @returns {object | null}
  */
-function readAnnotation(cwd) {
-  if (!cwd) return null;
+function tryParseAnnotationFile(file) {
   try {
-    const file = path.join(String(cwd), REVIEW_ITINERARY_FILE);
     const raw = JSON.parse(fs.readFileSync(file, "utf8"));
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
     return raw;
   } catch {
     return null;
   }
+}
+
+/**
+ * Current thread's annotation, then the legacy flat file so in-flight
+ * branches that still write `.solenta/review-itinerary.json` keep working.
+ *
+ * @param {string | null | undefined} cwd
+ * @param {string | null | undefined} [threadId]
+ * @returns {object | null}
+ */
+function readAnnotation(cwd, threadId) {
+  if (!cwd) return null;
+  const rel = reviewItineraryPathFor(threadId);
+  if (rel) {
+    const perThread = tryParseAnnotationFile(path.join(String(cwd), rel));
+    if (perThread) return perThread;
+  }
+  return tryParseAnnotationFile(path.join(String(cwd), REVIEW_ITINERARY_FILE));
+}
+
+/**
+ * @param {object[]} bodies
+ * @returns {object | null}
+ */
+function concatAnnotations(bodies) {
+  const chunks = [];
+  const risks = [];
+  const seenRisk = new Set();
+  /** @type {string[]} */
+  let readOrder = [];
+  for (const raw of bodies) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+    if (
+      !readOrder.length &&
+      Array.isArray(raw.readOrder) &&
+      raw.readOrder.length
+    ) {
+      readOrder = raw.readOrder.map((x) => String(x || "")).filter(Boolean);
+    }
+    if (Array.isArray(raw.chunks)) {
+      for (const chunk of raw.chunks) {
+        if (!chunk || typeof chunk !== "object") continue;
+        chunks.push(chunk);
+      }
+    }
+    if (Array.isArray(raw.risks)) {
+      for (const risk of raw.risks) {
+        const text = String(risk || "").trim();
+        if (!text || seenRisk.has(text)) continue;
+        seenRisk.add(text);
+        risks.push(text);
+      }
+    }
+  }
+  if (!chunks.length && !risks.length && !readOrder.length) return null;
+  return { version: 1, readOrder, chunks, risks };
+}
+
+/**
+ * Reviewer-facing: every per-thread file in the directory, plus the legacy
+ * flat path. Chunks are concatenated (same `area` from two threads is kept).
+ *
+ * @param {string | null | undefined} cwd
+ * @returns {object | null}
+ */
+function readAnnotations(cwd) {
+  if (!cwd) return null;
+  const files = [];
+  const dir = path.join(String(cwd), REVIEW_ITINERARY_DIR);
+  try {
+    for (const name of fs.readdirSync(dir).sort()) {
+      if (!name.endsWith(".json")) continue;
+      if (name !== path.basename(name)) continue;
+      files.push(path.join(dir, name));
+    }
+  } catch {
+    // missing directory
+  }
+  files.push(path.join(String(cwd), REVIEW_ITINERARY_FILE));
+  const bodies = [];
+  for (const file of files) {
+    const parsed = tryParseAnnotationFile(file);
+    if (parsed) bodies.push(parsed);
+  }
+  return concatAnnotations(bodies);
 }
 
 /**
@@ -96,7 +216,7 @@ function loadReviewContext(opts) {
   const cwd = project.remoteHost
     ? project.remotePath || project.path
     : thread.worktreePath || project.path;
-  const annotation = project.remoteHost ? null : readAnnotation(cwd);
+  const annotation = project.remoteHost ? null : readAnnotations(cwd);
   let symbols = [];
   try {
     const { readIndex } = require("./codeindex.js");
@@ -129,11 +249,14 @@ function setReviewAccepted(store, threadId, hashes) {
 
 module.exports = {
   REVIEW_ITINERARY_FILE,
+  REVIEW_ITINERARY_DIR,
   REVIEW_ITINERARY_NOTE,
   REVIEW_ACCEPTED_MAX,
+  reviewItineraryPathFor,
   reviewItineraryNoteFor,
   normalizeAcceptedHunks,
   readAnnotation,
+  readAnnotations,
   flattenSymbols,
   loadReviewContext,
   setReviewAccepted,

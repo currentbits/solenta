@@ -101,6 +101,8 @@ export interface ReviewItineraryInput {
 
 /** Agent-written self-annotation; lives in the thread cwd. */
 export const REVIEW_ITINERARY_FILE = ".solenta/review-itinerary.json";
+/** Per-thread itineraries (#621). One JSON file per threadId. */
+export const REVIEW_ITINERARY_DIR = ".solenta/review-itinerary";
 
 export const AREA_TITLE: Record<ReviewArea, string> = {
   "ci-config": "CI / config",
@@ -639,8 +641,18 @@ function sortByRisk(files: FileChange[]): FileChange[] {
   });
 }
 
-function isMetaItineraryFile(path: string): boolean {
-  return posixPath(path).endsWith(REVIEW_ITINERARY_FILE);
+function isMetaItineraryFile(filePath: string): boolean {
+  const n = posixPath(filePath);
+  if (n === REVIEW_ITINERARY_FILE || n.endsWith(`/${REVIEW_ITINERARY_FILE}`)) {
+    return true;
+  }
+  const dirPrefix = `${REVIEW_ITINERARY_DIR}/`;
+  const rest = n.startsWith(dirPrefix)
+    ? n.slice(dirPrefix.length)
+    : n.includes(`/${dirPrefix}`)
+      ? n.slice(n.lastIndexOf(`/${dirPrefix}`) + 1 + dirPrefix.length)
+      : "";
+  return rest.length > 0 && !rest.includes("/") && rest.endsWith(".json");
 }
 
 export function parseReviewAnnotation(raw: unknown): ReviewAnnotation | null {
