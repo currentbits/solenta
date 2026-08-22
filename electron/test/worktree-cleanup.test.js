@@ -300,6 +300,34 @@ describe("sweepOrphanWorktrees", () => {
     });
     assert.deepEqual(result.removed, []);
   });
+
+  it("force-removes an orphan whose .git is gone (#642)", async () => {
+    const orphanThread = services.createThread(fx.store, {
+      projectId: fx.project.id,
+      title: "Corrupt orphan",
+    });
+    const orphan = setupWorktree({
+      store: fx.store,
+      threadId: orphanThread.id,
+      worktreeBase: fx.worktreeBase,
+      broadcast: () => {},
+    });
+    fs.rmSync(path.join(orphan.worktreePath, ".git"), {
+      recursive: true,
+      force: true,
+    });
+    fx.store.removeThread(orphanThread.id);
+    fx.store.saveNow();
+
+    const result = await sweepOrphanWorktrees({
+      store: fx.store,
+      worktreeBase: fx.worktreeBase,
+    });
+
+    assert.deepEqual(result.removed, [orphan.worktreePath]);
+    assert.ok(!fs.existsSync(orphan.worktreePath));
+    assert.ok(fs.existsSync(fx.worktreePath));
+  });
 });
 
 describe("clearMissingWorktree (worktree deleted behind our back)", () => {

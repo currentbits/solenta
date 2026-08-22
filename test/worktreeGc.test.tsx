@@ -229,6 +229,62 @@ describe("worktree GC batch cleanup", () => {
   });
 });
 
+describe("worktree GC corrupt candidates (#642)", () => {
+  const seed = scanResult({
+    usage: [{ projectId: "p1", worktrees: 2, bytes: 7 * MB }],
+    totalBytes: 7 * MB,
+    candidates: [
+      candidate({
+        path: "/tmp/wt/dead",
+        title: "dead weight",
+        reason: "retention",
+        bytes: 5 * MB,
+        branch: "solenta/dead",
+      }),
+      candidate({
+        path: "/tmp/wt/corrupt",
+        title: "corrupt archived",
+        reason: "retention",
+        bytes: 2 * MB,
+        branch: "solenta/corrupt",
+        transient: true,
+        corrupt: true,
+      }),
+    ],
+  });
+
+  it("pre-selects a corrupt candidate and shows the force-delete note", async () => {
+    const m = await mount(modal({ scan: seed }));
+    const open = m.query("[data-gc-open]") as HTMLButtonElement;
+    assert.ok(
+      (open.textContent || "").includes("Reclaim 7.0 MB"),
+      `button includes the corrupt bytes, got: ${open.textContent}`,
+    );
+    await m.click(open);
+
+    const row = m.query(
+      '[data-gc-candidate="/tmp/wt/corrupt"]',
+    ) as HTMLElement | null;
+    assert.ok(row, "corrupt row renders");
+    assert.equal(row.getAttribute("data-blocked"), null);
+    const box = row.querySelector("input") as HTMLInputElement;
+    assert.equal(box.disabled, false, "corrupt stays tickable");
+    assert.equal(box.checked, true, "corrupt is pre-selected");
+    assert.ok(m.query('[data-gc-corrupt="/tmp/wt/corrupt"]'), "force-delete note");
+    assert.ok(
+      m.text().includes("git could not read the directory"),
+      `corrupt note is visible, got: ${m.text().slice(-200)}`,
+    );
+
+    const confirm = m.query("[data-gc-confirm]") as HTMLButtonElement;
+    assert.ok(
+      (confirm.textContent || "").includes("Delete 2 worktrees (7.0 MB)"),
+      `confirm includes the corrupt candidate, got: ${confirm.textContent}`,
+    );
+    m.unmount();
+  });
+});
+
 describe("worktree GC unmerged candidates (#601)", () => {
   const seed = scanResult({
     usage: [{ projectId: "p1", worktrees: 2, bytes: 8 * MB }],

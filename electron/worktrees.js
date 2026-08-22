@@ -4216,9 +4216,12 @@ async function maybeCleanupMergedWorktree(store, threadId) {
 
 /**
  * Boot-time GC: remove worktree dirs under worktreeBase that no thread
- * references. Conservative — only CLEAN worktrees are removed (a corrupted
- * or reset store must never cost uncommitted work), and branches are only
- * safe-deleted (-d) so unmerged commits always stay reachable.
+ * references. Conservative — only CLEAN worktrees are removed (a reset
+ * store must never cost uncommitted work). A directory git reports as
+ * "not a git repository" is force-removed (#642): there is no status to
+ * honor, and the branch (if any) lives in the repo. Other git failures
+ * still keep the dir. Branches are only safe-deleted (-d) so unmerged
+ * commits always stay reachable.
  *
  * @param {object} opts
  * @param {import('./store').Store} opts.store
@@ -4259,7 +4262,13 @@ async function sweepOrphanWorktrees(opts) {
         "--git-common-dir",
       ]);
       if (!common.ok || !common.stdout) {
-        result.kept.push(dir);
+        if (gitSaysNotARepo(common)) {
+          const forced = await forceRemoveWorktreeDir(dir, null);
+          if (forced.ok) result.removed.push(dir);
+          else result.kept.push(dir);
+        } else {
+          result.kept.push(dir);
+        }
         continue;
       }
       const repoPath = path.dirname(path.resolve(dir, common.stdout));
@@ -4270,7 +4279,13 @@ async function sweepOrphanWorktrees(opts) {
         { raw: true },
       );
       if (!status.ok || String(status.stdout || "").trim()) {
-        result.kept.push(dir);
+        if (!String(status.stdout || "").trim() && gitSaysNotARepo(status)) {
+          const forced = await forceRemoveWorktreeDir(dir, repoPath);
+          if (forced.ok) result.removed.push(dir);
+          else result.kept.push(dir);
+        } else {
+          result.kept.push(dir);
+        }
         continue;
       }
 
@@ -4447,10 +4462,46 @@ function baseBranchOf(repoPath, cache) {
 }
 
 /**
+ * True only for `fatal: not a git repository`. Other git failures (lock,
+ * timeout, missing binary) must not be treated as a corrupt worktree —
+ * those stay blocked so we never `fs.rm` a checkout git simply couldn't
+ * talk to (#642).
+ * @param {{ ok?: boolean, stderr?: string, combined?: string, stdout?: string } | null | undefined} res
+ */
+function gitSaysNotARepo(res) {
+  if (!res || res.ok) return false;
+  const text = String(res.stderr || res.combined || res.stdout || "");
+  return /not a git repository/i.test(text);
+}
+
+/**
+ * Drop a worktree directory git cannot operate on, then prune the repo's
+ * worktree list if we know it. Never touches branches (#642).
+ * @param {string} dir
+ * @param {string | null} repoPath
+ * @returns {Promise<{ ok: boolean, error?: string }>}
+ */
+async function forceRemoveWorktreeDir(dir, repoPath) {
+  try {
+    fs.rmSync(dir, { recursive: true, force: true });
+  } catch (err) {
+    return {
+      ok: false,
+      error: err && err.message ? String(err.message) : "force-remove failed",
+    };
+  }
+  if (repoPath) await gitTryAsync(repoPath, ["worktree", "prune"]);
+  if (fs.existsSync(dir)) {
+    return { ok: false, error: "directory still exists after force-remove" };
+  }
+  return { ok: true };
+}
+
+/**
  * @param {string} dir
  * @param {Map<string, Promise<string | null>>} [baseCache] memo for the owning
  *   repo's branch, so N worktrees of one repo cost one extra git call.
- * @returns {Promise<{ repoPath: string | null, readable: boolean, dirty: boolean, branch: string | null, unmerged: number }>}
+ * @returns {Promise<{ repoPath: string | null, readable: boolean, dirty: boolean, branch: string | null, unmerged: number, notARepo: boolean }>}
  */
 async function inspectWorktreeDir(dir, baseCache) {
   const common = await gitTryAsync(dir, [
@@ -4468,13 +4519,14 @@ async function inspectWorktreeDir(dir, baseCache) {
     { raw: true },
   );
   const readable = Boolean(status.ok);
+  const notARepo = gitSaysNotARepo(common) || gitSaysNotARepo(status);
   const dirty = readable && Boolean(String(status.stdout || "").trim());
   const br = await gitTryAsync(dir, ["branch", "--show-current"]);
   const branch = br.ok && br.stdout.trim() ? br.stdout.trim() : null;
   const unmerged = readable
     ? await unmergedCount(dir, branch, repoPath, baseCache || new Map())
     : 0;
-  return { repoPath, readable, dirty, branch, unmerged };
+  return { repoPath, readable, dirty, branch, unmerged, notARepo };
 }
 
 /**
@@ -4667,9 +4719,18 @@ async function gcScanInner(opts) {
     }
 
     let blocked;
-    if (!insp.readable) blocked = "git could not read the directory";
-    else if (insp.dirty) blocked = "uncommitted changes";
-    else if (thread && (thread.status === "working" || thread.status === "quota-wait")) {
+    let corrupt = false;
+    // Orphans and transients (archived / fork) whose gitdir is gone are
+    // reclaimable: `git worktree remove` cannot run, so GC force-deletes
+    // the directory. Settled keep-N overflow stays blocked — the user
+    // may still reopen that thread (#642).
+    if (insp.notARepo && (!thread || isTransientWorktree(thread))) {
+      corrupt = true;
+    } else if (!insp.readable) {
+      blocked = "git could not read the directory";
+    } else if (insp.dirty) {
+      blocked = "uncommitted changes";
+    } else if (thread && (thread.status === "working" || thread.status === "quota-wait")) {
       blocked = "thread is currently working";
     }
 
@@ -4683,6 +4744,7 @@ async function gcScanInner(opts) {
       branch: thread ? thread.branch || null : insp.branch,
       ...(transientDrop.has(path.resolve(dir)) ? { transient: true } : {}),
       ...(insp.unmerged > 0 ? { unmerged: insp.unmerged } : {}),
+      ...(corrupt ? { corrupt: true } : {}),
       ...(blocked ? { blocked } : {}),
     });
   }
@@ -4700,7 +4762,7 @@ async function gcScanInner(opts) {
  * (issue #316 / Conductor's cautionary tale).
  *
  * @param {import('./store').Store} store
- * @param {{ path: string, threadId: string | null }} cand
+ * @param {{ path: string, threadId: string | null, corrupt?: boolean }} cand
  * @returns {Promise<{ ok: boolean, error?: string }>}
  */
 async function removeGcWorktree(store, cand) {
@@ -4724,6 +4786,9 @@ async function removeGcWorktree(store, cand) {
   if (!fs.existsSync(dir)) {
     if (repoPath) await gitTryAsync(repoPath, ["worktree", "prune"]);
     return { ok: true };
+  }
+  if (cand.corrupt) {
+    return forceRemoveWorktreeDir(dir, repoPath);
   }
   if (!repoPath) return { ok: false, error: "could not find owning repo" };
   const removed = await gitTryAsync(repoPath, ["worktree", "remove", dir]);
@@ -4827,8 +4892,9 @@ async function gcClean(opts) {
  * default is 10, persisted on every project, so this actually runs. 0 is
  * the keep-everything hatch and is skipped. When a limit is set, the scan
  * skips `du` (activity time, not size, picks what to drop). Runs gcClean,
- * so the same guards apply: dirty and unreadable trees are skipped, and
- * branches are never deleted.
+ * so the same guards apply: dirty trees and unreadable non-transient
+ * trees are skipped; corrupt transients/orphans are force-removed (#642).
+ * Branches are never deleted.
  *
  * @param {object} opts
  * @param {import('./store').Store} opts.store

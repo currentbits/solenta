@@ -225,6 +225,10 @@ export interface ProjectUpdateInput {
  * `blocked` names why a candidate is NOT safe to reclaim (uncommitted
  * changes, git refused). Blocked rows are shown but never pre-selected,
  * and gcClean skips them.
+ *
+ * `corrupt` is the exception for `fatal: not a git repository` on an
+ * orphan or transient (archived / fork) dir (#642): the row is reclaimable
+ * via force-delete of the directory. The branch is untouched.
  */
 export interface GcCandidate {
   path: string;
@@ -240,6 +244,12 @@ export interface GcCandidate {
    * hold it back — the branch outlives the directory.
    */
   transient?: boolean;
+  /**
+   * Git cannot treat this directory as a worktree (`fatal: not a git
+   * repository`). Set on orphans and transients so GC can `fs.rm` the
+   * directory and prune; never set together with `blocked` (#642).
+   */
+  corrupt?: boolean;
   /**
    * Commits on this branch the project's branch does not have (#601). Absent
    * when there are none. NOT a `blocked` reason — GC removes directories and
@@ -2876,7 +2886,8 @@ export interface CoderApi {
     /**
      * Worktree GC scan (#316): every reclaimable worktree with its size, plus
      * per-project disk usage. Read-only and never rejects — a directory git
-     * cannot read comes back `blocked`.
+     * cannot read comes back `blocked`, unless it is an orphan/transient
+     * whose gitdir is gone (`corrupt`, #642).
      */
     gcScan(): Promise<GcScanResult>;
     /**
