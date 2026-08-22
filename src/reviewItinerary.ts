@@ -6,7 +6,8 @@
  * duplicate-utility scan, the critical path, tests (toggleable to the front),
  * then evidence. Files are chunked by functional area — never alphabetical.
  */
-import type { FileChange } from "./shared/ipc";
+import type { BlastRadiusInfo, FileChange } from "./shared/ipc";
+import { blastRadiusFor, isCiWorkflowPath } from "./blastRadius";
 
 export type ReviewArea =
   | "ci-config"
@@ -77,6 +78,8 @@ export interface ReviewStep {
 
 export interface ReviewItinerary {
   hardStop: { files: string[]; reason: string } | null;
+  /** CI/workflow files in this diff (issue #510). Privilege-escalation. */
+  blastRadius: BlastRadiusInfo | null;
   reuseHits: ReviewReuseHit[];
   mismatches: ReviewMismatch[];
   chunks: ReviewChunk[];
@@ -711,13 +714,20 @@ export function buildReviewItinerary(input: ReviewItineraryInput): ReviewItinera
   const hunks = patches.flatMap((p) => p.hunks);
   const annotation = input.annotation ?? null;
 
+  const blastRadius = blastRadiusFor(
+    files.map((f) => f.path),
+    input.patch,
+  );
   const ciFiles = files.filter((f) => classifyPath(f.path) === "ci-config");
+  const hardStopFiles = ciFiles
+    .map((f) => f.path)
+    .filter((p) => !isCiWorkflowPath(p));
   const hardStop =
-    ciFiles.length > 0
+    hardStopFiles.length > 0
       ? {
-          files: ciFiles.map((f) => f.path),
+          files: hardStopFiles,
           reason:
-            "CI and config changes first — a bad workflow file ships to every run.",
+            "CI and config changes first — a bad config file ships to every run.",
         }
       : null;
 
@@ -747,6 +757,21 @@ export function buildReviewItinerary(input: ReviewItineraryInput): ReviewItinera
   }
 
   const steps: ReviewStep[] = [];
+  if (blastRadius) {
+    const n = blastRadius.files.length;
+    const extra =
+      blastRadius.findings.length > 0
+        ? ` ${blastRadius.findings.length} interpolation warning${
+            blastRadius.findings.length === 1 ? "" : "s"
+          }.`
+        : "";
+    steps.push({
+      id: "blast-radius",
+      title: "Blast radius",
+      kind: "blast-radius",
+      detail: `${n} CI workflow file${n === 1 ? "" : "s"} — privilege-escalation, human sign-off required.${extra}`,
+    });
+  }
   if (hardStop) {
     steps.push({
       id: "ci-config",
@@ -765,7 +790,7 @@ export function buildReviewItinerary(input: ReviewItineraryInput): ReviewItinera
     });
   }
   for (const chunk of chunks) {
-    if (chunk.area === "ci-config" && hardStop) continue;
+    if (chunk.area === "ci-config" && (hardStop || blastRadius)) continue;
     steps.push({
       id: chunk.area,
       title: chunk.title,
@@ -784,6 +809,7 @@ export function buildReviewItinerary(input: ReviewItineraryInput): ReviewItinera
 
   return {
     hardStop,
+    blastRadius,
     reuseHits,
     mismatches,
     chunks,

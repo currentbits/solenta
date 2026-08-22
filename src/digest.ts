@@ -85,6 +85,12 @@ function classify(run: DigestRun): { bucket: DigestBucket; reason: string } {
   if (run.prState === "MERGED") {
     return { bucket: "merge-ready", reason: "PR merged" };
   }
+  if (run.ciWorkflow) {
+    return {
+      bucket: "needs-you",
+      reason: "CI workflow changes need a human",
+    };
+  }
   if (run.prNumber != null) {
     return { bucket: "merge-ready", reason: `PR #${run.prNumber} open` };
   }
@@ -118,6 +124,7 @@ function risksOf(run: DigestRun, bucket: DigestBucket): string[] {
   if (num(run.filesChanged) > RISK_FILES) {
     risks.push(`touches ${num(run.filesChanged)} files`);
   }
+  if (run.ciWorkflow) risks.push("CI workflow");
   if (num(run.filesChanged) > 0 && num(run.commits) === 0) {
     risks.push("uncommitted");
   }

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { isCiWorkflowBlockMessage } from "./blastRadius";
 import type {
   ActivityItem,
   AppSettings,
@@ -371,7 +372,9 @@ export interface UseCoderResult {
    */
   removeProject: (projectId: string) => Promise<void>;
   setupWorktree: () => Promise<ThreadInfo | null>;
-  mergeWorktree: () => Promise<ThreadInfo | null>;
+  mergeWorktree: (opts?: {
+    ciWorkflowApproved?: boolean;
+  }) => Promise<ThreadInfo | null>;
   removeWorktree: (force?: boolean) => Promise<ThreadInfo | null>;
   fetchDiff: () => Promise<DiffResult>;
   fetchReviewContext: () => Promise<ReviewContext>;
@@ -421,7 +424,7 @@ export interface UseCoderResult {
   /** CI checks for the selected thread's current PR. Failures are in-band. */
   prChecks: () => Promise<PrChecksResult>;
   /** Squash-merge the selected thread's current OPEN PR. */
-  prMerge: () => Promise<PrInfo>;
+  prMerge: (opts?: { ciWorkflowApproved?: boolean }) => Promise<PrInfo>;
   /** Open PRs for a project checkout (`gh pr list`). Failures are in-band. */
   listPrs: (projectPath: string) => Promise<ListPrsResult>;
   /** Check out a PR into a worktree thread. Failures are in-band. */
@@ -2043,10 +2046,15 @@ export function useCoder(): UseCoderResult {
     return thread;
   }, [api, selectedThreadId, applyThreadUpdate]);
 
-  const mergeWorktree = useCallback(async () => {
+  const mergeWorktree = useCallback(async (opts?: {
+    ciWorkflowApproved?: boolean;
+  }) => {
     if (!selectedThreadId) return null;
     const threadId = selectedThreadId;
-    const thread = await api.git.mergeWorktree({ threadId });
+    const thread = await api.git.mergeWorktree({
+      threadId,
+      ciWorkflowApproved: opts?.ciWorkflowApproved,
+    });
     if (selectedRef.current !== threadId) return thread;
     applyThreadUpdate(thread);
     const d = await api.threads.get(threadId);
@@ -2296,13 +2304,18 @@ export function useCoder(): UseCoderResult {
     return api.git.prChecks({ threadId: selectedThreadId });
   }, [api, selectedThreadId]);
 
-  const prMerge = useCallback(async () => {
+  const prMerge = useCallback(async (opts?: {
+    ciWorkflowApproved?: boolean;
+  }) => {
     if (!selectedThreadId) {
       throw new Error("No thread selected");
     }
     const threadId = selectedThreadId;
     try {
-      const pr = await api.git.prMerge({ threadId });
+      const pr = await api.git.prMerge({
+        threadId,
+        ciWorkflowApproved: opts?.ciWorkflowApproved,
+      });
       if (selectedRef.current !== threadId) return pr;
       const d = await api.threads.get(threadId);
       if (selectedRef.current === threadId) {
@@ -2312,7 +2325,10 @@ export function useCoder(): UseCoderResult {
       setError(null);
       return pr;
     } catch (err) {
-      setError({ scope: "run", message: errorMessage(err) });
+      const msg = errorMessage(err);
+      if (!isCiWorkflowBlockMessage(msg)) {
+        setError({ scope: "run", message: msg });
+      }
       throw err;
     }
   }, [api, selectedThreadId, applyThreadUpdate]);

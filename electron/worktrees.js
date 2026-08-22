@@ -7,6 +7,12 @@ const { execCommand, wrapCommand, SYNC_TIMEOUT_MS } = require("./ssh.js");
 const { pathSide, isWindowsMount, wslTarget, buildWslCommand } = require("./wsl.js");
 const { scanSecrets } = require("./guardrails.js");
 const { GENERATED_MARKER } = require("./configDoctor.js");
+const {
+  blastRadiusFor,
+  ciWorkflowFiles,
+  assertCiWorkflowSignOff,
+  inspectFailedMessage,
+} = require("./blastRadius.js");
 // #559 persists this default (10) on every project; 0 is keep-everything.
 const { DEFAULT_WORKTREE_RETENTION } = require("./store.js");
 // Legacy shared annotation. New threads write `.solenta/review-itinerary/<threadId>.json`
@@ -595,6 +601,17 @@ function mergeWorktree(opts) {
     throw new Error(`Cannot merge thread ${threadId} into its own worktree`);
   }
 
+  // Blast-radius gate (issue #510) before auto-commit: a workflow file in
+  // the working tree or the branch vs base is a privilege-escalation, not
+  // a code edit. Human sign-off is ciWorkflowApproved === true.
+  const baseForGate = defaultBranch(target);
+  gateCiWorkflowMerge(
+    wtPath,
+    baseForGate,
+    true,
+    opts.ciWorkflowApproved === true,
+  );
+
   // (a) Commit any uncommitted worktree changes. Refuse while conflicts are
   // unresolved: `add -A` would happily commit the markers.
   const pending = unresolvedFiles(wtPath);
@@ -623,7 +640,7 @@ function mergeWorktree(opts) {
   }
 
   // (b) Target checkout's current branch (must not be detached)
-  const baseBranch = defaultBranch(target);
+  const baseBranch = baseForGate;
 
   // (c) A dirty project checkout used to be a hard refusal — TRACKED changes
   // only, since a stray untracked scratch file blocked every merge forever
@@ -1214,11 +1231,112 @@ async function diff(opts) {
     truncated = true;
   }
 
+  const extra = [];
+  let lintPatch = patch;
+  if (!project.remoteHost) {
+    try {
+      const base = await defaultBranchAsync(project.path);
+      if (base) {
+        const vsBase = await gitTryAsync(cwd, [
+          "diff",
+          "--name-only",
+          `${base}...HEAD`,
+        ]);
+        if (vsBase.ok) {
+          for (const line of String(vsBase.stdout || "").split("\n")) {
+            const p = line.trim();
+            if (p) extra.push(p);
+          }
+        }
+        const committedCi = ciWorkflowFiles(extra);
+        if (committedCi.length) {
+          const vsPatch = await gitTryAsync(cwd, [
+            "diff",
+            `${base}...HEAD`,
+            "--",
+            ...committedCi,
+          ]);
+          if (vsPatch.ok && vsPatch.stdout) {
+            lintPatch = `${patch}\n${vsPatch.stdout}`;
+          }
+        }
+      }
+    } catch {
+      // Classification is additive; a missing base must not blank the diff.
+    }
+  }
+
   return {
     files: [...byPath.values()],
     patch,
     truncated,
+    blastRadius: blastRadiusFor(
+      [...byPath.keys(), ...extra],
+      lintPatch,
+    ),
   };
+}
+
+/**
+ * Paths changed on the branch vs `base` (three-dot) and optionally the
+ * working tree. Fail-closed: a git failure returns ok:false so merge
+ * cannot skip the #510 gate.
+ *
+ * @param {string} cwd
+ * @param {{ base?: string | null, includeWorkingTree?: boolean }} opts
+ * @returns {{ ok: boolean, paths: string[] }}
+ */
+function listChangedPaths(cwd, opts) {
+  const paths = new Set();
+  const base = opts && opts.base ? String(opts.base).trim() : "";
+  if (base) {
+    const committed = gitTry(cwd, ["diff", "--name-only", `${base}...HEAD`]);
+    if (!committed.ok) return { ok: false, paths: [] };
+    for (const line of String(committed.stdout || "").split("\n")) {
+      const p = line.trim();
+      if (p) paths.add(p);
+    }
+  }
+  if (opts && opts.includeWorkingTree) {
+    let dirty = "";
+    try {
+      dirty = gitOut(cwd, ["status", "--porcelain", "-uall"], { raw: true });
+    } catch {
+      return { ok: false, paths: [] };
+    }
+    for (const line of String(dirty || "").split("\n")) {
+      if (!line) continue;
+      let filePath = line.slice(3);
+      if (filePath.includes(" -> ")) {
+        filePath = filePath.split(" -> ").pop() || filePath;
+      }
+      filePath = filePath.replace(/^"|"$/g, "");
+      if (filePath) paths.add(filePath);
+    }
+  }
+  return { ok: true, paths: [...paths] };
+}
+
+/**
+ * Refuse a merge when the change set touches CI/workflow files unless the
+ * caller passed ciWorkflowApproved (explicit human sign-off). Issue #510;
+ * also the #161 reaction-loop invariant: a machine-delivered workflow fix
+ * must not bypass this.
+ *
+ * @param {string} cwd
+ * @param {string | null | undefined} base
+ * @param {boolean} includeWorkingTree
+ * @param {unknown} approved
+ */
+function gateCiWorkflowMerge(cwd, base, includeWorkingTree, approved) {
+  const listed = listChangedPaths(cwd, {
+    base,
+    includeWorkingTree,
+  });
+  if (!listed.ok) {
+    throw new Error(inspectFailedMessage());
+  }
+  assertCiWorkflowSignOff(ciWorkflowFiles(listed.paths), approved === true);
 }
 
 /**
@@ -2920,6 +3038,7 @@ async function updatePrBranchFromBase(opts) {
  * @param {object} opts
  * @param {import('./store').Store} opts.store
  * @param {string} opts.threadId
+ * @param {boolean} [opts.ciWorkflowApproved] explicit human sign-off (#510)
  * @param {(channel: string, payload: unknown) => void} [opts.broadcast]
  * @returns {Promise<Awaited<ReturnType<typeof prStatus>>>}
  */
@@ -2966,6 +3085,15 @@ async function mergePr(opts) {
   }
 
   const info = parsePrJson(viewed.stdout, branch, false);
+  const base =
+    (info.baseRefName && String(info.baseRefName).trim()) ||
+    (await defaultBranchAsync(project.path));
+  gateCiWorkflowMerge(
+    cwd,
+    base,
+    false,
+    opts.ciWorkflowApproved === true,
+  );
   if (info.state === "OPEN") {
     const update = await updatePrBranchFromBase({
       cwd,

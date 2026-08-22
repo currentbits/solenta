@@ -167,11 +167,12 @@ describe("review itinerary panel", () => {
   it("shows the hard-stop, reuse hit, plan mismatch, and author notes", async () => {
     const { view } = await mountItinerary();
     assert.ok(view.container.querySelector("[data-review-itinerary]"));
-    assert.ok(view.container.querySelector("[data-review-hard-stop]"));
-    assert.match(
-      view.container.querySelector("[data-review-hard-stop]")?.textContent || "",
-      /ci\.yml/,
-    );
+    const blast = view.container.querySelector("[data-blast-radius]");
+    assert.ok(blast);
+    assert.equal(blast.getAttribute("data-blast-radius"), "ci-workflow");
+    assert.match(blast.textContent || "", /ci\.yml/);
+    assert.equal(view.container.querySelector("[data-review-hard-stop]"), null);
+    assert.ok(view.container.querySelector("[data-blast-radius-file]"));
     assert.ok(view.container.querySelector("[data-review-reuse]"));
     assert.match(
       view.container.querySelector("[data-review-reuse]")?.textContent || "",

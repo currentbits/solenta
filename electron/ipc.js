@@ -905,6 +905,7 @@ const IPC_HANDLERS = {
     const merged = mergeWorktree({
       store: ctx.store,
       threadId: input.threadId,
+      ciWorkflowApproved: Boolean(input && input.ciWorkflowApproved),
       broadcast: ctx.broadcast,
     });
     await runRetention(ctx);
@@ -952,6 +953,7 @@ const IPC_HANDLERS = {
     const info = await mergePr({
       store: ctx.store,
       threadId: input.threadId,
+      ciWorkflowApproved: Boolean(input && input.ciWorkflowApproved),
       broadcast: ctx.broadcast,
     });
     // Merged in-app: reclaim the worktree + branch right away (same rules

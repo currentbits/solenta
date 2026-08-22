@@ -27,6 +27,7 @@ import {
 } from "../paneLayout";
 import type {
   AttachmentInfo,
+  BlastRadiusInfo,
   ChatMessage,
   CoderApi,
   DiffResult,
@@ -104,6 +105,12 @@ import {
 import type { SlashAction, SlashCommand } from "../slashCommands";
 import { buildBestOfNEntries } from "../bestOfN";
 import { createPrPrompt, isPrTooLargeMessage, splitPrPrompt } from "../prUi";
+import {
+  blastRadiusLabel,
+  blastRadiusTitle,
+  isCiWorkflowBlockMessage,
+  isCiWorkflowPath,
+} from "../blastRadius";
 import { suggestNextGitAction } from "../nextGitAction";
 import { forgeReadiness } from "../sourceControl";
 import { formatQuotaWaitLabel } from "../quotaWait";
@@ -537,8 +544,8 @@ interface ThreadViewProps {
   }) => Promise<PrInfo>;
   /** CI checks for the current PR. Failures stay in-band. */
   onPrChecks?: () => Promise<PrChecksResult>;
-  /** Squash-merge the current OPEN PR. */
-  onPrMerge?: () => Promise<PrInfo>;
+  /** Squash-merge the current OPEN PR. Pass ciWorkflowApproved after sign-off. */
+  onPrMerge?: (opts?: { ciWorkflowApproved?: boolean }) => Promise<PrInfo>;
   /** Upstream state for the header sync pill; absent hides the pill. */
   gitSyncInfo?: (threadId: string) => Promise<GitSyncInfo>;
   /** Fetch remotes before the sync pill re-reads state. */
@@ -1357,7 +1364,7 @@ function NextGitActionButton({
     allowOversize?: boolean;
   }) => Promise<PrInfo>;
   onPrChecks?: () => Promise<PrChecksResult>;
-  onPrMerge?: () => Promise<PrInfo>;
+  onPrMerge?: (opts?: { ciWorkflowApproved?: boolean }) => Promise<PrInfo>;
   onStartRun: (prompt: string) => void | Promise<void>;
   providerName: string;
   onPushed: () => void;
@@ -1370,6 +1377,11 @@ function NextGitActionButton({
   const [flash, setFlash] = useState<string | null>(null);
   /** Size-cap refusal message while the split/override choice is showing. */
   const [oversizeMsg, setOversizeMsg] = useState<string | null>(null);
+  const [blastRadius, setBlastRadius] = useState<BlastRadiusInfo | null>(
+    null,
+  );
+  /** Confirm bar for CI-workflow merge sign-off (issue #510). */
+  const [ciSignOff, setCiSignOff] = useState(false);
   const [github, setGithub] = useState<{
     ready: boolean;
     hint: string | null;
@@ -1406,6 +1418,8 @@ function NextGitActionButton({
     setPending(false);
     setFlash(null);
     setOversizeMsg(null);
+    setBlastRadius(null);
+    setCiSignOff(false);
   }, [thread.id]);
 
   const loadGit = useCallback(async () => {
@@ -1415,10 +1429,12 @@ function NextGitActionButton({
       if (threadRef.current !== id) return;
       setDirty(!isEmptyDiff(diff));
       setFileCount(diff.files.length);
+      setBlastRadius(diff.blastRadius ?? null);
     } catch {
       if (threadRef.current !== id) return;
       setDirty(false);
       setFileCount(0);
+      setBlastRadius(null);
     }
     if (!gitSyncInfo) {
       if (threadRef.current === id) setSync(null);
@@ -1557,17 +1573,40 @@ function NextGitActionButton({
     }
     if (action.kind === "merge") {
       if (!onPrMerge) return;
+      if (blastRadius) {
+        setCiSignOff(true);
+        return;
+      }
       setPending(true);
       try {
         await onPrMerge();
         await loadGit();
         await loadChecks();
-      } catch {
-        // Parent surfaces rejections via the runError banner.
-        void loadForge(true);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (isCiWorkflowBlockMessage(msg)) {
+          setCiSignOff(true);
+        } else {
+          void loadForge(true);
+        }
       } finally {
         setPending(false);
       }
+    }
+  };
+
+  const approveCiAndMerge = async () => {
+    if (!onPrMerge || pending || isWorking) return;
+    setPending(true);
+    try {
+      await onPrMerge({ ciWorkflowApproved: true });
+      setCiSignOff(false);
+      await loadGit();
+      await loadChecks();
+    } catch {
+      void loadForge(true);
+    } finally {
+      setPending(false);
     }
   };
 
@@ -1610,12 +1649,25 @@ function NextGitActionButton({
     .join(" ");
   const dataCreatePr = action.kind === "create-pr" ? "" : undefined;
   const href = action.href;
+  const actionTitle = blastRadius
+    ? `${action.title} · ${blastRadiusTitle(blastRadius)}`
+    : action.title;
 
   if (
     href &&
     (action.kind === "watch-checks" || action.kind === "checks-failed")
   ) {
     return (
+      <>
+      {blastRadius ? (
+        <span
+          className={styles.blastBadge}
+          data-blast-radius="ci-workflow"
+          title={blastRadiusTitle(blastRadius)}
+        >
+          {blastRadiusLabel(blastRadius)}
+        </span>
+      ) : null}
       <a
         className={className}
         data-next-git-action={action.kind}
@@ -1627,7 +1679,7 @@ function NextGitActionButton({
         href={href}
         target="_blank"
         rel="noreferrer"
-        title={action.title}
+        title={actionTitle}
         aria-disabled={disabled ? "true" : undefined}
         onClick={() => {
           void loadChecks();
@@ -1636,11 +1688,21 @@ function NextGitActionButton({
         {pending && <span className={styles.pushSpinner} aria-hidden />}
         {label}
       </a>
+      </>
     );
   }
 
   return (
     <>
+      {blastRadius ? (
+        <span
+          className={styles.blastBadge}
+          data-blast-radius="ci-workflow"
+          title={blastRadiusTitle(blastRadius)}
+        >
+          {blastRadiusLabel(blastRadius)}
+        </span>
+      ) : null}
       <button
         type="button"
         className={className}
@@ -1654,12 +1716,43 @@ function NextGitActionButton({
         disabled={disabled}
         aria-disabled={disabled ? "true" : undefined}
         aria-busy={pending || undefined}
-        title={action.title}
+        title={actionTitle}
         onClick={() => void handleClick()}
       >
         {pending && <span className={styles.pushSpinner} aria-hidden />}
         {label}
       </button>
+      {ciSignOff ? (
+        <span
+          className={styles.oversizeBar}
+          data-ci-signoff=""
+          role="alertdialog"
+        >
+          <span className={styles.oversizeText}>
+            {blastRadius
+              ? blastRadiusTitle(blastRadius)
+              : "This PR changes CI workflow files. Privilege-escalation — a human must sign off."}
+          </span>
+          <button
+            type="button"
+            className={styles.oversizeBtn}
+            data-ci-signoff-approve=""
+            disabled={disabled}
+            onClick={() => void approveCiAndMerge()}
+          >
+            Sign off & merge
+          </button>
+          <button
+            type="button"
+            className={styles.oversizeDismiss}
+            data-ci-signoff-cancel=""
+            aria-label="Cancel"
+            onClick={() => setCiSignOff(false)}
+          >
+            ×
+          </button>
+        </span>
+      ) : null}
       {oversizeMsg ? (
         <span
           className={styles.oversizeBar}
@@ -2683,6 +2776,15 @@ function FileRow({
       >
         <span className={styles.fileStatus}>{file.status}</span>
         <span className={styles.filePath}>{file.path}</span>
+        {isCiWorkflowPath(file.path) ? (
+          <span
+            className={styles.fileBlast}
+            data-blast-radius-file=""
+            title="CI workflow — privilege-escalation, human sign-off required"
+          >
+            CI
+          </span>
+        ) : null}
         <span className={styles.fileStats}>
           <span className={styles.adds}>+{file.additions}</span>
           <span className={styles.dels}>−{file.deletions}</span>
@@ -2946,7 +3048,19 @@ function ChangesPanel({
       )}
 
       {empty && (
-        <p className={styles.changesEmpty}>Working tree is clean</p>
+        <>
+          {diff?.blastRadius ? (
+            <div
+              className={styles.committedBlast}
+              role="alert"
+              data-blast-radius="ci-workflow"
+            >
+              <strong>Blast radius — CI workflow</strong>
+              <span>{blastRadiusTitle(diff.blastRadius)}</span>
+            </div>
+          ) : null}
+          <p className={styles.changesEmpty}>Working tree is clean</p>
+        </>
       )}
 
       {diff && !empty && itinerary && (

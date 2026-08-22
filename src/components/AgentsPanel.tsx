@@ -119,7 +119,9 @@ interface AgentsPanelProps {
   /** Select a thread (team row click). */
   onSelectThread?: (id: string) => void;
   onSetupWorktree: () => Promise<unknown>;
-  onMergeWorktree: () => Promise<unknown>;
+  onMergeWorktree: (opts?: {
+    ciWorkflowApproved?: boolean;
+  }) => Promise<unknown>;
   onRemoveWorktree: (force?: boolean) => Promise<unknown>;
   /** Opens the Git pane (fresh load). */
   onViewChanges: () => void;
@@ -337,9 +339,12 @@ function WorktreeCard({
   gitAction,
   dirtyMessage,
   conflictMessage,
+  ciWorkflowMessage,
   cardError,
   onSetup,
   onMerge,
+  onSignOffMerge,
+  onCancelCi,
   onDelete,
   onForceDelete,
   onCancelDirty,
@@ -352,9 +357,12 @@ function WorktreeCard({
   gitAction: GitAction;
   dirtyMessage: string | null;
   conflictMessage: string | null;
+  ciWorkflowMessage: string | null;
   cardError: string | null;
   onSetup: () => void;
   onMerge: () => void;
+  onSignOffMerge: () => void;
+  onCancelCi: () => void;
   onDelete: () => void;
   onForceDelete: () => void;
   onCancelDirty: () => void;
@@ -474,6 +482,39 @@ function WorktreeCard({
               type="button"
               className={styles.gitBtn}
               onClick={onCancelDirty}
+              disabled={busy}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {ciWorkflowMessage && (
+        <div className={styles.dirtyBlock} role="alert" data-ci-signoff="">
+          <pre className={styles.dirtyMessage}>{ciWorkflowMessage}</pre>
+          <div className={styles.gitActions}>
+            <button
+              type="button"
+              className={`${styles.gitBtn} ${styles.gitBtnPrimary}`}
+              data-ci-signoff-approve=""
+              onClick={onSignOffMerge}
+              disabled={busy}
+            >
+              {gitAction === "merge" ? (
+                <>
+                  <span className={styles.btnSpinner} aria-hidden />
+                  Merging…
+                </>
+              ) : (
+                "Sign off & merge"
+              )}
+            </button>
+            <button
+              type="button"
+              className={styles.gitBtn}
+              data-ci-signoff-cancel=""
+              onClick={onCancelCi}
               disabled={busy}
             >
               Cancel
@@ -1713,7 +1754,9 @@ export function GitTab({
   thread: ThreadInfo | null;
   project: ProjectInfo | null;
   onSetupWorktree: () => Promise<unknown>;
-  onMergeWorktree: () => Promise<unknown>;
+  onMergeWorktree: (opts?: {
+    ciWorkflowApproved?: boolean;
+  }) => Promise<unknown>;
   onRemoveWorktree: (force?: boolean) => Promise<unknown>;
   onViewChanges: () => void;
   listCheckpoints: (threadId: string) => Promise<CheckpointInfo[]>;
@@ -1746,6 +1789,9 @@ export function GitTab({
   const [gitAction, setGitAction] = useState<GitAction>(null);
   const [dirtyMessage, setDirtyMessage] = useState<string | null>(null);
   const [conflictMessage, setConflictMessage] = useState<string | null>(null);
+  const [ciWorkflowMessage, setCiWorkflowMessage] = useState<string | null>(
+    null,
+  );
   const [cardError, setCardError] = useState<string | null>(null);
   const [checkpoints, setCheckpoints] = useState<CheckpointInfo[]>([]);
   const [checkpointsLoading, setCheckpointsLoading] = useState(false);
@@ -1766,6 +1812,7 @@ export function GitTab({
   useEffect(() => {
     setDirtyMessage(null);
     setConflictMessage(null);
+    setCiWorkflowMessage(null);
     setCardError(null);
     setGitAction(null);
     setCheckpoints([]);
@@ -1849,6 +1896,7 @@ export function GitTab({
     try {
       await fn();
       setDirtyMessage(null);
+      setCiWorkflowMessage(null);
     } catch (err) {
       const msg =
         err instanceof Error && err.message
@@ -1862,10 +1910,13 @@ export function GitTab({
       };
       const dirty = after("WORKTREE_DIRTY:");
       const conflict = after("MERGE_CONFLICT:");
+      const ci = after("CI_WORKFLOW:");
       if (dirty) {
         setDirtyMessage(dirty);
       } else if (conflict) {
         setConflictMessage(conflict);
+      } else if (ci) {
+        setCiWorkflowMessage(ci);
       } else {
         setCardError(msg);
       }
@@ -1948,6 +1999,7 @@ export function GitTab({
           gitAction={gitAction}
           dirtyMessage={dirtyMessage}
           conflictMessage={conflictMessage}
+          ciWorkflowMessage={ciWorkflowMessage}
           cardError={cardError}
           onOpenWorktree={
             openInEditor && thread?.worktreePath
@@ -1957,6 +2009,12 @@ export function GitTab({
           onDismissConflict={() => setConflictMessage(null)}
           onSetup={() => void runAction("setup", () => onSetupWorktree())}
           onMerge={() => void runAction("merge", () => onMergeWorktree())}
+          onSignOffMerge={() =>
+            void runAction("merge", () =>
+              onMergeWorktree({ ciWorkflowApproved: true }),
+            )
+          }
+          onCancelCi={() => setCiWorkflowMessage(null)}
           onDelete={() =>
             void runAction("remove", () => onRemoveWorktree(false))
           }

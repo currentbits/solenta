@@ -6,16 +6,32 @@ const {
   gitTryAsync,
   parseShortstat,
 } = require("./worktrees.js");
+const { isCiWorkflowPath } = require("./blastRadius.js");
 
 const ZERO_STATS = {
   filesChanged: 0,
   additions: 0,
   deletions: 0,
   commits: 0,
+  ciWorkflow: false,
 };
 const DEFAULT_WINDOW_MS = 12 * 60 * 60 * 1000;
 const CHECK_RE =
   /\b(npm|pnpm|yarn|bun)\s+(run\s+)?(test|build|lint|typecheck)\b|\bnpx?\s+(vitest|jest|tsc)\b|\b(pytest|go test|cargo test|make test)\b/;
+
+async function namesTouchCi(cwd, range) {
+  try {
+    const names = await gitTryAsync(cwd, ["diff", "--name-only", range], {
+      raw: true,
+    });
+    if (!names || !names.ok) return false;
+    return String(names.stdout || "")
+      .split("\n")
+      .some((line) => isCiWorkflowPath(line.trim()));
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Git change stats for one digest row. Never throws: any failure is zeros.
@@ -24,7 +40,7 @@ const CHECK_RE =
  *
  * @param {object} thread
  * @param {object | null} project
- * @returns {Promise<{ filesChanged: number, additions: number, deletions: number, commits: number }>}
+ * @returns {Promise<{ filesChanged: number, additions: number, deletions: number, commits: number, ciWorkflow: boolean }>}
  */
 async function defaultGitStats(thread, project) {
   try {
@@ -52,6 +68,7 @@ async function defaultGitStats(thread, project) {
         additions: parsed ? parsed.additions : 0,
         deletions: parsed ? parsed.deletions : 0,
         commits: Number.isFinite(commits) ? commits : 0,
+        ciWorkflow: await namesTouchCi(cwd, base),
       };
     }
 
@@ -64,6 +81,7 @@ async function defaultGitStats(thread, project) {
       additions: parsed ? parsed.additions : 0,
       deletions: parsed ? parsed.deletions : 0,
       commits: 0,
+      ciWorkflow: await namesTouchCi(cwd, "HEAD"),
     };
   } catch {
     return { ...ZERO_STATS };
@@ -164,6 +182,7 @@ async function collectDigest(opts) {
         commits: num(stats.commits),
         prNumber: thread.prNumber != null ? thread.prNumber : null,
         prState: thread.prState != null ? thread.prState : null,
+        ciWorkflow: Boolean(stats.ciWorkflow),
         checks: checksFor(store, thread.id, sinceMs),
       };
     }),
