@@ -289,7 +289,6 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   /** Freshly created thread the Sidebar should reveal (expand/scroll/flash). */
   const [revealThreadId, setRevealThreadId] = useState<string | null>(null);
   const [drawer, setDrawer] = useState<DrawerId | null>(null);
-  const [agentsCollapsed, setAgentsCollapsed] = useState(loadAgentsCollapsed);
   const [forecast, setForecast] = useState<ConflictForecast>(EMPTY_FORECAST);
   const narrow = useNarrow();
   const [agentsCollapsed, setAgentsCollapsed] = useState(loadAgentsCollapsed);
