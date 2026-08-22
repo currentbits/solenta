@@ -13,7 +13,7 @@ import {
   clampHighlightIndex,
   detailModelRow,
   effortDisplayLabel,
-  effortSegments,
+  effortOptions,
   firstSelectableIndex,
   initialHighlightIndex,
   isRowSelected,
@@ -219,19 +219,11 @@ describe("modelTriggerLabel", () => {
     );
   });
 
-  it("appends a non-default effort next to the model name", () => {
-    assert.equal(
-      modelTriggerLabel("claude-sonnet-5", provider(), "high"),
-      "Sonnet 5 · High",
-    );
-    assert.equal(
-      modelTriggerLabel(null, provider(), "high"),
-      "Default · High",
-    );
-    assert.equal(
-      modelTriggerLabel("claude-sonnet-5", provider(), null),
-      "Sonnet 5",
-    );
+  it("never carries the reasoning level: that is its own pill", () => {
+    // The combined "Opus 5 · High" label read as a model name, which is what
+    // the split into two pills exists to stop.
+    assert.equal(modelTriggerLabel("claude-sonnet-5", provider()), "Sonnet 5");
+    assert.equal(modelTriggerLabel(null, provider()), "Default");
   });
 });
 
@@ -337,44 +329,22 @@ describe("reasoning control", () => {
     assert.equal(showReasoningControl(["low", "high"]), true);
   });
 
-  it("fills left-to-right up to the current level on the provider's list only", () => {
+  it("offers the provider default first, then every advertised level", () => {
     // Grok-shaped list: three levels. Must not expand to REASONING_EFFORTS.
     const efforts: ReasoningEffort[] = ["low", "medium", "high"];
-    const segs = effortSegments(efforts, "high");
-    assert.equal(segs.length, 3);
-    assert.notEqual(segs.length, REASONING_EFFORTS.length);
-    assert.deepEqual(
-      segs.map((s) => s.filled),
-      [true, true, true],
-    );
-    assert.deepEqual(
-      segs.map((s) => s.level),
-      efforts,
-    );
+    const options = effortOptions(efforts);
+    assert.deepEqual(options, [null, "low", "medium", "high"]);
+    assert.notEqual(options.length, REASONING_EFFORTS.length);
   });
 
-  it("fills through xhigh on a full claude-shaped list", () => {
-    const efforts: ReasoningEffort[] = [
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-      "max",
-    ];
-    const segs = effortSegments(efforts, "xhigh");
-    assert.deepEqual(
-      segs.map((s) => s.filled),
-      [true, true, true, true, false],
-    );
+  it("offers Default alone for a missing list", () => {
+    assert.deepEqual(effortOptions(undefined), [null]);
+    assert.deepEqual(effortOptions(null), [null]);
+    assert.deepEqual(effortOptions([]), [null]);
   });
 
-  it("fills nothing when current effort is null (provider default)", () => {
-    const segs = effortSegments(["low", "medium", "high"], null);
-    assert.ok(segs.every((s) => !s.filled));
-  });
-
-  it("labels null as Default and maps each CLI token to a human word", () => {
-    assert.equal(effortDisplayLabel(null), "Default");
+  it("labels null as Auto and maps each CLI token to a human word", () => {
+    assert.equal(effortDisplayLabel(null), "Auto");
     assert.equal(effortDisplayLabel("high"), "High");
     assert.equal(effortDisplayLabel("xhigh"), "Extra high");
     assert.equal(effortDisplayLabel("max"), "Max");
@@ -382,15 +352,4 @@ describe("reasoning control", () => {
     assert.equal(effortDisplayLabel("medium"), "Medium");
   });
 
-  it("unified row carries the provider's efforts for the detail meter", () => {
-    const rows = buildUnifiedModelRows(MULTI, "claude", false);
-    const claude = rows.find((r) => r.providerId === "claude")!;
-    const codex = rows.find((r) => r.providerId === "codex")!;
-    const grok = rows.find((r) => r.providerId === "grok")!;
-    assert.equal(claude.efforts.length, 5);
-    assert.equal(codex.efforts.length, 0);
-    assert.equal(grok.efforts.length, 3);
-    assert.equal(showReasoningControl(claude.efforts), true);
-    assert.equal(showReasoningControl(codex.efforts), false);
-  });
 });

@@ -496,17 +496,20 @@ describe("App reasoning-effort wiring", () => {
       .queryAll("button")
       .find((b) => (b.textContent || "").includes("Opus (1M context)"));
     assert.ok(trigger, "the model trigger must show the label");
-    await m.click(trigger);
 
-    const segments = m.queryAll('[aria-label^="Reasoning "]');
+    const pill = m.query('button[aria-label^="Reasoning:"]');
+    assert.ok(pill, "the effort pill is its own control next to the model pill");
+    await m.click(pill);
+
+    const rows = m.queryAll('[aria-label^="Reasoning "]');
     assert.ok(
-      segments.length >= 3,
-      `expected one segment per supported level, got ${segments.length}`,
+      rows.length >= 3,
+      `expected one row per supported level, got ${rows.length}`,
     );
-    const high = segments.find((s) =>
-      (s.getAttribute("aria-label") || "") === "Reasoning High",
+    const high = rows.find(
+      (s) => (s.getAttribute("aria-label") || "") === "Reasoning High",
     );
-    assert.ok(high, "a High segment must exist for claude");
+    assert.ok(high, "a High row must exist for claude");
     await m.click(high);
 
     const call = fake.only("threads.setReasoningEffort");

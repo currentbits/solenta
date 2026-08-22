@@ -99,13 +99,15 @@ describe("profileSummary", () => {
     );
   });
 
-  it("says Default for a null model and a null effort", () => {
+  it("says Default for a null model and Auto for a null effort", () => {
+    // Two different nulls, two different words: the model pill and the effort
+    // pill sit side by side and used to both read "Default".
     assert.equal(
       profileSummary(
         profile({ model: null, reasoningEffort: null, permissionMode: "default" }),
         LIST,
       ),
-      "Claude Code · Default · Default · Ask first",
+      "Claude Code · Default · Auto · Ask first",
     );
   });
 

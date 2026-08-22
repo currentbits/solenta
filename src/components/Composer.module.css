@@ -412,6 +412,13 @@
   line-height: 1;
 }
 
+.effortIcon {
+  display: inline-flex;
+  align-items: center;
+  opacity: 0.75;
+  line-height: 1;
+}
+
 /* Invisible text node keeping the trigger's textContent contract stable. */
 .legacyGlyph {
   display: none;
@@ -710,96 +717,6 @@
   color: var(--text-muted);
   line-height: 1.45;
   margin-bottom: 4px;
-}
-
-.reasoningBlock {
-  margin-top: auto;
-  padding-top: 12px;
-  border-top: 1px solid var(--border);
-}
-
-.reasoningHeader {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-
-.reasoningTitle {
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  color: var(--text-dim);
-}
-
-.reasoningLevel {
-  font-size: 12px;
-  font-weight: 550;
-  color: var(--green);
-}
-
-.effortSegments {
-  display: flex;
-  align-items: stretch;
-  gap: 4px;
-}
-
-.effortSegment {
-  flex: 1 1 0;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 4px;
-  padding: 0;
-  background: transparent;
-  border: none;
-}
-
-.effortBar {
-  height: 10px;
-  border-radius: 3px;
-  background: var(--track);
-  border: 1px solid transparent;
-  transition:
-    background-color 120ms ease,
-    border-color 120ms ease,
-    filter 120ms ease,
-    transform 120ms ease;
-}
-
-.effortSegment:hover:not(:disabled) .effortBar {
-  background: var(--overlay-strong);
-}
-
-.effortSegment:active:not(:disabled) .effortBar {
-  transform: scaleY(1.5);
-}
-
-.effortSegment[data-filled="true"] .effortBar {
-  background: var(--green);
-  border-color: var(--green-border);
-  /* --i is the segment index: the fill sweeps left-to-right instead of
-     lighting every segment on the same frame. Only set in the filled state,
-     so hover and un-fill stay immediate. */
-  transition-delay: calc(var(--i, 0) * 25ms);
-}
-
-.effortSegment[data-filled="true"]:hover .effortBar {
-  filter: brightness(1.08);
-}
-
-.effortCaption {
-  font-size: 9px;
-  line-height: 1.2;
-  font-weight: 500;
-  color: var(--text-muted);
-  text-align: center;
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
 }
 
 .send {

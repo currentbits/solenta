@@ -13,6 +13,7 @@ import { describe, it, afterEach } from "node:test";
 import { useState } from "react";
 import { mount, unmountAll } from "./support/dom.ts";
 import { Composer } from "../src/components/Composer";
+import { setLastReasoningEffort } from "../src/uiPrefs";
 import type {
   AgentProfile,
   PermissionMode,
@@ -263,6 +264,16 @@ async function openProvider(
   if (!providerBtn) return null;
   await m.click(providerBtn);
   return m.query('[role="listbox"][aria-label="Model"]') as HTMLElement | null;
+}
+
+/** Open the reasoning pill's menu. It is its own pill, not part of the picker. */
+async function openEffort(m: Awaited<ReturnType<typeof mount>>) {
+  const pill = m.query('button[aria-label^="Reasoning:"]');
+  if (!pill) return null;
+  await m.click(pill);
+  return m.query('[role="listbox"][aria-label="Reasoning effort"]') as
+    | HTMLElement
+    | null;
 }
 
 describe("Composer per-thread draft", () => {
@@ -754,88 +765,58 @@ describe("Composer drill-down picker", () => {
     m.unmount();
   });
 
-  it("hides the reasoning control entirely for a provider with no efforts", async () => {
-    // Empty efforts on the THREAD's provider: no control, not an empty one.
-    // Hovering another harness must not summon that harness's meter.
+  it("hides the reasoning pill entirely for a provider with no efforts", async () => {
+    // Empty efforts on the THREAD's provider: no pill, not a disabled one.
     const h = makeHarness();
     const m = await mount(composer(h, { provider: "codex", model: null }));
-    await m.click(m.query('button[aria-label^="Model:"]'));
     assert.equal(
-      m.query('[role="group"][aria-label="Reasoning effort"]'),
+      m.query('button[aria-label^="Reasoning:"]'),
       null,
-      "codex advertises no efforts, so no meter may render",
-    );
-    await m.hover(m.query('button[aria-label="Provider Claude Code"]'));
-    assert.equal(
-      m.query('[role="group"][aria-label="Reasoning effort"]'),
-      null,
-      "hovering a provider that does advertise efforts must not show a meter",
-    );
-    assert.equal(
-      m.text().includes("REASONING"),
-      false,
-      "the header must leave with the meter",
+      "codex advertises no efforts, so no effort pill may render",
     );
     m.unmount();
   });
 
-  it("renders one segment per level the current provider advertises", async () => {
-    // Count follows the thread, not the row under the cursor.
+  it("lists one row per level the thread's provider advertises", async () => {
     const h = makeHarness();
     const m = await mount(composer(h, { provider: "claude", model: null }));
-    assert.ok(await openProvider(m, "Claude Code"));
-    let group = m.query('[role="group"][aria-label="Reasoning effort"]');
-    assert.equal(group?.querySelectorAll("button").length, 5, "claude has five");
-
-    await m.click(m.byText("CLAUDE CODE"));
-    assert.ok(await openProvider(m, "Kimi"));
-    group = m.query('[role="group"][aria-label="Reasoning effort"]');
-    assert.equal(
-      group?.querySelectorAll("button").length,
-      5,
-      "drilling into kimi must not swap the meter onto kimi's three",
-    );
+    const menu = await openEffort(m);
+    // Default plus claude's five.
+    assert.equal(menu?.querySelectorAll("button").length, 6, "claude has five");
     m.unmount();
 
-    const m2 = await mount(
-      composer(h, { provider: "kimi", model: null }),
-    );
-    await m2.click(m2.query('button[aria-label^="Model:"]'));
-    group = m2.query('[role="group"][aria-label="Reasoning effort"]');
+    const m2 = await mount(composer(h, { provider: "kimi", model: null }));
+    const menu2 = await openEffort(m2);
     assert.equal(
-      group?.querySelectorAll("button").length,
-      3,
-      "kimi advertises three, so three segments when the thread is on kimi",
+      menu2?.querySelectorAll("button").length,
+      4,
+      "kimi advertises three, so three rows plus Default",
     );
     m2.unmount();
   });
 
-  it("reports the reasoning level when a segment is clicked", async () => {
-    // Restored: this is the whole point of the meter and it had no coverage
-    // left after the rewrite.
+  it("reports the reasoning level when a row is clicked", async () => {
     const h = makeHarness();
     const m = await mount(composer(h, { provider: "claude", model: null }));
-    assert.ok(await openProvider(m, "Claude Code"));
-    const seg = m
-      .queryAll('[aria-label^="Reasoning "]')
-      .find((el) => (el.getAttribute("aria-label") || "") === "Reasoning High");
-    assert.ok(seg, "a High segment must exist for claude");
-    await m.click(seg);
+    assert.ok(await openEffort(m));
+    const row = m.query('button[aria-label="Reasoning High"]');
+    assert.ok(row, "a High row must exist for claude");
+    await m.click(row);
     assert.deepEqual(h.efforts, ["high"], "clicking must report that level");
     m.unmount();
   });
 
-  it("labels each bar with the human effort name", async () => {
+  it("labels each row with the human effort name", async () => {
     const h = makeHarness();
     const m = await mount(composer(h, { provider: "claude", model: null }));
-    assert.ok(await openProvider(m, "Claude Code"));
-    const captions = m
-      .queryAll('[class*="effortCaption"]')
-      .map((el) => (el.textContent || "").trim());
+    const menu = await openEffort(m);
+    const labels = Array.from(menu?.querySelectorAll("button") ?? []).map((el) =>
+      (el.textContent || "").trim(),
+    );
     assert.deepEqual(
-      captions,
-      ["Low", "Medium", "High", "Extra high", "Max"],
-      "bars must show Low…Max, not tooltip-only",
+      labels,
+      ["Auto", "Low", "Medium", "High", "Extra high", "Max"],
+      "rows must read Auto and Low…Max, not tooltip-only",
     );
     m.unmount();
   });
@@ -1147,97 +1128,41 @@ describe("Composer drill-down picker", () => {
     m.unmount();
   });
 
-  it("the meter at the provider level stays on the thread, not the hover", async () => {
-    // The thread is on kimi (not PROVIDERS[0]) so "highlighted", "current" and
-    // "first" are distinguishable; with claude they are not.
-    const h = makeHarness();
-    const m = await mount(
-      composer(h, { provider: "kimi", model: "k3", reasoningEffort: "high" }),
-    );
-    await m.click(m.query('button[aria-label^="Model:"]'));
-
-    let group = m.query('[role="group"][aria-label="Reasoning effort"]');
-    assert.ok(group, "the thread's own provider shows a meter");
-    let segs = Array.from(group.querySelectorAll("button")) as HTMLButtonElement[];
-    assert.equal(segs.length, 3, "kimi advertises three levels");
-    assert.equal(
-      m.query('[class*="reasoningLevel"]')?.textContent,
-      "High",
-      "the thread's High must show before any hover",
-    );
-
-    await m.hover(m.query('button[aria-label="Provider Claude Code"]'));
-    group = m.query('[role="group"][aria-label="Reasoning effort"]');
-    assert.ok(group, "hovering claude must not hide kimi's meter");
-    segs = Array.from(group.querySelectorAll("button")) as HTMLButtonElement[];
-    assert.equal(
-      segs.length,
-      3,
-      "the count must stay on the thread, not follow claude's five",
-    );
-    assert.equal(
-      m.query('[class*="reasoningLevel"]')?.textContent,
-      "High",
-      "the label must not flip to Default just because the pointer moved",
-    );
-    assert.equal(
-      segs.some((b) => b.getAttribute("aria-pressed") === "true"),
-      true,
-      "the thread's High stays pressed under a foreign hover",
-    );
-    await m.click(segs[0]);
-    assert.deepEqual(
-      h.providerSets,
-      [],
-      "a reasoning bar must never switch the harness",
-    );
-    assert.deepEqual(
-      h.callOrder,
-      ["setReasoningEffort"],
-      "clicking a bar under a foreign hover only sets effort",
-    );
-    assert.equal(h.effectiveEffort, "low");
-    m.unmount();
-  });
-
-  it("clicking a segment while a foreign Custom row is highlighted only sets effort", async () => {
+  it("keeps the effort pill on the thread while the picker is open", async () => {
+    // The meter used to live in the picker's detail pane, so hovering another
+    // harness or a profile made it describe something the thread was not on.
+    // Its own pill cannot: it only ever reads the thread's provider.
     const h = makeHarness();
     const m = await mount(
       composer(h, { provider: "kimi", model: "k3", reasoningEffort: "high" }),
     );
     assert.ok(await openProvider(m, "Claude Code"), "drill into a foreign provider");
-    const target = m.query('[data-highlighted="true"]');
-    assert.ok(target);
-    await m.pressFocused("End");
-    assert.match(
-      m.query('[data-highlighted="true"]')?.textContent || "",
-      /Custom/,
-      "End must land on the Custom row for this to prove anything",
+    assert.equal(
+      m.query('button[aria-label^="Reasoning:"]')?.getAttribute("aria-label"),
+      "Reasoning: High",
+      "the pill must not follow the harness under the cursor",
     );
-    const group = m.query('[role="group"][aria-label="Reasoning effort"]');
-    assert.ok(group, "the thread's meter must still render on a Custom hover");
-    const segs = Array.from(
-      group.querySelectorAll("button"),
-    ) as HTMLButtonElement[];
-    assert.equal(segs.length, 3, "kimi's three, not claude's five");
-    await m.click(segs[segs.length - 1]);
+    const menu = await openEffort(m);
+    assert.equal(
+      menu?.querySelectorAll("button").length,
+      4,
+      "kimi's three plus Default, not claude's five",
+    );
+    await m.click(m.query('button[aria-label="Reasoning Max"]'));
     assert.deepEqual(
       h.providerSets,
       [],
-      "highlighting Custom must not ship a provider switch or a sentinel id",
+      "picking a level must never switch the harness",
     );
     assert.equal(h.effectiveEffort, "max");
     m.unmount();
   });
 
-  it("keeps the meter inert when the thread's OWN provider is not installed", async () => {
+  it("keeps the pill inert when the thread's OWN provider is not installed", async () => {
     // Both halves of the inertness (disabled + the pickEffort early-return)
-    // could be removed with the suite green (round 38 M3): every meter test
+    // could be removed with the suite green (round 38 M3): every effort test
     // used an installed provider.
     const h = makeHarness();
-    // GROK alone: with other providers present the initial highlight skips a
-    // disabled current row (round 32), so the pane would describe an
-    // installed provider and this test would exercise nothing.
     const m = await mount(
       composer(h, {
         provider: "grok",
@@ -1246,50 +1171,55 @@ describe("Composer drill-down picker", () => {
         providers: [GROK],
       }),
     );
-    await m.click(m.query('button[aria-label^="Model:"]'));
-    const group = m.query('[role="group"][aria-label="Reasoning effort"]');
-    assert.ok(group, "grok advertises efforts, so the meter renders");
-    const segs = Array.from(
-      group.querySelectorAll("button"),
-    ) as HTMLButtonElement[];
+    const pill = m.query('button[aria-label^="Reasoning:"]');
+    assert.ok(pill, "grok advertises efforts, so the pill renders");
     assert.equal(
-      segs.every((b) => b.disabled),
+      (pill as HTMLButtonElement).disabled,
       true,
-      "an uninstalled CLI cannot honour a level; the meter must refuse",
+      "an uninstalled CLI cannot honour a level; the pill must refuse",
     );
-    await m.click(segs[0]);
-    assert.deepEqual(h.efforts, [], "and a click must report nothing");
+    await m.click(pill);
+    assert.equal(
+      m.query('[role="listbox"][aria-label="Reasoning effort"]'),
+      null,
+      "and it must not open",
+    );
+    assert.deepEqual(h.efforts, [], "and report nothing");
     m.unmount();
   });
 
-  it("leaves the meter usable after backing out of a provider", async () => {
-    // Regression: backing out left the model highlight pointing into the flat
-    // list at another provider's row, so the pane said you were on your own
-    // harness at your own level while every segment refused the click.
-    const h = makeHarness();
+  it("restores a level a harness switch had dropped", async () => {
+    // claude/Extra high -> kimi cannot keep the level (kimi lists low/high/max
+    // only), so services.js clears it. Switching back used to land on Default,
+    // silently forgetting a level the user had picked.
+    const h = makeHarness("kimi");
+    setLastReasoningEffort("xhigh");
     const m = await mount(
-      composer(h, { provider: "kimi", model: null, reasoningEffort: "high" }),
+      composer(h, { provider: "kimi", model: null, reasoningEffort: null }),
     );
-    await m.click(m.query('button[aria-label^="Model:"]'));
-    await m.click(m.query('button[aria-label="Provider Claude Code"]'));
-    await m.click(m.byText("CLAUDE CODE"));
-    await m.hover(m.query('button[aria-label="Provider Kimi"]'));
-
-    const group = m.query('[role="group"][aria-label="Reasoning effort"]');
-    assert.ok(group, "own provider must still show its meter");
-    const segs = Array.from(group.querySelectorAll("button")) as HTMLButtonElement[];
-    assert.equal(
-      segs.every((b) => b.disabled),
-      false,
-      "backing out must not leave your own meter dead",
-    );
-    await m.click(segs[segs.length - 1]);
+    assert.ok(await openProvider(m, "Claude Code"));
+    await m.click(m.query('[role="listbox"][aria-label="Model"] button'));
     assert.deepEqual(
-      h.efforts,
-      ["max"],
-      "the last kimi segment is max, not high: the meter must map segments " +
-        "to the provider's OWN levels, not a contiguous low..high assumption",
+      h.callOrder,
+      ["setProvider", "setReasoningEffort"],
+      "the restore must follow the switch, not race it",
     );
+    assert.equal(h.effectiveEffort, "xhigh");
+    m.unmount();
+  });
+
+  it("does not resurrect a level over a deliberate Default", async () => {
+    // Same remembered level, but this harness CAN honour it: Auto here is the
+    // user's own choice on this thread and must survive the switch.
+    const h = makeHarness("claude");
+    setLastReasoningEffort("xhigh");
+    const m = await mount(
+      composer(h, { provider: "claude", model: null, reasoningEffort: null }),
+    );
+    assert.ok(await openProvider(m, "Kimi"));
+    await m.click(m.query('[role="listbox"][aria-label="Model"] button'));
+    assert.deepEqual(h.efforts, [], "no effort call at all");
+    setLastReasoningEffort(null);
     m.unmount();
   });
 
@@ -1514,52 +1444,66 @@ describe("Composer value displays (null-safe)", () => {
 });
 
 describe("Composer reasoning trigger pill", () => {
-  it("shows a non-default effort next to the model name without opening the picker", async () => {
+  it("shows the level on its own pill, never on the model pill", async () => {
     const h = makeHarness();
     const m = await mount(
       composer(h, { provider: "claude", model: null, reasoningEffort: "high" }),
     );
-    const trigger = m.query('button[aria-label^="Model:"]');
-    assert.ok(trigger);
+    const model = m.query('button[aria-label^="Model:"]');
+    assert.ok(model);
     assert.equal(
-      trigger.getAttribute("aria-label"),
-      "Model: Default · High",
-      "effort must be on the closed trigger, not only inside the popover",
+      model.getAttribute("aria-label"),
+      "Model: Default",
+      "the model pill names a model and nothing else",
     );
-    assert.match(trigger.textContent || "", /High/);
+    const effort = m.query('button[aria-label^="Reasoning:"]');
+    assert.ok(effort, "the effort pill must exist next to it");
+    assert.equal(effort.getAttribute("aria-label"), "Reasoning: High");
+    assert.match(effort.textContent || "", /High/);
     m.unmount();
   });
 
-  it("omits the effort from the trigger when the thread is on the provider default", async () => {
+  it("reads Auto when the thread is on the provider default", async () => {
     const h = makeHarness();
     const m = await mount(composer(h, { provider: "claude", model: null }));
-    const trigger = m.query('button[aria-label^="Model:"]');
-    assert.ok(trigger);
-    assert.equal(trigger.getAttribute("aria-label"), "Model: Default");
+    assert.equal(
+      m.query('button[aria-label^="Reasoning:"]')?.getAttribute("aria-label"),
+      "Reasoning: Auto",
+      "the model pill already says Default; the effort pill must not echo it",
+    );
     m.unmount();
   });
 });
 
 describe("Composer reasoning default", () => {
-  it("clicking the current level clears back to the provider default", async () => {
-    // ReasoningEffort | null is handled at every layer, but before this the UI
-    // could only move between levels, never restore the provider's default.
+  it("offers the provider default (Auto) as a row of its own", async () => {
+    // ReasoningEffort | null is handled at every layer, but it used to be
+    // reachable only by re-clicking the active segment, which nobody found.
     const h = makeHarness();
     const m = await mount(composer(h, { reasoningEffort: "high" }));
-    const trigger = m.query('button[aria-label^="Model:"]');
-    assert.ok(trigger, "model trigger must exist");
-    await m.click(trigger);
-    const current = m
-      .queryAll('[aria-label^="Reasoning "]')
-      .find((el) =>
-        (el.getAttribute("aria-label") || "") === "Reasoning High",
-      );
-    assert.ok(current, "a High segment must exist");
-    await m.click(current);
-    assert.deepEqual(
-      h.efforts,
-      [null],
-      "re-clicking the active level must report null, not the same level again",
+    const menu = await openEffort(m);
+    assert.ok(menu, "the effort pill must open a menu");
+    const def = m.query('button[aria-label="Reasoning Auto"]');
+    assert.ok(def, "the provider default must be a row, not a hidden toggle");
+    await m.click(def);
+    assert.deepEqual(h.efforts, [null], "picking Auto must report null");
+    m.unmount();
+  });
+
+  it("marks the active level and closes on pick", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h, { reasoningEffort: "high" }));
+    assert.ok(await openEffort(m));
+    assert.equal(
+      m.query('button[aria-label="Reasoning High"]')?.getAttribute("data-active"),
+      "true",
+    );
+    await m.click(m.query('button[aria-label="Reasoning Low"]'));
+    assert.deepEqual(h.efforts, ["low"]);
+    assert.equal(
+      m.query('[role="listbox"][aria-label="Reasoning effort"]'),
+      null,
+      "the menu must close behind the pick",
     );
     m.unmount();
   });
@@ -1578,6 +1522,11 @@ describe("Composer structure", () => {
     // so with the model pill first the two-pane picker (model rows and the
     // reasoning segments, the largest interactive surface here) was already
     // gone by the time this asserted, and nesting inside it went unnoticed.
+    // The effort menu is a sibling pill and every other pill closes it, so it
+    // is checked on its own before the loop rather than left half-open.
+    for (const btn of (await openEffort(m))?.querySelectorAll("button") ?? []) {
+      assert.equal(btn.querySelector("button, a"), null);
+    }
     const openLabels = ["Ask first"];
     for (const label of openLabels) {
       const pill = Array.from(m.queryAll("button")).find((b) =>
@@ -1600,12 +1549,6 @@ describe("Composer structure", () => {
     assert.ok(
       m.queryAll('[role="option"]').length >= 4,
       "the drilled provider's rows must be present while this asserts",
-    );
-    // The reasoning meter is the other new interactive surface. Without this
-    // the guard silently skipped it whenever the fixture had no effort levels.
-    assert.ok(
-      m.queryAll('[aria-label^="Reasoning "]').length > 0,
-      "the reasoning segments must be rendered when this asserts",
     );
 
     const interactives = m.queryAll("button, a");
@@ -1683,112 +1626,6 @@ describe("Composer keyboard send", () => {
     await m.type(m.query("textarea"), "/btw which file owns parseBtw");
     await m.press(m.query("textarea"), "Enter", { altKey: true });
     assert.deepEqual(h.sends, ["/btw which file owns parseBtw"]);
-    m.unmount();
-  });
-});
-
-describe("Composer reasoning belongs to the current provider", () => {
-  const scout: AgentProfile = {
-    id: "p1",
-    name: "Cheap scout",
-    provider: "claude",
-    model: "claude-sonnet-4",
-    reasoningEffort: "low",
-    permissionMode: "plan",
-  };
-
-  it("keeps the thread's effort when hovering a saved profile", async () => {
-    const h = makeHarness();
-    const m = await mount(
-      composer(h, {
-        provider: "claude",
-        model: null,
-        reasoningEffort: "high",
-        agentProfiles: [scout],
-      }),
-    );
-    await m.click(m.query('button[aria-label^="Model:"]'));
-    const profile = m.query('button[aria-label="Profile Cheap scout"]');
-    assert.ok(profile, "the saved profile must be in the picker");
-    await m.hover(profile);
-
-    const group = m.query('[role="group"][aria-label="Reasoning effort"]');
-    assert.ok(group, "hovering a profile must not hide the thread's meter");
-    assert.equal(
-      m.query('[class*="reasoningLevel"]')?.textContent,
-      "High",
-      "the label must stay on the thread, not vanish because profiles have no efforts",
-    );
-    const segs = Array.from(group.querySelectorAll("button")) as HTMLButtonElement[];
-    assert.equal(segs.length, 5, "claude's five, not a profile's empty list");
-    await m.click(segs[0]);
-    assert.deepEqual(h.providerSets, [], "a bar click on a profile hover must not apply the profile");
-    assert.deepEqual(h.efforts, ["low"]);
-    m.unmount();
-  });
-
-  it("keeps the thread's effort when hovering a foreign provider row", async () => {
-    const h = makeHarness();
-    const m = await mount(
-      composer(h, {
-        provider: "claude",
-        model: null,
-        reasoningEffort: "high",
-      }),
-    );
-    const list = await openProvider(m, "Kimi");
-    assert.ok(list, "must be able to enter a provider the thread is not on");
-
-    const group = m.query('[role="group"][aria-label="Reasoning effort"]');
-    assert.ok(group, "the thread's meter must still render inside a foreign list");
-    const segments = Array.from(group.querySelectorAll("button")) as HTMLButtonElement[];
-    assert.equal(
-      segments.length,
-      5,
-      "claude's five, not kimi's three: the meter is the thread's",
-    );
-    assert.equal(
-      segments.filter((b) => b.getAttribute("data-filled") === "true").length,
-      3,
-      "High still fills low..high on claude's scale",
-    );
-    assert.equal(
-      m.query('[class*="reasoningLevel"]')?.textContent,
-      "High",
-    );
-    m.unmount();
-  });
-
-  it("clicking a bar under a foreign hover does not call onSetProvider", async () => {
-    const h = makeHarness();
-    const m = await mount(
-      composer(h, { provider: "claude", model: null, reasoningEffort: "high" }),
-    );
-    const list = await openProvider(m, "Kimi");
-    assert.ok(list, "kimi must be enterable");
-    await m.press(list, "ArrowDown");
-    const hl = m.query('[data-highlighted="true"]');
-    assert.ok(
-      hl && (hl.textContent || "").includes("K3"),
-      "the K3 row must be highlighted before the effort pick",
-    );
-
-    const seg = Array.from(m.queryAll('[aria-label^="Reasoning "]')).find(
-      (el) => (el.getAttribute("aria-label") || "") === "Reasoning High",
-    );
-    assert.ok(seg, "claude's High segment must still render");
-    await m.click(seg);
-
-    assert.deepEqual(
-      h.providerSets,
-      [],
-      "a reasoning bar must never switch the harness, even on a foreign model row",
-    );
-    assert.deepEqual(
-      h.efforts,
-      [null],
-      "re-clicking the thread's current level still clears to default",
-    );
     m.unmount();
   });
 });

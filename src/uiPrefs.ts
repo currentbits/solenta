@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { REASONING_EFFORTS, type ReasoningEffort } from "./shared/ipc";
 
 /**
  * Boolean display preferences toggled from the Environment tab. Module state
@@ -57,3 +58,40 @@ const runDuration = makeFlagPref("coder.runDuration", false);
 export const getRunDurationEnabled = runDuration.get;
 export const setRunDurationEnabled = runDuration.set;
 export const useRunDurationEnabled = runDuration.use;
+
+/**
+ * The last reasoning level the user picked, remembered across harness switches.
+ *
+ * Effort lives on the thread, and setProvider (electron/services.js) has to
+ * clear it when the new harness does not advertise that level — a level the CLI
+ * would never receive must not keep showing in the pill. That made the choice
+ * unrecoverable: claude/Max → codex (no Max) → back to claude came back as
+ * Default. This remembers the intent so the switch back restores it.
+ */
+const EFFORT_KEY = "coder.lastReasoningEffort";
+let lastEffort: ReasoningEffort | null | undefined;
+
+export function getLastReasoningEffort(): ReasoningEffort | null {
+  if (lastEffort === undefined) {
+    let raw: string | null = null;
+    try {
+      raw = window.localStorage.getItem(EFFORT_KEY);
+    } catch {
+      raw = null;
+    }
+    lastEffort = REASONING_EFFORTS.includes(raw as ReasoningEffort)
+      ? (raw as ReasoningEffort)
+      : null;
+  }
+  return lastEffort;
+}
+
+export function setLastReasoningEffort(effort: ReasoningEffort | null): void {
+  lastEffort = effort;
+  try {
+    if (effort == null) window.localStorage.removeItem(EFFORT_KEY);
+    else window.localStorage.setItem(EFFORT_KEY, effort);
+  } catch {
+    // Private mode / quota: the preference just stops surviving a relaunch.
+  }
+}

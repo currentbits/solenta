@@ -35,7 +35,7 @@ import {
   buildProviderRows,
   effortDisplayLabel,
   providerDetail,
-  effortSegments,
+  effortOptions,
   firstSelectableIndex,
   initialHighlightIndex,
   initialProviderIndex,
@@ -65,6 +65,10 @@ import { DROP_OVERLAY_MESSAGE, DROP_REJECT_MESSAGE } from "../dropFiles";
 import { teachPermissionAllowed } from "../teach";
 import type { ThreadTeach } from "../shared/ipc";
 import { useFileDrop } from "../useFileDrop";
+import {
+  getLastReasoningEffort,
+  setLastReasoningEffort,
+} from "../uiPrefs";
 import styles from "./Composer.module.css";
 
 interface ComposerProps {
@@ -415,6 +419,7 @@ export const Composer = memo(function Composer({
   const [localError, setLocalError] = useState<string | null>(null);
   const [modeOpen, setModeOpen] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
+  const [effortOpen, setEffortOpen] = useState(false);
   /** Provider whose Custom... row was picked; null when not entering one. */
   const [customFor, setCustomFor] = useState<string | null>(null);
   /**
@@ -438,6 +443,7 @@ export const Composer = memo(function Composer({
   const modeWrapRef = useRef<HTMLDivElement>(null);
   const modelWrapRef = useRef<HTMLDivElement>(null);
   const modelTriggerRef = useRef<HTMLButtonElement>(null);
+  const effortWrapRef = useRef<HTMLDivElement>(null);
   const modelListRef = useRef<HTMLUListElement>(null);
   const providerListRef = useRef<HTMLUListElement>(null);
   const buildWrapRef = useRef<HTMLDivElement>(null);
@@ -504,19 +510,30 @@ export const Composer = memo(function Composer({
       closeCommand();
       const action = cmd.action;
       if (!action) return;
-      if (action === "model" || action === "effort") {
+      if (action === "model") {
         if (disabled || busy) return;
         setModelOpen(true);
         setModeOpen(false);
+        setEffortOpen(false);
         setBuildMenuOpen(false);
         setBestOfNOpen(false);
         onModelPickerOpen?.();
+        return;
+      }
+      if (action === "effort") {
+        if (disabled || busy) return;
+        setEffortOpen(true);
+        setModelOpen(false);
+        setModeOpen(false);
+        setBuildMenuOpen(false);
+        setBestOfNOpen(false);
         return;
       }
       if (action === "permissions") {
         if (disabled || busy) return;
         setModeOpen(true);
         setModelOpen(false);
+        setEffortOpen(false);
         setBuildMenuOpen(false);
         setBestOfNOpen(false);
         return;
@@ -650,11 +667,7 @@ export const Composer = memo(function Composer({
   const modelRows = drillInfo
     ? buildModelRows(drillInfo)
     : buildUnifiedModelRows(providers, provider, sessionLocked, providerName);
-  const triggerLabel = modelTriggerLabel(
-    model,
-    currentProviderInfo,
-    reasoningEffort,
-  );
+  const triggerLabel = modelTriggerLabel(model, currentProviderInfo);
   const hi = clampHighlightIndex(modelRows, highlightIndex);
   const detailRow = detailModelRow(modelRows, provider, model, hi);
   // At the provider level the pane must describe the highlighted PROVIDER.
@@ -685,18 +698,16 @@ export const Composer = memo(function Composer({
     vendor: detailRow.vendor,
     description: detailRow.description,
   };
-  // Meter binds to the thread, not the highlighted row. Hovering a profile
-  // or another provider must not blank the label or switch the harness.
+  // The effort pill is its own control on the thread's provider: it never
+  // follows what the model picker is pointing at.
   const efforts = currentProviderInfo?.efforts ?? [];
   const reasoningVisible = showReasoningControl(efforts);
-  const meterUnavailable = currentProviderInfo?.available === false;
-  const segments = reasoningVisible
-    ? effortSegments(efforts, reasoningEffort)
-    : [];
+  const effortUnavailable = currentProviderInfo?.available === false;
   const effortLabel = effortDisplayLabel(reasoningEffort);
 
   useEffect(() => {
-    if (!modeOpen && !modelOpen && !buildMenuOpen && !bestOfNOpen) return;
+    if (!modeOpen && !modelOpen && !effortOpen && !buildMenuOpen && !bestOfNOpen)
+      return;
     const onDoc = (e: MouseEvent) => {
       const t = e.target as Node;
       if (modeOpen && !modeWrapRef.current?.contains(t)) {
@@ -704,6 +715,9 @@ export const Composer = memo(function Composer({
       }
       if (modelOpen && !modelWrapRef.current?.contains(t)) {
         setModelOpen(false);
+      }
+      if (effortOpen && !effortWrapRef.current?.contains(t)) {
+        setEffortOpen(false);
       }
       if (buildMenuOpen && !buildWrapRef.current?.contains(t)) {
         setBuildMenuOpen(false);
@@ -714,7 +728,7 @@ export const Composer = memo(function Composer({
     };
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
-  }, [modeOpen, modelOpen, buildMenuOpen, bestOfNOpen]);
+  }, [modeOpen, modelOpen, effortOpen, buildMenuOpen, bestOfNOpen]);
 
   // When the popover opens, seed highlight on the selected model and focus the list.
   useEffect(() => {
@@ -816,9 +830,11 @@ export const Composer = memo(function Composer({
     }
   }, []);
 
-  const anyMenuOpen = modeOpen || modelOpen || buildMenuOpen || bestOfNOpen;
+  const anyMenuOpen =
+    modeOpen || modelOpen || effortOpen || buildMenuOpen || bestOfNOpen;
   const closeAllMenus = useCallback(() => {
     setModeOpen(false);
+    setEffortOpen(false);
     if (modelOpen) {
       closeModelPicker(true);
     } else {
@@ -1142,6 +1158,25 @@ export const Composer = memo(function Composer({
     }
   };
 
+  /**
+   * Re-apply the remembered level after a harness switch that dropped it.
+   *
+   * setProvider (electron/services.js) clears an effort the new harness does
+   * not advertise, so claude/Max → codex → claude used to land on Default. It
+   * only fires when the OLD harness could not honour the remembered level: a
+   * null effort on a harness that CAN honour it is a deliberate Default and
+   * must stay one.
+   */
+  const restoreEffortFor = async (nextProviderId: string) => {
+    if (nextProviderId === provider) return;
+    if (reasoningEffort != null) return;
+    const want = getLastReasoningEffort();
+    if (want == null || efforts.includes(want)) return;
+    const next = providers.find((p) => p.id === nextProviderId);
+    if (!next?.efforts?.includes(want)) return;
+    await onSetReasoningEffort(want);
+  };
+
   const pickRow = async (row: ModelRow) => {
     if (row.disabled) return;
     if (row.id === CUSTOM_MODEL_ID) {
@@ -1158,6 +1193,7 @@ export const Composer = memo(function Composer({
       // Always send both so a cross-provider pick switches harness and model
       // in one setProvider call (no contract change).
       await onSetProvider({ provider: row.providerId, model: row.id });
+      await restoreEffortFor(row.providerId);
     } catch (err) {
       const msg =
         err instanceof Error && err.message
@@ -1174,6 +1210,7 @@ export const Composer = memo(function Composer({
     closeModelPicker(true);
     try {
       await onSetProvider({ provider: customFor, model: id });
+      await restoreEffortFor(customFor);
     } catch (err) {
       const msg =
         err instanceof Error && err.message
@@ -1186,16 +1223,14 @@ export const Composer = memo(function Composer({
     }
   };
 
-  const pickEffort = async (level: ReasoningEffort) => {
-    // A bar sets reasoning on the current thread. It must never change the
-    // harness: that used to happen whenever the pointer was on another row.
-    if (meterUnavailable) return;
+  const pickEffort = async (level: ReasoningEffort | null) => {
+    if (effortUnavailable) return;
+    setEffortOpen(false);
     try {
-      // Clicking the current level clears it back to the provider default.
-      // Without this the null branch is implemented at every layer and
-      // unreachable from the UI: once you pick a level you can never stop.
-      const next = level === reasoningEffort ? null : level;
-      await onSetReasoningEffort(next);
+      // Remember the intent even when a later harness switch cannot honour it,
+      // so switching back restores the level instead of the provider default.
+      setLastReasoningEffort(level);
+      await onSetReasoningEffort(level);
     } catch (err) {
       const msg =
         err instanceof Error && err.message
@@ -1417,6 +1452,7 @@ export const Composer = memo(function Composer({
                   } else {
                     setModelOpen(true);
                     setModeOpen(false);
+                    setEffortOpen(false);
                     setBuildMenuOpen(false);
                     setBestOfNOpen(false);
                     // Providers were fetched once at boot; re-check so a CLI
@@ -1722,9 +1758,7 @@ export const Composer = memo(function Composer({
                   </div>
                   <div className={styles.modelPopoverRight}>
                     {/* Keyed on the highlighted row so a highlight move
-                        remounts the pane and replays the detailIn fade.
-                        The reasoning meter lives outside this key: it
-                        belongs to the thread, not the hover. */}
+                        remounts the pane and replays the detailIn fade. */}
                     <div
                       className={styles.detailBody}
                       key={`${detail.providerId}::${detail.label}`}
@@ -1741,57 +1775,97 @@ export const Composer = memo(function Composer({
                         </div>
                       ) : null}
                     </div>
-                    {reasoningVisible && (
-                      <div className={styles.reasoningBlock}>
-                        <div className={styles.reasoningHeader}>
-                          <span className={styles.reasoningTitle}>
-                            REASONING
-                          </span>
-                          <span className={styles.reasoningLevel}>
-                            {effortLabel}
-                          </span>
-                        </div>
-                        <div
-                          className={styles.effortSegments}
-                          role="group"
-                          aria-label="Reasoning effort"
-                        >
-                          {segments.map((seg, i) => (
-                            <button
-                              key={seg.level}
-                              type="button"
-                              className={styles.effortSegment}
-                              style={{ "--i": String(i) } as CSSProperties}
-                              data-filled={seg.filled ? "true" : undefined}
-                              aria-label={`Reasoning ${effortDisplayLabel(seg.level)}`}
-                              title={`Reasoning ${effortDisplayLabel(seg.level)}`}
-                              aria-pressed={
-                                reasoningEffort === seg.level
-                                  ? "true"
-                                  : "false"
-                              }
-                              disabled={meterUnavailable}
-                              onClick={() => void pickEffort(seg.level)}
-                            >
-                              <span
-                                className={styles.effortBar}
-                                aria-hidden="true"
-                              />
-                              <span
-                                className={styles.effortCaption}
-                                aria-hidden="true"
-                              >
-                                {effortDisplayLabel(seg.level)}
-                              </span>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
                   </div>
                 </div>
               )}
             </div>
+
+            {reasoningVisible && (
+              <div className={styles.modeWrap} ref={effortWrapRef}>
+                <button
+                  type="button"
+                  className={styles.pill}
+                  disabled={locked || effortUnavailable}
+                  aria-disabled={
+                    locked || effortUnavailable ? "true" : undefined
+                  }
+                  aria-haspopup="listbox"
+                  aria-expanded={effortOpen}
+                  aria-label={`Reasoning: ${effortLabel}`}
+                  title={
+                    effortUnavailable
+                      ? "The provider CLI is not installed"
+                      : `Reasoning: ${effortLabel}`
+                  }
+                  onClick={() => {
+                    if (locked || effortUnavailable) return;
+                    setEffortOpen((v) => !v);
+                    setModelOpen(false);
+                    setModeOpen(false);
+                    setBuildMenuOpen(false);
+                    setBestOfNOpen(false);
+                  }}
+                >
+                  <span className={styles.effortIcon} aria-hidden="true">
+                    <svg
+                      width="13"
+                      height="13"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M3 12V9m5 3V5m5 7V7" />
+                    </svg>
+                  </span>
+                  <span key={effortLabel} className={styles.pillLabel}>
+                    {effortLabel}
+                  </span>
+                  <span className={styles.caret}>
+                    <svg
+                      width="10"
+                      height="10"
+                      viewBox="0 0 10 10"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path d="M2.5 3.5 5 6l2.5-2.5" />
+                    </svg>
+                  </span>
+                </button>
+                {effortOpen && (
+                  <ul
+                    className={styles.modeMenu}
+                    role="listbox"
+                    aria-label="Reasoning effort"
+                  >
+                    {effortOptions(efforts).map((level) => (
+                      <li
+                        key={level ?? "default"}
+                        role="option"
+                        aria-selected={level === reasoningEffort}
+                      >
+                        <button
+                          type="button"
+                          className={styles.modeOption}
+                          data-active={level === reasoningEffort}
+                          aria-label={`Reasoning ${effortDisplayLabel(level)}`}
+                          onClick={() => void pickEffort(level)}
+                        >
+                          {effortDisplayLabel(level)}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
 
             {!ask && (
             <div className={styles.modeWrap} ref={modeWrapRef}>
@@ -1806,6 +1880,7 @@ export const Composer = memo(function Composer({
                   if (!locked) {
                     setModeOpen((v) => !v);
                     setModelOpen(false);
+                    setEffortOpen(false);
                     setBuildMenuOpen(false);
                     setBestOfNOpen(false);
                   }
@@ -1891,6 +1966,7 @@ export const Composer = memo(function Composer({
                   setBuildMenuOpen((v) => !v);
                   setModeOpen(false);
                   setModelOpen(false);
+                  setEffortOpen(false);
                   setBestOfNOpen(false);
                 }}
               >
@@ -1974,6 +2050,7 @@ export const Composer = memo(function Composer({
                     setBestOfNOpen((v) => !v);
                     setModeOpen(false);
                     setModelOpen(false);
+                    setEffortOpen(false);
                     setBuildMenuOpen(false);
                   }}
                 >

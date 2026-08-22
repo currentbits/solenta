@@ -5,11 +5,10 @@
  * 1. One unified list: every provider's Default + models, grouped by provider.
  * 2. Always show ModelInfo.label (or the raw id when modelInfo is missing).
  * 3. Detail pane follows the highlighted row, falling back to the selected one.
- * 4. The reasoning meter follows the thread's current provider, not the highlight.
- *    An empty efforts list on the current provider means no control at all.
- * 5. Reasoning segments fill left-to-right up to the current level (none when null).
- * 6. Unavailable providers are listed but not selectable.
- * 7. With a sessionId, other providers' rows are locked; current provider stays open.
+ * 4. Reasoning effort is a SEPARATE pill, not part of this picker. An empty
+ *    efforts list on the thread's provider means no effort pill at all.
+ * 5. Unavailable providers are listed but not selectable.
+ * 6. With a sessionId, other providers' rows are locked; current provider stays open.
  */
 import type {
   AgentProfile,
@@ -29,7 +28,6 @@ export interface ModelRow {
   description: string;
   providerId: string;
   providerName: string;
-  /** Effort levels the row's provider advertises. */
   /** Provider CLI is not installed. */
   unavailable: boolean;
   /** Row cannot be chosen (unavailable or session-locked other provider). */
@@ -41,13 +39,6 @@ export interface ModelRow {
    * Null for subsequent rows in the same provider.
    */
   groupHeading: string | null;
-}
-
-/** One segment of the reasoning meter. */
-export interface EffortSegment {
-  level: ReasoningEffort;
-  /** True for every segment at or below the current level. */
-  filled: boolean;
 }
 
 /** Stable key for React lists and selection compare. */
@@ -107,11 +98,9 @@ export function buildModelRows(
 
   const unavailable = provider.available === false;
   const disabledReason = unavailable ? "not installed" : null;
-  const efforts = Array.isArray(provider.efforts) ? provider.efforts : [];
   const base = {
     providerId: provider.id,
     providerName: provider.name,
-    efforts,
     unavailable,
     disabled: unavailable,
     disabledReason,
@@ -210,26 +199,19 @@ function rowFromInfo(info: ModelInfo): Pick<
 /**
  * Label for the composer trigger pill. Never invents a label from thin air:
  * modelInfo.label when present, otherwise the raw id (or "Default" for null).
- * A non-default reasoning level is appended so the effort is visible without
- * opening the picker (issue #649).
+ * The reasoning level is NOT appended: it has its own pill, and "Opus · High"
+ * on a pill that opens a model list read as a model name to most people.
  */
 export function modelTriggerLabel(
   model: string | null,
   provider: ProviderInfo | undefined | null,
-  reasoningEffort?: ReasoningEffort | null,
 ): string {
-  let label: string;
-  if (model == null || model === "") {
-    label = "Default";
-  } else {
-    const infos = provider?.modelInfo;
-    const hit = Array.isArray(infos)
-      ? infos.find((m) => m.id === model)
-      : undefined;
-    label = hit ? hit.label : model;
-  }
-  if (reasoningEffort == null) return label;
-  return `${label} · ${effortDisplayLabel(reasoningEffort)}`;
+  if (model == null || model === "") return "Default";
+  const infos = provider?.modelInfo;
+  const hit = Array.isArray(infos)
+    ? infos.find((m) => m.id === model)
+    : undefined;
+  return hit ? hit.label : model;
 }
 
 /**
@@ -262,7 +244,6 @@ export function detailModelRow(
       description: "",
       providerId: selectedProviderId,
       providerName: "",
-      efforts: [],
       unavailable: false,
       disabled: false,
       disabledReason: null,
@@ -345,7 +326,7 @@ export function initialHighlightIndex(
 
 /**
  * True only when the provider advertises at least one effort level.
- * Empty list → hide the control entirely (not a disabled stub).
+ * Empty list → hide the pill entirely (not a disabled stub).
  */
 export function showReasoningControl(
   efforts: readonly ReasoningEffort[] | undefined | null,
@@ -354,19 +335,14 @@ export function showReasoningControl(
 }
 
 /**
- * Segment meter: every level at or below the current one is filled.
- * Null current means no segments filled (provider default).
+ * Rows of the effort menu: the provider default first, then every level it
+ * advertises. Default is a real row because clearing back to it used to be
+ * reachable only by re-clicking the active segment, which nobody found.
  */
-export function effortSegments(
-  efforts: readonly ReasoningEffort[],
-  current: ReasoningEffort | null,
-): EffortSegment[] {
-  const idx =
-    current == null ? -1 : efforts.findIndex((e) => e === current);
-  return efforts.map((level, i) => ({
-    level,
-    filled: idx >= 0 && i <= idx,
-  }));
+export function effortOptions(
+  efforts: readonly ReasoningEffort[] | undefined | null,
+): (ReasoningEffort | null)[] {
+  return [null, ...(Array.isArray(efforts) ? efforts : [])];
 }
 
 /**
@@ -382,9 +358,14 @@ export const EFFORT_LABELS: Record<ReasoningEffort, string> = {
   max: "Max",
 };
 
-/** Display label for the accent effort text next to REASONING. */
+/**
+ * Display label for a level. Null is "Auto", not "Default": the effort pill
+ * sits next to the model pill, which says "Default" when the thread is on the
+ * provider default model — two adjacent pills both reading "Default" is the
+ * confusion the split was meant to remove.
+ */
 export function effortDisplayLabel(current: ReasoningEffort | null): string {
-  if (current == null) return "Default";
+  if (current == null) return "Auto";
   return EFFORT_LABELS[current] ?? current;
 }
 
