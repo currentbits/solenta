@@ -18,6 +18,10 @@
 # `smoke` is a separate job on purpose: a boot/dispatch failure must show
 # up as a boot failure, not a needle inside `npm test`. It is the first
 # thing in CI that actually starts the app on each OS (#449, #455).
+#
+# The `test` job also runs `npx vite build` (#646). Renderer tests stub
+# CSS modules (test/support/render-hooks.mjs), so an unclosed block like
+# the `.cliWarning` that sat on main for a day never fails `npm test`.
 name: test
 
 on: push
@@ -39,6 +43,7 @@ jobs:
       - run: npm ci
       - run: npm ci --prefix core
       - run: npm ci --prefix memory-server
+      - run: npx vite build
       - run: npm test
 
   smoke:
