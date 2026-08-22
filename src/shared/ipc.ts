@@ -1650,12 +1650,19 @@ export type CheckoutPrResult =
     }
   | { ok: false; reason: string };
 
-/** A GitHub issue fetched via `gh issue view`. */
+/** A GitHub or Linear issue fetched for thread start. */
 export interface IssueInfo {
   number: number;
   title: string;
   body: string;
   url: string;
+  /**
+   * Ticket backend. Absent means GitHub, matching the original fetch shape
+   * so existing callers keep working.
+   */
+  source?: "github" | "linear";
+  /** Linear identifier (ENG-123). Absent for GitHub. */
+  identifier?: string;
 }
 
 /** Per-project issue fetch. Failures stay in-band so the UI can show them. */
@@ -1971,6 +1978,12 @@ export interface AppSettings {
   subagentPool: SubagentPool;
   /** OpenTelemetry export (issue #280). */
   otel: OtelSettings;
+  /**
+   * Linear personal API key for ticket ingestion (issue #169). Encrypted at
+   * rest like MCP tokens. null/empty means unset; LINEAR_API_KEY in the
+   * environment is the fallback. Never required for GitHub issues.
+   */
+  linearApiKey?: string | null;
 }
 
 /**
@@ -2992,9 +3005,10 @@ export interface CoderApi {
   };
   issues: {
     /**
-     * Fetch a GitHub issue for a project checkout via `gh issue view`.
-     * Never rejects for missing gh / non-GitHub remotes / auth / missing
-     * issue: those come back as `{ ok: false, reason }`.
+     * Fetch a GitHub (`gh issue view`) or Linear (GraphQL) issue for a
+     * project checkout. Never rejects for missing gh / non-GitHub remotes /
+     * auth / missing issue / missing Linear key: those come back as
+     * `{ ok: false, reason }`.
      */
     fetch(input: { projectPath: string; ref: string }): Promise<FetchIssueResult>;
     /**

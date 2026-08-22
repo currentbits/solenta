@@ -919,7 +919,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
                 : undefined;
         thread = await createThread(issue.title, input.projectId, {
           ...opts,
-          issueNumber: issue.number,
+          // Linear identifiers are not GitHub issue numbers; post-merge
+          // reopen scans `GitHub issue #N:` and ThreadInfo.issueNumber.
+          ...(issue.source === "linear" ? {} : { issueNumber: issue.number }),
         });
       } catch (err) {
         return {
@@ -931,7 +933,11 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         return { ok: false as const, reason: "Could not create thread" };
       }
       const body = issue.body || "";
-      const prompt = `GitHub issue #${issue.number}: ${issue.title}\n${issue.url}\n\n${body}`;
+      const heading =
+        issue.source === "linear"
+          ? `Linear issue ${issue.identifier || issue.number}`
+          : `GitHub issue #${issue.number}`;
+      const prompt = `${heading}: ${issue.title}\n${issue.url}\n\n${body}`;
       try {
         await startRun(prompt, thread.id);
       } catch (err) {
@@ -939,6 +945,10 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           ok: false as const,
           reason: err instanceof Error ? err.message : String(err),
         };
+      }
+      // GitHub plan:* labels do not exist on Linear. Skip the column move.
+      if (issue.source === "linear") {
+        return { ok: true as const };
       }
       // The run is live either way, so a failed label move is a warning,
       // not a failure: say so instead of pretending the card moved.

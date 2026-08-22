@@ -211,8 +211,21 @@ function createSecrets(opts = {}) {
       }
       if (changed) nextOtel = { ...settings.otel, headers: out };
     }
+    let nextLinearKey = settings.linearApiKey;
+    if (typeof settings.linearApiKey === "string" && settings.linearApiKey) {
+      const sealed = seal(settings.linearApiKey);
+      if (sealed !== settings.linearApiKey) {
+        changed = true;
+        nextLinearKey = sealed;
+      }
+    }
     if (!changed) return settings;
-    return { ...settings, mcpServers: nextServers, otel: nextOtel };
+    return {
+      ...settings,
+      mcpServers: nextServers,
+      otel: nextOtel,
+      linearApiKey: nextLinearKey,
+    };
   }
 
   /**
@@ -282,10 +295,27 @@ function createSecrets(opts = {}) {
       }
     }
 
+    let nextLinearKey = settings.linearApiKey;
+    if (typeof settings.linearApiKey === "string" && settings.linearApiKey) {
+      hasSecret = true;
+      if (isSealed(settings.linearApiKey)) {
+        const plain = open(settings.linearApiKey, { key: "linearApiKey" });
+        changed = true;
+        nextLinearKey = plain == null || plain === "" ? null : plain;
+      } else if (available) {
+        migrated += 1;
+      }
+    }
+
     if (!available && hasSecret) warnUnavailable();
 
     const next = changed
-      ? { ...settings, mcpServers: nextServers, otel: nextOtel }
+      ? {
+          ...settings,
+          mcpServers: nextServers,
+          otel: nextOtel,
+          linearApiKey: nextLinearKey,
+        }
       : settings;
     return { settings: next, migrated };
   }

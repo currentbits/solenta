@@ -4573,6 +4573,26 @@ function buildDevCoder(): CoderApi {
         ref: string;
       }): Promise<FetchIssueResult> {
         const raw = String(input.ref || "").trim();
+        const linearUrl = raw.match(
+          /^https?:\/\/(?:www\.)?linear\.app\/[^/]+\/issue\/([A-Za-z][A-Za-z0-9]*-\d+)/i,
+        );
+        const linearId = raw.match(/^([A-Za-z][A-Za-z0-9]*-\d+)$/);
+        const linear = (linearUrl && linearUrl[1]) || (linearId && linearId[1]);
+        if (linear) {
+          const identifier = linear.toUpperCase();
+          const num = Number(identifier.split("-")[1]);
+          return {
+            ok: true,
+            issue: {
+              number: num,
+              title: `Linear ${identifier}`,
+              body: `Dev stand-in for ${raw}`,
+              url: `https://linear.app/acme/issue/${identifier}`,
+              source: "linear",
+              identifier,
+            },
+          };
+        }
         const url = raw.match(/\/issues\/(\d+)/);
         const hashed = raw.match(/#(\d+)$/);
         const bare = /^\d+$/.test(raw) ? raw : "";

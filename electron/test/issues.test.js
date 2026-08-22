@@ -12,6 +12,9 @@ const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 const {
   parseIssueRef,
+  parseTicketRef,
+  parseLinearIssueRef,
+  issueStartPrompt,
   fetchIssue,
   setPlanStatus,
   reopenIssue,
@@ -65,6 +68,107 @@ describe("parseIssueRef", () => {
     assert.equal(parseIssueRef("https://github.com/owner/repo/pull/123"), null);
     assert.equal(parseIssueRef("https://gitlab.com/owner/repo/issues/1"), null);
     assert.equal(parseIssueRef("not-an-issue"), null);
+    assert.equal(parseIssueRef("ENG-123"), null);
+    assert.equal(
+      parseIssueRef("https://linear.app/acme/issue/ENG-123"),
+      null,
+    );
+  });
+});
+
+describe("parseLinearIssueRef", () => {
+  it("parses a linear.app issue URL", () => {
+    assert.deepEqual(
+      parseLinearIssueRef("https://linear.app/acme/issue/ENG-123"),
+      {
+        source: "linear",
+        workspace: "acme",
+        identifier: "ENG-123",
+        team: "ENG",
+        number: 123,
+      },
+    );
+  });
+
+  it("parses www, slug, query, and fragment on the URL", () => {
+    assert.deepEqual(
+      parseLinearIssueRef(
+        "https://www.linear.app/acme/issue/eng-9/fix-login?foo=1#comment-2",
+      ),
+      {
+        source: "linear",
+        workspace: "acme",
+        identifier: "ENG-9",
+        team: "ENG",
+        number: 9,
+      },
+    );
+  });
+
+  it("parses a bare TEAM-123 identifier", () => {
+    assert.deepEqual(parseLinearIssueRef("  sol-42  "), {
+      source: "linear",
+      identifier: "SOL-42",
+      team: "SOL",
+      number: 42,
+    });
+  });
+
+  it("returns null for GitHub refs and junk", () => {
+    assert.equal(parseLinearIssueRef(""), null);
+    assert.equal(parseLinearIssueRef("12"), null);
+    assert.equal(parseLinearIssueRef("acme/demo#42"), null);
+    assert.equal(
+      parseLinearIssueRef("https://github.com/acme/demo/issues/1"),
+      null,
+    );
+    assert.equal(parseLinearIssueRef("ENG-0"), null);
+  });
+});
+
+describe("parseTicketRef", () => {
+  it("routes Linear and GitHub without mixing them", () => {
+    assert.equal(parseTicketRef("ENG-12").source, "linear");
+    assert.equal(parseTicketRef("12").source, "github");
+    assert.equal(
+      parseTicketRef("https://github.com/a/b/issues/3").source,
+      "github",
+    );
+    assert.equal(
+      parseTicketRef("https://linear.app/a/issue/ENG-3").source,
+      "linear",
+    );
+    assert.equal(parseTicketRef("not-an-issue"), null);
+  });
+});
+
+describe("issueStartPrompt", () => {
+  it("keeps the GitHub prefix post-merge scans for", () => {
+    assert.equal(
+      issueStartPrompt({
+        number: 7,
+        title: "Fix login",
+        url: "https://github.com/a/b/issues/7",
+        body: "steps",
+      }),
+      "GitHub issue #7: Fix login\nhttps://github.com/a/b/issues/7\n\nsteps",
+    );
+  });
+
+  it("uses the Linear identifier so post-merge cannot treat it as GitHub", () => {
+    const prompt = issueStartPrompt({
+      source: "linear",
+      identifier: "ENG-9",
+      number: 9,
+      title: "Fix login",
+      url: "https://linear.app/acme/issue/ENG-9",
+      body: "steps",
+    });
+    assert.equal(
+      prompt,
+      "Linear issue ENG-9: Fix login\nhttps://linear.app/acme/issue/ENG-9\n\nsteps",
+    );
+    assert.doesNotMatch(prompt, /GitHub issue #/);
   });
 });
 
@@ -199,6 +303,140 @@ process.exit(0);
     const result = await fetchIssue(repo, "1");
     assert.equal(result.ok, false);
     assert.match(result.reason, /unparseable issue JSON/);
+  });
+});
+
+describe("fetchIssue Linear", () => {
+  let prevKey;
+
+  beforeEach(() => {
+    prevKey = process.env.LINEAR_API_KEY;
+    delete process.env.LINEAR_API_KEY;
+  });
+
+  afterEach(() => {
+    if (prevKey == null) delete process.env.LINEAR_API_KEY;
+    else process.env.LINEAR_API_KEY = prevKey;
+  });
+
+  function graphqlIssue(over = {}) {
+    return {
+      data: {
+        issue: {
+          identifier: "ENG-12",
+          number: 12,
+          title: "Fix the login",
+          description: "Repro steps",
+          url: "https://linear.app/acme/issue/ENG-12",
+          ...over,
+        },
+      },
+    };
+  }
+
+  it("fetches via GraphQL without requiring a GitHub remote", async () => {
+    const calls = [];
+    const result = await fetchIssue("/not-a-repo", "ENG-12", {
+      linearApiKey: "lin_api_test",
+      linearGraphql: async (args) => {
+        calls.push(args);
+        return graphqlIssue();
+      },
+    });
+    assert.deepEqual(result, {
+      ok: true,
+      issue: {
+        number: 12,
+        title: "Fix the login",
+        body: "Repro steps",
+        url: "https://linear.app/acme/issue/ENG-12",
+        source: "linear",
+        identifier: "ENG-12",
+      },
+    });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].identifier, "ENG-12");
+    assert.equal(calls[0].apiKey, "lin_api_test");
+  });
+
+  it("accepts a linear.app URL", async () => {
+    const result = await fetchIssue("", "https://linear.app/acme/issue/ENG-12", {
+      linearApiKey: "k",
+      linearGraphql: async () => graphqlIssue(),
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.issue.identifier, "ENG-12");
+  });
+
+  it("returns linear api key missing without calling GraphQL", async () => {
+    let called = false;
+    const result = await fetchIssue("", "ENG-1", {
+      linearGraphql: async () => {
+        called = true;
+        return graphqlIssue();
+      },
+    });
+    assert.deepEqual(result, { ok: false, reason: "linear api key missing" });
+    assert.equal(called, false);
+  });
+
+  it("uses LINEAR_API_KEY when settings have none", async () => {
+    process.env.LINEAR_API_KEY = "from-env";
+    const keys = [];
+    const result = await fetchIssue("", "ENG-12", {
+      linearGraphql: async ({ apiKey }) => {
+        keys.push(apiKey);
+        return graphqlIssue();
+      },
+    });
+    assert.equal(result.ok, true);
+    assert.deepEqual(keys, ["from-env"]);
+  });
+
+  it("maps GraphQL not-found and auth errors", async () => {
+    assert.deepEqual(
+      await fetchIssue("", "ENG-99", {
+        linearApiKey: "k",
+        linearGraphql: async () => ({
+          errors: [{ message: "Entity not found" }],
+        }),
+      }),
+      { ok: false, reason: "issue not found" },
+    );
+    assert.deepEqual(
+      await fetchIssue("", "ENG-99", {
+        linearApiKey: "k",
+        linearGraphql: async () => {
+          const err = new Error("auth");
+          err.code = "auth";
+          throw err;
+        },
+      }),
+      { ok: false, reason: "auth" },
+    );
+  });
+
+  it("maps HTTP 401 from fetch to auth", async () => {
+    const result = await fetchIssue("", "ENG-1", {
+      linearApiKey: "k",
+      fetch: async () => ({
+        status: 401,
+        ok: false,
+        text: async () => "{}",
+      }),
+    });
+    assert.deepEqual(result, { ok: false, reason: "auth" });
+  });
+
+  it("never throws on a GraphQL throw", async () => {
+    const result = await fetchIssue("", "ENG-1", {
+      linearApiKey: "k",
+      linearGraphql: async () => {
+        throw new Error("socket hang up");
+      },
+    });
+    assert.equal(result.ok, false);
+    assert.match(result.reason, /socket hang up/);
   });
 });
 

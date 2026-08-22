@@ -1,8 +1,8 @@
 "use strict";
 
 /**
- * GitHub issue ingestion: parse a pasted ref, then `gh issue view`.
- * Never throws; failures come back as `{ ok: false, reason }`.
+ * Ticket ingestion: parse a pasted ref, then fetch GitHub (`gh issue view`)
+ * or Linear (GraphQL). Never throws; failures come back as `{ ok: false, reason }`.
  */
 
 const {
@@ -13,6 +13,10 @@ const {
   isGhAuthFailure,
   tailErr,
 } = require("./worktrees.js");
+const {
+  parseLinearIssueRef,
+  fetchLinearIssue,
+} = require("./linear.js");
 
 /** Fail-open: a missing scanner must not break issue fetch. */
 function loadScanInjection() {
@@ -99,6 +103,40 @@ function parseIssueRef(text) {
 }
 
 /**
+ * GitHub or Linear. Linear identifiers (ENG-123) and linear.app URLs win
+ * over GitHub so a pasted Linear ticket is never "invalid issue reference".
+ *
+ * @param {unknown} text
+ * @returns {{ source: "github", number: number, owner?: string, repo?: string } | { source: "linear", identifier: string, team: string, number: number, workspace?: string } | null}
+ */
+function parseTicketRef(text) {
+  const linear = parseLinearIssueRef(text);
+  if (linear) return linear;
+  const github = parseIssueRef(text);
+  if (github) return { source: "github", ...github };
+  return null;
+}
+
+/**
+ * First-turn prompt for a fetched ticket. Linear uses its identifier so
+ * post-merge reopen (which scans `GitHub issue #N:`) cannot act on it.
+ *
+ * @param {{ source?: string, identifier?: string, number?: number, title?: string, url?: string, body?: string }} issue
+ * @returns {string}
+ */
+function issueStartPrompt(issue) {
+  const title = issue && issue.title != null ? String(issue.title) : "";
+  const url = issue && issue.url != null ? String(issue.url) : "";
+  const body = issue && issue.body != null ? String(issue.body) : "";
+  if (issue && issue.source === "linear") {
+    const id = issue.identifier || String(issue.number || "");
+    return `Linear issue ${id}: ${title}\n${url}\n\n${body}`;
+  }
+  const n = issue && issue.number != null ? issue.number : "";
+  return `GitHub issue #${n}: ${title}\n${url}\n\n${body}`;
+}
+
+/**
  * owner/repo from a github.com remote URL, or null.
  * @param {string} url
  * @returns {{ owner: string, repo: string } | null}
@@ -137,14 +175,29 @@ function isIssueNotFound(text) {
 }
 
 /**
- * Fetch a GitHub issue for a project checkout. Never throws.
+ * Fetch a GitHub or Linear issue for a project checkout. Never throws.
+ * Linear does not need a GitHub remote; GitHub still does.
  *
  * @param {string} projectPath
  * @param {unknown} ref
- * @returns {Promise<{ ok: true, issue: { number: number, title: string, body: string, url: string } } | { ok: false, reason: string }>}
+ * @param {{ linearApiKey?: unknown, linearGraphql?: Function, fetch?: typeof fetch }} [opts]
+ * @returns {Promise<{ ok: true, issue: { number: number, title: string, body: string, url: string, source?: "linear", identifier?: string } } | { ok: false, reason: string }>}
  */
-async function fetchIssue(projectPath, ref) {
+async function fetchIssue(projectPath, ref, opts) {
   try {
+    const linear = parseLinearIssueRef(ref);
+    if (linear) {
+      const fetched = await fetchLinearIssue(linear, opts);
+      if (!fetched.ok) return fetched;
+      return {
+        ok: true,
+        issue: {
+          ...fetched.issue,
+          body: bannerUntrustedBody(fetched.issue.body),
+        },
+      };
+    }
+
     const parsed = parseIssueRef(ref);
     if (!parsed) {
       return { ok: false, reason: "invalid issue reference" };
@@ -567,6 +620,9 @@ async function createIssue(projectPath, input) {
 
 module.exports = {
   parseIssueRef,
+  parseTicketRef,
+  parseLinearIssueRef,
+  issueStartPrompt,
   fetchIssue,
   listIssues,
   setPlanStatus,

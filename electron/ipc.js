@@ -1017,10 +1017,16 @@ const IPC_HANDLERS = {
       broadcast: ctx.broadcast,
     });
   },
-  "issues:fetch": async (_ctx, input) => {
+  "issues:fetch": async (ctx, input) => {
     const projectPath = input && input.projectPath;
     const ref = input && input.ref;
-    return fetchIssue(projectPath, ref);
+    const settings =
+      ctx.store && typeof ctx.store.getSettings === "function"
+        ? ctx.store.getSettings()
+        : null;
+    return fetchIssue(projectPath, ref, {
+      linearApiKey: settings && settings.linearApiKey,
+    });
   },
   "issues:list": async (_ctx, projectPath) => {
     return listIssues(projectPath);

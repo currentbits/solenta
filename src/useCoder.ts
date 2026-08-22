@@ -224,7 +224,7 @@ export interface UseCoderResult {
   cancelQueued: (threadId?: string) => void;
   /** Re-send a queued prompt after a delivery failure (issue #314). */
   retryQueued: (threadId?: string) => void;
-  /** Fetch a GitHub issue for a project checkout (`gh issue view`). */
+  /** Fetch a GitHub or Linear issue for a project checkout. */
   fetchIssue: (
     projectPath: string,
     ref: string,

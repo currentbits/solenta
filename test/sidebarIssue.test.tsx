@@ -94,6 +94,11 @@ describe("Sidebar issue form", () => {
 
     const input = m.query("[data-issue-input]") as HTMLInputElement | null;
     assert.ok(input, "form has an issue ref input");
+    assert.match(
+      input.placeholder,
+      /Linear/i,
+      "placeholder must mention Linear so pasted ENG-123 refs are discoverable",
+    );
     await m.type(input, "https://github.com/acme/ledger/issues/99");
 
     const create = m.query("[data-issue-create]");
