@@ -56,6 +56,44 @@
         Every notable change to Solenta, newest first.
       </p>
 
+      <h2 id="v0-10-0">0.10.0 <small>2026-08-22</small></h2>
+      <h3>Added</h3>
+      <ul>
+        <li><strong>Light theme.</strong> Solenta follows your system light/dark setting, or you can pin either one. The whole interface is tokenised, so every pane, card and diff view comes along.</li>
+        <li><strong>Settings, redesigned.</strong> The modal is a proper paned layout instead of one long scroll, so providers, defaults, budgets and data live somewhere you can find them again.</li>
+        <li><strong>The right panel collapses.</strong> Fold the agents panel away when you want the transcript full-width; the state persists per window. Interface zoom persists too.</li>
+        <li><strong>Sidebar filters.</strong> Narrow the thread list by status and by provider, on top of the existing project scope and search.</li>
+        <li><strong>Let the agent resolve the conflict.</strong> A merge conflict gets a one-click button that hands the conflict to an agent instead of dropping you into a manual three-way merge.</li>
+        <li><strong>Check out someone else's PR.</strong> Pull an open pull request into its own worktree and start a thread on it, without leaving the app.</li>
+        <li><strong>Outbound webhooks.</strong> Fire a webhook when a thread finishes, fails or starts waiting on you. Slack, Discord and ntfy shapes are built in. Opt-in per project.</li>
+        <li><strong>Linear tickets can start a thread.</strong> Ticket ingestion is no longer GitHub-only.</li>
+        <li><strong>Per-project setup command.</strong> A command that runs automatically whenever a worktree is created, plus named quick actions in the project header, so a fresh worktree is usable without a manual install step.</li>
+        <li><strong>Install-time trust gate.</strong> Skills, MCP servers and packages an agent tries to install are scanned before they land, and reported as trusted, caution or blocked. Local and regex-only; no network, no model. Blocked refuses, caution asks.</li>
+        <li><strong>Encrypted credentials.</strong> Stored provider keys are encrypted at rest rather than sitting in the plain store file.</li>
+        <li><strong>Jujutsu.</strong> Projects on <code>jj</code> are detected and driven through the same worktree and diff paths as git.</li>
+        <li><strong>Cross-thread messages.</strong> Threads can hand each other work directly, with delivery you can see, instead of routing everything through the lead.</li>
+        <li><strong>Blast-radius guard.</strong> An agent diff that reaches outside the files the task implied is flagged before you review it, and the daily digest reports it.</li>
+        <li><strong>Model and effort pickers, split out.</strong> The composer's model row and the reasoning-effort meter are their own controls, and the effort meter follows the model you actually picked.</li>
+      </ul>
+      <h3>Fixed</h3>
+      <ul>
+        <li>Typing in the composer no longer lags. The field is uncontrolled now, so a keystroke stops re-rendering the model rows, pills and slash palette.</li>
+        <li>First paint no longer waits on the whole boot chain, and the store is no longer parsed synchronously on the main process before the window appears.</li>
+        <li>Opening a thousand-message thread windows the transcript instead of mounting all of it into the DOM.</li>
+        <li>A state change no longer ships every thread row to the renderer, and the generic provider stream path is throttled instead of writing the store on every raw chunk.</li>
+        <li>Worktree retention sweeps on a timer, so grace-period crossings are reclaimed while the app is running, and corrupt worktree directories are collectable again instead of being stuck forever.</li>
+        <li>Concurrent <code>grok mcp add</code> writes no longer corrupt the grok config and take every grok run down with it.</li>
+        <li>Every parallel worker gets its own review itinerary, so the shared file stops being a guaranteed merge conflict.</li>
+        <li>The questions modal appears under Fable, Grok and Kimi, not just Claude and Codex.</li>
+        <li>Drag and drop accepts <code>.txt</code> and other plain-text files, not only images.</li>
+        <li>Memory dedup and contradiction detection reuse the embeddings that were already there.</li>
+        <li>Divergence compare is off by default.</li>
+        <li>Worktrees are no longer merged automatically; landing a branch stays an explicit action.</li>
+        <li>A PR opened from a thread shows its link in the related thread again.</li>
+        <li>Image stores under userData are cleaned up with the threads that made them.</li>
+        <li>CI runs the renderer build, so a CSS parse error fails the gate instead of reaching a release.</li>
+      </ul>
+
       <h2 id="v0-9-0">0.9.0 <small>2026-08-21</small></h2>
       <h3>Added</h3>
       <ul>

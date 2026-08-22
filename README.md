@@ -88,6 +88,8 @@ it.
   (`gh` auth) before the header offers Create PR. Oversized PRs (default
   400 lines) are refused; the header offers a stacked split. Fork and archived
   worktrees are garbage-collected on their own; the branch always survives.
+  Merge conflicts get a one-click "let the agent resolve it", and an open PR
+  can be checked out into its own worktree. Jujutsu (`jj`) projects work too.
 - **Planboard** — a project's plan as its GitHub issues via `gh`, with auto-
   dispatch from `plan:todo`, a review-load meter on the open PR queue, and
   issues that close themselves when the thread's work lands.
@@ -98,6 +100,10 @@ it.
 - **Verify means green** — a thread settles done only when its verify command
   exits 0. After merge the command re-runs 24h later; a failure starts a
   fix thread and reopens the planboard issue. Optional spend caps.
+- **Guardrails on what agents install** — skills, MCP servers and packages an
+  agent tries to install are scanned locally before they land and reported as
+  trusted, caution, or blocked. A diff that reaches outside the files the task
+  implied is flagged as blast radius. Stored provider keys are encrypted.
 - **You own it** — MIT, no Solenta account, no Solenta cloud, local SQLite,
   GitHub issues. The only network traffic is a release check.
 
