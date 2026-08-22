@@ -335,6 +335,37 @@ describe("recap card", () => {
     m.unmount();
   });
 
+  it("links the PR number out to GitHub when a URL is recorded", async () => {
+    const m = await mount(
+      tab({
+        thread: thread({
+          prNumber: 7,
+          prState: "OPEN",
+          prUrl: "https://github.com/owner/repo/pull/7",
+        }),
+      }),
+    );
+    await m.flush();
+    const link = m.query("[data-recap-pr]") as HTMLAnchorElement | null;
+    assert.ok(link, "PR fact is a link");
+    assert.equal(link!.getAttribute("href"), "https://github.com/owner/repo/pull/7");
+    assert.equal((link!.textContent || "").trim(), "#7 open");
+    m.unmount();
+  });
+
+  it("keeps the PR number plain text when no URL is recorded", async () => {
+    const m = await mount(
+      tab({ thread: thread({ prNumber: 7, prState: "OPEN" }) }),
+    );
+    await m.flush();
+    assert.equal(m.query("[data-recap-pr]"), null);
+    assert.match(
+      (m.query("[data-recap-facts]")?.textContent || "").trim(),
+      /#7 open/,
+    );
+    m.unmount();
+  });
+
   it("omits the PR from the facts line when none is recorded", async () => {
     const m = await mount(tab({}));
     await m.flush();

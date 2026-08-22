@@ -1606,13 +1606,30 @@ function RecapCard({
 
   if (!thread) return null;
 
-  const facts: string[] = [];
+  const facts: ReactNode[] = [];
   if (thread.branch) facts.push(thread.branch);
   if (thread.prNumber != null) {
+    const prLabel = thread.prState
+      ? `#${thread.prNumber} ${thread.prState.toLowerCase()}`
+      : `#${thread.prNumber}`;
+    // Link out when a URL was recorded; never invent one (same rule as the
+    // sidebar chip in prUi.ts).
     facts.push(
-      thread.prState
-        ? `#${thread.prNumber} ${thread.prState.toLowerCase()}`
-        : `#${thread.prNumber}`,
+      thread.prUrl ? (
+        <a
+          key="pr"
+          className={styles.recapPrLink}
+          data-recap-pr=""
+          href={thread.prUrl}
+          target="_blank"
+          rel="noreferrer"
+          title={thread.prUrl}
+        >
+          {prLabel}
+        </a>
+      ) : (
+        prLabel
+      ),
     );
   }
   facts.push(thread.status);
@@ -1641,7 +1658,12 @@ function RecapCard({
             : undefined
         }
       >
-        {facts.join(" · ")}
+        {facts.map((fact, i) => (
+          <span key={i}>
+            {i > 0 ? " · " : null}
+            {fact}
+          </span>
+        ))}
       </div>
     </section>
   );
