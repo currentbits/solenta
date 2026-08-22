@@ -26,7 +26,7 @@
 </p>
 
 <p align="center">
-  <img src="assets/screenshot.png" alt="Solenta: threads sidebar, conversation with work log, and the environment panel" width="100%" />
+  <img src="assets/screenshot.png" alt="Solenta: threads sidebar, a thread with its work log and plan, and the environment panel" width="100%" />
 </p>
 
 ## The problem
@@ -70,6 +70,10 @@ Grok · thread 6
 - **Per-repo code index** — a symbol index built once and injected into every
   dispatched prompt, so a fresh worker starts knowing where things live.
 
+<p align="center">
+  <img src="assets/screenshot-memory.png" alt="The Memory tab: shared entries scoped to the project, typed as strategy, knowledge, convention or task, with the config doctor above them" width="100%" />
+</p>
+
 ## The rest of the desk
 
 Memory is why Solenta exists. The rest is so you can run the agents that write
@@ -96,6 +100,10 @@ it.
   fix thread and reopens the planboard issue. Optional spend caps.
 - **You own it** — MIT, no Solenta account, no Solenta cloud, local SQLite,
   GitHub issues. The only network traffic is a release check.
+
+<p align="center">
+  <img src="assets/screenshot-git.png" alt="Git open as a center pane beside the thread: review itinerary, per-file diff, and a commit box" width="100%" />
+</p>
 
 ## Install
 
@@ -217,6 +225,9 @@ The root `package.json` already allows scripts for the pinned Electron version.
 
 ## Also in the box
 
+- **First run** — a setup wizard checks which agent CLIs are on your `PATH`
+  (with per-provider install hints), adds the first project, and sets the
+  defaults, then a short tour of the panes. Skippable, shown once.
 - **Teach mode** — hints, not solutions, across all five providers. Autonomy
   steps from Hints to Review to Pair as reviews pass.
 - **Ask mode** — read-only Q&A from the code map and memory. No tools, no

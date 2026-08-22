@@ -146,15 +146,20 @@ function toFullEntry(row: MemoryRow): MemoryEntryInfo {
   };
 }
 
+// Memory rows are scoped by the project PATH the Memory tab sends, so the demo
+// entries have to carry the demo project paths, not slugs.
+const DEMO_NEBULA = "/Users/demo/acme/nebula";
+const DEMO_LEDGER = "/Users/demo/acme/ledger";
+
 function seedMemoryEntries(t0: number): MemoryRow[] {
   const hours = (h: number) => toIso(t0 - h * 60 * 60 * 1000);
   return [
     {
       id: "mem-seed-1",
-      type: "convention",
-      title: "Never use em dashes in UI copy",
-      body: "Global preference: do not use em dashes in user-facing strings. Prefer periods, commas, colons, parentheses, or a plain hyphen.",
-      project: null,
+      type: "strategy",
+      title: "Rewriting auth was ruled out. Cookie sessions stay",
+      body: "Thread 1 costed a move to token auth and dropped it. Refresh lives in src/lib/auth.ts and the 401 retry in src/lib/api.ts. Do not re-open the rewrite without new evidence.",
+      project: DEMO_NEBULA,
       importance: 5,
       createdAt: hours(48),
       updatedAt: hours(6),
@@ -162,62 +167,62 @@ function seedMemoryEntries(t0: number): MemoryRow[] {
     {
       id: "mem-seed-2",
       type: "knowledge",
-      title: "Worktree dirty reject marker",
-      body: "Git removeWorktree rejections that list dirty paths are prefixed with WORKTREE_DIRTY: so the Git tab can strip Electron invoke wrappers and show only the file list.",
-      project: "coder",
+      title: "Per-device overrides read from the settings store, not the env",
+      body: "src/settings/store.ts is the single source for per-device overrides. The env reader was a migration shim and is gone. Anything reading process.env for a device key is stale.",
+      project: DEMO_NEBULA,
       importance: 4,
       createdAt: hours(36),
       updatedAt: hours(12),
     },
     {
       id: "mem-seed-3",
-      type: "task",
-      title: "Add Memory tab to renderer",
-      body: "Right panel third tab with search, recent list, expand-to-full get, and store form. Dev stub always running.",
-      project: "coder",
-      importance: 3,
-      createdAt: hours(4),
-      updatedAt: hours(1),
-    },
-    {
-      id: "mem-seed-4",
       type: "knowledge",
-      title: "Session usage only after first turn",
-      body: "ThreadDetail.usage stays null until the provider reports tokens. Session card shows \"No usage yet\" in that state.",
-      project: "acme/nebula",
-      importance: 3,
+      title: "Windows worktree paths need the UNC form",
+      body: "A WSL path handed to git on the Windows side resolves relative to the wrong root. Convert to \\\\wsl$\\ before spawning. Found while fixing #839.",
+      project: DEMO_NEBULA,
+      importance: 4,
       createdAt: hours(72),
       updatedAt: hours(24),
     },
     {
-      id: "mem-seed-5",
-      type: "run",
-      title: "Simulate workflow mid-run seed",
-      body: "The active simulate thread boots with a half-settled workflow so Agents tab demos live phase chips without starting a run.",
-      project: "coder",
-      importance: 1,
-      createdAt: hours(10),
-      updatedAt: hours(8),
-    },
-    {
-      id: "mem-seed-6",
+      id: "mem-seed-4",
       type: "convention",
-      title: "selectedRef guard after await",
-      body: "Any useCoder action that applies results to state after an await must check selectedRef.current still matches the thread id captured before the call.",
+      title: "Every state write after an await re-checks the thread id",
+      body: "Applying a result to state after an await must confirm the selected thread still matches the id captured before the call, or a slow response lands in the wrong thread.",
       project: null,
       importance: 5,
       createdAt: hours(20),
       updatedAt: hours(2),
     },
     {
-      id: "mem-seed-7",
+      id: "mem-seed-5",
       type: "strategy",
-      title: "When a worktree merge is dirty, stash by path then retry",
-      body: "When merging a worktree into a dirty main checkout, do not commit the WIP. Stash by path, merge, then stash pop. Untracked files also trip the dirty guard.",
-      project: "coder",
+      title: "Dirty merge: stash by path, merge, pop",
+      body: "When merging a worktree into a dirty checkout, do not commit the WIP. Stash by path, merge, then pop. Untracked files trip the dirty guard too.",
+      project: null,
       importance: 4,
       createdAt: hours(8),
       updatedAt: hours(3),
+    },
+    {
+      id: "mem-seed-6",
+      type: "knowledge",
+      title: "The CSP change belongs in the preload, not the page",
+      body: "Meta-tag CSP is ignored once the response header is set. Ship the policy from the main process response header and keep the preload surface typed.",
+      project: DEMO_LEDGER,
+      importance: 3,
+      createdAt: hours(10),
+      updatedAt: hours(8),
+    },
+    {
+      id: "mem-seed-7",
+      type: "task",
+      title: "Backfill the migration test before the schema lands",
+      body: "The key-schema patch needs a fixture that runs the old rows through the migration. Blocked until the store move in #842 merges.",
+      project: DEMO_NEBULA,
+      importance: 3,
+      createdAt: hours(4),
+      updatedAt: hours(1),
     },
   ];
 }
