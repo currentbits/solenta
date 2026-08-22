@@ -218,6 +218,21 @@ describe("modelTriggerLabel", () => {
       "custom-x",
     );
   });
+
+  it("appends a non-default effort next to the model name", () => {
+    assert.equal(
+      modelTriggerLabel("claude-sonnet-5", provider(), "high"),
+      "Sonnet 5 · High",
+    );
+    assert.equal(
+      modelTriggerLabel(null, provider(), "high"),
+      "Default · High",
+    );
+    assert.equal(
+      modelTriggerLabel("claude-sonnet-5", provider(), null),
+      "Sonnet 5",
+    );
+  });
 });
 
 describe("detailModelRow and selection", () => {

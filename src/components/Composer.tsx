@@ -635,7 +635,11 @@ export function Composer({
   const modelRows = drillInfo
     ? buildModelRows(drillInfo)
     : buildUnifiedModelRows(providers, provider, sessionLocked, providerName);
-  const triggerLabel = modelTriggerLabel(model, currentProviderInfo);
+  const triggerLabel = modelTriggerLabel(
+    model,
+    currentProviderInfo,
+    reasoningEffort,
+  );
   const hi = clampHighlightIndex(modelRows, highlightIndex);
   const detailRow = detailModelRow(modelRows, provider, model, hi);
   // At the provider level the pane must describe the highlighted PROVIDER.
@@ -654,7 +658,6 @@ export function Composer({
           label: highlightedProfile.name,
           vendor: highlightedProfile.disabled ? "not installed" : "profile",
           description: highlightedProfile.summary,
-          efforts: [] as ReasoningEffort[],
         }
       : providerDetail(
           providerRows,
@@ -666,22 +669,16 @@ export function Composer({
     label: detailRow.label,
     vendor: detailRow.vendor,
     description: detailRow.description,
-    efforts: detailRow.efforts ?? [],
   };
-  const efforts = detail.efforts ?? [];
+  // Meter binds to the thread, not the highlighted row. Hovering a profile
+  // or another provider must not blank the label or switch the harness.
+  const efforts = currentProviderInfo?.efforts ?? [];
   const reasoningVisible = showReasoningControl(efforts);
-  // A provider whose CLI is not installed can be highlighted but never
-  // selected, so its meter must stay inert even though it renders.
-  const detailUnavailable =
-    providers.find((p) => p.id === detail.providerId)?.available === false;
-  // Effort applies only to the current provider: show the live value when the
-  // highlighted row is that provider, otherwise a blank meter (null current).
-  const effortForMeter =
-    detail.providerId === provider ? reasoningEffort : null;
+  const meterUnavailable = currentProviderInfo?.available === false;
   const segments = reasoningVisible
-    ? effortSegments(efforts, effortForMeter)
+    ? effortSegments(efforts, reasoningEffort)
     : [];
-  const effortLabel = effortDisplayLabel(effortForMeter);
+  const effortLabel = effortDisplayLabel(reasoningEffort);
 
   useEffect(() => {
     if (!modeOpen && !modelOpen && !buildMenuOpen && !bestOfNOpen) return;
@@ -1175,21 +1172,10 @@ export function Composer({
   };
 
   const pickEffort = async (level: ReasoningEffort) => {
-    // The meter follows the HIGHLIGHTED row. Picking a level on another
-    // harness selects that harness and the highlighted model, then applies
-    // the level: setProvider resets effort to null on a provider switch, so
-    // the effort call must come second or it is wiped immediately.
-    if (detailUnavailable) return;
+    // A bar sets reasoning on the current thread. It must never change the
+    // harness: that used to happen whenever the pointer was on another row.
+    if (meterUnavailable) return;
     try {
-      if (detail.providerId !== provider) {
-        const targetModel =
-          providerPane || detailRow.id === CUSTOM_MODEL_ID
-            ? null
-            : detailRow.id;
-        await onSetProvider({ provider: detail.providerId, model: targetModel });
-        await onSetReasoningEffort(level);
-        return;
-      }
       // Clicking the current level clears it back to the provider default.
       // Without this the null branch is implemented at every layer and
       // unreachable from the UI: once you pick a level you can never stop.
@@ -1716,7 +1702,9 @@ export function Composer({
                   </div>
                   <div className={styles.modelPopoverRight}>
                     {/* Keyed on the highlighted row so a highlight move
-                        remounts the pane and replays the detailIn fade. */}
+                        remounts the pane and replays the detailIn fade.
+                        The reasoning meter lives outside this key: it
+                        belongs to the thread, not the hover. */}
                     <div
                       className={styles.detailBody}
                       key={`${detail.providerId}::${detail.label}`}
@@ -1732,44 +1720,54 @@ export function Composer({
                           {detail.description}
                         </div>
                       ) : null}
-                      {reasoningVisible && (
-                        <div className={styles.reasoningBlock}>
-                          <div className={styles.reasoningHeader}>
-                            <span className={styles.reasoningTitle}>
-                              REASONING
-                            </span>
-                            <span className={styles.reasoningLevel}>
-                              {effortLabel}
-                            </span>
-                          </div>
-                          <div
-                            className={styles.effortSegments}
-                            role="group"
-                            aria-label="Reasoning effort"
-                          >
-                            {segments.map((seg, i) => (
-                              <button
-                                key={seg.level}
-                                type="button"
-                                className={styles.effortSegment}
-                                style={{ "--i": String(i) } as CSSProperties}
-                                data-filled={seg.filled ? "true" : undefined}
-                                aria-label={`Reasoning ${effortDisplayLabel(seg.level)}`}
-                                title={`Reasoning ${effortDisplayLabel(seg.level)}`}
-                                aria-pressed={
-                                  detail.providerId === provider &&
-                                  reasoningEffort === seg.level
-                                    ? "true"
-                                    : "false"
-                                }
-                                disabled={detailUnavailable}
-                                onClick={() => void pickEffort(seg.level)}
-                              />
-                            ))}
-                          </div>
-                        </div>
-                      )}
                     </div>
+                    {reasoningVisible && (
+                      <div className={styles.reasoningBlock}>
+                        <div className={styles.reasoningHeader}>
+                          <span className={styles.reasoningTitle}>
+                            REASONING
+                          </span>
+                          <span className={styles.reasoningLevel}>
+                            {effortLabel}
+                          </span>
+                        </div>
+                        <div
+                          className={styles.effortSegments}
+                          role="group"
+                          aria-label="Reasoning effort"
+                        >
+                          {segments.map((seg, i) => (
+                            <button
+                              key={seg.level}
+                              type="button"
+                              className={styles.effortSegment}
+                              style={{ "--i": String(i) } as CSSProperties}
+                              data-filled={seg.filled ? "true" : undefined}
+                              aria-label={`Reasoning ${effortDisplayLabel(seg.level)}`}
+                              title={`Reasoning ${effortDisplayLabel(seg.level)}`}
+                              aria-pressed={
+                                reasoningEffort === seg.level
+                                  ? "true"
+                                  : "false"
+                              }
+                              disabled={meterUnavailable}
+                              onClick={() => void pickEffort(seg.level)}
+                            >
+                              <span
+                                className={styles.effortBar}
+                                aria-hidden="true"
+                              />
+                              <span
+                                className={styles.effortCaption}
+                                aria-hidden="true"
+                              >
+                                {effortDisplayLabel(seg.level)}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
