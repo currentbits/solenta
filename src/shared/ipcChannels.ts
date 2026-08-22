@@ -113,6 +113,7 @@ export const IPC_CHANNELS = [
   { ns: "threads", method: "setReasoningEffort" },
   { ns: "threads", method: "setVerifyCommand" },
   { ns: "threads", method: "runVerify" },
+  { ns: "threads", method: "runCommand" },
   { ns: "threads", method: "delete" },
   { ns: "activity", method: "list" },
   { ns: "usage", method: "byDay" },

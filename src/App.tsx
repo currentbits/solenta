@@ -233,6 +233,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     devServerStatus,
     setVerifyCommand,
     runVerify,
+    runCommand,
     appStatus,
     updateStatus,
     checkUpdate,
@@ -1340,6 +1341,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onPrMerge={prMerge}
         gitSyncInfo={gitSyncInfo}
         gitFetch={gitFetch}
+        onRunCommand={runCommand}
         runError={error?.scope === "run" ? error.message : null}
         onDismissRunError={clearError}
         onFork={handleForkOpen}

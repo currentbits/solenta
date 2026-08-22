@@ -70,6 +70,8 @@ describe("edit project", () => {
       remotePath: "/srv/app",
       worktreeRetention: 10,
       autoDispatch: false,
+      setupCommand: null,
+      quickActions: [],
     });
     assert.equal(
       m.query("[data-edit-project]"),
@@ -177,6 +179,55 @@ describe("edit project", () => {
     const note = m.query("[data-scm-detail]");
     assert.ok(note, "jj note under the path");
     assert.match(note!.textContent || "", /Jujutsu colocated/);
+    m.unmount();
+  });
+
+  it("saves a setup command and a named quick action (#153)", async () => {
+    const p1 = project({
+      id: "p1",
+      name: "ledger",
+      path: "/tmp/ledger",
+      setupCommand: "npm install",
+      quickActions: [{ id: "lint", name: "Lint", command: "npm run lint" }],
+    });
+    const t1 = thread({ id: "t1", projectId: "p1" });
+    const fake = createFakeCoder({
+      projects: [p1],
+      threads: [t1],
+      details: { t1: detail({ thread: t1 }) },
+    });
+    const m = await boot(fake);
+    await m.click(m.query("[data-scope-trigger]"));
+    await m.click(m.query('[data-scope-edit="p1"]'));
+    const setup = m.query(
+      "[data-edit-project-setup]",
+    ) as HTMLInputElement | null;
+    assert.ok(setup, "setup field");
+    assert.equal(setup.value, "npm install");
+    const name = m.query(
+      "[data-edit-project-action-name]",
+    ) as HTMLInputElement | null;
+    assert.ok(name, "action name");
+    assert.equal(name.value, "Lint");
+    await m.type(m.query("[data-edit-project-setup]"), "pnpm i");
+    await m.click(m.query("[data-edit-project-action-add]"));
+    const names = m.queryAll(
+      "[data-edit-project-action-name]",
+    ) as HTMLInputElement[];
+    const commands = m.queryAll(
+      "[data-edit-project-action-command]",
+    ) as HTMLInputElement[];
+    assert.equal(names.length, 2);
+    await m.type(names[1]!, "Reset db");
+    await m.type(commands[1]!, "npm run db:reset");
+    await m.click(m.query("[data-edit-project-submit]"));
+    await m.flush();
+    const payload = fake.of("projects.update")[0]!.args[0] as ProjectUpdateInput;
+    assert.equal(payload.setupCommand, "pnpm i");
+    assert.equal(payload.quickActions?.length, 2);
+    assert.equal(payload.quickActions?.[0]?.name, "Lint");
+    assert.equal(payload.quickActions?.[1]?.name, "Reset db");
+    assert.equal(payload.quickActions?.[1]?.command, "npm run db:reset");
     m.unmount();
   });
 });

@@ -727,6 +727,8 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         remotePath?: string;
         spaceId?: string;
         iconPath?: string | null;
+        setupCommand?: string | null;
+        quickActions?: ProjectInfo["quickActions"];
       }) => {
         const found = projects.find((p) => p.id === input.projectId);
         const updated = found ? { ...found } : project();
@@ -756,6 +758,18 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
             delete updated.iconPath;
             delete updated.iconUrl;
           }
+        }
+        if (Object.prototype.hasOwnProperty.call(input, "setupCommand")) {
+          const cmd = input.setupCommand?.trim() || "";
+          if (cmd) updated.setupCommand = cmd;
+          else delete updated.setupCommand;
+        }
+        if (Object.prototype.hasOwnProperty.call(input, "quickActions")) {
+          const rows = Array.isArray(input.quickActions)
+            ? input.quickActions.filter((a) => a && a.name && a.command)
+            : [];
+          if (rows.length) updated.quickActions = rows;
+          else delete updated.quickActions;
         }
         return rec("projects.update", [input], updated).then((v) => {
           if (found) {
@@ -1577,6 +1591,24 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
             id: (input as { threadId: string }).threadId,
             spec: { slug: "spec", stage: "build", awaitingApproval: false },
           }),
+        ),
+      runCommand: (input: unknown) =>
+        rec(
+          "threads.runCommand",
+          [input],
+          {
+            name:
+              (input as { actionId?: string }).actionId === "setup"
+                ? "setup"
+                : "action",
+            command: "true",
+            ok: true,
+            exitCode: 0,
+            timedOut: false,
+            log: "",
+            durationMs: 1,
+            at: Date.now(),
+          },
         ),
       delete: (input: unknown) => rec("threads.delete", [input], undefined),
     },

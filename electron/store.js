@@ -24,6 +24,10 @@ const {
   appendJsonArrayItem,
 } = require("./jsonEnvelope.js");
 const { clampUiScale, UI_SCALE_DEFAULT } = require("./zoom.js");
+const {
+  normalizeSetupCommand,
+  normalizeQuickActions,
+} = require("./projectCommands.js");
 
 /** Builtin "Plan and Verify" workflow template (seeded on every store). */
 const STANDARD_TEMPLATE = {
@@ -885,6 +889,12 @@ function migrateProject(p) {
   } else {
     delete next.iconPath;
   }
+  const setupCommand = normalizeSetupCommand(next.setupCommand);
+  if (setupCommand) next.setupCommand = setupCommand;
+  else delete next.setupCommand;
+  const quickActions = normalizeQuickActions(next.quickActions);
+  if (quickActions) next.quickActions = quickActions;
+  else delete next.quickActions;
   return next;
 }
 

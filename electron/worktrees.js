@@ -1062,6 +1062,20 @@ function setupWorktree(opts) {
     broadcast("threads:changed", listThreads(store));
   }
 
+  // Issue #153: fire-and-forget. A failed npm install must not undo the
+  // worktree, and setupWorktree stays sync for the existing call sites.
+  const { kickWorktreeSetup } = require("./projectCommands.js");
+  const setup = kickWorktreeSetup({
+    store,
+    threadId,
+    cwd: dir,
+    project,
+    broadcast,
+  });
+  if (setup && typeof setup.catch === "function") {
+    setup.catch(() => {});
+  }
+
   return updated ? { ...updated } : { ...thread, worktreePath: dir, branch };
 }
 
