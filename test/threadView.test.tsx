@@ -18,6 +18,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { inAct, mount, unmountAll } from "./support/dom.ts";
 import { ThreadView } from "../src/components/ThreadView";
 import styles from "../src/components/ThreadView.module.css";
+import { TRANSCRIPT_WINDOW } from "../src/transcriptWindow";
 import type {
   AttachmentInfo,
   ChatMessage,
@@ -161,6 +162,7 @@ function view(props: {
   onStartSuggestion?: (s: WorkSuggestion) => void | Promise<void>;
   onFileSuggestion?: (s: WorkSuggestion) => void | Promise<void>;
   onDismissSuggestion?: (s: WorkSuggestion) => void | Promise<void>;
+  revealMessageId?: string | null;
 }) {
   return (
     <ThreadView
@@ -205,6 +207,7 @@ function view(props: {
       onStartSuggestion={props.onStartSuggestion}
       onFileSuggestion={props.onFileSuggestion}
       onDismissSuggestion={props.onDismissSuggestion}
+      revealMessageId={props.revealMessageId}
     />
   );
 }
@@ -1756,3 +1759,216 @@ describe("ThreadView suggested-work chip actions (issue #550)", () => {
     m.unmount();
   });
 });
+
+/**
+ * Issue #564: the renderer only mounts the tail of a long transcript.
+ * Marker text is `#${i}#` so `#1#` cannot match `#10#`.
+ */
+function bulkMessages(n: number): ChatMessage[] {
+  const rows: ChatMessage[] = [];
+  for (let i = 0; i < n; i++) {
+    rows.push(
+      msg({
+        id: `bulk-${i}`,
+        role: "user",
+        text: `#${i}#`,
+        createdAt: i + 1,
+      }),
+    );
+  }
+  return rows;
+}
+
+function renderedBulkIds(html: string, n: number): number[] {
+  const ids: number[] = [];
+  for (let i = 0; i < n; i++) {
+    if (html.includes(`#${i}#`)) ids.push(i);
+  }
+  return ids;
+}
+
+describe("ThreadView transcript windowing (issue #564)", () => {
+  it("renders only the tail window plus a Show earlier row on a 500-message thread", () => {
+    const n = 500;
+    const html = render({
+      detail: detail({ messages: bulkMessages(n) }),
+    });
+    const ids = renderedBulkIds(html, n);
+    assert.deepEqual(
+      ids,
+      [...Array(TRANSCRIPT_WINDOW).keys()].map((i) => n - TRANSCRIPT_WINDOW + i),
+      "only the last 120 timeline entries mount",
+    );
+    assert.ok(
+      html.includes("data-show-earlier"),
+      "Show earlier control must render when entries sit above the window",
+    );
+    assert.ok(
+      html.includes("Show earlier — 380 messages"),
+      `expected hidden-count copy, got near: ${html.slice(
+        html.indexOf("Show earlier"),
+        html.indexOf("Show earlier") + 80,
+      )}`,
+    );
+    assert.ok(!html.includes("#0#"), "the oldest message stays unmounted");
+  });
+
+  it("renders a short transcript fully with no Show earlier row", () => {
+    const n = 40;
+    const html = render({
+      detail: detail({ messages: bulkMessages(n) }),
+    });
+    const ids = renderedBulkIds(html, n);
+    assert.equal(ids.length, n, "every message mounts when under the window");
+    assert.ok(html.includes("#0#") && html.includes("#39#"));
+    assert.ok(
+      !html.includes("data-show-earlier"),
+      "no Show earlier row when the whole transcript fits",
+    );
+  });
+
+  it("grows the window by another chunk when Show earlier is clicked", async () => {
+    const n = 500;
+    const m = await mount(
+      view({ detail: detail({ messages: bulkMessages(n) }) }),
+    );
+    const btn = m.query("[data-show-earlier]");
+    assert.ok(btn, "Show earlier button");
+    await m.click(btn);
+    const ids = renderedBulkIds(m.html(), n);
+    assert.equal(ids[0], n - TRANSCRIPT_WINDOW * 2);
+    assert.equal(ids[ids.length - 1], n - 1);
+    assert.equal(ids.length, TRANSCRIPT_WINDOW * 2);
+    assert.ok(
+      m.text().includes("Show earlier — 260 messages"),
+      "hidden count drops by one chunk",
+    );
+    assert.ok(!m.html().includes("#0#"), "the oldest message is still above the window");
+    m.unmount();
+  });
+
+  it("appends a streamed message at the tail without revealing earlier entries", async () => {
+    const n = 500;
+    const initial = bulkMessages(n);
+
+    function StreamHarness() {
+      const [messages, setMessages] = useState(initial);
+      return (
+        <div>
+          <button
+            type="button"
+            data-append-stream=""
+            onClick={() =>
+              setMessages((prev) => [
+                ...prev,
+                msg({
+                  id: "streamed-tail",
+                  role: "user",
+                  text: "STREAMED_TAIL",
+                  createdAt: n + 1,
+                }),
+              ])
+            }
+          >
+            append
+          </button>
+          {view({ detail: detail({ messages }) })}
+        </div>
+      );
+    }
+
+    const m = await mount(<StreamHarness />);
+    assert.ok(!m.html().includes("#0#"), "pre-stream: oldest is windowed out");
+    assert.ok(m.html().includes("#499#"), "pre-stream: tail is mounted");
+    await m.click(m.query("[data-append-stream]"));
+    assert.ok(
+      m.text().includes("STREAMED_TAIL"),
+      "the streamed message mounts at the tail",
+    );
+    assert.ok(
+      !m.html().includes("#0#"),
+      "append must not extend the top of the window",
+    );
+    assert.ok(
+      m.text().includes("Show earlier — 380 messages"),
+      "hidden count stays put across a tail append",
+    );
+    m.unmount();
+  });
+
+  it("extends the window to include a jump-to-anchor above it", async () => {
+    const n = 500;
+    const messages = bulkMessages(n);
+
+    function JumpHarness() {
+      const [reveal, setReveal] = useState<string | null>(null);
+      return (
+        <div>
+          <button
+            type="button"
+            data-jump-early=""
+            onClick={() => setReveal(messages[0]!.id)}
+          >
+            jump
+          </button>
+          {view({
+            detail: detail({ messages }),
+            revealMessageId: reveal,
+          })}
+        </div>
+      );
+    }
+
+    const m = await mount(<JumpHarness />);
+    assert.ok(!m.html().includes("#0#"), "anchor starts above the window");
+    await m.click(m.query("[data-jump-early]"));
+    assert.ok(
+      m.html().includes("#0#"),
+      "ensureVisible must raise the window to include the target",
+    );
+    assert.ok(
+      m.html().includes("#499#"),
+      "the tail stays mounted after expanding upward",
+    );
+    m.unmount();
+  });
+
+  it("resets the window when switching to another thread", async () => {
+    const longThread = detail({
+      thread: thread({ id: "t-long" }),
+      messages: bulkMessages(500),
+    });
+    const shortThread = detail({
+      thread: thread({ id: "t-short", title: "short" }),
+      messages: bulkMessages(8),
+    });
+
+    function SwitchHarness() {
+      const [open, setOpen] = useState(longThread);
+      return (
+        <div>
+          <button
+            type="button"
+            data-open-short=""
+            onClick={() => setOpen(shortThread)}
+          >
+            short
+          </button>
+          {view({ detail: open })}
+        </div>
+      );
+    }
+
+    const m = await mount(<SwitchHarness />);
+    assert.ok(m.query("[data-show-earlier]"), "long thread is windowed");
+    await m.click(m.query("[data-open-short]"));
+    assert.ok(m.html().includes("#0#"), "short thread shows its first message");
+    assert.equal(
+      m.query("[data-show-earlier]"),
+      null,
+      "a short thread must not inherit the previous window start",
+    );
+    m.unmount();
+  });
+});
+

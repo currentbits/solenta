@@ -1116,6 +1116,27 @@ a.btn {
   gap: 8px;
 }
 
+.showEarlier {
+  display: flex;
+  justify-content: center;
+}
+
+.showEarlierBtn {
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.showEarlierBtn:hover {
+  color: var(--text);
+  background: var(--card-hover);
+  border-color: var(--blue-border);
+}
+
 .body[hidden] {
   display: none;
 }

@@ -75,6 +75,12 @@ import {
   type WorkLogGroup,
 } from "../timeline";
 import {
+  clampWindowStart,
+  ensureVisibleStart,
+  extendWindowStart,
+  initialWindowStart,
+} from "../transcriptWindow";
+import {
   lastUserMessage,
   retryAnchorEventId,
   retryButtonTitle,
@@ -322,6 +328,11 @@ function ImageLightbox({
 
 interface ThreadViewProps {
   detail: ThreadDetail | null;
+  /**
+   * Expand the transcript window to include this message (jump-to-turn
+   * #487, find #486, deep links). No-op when missing or already visible.
+   */
+  revealMessageId?: string | null;
   /** threads.get failure for the selected thread; shown with a retry. */
   detailError?: string | null;
   /** Re-fetch the selected thread's detail after a load failure. */
@@ -3274,6 +3285,7 @@ function DivergenceCard({
  */
 export const ThreadView = memo(function ThreadView({
   detail,
+  revealMessageId = null,
   detailError = null,
   onRetryDetail,
   project,
@@ -3491,6 +3503,44 @@ export const ThreadView = memo(function ThreadView({
     if (!detail) return [];
     return buildTimeline(detail.messages, detail.workLog);
   }, [detail]);
+
+  /**
+   * One integer: index of the first mounted timeline entry. Thread switches
+   * reset to the tail window; streaming appends leave it alone so the top
+   * does not creep; Show earlier / revealMessageId only move it down.
+   */
+  const [windowThreadId, setWindowThreadId] = useState(threadId);
+  const [windowStart, setWindowStart] = useState(() =>
+    initialWindowStart(timeline.length),
+  );
+  const pendingPrepend = useRef<number | null>(null);
+
+  const revealIndex = useMemo(() => {
+    if (!revealMessageId) return -1;
+    return timeline.findIndex(
+      (entry) =>
+        entry.kind === "message" && entry.message.id === revealMessageId,
+    );
+  }, [timeline, revealMessageId]);
+
+  const start = clampWindowStart(
+    ensureVisibleStart(
+      threadId !== windowThreadId
+        ? initialWindowStart(timeline.length)
+        : windowStart,
+      revealIndex,
+    ),
+    timeline.length,
+  );
+  if (threadId !== windowThreadId) {
+    setWindowThreadId(threadId);
+    setWindowStart(start);
+  } else if (start < windowStart) {
+    setWindowStart(start);
+  }
+
+  const visibleTimeline = start === 0 ? timeline : timeline.slice(start);
+  const hiddenCount = start;
 
   /** Run duration per runId, for assistant-message meta footers. Opt-in. */
   const showRunDuration = useRunDurationEnabled();
@@ -4032,6 +4082,23 @@ export const ThreadView = memo(function ThreadView({
   const pinIfStuckRef = useRef(pinIfStuck);
   pinIfStuckRef.current = pinIfStuck;
 
+  const showEarlier = () => {
+    stickToBottom.current = false;
+    forceStick.current = false;
+    const el = bodyRef.current;
+    pendingPrepend.current = el ? el.scrollHeight : 0;
+    setWindowStart((s) => extendWindowStart(s));
+  };
+
+  useLayoutEffect(() => {
+    const prev = pendingPrepend.current;
+    if (prev == null) return;
+    pendingPrepend.current = null;
+    const el = bodyRef.current;
+    if (!el) return;
+    el.scrollTop += el.scrollHeight - prev;
+  }, [start]);
+
   /**
    * Pin before paint so a remounted body (thread switch) and a newly
    * inserted permission card never flash at the wrong scrollTop. #408's
@@ -4089,7 +4156,7 @@ export const ThreadView = memo(function ThreadView({
       ro.observe(child);
     }
     return () => ro.disconnect();
-  }, [timeline, detail?.pendingPermission, isWorking]);
+  }, [timeline, start, detail?.pendingPermission, isWorking]);
 
   /**
    * Delegated: any image in the timeline (tool output, attachment thumb,
@@ -4754,7 +4821,21 @@ export const ThreadView = memo(function ThreadView({
           </div>
         )}
 
-        {timeline.map((entry) => {
+        {hiddenCount > 0 && (
+          <div className={styles.showEarlier}>
+            <button
+              type="button"
+              className={styles.showEarlierBtn}
+              data-show-earlier=""
+              data-hidden-count={hiddenCount}
+              onClick={showEarlier}
+            >
+              {`Show earlier — ${hiddenCount} ${hiddenCount === 1 ? "message" : "messages"}`}
+            </button>
+          </div>
+        )}
+
+        {visibleTimeline.map((entry) => {
           if (entry.kind === "message") {
             const isRetrySurface =
               entry.message.role === "event" &&
