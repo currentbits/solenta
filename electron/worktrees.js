@@ -5047,21 +5047,36 @@ async function enforceRetention(opts) {
 
 /**
  * Run enforceRetention without throwing. Archive / merge call this so a
- * GC failure cannot fail the user-facing action (#559).
+ * GC failure cannot fail the user-facing action (#559). Also reclaims
+ * stale kimi-homes overlays on the same pass (#675).
  *
  * @param {object} opts
+ * @param {import('./store').Store} [opts.store]
+ * @param {string} [opts.worktreeBase]
+ * @param {string} [opts.userDataPath]
+ * @param {(channel: string, payload: unknown) => void} [opts.broadcast]
  * @returns {Promise<{ removed: string[], failed: Array<{path: string, error: string}>, bytes: number }>}
  */
 async function scheduleRetention(opts) {
+  let result = { removed: [], failed: [], bytes: 0 };
   try {
-    return await enforceRetention(opts);
+    result = await enforceRetention(opts);
   } catch (err) {
     console.warn(
       "worktree retention:",
       err && err.message ? err.message : err,
     );
-    return { removed: [], failed: [], bytes: 0 };
   }
+  try {
+    const { reclaimKimiHomes } = require("./kimi.js");
+    reclaimKimiHomes(opts);
+  } catch (err) {
+    console.warn(
+      "kimi-home retention:",
+      err && err.message ? err.message : err,
+    );
+  }
+  return result;
 }
 
 /**
@@ -5075,6 +5090,7 @@ async function scheduleRetention(opts) {
  * @param {object} opts
  * @param {import('./store').Store} opts.store
  * @param {string} opts.worktreeBase
+ * @param {string} [opts.userDataPath]
  * @param {(channel: string, payload: unknown) => void} [opts.broadcast]
  * @param {number} [opts.intervalMs] default 6 h
  * @param {number} [opts.startupDelayMs] default 15 s
@@ -5087,6 +5103,7 @@ async function scheduleRetention(opts) {
 function createRetentionSweeper(opts) {
   const store = opts.store;
   const worktreeBase = opts.worktreeBase;
+  const userDataPath = opts.userDataPath;
   const broadcast = opts.broadcast;
   const intervalMs =
     opts.intervalMs != null ? opts.intervalMs : RETENTION_SWEEP_INTERVAL_MS;
@@ -5113,7 +5130,12 @@ function createRetentionSweeper(opts) {
     if (running) return { ran: false };
     running = true;
     try {
-      const result = await sweepFn({ store, worktreeBase, broadcast });
+      const result = await sweepFn({
+        store,
+        worktreeBase,
+        userDataPath,
+        broadcast,
+      });
       if (result && result.removed && result.removed.length > 0) {
         console.warn(
           `worktree retention: reclaimed ${result.removed.length} worktree(s)`,
