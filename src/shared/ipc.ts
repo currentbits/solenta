@@ -1859,6 +1859,12 @@ export interface AppSettings {
    */
   notifications: boolean;
   /**
+   * Ask "how much time did this save you?" when a run finishes (issue #401).
+   * Opt-in: absent/false means the card never appears and the felt-vs-actual
+   * section of the Fleet view stays empty.
+   */
+  feltEstimatePrompt: boolean;
+  /**
    * Electron webContents zoom factor (issue #652). Default 1; clamped to
    * 0.8–1.6 in 0.1 steps. View-menu zoom and the Settings control share this.
    */

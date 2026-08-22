@@ -23,7 +23,7 @@ describe("normalizeSettings autoSettleAfterDays", () => {
       autoSettleOnMerge: true,
       prDiffCapLines: 400,
       mcpServers: [],
-      defaultWorktree: false, defaultOrchestrate: false, onboardingSeen: false, updateChannel: null, notifications: true, theme: "dark", quotaWaitAutoResume: true, prDiffCapLines: 400, agentProfiles: [], subagentPool: { defaultAlias: null, force: false, entries: [] }, otel: { endpoint: null, headers: {}, claudeMetrics: false }, uiScale: 1,
+      defaultWorktree: false, defaultOrchestrate: false, onboardingSeen: false, updateChannel: null, notifications: true, feltEstimatePrompt: false, theme: "dark", quotaWaitAutoResume: true, prDiffCapLines: 400, agentProfiles: [], subagentPool: { defaultAlias: null, force: false, entries: [] }, otel: { endpoint: null, headers: {}, claudeMetrics: false }, uiScale: 1,
     });
     assert.deepEqual(normalizeSettings(null), {
       dailyBudgetUsd: null,
@@ -32,7 +32,7 @@ describe("normalizeSettings autoSettleAfterDays", () => {
       autoSettleOnMerge: true,
       prDiffCapLines: 400,
       mcpServers: [],
-      defaultWorktree: false, defaultOrchestrate: false, onboardingSeen: false, updateChannel: null, notifications: true, theme: "dark", quotaWaitAutoResume: true, prDiffCapLines: 400, agentProfiles: [], subagentPool: { defaultAlias: null, force: false, entries: [] }, otel: { endpoint: null, headers: {}, claudeMetrics: false }, uiScale: 1,
+      defaultWorktree: false, defaultOrchestrate: false, onboardingSeen: false, updateChannel: null, notifications: true, feltEstimatePrompt: false, theme: "dark", quotaWaitAutoResume: true, prDiffCapLines: 400, agentProfiles: [], subagentPool: { defaultAlias: null, force: false, entries: [] }, otel: { endpoint: null, headers: {}, claudeMetrics: false }, uiScale: 1,
     });
     assert.equal(DEFAULT_AUTO_SETTLE_AFTER_DAYS, 3);
   });
@@ -94,13 +94,13 @@ describe("setSettings autoSettleAfterDays validation", () => {
 
     assert.deepEqual(
       services.setSettings(store, { autoSettleAfterDays: 7 }),
-      { dailyBudgetUsd: null, orchestrationBudgetUsd: null, autoSettleAfterDays: 7, autoSettleOnMerge: true, mcpServers: [], defaultWorktree: false, defaultOrchestrate: false, onboardingSeen: false, updateChannel: null, notifications: true, theme: "dark", quotaWaitAutoResume: true, prDiffCapLines: 400, agentProfiles: [], subagentPool: { defaultAlias: null, force: false, entries: [] }, otel: { endpoint: null, headers: {}, claudeMetrics: false }, uiScale: 1 },
+      { dailyBudgetUsd: null, orchestrationBudgetUsd: null, autoSettleAfterDays: 7, autoSettleOnMerge: true, mcpServers: [], defaultWorktree: false, defaultOrchestrate: false, onboardingSeen: false, updateChannel: null, notifications: true, feltEstimatePrompt: false, theme: "dark", quotaWaitAutoResume: true, prDiffCapLines: 400, agentProfiles: [], subagentPool: { defaultAlias: null, force: false, entries: [] }, otel: { endpoint: null, headers: {}, claudeMetrics: false }, uiScale: 1 },
     );
     assert.equal(store.getSettings().autoSettleAfterDays, 7);
 
     assert.deepEqual(
       services.setSettings(store, { autoSettleAfterDays: null }),
-      { dailyBudgetUsd: null, orchestrationBudgetUsd: null, autoSettleAfterDays: null, autoSettleOnMerge: true, mcpServers: [], defaultWorktree: false, defaultOrchestrate: false, onboardingSeen: false, updateChannel: null, notifications: true, theme: "dark", quotaWaitAutoResume: true, prDiffCapLines: 400, agentProfiles: [], subagentPool: { defaultAlias: null, force: false, entries: [] }, otel: { endpoint: null, headers: {}, claudeMetrics: false }, uiScale: 1 },
+      { dailyBudgetUsd: null, orchestrationBudgetUsd: null, autoSettleAfterDays: null, autoSettleOnMerge: true, mcpServers: [], defaultWorktree: false, defaultOrchestrate: false, onboardingSeen: false, updateChannel: null, notifications: true, feltEstimatePrompt: false, theme: "dark", quotaWaitAutoResume: true, prDiffCapLines: 400, agentProfiles: [], subagentPool: { defaultAlias: null, force: false, entries: [] }, otel: { endpoint: null, headers: {}, claudeMetrics: false }, uiScale: 1 },
     );
 
     assert.throws(
@@ -143,7 +143,7 @@ describe("setSettings autoSettleAfterDays validation", () => {
       autoSettleOnMerge: true,
       prDiffCapLines: 400,
       mcpServers: [],
-      defaultWorktree: false, defaultOrchestrate: false, onboardingSeen: false, updateChannel: null, notifications: true, theme: "dark", quotaWaitAutoResume: true, prDiffCapLines: 400, agentProfiles: [], subagentPool: { defaultAlias: null, force: false, entries: [] }, otel: { endpoint: null, headers: {}, claudeMetrics: false }, uiScale: 1,
+      defaultWorktree: false, defaultOrchestrate: false, onboardingSeen: false, updateChannel: null, notifications: true, feltEstimatePrompt: false, theme: "dark", quotaWaitAutoResume: true, prDiffCapLines: 400, agentProfiles: [], subagentPool: { defaultAlias: null, force: false, entries: [] }, otel: { endpoint: null, headers: {}, claudeMetrics: false }, uiScale: 1,
     });
   });
 

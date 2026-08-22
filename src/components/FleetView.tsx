@@ -60,8 +60,10 @@ export function reviewTaxCopy(tax: number | null): string {
   return "agent PRs are reviewed as quickly as human PRs";
 }
 
+// The card is opt-in, so the empty state must name the switch: otherwise it
+// points at a card the user has never been shown.
 const NO_ESTIMATES =
-  "no estimates yet — answer the one-tap card when a thread finishes";
+  "no estimates yet — turn on the time-saved card in Settings → General, then answer it when a thread finishes";
 
 /**
  * Felt-vs-actual copy (issue #401). Neutral on purpose: the counterfactual

@@ -1294,7 +1294,10 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onRepeatSchedule={handleRepeatSchedule}
         onDistillWorkflow={handleDistillWorkflow}
         onSetNotes={handleSetNotes}
-        onSetFeltEstimate={handleSetFeltEstimate}
+        onSetFeltEstimate={
+          // Opt-in (#401): no handler, no card. ThreadView already hides it.
+          settings?.feltEstimatePrompt ? handleSetFeltEstimate : undefined
+        }
         onStartSpec={handleStartSpec}
         onStopSpec={handleStopSpec}
         onReviewSpec={handleReviewSpec}
