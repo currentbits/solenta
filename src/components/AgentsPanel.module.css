@@ -8,6 +8,47 @@
   min-width: 0;
 }
 
+/* Collapsed state: a rail wide enough for the reopen chevron. */
+.rail {
+  display: flex;
+  justify-content: center;
+  height: 100%;
+  padding-top: 14px;
+  background: var(--bg-elevated);
+  border-left: 1px solid var(--border);
+}
+
+.collapseBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  align-self: center;
+  margin-right: 4px;
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.rail .collapseBtn {
+  align-self: flex-start;
+}
+
+.collapseBtn:hover {
+  color: var(--text);
+  background: var(--card-hover);
+}
+
+.collapseBtn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  color: var(--text);
+}
+
 .tabs {
   display: flex;
   align-items: stretch;

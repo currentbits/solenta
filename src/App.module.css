@@ -20,6 +20,10 @@
   position: relative;
 }
 
+.app[data-agents-rail="true"] {
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr) 32px;
+}
+
 .narrowBar,
 .scrim {
   display: none;

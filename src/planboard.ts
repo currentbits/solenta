@@ -39,6 +39,12 @@ export function issueUpdatedMs(issue: PlanIssue): number | null {
   return Number.isFinite(ms) ? ms : null;
 }
 
+/**
+ * Done is every issue ever closed, so it is capped to the most recent few.
+ * Todo and In progress are the live backlog and are never truncated.
+ */
+const DONE_COLUMN_CAP = 25;
+
 /** Todo / In progress / Done, each newest-updated first. */
 export function planColumns(issues: readonly PlanIssue[]): PlanColumn[] {
   const buckets: Record<PlanColumnId, PlanIssue[]> = {
@@ -49,13 +55,16 @@ export function planColumns(issues: readonly PlanIssue[]): PlanColumn[] {
   for (const issue of issues) {
     buckets[planColumnFor(issue)].push(issue);
   }
-  return COLUMN_ORDER.map(({ id, title }) => ({
-    id,
-    title,
-    issues: buckets[id]
+  return COLUMN_ORDER.map(({ id, title }) => {
+    const sorted = buckets[id]
       .slice()
-      .sort((a, b) => (issueUpdatedMs(b) ?? 0) - (issueUpdatedMs(a) ?? 0)),
-  }));
+      .sort((a, b) => (issueUpdatedMs(b) ?? 0) - (issueUpdatedMs(a) ?? 0));
+    return {
+      id,
+      title,
+      issues: id === "done" ? sorted.slice(0, DONE_COLUMN_CAP) : sorted,
+    };
+  });
 }
 
 export function isPlanEmpty(columns: readonly PlanColumn[]): boolean {

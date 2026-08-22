@@ -1185,11 +1185,15 @@ function setProvider(store, input) {
     } else {
       patch.model = null;
     }
-    // Same for effort, and for the same reason. A level the new provider does
-    // not list would never reach its CLI, while the picker kept displaying it:
-    // a setting shown to the user that does nothing, which is the exact bug
-    // this feature removed one control to the left.
-    patch.reasoningEffort = null;
+    // Effort is a preference, not a model detail, so it survives the switch
+    // when the new provider lists that level. It cannot survive onto a
+    // provider that does not list it: that level would never reach the CLI
+    // while the picker kept displaying it (same rule as setReasoningEffort).
+    const nextEfforts =
+      nextEntry && Array.isArray(nextEntry.efforts) ? nextEntry.efforts : [];
+    patch.reasoningEffort = nextEfforts.includes(thread.reasoningEffort)
+      ? thread.reasoningEffort
+      : null;
   } else if (modelProvided) {
     patch.model = normalizeModelForProvider(nextEntry, input.model);
   }

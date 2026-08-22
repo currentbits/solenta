@@ -300,8 +300,11 @@ async function listIssues(projectPath) {
       "all",
       "--json",
       "number,title,labels,state,url,updatedAt",
+      // ponytail: one flat fetch of every issue; the Done column is capped in
+      // planColumns instead. Paginate (gh does 100/page) if a repo ever needs
+      // more than this.
       "--limit",
-      "100",
+      "1000",
     ],
     GH_USER,
   );

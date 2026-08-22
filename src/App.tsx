@@ -78,6 +78,24 @@ function useNarrow(): boolean {
   return useSyncExternalStore(subscribeNarrow, getNarrow, () => false);
 }
 
+const AGENTS_COLLAPSED_KEY = "coder.agentsCollapsed";
+
+function loadAgentsCollapsed(): boolean {
+  try {
+    return window.localStorage.getItem(AGENTS_COLLAPSED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function saveAgentsCollapsed(value: boolean): void {
+  try {
+    window.localStorage.setItem(AGENTS_COLLAPSED_KEY, value ? "1" : "0");
+  } catch {
+    // Quota/private mode: the pref just stops persisting.
+  }
+}
+
 type AppProps = {
   /**
    * Test seam. Production reads compile-time __BUILD_SHA__; node tests
@@ -263,6 +281,16 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   const [drawer, setDrawer] = useState<DrawerId | null>(null);
   const [forecast, setForecast] = useState<ConflictForecast>(EMPTY_FORECAST);
   const narrow = useNarrow();
+  const [agentsCollapsed, setAgentsCollapsed] = useState(loadAgentsCollapsed);
+  const toggleAgentsCollapsed = useCallback(() => {
+    setAgentsCollapsed((v) => {
+      saveAgentsCollapsed(!v);
+      return !v;
+    });
+  }, []);
+  // Narrow layout already hides the panel behind a drawer; the rail would
+  // just eat the drawer.
+  const agentsRail = agentsCollapsed && !narrow;
   const sidebarPaneRef = useRef<HTMLDivElement>(null);
   const agentsPaneRef = useRef<HTMLDivElement>(null);
   const threadsBtnRef = useRef<HTMLButtonElement>(null);
@@ -954,6 +982,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         className={styles.app}
         data-layout="app"
         data-drawer={drawer ?? ""}
+        data-agents-rail={agentsRail ? "true" : ""}
       >
         <div className={styles.narrowBar} data-narrow-chrome="">
           <button
@@ -1257,6 +1286,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         >
           <ErrorBoundary pane="Agents panel">
             <AgentsPanel
+        collapsed={agentsRail}
+        onToggleCollapsed={toggleAgentsCollapsed}
         workflow={visibleDetail?.workflow ?? null}
         thread={visibleDetail?.thread ?? null}
         usage={visibleDetail?.usage ?? null}

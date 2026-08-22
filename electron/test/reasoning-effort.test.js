@@ -595,6 +595,25 @@ describe("reasoning effort: setReasoningEffort service", () => {
     );
   });
 
+  it("keeps the effort when the new provider lists it", () => {
+    // Effort is a user preference, not a model detail: picking another model
+    // (which is a provider switch whenever the row belongs to another harness)
+    // must not silently drop back to the provider default.
+    const thread = services.createThread(store, {
+      projectId: project.id,
+      title: "T",
+    });
+    services.setProvider(store, { threadId: thread.id, provider: "claude" });
+    services.setReasoningEffort(store, { threadId: thread.id, effort: "high" });
+
+    services.setProvider(store, { threadId: thread.id, provider: "grok" });
+    assert.equal(store.getThread(thread.id).reasoningEffort, "high");
+
+    // …and onward to a provider that lists high too (kimi: low/high/max).
+    services.setProvider(store, { threadId: thread.id, provider: "kimi" });
+    assert.equal(store.getThread(thread.id).reasoningEffort, "high");
+  });
+
   it("rejects any effort for a provider with empty efforts, naming the provider", () => {
     const thread = services.createThread(store, {
       projectId: project.id,

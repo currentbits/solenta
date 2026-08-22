@@ -158,3 +158,19 @@ describe("formatLineCount", () => {
     assert.equal(formatLineCount(12000), "12k");
   });
 });
+
+describe("planboard backlog window", () => {
+  it("never truncates todo or doing, caps done", () => {
+    const many = Array.from({ length: 200 }, (_, i) =>
+      issue({ number: i + 1, labels: i % 2 ? ["plan:doing"] : [] }),
+    );
+    const closed = Array.from({ length: 200 }, (_, i) =>
+      issue({ number: 1000 + i, state: "CLOSED" as const }),
+    );
+    const cols = planColumns([...many, ...closed]);
+    const by = (id: string) => cols.find((c) => c.id === id)!.issues.length;
+    assert.equal(by("todo"), 100);
+    assert.equal(by("doing"), 100);
+    assert.equal(by("done"), 25);
+  });
+});

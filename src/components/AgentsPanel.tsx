@@ -96,6 +96,9 @@ const LABEL_ICON_PROPS = {
 } as const;
 
 interface AgentsPanelProps {
+  /** Wide layout only: render the thin reopen rail instead of the panel. */
+  collapsed?: boolean;
+  onToggleCollapsed?: () => void;
   workflow: WorkflowView | null;
   thread: ThreadInfo | null;
   usage: SessionUsage | null;
@@ -2847,6 +2850,8 @@ function PulseTab({
  * reason — the array's identity churns, the key only moves on a real change.
  */
 export const AgentsPanel = memo(function AgentsPanel({
+  collapsed = false,
+  onToggleCollapsed,
   workflow,
   thread,
   usage,
@@ -2908,9 +2913,40 @@ export const AgentsPanel = memo(function AgentsPanel({
     else if (activeView === "prs") setTab("git");
   }, [activeView]);
 
+  if (collapsed) {
+    return (
+      <aside className={styles.rail} data-panel-collapsed="true">
+        <button
+          type="button"
+          className={styles.collapseBtn}
+          data-panel-collapse="expand"
+          aria-expanded={false}
+          aria-label="Show side panel"
+          title="Show side panel"
+          onClick={onToggleCollapsed}
+        >
+          ‹
+        </button>
+      </aside>
+    );
+  }
+
   return (
     <aside className={styles.panel}>
       <header className={styles.tabs}>
+        {onToggleCollapsed && (
+          <button
+            type="button"
+            className={styles.collapseBtn}
+            data-panel-collapse="collapse"
+            aria-expanded
+            aria-label="Hide side panel"
+            title="Hide side panel"
+            onClick={onToggleCollapsed}
+          >
+            ›
+          </button>
+        )}
         <button
           type="button"
           className={styles.tab}
