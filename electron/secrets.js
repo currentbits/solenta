@@ -219,12 +219,27 @@ function createSecrets(opts = {}) {
         nextLinearKey = sealed;
       }
     }
+    let nextWebhook = settings.webhook;
+    const webhookUrl =
+      settings.webhook &&
+      typeof settings.webhook === "object" &&
+      typeof settings.webhook.url === "string"
+        ? settings.webhook.url
+        : "";
+    if (webhookUrl) {
+      const sealed = seal(webhookUrl);
+      if (sealed !== webhookUrl) {
+        changed = true;
+        nextWebhook = { ...settings.webhook, url: sealed };
+      }
+    }
     if (!changed) return settings;
     return {
       ...settings,
       mcpServers: nextServers,
       otel: nextOtel,
       linearApiKey: nextLinearKey,
+      webhook: nextWebhook,
     };
   }
 
@@ -307,6 +322,27 @@ function createSecrets(opts = {}) {
       }
     }
 
+    let nextWebhook = settings.webhook;
+    const webhookUrl =
+      settings.webhook &&
+      typeof settings.webhook === "object" &&
+      typeof settings.webhook.url === "string"
+        ? settings.webhook.url
+        : "";
+    if (webhookUrl) {
+      hasSecret = true;
+      if (isSealed(webhookUrl)) {
+        const plain = open(webhookUrl, { key: "webhook:url" });
+        changed = true;
+        nextWebhook = {
+          ...settings.webhook,
+          url: plain == null || plain === "" ? null : plain,
+        };
+      } else if (available) {
+        migrated += 1;
+      }
+    }
+
     if (!available && hasSecret) warnUnavailable();
 
     const next = changed
@@ -315,6 +351,7 @@ function createSecrets(opts = {}) {
           mcpServers: nextServers,
           otel: nextOtel,
           linearApiKey: nextLinearKey,
+          webhook: nextWebhook,
         }
       : settings;
     return { settings: next, migrated };

@@ -435,6 +435,11 @@ const DEFAULT_PR_DIFF_CAP_LINES = 400;
  * autoSettleOnMerge: only an explicit false turns merge-settle off, so
  * absent/junk keeps the previous "MERGED = settled" behaviour.
  *
+ * webhook: absent/junk → { url: null, onDone/onFailed/onWaiting: true }.
+ * A URL must be http(s); anything else collapses to null so a corrupt store
+ * cannot POST somewhere unexpected. Only an explicit false turns an event
+ * off, so a pasted URL fires all three until the user unchecks.
+ *
  * @param {unknown} raw
  * @returns {{ dailyBudgetUsd: number | null, orchestrationBudgetUsd: number | null, autoSettleAfterDays: number | null, autoSettleOnMerge: boolean, prDiffCapLines: number | null, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }>, defaultWorktree: boolean, defaultOrchestrate: boolean, updateChannel: "prod" | "nightly" | null, notifications: boolean, agentProfiles: Array<{ id: string, name: string, provider: string, model: string | null, reasoningEffort: string | null, permissionMode: string }> }}
  */
@@ -459,6 +464,7 @@ function normalizeSettings(raw) {
     subagentPool: { defaultAlias: null, force: false, entries: [] },
     otel: { endpoint: null, headers: {}, claudeMetrics: false },
     linearApiKey: null,
+    webhook: { url: null, onDone: true, onFailed: true, onWaiting: true },
   };
   if (!raw || typeof raw !== "object") return settings;
   const obj = /** @type {{ dailyBudgetUsd?: unknown, orchestrationBudgetUsd?: unknown, autoSettleAfterDays?: unknown, mcpServers?: unknown }} */ (
@@ -556,6 +562,9 @@ function normalizeSettings(raw) {
   } else {
     settings.linearApiKey = null;
   }
+  settings.webhook = normalizeWebhook(
+    /** @type {{ webhook?: unknown }} */ (obj).webhook,
+  );
   return settings;
 }
 
@@ -580,6 +589,28 @@ function normalizeOtel(raw) {
     }
   }
   out.claudeMetrics = obj.claudeMetrics === true;
+  return out;
+}
+
+/**
+ * Heal the webhook slice (issue #167). Absent/junk → no URL, every event on.
+ *
+ * @param {unknown} raw
+ * @returns {{ url: string | null, onDone: boolean, onFailed: boolean, onWaiting: boolean }}
+ */
+function normalizeWebhook(raw) {
+  const out = { url: null, onDone: true, onFailed: true, onWaiting: true };
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return out;
+  const obj = /** @type {{ url?: unknown, onDone?: unknown, onFailed?: unknown, onWaiting?: unknown }} */ (
+    raw
+  );
+  if (typeof obj.url === "string") {
+    const trimmed = obj.url.trim();
+    if (isHttpUrl(trimmed)) out.url = trimmed;
+  }
+  out.onDone = obj.onDone !== false;
+  out.onFailed = obj.onFailed !== false;
+  out.onWaiting = obj.onWaiting !== false;
   return out;
 }
 
@@ -2081,6 +2112,7 @@ class Store {
       subagentPool: n.subagentPool,
       otel: n.otel,
       linearApiKey: n.linearApiKey,
+      webhook: n.webhook,
     };
   }
 
@@ -2267,6 +2299,31 @@ class Store {
       } else {
         throw new Error("linearApiKey must be a string or null");
       }
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "webhook")) {
+      const v = patch.webhook;
+      if (!v || typeof v !== "object" || Array.isArray(v)) {
+        throw new Error("webhook must be an object");
+      }
+      if (Object.prototype.hasOwnProperty.call(v, "url")) {
+        if (v.url != null && v.url !== "") {
+          if (!(typeof v.url === "string" && isHttpUrl(v.url.trim()))) {
+            throw new Error("Webhook URL must be an http(s) URL or empty");
+          }
+        }
+      }
+      for (const key of ["onDone", "onFailed", "onWaiting"]) {
+        if (
+          Object.prototype.hasOwnProperty.call(v, key) &&
+          typeof v[key] !== "boolean"
+        ) {
+          throw new Error(`${key} must be a boolean`);
+        }
+      }
+      this.data.settings.webhook = normalizeWebhook({
+        ...this.data.settings.webhook,
+        ...v,
+      });
     }
     return this.getSettings();
   }

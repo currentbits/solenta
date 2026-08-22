@@ -230,6 +230,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     prDiffCapLines: 400,
     onboardingSeen: true,
     uiScale: 1,
+    webhook: { url: null, onDone: true, onFailed: true, onWaiting: true },
     ...(opts.settings ?? {}),
   };
   const ALL_SKILL_TARGETS: SkillTarget[] = [

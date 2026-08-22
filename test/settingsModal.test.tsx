@@ -850,6 +850,134 @@ describe("SettingsModal OpenTelemetry (issue #280)", () => {
   });
 });
 
+describe("SettingsModal webhook (issue #167)", () => {
+  it("renders the URL and event toggles on General", async () => {
+    const m = await mount(
+      modal({
+        settings: {
+          dailyBudgetUsd: null,
+          autoSettleAfterDays: 3,
+          webhook: {
+            url: "https://ntfy.sh/solenta",
+            onDone: true,
+            onFailed: true,
+            onWaiting: false,
+          },
+        } as AppSettings,
+      }),
+    );
+    assert.ok(m.query("[data-webhook-settings]"), "webhook section");
+    const input = m.query("[data-webhook-url]") as HTMLInputElement;
+    assert.ok(input, "url input");
+    assert.equal(input.value, "https://ntfy.sh/solenta");
+    assert.equal(
+      (m.query("[data-webhook-on-done]") as HTMLInputElement).checked,
+      true,
+    );
+    assert.equal(
+      (m.query("[data-webhook-on-waiting]") as HTMLInputElement).checked,
+      false,
+    );
+    assert.ok(
+      m.text().includes("Fires even while this window is focused"),
+      "copy must say webhooks fire while focused",
+    );
+    m.unmount();
+  });
+
+  it("saves a URL on Enter and a cleared URL as null", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const m = await mount(
+      modal({
+        settings: {
+          dailyBudgetUsd: null,
+          autoSettleAfterDays: 3,
+          webhook: {
+            url: null,
+            onDone: true,
+            onFailed: true,
+            onWaiting: true,
+          },
+        } as AppSettings,
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return {
+            dailyBudgetUsd: null,
+            autoSettleAfterDays: 3,
+            webhook: patch.webhook ?? {
+              url: null,
+              onDone: true,
+              onFailed: true,
+              onWaiting: true,
+            },
+          } as AppSettings;
+        },
+      }),
+    );
+    const input = m.query("[data-webhook-url]");
+    assert.ok(input, "url input");
+    await m.type(input, "https://hooks.slack.com/services/T/B/X");
+    await m.press(input, "Enter");
+    assert.equal(patches.length, 1);
+    assert.equal(
+      patches[0].webhook?.url,
+      "https://hooks.slack.com/services/T/B/X",
+    );
+
+    await m.type(input, "");
+    await m.press(input, "Enter");
+    assert.equal(patches[1].webhook?.url, null);
+    m.unmount();
+  });
+
+  it("saves an event toggle without dropping the URL", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const m = await mount(
+      modal({
+        settings: {
+          dailyBudgetUsd: null,
+          autoSettleAfterDays: 3,
+          webhook: {
+            url: "https://example.com/hook",
+            onDone: true,
+            onFailed: true,
+            onWaiting: true,
+          },
+        } as AppSettings,
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return {
+            dailyBudgetUsd: null,
+            autoSettleAfterDays: 3,
+            webhook: patch.webhook ?? {
+              url: "https://example.com/hook",
+              onDone: true,
+              onFailed: true,
+              onWaiting: true,
+            },
+          } as AppSettings;
+        },
+      }),
+    );
+    await m.click(m.query("[data-webhook-on-waiting]"));
+    assert.equal(patches.length, 1);
+    assert.equal(patches[0].webhook?.onWaiting, false);
+    assert.equal(patches[0].webhook?.url, "https://example.com/hook");
+    m.unmount();
+  });
+
+  it("Find a setting matches slack on General", async () => {
+    const m = await mount(modal());
+    const search = m.query("[data-settings-search]") as HTMLInputElement;
+    await m.type(search, "slack");
+    assert.ok(
+      m.query('[data-settings-nav="general"]'),
+      "General matches slack",
+    );
+    m.unmount();
+  });
+});
+
 describe("SettingsModal Appearance (#652)", () => {
   it("renders UI scale on General and saves on change", async () => {
     const patches: Partial<AppSettings>[] = [];

@@ -45,6 +45,7 @@ import type {
   McpServerInfo,
   SubagentPool,
   OtelSettings,
+  WebhookSettings,
   PermissionMode,
   PlanIssue,
   PlanStatus,
@@ -1477,6 +1478,12 @@ function buildDevCoder(): CoderApi {
   let theme: AppSettings["theme"] = "dark";
   let quotaWaitAutoResume = true;
   let otel: OtelSettings = { endpoint: null, headers: {}, claudeMetrics: false };
+  let webhook: WebhookSettings = {
+    url: null,
+    onDone: true,
+    onFailed: true,
+    onWaiting: true,
+  };
   /** Saved agent profiles (Settings tab), in-memory. */
   let agentProfiles: AgentProfile[] = [];
   /** Described worker-model pool (Settings), in-memory. */
@@ -2097,6 +2104,7 @@ function buildDevCoder(): CoderApi {
             entries: subagentPool.entries.map((e) => ({ ...e })),
           },
           otel: { ...otel, headers: { ...otel.headers } },
+          webhook: { ...webhook },
         };
       },
       async set(patch: Partial<AppSettings>): Promise<AppSettings> {
@@ -2222,6 +2230,25 @@ function buildDevCoder(): CoderApi {
             claudeMetrics: v.claudeMetrics === true,
           };
         }
+        if (Object.prototype.hasOwnProperty.call(patch, "webhook")) {
+          const v = patch.webhook;
+          if (!v || typeof v !== "object") {
+            throw new Error("webhook must be an object");
+          }
+          if (
+            v.url != null &&
+            v.url !== "" &&
+            !/^https?:\/\/\S+$/.test(String(v.url).trim())
+          ) {
+            throw new Error("Webhook URL must be an http(s) URL or empty");
+          }
+          webhook = {
+            url: v.url ? String(v.url).trim() : null,
+            onDone: v.onDone !== false,
+            onFailed: v.onFailed !== false,
+            onWaiting: v.onWaiting !== false,
+          };
+        }
         return {
           dailyBudgetUsd,
           orchestrationBudgetUsd,
@@ -2244,6 +2271,7 @@ function buildDevCoder(): CoderApi {
             entries: subagentPool.entries.map((e) => ({ ...e })),
           },
           otel: { ...otel, headers: { ...otel.headers } },
+          webhook: { ...webhook },
         };
       },
     },
