@@ -3,7 +3,7 @@
  * Run: npm run test:renderer
  */
 import assert from "node:assert/strict";
-import { describe, it, afterEach } from "node:test";
+import { describe, it, afterEach, beforeEach } from "node:test";
 import { mount, unmountAll } from "./support/dom.ts";
 import {
   createFakeCoder,
@@ -169,6 +169,11 @@ function view(props: {
 
 afterEach(unmountAll);
 
+// The card is opt-in (default off); every case below is about what it shows
+// once enabled, so turn it on per test and drop back to the default after.
+beforeEach(() => setDivergenceCardEnabled(true));
+afterEach(() => setDivergenceCardEnabled(false));
+
 const codexPeer: ComparePeer = {
   id: "t-codex",
   label: "Codex",
@@ -284,24 +289,20 @@ describe("divergence card", () => {
 
   it("hides entirely (and skips the peek) when the Environment toggle is off", async () => {
     setDivergenceCardEnabled(false);
-    try {
-      let peeks = 0;
-      const m = await mount(
-        view({
-          comparePeers: [codexPeer],
-          onPeekThread: async () => {
-            peeks += 1;
-            return codexDetail;
-          },
-        }),
-      );
-      await m.flush();
-      assert.equal(m.query("[data-divergence-card]"), null);
-      assert.equal(peeks, 0);
-      m.unmount();
-    } finally {
-      setDivergenceCardEnabled(true);
-    }
+    let peeks = 0;
+    const m = await mount(
+      view({
+        comparePeers: [codexPeer],
+        onPeekThread: async () => {
+          peeks += 1;
+          return codexDetail;
+        },
+      }),
+    );
+    await m.flush();
+    assert.equal(m.query("[data-divergence-card]"), null);
+    assert.equal(peeks, 0);
+    m.unmount();
   });
 });
 

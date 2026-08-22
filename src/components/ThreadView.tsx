@@ -126,6 +126,7 @@ import {
   type ComparePeer,
   type DivergenceField,
 } from "../divergence";
+import { useRunDurationEnabled } from "../uiPrefs";
 import { Composer } from "./Composer";
 import { Markdown } from "./Markdown";
 import { PathLinkProvider, PathText } from "./PathLinks";
@@ -3491,10 +3492,11 @@ export const ThreadView = memo(function ThreadView({
     return buildTimeline(detail.messages, detail.workLog);
   }, [detail]);
 
-  /** Run duration per runId, for assistant-message meta footers. */
+  /** Run duration per runId, for assistant-message meta footers. Opt-in. */
+  const showRunDuration = useRunDurationEnabled();
   const durationByRunId = useMemo(() => {
     const map = new Map<string, string>();
-    if (!detail) return map;
+    if (!detail || !showRunDuration) return map;
     const byRun = new Map<string, WorkLogItem[]>();
     for (const item of detail.workLog) {
       const list = byRun.get(item.runId);
@@ -3506,7 +3508,7 @@ export const ThreadView = memo(function ThreadView({
       if (label) map.set(runId, label);
     }
     return map;
-  }, [detail]);
+  }, [detail, showRunDuration]);
 
   /** "Worked for" header per completed run, keyed by its first message. */
   const headerByMessageId = useMemo(() => {

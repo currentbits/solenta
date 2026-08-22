@@ -23,6 +23,7 @@ import type {
   ThreadInfo,
   WorkflowTemplateInfo,
 } from "../src/shared/ipc";
+import { setRunDurationEnabled } from "../src/uiPrefs";
 
 const project: ProjectInfo = {
   id: "p1",
@@ -162,6 +163,36 @@ const twoRuns = detail({
     msg({ id: "u2", role: "user", text: "second prompt", runId: "r2", createdAt: 200_000 }),
     msg({ id: "a2", role: "assistant", text: "SECOND_RUN_REPLY", runId: "r2", createdAt: 210_000 }),
   ],
+});
+
+describe("time spent in the message footer", () => {
+  const withWorkLog = detail({
+    messages: twoRuns.messages,
+    workLog: [
+      { id: "w1", runId: "r1", label: "step", done: true, timestamp: 1_000 },
+      { id: "w2", runId: "r1", label: "step", done: true, timestamp: 126_000 },
+    ],
+  });
+
+  it("is off by default and appears once the pref is on", async () => {
+    const off = await mount(view({ detail: withWorkLog }));
+    await off.flush();
+    assert.ok(
+      !off.text().includes("2m 5s ·"),
+      "no duration segment in the footer by default",
+    );
+    off.unmount();
+
+    setRunDurationEnabled(true);
+    try {
+      const on = await mount(view({ detail: withWorkLog }));
+      await on.flush();
+      assert.ok(on.text().includes("2m 5s ·"), "duration segment once enabled");
+      on.unmount();
+    } finally {
+      setRunDurationEnabled(false);
+    }
+  });
 });
 
 describe("run headers", () => {

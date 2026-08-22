@@ -713,11 +713,16 @@ must not mount underneath (issue #538).
 Opt-in compare of two runs of the same task (`src/divergence.ts`).
 The header card (`data-divergence-card` in `ThreadView.tsx`) is
 hidden unless `useDivergenceCardEnabled()` is on.
-The toggle lives on the Environment tab (`DivergenceCardToggle` in
-`AgentsPanel.tsx`). Module state is the source of truth; localStorage
-`coder.divergenceCard` (`"on"` / `"off"`) carries it across launches.
-Default on (`getItem !== "off"`). The toggle still works when
-localStorage does not persist.
+
+Both display prefs live in `src/uiPrefs.ts` (`makeFlagPref`) and are
+toggled from the Environment tab (`DisplayPrefsCard` in
+`AgentsPanel.tsx`): `coder.divergenceCard` for this card and
+`coder.runDuration` for the "1m 45s" segment in the assistant message
+footer at the end of a run (`durationByRunId` in `ThreadView.tsx`).
+Both default **off** — only an explicit `"on"` enables them. Module
+state is the source of truth, so a toggle still works when localStorage
+does not persist; localStorage carries it across launches. The
+collapsible "Worked for" run headers are unaffected.
 
 Comparison is tool steps only (`extractSteps`): assistant prose always
 differs across models, so including it would make every Claude-vs-Codex

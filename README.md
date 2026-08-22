@@ -244,7 +244,8 @@ The root `package.json` already allows scripts for the pinned Electron version.
   before the next unlocks. tasks.md becomes a dispatch DAG (`needs:`);
   converge appends missing work back onto the file.
 - **Divergence** — compare two runs at the first mismatched tool step.
-  Toggled from Environment (default on).
+  Toggled from Environment (default off), alongside the time-spent segment
+  in the message footer at the end of a run (also default off).
 - **Claim provenance** — assistant claims tagged repo, memory, issue, or
   model prior knowledge when ungrounded.
 - **Skills and `/` commands** — browse and edit the `SKILL.md` files your

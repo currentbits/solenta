@@ -61,7 +61,9 @@ import { useEscapeClose } from "../useEscapeClose";
 import {
   setDivergenceCardEnabled,
   useDivergenceCardEnabled,
-} from "../divergence";
+  setRunDurationEnabled,
+  useRunDurationEnabled,
+} from "../uiPrefs";
 import styles from "./AgentsPanel.module.css";
 
 type PanelTab = "agents" | "git" | "memory" | "skills" | "pulse";
@@ -598,10 +600,11 @@ function ChangesCard({
   );
 }
 
-function DivergenceCardToggle() {
-  const enabled = useDivergenceCardEnabled();
+function DisplayPrefsCard() {
+  const divergence = useDivergenceCardEnabled();
+  const runDuration = useRunDurationEnabled();
   return (
-    <section className={styles.gitCard} data-divergence-pref="">
+    <section className={styles.gitCard} data-display-prefs="">
       <div className={styles.gitCardLabel}>
         <svg {...LABEL_ICON_PROPS} className={styles.labelIcon}>
           <path d="M2.5 8h2c4.5 0 3.5-4.5 9-4.5" />
@@ -609,15 +612,23 @@ function DivergenceCardToggle() {
           <path d="M11.5 1.5l2 2-2 2" />
           <path d="M11.5 10.5l2 2-2 2" />
         </svg>
-        Divergence
+        Display
       </div>
       <label className={styles.checkboxLabel}>
         <input
           type="checkbox"
-          checked={enabled}
+          checked={divergence}
           onChange={(e) => setDivergenceCardEnabled(e.target.checked)}
         />
         Show divergence compare on threads
+      </label>
+      <label className={styles.checkboxLabel}>
+        <input
+          type="checkbox"
+          checked={runDuration}
+          onChange={(e) => setRunDurationEnabled(e.target.checked)}
+        />
+        Show time spent at the end of a run
       </label>
     </section>
   );
@@ -1915,7 +1926,7 @@ export function GitTab({
           hasThread={Boolean(thread)}
           onViewChanges={onViewChanges}
         />
-        <DivergenceCardToggle />
+        <DisplayPrefsCard />
         {project?.remoteHost ? (
           <section className={styles.gitCard} data-remote-unavailable="">
             <div className={styles.gitCardLabel}>
