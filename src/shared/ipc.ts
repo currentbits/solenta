@@ -1859,6 +1859,11 @@ export interface AppSettings {
    */
   notifications: boolean;
   /**
+   * Electron webContents zoom factor (issue #652). Default 1; clamped to
+   * 0.8–1.6 in 0.1 steps. View-menu zoom and the Settings control share this.
+   */
+  uiScale: number;
+  /**
    * Continue automatically when a provider usage limit resets (#462).
    * Default on; only an explicit false opts out (Claude's /config row).
    * Per-thread quotaWaitAutoResume overrides this.

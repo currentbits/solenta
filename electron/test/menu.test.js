@@ -24,12 +24,18 @@ describe("app menu template (issue #353)", () => {
     assert.equal(linux[0].label, "Edit");
   });
 
-  it("keeps the View menu Electron's default provided", () => {
+  it("keeps reload, devtools, zoom, and fullscreen on View", () => {
     const t = appMenuTemplate({ platform: "darwin" });
-    assert.ok(
-      t.some((m) => m.role === "viewMenu"),
-      "dropping View loses reload, devtools, zoom and fullscreen",
-    );
+    const view = t.find((m) => m.label === "View");
+    assert.ok(view, "dropping View loses reload, devtools, zoom and fullscreen");
+    const roles = view.submenu.map((i) => i.role).filter(Boolean);
+    for (const role of ["reload", "forceReload", "toggleDevTools", "togglefullscreen"]) {
+      assert.ok(roles.includes(role), `View menu needs the ${role} role`);
+    }
+    const labels = view.submenu.map((i) => i.label);
+    assert.ok(labels.includes("Actual Size"));
+    assert.ok(labels.includes("Zoom In"));
+    assert.ok(labels.includes("Zoom Out"));
   });
 
   it("always has a Window menu", () => {

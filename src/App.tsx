@@ -64,6 +64,9 @@ export type AppView =
 
 type DrawerId = "sidebar" | "agents";
 
+// CSS px, so Electron zoom (settings.uiScale) is included. minWidth 1100 DIP
+// at 1.6× is ~688 CSS px, already under this threshold, so the three panes
+// collapse into drawers instead of crushing the thread (#652).
 const NARROW_QUERY = "(max-width: 900px)";
 
 function subscribeNarrow(onChange: () => void): () => void {

@@ -40,6 +40,7 @@ const { start: startLoopLag } = require("./looplag.js");
 const { installShutdown } = require("./shutdown.js");
 const { installAppMenu } = require("./menu.js");
 const { bootFirstPaint } = require("./boot.js");
+const { applyZoom, clampUiScale } = require("./zoom.js");
 
 // Before anything else can throw: the app is full of fire-and-forget `void`
 // calls, and one unhandled rejection would otherwise kill the process with
@@ -93,6 +94,22 @@ let postMergeScheduler = null;
 /** @type {Awaited<ReturnType<typeof startWebServer>> | null} */
 let webServer = null;
 
+/** @type {InstanceType<typeof Store> | null} */
+let store = null;
+
+function currentUiScale() {
+  return store ? store.getSettings().uiScale : 1;
+}
+
+function applyUiScale(win, factor) {
+  if (!store) {
+    const next = clampUiScale(factor);
+    if (win && !win.isDestroyed()) win.webContents.setZoomFactor(next);
+    return next;
+  }
+  return applyZoom(win, factor, store);
+}
+
 /**
  * Ensure @coder/core is built; throw a helpful error if missing.
  */
@@ -141,6 +158,15 @@ function createWindow() {
     if (decision.allow) return;
     event.preventDefault();
     if (decision.external) void shell.openExternal(url);
+  });
+
+  // Zoom before this is reset on load; persist settings.uiScale (#652).
+  win.webContents.on("did-finish-load", () => {
+    try {
+      win.webContents.setZoomFactor(clampUiScale(currentUiScale()));
+    } catch {
+      // contents may already be gone
+    }
   });
 
   if (isDev) {
@@ -217,7 +243,10 @@ function notifyThreadComplete(thread) {
 app.whenReady().then(async () => {
   // Before any window: without an installed menu a packaged build has no
   // Edit menu and Cmd+C/X/V/A silently die in inputs (issue #353).
-  installAppMenu();
+  installAppMenu({
+    applyZoom: applyUiScale,
+    getUiScale: currentUiScale,
+  });
 
   const userData = app.getPath("userData");
   // App root: packaged app path, or repo root in dev (parent of electron/).
@@ -238,7 +267,9 @@ app.whenReady().then(async () => {
   let core = null;
 
   // #618: paint the empty window before store load / memory supervision.
-  const store = await bootFirstPaint({
+  // Assigns the module-level `store` (not a new binding): applyUiScale and
+  // currentUiScale read it from outside this function.
+  store = await bootFirstPaint({
     createWindow,
     async beforeStore() {
       // Which build is this? A stale packaged bundle missing recent fixes looks
