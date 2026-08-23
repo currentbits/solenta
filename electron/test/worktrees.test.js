@@ -9,6 +9,7 @@ const services = require("../services.js");
 const {
   setupWorktree,
   diff,
+  commit,
   mergeWorktree,
   conflictContext,
   removeWorktree,
@@ -440,6 +441,102 @@ describe("worktrees", () => {
     assert.equal(stored.worktreePath, null);
     assert.equal(stored.branch, null);
     assert.ok(broadcasts.some((b) => b.ch === "threads:changed"));
+  });
+
+  it("mergeWorktree with paths commits only those files and refuses leftovers", async () => {
+    const setup = setupWorktree({
+      store,
+      threadId: thread.id,
+      worktreeBase,
+      broadcast: () => {},
+    });
+    const wtPath = setup.worktreePath;
+    fs.writeFileSync(path.join(wtPath, "keep.txt"), "keep\n");
+    fs.writeFileSync(path.join(wtPath, "skip.txt"), "skip\n");
+
+    assert.throws(
+      () =>
+        mergeWorktree({
+          store,
+          threadId: thread.id,
+          paths: ["keep.txt"],
+          broadcast: () => {},
+        }),
+      /Uncommitted files remain/i,
+    );
+
+    assert.ok(fs.existsSync(wtPath), "worktree stays until leftovers are gone");
+    assert.match(git(wtPath, ["status", "--porcelain"]), /skip\.txt/);
+    assert.doesNotMatch(git(wtPath, ["status", "--porcelain"]), /keep\.txt/);
+    assert.match(
+      git(wtPath, ["log", "-1", "--format=%s"]),
+      /coder: session changes/,
+    );
+    assert.equal(
+      git(wtPath, ["show", "--name-only", "--format=", "HEAD"]),
+      "keep.txt",
+    );
+    assert.equal(
+      fs.existsSync(path.join(repo, "keep.txt")),
+      false,
+      "squash merge did not run",
+    );
+  });
+
+  it("mergeWorktree with empty paths refuses leftover dirty files", async () => {
+    const setup = setupWorktree({
+      store,
+      threadId: thread.id,
+      worktreeBase,
+      broadcast: () => {},
+    });
+    const wtPath = setup.worktreePath;
+    fs.writeFileSync(path.join(wtPath, "keep.txt"), "keep\n");
+    fs.writeFileSync(path.join(wtPath, "skip.txt"), "skip\n");
+    commit({
+      store,
+      threadId: thread.id,
+      message: "feat: keep",
+      paths: ["keep.txt"],
+    });
+
+    assert.throws(
+      () =>
+        mergeWorktree({
+          store,
+          threadId: thread.id,
+          paths: [],
+          broadcast: () => {},
+        }),
+      /Uncommitted files remain/i,
+    );
+    assert.ok(fs.existsSync(wtPath));
+    assert.match(git(wtPath, ["status", "--porcelain"]), /skip\.txt/);
+    assert.equal(git(wtPath, ["log", "-1", "--format=%s"]), "feat: keep");
+  });
+
+  it("mergeWorktree with every dirty path squash-merges", async () => {
+    const setup = setupWorktree({
+      store,
+      threadId: thread.id,
+      worktreeBase,
+      broadcast: () => {},
+    });
+    const wtPath = setup.worktreePath;
+    fs.writeFileSync(path.join(wtPath, "keep.txt"), "keep\n");
+    fs.writeFileSync(path.join(wtPath, "skip.txt"), "skip\n");
+
+    const merged = mergeWorktree({
+      store,
+      threadId: thread.id,
+      paths: ["keep.txt", "skip.txt"],
+      broadcast: () => {},
+    });
+
+    assert.equal(merged.worktreePath, null);
+    assert.ok(fs.existsSync(path.join(repo, "keep.txt")));
+    assert.ok(fs.existsSync(path.join(repo, "skip.txt")));
+    assert.ok(!fs.existsSync(wtPath));
   });
 
   it("mergeWorktree ignores an unrelated untracked file in the project (#198)", async () => {

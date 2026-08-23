@@ -976,6 +976,47 @@ a.btn {
   font-size: 12px;
 }
 
+.stageBar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 6px 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+  user-select: none;
+}
+
+.fileStage {
+  width: 14px;
+  height: 14px;
+  margin: 0 0 0 2px;
+  padding: 0;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text);
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.fileStage:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.fileStage[aria-checked="true"] {
+  background: var(--blue-soft);
+  border-color: var(--blue);
+}
+
+.fileStage[aria-checked="mixed"] {
+  background: var(--card-hover);
+}
+
 .fileList {
   list-style: none;
   margin: 0;

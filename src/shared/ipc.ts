@@ -2865,10 +2865,16 @@ export interface CoderApi {
       hashes: string[];
     }): Promise<ThreadInfo>;
     /**
-     * Commits every change in the thread's cwd (git add -A + commit -m).
-     * Rejects on an empty message or when there is nothing to commit.
+     * Commits changes in the thread's cwd. Omit `paths` to stage everything
+     * (`git add -A`); pass a list to stage and commit only those files.
+     * Rejects on an empty message, an empty `paths` list, or when there is
+     * nothing to commit.
      */
-    commit(input: { threadId: string; message: string }): Promise<{ subject: string }>;
+    commit(input: {
+      threadId: string;
+      message: string;
+      paths?: string[];
+    }): Promise<{ subject: string }>;
     /**
      * Discards one file's changes: untracked files are deleted, staged-new
      * files are removed from index and disk, tracked files are restored from
@@ -2890,6 +2896,8 @@ export interface CoderApi {
      * branch (committing any uncommitted worktree changes first), then removes
      * the worktree and branch. Rejects with a descriptive Error on conflicts
      * or a dirty project checkout; nothing is force-removed on failure.
+     * Pass `paths` to auto-commit only those files; leftover dirty files
+     * refuse the merge so the worktree is not deleted with uncommitted work.
      */
     mergeWorktree(input: {
       threadId: string;
@@ -2899,6 +2907,8 @@ export interface CoderApi {
        * pipeline file. Not a permission preset.
        */
       ciWorkflowApproved?: boolean;
+      /** Stage only these paths for the session commit. Omitted = add -A. */
+      paths?: string[];
     }): Promise<ThreadInfo>;
     /**
      * Unmerged files in the thread worktree plus capped conflict-marker

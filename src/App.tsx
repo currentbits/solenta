@@ -192,6 +192,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     fetchReviewContext,
     setReviewAccepted,
     commitChanges,
+    setStagedPaths,
     revertFile,
     suggestCommitMessage,
     listFiles,
@@ -1337,6 +1338,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onFetchReviewContext={fetchReviewContext}
         onSetReviewAccepted={setReviewAccepted}
         onCommitChanges={commitChanges}
+        onStagedPathsChange={setStagedPaths}
         onRevertFile={revertFile}
         onSuggestCommitMessage={suggestCommitMessage}
         onListFiles={listFiles}
