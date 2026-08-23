@@ -90,6 +90,13 @@ it.
   worktrees are garbage-collected on their own; the branch always survives.
   Merge conflicts get a one-click "let the agent resolve it", and an open PR
   can be checked out into its own worktree. Jujutsu (`jj`) projects work too.
+  Files are staged with a checkbox per row before commit or merge, and a click
+  on a diff line number leaves an inline comment that goes back to the agent
+  as a follow-up prompt.
+- **Terminal and Browser panes** — a long-lived shell in the thread's worktree
+  (`cd` and exports persist), and an embedded loopback-only browser on your dev
+  server. Screenshot the page into the composer, or let the agent navigate,
+  click, type and screenshot it through the `preview` tool.
 - **Planboard** — a project's plan as its GitHub issues via `gh`, with auto-
   dispatch from `plan:todo`, a review-load meter on the open PR queue, and
   issues that close themselves when the thread's work lands.
@@ -235,7 +242,7 @@ The root `package.json` already allows scripts for the pinned Electron version.
 - **First run** — a setup wizard checks which agent CLIs are on your `PATH`
   (with per-provider install hints), adds the first project, and sets the
   defaults, then a short tour of the panes. Skippable, shown once.
-- **Teach mode** — hints, not solutions, across all five providers. Autonomy
+- **Teach mode** — hints, not solutions, across every provider. Autonomy
   steps from Hints to Review to Pair as reviews pass.
 - **Ask mode** — read-only Q&A from the code map and memory. No tools, no
   worktree, no agent credits.
