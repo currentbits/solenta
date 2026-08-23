@@ -142,6 +142,7 @@ describe("Store", () => {
       sessionId: null,
       permissionMode: "default",
       reasoningEffort: null,
+      webSearch: false,
       worktreePath: null,
       handoffFrom: null,
       feltEstimate: null,

@@ -16,6 +16,7 @@ const { execFileSync } = require("node:child_process");
  * - codex: no dedicated flag; config override `-c model_reasoning_effort=<level>`.
  *   Live API rejects bogus with enum none|minimal|low|medium|high|xhigh|max;
  *   contract intersection (no none/minimal) is low|medium|high|xhigh|max.
+ *   Live web search is `--search` (issue #174), gated by thread.webSearch.
  * - kimi: no effort flag, but [thinking].effort in config.toml (low/high/max
  *   on the k3 family) → efforts listed with effortVia "config"; kimi.js flips
  *   the config around the spawn.
@@ -49,6 +50,8 @@ const { execFileSync } = require("node:child_process");
  * @property {Array<"low"|"medium"|"high"|"xhigh"|"max">} efforts
  * @property {"config"} [effortVia] - efforts applied outside argv (kimi:
  *   config.toml flip in kimi.js); absent means buildArgs emits the flag
+ * @property {boolean} [supportsSearch] - CLI accepts `codex exec --search`
+ *   (live web search). Absent/false hides the composer Search pill.
  * @property {"claude-stream" | "codex-json" | "kimi-stream" | "opencode-json" | "cursor-stream" | "simulate"} kind
  * @property {(opts: {
  *   prompt: string,
@@ -56,6 +59,7 @@ const { execFileSync } = require("node:child_process");
  *   permissionMode?: string,
  *   model?: string | null,
  *   reasoningEffort?: string | null,
+ *   webSearch?: boolean,
  * }) => string[]} buildArgs
  */
 
@@ -202,34 +206,29 @@ const PROVIDERS = [
     // No dedicated flag; -c model_reasoning_effort=. Live API enum
     // none|minimal|low|medium|high|xhigh|max; contract has no none/minimal.
     efforts: ["low", "medium", "high", "xhigh", "max"],
+    supportsSearch: true,
     kind: "codex-json",
-    buildArgs({ prompt, sessionId, model, reasoningEffort }) {
+    buildArgs({ prompt, sessionId, model, reasoningEffort, webSearch }) {
       const codexEfforts = ["low", "medium", "high", "xhigh", "max"];
-      if (sessionId) {
-        const args = [
-          "exec",
-          "resume",
-          String(sessionId),
-          "--json",
-          "--skip-git-repo-check",
-        ];
-        if (model) {
-          args.push("-m", String(model));
-        }
-        maybeEmitEffort(codexEfforts, reasoningEffort, (level) => {
-          // Single-arg form for -c: one key=value token, never open-ended.
-          args.push("-c", `model_reasoning_effort=${level}`);
-        });
-        args.push(String(prompt ?? ""));
-        return args;
-      }
-      const args = ["exec", "--json", "--skip-git-repo-check"];
+      const args = sessionId
+        ? [
+            "exec",
+            "resume",
+            String(sessionId),
+            "--json",
+            "--skip-git-repo-check",
+          ]
+        : ["exec", "--json", "--skip-git-repo-check"];
       if (model) {
         args.push("-m", String(model));
       }
       maybeEmitEffort(codexEfforts, reasoningEffort, (level) => {
+        // Single-arg form for -c: one key=value token, never open-ended.
         args.push("-c", `model_reasoning_effort=${level}`);
       });
+      if (webSearch === true) {
+        args.push("--search");
+      }
       args.push(String(prompt ?? ""));
       return args;
     },
@@ -1148,6 +1147,7 @@ function listProviders(opts = {}) {
       models: entry.models.slice(),
       modelInfo: (entry.modelInfo || []).map((m) => ({ ...m })),
       efforts: (entry.efforts || []).slice(),
+      supportsSearch: entry.supportsSearch === true,
     });
   }
 
@@ -1160,6 +1160,7 @@ function listProviders(opts = {}) {
       models: [],
       modelInfo: [],
       efforts: [],
+      supportsSearch: false,
     });
   }
 

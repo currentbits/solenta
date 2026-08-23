@@ -587,6 +587,12 @@ export interface ThreadInfo {
    * Ignored by providers whose `efforts` list is empty.
    */
   reasoningEffort: ReasoningEffort | null;
+  /**
+   * Codex live web search (`codex exec --search`). False/absent on every
+   * other provider and on older store rows. Ignored at spawn unless the
+   * provider advertises `supportsSearch`.
+   */
+  webSearch?: boolean;
   /** Absolute path of the thread's git worktree, when one was set up. */
   worktreePath: string | null;
   /**
@@ -1843,6 +1849,11 @@ export interface ProviderInfo {
    * rather than offering a setting that does nothing.
    */
   efforts: ReasoningEffort[];
+  /**
+   * True when the CLI accepts a live web-search flag (`codex exec --search`).
+   * The composer hides the Search pill when this is missing or false.
+   */
+  supportsSearch?: boolean;
 }
 
 /** One phase of a user-defined workflow template. */
@@ -2767,6 +2778,15 @@ export interface CoderApi {
     setReasoningEffort(input: {
       threadId: string;
       effort: ReasoningEffort | null;
+    }): Promise<ThreadInfo>;
+    /**
+     * Enables or disables Codex live web search for the thread. Rejects
+     * `webSearch: true` when the provider does not advertise supportsSearch,
+     * rather than storing a flag that would never reach the CLI.
+     */
+    setWebSearch(input: {
+      threadId: string;
+      webSearch: boolean;
     }): Promise<ThreadInfo>;
     /**
      * Sets the thread's verification command (issue #296). A non-empty

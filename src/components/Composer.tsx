@@ -89,6 +89,8 @@ interface ComposerProps {
   model: string | null;
   /** Thread reasoning effort; null means provider default. */
   reasoningEffort: ReasoningEffort | null;
+  /** Codex live web search (`--search`). Hidden unless the provider advertises it. */
+  webSearch?: boolean;
   /** Registry from providers.list(). */
   providers: ProviderInfo[];
   /** Saved named profiles from settings. Empty hides the Profiles section. */
@@ -100,6 +102,7 @@ interface ComposerProps {
     model?: string | null;
   }) => void | Promise<void>;
   onSetReasoningEffort: (effort: ReasoningEffort | null) => void | Promise<void>;
+  onSetWebSearch?: (webSearch: boolean) => void | Promise<void>;
   onSaveWorkflow: (template: WorkflowSaveInput) => Promise<WorkflowTemplateInfo>;
   onRemoveWorkflow: (id: string) => Promise<void>;
   /** Provider session id (short form shown in meta). */
@@ -309,11 +312,13 @@ export const Composer = memo(function Composer({
   provider,
   model,
   reasoningEffort,
+  webSearch = false,
   providers,
   agentProfiles = [],
   workflows,
   onSetProvider,
   onSetReasoningEffort,
+  onSetWebSearch,
   onSaveWorkflow,
   onRemoveWorkflow,
   sessionId,
@@ -1236,6 +1241,20 @@ export const Composer = memo(function Composer({
     }
   };
 
+  const toggleWebSearch = async () => {
+    if (!onSetWebSearch) return;
+    if (locked || currentProviderInfo?.available === false) return;
+    try {
+      await onSetWebSearch(!webSearch);
+    } catch (err) {
+      const msg =
+        err instanceof Error && err.message
+          ? err.message
+          : "Failed to set web search";
+      setLocalError(msg);
+    }
+  };
+
   const pickEffort = async (level: ReasoningEffort | null) => {
     if (effortUnavailable) return;
     setEffortOpen(false);
@@ -1878,6 +1897,59 @@ export const Composer = memo(function Composer({
                   </ul>
                 )}
               </div>
+            )}
+
+            {currentProviderInfo?.supportsSearch && onSetWebSearch && (
+              <button
+                type="button"
+                className={
+                  webSearch
+                    ? `${styles.pill} ${styles.pillAccent}`
+                    : styles.pill
+                }
+                disabled={locked || currentProviderInfo.available === false}
+                aria-disabled={
+                  locked || currentProviderInfo.available === false
+                    ? "true"
+                    : undefined
+                }
+                aria-pressed={webSearch}
+                aria-label={webSearch ? "Web search: on" : "Web search: off"}
+                title={
+                  currentProviderInfo.available === false
+                    ? "The provider CLI is not installed"
+                    : webSearch
+                      ? "Web search on. Codex can query the live web."
+                      : "Web search off. Turn on for live docs and API changes."
+                }
+                onClick={() => {
+                  if (locked || currentProviderInfo.available === false) return;
+                  setEffortOpen(false);
+                  setModelOpen(false);
+                  setModeOpen(false);
+                  setBuildMenuOpen(false);
+                  setBestOfNOpen(false);
+                  void toggleWebSearch();
+                }}
+              >
+                <span className={styles.effortIcon} aria-hidden="true">
+                  <svg
+                    width="13"
+                    height="13"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <circle cx="8" cy="8" r="5.5" />
+                    <path d="M2.5 8h11" />
+                    <path d="M8 2.5c1.7 1.8 2.6 3.6 2.6 5.5S9.7 11.7 8 13.5C6.3 11.7 5.4 9.9 5.4 8S6.3 4.3 8 2.5z" />
+                  </svg>
+                </span>
+                <span className={styles.pillLabel}>Search</span>
+              </button>
             )}
 
             {!ask && (

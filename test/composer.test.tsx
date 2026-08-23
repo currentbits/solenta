@@ -55,6 +55,7 @@ const CODEX: ProviderInfo = {
   models: [],
   modelInfo: [],
   efforts: [],
+  supportsSearch: true,
 };
 
 const GROK: ProviderInfo = {
@@ -134,6 +135,7 @@ interface Harness {
   modes: PermissionMode[];
   providerSets: { provider?: string; model?: string | null }[];
   efforts: (ReasoningEffort | null)[];
+  webSearches: boolean[];
   /**
    * Ordered log across BOTH callbacks, and the effective effort after
    * emulating the backend rule (setProvider clears effort on a provider
@@ -153,6 +155,7 @@ function makeHarness(provider = "claude"): Harness {
     modes: [],
     providerSets: [],
     efforts: [],
+    webSearches: [],
     callOrder: [],
     effectiveEffort: null,
     harnessProvider: provider,
@@ -168,6 +171,7 @@ function composer(
     provider?: string;
     model?: string | null;
     reasoningEffort?: ReasoningEffort | null;
+    webSearch?: boolean;
     sessionId?: string | null;
     branch?: string | null;
     hasWorktree?: boolean;
@@ -198,6 +202,7 @@ function composer(
       reasoningEffort={
         over.reasoningEffort === undefined ? null : over.reasoningEffort
       }
+      webSearch={over.webSearch === true}
       providers={over.providers ?? PROVIDERS}
       agentProfiles={over.agentProfiles}
       workflows={WORKFLOWS}
@@ -216,6 +221,9 @@ function composer(
         harness.efforts.push(effort);
         harness.callOrder.push("setReasoningEffort");
         harness.effectiveEffort = effort;
+      }}
+      onSetWebSearch={(enabled) => {
+        harness.webSearches.push(enabled);
       }}
       onSaveWorkflow={async (t) => ({
         id: "saved",
@@ -1885,6 +1893,43 @@ describe("Composer agent profiles", () => {
     assert.equal(btn.disabled, true);
     assert.match(btn.title, /not installed/);
     assert.deepEqual(h.providerSets, []);
+    m.unmount();
+  });
+});
+
+describe("Composer web-search pill (issue #174)", () => {
+  it("hides the search pill when the thread provider does not advertise it", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h, { provider: "claude", model: null }));
+    assert.equal(
+      m.query('button[aria-label^="Web search:"]'),
+      null,
+      "claude has no --search flag, so no search pill may render",
+    );
+    m.unmount();
+  });
+
+  it("shows the search pill on Codex and reports a toggle", async () => {
+    const h = makeHarness();
+    const m = await mount(
+      composer(h, { provider: "codex", model: null, webSearch: false }),
+    );
+    const pill = m.query('button[aria-label="Web search: off"]');
+    assert.ok(pill, "codex must show a Search pill next to the other controls");
+    await m.click(pill);
+    assert.deepEqual(h.webSearches, [true]);
+    m.unmount();
+  });
+
+  it("labels the pill on when search is already enabled", async () => {
+    const h = makeHarness();
+    const m = await mount(
+      composer(h, { provider: "codex", model: null, webSearch: true }),
+    );
+    const pill = m.query('button[aria-label="Web search: on"]');
+    assert.ok(pill, "an enabled thread must render the on state");
+    await m.click(pill);
+    assert.deepEqual(h.webSearches, [false]);
     m.unmount();
   });
 });

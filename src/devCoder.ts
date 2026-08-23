@@ -271,7 +271,10 @@ function devProvider(
 
 const DEV_PROVIDERS: ProviderInfo[] = [
   devProvider("claude", "Claude Code", ["claude-opus-5", "claude-sonnet-5"]),
-  devProvider("codex", "Codex", ["gpt-5.3-codex", "gpt-5.3"]),
+  {
+    ...devProvider("codex", "Codex", ["gpt-5.3-codex", "gpt-5.3"]),
+    supportsSearch: true,
+  },
   devProvider("kimi", "Kimi", ["kimi-k3-thinking"]),
   devProvider("grok", "Grok", ["grok-4.6"], TRAILER),
   devProvider("opencode", "OpenCode", ["opencode/grok-code"]),
@@ -610,6 +613,7 @@ function seedThreads(projects: ProjectInfo[]): ThreadInfo[] {
           ? "default"
           : "acceptEdits") as PermissionMode,
       reasoningEffort: null,
+      webSearch: false,
       worktreePath: null,
       handoffFrom: null,
       muted: false,
@@ -1724,6 +1728,7 @@ function buildDevCoder(): CoderApi {
       sessionId: null,
       permissionMode: "default",
       reasoningEffort: null,
+      webSearch: false,
       worktreePath: null,
       handoffFrom: null,
       muted: false,
@@ -3365,6 +3370,14 @@ function buildDevCoder(): CoderApi {
         effort: ReasoningEffort | null;
       }) {
         return patchThread(input.threadId, { reasoningEffort: input.effort });
+      },
+      async setWebSearch(input: {
+        threadId: string;
+        webSearch: boolean;
+      }) {
+        return patchThread(input.threadId, {
+          webSearch: input.webSearch === true,
+        });
       },
       async setVerifyCommand(input: {
         threadId: string;

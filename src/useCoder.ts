@@ -280,6 +280,11 @@ export interface UseCoderResult {
     threadId?: string,
   ) => Promise<void>;
   /**
+   * Enable or disable Codex live web search. Defaults to the selected thread.
+   * Pass threadId when applying to a fork that is not selected.
+   */
+  setWebSearch: (webSearch: boolean, threadId?: string) => Promise<void>;
+  /**
    * Archive or unarchive a thread. Defaults to the selected thread.
    * Pass threadId when undoing archive after selection has already moved.
    * Archiving the selected thread moves selection off it.
@@ -1529,6 +1534,34 @@ export function useCoder(): UseCoderResult {
         const thread = await api.threads.setReasoningEffort({
           threadId,
           effort,
+        });
+        applyThreads(
+          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
+        );
+        if (selectedRef.current === threadId) {
+          setDetail((prev) =>
+            prev && prev.thread.id === thread.id
+              ? { ...prev, thread }
+              : prev,
+          );
+        }
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+        throw err;
+      }
+    },
+    [api, selectedThreadId, applyThreads],
+  );
+
+  const setWebSearch = useCallback(
+    async (webSearch: boolean, threadIdArg?: string) => {
+      const threadId = threadIdArg ?? selectedThreadId;
+      if (!threadId) return;
+      try {
+        const thread = await api.threads.setWebSearch({
+          threadId,
+          webSearch,
         });
         applyThreads(
           threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
@@ -2885,6 +2918,7 @@ export function useCoder(): UseCoderResult {
     clearQuestion,
     setProvider,
     setReasoningEffort,
+    setWebSearch,
     setArchived,
     setSettled,
     setPinned,

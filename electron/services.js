@@ -542,6 +542,7 @@ function createThread(store, input) {
     sessionId: null,
     permissionMode: "default",
     reasoningEffort: null,
+    webSearch: false,
     worktreePath: null,
     handoffFrom: null,
     automationId: input.automationId || null,
@@ -621,6 +622,37 @@ function setReasoningEffort(store, input) {
   const updated = store.updateThread(threadId, { reasoningEffort: level });
   store.save();
   return updated ? { ...updated } : { ...thread, reasoningEffort: level };
+}
+
+/**
+ * Enable or disable Codex live web search (`codex exec --search`) for a
+ * thread. `webSearch: false` is always allowed. `true` is rejected unless
+ * the thread's provider advertises supportsSearch, so a setting that would
+ * never reach the CLI cannot be stored.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, webSearch: boolean }} input
+ */
+function setWebSearch(store, input) {
+  const { threadId } = input;
+  const enabled = input.webSearch === true;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+
+  if (enabled) {
+    const entry = getProvider(thread.provider);
+    if (!entry || entry.supportsSearch !== true) {
+      const providerName =
+        (entry && entry.name) || thread.provider || "provider";
+      throw new Error(`${providerName} does not support web search`);
+    }
+  }
+
+  const updated = store.updateThread(threadId, { webSearch: enabled });
+  store.save();
+  return updated ? { ...updated } : { ...thread, webSearch: enabled };
 }
 
 /** Thread title cap — matches runner auto-rename from the first prompt line. */
@@ -1185,7 +1217,7 @@ function setProvider(store, input) {
   const providerChanging =
     providerProvided && String(input.provider) !== String(thread.provider);
 
-  /** @type {{ provider?: string, model?: string | null, sessionId?: null, reasoningEffort?: null }} */
+  /** @type {{ provider?: string, model?: string | null, sessionId?: null, reasoningEffort?: null, webSearch?: boolean }} */
   const patch = {};
 
   if (providerChanging && thread.status === "working") {
@@ -1221,6 +1253,12 @@ function setProvider(store, input) {
     patch.reasoningEffort = nextEfforts.includes(thread.reasoningEffort)
       ? thread.reasoningEffort
       : null;
+    // Same rule as effort: a search toggle that the new provider cannot
+    // honour must not survive the switch (issue #174).
+    patch.webSearch =
+      nextEntry && nextEntry.supportsSearch === true
+        ? thread.webSearch === true
+        : false;
   } else if (modelProvided) {
     patch.model = normalizeModelForProvider(nextEntry, input.model);
   }
@@ -4497,6 +4535,7 @@ module.exports = {
   forkWorkerThread,
   setPermissionMode,
   setReasoningEffort,
+  setWebSearch,
   setProvider,
   // normalizeModelForProvider / isKnownProviderId / truncateThreadTitle stay
   // module-private (round-49 review A-n2: dead exports). Tests use

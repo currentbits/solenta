@@ -967,6 +967,8 @@ function migrateThread(t) {
     // Older stores lack reasoningEffort; null (not undefined) so the picker is stable.
     reasoningEffort:
       t.reasoningEffort !== undefined ? t.reasoningEffort : null,
+    // Codex live web search (issue #174). Absent → off.
+    webSearch: t.webSearch === true,
     worktreePath: t.worktreePath !== undefined ? t.worktreePath : null,
     runStartedAt: t.runStartedAt !== undefined ? t.runStartedAt : null,
     // Older stores have no lastError; null (not undefined) so the badge is stable.

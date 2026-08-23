@@ -552,6 +552,46 @@ describe("App reasoning-effort wiring", () => {
     );
     m.unmount();
   });
+
+  it("sends the search toggle to setWebSearch, with the thread id", async () => {
+    const picked = thread({
+      provider: "codex",
+      model: null,
+      webSearch: false,
+    });
+    const fake = createFakeCoder({
+      providers: [
+        {
+          id: "codex",
+          name: "Codex",
+          available: true,
+          supportsResume: true,
+          models: [],
+          modelInfo: [],
+          efforts: ["low", "medium", "high", "xhigh", "max"],
+          supportsSearch: true,
+        } as unknown as ProviderInfo,
+      ],
+      threads: [picked],
+      details: { t1: detail({ thread: picked }) },
+    });
+    const m = await boot(fake);
+    const card = m.query('button[aria-label="Select thread: first thread"]');
+    assert.ok(card, "the thread card must be present");
+    await m.click(card);
+
+    const pill = m.query('button[aria-label="Web search: off"]');
+    assert.ok(pill, "codex must show the Search pill on the composer");
+    await m.click(pill);
+
+    const call = fake.only("threads.setWebSearch");
+    assert.deepEqual(
+      call.args[0],
+      { threadId: "t1", webSearch: true },
+      "the toggle and the thread id must both reach the channel",
+    );
+    m.unmount();
+  });
 });
 
 describe("App remove-project wiring (round 41)", () => {

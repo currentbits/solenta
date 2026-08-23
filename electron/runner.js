@@ -2688,6 +2688,7 @@ function createRunner(opts) {
       permissionMode: thread.permissionMode || "default",
       model: thread.model || null,
       reasoningEffort: thread.reasoningEffort || null,
+      webSearch: thread.webSearch === true,
     });
     // Claude runs interactively: prompt over stdin, permission prompts via
     // the control protocol. Other claude-stream providers (e.g. grok) keep
@@ -3525,6 +3526,7 @@ function createRunner(opts) {
       permissionMode: thread.permissionMode || "default",
       model: thread.model || null,
       reasoningEffort: thread.reasoningEffort || null,
+      webSearch: thread.webSearch === true,
     });
     // Leading -c MCP override when memory server is healthy. The matching
     // bearer tokens ride the child's env, never argv (issue #125).
@@ -3915,6 +3917,7 @@ function createRunner(opts) {
       permissionMode: thread.permissionMode || "default",
       model: thread.model || null,
       reasoningEffort: thread.reasoningEffort || null,
+      webSearch: thread.webSearch === true,
     });
     const spawn = resolveSpawn(project, binary, args, localCwd);
 
@@ -4311,6 +4314,7 @@ function createRunner(opts) {
       permissionMode: thread.permissionMode || "default",
       model: thread.model || null,
       reasoningEffort: thread.reasoningEffort || null,
+      webSearch: thread.webSearch === true,
     });
     const spawn = resolveSpawn(project, binary, args, localCwd);
 
@@ -4699,6 +4703,7 @@ function createRunner(opts) {
       permissionMode: thread.permissionMode || "default",
       model: thread.model || null,
       reasoningEffort: thread.reasoningEffort || null,
+      webSearch: thread.webSearch === true,
     });
     const spawn = resolveSpawn(project, binary, args, localCwd);
 

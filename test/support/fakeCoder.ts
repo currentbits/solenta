@@ -139,6 +139,7 @@ export function thread(over: Partial<ThreadInfo> = {}): ThreadInfo {
     sessionId: null,
     permissionMode: "default",
     reasoningEffort: null,
+    webSearch: false,
     worktreePath: null,
     ...over,
   } as ThreadInfo;
@@ -1420,6 +1421,8 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       setProvider: (input: unknown) => rec("threads.setProvider", [input], thread()),
       setReasoningEffort: (input: unknown) =>
         rec("threads.setReasoningEffort", [input], thread()),
+      setWebSearch: (input: unknown) =>
+        rec("threads.setWebSearch", [input], thread()),
       /**
        * Honest fork (round 49 contract / electron forkThread): new thread
        * same project, copies provider/model/permissionMode unless overridden;
