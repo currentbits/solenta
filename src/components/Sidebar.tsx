@@ -162,8 +162,12 @@ interface SidebarProps {
   appVersion?: string | null;
   /** Update channel of the running build; "nightly" tags the wordmark. */
   channel?: "prod" | "nightly" | null;
-  /** Update check result; a label next to Settings when an update is waiting. */
+  /** Update check result; a button next to Settings when an update is waiting. */
   updateState?: UpdateStatus["state"] | null;
+  /** Download + stage the waiting release (updateState "available"). */
+  onDownloadUpdate?: () => void | Promise<void>;
+  /** Relaunch into the staged bundle (updateState "staged"). */
+  onApplyUpdate?: () => void | Promise<void>;
   searchPlaceholder: string;
   projectsHeader: string;
   projects: ProjectInfo[];
@@ -1262,6 +1266,8 @@ export const Sidebar = memo(function Sidebar({
   appVersion,
   channel,
   updateState,
+  onDownloadUpdate,
+  onApplyUpdate,
   searchPlaceholder,
   projects,
   threads,
@@ -1297,6 +1303,7 @@ export const Sidebar = memo(function Sidebar({
 }: SidebarProps) {
   const [query, setQuery] = useState("");
   const [now, setNow] = useState(() => Date.now());
+  const [updating, setUpdating] = useState(false);
   const [createMenuOpen, setCreateMenuOpen] = useState(false);
   const [scopeMenuOpen, setScopeMenuOpen] = useState(false);
   const [filterMenu, setFilterMenu] = useState<FilterMenu | null>(null);
@@ -2947,20 +2954,6 @@ export const Sidebar = memo(function Sidebar({
           <button
             type="button"
             className={styles.settings}
-            title={
-              updateState === "available"
-                ? "Update available"
-                : updateState === "staged"
-                  ? "Update ready — restart to apply"
-                  : undefined
-            }
-            aria-label={
-              updateState === "available"
-                ? "Settings. Update available"
-                : updateState === "staged"
-                  ? "Settings. Update ready — restart to apply"
-                  : undefined
-            }
             onClick={() => onOpenSettings?.()}
           >
             <span className={styles.settingsIcon} aria-hidden>
@@ -2970,16 +2963,40 @@ export const Sidebar = memo(function Sidebar({
               </Icon>
             </span>
             Settings
-            {(updateState === "available" || updateState === "staged") && (
-              <span
-                className={styles.settingsUpdate}
-                data-settings-update=""
-                aria-hidden
-              >
-                {updateState === "staged" ? "Restart" : "Update"}
-              </span>
-            )}
           </button>
+          {(updateState === "available" || updateState === "staged") && (
+            <button
+              type="button"
+              className={styles.settingsUpdate}
+              data-settings-update=""
+              disabled={updating}
+              title={
+                updateState === "staged"
+                  ? "Restart to update"
+                  : "Download and install the update"
+              }
+              onClick={async () => {
+                if (updateState === "staged") {
+                  void onApplyUpdate?.();
+                  return;
+                }
+                setUpdating(true);
+                try {
+                  await onDownloadUpdate?.();
+                } finally {
+                  // On success updateState flips to "staged" and this button
+                  // becomes Restart; on failure it stays clickable.
+                  setUpdating(false);
+                }
+              }}
+            >
+              {updating
+                ? "Updating…"
+                : updateState === "staged"
+                  ? "Restart"
+                  : "Update"}
+            </button>
+          )}
           {projects.length > 0 && (
             <button
               type="button"

@@ -1378,6 +1378,19 @@
   font-weight: 600;
   color: var(--blue);
   flex-shrink: 0;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid color-mix(in srgb, var(--blue) 40%, transparent);
+}
+
+.settingsUpdate:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--blue) 14%, transparent);
+}
+
+.settingsUpdate:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 .footerAdd {

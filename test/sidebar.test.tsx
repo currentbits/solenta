@@ -152,6 +152,9 @@ function sidebar(
     revealThreadId?: string | null;
     onRevealHandled?: () => void;
     updateState?: UpdateStatus["state"] | null;
+    onDownloadUpdate?: () => void | Promise<void>;
+    onApplyUpdate?: () => void | Promise<void>;
+    onOpenSettings?: () => void;
     appVersion?: string | null;
     channel?: "prod" | "nightly" | null;
     searchThreads?: (input: { query: string }) => Promise<ThreadInfo[]>;
@@ -189,6 +192,9 @@ function sidebar(
       revealThreadId={over.revealThreadId ?? null}
       onRevealHandled={over.onRevealHandled}
       updateState={over.updateState}
+      onDownloadUpdate={over.onDownloadUpdate}
+      onApplyUpdate={over.onApplyUpdate}
+      onOpenSettings={over.onOpenSettings}
       searchThreads={
         over.searchThreads ??
         (async ({ query }) =>
@@ -1956,22 +1962,23 @@ function settingsButton(
 }
 
 describe("Sidebar update indicator (issue #138 / #673)", () => {
-  it("labels Settings when an update is waiting, not otherwise", async () => {
+  it("shows an update button when one is waiting, not otherwise", async () => {
     const available = await mount(
       sidebar(THREADS, { updateState: "available" }),
     );
-    const availableBtn = settingsButton(available);
+    const btn = available.query("[data-settings-update]") as HTMLButtonElement;
+    assert.equal(btn?.textContent, "Update");
+    assert.equal(btn.tagName, "BUTTON", "the label must be clickable");
     assert.equal(
-      availableBtn.querySelector("[data-settings-update]")?.textContent,
-      "Update",
-      "Update label present when updateState=available",
+      settingsButton(available).querySelector("[data-settings-update]"),
+      null,
+      "nested buttons are invalid; it sits beside Settings",
     );
-    assert.equal(availableBtn.title, "Update available");
     available.unmount();
 
     const staged = await mount(sidebar(THREADS, { updateState: "staged" }));
     assert.equal(
-      settingsButton(staged).querySelector("[data-settings-update]")?.textContent,
+      staged.query("[data-settings-update]")?.textContent,
       "Restart",
       "Restart label present when updateState=staged",
     );
@@ -1979,19 +1986,58 @@ describe("Sidebar update indicator (issue #138 / #673)", () => {
 
     const none = await mount(sidebar(THREADS, { updateState: "none" }));
     assert.equal(
-      settingsButton(none).querySelector("[data-settings-update]"),
+      none.query("[data-settings-update]"),
       null,
-      "label absent when updateState=none",
+      "button absent when updateState=none",
     );
     none.unmount();
 
     const unset = await mount(sidebar(THREADS));
     assert.equal(
-      settingsButton(unset).querySelector("[data-settings-update]"),
+      unset.query("[data-settings-update]"),
       null,
-      "label absent when updateState is unset",
+      "button absent when updateState is unset",
     );
     unset.unmount();
+  });
+
+  it("Update installs, Restart relaunches, Settings stays untouched", async () => {
+    let release = (): void => {};
+    const downloads: number[] = [];
+    const m = await mount(
+      sidebar(THREADS, {
+        updateState: "available",
+        onDownloadUpdate: () => {
+          downloads.push(1);
+          return new Promise<void>((r) => {
+            release = r;
+          });
+        },
+        onOpenSettings: () => assert.fail("Update must not open Settings"),
+      }),
+    );
+    await m.click(m.query("[data-settings-update]"));
+    assert.equal(downloads.length, 1, "click downloads the update");
+    const busy = m.query("[data-settings-update]") as HTMLButtonElement;
+    assert.equal(busy.textContent, "Updating…");
+    assert.ok(busy.disabled, "no double install while downloading");
+    await inAct(async () => {
+      release();
+    });
+    m.unmount();
+
+    let applied = 0;
+    const restart = await mount(
+      sidebar(THREADS, {
+        updateState: "staged",
+        onApplyUpdate: () => {
+          applied += 1;
+        },
+      }),
+    );
+    await restart.click(restart.query("[data-settings-update]"));
+    assert.equal(applied, 1, "Restart relaunches into the staged bundle");
+    restart.unmount();
   });
 
   it("sits next to Settings, not a far-right dot", () => {
