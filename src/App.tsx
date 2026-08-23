@@ -232,6 +232,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     startDevServer,
     stopDevServer,
     devServerStatus,
+    preview,
     setVerifyCommand,
     runVerify,
     runCommand,
@@ -1350,6 +1351,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onSaveAttachmentImage={saveAttachmentImage}
         onLoadAttachmentImage={loadAttachmentImage}
         onDropAttachmentFiles={dropAttachmentFiles}
+        preview={preview}
+        devServerStatus={devServerStatus}
+        listLocalServers={listLocalServers}
         onPush={pushBranch}
         onCreatePr={createPr}
         onPrChecks={prChecks}

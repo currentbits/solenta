@@ -13,6 +13,7 @@ import {
   PaneWorkspace,
   ViewsMenu,
 } from "./PaneWorkspace";
+import { BrowserPane } from "./BrowserPane";
 import {
   defaultPaneLayout,
   findLeaf,
@@ -28,6 +29,8 @@ import {
 import type {
   AttachmentInfo,
   BlastRadiusInfo,
+  DevServerState,
+  LocalServerInfo,
   ChatMessage,
   CoderApi,
   DiffResult,
@@ -534,6 +537,10 @@ interface ThreadViewProps {
   onLoadAttachmentImage?: (path: string) => Promise<string | null>;
   /** Classify drag-dropped files into attachments. */
   onDropAttachmentFiles?: (files: File[]) => Promise<AttachmentInfo[]>;
+  /** Embedded Browser pane (issue #155). Absent hides screenshot-to-composer. */
+  preview?: CoderApi["preview"] | null;
+  devServerStatus?: (threadId: string) => Promise<DevServerState>;
+  listLocalServers?: (threadId: string) => Promise<LocalServerInfo[]>;
   /** Push the thread's current branch to origin. */
   onPush: () => Promise<{ remote: string; branch: string }>;
   /**
@@ -3521,6 +3528,9 @@ export const ThreadView = memo(function ThreadView({
   onSaveAttachmentImage,
   onLoadAttachmentImage,
   onDropAttachmentFiles,
+  preview,
+  devServerStatus,
+  listLocalServers,
   onPush,
   onCreatePr,
   onPrChecks,
@@ -3634,6 +3644,9 @@ export const ThreadView = memo(function ThreadView({
       cancelled = true;
     };
   }, [onListCliCommands, project?.path, threadId]);
+  const [incomingAttachments, setIncomingAttachments] = useState<
+    AttachmentInfo[]
+  >([]);
   const [layoutThreadId, setLayoutThreadId] = useState<string | null>(threadId);
   const [layout, setLayout] = useState<LayoutNode>(() =>
     hydratePaneLayout(threadId, { openDiff: changesOpen }).layout,
@@ -4077,6 +4090,7 @@ export const ThreadView = memo(function ThreadView({
       setSyncRefreshNonce(0);
       setCopiedThreadId(false);
       setLightbox(null);
+      setIncomingAttachments([]);
       if (copyFlashTimer.current != null) {
         clearTimeout(copyFlashTimer.current);
         copyFlashTimer.current = null;
@@ -4996,6 +5010,24 @@ export const ThreadView = memo(function ThreadView({
         onChange={handlePaneChange}
         onFocus={setFocusedId}
         renderPane={(leaf) => {
+          if (leaf.type === "browser") {
+            return (
+              <BrowserPane
+                threadId={detail?.thread.id ?? ""}
+                preview={preview}
+                devServerStatus={devServerStatus}
+                listLocalServers={listLocalServers}
+                onAttachScreenshot={
+                  onSaveAttachmentImage
+                    ? async (dataUrl) => {
+                        const att = await onSaveAttachmentImage(dataUrl);
+                        if (att) setIncomingAttachments([att]);
+                      }
+                    : undefined
+                }
+              />
+            );
+          }
           if (leaf.type === "diff") {
             return (
               <ChangesPanel
@@ -5471,6 +5503,8 @@ export const ThreadView = memo(function ThreadView({
         onSaveAttachmentImage={onSaveAttachmentImage}
         onLoadAttachmentImage={onLoadAttachmentImage}
         onDropAttachmentFiles={onDropAttachmentFiles}
+        incomingAttachments={incomingAttachments}
+        onIncomingAttachmentsConsumed={() => setIncomingAttachments([])}
         onSlashAction={handleSlashAction}
         cliCommands={cliCommands}
         onStopRun={onStopRun}
