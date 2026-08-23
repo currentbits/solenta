@@ -16,6 +16,7 @@ const SITE = path.join(__dirname, "..", "..", "site");
 const HTML = fs.readFileSync(path.join(SITE, "index.html"), "utf8");
 const MAIN = fs.readFileSync(path.join(SITE, "main.js"), "utf8");
 const FALLBACK = /const FALLBACK_TAG = "(v[\d.]+)"/.exec(MAIN)[1];
+const PKG_VERSION = require("../../package.json").version;
 const DL = "https://github.com/currentbits/solenta/releases/latest/download/";
 const RELEASES = "https://github.com/currentbits/solenta/releases/latest";
 
@@ -55,6 +56,13 @@ const href = (doc, sel) => doc.querySelector(sel).getAttribute("href");
 
 test("the fallback tag is a release tag", () => {
   assert.match(FALLBACK, /^v\d+\.\d+\.\d+$/);
+});
+
+// FALLBACK_TAG is the only place the site writes the version down, and it is
+// what a no-JS visitor gets. Left behind at a release it resolves to an asset
+// name that no longer exists in /releases/latest, i.e. a 404 on every button.
+test("the fallback tag tracks package.json", () => {
+  assert.equal(FALLBACK, `v${PKG_VERSION}`);
 });
 
 test("every download link is a releases page until JS narrows it", () => {

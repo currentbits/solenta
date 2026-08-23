@@ -73,7 +73,7 @@
   // ponytail: runtime fetch, not build-time templating, because the site has
   // no build step at all (site/Dockerfile just COPYs the directory into nginx).
   const REPO = "https://github.com/currentbits/solenta";
-  const FALLBACK_TAG = "v0.11.0";
+  const FALLBACK_TAG = "v0.12.0";
   const ASSET = {
     mac: (t) => `Solenta-${t}-macos-arm64.zip`,
     win: (t) => `Solenta-${t}-win32-x64.zip`,
