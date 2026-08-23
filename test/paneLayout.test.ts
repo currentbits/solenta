@@ -7,6 +7,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  PANE_REGISTRY,
   PANE_TYPES,
   closePane,
   defaultPaneLayout,
@@ -35,6 +36,13 @@ describe("pane registry (issue #552)", () => {
       "tasks",
       "subagent",
     ]);
+  });
+
+  it("ships chat, git, terminal, and browser", () => {
+    assert.equal(PANE_REGISTRY.chat.shipped, true);
+    assert.equal(PANE_REGISTRY.diff.shipped, true);
+    assert.equal(PANE_REGISTRY.browser.shipped, true);
+    assert.equal(PANE_REGISTRY.terminal.shipped, true);
   });
 });
 

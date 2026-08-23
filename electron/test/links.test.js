@@ -96,3 +96,72 @@ describe("external link policy", () => {
     assert.deepEqual(r, { allow: false, external: false });
   });
 });
+
+const {
+  previewNavigateAction,
+  isLoopbackHost,
+  coercePreviewUrl,
+  canonicalizePreviewUrl,
+} = require("../links.js");
+
+describe("preview guest navigation policy (issue #155)", () => {
+  it("allows loopback http(s) and about:blank", () => {
+    for (const url of [
+      "http://localhost:5173/",
+      "http://127.0.0.1:3000/app",
+      "https://localhost/",
+      "http://[::1]:8080/",
+      "http://foo.localhost:5173/",
+      "about:blank",
+    ]) {
+      const r = previewNavigateAction(url);
+      assert.equal(r.allow, true, url);
+      assert.equal(r.external, false, url);
+    }
+  });
+
+  it("rewrites 0.0.0.0 bind-all banners to 127.0.0.1", () => {
+    const r = previewNavigateAction("http://0.0.0.0:3000/");
+    assert.equal(r.allow, true);
+    assert.equal(r.url, "http://127.0.0.1:3000/");
+  });
+
+  it("coerces a scheme-less localhost:port to http", () => {
+    assert.equal(coercePreviewUrl("localhost:5173"), "http://localhost:5173");
+    const r = previewNavigateAction("localhost:5173");
+    assert.equal(r.allow, true);
+    assert.ok(r.url && r.url.startsWith("http://localhost:5173"));
+  });
+
+  it("sends non-loopback http(s) to the OS browser instead of the guest", () => {
+    const r = previewNavigateAction("https://github.com/currentbits/solenta");
+    assert.equal(r.allow, false);
+    assert.equal(r.external, true);
+  });
+
+  it("drops file, javascript, and data URLs", () => {
+    for (const url of [
+      "file:///etc/passwd",
+      "javascript:alert(1)",
+      "data:text/html,<script>alert(1)</script>",
+    ]) {
+      assert.deepEqual(
+        previewNavigateAction(url),
+        { allow: false, external: false },
+        url,
+      );
+    }
+  });
+
+  it("does not treat prefix-similar hosts as loopback", () => {
+    assert.equal(isLoopbackHost("localhost.evil.com"), false);
+    assert.equal(isLoopbackHost("127.0.0.1.evil.com"), false);
+    const r = previewNavigateAction("http://localhost.evil.com/");
+    assert.equal(r.allow, false);
+    assert.equal(r.external, true);
+  });
+
+  it("canonicalizePreviewUrl is null on garbage", () => {
+    assert.equal(canonicalizePreviewUrl("not a url"), null);
+  });
+});

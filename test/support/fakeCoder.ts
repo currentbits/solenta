@@ -25,6 +25,7 @@ import type {
   RunStatInfo,
   DevServerState,
   TerminalState,
+  PreviewSnapshot,
   DiffResult,
   CreateIssueResult,
   FetchIssueResult,
@@ -1966,6 +1967,76 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       write: (input: unknown) => rec("terminal.write", [input], fakeTerminal()),
       read: (input: unknown) => rec("terminal.read", [input], fakeTerminal()),
       close: (input: unknown) => rec("terminal.close", [input], fakeTerminal()),
+    },
+    preview: {
+      bind: (input: unknown) =>
+        rec("preview.bind", [input], {
+          url: "",
+          title: "",
+          canGoBack: false,
+          canGoForward: false,
+        } as PreviewSnapshot),
+      unbind: (input: unknown) =>
+        rec("preview.unbind", [input], { ok: true }),
+      navigate: (input: unknown) => {
+        const url = String((input as { url?: string }).url ?? "");
+        return rec("preview.navigate", [input], {
+          url,
+          title: "",
+          canGoBack: false,
+          canGoForward: false,
+        } as PreviewSnapshot);
+      },
+      reload: (input: unknown) =>
+        rec("preview.reload", [input], {
+          url: "",
+          title: "",
+          canGoBack: false,
+          canGoForward: false,
+        } as PreviewSnapshot),
+      goBack: (input: unknown) =>
+        rec("preview.goBack", [input], {
+          url: "",
+          title: "",
+          canGoBack: false,
+          canGoForward: false,
+        } as PreviewSnapshot),
+      goForward: (input: unknown) =>
+        rec("preview.goForward", [input], {
+          url: "",
+          title: "",
+          canGoBack: false,
+          canGoForward: false,
+        } as PreviewSnapshot),
+      info: (input: unknown) =>
+        rec("preview.info", [input], {
+          url: "",
+          title: "",
+          canGoBack: false,
+          canGoForward: false,
+        } as PreviewSnapshot),
+      screenshot: (input: unknown) =>
+        rec("preview.screenshot", [input], {
+          url: "http://localhost:5173/",
+          title: "",
+          canGoBack: false,
+          canGoForward: false,
+          dataUrl: "data:image/png;base64,aaa",
+        }),
+      click: (input: unknown) =>
+        rec("preview.click", [input], {
+          url: "",
+          title: "",
+          canGoBack: false,
+          canGoForward: false,
+        } as PreviewSnapshot),
+      type: (input: unknown) =>
+        rec("preview.type", [input], {
+          url: "",
+          title: "",
+          canGoBack: false,
+          canGoForward: false,
+        } as PreviewSnapshot),
     },
     files: {
       list: (input: unknown) => {

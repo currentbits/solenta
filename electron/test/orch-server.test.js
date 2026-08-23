@@ -178,6 +178,46 @@ function makeDeps() {
   return deps;
 }
 
+describe("preview MCP tool (issue #155)", () => {
+  it("requires the same-project thread and forwards screenshot", async () => {
+    const shots = [];
+    const deps = makeDeps();
+    deps.preview = {
+      screenshot: async (input) => {
+        shots.push(input);
+        return {
+          url: "http://localhost:5173/",
+          title: "app",
+          canGoBack: false,
+          canGoForward: false,
+          dataUrl: "data:image/png;base64,aaa",
+        };
+      },
+    };
+    const h = createToolHandlers(deps);
+    const out = await h.preview({
+      threadId: "t1",
+      projectId: "p1",
+      action: "screenshot",
+    });
+    assert.equal(out.dataUrl.startsWith("data:image/png"), true);
+    assert.deepEqual(shots, [{ threadId: "t1" }]);
+
+    await assert.rejects(
+      h.preview({ threadId: "t3", projectId: "p1", action: "info" }),
+      /not to/,
+    );
+  });
+
+  it("rejects an unknown action", async () => {
+    const h = createToolHandlers(makeDeps());
+    await assert.rejects(
+      h.preview({ threadId: "t1", projectId: "p1", action: "explode" }),
+      /Unknown preview action/,
+    );
+  });
+});
+
 describe("orch-server tool handlers", () => {
   it("instructions tell the orchestrator it is woken when workers finish", () => {
     assert.match(INSTRUCTIONS, /woken on a new turn/);
@@ -199,6 +239,8 @@ describe("orch-server tool handlers", () => {
     assert.doesNotMatch(INSTRUCTIONS, /poll thread_status until/);
     assert.match(INSTRUCTIONS, /THIS project only/);
     assert.doesNotMatch(INSTRUCTIONS, /this server sees all of them/);
+    assert.match(INSTRUCTIONS, /preview drives the Browser pane/);
+    assert.match(INSTRUCTIONS, /Do not claim the UI works without a screenshot/);
   });
 
   it("threads_list maps id, title, provider, status, handoffFrom, project, later fields", async () => {
@@ -1162,6 +1204,7 @@ describe("orch-server HTTP", () => {
       "ask_user",
       "hypothesis_record",
       "peer_send",
+      "preview",
       "spec_submit",
       "task_add",
       "task_claim",

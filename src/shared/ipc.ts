@@ -1595,6 +1595,19 @@ export interface TerminalState {
   startedAt: number;
 }
 
+/** Live state of the embedded Browser pane guest (issue #155). */
+export interface PreviewSnapshot {
+  url: string;
+  title: string;
+  canGoBack: boolean;
+  canGoForward: boolean;
+}
+
+export interface PreviewScreenshot extends PreviewSnapshot {
+  /** PNG data URL of the visible page. */
+  dataUrl: string;
+}
+
 export interface PrInfo {
   number: number;
   url: string;
@@ -2887,10 +2900,16 @@ export interface CoderApi {
       hashes: string[];
     }): Promise<ThreadInfo>;
     /**
-     * Commits every change in the thread's cwd (git add -A + commit -m).
-     * Rejects on an empty message or when there is nothing to commit.
+     * Commits changes in the thread's cwd. Omit `paths` to stage everything
+     * (`git add -A`); pass a list to stage and commit only those files.
+     * Rejects on an empty message, an empty `paths` list, or when there is
+     * nothing to commit.
      */
-    commit(input: { threadId: string; message: string }): Promise<{ subject: string }>;
+    commit(input: {
+      threadId: string;
+      message: string;
+      paths?: string[];
+    }): Promise<{ subject: string }>;
     /**
      * Discards one file's changes: untracked files are deleted, staged-new
      * files are removed from index and disk, tracked files are restored from
@@ -2912,6 +2931,8 @@ export interface CoderApi {
      * branch (committing any uncommitted worktree changes first), then removes
      * the worktree and branch. Rejects with a descriptive Error on conflicts
      * or a dirty project checkout; nothing is force-removed on failure.
+     * Pass `paths` to auto-commit only those files; leftover dirty files
+     * refuse the merge so the worktree is not deleted with uncommitted work.
      */
     mergeWorktree(input: {
       threadId: string;
@@ -2921,6 +2942,8 @@ export interface CoderApi {
        * pipeline file. Not a permission preset.
        */
       ciWorkflowApproved?: boolean;
+      /** Stage only these paths for the session commit. Omitted = add -A. */
+      paths?: string[];
     }): Promise<ThreadInfo>;
     /**
      * Unmerged files in the thread worktree plus capped conflict-marker
@@ -3208,6 +3231,28 @@ export interface CoderApi {
     read(input: { threadId: string; since?: number }): Promise<TerminalState>;
     /** Kill the shell and drop its scrollback. */
     close(input: { threadId: string }): Promise<TerminalState>;
+  };
+  /**
+   * Embedded Browser pane (issue #155). Desktop-only: the renderer hosts a
+   * <webview> and bind() maps it so screenshot/navigate/click share the
+   * visible page. Loopback URLs only; the app-window policy in links.js is
+   * unchanged.
+   */
+  preview: {
+    bind(input: { threadId: string; webContentsId: number }): Promise<PreviewSnapshot>;
+    unbind(input: { threadId: string; webContentsId?: number }): Promise<{ ok: boolean }>;
+    navigate(input: { threadId: string; url: string }): Promise<PreviewSnapshot>;
+    reload(input: { threadId: string }): Promise<PreviewSnapshot>;
+    goBack(input: { threadId: string }): Promise<PreviewSnapshot>;
+    goForward(input: { threadId: string }): Promise<PreviewSnapshot>;
+    info(input: { threadId: string }): Promise<PreviewSnapshot>;
+    screenshot(input: { threadId: string }): Promise<PreviewScreenshot>;
+    click(input: { threadId: string; selector: string }): Promise<PreviewSnapshot>;
+    type(input: {
+      threadId: string;
+      selector: string;
+      text: string;
+    }): Promise<PreviewSnapshot>;
   };
   /**
    * Vibe Kanban import (#399). Preview/import read the local VK SQLite;

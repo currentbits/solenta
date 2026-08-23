@@ -41,7 +41,16 @@ const DIFF: DiffResult = {
     { path: "src/a.ts", status: "M", additions: 3, deletions: 1 },
     { path: "notes.txt", status: "??", additions: 5, deletions: 0 },
   ],
-  patch: "diff --git a/src/a.ts b/src/a.ts\n+line\n",
+  patch: [
+    "diff --git a/src/a.ts b/src/a.ts",
+    "--- a/src/a.ts",
+    "+++ b/src/a.ts",
+    "@@ -1,3 +1,4 @@",
+    " keep",
+    "-old",
+    "+new",
+    " context",
+  ].join("\n"),
   truncated: false,
 };
 
@@ -84,24 +93,49 @@ function detail(): ThreadDetail {
   };
 }
 
-interface Spies {
-  commits: string[];
-  reverts: Array<{ path: string; status: string }>;
-  suggests: number;
-  diffLoads: number;
+interface CommitCall {
+  message: string;
+  paths?: string[];
 }
 
-function mountPanel(): { m: Promise<Mounted>; spies: Spies } {
-  const spies: Spies = { commits: [], reverts: [], suggests: 0, diffLoads: 0 };
+interface RevertCall {
+  path: string;
+  status: string;
+}
+
+interface Spies {
+  commits: CommitCall[];
+  reverts: RevertCall[];
+  suggests: number;
+  diffLoads: number;
+  comments: string[];
+}
+
+function mountPanel(opts?: {
+  archived?: boolean;
+  working?: boolean;
+}): { m: Promise<Mounted>; spies: Spies } {
+  const spies: Spies = {
+    commits: [],
+    reverts: [],
+    suggests: 0,
+    diffLoads: 0,
+    comments: [],
+  };
+  const t = thread();
+  if (opts?.archived) t.archived = true;
+  if (opts?.working) t.status = "working";
   const m = mount(
     <ThreadView
-      detail={detail()}
+      detail={{ ...detail(), thread: t }}
       project={project}
       providers={providers}
       workflows={[]}
       hasProjects={true}
       onAddProject={() => {}}
-      onStartRun={() => {}}
+      onStartRun={(prompt) => {
+        spies.comments.push(prompt);
+      }}
       onStartWorkflow={() => {}}
       onSaveWorkflow={async () => ({ id: "w", name: "s", phases: [] })}
       onRemoveWorkflow={async () => {}}
@@ -118,8 +152,8 @@ function mountPanel(): { m: Promise<Mounted>; spies: Spies } {
         spies.diffLoads += 1;
         return DIFF;
       }}
-      onCommitChanges={async (message) => {
-        spies.commits.push(message);
+      onCommitChanges={async (message, paths) => {
+        spies.commits.push({ message, paths });
         return { subject: message };
       }}
       onRevertFile={async (path, status) => {
@@ -138,11 +172,8 @@ function mountPanel(): { m: Promise<Mounted>; spies: Spies } {
 
 /** The Changes panel footer — not the header next-action "Commit N files". */
 function panelCommit(view: { container: HTMLElement }): HTMLButtonElement | null {
-  return (
-    [...view.container.querySelectorAll("button")].find((b) => {
-      const text = (b.textContent || "").trim();
-      return text === "Commit" || text === "Committing…";
-    }) ?? null
+  return view.container.querySelector(
+    "[data-commit-changes]",
   ) as HTMLButtonElement | null;
 }
 
@@ -170,7 +201,9 @@ describe("ChangesPanel commit flow", () => {
     await view.click(view.byText("Generate"));
     const before = spies.diffLoads;
     await view.click(panelCommit(view));
-    assert.deepEqual(spies.commits, ["feat: generated"]);
+    assert.equal(spies.commits.length, 1);
+    assert.equal(spies.commits[0]?.message, "feat: generated");
+    assert.deepEqual(spies.commits[0]?.paths, ["src/a.ts", "notes.txt"]);
     assert.ok(spies.diffLoads > before, "diff reloaded after commit");
     const input = view.container.querySelector<HTMLTextAreaElement>(
       'textarea[aria-label="Commit message"]',
@@ -218,6 +251,40 @@ describe("ChangesPanel commit flow", () => {
     );
   });
 
+  it("unchecking a file commits only the rest", async () => {
+    const { m, spies } = mountPanel();
+    const view = await m;
+    await view.flush();
+    const notes = view.container.querySelector(
+      '[data-stage-file="notes.txt"]',
+    );
+    assert.ok(notes);
+    assert.equal(notes.getAttribute("aria-checked"), "true");
+    await view.click(notes);
+    assert.equal(notes.getAttribute("aria-checked"), "false");
+
+    await view.click(view.byText("Generate"));
+    const commitBtn = panelCommit(view);
+    assert.ok(commitBtn);
+    assert.match((commitBtn.textContent || "").trim(), /Commit 1 file/);
+    await view.click(commitBtn);
+    assert.equal(spies.commits.length, 1);
+    assert.deepEqual(spies.commits[0]?.paths, ["src/a.ts"]);
+  });
+
+  it("unchecking every file disables Commit", async () => {
+    const { m } = mountPanel();
+    const view = await m;
+    await view.flush();
+    await view.click(view.byText("Generate"));
+    for (const box of view.container.querySelectorAll("[data-stage-file]")) {
+      if (box.getAttribute("aria-checked") === "true") await view.click(box);
+    }
+    const commitBtn = panelCommit(view);
+    assert.ok(commitBtn);
+    assert.ok(commitBtn.hasAttribute("disabled"), "disabled with nothing staged");
+  });
+
   it("selects a file row", async () => {
     const { m } = mountPanel();
     const view = await m;
@@ -235,5 +302,100 @@ describe("ChangesPanel commit flow", () => {
       rows.filter((r) => r.getAttribute("data-selected") === "true").length,
       1,
     );
+  });
+});
+
+describe("ChangesPanel inline comments (issue #162)", () => {
+  it("puts a comment control on code lines, not on the hunk header", async () => {
+    const { m } = mountPanel();
+    const view = await m;
+    const add = view.query('button[aria-label="Comment on line 2"]');
+    const removed = view.query('button[aria-label="Comment on removed line 2"]');
+    const ctx = view.query('button[aria-label="Comment on line 1"]');
+    assert.ok(add, "added line is commentable");
+    assert.ok(removed, "deleted line is commentable");
+    assert.ok(ctx, "context line is commentable");
+    assert.equal(
+      view.queryAll("[data-diff-comment-gutter]").length,
+      4,
+      "keep, old, new, context — not the @@ header",
+    );
+  });
+
+  it("opens a comment box on the clicked line", async () => {
+    const { m } = mountPanel();
+    const view = await m;
+    assert.equal(view.query("[data-diff-comment-box]"), null);
+    await view.click(view.query('button[aria-label="Comment on line 2"]'));
+    const box = view.query("[data-diff-comment-box]");
+    assert.ok(box, "comment box appears");
+    const input = view.query(
+      'textarea[aria-label="Diff comment"]',
+    ) as HTMLTextAreaElement | null;
+    assert.ok(input);
+    const send = [...box!.querySelectorAll("button")].find(
+      (b) => (b.textContent || "").trim() === "Send",
+    );
+    assert.ok(send);
+    assert.ok(send!.hasAttribute("disabled"), "empty comment cannot send");
+  });
+
+  it("sends the comment as a follow-up prompt with file and line", async () => {
+    const { m, spies } = mountPanel();
+    const view = await m;
+    await view.click(view.query('button[aria-label="Comment on line 2"]'));
+    const input = view.query('textarea[aria-label="Diff comment"]');
+    await view.type(input, "use Y instead");
+    const send = [...view.queryAll("[data-diff-comment-box] button")].find(
+      (b) => (b.textContent || "").trim() === "Send",
+    );
+    await view.click(send ?? null);
+    assert.equal(spies.comments.length, 1);
+    assert.match(spies.comments[0]!, /^Comment on src\/a\.ts:2:\n/);
+    assert.match(spies.comments[0]!, /\n    \+new\n/);
+    assert.match(spies.comments[0]!, /\nuse Y instead$/);
+    assert.equal(
+      view.query("[data-diff-comment-box]"),
+      null,
+      "box closes after send",
+    );
+  });
+
+  it("queues the comment while the thread is working", async () => {
+    const { m, spies } = mountPanel({ working: true });
+    const view = await m;
+    await view.click(view.query('button[aria-label="Comment on line 2"]'));
+    const queue = [...view.queryAll("[data-diff-comment-box] button")].find(
+      (b) => (b.textContent || "").trim() === "Queue",
+    );
+    assert.ok(queue, "Send relabels to Queue mid-run");
+    const input = view.query('textarea[aria-label="Diff comment"]');
+    await view.type(input, "fix the new line");
+    await view.click(queue);
+    assert.equal(spies.comments.length, 1);
+    assert.match(spies.comments[0]!, /fix the new line$/);
+  });
+
+  it("sends with Cmd+Enter and closes on Escape", async () => {
+    const { m, spies } = mountPanel();
+    const view = await m;
+    await view.click(view.query('button[aria-label="Comment on line 2"]'));
+    const input = view.query('textarea[aria-label="Diff comment"]');
+    await view.type(input, "first");
+    await view.pressFocused("Enter", { metaKey: true });
+    assert.equal(spies.comments.length, 1);
+    assert.match(spies.comments[0]!, /\nfirst$/);
+
+    await view.click(view.query('button[aria-label="Comment on line 1"]'));
+    assert.ok(view.query("[data-diff-comment-box]"));
+    await view.pressFocused("Escape");
+    assert.equal(view.query("[data-diff-comment-box]"), null);
+    assert.equal(spies.comments.length, 1, "Escape must not send");
+  });
+
+  it("hides comment controls on an archived thread", async () => {
+    const { m } = mountPanel({ archived: true });
+    const view = await m;
+    assert.equal(view.queryAll("[data-diff-comment-gutter]").length, 0);
   });
 });

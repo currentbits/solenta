@@ -61,6 +61,118 @@ describe("worktrees commit/revertFile", () => {
     assert.equal(git(repo, ["status", "--porcelain"]), "");
   });
 
+  it("commit with paths stages only those files", () => {
+    fs.writeFileSync(path.join(repo, "a.txt"), "one\n");
+    fs.appendFileSync(path.join(repo, "README.md"), "more\n");
+
+    const result = commit({
+      store,
+      threadId: thread.id,
+      message: "feat: add a",
+      paths: ["a.txt"],
+    });
+    assert.equal(result.subject, "feat: add a");
+    assert.equal(git(repo, ["log", "-1", "--format=%s"]), "feat: add a");
+    assert.equal(git(repo, ["show", "--name-only", "--format=", "HEAD"]), "a.txt");
+    assert.match(git(repo, ["status", "--porcelain"]), /README\.md/);
+    assert.doesNotMatch(git(repo, ["status", "--porcelain"]), /a\.txt/);
+  });
+
+  it("commit with paths leaves already-staged siblings uncommitted", () => {
+    fs.writeFileSync(path.join(repo, "a.txt"), "one\n");
+    fs.appendFileSync(path.join(repo, "README.md"), "more\n");
+    git(repo, ["add", "a.txt"]);
+
+    commit({
+      store,
+      threadId: thread.id,
+      message: "docs: readme",
+      paths: ["README.md"],
+    });
+    assert.equal(git(repo, ["show", "--name-only", "--format=", "HEAD"]), "README.md");
+    assert.match(git(repo, ["status", "--porcelain"]), /a\.txt/);
+  });
+
+  it("commit with paths can stage a deleted tracked file", () => {
+    fs.writeFileSync(path.join(repo, "a.txt"), "one\n");
+    fs.rmSync(path.join(repo, "README.md"));
+
+    commit({
+      store,
+      threadId: thread.id,
+      message: "chore: drop readme",
+      paths: ["README.md"],
+    });
+    assert.equal(git(repo, ["show", "--name-only", "--format=", "HEAD"]), "README.md");
+    assert.match(git(repo, ["status", "--porcelain"]), /\?\? a\.txt/);
+  });
+
+  it("commit with an empty paths list refuses without touching the repo", () => {
+    fs.writeFileSync(path.join(repo, "a.txt"), "one\n");
+    assert.throws(
+      () =>
+        commit({
+          store,
+          threadId: thread.id,
+          message: "feat: none",
+          paths: [],
+        }),
+      /no files selected/i,
+    );
+    assert.match(git(repo, ["status", "--porcelain"]), /\?\? a\.txt/);
+    assert.equal(git(repo, ["log", "-1", "--format=%s"]), "init");
+  });
+
+  it("commit rejects paths that are not dirty", () => {
+    fs.writeFileSync(path.join(repo, "a.txt"), "one\n");
+    assert.throws(
+      () =>
+        commit({
+          store,
+          threadId: thread.id,
+          message: "feat: missing",
+          paths: ["nope.txt"],
+        }),
+      /not a changed file/i,
+    );
+    assert.match(git(repo, ["status", "--porcelain"]), /\?\? a\.txt/);
+  });
+
+  it("commit rejects paths that escape the working tree", () => {
+    fs.writeFileSync(path.join(repo, "a.txt"), "one\n");
+    assert.throws(
+      () =>
+        commit({
+          store,
+          threadId: thread.id,
+          message: "feat: escape",
+          paths: ["../outside.txt"],
+        }),
+      /escapes|invalid/i,
+    );
+    assert.throws(
+      () =>
+        commit({
+          store,
+          threadId: thread.id,
+          message: "feat: escape",
+          paths: ["/etc/passwd"],
+        }),
+      /escapes|invalid/i,
+    );
+    assert.throws(
+      () =>
+        commit({
+          store,
+          threadId: thread.id,
+          message: "feat: escape",
+          paths: ["-n"],
+        }),
+      /invalid/i,
+    );
+    assert.equal(git(repo, ["log", "-1", "--format=%s"]), "init");
+  });
+
   it("commit rejects an empty message without touching the repo", () => {
     fs.writeFileSync(path.join(repo, "a.txt"), "one\n");
     assert.throws(

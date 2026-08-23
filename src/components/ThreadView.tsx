@@ -14,6 +14,7 @@ import {
   ViewsMenu,
 } from "./PaneWorkspace";
 import { TerminalPane, type TerminalApi } from "./TerminalPane";
+import { BrowserPane } from "./BrowserPane";
 import {
   defaultPaneLayout,
   findLeaf,
@@ -29,6 +30,8 @@ import {
 import type {
   AttachmentInfo,
   BlastRadiusInfo,
+  DevServerState,
+  LocalServerInfo,
   ChatMessage,
   CoderApi,
   DiffResult,
@@ -60,7 +63,16 @@ import { SPEC_ARTIFACTS, THREAD_NOTES_MAX, FELT_ESTIMATE_BUCKETS_MS } from "../s
 import { TEACH_AUTONOMY_LABELS } from "../teach";
 import type { TeachAutonomy } from "../shared/ipc";
 import type { WorkflowSaveInput } from "../useCoder";
-import { diffLineKind, isEmptyDiff } from "../diffView";
+import {
+  annotateHunkLines,
+  commentGutterLabel,
+  commentLineRef,
+  diffLineKind,
+  formatDiffCommentPrompt,
+  isEmptyDiff,
+  type DiffCommentAnchor,
+  type DiffLineKind,
+} from "../diffView";
 import {
   contextBreakdown,
   type ContextBreakdownSegment,
@@ -511,8 +523,13 @@ interface ThreadViewProps {
   }>;
   /** Persist hunk hashes the user marked as reviewed. */
   onSetReviewAccepted?: (hashes: string[]) => Promise<void>;
-  /** Commit all changes shown in the Changes panel. */
-  onCommitChanges: (message: string) => Promise<{ subject: string }>;
+  /** Commit the staged paths (or all files when `paths` is omitted). */
+  onCommitChanges: (
+    message: string,
+    paths?: string[],
+  ) => Promise<{ subject: string }>;
+  /** Keep the Git-tab merge in sync with the pane's staged path list. */
+  onStagedPathsChange?: (paths: string[] | null) => void;
   /** Discard one changed file (untracked deletes the file). */
   onRevertFile: (path: string, status: string) => Promise<{ path: string }>;
   /** Draft a commit message with the thread's provider. */
@@ -542,6 +559,10 @@ interface ThreadViewProps {
   onLoadAttachmentImage?: (path: string) => Promise<string | null>;
   /** Classify drag-dropped files into attachments. */
   onDropAttachmentFiles?: (files: File[]) => Promise<AttachmentInfo[]>;
+  /** Embedded Browser pane (issue #155). Absent hides screenshot-to-composer. */
+  preview?: CoderApi["preview"] | null;
+  devServerStatus?: (threadId: string) => Promise<DevServerState>;
+  listLocalServers?: (threadId: string) => Promise<LocalServerInfo[]>;
   /** Push the thread's current branch to origin. */
   onPush: () => Promise<{ remote: string; branch: string }>;
   /**
@@ -2788,13 +2809,119 @@ function FeltEstimateCard({
   );
 }
 
-const DiffLine = memo(function DiffLine({ line }: { line: string }) {  const kind = diffLineKind(line);
+const DiffLine = memo(function DiffLine({
+  line,
+  kind: kindOverride,
+  oldLine = null,
+  newLine = null,
+  commentable = false,
+  commenting = false,
+  onCommentClick,
+}: {
+  line: string;
+  kind?: DiffLineKind;
+  oldLine?: number | null;
+  newLine?: number | null;
+  commentable?: boolean;
+  commenting?: boolean;
+  onCommentClick?: () => void;
+}) {
+  const kind = kindOverride ?? diffLineKind(line);
+  const ref = commentLineRef({ kind, oldLine, newLine });
   return (
-    <div className={styles.diffLine} data-kind={kind}>
-      {line || " "}
+    <div
+      className={styles.diffLine}
+      data-kind={kind}
+      data-commenting={commenting ? "" : undefined}
+    >
+      {commentable && onCommentClick ? (
+        <button
+          type="button"
+          className={styles.diffLineGutter}
+          data-diff-comment-gutter=""
+          aria-label={commentGutterLabel({ kind, oldLine, newLine })}
+          title={commentGutterLabel({ kind, oldLine, newLine })}
+          aria-expanded={commenting}
+          onClick={onCommentClick}
+        >
+          {ref ? ref.n : "+"}
+        </button>
+      ) : (
+        <span className={styles.diffLineGutter} data-static="" aria-hidden>
+          {ref ? ref.n : ""}
+        </span>
+      )}
+      <span className={styles.diffLineText}>{line || " "}</span>
     </div>
   );
 });
+
+function DiffCommentBox({
+  draft,
+  busy,
+  error,
+  submitLabel,
+  onChange,
+  onSend,
+  onCancel,
+}: {
+  draft: string;
+  busy: boolean;
+  error: string | null;
+  submitLabel: string;
+  onChange: (value: string) => void;
+  onSend: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className={styles.diffComment} data-diff-comment-box="">
+      <textarea
+        className={styles.diffCommentInput}
+        aria-label="Diff comment"
+        placeholder="Tell the agent what to change"
+        rows={3}
+        autoFocus
+        value={draft}
+        disabled={busy}
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            e.preventDefault();
+            onCancel();
+            return;
+          }
+          if ((e.metaKey || e.ctrlKey || e.shiftKey) && e.key === "Enter") {
+            e.preventDefault();
+            onSend();
+          }
+        }}
+      />
+      {error ? (
+        <div className={styles.inlineError} role="alert">
+          {error}
+        </div>
+      ) : null}
+      <div className={styles.diffCommentActions}>
+        <button
+          type="button"
+          className={styles.btn}
+          disabled={busy}
+          onClick={onCancel}
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          className={`${styles.btn} ${styles.btnPrimary}`}
+          disabled={busy || draft.trim() === ""}
+          onClick={onSend}
+        >
+          {busy ? "Sending…" : submitLabel}
+        </button>
+      </div>
+    </div>
+  );
+}
 
 function planTextOf(detail: ThreadDetail | null | undefined): string {
   if (!detail) return "";
@@ -2812,20 +2939,38 @@ function planTextOf(detail: ThreadDetail | null | undefined): string {
 function FileRow({
   file,
   selected,
+  staged,
   confirmRevert,
   reverting,
   onSelect,
+  onToggleStage,
   onRevert,
 }: {
   file: FileChange;
   selected: boolean;
+  staged: boolean;
   confirmRevert: string | null;
   reverting: string | null;
   onSelect: (path: string) => void;
+  onToggleStage: (path: string, next: boolean) => void;
   onRevert: (f: FileChange) => void;
 }) {
   return (
     <li>
+      <button
+        type="button"
+        className={styles.fileStage}
+        data-stage-file={file.path}
+        role="checkbox"
+        aria-checked={staged}
+        aria-label={`Stage ${file.path}`}
+        onClick={(e) => {
+          e.stopPropagation();
+          onToggleStage(file.path, !staged);
+        }}
+      >
+        {staged ? "✓" : ""}
+      </button>
       <button
         type="button"
         className={styles.fileRow}
@@ -2882,12 +3027,15 @@ function ChangesPanel({
   threadBranch,
   planText,
   openNonce,
+  isWorking = false,
   onFetchDiff,
   onFetchReviewContext,
   onSetReviewAccepted,
   onCommit,
+  onStagedPathsChange,
   onRevert,
   onSuggest,
+  onComment,
 }: {
   open: boolean;
   /** Hide the "Git" title when the pane chrome already names it. */
@@ -2897,6 +3045,7 @@ function ChangesPanel({
   threadBranch: string | null;
   planText: string;
   openNonce: number;
+  isWorking?: boolean;
   onFetchDiff: () => Promise<DiffResult>;
   onFetchReviewContext?: () => Promise<{
     annotation: unknown;
@@ -2904,9 +3053,12 @@ function ChangesPanel({
     acceptedHunks: string[];
   }>;
   onSetReviewAccepted?: (hashes: string[]) => Promise<void>;
-  onCommit: (message: string) => Promise<{ subject: string }>;
+  onCommit: (message: string, paths?: string[]) => Promise<{ subject: string }>;
+  onStagedPathsChange?: (paths: string[] | null) => void;
   onRevert: (path: string, status: string) => Promise<{ path: string }>;
   onSuggest: () => Promise<{ message: string }>;
+  /** Send a line comment as a follow-up prompt (issue #162). */
+  onComment?: (prompt: string) => void | Promise<void>;
 }) {
   const [diff, setDiff] = useState<DiffResult | null>(null);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
@@ -2924,6 +3076,15 @@ function ChangesPanel({
   const [reverting, setReverting] = useState<string | null>(null);
   /** Untracked-path revert arms a confirm first (it deletes the file). */
   const [confirmRevert, setConfirmRevert] = useState<string | null>(null);
+  const [commentTarget, setCommentTarget] = useState<{
+    key: string;
+    anchor: DiffCommentAnchor;
+  } | null>(null);
+  const [commentDraft, setCommentDraft] = useState("");
+  const [commentBusy, setCommentBusy] = useState(false);
+  const [commentError, setCommentError] = useState<string | null>(null);
+  const [stagedPaths, setStagedPaths] = useState<Set<string>>(() => new Set());
+  const knownFilesRef = useRef<Set<string>>(new Set());
   const threadIdRef = useRef(threadId);
   threadIdRef.current = threadId;
 
@@ -2968,7 +3129,35 @@ function ChangesPanel({
     setAnnotation(null);
     setAcceptedHunks([]);
     setSelectedPath(null);
+    setCommentTarget(null);
+    setCommentDraft("");
+    setCommentBusy(false);
+    setCommentError(null);
+    setStagedPaths(new Set());
+    knownFilesRef.current = new Set();
+    onStagedPathsChange?.(null);
+    // onStagedPathsChange is a stable setter from useCoder; threadId is the trigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [threadId]);
+
+  useEffect(() => {
+    if (!diff) return;
+    setStagedPaths((prev) => {
+      const next = new Set<string>();
+      const known = knownFilesRef.current;
+      const first = known.size === 0;
+      for (const f of diff.files) {
+        if (first || !known.has(f.path) || prev.has(f.path)) next.add(f.path);
+      }
+      knownFilesRef.current = new Set(diff.files.map((f) => f.path));
+      return next;
+    });
+  }, [diff]);
+
+  useEffect(() => {
+    if (!diff || isEmptyDiff(diff)) return;
+    onStagedPathsChange?.([...stagedPaths]);
+  }, [diff, stagedPaths, onStagedPathsChange]);
 
   useEffect(() => {
     if (!diff || diff.files.length === 0) {
@@ -3049,13 +3238,24 @@ function ChangesPanel({
     }
   };
 
+  const toggleStage = (path: string, next: boolean) => {
+    setStagedPaths((prev) => {
+      const copy = new Set(prev);
+      if (next) copy.add(path);
+      else copy.delete(path);
+      return copy;
+    });
+  };
+
   const doCommit = async () => {
     const msg = message.trim();
-    if (!msg || busy) return;
+    if (!msg || busy || !diff) return;
+    const paths = diff.files.map((f) => f.path).filter((p) => stagedPaths.has(p));
+    if (paths.length === 0) return;
     setBusy("commit");
     setError(null);
     try {
-      await onCommit(msg);
+      await onCommit(msg, paths);
       setMessage("");
       await load();
     } catch (err) {
@@ -3069,6 +3269,56 @@ function ChangesPanel({
   const visiblePatches = selectedPath
     ? patches.filter((p) => p.path === selectedPath)
     : patches;
+
+  const toggleComment = (key: string, anchor: DiffCommentAnchor) => {
+    if (commentBusy) return;
+    if (commentTarget?.key === key) {
+      setCommentTarget(null);
+      setCommentDraft("");
+      setCommentError(null);
+      return;
+    }
+    setCommentTarget({ key, anchor });
+    setCommentDraft("");
+    setCommentError(null);
+  };
+
+  const sendComment = async () => {
+    if (!commentTarget || !onComment || commentBusy) return;
+    const prompt = formatDiffCommentPrompt(commentTarget.anchor, commentDraft);
+    if (!prompt) return;
+    setCommentBusy(true);
+    setCommentError(null);
+    try {
+      await onComment(prompt);
+      setCommentTarget(null);
+      setCommentDraft("");
+    } catch (err) {
+      setCommentError(
+        err instanceof Error && err.message ? err.message : "Failed to send comment",
+      );
+    } finally {
+      setCommentBusy(false);
+    }
+  };
+
+  const commentBox =
+    commentTarget && onComment ? (
+      <DiffCommentBox
+        draft={commentDraft}
+        busy={commentBusy}
+        error={commentError}
+        submitLabel={isWorking ? "Queue" : "Send"}
+        onChange={setCommentDraft}
+        onSend={() => void sendComment()}
+        onCancel={() => {
+          if (commentBusy) return;
+          setCommentTarget(null);
+          setCommentDraft("");
+          setCommentError(null);
+        }}
+      />
+    ) : null;
 
   return (
     <section
@@ -3127,6 +3377,33 @@ function ChangesPanel({
         <>
           <div className={styles.changesSplit}>
             <div className={styles.changesFiles}>
+              <div className={styles.stageBar}>
+                <button
+                  type="button"
+                  className={styles.fileStage}
+                  data-stage-all=""
+                  role="checkbox"
+                  aria-label="Stage all files"
+                  aria-checked={
+                    diff.files.length > 0 &&
+                    stagedPaths.size === diff.files.length
+                      ? true
+                      : stagedPaths.size === 0
+                        ? false
+                        : "mixed"
+                  }
+                  onClick={() => {
+                    if (stagedPaths.size === diff.files.length) {
+                      setStagedPaths(new Set());
+                    } else {
+                      setStagedPaths(new Set(diff.files.map((f) => f.path)));
+                    }
+                  }}
+                >
+                  {stagedPaths.size === diff.files.length ? "✓" : ""}
+                </button>
+                {stagedPaths.size}/{diff.files.length} staged
+              </div>
               <ReviewItineraryView
                 itinerary={itinerary}
                 testsFirst={testsFirst}
@@ -3141,9 +3418,11 @@ function ChangesPanel({
                         key={f.path}
                         file={f}
                         selected={selectedPath === f.path}
+                        staged={stagedPaths.has(f.path)}
                         confirmRevert={confirmRevert}
                         reverting={reverting}
                         onSelect={setSelectedPath}
+                        onToggleStage={toggleStage}
                         onRevert={(file) => void revert(file)}
                       />
                     ))}
@@ -3159,9 +3438,37 @@ function ChangesPanel({
                   {visiblePatches.map((p) => (
                     <Fragment key={p.path}>
                       {p.hunks.length === 0 &&
-                        p.text.split("\n").map((line, i) => (
-                          <DiffLine key={`${p.path}:${i}`} line={line} />
-                        ))}
+                        p.text.split("\n").map((line, i) => {
+                          const kind = diffLineKind(line);
+                          const key = `${p.path}:${i}`;
+                          const commentable =
+                            Boolean(onComment) &&
+                            (kind === "add" || kind === "del") &&
+                            !line.startsWith("\\");
+                          return (
+                            <Fragment key={key}>
+                              <DiffLine
+                                line={line}
+                                kind={kind}
+                                commentable={commentable}
+                                commenting={commentTarget?.key === key}
+                                onCommentClick={
+                                  commentable
+                                    ? () =>
+                                        toggleComment(key, {
+                                          path: p.path,
+                                          kind,
+                                          text: line,
+                                          oldLine: null,
+                                          newLine: null,
+                                        })
+                                    : undefined
+                                }
+                              />
+                              {commentTarget?.key === key ? commentBox : null}
+                            </Fragment>
+                          );
+                        })}
                       {p.hunks.map((hunk) => (
                         <div
                           key={hunk.id}
@@ -3190,9 +3497,40 @@ function ChangesPanel({
                             </button>
                           </div>
                           <DiffLine line={hunk.header} />
-                          {hunk.body.split("\n").map((line, i) => (
-                            <DiffLine key={`${hunk.id}:${i}`} line={line} />
-                          ))}
+                          {annotateHunkLines(hunk.header, hunk.body).map(
+                            (row, i) => {
+                              const key = `${hunk.id}:${i}`;
+                              const commentable =
+                                Boolean(onComment) && row.commentable;
+                              return (
+                                <Fragment key={key}>
+                                  <DiffLine
+                                    line={row.text}
+                                    kind={row.kind}
+                                    oldLine={row.oldLine}
+                                    newLine={row.newLine}
+                                    commentable={commentable}
+                                    commenting={commentTarget?.key === key}
+                                    onCommentClick={
+                                      commentable
+                                        ? () =>
+                                            toggleComment(key, {
+                                              path: p.path,
+                                              kind: row.kind,
+                                              text: row.text,
+                                              oldLine: row.oldLine,
+                                              newLine: row.newLine,
+                                            })
+                                        : undefined
+                                    }
+                                  />
+                                  {commentTarget?.key === key
+                                    ? commentBox
+                                    : null}
+                                </Fragment>
+                              );
+                            },
+                          )}
                         </div>
                       ))}
                     </Fragment>
@@ -3226,10 +3564,22 @@ function ChangesPanel({
               <button
                 type="button"
                 className={`${styles.btn} ${styles.btnPrimary}`}
-                disabled={message.trim() === "" || busy != null}
+                data-commit-changes=""
+                disabled={
+                  message.trim() === "" ||
+                  busy != null ||
+                  stagedPaths.size === 0
+                }
                 onClick={() => void doCommit()}
               >
-                {busy === "commit" ? "Committing…" : "Commit"}
+                {busy === "commit"
+                  ? "Committing…"
+                  : stagedPaths.size === 0 ||
+                      stagedPaths.size === (diff?.files.length ?? 0)
+                    ? "Commit"
+                    : stagedPaths.size === 1
+                      ? "Commit 1 file"
+                      : `Commit ${stagedPaths.size} files`}
               </button>
             </div>
           </div>
@@ -3520,6 +3870,7 @@ export const ThreadView = memo(function ThreadView({
   onFetchReviewContext,
   onSetReviewAccepted,
   onCommitChanges,
+  onStagedPathsChange,
   onRevertFile,
   onSuggestCommitMessage,
   onListFiles,
@@ -3531,6 +3882,9 @@ export const ThreadView = memo(function ThreadView({
   onSaveAttachmentImage,
   onLoadAttachmentImage,
   onDropAttachmentFiles,
+  preview,
+  devServerStatus,
+  listLocalServers,
   onPush,
   onCreatePr,
   onPrChecks,
@@ -3644,6 +3998,9 @@ export const ThreadView = memo(function ThreadView({
       cancelled = true;
     };
   }, [onListCliCommands, project?.path, threadId]);
+  const [incomingAttachments, setIncomingAttachments] = useState<
+    AttachmentInfo[]
+  >([]);
   const [layoutThreadId, setLayoutThreadId] = useState<string | null>(threadId);
   const [layout, setLayout] = useState<LayoutNode>(() =>
     hydratePaneLayout(threadId, { openDiff: changesOpen }).layout,
@@ -4087,6 +4444,7 @@ export const ThreadView = memo(function ThreadView({
       setSyncRefreshNonce(0);
       setCopiedThreadId(false);
       setLightbox(null);
+      setIncomingAttachments([]);
       if (copyFlashTimer.current != null) {
         clearTimeout(copyFlashTimer.current);
         copyFlashTimer.current = null;
@@ -5011,6 +5369,24 @@ export const ThreadView = memo(function ThreadView({
         onChange={handlePaneChange}
         onFocus={setFocusedId}
         renderPane={(leaf) => {
+          if (leaf.type === "browser") {
+            return (
+              <BrowserPane
+                threadId={detail?.thread.id ?? ""}
+                preview={preview}
+                devServerStatus={devServerStatus}
+                listLocalServers={listLocalServers}
+                onAttachScreenshot={
+                  onSaveAttachmentImage
+                    ? async (dataUrl) => {
+                        const att = await onSaveAttachmentImage(dataUrl);
+                        if (att) setIncomingAttachments([att]);
+                      }
+                    : undefined
+                }
+              />
+            );
+          }
           if (leaf.type === "diff") {
             return (
               <ChangesPanel
@@ -5021,12 +5397,19 @@ export const ThreadView = memo(function ThreadView({
                 threadBranch={detail?.thread.branch ?? null}
                 planText={planTextOf(detail)}
                 openNonce={changesNonce}
+                isWorking={isWorking}
                 onFetchDiff={onFetchDiff}
                 onFetchReviewContext={onFetchReviewContext}
                 onSetReviewAccepted={onSetReviewAccepted}
                 onCommit={onCommitChanges}
+                onStagedPathsChange={onStagedPathsChange}
                 onRevert={onRevertFile}
                 onSuggest={onSuggestCommitMessage}
+                onComment={
+                  isArchived
+                    ? undefined
+                    : (prompt) => onStartRun(prompt)
+                }
               />
             );
           }
@@ -5494,6 +5877,8 @@ export const ThreadView = memo(function ThreadView({
         onSaveAttachmentImage={onSaveAttachmentImage}
         onLoadAttachmentImage={onLoadAttachmentImage}
         onDropAttachmentFiles={onDropAttachmentFiles}
+        incomingAttachments={incomingAttachments}
+        onIncomingAttachmentsConsumed={() => setIncomingAttachments([])}
         onSlashAction={handleSlashAction}
         cliCommands={cliCommands}
         onStopRun={onStopRun}

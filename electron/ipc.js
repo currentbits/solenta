@@ -34,6 +34,7 @@ const { suggestCommitMessage } = require("./commitmsg.js");
 const { listLocalServers } = require("./servers.js");
 const devservers = require("./devservers.js");
 const terminal = require("./terminal.js");
+const preview = require("./preview.js");
 const { createMemoryProxy } = require("./memory-proxy.js");
 const {
   readToolImage,
@@ -92,6 +93,7 @@ function runRetention(ctx) {
   return scheduleRetention({
     store: ctx.store,
     worktreeBase: ctx.worktreeBase,
+    userDataPath: ctx.userDataPath,
     broadcast: ctx.broadcast,
   });
 }
@@ -893,6 +895,7 @@ const IPC_HANDLERS = {
       store: ctx.store,
       threadId: input.threadId,
       message: input.message,
+      paths: Array.isArray(input.paths) ? input.paths : undefined,
     });
   },
   "git:revertFile": async (ctx, input) => {
@@ -968,6 +971,7 @@ const IPC_HANDLERS = {
       store: ctx.store,
       threadId: input.threadId,
       ciWorkflowApproved: Boolean(input && input.ciWorkflowApproved),
+      paths: Array.isArray(input && input.paths) ? input.paths : undefined,
       broadcast: ctx.broadcast,
     });
     await runRetention(ctx);
@@ -1270,6 +1274,46 @@ const IPC_HANDLERS = {
     const threadId = input && input.threadId;
     resolveDevServerRoot(ctx, threadId);
     return terminal.close(threadId);
+  },
+  "preview:bind": async (ctx, input) => {
+    resolveDevServerRoot(ctx, input && input.threadId);
+    return preview.bind(input);
+  },
+  "preview:unbind": async (ctx, input) => {
+    resolveDevServerRoot(ctx, input && input.threadId);
+    return preview.unbind(input);
+  },
+  "preview:navigate": async (ctx, input) => {
+    resolveDevServerRoot(ctx, input && input.threadId);
+    return preview.navigate(input);
+  },
+  "preview:reload": async (ctx, input) => {
+    resolveDevServerRoot(ctx, input && input.threadId);
+    return preview.reload(input);
+  },
+  "preview:goBack": async (ctx, input) => {
+    resolveDevServerRoot(ctx, input && input.threadId);
+    return preview.goBack(input);
+  },
+  "preview:goForward": async (ctx, input) => {
+    resolveDevServerRoot(ctx, input && input.threadId);
+    return preview.goForward(input);
+  },
+  "preview:info": async (ctx, input) => {
+    resolveDevServerRoot(ctx, input && input.threadId);
+    return preview.info(input);
+  },
+  "preview:screenshot": async (ctx, input) => {
+    resolveDevServerRoot(ctx, input && input.threadId);
+    return preview.screenshot(input);
+  },
+  "preview:click": async (ctx, input) => {
+    resolveDevServerRoot(ctx, input && input.threadId);
+    return preview.click(input);
+  },
+  "preview:type": async (ctx, input) => {
+    resolveDevServerRoot(ctx, input && input.threadId);
+    return preview.type(input);
   },
 };
 

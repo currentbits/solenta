@@ -154,6 +154,12 @@ interface ComposerProps {
    */
   onDropAttachmentFiles?: (files: File[]) => Promise<AttachmentInfo[]>;
   /**
+   * Attachments arriving from outside the composer (Browser pane screenshot,
+   * issue #155). Consumed into the pending chips, then onIncomingAttachmentsConsumed.
+   */
+  incomingAttachments?: AttachmentInfo[];
+  onIncomingAttachmentsConsumed?: () => void;
+  /**
    * CLI `/` verbs that live outside Composer (issue #472): rewind, usage,
    * fork, new, clear, compact. Model / effort / permissions are handled
    * here. Absent: those verbs still clear the token so they never send.
@@ -328,6 +334,8 @@ export const Composer = memo(function Composer({
   onSaveAttachmentImage,
   onLoadAttachmentImage,
   onDropAttachmentFiles,
+  incomingAttachments,
+  onIncomingAttachmentsConsumed,
   onSlashAction,
   cliCommands,
   onStopRun,
@@ -400,6 +408,11 @@ export const Composer = memo(function Composer({
     },
     [threadId],
   );
+  useEffect(() => {
+    if (!incomingAttachments?.length) return;
+    addAttachments(incomingAttachments);
+    onIncomingAttachmentsConsumed?.();
+  }, [incomingAttachments, addAttachments, onIncomingAttachmentsConsumed]);
   const removeAttachment = useCallback(
     (path: string) =>
       setAttachmentsByThread((prev) => ({

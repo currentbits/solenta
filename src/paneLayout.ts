@@ -52,7 +52,7 @@ export const PANE_REGISTRY: Record<
   diff: { title: "Git", shipped: true, split: "horizontal" },
   // Side-by-side, not a bottom drawer: the terminal is a pane like Git.
   terminal: { title: "Terminal", shipped: true, split: "horizontal" },
-  browser: { title: "Browser", shipped: false, split: "horizontal" },
+  browser: { title: "Browser", shipped: true, split: "horizontal" },
   files: { title: "Files", shipped: false, split: "horizontal" },
   tasks: { title: "Tasks", shipped: false, split: "horizontal" },
   subagent: { title: "Subagent", shipped: false, split: "horizontal" },

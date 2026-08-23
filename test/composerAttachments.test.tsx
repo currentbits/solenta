@@ -99,6 +99,8 @@ function composer(
     withPicker?: boolean;
     savedImage?: AttachmentInfo | null;
     onDrop?: (files: File[]) => Promise<AttachmentInfo[]>;
+    incoming?: AttachmentInfo[];
+    onIncomingConsumed?: () => void;
   } = {},
 ) {
   const picks = over.picks ?? [];
@@ -136,6 +138,8 @@ function composer(
       }
       onLoadAttachmentImage={async () => null}
       onDropAttachmentFiles={over.onDrop}
+      incomingAttachments={over.incoming}
+      onIncomingAttachmentsConsumed={over.onIncomingConsumed}
     />
   );
 }
@@ -151,6 +155,25 @@ describe("Composer attachments", () => {
       null,
       "attach button must not render without onPickAttachments",
     );
+    m.unmount();
+  });
+
+  it("pins incoming attachments (browser screenshot) as chips", async () => {
+    const h: Harness = { sends: [] };
+    const consumed: number[] = [];
+    const m = await mount(
+      composer(h, {
+        incoming: [IMAGE],
+        onIncomingConsumed: () => consumed.push(1),
+      }),
+    );
+    await m.flush();
+    assert.ok(
+      m.query('[data-attachment-kind="image"]'),
+      "incoming screenshot must become a chip",
+    );
+    assert.ok(m.text().includes("pic.png"));
+    assert.equal(consumed.length, 1);
     m.unmount();
   });
 
