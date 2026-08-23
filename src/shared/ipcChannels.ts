@@ -32,6 +32,7 @@ export const IPC_CHANNELS = [
   { ns: "app", method: "checkUpdate" },
   { ns: "app", method: "downloadUpdate" },
   { ns: "app", method: "applyUpdate" },
+  { ns: "app", method: "feedback" },
   { ns: "memory", method: "search" },
   { ns: "memory", method: "recent" },
   { ns: "memory", method: "get" },

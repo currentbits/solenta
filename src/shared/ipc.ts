@@ -2297,6 +2297,13 @@ export interface CoderApi {
     downloadUpdate(): Promise<UpdateStatus>;
     /** Relaunch into a staged update. */
     applyUpdate(): Promise<void>;
+    /**
+     * `/feedback` (issue #681): POST the text to the Solenta endpoint. Sent
+     * from the main process so the renderer never makes a cross-origin call.
+     * `threadId` only decides where the confirmation event message lands.
+     * Rejects with a user-facing sentence when the endpoint refuses.
+     */
+    feedback(input: { text: string; threadId?: string }): Promise<void>;
   };
   /**
    * Proxied to the local shared-memory server by the main process (the

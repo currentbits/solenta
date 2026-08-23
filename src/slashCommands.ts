@@ -3,7 +3,8 @@
  *
  * Orchestration verbs stay insert-only: the runner intercepts the sent text
  * (#338). `/btw` stays insert-only so the send path can intercept it as a
- * side question (#471) without occupying the live turn. CLI verbs that map
+ * side question (#471) without occupying the live turn, and `/feedback` the
+ * same way so the text reaches us and not the model (#681). CLI verbs that map
  * to existing UI run immediately and never reach the model. Unknown `/foo`
  * is not in this list, so a send still goes through.
  */
@@ -133,6 +134,11 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
     hint: "Settle this thread and start a new draft",
     kind: "run",
     action: "clear",
+  },
+  {
+    name: "/feedback",
+    hint: "Send feedback to the Solenta team",
+    kind: "insert",
   },
 ];
 

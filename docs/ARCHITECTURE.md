@@ -536,8 +536,8 @@ Issue #472 grew the same `/` popup into the CLI verb palette
 (`/compact`, `/rewind`, `/usage`, `/model`, …). Those verbs run existing
 UI immediately and never become a prompt. Unknown `/foo` still goes to
 the model. `/btw` stays insert-only so the send path intercepts it as a
-side question (issue #471). `/goal` stays insert-only until its ticket
-lands.
+side question (issue #471), and `/feedback` the same way (issue #681, see
+below). `/goal` stays insert-only until its ticket lands.
 
 Issue #606 adds the underlying CLI's invocable skills and custom
 commands to the same palette (`electron/cliCommands.js`
@@ -625,6 +625,50 @@ the question via `setQueued` (then it is #468) and drops the card.
 Caps: 3 in flight, 8 cards kept, 4000-char question. Running cards
 become `error: Interrupted` on store load — the helper is gone after a
 crash.
+
+## Feedback (`/feedback`)
+
+Issue #681. `/feedback <text>` sends the text to us instead of to the
+model — the one composer verb that leaves the machine.
+
+| Piece | Path |
+|-------|------|
+| Parse (renderer) | `src/feedback.ts` `parseFeedbackCommand` — intercepts in `useCoder.startRun` alongside `/btw`, before the busy-queue path |
+| Send (main) | `electron/feedback.js` `sendFeedback` — POST from the main process, so the renderer never makes a cross-origin call |
+| IPC | `app:feedback` in `electron/ipc.js`; stamps app version + `platform arch` |
+| Endpoint | `feedback-api/` in this repo, deployed as the Girder app `solenta-feedback` (feedback.solenta.app) |
+
+The endpoint is a small Node server (one dependency, `pg`) that inserts a
+row into its own postgres. Postgres rather than a bucket or a log because
+Girder backs it up — losing what someone took the trouble to write is the
+one failure that matters here. The sender's IP is deliberately **not**
+stored: the rate limiter holds it in memory for an hour, the record does
+not need it.
+
+Read it back with the admin token:
+
+```
+curl -s -H "Authorization: Bearer $ADMIN_TOKEN" \
+  https://feedback.solenta.app/api/feedback | jq
+```
+
+It is a public, unauthenticated POST, so it caps the body at 8 KB, caps
+the text at 4000 chars, and rate-limits to 5 per IP per hour (in-memory —
+one instance, forgiving across restarts). The GET is bearer-only with a
+constant-time compare, and an unset `ADMIN_TOKEN` denies everything rather
+than opening the list up.
+
+Two ordering details worth keeping: the insert is logged as well as
+stored, so `girder app_logs solenta-feedback runtime:true` shows feedback
+arriving live and a failed insert still leaves the text in the log; and
+the Dockerfile is two-stage so npm never reaches the final image (Girder's
+trivy gate fails `node:22-alpine` on npm's own bundled deps).
+
+Order matters in the handler: the send happens **first**, and only a
+success appends the "Feedback sent" event message. A failed send must not
+leave a confirmation in the transcript. The error text the composer shows
+is the endpoint's own sentence when it has one, so a rate-limit reads as
+advice rather than as a status code.
 
 ## Spec mode
 

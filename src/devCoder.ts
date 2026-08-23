@@ -2009,6 +2009,20 @@ function buildDevCoder(): CoderApi {
         return this.checkUpdate();
       },
       async applyUpdate(): Promise<void> {},
+      async feedback(input: {
+        text: string;
+        threadId?: string;
+      }): Promise<void> {
+        // Browser dev has no endpoint: log it and confirm, same as a real send.
+        console.info("[dev] feedback:", input.text);
+        const detail = input.threadId ? details.get(input.threadId) : null;
+        detail?.messages.push({
+          id: id("evt"),
+          role: "event",
+          text: "Feedback sent to the Solenta team. Thank you.",
+          createdAt: now(),
+        });
+      },
     },
     memory: {
       async search(input: {

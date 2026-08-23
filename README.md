@@ -248,6 +248,8 @@ The root `package.json` already allows scripts for the pinned Electron version.
   worktree, no agent credits.
 - **`/btw`** — a side question on the same thread that does not pause, steer,
   or queue behind the live run.
+- **`/feedback`** — send a note straight to the Solenta team from the composer.
+  The text goes to us, never to the model, and never occupies the live turn.
 - **Sidebar** — T3-flat: no project group headers. A row is status + title +
   age; pinned threads sit in a block at the top; snoozed and settled
   (archived at the tail) live in shelves. Scope to one project from the

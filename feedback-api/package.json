@@ -1,0 +1,14 @@
+{
+  "name": "solenta-feedback-api",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Receives /feedback from the Solenta app (issue #681)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test test.js"
+  },
+  "dependencies": {
+    "pg": "^8.13.1"
+  }
+}

@@ -52,6 +52,16 @@ const { collectDigest } = require("./digest.js");
 const { collectFleet } = require("./fleet.js");
 const { distillThread } = require("./distill.js");
 const updater = require("./updater.js");
+const feedback = require("./feedback.js");
+
+/** Version stamped in the embedded package.json; "dev" outside a build. */
+function appVersion() {
+  try {
+    return String(require("../package.json").version || "") || "dev";
+  } catch {
+    return "dev";
+  }
+}
 const vibeKanban = require("./vibeKanban.js");
 const { browseFilesystem, expandUserPath } = require("./fsBrowse.js");
 const { discoverSourceControl } = require("./sourceControl.js");
@@ -718,6 +728,35 @@ const IPC_HANDLERS = {
   },
   "app:applyUpdate": async () => {
     updater.applyUpdate();
+  },
+  "app:feedback": async (ctx, input) => {
+    const text = feedback.normalizeFeedback(input && input.text);
+    if (!text) throw new Error("Feedback is empty");
+    // Send first: a failed send must not leave a "sent" line in the transcript.
+    await feedback.sendFeedback({
+      text,
+      version: appVersion(),
+      platform: `${process.platform} ${process.arch}`,
+    });
+    const threadId = input && input.threadId;
+    if (threadId) {
+      feedback.appendFeedbackEvent(
+        ctx.store,
+        threadId,
+        "Feedback sent to the Solenta team. Thank you.",
+      );
+      try {
+        ctx.broadcast(
+          "thread:updated",
+          services.getThreadDetail(ctx.store, threadId, null, {
+            markVisited: false,
+          }),
+        );
+        ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+      } catch {
+        // Thread archived between the send and the confirmation.
+      }
+    }
   },
   "memory:search": async (ctx, input) => {
     return ctx.memory.search(input || { query: "" });

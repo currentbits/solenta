@@ -69,6 +69,7 @@ import {
   reconcileThreadList,
 } from "./threadPatch";
 import { parseBtwCommand } from "./btw";
+import { parseFeedbackCommand } from "./feedback";
 
 const STATUS_POLL_MS = 60_000;
 /** Renderer-side GitHub releases poll. One GET; 60 unauth req/hour is plenty. */
@@ -1214,6 +1215,21 @@ export function useCoder(): UseCoderResult {
     ) => {
       const threadId = targetThreadId ?? selectedThreadId;
       if (!threadId) return;
+      // Feedback (issue #681): goes to us, not to the model. Intercepted here
+      // with `/btw` so a busy thread does not queue it as the next prompt.
+      const feedbackText = parseFeedbackCommand(prompt);
+      if (feedbackText) {
+        try {
+          // The confirmation message arrives on the `thread:updated` push the
+          // handler broadcasts, so there is nothing to merge here.
+          await api.app.feedback({ text: feedbackText, threadId });
+          setError(null);
+        } catch (err) {
+          setError({ scope: "run", message: errorMessage(err) });
+          throw err;
+        }
+        return;
+      }
       // Side question (issue #471): intercept BEFORE the busy-queue path so
       // `/btw` never becomes the next follow-up and never starts a main turn.
       const btwQuestion = parseBtwCommand(prompt);
