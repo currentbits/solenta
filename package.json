@@ -37,6 +37,7 @@
     "@vitejs/plugin-react": "^4.4.1",
     "electron": "^35.2.0",
     "jsdom": "^30.0.1",
+    "resedit": "^3.0.2",
     "typescript": "^5.8.3",
     "vite": "^6.3.3"
   },

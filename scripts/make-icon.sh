@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Generate assets/Solenta.icns (and assets/icon-512.png for the dev dock icon)
+# Generate assets/Solenta.icns (macOS bundle), assets/Solenta.ico (Windows
+# window/taskbar icon) and assets/icon-512.png (dev dock + Linux window icon)
 # from assets/icon.svg. Zero new dependencies: rasterizes with the sharp that
 # already ships in memory-server/node_modules, converts with macOS iconutil.
 # Idempotent: safe to re-run; outputs are overwritten.
@@ -51,7 +52,50 @@ const targets = [
   }
   // Dev dock icon (app.dock.setIcon wants an image file).
   await sharp(svg, { density: 288 }).resize(512, 512).png().toFile("assets/icon-512.png");
-  console.log("rasterized", targets.length, "sizes + icon-512.png");
+
+  // assets/Solenta.ico — Windows has no Info.plist, so BrowserWindow({icon})
+  // reads this file directly. An .ico is a 6-byte header, one 16-byte entry
+  // per size, then the images; Vista+ accepts PNG payloads verbatim, so no
+  // BMP/DIB encoding is needed. 256 is the format's max dimension.
+  // ponytail: hand-rolled container instead of an ico encoder dep; it is
+  // 20 lines and the format has not moved since 2007.
+  const icoSizes = [16, 24, 32, 48, 64, 128, 256];
+  const pngs = await Promise.all(
+    icoSizes.map((px) =>
+      sharp(svg, { density: Math.max(72, (px / 1024) * 72 * 8) })
+        .resize(px, px)
+        .png()
+        .toBuffer(),
+    ),
+  );
+  const header = Buffer.alloc(6);
+  header.writeUInt16LE(0, 0); // reserved
+  header.writeUInt16LE(1, 2); // type: icon
+  header.writeUInt16LE(icoSizes.length, 4);
+  let offset = 6 + 16 * icoSizes.length;
+  const entries = icoSizes.map((px, i) => {
+    const e = Buffer.alloc(16);
+    e.writeUInt8(px === 256 ? 0 : px, 0); // 0 means 256
+    e.writeUInt8(px === 256 ? 0 : px, 1);
+    e.writeUInt8(0, 2); // palette colors
+    e.writeUInt8(0, 3); // reserved
+    e.writeUInt16LE(1, 4); // color planes
+    e.writeUInt16LE(32, 6); // bits per pixel
+    e.writeUInt32LE(pngs[i].length, 8);
+    e.writeUInt32LE(offset, 12);
+    offset += pngs[i].length;
+    return e;
+  });
+  require("node:fs").writeFileSync(
+    "assets/Solenta.ico",
+    Buffer.concat([header, ...entries, ...pngs]),
+  );
+
+  console.log(
+    "rasterized",
+    targets.length,
+    "sizes + icon-512.png + Solenta.ico (" + icoSizes.join(",") + ")",
+  );
 })().catch((e) => {
   console.error("rasterize failed:", e.message);
   process.exit(1);

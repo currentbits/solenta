@@ -158,9 +158,25 @@ function applyNativeAndWindowTheme(win) {
   return backgroundColor;
 }
 
+/**
+ * Window icon for Windows/Linux. macOS never needs one (packaged: the .icns
+ * via CFBundleIconFile; dev: app.dock.setIcon below), but on Windows the
+ * taskbar button falls back to the icon embedded in electron.exe when the
+ * window has none — which is why the stock Electron logo showed up. Path is
+ * the same in dev and packaged: both have assets/ next to electron/.
+ */
+function windowIcon() {
+  if (process.platform === "darwin") return null;
+  const file = process.platform === "win32" ? "Solenta.ico" : "icon-512.png";
+  const p = path.join(__dirname, "../assets", file);
+  return fs.existsSync(p) ? p : null;
+}
+
 function createWindow() {
   const backgroundColor = applyNativeAndWindowTheme(null);
+  const icon = windowIcon();
   const win = new BrowserWindow({
+    ...(icon ? { icon } : {}),
     width: 1440,
     height: 900,
     minWidth: 1100,
