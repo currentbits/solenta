@@ -1573,6 +1573,28 @@ export interface DevServerState {
   lastLines?: string[];
 }
 
+/**
+ * Per-thread shell session behind the Terminal pane (#147). Output is
+ * polled: `cursor` is an absolute character offset into the session's
+ * scrollback, and `text` is everything committed since the caller's cursor.
+ */
+export interface TerminalState {
+  running: boolean;
+  /** Directory the shell started in (thread worktree, else project root). */
+  cwd: string;
+  /** Shell binary actually spawned, e.g. `/bin/zsh`. */
+  shell: string;
+  /** Absolute offset to pass back as `since` on the next read. */
+  cursor: number;
+  /** Committed output since the caller's cursor (whole buffer when reset). */
+  text: string;
+  /** Current partial line — no newline yet, rewritten by every read. */
+  pending: string;
+  /** The caller's cursor was missing or scrolled out; `text` replaces all. */
+  reset: boolean;
+  startedAt: number;
+}
+
 export interface PrInfo {
   number: number;
   url: string;
@@ -3166,6 +3188,26 @@ export interface CoderApi {
     stop(input: { threadId: string }): Promise<DevServerState>;
     /** Live status, including a captured URL and recent log tail. */
     status(input: { threadId: string }): Promise<DevServerState>;
+  };
+  /**
+   * Terminal pane (#147). One long-lived shell per thread, cwd'd at the
+   * worktree, so `cd` and exports persist across commands. Pipes, not a
+   * PTY: interactive prompts and curses apps are out of scope, and `close`
+   * (kill + respawn) is how the pane spells Ctrl-C.
+   */
+  terminal: {
+    /** Start the thread's shell, or re-attach to a live one. */
+    open(input: { threadId: string }): Promise<TerminalState>;
+    /** Run one command line. Echoed into the scrollback first. */
+    write(input: {
+      threadId: string;
+      data: string;
+      since?: number;
+    }): Promise<TerminalState>;
+    /** Poll for output committed since `since`. */
+    read(input: { threadId: string; since?: number }): Promise<TerminalState>;
+    /** Kill the shell and drop its scrollback. */
+    close(input: { threadId: string }): Promise<TerminalState>;
   };
   /**
    * Vibe Kanban import (#399). Preview/import read the local VK SQLite;

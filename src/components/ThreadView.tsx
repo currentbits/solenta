@@ -13,6 +13,7 @@ import {
   PaneWorkspace,
   ViewsMenu,
 } from "./PaneWorkspace";
+import { TerminalPane, type TerminalApi } from "./TerminalPane";
 import {
   defaultPaneLayout,
   findLeaf,
@@ -490,6 +491,13 @@ interface ThreadViewProps {
   onCloseChanges: () => void;
   /** Opens the Git pane (same path as the Environment tab). */
   onViewChanges?: () => void;
+  /** Shell session for the Terminal pane (#147). */
+  terminalApi?: TerminalApi;
+  /**
+   * Fires whenever the workspace holds more than one pane. App collapses
+   * the agents rail so the panes get the width.
+   */
+  onPanesNeedRoom?: () => void;
   /** Per-checkpoint-pair shortstat for review bars. */
   runStats?: (threadId: string) => Promise<RunStatInfo[]>;
   /** Hard-reset the worktree to a checkpoint (Undo confirm). */
@@ -3504,6 +3512,8 @@ export const ThreadView = memo(function ThreadView({
   changesNonce,
   onCloseChanges,
   onViewChanges,
+  terminalApi,
+  onPanesNeedRoom,
   runStats,
   restoreCheckpoint,
   onFetchDiff,
@@ -4092,6 +4102,8 @@ export const ThreadView = memo(function ThreadView({
 
   useEffect(() => {
     if (!changesOpen) return;
+    // A newly opened pane needs the width the agents rail is holding.
+    if (!hasPaneType(layout, "diff")) onPanesNeedRoom?.();
     setLayout((prev) => {
       if (hasPaneType(prev, "diff")) return prev;
       const next = openPane(prev, "diff", focusedId);
@@ -4118,11 +4130,14 @@ export const ThreadView = memo(function ThreadView({
 
   const handleOpenPane = useCallback(
     (type: PaneType) => {
+      const fresh = !hasPaneType(layout, type);
       const next = openPane(layout, type, focusedId);
       applyLayout(next.layout, next.focusId);
+      // Git, Terminal, Browser, … all want the width the agents rail holds.
+      if (fresh) onPanesNeedRoom?.();
       if (type === "diff") onViewChanges?.();
     },
-    [layout, focusedId, applyLayout, onViewChanges],
+    [layout, focusedId, applyLayout, onViewChanges, onPanesNeedRoom],
   );
 
   const handleResetLayout = useCallback(() => {
@@ -5012,6 +5027,14 @@ export const ThreadView = memo(function ThreadView({
                 onCommit={onCommitChanges}
                 onRevert={onRevertFile}
                 onSuggest={onSuggestCommitMessage}
+              />
+            );
+          }
+          if (leaf.type === "terminal" && terminalApi) {
+            return (
+              <TerminalPane
+                threadId={detail?.thread.id ?? null}
+                api={terminalApi}
               />
             );
           }

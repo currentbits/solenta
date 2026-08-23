@@ -33,6 +33,7 @@ const {
 const { suggestCommitMessage } = require("./commitmsg.js");
 const { listLocalServers } = require("./servers.js");
 const devservers = require("./devservers.js");
+const terminal = require("./terminal.js");
 const { createMemoryProxy } = require("./memory-proxy.js");
 const {
   readToolImage,
@@ -1250,7 +1251,39 @@ const IPC_HANDLERS = {
     resolveDevServerRoot(ctx, threadId);
     return devservers.status(threadId);
   },
+  "terminal:open": async (ctx, input) => {
+    const threadId = input && input.threadId;
+    const { root, project } = resolveDevServerRoot(ctx, threadId);
+    return terminal.open(threadId, root, { project });
+  },
+  "terminal:write": async (ctx, input) => {
+    const threadId = input && input.threadId;
+    resolveDevServerRoot(ctx, threadId);
+    return terminal.write(threadId, input && input.data, sinceOf(input));
+  },
+  "terminal:read": async (ctx, input) => {
+    const threadId = input && input.threadId;
+    resolveDevServerRoot(ctx, threadId);
+    return terminal.read(threadId, sinceOf(input));
+  },
+  "terminal:close": async (ctx, input) => {
+    const threadId = input && input.threadId;
+    resolveDevServerRoot(ctx, threadId);
+    return terminal.close(threadId);
+  },
 };
+
+/**
+ * Terminal read cursor. Anything that is not a finite number means "replay
+ * the whole scrollback", which is what a freshly mounted pane wants.
+ *
+ * @param {{ since?: unknown } | null | undefined} input
+ * @returns {number | null}
+ */
+function sinceOf(input) {
+  const since = input && input.since;
+  return typeof since === "number" && Number.isFinite(since) ? since : null;
+}
 
 /**
  * Thread cwd for the dev-server runner: worktree when bound, else the

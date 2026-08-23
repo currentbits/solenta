@@ -27,7 +27,22 @@ async function boot(fake: FakeCoder) {
   const shell = await mount(<div />);
   installFakeCoder(fake);
   shell.unmount();
+  // The agents rail auto-collapses when a workspace pane opens (#147) and
+  // that choice persists, so clear it or the previous test decides this one.
+  window.localStorage.removeItem("coder.agents.collapsed");
   return mount(<App />);
+}
+
+/**
+ * Re-open the agents rail. Opening the Git pane collapses it, so anything
+ * that reads the Environment tab AFTER a restore has to ask for it back.
+ */
+async function expandAgents(m: Awaited<ReturnType<typeof mount>>) {
+  const expand = m.query("[data-agents-expand]");
+  if (expand) {
+    await m.click(expand as HTMLElement);
+    await m.flush();
+  }
 }
 
 function decoy(): ThreadInfo {
@@ -88,6 +103,7 @@ async function selectThread(
 }
 
 async function openGitTab(m: Awaited<ReturnType<typeof mount>>) {
+  await expandAgents(m);
   const git = m
     .queryAll("button")
     .find((b) => (b.textContent || "").trim() === "Environment");
@@ -262,6 +278,9 @@ describe("App checkpoints wiring (round 50)", () => {
       fake.of("git.listCheckpoints").length > listsBeforeConfirm,
       "successful restore must re-call listCheckpoints (explicit refresh)",
     );
+
+    // Restore reopens the Git pane, which collapses the rail (#147).
+    await expandAgents(m);
 
     // List refreshed: turn 3 (newer) gone; turn 2 + 1 remain.
     // This depends on fake truncating later checkpoints (reviewer mutant).

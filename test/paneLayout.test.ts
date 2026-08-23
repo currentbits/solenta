@@ -107,12 +107,12 @@ describe("openPane", () => {
     assert.equal(leafByType(next, "diff")?.id, focusId);
   });
 
-  it("opens Terminal below the focused pane", () => {
+  it("opens Terminal beside the focused pane, like Git", () => {
     const layout = defaultPaneLayout();
     const { layout: next } = openPane(layout, "terminal", firstLeafId(layout));
     assert.equal(next.kind, "split");
     if (next.kind !== "split") return;
-    assert.equal(next.orientation, "vertical");
+    assert.equal(next.orientation, "horizontal");
     if (next.children[1]!.kind === "leaf") {
       assert.equal(next.children[1]!.type, "terminal");
     }

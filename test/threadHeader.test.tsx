@@ -21,6 +21,7 @@ import type {
   ProviderInfo,
   ThreadDetail,
   ThreadInfo,
+  TerminalState,
   WorkflowTemplateInfo,
 } from "../src/shared/ipc";
 import { setRunDurationEnabled } from "../src/uiPrefs";
@@ -100,6 +101,27 @@ function detail(over: Partial<ThreadDetail> = {}): ThreadDetail {
 const noopSave = async () =>
   ({ id: "wf", name: "standard", phases: [] }) as WorkflowTemplateInfo;
 
+/** No shell under jsdom; the pane only needs the four calls to resolve. */
+const fakeTerminalApi = {
+  open: async () => idleTerminal(),
+  write: async () => idleTerminal(),
+  read: async () => idleTerminal(),
+  close: async () => idleTerminal(),
+};
+
+function idleTerminal(): TerminalState {
+  return {
+    running: false,
+    cwd: "/tmp/repo",
+    shell: "/bin/zsh",
+    cursor: 0,
+    text: "",
+    pending: "",
+    reset: true,
+    startedAt: 0,
+  };
+}
+
 function view(props: {
   detail?: ThreadDetail | null;
   project?: ProjectInfo;
@@ -120,6 +142,7 @@ function view(props: {
   changesOpen?: boolean;
   onViewChanges?: () => void;
   onCloseChanges?: () => void;
+  onPanesNeedRoom?: () => void;
   onRunCommand?: (
     threadId: string,
     actionId?: string,
@@ -153,6 +176,8 @@ function view(props: {
       changesNonce={0}
       onCloseChanges={props.onCloseChanges ?? (() => {})}
       onViewChanges={props.onViewChanges}
+      terminalApi={fakeTerminalApi}
+      onPanesNeedRoom={props.onPanesNeedRoom}
       onFetchDiff={async () => ({ files: [], patch: "", truncated: false })}
       onCommitChanges={async () => ({ subject: "x" })}
       onRevertFile={async (path) => ({ path })}
@@ -521,12 +546,42 @@ describe("Views menu pane workspace (issue #552)", () => {
     const m = await mount(view({}));
     await m.flush();
     await m.click(m.query("[data-views-btn]"));
-    await m.click(m.query("[data-views-item='terminal']"));
+    await m.click(m.query("[data-views-item='files']"));
     assert.ok(
-      m.query("[data-pane-placeholder='terminal']"),
-      "terminal registers as a pane even before the PTY lands",
+      m.query("[data-pane-placeholder='files']"),
+      "files registers as a pane even before it is built",
     );
     assert.ok(m.query("[data-pane-chat]"), "chat stays");
+    m.unmount();
+  });
+
+  it("opens Terminal as a pane beside chat, not a drawer", async () => {
+    const m = await mount(view({}));
+    await m.flush();
+    await m.click(m.query("[data-views-btn]"));
+    await m.click(m.query("[data-views-item='terminal']"));
+    assert.ok(m.query("[data-terminal-pane]"), "terminal pane renders");
+    assert.ok(m.query("[data-pane-chat]"), "chat stays");
+    assert.equal(
+      m.query("[data-pane-split]")?.getAttribute("data-pane-split"),
+      "horizontal",
+      "side by side, same split as Git",
+    );
+    m.unmount();
+  });
+
+  it("asks for room as soon as a second pane exists", async () => {
+    let asked = 0;
+    const m = await mount(view({ onPanesNeedRoom: () => (asked += 1) }));
+    await m.flush();
+    assert.equal(asked, 0, "chat alone does not collapse the agents rail");
+
+    for (const type of ["terminal", "diff"]) {
+      await m.click(m.query("[data-views-btn]"));
+      await m.click(m.query(`[data-views-item='${type}']`));
+    }
+    await m.flush();
+    assert.ok(asked >= 1, "opening a pane collapses the agents rail");
     m.unmount();
   });
 

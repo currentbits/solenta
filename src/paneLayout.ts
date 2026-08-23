@@ -50,7 +50,8 @@ export const PANE_REGISTRY: Record<
 > = {
   chat: { title: "Chat", shipped: true, split: "horizontal" },
   diff: { title: "Git", shipped: true, split: "horizontal" },
-  terminal: { title: "Terminal", shipped: false, split: "vertical" },
+  // Side-by-side, not a bottom drawer: the terminal is a pane like Git.
+  terminal: { title: "Terminal", shipped: true, split: "horizontal" },
   browser: { title: "Browser", shipped: false, split: "horizontal" },
   files: { title: "Files", shipped: false, split: "horizontal" },
   tasks: { title: "Tasks", shipped: false, split: "horizontal" },

@@ -232,6 +232,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     startDevServer,
     stopDevServer,
     devServerStatus,
+    terminal,
     setVerifyCommand,
     runVerify,
     runCommand,
@@ -760,6 +761,11 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     collapseSourceRef.current = "user";
     setAgentsCollapsed(true);
   }, []);
+
+  // A second workspace pane (Git, Terminal, Browser, …) takes the rail's
+  // width. Not flagged as a "user" collapse: focus stays where it was, and
+  // the expand button is still one click away.
+  const collapseAgentsForPanes = useCallback(() => setAgentsCollapsed(true), []);
 
   useEffect(() => {
     if (collapseSourceRef.current !== "user") return;
@@ -1333,6 +1339,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         changesNonce={changesNonce}
         onCloseChanges={closeChanges}
         onViewChanges={openChanges}
+        terminalApi={terminal}
+        onPanesNeedRoom={collapseAgentsForPanes}
         runStats={runStats}
         restoreCheckpoint={restoreCheckpoint}
         onFetchDiff={fetchDiff}

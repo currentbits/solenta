@@ -24,6 +24,7 @@ import type {
   DistilledWorkflow,
   RunStatInfo,
   DevServerState,
+  TerminalState,
   DiffResult,
   CreateIssueResult,
   FetchIssueResult,
@@ -192,6 +193,20 @@ export interface FakeOptions {
   testWebhook?: WebhookTestResult;
   /** Override fs.browse result (default: demo home directories). */
   browse?: (input: unknown) => FsBrowseResult;
+}
+
+/** Idle terminal session for the harness; no shell exists under jsdom. */
+function fakeTerminal(): TerminalState {
+  return {
+    running: true,
+    cwd: "/tmp/worktree",
+    shell: "/bin/zsh",
+    cursor: 0,
+    text: "",
+    pending: "",
+    reset: true,
+    startedAt: 0,
+  };
 }
 
 export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
@@ -1945,6 +1960,12 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         rec("devserver.stop", [input], { running: false } as DevServerState),
       status: (input: unknown) =>
         rec("devserver.status", [input], { running: false } as DevServerState),
+    },
+    terminal: {
+      open: (input: unknown) => rec("terminal.open", [input], fakeTerminal()),
+      write: (input: unknown) => rec("terminal.write", [input], fakeTerminal()),
+      read: (input: unknown) => rec("terminal.read", [input], fakeTerminal()),
+      close: (input: unknown) => rec("terminal.close", [input], fakeTerminal()),
     },
     files: {
       list: (input: unknown) => {

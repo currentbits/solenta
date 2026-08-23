@@ -16,6 +16,7 @@ import type {
   ConflictContext,
   ConflictForecast,
   DevServerState,
+  TerminalState,
   DiffResult,
   ReviewContext,
   ReviewSymbol,
@@ -495,6 +496,21 @@ export interface UseCoderResult {
   stopDevServer: (threadId: string) => Promise<DevServerState>;
   /** Live status for the thread's spawned dev server. */
   devServerStatus: (threadId: string) => Promise<DevServerState>;
+  /**
+   * Terminal pane shell session (#147). Passed through as the namespace:
+   * the pane owns the open/poll/close lifecycle, so unwrapping four
+   * callbacks here would only be four more props to thread through App.
+   */
+  terminal: {
+    open: (threadId: string) => Promise<TerminalState>;
+    write: (
+      threadId: string,
+      data: string,
+      since: number,
+    ) => Promise<TerminalState>;
+    read: (threadId: string, since: number) => Promise<TerminalState>;
+    close: (threadId: string) => Promise<TerminalState>;
+  };
   /** Arm or clear the thread's verification command (issue #296). */
   setVerifyCommand: (threadId: string, command: string | null) => Promise<void>;
   /** Run the thread's verification command now. Rejects on an active run. */
@@ -2609,6 +2625,18 @@ export function useCoder(): UseCoderResult {
     [api],
   );
 
+  const terminal = useMemo(
+    () => ({
+      open: (threadId: string) => api.terminal.open({ threadId }),
+      write: (threadId: string, data: string, since: number) =>
+        api.terminal.write({ threadId, data, since }),
+      read: (threadId: string, since: number) =>
+        api.terminal.read({ threadId, since }),
+      close: (threadId: string) => api.terminal.close({ threadId }),
+    }),
+    [api],
+  );
+
   const setVerifyCommand = useCallback(
     async (threadId: string, command: string | null) => {
       const thread = await api.threads.setVerifyCommand({ threadId, command });
@@ -2908,6 +2936,7 @@ export function useCoder(): UseCoderResult {
     startDevServer,
     stopDevServer,
     devServerStatus,
+    terminal,
     setVerifyCommand,
     runVerify,
     runCommand,

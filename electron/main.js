@@ -32,6 +32,7 @@ const {
 const { createOrchServer } = require("./orchServer.js");
 const { createPrStateRefresher, createRetentionSweeper } = require("./worktrees.js");
 const { killAll: killAllDevServers } = require("./devservers.js");
+const { killAll: killAllTerminals } = require("./terminal.js");
 const { startScheduler } = require("./automations.js");
 const { startAutoDispatch } = require("./autodispatch.js");
 const { startPostMergeScheduler } = require("./postmerge.js");
@@ -648,6 +649,11 @@ installShutdown({
     }
     try {
       killAllDevServers();
+    } catch {
+      // ignore
+    }
+    try {
+      killAllTerminals();
     } catch {
       // ignore
     }
