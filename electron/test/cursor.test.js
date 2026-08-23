@@ -296,6 +296,7 @@ describe("cursor runner integration", () => {
       core,
       pushFn: (ch, payload) => pushes.push({ ch, payload }),
       tickMs: 50,
+      userDataPath: tmpDir,
     });
   });
 
@@ -357,6 +358,56 @@ describe("cursor runner integration", () => {
     assert.ok(argv.includes("--force"));
     assert.equal(argv[argv.length - 1], "do the thing");
     assert.ok(!argv.includes("--worktree"));
+  });
+
+  it("injects --plugin-dir for the pin-task-parent plugin and keeps prompt last", async () => {
+    const thread = store.getThreads()[0];
+    await runner.startRun({
+      threadId: thread.id,
+      prompt: "do the thing",
+    });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    const argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
+    const pIdx = argv.indexOf("--plugin-dir");
+    assert.ok(pIdx >= 0, `expected --plugin-dir: ${JSON.stringify(argv)}`);
+    const pluginDir = path.resolve(tmpDir, "cursor-pin-parent");
+    assert.equal(argv[pIdx + 1], pluginDir);
+    assert.ok(pIdx < argv.length - 1, "prompt must stay last");
+    assert.equal(argv[argv.length - 1], "do the thing");
+    assert.ok(
+      fs.existsSync(path.join(pluginDir, ".cursor-plugin", "plugin.json")),
+      "plugin must be materialized under userDataPath",
+    );
+    assert.ok(
+      fs.existsSync(path.join(pluginDir, "scripts", "pin-task-parent.js")),
+    );
+  });
+
+  it("falls back to tmpdir for --plugin-dir when userDataPath is unset", async () => {
+    runner.stopAll();
+    const core = await loadCore();
+    runner = createRunner({
+      store,
+      core,
+      pushFn: (ch, payload) => pushes.push({ ch, payload }),
+      tickMs: 50,
+    });
+    const thread = store.getThreads()[0];
+    await runner.startRun({
+      threadId: thread.id,
+      prompt: "do the thing",
+    });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    const argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
+    const pIdx = argv.indexOf("--plugin-dir");
+    assert.ok(pIdx >= 0, `expected --plugin-dir: ${JSON.stringify(argv)}`);
+    assert.equal(
+      argv[pIdx + 1],
+      path.resolve(os.tmpdir(), "solenta-cursor-pin-parent"),
+    );
+    assert.equal(argv[argv.length - 1], "do the thing");
   });
 
   it("second turn with sessionId emits --resume cursor-sess-1", async () => {

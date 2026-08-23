@@ -29,6 +29,7 @@ const WIN32_FILES = [
   "electron/test/budget-spend.test.js",
   "electron/test/codex.test.js",
   "electron/test/cursor-parse.test.js",
+  "electron/test/cursor-pin-task-parent.test.js",
   "electron/test/cursor.test.js",
   "electron/test/context-usage.test.js",
   "electron/test/fork-handoff.test.js",

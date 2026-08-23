@@ -19,6 +19,10 @@ const { runKimi, materializeKimiHome } = kimiParse;
 const cursorParse = require("./cursor.js");
 const { runCursor } = cursorParse;
 const {
+  materializeCursorPinPlugin,
+  cursorPinPluginDir,
+} = require("./cursorPinTaskParent.js");
+const {
   getProvider,
   resolveBin,
   isBinAvailable,
@@ -4767,6 +4771,19 @@ function createRunner(opts) {
       reasoningEffort: thread.reasoningEffort || null,
       webSearch: thread.webSearch === true,
     });
+    // #686: pin Task/Agent workers to the parent model. Prompt stays last.
+    // Skip remote/WSL: the plugin lives on this host, not the wrapped cwd.
+    if (!crossesBoundary(project) && args.length > 0) {
+      try {
+        const pluginDir = materializeCursorPinPlugin(
+          cursorPinPluginDir(userDataPath),
+        );
+        const promptArg = args.pop();
+        args.push("--plugin-dir", pluginDir, promptArg);
+      } catch {
+        // Fail-open: a plugin write error must not block the Cursor turn.
+      }
+    }
     const spawn = resolveSpawn(project, binary, args, localCwd);
 
     const entry = {
