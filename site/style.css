@@ -314,6 +314,28 @@ html.js .reveal.in .em { background-size: 100% 44%; }
   text-decoration: none;
 }
 .btn-lg { padding: 15px 30px; font-size: 15.5px; }
+.btn-block { display: flex; justify-content: center; width: 100%; }
+
+/* JS hides the platform you are already on from the alternates line. */
+[hidden] { display: none !important; }
+
+/* Alternates under the hero CTA: the other two platforms and the steps. */
+.hero-alt {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin: 20px 0 0;
+  font-size: 14px;
+  color: var(--muted);
+}
+.hero-alt a {
+  color: var(--muted);
+  text-decoration: underline;
+  text-decoration-color: var(--border-strong);
+  text-underline-offset: 3px;
+}
+.hero-alt a:hover { color: var(--ink); text-decoration-color: var(--ink); }
 
 /* ---------------- hero screenshot ---------------- */
 .hero-shot { margin-top: clamp(52px, 7vw, 88px); }
@@ -796,26 +818,85 @@ section#trust .section-head h2 { font-size: clamp(34px, 4.4vw, 58px); }
   gap: 16px;
 }
 .install-card {
+  display: flex;
+  flex-direction: column;
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
   padding: 24px;
-  min-width: 0; /* grid item: let the pre scroll instead of forcing the track wide */
+  min-width: 0; /* grid item: let long commands wrap instead of widening the track */
   background: var(--paper-raised);
 }
-.install-card h3 { margin: 0 0 4px; font-size: 15.5px; font-weight: 650; }
-.install-card .os-note { color: var(--dim); font-size: 13px; margin: 0 0 16px; }
-/* Terminal artifact: dark, like everything the product actually touches. */
-.install-card pre {
-  margin: 0;
-  background: var(--panel);
-  border-radius: var(--radius-ctl);
-  padding: 13px 15px;
-  font-size: 12.5px;
-  line-height: 1.75;
-  overflow-x: auto;
-  color: var(--panel-muted);
+/* The platform JS detected: raised, with the primary (yellow) button. */
+.install-card.is-you {
+  border-color: var(--border-strong);
+  box-shadow: 0 10px 30px rgba(25, 25, 24, 0.08);
 }
-.install-card pre b { color: var(--panel-text); font-weight: 600; }
+.install-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 0 0 16px;
+}
+.install-head h3 { margin: 0; font-size: 15.5px; font-weight: 650; }
+.install-head .os-note { color: var(--dim); font-size: 13px; margin: 0; }
+.you-chip { display: none; }
+.install-card.is-you .you-chip {
+  display: inline-block;
+  margin-left: auto;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.install-steps {
+  flex: 1; /* pushes every card's caveat down to a shared baseline */
+  margin: 18px 0 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 13.5px;
+  line-height: 1.65;
+}
+.install-steps li + li { margin-top: 9px; }
+.install-steps b { color: var(--ink); font-weight: 600; }
+.install-steps code {
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: rgba(25, 25, 24, 0.06);
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+/* The caveats people otherwise discover after downloading. */
+.install-warn {
+  margin: 18px 0 0;
+  padding-left: 12px;
+  border-left: 3px solid var(--accent);
+  color: var(--dim);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.release-line {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  color: var(--dim);
+}
+.section-head p.release-line { margin: 14px 0 0; font-size: 12.5px; }
+
+.install-all { margin: 22px 0 0; font-size: 14px; }
+.install-all a {
+  color: var(--muted);
+  text-decoration: underline;
+  text-decoration-color: var(--border-strong);
+  text-underline-offset: 3px;
+}
+.install-all a:hover { color: var(--ink); }
 
 .final-cta {
   margin-top: clamp(44px, 5vw, 64px);

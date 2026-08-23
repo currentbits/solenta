@@ -27,8 +27,12 @@
   <meta name="theme-color" content="#f5f5f2" />
   <link rel="icon" href="assets/icon.svg" type="image/svg+xml" />
   <script>document.documentElement.classList.add("js");</script>
-  <link rel="stylesheet" href="style.css?v=8" />
+  <link rel="stylesheet" href="style.css?v=9" />
   <script src="https://unpkg.com/@phosphor-icons/web@2.1.1" defer></script>
+  <!-- Plausible: no cookies, no personal data, so no consent banner. The
+       tagged-events build reads plausible-event-* classes off links, which
+       is why the download and GitHub links carry them. -->
+  <script defer data-domain="solenta.app" src="https://plausible.io/js/script.tagged-events.js"></script>
 </head>
 <body>
 
@@ -41,10 +45,10 @@
       Solenta
     </a>
     <div class="nav-links">
-      <a href="docs.html">Docs</a>
-      <a href="changelog.html">Changelog</a>
-      <a href="https://github.com/currentbits/solenta">GitHub</a>
-      <a class="nav-cta" href="https://github.com/currentbits/solenta/releases/latest">
+      <a class="plausible-event-name=Docs" href="docs.html">Docs</a>
+      <a class="plausible-event-name=Changelog" href="changelog.html">Changelog</a>
+      <a class="plausible-event-name=GitHub+Repo" href="https://github.com/currentbits/solenta">GitHub</a>
+      <a class="nav-cta" href="#install">
         Download
       </a>
     </div>
@@ -62,14 +66,26 @@
       One shared memory across every agent, and a planboard that is your GitHub issues.
     </p>
     <div class="hero-ctas reveal">
-      <a class="btn btn-primary" href="https://github.com/currentbits/solenta/releases/latest">
+      <a class="btn btn-primary plausible-event-name=Download plausible-event-platform=unknown"
+         id="hero-dl" data-dl="auto"
+         href="https://github.com/currentbits/solenta/releases/latest">
         Download Solenta
       </a>
-      <a class="btn btn-ghost" href="https://github.com/currentbits/solenta">
+      <a class="btn btn-ghost plausible-event-name=GitHub+Star" href="https://github.com/currentbits/solenta">
         <img src="https://cdn.simpleicons.org/github/191918" width="16" height="16" alt="" />
         Star on GitHub
       </a>
     </div>
+    <p class="hero-alt reveal">
+      <span id="hero-alt-lead">Downloads for</span>
+      <a class="plausible-event-name=Download plausible-event-platform=mac"
+         data-dl="mac" href="https://github.com/currentbits/solenta/releases/latest">macOS</a>
+      <a class="plausible-event-name=Download plausible-event-platform=win"
+         data-dl="win" href="https://github.com/currentbits/solenta/releases/latest">Windows</a>
+      <a class="plausible-event-name=Download plausible-event-platform=linux"
+         data-dl="linux" href="https://github.com/currentbits/solenta/releases/latest">Linux</a>
+      <a href="#install">install steps</a>
+    </p>
     <div class="hero-shot">
       <div class="shot-wrap">
         <div class="shot">
@@ -417,36 +433,71 @@
   <div class="wrap">
     <div class="section-head reveal">
       <h2>Install in a minute.</h2>
-      <p>Grab an archive from the latest release, then install whichever agent CLIs you want to drive. Solenta finds them on your PATH.</p>
+      <p>Grab the archive for your platform, then install whichever agent CLIs you want to drive. Solenta finds them on your PATH.</p>
+      <p class="release-line" data-tag hidden></p>
     </div>
     <div class="install-grid">
-      <div class="install-card reveal">
-        <h3>macOS</h3>
-        <p class="os-note">Apple Silicon</p>
-        <pre><b>Solenta-v0.11.0-macos-arm64.zip</b>
-unzip, move to /Applications
-first launch: right-click &gt; Open</pre>
+      <div class="install-card reveal" data-os="mac">
+        <div class="install-head">
+          <h3>macOS</h3>
+          <span class="os-note">Apple Silicon</span>
+          <span class="you-chip">Detected</span>
+        </div>
+        <a class="btn btn-ghost btn-block plausible-event-name=Download plausible-event-platform=mac"
+           data-dl="mac" href="https://github.com/currentbits/solenta/releases/latest">
+          Download for macOS
+        </a>
+        <ol class="install-steps">
+          <li>Unzip, then move <b>Solenta.app</b> to /Applications.</li>
+          <li>First launch: right-click the app and choose Open. The build is not signed or notarized yet, so a plain double-click gets refused.</li>
+          <li>Still blocked? <code>xattr -dr com.apple.quarantine /Applications/Solenta.app</code></li>
+        </ol>
+        <p class="install-warn">Apple Silicon only. There is no Intel (x64) build yet.</p>
       </div>
-      <div class="install-card reveal">
-        <h3>Windows</h3>
-        <p class="os-note">x64</p>
-        <pre><b>Solenta-v0.11.0-win32-x64.zip</b>
-unzip anywhere
-run solenta.exe (SmartScreen asks once)</pre>
+      <div class="install-card reveal" data-os="win">
+        <div class="install-head">
+          <h3>Windows</h3>
+          <span class="os-note">x64</span>
+          <span class="you-chip">Detected</span>
+        </div>
+        <a class="btn btn-ghost btn-block plausible-event-name=Download plausible-event-platform=win"
+           data-dl="win" href="https://github.com/currentbits/solenta/releases/latest">
+          Download for Windows
+        </a>
+        <ol class="install-steps">
+          <li>Unzip somewhere permanent, for example <code>%LOCALAPPDATA%\Solenta</code>.</li>
+          <li>Run <b>solenta.exe</b>. SmartScreen warns once: More info, then Run anyway.</li>
+          <li>Pin it to the taskbar yourself if you want it there.</li>
+        </ol>
+        <p class="install-warn">A portable zip, not an installer. No setup wizard, no Start menu entry, and moving the folder later is on you.</p>
       </div>
-      <div class="install-card reveal">
-        <h3>Linux</h3>
-        <p class="os-note">x64</p>
-        <pre><b>Solenta-v0.11.0-linux-x64.tar.gz</b>
-tar xzf Solenta-*.tar.gz
-./solenta/solenta</pre>
+      <div class="install-card reveal" data-os="linux">
+        <div class="install-head">
+          <h3>Linux</h3>
+          <span class="os-note">x64</span>
+          <span class="you-chip">Detected</span>
+        </div>
+        <a class="btn btn-ghost btn-block plausible-event-name=Download plausible-event-platform=linux"
+           data-dl="linux" href="https://github.com/currentbits/solenta/releases/latest">
+          Download for Linux
+        </a>
+        <ol class="install-steps">
+          <li><code>tar xzf Solenta-*.tar.gz</code></li>
+          <li><code>./solenta/solenta</code></li>
+          <li>Add a .desktop file yourself if you want it in your launcher.</li>
+        </ol>
+        <p class="install-warn">A tarball for glibc x64 desktops. No .deb, no .rpm, no AppImage yet.</p>
       </div>
     </div>
+    <p class="install-all reveal">
+      <a class="plausible-event-name=All+downloads" href="https://github.com/currentbits/solenta/releases">All releases, including older versions</a>
+    </p>
     <div class="final-cta reveal">
-      <a class="btn btn-primary btn-lg" href="https://github.com/currentbits/solenta/releases/latest">
-        Download Solenta
+      <a class="btn btn-ghost btn-lg plausible-event-name=Docs" href="docs.html">Read the docs</a>
+      <a class="btn btn-ghost btn-lg plausible-event-name=GitHub+Star" href="https://github.com/currentbits/solenta">
+        <img src="https://cdn.simpleicons.org/github/191918" width="16" height="16" alt="" />
+        Star on GitHub
       </a>
-      <a class="btn btn-ghost btn-lg" href="docs.html">Read the docs</a>
     </div>
   </div>
 </section>
@@ -461,14 +512,14 @@ tar xzf Solenta-*.tar.gz
     <span class="spacer"></span>
     <a href="docs.html">Docs</a>
     <a href="changelog.html">Changelog</a>
-    <a href="https://github.com/currentbits/solenta">GitHub</a>
-    <a href="https://github.com/currentbits/solenta/releases">Releases</a>
+    <a class="plausible-event-name=GitHub+Repo" href="https://github.com/currentbits/solenta">GitHub</a>
+    <a class="plausible-event-name=All+downloads" href="https://github.com/currentbits/solenta/releases">Releases</a>
     <a href="https://x.com/currentbitsNET">@currentbitsNET</a>
     <a href="https://verifieddr.com/website/solenta-app" target="_blank"><img src="https://verifieddr.com/badge/solenta-app.svg?style=minimal" alt="Verified DR - Verified Domain Rating for solenta.app" width="200" height="24" /></a>
     <a href="https://nicklaunches.com/products/solenta/?utm_source=solenta.app&utm_medium=badge&utm_campaign=featured" target="_blank" rel="noopener"><img src="https://nicklaunches.com/badges/featured.png" alt="Solenta on Nick Launches" width="244" height="56" /></a>
   </div>
 </footer>
 
-<script src="main.js?v=4"></script>
+<script src="main.js?v=5"></script>
 </body>
 </html>
