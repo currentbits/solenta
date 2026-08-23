@@ -15,6 +15,7 @@ import {
 } from "./PaneWorkspace";
 import { TerminalPane, type TerminalApi } from "./TerminalPane";
 import { BrowserPane } from "./BrowserPane";
+import { useWorktreeChrome } from "./WorktreeControl";
 import {
   defaultPaneLayout,
   findLeaf,
@@ -34,6 +35,7 @@ import type {
   LocalServerInfo,
   ChatMessage,
   CoderApi,
+  ConflictContext,
   DiffResult,
   FileChange,
   GitSyncInfo,
@@ -584,6 +586,16 @@ interface ThreadViewProps {
   gitSyncInfo?: (threadId: string) => Promise<GitSyncInfo>;
   /** Fetch remotes before the sync pill re-reads state. */
   gitFetch?: (threadId: string) => Promise<void>;
+  /** Isolated worktree setup (header control, #680). */
+  onSetupWorktree?: () => Promise<unknown>;
+  onMergeWorktree?: (opts?: {
+    ciWorkflowApproved?: boolean;
+  }) => Promise<unknown>;
+  onRemoveWorktree?: (force?: boolean) => Promise<unknown>;
+  /** Unmerged worktree files plus capped conflict-marker snippets. */
+  conflictContext?: (threadId: string) => Promise<ConflictContext>;
+  /** Open the thread worktree in the configured editor. */
+  onOpenWorktree?: () => void | Promise<void>;
   /** Run the project's setup command or a named quick action (issue #153). */
   onRunCommand?: (
     threadId: string,
@@ -3891,6 +3903,11 @@ export const ThreadView = memo(function ThreadView({
   onPrMerge,
   gitSyncInfo,
   gitFetch,
+  onSetupWorktree,
+  onMergeWorktree,
+  onRemoveWorktree,
+  conflictContext,
+  onOpenWorktree,
   onRunCommand,
   runError = null,
   onDismissRunError,
@@ -4188,6 +4205,24 @@ export const ThreadView = memo(function ThreadView({
   }, [detail, providers]);
   const hasTimeline = timeline.length > 0;
   const hasWorktree = Boolean(detail?.thread.worktreePath);
+  const worktree = useWorktreeChrome({
+    thread:
+      onSetupWorktree && onMergeWorktree && onRemoveWorktree
+        ? (detail?.thread ?? null)
+        : null,
+    project,
+    isWorking,
+    onSetupWorktree: onSetupWorktree ?? (async () => {}),
+    onMergeWorktree: onMergeWorktree ?? (async () => {}),
+    onRemoveWorktree: onRemoveWorktree ?? (async () => {}),
+    onStartRun,
+    conflictContext,
+    onOpenWorktree: onOpenWorktree
+      ? () => {
+          void onOpenWorktree();
+        }
+      : null,
+  });
 
   /** Last user text + event card id that carries the Retry turn control. */
   const retryUser = useMemo(
@@ -4959,8 +4994,9 @@ export const ThreadView = memo(function ThreadView({
           {DROP_OVERLAY_MESSAGE}
         </div>
       ) : null}
-      <header className={styles.header}>
-        <div className={styles.breadcrumb}>
+      <header className={styles.header} data-thread-header="">
+        <div className={styles.headerLead}>
+          <div className={styles.breadcrumb}>
           {onCreateThread ? (
             <button
               type="button"
@@ -4975,7 +5011,9 @@ export const ThreadView = memo(function ThreadView({
           ) : (
             <span className={styles.project}>{projectSlug}</span>
           )}
-          <span className={styles.sep}>/</span>
+          <span className={styles.sep} aria-hidden>
+            /
+          </span>
           {renaming ? (
             <input
               className={`${styles.threadTitle} ${styles.titleInput}`}
@@ -5000,13 +5038,11 @@ export const ThreadView = memo(function ThreadView({
           ) : (
             <span className={styles.threadTitle}>{thread.title}</span>
           )}
+          </div>
         </div>
-        <ViewsMenu
-          layout={layout}
-          onOpen={handleOpenPane}
-          onReset={handleResetLayout}
-        />
-        <div className={styles.actions}>
+        <div className={styles.headerTrail}>
+          {worktree.toolbar}
+          <div className={styles.actions}>
           {thread.sandbox && <SandboxBadge sandbox={thread.sandbox} />}
           {ring && (
             <ContextRingBadge
@@ -5338,8 +5374,16 @@ export const ThreadView = memo(function ThreadView({
               </div>
             )}
           </div>
+          </div>
+          <div className={styles.headerDivider} aria-hidden />
+          <ViewsMenu
+            layout={layout}
+            onOpen={handleOpenPane}
+            onReset={handleResetLayout}
+          />
         </div>
       </header>
+      {worktree.banner}
 
       {notesOpen && onSetNotes && (
         <div className={styles.notesPanel} data-thread-notes-panel="">

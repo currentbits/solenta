@@ -63,9 +63,6 @@ function renderGit(project: ProjectInfo): string {
     <GitTab
       thread={thread({ projectId: project.id })}
       project={project}
-      onSetupWorktree={async () => {}}
-      onMergeWorktree={async () => {}}
-      onRemoveWorktree={async () => {}}
       onViewChanges={() => {}}
       listCheckpoints={async () => []}
       restoreCheckpoint={async () => {}}
@@ -82,7 +79,10 @@ describe("Environment tab remote hint", () => {
       "hint card hook missing",
     );
     assert.ok(html.includes("Not available on remote projects"));
-    assert.ok(!html.includes(">Worktree<"), "WorktreeCard must be hidden");
+    assert.ok(
+      !html.includes("data-worktree-control"),
+      "worktree header control is not on the Environment tab",
+    );
     assert.ok(!html.includes("Local Servers"), "LocalServersCard must be hidden");
     assert.ok(!html.includes("Checkpoints"), "CheckpointsCard must be hidden");
     assert.ok(html.includes("Changes"), "ChangesCard must stay");
@@ -92,7 +92,6 @@ describe("Environment tab remote hint", () => {
   it("keeps the full Environment cards on a local project", () => {
     const html = renderGit(localProject);
     assert.ok(!html.includes("data-remote-unavailable"));
-    assert.ok(html.includes("Worktree"));
     assert.ok(html.includes("Local Servers"));
     assert.ok(html.includes("Changes"));
   });

@@ -35,12 +35,53 @@
 .header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
-  padding: 0 20px;
-  border-bottom: 1px solid var(--border);
+  padding: 0 10px 0 16px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg-elevated);
   flex-shrink: 0;
-  height: 56px;
+  height: 44px;
+}
+
+.headerLead {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  flex: 1;
+}
+
+.headerTrail {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  min-width: 0;
+}
+
+.headerDivider {
+  width: 1px;
+  height: 16px;
+  background: var(--border);
+  flex-shrink: 0;
+  margin: 0 2px;
+}
+
+.header .iconBtn,
+.header .menuBtn {
+  width: 28px;
+  height: 28px;
+  border-color: transparent;
+  background: transparent;
+}
+
+.header .iconBtn:hover,
+.header .menuBtn:hover:not(:disabled) {
+  background: var(--overlay-hover);
+}
+
+.header .btn {
+  height: 28px;
+  padding: 0 10px;
 }
 
 .paneTabs {
@@ -321,7 +362,7 @@
 
 .breadcrumb {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
   min-width: 0;
   overflow: hidden;
@@ -330,23 +371,32 @@
 .project {
   color: var(--text-dim);
   font-family: var(--mono);
-  font-size: 11.5px;
-  letter-spacing: 0.02em;
+  font-size: 11px;
+  letter-spacing: 0.01em;
   white-space: nowrap;
 }
 
-button.project {
+button.project,
+span.project {
   appearance: none;
-  background: none;
-  border: none;
-  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 7px;
   margin: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: var(--overlay-soft);
+  color: var(--text-dim);
+}
+
+button.project {
   cursor: pointer;
-  border-radius: 2px;
 }
 
 button.project:hover {
   color: var(--text);
+  background: var(--overlay-hover);
 }
 
 button.project:focus-visible {
@@ -362,9 +412,9 @@ button.project:focus-visible {
 }
 
 .threadTitle {
-  font-weight: 650;
-  font-size: 14.5px;
-  letter-spacing: -0.01em;
+  font-weight: 600;
+  font-size: 13.5px;
+  letter-spacing: -0.015em;
   color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;

@@ -147,6 +147,9 @@ function view(props: {
     threadId: string,
     actionId?: string,
   ) => Promise<unknown>;
+  onSetupWorktree?: () => Promise<unknown>;
+  onMergeWorktree?: () => Promise<unknown>;
+  onRemoveWorktree?: (force?: boolean) => Promise<unknown>;
 }) {
   return (
     <ThreadView
@@ -185,6 +188,9 @@ function view(props: {
       onPush={props.onPush ?? (async () => ({ remote: "origin", branch: "main" }))}
       gitSyncInfo={props.gitSyncInfo}
       gitFetch={props.gitFetch}
+      onSetupWorktree={props.onSetupWorktree}
+      onMergeWorktree={props.onMergeWorktree}
+      onRemoveWorktree={props.onRemoveWorktree}
     />
   );
 }
@@ -413,6 +419,53 @@ describe("header no longer hosts Environment actions", () => {
     assert.equal(header!.querySelector("[data-dev-menu]"), null);
     assert.equal(header!.querySelector("[data-thread-fork]"), null);
     assert.equal(header!.querySelector("[data-thread-handoff]"), null);
+    m.unmount();
+  });
+});
+
+describe("worktree in the thread topbar (#680)", () => {
+  it("is hidden until the worktree handlers are wired", async () => {
+    const m = await mount(view({}));
+    await m.flush();
+    assert.equal(m.query("[data-worktree-control]"), null);
+    m.unmount();
+  });
+
+  it("shows Merge worktree in the header when the thread has a worktree", async () => {
+    const merges: number[] = [];
+    const m = await mount(
+      view({
+        onSetupWorktree: async () => {},
+        onMergeWorktree: async () => {
+          merges.push(1);
+        },
+        onRemoveWorktree: async () => {},
+      }),
+    );
+    await m.flush();
+    const header = m.query("[data-thread-header]");
+    assert.ok(header, "thread header present");
+    const merge = header!.querySelector("[data-worktree-merge]");
+    assert.ok(merge, "Merge worktree lives in the topbar");
+    assert.equal((merge!.textContent || "").trim(), "Merge worktree");
+    await m.click(merge);
+    assert.equal(merges.length, 1);
+    m.unmount();
+  });
+
+  it("shows Set up worktree in the header when the thread has none", async () => {
+    const m = await mount(
+      view({
+        detail: detail({ thread: thread({ worktreePath: null }) }),
+        onSetupWorktree: async () => {},
+        onMergeWorktree: async () => {},
+        onRemoveWorktree: async () => {},
+      }),
+    );
+    await m.flush();
+    const setup = m.query("[data-worktree-setup]");
+    assert.ok(setup);
+    assert.ok(m.query("[data-thread-header]")!.contains(setup));
     m.unmount();
   });
 });

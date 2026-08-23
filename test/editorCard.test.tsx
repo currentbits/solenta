@@ -103,9 +103,6 @@ describe("Git tab places the Editor card after Local Servers", () => {
       <GitTab
         thread={thread()}
         project={project}
-        onSetupWorktree={async () => {}}
-        onMergeWorktree={async () => {}}
-        onRemoveWorktree={async () => {}}
         onViewChanges={() => {}}
         listCheckpoints={async () => []}
         restoreCheckpoint={async () => {}}

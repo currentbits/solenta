@@ -149,20 +149,28 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  height: 30px;
-  padding: 0 10px;
-  border: 1px solid var(--border);
+  height: 28px;
+  padding: 0 9px;
+  border: none;
   border-radius: var(--radius-sm);
-  background: var(--bg-elevated);
+  background: transparent;
   color: var(--text-muted);
   font-size: 12px;
   font-weight: 550;
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease,
+    transform 0.16s cubic-bezier(0.23, 1, 0.32, 1);
 }
 
 .viewsBtn:hover,
 .viewsBtn[aria-expanded="true"] {
   color: var(--text);
-  background: var(--card-hover);
+  background: var(--overlay-hover);
+}
+
+.viewsBtn:active {
+  transform: scale(0.97);
 }
 
 .viewsBtn:focus-visible {
@@ -173,7 +181,8 @@
 .viewsMenu {
   position: absolute;
   top: calc(100% + 6px);
-  left: 0;
+  right: 0;
+  left: auto;
   z-index: 20;
   min-width: 168px;
   padding: 4px;
@@ -220,5 +229,9 @@
   .viewsBtn,
   .close {
     transition: none;
+  }
+
+  .viewsBtn:active {
+    transform: none;
   }
 }

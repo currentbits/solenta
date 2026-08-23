@@ -11,7 +11,6 @@ import type {
   AgentStatus,
   AppSettings,
   CheckpointInfo,
-  ConflictContext,
   GitSyncInfo,
   GitRepoInfo,
   GitPullResult,
@@ -43,11 +42,6 @@ import {
   providerDisplayName,
   shortSessionId,
 } from "../format";
-import {
-  buildConflictResolvePrompt,
-  parseConflictFiles,
-  type ConflictResolveInput,
-} from "../conflictResolve";
 import { contextRing, threadContextWindow } from "../contextRing";
 import { buildWaitStates, waitLabel, type WaitState } from "../waiting";
 import { MemoryTab } from "./MemoryTab";
@@ -121,15 +115,6 @@ interface AgentsPanelProps {
   ) => Promise<{ rootThreadId: string; tasks: CrewTaskView[] }>;
   /** Select a thread (team row click). */
   onSelectThread?: (id: string) => void;
-  onSetupWorktree: () => Promise<unknown>;
-  onMergeWorktree: (opts?: {
-    ciWorkflowApproved?: boolean;
-  }) => Promise<unknown>;
-  /** Start a turn (issue #163 conflict resolve). */
-  onStartRun?: (prompt: string, threadId?: string) => Promise<void>;
-  /** Unmerged worktree files plus capped conflict-marker snippets. */
-  conflictContext?: (threadId: string) => Promise<ConflictContext>;
-  onRemoveWorktree: (force?: boolean) => Promise<unknown>;
   /** Opens the Git pane (fresh load). */
   onViewChanges: () => void;
   /** Worktree checkpoints (newest-first). */
@@ -212,7 +197,6 @@ interface AgentsPanelProps {
 
 type PhaseChipStatus = "done" | "active" | "pending" | "failed";
 type DotStatus = "active" | "done" | "pending" | "error";
-type GitAction = "setup" | "merge" | "remove" | null;
 
 function phaseStatus(phase: PhaseView): PhaseChipStatus {
   if (phase.agents.length === 0) return "pending";
@@ -338,281 +322,6 @@ function SessionCard({
           <p className={styles.usageEmpty}>No usage yet</p>
         )}
       </div>
-    </section>
-  );
-}
-
-function WorktreeCard({
-  thread,
-  busy,
-  gitAction,
-  dirtyMessage,
-  conflictMessage,
-  ciWorkflowMessage,
-  cardError,
-  onSetup,
-  onMerge,
-  onSignOffMerge,
-  onCancelCi,
-  onDelete,
-  onForceDelete,
-  onCancelDirty,
-  onDismissConflict,
-  onOpenWorktree,
-  onResolve,
-  resolving,
-  resolveLabel,
-  onDismissError,
-}: {
-  thread: ThreadInfo | null;
-  busy: boolean;
-  gitAction: GitAction;
-  dirtyMessage: string | null;
-  conflictMessage: string | null;
-  ciWorkflowMessage: string | null;
-  cardError: string | null;
-  onSetup: () => void;
-  onMerge: () => void;
-  onSignOffMerge: () => void;
-  onCancelCi: () => void;
-  onDelete: () => void;
-  onForceDelete: () => void;
-  onCancelDirty: () => void;
-  onDismissConflict: () => void;
-  onOpenWorktree: (() => void) | null;
-  onResolve: (() => void) | null;
-  resolving: boolean;
-  resolveLabel: string;
-  onDismissError: () => void;
-}) {
-  const hasWorktree = Boolean(thread?.worktreePath);
-  const branch = thread?.branch ?? null;
-  const path = thread?.worktreePath ?? null;
-  const setupPending = gitAction === "setup";
-
-  return (
-    <section className={styles.gitCard}>
-      <div className={styles.gitCardLabel}>
-        <svg {...LABEL_ICON_PROPS} className={styles.labelIcon}>
-          <circle cx="4.5" cy="3.5" r="1.5" />
-          <circle cx="4.5" cy="12.5" r="1.5" />
-          <circle cx="11.5" cy="5.5" r="1.5" />
-          <path d="M4.5 5v6M11.5 7c0 2.2-2.8 2.3-4.6 3.4" />
-        </svg>
-        Worktree
-      </div>
-
-      {!thread ? (
-        <p className={styles.gitHint}>Select a thread to manage its worktree.</p>
-      ) : !hasWorktree ? (
-        <>
-          <p className={styles.gitHint}>
-            Create a git worktree so runs execute on an isolated branch.
-          </p>
-          <div className={styles.gitActions}>
-            <button
-              type="button"
-              className={`${styles.gitBtn} ${styles.gitBtnPrimary}`}
-              onClick={onSetup}
-              disabled={busy}
-            >
-              {setupPending ? (
-                <>
-                  <span className={styles.btnSpinner} aria-hidden />
-                  Setting up…
-                </>
-              ) : (
-                "Set up worktree"
-              )}
-            </button>
-          </div>
-        </>
-      ) : (
-        <>
-          {branch && (
-            <div className={styles.worktreeBranch} title={branch}>
-              {branch}
-            </div>
-          )}
-          {path && (
-            <div className={styles.worktreePath} title={path}>
-              {path}
-            </div>
-          )}
-          <div className={styles.gitActions}>
-            <button
-              type="button"
-              className={`${styles.gitBtn} ${styles.gitBtnPrimary}`}
-              onClick={onMerge}
-              disabled={busy}
-            >
-              {gitAction === "merge" ? (
-                <>
-                  <span className={styles.btnSpinner} aria-hidden />
-                  Merging…
-                </>
-              ) : (
-                "Merge to main"
-              )}
-            </button>
-            <button
-              type="button"
-              className={styles.gitBtn}
-              onClick={onDelete}
-              disabled={busy}
-            >
-              {gitAction === "remove" && !dirtyMessage ? (
-                <>
-                  <span className={styles.btnSpinner} aria-hidden />
-                  Deleting…
-                </>
-              ) : (
-                "Delete"
-              )}
-            </button>
-          </div>
-        </>
-      )}
-
-      {dirtyMessage && (
-        <div className={styles.dirtyBlock} role="alert">
-          <pre className={styles.dirtyMessage}>{dirtyMessage}</pre>
-          <div className={styles.gitActions}>
-            <button
-              type="button"
-              className={`${styles.gitBtn} ${styles.gitBtnDanger}`}
-              onClick={onForceDelete}
-              disabled={busy}
-            >
-              {gitAction === "remove" ? (
-                <>
-                  <span className={styles.btnSpinner} aria-hidden />
-                  Deleting…
-                </>
-              ) : (
-                "Delete anyway"
-              )}
-            </button>
-            <button
-              type="button"
-              className={styles.gitBtn}
-              onClick={onCancelDirty}
-              disabled={busy}
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
-
-      {ciWorkflowMessage && (
-        <div className={styles.dirtyBlock} role="alert" data-ci-signoff="">
-          <pre className={styles.dirtyMessage}>{ciWorkflowMessage}</pre>
-          <div className={styles.gitActions}>
-            <button
-              type="button"
-              className={`${styles.gitBtn} ${styles.gitBtnPrimary}`}
-              data-ci-signoff-approve=""
-              onClick={onSignOffMerge}
-              disabled={busy}
-            >
-              {gitAction === "merge" ? (
-                <>
-                  <span className={styles.btnSpinner} aria-hidden />
-                  Merging…
-                </>
-              ) : (
-                "Sign off & merge"
-              )}
-            </button>
-            <button
-              type="button"
-              className={styles.gitBtn}
-              data-ci-signoff-cancel=""
-              onClick={onCancelCi}
-              disabled={busy}
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
-
-      {conflictMessage && (
-        <div className={styles.dirtyBlock} role="alert">
-          <pre className={styles.dirtyMessage}>{conflictMessage}</pre>
-          <div className={styles.gitActions}>
-            {onResolve && (
-              <button
-                type="button"
-                className={`${styles.gitBtn} ${styles.gitBtnPrimary}`}
-                data-conflict-resolve=""
-                onClick={onResolve}
-                disabled={busy}
-              >
-                {resolving ? (
-                  <>
-                    <span className={styles.btnSpinner} aria-hidden />
-                    {resolveLabel}
-                  </>
-                ) : (
-                  "Let the agent resolve"
-                )}
-              </button>
-            )}
-            {onOpenWorktree && (
-              <button
-                type="button"
-                className={styles.gitBtn}
-                onClick={onOpenWorktree}
-              >
-                Open worktree
-              </button>
-            )}
-            <button
-              type="button"
-              className={
-                onResolve
-                  ? styles.gitBtn
-                  : `${styles.gitBtn} ${styles.gitBtnPrimary}`
-              }
-              onClick={onMerge}
-              disabled={busy}
-            >
-              {gitAction === "merge" ? (
-                <>
-                  <span className={styles.btnSpinner} aria-hidden />
-                  Merging…
-                </>
-              ) : (
-                "Merge again"
-              )}
-            </button>
-            <button
-              type="button"
-              className={styles.gitBtn}
-              onClick={onDismissConflict}
-            >
-              Dismiss
-            </button>
-          </div>
-        </div>
-      )}
-
-      {cardError && (
-        <div className={styles.cardError} role="alert">
-          <span className={styles.cardErrorText}>{cardError}</span>
-          <button
-            type="button"
-            className={styles.cardErrorDismiss}
-            onClick={onDismissError}
-            aria-label="Dismiss error"
-            title="Dismiss error"
-          >
-            ×
-          </button>
-        </div>
-      )}
     </section>
   );
 }
@@ -1817,9 +1526,6 @@ function CheckpointsCard({
 export function GitTab({
   thread,
   project,
-  onSetupWorktree,
-  onMergeWorktree,
-  onRemoveWorktree,
   onViewChanges,
   listCheckpoints,
   restoreCheckpoint,
@@ -1841,18 +1547,9 @@ export function GitTab({
   prsActive,
   providers = [],
   onFork,
-  onStartRun,
-  conflictContext,
 }: {
   thread: ThreadInfo | null;
   project: ProjectInfo | null;
-  onSetupWorktree: () => Promise<unknown>;
-  onMergeWorktree: (opts?: {
-    ciWorkflowApproved?: boolean;
-  }) => Promise<unknown>;
-  onStartRun?: (prompt: string, threadId?: string) => Promise<void>;
-  conflictContext?: (threadId: string) => Promise<ConflictContext>;
-  onRemoveWorktree: (force?: boolean) => Promise<unknown>;
   onViewChanges: () => void;
   listCheckpoints: (threadId: string) => Promise<CheckpointInfo[]>;
   restoreCheckpoint: (threadId: string, sha: string) => Promise<void>;
@@ -1881,13 +1578,6 @@ export function GitTab({
     opts?: { provider?: string; model?: string | null },
   ) => void | Promise<void | ThreadInfo | null>;
 }) {
-  const [gitAction, setGitAction] = useState<GitAction>(null);
-  const [dirtyMessage, setDirtyMessage] = useState<string | null>(null);
-  const [conflictMessage, setConflictMessage] = useState<string | null>(null);
-  const [ciWorkflowMessage, setCiWorkflowMessage] = useState<string | null>(
-    null,
-  );
-  const [cardError, setCardError] = useState<string | null>(null);
   const [checkpoints, setCheckpoints] = useState<CheckpointInfo[]>([]);
   const [checkpointsLoading, setCheckpointsLoading] = useState(false);
   const [checkpointError, setCheckpointError] = useState<string | null>(null);
@@ -1898,32 +1588,18 @@ export function GitTab({
   const [now, setNow] = useState(() => Date.now());
   const [sync, setSync] = useState<GitSyncInfo | null>(null);
   const [syncing, setSyncing] = useState(false);
-  const [resolving, setResolving] = useState(false);
-  const [pendingMergeRetry, setPendingMergeRetry] = useState(false);
-  const sawWorkingRef = useRef(false);
-  const onMergeRef = useRef(onMergeWorktree);
-  onMergeRef.current = onMergeWorktree;
 
   const isWorking = thread?.status === "working";
-  const busy = isWorking || gitAction != null || resolving;
 
   // Clear per-thread state when the selected thread changes so a stale
   // error from row A never shows on row B.
   useEffect(() => {
-    setDirtyMessage(null);
-    setConflictMessage(null);
-    setCiWorkflowMessage(null);
-    setCardError(null);
-    setGitAction(null);
     setCheckpoints([]);
     setCheckpointError(null);
     setRestoreConfirm(null);
     setRestorePending(false);
     setSync(null);
     setSyncing(false);
-    setResolving(false);
-    setPendingMergeRetry(false);
-    sawWorkingRef.current = false;
   }, [thread?.id]);
 
   // Relative ages tick (same 60s cadence as the sidebar).
@@ -1988,104 +1664,6 @@ export function GitTab({
       setSyncing(false);
     }
   };
-
-  const runAction = async (
-    action: Exclude<GitAction, null>,
-    fn: () => Promise<unknown>,
-  ) => {
-    setGitAction(action);
-    setCardError(null);
-    setConflictMessage(null);
-    try {
-      await fn();
-      setDirtyMessage(null);
-      setCiWorkflowMessage(null);
-    } catch (err) {
-      const msg =
-        err instanceof Error && err.message
-          ? err.message
-          : "Git action failed";
-      // Electron wraps invoke rejections ("Error invoking remote method …");
-      // strip everything through the marker so only the listed entries show.
-      const after = (marker: string) => {
-        const at = msg.indexOf(marker);
-        return at === -1 ? null : msg.slice(at + marker.length).trim();
-      };
-      const dirty = after("WORKTREE_DIRTY:");
-      const conflict = after("MERGE_CONFLICT:");
-      const ci = after("CI_WORKFLOW:");
-      if (dirty) {
-        setDirtyMessage(dirty);
-      } else if (conflict) {
-        setConflictMessage(conflict);
-      } else if (ci) {
-        setCiWorkflowMessage(ci);
-      } else {
-        setCardError(msg);
-      }
-    } finally {
-      setGitAction(null);
-    }
-  };
-
-  const handleResolve = async () => {
-    if (!thread || !onStartRun || busy) return;
-    setResolving(true);
-    setCardError(null);
-    try {
-      let input: ConflictResolveInput = {
-        files: parseConflictFiles(conflictMessage || "").map((path) => ({
-          path,
-          content: "",
-          truncated: false,
-          binary: false,
-        })),
-        branch: thread.branch,
-      };
-      if (conflictContext) {
-        try {
-          const ctx = await conflictContext(thread.id);
-          if (ctx.files.length) {
-            input = ctx;
-          } else {
-            input = {
-              ...input,
-              branch: ctx.branch ?? input.branch,
-              baseBranch: ctx.baseBranch,
-              omitted: ctx.omitted,
-            };
-          }
-        } catch {
-          // Prompt still lists files from the MERGE_CONFLICT body.
-        }
-      }
-      await onStartRun(buildConflictResolvePrompt(input), thread.id);
-      setPendingMergeRetry(true);
-    } catch (err) {
-      const msg =
-        err instanceof Error && err.message
-          ? err.message
-          : "Could not start resolve turn";
-      setCardError(msg);
-    } finally {
-      setResolving(false);
-    }
-  };
-
-  useEffect(() => {
-    if (!pendingMergeRetry) {
-      sawWorkingRef.current = false;
-      return;
-    }
-    if (thread?.status === "working") {
-      sawWorkingRef.current = true;
-      return;
-    }
-    if (!sawWorkingRef.current) return;
-    sawWorkingRef.current = false;
-    setPendingMergeRetry(false);
-    void runAction("merge", () => onMergeRef.current());
-  }, [pendingMergeRetry, thread?.status]);
 
   const statusLine = (() => {
     if (!thread) return "No thread selected";
@@ -2156,46 +1734,6 @@ export function GitTab({
           </section>
         ) : (
           <>
-        <WorktreeCard
-          thread={thread}
-          busy={busy}
-          gitAction={gitAction}
-          dirtyMessage={dirtyMessage}
-          conflictMessage={conflictMessage}
-          ciWorkflowMessage={ciWorkflowMessage}
-          cardError={cardError}
-          onOpenWorktree={
-            openInEditor && thread?.worktreePath
-              ? () => void openInEditor()
-              : null
-          }
-          onDismissConflict={() => {
-            setConflictMessage(null);
-            setPendingMergeRetry(false);
-            sawWorkingRef.current = false;
-          }}
-          onResolve={onStartRun ? () => void handleResolve() : null}
-          resolving={resolving || (pendingMergeRetry && isWorking)}
-          resolveLabel={
-            pendingMergeRetry && isWorking ? "Resolving…" : "Starting…"
-          }
-          onSetup={() => void runAction("setup", () => onSetupWorktree())}
-          onMerge={() => void runAction("merge", () => onMergeWorktree())}
-          onSignOffMerge={() =>
-            void runAction("merge", () =>
-              onMergeWorktree({ ciWorkflowApproved: true }),
-            )
-          }
-          onCancelCi={() => setCiWorkflowMessage(null)}
-          onDelete={() =>
-            void runAction("remove", () => onRemoveWorktree(false))
-          }
-          onForceDelete={() =>
-            void runAction("remove", () => onRemoveWorktree(true))
-          }
-          onCancelDirty={() => setDirtyMessage(null)}
-          onDismissError={() => setCardError(null)}
-        />
         <PullCard threadId={thread?.id ?? null} gitPull={gitPull} />
         <DevServerCard
           threadId={thread?.id ?? null}
@@ -3089,11 +2627,6 @@ export const AgentsPanel = memo(function AgentsPanel({
   listThreadSummaries,
   listCrewTasks,
   onSelectThread,
-  onSetupWorktree,
-  onMergeWorktree,
-  onStartRun,
-  conflictContext,
-  onRemoveWorktree,
   onViewChanges,
   listCheckpoints,
   restoreCheckpoint,
@@ -3233,11 +2766,6 @@ export const AgentsPanel = memo(function AgentsPanel({
         <GitTab
           thread={thread}
           project={project}
-          onSetupWorktree={onSetupWorktree}
-          onMergeWorktree={onMergeWorktree}
-          onStartRun={onStartRun}
-          conflictContext={conflictContext}
-          onRemoveWorktree={onRemoveWorktree}
           onViewChanges={onViewChanges}
           listCheckpoints={listCheckpoints}
           restoreCheckpoint={restoreCheckpoint}

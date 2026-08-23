@@ -83,9 +83,6 @@ function tab(opts: {
     <GitTab
       thread={opts.thread === undefined ? thread() : opts.thread}
       project={opts.project ?? project}
-      onSetupWorktree={async () => {}}
-      onMergeWorktree={async () => {}}
-      onRemoveWorktree={async () => {}}
       onViewChanges={() => {}}
       listCheckpoints={async () => []}
       restoreCheckpoint={async () => {}}

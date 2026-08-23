@@ -1,12 +1,13 @@
 /**
- * Git tab: one-click "Let the agent resolve" after MERGE_CONFLICT (#163).
+ * Header worktree control: one-click "Let the agent resolve" after
+ * MERGE_CONFLICT (#163 / #680).
  * Run: npm run test:renderer -- test/worktreeConflict.test.tsx
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { useState } from "react";
 import { inAct, mount } from "./support/dom.ts";
-import { GitTab } from "../src/components/AgentsPanel";
+import { WorktreeControl } from "../src/components/WorktreeControl";
 import type { AgentStatus, ProjectInfo, ThreadInfo } from "../src/shared/ipc";
 import type { ConflictResolveInput } from "../src/conflictResolve.ts";
 
@@ -65,29 +66,21 @@ const CONTEXT: ConflictResolveInput = {
   baseBranch: "main",
 };
 
-function gitTab(opts: {
+function chrome(opts: {
   thread?: ThreadInfo | null;
+  project?: ProjectInfo;
   onMergeWorktree?: () => Promise<unknown>;
   onStartRun?: (prompt: string, threadId?: string) => Promise<void>;
   conflictContext?: (threadId: string) => Promise<ConflictResolveInput>;
 }) {
   return (
-    <GitTab
+    <WorktreeControl
       thread={opts.thread === undefined ? thread() : opts.thread}
-      project={project}
+      project={opts.project ?? project}
+      isWorking={(opts.thread ?? thread()).status === "working"}
       onSetupWorktree={async () => {}}
       onMergeWorktree={opts.onMergeWorktree ?? (async () => {})}
       onRemoveWorktree={async () => {}}
-      onViewChanges={() => {}}
-      listCheckpoints={async () => []}
-      restoreCheckpoint={async () => {}}
-      listLocalServers={async () => []}
-      listDevScripts={async () => []}
-      startDevServer={async () => ({ running: false }) as never}
-      stopDevServer={async () => ({ running: false }) as never}
-      devServerStatus={async () => ({ running: false }) as never}
-      gitRepoInfo={async () => ({ ok: false as const })}
-      gitPull={async () => ({ ok: true, summary: "Already up to date" })}
       onStartRun={opts.onStartRun}
       conflictContext={opts.conflictContext}
     />
@@ -97,13 +90,13 @@ function gitTab(opts: {
 describe("worktree conflict resolve (#163)", () => {
   it("hides Let the agent resolve when onStartRun is not wired", async () => {
     const m = await mount(
-      gitTab({
+      chrome({
         onMergeWorktree: async () => {
           throw new Error(`MERGE_CONFLICT:${CONFLICT_BODY}`);
         },
       }),
     );
-    await m.click(m.byText("Merge to main"));
+    await m.click(m.byText("Merge worktree"));
     assert.ok(m.text().includes("README.md"));
     assert.equal(m.query("[data-conflict-resolve]"), null);
     assert.ok(m.byText("Merge again"));
@@ -117,7 +110,7 @@ describe("worktree conflict resolve (#163)", () => {
     function Harness() {
       const [status, set] = useState<AgentStatus>("idle");
       setStatus = set;
-      return gitTab({
+      return chrome({
         thread: thread({ status }),
         onMergeWorktree: async () => {
           merges += 1;
@@ -133,10 +126,10 @@ describe("worktree conflict resolve (#163)", () => {
     }
 
     const m = await mount(<Harness />);
-    await m.click(m.byText("Merge to main"));
+    await m.click(m.byText("Merge worktree"));
     assert.equal(merges, 1);
     const resolveBtn = m.query("[data-conflict-resolve]");
-    assert.ok(resolveBtn, "Let the agent resolve is on the conflict card");
+    assert.ok(resolveBtn, "Let the agent resolve is on the conflict banner");
     await m.click(resolveBtn);
     assert.equal(prompts.length, 1);
     assert.match(prompts[0]!, /README\.md/);
@@ -164,7 +157,7 @@ describe("worktree conflict resolve (#163)", () => {
     function Harness() {
       const [status, set] = useState<AgentStatus>("idle");
       setStatus = set;
-      return gitTab({
+      return chrome({
         thread: thread({ status }),
         onMergeWorktree: async () => {
           merges += 1;
@@ -178,7 +171,7 @@ describe("worktree conflict resolve (#163)", () => {
     }
 
     const m = await mount(<Harness />);
-    await m.click(m.byText("Merge to main"));
+    await m.click(m.byText("Merge worktree"));
     await m.click(m.query("[data-conflict-resolve]"));
     assert.equal(prompts.length, 1);
     await m.click(m.byText("Dismiss"));
@@ -191,5 +184,47 @@ describe("worktree conflict resolve (#163)", () => {
     });
     await m.flush();
     assert.equal(merges, 1);
+  });
+});
+
+describe("worktree header control (#680)", () => {
+  it("offers Set up worktree when the thread has none", async () => {
+    const setups: number[] = [];
+    const m = await mount(
+      <WorktreeControl
+        thread={thread({ worktreePath: null, branch: null })}
+        project={project}
+        isWorking={false}
+        onSetupWorktree={async () => {
+          setups.push(1);
+        }}
+        onMergeWorktree={async () => {}}
+        onRemoveWorktree={async () => {}}
+      />,
+    );
+    const btn = m.query("[data-worktree-setup]");
+    assert.ok(btn);
+    assert.equal((btn!.textContent || "").trim(), "Set up worktree");
+    assert.equal(m.query("[data-worktree-merge]"), null);
+    await m.click(btn);
+    assert.equal(setups.length, 1);
+  });
+
+  it("hides on remote projects", async () => {
+    const m = await mount(
+      <WorktreeControl
+        thread={thread()}
+        project={{
+          ...project,
+          remoteHost: "dev@box",
+          remotePath: "/srv/app",
+        }}
+        isWorking={false}
+        onSetupWorktree={async () => {}}
+        onMergeWorktree={async () => {}}
+        onRemoveWorktree={async () => {}}
+      />,
+    );
+    assert.equal(m.query("[data-worktree-control]"), null);
   });
 });
