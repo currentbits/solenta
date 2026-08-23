@@ -84,9 +84,19 @@ function detail(): ThreadDetail {
   };
 }
 
+interface CommitCall {
+  message: string;
+  paths?: string[];
+}
+
+interface RevertCall {
+  path: string;
+  status: string;
+}
+
 interface Spies {
-  commits: string[];
-  reverts: Array<{ path: string; status: string }>;
+  commits: CommitCall[];
+  reverts: RevertCall[];
   suggests: number;
   diffLoads: number;
 }
@@ -118,8 +128,8 @@ function mountPanel(): { m: Promise<Mounted>; spies: Spies } {
         spies.diffLoads += 1;
         return DIFF;
       }}
-      onCommitChanges={async (message) => {
-        spies.commits.push(message);
+      onCommitChanges={async (message, paths) => {
+        spies.commits.push({ message, paths });
         return { subject: message };
       }}
       onRevertFile={async (path, status) => {
@@ -138,11 +148,8 @@ function mountPanel(): { m: Promise<Mounted>; spies: Spies } {
 
 /** The Changes panel footer — not the header next-action "Commit N files". */
 function panelCommit(view: { container: HTMLElement }): HTMLButtonElement | null {
-  return (
-    [...view.container.querySelectorAll("button")].find((b) => {
-      const text = (b.textContent || "").trim();
-      return text === "Commit" || text === "Committing…";
-    }) ?? null
+  return view.container.querySelector(
+    "[data-commit-changes]",
   ) as HTMLButtonElement | null;
 }
 
@@ -170,7 +177,9 @@ describe("ChangesPanel commit flow", () => {
     await view.click(view.byText("Generate"));
     const before = spies.diffLoads;
     await view.click(panelCommit(view));
-    assert.deepEqual(spies.commits, ["feat: generated"]);
+    assert.equal(spies.commits.length, 1);
+    assert.equal(spies.commits[0]?.message, "feat: generated");
+    assert.deepEqual(spies.commits[0]?.paths, ["src/a.ts", "notes.txt"]);
     assert.ok(spies.diffLoads > before, "diff reloaded after commit");
     const input = view.container.querySelector<HTMLTextAreaElement>(
       'textarea[aria-label="Commit message"]',
@@ -216,6 +225,40 @@ describe("ChangesPanel commit flow", () => {
       ),
       undefined,
     );
+  });
+
+  it("unchecking a file commits only the rest", async () => {
+    const { m, spies } = mountPanel();
+    const view = await m;
+    await view.flush();
+    const notes = view.container.querySelector(
+      '[data-stage-file="notes.txt"]',
+    );
+    assert.ok(notes);
+    assert.equal(notes.getAttribute("aria-checked"), "true");
+    await view.click(notes);
+    assert.equal(notes.getAttribute("aria-checked"), "false");
+
+    await view.click(view.byText("Generate"));
+    const commitBtn = panelCommit(view);
+    assert.ok(commitBtn);
+    assert.match((commitBtn.textContent || "").trim(), /Commit 1 file/);
+    await view.click(commitBtn);
+    assert.equal(spies.commits.length, 1);
+    assert.deepEqual(spies.commits[0]?.paths, ["src/a.ts"]);
+  });
+
+  it("unchecking every file disables Commit", async () => {
+    const { m } = mountPanel();
+    const view = await m;
+    await view.flush();
+    await view.click(view.byText("Generate"));
+    for (const box of view.container.querySelectorAll("[data-stage-file]")) {
+      if (box.getAttribute("aria-checked") === "true") await view.click(box);
+    }
+    const commitBtn = panelCommit(view);
+    assert.ok(commitBtn);
+    assert.ok(commitBtn.hasAttribute("disabled"), "disabled with nothing staged");
   });
 
   it("selects a file row", async () => {

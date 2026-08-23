@@ -677,6 +677,9 @@ function autoResolveMergeArtifacts(cwd) {
  * @param {import('./store').Store} opts.store
  * @param {string} opts.threadId
  * @param {string} [opts.intoPath] - merge target checkout; defaults to project.path
+ * @param {string[]} [opts.paths] - stage only these paths before the session
+ *   commit; omitted = add -A. Leftover dirty files refuse the merge so the
+ *   worktree is not deleted with uncommitted work.
  * @param {(channel: string, payload: unknown) => void} [opts.broadcast]
  * @returns {object} updated ThreadInfo
  */
@@ -736,13 +739,36 @@ function mergeWorktree(opts) {
     raw: true,
   }).trim();
   if (wtStatus) {
-    gitOut(wtPath, ["add", "-A"]);
-    const commitMsg = `coder: session changes for ${thread.title}`;
-    const committed = gitTry(wtPath, ["commit", "-m", commitMsg]);
-    if (!committed.ok) {
-      throw new Error(
-        `Failed to commit worktree changes: ${committed.combined.split("\n")[0]}`,
-      );
+    const paths = normalizeCommitPaths(wtPath, opts.paths);
+    // Empty `paths` means the Git pane staged nothing further: do not
+    // auto-commit. The leftover check below then refuses so the worktree
+    // is not deleted with uncommitted files.
+    if (!paths || paths.length > 0) {
+      stageForCommit(wtPath, paths);
+      const commitMsg = `coder: session changes for ${thread.title}`;
+      const commitArgs = paths
+        ? ["commit", "-m", commitMsg, "--", ...paths]
+        : ["commit", "-m", commitMsg];
+      const committed = gitTry(wtPath, commitArgs);
+      if (!committed.ok) {
+        throw new Error(
+          `Failed to commit worktree changes: ${committed.combined.split("\n")[0]}`,
+        );
+      }
+    }
+    if (paths) {
+      const leftoverRaw = gitOut(wtPath, ["status", "--porcelain", "-uall"], {
+        raw: true,
+      }).trim();
+      if (leftoverRaw) {
+        const leftover = leftoverRaw
+          .split("\n")
+          .map((line) => parsePorcelainPath(line))
+          .filter(Boolean);
+        throw new Error(
+          `Uncommitted files remain:\n${leftover.map((f) => `  ${f}`).join("\n")}\nDiscard or include them before merging.`,
+        );
+      }
     }
   }
 
@@ -1479,13 +1505,78 @@ function threadGitCwd(store, threadId) {
 }
 
 /**
- * Commit every change in the thread's tree (add -A + commit -m). The message
- * is one argv element, never shell-interpolated.
+ * Repo-relative path from the diff file list. Rejects empties, absolute
+ * paths, leading-dash pathspecs (git flags even after `--`), and anything
+ * that resolves outside cwd.
+ *
+ * @param {string} cwd
+ * @param {string} relPath
+ * @returns {string}
+ */
+function assertRelPathInCwd(cwd, relPath) {
+  const rel = String(relPath || "");
+  if (!rel || path.isAbsolute(rel) || rel.startsWith("-")) {
+    throw new Error(`Invalid path: ${rel || "(empty)"}`);
+  }
+  if (rel.split(/[/\\]/).includes("..")) {
+    throw new Error(`Path escapes the working tree: ${rel}`);
+  }
+  const full = path.resolve(cwd, rel);
+  if (full !== cwd && !full.startsWith(cwd + path.sep)) {
+    throw new Error(`Path escapes the working tree: ${rel}`);
+  }
+  return rel;
+}
+
+/**
+ * Validate an optional commit path list. `null` means stage everything
+ * (`git add -A`). An empty array is a caller error (nothing selected).
+ *
+ * @param {string} cwd
+ * @param {unknown} paths
+ * @returns {string[] | null}
+ */
+function normalizeCommitPaths(cwd, paths) {
+  if (paths == null) return null;
+  if (!Array.isArray(paths)) {
+    throw new Error("paths must be an array");
+  }
+  const out = [];
+  const seen = new Set();
+  for (const raw of paths) {
+    const rel = assertRelPathInCwd(cwd, String(raw || ""));
+    if (seen.has(rel)) continue;
+    seen.add(rel);
+    out.push(rel);
+  }
+  return out;
+}
+
+/**
+ * Stage the given paths, or the whole tree when `paths` is null.
+ *
+ * @param {string} cwd
+ * @param {string[] | null} paths
+ */
+function stageForCommit(cwd, paths) {
+  const args = paths ? ["add", "-A", "--", ...paths] : ["add", "-A"];
+  const add = gitTry(cwd, args);
+  if (!add.ok) {
+    throw new Error(tailErr(add.stderr || add.combined, "git add failed"));
+  }
+}
+
+/**
+ * Commit changes in the thread's tree. With `paths`, only those files are
+ * staged and committed (`git add -A -- <paths>` + `git commit -- <paths>`);
+ * omitted `paths` is add -A of the whole tree. The message is one argv
+ * element, never shell-interpolated.
  *
  * @param {object} opts
  * @param {import('./store').Store} opts.store
  * @param {string} opts.threadId
  * @param {string} opts.message
+ * @param {string[]} [opts.paths]
  * @returns {{ subject: string }}
  */
 function commit(opts) {
@@ -1496,14 +1587,27 @@ function commit(opts) {
   }
   assertNoOutboundSecrets(message, "commit message");
   const { cwd } = threadGitCwd(store, threadId);
+  const paths = normalizeCommitPaths(cwd, opts.paths);
+  if (paths && paths.length === 0) {
+    throw new Error("No files selected");
+  }
   if (!gitOut(cwd, ["status", "--porcelain", "-uall"])) {
     throw new Error("Nothing to commit");
   }
-  const add = gitTry(cwd, ["add", "-A"]);
-  if (!add.ok) {
-    throw new Error(tailErr(add.stderr || add.combined, "git add failed"));
+  if (paths) {
+    const listed = listChangedPaths(cwd, { includeWorkingTree: true });
+    const dirty = new Set(listed.ok ? listed.paths : []);
+    for (const p of paths) {
+      if (!dirty.has(p)) {
+        throw new Error(`Not a changed file: ${p}`);
+      }
+    }
   }
-  const res = gitTry(cwd, ["commit", "-m", message]);
+  stageForCommit(cwd, paths);
+  const commitArgs = paths
+    ? ["commit", "-m", message, "--", ...paths]
+    : ["commit", "-m", message];
+  const res = gitTry(cwd, commitArgs);
   if (!res.ok) {
     throw new Error(tailErr(res.stderr || res.combined, "git commit failed"));
   }
@@ -1525,15 +1629,9 @@ function commit(opts) {
  */
 function revertFile(opts) {
   const { store, threadId, status } = opts;
-  const relPath = String(opts.path || "");
-  if (!relPath || path.isAbsolute(relPath)) {
-    throw new Error(`Invalid path: ${relPath || "(empty)"}`);
-  }
   const { cwd } = threadGitCwd(store, threadId);
+  const relPath = assertRelPathInCwd(cwd, String(opts.path || ""));
   const full = path.resolve(cwd, relPath);
-  if (full !== cwd && !full.startsWith(cwd + path.sep)) {
-    throw new Error(`Path escapes the working tree: ${relPath}`);
-  }
   if (status === "??") {
     fs.rmSync(full, { recursive: true, force: true });
     return { path: relPath };

@@ -390,8 +390,16 @@ export interface UseCoderResult {
   fetchDiff: () => Promise<DiffResult>;
   fetchReviewContext: () => Promise<ReviewContext>;
   setReviewAccepted: (hashes: string[]) => Promise<void>;
-  /** Commit all changes in the selected thread's cwd. */
-  commitChanges: (message: string) => Promise<{ subject: string }>;
+  /** Commit selected (or all) changes in the selected thread's cwd. */
+  commitChanges: (
+    message: string,
+    paths?: string[],
+  ) => Promise<{ subject: string }>;
+  /**
+   * Remember the Git pane's staged path list so mergeWorktree can stage
+   * the same subset. `null` means the pane has not chosen a subset.
+   */
+  setStagedPaths: (paths: string[] | null) => void;
   /** Discard one changed file in the selected thread's cwd. */
   revertFile: (path: string, status: string) => Promise<{ path: string }>;
   /** Draft a commit message with the thread's provider (never commits). */
@@ -623,6 +631,15 @@ export function useCoder(): UseCoderResult {
   useEffect(() => {
     selectedRef.current = selectedThreadId;
   }, [selectedThreadId]);
+
+  const stagedPathsRef = useRef<string[] | null>(null);
+  useEffect(() => {
+    stagedPathsRef.current = null;
+  }, [selectedThreadId]);
+
+  const setStagedPaths = useCallback((paths: string[] | null) => {
+    stagedPathsRef.current = paths;
+  }, []);
 
   useEffect(() => {
     detailRef.current = detail;
@@ -2093,9 +2110,11 @@ export function useCoder(): UseCoderResult {
   }) => {
     if (!selectedThreadId) return null;
     const threadId = selectedThreadId;
+    const staged = stagedPathsRef.current;
     const thread = await api.git.mergeWorktree({
       threadId,
       ciWorkflowApproved: opts?.ciWorkflowApproved,
+      ...(staged != null ? { paths: staged } : {}),
     });
     if (selectedRef.current !== threadId) return thread;
     applyThreadUpdate(thread);
@@ -2150,12 +2169,17 @@ export function useCoder(): UseCoderResult {
   );
 
   const commitChanges = useCallback(
-    async (message: string) => {
+    async (message: string, paths?: string[]) => {
       if (!selectedThreadId) {
         throw new Error("No thread selected");
       }
       const threadId = selectedThreadId;
-      return api.git.commit({ threadId, message });
+      const selected = paths ?? stagedPathsRef.current ?? undefined;
+      return api.git.commit({
+        threadId,
+        message,
+        ...(selected != null ? { paths: selected } : {}),
+      });
     },
     [api, selectedThreadId],
   );
@@ -2866,6 +2890,7 @@ export function useCoder(): UseCoderResult {
     fetchReviewContext,
     setReviewAccepted,
     commitChanges,
+    setStagedPaths,
     revertFile,
     suggestCommitMessage,
     listFiles,

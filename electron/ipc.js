@@ -892,6 +892,7 @@ const IPC_HANDLERS = {
       store: ctx.store,
       threadId: input.threadId,
       message: input.message,
+      paths: Array.isArray(input.paths) ? input.paths : undefined,
     });
   },
   "git:revertFile": async (ctx, input) => {
@@ -967,6 +968,7 @@ const IPC_HANDLERS = {
       store: ctx.store,
       threadId: input.threadId,
       ciWorkflowApproved: Boolean(input && input.ciWorkflowApproved),
+      paths: Array.isArray(input && input.paths) ? input.paths : undefined,
       broadcast: ctx.broadcast,
     });
     await runRetention(ctx);
