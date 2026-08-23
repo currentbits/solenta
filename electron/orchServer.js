@@ -532,6 +532,7 @@ function createToolHandlers(deps) {
       await scheduleRetention({
         store,
         worktreeBase: path.join(userDataPath, "worktrees"),
+        userDataPath,
         broadcast,
       });
     }
@@ -911,6 +912,7 @@ function createToolHandlers(deps) {
       await scheduleRetention({
         store,
         worktreeBase: path.join(userDataPath, "worktrees"),
+        userDataPath,
         broadcast,
       });
     }

@@ -157,6 +157,124 @@ function materializeKimiHome(opts) {
 }
 
 /**
+ * True when the overlay must stay on disk: a kimi child may still be
+ * reading it. Matches worktree GC's live-thread skip.
+ * @param {object | null | undefined} store
+ * @param {string} threadId
+ */
+function isLiveKimiThread(store, threadId) {
+  if (!store || typeof store.getThread !== "function") return false;
+  const thread = store.getThread(threadId);
+  if (!thread) return false;
+  return thread.status === "working" || thread.status === "quota-wait";
+}
+
+/**
+ * Remove `target` without following symlinks. Unlink a symlink (even one
+ * pointing at a directory) instead of descending into the target — the
+ * overlay's credentials/sessions/cache links go into ~/.kimi-code.
+ * @param {string} target
+ */
+function rmWithoutFollowing(target) {
+  let st;
+  try {
+    st = fs.lstatSync(target);
+  } catch (err) {
+    if (err && err.code === "ENOENT") return;
+    throw err;
+  }
+  if (st.isSymbolicLink() || !st.isDirectory()) {
+    fs.unlinkSync(target);
+    return;
+  }
+  let entries = [];
+  try {
+    entries = fs.readdirSync(target, { withFileTypes: true });
+  } catch (err) {
+    if (err && err.code === "ENOENT") return;
+    throw err;
+  }
+  for (const ent of entries) {
+    const child = path.join(target, ent.name);
+    // isSymbolicLink first: a junction/link-to-dir can also report as a
+    // directory on Windows, and following it would wipe ~/.kimi-code.
+    if (ent.isSymbolicLink() || !ent.isDirectory()) {
+      try {
+        fs.unlinkSync(child);
+      } catch {
+        // best-effort
+      }
+    } else {
+      rmWithoutFollowing(child);
+    }
+  }
+  fs.rmdirSync(target);
+}
+
+/**
+ * Reclaim stale KIMI_CODE_HOME overlays (#675).
+ *
+ * One dir per thread that has ever run kimi, under
+ * `<userDataPath>/kimi-homes/<threadId>/`. They are tiny (symlinks plus
+ * three files) but nothing else deletes them. Called from scheduleRetention
+ * so boot / archive / merge / the 6h sweeper pick them up — not a new
+ * timer. Skips a thread that is currently working or in quota-wait.
+ *
+ * @param {object} opts
+ * @param {string} [opts.userDataPath]
+ * @param {{ getThread?: (id: string) => { status?: string } | null }} [opts.store]
+ * @returns {{ removed: string[], skipped: string[] }}
+ */
+function reclaimKimiHomes(opts) {
+  const userDataPath = String((opts && opts.userDataPath) || "");
+  if (!userDataPath) return { removed: [], skipped: [] };
+  const store = opts && opts.store;
+  // Without a store we cannot tell a live kimi turn from a stale overlay.
+  // Refuse rather than risk deleting an in-use home.
+  if (!store || typeof store.getThread !== "function") {
+    return { removed: [], skipped: [] };
+  }
+  const base = path.join(userDataPath, "kimi-homes");
+  let baseStat;
+  try {
+    baseStat = fs.lstatSync(base);
+  } catch (err) {
+    if (err && err.code === "ENOENT") return { removed: [], skipped: [] };
+    throw err;
+  }
+  // A symlinked kimi-homes/ would make readdir walk the target. Refuse.
+  if (!baseStat.isDirectory() || baseStat.isSymbolicLink()) {
+    return { removed: [], skipped: [] };
+  }
+
+  const removed = [];
+  const skipped = [];
+  let names = [];
+  try {
+    names = fs.readdirSync(base);
+  } catch {
+    return { removed, skipped };
+  }
+  for (const name of names) {
+    // path.basename guard: readdir cannot return ".." on POSIX, but a
+    // crafted name with a separator must never walk outside kimi-homes.
+    if (!name || name !== path.basename(name)) continue;
+    const dest = path.join(base, name);
+    if (isLiveKimiThread(store, name)) {
+      skipped.push(dest);
+      continue;
+    }
+    try {
+      rmWithoutFollowing(dest);
+      removed.push(dest);
+    } catch {
+      // housekeeping; a busy overlay is retried on the next pass
+    }
+  }
+  return { removed, skipped };
+}
+
+/**
  * Set [thinking].effort in kimi's config.toml and return a restore function.
  *
  * kimi 0.31.1 has no per-invocation effort mechanism: no CLI flag (probed
@@ -697,6 +815,7 @@ module.exports = {
   flipKimiEffort,
   kimiConfigPath,
   materializeKimiHome,
+  reclaimKimiHomes,
   workspaceId,
   extractAssistantText,
   extractToolEvent,

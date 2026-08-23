@@ -512,8 +512,13 @@ interface ThreadViewProps {
   }>;
   /** Persist hunk hashes the user marked as reviewed. */
   onSetReviewAccepted?: (hashes: string[]) => Promise<void>;
-  /** Commit all changes shown in the Changes panel. */
-  onCommitChanges: (message: string) => Promise<{ subject: string }>;
+  /** Commit the staged paths (or all files when `paths` is omitted). */
+  onCommitChanges: (
+    message: string,
+    paths?: string[],
+  ) => Promise<{ subject: string }>;
+  /** Keep the Git-tab merge in sync with the pane's staged path list. */
+  onStagedPathsChange?: (paths: string[] | null) => void;
   /** Discard one changed file (untracked deletes the file). */
   onRevertFile: (path: string, status: string) => Promise<{ path: string }>;
   /** Draft a commit message with the thread's provider. */
@@ -2919,20 +2924,38 @@ function planTextOf(detail: ThreadDetail | null | undefined): string {
 function FileRow({
   file,
   selected,
+  staged,
   confirmRevert,
   reverting,
   onSelect,
+  onToggleStage,
   onRevert,
 }: {
   file: FileChange;
   selected: boolean;
+  staged: boolean;
   confirmRevert: string | null;
   reverting: string | null;
   onSelect: (path: string) => void;
+  onToggleStage: (path: string, next: boolean) => void;
   onRevert: (f: FileChange) => void;
 }) {
   return (
     <li>
+      <button
+        type="button"
+        className={styles.fileStage}
+        data-stage-file={file.path}
+        role="checkbox"
+        aria-checked={staged}
+        aria-label={`Stage ${file.path}`}
+        onClick={(e) => {
+          e.stopPropagation();
+          onToggleStage(file.path, !staged);
+        }}
+      >
+        {staged ? "✓" : ""}
+      </button>
       <button
         type="button"
         className={styles.fileRow}
@@ -2994,6 +3017,7 @@ function ChangesPanel({
   onFetchReviewContext,
   onSetReviewAccepted,
   onCommit,
+  onStagedPathsChange,
   onRevert,
   onSuggest,
   onComment,
@@ -3014,7 +3038,8 @@ function ChangesPanel({
     acceptedHunks: string[];
   }>;
   onSetReviewAccepted?: (hashes: string[]) => Promise<void>;
-  onCommit: (message: string) => Promise<{ subject: string }>;
+  onCommit: (message: string, paths?: string[]) => Promise<{ subject: string }>;
+  onStagedPathsChange?: (paths: string[] | null) => void;
   onRevert: (path: string, status: string) => Promise<{ path: string }>;
   onSuggest: () => Promise<{ message: string }>;
   /** Send a line comment as a follow-up prompt (issue #162). */
@@ -3043,6 +3068,8 @@ function ChangesPanel({
   const [commentDraft, setCommentDraft] = useState("");
   const [commentBusy, setCommentBusy] = useState(false);
   const [commentError, setCommentError] = useState<string | null>(null);
+  const [stagedPaths, setStagedPaths] = useState<Set<string>>(() => new Set());
+  const knownFilesRef = useRef<Set<string>>(new Set());
   const threadIdRef = useRef(threadId);
   threadIdRef.current = threadId;
 
@@ -3091,7 +3118,31 @@ function ChangesPanel({
     setCommentDraft("");
     setCommentBusy(false);
     setCommentError(null);
+    setStagedPaths(new Set());
+    knownFilesRef.current = new Set();
+    onStagedPathsChange?.(null);
+    // onStagedPathsChange is a stable setter from useCoder; threadId is the trigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [threadId]);
+
+  useEffect(() => {
+    if (!diff) return;
+    setStagedPaths((prev) => {
+      const next = new Set<string>();
+      const known = knownFilesRef.current;
+      const first = known.size === 0;
+      for (const f of diff.files) {
+        if (first || !known.has(f.path) || prev.has(f.path)) next.add(f.path);
+      }
+      knownFilesRef.current = new Set(diff.files.map((f) => f.path));
+      return next;
+    });
+  }, [diff]);
+
+  useEffect(() => {
+    if (!diff || isEmptyDiff(diff)) return;
+    onStagedPathsChange?.([...stagedPaths]);
+  }, [diff, stagedPaths, onStagedPathsChange]);
 
   useEffect(() => {
     if (!diff || diff.files.length === 0) {
@@ -3172,13 +3223,24 @@ function ChangesPanel({
     }
   };
 
+  const toggleStage = (path: string, next: boolean) => {
+    setStagedPaths((prev) => {
+      const copy = new Set(prev);
+      if (next) copy.add(path);
+      else copy.delete(path);
+      return copy;
+    });
+  };
+
   const doCommit = async () => {
     const msg = message.trim();
-    if (!msg || busy) return;
+    if (!msg || busy || !diff) return;
+    const paths = diff.files.map((f) => f.path).filter((p) => stagedPaths.has(p));
+    if (paths.length === 0) return;
     setBusy("commit");
     setError(null);
     try {
-      await onCommit(msg);
+      await onCommit(msg, paths);
       setMessage("");
       await load();
     } catch (err) {
@@ -3300,6 +3362,33 @@ function ChangesPanel({
         <>
           <div className={styles.changesSplit}>
             <div className={styles.changesFiles}>
+              <div className={styles.stageBar}>
+                <button
+                  type="button"
+                  className={styles.fileStage}
+                  data-stage-all=""
+                  role="checkbox"
+                  aria-label="Stage all files"
+                  aria-checked={
+                    diff.files.length > 0 &&
+                    stagedPaths.size === diff.files.length
+                      ? true
+                      : stagedPaths.size === 0
+                        ? false
+                        : "mixed"
+                  }
+                  onClick={() => {
+                    if (stagedPaths.size === diff.files.length) {
+                      setStagedPaths(new Set());
+                    } else {
+                      setStagedPaths(new Set(diff.files.map((f) => f.path)));
+                    }
+                  }}
+                >
+                  {stagedPaths.size === diff.files.length ? "✓" : ""}
+                </button>
+                {stagedPaths.size}/{diff.files.length} staged
+              </div>
               <ReviewItineraryView
                 itinerary={itinerary}
                 testsFirst={testsFirst}
@@ -3314,9 +3403,11 @@ function ChangesPanel({
                         key={f.path}
                         file={f}
                         selected={selectedPath === f.path}
+                        staged={stagedPaths.has(f.path)}
                         confirmRevert={confirmRevert}
                         reverting={reverting}
                         onSelect={setSelectedPath}
+                        onToggleStage={toggleStage}
                         onRevert={(file) => void revert(file)}
                       />
                     ))}
@@ -3458,10 +3549,22 @@ function ChangesPanel({
               <button
                 type="button"
                 className={`${styles.btn} ${styles.btnPrimary}`}
-                disabled={message.trim() === "" || busy != null}
+                data-commit-changes=""
+                disabled={
+                  message.trim() === "" ||
+                  busy != null ||
+                  stagedPaths.size === 0
+                }
                 onClick={() => void doCommit()}
               >
-                {busy === "commit" ? "Committing…" : "Commit"}
+                {busy === "commit"
+                  ? "Committing…"
+                  : stagedPaths.size === 0 ||
+                      stagedPaths.size === (diff?.files.length ?? 0)
+                    ? "Commit"
+                    : stagedPaths.size === 1
+                      ? "Commit 1 file"
+                      : `Commit ${stagedPaths.size} files`}
               </button>
             </div>
           </div>
@@ -3750,6 +3853,7 @@ export const ThreadView = memo(function ThreadView({
   onFetchReviewContext,
   onSetReviewAccepted,
   onCommitChanges,
+  onStagedPathsChange,
   onRevertFile,
   onSuggestCommitMessage,
   onListFiles,
@@ -5251,6 +5355,7 @@ export const ThreadView = memo(function ThreadView({
                 onFetchReviewContext={onFetchReviewContext}
                 onSetReviewAccepted={onSetReviewAccepted}
                 onCommit={onCommitChanges}
+                onStagedPathsChange={onStagedPathsChange}
                 onRevert={onRevertFile}
                 onSuggest={onSuggestCommitMessage}
                 onComment={
