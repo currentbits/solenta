@@ -59,7 +59,16 @@ import { SPEC_ARTIFACTS, THREAD_NOTES_MAX, FELT_ESTIMATE_BUCKETS_MS } from "../s
 import { TEACH_AUTONOMY_LABELS } from "../teach";
 import type { TeachAutonomy } from "../shared/ipc";
 import type { WorkflowSaveInput } from "../useCoder";
-import { diffLineKind, isEmptyDiff } from "../diffView";
+import {
+  annotateHunkLines,
+  commentGutterLabel,
+  commentLineRef,
+  diffLineKind,
+  formatDiffCommentPrompt,
+  isEmptyDiff,
+  type DiffCommentAnchor,
+  type DiffLineKind,
+} from "../diffView";
 import {
   contextBreakdown,
   type ContextBreakdownSegment,
@@ -2780,13 +2789,119 @@ function FeltEstimateCard({
   );
 }
 
-const DiffLine = memo(function DiffLine({ line }: { line: string }) {  const kind = diffLineKind(line);
+const DiffLine = memo(function DiffLine({
+  line,
+  kind: kindOverride,
+  oldLine = null,
+  newLine = null,
+  commentable = false,
+  commenting = false,
+  onCommentClick,
+}: {
+  line: string;
+  kind?: DiffLineKind;
+  oldLine?: number | null;
+  newLine?: number | null;
+  commentable?: boolean;
+  commenting?: boolean;
+  onCommentClick?: () => void;
+}) {
+  const kind = kindOverride ?? diffLineKind(line);
+  const ref = commentLineRef({ kind, oldLine, newLine });
   return (
-    <div className={styles.diffLine} data-kind={kind}>
-      {line || " "}
+    <div
+      className={styles.diffLine}
+      data-kind={kind}
+      data-commenting={commenting ? "" : undefined}
+    >
+      {commentable && onCommentClick ? (
+        <button
+          type="button"
+          className={styles.diffLineGutter}
+          data-diff-comment-gutter=""
+          aria-label={commentGutterLabel({ kind, oldLine, newLine })}
+          title={commentGutterLabel({ kind, oldLine, newLine })}
+          aria-expanded={commenting}
+          onClick={onCommentClick}
+        >
+          {ref ? ref.n : "+"}
+        </button>
+      ) : (
+        <span className={styles.diffLineGutter} data-static="" aria-hidden>
+          {ref ? ref.n : ""}
+        </span>
+      )}
+      <span className={styles.diffLineText}>{line || " "}</span>
     </div>
   );
 });
+
+function DiffCommentBox({
+  draft,
+  busy,
+  error,
+  submitLabel,
+  onChange,
+  onSend,
+  onCancel,
+}: {
+  draft: string;
+  busy: boolean;
+  error: string | null;
+  submitLabel: string;
+  onChange: (value: string) => void;
+  onSend: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className={styles.diffComment} data-diff-comment-box="">
+      <textarea
+        className={styles.diffCommentInput}
+        aria-label="Diff comment"
+        placeholder="Tell the agent what to change"
+        rows={3}
+        autoFocus
+        value={draft}
+        disabled={busy}
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            e.preventDefault();
+            onCancel();
+            return;
+          }
+          if ((e.metaKey || e.ctrlKey || e.shiftKey) && e.key === "Enter") {
+            e.preventDefault();
+            onSend();
+          }
+        }}
+      />
+      {error ? (
+        <div className={styles.inlineError} role="alert">
+          {error}
+        </div>
+      ) : null}
+      <div className={styles.diffCommentActions}>
+        <button
+          type="button"
+          className={styles.btn}
+          disabled={busy}
+          onClick={onCancel}
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          className={`${styles.btn} ${styles.btnPrimary}`}
+          disabled={busy || draft.trim() === ""}
+          onClick={onSend}
+        >
+          {busy ? "Sending…" : submitLabel}
+        </button>
+      </div>
+    </div>
+  );
+}
 
 function planTextOf(detail: ThreadDetail | null | undefined): string {
   if (!detail) return "";
@@ -2874,12 +2989,14 @@ function ChangesPanel({
   threadBranch,
   planText,
   openNonce,
+  isWorking = false,
   onFetchDiff,
   onFetchReviewContext,
   onSetReviewAccepted,
   onCommit,
   onRevert,
   onSuggest,
+  onComment,
 }: {
   open: boolean;
   /** Hide the "Git" title when the pane chrome already names it. */
@@ -2889,6 +3006,7 @@ function ChangesPanel({
   threadBranch: string | null;
   planText: string;
   openNonce: number;
+  isWorking?: boolean;
   onFetchDiff: () => Promise<DiffResult>;
   onFetchReviewContext?: () => Promise<{
     annotation: unknown;
@@ -2899,6 +3017,8 @@ function ChangesPanel({
   onCommit: (message: string) => Promise<{ subject: string }>;
   onRevert: (path: string, status: string) => Promise<{ path: string }>;
   onSuggest: () => Promise<{ message: string }>;
+  /** Send a line comment as a follow-up prompt (issue #162). */
+  onComment?: (prompt: string) => void | Promise<void>;
 }) {
   const [diff, setDiff] = useState<DiffResult | null>(null);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
@@ -2916,6 +3036,13 @@ function ChangesPanel({
   const [reverting, setReverting] = useState<string | null>(null);
   /** Untracked-path revert arms a confirm first (it deletes the file). */
   const [confirmRevert, setConfirmRevert] = useState<string | null>(null);
+  const [commentTarget, setCommentTarget] = useState<{
+    key: string;
+    anchor: DiffCommentAnchor;
+  } | null>(null);
+  const [commentDraft, setCommentDraft] = useState("");
+  const [commentBusy, setCommentBusy] = useState(false);
+  const [commentError, setCommentError] = useState<string | null>(null);
   const threadIdRef = useRef(threadId);
   threadIdRef.current = threadId;
 
@@ -2960,6 +3087,10 @@ function ChangesPanel({
     setAnnotation(null);
     setAcceptedHunks([]);
     setSelectedPath(null);
+    setCommentTarget(null);
+    setCommentDraft("");
+    setCommentBusy(false);
+    setCommentError(null);
   }, [threadId]);
 
   useEffect(() => {
@@ -3062,6 +3193,56 @@ function ChangesPanel({
     ? patches.filter((p) => p.path === selectedPath)
     : patches;
 
+  const toggleComment = (key: string, anchor: DiffCommentAnchor) => {
+    if (commentBusy) return;
+    if (commentTarget?.key === key) {
+      setCommentTarget(null);
+      setCommentDraft("");
+      setCommentError(null);
+      return;
+    }
+    setCommentTarget({ key, anchor });
+    setCommentDraft("");
+    setCommentError(null);
+  };
+
+  const sendComment = async () => {
+    if (!commentTarget || !onComment || commentBusy) return;
+    const prompt = formatDiffCommentPrompt(commentTarget.anchor, commentDraft);
+    if (!prompt) return;
+    setCommentBusy(true);
+    setCommentError(null);
+    try {
+      await onComment(prompt);
+      setCommentTarget(null);
+      setCommentDraft("");
+    } catch (err) {
+      setCommentError(
+        err instanceof Error && err.message ? err.message : "Failed to send comment",
+      );
+    } finally {
+      setCommentBusy(false);
+    }
+  };
+
+  const commentBox =
+    commentTarget && onComment ? (
+      <DiffCommentBox
+        draft={commentDraft}
+        busy={commentBusy}
+        error={commentError}
+        submitLabel={isWorking ? "Queue" : "Send"}
+        onChange={setCommentDraft}
+        onSend={() => void sendComment()}
+        onCancel={() => {
+          if (commentBusy) return;
+          setCommentTarget(null);
+          setCommentDraft("");
+          setCommentError(null);
+        }}
+      />
+    ) : null;
+
   return (
     <section
       className={styles.changesPane}
@@ -3151,9 +3332,37 @@ function ChangesPanel({
                   {visiblePatches.map((p) => (
                     <Fragment key={p.path}>
                       {p.hunks.length === 0 &&
-                        p.text.split("\n").map((line, i) => (
-                          <DiffLine key={`${p.path}:${i}`} line={line} />
-                        ))}
+                        p.text.split("\n").map((line, i) => {
+                          const kind = diffLineKind(line);
+                          const key = `${p.path}:${i}`;
+                          const commentable =
+                            Boolean(onComment) &&
+                            (kind === "add" || kind === "del") &&
+                            !line.startsWith("\\");
+                          return (
+                            <Fragment key={key}>
+                              <DiffLine
+                                line={line}
+                                kind={kind}
+                                commentable={commentable}
+                                commenting={commentTarget?.key === key}
+                                onCommentClick={
+                                  commentable
+                                    ? () =>
+                                        toggleComment(key, {
+                                          path: p.path,
+                                          kind,
+                                          text: line,
+                                          oldLine: null,
+                                          newLine: null,
+                                        })
+                                    : undefined
+                                }
+                              />
+                              {commentTarget?.key === key ? commentBox : null}
+                            </Fragment>
+                          );
+                        })}
                       {p.hunks.map((hunk) => (
                         <div
                           key={hunk.id}
@@ -3182,9 +3391,40 @@ function ChangesPanel({
                             </button>
                           </div>
                           <DiffLine line={hunk.header} />
-                          {hunk.body.split("\n").map((line, i) => (
-                            <DiffLine key={`${hunk.id}:${i}`} line={line} />
-                          ))}
+                          {annotateHunkLines(hunk.header, hunk.body).map(
+                            (row, i) => {
+                              const key = `${hunk.id}:${i}`;
+                              const commentable =
+                                Boolean(onComment) && row.commentable;
+                              return (
+                                <Fragment key={key}>
+                                  <DiffLine
+                                    line={row.text}
+                                    kind={row.kind}
+                                    oldLine={row.oldLine}
+                                    newLine={row.newLine}
+                                    commentable={commentable}
+                                    commenting={commentTarget?.key === key}
+                                    onCommentClick={
+                                      commentable
+                                        ? () =>
+                                            toggleComment(key, {
+                                              path: p.path,
+                                              kind: row.kind,
+                                              text: row.text,
+                                              oldLine: row.oldLine,
+                                              newLine: row.newLine,
+                                            })
+                                        : undefined
+                                    }
+                                  />
+                                  {commentTarget?.key === key
+                                    ? commentBox
+                                    : null}
+                                </Fragment>
+                              );
+                            },
+                          )}
                         </div>
                       ))}
                     </Fragment>
@@ -5006,12 +5246,18 @@ export const ThreadView = memo(function ThreadView({
                 threadBranch={detail?.thread.branch ?? null}
                 planText={planTextOf(detail)}
                 openNonce={changesNonce}
+                isWorking={isWorking}
                 onFetchDiff={onFetchDiff}
                 onFetchReviewContext={onFetchReviewContext}
                 onSetReviewAccepted={onSetReviewAccepted}
                 onCommit={onCommitChanges}
                 onRevert={onRevertFile}
                 onSuggest={onSuggestCommitMessage}
+                onComment={
+                  isArchived
+                    ? undefined
+                    : (prompt) => onStartRun(prompt)
+                }
               />
             );
           }
