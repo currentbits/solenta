@@ -106,6 +106,24 @@ function titleCaseToolName(key) {
 }
 
 /**
+ * Parse a Cursor tool input blob (JSON string from extractToolEvents) back
+ * into an object. Null when the blob is empty or not a JSON object.
+ * @param {string | null | undefined} input
+ * @returns {Record<string, unknown> | null}
+ */
+function parseToolArgs(input) {
+  if (input == null || input === "") return null;
+  if (typeof input !== "string") return null;
+  try {
+    const obj = JSON.parse(input);
+    if (!obj || typeof obj !== "object" || Array.isArray(obj)) return null;
+    return /** @type {Record<string, unknown>} */ (obj);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Name + payload from a Cursor tool_call object. function.name wins when
  * the function-shaped form is present.
  * @param {Record<string, unknown>} toolCall
@@ -425,6 +443,7 @@ module.exports = {
   extractToolEvents,
   extractSessionId,
   extractUsage,
+  parseToolArgs,
   truncate,
   INPUT_TRUNCATE,
   OUTPUT_TRUNCATE,

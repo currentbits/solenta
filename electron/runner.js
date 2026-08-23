@@ -440,6 +440,32 @@ function assertProviderBinary(entry, project) {
 }
 
 /**
+ * Collapsed Cursor tool-card title. Claude already uses toolSummary so
+ * Task shows `Task: <description>` instead of the args JSON. Cursor was
+ * slicing the stringified blob, which made Sol's subagent `model` field
+ * look like the parent session (issue #685).
+ * @param {string} name
+ * @param {string} input
+ * @param {Record<string, unknown> | null} args
+ */
+function cursorToolCardSummary(name, input, args) {
+  if (!args) {
+    return input
+      ? `${name}: ${input.length > 80 ? `${input.slice(0, 80)}…` : input}`
+      : name;
+  }
+  let summary = toolSummary(name, args);
+  if (
+    (name === "Task" || name === "Agent") &&
+    typeof args.model === "string" &&
+    args.model
+  ) {
+    summary = `${summary} (${args.model})`;
+  }
+  return summary;
+}
+
+/**
  * Single spawn seam: when the project sits across a boundary — an ssh remote
  * or the WSL side of a Windows machine (#397) — spawn the wrapper with the
  * wrapped CLI argv instead of the local binary. Plain local projects are
@@ -617,6 +643,42 @@ function createRunner(opts) {
     store.updateThread(threadId, {
       subagents: [...subagentRows(threadId), row].slice(-SUBAGENT_ROWS_MAX),
     });
+  }
+
+  /**
+   * Cursor Task/Agent is the same in-CLI subagent as Claude's Agent tool
+   * (issue #685). Track it on the thread so the Agents panel lists it as a
+   * subagent instead of looking like the parent model.
+   * @param {string} threadId
+   * @param {{ id: string, name: string }} tool
+   * @param {Record<string, unknown> | null} args
+   * @param {"running" | "done" | "failed"} status
+   */
+  function noteCursorSubagent(threadId, tool, args, status) {
+    if (tool.name !== "Task" && tool.name !== "Agent") return;
+    const description =
+      typeof args?.description === "string" && args.description
+        ? args.description
+        : tool.name;
+    const agentType =
+      typeof args?.subagent_type === "string"
+        ? args.subagent_type
+        : typeof args?.subagentType === "string"
+          ? args.subagentType
+          : null;
+    const rows = subagentRows(threadId);
+    if (!rows.some((r) => r.id === tool.id)) {
+      addSubagentRow(threadId, {
+        id: tool.id,
+        description,
+        agentType,
+        status,
+      });
+      return;
+    }
+    if (status !== "running") {
+      setSubagentStatus(threadId, tool.id, status);
+    }
   }
 
   /** Flip a running row's status; false when no such row (not a subagent). */
@@ -4836,6 +4898,8 @@ function createRunner(opts) {
         }
 
         for (const tool of cursorParse.extractToolEvents(ev)) {
+          const args = cursorParse.parseToolArgs(tool.input);
+          const summary = cursorToolCardSummary(tool.name, tool.input, args);
           if (tool.phase === "start") {
             const toolMeta = {
               id: tool.id,
@@ -4845,9 +4909,6 @@ function createRunner(opts) {
               isError: false,
               done: false,
             };
-            const summary = tool.input
-              ? `${tool.name}: ${tool.input.length > 80 ? `${tool.input.slice(0, 80)}…` : tool.input}`
-              : tool.name;
             const msgId = appendMessage(
               threadId,
               "tool",
@@ -4856,6 +4917,7 @@ function createRunner(opts) {
               toolMeta,
             );
             toolMsgById.set(tool.id, msgId);
+            noteCursorSubagent(threadId, tool, args, "running");
             // Post-tool text starts a fresh message below the tool call.
             assistantMsgId = null;
             assistantText = "";
@@ -4873,7 +4935,7 @@ function createRunner(opts) {
               msgId = appendMessage(
                 threadId,
                 "tool",
-                tool.name,
+                summary,
                 runId,
                 toolMeta,
               );
@@ -4896,6 +4958,12 @@ function createRunner(opts) {
               });
               noteToolSpan(threadId, runId, tool.id, tool.name, tool.isError);
             }
+            noteCursorSubagent(
+              threadId,
+              tool,
+              args,
+              tool.isError ? "failed" : "done",
+            );
           } else {
             const toolMeta = {
               id: tool.id,
@@ -4905,7 +4973,13 @@ function createRunner(opts) {
               isError: tool.isError,
               done: true,
             };
-            appendMessage(threadId, "tool", tool.name, runId, toolMeta);
+            appendMessage(threadId, "tool", summary, runId, toolMeta);
+            noteCursorSubagent(
+              threadId,
+              tool,
+              args,
+              tool.isError ? "failed" : "done",
+            );
             assistantMsgId = null;
             assistantText = "";
           }
@@ -4928,6 +5002,7 @@ function createRunner(opts) {
         if (e.kind !== "cursor") return;
 
         clearRun(threadId);
+        finishRunningSubagents(threadId);
         completeWorkLogStep(threadId, e.startingId);
         completeWorkLogStep(threadId, e.workingId);
 
@@ -4990,6 +5065,7 @@ function createRunner(opts) {
         if (e.kind !== "cursor") return;
 
         clearRun(threadId);
+        finishRunningSubagents(threadId);
         completeWorkLogStep(threadId, e.startingId);
         completeWorkLogStep(threadId, e.workingId);
         const msg = err && err.message ? err.message : String(err);
@@ -6124,6 +6200,9 @@ function createRunner(opts) {
       costUsd: 0,
     };
     clearRun(threadId);
+    // Cursor (and a killed Claude CLI) take in-session Task/Agent
+    // subagents with them. Leave no running badge on a dead process.
+    finishRunningSubagents(threadId);
     appendMessage(threadId, "event", "Run stopped", runId);
     appendDoneWorkLog(threadId, runId, "Run stopped");
     store.updateThread(

@@ -7,6 +7,7 @@ const {
   extractToolEvents,
   extractSessionId,
   extractUsage,
+  parseToolArgs,
 } = require("../cursor.js");
 
 // Documented example sequence from
@@ -332,6 +333,19 @@ describe("cursor extractToolEvents", () => {
     assert.equal(err[0].isError, true);
     assert.equal(err[0].phase, "end");
     assert.match(String(err[0].output), /ENOENT/);
+  });
+});
+
+describe("cursor parseToolArgs", () => {
+  it("parses a JSON object blob and rejects junk", () => {
+    assert.deepEqual(parseToolArgs('{"description":"Review ops","model":"claude-sonnet-5-thinking-high"}'), {
+      description: "Review ops",
+      model: "claude-sonnet-5-thinking-high",
+    });
+    assert.equal(parseToolArgs(""), null);
+    assert.equal(parseToolArgs("not json"), null);
+    assert.equal(parseToolArgs("[1,2]"), null);
+    assert.equal(parseToolArgs(null), null);
   });
 });
 

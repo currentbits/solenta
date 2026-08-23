@@ -164,6 +164,71 @@ async function main() {
     return;
   }
 
+  if (scenario === "task-subagent") {
+    emit({
+      type: "system",
+      subtype: "init",
+      apiKeySource: "login",
+      cwd: process.cwd(),
+      session_id: "cursor-sess-1",
+      model: "GPT-5.6 Sol High Fast",
+      permissionMode: "default",
+    });
+    await delay(20);
+    emit({
+      type: "tool_call",
+      subtype: "started",
+      call_id: "task-1",
+      tool_call: {
+        taskToolCall: {
+          args: {
+            description: "Re-review operations docs",
+            prompt: "Re-review Task 6 after fixes.",
+            model: "claude-sonnet-5-thinking-high",
+            subagentType: { unspecified: {} },
+          },
+        },
+      },
+      session_id: "cursor-sess-1",
+    });
+    await delay(20);
+    emit({
+      type: "tool_call",
+      subtype: "completed",
+      call_id: "task-1",
+      tool_call: {
+        taskToolCall: {
+          args: {
+            description: "Re-review operations docs",
+            prompt: "Re-review Task 6 after fixes.",
+            model: "claude-sonnet-5-thinking-high",
+            subagentType: { unspecified: {} },
+          },
+          result: { success: { result: "looks good" } },
+        },
+      },
+      session_id: "cursor-sess-1",
+    });
+    await delay(20);
+    emit({
+      type: "assistant",
+      timestamp_ms: 1,
+      message: { content: [{ type: "text", text: "Done." }] },
+      session_id: "cursor-sess-1",
+    });
+    emit({
+      type: "result",
+      subtype: "success",
+      is_error: false,
+      duration_ms: 40,
+      duration_api_ms: 40,
+      result: "Done.",
+      session_id: "cursor-sess-1",
+    });
+    process.exit(0);
+    return;
+  }
+
   process.stderr.write("unknown scenario\\n");
   process.exit(1);
 }
@@ -358,5 +423,49 @@ describe("cursor runner integration", () => {
     assert.equal(entry.binEnv, "CODER_CURSOR_BIN");
     assert.ok(entry.defaultBin);
     assert.equal(resolveBin(entry), fakeBin);
+  });
+
+  it("passes thread.model as --model", async () => {
+    const thread = store.getThreads()[0];
+    store.updateThread(thread.id, { model: "gpt-5.6-sol-high-fast" });
+    store.saveNow();
+    await runner.startRun({ threadId: thread.id, prompt: "do the thing" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    const argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
+    const idx = argv.indexOf("--model");
+    assert.ok(idx >= 0, `expected --model in ${JSON.stringify(argv)}`);
+    assert.equal(argv[idx + 1], "gpt-5.6-sol-high-fast");
+  });
+
+  it("summarizes Cursor Task as description plus subagent model, not raw JSON", async () => {
+    process.env.CODER_FAKE_CURSOR_SCENARIO = "task-subagent";
+    const thread = store.getThreads()[0];
+    store.updateThread(thread.id, { model: "gpt-5.6-sol-high-fast" });
+    store.saveNow();
+    await runner.startRun({ threadId: thread.id, prompt: "go" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    const tools = store.getMessages(thread.id).filter((m) => m.role === "tool");
+    assert.equal(tools.length, 1);
+    assert.equal(tools[0].tool.name, "Task");
+    assert.equal(
+      tools[0].text,
+      "Task: Re-review operations docs (claude-sonnet-5-thinking-high)",
+    );
+  });
+
+  it("tracks Cursor Task calls on thread.subagents until the tool completes", async () => {
+    process.env.CODER_FAKE_CURSOR_SCENARIO = "task-subagent";
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "go" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    const subs = store.getThread(thread.id).subagents;
+    assert.ok(Array.isArray(subs));
+    assert.equal(subs.length, 1);
+    assert.equal(subs[0].id, "task-1");
+    assert.equal(subs[0].description, "Re-review operations docs");
+    assert.equal(subs[0].status, "done");
   });
 });
