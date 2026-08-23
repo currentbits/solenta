@@ -41,7 +41,16 @@ const DIFF: DiffResult = {
     { path: "src/a.ts", status: "M", additions: 3, deletions: 1 },
     { path: "notes.txt", status: "??", additions: 5, deletions: 0 },
   ],
-  patch: "diff --git a/src/a.ts b/src/a.ts\n+line\n",
+  patch: [
+    "diff --git a/src/a.ts b/src/a.ts",
+    "--- a/src/a.ts",
+    "+++ b/src/a.ts",
+    "@@ -1,3 +1,4 @@",
+    " keep",
+    "-old",
+    "+new",
+    " context",
+  ].join("\n"),
   truncated: false,
 };
 
@@ -99,19 +108,34 @@ interface Spies {
   reverts: RevertCall[];
   suggests: number;
   diffLoads: number;
+  comments: string[];
 }
 
-function mountPanel(): { m: Promise<Mounted>; spies: Spies } {
-  const spies: Spies = { commits: [], reverts: [], suggests: 0, diffLoads: 0 };
+function mountPanel(opts?: {
+  archived?: boolean;
+  working?: boolean;
+}): { m: Promise<Mounted>; spies: Spies } {
+  const spies: Spies = {
+    commits: [],
+    reverts: [],
+    suggests: 0,
+    diffLoads: 0,
+    comments: [],
+  };
+  const t = thread();
+  if (opts?.archived) t.archived = true;
+  if (opts?.working) t.status = "working";
   const m = mount(
     <ThreadView
-      detail={detail()}
+      detail={{ ...detail(), thread: t }}
       project={project}
       providers={providers}
       workflows={[]}
       hasProjects={true}
       onAddProject={() => {}}
-      onStartRun={() => {}}
+      onStartRun={(prompt) => {
+        spies.comments.push(prompt);
+      }}
       onStartWorkflow={() => {}}
       onSaveWorkflow={async () => ({ id: "w", name: "s", phases: [] })}
       onRemoveWorkflow={async () => {}}
@@ -278,5 +302,100 @@ describe("ChangesPanel commit flow", () => {
       rows.filter((r) => r.getAttribute("data-selected") === "true").length,
       1,
     );
+  });
+});
+
+describe("ChangesPanel inline comments (issue #162)", () => {
+  it("puts a comment control on code lines, not on the hunk header", async () => {
+    const { m } = mountPanel();
+    const view = await m;
+    const add = view.query('button[aria-label="Comment on line 2"]');
+    const removed = view.query('button[aria-label="Comment on removed line 2"]');
+    const ctx = view.query('button[aria-label="Comment on line 1"]');
+    assert.ok(add, "added line is commentable");
+    assert.ok(removed, "deleted line is commentable");
+    assert.ok(ctx, "context line is commentable");
+    assert.equal(
+      view.queryAll("[data-diff-comment-gutter]").length,
+      4,
+      "keep, old, new, context — not the @@ header",
+    );
+  });
+
+  it("opens a comment box on the clicked line", async () => {
+    const { m } = mountPanel();
+    const view = await m;
+    assert.equal(view.query("[data-diff-comment-box]"), null);
+    await view.click(view.query('button[aria-label="Comment on line 2"]'));
+    const box = view.query("[data-diff-comment-box]");
+    assert.ok(box, "comment box appears");
+    const input = view.query(
+      'textarea[aria-label="Diff comment"]',
+    ) as HTMLTextAreaElement | null;
+    assert.ok(input);
+    const send = [...box!.querySelectorAll("button")].find(
+      (b) => (b.textContent || "").trim() === "Send",
+    );
+    assert.ok(send);
+    assert.ok(send!.hasAttribute("disabled"), "empty comment cannot send");
+  });
+
+  it("sends the comment as a follow-up prompt with file and line", async () => {
+    const { m, spies } = mountPanel();
+    const view = await m;
+    await view.click(view.query('button[aria-label="Comment on line 2"]'));
+    const input = view.query('textarea[aria-label="Diff comment"]');
+    await view.type(input, "use Y instead");
+    const send = [...view.queryAll("[data-diff-comment-box] button")].find(
+      (b) => (b.textContent || "").trim() === "Send",
+    );
+    await view.click(send ?? null);
+    assert.equal(spies.comments.length, 1);
+    assert.match(spies.comments[0]!, /^Comment on src\/a\.ts:2:\n/);
+    assert.match(spies.comments[0]!, /\n    \+new\n/);
+    assert.match(spies.comments[0]!, /\nuse Y instead$/);
+    assert.equal(
+      view.query("[data-diff-comment-box]"),
+      null,
+      "box closes after send",
+    );
+  });
+
+  it("queues the comment while the thread is working", async () => {
+    const { m, spies } = mountPanel({ working: true });
+    const view = await m;
+    await view.click(view.query('button[aria-label="Comment on line 2"]'));
+    const queue = [...view.queryAll("[data-diff-comment-box] button")].find(
+      (b) => (b.textContent || "").trim() === "Queue",
+    );
+    assert.ok(queue, "Send relabels to Queue mid-run");
+    const input = view.query('textarea[aria-label="Diff comment"]');
+    await view.type(input, "fix the new line");
+    await view.click(queue);
+    assert.equal(spies.comments.length, 1);
+    assert.match(spies.comments[0]!, /fix the new line$/);
+  });
+
+  it("sends with Cmd+Enter and closes on Escape", async () => {
+    const { m, spies } = mountPanel();
+    const view = await m;
+    await view.click(view.query('button[aria-label="Comment on line 2"]'));
+    const input = view.query('textarea[aria-label="Diff comment"]');
+    await view.type(input, "first");
+    await view.pressFocused("Enter", { metaKey: true });
+    assert.equal(spies.comments.length, 1);
+    assert.match(spies.comments[0]!, /\nfirst$/);
+
+    await view.click(view.query('button[aria-label="Comment on line 1"]'));
+    assert.ok(view.query("[data-diff-comment-box]"));
+    await view.pressFocused("Escape");
+    assert.equal(view.query("[data-diff-comment-box]"), null);
+    assert.equal(spies.comments.length, 1, "Escape must not send");
+  });
+
+  it("hides comment controls on an archived thread", async () => {
+    const { m } = mountPanel({ archived: true });
+    const view = await m;
+    assert.equal(view.queryAll("[data-diff-comment-gutter]").length, 0);
   });
 });

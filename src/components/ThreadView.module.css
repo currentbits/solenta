@@ -1108,6 +1108,8 @@ a.btn {
 }
 
 .diffLine {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
   white-space: pre;
   color: var(--text-muted);
 }
@@ -1128,6 +1130,123 @@ a.btn {
 
 .diffLine[data-kind="meta"] {
   color: var(--text-dim);
+}
+
+.diffLine[data-commenting] {
+  box-shadow: inset 2px 0 0 var(--blue);
+}
+
+.diffLineGutter {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0 8px 0 4px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  line-height: inherit;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  user-select: none;
+}
+
+button.diffLineGutter {
+  cursor: pointer;
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease,
+    transform 0.12s ease;
+}
+
+button.diffLineGutter:active {
+  transform: scale(0.97);
+}
+
+button.diffLineGutter:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  button.diffLineGutter:hover {
+    color: var(--blue);
+    background: var(--blue-soft);
+  }
+}
+
+.diffLineGutter[data-static] {
+  cursor: default;
+}
+
+.diffLineText {
+  min-width: 0;
+}
+
+.diffComment {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 4px 0 10px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  opacity: 1;
+  transform: translateY(0);
+  transition:
+    opacity 120ms cubic-bezier(0.23, 1, 0.32, 1),
+    transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+@starting-style {
+  .diffComment {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .diffComment {
+    transition: none;
+    transform: none;
+  }
+
+  button.diffLineGutter {
+    transition: none;
+  }
+
+  button.diffLineGutter:active {
+    transform: none;
+  }
+}
+
+.diffCommentInput {
+  width: 100%;
+  resize: vertical;
+  font: inherit;
+  font-size: 12.5px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text);
+}
+
+.diffCommentInput:focus {
+  outline: none;
+  border-color: var(--blue-border);
+}
+
+.diffCommentInput::placeholder {
+  color: var(--text-dim);
+}
+
+.diffCommentActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .hunkBlock {
