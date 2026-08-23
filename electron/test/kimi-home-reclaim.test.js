@@ -17,13 +17,13 @@ const path = require("node:path");
 const { materializeKimiHome } = require("../kimi.js");
 const { scheduleRetention } = require("../worktrees.js");
 
-const SECRET = "do-not-delete-me\n";
+const CREDS_BODY = "do-not-delete-me\n";
 const SESSION = '{"id":"live-session"}\n';
 
 function makeSourceHome(root) {
   const sourceHome = path.join(root, "real-kimi-code");
   fs.mkdirSync(sourceHome);
-  fs.writeFileSync(path.join(sourceHome, "credentials"), SECRET);
+  fs.writeFileSync(path.join(sourceHome, "credentials"), CREDS_BODY);
   fs.writeFileSync(path.join(sourceHome, "config.toml"), "default_model = \"kimi\"\n");
   const sessions = path.join(sourceHome, "sessions");
   fs.mkdirSync(sessions);
@@ -98,7 +98,7 @@ describe("kimi-home reclaim (#675)", () => {
 
     assert.equal(
       fs.readFileSync(path.join(sourceHome, "credentials"), "utf8"),
-      SECRET,
+      CREDS_BODY,
       "credentials symlink target must not be deleted",
     );
     assert.equal(
