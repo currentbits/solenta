@@ -89,6 +89,7 @@
       <span class="agent-chip">Codex</span>
       <span class="agent-chip"><img src="https://cdn.simpleicons.org/kimi/191918" width="15" height="15" alt="" /> Kimi</span>
       <span class="agent-chip">Grok</span>
+      <span class="agent-chip">Cursor</span>
       <span class="agent-chip"><img src="https://cdn.simpleicons.org/opencode/191918" width="15" height="15" alt="" /> OpenCode</span>
     </div>
   </div>
@@ -103,8 +104,8 @@
         <p>
           What one thread learns, the next one knows. Solenta injects a local
           memory server into every agent session automatically, so decisions
-          and gotchas persist across Claude Code, Codex, Kimi, Grok and
-          OpenCode. The tenth session on a project is better informed than
+          and gotchas persist across Claude Code, Codex, Cursor, Kimi, Grok
+          and OpenCode. The tenth session on a project is better informed than
           the first.
         </p>
         <ul class="orch-points">
@@ -201,8 +202,13 @@
       </div>
       <div class="cell cell-b reveal">
         <div class="cell-icon"><i class="ph ph-squares-four"></i></div>
-        <h3>Five providers, one UI</h3>
-        <p>Claude Code, Codex, Kimi, Grok and OpenCode with sticky permission modes, model overrides and session resume.</p>
+        <h3>Six providers, one UI</h3>
+        <p>Claude Code, Codex, Cursor, Kimi, Grok and OpenCode with sticky permission modes, model overrides and session resume.</p>
+      </div>
+      <div class="cell cell-e reveal">
+        <div class="cell-icon"><i class="ph ph-terminal-window"></i></div>
+        <h3>Terminal and browser, in the thread</h3>
+        <p>A shell in the thread's worktree and an embedded browser on your dev server, beside the transcript. Screenshot the page into the composer, or let the agent click through it itself.</p>
       </div>
       <div class="cell cell-e reveal">
         <div class="cell-icon"><i class="ph ph-rows"></i></div>
@@ -371,7 +377,7 @@
     <div class="faq-list reveal">
       <details name="faq">
         <summary>Which agents can Solenta run?</summary>
-        <p>Claude Code, Codex, Kimi, Grok and OpenCode. Install the CLIs you want to drive and Solenta finds them on your PATH. Permission modes, model overrides and session resume are per provider.</p>
+        <p>Claude Code, Codex, Cursor, Kimi, Grok and OpenCode. Install the CLIs you want to drive and Solenta finds them on your PATH. Permission modes, model overrides and session resume are per provider.</p>
       </details>
       <details name="faq">
         <summary>Does my code leave my machine?</summary>
@@ -417,21 +423,21 @@
       <div class="install-card reveal">
         <h3>macOS</h3>
         <p class="os-note">Apple Silicon</p>
-        <pre><b>Solenta-v0.10.0-macos-arm64.zip</b>
+        <pre><b>Solenta-v0.11.0-macos-arm64.zip</b>
 unzip, move to /Applications
 first launch: right-click &gt; Open</pre>
       </div>
       <div class="install-card reveal">
         <h3>Windows</h3>
         <p class="os-note">x64</p>
-        <pre><b>Solenta-v0.10.0-win32-x64.zip</b>
+        <pre><b>Solenta-v0.11.0-win32-x64.zip</b>
 unzip anywhere
 run solenta.exe (SmartScreen asks once)</pre>
       </div>
       <div class="install-card reveal">
         <h3>Linux</h3>
         <p class="os-note">x64</p>
-        <pre><b>Solenta-v0.10.0-linux-x64.tar.gz</b>
+        <pre><b>Solenta-v0.11.0-linux-x64.tar.gz</b>
 tar xzf Solenta-*.tar.gz
 ./solenta/solenta</pre>
       </div>

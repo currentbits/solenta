@@ -56,6 +56,24 @@
         Every notable change to Solenta, newest first.
       </p>
 
+      <h2 id="v0-11-0">0.11.0 <small>2026-08-23</small></h2>
+      <h3>Added</h3>
+      <ul>
+        <li><strong>Terminal pane.</strong> A real shell in the thread's worktree, side by side with the transcript rather than a drawer under it. One long-lived session per thread, so <code>cd</code> and exports persist between commands.</li>
+        <li><strong>Browser pane.</strong> An embedded browser scoped to the thread, with an address bar that suggests the project's dev-server URL. A capture button drops a screenshot of the page straight into the composer, and the agent can drive the same view: navigate, click, type and screenshot, so it can see what it just built.</li>
+        <li><strong>Comment on a diff line.</strong> Click a line number in the Git pane and leave an inline comment; sending it posts the file, the line and the quoted code back to the agent as a follow-up prompt.</li>
+        <li><strong>Stage files before committing.</strong> The Changes panel gets a checkbox per file and a tri-state header, so a commit or a merge lands only what you ticked instead of everything the agent touched.</li>
+        <li><strong>Cursor CLI is a provider.</strong> <code>cursor-agent</code> joins Claude Code, Codex, Kimi, Grok and OpenCode, with its full model catalog, session resume and skills fan-out.</li>
+        <li><strong>Updates are a button.</strong> The app checks for new releases on its own while it runs, and the update notice next to Settings is a button that installs and relaunches instead of a line of text pointing you at GitHub.</li>
+        <li><strong>Verify reuses other worktrees' builds.</strong> Every worktree of a repo now points at one shared build cache, so a verify run in one thread does not rebuild what another thread already built. Turbo, Nx and the usual suspects are picked up automatically.</li>
+      </ul>
+      <h3>Fixed</h3>
+      <ul>
+        <li>Kimi runs no longer see other projects. Each run gets its own scoped home with only this project's MCP servers and this run's directory, and a thread listing is limited to the project that asked for it.</li>
+        <li>Those per-run kimi directories are now collected on the retention sweep instead of accumulating one per thread forever.</li>
+        <li>A machine on the nightly channel is no longer offered a permanent downgrade to the last stable release; the update check picks the newest release by publish time rather than trusting the order GitHub returns.</li>
+      </ul>
+
       <h2 id="v0-10-0">0.10.0 <small>2026-08-22</small></h2>
       <h3>Added</h3>
       <ul>

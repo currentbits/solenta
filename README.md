@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>Every agent starts where the last one stopped.</strong><br/>
-  Shared local memory across Claude Code, Codex, Kimi, Grok, and OpenCode.<br/>
+  Shared local memory across Claude Code, Codex, Cursor, Kimi, Grok, and OpenCode.<br/>
   Session ten does not re-learn what session one already ruled out.
 </p>
 
@@ -79,7 +79,7 @@ Grok · thread 6
 Memory is why Solenta exists. The rest is so you can run the agents that write
 it.
 
-- **Five providers, one UI** — Claude Code, Codex, Kimi Code, Grok, and
+- **Six providers, one UI** — Claude Code, Codex, Cursor, Kimi Code, Grok, and
   OpenCode, with model overrides, session resume, and quota-reset resume.
 - **Git in the loop** — fail-closed worktrees (setup failure never falls back
   to the project checkout), Git as a center pane rather than an overlay, a
@@ -121,6 +121,7 @@ it.
 > |---|---|---|
 > | [Claude Code](https://claude.com/product/claude-code) | `npm i -g @anthropic-ai/claude-code` | `claude` → `/login` |
 > | [Codex](https://developers.openai.com/codex/cli) | `npm i -g @openai/codex` | `codex login` |
+> | [Cursor](https://cursor.com/cli) | `curl https://cursor.com/install -fsS \| bash` | `cursor-agent login` |
 > | [Grok](https://x.ai/cli) | see x.ai/cli | `grok login` |
 > | [OpenCode](https://opencode.ai) | `npm i -g opencode-ai` | `opencode auth login` |
 > | [Kimi Code](https://github.com/MoonshotAI/kimi-cli) | `pip install kimi-cli` | `kimi` → follow prompts |

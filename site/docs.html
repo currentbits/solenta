@@ -66,6 +66,7 @@
       <a href="#skills">Skills</a>
       <a href="#automations">Automations</a>
       <a href="#dev-servers">Dev servers</a>
+      <a href="#panes">Terminal and Browser panes</a>
       <a href="#spend">Spend guardrails</a>
       <a href="#analytics">Usage and fleet analytics</a>
       <a href="#updates">Notifications and updates</a>
@@ -81,7 +82,8 @@
         Solenta is a local-first desktop app: agents share a persistent local
         memory, so a later thread can pick up what an earlier one stored, and
         the Planboard is the project's GitHub issues. Each thread can run
-        Claude Code, Codex, Kimi, Grok or OpenCode in its own git worktree.
+        Claude Code, Codex, Cursor, Kimi, Grok or OpenCode in its own git
+        worktree.
         Everything below is in the current release.
       </p>
 
@@ -99,6 +101,7 @@
       <ul>
         <li><strong>Claude Code</strong> (<code>claude</code>)</li>
         <li><strong>Codex</strong> (<code>codex</code>)</li>
+        <li><strong>Cursor</strong> (<code>cursor-agent</code>)</li>
         <li><strong>Kimi</strong> (<code>kimi</code>)</li>
         <li><strong>Grok</strong> (<code>grok</code>)</li>
         <li><strong>OpenCode</strong> (<code>opencode</code>)</li>
@@ -295,6 +298,16 @@
         right-hand panel. The Environment tab still runs
         <code>git pull --ff-only</code>, starts the project dev server, and
         holds Fork and Handoff.
+      </p>
+      <p>
+        In that pane the Changes list has a <strong>checkbox per file</strong>
+        and a tri-state header checkbox: a commit or a merge stages only the
+        files you ticked, and the button names the count. Everything is
+        checked by default, so leaving it alone commits the lot as before.
+        Clicking a <strong>line number</strong> in the diff opens an inline
+        comment box; sending it posts that comment to the agent as a
+        follow-up prompt with the file, the line number and the quoted diff
+        line attached, so a review note goes straight back into the run.
       </p>
       <p>
         The header carries one <strong>next-action</strong> button that names
@@ -535,7 +548,7 @@
         Skills also <strong>fan out</strong>: install one once and Solenta
         copies it into every provider's skills directory it finds on your
         machine, so a skill you wrote for Claude Code is available to Codex,
-        Grok, Kimi and OpenCode without five manual copies.
+        Cursor, Grok, Kimi and OpenCode without five manual copies.
       </p>
 
       <h2 id="automations">Automations</h2>
@@ -562,6 +575,33 @@
         <code>Local: http://localhost:5173/</code> banner) so it is one click
         away. Stopping the server is a button too: no orphaned process on a
         port you have to hunt down later.
+      </p>
+
+      <h2 id="panes">Terminal and Browser panes</h2>
+      <p>
+        The thread centre is a split of panes, not one transcript. Chat and
+        Git are two of them; <strong>Terminal</strong> and
+        <strong>Browser</strong> open from the Views menu and sit beside the
+        transcript rather than under it.
+      </p>
+      <p>
+        The <strong>Terminal</strong> pane is one long-lived shell per thread,
+        started in that thread's worktree (the project root when it has none),
+        so <code>cd</code> and exported variables survive between commands and
+        you are never a directory away from what the agent is editing. It is
+        pipes rather than a full TTY: interactive prompts and curses apps are
+        out of scope, and closing the pane kills the shell and its scrollback.
+      </p>
+      <p>
+        The <strong>Browser</strong> pane is an embedded browser bound to the
+        thread, with back, forward, reload and an address bar that suggests the
+        thread's dev-server URL. It is restricted to loopback addresses: this
+        is for looking at what you are building, not for browsing the web. The
+        capture button screenshots the visible page and attaches the PNG to the
+        composer. The agent on that thread can drive the same view through its
+        own tool: navigate, reload, click and type by CSS selector, and take a
+        screenshot it can actually see, which closes the loop between changing
+        a page and checking it.
       </p>
 
       <h2 id="spend">Spend guardrails</h2>
@@ -618,9 +658,9 @@
       <p>
         For work that ran while you were not watching, the
         <strong>morning digest</strong> collects it into one summary: what ran,
-        what it cost, and what changed. A waiting update shows as a dot on the
-        sidebar Settings button, so you do not have to open Settings to find
-        out there is one.
+        what it cost, and what changed. A waiting update shows next to the
+        sidebar Settings button as a button that installs it and relaunches,
+        so you do not have to open Settings, or GitHub, to act on one.
       </p>
       <p>
         Updates come from plain GitHub releases on two channels:
