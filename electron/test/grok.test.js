@@ -528,6 +528,39 @@ describe("runner grok provider (claude-stream path)", () => {
     assert.equal(users.length, 1);
   });
 
+  it("a machine-delivered turn does not erase the question card (#647)", async () => {
+    process.env.CODER_FAKE_GROK_SCENARIO = "ask-question";
+    const thread = store.getThreads()[0];
+
+    await runner.startRun({ threadId: thread.id, prompt: "land the branch" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+    const card = store.getThread(thread.id).pendingQuestion;
+    assert.ok(card);
+
+    // grok ended its turn when it asked, so the thread is idle and a worker
+    // notice is free to start a run right over the card. It must not.
+    process.env.CODER_FAKE_GROK_SCENARIO = "success";
+    runner.deliverNotice({
+      threadId: thread.id,
+      line: "[orchestration] Worker thread w1 finished with status done.",
+    });
+    await waitFor(() => store.getThread(thread.id).status === "working");
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    const after = store.getThread(thread.id);
+    assert.deepEqual(after.pendingQuestion, card);
+    assert.equal(after.awaitingInput, true);
+
+    // The user answering still clears it: that turn is a human one.
+    await runner.startRun({
+      threadId: thread.id,
+      prompt: "Answering your question:\n\nMerge or open a PR?\n→ Merge",
+    });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+    assert.equal(store.getThread(thread.id).pendingQuestion, null);
+    assert.equal(store.getThread(thread.id).awaitingInput, false);
+  });
+
   it("second turn passes --resume with captured session id", async () => {
     process.env.CODER_FAKE_GROK_SCENARIO = "success";
     const thread = store.getThreads()[0];

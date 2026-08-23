@@ -1450,7 +1450,12 @@ function setQueued(store, input) {
   // Queueing a follow-up mid-run is still the user speaking, so it supersedes
   // an open question card the same way startRun does (issue #647). Clearing
   // the queue (prompt === null) is not: the card outlives a cancelled draft.
-  const patch = queued ? { queued, pendingQuestion: null } : { queued };
+  // An inbound cross-thread send is another agent, not the user: it queues
+  // behind the card instead of deleting it.
+  const patch =
+    queued && input.inbound !== true
+      ? { queued, pendingQuestion: null }
+      : { queued };
   const updated = store.updateThread(threadId, patch);
   store.save();
   return updated ? { ...updated } : { ...thread, queued };

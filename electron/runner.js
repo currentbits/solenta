@@ -5928,6 +5928,14 @@ function createRunner(opts) {
       title = firstLine.slice(0, max) || "New Thread";
     }
 
+    // A machine-delivered turn is not the user answering, so it must not
+    // erase an open question card (issue #647). grok/kimi end their turn when
+    // they ask, which leaves the thread idle and every notice / cross-thread
+    // send free to start a run over the card — measured on the live store:
+    // 4 of 82 asks were wiped this way, one 2 s after it went up.
+    const machineTurn = input.fromNotice === true || input.fromInbound === true;
+    const keepQuestion = machineTurn ? thread.pendingQuestion || null : null;
+
     // Real activity clears a stale "settled" pin (t3 rule). An explicit
     // "active" pin survives so the user can keep a thread out of auto-settle.
     // Shared with workflow start via services.clearSettledOnActivity.
@@ -5936,11 +5944,11 @@ function createRunner(opts) {
       {
         status: "working",
         title,
+        awaitingInput: keepQuestion != null,
         runStartedAt: Date.now(),
-        awaitingInput: false,
         // Any user turn supersedes an open question card (issue #647):
         // answering it IS this message, and so is changing the subject.
-        pendingQuestion: null,
+        pendingQuestion: keepQuestion,
         lastEventAt: null,
         stalledAt: null,
         quotaWaitUntil: null,
