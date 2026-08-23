@@ -51,7 +51,7 @@ export const PANE_REGISTRY: Record<
   chat: { title: "Chat", shipped: true, split: "horizontal" },
   diff: { title: "Git", shipped: true, split: "horizontal" },
   terminal: { title: "Terminal", shipped: false, split: "vertical" },
-  browser: { title: "Browser", shipped: false, split: "horizontal" },
+  browser: { title: "Browser", shipped: true, split: "horizontal" },
   files: { title: "Files", shipped: false, split: "horizontal" },
   tasks: { title: "Tasks", shipped: false, split: "horizontal" },
   subagent: { title: "Subagent", shipped: false, split: "horizontal" },

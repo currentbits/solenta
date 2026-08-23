@@ -99,6 +99,12 @@ const INSTRUCTIONS =
   "When a worker model pool is configured, your prompt lists described aliases. " +
   "Pass pool=<alias> on thread_fork to pick one; omit pool to use the default. " +
   "Do not pass a raw model id. " +
+  "preview drives the Browser pane on YOUR OWN thread — the shared visible " +
+  "webview the user sees. The pane must be open (Views → Browser). Loopback " +
+  "URLs only (localhost). action is one of info, navigate, reload, back, " +
+  "forward, screenshot, click, type. screenshot returns a PNG of the page; " +
+  "click and type take a CSS selector. If the pane is not open the tool says " +
+  "so: ask the user to open it. Do not claim the UI works without a screenshot. " +
   "Worktrees of one repo share a git object store, so the durable way to hand " +
   "over a document (plan.md, contract.md) is to COMMIT it on your branch and " +
   "send the peer a `branch:path` ref in the task note or peer message. The peer " +
@@ -131,6 +137,30 @@ function authorized(req, token, url) {
 
 function json(value) {
   return { content: [{ type: "text", text: JSON.stringify(value, null, 2) }] };
+}
+
+/**
+ * screenshot returns a PNG data URL; MCP image content carries the pixels
+ * so the agent can see the page, and the JSON drops the data URL so the
+ * transcript does not swallow a megabyte of base64.
+ * @param {object} value
+ */
+function previewResult(value) {
+  if (!value || typeof value !== "object" || typeof value.dataUrl !== "string") {
+    return json(value);
+  }
+  const dataUrl = value.dataUrl;
+  const { dataUrl: _drop, ...meta } = value;
+  const content = [{ type: "text", text: JSON.stringify(meta, null, 2) }];
+  const m = /^data:image\/png;base64,([A-Za-z0-9+/=\s]+)$/i.exec(dataUrl);
+  if (m) {
+    content.unshift({
+      type: "image",
+      data: m[1].replace(/\s+/g, ""),
+      mimeType: "image/png",
+    });
+  }
+  return { content };
 }
 
 /**
@@ -255,6 +285,7 @@ async function loadOrCreateConfig(file) {
 function createToolHandlers(deps) {
   const { store, runner, forkThread, getProvider, broadcast, userDataPath } =
     deps;
+  const previewApi = deps.preview || require("./preview.js");
   const boundProjectId = deps.boundProjectId
     ? String(deps.boundProjectId)
     : "";
@@ -955,6 +986,33 @@ function createToolHandlers(deps) {
     return { threadId: args.threadId, title: updated.title };
   }
 
+  async function preview(args) {
+    requireOwnThread(args);
+    const action = String((args && args.action) || "");
+    const threadId = args.threadId;
+    if (action === "info") return previewApi.info({ threadId });
+    if (action === "navigate") {
+      return previewApi.navigate({ threadId, url: args.url });
+    }
+    if (action === "reload") return previewApi.reload({ threadId });
+    if (action === "back") return previewApi.goBack({ threadId });
+    if (action === "forward") return previewApi.goForward({ threadId });
+    if (action === "screenshot") return previewApi.screenshot({ threadId });
+    if (action === "click") {
+      return previewApi.click({ threadId, selector: args.selector });
+    }
+    if (action === "type") {
+      return previewApi.type({
+        threadId,
+        selector: args.selector,
+        text: args.text,
+      });
+    }
+    throw new Error(
+      "Unknown preview action. Use info, navigate, reload, back, forward, screenshot, click, or type.",
+    );
+  }
+
   return {
     threads_list,
     thread_fork,
@@ -977,6 +1035,7 @@ function createToolHandlers(deps) {
     task_complete,
     task_release,
     peer_send,
+    preview,
   };
 }
 
@@ -1413,6 +1472,37 @@ function buildMcpServer(sdk, handlers) {
       },
     },
     async (args) => json(await handlers.task_release(args)),
+  );
+
+  server.registerTool(
+    "preview",
+    {
+      description:
+        "Drive the Browser pane on YOUR OWN thread, the shared visible " +
+        "webview. The pane must already be open (Views → Browser). Loopback " +
+        "URLs only. action: info, navigate (url), reload, back, forward, " +
+        "screenshot, click (selector), type (selector + text). screenshot " +
+        "returns a PNG of the page. If the pane is not open the tool says so; " +
+        "ask the user to open it instead of claiming the UI works.",
+      inputSchema: {
+        threadId: z.string().min(1),
+        projectId: z.string().min(1),
+        action: z.enum([
+          "info",
+          "navigate",
+          "reload",
+          "back",
+          "forward",
+          "screenshot",
+          "click",
+          "type",
+        ]),
+        url: z.string().min(1).optional(),
+        selector: z.string().min(1).optional(),
+        text: z.string().optional(),
+      },
+    },
+    async (args) => previewResult(await handlers.preview(args)),
   );
 
   server.registerTool(

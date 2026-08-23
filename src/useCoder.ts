@@ -503,6 +503,8 @@ export interface UseCoderResult {
   stopDevServer: (threadId: string) => Promise<DevServerState>;
   /** Live status for the thread's spawned dev server. */
   devServerStatus: (threadId: string) => Promise<DevServerState>;
+  /** Embedded Browser pane guest (issue #155). Desktop-only. */
+  preview: CoderApi["preview"];
   /** Arm or clear the thread's verification command (issue #296). */
   setVerifyCommand: (threadId: string, command: string | null) => Promise<void>;
   /** Run the thread's verification command now. Rejects on an active run. */
@@ -2933,6 +2935,7 @@ export function useCoder(): UseCoderResult {
     startDevServer,
     stopDevServer,
     devServerStatus,
+    preview: api.preview,
     setVerifyCommand,
     runVerify,
     runCommand,

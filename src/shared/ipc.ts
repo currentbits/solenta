@@ -1573,6 +1573,19 @@ export interface DevServerState {
   lastLines?: string[];
 }
 
+/** Live state of the embedded Browser pane guest (issue #155). */
+export interface PreviewSnapshot {
+  url: string;
+  title: string;
+  canGoBack: boolean;
+  canGoForward: boolean;
+}
+
+export interface PreviewScreenshot extends PreviewSnapshot {
+  /** PNG data URL of the visible page. */
+  dataUrl: string;
+}
+
 export interface PrInfo {
   number: number;
   url: string;
@@ -3176,6 +3189,28 @@ export interface CoderApi {
     stop(input: { threadId: string }): Promise<DevServerState>;
     /** Live status, including a captured URL and recent log tail. */
     status(input: { threadId: string }): Promise<DevServerState>;
+  };
+  /**
+   * Embedded Browser pane (issue #155). Desktop-only: the renderer hosts a
+   * <webview> and bind() maps it so screenshot/navigate/click share the
+   * visible page. Loopback URLs only; the app-window policy in links.js is
+   * unchanged.
+   */
+  preview: {
+    bind(input: { threadId: string; webContentsId: number }): Promise<PreviewSnapshot>;
+    unbind(input: { threadId: string; webContentsId?: number }): Promise<{ ok: boolean }>;
+    navigate(input: { threadId: string; url: string }): Promise<PreviewSnapshot>;
+    reload(input: { threadId: string }): Promise<PreviewSnapshot>;
+    goBack(input: { threadId: string }): Promise<PreviewSnapshot>;
+    goForward(input: { threadId: string }): Promise<PreviewSnapshot>;
+    info(input: { threadId: string }): Promise<PreviewSnapshot>;
+    screenshot(input: { threadId: string }): Promise<PreviewScreenshot>;
+    click(input: { threadId: string; selector: string }): Promise<PreviewSnapshot>;
+    type(input: {
+      threadId: string;
+      selector: string;
+      text: string;
+    }): Promise<PreviewSnapshot>;
   };
   /**
    * Vibe Kanban import (#399). Preview/import read the local VK SQLite;

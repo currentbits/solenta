@@ -517,6 +517,17 @@ describe("Views menu pane workspace (issue #552)", () => {
     m.unmount();
   });
 
+  it("opens the Browser pane as a real preview, not a placeholder", async () => {
+    const m = await mount(view({}));
+    await m.flush();
+    await m.click(m.query("[data-views-btn]"));
+    await m.click(m.query("[data-views-item='browser']"));
+    assert.ok(m.query("[data-browser-pane]"), "Browser pane mounts");
+    assert.equal(m.query("[data-pane-placeholder='browser']"), null);
+    assert.ok(m.query("[data-pane-chat]"), "chat stays");
+    m.unmount();
+  });
+
   it("opens an unshipped pane type as a placeholder slot", async () => {
     const m = await mount(view({}));
     await m.flush();

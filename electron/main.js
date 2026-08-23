@@ -24,6 +24,7 @@ const {
 } = require("./notify.js");
 const { recordSecretUse } = require("./secrets.js");
 const { windowOpenAction, navigateAction } = require("./links.js");
+const { guestWebviewPolicy, attachGuestPolicy } = require("./preview.js");
 const {
   createMemorySupervisor,
   getMemoryStatus,
@@ -171,6 +172,7 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      webviewTag: true,
     },
   });
 
@@ -268,6 +270,19 @@ function notifyThreadComplete(thread) {
   });
   n.show();
 }
+
+// Guest <webview> for the Browser pane (issue #155). Strip node/preload
+// and refuse any partition that is not solenta-preview:<threadId>. The app
+// window itself still never navigates to the web (links.js above).
+app.on("web-contents-created", (_event, contents) => {
+  contents.on("will-attach-webview", (event, webPreferences, params) => {
+    const decision = guestWebviewPolicy(webPreferences, params);
+    if (!decision.allow) event.preventDefault();
+  });
+  contents.on("did-attach-webview", (_e, guest) => {
+    attachGuestPolicy(guest);
+  });
+});
 
 app.whenReady().then(async () => {
   // Before any window: without an installed menu a packaged build has no

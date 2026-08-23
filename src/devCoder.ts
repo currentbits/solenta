@@ -30,6 +30,7 @@ import type {
   CommandRunResult,
   DiffResult,
   DevServerState,
+  PreviewSnapshot,
   FailureKind,
   FailureMode,
   FleetEvidence,
@@ -4712,6 +4713,53 @@ function buildDevCoder(): CoderApi {
     servers: {
       async list(_input: { threadId: string }): Promise<LocalServerInfo[]> {
         return [];
+      },
+    },
+    preview: {
+      async bind(_input: { threadId: string; webContentsId: number }): Promise<PreviewSnapshot> {
+        return { url: "", title: "", canGoBack: false, canGoForward: false };
+      },
+      async unbind(_input: { threadId: string; webContentsId?: number }) {
+        return { ok: true };
+      },
+      async navigate(input: { threadId: string; url: string }): Promise<PreviewSnapshot> {
+        return {
+          url: input.url,
+          title: "",
+          canGoBack: false,
+          canGoForward: false,
+        };
+      },
+      async reload(_input: { threadId: string }): Promise<PreviewSnapshot> {
+        return { url: "", title: "", canGoBack: false, canGoForward: false };
+      },
+      async goBack(_input: { threadId: string }): Promise<PreviewSnapshot> {
+        return { url: "", title: "", canGoBack: false, canGoForward: false };
+      },
+      async goForward(_input: { threadId: string }): Promise<PreviewSnapshot> {
+        return { url: "", title: "", canGoBack: false, canGoForward: false };
+      },
+      async info(_input: { threadId: string }): Promise<PreviewSnapshot> {
+        return { url: "", title: "", canGoBack: false, canGoForward: false };
+      },
+      async screenshot(_input: { threadId: string }) {
+        return {
+          url: "http://localhost:5173/",
+          title: "",
+          canGoBack: false,
+          canGoForward: false,
+          dataUrl: "data:image/png;base64,aaa",
+        };
+      },
+      async click(_input: { threadId: string; selector: string }): Promise<PreviewSnapshot> {
+        return { url: "", title: "", canGoBack: false, canGoForward: false };
+      },
+      async type(_input: {
+        threadId: string;
+        selector: string;
+        text: string;
+      }): Promise<PreviewSnapshot> {
+        return { url: "", title: "", canGoBack: false, canGoForward: false };
       },
     },
     devserver: {
