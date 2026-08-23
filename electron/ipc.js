@@ -91,6 +91,7 @@ function runRetention(ctx) {
   return scheduleRetention({
     store: ctx.store,
     worktreeBase: ctx.worktreeBase,
+    userDataPath: ctx.userDataPath,
     broadcast: ctx.broadcast,
   });
 }

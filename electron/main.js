@@ -517,6 +517,7 @@ app.whenReady().then(async () => {
   retentionSweeper = createRetentionSweeper({
     store,
     worktreeBase,
+    userDataPath: userData,
     broadcast,
     intervalMs: 6 * 60 * 60 * 1000,
     startupDelayMs: 15_000,
