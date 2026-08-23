@@ -247,6 +247,22 @@ cp assets/Solenta.icns "$APP_BUNDLE/Contents/Resources/Solenta.icns"
 echo "icon: Contents/Resources/Solenta.icns"
 
 # ---------------------------------------------------------------------------
+# Code signing (Developer ID + hardened runtime)
+# ---------------------------------------------------------------------------
+# Last mutation of the bundle: codesign seals the tree, so anything that edits
+# a file after this point invalidates the signature.
+#
+# Notarization only runs for tagged builds (publish-release.sh passes --tag).
+# It is a multi-minute round trip to Apple, and a local install-swap bundle
+# never leaves this machine — where the signature alone is enough. Releases go
+# to other people's Macs, where an un-stapled bundle is still Gatekeeper-blocked.
+CODESIGN_ARGS=()
+if [[ -n "$RELEASE_TAG" ]]; then
+  CODESIGN_ARGS+=(--notarize)
+fi
+bash "$ROOT/scripts/codesign-app.sh" "$APP_BUNDLE" ${CODESIGN_ARGS[@]+"${CODESIGN_ARGS[@]}"}
+
+# ---------------------------------------------------------------------------
 # Report size
 # ---------------------------------------------------------------------------
 

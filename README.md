@@ -136,8 +136,8 @@ it.
 Grab an archive from the [latest release](https://github.com/currentbits/solenta/releases/latest):
 
 - **macOS (Apple Silicon)** — `Solenta-<v>-macos-arm64.zip`. Unzip, move
-  `Solenta.app` to `/Applications`. Not notarized, so right-click → **Open** the
-  first time (or `xattr -dr com.apple.quarantine /Applications/Solenta.app`).
+  `Solenta.app` to `/Applications`, double-click. Signed with a Developer ID and
+  notarized by Apple, so Gatekeeper opens it like any other app.
 - **Windows (x64)** — `Solenta-<v>-win32-x64.zip`. Unzip anywhere, run
   `solenta.exe`. Unsigned, so SmartScreen asks once. There is no installer
   and no winget package; see the note in `scripts/package-cross.sh`.
@@ -214,6 +214,37 @@ npm run test:memory      # memory server (needs `npm ci --prefix memory-server`)
 ```
 
 `npm run acceptance` stays manual: one real claude turn, not part of CI.
+
+<details>
+<summary>Packaging and code signing</summary>
+
+`bash scripts/package-app.sh` builds `out/Solenta.app`; `scripts/publish-release.sh
+prod|nightly` builds every platform, notarizes the mac bundle and cuts the
+GitHub release.
+
+Signing happens in `scripts/codesign-app.sh` (hardened runtime, entitlements in
+`scripts/entitlements.plist`) and reads credentials from the environment only:
+
+| Var | Purpose |
+|---|---|
+| `CODESIGN_IDENTITY` | Full identity string. Auto-detected from the keychain when unset. |
+| `APPLE_KEYCHAIN_PROFILE` | `notarytool` profile name. Preferred over the three below. |
+| `APPLE_ID` / `APPLE_TEAM_ID` / `APPLE_APP_PASSWORD` | Fallback. The password is an app-specific password from appleid.apple.com, never the account password. |
+
+Store the profile once instead of exporting a password per shell:
+
+```bash
+xcrun notarytool store-credentials solenta \
+  --apple-id you@example.com --team-id TEAMID --password <app-specific-password>
+export APPLE_KEYCHAIN_PROFILE=solenta
+```
+
+Local builds sign but do not notarize (a multi-minute round trip to Apple that
+a bundle which never leaves this machine does not need). Only a `--tag` build —
+what `publish-release.sh` produces — notarizes and staples. Without a Developer
+ID cert a local build still succeeds, unsigned, with a loud warning; a release
+build fails instead of quietly shipping something Gatekeeper blocks.
+</details>
 
 **Env:** `CODER_CLAUDE_BIN`, `CODER_CODEX_BIN`, `CODER_KIMI_BIN`,
 `CODER_GROK_BIN`, `CODER_OPENCODE_BIN` (CLI paths) · `CODER_SIMULATE=1` (fake

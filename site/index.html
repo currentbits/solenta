@@ -449,8 +449,7 @@
         </a>
         <ol class="install-steps">
           <li>Unzip, then move <b>Solenta.app</b> to /Applications.</li>
-          <li>First launch: right-click the app and choose Open. The build is not signed or notarized yet, so a plain double-click gets refused.</li>
-          <li>Still blocked? <code>xattr -dr com.apple.quarantine /Applications/Solenta.app</code></li>
+          <li>Double-click it. The build is signed with a Developer ID and notarized by Apple, so Gatekeeper opens it like any other app.</li>
         </ol>
         <p class="install-warn">Apple Silicon only. There is no Intel (x64) build yet.</p>
       </div>

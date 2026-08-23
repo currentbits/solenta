@@ -45,6 +45,30 @@ if [[ ! -d "$APP_RES/node_modules/cross-spawn" || ! -f "$APP_RES/node_modules/cr
   exit 1
 fi
 
+# ---------------------------------------------------------------------------
+# Gatekeeper
+# ---------------------------------------------------------------------------
+# Three states, three verdicts:
+#   unsigned            -> warn, skip (a machine without the cert must still build)
+#   signed, not stapled -> seal must be intact; spctl is expected to reject and
+#                          is reported, not fatal (that is every local build)
+#   stapled             -> spctl MUST pass; this is what users download
+# -dvv, not -dv: the Authority chain only prints at the second -v.
+if codesign -dvv "$APP" 2>&1 | grep -q "^Authority=Developer ID Application"; then
+  echo "verify: signature"
+  codesign --verify --deep --strict --verbose=2 "$APP"
+  if xcrun stapler validate "$APP" >/dev/null 2>&1; then
+    echo "  notarization ticket stapled"
+    spctl -a -vvv -t install "$APP"
+    echo "  spctl: accepted"
+  else
+    echo "  no stapled ticket (local build) — spctl is advisory here:"
+    spctl -a -vvv -t install "$APP" 2>&1 | sed 's/^/    /' || true
+  fi
+else
+  echo "verify: WARNING — bundle is UNSIGNED, Gatekeeper checks skipped"
+fi
+
 # Install cleanup before any probe so the temp dir cannot leak.
 TMP_USERDATA="$(mktemp -d "${TMPDIR:-/tmp}/solenta-pkg-verify.XXXXXX")"
 ELECTRON_PID=""

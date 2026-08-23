@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Hardened-runtime entitlements for the Solenta .app and every nested binary.
+  Notarization requires the hardened runtime; the hardened runtime breaks
+  Electron unless these four are granted.
+
+  allow-jit + allow-unsigned-executable-memory  V8 writes and executes JIT pages.
+  allow-dyld-environment-variables              Electron spawns its own binary as
+                                                a plain Node process; that path
+                                                sets DYLD_* on some macOS builds.
+  disable-library-validation                    memory-server dlopen()s native
+                                                addons (sharp, onnxruntime-node)
+                                                from Resources/app. They ARE
+                                                re-signed with our Developer ID,
+                                                but the loader also walks
+                                                libvips' own dylib graph, and one
+                                                third-party signature in that
+                                                graph kills the whole process.
+
+  Deliberately NOT here: app-sandbox (Solenta runs user CLIs across the whole
+  filesystem by design) and the cs.debugger entitlement.
+-->
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+  <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+  <true/>
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+</dict>
+</plist>
