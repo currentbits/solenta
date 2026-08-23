@@ -5,7 +5,8 @@
 #
 # Credentials come from the environment, never from this file:
 #   CODESIGN_IDENTITY       full identity string; auto-detected when unset
-#   APPLE_KEYCHAIN_PROFILE  notarytool profile (see `notarytool store-credentials`)
+#   APPLE_KEYCHAIN_PROFILE  notarytool profile (see `notarytool store-credentials`);
+#                           falls back to the "solenta" profile when it exists
 #   APPLE_ID / APPLE_TEAM_ID / APPLE_APP_PASSWORD   fallback if no profile
 #
 # No Developer ID identity in the keychain -> WARN and exit 0, leaving the
@@ -121,6 +122,14 @@ codesign --verify --deep --strict --verbose=2 "$APP"
 if [[ "$NOTARIZE" -ne 1 ]]; then
   echo "notarize: skipped (no --notarize). Gatekeeper will still block this bundle on other Macs."
   exit 0
+fi
+
+# The profile lives in the keychain, not the environment, so an interactive
+# shell that never exported APPLE_KEYCHAIN_PROFILE still has working creds.
+# Probe the default name before declaring there are none.
+if [[ -z "${APPLE_KEYCHAIN_PROFILE:-}" ]] \
+  && xcrun notarytool history --keychain-profile solenta >/dev/null 2>&1; then
+  APPLE_KEYCHAIN_PROFILE=solenta
 fi
 
 NOTARY_AUTH=()
