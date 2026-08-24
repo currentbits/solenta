@@ -79,6 +79,21 @@ test("site shell assets revalidate after every deploy", () => {
   assert.match(block[1], /Cache-Control "public, max-age=0, must-revalidate"/);
 });
 
+test("product screenshots and social PNGs revalidate after every deploy", () => {
+  // A Girder cutover poisoned Cloudflare's ?v=2 keys with last week's dark
+  // PNG bytes for seven days. These files must not inherit location /assets/.
+  const block = /location ~\* [^{\n]*png[^{\n]*\{([^}]+)\}/.exec(NGINX);
+  assert.ok(block, "nginx must define a cache policy for product screenshot and social PNGs");
+  assert.match(block[0], /screen-/);
+  assert.match(block[0], /card/);
+  assert.match(block[0], /og/);
+  assert.match(block[1], /Cache-Control "public, max-age=0, must-revalidate"/);
+
+  const assets = /location \/assets\/ \{([^}]+)\}/.exec(NGINX);
+  assert.ok(assets, "unrelated assets keep the generic long-lived policy");
+  assert.match(assets[1], /expires 7d/);
+});
+
 test("macOS gets a direct asset link and owns its install card", async () => {
   const { doc } = render({ platform: "MacIntel" });
   const hero = doc.getElementById("hero-dl");
