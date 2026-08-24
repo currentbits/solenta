@@ -1722,6 +1722,8 @@ export interface PlanIssue {
   labels: string[];
   /** ISO timestamp from gh, when present. */
   updatedAt?: string;
+  /** ISO creation timestamp from gh, when present. */
+  createdAt?: string;
 }
 
 /** Per-project listIssues result. Failures stay in-band so the UI can retry. */

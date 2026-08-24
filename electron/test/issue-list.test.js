@@ -14,7 +14,7 @@ const { parseIssueListJson } = require("../issues.js");
 const { planboardNoteFor, PLANBOARD_NOTE } = require("../services.js");
 
 describe("parseIssueListJson", () => {
-  it("maps rows, label names, state, and updatedAt", () => {
+  it("maps rows, label names, state, updatedAt, and createdAt", () => {
     const rows = parseIssueListJson(
       JSON.stringify([
         {
@@ -24,6 +24,7 @@ describe("parseIssueListJson", () => {
           state: "OPEN",
           labels: [{ name: "plan:doing" }, { name: "roadmap" }],
           updatedAt: "2026-01-02T03:04:05Z",
+          createdAt: "2026-01-01T01:02:03Z",
         },
         {
           number: 8,
@@ -42,6 +43,7 @@ describe("parseIssueListJson", () => {
         state: "OPEN",
         labels: ["plan:doing", "roadmap"],
         updatedAt: "2026-01-02T03:04:05Z",
+        createdAt: "2026-01-01T01:02:03Z",
       },
       {
         number: 8,

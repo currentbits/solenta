@@ -54,7 +54,8 @@
 }
 
 .projectSelect,
-.startMode {
+.startMode,
+.sort {
   padding: 5px 8px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);

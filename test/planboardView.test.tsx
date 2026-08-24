@@ -143,6 +143,55 @@ describe("PlanboardView", () => {
     m.unmount();
   });
 
+  it("reorders a column from the sort selector", async () => {
+    const sortable: ListIssuesResult = {
+      ok: true,
+      issues: [
+        {
+          number: 10,
+          title: "older",
+          url: "https://github.com/acme/ledger/issues/10",
+          state: "OPEN",
+          labels: [],
+          updatedAt: "2026-02-01T00:00:00Z",
+          createdAt: "2026-01-01T00:00:00Z",
+        },
+        {
+          number: 30,
+          title: "newer",
+          url: "https://github.com/acme/ledger/issues/30",
+          state: "OPEN",
+          labels: [],
+          updatedAt: "2026-01-01T00:00:00Z",
+          createdAt: "2026-03-01T00:00:00Z",
+        },
+      ],
+    };
+    const m = await mount(
+      <PlanboardView projects={projects} listIssues={async () => sortable} />,
+    );
+    const numbers = () =>
+      Array.from(
+        m.queryAll('[data-plan-column="todo"] [data-plan-issue]'),
+      ).map((el) => el.getAttribute("data-plan-issue"));
+    assert.deepEqual(numbers(), ["10", "30"], "default: recently updated");
+
+    const select = m.query("select[data-plan-sort]") as HTMLSelectElement | null;
+    assert.ok(select, "sort selector");
+    await inAct(() => {
+      select.value = "number-asc";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    assert.deepEqual(numbers(), ["10", "30"], "low to high");
+
+    await inAct(() => {
+      select.value = "created-desc";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    assert.deepEqual(numbers(), ["30", "10"], "newest added");
+    m.unmount();
+  });
+
   it("starts a task from a Todo card only, and reloads the board", async () => {
     const started: { projectPath: string; ref: string }[] = [];
     let loads = 0;

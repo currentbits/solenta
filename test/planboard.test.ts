@@ -8,6 +8,7 @@ import {
   badgeLabels,
   formatLineCount,
   isPlanEmpty,
+  issueCreatedMs,
   issueUpdatedMs,
   planColumns,
   reviewLoad,
@@ -63,6 +64,38 @@ describe("planColumns", () => {
     );
   });
 
+  it("sorts low to high by issue number", () => {
+    const cols = planColumns(
+      [
+        issue({ number: 30 }),
+        issue({ number: 10 }),
+        issue({ number: 20 }),
+      ],
+      "number-asc",
+    );
+    assert.deepEqual(
+      cols[0].issues.map((i) => i.number),
+      [10, 20, 30],
+    );
+  });
+
+  it("sorts by date added, both directions, missing dates last", () => {
+    const issues = [
+      issue({ number: 1, createdAt: "2026-01-01T00:00:00Z" }),
+      issue({ number: 2, createdAt: "2026-03-01T00:00:00Z" }),
+      issue({ number: 3, createdAt: "2026-02-01T00:00:00Z" }),
+      issue({ number: 4 }),
+    ];
+    assert.deepEqual(
+      planColumns(issues, "created-desc")[0].issues.map((i) => i.number),
+      [2, 3, 1, 4],
+    );
+    assert.deepEqual(
+      planColumns(issues, "created-asc")[0].issues.map((i) => i.number),
+      [1, 3, 2, 4],
+    );
+  });
+
   it("column order and titles are Todo / In progress / Done", () => {
     assert.deepEqual(
       planColumns([]).map((c) => c.title),
@@ -86,6 +119,15 @@ describe("helpers", () => {
     );
     assert.equal(issueUpdatedMs(issue({ number: 1, updatedAt: "nope" })), null);
     assert.equal(issueUpdatedMs(issue({ number: 1 })), null);
+  });
+
+  it("issueCreatedMs parses ISO and rejects junk", () => {
+    assert.equal(
+      issueCreatedMs(issue({ number: 1, createdAt: "2026-01-01T00:00:00Z" })),
+      Date.parse("2026-01-01T00:00:00Z"),
+    );
+    assert.equal(issueCreatedMs(issue({ number: 1, createdAt: "nope" })), null);
+    assert.equal(issueCreatedMs(issue({ number: 1 })), null);
   });
 
   it("isPlanEmpty", () => {

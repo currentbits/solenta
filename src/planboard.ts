@@ -39,14 +39,46 @@ export function issueUpdatedMs(issue: PlanIssue): number | null {
   return Number.isFinite(ms) ? ms : null;
 }
 
+/** Parse gh's ISO createdAt; null when missing or malformed. */
+export function issueCreatedMs(issue: PlanIssue): number | null {
+  if (!issue.createdAt) return null;
+  const ms = Date.parse(issue.createdAt);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/**
+ * Board ordering inside each column. "updated" is the default; the others
+ * answer "what is oldest/what did I add recently" without leaving the board.
+ */
+export type PlanSort = "updated" | "number-asc" | "created-desc" | "created-asc";
+
+/** Issues without a date sort last, whichever direction was picked. */
+function compareIssues(sort: PlanSort) {
+  return (a: PlanIssue, b: PlanIssue): number => {
+    switch (sort) {
+      case "number-asc":
+        return a.number - b.number;
+      case "created-desc":
+        return (issueCreatedMs(b) ?? 0) - (issueCreatedMs(a) ?? 0);
+      case "created-asc":
+        return (issueCreatedMs(a) ?? Infinity) - (issueCreatedMs(b) ?? Infinity);
+      default:
+        return (issueUpdatedMs(b) ?? 0) - (issueUpdatedMs(a) ?? 0);
+    }
+  };
+}
+
 /**
  * Done is every issue ever closed, so it is capped to the most recent few.
  * Todo and In progress are the live backlog and are never truncated.
  */
 const DONE_COLUMN_CAP = 25;
 
-/** Todo / In progress / Done, each newest-updated first. */
-export function planColumns(issues: readonly PlanIssue[]): PlanColumn[] {
+/** Todo / In progress / Done, each ordered by the chosen sort. */
+export function planColumns(
+  issues: readonly PlanIssue[],
+  sort: PlanSort = "updated",
+): PlanColumn[] {
   const buckets: Record<PlanColumnId, PlanIssue[]> = {
     todo: [],
     doing: [],
@@ -55,10 +87,9 @@ export function planColumns(issues: readonly PlanIssue[]): PlanColumn[] {
   for (const issue of issues) {
     buckets[planColumnFor(issue)].push(issue);
   }
+  const compare = compareIssues(sort);
   return COLUMN_ORDER.map(({ id, title }) => {
-    const sorted = buckets[id]
-      .slice()
-      .sort((a, b) => (issueUpdatedMs(b) ?? 0) - (issueUpdatedMs(a) ?? 0));
+    const sorted = buckets[id].slice().sort(compare);
     return {
       id,
       title,

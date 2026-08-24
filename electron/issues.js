@@ -280,7 +280,7 @@ async function fetchIssue(projectPath, ref, opts) {
  * Rows missing a positive number, title, or url are dropped.
  *
  * @param {string} stdout
- * @returns {{ number: number, title: string, url: string, state: "OPEN" | "CLOSED", labels: string[], updatedAt?: string }[]}
+ * @returns {{ number: number, title: string, url: string, state: "OPEN" | "CLOSED", labels: string[], updatedAt?: string, createdAt?: string }[]}
  */
 function parseIssueListJson(stdout) {
   let data;
@@ -317,6 +317,9 @@ function parseIssueListJson(stdout) {
     if (row.updatedAt != null && String(row.updatedAt).trim() !== "") {
       issue.updatedAt = String(row.updatedAt);
     }
+    if (row.createdAt != null && String(row.createdAt).trim() !== "") {
+      issue.createdAt = String(row.createdAt);
+    }
     issues.push(issue);
   }
   return issues;
@@ -352,7 +355,7 @@ async function listIssues(projectPath) {
       "--state",
       "all",
       "--json",
-      "number,title,labels,state,url,updatedAt",
+      "number,title,labels,state,url,updatedAt,createdAt",
       // ponytail: one flat fetch of every issue; the Done column is capped in
       // planColumns instead. Paginate (gh does 100/page) if a repo ever needs
       // more than this.

@@ -8,6 +8,7 @@ import {
   planColumns,
   reviewLoad,
 } from "../planboard";
+import type { PlanSort } from "../planboard";
 import type {
   ListIssuesResult,
   ListPrsResult,
@@ -67,6 +68,8 @@ export function PlanboardView({
   const [startNote, setStartNote] = useState<string | null>(null);
   /** Thread mode for Start task; "default" follows the app setting. */
   const [startMode, setStartMode] = useState<ThreadStartMode>("default");
+  /** Column ordering; "updated" is the long-standing default. */
+  const [sort, setSort] = useState<PlanSort>("updated");
   const loadGen = useRef(0);
 
   useEffect(() => {
@@ -125,8 +128,8 @@ export function PlanboardView({
   );
 
   const columns = useMemo(
-    () => planColumns(result && result.ok ? result.issues : []),
-    [result],
+    () => planColumns(result && result.ok ? result.issues : [], sort),
+    [result, sort],
   );
   // Review-load meter: open non-draft PRs consume the human review budget.
   const review = useMemo(
@@ -195,6 +198,19 @@ export function PlanboardView({
               <option value="orchestrator">Start as: Orchestrator</option>
             </select>
           ) : null}
+          <select
+            className={styles.sort}
+            value={sort}
+            onChange={(e) => setSort(e.target.value as PlanSort)}
+            data-plan-sort=""
+            aria-label="Sort issues"
+            title="Order the cards in every column"
+          >
+            <option value="updated">Sort: Recently updated</option>
+            <option value="number-asc">Sort: Low to high</option>
+            <option value="created-desc">Sort: Newest added</option>
+            <option value="created-asc">Sort: Oldest added</option>
+          </select>
           <button
             type="button"
             className={styles.refresh}
